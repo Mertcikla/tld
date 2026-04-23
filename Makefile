@@ -11,6 +11,12 @@ dev: frontend-deps
 	@(cd frontend && npm run dev) & \
 	DEV=true air; \
 	wait
+
+proto: ## Update go.mod to latest BSR-published proto versions (run after buf push in proto/)
+	go get buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go@$(shell buf registry sdk version --module=buf.build/tldiagramcom/diagram --plugin=buf.build/protocolbuffers/go)
+	go get buf.build/gen/go/tldiagramcom/diagram/connectrpc/go@$(shell buf registry sdk version --module=buf.build/tldiagramcom/diagram --plugin=buf.build/connectrpc/go)
+	go mod tidy
+
 test: test-backend
 	go test ./...
 

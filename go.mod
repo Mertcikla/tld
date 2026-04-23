@@ -3,9 +3,9 @@ module github.com/mertcikla/diag/tld
 go 1.26.1
 
 require (
-	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.19.1-20260419172603-8192c519478e.2
-	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.11-20260419172603-8192c519478e.1
-	connectrpc.com/connect v1.19.1
+	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.19.2-20260422232016-b7320334c522.1
+	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.11-20260422232016-b7320334c522.1
+	connectrpc.com/connect v1.19.2
 	github.com/bmatcuk/doublestar/v4 v4.6.1
 	github.com/google/uuid v1.6.0
 	github.com/schollz/progressbar/v3 v3.19.0
