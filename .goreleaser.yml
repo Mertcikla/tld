@@ -25,7 +25,8 @@ builds:
       - -s -w -X github.com/mertcikla/tld/cmd/version.Version={{.Version}}
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -35,26 +36,24 @@ archives:
       {{- if .Arm }}v{{ .Arm }}{{ end }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats:
+          - zip
 
-brews:
+homebrew_casks:
   - repository:
       owner: Mertcikla
       name: homebrew-tap
-    directory: Formula
+    binaries:
+      - tld
     homepage: "https://tldiagram.com"
     description: "CLI for the tlDiagram architecture diagramming system"
-    license: "MIT"
-    install: |
-      bin.install "tld"
-    test: |
-      system "#{bin}/tld version"
+    license: "Apache 2.0"
 
 checksum:
   name_template: 'checksums.txt'
 
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  version_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
