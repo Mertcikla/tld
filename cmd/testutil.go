@@ -42,9 +42,7 @@ func RunCmdWithStdin(t *testing.T, dir string, stdin io.Reader, args ...string) 
 
 	// Isolate configuration
 	if os.Getenv("TLD_CONFIG_DIR") == "" {
-		configDir := t.TempDir()
-		_ = os.Setenv("TLD_CONFIG_DIR", configDir)
-		t.Cleanup(func() { _ = os.Unsetenv("TLD_CONFIG_DIR") })
+		t.Setenv("TLD_CONFIG_DIR", t.TempDir())
 	}
 
 	root := NewRootCmd()

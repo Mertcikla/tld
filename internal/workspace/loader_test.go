@@ -25,8 +25,7 @@ func writeFile(t *testing.T, path, content string) {
 func setupConfig(t *testing.T) string {
 	t.Helper()
 	configDir := t.TempDir()
-	_ = os.Setenv("TLD_CONFIG_DIR", configDir)
-	t.Cleanup(func() { _ = os.Unsetenv("TLD_CONFIG_DIR") })
+	t.Setenv("TLD_CONFIG_DIR", configDir)
 	return filepath.Join(configDir, "tld.yaml")
 }
 
