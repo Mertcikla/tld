@@ -11,7 +11,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(configDir)
+	defer func() { _ = os.RemoveAll(configDir) }()
 
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		panic(err)
