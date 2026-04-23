@@ -36,12 +36,17 @@ func Bootstrap(cwd string) (*App, error) {
 		return nil, err
 	}
 
+	staticFS, err := assets.StaticFS()
+	if err != nil {
+		return nil, err
+	}
+
 	sqliteStore, err := store.Open(dbPath, assets.FS)
 	if err != nil {
 		return nil, err
 	}
 
-	srv, err := server.New(sqliteStore, assets.FS, localWorkspaceID)
+	srv, err := server.New(sqliteStore, staticFS, localWorkspaceID)
 	if err != nil {
 		return nil, err
 	}
