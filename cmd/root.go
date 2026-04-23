@@ -19,6 +19,7 @@ import (
 	"github.com/mertcikla/tld/cmd/rename"
 	"github.com/mertcikla/tld/cmd/serve"
 	"github.com/mertcikla/tld/cmd/status"
+	"github.com/mertcikla/tld/cmd/stop"
 	"github.com/mertcikla/tld/cmd/update"
 	"github.com/mertcikla/tld/cmd/validate"
 	"github.com/mertcikla/tld/cmd/version"
@@ -147,6 +148,9 @@ and apply them atomically with 'tld apply'.`,
 	serveCmd := serve.NewServeCmd(nil)
 	serveCmd.GroupID = secondaryGroup.ID
 
+	stopCmd := stop.NewStopCmd()
+	stopCmd.GroupID = secondaryGroup.ID
+
 	root.AddCommand(
 		initCmd,
 		loginCmd,
@@ -166,6 +170,7 @@ and apply them atomically with 'tld apply'.`,
 		analyzeCmd,
 		checkCmd,
 		serveCmd,
+		stopCmd,
 		versionCmd,
 	)
 

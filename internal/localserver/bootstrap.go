@@ -64,7 +64,7 @@ func Bootstrap(cwd string, opts ...ServeOptions) (*App, error) {
 		return nil, err
 	}
 
-	addr := resolveAddr(o)
+	addr := ResolveAddr(o)
 
 	return &App{
 		Addr:    addr,
@@ -73,7 +73,9 @@ func Bootstrap(cwd string, opts ...ServeOptions) (*App, error) {
 	}, nil
 }
 
-func resolveAddr(o ServeOptions) string {
+// ResolveAddr returns the host:port the server will bind to for the given
+// options, applying the same priority as Bootstrap (opts > env > default).
+func ResolveAddr(o ServeOptions) string {
 	if o.Host == "" && o.Port == "" {
 		return AddrFromEnv()
 	}

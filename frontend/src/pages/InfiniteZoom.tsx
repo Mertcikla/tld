@@ -18,7 +18,6 @@ import {
   useDisclosure,
   VStack,
 } from '@chakra-ui/react'
-import { useSetHeader } from '../components/HeaderContext'
 import { api } from '../api/client'
 import type { ExploreData, ViewLayer } from '../types'
 import { FitViewIcon as FitViewSvg, TagsIcon, EyeIcon, EyeOffIcon, FocusIcon as FocusSvg } from '../components/Icons'
@@ -40,7 +39,6 @@ const MINI_ONBOARDING_KEY = 'shared_zoom_onboarding_dismissed'
 // ── Inner component ────────────────────────────────────────────────
 function InfiniteZoomInner({ sharedToken, shareSlot }: Props) {
   const navigate = useNavigate()
-  const setHeader = useSetHeader()
 
   const [data, setData] = useState<ExploreData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -111,11 +109,6 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props) {
     setHiddenTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag])
   }, [])
 
-  // Set page header
-  useEffect(() => {
-    setHeader({ node: <Text fontWeight="medium" fontSize="sm" color="gray.300">Explore</Text> })
-    return () => setHeader(null)
-  }, [setHeader])
   useEffect(() => {
     if (sharedToken && canvasReady && !localStorage.getItem(MINI_ONBOARDING_KEY)) {
       setShowMiniOnboarding(true)
