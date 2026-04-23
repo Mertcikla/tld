@@ -1,0 +1,10 @@
+{
+  "name": "tldiagram",
+  "description": "Codebase diagram generation for tldiagram.com",
+  "version": "0.0.1",
+  "homepage": "https://tldiagram.com",
+  "author": {
+    "name": "Mert Çıkla",
+    "url": "https://github.com/mertcikla"
+  }
+}

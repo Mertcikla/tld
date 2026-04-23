@@ -1,0 +1,309 @@
+@import './styles/theme.css';
+
+:root {
+    --theme-blue: var(--accent, #63b3ed);
+    /* alias - accent is set by AccentColorProvider */
+    --grad-brand: linear-gradient(135deg, #00c6ff 0%, #0072ff 100%);
+
+    /* ── Layout: top menu bar ─────────────────────────────────────────
+       --topbar-h / --topbar-h-mobile are the *content* heights of the bar.
+       --topbar-h-total / --topbar-h-mobile-total include env(safe-area-inset-top)
+       so both the fixed bar itself and the spacer below it absorb the iOS
+       status-bar height automatically. On a regular desktop browser the
+       inset resolves to 0px, so nothing changes.                        */
+    --topbar-h: 40px;
+    /* top bar content height – desktop (sm+) */
+    --topbar-h-mobile: 0px;
+    /* top bar content height – mobile (<sm)  */
+    /* Total bar heights including iOS safe-area-inset-top */
+    --topbar-h-total: calc(var(--topbar-h) + env(safe-area-inset-top, 0px));
+    --topbar-h-mobile-total: calc(var(--topbar-h-mobile) + env(safe-area-inset-top, 0px));
+
+    --topbar-content-gap: 4px;
+    /* margin between bar & page content (mobile only) */
+    --topbar-float-top: 10px;
+    /* mobile floating icons: extra offset below bar */
+    --topbar-float-h: 38px;
+    /* mobile floating icons min-height  */
+
+    /* ── Layout: bottom mobile nav ────────────────────────────────────  */
+    --bottomnav-h: 74px;
+    /* bottom nav bar height             */
+    --bottomnav-container-h: 116px;
+    /* nav + FAB overflow area           */
+    --bottomnav-fab-bottom: 22px;
+    /* FAB offset from bottom            */
+    --bottomnav-fab-size: 74px;
+    /* FAB diameter                      */
+
+    /* ── Layout: react-flow mobile offsets (above bottom nav) ─────────  */
+    --rf-controls-bottom: 80px;
+    --rf-minimap-bottom: 70px;
+    --rf-panel-bl-bottom: 82px;
+}
+
+.react-flow {
+    background-color: var(--bg-canvas);
+}
+
+.react-flow__edge-path {
+    stroke: var(--theme-blue);
+    stroke-width: 2;
+    opacity: 0.8;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+    stroke-width: 3;
+    opacity: 1;
+}
+
+/* Keep React Flow reconnect endpoints interactive, but let the node slot handle
+   be the only visible endpoint marker. */
+.react-flow__edge.selected .react-flow__edgeupdater {
+    fill: transparent;
+    stroke: transparent;
+    stroke-width: 0;
+    opacity: 0;
+    cursor: grab;
+    r: 10px;
+}
+
+/* Flowing dashes on hover indicate the edge is interactive / grabbable */
+@keyframes edge-flow {
+    from {
+        stroke-dashoffset: 24;
+    }
+
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+.react-flow__edge:hover:not(.selected) .react-flow__edge-path {
+    stroke-dasharray: 8 4;
+    animation: edge-flow 0.4s linear infinite;
+    opacity: 1;
+}
+
+.react-flow__edge-marker {
+    fill: var(--theme-blue);
+}
+
+.react-flow__controls button {
+    background-color: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0;
+    color: #cbd5e0;
+    fill: #cbd5e0;
+    transition: all 0.2s var(--chakra-transitions-easing-pop);
+}
+
+.react-flow__controls button:last-child {
+    border-bottom: none;
+}
+
+/* On small screens, lift controls and minimap above the bottom navigation + safe area */
+@media (max-width: 768px) {
+    .react-flow__controls {
+        /* Fix: position fixed so controls escape any parent stacking context
+           and reliably sit above the mobile bottom nav / safe-area. */
+        position: fixed !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + var(--rf-controls-bottom)) !important;
+        right: max(env(safe-area-inset-right, 0px), 1.25rem) !important;
+        z-index: 3000 !important;
+        margin: 0 !important;
+    }
+
+    .react-flow__minimap {
+        /* Keep minimap fixed to viewport so it doesn't get clipped by parent containers */
+        position: fixed !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + var(--rf-minimap-bottom)) !important;
+        left: max(env(safe-area-inset-left, 0px), 1.25rem) !important;
+        z-index: 3000 !important;
+        /* Constrain size so the minimap never takes more than ~20% of viewport */
+        max-width: 20vw !important;
+        max-height: 20vh !important;
+        width: min(20vw, 220px) !important;
+        height: auto !important;
+        margin: 0 !important;
+        pointer-events: auto !important;
+        overflow: hidden;
+    }
+
+    /* Specific fix for the React Flow bottom-left panel (class="react-flow__panel bottom left") */
+    .react-flow__panel.bottom.left {
+        /* Lift the panel above common mobile bottom nav heights + safe area */
+        position: fixed !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + var(--rf-panel-bl-bottom)) !important;
+        left: max(env(safe-area-inset-left, 0px), 1.25rem) !important;
+        pointer-events: auto !important;
+        z-index: 3001 !important;
+        margin: 0 !important;
+    }
+
+    /* Floating action menu (bottom-center) */
+    .react-flow__panel.bottom.center {
+        position: fixed !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + var(--bottomnav-h)) !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        z-index: 3001 !important;
+    }
+
+    /* Slight spacing between control buttons to improve touch targets */
+    .react-flow__controls button {
+        margin-bottom: 6px;
+    }
+}
+
+/* On desktop / iPad (viewport-fit=cover): lift bottom React Flow panels above
+   the home-indicator safe area. env() resolves to 0px on regular browsers so
+   this is a no-op there. The mobile block above already handles this via the
+   explicit calc() on its fixed-position bottom values.                        */
+@media (min-width: 769px) {
+
+    /* Clear all margins for controls so the inline style='margin:1rem' on the
+       <Controls> JSX element doesn't push it above its intended bottom anchor.
+       Re-apply corner gap via right/bottom instead.                           */
+    .react-flow__controls {
+        margin: 0 !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem) !important;
+        right: max(env(safe-area-inset-right, 0px), 1rem) !important;
+    }
+
+    .react-flow__minimap {
+        margin-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem) !important;
+        margin-left: max(env(safe-area-inset-left, 0px), 1rem) !important;
+    }
+
+    .react-flow__panel.bottom.left:not(.react-flow__controls) {
+        margin-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem) !important;
+        margin-left: max(env(safe-area-inset-left, 0px), 1rem) !important;
+    }
+
+    .react-flow__panel.bottom.right:not(.react-flow__controls) {
+        margin-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem) !important;
+        margin-right: max(env(safe-area-inset-right, 0px), 1rem) !important;
+    }
+}
+
+/* On narrower desktop / iPad (<1280px) the centered floating action bar overlaps
+   the bottom-left panel (ViewTree). Push the panel above the bar:
+     1rem  = bar's own bottom gap
+     ~40px = bar height (28px content + 8px vertical padding + 4px slack)
+     8px   = visual gap between panel and bar
+   margin-bottom is reset to 0 so it doesn't stack with the 769px+ rule above. */
+@media (min-width: 769px) and (max-width: 1279px) {
+    .react-flow__panel.bottom.left:not(.react-flow__controls) {
+        bottom: calc(env(safe-area-inset-bottom, 0px) + var(--rf-panel-bl-bottom)) !important;
+        margin-bottom: 0 !important;
+        margin-left: max(env(safe-area-inset-left, 0px), 1rem) !important;
+    }
+
+    .react-flow__controls {
+        bottom: calc(env(safe-area-inset-bottom, 0px) + var(--rf-panel-bl-bottom)) !important;
+        right: max(env(safe-area-inset-right, 0px), 1rem) !important;
+    }
+
+    .react-flow__minimap {
+        bottom: calc(env(safe-area-inset-bottom, 0px) + var(--rf-panel-bl-bottom)) !important;
+        margin-bottom: 0 !important;
+        margin-left: max(env(safe-area-inset-left, 0px), 1rem) !important;
+    }
+}
+
+.react-flow__controls button:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: white;
+    fill: white;
+}
+
+.react-flow__minimap {
+    background-color: var(--bg-panel);
+    border: 1px solid #2d3748;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem) !important;
+    /* Constrain minimap size globally so it does not exceed ~20% of the viewport */
+    max-width: 30vw !important;
+    max-height: 30vh !important;
+    width: min(30vw, 240px) !important;
+    height: auto !important;
+    overflow: hidden;
+    margin: 0.5rem !important;
+    pointer-events: auto !important;
+}
+
+/* Ensure the internal svg/canvas of the minimap scales to the container size */
+.react-flow__minimap svg,
+.react-flow__minimap canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+.react-flow__attribution {
+    display: none;
+}
+
+/* Widen the invisible edge interaction area so tapping edges is forgiving */
+.react-flow__edge-interaction {
+    stroke-width: 24 !important;
+}
+
+/* Hide handles by default; reveal them on hover, during connection, or when already connected */
+.react-flow__handle {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s, width 0.15s, height 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+
+.react-flow__handle.element-node-handle {
+    width: 8px;
+    height: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.8);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+
+/* Expand the interactive hit area without affecting the visible circle */
+.react-flow__handle::before {
+    content: '';
+    position: absolute;
+    inset: -14px;
+    border-radius: 50%;
+}
+
+.react-flow__handle.handle-connected {
+    opacity: 1;
+    pointer-events: all;
+}
+
+.react-flow__node:hover .react-flow__handle.element-node-handle.handle-active-slot,
+.react-flow__node:hover .react-flow__handle.element-node-handle.handle-fallback-slot {
+    opacity: 1;
+    pointer-events: all;
+}
+
+/* When a node is selected: show handles at full size (matching edge-updater r=6px) */
+.react-flow__node.selected .react-flow__handle.element-node-handle.handle-active-slot,
+.react-flow__node.selected .react-flow__handle.element-node-handle.handle-fallback-slot {
+    opacity: 1;
+    pointer-events: all;
+    width: 12px;
+    height: 12px;
+    border: 1.5px solid rgba(255, 255, 255, 0.85);
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+}
+
+.react-flow__handle.handle-selected-edge {
+    opacity: 1;
+    pointer-events: all;
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255, 255, 255, 0.9);
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.38);
+}
+
+.react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-active-slot,
+.react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-fallback-slot {
+    opacity: 1;
+    pointer-events: all;
+}

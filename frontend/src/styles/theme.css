@@ -1,0 +1,56 @@
+:root {
+    /* Base background color - dark blue/purplish */
+    --bg-main: #0d121e;
+    --bg-main-rgb: 13, 18, 30;
+
+    /* Element background color */
+    --bg-element: #2d3748;
+    --bg-element-rgb: 45, 55, 72;
+
+    /* Derived background colors */
+    --bg-canvas: color-mix(in srgb, var(--bg-main), black 15%);
+    --bg-header: rgba(var(--bg-main-rgb), 0.96);
+    --bg-menu: rgba(var(--bg-main-rgb), 0.98);
+    --bg-panel: rgba(var(--bg-main-rgb), 0.96);
+    --bg-card: rgba(var(--bg-main-rgb), 0.4);
+    --bg-card-solid: var(--bg-element);
+    --bg-dots: rgba(var(--bg-main-rgb), 0.6);
+    --bg-hover: rgba(255, 255, 255, 0.05);
+
+    /* Borders */
+    --border-main: rgba(255, 255, 255, 0.08);
+
+    /* Gradients */
+    --grad-header: linear-gradient(180deg, rgba(var(--bg-main-rgb), 0.96) 0%, rgba(var(--bg-main-rgb), 0.92) 100%);
+    --grad-panel: radial-gradient(circle at 50% -20%, rgba(var(--accent-rgb, 99, 179, 237), 0.15), transparent 80%);
+    --grad-card: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.05) 8%, rgba(255, 255, 255, 0.05) 92%, transparent 100%);
+}
+
+/* Chakra theme overrides or extensions can go here if needed */
+.bg-main {
+    background-color: var(--bg-main);
+}
+
+.bg-element {
+    background-color: var(--bg-element);
+}
+
+.bg-canvas {
+    background-color: var(--bg-canvas);
+}
+
+.bg-header {
+    background-color: var(--bg-header);
+}
+
+.bg-menu {
+    background-color: var(--bg-menu);
+}
+
+.bg-panel {
+    background-color: var(--bg-panel);
+}
+
+.bg-card {
+    background-color: var(--bg-card);
+}

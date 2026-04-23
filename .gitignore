@@ -1,0 +1,5 @@
+tld
+data/
+frontend/node_modules
+frontend/public
+tmp

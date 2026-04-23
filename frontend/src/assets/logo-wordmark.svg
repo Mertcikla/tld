@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Wordmark asset. Requires Josefin Sans to be loaded on the page (or in the browser cache).
+  Use inline or as a React component - NOT as <img src> (SVGs served as images cannot
+  load external fonts, and this file intentionally omits the embedded font blob).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="44" viewBox="0 0 200 44">
+  <defs>
+    <linearGradient id="tg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"   stop-color="#90cdf4" />
+      <stop offset="0.5" stop-color="#63b3ed" />
+      <stop offset="1"   stop-color="#4299e1" />
+    </linearGradient>
+  </defs>
+  <text
+    x="0" y="34"
+    font-family="'Josefin Sans', sans-serif"
+    font-weight="600"
+    font-size="38"
+    fill="url(#tg)"
+    letter-spacing="-0.5">tlDiagram</text>
+</svg>

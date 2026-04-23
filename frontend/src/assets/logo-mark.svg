@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80">
+  <defs>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="32" result="blur1" />
+      <feFlood flood-color="#63b3ed" flood-opacity="0.3" result="c1" />
+      <feComposite in="c1" in2="blur1" operator="in" result="glow1" />
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10" result="blur2" />
+      <feFlood flood-color="#90cdf4" flood-opacity="0.5" result="c2" />
+      <feComposite in="c2" in2="blur2" operator="in" result="glow2" />
+      <feMerge>
+        <feMergeNode in="glow1" />
+        <feMergeNode in="glow2" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <linearGradient id="grad" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0"    stop-color="#90cdf4" />
+      <stop offset="0.45" stop-color="#63b3ed" />
+      <stop offset="1"    stop-color="#2b6cb0" />
+    </linearGradient>
+  </defs>
+  <!-- Scale 1024→80 (×0.078125), then apply original inner transform -->
+  <g transform="scale(0.078125)" fill-rule="evenodd">
+    <g filter="url(#glow)" transform="translate(78,118) scale(0.8)">
+      <path
+        d="M201 18s169-39 340-2c171 38 342 152 342 457S713 902 544 949c-170 48-344 19-344 19l1-566h302V217H201z M455 715c-67 83-122 141-62 48q23-35 33-62h-4a78 78 0 1 1 78-78q0 24-12 44-11 21-33 48"
+        fill="url(#grad)" />
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,14 @@
+version: "2"
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - ineffassign
+    - revive
+  settings:
+    revive:
+      rules:
+        - name: exported
+          disabled: true

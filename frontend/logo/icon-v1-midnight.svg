@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- D monogram gradient: blue to cyan -->
+    <linearGradient id="dgrad" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#90cdf4" />
+      <stop offset="45%" stop-color="#63b3ed" />
+      <stop offset="100%" stop-color="#2b6cb0" />
+    </linearGradient>
+
+    <!-- Teardrop fill gradient -->
+    <linearGradient id="teargrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#0d1117" />
+      <stop offset="100%" stop-color="#1a2535" />
+    </linearGradient>
+
+    <!-- Outer glow filter -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="18" result="blur" />
+      <feFlood flood-color="#63b3ed" flood-opacity="0.35" result="color" />
+      <feComposite in="color" in2="blur" operator="in" result="glow" />
+      <feMerge>
+        <feMergeNode in="glow" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <!-- Drop shadow filter for the whole icon -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="24" flood-color="#000000" flood-opacity="0.7" />
+    </filter>
+
+    <!-- Inner highlight filter -->
+    <filter id="innerhighlight">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="3" result="blur" />
+      <feOffset dx="-2" dy="-2" result="offset" />
+      <feFlood flood-color="white" flood-opacity="0.07" result="light" />
+      <feComposite in="light" in2="offset" operator="in" result="highlight" />
+      <feMerge>
+        <feMergeNode in="SourceGraphic" />
+        <feMergeNode in="highlight" />
+      </feMerge>
+    </filter>
+
+    <!-- Clip to rounded square for iOS -->
+    <clipPath id="roundsq">
+      <rect width="1024" height="1024" rx="224" ry="224" />
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#roundsq)">
+    <!-- Background -->
+    <rect width="1024" height="1024" fill="url(#bg)" />
+
+    <!-- Android: white circle background -->
+    <circle cx="512" cy="512" r="512" fill="white" />
+
+    <!-- D monogram - centered in the 1024×1024 canvas -->
+    <!-- Bounding box: x 201–883 (w=682), y 16–968 (h=952). Scale 0.8 → 546×762px. -->
+    <!-- tx = (1024−546)/2 − 201×0.8 = 78.4  ty = (1024−762)/2 − 16×0.8 = 118.2 -->
+    <g filter="url(#glow)" transform="translate(78, 118) scale(0.8)">
+      <!-- Outer D path -->
+      <path
+        d="M201 18s169-39 340-2c171 38 342 152 342 457S713 902 544 949c-170 48-344 19-344 19l1-566h302V217H201z"
+        fill="url(#dgrad)"
+      />
+      <!-- Teardrop cutout - uses same dark fill to punch through -->
+      <path
+        fill="url(#teargrad)"
+        d="M455 715c-67 83-122 141-62 48q23-35 33-62h-4a78 78 0 1 1 78-78q0 24-12 44-11 21-33 48"
+      />
+    </g>
+
+    <!-- Top-edge specular line -->
+  </g>
+</svg>

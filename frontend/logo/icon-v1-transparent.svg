@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <!-- D monogram gradient: blue to cyan -->
+    <linearGradient id="dgrad" x1="0" y1="0" x2="0.6" y2="1">
+      <stop offset="0%" stop-color="#90cdf4" />
+      <stop offset="45%" stop-color="#63b3ed" />
+      <stop offset="100%" stop-color="#2b6cb0" />
+    </linearGradient>
+
+    <!-- Outer glow filter -->
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="18" result="blur" />
+      <feFlood flood-color="#63b3ed" flood-opacity="0.35" result="color" />
+      <feComposite in="color" in2="blur" operator="in" result="glow" />
+      <feMerge>
+        <feMergeNode in="glow" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- No background - fully transparent -->
+
+  <!-- D monogram with evenodd fill-rule: teardrop is a true transparent hole -->
+  <g filter="url(#glow)" transform="translate(78, 118) scale(0.8)" fill-rule="evenodd">
+
+    <circle cx="512" cy="512" r="600" fill="white" />
+    <path
+      d="M201 18s169-39 340-2c171 38 342 152 342 457S713 902 544 949c-170 48-344 19-344 19l1-566h302V217H201z
+         M455 715c-67 83-122 141-62 48q23-35 33-62h-4a78 78 0 1 1 78-78q0 24-12 44-11 21-33 48"
+      fill="url(#dgrad)"
+    />
+  </g>
+</svg>

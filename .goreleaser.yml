@@ -1,0 +1,64 @@
+version: 2
+
+project_name: tld
+
+before:
+  hooks:
+    - go mod tidy
+    - npm --prefix frontend version --no-git-tag-version --allow-same-version {{ .Version }}
+    - npm --prefix frontend ci
+    - npm --prefix frontend run build
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    main: .
+    binary: tld
+    ldflags:
+      - -s -w -X github.com/mertcikla/tld-cli/cmd.Version={{.Version}}
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+
+brews:
+  - repository:
+      owner: Mertcikla
+      name: homebrew-tap
+    directory: Formula
+    homepage: "https://tldiagram.com"
+    description: "CLI for the tlDiagram architecture diagramming system"
+    license: "MIT"
+    install: |
+      bin.install "tld"
+    test: |
+      system "#{bin}/tld version"
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
