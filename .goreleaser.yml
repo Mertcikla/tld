@@ -19,7 +19,7 @@ builds:
     goarch:
       - amd64
       - arm64
-    main: ./cmd/tld
+    main: ./cmd/tld/main.go
     binary: tld
     ldflags:
       - -s -w -X github.com/mertcikla/tld/cmd/version.Version={{.Version}}
