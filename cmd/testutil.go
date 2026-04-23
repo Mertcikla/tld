@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -94,18 +93,6 @@ func InitGitRepo(t *testing.T, dir string, filename string, source string) {
 	}
 	run("add", ".")
 	run("commit", "-m", "initial commit")
-}
-
-// ReferenceFixturePath returns an absolute path to a test fixture.
-func ReferenceFixturePath(t *testing.T, parts ...string) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	// Since this is in cmd/testutil.go, filepath.Dir(file) is the cmd/ directory.
-	segments := append([]string{filepath.Dir(file), "..", "tests", "test-codebase"}, parts...)
-	return filepath.Clean(filepath.Join(segments...))
 }
 
 // Mocking helpers

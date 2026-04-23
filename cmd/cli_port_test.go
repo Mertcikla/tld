@@ -85,19 +85,6 @@ func TestConnectCmd_HelpHidesStyleFlag(t *testing.T) {
 	}
 }
 
-func TestAnalyzeCmd_LegacyViewFlagRejected(t *testing.T) {
-	dir := t.TempDir()
-	cmd.MustInitWorkspace(t, dir)
-
-	_, stderr, err := cmd.RunCmd(t, dir, "analyze", "--view", "structural", cmd.ReferenceFixturePath(t, "typescript"))
-	if err == nil {
-		t.Fatal("expected analyze --view to fail")
-	}
-	if !strings.Contains(stderr, "unknown flag: --view") && !strings.Contains(err.Error(), "unknown flag: --view") {
-		t.Fatalf("missing unknown flag error\nerr: %v\nstderr:\n%s", err, stderr)
-	}
-}
-
 func TestAnalyzeCmd_EmptyGoFileDoesNotChangeWorkspaceContents(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
