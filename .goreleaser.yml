@@ -43,6 +43,7 @@ homebrew_casks:
   - repository:
       owner: Mertcikla
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     binaries:
       - tld
     homepage: "https://tldiagram.com"
