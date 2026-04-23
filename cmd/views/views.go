@@ -1,13 +1,14 @@
 package views
 
 import (
-	"github.com/mertcikla/diag/tld/internal/cmdutil"
 	"fmt"
 	"io"
 	"sort"
 
-	"github.com/mertcikla/diag/tld/internal/planner"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/cmdutil"
+
+	"github.com/mertcikla/tld/internal/planner"
+	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
 

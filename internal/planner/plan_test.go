@@ -5,8 +5,8 @@ import (
 	"time"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
-	"github.com/mertcikla/diag/tld/internal/planner"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/planner"
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 func elementWorkspace() *workspace.Workspace {

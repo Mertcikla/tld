@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
-	assets "github.com/mertcikla/diag/tld"
-	"github.com/mertcikla/diag/tld/internal/server"
-	"github.com/mertcikla/diag/tld/internal/store"
+	assets "github.com/mertcikla/tld"
+	"github.com/mertcikla/tld/internal/server"
+	"github.com/mertcikla/tld/internal/store"
 )
 
 var localWorkspaceID = uuid.MustParse("11111111-1111-1111-1111-111111111111")

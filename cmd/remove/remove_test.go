@@ -1,9 +1,10 @@
 package remove_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"strings"
 	"testing"
+
+	"github.com/mertcikla/tld/cmd"
 )
 
 func TestRemoveElementCmd_LocalOnly(t *testing.T) {

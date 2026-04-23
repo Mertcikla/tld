@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrganizationResponse) *workspace.Workspace {

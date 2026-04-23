@@ -1,15 +1,15 @@
 package cmd_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd/version"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/mertcikla/diag/tld/cmd"
-)
+	"github.com/mertcikla/tld/cmd/version"
 
+	"github.com/mertcikla/tld/cmd"
+)
 
 func TestRootCmd_HelpMatchesReferenceSurface(t *testing.T) {
 	stdout, _, err := cmd.RunCmd(t, ".", "--help")

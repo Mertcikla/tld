@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mertcikla/diag/tld/internal/analyzer"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/analyzer"
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 func buildAnalyzeConnectorsForRef(

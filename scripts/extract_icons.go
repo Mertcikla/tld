@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	assets "github.com/mertcikla/diag/tld"
+	assets "github.com/mertcikla/tld"
 )
 
 func main() {

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 func WithHint(err error, hint string) error {

@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mertcikla/diag/tld/internal/ignore"
+	"github.com/mertcikla/tld/internal/ignore"
 	"gopkg.in/yaml.v3"
 )
 

@@ -1,11 +1,12 @@
 package check_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mertcikla/tld/cmd"
 )
 
 func TestCheckCmd_SkipsForeignRepoSymbols(t *testing.T) {

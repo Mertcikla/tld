@@ -1,14 +1,15 @@
 package export_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mertcikla/tld/cmd"
+
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/workspace"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mertcikla/diag/tld/internal/analyzer"
-	"github.com/mertcikla/diag/tld/internal/git"
-	"github.com/mertcikla/diag/tld/internal/ignore"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/analyzer"
+	"github.com/mertcikla/tld/internal/git"
+	"github.com/mertcikla/tld/internal/ignore"
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 func CheckSymbols(ctx context.Context, ws *workspace.Workspace, repoCtx RepoScope, rules *ignore.Rules) []string {

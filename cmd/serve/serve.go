@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/mertcikla/diag/tld/internal/localserver"
+	"github.com/mertcikla/tld/internal/localserver"
 	"github.com/spf13/cobra"
 )
 

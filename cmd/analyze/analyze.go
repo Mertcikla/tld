@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mertcikla/diag/tld/internal/analyzer"
-	"github.com/mertcikla/diag/tld/internal/cmdutil"
-	"github.com/mertcikla/diag/tld/internal/git"
-	"github.com/mertcikla/diag/tld/internal/ignore"
-	"github.com/mertcikla/diag/tld/internal/term"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/analyzer"
+	"github.com/mertcikla/tld/internal/cmdutil"
+	"github.com/mertcikla/tld/internal/git"
+	"github.com/mertcikla/tld/internal/ignore"
+	"github.com/mertcikla/tld/internal/term"
+	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -831,7 +831,7 @@ func analyzeElementToWorkspaceElement(spec analyzeElementSpec) *workspace.Elemen
 
 func findAnalyzeElementRef(ws *workspace.Workspace, identity analyzeElementIdentity) (string, bool) {
 	targetPath := normalizeAnalyzePath(identity.FilePath)
-	
+
 	// 1. Try exact match including branch
 	for ref, element := range ws.Elements {
 		if element == nil {

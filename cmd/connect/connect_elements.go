@@ -1,13 +1,13 @@
 package connect
 
 import (
-	"github.com/mertcikla/diag/tld/internal/cmdutil"
 	"fmt"
 
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/cmdutil"
+
+	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
-
 
 func NewConnectElementsCmd(wdir *string) *cobra.Command {
 	var (

@@ -4,16 +4,16 @@ import (
 	"fmt"
 	"time"
 
-	hashidlib "github.com/mertcikla/diag/tld/internal/hashids"
-	"github.com/mertcikla/diag/tld/internal/ignore"
+	hashidlib "github.com/mertcikla/tld/internal/hashids"
+	"github.com/mertcikla/tld/internal/ignore"
 )
 
 // Config is parsed from the user's global tld.yaml.
 type Config struct {
-	ServerURL  string            `yaml:"server_url"`
-	APIKey     string            `yaml:"api_key"`
-	WorkspaceID      string            `yaml:"org_id"`
-	Validation *ValidationConfig `yaml:"validation,omitempty"`
+	ServerURL   string            `yaml:"server_url"`
+	APIKey      string            `yaml:"api_key"`
+	WorkspaceID string            `yaml:"org_id"`
+	Validation  *ValidationConfig `yaml:"validation,omitempty"`
 }
 
 // WorkspaceConfig is parsed from the workspace-local .tld.yaml.

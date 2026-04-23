@@ -1,12 +1,13 @@
 package check_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mertcikla/tld/cmd"
 )
 
 func withWorkingDir(t *testing.T, dir string) {

@@ -1,18 +1,18 @@
 package apply_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/mertcikla/tld/cmd"
+
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
-	"github.com/mertcikla/diag/tld/internal/planner"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/planner"
+	"github.com/mertcikla/tld/internal/workspace"
 )
-
 
 func TestApplyCmd_SuccessAutoApprove(t *testing.T) {
 	svc := &cmd.MockDiagramService{}

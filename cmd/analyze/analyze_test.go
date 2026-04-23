@@ -1,13 +1,14 @@
 package analyze_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/cmd"
+
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 const (

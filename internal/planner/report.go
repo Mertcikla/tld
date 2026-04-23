@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mertcikla/diag/tld/internal/term"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/term"
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 // RenderPlanMarkdown writes a human-readable plan report to w.

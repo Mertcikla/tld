@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mertcikla/diag/tld/internal/analyzer"
+	"github.com/mertcikla/tld/internal/analyzer"
 )
 
 func TestResolveServerCommandWithLookPath(t *testing.T) {

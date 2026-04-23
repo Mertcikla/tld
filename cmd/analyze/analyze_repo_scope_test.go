@@ -1,14 +1,14 @@
 package analyze_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-)
 
+	"github.com/mertcikla/tld/cmd"
+)
 
 func TestAnalyzeCmd_RejectsRepoOutsideConfiguredRepositories(t *testing.T) {
 	workspaceDir := t.TempDir()

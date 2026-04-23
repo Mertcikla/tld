@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	hashidlib "github.com/mertcikla/diag/tld/internal/hashids"
+	hashidlib "github.com/mertcikla/tld/internal/hashids"
 	"gopkg.in/yaml.v3"
 )
 

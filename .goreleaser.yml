@@ -19,10 +19,10 @@ builds:
     goarch:
       - amd64
       - arm64
-    main: .
+    main: ./cmd/tld
     binary: tld
     ldflags:
-      - -s -w -X github.com/mertcikla/tld-cli/cmd.Version={{.Version}}
+      - -s -w -X github.com/mertcikla/tld/cmd/version.Version={{.Version}}
 
 archives:
   - format: tar.gz

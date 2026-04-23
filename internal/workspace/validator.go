@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mertcikla/diag/tld/internal/analyzer"
+	"github.com/mertcikla/tld/internal/analyzer"
 )
 
 // ValidationError describes a single validation failure.

@@ -6,7 +6,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/mertcikla/diag/tld/internal/analyzer"
+	"github.com/mertcikla/tld/internal/analyzer"
 	"go.lsp.dev/protocol"
 )
 

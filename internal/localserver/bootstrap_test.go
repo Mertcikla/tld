@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mertcikla/diag/tld/internal/localserver"
+	"github.com/mertcikla/tld/internal/localserver"
 )
 
 func TestBootstrapCreatesDatabaseAndReadyEndpoint(t *testing.T) {

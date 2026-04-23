@@ -3,8 +3,8 @@ package planner_test
 import (
 	"testing"
 
-	"github.com/mertcikla/diag/tld/internal/planner"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/planner"
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 func TestProtoMapping_ElementFields(t *testing.T) {

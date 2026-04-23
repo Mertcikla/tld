@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/workspace"
 	"gopkg.in/yaml.v3"
 )
 

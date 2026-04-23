@@ -1,4 +1,4 @@
-module github.com/mertcikla/diag/tld
+module github.com/mertcikla/tld
 
 go 1.26.1
 

@@ -1,13 +1,14 @@
 package views_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"encoding/json"
 	"slices"
 	"testing"
 
-	"github.com/mertcikla/diag/tld/internal/planner"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/cmd"
+
+	"github.com/mertcikla/tld/internal/planner"
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 func TestViewsCmd_OutputsDerivedViewSummary(t *testing.T) {

@@ -1,10 +1,11 @@
 package initialize_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/mertcikla/tld/cmd"
 )
 
 func TestInitCmd_CreatesTldDirectory(t *testing.T) {

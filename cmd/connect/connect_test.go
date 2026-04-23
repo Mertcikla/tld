@@ -1,12 +1,13 @@
 package connect_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/cmd"
+
+	"github.com/mertcikla/tld/internal/workspace"
 	"gopkg.in/yaml.v3"
 )
 

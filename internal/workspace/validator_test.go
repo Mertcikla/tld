@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 func buildWorkspace(elements map[string]*workspace.Element, connectors map[string]*workspace.Connector) *workspace.Workspace {

@@ -1,15 +1,16 @@
 package plan
 
 import (
-	"github.com/mertcikla/diag/tld/internal/cmdutil"
 	"fmt"
 	"os"
 	"time"
 
+	"github.com/mertcikla/tld/internal/cmdutil"
+
 	"connectrpc.com/connect"
-	"github.com/mertcikla/diag/tld/internal/client"
-	"github.com/mertcikla/diag/tld/internal/planner"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/client"
+	"github.com/mertcikla/tld/internal/planner"
+	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
 

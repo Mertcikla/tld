@@ -5,8 +5,8 @@ import (
 	"errors"
 	"os"
 
-	"github.com/mertcikla/diag/tld/internal/ignore"
-	"github.com/mertcikla/diag/tld/internal/symbol"
+	"github.com/mertcikla/tld/internal/ignore"
+	"github.com/mertcikla/tld/internal/symbol"
 )
 
 type Service interface {

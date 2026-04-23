@@ -1,11 +1,12 @@
 package validate_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mertcikla/tld/cmd"
 )
 
 func TestValidateCmd_ValidWorkspace(t *testing.T) {

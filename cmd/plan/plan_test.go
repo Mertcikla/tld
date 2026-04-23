@@ -1,14 +1,15 @@
 package plan_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/mertcikla/diag/tld/internal/planner"
+	"github.com/mertcikla/tld/cmd"
+
+	"github.com/mertcikla/tld/internal/planner"
 )
 
 func TestPlanCmd_OutputsMarkdown(t *testing.T) {

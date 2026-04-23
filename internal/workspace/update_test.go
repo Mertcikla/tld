@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 func TestUpdateElementField_UpdatesScalarField(t *testing.T) {

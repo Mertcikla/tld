@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mertcikla/diag/tld/internal/analyzer"
-	analyzerlsp "github.com/mertcikla/diag/tld/internal/analyzer/lsp"
+	"github.com/mertcikla/tld/internal/analyzer"
+	analyzerlsp "github.com/mertcikla/tld/internal/analyzer/lsp"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )

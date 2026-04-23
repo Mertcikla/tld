@@ -1,10 +1,11 @@
 package pull_test
 
 import (
-	"github.com/mertcikla/diag/tld/cmd"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/mertcikla/tld/cmd"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"

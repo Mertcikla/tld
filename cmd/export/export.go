@@ -6,9 +6,9 @@ import (
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
-	"github.com/mertcikla/diag/tld/internal/client"
-	"github.com/mertcikla/diag/tld/internal/cmdutil"
-	"github.com/mertcikla/diag/tld/internal/workspace"
+	"github.com/mertcikla/tld/internal/client"
+	"github.com/mertcikla/tld/internal/cmdutil"
+	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
 

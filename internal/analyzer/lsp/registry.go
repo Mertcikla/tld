@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/mertcikla/diag/tld/internal/analyzer"
+	"github.com/mertcikla/tld/internal/analyzer"
 )
 
 type LookPathFunc func(file string) (string, error)
