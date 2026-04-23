@@ -714,7 +714,7 @@ func buildAnalyzeElementIndex(ws *workspace.Workspace) map[analyzeElementLookupK
 		}
 		index[analyzeElementLookupKey{
 			Branch:   element.Branch,
-			FilePath: filepath.Clean(element.FilePath),
+			FilePath: normalizeAnalyzePath(element.FilePath),
 			Symbol:   element.Symbol,
 			Kind:     element.Kind,
 		}] = ref
@@ -736,10 +736,14 @@ func buildAnalyzeElementNameOwners(ws *workspace.Workspace) map[string]map[strin
 	return owners
 }
 
+func normalizeAnalyzePath(p string) string {
+	return filepath.ToSlash(filepath.Clean(p))
+}
+
 func normalizeAnalyzeElementLookupKey(identity analyzeElementIdentity) analyzeElementLookupKey {
 	return analyzeElementLookupKey{
 		Branch:   identity.Branch,
-		FilePath: filepath.Clean(identity.FilePath),
+		FilePath: normalizeAnalyzePath(identity.FilePath),
 		Symbol:   identity.Symbol,
 		Kind:     identity.Kind,
 	}
@@ -826,24 +830,33 @@ func analyzeElementToWorkspaceElement(spec analyzeElementSpec) *workspace.Elemen
 }
 
 func findAnalyzeElementRef(ws *workspace.Workspace, identity analyzeElementIdentity) (string, bool) {
+	targetPath := normalizeAnalyzePath(identity.FilePath)
+	
+	// 1. Try exact match including branch
 	for ref, element := range ws.Elements {
 		if element == nil {
 			continue
 		}
-		if element.Kind != identity.Kind {
-			continue
+		if element.Kind == identity.Kind &&
+			normalizeAnalyzePath(element.FilePath) == targetPath &&
+			element.Symbol == identity.Symbol &&
+			element.Branch == identity.Branch {
+			return ref, true
 		}
-		if filepath.Clean(element.FilePath) != filepath.Clean(identity.FilePath) {
-			continue
-		}
-		if element.Symbol != identity.Symbol {
-			continue
-		}
-		if identity.Branch != "" && element.Branch != identity.Branch {
-			continue
-		}
-		return ref, true
 	}
+
+	// 2. Try lenient match excluding branch
+	for ref, element := range ws.Elements {
+		if element == nil {
+			continue
+		}
+		if element.Kind == identity.Kind &&
+			normalizeAnalyzePath(element.FilePath) == targetPath &&
+			element.Symbol == identity.Symbol {
+			return ref, true
+		}
+	}
+
 	return "", false
 }
 
@@ -1019,19 +1032,19 @@ func analyzeElementRoot(scanRoot, repoRoot string, activeRepo bool) string {
 func analyzeRelativeFilePath(path, root string) string {
 	cleanPath := filepath.Clean(path)
 	if root == "" || cleanPath == "" || !filepath.IsAbs(cleanPath) {
-		return cleanPath
+		return normalizeAnalyzePath(cleanPath)
 	}
 	if relPath, ok := analyzePathWithinRoot(root, cleanPath); ok {
-		return relPath
+		return normalizeAnalyzePath(relPath)
 	}
 	resolvedRoot, rootErr := filepath.EvalSymlinks(root)
 	resolvedPath, pathErr := filepath.EvalSymlinks(cleanPath)
 	if rootErr == nil && pathErr == nil {
 		if relPath, ok := analyzePathWithinRoot(resolvedRoot, resolvedPath); ok {
-			return relPath
+			return normalizeAnalyzePath(relPath)
 		}
 	}
-	return cleanPath
+	return normalizeAnalyzePath(cleanPath)
 }
 
 func analyzePathWithinRoot(root, path string) (string, bool) {
