@@ -23,7 +23,22 @@ jobs:
         with:
           go-version-file: 'go.mod'
           cache: true
-          
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend assets
+        working-directory: frontend
+        run: npm run build
+
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
