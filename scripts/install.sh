@@ -21,10 +21,10 @@ case "$ARCH_UNAME" in
 esac
 
 # Get the latest release version
-VERSION=$(curl -s "https://api.github.com/repos/Mertcikla/tld-cli/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+VERSION=$(curl -s "https://api.github.com/repos/Mertcikla/tld/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
 if [ -z "$VERSION" ]; then
-    echo "Could not find latest version for Mertcikla/tld-cli"
+    echo "Could not find latest version for Mertcikla/tld"
     exit 1
 fi
 

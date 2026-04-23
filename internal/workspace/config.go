@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ConfigDir returns the path to the global configuration directory.
@@ -33,4 +35,32 @@ func ConfigPath() (string, error) {
 // WorkspaceConfigPath returns the path to the workspace-local configuration file.
 func WorkspaceConfigPath(dir string) string {
 	return filepath.Join(dir, ".tld.yaml")
+}
+
+// ServeConfig holds serve-specific settings from the global config file.
+type ServeConfig struct {
+	Host string `yaml:"host"`
+	Port string `yaml:"port"`
+}
+
+// GlobalConfig represents the global tld.yaml configuration file.
+type GlobalConfig struct {
+	Serve ServeConfig `yaml:"serve"`
+}
+
+// LoadGlobalConfig reads the global config file. Missing file is not an error.
+func LoadGlobalConfig() (*GlobalConfig, error) {
+	cfgPath, err := ConfigPath()
+	if err != nil {
+		return &GlobalConfig{}, nil
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return &GlobalConfig{}, nil
+	}
+	var cfg GlobalConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return &GlobalConfig{}, nil
+	}
+	return &cfg, nil
 }

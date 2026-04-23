@@ -19,6 +19,13 @@ type App struct {
 	Handler http.Handler
 }
 
+// ServeOptions overrides the address that Bootstrap listens on.
+// An empty field means "use the lower-priority source".
+type ServeOptions struct {
+	Host string
+	Port string
+}
+
 func envOrDefault(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -27,10 +34,16 @@ func envOrDefault(key, fallback string) string {
 }
 
 func AddrFromEnv() string {
-	return envOrDefault("TLD_ADDR", "127.0.0.1:"+envOrDefault("PORT", "8081"))
+	return envOrDefault("TLD_ADDR", "127.0.0.1:"+envOrDefault("PORT", "8060"))
 }
 
-func Bootstrap(cwd string) (*App, error) {
+// Bootstrap creates the local server app. opts overrides host/port with the
+// highest priority; falls back to AddrFromEnv() when opts is empty.
+func Bootstrap(cwd string, opts ...ServeOptions) (*App, error) {
+	var o ServeOptions
+	if len(opts) > 0 {
+		o = opts[0]
+	}
 	dbPath := filepath.Join(cwd, "data", "tld.db")
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, err
@@ -51,9 +64,26 @@ func Bootstrap(cwd string) (*App, error) {
 		return nil, err
 	}
 
+	addr := resolveAddr(o)
+
 	return &App{
-		Addr:    AddrFromEnv(),
+		Addr:    addr,
 		DBPath:  dbPath,
 		Handler: srv.Routes(),
 	}, nil
+}
+
+func resolveAddr(o ServeOptions) string {
+	if o.Host == "" && o.Port == "" {
+		return AddrFromEnv()
+	}
+	host := "127.0.0.1"
+	port := envOrDefault("PORT", "8060")
+	if o.Host != "" {
+		host = o.Host
+	}
+	if o.Port != "" {
+		port = o.Port
+	}
+	return host + ":" + port
 }
