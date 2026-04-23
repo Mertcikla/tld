@@ -5,70 +5,59 @@ import (
 	"fmt"
 	"strings"
 
-	sitter "github.com/tree-sitter/go-tree-sitter"
-	tree_sitter_cpp "github.com/tree-sitter/tree-sitter-cpp/bindings/go"
+	"github.com/odvcencio/gotreesitter"
 )
 
 type cppParser struct{}
 
 func (p *cppParser) ParseFile(ctx context.Context, path string, source []byte) (*Result, error) {
-	parser := sitter.NewParser()
-	defer parser.Close()
-
-	if err := parser.SetLanguage(sitter.NewLanguage(tree_sitter_cpp.Language())); err != nil {
-		return nil, fmt.Errorf("set c++ tree-sitter language: %w", err)
-	}
-
-	tree, err := parseTree(ctx, parser, source)
+	parsed, err := parseTree(ctx, path, source)
 	if err != nil {
 		return nil, fmt.Errorf("parse c++ tree-sitter source: %w", err)
 	}
-	defer tree.Close()
+	defer parsed.Close()
 
 	result := &Result{}
-	root := tree.RootNode()
-	p.walkNode(root, source, path, "", result)
+	root := parsed.tree.RootNode()
+	p.walkNode(root, parsed.lang, source, path, "", result)
 	return result, nil
 }
 
-func (p *cppParser) walkNode(node *sitter.Node, source []byte, path, parent string, result *Result) {
+func (p *cppParser) walkNode(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) {
 	if node == nil {
 		return
 	}
 
 	nextParent := parent
-	switch node.Kind() {
+	switch nodeKind(node, lang) {
 	case "class_specifier":
-		nextParent = p.appendType(node, source, path, parent, "class", result)
+		nextParent = p.appendType(node, lang, source, path, parent, "class", result)
 	case "struct_specifier":
-		nextParent = p.appendType(node, source, path, parent, "struct", result)
+		nextParent = p.appendType(node, lang, source, path, parent, "struct", result)
 	case "enum_specifier":
-		nextParent = p.appendType(node, source, path, parent, "enum", result)
+		nextParent = p.appendType(node, lang, source, path, parent, "enum", result)
 	case "function_definition":
-		p.appendFunction(node, source, path, parent, result)
+		p.appendFunction(node, lang, source, path, parent, result)
 	case "declaration":
-		p.appendMemberDeclaration(node, source, path, parent, result)
+		p.appendMemberDeclaration(node, lang, source, path, parent, result)
 	case "call_expression":
-		p.appendCall(node, source, path, result)
+		p.appendCall(node, lang, source, path, result)
 	}
 
-	cursor := node.Walk()
-	defer cursor.Close()
-	for _, child := range node.NamedChildren(cursor) {
-		childCopy := child
-		p.walkNode(&childCopy, source, path, nextParent, result)
+	for _, child := range namedChildren(node) {
+		p.walkNode(child, lang, source, path, nextParent, result)
 	}
 }
 
-func (p *cppParser) appendType(node *sitter.Node, source []byte, path, parent, kind string, result *Result) string {
-	nameNode := node.ChildByFieldName("name")
+func (p *cppParser) appendType(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent, kind string, result *Result) string {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
-		nameNode = cppFirstNamedIdentifier(node, source)
+		nameNode = cppFirstNamedIdentifier(node, lang, source)
 	}
 	if nameNode == nil {
 		return parent
 	}
-	name := cppSimpleName(nameNode.Utf8Text(source))
+	name := cppSimpleName(nodeText(nameNode, source))
 	if name == "" {
 		return parent
 	}
@@ -76,15 +65,15 @@ func (p *cppParser) appendType(node *sitter.Node, source []byte, path, parent, k
 		Name:     name,
 		Kind:     kind,
 		FilePath: path,
-		Line:     int(nameNode.StartPosition().Row) + 1,
-		EndLine:  int(node.EndPosition().Row) + 1,
+		Line:     int(nameNode.StartPoint().Row) + 1,
+		EndLine:  int(node.EndPoint().Row) + 1,
 		Parent:   parent,
 	})
 	return name
 }
 
-func (p *cppParser) appendFunction(node *sitter.Node, source []byte, path, parent string, result *Result) {
-	declarator := node.ChildByFieldName("declarator")
+func (p *cppParser) appendFunction(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) {
+	declarator := childByFieldName(node, lang, "declarator")
 	name, owner := cppFunctionInfo(declarator, source)
 	if name == "" {
 		return
@@ -95,17 +84,17 @@ func (p *cppParser) appendFunction(node *sitter.Node, source []byte, path, paren
 		Kind:     cppFunctionKind(name, owner),
 		FilePath: path,
 		Line:     cppNodeLine(declarator, node),
-		EndLine:  int(node.EndPosition().Row) + 1,
+		EndLine:  int(node.EndPoint().Row) + 1,
 		Parent:   owner,
 	})
 }
 
-func (p *cppParser) appendMemberDeclaration(node *sitter.Node, source []byte, path, parent string, result *Result) {
+func (p *cppParser) appendMemberDeclaration(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) {
 	if parent == "" {
 		return
 	}
-	declarator := node.ChildByFieldName("declarator")
-	if !cppHasFunctionDeclarator(declarator) {
+	declarator := childByFieldName(node, lang, "declarator")
+	if !cppHasFunctionDeclarator(declarator, lang) {
 		return
 	}
 	name, owner := cppFunctionInfo(declarator, source)
@@ -118,51 +107,48 @@ func (p *cppParser) appendMemberDeclaration(node *sitter.Node, source []byte, pa
 		Kind:     cppFunctionKind(name, owner),
 		FilePath: path,
 		Line:     cppNodeLine(declarator, node),
-		EndLine:  int(node.EndPosition().Row) + 1,
+		EndLine:  int(node.EndPoint().Row) + 1,
 		Parent:   owner,
 	})
 }
 
-func (p *cppParser) appendCall(node *sitter.Node, source []byte, path string, result *Result) {
-	functionNode := node.ChildByFieldName("function")
+func (p *cppParser) appendCall(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path string, result *Result) {
+	functionNode := childByFieldName(node, lang, "function")
 	if functionNode == nil {
 		return
 	}
-	name := cppSimpleName(functionNode.Utf8Text(source))
+	name := cppSimpleName(nodeText(functionNode, source))
 	if name == "" {
 		return
 	}
 	result.Refs = append(result.Refs, Ref{
 		Name:     name,
 		FilePath: path,
-		Line:     int(functionNode.StartPosition().Row) + 1,
-		Column:   int(functionNode.StartPosition().Column) + 1,
+		Line:     int(functionNode.StartPoint().Row) + 1,
+		Column:   int(functionNode.StartPoint().Column) + 1,
 	})
 }
 
-func cppFunctionInfo(declarator *sitter.Node, source []byte) (string, string) {
+func cppFunctionInfo(declarator *gotreesitter.Node, source []byte) (string, string) {
 	if declarator == nil {
 		return "", ""
 	}
-	text := strings.TrimSpace(declarator.Utf8Text(source))
+	text := strings.TrimSpace(nodeText(declarator, source))
 	if text == "" || !strings.Contains(text, "(") {
 		return "", ""
 	}
 	return cppFunctionName(text), cppFunctionOwner(text)
 }
 
-func cppHasFunctionDeclarator(node *sitter.Node) bool {
+func cppHasFunctionDeclarator(node *gotreesitter.Node, lang *gotreesitter.Language) bool {
 	if node == nil {
 		return false
 	}
-	if strings.HasSuffix(node.Kind(), "function_declarator") {
+	if strings.HasSuffix(nodeKind(node, lang), "function_declarator") {
 		return true
 	}
-	cursor := node.Walk()
-	defer cursor.Close()
-	for _, child := range node.NamedChildren(cursor) {
-		childCopy := child
-		if cppHasFunctionDeclarator(&childCopy) {
+	for _, child := range namedChildren(node) {
+		if cppHasFunctionDeclarator(child, lang) {
 			return true
 		}
 	}
@@ -234,31 +220,28 @@ func cppSimpleName(text string) string {
 	return strings.TrimSpace(text)
 }
 
-func cppNodeLine(primary, fallback *sitter.Node) int {
+func cppNodeLine(primary, fallback *gotreesitter.Node) int {
 	if primary != nil {
-		return int(primary.StartPosition().Row) + 1
+		return int(primary.StartPoint().Row) + 1
 	}
 	if fallback != nil {
-		return int(fallback.StartPosition().Row) + 1
+		return int(fallback.StartPoint().Row) + 1
 	}
 	return 0
 }
 
-func cppFirstNamedIdentifier(node *sitter.Node, source []byte) *sitter.Node {
+func cppFirstNamedIdentifier(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte) *gotreesitter.Node {
 	if node == nil {
 		return nil
 	}
-	if name := cppSimpleName(node.Utf8Text(source)); name != "" {
-		switch node.Kind() {
+	if name := cppSimpleName(nodeText(node, source)); name != "" {
+		switch nodeKind(node, lang) {
 		case "type_identifier", "identifier", "field_identifier", "namespace_identifier":
 			return node
 		}
 	}
-	cursor := node.Walk()
-	defer cursor.Close()
-	for _, child := range node.NamedChildren(cursor) {
-		childCopy := child
-		if match := cppFirstNamedIdentifier(&childCopy, source); match != nil {
+	for _, child := range namedChildren(node) {
+		if match := cppFirstNamedIdentifier(child, lang, source); match != nil {
 			return match
 		}
 	}

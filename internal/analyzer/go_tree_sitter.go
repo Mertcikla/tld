@@ -7,84 +7,73 @@ import (
 	"strconv"
 	"strings"
 
-	sitter "github.com/tree-sitter/go-tree-sitter"
-	tree_sitter_go "github.com/tree-sitter/tree-sitter-go/bindings/go"
+	"github.com/odvcencio/gotreesitter"
 )
 
 type goParser struct{}
 
 func (p *goParser) ParseFile(ctx context.Context, path string, source []byte) (*Result, error) {
-	parser := sitter.NewParser()
-	defer parser.Close()
-
-	if err := parser.SetLanguage(sitter.NewLanguage(tree_sitter_go.Language())); err != nil {
-		return nil, fmt.Errorf("set go tree-sitter language: %w", err)
-	}
-
-	tree, err := parseTree(ctx, parser, source)
+	parsed, err := parseTree(ctx, path, source)
 	if err != nil {
 		return nil, fmt.Errorf("parse go tree-sitter source: %w", err)
 	}
-	defer tree.Close()
+	defer parsed.Close()
 
 	result := &Result{}
-	root := tree.RootNode()
-	p.walkNode(root, source, path, result)
+	root := parsed.tree.RootNode()
+	p.walkNode(root, parsed.lang, source, path, result)
 	return result, nil
 }
 
-func (p *goParser) walkNode(node *sitter.Node, source []byte, path string, result *Result) {
+func (p *goParser) walkNode(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path string, result *Result) {
 	if node == nil {
 		return
 	}
 
-	switch node.Kind() {
+	switch nodeKind(node, lang) {
 	case "function_declaration":
-		p.appendFunction(node, source, path, "function", result)
+		p.appendFunction(node, lang, source, path, "function", result)
 	case "method_declaration":
-		p.appendFunction(node, source, path, "method", result)
+		p.appendFunction(node, lang, source, path, "method", result)
 	case "type_spec":
-		p.appendTypeSpec(node, source, path, result)
+		p.appendTypeSpec(node, lang, source, path, result)
 	case "type_alias":
-		p.appendTypeAlias(node, source, path, result)
+		p.appendTypeAlias(node, lang, source, path, result)
 	case "import_spec":
-		p.appendImport(node, source, path, result)
+		p.appendImport(node, lang, source, path, result)
 	case "call_expression":
-		p.appendCall(node, source, path, result)
+		p.appendCall(node, lang, source, path, result)
 	}
 
-	cursor := node.Walk()
-	defer cursor.Close()
-	for _, child := range node.NamedChildren(cursor) {
-		childCopy := child
-		p.walkNode(&childCopy, source, path, result)
+	for _, child := range namedChildren(node) {
+		p.walkNode(child, lang, source, path, result)
 	}
 }
 
-func (p *goParser) appendFunction(node *sitter.Node, source []byte, path, kind string, result *Result) {
-	nameNode := node.ChildByFieldName("name")
+func (p *goParser) appendFunction(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, kind string, result *Result) {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
 		return
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:        nameNode.Utf8Text(source),
+		Name:        nodeText(nameNode, source),
 		Kind:        kind,
 		FilePath:    path,
-		Line:        int(nameNode.StartPosition().Row) + 1,
-		EndLine:     int(node.EndPosition().Row) + 1,
-		Description: p.findComment(node, source),
+		Line:        int(nameNode.StartPoint().Row) + 1,
+		EndLine:     int(node.EndPoint().Row) + 1,
+		Description: p.findComment(node, lang, source),
 	})
 }
 
-func (p *goParser) appendTypeSpec(node *sitter.Node, source []byte, path string, result *Result) {
-	nameNode := node.ChildByFieldName("name")
+func (p *goParser) appendTypeSpec(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path string, result *Result) {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
 		return
 	}
-	typeNode := node.ChildByFieldName("type")
+	typeNode := childByFieldName(node, lang, "type")
 	kind := "type"
 	if typeNode != nil {
-		switch typeNode.Kind() {
+		switch nodeKind(typeNode, lang) {
 		case "struct_type":
 			kind = "struct"
 		case "interface_type":
@@ -92,35 +81,35 @@ func (p *goParser) appendTypeSpec(node *sitter.Node, source []byte, path string,
 		}
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:        nameNode.Utf8Text(source),
+		Name:        nodeText(nameNode, source),
 		Kind:        kind,
 		FilePath:    path,
-		Line:        int(nameNode.StartPosition().Row) + 1,
-		EndLine:     int(node.EndPosition().Row) + 1,
-		Description: p.findComment(node, source),
+		Line:        int(nameNode.StartPoint().Row) + 1,
+		EndLine:     int(node.EndPoint().Row) + 1,
+		Description: p.findComment(node, lang, source),
 	})
 }
 
-func (p *goParser) appendTypeAlias(node *sitter.Node, source []byte, path string, result *Result) {
-	nameNode := node.ChildByFieldName("name")
+func (p *goParser) appendTypeAlias(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path string, result *Result) {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
 		return
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     nameNode.Utf8Text(source),
+		Name:     nodeText(nameNode, source),
 		Kind:     "type",
 		FilePath: path,
-		Line:     int(nameNode.StartPosition().Row) + 1,
-		EndLine:  int(node.EndPosition().Row) + 1,
+		Line:     int(nameNode.StartPoint().Row) + 1,
+		EndLine:  int(node.EndPoint().Row) + 1,
 	})
 }
 
-func (p *goParser) appendCall(node *sitter.Node, source []byte, path string, result *Result) {
-	functionNode := node.ChildByFieldName("function")
+func (p *goParser) appendCall(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path string, result *Result) {
+	functionNode := childByFieldName(node, lang, "function")
 	if functionNode == nil {
 		return
 	}
-	name := goCallName(functionNode, source)
+	name := goCallName(functionNode, lang, source)
 	if name == "" {
 		return
 	}
@@ -128,17 +117,17 @@ func (p *goParser) appendCall(node *sitter.Node, source []byte, path string, res
 		Name:     name,
 		Kind:     "call",
 		FilePath: path,
-		Line:     int(functionNode.StartPosition().Row) + 1,
-		Column:   int(functionNode.StartPosition().Column) + 1,
+		Line:     int(functionNode.StartPoint().Row) + 1,
+		Column:   int(functionNode.StartPoint().Column) + 1,
 	})
 }
 
-func (p *goParser) appendImport(node *sitter.Node, source []byte, filePath string, result *Result) {
-	pathNode := node.ChildByFieldName("path")
+func (p *goParser) appendImport(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, filePath string, result *Result) {
+	pathNode := childByFieldName(node, lang, "path")
 	if pathNode == nil {
 		return
 	}
-	importPath, err := strconv.Unquote(strings.TrimSpace(pathNode.Utf8Text(source)))
+	importPath, err := strconv.Unquote(strings.TrimSpace(nodeText(pathNode, source)))
 	if err != nil || importPath == "" {
 		return
 	}
@@ -147,52 +136,49 @@ func (p *goParser) appendImport(node *sitter.Node, source []byte, filePath strin
 		Kind:       "import",
 		TargetPath: importPath,
 		FilePath:   filePath,
-		Line:       int(pathNode.StartPosition().Row) + 1,
-		Column:     int(pathNode.StartPosition().Column) + 1,
+		Line:       int(pathNode.StartPoint().Row) + 1,
+		Column:     int(pathNode.StartPoint().Column) + 1,
 	})
 }
 
-func (p *goParser) findComment(node *sitter.Node, source []byte) string {
+func (p *goParser) findComment(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte) string {
 	if node == nil {
 		return ""
 	}
-	prev := node.PrevNamedSibling()
-	if prev == nil || prev.Kind() != "comment" {
+	prev := prevNamedSibling(node)
+	if prev == nil || nodeKind(prev, lang) != "comment" {
 		return ""
 	}
 	// Check if it's immediately above
-	if node.StartPosition().Row-prev.EndPosition().Row > 1 {
+	if node.StartPoint().Row-prev.EndPoint().Row > 1 {
 		return ""
 	}
-	text := strings.TrimSpace(prev.Utf8Text(source))
+	text := strings.TrimSpace(nodeText(prev, source))
 	text = strings.TrimPrefix(text, "//")
 	text = strings.TrimPrefix(text, "/*")
 	text = strings.TrimSuffix(text, "*/")
 	return strings.TrimSpace(text)
 }
 
-func goCallName(node *sitter.Node, source []byte) string {
+func goCallName(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte) string {
 	if node == nil {
 		return ""
 	}
-	switch node.Kind() {
+	switch nodeKind(node, lang) {
 	case "identifier", "field_identifier", "type_identifier":
-		return node.Utf8Text(source)
+		return nodeText(node, source)
 	case "selector_expression":
-		fieldNode := node.ChildByFieldName("field")
+		fieldNode := childByFieldName(node, lang, "field")
 		if fieldNode != nil {
-			return fieldNode.Utf8Text(source)
+			return nodeText(fieldNode, source)
 		}
 	case "parenthesized_expression":
-		cursor := node.Walk()
-		defer cursor.Close()
-		children := node.NamedChildren(cursor)
+		children := namedChildren(node)
 		if len(children) > 0 {
-			child := children[0]
-			return goCallName(&child, source)
+			return goCallName(children[0], lang, source)
 		}
 	}
-	text := strings.TrimSpace(node.Utf8Text(source))
+	text := strings.TrimSpace(nodeText(node, source))
 	if text == "" {
 		return ""
 	}

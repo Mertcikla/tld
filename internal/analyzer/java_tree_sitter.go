@@ -5,106 +5,95 @@ import (
 	"fmt"
 	"strings"
 
-	sitter "github.com/tree-sitter/go-tree-sitter"
-	tree_sitter_java "github.com/tree-sitter/tree-sitter-java/bindings/go"
+	"github.com/odvcencio/gotreesitter"
 )
 
 type javaParser struct{}
 
 func (p *javaParser) ParseFile(ctx context.Context, path string, source []byte) (*Result, error) {
-	parser := sitter.NewParser()
-	defer parser.Close()
-
-	if err := parser.SetLanguage(sitter.NewLanguage(tree_sitter_java.Language())); err != nil {
-		return nil, fmt.Errorf("set java tree-sitter language: %w", err)
-	}
-
-	tree, err := parseTree(ctx, parser, source)
+	parsed, err := parseTree(ctx, path, source)
 	if err != nil {
 		return nil, fmt.Errorf("parse java tree-sitter source: %w", err)
 	}
-	defer tree.Close()
+	defer parsed.Close()
 
 	result := &Result{}
-	root := tree.RootNode()
-	p.walkNode(root, source, path, "", result)
+	root := parsed.tree.RootNode()
+	p.walkNode(root, parsed.lang, source, path, "", result)
 	return result, nil
 }
 
-func (p *javaParser) walkNode(node *sitter.Node, source []byte, path, parent string, result *Result) {
+func (p *javaParser) walkNode(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) {
 	if node == nil {
 		return
 	}
 
 	nextParent := parent
-	switch node.Kind() {
+	switch nodeKind(node, lang) {
 	case "class_declaration":
-		nextParent = p.appendType(node, source, path, parent, "class", result)
+		nextParent = p.appendType(node, lang, source, path, parent, "class", result)
 	case "interface_declaration":
-		nextParent = p.appendType(node, source, path, parent, "interface", result)
+		nextParent = p.appendType(node, lang, source, path, parent, "interface", result)
 	case "enum_declaration":
-		nextParent = p.appendType(node, source, path, parent, "enum", result)
+		nextParent = p.appendType(node, lang, source, path, parent, "enum", result)
 	case "record_declaration":
-		nextParent = p.appendType(node, source, path, parent, "record", result)
+		nextParent = p.appendType(node, lang, source, path, parent, "record", result)
 	case "method_declaration":
-		p.appendMethod(node, source, path, parent, "method", result)
+		p.appendMethod(node, lang, source, path, parent, "method", result)
 	case "constructor_declaration":
-		p.appendMethod(node, source, path, parent, "constructor", result)
+		p.appendMethod(node, lang, source, path, parent, "constructor", result)
 	case "method_invocation":
-		p.appendCall(node, source, path, result)
+		p.appendCall(node, lang, source, path, result)
 	case "object_creation_expression":
-		p.appendObjectCreation(node, source, path, result)
+		p.appendObjectCreation(node, lang, source, path, result)
 	}
 
-	cursor := node.Walk()
-	defer cursor.Close()
-	for _, child := range node.NamedChildren(cursor) {
-		childCopy := child
-		p.walkNode(&childCopy, source, path, nextParent, result)
+	for _, child := range namedChildren(node) {
+		p.walkNode(child, lang, source, path, nextParent, result)
 	}
 }
 
-func (p *javaParser) appendType(node *sitter.Node, source []byte, path, parent, kind string, result *Result) string {
-	nameNode := node.ChildByFieldName("name")
+func (p *javaParser) appendType(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent, kind string, result *Result) string {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
 		return parent
 	}
-	name := nameNode.Utf8Text(source)
+	name := nodeText(nameNode, source)
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     kind,
 		FilePath: path,
-		Line:     int(nameNode.StartPosition().Row) + 1,
-		EndLine:  int(node.EndPosition().Row) + 1,
+		Line:     int(nameNode.StartPoint().Row) + 1,
+		EndLine:  int(node.EndPoint().Row) + 1,
 		Parent:   parent,
 	})
 	return name
 }
 
-func (p *javaParser) appendMethod(node *sitter.Node, source []byte, path, parent, kind string, result *Result) {
-	nameNode := node.ChildByFieldName("name")
+func (p *javaParser) appendMethod(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent, kind string, result *Result) {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
 		return
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     nameNode.Utf8Text(source),
+		Name:     nodeText(nameNode, source),
 		Kind:     kind,
 		FilePath: path,
-		Line:     int(nameNode.StartPosition().Row) + 1,
-		EndLine:  int(node.EndPosition().Row) + 1,
+		Line:     int(nameNode.StartPoint().Row) + 1,
+		EndLine:  int(node.EndPoint().Row) + 1,
 		Parent:   parent,
 	})
 }
 
-func (p *javaParser) appendCall(node *sitter.Node, source []byte, path string, result *Result) {
-	nameNode := node.ChildByFieldName("name")
-	line := int(node.StartPosition().Row) + 1
+func (p *javaParser) appendCall(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path string, result *Result) {
+	nameNode := childByFieldName(node, lang, "name")
+	line := int(node.StartPoint().Row) + 1
 	name := ""
 	if nameNode != nil {
-		name = nameNode.Utf8Text(source)
-		line = int(nameNode.StartPosition().Row) + 1
+		name = nodeText(nameNode, source)
+		line = int(nameNode.StartPoint().Row) + 1
 	} else {
-		name = javaCallName(node.Utf8Text(source))
+		name = javaCallName(nodeText(node, source))
 	}
 	if name == "" {
 		return
@@ -113,19 +102,19 @@ func (p *javaParser) appendCall(node *sitter.Node, source []byte, path string, r
 		Name:     name,
 		FilePath: path,
 		Line:     line,
-		Column:   int(node.StartPosition().Column) + 1,
+		Column:   int(node.StartPoint().Column) + 1,
 	})
 }
 
-func (p *javaParser) appendObjectCreation(node *sitter.Node, source []byte, path string, result *Result) {
-	typeNode := node.ChildByFieldName("type")
-	line := int(node.StartPosition().Row) + 1
+func (p *javaParser) appendObjectCreation(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path string, result *Result) {
+	typeNode := childByFieldName(node, lang, "type")
+	line := int(node.StartPoint().Row) + 1
 	name := ""
 	if typeNode != nil {
-		name = javaSimpleName(typeNode.Utf8Text(source))
-		line = int(typeNode.StartPosition().Row) + 1
+		name = javaSimpleName(nodeText(typeNode, source))
+		line = int(typeNode.StartPoint().Row) + 1
 	} else {
-		name = javaConstructorName(node.Utf8Text(source))
+		name = javaConstructorName(nodeText(node, source))
 	}
 	if name == "" {
 		return
@@ -134,7 +123,7 @@ func (p *javaParser) appendObjectCreation(node *sitter.Node, source []byte, path
 		Name:     name,
 		FilePath: path,
 		Line:     line,
-		Column:   int(node.StartPosition().Column) + 1,
+		Column:   int(node.StartPoint().Column) + 1,
 	})
 }
 

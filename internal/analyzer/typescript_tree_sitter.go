@@ -3,12 +3,9 @@ package analyzer
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"strings"
 
-	sitter "github.com/tree-sitter/go-tree-sitter"
-	tree_sitter_javascript "github.com/tree-sitter/tree-sitter-javascript/bindings/go"
-	tree_sitter_typescript "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
+	"github.com/odvcencio/gotreesitter"
 )
 
 // tsParser handles TypeScript (.ts, .tsx, .mts, .cts) files.
@@ -19,174 +16,156 @@ type tsParser struct{}
 type jsParser struct{}
 
 func (p *tsParser) ParseFile(ctx context.Context, filePath string, source []byte) (*Result, error) {
-	var lang *sitter.Language
-	ext := strings.ToLower(filepath.Ext(filePath))
-	if ext == ".tsx" {
-		lang = sitter.NewLanguage(tree_sitter_typescript.LanguageTSX())
-	} else {
-		lang = sitter.NewLanguage(tree_sitter_typescript.LanguageTypescript())
-	}
-	return parseTSFamily(ctx, filePath, source, lang, "typescript")
+	return parseTSFamily(ctx, filePath, source, "typescript")
 }
 
 func (p *jsParser) ParseFile(ctx context.Context, filePath string, source []byte) (*Result, error) {
-	lang := sitter.NewLanguage(tree_sitter_javascript.Language())
-	return parseTSFamily(ctx, filePath, source, lang, "javascript")
+	return parseTSFamily(ctx, filePath, source, "javascript")
 }
 
 // parseTSFamily is the shared parse implementation for all TS/JS variants.
-func parseTSFamily(ctx context.Context, path string, source []byte, lang *sitter.Language, langLabel string) (*Result, error) {
-	parser := sitter.NewParser()
-	defer parser.Close()
-
-	if err := parser.SetLanguage(lang); err != nil {
-		return nil, fmt.Errorf("set %s tree-sitter language: %w", langLabel, err)
-	}
-
-	tree, err := parseTree(ctx, parser, source)
+func parseTSFamily(ctx context.Context, path string, source []byte, langLabel string) (*Result, error) {
+	parsed, err := parseTree(ctx, path, source)
 	if err != nil {
 		return nil, fmt.Errorf("parse %s tree-sitter source: %w", langLabel, err)
 	}
-	defer tree.Close()
+	defer parsed.Close()
 
 	result := &Result{}
-	root := tree.RootNode()
-	walkTSNode(root, source, path, "", result)
+	root := parsed.tree.RootNode()
+	walkTSNode(root, parsed.lang, source, path, "", result)
 	return result, nil
 }
 
 // walkTSNode walks the AST recursively, collecting symbols and refs.
 // parent is the name of the immediately enclosing class/interface/enum.
-func walkTSNode(node *sitter.Node, source []byte, path, parent string, result *Result) {
+func walkTSNode(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) {
 	if node == nil {
 		return
 	}
 
 	nextParent := parent
-	switch node.Kind() {
+	switch nodeKind(node, lang) {
 	case "class_declaration", "abstract_class_declaration":
-		nextParent = appendTSClass(node, source, path, parent, result)
+		nextParent = appendTSClass(node, lang, source, path, parent, result)
 	case "interface_declaration":
-		nextParent = appendTSInterface(node, source, path, parent, result)
+		nextParent = appendTSInterface(node, lang, source, path, parent, result)
 	case "enum_declaration":
-		nextParent = appendTSEnum(node, source, path, parent, result)
+		nextParent = appendTSEnum(node, lang, source, path, parent, result)
 	case "type_alias_declaration":
-		appendTSTypeAlias(node, source, path, parent, result)
+		appendTSTypeAlias(node, lang, source, path, parent, result)
 	case "function_declaration", "generator_function_declaration":
-		appendTSFunction(node, source, path, parent, result)
+		appendTSFunction(node, lang, source, path, parent, result)
 	case "method_definition":
-		appendTSMethod(node, source, path, parent, result)
+		appendTSMethod(node, lang, source, path, parent, result)
 	case "lexical_declaration", "variable_declaration":
 		// Captures: const foo = () => {}  /  const foo = function() {}
-		appendTSVariableDecl(node, source, path, parent, result)
+		appendTSVariableDecl(node, lang, source, path, parent, result)
 	case "import_statement":
-		appendTSImport(node, source, path, result)
+		appendTSImport(node, lang, source, path, result)
 	case "call_expression":
-		appendTSCall(node, source, path, result)
+		appendTSCall(node, lang, source, path, result)
 	case "new_expression":
-		appendTSNew(node, source, path, result)
+		appendTSNew(node, lang, source, path, result)
 	}
 
-	cursor := node.Walk()
-	defer cursor.Close()
-	for _, child := range node.NamedChildren(cursor) {
-		childCopy := child
-		walkTSNode(&childCopy, source, path, nextParent, result)
+	for _, child := range namedChildren(node) {
+		walkTSNode(child, lang, source, path, nextParent, result)
 	}
 }
 
 // ---------- Symbol extractors ----------
 
-func appendTSClass(node *sitter.Node, source []byte, path, parent string, result *Result) string {
-	nameNode := node.ChildByFieldName("name")
+func appendTSClass(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) string {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
 		return parent
 	}
-	name := nameNode.Utf8Text(source)
+	name := nodeText(nameNode, source)
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:        name,
 		Kind:        "class",
 		FilePath:    path,
-		Line:        int(nameNode.StartPosition().Row) + 1,
-		EndLine:     int(node.EndPosition().Row) + 1,
+		Line:        int(nameNode.StartPoint().Row) + 1,
+		EndLine:     int(node.EndPoint().Row) + 1,
 		Parent:      parent,
-		Description: findTSComment(node, source),
+		Description: findTSComment(node, lang, source),
 	})
 	return name
 }
 
-func appendTSInterface(node *sitter.Node, source []byte, path, parent string, result *Result) string {
-	nameNode := node.ChildByFieldName("name")
+func appendTSInterface(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) string {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
 		return parent
 	}
-	name := nameNode.Utf8Text(source)
+	name := nodeText(nameNode, source)
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:        name,
 		Kind:        "interface",
 		FilePath:    path,
-		Line:        int(nameNode.StartPosition().Row) + 1,
-		EndLine:     int(node.EndPosition().Row) + 1,
+		Line:        int(nameNode.StartPoint().Row) + 1,
+		EndLine:     int(node.EndPoint().Row) + 1,
 		Parent:      parent,
-		Description: findTSComment(node, source),
+		Description: findTSComment(node, lang, source),
 	})
 	return name
 }
 
-func appendTSEnum(node *sitter.Node, source []byte, path, parent string, result *Result) string {
-	nameNode := node.ChildByFieldName("name")
+func appendTSEnum(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) string {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
 		return parent
 	}
-	name := nameNode.Utf8Text(source)
+	name := nodeText(nameNode, source)
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     "enum",
 		FilePath: path,
-		Line:     int(nameNode.StartPosition().Row) + 1,
-		EndLine:  int(node.EndPosition().Row) + 1,
+		Line:     int(nameNode.StartPoint().Row) + 1,
+		EndLine:  int(node.EndPoint().Row) + 1,
 		Parent:   parent,
 	})
 	return name
 }
 
-func appendTSTypeAlias(node *sitter.Node, source []byte, path, parent string, result *Result) {
-	nameNode := node.ChildByFieldName("name")
+func appendTSTypeAlias(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
 		return
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     nameNode.Utf8Text(source),
+		Name:     nodeText(nameNode, source),
 		Kind:     "type",
 		FilePath: path,
-		Line:     int(nameNode.StartPosition().Row) + 1,
-		EndLine:  int(node.EndPosition().Row) + 1,
+		Line:     int(nameNode.StartPoint().Row) + 1,
+		EndLine:  int(node.EndPoint().Row) + 1,
 		Parent:   parent,
 	})
 }
 
-func appendTSFunction(node *sitter.Node, source []byte, path, parent string, result *Result) {
-	nameNode := node.ChildByFieldName("name")
+func appendTSFunction(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
 		return
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:        nameNode.Utf8Text(source),
+		Name:        nodeText(nameNode, source),
 		Kind:        "function",
 		FilePath:    path,
-		Line:        int(nameNode.StartPosition().Row) + 1,
-		EndLine:     int(node.EndPosition().Row) + 1,
+		Line:        int(nameNode.StartPoint().Row) + 1,
+		EndLine:     int(node.EndPoint().Row) + 1,
 		Parent:      parent,
-		Description: findTSComment(node, source),
+		Description: findTSComment(node, lang, source),
 	})
 }
 
-func appendTSMethod(node *sitter.Node, source []byte, path, parent string, result *Result) {
-	nameNode := node.ChildByFieldName("name")
+func appendTSMethod(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) {
+	nameNode := childByFieldName(node, lang, "name")
 	if nameNode == nil {
 		return
 	}
-	name := nameNode.Utf8Text(source)
+	name := nodeText(nameNode, source)
 	kind := "method"
 	if name == "constructor" {
 		kind = "constructor"
@@ -195,28 +174,26 @@ func appendTSMethod(node *sitter.Node, source []byte, path, parent string, resul
 		Name:     name,
 		Kind:     kind,
 		FilePath: path,
-		Line:     int(nameNode.StartPosition().Row) + 1,
-		EndLine:  int(node.EndPosition().Row) + 1,
+		Line:     int(nameNode.StartPoint().Row) + 1,
+		EndLine:  int(node.EndPoint().Row) + 1,
 		Parent:   parent,
 	})
 }
 
 // appendTSVariableDecl captures arrow functions and function expressions assigned
 // to const/let/var declarations: `const foo = () => {}` or `const foo = function() {}`.
-func appendTSVariableDecl(node *sitter.Node, source []byte, path, parent string, result *Result) {
-	cursor := node.Walk()
-	defer cursor.Close()
-	for _, child := range node.NamedChildren(cursor) {
-		if child.Kind() != "variable_declarator" {
+func appendTSVariableDecl(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) {
+	for _, child := range namedChildren(node) {
+		if nodeKind(child, lang) != "variable_declarator" {
 			continue
 		}
-		nameNode := child.ChildByFieldName("name")
-		valueNode := child.ChildByFieldName("value")
+		nameNode := childByFieldName(child, lang, "name")
+		valueNode := childByFieldName(child, lang, "value")
 		if nameNode == nil || valueNode == nil {
 			continue
 		}
 		kind := ""
-		switch valueNode.Kind() {
+		switch nodeKind(valueNode, lang) {
 		case "arrow_function", "function_expression", "generator_function_expression":
 			kind = "function"
 		}
@@ -227,8 +204,8 @@ func appendTSVariableDecl(node *sitter.Node, source []byte, path, parent string,
 			Name:     tsIdentifierName(nameNode, source),
 			Kind:     kind,
 			FilePath: path,
-			Line:     int(nameNode.StartPosition().Row) + 1,
-			EndLine:  int(valueNode.EndPosition().Row) + 1,
+			Line:     int(nameNode.StartPoint().Row) + 1,
+			EndLine:  int(valueNode.EndPoint().Row) + 1,
 			Parent:   parent,
 		})
 	}
@@ -236,41 +213,38 @@ func appendTSVariableDecl(node *sitter.Node, source []byte, path, parent string,
 
 // ---------- Ref extractors ----------
 
-func appendTSImport(node *sitter.Node, source []byte, filePath string, result *Result) {
+func appendTSImport(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, filePath string, result *Result) {
 	// import ... from "module-path"
-	sourceNode := node.ChildByFieldName("source")
+	sourceNode := childByFieldName(node, lang, "source")
 	if sourceNode == nil {
 		return
 	}
-	raw := sourceNode.Utf8Text(source)
+	raw := nodeText(sourceNode, source)
 	modulePath := strings.Trim(raw, `"'`+"`")
 	if modulePath == "" {
 		return
 	}
 	// Extract the imported names from the import clause, defaulting to the module base name.
-	names := extractTSImportedNames(node, source, modulePath)
+	names := extractTSImportedNames(node, lang, source, modulePath)
 	for _, name := range names {
 		result.Refs = append(result.Refs, Ref{
 			Name:       name,
 			Kind:       "import",
 			TargetPath: modulePath,
 			FilePath:   filePath,
-			Line:       int(sourceNode.StartPosition().Row) + 1,
-			Column:     int(sourceNode.StartPosition().Column) + 1,
+			Line:       int(sourceNode.StartPoint().Row) + 1,
+			Column:     int(sourceNode.StartPoint().Column) + 1,
 		})
 	}
 }
 
 // extractTSImportedNames returns the local names of imported bindings.
 // Falls back to the last segment of the module path when no named imports exist.
-func extractTSImportedNames(importNode *sitter.Node, source []byte, modulePath string) []string {
-	cursor := importNode.Walk()
-	defer cursor.Close()
+func extractTSImportedNames(importNode *gotreesitter.Node, lang *gotreesitter.Language, source []byte, modulePath string) []string {
 	var names []string
-	for _, child := range importNode.NamedChildren(cursor) {
-		if child.Kind() == "import_clause" {
-			childCopy := child
-			names = append(names, extractFromImportClause(&childCopy, source)...)
+	for _, child := range namedChildren(importNode) {
+		if nodeKind(child, lang) == "import_clause" {
+			names = append(names, extractFromImportClause(child, lang, source)...)
 		}
 	}
 	if len(names) == 0 {
@@ -280,60 +254,52 @@ func extractTSImportedNames(importNode *sitter.Node, source []byte, modulePath s
 	return names
 }
 
-func extractFromImportClause(clause *sitter.Node, source []byte) []string {
-	cursor := clause.Walk()
-	defer cursor.Close()
+func extractFromImportClause(clause *gotreesitter.Node, lang *gotreesitter.Language, source []byte) []string {
 	var names []string
-	for _, child := range clause.NamedChildren(cursor) {
-		switch child.Kind() {
+	for _, child := range namedChildren(clause) {
+		switch nodeKind(child, lang) {
 		case "identifier":
 			// default import: import Foo from "..."
-			names = append(names, child.Utf8Text(source))
+			names = append(names, nodeText(child, source))
 		case "namespace_import":
 			// import * as X from "..."
-			childCopy := child
-			aliasCursor := childCopy.Walk()
-			for _, nc := range childCopy.NamedChildren(aliasCursor) {
-				if nc.Kind() == "identifier" {
-					names = append(names, nc.Utf8Text(source))
+			for _, nc := range namedChildren(child) {
+				if nodeKind(nc, lang) == "identifier" {
+					names = append(names, nodeText(nc, source))
 				}
 			}
-			aliasCursor.Close()
 		case "named_imports":
 			// import { A, B as C } from "..."
-			childCopy := child
-			names = append(names, extractNamedImports(&childCopy, source)...)
+			names = append(names, extractNamedImports(child, lang, source)...)
 		}
 	}
 	return names
 }
 
-func extractNamedImports(namedImports *sitter.Node, source []byte) []string {
-	cursor := namedImports.Walk()
-	defer cursor.Close()
+func extractNamedImports(namedImports *gotreesitter.Node, lang *gotreesitter.Language, source []byte) []string {
 	var names []string
-	for _, child := range namedImports.NamedChildren(cursor) {
-		if child.Kind() != "import_specifier" {
+	for _, child := range namedChildren(namedImports) {
+		if nodeKind(child, lang) != "import_specifier" {
 			continue
 		}
 		// Prefer `alias` field (local name) if present, otherwise use `name`.
-		localNode := child.ChildByFieldName("alias")
+		localNode := childByFieldName(child, lang, "alias")
 		if localNode == nil {
-			localNode = child.ChildByFieldName("name")
+			localNode = childByFieldName(child, lang, "name")
 		}
 		if localNode != nil {
-			names = append(names, localNode.Utf8Text(source))
+			names = append(names, nodeText(localNode, source))
 		}
 	}
 	return names
 }
 
-func appendTSCall(node *sitter.Node, source []byte, path string, result *Result) {
-	fnNode := node.ChildByFieldName("function")
+func appendTSCall(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path string, result *Result) {
+	fnNode := childByFieldName(node, lang, "function")
 	if fnNode == nil {
 		return
 	}
-	name := tsCallName(fnNode, source)
+	name := tsCallName(fnNode, lang, source)
 	if name == "" {
 		return
 	}
@@ -341,17 +307,17 @@ func appendTSCall(node *sitter.Node, source []byte, path string, result *Result)
 		Name:     name,
 		Kind:     "call",
 		FilePath: path,
-		Line:     int(fnNode.StartPosition().Row) + 1,
-		Column:   int(fnNode.StartPosition().Column) + 1,
+		Line:     int(fnNode.StartPoint().Row) + 1,
+		Column:   int(fnNode.StartPoint().Column) + 1,
 	})
 }
 
-func appendTSNew(node *sitter.Node, source []byte, path string, result *Result) {
-	constructorNode := node.ChildByFieldName("constructor")
+func appendTSNew(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path string, result *Result) {
+	constructorNode := childByFieldName(node, lang, "constructor")
 	if constructorNode == nil {
 		return
 	}
-	name := tsCallName(constructorNode, source)
+	name := tsCallName(constructorNode, lang, source)
 	if name == "" {
 		return
 	}
@@ -359,8 +325,8 @@ func appendTSNew(node *sitter.Node, source []byte, path string, result *Result) 
 		Name:     name,
 		Kind:     "call",
 		FilePath: path,
-		Line:     int(constructorNode.StartPosition().Row) + 1,
-		Column:   int(constructorNode.StartPosition().Column) + 1,
+		Line:     int(constructorNode.StartPoint().Row) + 1,
+		Column:   int(constructorNode.StartPoint().Column) + 1,
 	})
 }
 
@@ -368,28 +334,28 @@ func appendTSNew(node *sitter.Node, source []byte, path string, result *Result) 
 
 // tsCallName extracts the terminal callable name from a function node in a call expression.
 // Mirrors the same disambiguation logic used in goCallName and pythonCallName.
-func tsCallName(node *sitter.Node, source []byte) string {
+func tsCallName(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte) string {
 	if node == nil {
 		return ""
 	}
-	switch node.Kind() {
+	switch nodeKind(node, lang) {
 	case "identifier":
-		return node.Utf8Text(source)
+		return nodeText(node, source)
 	case "member_expression":
 		// obj.method → return "method"
-		propNode := node.ChildByFieldName("property")
+		propNode := childByFieldName(node, lang, "property")
 		if propNode != nil {
-			return propNode.Utf8Text(source)
+			return nodeText(propNode, source)
 		}
 	case "call_expression":
 		// Chained: foo()() → resolve inner
-		innerFn := node.ChildByFieldName("function")
+		innerFn := childByFieldName(node, lang, "function")
 		if innerFn != nil {
-			return tsCallName(innerFn, source)
+			return tsCallName(innerFn, lang, source)
 		}
 	}
 	// Fallback: last segment after ".".
-	text := strings.TrimSpace(node.Utf8Text(source))
+	text := strings.TrimSpace(nodeText(node, source))
 	if text == "" {
 		return ""
 	}
@@ -410,11 +376,11 @@ func tsCallName(node *sitter.Node, source []byte) string {
 // tsIdentifierName extracts the identifier text from a name node.
 // For simple identifiers it returns the raw text; for complex patterns (e.g.
 // destructuring) it returns the full text as a best-effort fallback.
-func tsIdentifierName(node *sitter.Node, source []byte) string {
+func tsIdentifierName(node *gotreesitter.Node, source []byte) string {
 	if node == nil {
 		return ""
 	}
-	return strings.TrimSpace(node.Utf8Text(source))
+	return strings.TrimSpace(nodeText(node, source))
 }
 
 // tsModuleBaseName returns the trailing path segment, stripping the file extension.
@@ -430,19 +396,19 @@ func tsModuleBaseName(modulePath string) string {
 }
 
 // findTSComment looks for a JSDoc or single-line comment immediately preceding the node.
-func findTSComment(node *sitter.Node, source []byte) string {
+func findTSComment(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte) string {
 	if node == nil {
 		return ""
 	}
-	prev := node.PrevNamedSibling()
-	if prev == nil || prev.Kind() != "comment" {
+	prev := prevNamedSibling(node)
+	if prev == nil || nodeKind(prev, lang) != "comment" {
 		return ""
 	}
 	// Must be immediately above (no blank lines between).
-	if node.StartPosition().Row-prev.EndPosition().Row > 1 {
+	if node.StartPoint().Row-prev.EndPoint().Row > 1 {
 		return ""
 	}
-	text := strings.TrimSpace(prev.Utf8Text(source))
+	text := strings.TrimSpace(nodeText(prev, source))
 	text = strings.TrimPrefix(text, "/**")
 	text = strings.TrimPrefix(text, "/*")
 	text = strings.TrimSuffix(text, "*/")
