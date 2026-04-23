@@ -683,7 +683,6 @@ type analyzeElementIdentity struct {
 }
 
 type analyzeElementLookupKey struct {
-	Repo     string
 	Branch   string
 	FilePath string
 	Symbol   string
@@ -714,7 +713,6 @@ func buildAnalyzeElementIndex(ws *workspace.Workspace) map[analyzeElementLookupK
 			continue
 		}
 		index[analyzeElementLookupKey{
-			Repo:     element.Repo,
 			Branch:   element.Branch,
 			FilePath: filepath.Clean(element.FilePath),
 			Symbol:   element.Symbol,
@@ -740,7 +738,6 @@ func buildAnalyzeElementNameOwners(ws *workspace.Workspace) map[string]map[strin
 
 func normalizeAnalyzeElementLookupKey(identity analyzeElementIdentity) analyzeElementLookupKey {
 	return analyzeElementLookupKey{
-		Repo:     identity.Repo,
 		Branch:   identity.Branch,
 		FilePath: filepath.Clean(identity.FilePath),
 		Symbol:   identity.Symbol,
@@ -754,7 +751,6 @@ func ensureAnalyzeElement(wdir string, dryRun bool, ws *workspace.Workspace, kno
 	if knownRef, ok := known[identity]; ok {
 		ref = knownRef
 	} else if existingRef, ok := findAnalyzeElementRef(ws, analyzeElementIdentity{
-		Repo:     identity.Repo,
 		Branch:   identity.Branch,
 		FilePath: identity.FilePath,
 		Symbol:   identity.Symbol,
@@ -834,10 +830,7 @@ func findAnalyzeElementRef(ws *workspace.Workspace, identity analyzeElementIdent
 		if element == nil {
 			continue
 		}
-		if identity.Repo != "" && element.Repo != identity.Repo {
-			continue
-		}
-		if identity.Branch != "" && element.Branch != identity.Branch {
+		if element.Kind != identity.Kind {
 			continue
 		}
 		if filepath.Clean(element.FilePath) != filepath.Clean(identity.FilePath) {
@@ -846,7 +839,7 @@ func findAnalyzeElementRef(ws *workspace.Workspace, identity analyzeElementIdent
 		if element.Symbol != identity.Symbol {
 			continue
 		}
-		if identity.Kind != "" && element.Kind != identity.Kind {
+		if identity.Branch != "" && element.Branch != identity.Branch {
 			continue
 		}
 		return ref, true

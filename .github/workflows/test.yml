@@ -49,7 +49,7 @@ jobs:
           git diff --exit-code
 
       - name: Run unit tests with race detection
-        run: go test -v -race -shuffle=on -coverprofile=coverage.txt ./...
+        run: go test -race -shuffle=on -coverprofile=coverage.txt ./...
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
