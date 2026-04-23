@@ -39,11 +39,6 @@ func runForeground(host, port string) error {
 		return err
 	}
 
-	if err := localserver.WritePID(localserver.PIDPath(cwd), os.Getpid()); err != nil {
-		return fmt.Errorf("write pid file: %w", err)
-	}
-	defer func() { _ = os.Remove(localserver.PIDPath(cwd)) }()
-
 	srv := &http.Server{Addr: app.Addr, Handler: app.Handler}
 
 	sigs := make(chan os.Signal, 1)
@@ -107,12 +102,23 @@ func runBackground(cmd *cobra.Command, host, port string) error {
 		return fmt.Errorf("start server process: %w", err)
 	}
 
+	if err := localserver.WritePID(pidPath, child.Process.Pid); err != nil {
+		_ = child.Process.Kill()
+		return fmt.Errorf("write pid file: %w", err)
+	}
+
 	opts := resolveServeOptions(host, port)
 	addr := localserver.ResolveAddr(opts)
 
 	if err := waitReady("http://"+addr+"/api/ready", 10*time.Second); err != nil {
 		_ = child.Process.Kill()
+		_ = os.Remove(pidPath)
 		return fmt.Errorf("server did not become ready: %w\nCheck logs: %s", err, localserver.LogPath(cwd))
+	}
+
+	if !localserver.IsRunning(child.Process.Pid) {
+		_ = os.Remove(pidPath)
+		return fmt.Errorf("server process exited immediately; check logs: %s", localserver.LogPath(cwd))
 	}
 
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Webapp available at http://%s\n", addr)
