@@ -1,10 +1,16 @@
-.PHONY: frontend-deps frontend-build build run clean dev test-backend build-go
+.PHONY: frontend-deps frontend-build lint-be lint-fe build run clean dev test-backend build-go
 
 frontend-deps:
 	if [ ! -d frontend/node_modules ]; then cd frontend && npm install; fi
 
 frontend-build: frontend-deps
 	cd frontend && VITE_APP_BASE=/ VITE_ROUTER_BASENAME=/ npm run build
+
+lint-be:
+	golangci-lint run ./...
+
+lint-fe: frontend-deps
+	cd frontend && npm run lint
 
 dev: frontend-deps
 	@echo "Starting development stack..."
