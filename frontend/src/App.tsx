@@ -17,8 +17,8 @@ import { platform } from './platform/local'
 
 function AppLayout() {
   const header = useHeader()
-  const node = header && typeof header === 'object' && 'node' in header ? (header as any).node : header
-  const hideMobileBar = header && typeof header === 'object' && 'hideMobileBar' in header ? !!(header as any).hideMobileBar : false
+  const node = header && typeof header === 'object' && 'node' in header ? (header as { node: React.ReactNode }).node : header
+  const hideMobileBar = header && typeof header === 'object' && 'hideMobileBar' in header ? !!(header as { hideMobileBar?: boolean }).hideMobileBar : false
 
   return (
     <Box h="100vh" display="flex" flexDirection="column" bg="var(--bg-canvas)" overflow="hidden">

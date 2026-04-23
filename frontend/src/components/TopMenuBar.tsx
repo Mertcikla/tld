@@ -3,7 +3,6 @@ import type { TopMenuBarSlots } from '../slots'
 import { Link as RouterLink, useLocation } from "react-router-dom"
 import {
   Box,
-  Circle,
   Flex,
   HStack,
   IconButton,
@@ -15,7 +14,6 @@ import {
   Portal,
   Text,
   Tooltip,
-  VStack,
   useMediaQuery,
 } from "@chakra-ui/react"
 import { SettingsIcon } from "@chakra-ui/icons"

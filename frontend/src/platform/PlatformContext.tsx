@@ -6,7 +6,7 @@ export const PlatformProvider = ({
   platform, 
   children 
 }: { 
-  platform: PlatformFeatures<any>; 
+  platform: PlatformFeatures<unknown>; 
   children: ReactNode 
 }) => {
   return (

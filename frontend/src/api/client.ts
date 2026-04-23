@@ -35,6 +35,8 @@ import {
   ListViewLayersResponseSchema,
   CreateViewLayerResponseSchema,
   UpdateViewLayerResponseSchema,
+  PlanElement,
+  PlanConnector,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
 import {
   DependencyService,
@@ -43,9 +45,6 @@ import {
 import {
   ImportService,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/import_service_pb'
-import {
-  WorkspaceVersionService,
-} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_version_service_pb'
 import { transport } from './transport'
 
 export interface DependenciesResponse {
@@ -597,7 +596,7 @@ export const api = {
   },
 
   import: {
-    resources: (orgId: string, data: { elements: any[]; connectors: any[] }): Promise<{ view_id: number; view_url: string }> =>
+    resources: (orgId: string, data: { elements: PlanElement[]; connectors: PlanConnector[] }): Promise<{ view_id: number; view_url: string }> =>
       rpc(async () => {
         const res = await importClient.importResources({
           orgId,
@@ -606,7 +605,7 @@ export const api = {
         })
         return { view_id: res.viewId, view_url: res.viewUrl }
       }),
-    parseStructurizr: (code: string): Promise<{ elements: any[]; connectors: any[]; warnings: string[] }> =>
+    parseStructurizr: (code: string): Promise<{ elements: PlanElement[]; connectors: PlanConnector[]; warnings: string[] }> =>
       rpc(async () => {
         const res = await importClient.parseStructurizr({ code })
         return {

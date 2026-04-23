@@ -5,11 +5,8 @@ import {
   Box,
   Button,
   Center,
-  FormControl,
-  Heading,
   HStack,
   IconButton,
-  Input,
   Popover,
   PopoverBody,
   PopoverContent,
@@ -19,7 +16,6 @@ import {
   Text,
   Tooltip,
   useDisclosure,
-  useToast,
   VStack,
 } from '@chakra-ui/react'
 import { useSetHeader } from '../components/HeaderContext'
@@ -44,17 +40,13 @@ const MINI_ONBOARDING_KEY = 'shared_zoom_onboarding_dismissed'
 // ── Inner component ────────────────────────────────────────────────
 function InfiniteZoomInner({ sharedToken, shareSlot }: Props) {
   const navigate = useNavigate()
-  const toast = useToast()
   const setHeader = useSetHeader()
 
   const [data, setData] = useState<ExploreData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [passwordRequired, setPasswordRequired] = useState(false)
-  const [password, setPassword] = useState('')
-  const [verifying, setVerifying] = useState(false)
   const [canvasReady, setCanvasReady] = useState(false)
   const [showMiniOnboarding, setShowMiniOnboarding] = useState(false)
-  const [tagColors, setTagColors] = useState<Record<string, import('../types').Tag>>({})
+  const [tagColors] = useState<Record<string, import('../types').Tag>>({})
   const [layers, setLayers] = useState<ViewLayer[]>([])
   const [highlightedTags, setHighlightedTags] = useState<string[]>([])
   const [highlightColor, setHighlightColor] = useState('')
@@ -140,7 +132,6 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props) {
     const loader = api.explore.load()
     loader.then((d) => {
       if (d.password_required) {
-        setPasswordRequired(true)
         setLoading(false)
       } else {
         primeWorkspaceGraphSnapshot(d)

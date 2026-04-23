@@ -14,6 +14,6 @@ export interface PlatformFeatures<User = unknown> {
   getRoutes: (context: PlatformRouteContext<User>) => ReactNode[]
   getAuthenticatedRoutes: (context: PlatformRouteContext<User>) => ReactNode[]
   getSettingsRoutes: (context: PlatformRouteContext<User>) => ReactNode[]
-  AuthLayout: ComponentType<any>
-  connectRealtime?: (...args: any[]) => unknown
+  AuthLayout: ComponentType<unknown>
+  connectRealtime?: (...args: unknown[]) => unknown
 }
