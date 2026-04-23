@@ -2,6 +2,10 @@
   "name": "@tldiagram/core-ui",
   "version": "1.87.0",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Mertcikla/tld"
+  },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",

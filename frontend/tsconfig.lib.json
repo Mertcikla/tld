@@ -15,9 +15,6 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
     "ignoreDeprecations": "5.0",
-    "paths": {
-      "@buf/tldiagramcom_diagram.bufbuild_es/*": ["./src/gen/*"]
-    },
     "rootDir": "src",
     "declaration": true,
     "declarationDir": "./dist",
