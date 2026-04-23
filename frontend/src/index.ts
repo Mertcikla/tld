@@ -99,7 +99,7 @@ export { HeaderProvider, useSetHeader, useHeader } from './components/HeaderCont
 export * from './types'
 
 // ─── Platform ────────────────────────────────────────────────────────────────
-export type { PlatformFeatures } from './platform/types'
+export type { PlatformFeatures, PlatformRouteContext } from './platform/types'
 export { platform as localPlatform } from './platform/local'
 export { PlatformProvider } from './platform/PlatformContext'
 export { usePlatform } from './platform/context'
