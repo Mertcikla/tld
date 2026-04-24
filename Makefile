@@ -1,4 +1,10 @@
-.PHONY: frontend-deps frontend-build lint-be lint-fe build run clean dev test-backend build-go
+.PHONY: frontend-deps frontend-build lint-be lint-fe build run clean dev test-backend build-go setup-hooks
+
+setup-hooks:
+	chmod +x scripts/pre-commit.sh
+	cp scripts/pre-commit.sh .git/hooks/pre-commit
+	chmod +x .git/hooks/pre-commit
+	@echo "Pre-commit hooks installed!"
 
 frontend-deps:
 	if [ ! -d frontend/node_modules ]; then cd frontend && npm install; fi
