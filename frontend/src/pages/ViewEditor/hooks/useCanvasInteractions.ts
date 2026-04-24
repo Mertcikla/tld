@@ -36,6 +36,97 @@ import {
 } from '../../../utils/edgeDistribution'
 
 const SNAP_RADIUS = 75
+const CONNECTOR_DRAG_UPDATE_INTERVAL_MS = 25
+
+type HandleTarget = {
+  nodeId?: string
+  handleId: string
+  x: number
+  y: number
+}
+
+function collectHandleTargets(excludeNodeId?: string): HandleTarget[] {
+  const handles = document.querySelectorAll('.react-flow__handle')
+  const targets: HandleTarget[] = []
+
+  for (const handle of handles) {
+    const nodeId = handle.closest('.react-flow__node')?.getAttribute('data-id') || undefined
+    if (excludeNodeId && nodeId === excludeNodeId) continue
+
+    const rect = handle.getBoundingClientRect()
+    targets.push({
+      nodeId,
+      handleId: handle.getAttribute('data-handleid') || handle.id,
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    })
+  }
+
+  return targets
+}
+
+function findNearestHandleTargetInCache(targets: HandleTarget[], clientX: number, clientY: number) {
+  let hoveredHandleId: string | undefined
+  let hoveredNodeId: string | undefined
+  let snapPos = { x: clientX, y: clientY }
+  let nearestDistance = Infinity
+
+  for (const target of targets) {
+    const dist = Math.hypot(clientX - target.x, clientY - target.y)
+    if (dist < 36 && dist < nearestDistance) {
+      nearestDistance = dist
+      snapPos = { x: target.x, y: target.y }
+      hoveredHandleId = target.handleId
+      hoveredNodeId = target.nodeId
+    }
+  }
+
+  return {
+    nearHandle: hoveredHandleId !== undefined,
+    snapPos,
+    hoveredHandleId,
+    hoveredNodeId,
+  }
+}
+
+export function applyNodeChangesWithStructuralSharing(changes: NodeChange[], nodes: RFNode[]) {
+  if (changes.length === 0) return nodes
+
+  const canFastPath = changes.every((change) => change.type === 'position' && 'id' in change)
+  if (!canFastPath) return applyNodeChanges(changes, nodes)
+
+  const changesById = new Map(changes.map((change) => [change.id, change]))
+  let didChange = false
+
+  const nextNodes = nodes.map((node) => {
+    const change = changesById.get(node.id)
+    if (!change || change.type !== 'position') return node
+
+    const position = change.position ?? node.position
+    const positionAbsolute = change.positionAbsolute ?? node.positionAbsolute
+    const dragging = change.dragging ?? node.dragging
+
+    if (
+      node.position.x === position.x &&
+      node.position.y === position.y &&
+      node.positionAbsolute?.x === positionAbsolute?.x &&
+      node.positionAbsolute?.y === positionAbsolute?.y &&
+      node.dragging === dragging
+    ) {
+      return node
+    }
+
+    didChange = true
+    return {
+      ...node,
+      position,
+      positionAbsolute,
+      dragging,
+    }
+  })
+
+  return didChange ? nextNodes : nodes
+}
 
 interface CanvasInteractionOptions {
   viewId: number | null
@@ -176,6 +267,7 @@ export function useCanvasInteractions({
   const [reconnectPicking, setReconnectPicking] = useState<{ edgeId: number; endpoint: 'source' | 'target' } | null>(null)
   const [handleReconnectDrag, setHandleReconnectDrag] = useState<HandleReconnectDragState | null>(null)
   const [connectorLongPressMenu, setConnectorLongPressMenu] = useState<{ edgeId: number; x: number; y: number } | null>(null)
+  const isMovingRef = useRef(false)
 
   interactionSourceIdRef.current = interactionSourceId
 
@@ -185,6 +277,7 @@ export function useCanvasInteractions({
   const connectingSourceRef = useRef<string | null>(null)
   const connectWasValidRef = useRef(false)
   const connectGhostListenerRef = useRef<((e: MouseEvent) => void) | null>(null)
+  const connectorDragLastUpdateRef = useRef(0)
   const isReconnectingRef = useRef(false)
   const suppressNextConnectorClickRef = useRef(false)
   const suppressNextPaneClickRef = useRef(false)
@@ -224,36 +317,6 @@ export function useCanvasInteractions({
     setHandleReconnectDrag(null)
     isReconnectingRef.current = false
   }, [clearHandleReconnectListeners])
-
-  const findNearestHandleTarget = useCallback((clientX: number, clientY: number, excludeNodeId?: string) => {
-    const handles = document.querySelectorAll('.react-flow__handle')
-    let hoveredHandleId: string | undefined
-    let hoveredNodeId: string | undefined
-    let snapPos = { x: clientX, y: clientY }
-    let nearestDistance = Infinity
-
-    for (const handle of handles) {
-      const nodeId = handle.closest('.react-flow__node')?.getAttribute('data-id') || undefined
-      if (excludeNodeId && nodeId === excludeNodeId) continue
-      const rect = handle.getBoundingClientRect()
-      const cx = rect.left + rect.width / 2
-      const cy = rect.top + rect.height / 2
-      const dist = Math.hypot(clientX - cx, clientY - cy)
-      if (dist < 36 && dist < nearestDistance) {
-        nearestDistance = dist
-        snapPos = { x: cx, y: cy }
-        hoveredHandleId = handle.getAttribute('data-handleid') || handle.id
-        hoveredNodeId = nodeId
-      }
-    }
-
-    return {
-      nearHandle: hoveredHandleId !== undefined,
-      snapPos,
-      hoveredHandleId,
-      hoveredNodeId,
-    }
-  }, [])
 
   // ── Ref-forwarded callbacks ────────────────────────────────────────────────
   const openConnectorPanelRef = useRef(openConnectorPanel)
@@ -477,10 +540,10 @@ export function useCanvasInteractions({
     if (!canEdit) {
       const nonMutating = changes.filter((c) => c.type !== 'position')
       if (nonMutating.length === 0) return
-      setRfNodes((nds) => applyNodeChanges(nonMutating, nds))
+      setRfNodes((nds) => applyNodeChangesWithStructuralSharing(nonMutating, nds))
       return
     }
-    setRfNodes((nds) => applyNodeChanges(changes, nds))
+    setRfNodes((nds) => applyNodeChangesWithStructuralSharing(changes, nds))
   }, [canEdit, setRfNodes])
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
@@ -494,18 +557,11 @@ export function useCanvasInteractions({
     dragStartPositionsRef.current[node.id] = { x: node.position.x, y: node.position.y }
   }, [canEdit, viewId])
 
-  const onNodeDrag: NodeDragHandler = useCallback((_e, node) => {
-    if (!canEdit || viewId === null) return
-    const elementId = parseNumericId(node.id)
-    if (elementId === null) return
-    setViewElements((prev) =>
-      prev.map((element) =>
-        element.element_id === elementId
-          ? { ...element, position_x: node.position.x, position_y: node.position.y }
-          : element,
-      ),
-    )
-  }, [canEdit, setViewElements, viewId])
+  const onNodeDrag: NodeDragHandler = useCallback(() => {
+    // React Flow already updates rfNodes via onNodesChange while dragging.
+    // Mirroring into viewElements here forces every derived edge/node to rebuild
+    // on each pointer frame, so persist to app state only on drag stop.
+  }, [])
 
   const positionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
   const dragStartPositionsRef = useRef<Record<string, { x: number; y: number }>>({})
@@ -563,16 +619,14 @@ export function useCanvasInteractions({
     if (!canEdit || isReconnectingRef.current) return
     connectingSourceRef.current = nodeId
     connectWasValidRef.current = false
+    const handleTargets = collectHandleTargets(nodeId ?? undefined)
+    connectorDragLastUpdateRef.current = 0
     const listener = (e: MouseEvent) => {
-      const handles = document.querySelectorAll('.react-flow__handle')
-      let nearHandle = false
-      for (const handle of handles) {
-        const rect = handle.getBoundingClientRect()
-        if (Math.hypot(e.clientX - (rect.left + rect.width / 2), e.clientY - (rect.top + rect.height / 2)) < 36) {
-          nearHandle = true; break
-        }
-      }
-      setConnectGhostPos(nearHandle ? null : { x: e.clientX, y: e.clientY })
+      const now = performance.now()
+      if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
+      connectorDragLastUpdateRef.current = now
+      const hit = findNearestHandleTargetInCache(handleTargets, e.clientX, e.clientY)
+      setConnectGhostPos(hit.nearHandle ? null : { x: e.clientX, y: e.clientY })
     }
     connectGhostListenerRef.current = listener
     document.addEventListener('mousemove', listener)
@@ -685,6 +739,8 @@ export function useCanvasInteractions({
     setConnectGhostPos(null)
     clearHandleReconnectListeners()
     isReconnectingRef.current = true
+    const handleTargets = collectHandleTargets(fixedNodeId)
+    connectorDragLastUpdateRef.current = 0
     syncHandleReconnectDrag({
       edgeId: args.edgeId,
       endpoint: args.endpoint,
@@ -695,7 +751,10 @@ export function useCanvasInteractions({
     })
 
     const move = (event: PointerEvent) => {
-      const hit = findNearestHandleTarget(event.clientX, event.clientY)
+      const now = performance.now()
+      if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
+      connectorDragLastUpdateRef.current = now
+      const hit = findNearestHandleTargetInCache(handleTargets, event.clientX, event.clientY)
       const current = handleReconnectDragRef.current
       if (!current) return
       syncHandleReconnectDrag({
@@ -776,7 +835,7 @@ export function useCanvasInteractions({
     document.addEventListener('pointermove', move)
     document.addEventListener('pointerup', up)
     document.addEventListener('pointercancel', up)
-  }, [canEdit, clearHandleReconnectListeners, findNearestHandleTarget, performReconnect, rfNodesRef, _rfEdgesRef, syncHandleReconnectDrag])
+  }, [canEdit, clearHandleReconnectListeners, performReconnect, rfNodesRef, _rfEdgesRef, syncHandleReconnectDrag])
 
   // ── Click-connect ghost cursor tracking ────────────────────────────────────
   useEffect(() => {
@@ -785,43 +844,29 @@ export function useCanvasInteractions({
       setConnectGhostPos(null)
       return
     }
+    const handleTargets = collectHandleTargets(clickConnectMode.sourceNodeId)
+    const sourceHandleTargets = collectHandleTargets().filter((target) => target.nodeId === clickConnectMode.sourceNodeId)
+    connectorDragLastUpdateRef.current = 0
     const listener = (e: MouseEvent) => {
-      const handles = document.querySelectorAll('.react-flow__handle')
-      let nearHandle = false
-      let snapPos = { x: e.clientX, y: e.clientY }
-      let hoveredTargetHandleId: string | undefined = undefined
-      let nearestTargetHandleDistance = Infinity
-      for (const handle of handles) {
-        if (handle.closest(`[data-id="${clickConnectMode.sourceNodeId}"]`)) continue
-        const rect = handle.getBoundingClientRect()
-        const cx = rect.left + rect.width / 2
-        const cy = rect.top + rect.height / 2
-        const dist = Math.hypot(e.clientX - cx, e.clientY - cy)
-        if (dist < 36 && dist < nearestTargetHandleDistance) {
-          nearestTargetHandleDistance = dist
-          nearHandle = true
-          snapPos = { x: cx, y: cy }
-          hoveredTargetHandleId = handle.getAttribute('data-handleid') || handle.id
-        }
-      }
-      setClickConnectCursorPos(snapPos)
-      setConnectGhostPos(nearHandle ? null : { x: e.clientX, y: e.clientY })
+      const now = performance.now()
+      if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
+      connectorDragLastUpdateRef.current = now
+      const hit = findNearestHandleTargetInCache(handleTargets, e.clientX, e.clientY)
+      setClickConnectCursorPos(hit.snapPos)
+      setConnectGhostPos(hit.nearHandle ? null : { x: e.clientX, y: e.clientY })
       setClickConnectMode((prev) => {
         if (!prev) return null
         let bestHandle = prev.sourceHandle
-        const sourceNodeEl = document.querySelector(`.react-flow__node[data-id="${prev.sourceNodeId}"]`)
-        if (sourceNodeEl) {
-          const sourceHandles = sourceNodeEl.querySelectorAll('.react-flow__handle')
-          let minDist = Infinity
-          for (const h of sourceHandles) {
-            const rect = h.getBoundingClientRect()
-            const cx = rect.left + rect.width / 2; const cy = rect.top + rect.height / 2
-            const dist = Math.hypot(e.clientX - cx, e.clientY - cy)
-            if (dist < minDist) { minDist = dist; bestHandle = h.getAttribute('data-handleid') || h.id }
+        let minDist = Infinity
+        for (const target of sourceHandleTargets) {
+          const dist = Math.hypot(e.clientX - target.x, e.clientY - target.y)
+          if (dist < minDist) {
+            minDist = dist
+            bestHandle = target.handleId
           }
         }
-        if (prev.sourceHandle !== bestHandle || prev.targetHandle !== hoveredTargetHandleId) {
-          return { ...prev, sourceHandle: bestHandle, targetHandle: hoveredTargetHandleId }
+        if (prev.sourceHandle !== bestHandle || prev.targetHandle !== hit.hoveredHandleId) {
+          return { ...prev, sourceHandle: bestHandle, targetHandle: hit.hoveredHandleId }
         }
         return prev
       })
@@ -930,21 +975,23 @@ export function useCanvasInteractions({
   }, [])
 
   const onMoveStart = useCallback(() => {
+    if (isMovingRef.current) return
+    isMovingRef.current = true
     setCanvasMenu(null)
     setConnectorLongPressMenu(null)
     setAddingElementAt(null)
-    setRfNodes((nds) => nds.map((n) => ({ ...n, data: { ...n.data, isCanvasMoving: true } })))
     onMoveStateChange?.(true)
-  }, [setRfNodes, onMoveStateChange])
+  }, [onMoveStateChange])
 
   const onMove = useCallback((_: unknown, viewport: { x: number; y: number; zoom: number }) => {
     drawingCanvasRef.current?.notifyViewportChange(viewport)
   }, [drawingCanvasRef])
 
   const onMoveEnd = useCallback(() => {
-    setRfNodes((nds) => nds.map((n) => ({ ...n, data: { ...n.data, isCanvasMoving: false } })))
+    if (!isMovingRef.current) return
+    isMovingRef.current = false
     onMoveStateChange?.(false)
-  }, [setRfNodes, onMoveStateChange])
+  }, [onMoveStateChange])
 
   // ── Touch & long-press ────────────────────────────────────────────────────
   function getTouchDistance(touches: Map<number, { x: number; y: number }>): number {

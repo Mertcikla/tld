@@ -37,6 +37,7 @@ export interface ScreenRect {
   bottom: number
 }
 
+const frameLabelRects: ScreenRect[] = []
 
 /**
  * Returns a world-space font size that, when multiplied by zoom,
@@ -62,19 +63,61 @@ const TYPE_COLOR_400: Record<string, string> = {
 }
 
 /** Border color: type .400 at 50% alpha - bold branded tint */
+const typeBorderColorCache = new Map<string, string>()
 function typeBorderColor(type: string, alpha = 0.5): string {
+  const cacheKey = `${type}:${alpha}`
+  const cached = typeBorderColorCache.get(cacheKey)
+  if (cached) return cached
+
   const color = TYPE_COLOR_400[type]
   const hex = typeof color === 'string' ? color : '#a0aec0'
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
   const b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r},${g},${b},${alpha})`
+  const rgba = `rgba(${r},${g},${b},${alpha})`
+  typeBorderColorCache.set(cacheKey, rgba)
+  return rgba
 }
 
-/** Read a CSS custom property value from :root (resolves color-mix, etc.). */
-function readCSSVar(name: string, fallback: string): string {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-  return v || fallback
+interface RendererThemeVars {
+  canvasBg: string
+  nodeBg: string
+  accent: string
+  labelBg: string
+}
+
+const themeFallbacks: RendererThemeVars = {
+  canvasBg: '#0d121e',
+  nodeBg: '#2d3748',
+  accent: '#63b3ed',
+  labelBg: '#171923',
+}
+
+let cachedThemeVars: RendererThemeVars = themeFallbacks
+let themeObserverStarted = false
+
+function refreshThemeVars(): void {
+  if (typeof document === 'undefined') return
+  const styles = getComputedStyle(document.documentElement)
+  cachedThemeVars = {
+    canvasBg: styles.getPropertyValue('--bg-main').trim() || themeFallbacks.canvasBg,
+    nodeBg: styles.getPropertyValue('--bg-element').trim() || themeFallbacks.nodeBg,
+    accent: styles.getPropertyValue('--accent').trim() || themeFallbacks.accent,
+    labelBg: styles.getPropertyValue('--chakra-colors-gray-900').trim() || themeFallbacks.labelBg,
+  }
+}
+
+function getThemeVars(): RendererThemeVars {
+  if (!themeObserverStarted && typeof document !== 'undefined') {
+    themeObserverStarted = true
+    refreshThemeVars()
+    const update = () => refreshThemeVars()
+    const mo = new MutationObserver(update)
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
+    window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', update)
+    window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', update)
+  }
+  return cachedThemeVars
 }
 
 // ── Geometry helpers ───────────────────────────────────────────────
@@ -133,14 +176,6 @@ function rectsOverlap(a: ScreenRect, b: ScreenRect): boolean {
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top
 }
 
-function worldToScreen(matrix: DOMMatrix, x: number, y: number) {
-  return new DOMPoint(x, y).matrixTransform(matrix)
-}
-
-function screenToWorld(matrix: DOMMatrix, x: number, y: number) {
-  return new DOMPoint(x, y).matrixTransform(matrix.inverse())
-}
-
 export function pickEdgeLabelPosition(
   matrix: DOMMatrix,
   midX: number,
@@ -151,7 +186,8 @@ export function pickEdgeLabelPosition(
   dy: number,
   occupiedLabelRects: ScreenRect[],
 ) {
-  const screenMid = worldToScreen(matrix, midX, midY)
+  const screenMidX = matrix.a * midX + matrix.c * midY + matrix.e
+  const screenMidY = matrix.b * midX + matrix.d * midY + matrix.f
   const screenTextW = Math.max(1, textW * matrix.a)
   const screenTextH = Math.max(1, textH * matrix.d)
   const gap = 6
@@ -161,21 +197,38 @@ export function pickEdgeLabelPosition(
   const normalY = dx / length
   const tangentX = dx / length
   const tangentY = dy / length
-  const candidateOffsets = [
-    { x: 0, y: 0 },
-    { x: normalX * step, y: normalY * step },
-    { x: -normalX * step, y: -normalY * step },
-    { x: normalX * step * 2, y: normalY * step * 2 },
-    { x: -normalX * step * 2, y: -normalY * step * 2 },
-    { x: tangentX * step, y: tangentY * step },
-    { x: -tangentX * step, y: -tangentY * step },
-    { x: tangentX * step + normalX * step, y: tangentY * step + normalY * step },
-    { x: -tangentX * step - normalX * step, y: -tangentY * step - normalY * step },
-  ]
 
-  for (const offset of candidateOffsets) {
-    const centerX = screenMid.x + offset.x
-    const centerY = screenMid.y + offset.y
+  for (let i = 0; i < 9; i++) {
+    let offsetX = 0
+    let offsetY = 0
+    if (i === 1) {
+      offsetX = normalX * step
+      offsetY = normalY * step
+    } else if (i === 2) {
+      offsetX = -normalX * step
+      offsetY = -normalY * step
+    } else if (i === 3) {
+      offsetX = normalX * step * 2
+      offsetY = normalY * step * 2
+    } else if (i === 4) {
+      offsetX = -normalX * step * 2
+      offsetY = -normalY * step * 2
+    } else if (i === 5) {
+      offsetX = tangentX * step
+      offsetY = tangentY * step
+    } else if (i === 6) {
+      offsetX = -tangentX * step
+      offsetY = -tangentY * step
+    } else if (i === 7) {
+      offsetX = tangentX * step + normalX * step
+      offsetY = tangentY * step + normalY * step
+    } else if (i === 8) {
+      offsetX = -tangentX * step - normalX * step
+      offsetY = -tangentY * step - normalY * step
+    }
+
+    const centerX = screenMidX + offsetX
+    const centerY = screenMidY + offsetY
     const rect: ScreenRect = {
       left: centerX - screenTextW / 2 - gap,
       top: centerY - screenTextH / 2 - gap / 2,
@@ -184,15 +237,21 @@ export function pickEdgeLabelPosition(
     }
     if (occupiedLabelRects.some((existing) => rectsOverlap(rect, existing))) continue
     occupiedLabelRects.push(rect)
-    const worldPoint = screenToWorld(matrix, centerX, centerY)
-    return { x: worldPoint.x, y: worldPoint.y }
+    const det = matrix.a * matrix.d - matrix.b * matrix.c
+    if (det === 0) return { x: midX, y: midY }
+    const translatedX = centerX - matrix.e
+    const translatedY = centerY - matrix.f
+    return {
+      x: (matrix.d * translatedX - matrix.c * translatedY) / det,
+      y: (-matrix.b * translatedX + matrix.a * translatedY) / det,
+    }
   }
 
   const fallbackRect: ScreenRect = {
-    left: screenMid.x - screenTextW / 2 - gap,
-    top: screenMid.y - screenTextH / 2 - gap / 2,
-    right: screenMid.x + screenTextW / 2 + gap,
-    bottom: screenMid.y + screenTextH / 2 + gap / 2,
+    left: screenMidX - screenTextW / 2 - gap,
+    top: screenMidY - screenTextH / 2 - gap / 2,
+    right: screenMidX + screenTextW / 2 + gap,
+    bottom: screenMidY + screenTextH / 2 + gap / 2,
   }
   occupiedLabelRects.push(fallbackRect)
   return { x: midX, y: midY }
@@ -301,9 +360,15 @@ function parseHex(hex: string): { r: number; g: number; b: number } {
 }
 
 /** Derive a portal tint color from the accent: same hue, very low alpha. */
+const portalTintColorCache = new Map<string, string>()
 function portalTintColor(accent: string, alpha: number): string {
+  const cacheKey = `${accent}:${alpha}`
+  const cached = portalTintColorCache.get(cacheKey)
+  if (cached) return cached
   const { r, g, b } = parseHex(accent)
-  return `rgba(${r},${g},${b},${alpha})`
+  const rgba = `rgba(${r},${g},${b},${alpha})`
+  portalTintColorCache.set(cacheKey, rgba)
+  return rgba
 }
 
 /** Draw a squiggly line from (x1, y1) to (x2, y2). */
@@ -719,24 +784,38 @@ function drawNode(
 
 // ── Edge drawing ───────────────────────────────────────────────────
 
-function drawEdges(
-  ctx: CanvasRenderingContext2D,
-  nodes: LayoutNode[],
-  alpha: number,
-  zoom: number,
-  thresholds: { start: number; end: number },
-  accent: string,
-  labelBg: string,
-  occupiedLabelRects: ScreenRect[],
-): void {
-  if (alpha < 0.05) return
-  const nodeMap = new Map(nodes.map((n) => [n.id, n]))
-  const handleUsage: Record<string, { edgeKey: string; type: 'source' | 'target'; otherNodeCoord: number }[]> = {}
+interface HandleUsage {
+  edgeKey: string
+  type: 'source' | 'target'
+  otherNodeCoord: number
+}
 
-  nodes.forEach((node) => {
-    node.edgesOut.forEach((edge, edgeIndex) => {
+interface DrawEdgesLayoutMetadata {
+  nodeMap: Map<string, LayoutNode>
+  handleUsage: Record<string, HandleUsage[]>
+  handleUsageIndex: Record<string, number>
+}
+
+const drawEdgesMetadataCache = new WeakMap<LayoutNode[], DrawEdgesLayoutMetadata>()
+const emptyHandleUsage: HandleUsage[] = []
+
+function getDrawEdgesLayoutMetadata(nodes: LayoutNode[]): DrawEdgesLayoutMetadata {
+  const cached = drawEdgesMetadataCache.get(nodes)
+  if (cached) return cached
+
+  const nodeMap = new Map<string, LayoutNode>()
+  const handleUsage: Record<string, HandleUsage[]> = {}
+  const handleUsageIndex: Record<string, number> = {}
+
+  for (const node of nodes) {
+    nodeMap.set(node.id, node)
+  }
+
+  for (const node of nodes) {
+    for (let edgeIndex = 0; edgeIndex < node.edgesOut.length; edgeIndex++) {
+      const edge = node.edgesOut[edgeIndex]
       const target = nodeMap.get(edge.targetId)
-      if (!target) return
+      if (!target) continue
 
       const edgeKey = `${node.id}:${edgeIndex}`
       const sourceSide = getLogicalHandleId(edge.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
@@ -761,12 +840,34 @@ function drawEdges(
           ? node.worldY + node.worldH / 2
           : node.worldX + node.worldW / 2,
       })
-    })
-  })
+    }
+  }
 
-  Object.values(handleUsage).forEach((usages) => {
+  for (const [usageKey, usages] of Object.entries(handleUsage)) {
     usages.sort((a, b) => a.otherNodeCoord - b.otherNodeCoord)
-  })
+    for (let i = 0; i < usages.length; i++) {
+      const usage = usages[i]
+      handleUsageIndex[`${usageKey}:${usage.edgeKey}:${usage.type}`] = i
+    }
+  }
+
+  const metadata = { nodeMap, handleUsage, handleUsageIndex }
+  drawEdgesMetadataCache.set(nodes, metadata)
+  return metadata
+}
+
+function drawEdges(
+  ctx: CanvasRenderingContext2D,
+  nodes: LayoutNode[],
+  alpha: number,
+  zoom: number,
+  thresholds: { start: number; end: number },
+  accent: string,
+  labelBg: string,
+  occupiedLabelRects: ScreenRect[],
+): void {
+  if (alpha < 0.05) return
+  const { nodeMap, handleUsage, handleUsageIndex } = getDrawEdgesLayoutMetadata(nodes)
 
   for (const node of nodes) {
     for (const [edgeIndex, edge] of node.edgesOut.entries()) {
@@ -807,10 +908,12 @@ function drawEdges(
       const edgeKey = `${node.id}:${edgeIndex}`
       const sourceSide = getLogicalHandleId(edge.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
       const targetSide = getLogicalHandleId(edge.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
-      const srcGroup = handleUsage[`${node.id}-${sourceSide}`] ?? []
-      const tgtGroup = handleUsage[`${target.id}-${targetSide}`] ?? []
-      const sourceGroupIndex = srcGroup.findIndex((usage) => usage.edgeKey === edgeKey && usage.type === 'source')
-      const targetGroupIndex = tgtGroup.findIndex((usage) => usage.edgeKey === edgeKey && usage.type === 'target')
+      const srcKey = `${node.id}-${sourceSide}`
+      const tgtKey = `${target.id}-${targetSide}`
+      const srcGroup = handleUsage[srcKey] ?? emptyHandleUsage
+      const tgtGroup = handleUsage[tgtKey] ?? emptyHandleUsage
+      const sourceGroupIndex = handleUsageIndex[`${srcKey}:${edgeKey}:source`] ?? -1
+      const targetGroupIndex = handleUsageIndex[`${tgtKey}:${edgeKey}:target`] ?? -1
 
       const sH = getHandlePos(
         effXSource,
@@ -1095,11 +1198,7 @@ export function renderFrame(
   canvasW: number,
   canvasH: number,
 ): ScreenRect[] {
-  // Read user-customisable CSS vars once per frame
-  const canvasBg = readCSSVar('--bg-main', '#0d121e')
-  const nodeBg = readCSSVar('--bg-element', '#2d3748')
-  const accent = readCSSVar('--accent', '#63b3ed')
-  const labelBg = readCSSVar('--chakra-colors-gray-900', '#171923')
+  const { canvasBg, nodeBg, accent, labelBg } = getThemeVars()
 
   ctx.clearRect(0, 0, canvasW, canvasH)
 
@@ -1114,7 +1213,8 @@ export function renderFrame(
   ctx.scale(view.zoom, view.zoom)
 
   const thresholds = getExpandThresholds(canvasW)
-  const occupiedLabelRects: ScreenRect[] = []
+  const occupiedLabelRects = frameLabelRects
+  occupiedLabelRects.length = 0
 
   for (const group of groups) {
     if (!isVisible(group.worldX, group.worldY, group.worldW, group.worldH, view, canvasW, canvasH)) {

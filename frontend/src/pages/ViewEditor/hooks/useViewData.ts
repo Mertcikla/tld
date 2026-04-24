@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MarkerType, type Edge as RFEdge, type Node as RFNode } from 'reactflow'
 import { api } from '../../../api/client'
@@ -46,6 +47,12 @@ function alphaColor(color: string, opacity: number): string {
   if (opacity >= 1) return color
   return `color-mix(in srgb, ${color} ${Math.round(opacity * 100)}%, transparent)`
 }
+
+// Stable style refs so unchanged nodes keep identical style references across renders,
+// letting structural-sharing fast-path bail out without rebuilding the node.
+const HIDDEN_STYLE: CSSProperties = { opacity: 0.1, pointerEvents: 'none' }
+const SOFT_FOCUS_STYLE: CSSProperties = { opacity: 0.2 }
+const EMPTY_ARRAY: readonly never[] = Object.freeze([])
 
 export function useViewData({
   viewId,
@@ -268,51 +275,108 @@ export function useViewData({
     return nextIds
   }, [viewElements])
 
+  // Stable-ref fallback parent links: flatten only when the underlying map changes so
+  // nodes without their own parent link entry can still pass the data-equality fast path.
+  const viewParentLinks = useMemo(
+    () => Object.values(parentLinksMap).flat(),
+    [parentLinksMap],
+  )
+
+  const parentViewId = useMemo(() => {
+    const findInTreeById = (nodes: ViewTreeNode[], id: number): ViewTreeNode | null => {
+      for (const node of nodes) {
+        if (node.id === id) return node
+        const found = findInTreeById(node.children, id)
+        if (found) return found
+      }
+      return null
+    }
+    const currentView = findInTreeById(treeData, viewId || -1)
+    return currentView?.parent_view_id
+  }, [treeData, viewId])
+
   // ── Derive RF nodes ────────────────────────────────────────────────────────
   useEffect(() => {
     setRfNodes((prevNodes) => {
-      // The structural parent of the current view is stored under the view's
-      // owner element ID which differs from the IDs of elements placed inside
-      // the view. Pre-compute it so every node in the view shows the correct
-      // zoom-out state even when their own element_id has no direct parent link.
-      const viewParentLinks = Object.values(parentLinksMap).flat()
-      const findInTreeById = (nodes: ViewTreeNode[], id: number): ViewTreeNode | null => {
-        for (const node of nodes) {
-          if (node.id === id) return node
-          const found = findInTreeById(node.children, id)
-          if (found) return found
-        }
-        return null
-      }
-      const currentView = findInTreeById(treeData, viewId || -1)
-      const parentViewId = currentView?.parent_view_id
-      
+
+      const prevNodeMap = new Map(prevNodes.map((n) => [n.id, n]))
+      const hiddenSet = hiddenLayerTags.length > 0 ? new Set(hiddenLayerTags) : null
+      const activeSet = activeTags.length > 0 ? new Set(activeTags) : null
+      const hoveredSet = hoveredLayerTags !== null ? new Set(hoveredLayerTags) : null
+      const isClickConnectMode = clickConnectMode !== null
+
       return viewElements.map((obj) => {
-        const existing = prevNodes.find((n) => n.id === String(obj.element_id))
+        const nodeId = String(obj.element_id)
+        const existing = prevNodeMap.get(nodeId)
         const objTags = obj.tags || []
-        const isHiddenByLayer = hiddenLayerTags.length > 0 && objTags.some((t) => hiddenLayerTags.includes(t))
-        const isInactive = isHiddenByLayer || (activeTags.length > 0 && !objTags.some((t) => activeTags.includes(t)))
-        const isLayerHighlighted = hoveredLayerTags !== null && objTags.some((t) => hoveredLayerTags.includes(t))
-        const isSoftFocused = hoveredLayerTags !== null && !isLayerHighlighted
+
+        const isHiddenByLayer = hiddenSet !== null && objTags.some((t) => hiddenSet.has(t))
+        const isInactive = isHiddenByLayer || (activeSet !== null && !objTags.some((t) => activeSet.has(t)))
+        const isLayerHighlighted = hoveredSet !== null && objTags.some((t) => hoveredSet.has(t))
+        const isSoftFocused = hoveredSet !== null && !isLayerHighlighted
+
+        const newZIndex = isLayerHighlighted ? 10 : interactionSourceId === obj.element_id ? 1000 : 0
+        const newStyle = isInactive
+          ? HIDDEN_STYLE
+          : isSoftFocused
+            ? SOFT_FOCUS_STYLE
+            : undefined
+        const layerHighlightColor = isLayerHighlighted ? (hoveredLayerColor ?? undefined) : undefined
+        const position = existing?.dragging ? existing.position : { x: obj.position_x ?? 0, y: obj.position_y ?? 0 }
+        const isZoomHovered = hoveredZoomRef.current?.elementId === obj.element_id ? hoveredZoomRef.current.type : null
+        const links = linksMap[obj.element_id] || EMPTY_ARRAY
+        const parentLinks = parentLinksMap[obj.element_id] || viewParentLinks
+
+        // Structural sharing: if every input that would produce the same output matches the
+        // previous node, return the previous reference so React Flow skips this node's work.
+        if (
+          existing &&
+          existing.style === newStyle &&
+          existing.zIndex === newZIndex &&
+          existing.position.x === position.x &&
+          existing.position.y === position.y &&
+          existing.data &&
+          existing.data.element_id === obj.element_id &&
+          existing.data.tags === obj.tags &&
+          existing.data.name === obj.name &&
+          existing.data.position_x === obj.position_x &&
+          existing.data.position_y === obj.position_y &&
+          existing.data.description === obj.description &&
+          existing.data.kind === obj.kind &&
+          existing.data.technology === obj.technology &&
+          existing.data.url === obj.url &&
+          existing.data.logo_url === obj.logo_url &&
+          existing.data.repo === obj.repo &&
+          existing.data.branch === obj.branch &&
+          existing.data.file_path === obj.file_path &&
+          existing.data.technology_connectors === obj.technology_connectors &&
+          existing.data.links === links &&
+          existing.data.parentLinks === parentLinks &&
+          existing.data.parentViewId === parentViewId &&
+          existing.data.interactionSourceId === interactionSourceId &&
+          existing.data.isClickConnectMode === isClickConnectMode &&
+          existing.data.tagColors === tagColors &&
+          existing.data.layerHighlightColor === layerHighlightColor &&
+          existing.data.forceShowTagPopup === isLayerHighlighted &&
+          existing.data.isZoomHovered === isZoomHovered
+        ) {
+          return existing
+        }
 
         return {
-          id: String(obj.element_id),
+          id: nodeId,
           type: 'elementNode',
-          position: existing?.dragging ? existing.position : { x: obj.position_x ?? 0, y: obj.position_y ?? 0 },
+          position,
           width: existing?.width,
           height: existing?.height,
           selected: existing?.selected,
           dragging: existing?.dragging,
-          zIndex: isLayerHighlighted ? 10 : interactionSourceId === obj.element_id ? 1000 : 0,
-          style: isInactive
-            ? { opacity: 0.1, pointerEvents: 'none' }
-            : isSoftFocused
-              ? { opacity: 0.2 }
-              : undefined,
+          zIndex: newZIndex,
+          style: newStyle,
           data: {
             ...obj,
-            links: linksMap[obj.element_id] || [],
-            parentLinks: parentLinksMap[obj.element_id] || viewParentLinks,
+            links,
+            parentLinks,
             parentViewId,
             onZoomIn: stableOnZoomIn,
             onZoomOut: stableOnZoomOut,
@@ -324,18 +388,18 @@ export function useViewData({
             onStartHandleReconnect: stableOnStartHandleReconnect,
             onRemove: stableOnRemoveElement,
             onHoverZoom: stableOnHoverZoom,
-            isZoomHovered: hoveredZoomRef.current?.elementId === obj.element_id ? hoveredZoomRef.current.type : null,
+            isZoomHovered,
             interactionSourceId,
-            isClickConnectMode: clickConnectMode !== null,
+            isClickConnectMode,
             tagColors,
-            layerHighlightColor: isLayerHighlighted ? (hoveredLayerColor ?? undefined) : undefined,
+            layerHighlightColor,
             forceShowTagPopup: isLayerHighlighted,
           },
         }
       })
     })
   }, [
-    viewElements, viewId, linksMap, parentLinksMap, treeData,
+    viewElements, linksMap, parentLinksMap, viewParentLinks, parentViewId,
     interactionSourceId, clickConnectMode,
     stableOnZoomIn, stableOnZoomOut, stableOnNavigateToView, stableOnSelect,
     stableOnInteractionStart, stableOnConnectTo, stableOnStartHandleReconnect, stableOnRemoveElement, stableOnHoverZoom,
@@ -344,13 +408,17 @@ export function useViewData({
 
   // ── Derive RF connectors ────────────────────────────────────────────────────────
   useEffect(() => {
-    const visibleElementIds = new Set(viewElements.map((element) => element.element_id))
-    const filtered = connectors.filter((connector) => visibleElementIds.has(connector.source_element_id) && visibleElementIds.has(connector.target_element_id))
+    const elementMap = new Map<number, PlacedElement>()
+    for (const el of viewElements) elementMap.set(el.element_id, el)
+
+    const filtered = connectors.filter((connector) =>
+      elementMap.has(connector.source_element_id) && elementMap.has(connector.target_element_id),
+    )
 
     const handleUsage: Record<string, { id: string; type: 'source' | 'target'; otherNodeCoord: number }[]> = {}
     filtered.forEach((c) => {
-      const srcNode = viewElements.find((o) => o.element_id === c.source_element_id)
-      const tgtNode = viewElements.find((o) => o.element_id === c.target_element_id)
+      const srcNode = elementMap.get(c.source_element_id)
+      const tgtNode = elementMap.get(c.target_element_id)
       if (!srcNode || !tgtNode) return
 
       const sourceSide = getLogicalHandleId(c.source_handle, DEFAULT_SOURCE_HANDLE_SIDE)
@@ -371,29 +439,34 @@ export function useViewData({
       usages.sort((a, b) => a.otherNodeCoord - b.otherNodeCoord)
     })
 
+    const hiddenSet = hiddenLayerTags.length > 0 ? new Set(hiddenLayerTags) : null
+    const activeSet = activeTags.length > 0 ? new Set(activeTags) : null
+    const hoveredSet = hoveredLayerTags !== null ? new Set(hoveredLayerTags) : null
 
-    setRfEdges((prevConnectors) =>
-      filtered.map((e) => {
-        const existing = prevConnectors.find((re) => re.id === String(e.id))
+    setRfEdges((prevConnectors) => {
+      const prevEdgeMap = new Map(prevConnectors.map((e) => [e.id, e]))
+
+      return filtered.map((e) => {
+        const edgeId = String(e.id)
+        const existing = prevEdgeMap.get(edgeId)
         const dir = e.direction ?? 'forward'
-        const arrowMarker = { type: MarkerType.ArrowClosed, width: 14, height: 14 }
 
-        const sourceObj = viewElements.find((o) => o.element_id === e.source_element_id)
-        const targetObj = viewElements.find((o) => o.element_id === e.target_element_id)
+        const sourceObj = elementMap.get(e.source_element_id)
+        const targetObj = elementMap.get(e.target_element_id)
         const srcTags = sourceObj?.tags || []
         const tgtTags = targetObj?.tags || []
-        const isInactiveByLayer = hiddenLayerTags.length > 0 && (
-          srcTags.some((t) => hiddenLayerTags.includes(t)) ||
-          tgtTags.some((t) => hiddenLayerTags.includes(t))
+        const isInactiveByLayer = hiddenSet !== null && (
+          srcTags.some((t) => hiddenSet.has(t)) ||
+          tgtTags.some((t) => hiddenSet.has(t))
         )
-        const isInactiveByFilter = activeTags.length > 0 && (
-          !srcTags.some((t) => activeTags.includes(t)) ||
-          !tgtTags.some((t) => activeTags.includes(t))
+        const isInactiveByFilter = activeSet !== null && (
+          !srcTags.some((t) => activeSet.has(t)) ||
+          !tgtTags.some((t) => activeSet.has(t))
         )
         const isInactive = isInactiveByLayer || isInactiveByFilter
-        const isSoftFocused = hoveredLayerTags !== null && (
-          !sourceObj?.tags?.some((t) => hoveredLayerTags.includes(t)) ||
-          !targetObj?.tags?.some((t) => hoveredLayerTags.includes(t))
+        const isSoftFocused = hoveredSet !== null && (
+          !srcTags.some((t) => hoveredSet.has(t)) ||
+          !tgtTags.some((t) => hoveredSet.has(t))
         )
         const edgeOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 0.8
         const markerOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 1
@@ -404,21 +477,52 @@ export function useViewData({
         const tgtKey = `${e.target_element_id}-${targetSide}`
         const srcGroup = handleUsage[srcKey] ?? []
         const tgtGroup = handleUsage[tgtKey] ?? []
-        const sourceGroupIndex = srcGroup.findIndex((u) => u.id === String(e.id) && u.type === 'source')
-        const targetGroupIndex = tgtGroup.findIndex((u) => u.id === String(e.id) && u.type === 'target')
-        const sourceHandleSlot = getVisualHandleSlot(sourceGroupIndex, Math.max(srcGroup.length, 1))
-        const targetHandleSlot = getVisualHandleSlot(targetGroupIndex, Math.max(tgtGroup.length, 1))
+        const sourceGroupIndex = srcGroup.findIndex((u) => u.id === edgeId && u.type === 'source')
+        const targetGroupIndex = tgtGroup.findIndex((u) => u.id === edgeId && u.type === 'target')
+        const sourceGroupCount = Math.max(srcGroup.length, 1)
+        const targetGroupCount = Math.max(tgtGroup.length, 1)
+        const sourceHandleSlot = getVisualHandleSlot(sourceGroupIndex, sourceGroupCount)
+        const targetHandleSlot = getVisualHandleSlot(targetGroupIndex, targetGroupCount)
+        const sourceHandle = getVisualHandleIdForGroup(sourceSide, sourceGroupIndex, sourceGroupCount)
+        const targetHandle = getVisualHandleIdForGroup(targetSide, targetGroupIndex, targetGroupCount)
+        const newZIndex = selectedEdgeId !== null && edgeId === String(selectedEdgeId) ? 1000 : 100
+        const pointerEvents = (isInactive || isSoftFocused) ? 'none' : 'auto'
+        const labelBgOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 0.95
+
+        // Structural sharing: when all user-visible outputs match prev exactly, reuse prev ref.
+        // We match on the underlying connector ref plus every computed visibility/layout value.
+        if (
+          existing &&
+          existing.data &&
+          (existing.data as Connector & { __src?: unknown }).__src === e &&
+          existing.sourceHandle === sourceHandle &&
+          existing.targetHandle === targetHandle &&
+          existing.zIndex === newZIndex &&
+          (existing.style as CSSProperties | undefined)?.opacity === edgeOpacity &&
+          (existing.style as CSSProperties | undefined)?.pointerEvents === pointerEvents &&
+          (existing.labelStyle as CSSProperties | undefined)?.opacity === markerOpacity &&
+          (existing.labelBgStyle as CSSProperties | undefined)?.fillOpacity === labelBgOpacity &&
+          (existing.data as { sourceGroupIndex?: number }).sourceGroupIndex === sourceGroupIndex &&
+          (existing.data as { targetGroupIndex?: number }).targetGroupIndex === targetGroupIndex &&
+          (existing.data as { sourceGroupCount?: number }).sourceGroupCount === srcGroup.length &&
+          (existing.data as { targetGroupCount?: number }).targetGroupCount === tgtGroup.length
+        ) {
+          return existing
+        }
+
+        const arrowMarker = { type: MarkerType.ArrowClosed, width: 14, height: 14 }
 
         return {
-          id: String(e.id),
+          id: edgeId,
           source: String(e.source_element_id),
           target: String(e.target_element_id),
-          sourceHandle: getVisualHandleIdForGroup(sourceSide, sourceGroupIndex, Math.max(srcGroup.length, 1)),
-          targetHandle: getVisualHandleIdForGroup(targetSide, targetGroupIndex, Math.max(tgtGroup.length, 1)),
+          sourceHandle,
+          targetHandle,
           type: e.style === 'bezier' ? 'default' : (e.style || 'default'),
           label: e.label ?? '',
           data: {
             ...e,
+            __src: e,
             sourceGroupIndex,
             sourceGroupCount: srcGroup.length,
             targetGroupIndex,
@@ -429,24 +533,32 @@ export function useViewData({
             targetHandleSlot,
           },
 
-          style: { stroke: 'var(--accent)', strokeWidth: 2, opacity: edgeOpacity, pointerEvents: (isInactive || isSoftFocused) ? 'none' : 'auto' },
+          style: { stroke: 'var(--accent)', strokeWidth: 2, opacity: edgeOpacity, pointerEvents },
           labelStyle: { fontSize: 11, fill: 'var(--accent)', opacity: markerOpacity },
-          labelBgStyle: { fill: 'var(--chakra-colors-gray-900)', fillOpacity: isInactive ? 0.1 : isSoftFocused ? 0.2 : 0.95 },
+          labelBgStyle: { fill: 'var(--chakra-colors-gray-900)', fillOpacity: labelBgOpacity },
           markerEnd: (dir === 'forward' || dir === 'both') ? { ...arrowMarker, color: alphaColor('var(--accent)', markerOpacity) } : undefined,
           markerStart: (dir === 'backward' || dir === 'both') ? { ...arrowMarker, color: alphaColor('var(--accent)', markerOpacity) } : undefined,
           selected: existing?.selected,
-          zIndex: selectedEdgeId !== null && existing?.id === String(selectedEdgeId) ? 1000 : 100,
+          zIndex: newZIndex,
         }
-      }),
-    )
+      })
+    })
   }, [connectors, selectedEdgeId, activeTags, hiddenLayerTags, hoveredLayerTags, viewElements])
 
 
   // ── Boost z-index of selected connector ────────────────────────────────────────
   useEffect(() => {
-    setRfEdges((prev) =>
-      prev.map((e) => ({ ...e, zIndex: selectedEdgeId !== null && e.id === String(selectedEdgeId) ? 1000 : 100 })),
-    )
+    setRfEdges((prev) => {
+      let changed = false
+      const selectedId = selectedEdgeId !== null ? String(selectedEdgeId) : null
+      const next = prev.map((edge) => {
+        const nextZIndex = selectedId !== null && edge.id === selectedId ? 1000 : 100
+        if (edge.zIndex === nextZIndex) return edge
+        changed = true
+        return { ...edge, zIndex: nextZIndex }
+      })
+      return changed ? next : prev
+    })
   }, [selectedEdgeId])
 
   return {

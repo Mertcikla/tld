@@ -11,7 +11,6 @@ import ReactFlow, {
   PanOnScrollMode,
   ReactFlowProvider,
   useReactFlow,
-  applyNodeChanges,
 } from 'reactflow'
 import type { Edge as RFEdge, EdgeMarker as RFEdgeMarker, Node as RFNode, NodeChange } from 'reactflow'
 import 'reactflow/dist/style.css'
@@ -74,7 +73,7 @@ import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
 import { ViewEditorContext } from './context'
 import { useViewData } from './hooks/useViewData'
 import { useDrawingEngine } from './hooks/useDrawingEngine'
-import { useCanvasInteractions } from './hooks/useCanvasInteractions'
+import { applyNodeChangesWithStructuralSharing, useCanvasInteractions } from './hooks/useCanvasInteractions'
 import { sanitizeExportFilename, triggerDownload } from './utils'
 import { pickUnusedColor } from '../../components/ViewExplorer/utils'
 
@@ -646,18 +645,6 @@ function ViewEditorInner({
     handleUpdateTags,
     drawingCanvasRef,
     snapToGrid,
-    onMoveStateChange: useCallback((moving: boolean) => {
-      setLiveContextNodes((nds) => {
-        let changed = false
-        const nextNodes = nds.map((node) => {
-          const currentMoving = Boolean((node.data as { isCanvasMoving?: boolean }).isCanvasMoving)
-          if (currentMoving === moving) return node
-          changed = true
-          return { ...node, data: { ...node.data, isCanvasMoving: moving } }
-        })
-        return changed ? nextNodes : nds
-      })
-    }, []),
   })
 
   // Wire stable placeholders to the real implementations from canvas hook
@@ -826,7 +813,7 @@ function ViewEditorInner({
     const ctxChanges = changes.filter((c) => 'id' in c && contextNodeIdsRef.current.has((c as { id: string }).id))
     const mainChanges = changes.filter((c) => !('id' in c) || !contextNodeIdsRef.current.has((c as { id: string }).id))
     if (ctxChanges.length > 0) {
-      setLiveContextNodes((nds) => applyNodeChanges(ctxChanges, nds))
+      setLiveContextNodes((nds) => applyNodeChangesWithStructuralSharing(ctxChanges, nds))
     }
     if (mainChanges.length > 0) {
       canvasOnNodesChange(mainChanges)
@@ -1226,6 +1213,7 @@ function ViewEditorInner({
                 snapToGrid={snapToGrid}
                 snapGrid={[30, 30]}
                 deleteKeyCode={null}
+                autoPanOnNodeDrag={false}
                 panOnDrag={!drawingMode}
                 panOnScroll={!isMobileLayout} panOnScrollSpeed={1.2} panOnScrollMode={PanOnScrollMode.Free}
                 zoomOnScroll={false} zoomOnPinch

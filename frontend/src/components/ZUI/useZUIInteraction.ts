@@ -30,6 +30,54 @@ interface DeepestNodeResult {
   cumulativeScale: number
 }
 
+interface NodeSpatialIndex {
+  cellSize: number
+  cells: Map<string, LayoutNode[]>
+}
+
+const NODE_INDEX_CELL_SIZE = 320
+const nodeSpatialIndexCache = new WeakMap<LayoutNode[], NodeSpatialIndex>()
+
+function getNodeSpatialIndex(nodes: LayoutNode[]): NodeSpatialIndex {
+  const cached = nodeSpatialIndexCache.get(nodes)
+  if (cached) return cached
+
+  const index: NodeSpatialIndex = { cellSize: NODE_INDEX_CELL_SIZE, cells: new Map() }
+  for (const node of nodes) {
+    const startX = Math.floor(node.worldX / index.cellSize)
+    const endX = Math.floor((node.worldX + node.worldW) / index.cellSize)
+    const startY = Math.floor(node.worldY / index.cellSize)
+    const endY = Math.floor((node.worldY + node.worldH) / index.cellSize)
+
+    for (let cx = startX; cx <= endX; cx++) {
+      for (let cy = startY; cy <= endY; cy++) {
+        const key = cellKey(cx, cy)
+        let bucket = index.cells.get(key)
+        if (!bucket) {
+          bucket = []
+          index.cells.set(key, bucket)
+        }
+        bucket.push(node)
+      }
+    }
+  }
+
+  nodeSpatialIndexCache.set(nodes, index)
+  return index
+}
+
+function getNodesAtPoint(nodes: LayoutNode[], worldX: number, worldY: number): LayoutNode[] {
+  const index = getNodeSpatialIndex(nodes)
+  return index.cells.get(cellKey(Math.floor(worldX / index.cellSize), Math.floor(worldY / index.cellSize))) ?? []
+}
+
+function warmNodeSpatialIndexes(nodes: LayoutNode[]): void {
+  getNodeSpatialIndex(nodes)
+  for (const node of nodes) {
+    if (node.children.length > 0) warmNodeSpatialIndexes(node.children)
+  }
+}
+
 function findDeepestAt(worldX: number, worldY: number, groups: DiagramGroupLayout[], view: ZUIViewState, thresholds: { start: number, end: number }): DeepestNodeResult | null {
   for (const group of groups) {
     if (worldX >= group.worldX && worldX <= group.worldX + group.worldW &&
@@ -53,7 +101,8 @@ function findDeepestInNodes(
   view: ZUIViewState,
   thresholds: { start: number, end: number }
 ): DeepestNodeResult | null {
-  for (const node of nodes) {
+  const candidates = getNodesAtPoint(nodes, worldX, worldY)
+  for (const node of candidates) {
     if (worldX >= node.worldX && worldX <= node.worldX + node.worldW &&
       worldY >= node.worldY && worldY <= node.worldY + node.worldH) {
 
@@ -120,13 +169,72 @@ function findHoveredGroup(worldX: number, worldY: number, groups: DiagramGroupLa
   return null
 }
 
-function findHoveredEdge(
-  worldX: number,
-  worldY: number,
-  groups: DiagramGroupLayout[],
-  view: ZUIViewState
-): HoveredItem | null {
-  const threshold = 18 / view.zoom // 18 screen pixels converted to world distance
+type IndexedEdge =
+  | {
+    kind: 'edge'
+    x1: number
+    y1: number
+    x2: number
+    y2: number
+    midX: number
+    midY: number
+    sourceLabel: string
+    targetLabel: string
+    label: string
+    diagramId: number
+    sourceObjId: number
+    targetObjId: number
+  }
+  | {
+    kind: 'portal'
+    x1: number
+    y1: number
+    x2: number
+    y2: number
+    midX: number
+    midY: number
+    sourceLabel: string
+    targetLabel: string
+    diagramId: number
+    targetDiagId?: number
+  }
+
+interface EdgeSpatialIndex {
+  cellSize: number
+  cells: Map<string, IndexedEdge[]>
+}
+
+const EDGE_INDEX_CELL_SIZE = 360
+
+function cellKey(cx: number, cy: number): string {
+  return `${cx},${cy}`
+}
+
+function addEdgeToSpatialIndex(index: EdgeSpatialIndex, edge: IndexedEdge): void {
+  const minX = Math.min(edge.x1, edge.x2)
+  const maxX = Math.max(edge.x1, edge.x2)
+  const minY = Math.min(edge.y1, edge.y2)
+  const maxY = Math.max(edge.y1, edge.y2)
+  const startX = Math.floor(minX / index.cellSize)
+  const endX = Math.floor(maxX / index.cellSize)
+  const startY = Math.floor(minY / index.cellSize)
+  const endY = Math.floor(maxY / index.cellSize)
+
+  for (let cx = startX; cx <= endX; cx++) {
+    for (let cy = startY; cy <= endY; cy++) {
+      const key = cellKey(cx, cy)
+      let bucket = index.cells.get(key)
+      if (!bucket) {
+        bucket = []
+        index.cells.set(key, bucket)
+      }
+      bucket.push(edge)
+    }
+  }
+}
+
+function buildEdgeSpatialIndex(groups: DiagramGroupLayout[]): EdgeSpatialIndex {
+  const index: EdgeSpatialIndex = { cellSize: EDGE_INDEX_CELL_SIZE, cells: new Map() }
 
   for (const group of groups) {
     const nodeMap = new Map<string, LayoutNode>()
@@ -139,89 +247,122 @@ function findHoveredEdge(
       const target = nodeMap.get(edge.targetId)
       if (!source || !target) continue
 
-      // Node centers
       const x1 = source.worldX + source.worldW / 2
       const y1 = source.worldY + source.worldH / 2
       const x2 = target.worldX + target.worldW / 2
       const y2 = target.worldY + target.worldH / 2
-
-      // Midpoint for popover placement
-      const midX = (x1 + x2) / 2
-      const midY = (y1 + y2) / 2
-
-      // Distance from point to line segment
-      const dx = x2 - x1
-      const dy = y2 - y1
-      const l2 = dx * dx + dy * dy
-      if (l2 === 0) continue
-
-      let t = ((worldX - x1) * dx + (worldY - y1) * dy) / l2
-      t = Math.max(0, Math.min(1, t))
-
-      const nearestX = x1 + t * dx
-      const nearestY = y1 + t * dy
-      const dist = Math.sqrt((worldX - nearestX) ** 2 + (worldY - nearestY) ** 2)
-
-      if (dist < threshold) {
-        return {
-          type: 'edge',
-          data: {
-            sourceId: source.label,
-            targetId: target.label,
-            label: edge.label || 'Connection',
-            diagramId: group.diagramId,
-            sourceObjId: source.elementId,
-            targetObjId: target.elementId
-          },
-          absX: midX,
-          absY: midY
-        }
-      }
+      addEdgeToSpatialIndex(index, {
+        kind: 'edge',
+        x1,
+        y1,
+        x2,
+        y2,
+        midX: (x1 + x2) / 2,
+        midY: (y1 + y2) / 2,
+        sourceLabel: source.label,
+        targetLabel: target.label,
+        label: edge.label || 'Connection',
+        diagramId: group.diagramId,
+        sourceObjId: source.elementId,
+        targetObjId: target.elementId,
+      })
     }
 
-    // ── Squiggly lines to portal nodes ──
     for (const node of group.nodes) {
-      if (node.isPortal) {
-        // Line from diagram bottom center to portal top center
-        const x1 = group.worldX + group.diagramX + group.diagramW / 2
-        const y1 = group.worldY + group.diagramY + group.diagramH
-        const x2 = node.worldX + node.worldW / 2
-        const y2 = node.worldY
+      if (!node.isPortal) continue
+      const x1 = group.worldX + group.diagramX + group.diagramW / 2
+      const y1 = group.worldY + group.diagramY + group.diagramH
+      const x2 = node.worldX + node.worldW / 2
+      const y2 = node.worldY
+      addEdgeToSpatialIndex(index, {
+        kind: 'portal',
+        x1,
+        y1,
+        x2,
+        y2,
+        midX: (x1 + x2) / 2,
+        midY: (y1 + y2) / 2,
+        sourceLabel: group.label,
+        targetLabel: node.label,
+        diagramId: group.diagramId,
+        targetDiagId: node.linkedDiagramId,
+      })
+    }
+  }
 
-        const midX = (x1 + x2) / 2
-        const midY = (y1 + y2) / 2
+  return index
+}
 
-        const dx = x2 - x1
-        const dy = y2 - y1
+function findHoveredEdge(
+  worldX: number,
+  worldY: number,
+  index: EdgeSpatialIndex,
+  view: ZUIViewState
+): HoveredItem | null {
+  const threshold = 18 / view.zoom // 18 screen pixels converted to world distance
+  const startX = Math.floor((worldX - threshold) / index.cellSize)
+  const endX = Math.floor((worldX + threshold) / index.cellSize)
+  const startY = Math.floor((worldY - threshold) / index.cellSize)
+  const endY = Math.floor((worldY + threshold) / index.cellSize)
+  const thresholdSquared = threshold * threshold
+  let bestEdge: IndexedEdge | null = null
+  let bestDistSquared = thresholdSquared
+
+  for (let cx = startX; cx <= endX; cx++) {
+    for (let cy = startY; cy <= endY; cy++) {
+      const bucket = index.cells.get(cellKey(cx, cy))
+      if (!bucket) continue
+
+      for (const edge of bucket) {
+        const dx = edge.x2 - edge.x1
+        const dy = edge.y2 - edge.y1
         const l2 = dx * dx + dy * dy
         if (l2 === 0) continue
 
-        let t = ((worldX - x1) * dx + (worldY - y1) * dy) / l2
+        let t = ((worldX - edge.x1) * dx + (worldY - edge.y1) * dy) / l2
         t = Math.max(0, Math.min(1, t))
 
-        const nearestX = x1 + t * dx
-        const nearestY = y1 + t * dy
-        const dist = Math.sqrt((worldX - nearestX) ** 2 + (worldY - nearestY) ** 2)
-
-        if (dist < threshold) {
-          return {
-            type: 'edge',
-            data: {
-              sourceId: group.label,
-              targetId: node.label,
-              label: '',
-              diagramId: group.diagramId,
-              targetDiagId: node.linkedDiagramId,
-              isPortalConn: true
-            },
-            absX: midX,
-            absY: midY
-          }
+        const nearestX = edge.x1 + t * dx
+        const nearestY = edge.y1 + t * dy
+        const distSquared = (worldX - nearestX) ** 2 + (worldY - nearestY) ** 2
+        if (distSquared < bestDistSquared) {
+          bestDistSquared = distSquared
+          bestEdge = edge
         }
       }
     }
   }
-  return null
+
+  if (!bestEdge) return null
+  if (bestEdge.kind === 'portal') {
+    return {
+      type: 'edge',
+      data: {
+        sourceId: bestEdge.sourceLabel,
+        targetId: bestEdge.targetLabel,
+        label: '',
+        diagramId: bestEdge.diagramId,
+        targetDiagId: bestEdge.targetDiagId,
+        isPortalConn: true
+      },
+      absX: bestEdge.midX,
+      absY: bestEdge.midY
+    }
+  }
+
+  return {
+    type: 'edge',
+    data: {
+      sourceId: bestEdge.sourceLabel,
+      targetId: bestEdge.targetLabel,
+      label: bestEdge.label,
+      diagramId: bestEdge.diagramId,
+      sourceObjId: bestEdge.sourceObjId,
+      targetObjId: bestEdge.targetObjId
+    },
+    absX: bestEdge.midX,
+    absY: bestEdge.midY
+  }
 }
 
 export function calculateMaxZoom(groups: DiagramGroupLayout[], canvasW: number): number {
@@ -350,12 +491,20 @@ export function useZUIInteraction(
   // ── Refs for stable event handlers ──────────────────────────────
   const viewStateRef = useRef<ZUIViewState>(initialView)
   const groupsRef = useRef<DiagramGroupLayout[]>(groups)
+  const edgeSpatialIndexRef = useRef<EdgeSpatialIndex | null>(null)
+  if (edgeSpatialIndexRef.current === null) {
+    edgeSpatialIndexRef.current = buildEdgeSpatialIndex(groups)
+  }
   const bboxRef = useRef<BBox | undefined>(bbox)
   const onZoomRef = useRef(onZoom)
   const onPanRef = useRef(onPan)
 
   useEffect(() => {
     groupsRef.current = groups
+    edgeSpatialIndexRef.current = buildEdgeSpatialIndex(groups)
+    for (const group of groups) {
+      warmNodeSpatialIndexes(group.nodes)
+    }
     bboxRef.current = bbox
     onZoomRef.current = onZoom
     onPanRef.current = onPan
@@ -503,7 +652,8 @@ export function useZUIInteraction(
     function onMouseDown(e: MouseEvent) {
       if (e.button !== 0) return
       dragging.current = true
-      lastMouse.current = { x: e.clientX, y: e.clientY }
+      lastMouse.current.x = e.clientX
+      lastMouse.current.y = e.clientY
       el!.style.cursor = 'grabbing'
       setHoveredItem(null, true) // Hide popover immediately while dragging
     }
@@ -518,7 +668,8 @@ export function useZUIInteraction(
       if (dragging.current) {
         const dx = e.clientX - lastMouse.current.x
         const dy = e.clientY - lastMouse.current.y
-        lastMouse.current = { x: e.clientX, y: e.clientY }
+        lastMouse.current.x = e.clientX
+        lastMouse.current.y = e.clientY
         setViewState((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }))
         onPanRef.current?.()
         return
@@ -547,7 +698,7 @@ export function useZUIInteraction(
           setHoveredItem(proxyEdge)
           return
         }
-        const edge = findHoveredEdge(worldX, worldY, groupsRef.current, view)
+        const edge = findHoveredEdge(worldX, worldY, edgeSpatialIndexRef.current!, view)
         if (edge) {
           setHoveredItem(edge)
         } else {
@@ -619,7 +770,8 @@ export function useZUIInteraction(
       e.preventDefault()
       if (e.touches.length === 1) {
         dragging.current = true
-        lastMouse.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+        lastMouse.current.x = e.touches[0].clientX
+        lastMouse.current.y = e.touches[0].clientY
         lastPinchDist.current = null
       } else if (e.touches.length >= 2) {
         dragging.current = false
@@ -635,7 +787,8 @@ export function useZUIInteraction(
       if (e.touches.length === 1 && dragging.current) {
         const dx = e.touches[0].clientX - lastMouse.current.x
         const dy = e.touches[0].clientY - lastMouse.current.y
-        lastMouse.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+        lastMouse.current.x = e.touches[0].clientX
+        lastMouse.current.y = e.touches[0].clientY
         setViewState((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }))
         onPanRef.current?.()
       } else if (e.touches.length >= 2) {
@@ -677,7 +830,8 @@ export function useZUIInteraction(
       } else if (e.touches.length === 1) {
         // Transition back to dragging with the single remaining finger
         dragging.current = true
-        lastMouse.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
+        lastMouse.current.x = e.touches[0].clientX
+        lastMouse.current.y = e.touches[0].clientY
         lastPinchDist.current = null
       } else {
         // Still have multiple fingers, reset baseline to avoid jumps
