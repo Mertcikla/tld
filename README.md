@@ -44,6 +44,12 @@ Here are some examples that were generated using the agent skill.
 ---
 
 ## Quick Start
+### Single line install and start
+```bash
+curl -LsSf https://tldiagram.com/install.sh | sh -s serve --open
+```
+
+OR
 
 ### 1. Install the binary
 ```bash
@@ -53,7 +59,6 @@ curl -LsSf https://tldiagram.com/install.sh | sh
 ### 2. Launch the Web UI
 Initialize a workspace and start the local server:
 ```bash
-tld init
 tld serve
 ```
 Open **`http://localhost:8060`** to start visually mapping your architecture.
