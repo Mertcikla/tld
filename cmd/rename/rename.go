@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/mertcikla/tld/internal/cmdutil"
+	"github.com/mertcikla/tld/internal/completion"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -40,5 +41,9 @@ func NewRenameCmd(wdir *string) *cobra.Command {
 	c.Flags().StringVar(&to, "to", "", "new element ref (required)")
 	_ = c.MarkFlagRequired("from")
 	_ = c.MarkFlagRequired("to")
+
+	_ = c.RegisterFlagCompletionFunc("from", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return completion.ElementRefs(wdir)
+	})
 	return c
 }
