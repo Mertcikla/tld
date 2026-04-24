@@ -6,7 +6,7 @@ interface EmptyCanvasStateProps {
   hasNodes: boolean
 }
 
-export const EmptyCanvasState: React.FC<EmptyCanvasStateProps> = ({ isMobile, hasNodes }) => {
+export const EmptyCanvasState: React.FC<EmptyCanvasStateProps> = React.memo(({ isMobile, hasNodes }) => {
   if (hasNodes) return null
 
   return (
@@ -39,4 +39,5 @@ export const EmptyCanvasState: React.FC<EmptyCanvasStateProps> = ({ isMobile, ha
       </Text>
     </Box>
   )
-}
+})
+EmptyCanvasState.displayName = 'EmptyCanvasState'

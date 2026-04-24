@@ -22,7 +22,7 @@ interface EditorOverlaysProps {
   rfNodes: RFNode[]
 }
 
-export const EditorOverlays: React.FC<EditorOverlaysProps> = ({
+export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
   connectGhostPos,
   clickConnectMode,
   clickConnectCursorPos,
@@ -169,4 +169,5 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = ({
 
     </>
   )
-}
+})
+EditorOverlays.displayName = 'EditorOverlays'

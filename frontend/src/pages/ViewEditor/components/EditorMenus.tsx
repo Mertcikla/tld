@@ -26,7 +26,7 @@ interface ConnectorContextMenuProps {
   onDelete: (edgeId: number) => void
 }
 
-export const ConnectorContextMenu: React.FC<ConnectorContextMenuProps> = ({
+export const ConnectorContextMenu: React.FC<ConnectorContextMenuProps> = React.memo(({
   menu,
   onEdit,
   onMoveSource,
@@ -68,14 +68,15 @@ export const ConnectorContextMenu: React.FC<ConnectorContextMenuProps> = ({
       </VStack>
     </Box>
   )
-}
+})
+ConnectorContextMenu.displayName = 'ConnectorContextMenu'
 
 interface CanvasContextMenuProps {
   menu: { x: number; y: number; flowX: number; flowY: number } | null
   onAddElement: (x: number, y: number) => void
 }
 
-export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({ menu, onAddElement }) => {
+export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = React.memo(({ menu, onAddElement }) => {
   const { canEdit, snapToGrid, setSnapToGrid } = useViewEditorContext()
   if (!menu) return null
 
@@ -109,4 +110,5 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({ menu, onAd
       </VStack>
     </Box>
   )
-}
+})
+CanvasContextMenu.displayName = 'CanvasContextMenu'
