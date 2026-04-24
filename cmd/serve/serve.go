@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -47,7 +48,7 @@ func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 
 	PrintLogo(cmd.OutOrStdout())
 	url := "http://" + app.Addr
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Webapp available at %s\n", url)
+	printServeInfo(cmd.OutOrStdout(), url, dataDir)
 
 	if openBrowser {
 		_ = cmdutil.OpenBrowser(url)
@@ -78,7 +79,8 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 
 	if pid, err := localserver.ReadPID(pidPath); err == nil && localserver.IsRunning(pid) {
 		PrintLogo(cmd.OutOrStdout())
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Server already running (pid %d)\nWebapp available at %s\n", pid, url)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Server already running (pid %d)\n", pid)
+		printServeInfo(cmd.OutOrStdout(), url, dataDir)
 		if openBrowser {
 			_ = cmdutil.OpenBrowser(url)
 		}
@@ -136,12 +138,20 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 	}
 
 	PrintLogo(cmd.OutOrStdout())
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Webapp available at %s\n", url)
+	printServeInfo(cmd.OutOrStdout(), url, dataDir)
 
 	if openBrowser {
 		_ = cmdutil.OpenBrowser(url)
 	}
 	return nil
+}
+
+func printServeInfo(out io.Writer, url, dataDir string) {
+	cfgPath, _ := workspace.ConfigPath()
+	_, _ = fmt.Fprintf(out, "Webapp available at: %s\n", url)
+	_, _ = fmt.Fprintf(out, "Config path:         %s\n", cfgPath)
+	_, _ = fmt.Fprintf(out, "Data path:           %s\n", dataDir)
+	_, _ = fmt.Fprintln(out, "Run 'tld stop' to shut down the server")
 }
 
 func waitReady(url string, timeout time.Duration) error {
