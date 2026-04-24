@@ -1,8 +1,8 @@
-# tlDiagram Open Source (`tld`)
+# tlDiagram (`tld`)
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/mertcikla/tld)](https://go.dev/) [![License](https://img.shields.io/github/license/mertcikla/tld)](./LICENSE) [![Build Status](https://img.shields.io/github/actions/workflow/status/mertcikla/tld/test.yml?branch=main)](https://github.com/mertcikla/tld/actions) [![Go Report Card](https://goreportcard.com/badge/github.com/mertcikla/tld)](https://goreportcard.com/report/github.com/mertcikla/tld)
 
-`tld` is the **open-source, self-hostable version of [tlDiagram.com](http://tldiagram.com/)**. It provides a complete software architecture management platform that bundles a high-performance Go backend with an interactive React frontend into a single, standalone binary. 
+`tld` provides a complete software architecture management platform that bundles a high-performance Go backend with an interactive React frontend into a single, standalone binary. Includes a CLI to enable managing diagrams from the shell or in CI.
 
 Designed for local-first development and private self-hosting, `tld` allows teams to visualize, document, and manage their system architecture using a combination of a rich web UI and "Diagrams as Code" workflows.
 
@@ -11,10 +11,21 @@ Designed for local-first development and private self-hosting, `tld` allows team
 ## Key Features
 
 - **Full-Featured Web UI**: A React frontend designed, polished and optimized to handle complex architectures while attempting to intelligently show and hide details.
-- **Automated Codebase Analysis**: Built-in tree-sitter integration to automatically discover architecture components in Go, Java, Python, C++, and TypeScript.
 - **Bi-directional Sync**: Seamlessly sync changes between your local YAML files, the self-hosted web UI, and the cloud version at tlDiagram.com.
 - **Standalone Distribution**: A single, dependency-free binary containing both the server and the web application.
+- **CLI built that speaks agent**: Use the [agent skill](./skills/create-diagram/SKILL.md) and teach your agent how to create a diagram of your codebase with the exact detail level you need. You can prompt your agent to add/remove details as needed. 
+Here are some examples that were generated using the agent skill.
+
+  - [Kubernetes](https://tldiagram.com/app/explore/shared/827bc17d-7d9b-411f-9d03-179fab99bcbd)
+
+  - [pytorch](https://tldiagram.com/app/explore/shared/abc56a26-3e20-4235-90fa-e045b2b2ac74)
+ 
+  - [kafka](https://tldiagram.com/app/explore/shared/9d415d7f-b91f-47c0-9dc7-756de2860695)
+
+  - [.NET eShop reference](https://tldiagram.com/app/explore/shared/ba6cbf2a-e0ff-468a-87e5-f720d35f448d)
+
 - **Diagrams as Code**: A Git-like workflow (`plan`/`apply`) to manage architectural evolution alongside your source code.
+- **Automated Codebase Analysis**: (Preview) Built-in tree-sitter integration to automatically discover architecture components in Go, Java, Python, C++, and TypeScript (more soon™ (hopefully)).
 
 ---
 
@@ -24,12 +35,11 @@ Designed for local-first development and private self-hosting, `tld` allows team
 2. [Deployment & Self-Hosting](#deployment--self-hosting)
 3. [The tlDiagram Workflow](#the-tldiagram-workflow)
 4. [Tech Stack](#tech-stack)
-5. [Architecture Overview](#architecture-overview)
-6. [Development Setup](#development-setup)
-7. [Commands Reference](#commands-reference)
-8. [Workspace Structure](#workspace-structure)
-9. [Environment Variables](#environment-variables)
-10. [Troubleshooting](#troubleshooting)
+5. [Development Setup](#development-setup)
+6. [Commands Reference](#commands-reference)
+7. [Workspace Structure](#workspace-structure)
+8. [Environment Variables](#environment-variables)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -115,20 +125,49 @@ If you want to contribute to `tld` or build it from source:
 
 ---
 
-## Commands Reference
+## Commands Reference 
+`tld --help`
 
-| Category | Command | Description |
-|----------|---------|-------------|
-| **Server** | `tld serve` | Starts the local web UI and backend. |
-| | `tld stop` | Stops the background server process. |
-| **Workspace** | `tld init` | Initializes a new architecture workspace. |
-| | `tld status` | Shows sync status between local files and server. |
-| **Sync** | `tld pull` | Fetches latest state from cloud/server. |
-| | `tld apply` | Pushes local changes to the cloud/server. |
-| **Analysis** | `tld analyze` | Scans codebase for architectural components. |
-| | `tld check` | Validates linked code symbols in CI. |
-| **Resources** | `tld add` / `tld connect` | Programmatic management of elements and edges. |
+```text
+Usage:
+  tld [command]
 
+CRUD actions on resources:
+  add         Add or update an element in elements.yaml
+  connect     Add a connector between two elements
+  remove      Remove workspace resources
+  rename      Rename an element in elements.yaml
+  update      Update a resource field with a value
+
+Secondary actions:
+  analyze     Extract symbols from source files and upsert them as workspace elements
+  apply       Apply plan to the tldiagram.com
+  check       Check workspace health and diagram freshness
+  completion  Generate the autocompletion script for the specified shell
+  diff        Show differences between local workspace and server
+  export      Export all diagrams from an organization to the local workspace
+  help        Help about any command
+  init        Initialize a new tld workspace
+  login       Authenticate the CLI with a tlDiagram server
+  plan        Show what would be applied
+  pull        Pull the current server state into local YAML files
+  serve       Start the local tlDiagram web server
+  status      Show sync status between local YAML and the server
+  stop        Stop the local tlDiagram web server
+  validate    Validate the workspace YAML files
+  version     Print the version number of tld
+  views       Show derived view structure for the workspace
+
+Flags:
+      --compact            compact JSON output (no whitespace)
+      --format string      output format: text or json (default "text")
+  -h, --help               help for tld
+  -v, --version            version for tld
+  -w, --workspace string   workspace directory (default "tld")
+
+Use "tld [command] --help" for more information about a command
+
+```
 ---
 
 ## Workspace Structure
