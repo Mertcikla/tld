@@ -4,7 +4,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Mertcikla/tld"
+    "url": "git+https://github.com/mertcikla/tld.git"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
