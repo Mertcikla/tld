@@ -94,6 +94,11 @@ const nodeTypes = {
 }
 const edgeTypes = { default: ViewBezierConnector, contextStraightConnector: ContextStraightConnector, proxyConnectorEdge: ProxyConnectorEdge }
 const EMPTY_LINKS: ViewConnector[] = []
+const VIEW_EDITOR_MIN_ZOOM_FLOOR = 0.12
+const VIEW_EDITOR_EMPTY_EXTENT_RATIO = 0.75
+const VIEW_EDITOR_PAN_MARGIN_RATIO = 0.25
+const VIEW_EDITOR_PAN_MARGIN_MIN = 180
+const VIEW_EDITOR_PAN_MARGIN_MAX = 720
 
 function alphaColor(color: string, opacity: number): string {
   if (opacity >= 1) return color
@@ -808,7 +813,7 @@ function ViewEditorInner({
   // ── FitView ────────────────────────────────────────────────────────────────
   const fitViewRef = useRef(safeFitView)
   fitViewRef.current = safeFitView
-  const [computedMinZoom, setComputedMinZoom] = useState(0.05)
+  const [computedMinZoom, setComputedMinZoom] = useState(VIEW_EDITOR_MIN_ZOOM_FLOOR)
   const [computedTranslateExtent, setComputedTranslateExtent] = useState<[[number, number], [number, number]] | undefined>(undefined)
   const {
     clampedRevealProgress,
@@ -861,9 +866,12 @@ function ViewEditorInner({
   // ── Dynamic viewport bounds ────────────────────────────────────────────────
   useEffect(() => {
     const vw = window.innerWidth; const vh = window.innerHeight
-    const emptyExtent: [[number, number], [number, number]] = [[-vw, -vh], [vw, vh]]
+    const emptyExtent: [[number, number], [number, number]] = [
+      [-vw * VIEW_EDITOR_EMPTY_EXTENT_RATIO, -vh * VIEW_EDITOR_EMPTY_EXTENT_RATIO],
+      [vw * VIEW_EDITOR_EMPTY_EXTENT_RATIO, vh * VIEW_EDITOR_EMPTY_EXTENT_RATIO],
+    ]
     if (flowNodes.length === 0 && drawingPaths.length === 0) {
-      setComputedMinZoom((prev) => prev === 0.05 ? prev : 0.05)
+      setComputedMinZoom((prev) => prev === VIEW_EDITOR_MIN_ZOOM_FLOOR ? prev : VIEW_EDITOR_MIN_ZOOM_FLOOR)
       setComputedTranslateExtent((prev) => areTranslateExtentsEqual(prev, emptyExtent) ? prev : emptyExtent)
       return
     }
@@ -876,22 +884,22 @@ function ViewEditorInner({
       for (const pt of p.points) { minX = Math.min(minX, pt.x); minY = Math.min(minY, pt.y); maxX = Math.max(maxX, pt.x); maxY = Math.max(maxY, pt.y) }
     }
     if (!isFinite(minX)) {
-      setComputedMinZoom((prev) => prev === 0.05 ? prev : 0.05)
+      setComputedMinZoom((prev) => prev === VIEW_EDITOR_MIN_ZOOM_FLOOR ? prev : VIEW_EDITOR_MIN_ZOOM_FLOOR)
       setComputedTranslateExtent((prev) => areTranslateExtentsEqual(prev, emptyExtent) ? prev : emptyExtent)
       return
     }
     const bboxW = maxX - minX; const bboxH = maxY - minY
     let minZoom = Math.sqrt((0.12 * vw * vh) / Math.max(1, bboxW * bboxH))
-    if (!isFinite(minZoom) || isNaN(minZoom) || minZoom <= 0) minZoom = 0.05
-    const nextMinZoom = Math.max(0.05, Math.min(minZoom, 1))
+    if (!isFinite(minZoom) || isNaN(minZoom) || minZoom <= 0) minZoom = VIEW_EDITOR_MIN_ZOOM_FLOOR
+    const nextMinZoom = Math.max(VIEW_EDITOR_MIN_ZOOM_FLOOR, Math.min(minZoom, 1))
     setComputedMinZoom((prev) => prev === nextMinZoom ? prev : nextMinZoom)
     // Extent must be ≥ viewport at minZoom (else pan locks). Center on content bbox.
-    // Slack = content-proportional so user can always pan a bit past content edges.
+    // Keep only modest content-proportional slack so the canvas stays discoverable.
     const vwFlowMax = vw / nextMinZoom; const vhFlowMax = vh / nextMinZoom
-    const slackX = Math.max(bboxW * 0.5, 400)
-    const slackY = Math.max(bboxH * 0.5, 400)
-    const spanX = Math.max(bboxW + 2 * slackX, vwFlowMax + 2 * slackX)
-    const spanY = Math.max(bboxH + 2 * slackY, vhFlowMax + 2 * slackY)
+    const slackX = Math.min(Math.max(bboxW * VIEW_EDITOR_PAN_MARGIN_RATIO, VIEW_EDITOR_PAN_MARGIN_MIN), VIEW_EDITOR_PAN_MARGIN_MAX)
+    const slackY = Math.min(Math.max(bboxH * VIEW_EDITOR_PAN_MARGIN_RATIO, VIEW_EDITOR_PAN_MARGIN_MIN), VIEW_EDITOR_PAN_MARGIN_MAX)
+    const spanX = Math.max(bboxW + 2 * slackX, vwFlowMax)
+    const spanY = Math.max(bboxH + 2 * slackY, vhFlowMax)
     const cx = (minX + maxX) / 2; const cy = (minY + maxY) / 2
     const nextTranslateExtent: [[number, number], [number, number]] = [[cx - spanX / 2, cy - spanY / 2], [cx + spanX / 2, cy + spanY / 2]]
     setComputedTranslateExtent((prev) => areTranslateExtentsEqual(prev, nextTranslateExtent) ? prev : nextTranslateExtent)
