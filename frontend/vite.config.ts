@@ -2,6 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tsconfigPaths from 'vite-tsconfig-paths'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath, URL } from 'node:url'
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 const appBase = process.env.VITE_APP_BASE ?? '/'
@@ -37,6 +38,37 @@ export default defineConfig(async () => {
     base: appBase,
     define: {
       'import.meta.env.VITE_APP_VERSION': JSON.stringify(pkg.version),
+    },
+    resolve: {
+      alias: {
+        fs: fileURLToPath(new URL('./src/shims/empty-node-module.ts', import.meta.url)),
+        path: fileURLToPath(new URL('./src/shims/empty-node-module.ts', import.meta.url)),
+      },
+    },
+    build: {
+      chunkSizeWarningLimit: 1500,
+      rollupOptions: {
+        onwarn(warning, warn) {
+          if (
+            warning.code === 'EVAL' &&
+            typeof warning.id === 'string' &&
+            warning.id.includes('web-tree-sitter/tree-sitter.js')
+          ) {
+            return
+          }
+          warn(warning)
+        },
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return
+            if (id.includes('web-tree-sitter')) return 'tree-sitter'
+            if (id.includes('elkjs')) return 'elk'
+            if (id.includes('@codemirror') || id.includes('@uiw/react-codemirror')) return 'codemirror'
+            if (id.includes('@chakra-ui') || id.includes('@emotion') || id.includes('framer-motion')) return 'ui'
+            if (id.includes('reactflow')) return 'reactflow'
+          },
+        },
+      },
     },
     server: {
       host: true,

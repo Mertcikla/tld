@@ -74,7 +74,7 @@ import { ViewEditorContext } from './context'
 import { useViewData } from './hooks/useViewData'
 import { useDrawingEngine } from './hooks/useDrawingEngine'
 import { applyNodeChangesWithStructuralSharing, useCanvasInteractions } from './hooks/useCanvasInteractions'
-import { sanitizeExportFilename, triggerDownload } from './utils'
+import { connectorToConnector, findClosestHandles, sanitizeExportFilename, triggerDownload } from './utils'
 import { pickUnusedColor } from '../../components/ViewExplorer/utils'
 
 import { EmptyCanvasState } from './components/EmptyCanvasState'
@@ -612,7 +612,7 @@ function ViewEditorInner({
       const targetNode = rfNodesRef.current.find((n) => n.id === String(targetElementId))
       let finalSourceHandle = 'right'; let finalTargetHandle = 'left'
       if (sourceNode && targetNode) {
-        const h = (await import('./utils')).findClosestHandles(sourceNode, targetNode)
+        const h = findClosestHandles(sourceNode, targetNode)
         finalSourceHandle = h.sourceHandle; finalTargetHandle = h.targetHandle
       }
       try {
@@ -620,7 +620,7 @@ function ViewEditorInner({
           source_element_id: sourceId, target_element_id: targetElementId,
           source_handle: finalSourceHandle, target_handle: finalTargetHandle, direction: 'forward',
         })
-        const connector = (await import('./utils')).connectorToConnector(newConnector)
+        const connector = connectorToConnector(newConnector)
         upsertConnectorGraphSnapshot(connector)
         setConnectors((prev) => [...prev, connector])
       } catch { /* intentionally empty */ }

@@ -480,7 +480,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
     try {
       if (viewId != null) {
         await api.workspace.views.placements.remove(viewId, element.id)
-      } else if (orgId) {
+      } else if (orgId !== undefined) {
         await api.elements.delete(orgId, element.id)
       }
       onDelete?.(element.id)
@@ -491,7 +491,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
   const handlePermanentDelete = async () => {
     if (isReadOnly || !element) return
     try {
-      if (!orgId) return
+      if (orgId === undefined) return
       await api.elements.delete(orgId, element.id)
       onPermanentDelete?.(element.id)
       confirmPermanentDelete.onClose()
