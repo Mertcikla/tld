@@ -384,6 +384,36 @@ export const api = {
           return (json.views ?? []).map(mapDiagram)
         }),
 
+      // Lazy: root-level views only. Use for sidebar first render on huge workspaces.
+      treeRoots: (opts: { limit?: number; offset?: number; search?: string } = {}): Promise<{ views: ViewTreeNode[]; totalCount: number }> =>
+        rpc(async () => {
+          const res = await workspaceClient.getWorkspace({
+            includeContent: false,
+            level: 0,
+            limit: opts.limit ?? 0,
+            offset: opts.offset ?? 0,
+            search: opts.search ?? '',
+          })
+          const json = j<{ views: ProtoDiagram[]; total_count?: number }>(GetWorkspaceResponseSchema, res)
+          return {
+            views: (json.views ?? []).map(mapDiagram),
+            totalCount: Number(json.total_count ?? 0),
+          }
+        }),
+
+      // Lazy: direct children of a parent view. Used on tree node expand.
+      treeChildren: (parentId: number, opts: { limit?: number; offset?: number } = {}): Promise<ViewTreeNode[]> =>
+        rpc(async () => {
+          const res = await workspaceClient.getWorkspace({
+            includeContent: false,
+            parentId,
+            limit: opts.limit ?? 0,
+            offset: opts.offset ?? 0,
+          })
+          const json = j<{ views: ProtoDiagram[] }>(GetWorkspaceResponseSchema, res)
+          return (json.views ?? []).map(mapDiagram)
+        }),
+
       get: (id: number): Promise<ViewTreeNode> =>
         rpc(async () => {
           const res = await workspaceClient.getView({ viewId: id })
