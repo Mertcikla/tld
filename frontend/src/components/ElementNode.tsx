@@ -12,9 +12,6 @@ import { ZoomInIcon, ZoomOutIcon, TrashIcon as TrashSvg, EditIcon as EditSvg } f
 import { vscodeBridge } from '../lib/vscodeBridge'
 import type { ExtensionToWebviewMessage } from '../types/vscode-messages'
 import {
-  DEFAULT_SOURCE_HANDLE_SIDE,
-  DEFAULT_TARGET_HANDLE_SIDE,
-  ensureVisualHandleId,
   getVisualHandleId,
   getVisualHandleStyle,
   HANDLE_SLOT_CENTER_INDEX,
@@ -154,6 +151,10 @@ interface NodeData extends PlacedElement {
   layerHighlightColor?: string
   forceShowTagPopup?: boolean
   isCanvasMoving?: boolean
+  connectedHandleIds?: readonly string[]
+  selectedHandleIds?: readonly string[]
+  reconnectCandidates?: readonly { handleId: string; edgeId: string; endpoint: 'source' | 'target'; selected: boolean }[]
+  isConnectorHighlighted?: boolean
 }
 
 interface Props {
@@ -285,61 +286,13 @@ function ElementNode({ data, selected }: Props) {
   const zoom = useStore(zoomSelector)
   useAccentColor()
 
-  const nodeId = String(data.element_id)
-  const isConnectorHighlighted = useStore((s) =>
-    s.edges.some(e => e.selected && (e.source === nodeId || e.target === nodeId))
-  )
-  const { connectedHandleKey, selectedHandleKey } = useStore((s) => {
-    const connectedHandles = new Set<string>()
-    const selectedHandles = new Set<string>()
-    for (const connector of s.edges) {
-      if (connector.source === nodeId) {
-        const targetNode = s.nodeInternals.get(connector.target)
-        if (targetNode && targetNode.type !== 'ContextBoundaryElement' && targetNode.type !== 'contextNeighborNode') {
-          const handleId = ensureVisualHandleId(connector.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
-          if (handleId) {
-            connectedHandles.add(handleId)
-            if (connector.selected) selectedHandles.add(handleId)
-          }
-        }
-      }
-      if (connector.target === nodeId) {
-        const sourceNode = s.nodeInternals.get(connector.source)
-        if (sourceNode && sourceNode.type !== 'ContextBoundaryElement' && sourceNode.type !== 'contextNeighborNode') {
-          const handleId = ensureVisualHandleId(connector.targetHandle, DEFAULT_TARGET_HANDLE_SIDE)
-          if (handleId) {
-            connectedHandles.add(handleId)
-            if (connector.selected) selectedHandles.add(handleId)
-          }
-        }
-      }
-    }
-    return {
-      connectedHandleKey: Array.from(connectedHandles).sort().join('|'),
-      selectedHandleKey: Array.from(selectedHandles).sort().join('|'),
-    }
-  })
-  const handleReconnectCandidates = useStore((s) => {
-    const candidates: Array<{ handleId: string; edgeId: string; endpoint: 'source' | 'target'; selected: boolean }> = []
-    for (const connector of s.edges) {
-      if (connector.source === nodeId) {
-        const handleId = ensureVisualHandleId(connector.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
-        if (handleId) candidates.push({ handleId, edgeId: connector.id, endpoint: 'source', selected: !!connector.selected })
-      }
-      if (connector.target === nodeId) {
-        const handleId = ensureVisualHandleId(connector.targetHandle, DEFAULT_TARGET_HANDLE_SIDE)
-        if (handleId) candidates.push({ handleId, edgeId: connector.id, endpoint: 'target', selected: !!connector.selected })
-      }
-    }
-    return candidates
-  })
   const connectedHandleIds = useMemo(
-    () => new Set(connectedHandleKey ? connectedHandleKey.split('|') : []),
-    [connectedHandleKey],
+    () => new Set(data.connectedHandleIds ?? []),
+    [data.connectedHandleIds],
   )
   const selectedHandleIds = useMemo(
-    () => new Set(selectedHandleKey ? selectedHandleKey.split('|') : []),
-    [selectedHandleKey],
+    () => new Set(data.selectedHandleIds ?? []),
+    [data.selectedHandleIds],
   )
   const activeSides = useMemo(() => {
     const sides = new Set<string>()
@@ -351,7 +304,7 @@ function ElementNode({ data, selected }: Props) {
   }, [connectedHandleIds])
   const reconnectCandidateByHandle = useMemo(() => {
     const next = new Map<string, { edgeId: string; endpoint: 'source' | 'target' }>()
-    const sortedCandidates = [...handleReconnectCandidates].sort((left, right) => {
+    const sortedCandidates = [...(data.reconnectCandidates ?? [])].sort((left, right) => {
       if (left.selected !== right.selected) return left.selected ? -1 : 1
       return left.edgeId.localeCompare(right.edgeId)
     })
@@ -361,7 +314,7 @@ function ElementNode({ data, selected }: Props) {
       }
     }
     return next
-  }, [handleReconnectCandidates])
+  }, [data.reconnectCandidates])
 
   const derivedPrimaryIconPath = (() => {
     const selected = data.technology_connectors?.find((link) => link.type === 'catalog' && !!link.is_primary_icon && !!link.slug)
@@ -509,7 +462,7 @@ function ElementNode({ data, selected }: Props) {
       isSelected={selected}
       isSource={isSource}
       isTarget={isTarget}
-      isConnectorHighlighted={isConnectorHighlighted}
+      isConnectorHighlighted={!!data.isConnectorHighlighted}
       minW="180px"
       maxW="230px"
       cursor={bodyCursor}

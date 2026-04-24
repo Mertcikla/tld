@@ -98,6 +98,7 @@ const VIEW_EDITOR_EMPTY_EXTENT_RATIO = 0.75
 const VIEW_EDITOR_PAN_MARGIN_RATIO = 0.25
 const VIEW_EDITOR_PAN_MARGIN_MIN = 180
 const VIEW_EDITOR_PAN_MARGIN_MAX = 720
+const SNAP_GRID: [number, number] = [30, 30]
 
 function alphaColor(color: string, opacity: number): string {
   if (opacity >= 1) return color
@@ -1211,8 +1212,9 @@ function ViewEditorInner({
                 nodesDraggable={canEdit} connectionMode={ConnectionMode.Loose} connectionRadius={25}
                 edgesUpdatable={canEdit} reconnectRadius={0}
                 snapToGrid={snapToGrid}
-                snapGrid={[30, 30]}
+                snapGrid={SNAP_GRID}
                 deleteKeyCode={null}
+                onlyRenderVisibleElements
                 autoPanOnNodeDrag={false}
                 panOnDrag={!drawingMode}
                 panOnScroll={!isMobileLayout} panOnScrollSpeed={1.2} panOnScrollMode={PanOnScrollMode.Free}

@@ -53,6 +53,100 @@ function alphaColor(color: string, opacity: number): string {
 const HIDDEN_STYLE: CSSProperties = { opacity: 0.1, pointerEvents: 'none' }
 const SOFT_FOCUS_STYLE: CSSProperties = { opacity: 0.2 }
 const EMPTY_ARRAY: readonly never[] = Object.freeze([])
+const EMPTY_NODE_CONNECTION_META = Object.freeze({
+  key: '',
+  connectedHandleIds: EMPTY_ARRAY as readonly string[],
+  selectedHandleIds: EMPTY_ARRAY as readonly string[],
+  reconnectCandidates: EMPTY_ARRAY as readonly NodeReconnectCandidate[],
+  isConnectorHighlighted: false,
+})
+
+type NodeReconnectCandidate = {
+  handleId: string
+  edgeId: string
+  endpoint: 'source' | 'target'
+  selected: boolean
+}
+
+type NodeConnectionMeta = {
+  key: string
+  connectedHandleIds: readonly string[]
+  selectedHandleIds: readonly string[]
+  reconnectCandidates: readonly NodeReconnectCandidate[]
+  isConnectorHighlighted: boolean
+}
+
+type ConnectorLayout = {
+  connector: Connector
+  sourceHandle: string
+  targetHandle: string
+  sourceGroupIndex: number
+  sourceGroupCount: number
+  targetGroupIndex: number
+  targetGroupCount: number
+  sourceHandleSide: string
+  targetHandleSide: string
+  sourceHandleSlot: number
+  targetHandleSlot: number
+}
+
+function buildConnectorLayouts(connectors: Connector[], elementMap: Map<number, PlacedElement>): ConnectorLayout[] {
+  const filtered = connectors.filter((connector) =>
+    elementMap.has(connector.source_element_id) && elementMap.has(connector.target_element_id),
+  )
+
+  const handleUsage: Record<string, { id: string; type: 'source' | 'target'; otherNodeCoord: number }[]> = {}
+  filtered.forEach((connector) => {
+    const srcNode = elementMap.get(connector.source_element_id)
+    const tgtNode = elementMap.get(connector.target_element_id)
+    if (!srcNode || !tgtNode) return
+
+    const sourceSide = getLogicalHandleId(connector.source_handle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
+    const targetSide = getLogicalHandleId(connector.target_handle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
+
+    const srcKey = `${connector.source_element_id}-${sourceSide}`
+    handleUsage[srcKey] ??= []
+    const srcCoord = (sourceSide === 'left' || sourceSide === 'right') ? (tgtNode.position_y ?? 0) : (tgtNode.position_x ?? 0)
+    handleUsage[srcKey].push({ id: String(connector.id), type: 'source', otherNodeCoord: srcCoord })
+
+    const tgtKey = `${connector.target_element_id}-${targetSide}`
+    handleUsage[tgtKey] ??= []
+    const tgtCoord = (targetSide === 'left' || targetSide === 'right') ? (srcNode.position_y ?? 0) : (srcNode.position_x ?? 0)
+    handleUsage[tgtKey].push({ id: String(connector.id), type: 'target', otherNodeCoord: tgtCoord })
+  })
+
+  Object.values(handleUsage).forEach((usages) => {
+    usages.sort((a, b) => a.otherNodeCoord - b.otherNodeCoord)
+  })
+
+  return filtered.map((connector) => {
+    const edgeId = String(connector.id)
+    const sourceSide = getLogicalHandleId(connector.source_handle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
+    const targetSide = getLogicalHandleId(connector.target_handle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
+    const srcGroup = handleUsage[`${connector.source_element_id}-${sourceSide}`] ?? []
+    const tgtGroup = handleUsage[`${connector.target_element_id}-${targetSide}`] ?? []
+    const sourceGroupIndex = srcGroup.findIndex((usage) => usage.id === edgeId && usage.type === 'source')
+    const targetGroupIndex = tgtGroup.findIndex((usage) => usage.id === edgeId && usage.type === 'target')
+    const sourceGroupCount = Math.max(srcGroup.length, 1)
+    const targetGroupCount = Math.max(tgtGroup.length, 1)
+    const sourceHandleSlot = getVisualHandleSlot(sourceGroupIndex, sourceGroupCount)
+    const targetHandleSlot = getVisualHandleSlot(targetGroupIndex, targetGroupCount)
+
+    return {
+      connector,
+      sourceHandle: getVisualHandleIdForGroup(sourceSide, sourceGroupIndex, sourceGroupCount),
+      targetHandle: getVisualHandleIdForGroup(targetSide, targetGroupIndex, targetGroupCount),
+      sourceGroupIndex,
+      sourceGroupCount: srcGroup.length,
+      targetGroupIndex,
+      targetGroupCount: tgtGroup.length,
+      sourceHandleSide: sourceSide,
+      targetHandleSide: targetSide,
+      sourceHandleSlot,
+      targetHandleSlot,
+    }
+  })
+}
 
 export function useViewData({
   viewId,
@@ -295,6 +389,90 @@ export function useViewData({
     return currentView?.parent_view_id
   }, [treeData, viewId])
 
+  const elementMap = useMemo(() => {
+    const next = new Map<number, PlacedElement>()
+    for (const element of viewElements) next.set(element.element_id, element)
+    return next
+  }, [viewElements])
+
+  const connectorLayouts = useMemo(
+    () => buildConnectorLayouts(connectors, elementMap),
+    [connectors, elementMap],
+  )
+
+  const connectionMetaCacheRef = useRef<Map<number, NodeConnectionMeta>>(new Map())
+  const nodeConnectionMetaByElementId = useMemo(() => {
+    const drafts = new Map<number, {
+      connected: Set<string>
+      selected: Set<string>
+      reconnect: NodeReconnectCandidate[]
+      highlighted: boolean
+    }>()
+
+    const draftFor = (elementId: number) => {
+      let draft = drafts.get(elementId)
+      if (!draft) {
+        draft = { connected: new Set(), selected: new Set(), reconnect: [], highlighted: false }
+        drafts.set(elementId, draft)
+      }
+      return draft
+    }
+
+    const selectedId = selectedEdgeId === null ? null : String(selectedEdgeId)
+    for (const layout of connectorLayouts) {
+      const connector = layout.connector
+      const edgeId = String(connector.id)
+      const isSelected = selectedId === edgeId
+      const sourceDraft = draftFor(connector.source_element_id)
+      const targetDraft = draftFor(connector.target_element_id)
+
+      sourceDraft.connected.add(layout.sourceHandle)
+      targetDraft.connected.add(layout.targetHandle)
+      sourceDraft.reconnect.push({ handleId: layout.sourceHandle, edgeId, endpoint: 'source', selected: isSelected })
+      targetDraft.reconnect.push({ handleId: layout.targetHandle, edgeId, endpoint: 'target', selected: isSelected })
+
+      if (isSelected) {
+        sourceDraft.selected.add(layout.sourceHandle)
+        targetDraft.selected.add(layout.targetHandle)
+        sourceDraft.highlighted = true
+        targetDraft.highlighted = true
+      }
+    }
+
+    const prev = connectionMetaCacheRef.current
+    const next = new Map<number, NodeConnectionMeta>()
+    for (const [elementId, draft] of drafts) {
+      const connectedHandleIds = Array.from(draft.connected).sort()
+      const selectedHandleIds = Array.from(draft.selected).sort()
+      const reconnectCandidates = draft.reconnect.sort((left, right) => {
+        if (left.handleId !== right.handleId) return left.handleId.localeCompare(right.handleId)
+        if (left.selected !== right.selected) return left.selected ? -1 : 1
+        return left.edgeId.localeCompare(right.edgeId)
+      })
+      const reconnectKey = reconnectCandidates
+        .map((candidate) => `${candidate.handleId}:${candidate.edgeId}:${candidate.endpoint}:${candidate.selected ? 1 : 0}`)
+        .join(',')
+      const key = [
+        connectedHandleIds.join('|'),
+        selectedHandleIds.join('|'),
+        reconnectKey,
+        draft.highlighted ? 1 : 0,
+      ].join('::')
+      const existing = prev.get(elementId)
+      next.set(elementId, existing?.key === key
+        ? existing
+        : {
+          key,
+          connectedHandleIds,
+          selectedHandleIds,
+          reconnectCandidates,
+          isConnectorHighlighted: draft.highlighted,
+        })
+    }
+    connectionMetaCacheRef.current = next
+    return next
+  }, [connectorLayouts, selectedEdgeId])
+
   // ── Derive RF nodes ────────────────────────────────────────────────────────
   useEffect(() => {
     setRfNodes((prevNodes) => {
@@ -326,6 +504,7 @@ export function useViewData({
         const isZoomHovered = hoveredZoomRef.current?.elementId === obj.element_id ? hoveredZoomRef.current.type : null
         const links = linksMap[obj.element_id] || EMPTY_ARRAY
         const parentLinks = parentLinksMap[obj.element_id] || viewParentLinks
+        const connectionMeta = nodeConnectionMetaByElementId.get(obj.element_id) ?? EMPTY_NODE_CONNECTION_META
 
         // Structural sharing: if every input that would produce the same output matches the
         // previous node, return the previous reference so React Flow skips this node's work.
@@ -358,7 +537,11 @@ export function useViewData({
           existing.data.tagColors === tagColors &&
           existing.data.layerHighlightColor === layerHighlightColor &&
           existing.data.forceShowTagPopup === isLayerHighlighted &&
-          existing.data.isZoomHovered === isZoomHovered
+          existing.data.isZoomHovered === isZoomHovered &&
+          existing.data.connectedHandleIds === connectionMeta.connectedHandleIds &&
+          existing.data.selectedHandleIds === connectionMeta.selectedHandleIds &&
+          existing.data.reconnectCandidates === connectionMeta.reconnectCandidates &&
+          existing.data.isConnectorHighlighted === connectionMeta.isConnectorHighlighted
         ) {
           return existing
         }
@@ -394,6 +577,10 @@ export function useViewData({
             tagColors,
             layerHighlightColor,
             forceShowTagPopup: isLayerHighlighted,
+            connectedHandleIds: connectionMeta.connectedHandleIds,
+            selectedHandleIds: connectionMeta.selectedHandleIds,
+            reconnectCandidates: connectionMeta.reconnectCandidates,
+            isConnectorHighlighted: connectionMeta.isConnectorHighlighted,
           },
         }
       })
@@ -404,41 +591,11 @@ export function useViewData({
     stableOnZoomIn, stableOnZoomOut, stableOnNavigateToView, stableOnSelect,
     stableOnInteractionStart, stableOnConnectTo, stableOnStartHandleReconnect, stableOnRemoveElement, stableOnHoverZoom,
     stableOnOpenCodePreview, hoveredZoomRef, activeTags, hiddenLayerTags, hoveredLayerTags, hoveredLayerColor, tagColors,
+    nodeConnectionMetaByElementId,
   ])
 
   // ── Derive RF connectors ────────────────────────────────────────────────────────
   useEffect(() => {
-    const elementMap = new Map<number, PlacedElement>()
-    for (const el of viewElements) elementMap.set(el.element_id, el)
-
-    const filtered = connectors.filter((connector) =>
-      elementMap.has(connector.source_element_id) && elementMap.has(connector.target_element_id),
-    )
-
-    const handleUsage: Record<string, { id: string; type: 'source' | 'target'; otherNodeCoord: number }[]> = {}
-    filtered.forEach((c) => {
-      const srcNode = elementMap.get(c.source_element_id)
-      const tgtNode = elementMap.get(c.target_element_id)
-      if (!srcNode || !tgtNode) return
-
-      const sourceSide = getLogicalHandleId(c.source_handle, DEFAULT_SOURCE_HANDLE_SIDE)
-      const targetSide = getLogicalHandleId(c.target_handle, DEFAULT_TARGET_HANDLE_SIDE)
-
-      const srcKey = `${c.source_element_id}-${sourceSide}`
-      handleUsage[srcKey] ??= []
-      const srcCoord = (sourceSide === 'left' || sourceSide === 'right') ? (tgtNode.position_y ?? 0) : (tgtNode.position_x ?? 0)
-      handleUsage[srcKey].push({ id: String(c.id), type: 'source', otherNodeCoord: srcCoord })
-
-      const tgtKey = `${c.target_element_id}-${targetSide}`
-      handleUsage[tgtKey] ??= []
-      const tgtCoord = (targetSide === 'left' || targetSide === 'right') ? (srcNode.position_y ?? 0) : (srcNode.position_x ?? 0)
-      handleUsage[tgtKey].push({ id: String(c.id), type: 'target', otherNodeCoord: tgtCoord })
-    })
-
-    Object.values(handleUsage).forEach((usages) => {
-      usages.sort((a, b) => a.otherNodeCoord - b.otherNodeCoord)
-    })
-
     const hiddenSet = hiddenLayerTags.length > 0 ? new Set(hiddenLayerTags) : null
     const activeSet = activeTags.length > 0 ? new Set(activeTags) : null
     const hoveredSet = hoveredLayerTags !== null ? new Set(hoveredLayerTags) : null
@@ -446,7 +603,8 @@ export function useViewData({
     setRfEdges((prevConnectors) => {
       const prevEdgeMap = new Map(prevConnectors.map((e) => [e.id, e]))
 
-      return filtered.map((e) => {
+      return connectorLayouts.map((layout) => {
+        const e = layout.connector
         const edgeId = String(e.id)
         const existing = prevEdgeMap.get(edgeId)
         const dir = e.direction ?? 'forward'
@@ -470,21 +628,6 @@ export function useViewData({
         )
         const edgeOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 0.8
         const markerOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 1
-        const sourceSide = getLogicalHandleId(e.source_handle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
-        const targetSide = getLogicalHandleId(e.target_handle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
-
-        const srcKey = `${e.source_element_id}-${sourceSide}`
-        const tgtKey = `${e.target_element_id}-${targetSide}`
-        const srcGroup = handleUsage[srcKey] ?? []
-        const tgtGroup = handleUsage[tgtKey] ?? []
-        const sourceGroupIndex = srcGroup.findIndex((u) => u.id === edgeId && u.type === 'source')
-        const targetGroupIndex = tgtGroup.findIndex((u) => u.id === edgeId && u.type === 'target')
-        const sourceGroupCount = Math.max(srcGroup.length, 1)
-        const targetGroupCount = Math.max(tgtGroup.length, 1)
-        const sourceHandleSlot = getVisualHandleSlot(sourceGroupIndex, sourceGroupCount)
-        const targetHandleSlot = getVisualHandleSlot(targetGroupIndex, targetGroupCount)
-        const sourceHandle = getVisualHandleIdForGroup(sourceSide, sourceGroupIndex, sourceGroupCount)
-        const targetHandle = getVisualHandleIdForGroup(targetSide, targetGroupIndex, targetGroupCount)
         const newZIndex = selectedEdgeId !== null && edgeId === String(selectedEdgeId) ? 1000 : 100
         const pointerEvents = (isInactive || isSoftFocused) ? 'none' : 'auto'
         const labelBgOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 0.95
@@ -495,17 +638,17 @@ export function useViewData({
           existing &&
           existing.data &&
           (existing.data as Connector & { __src?: unknown }).__src === e &&
-          existing.sourceHandle === sourceHandle &&
-          existing.targetHandle === targetHandle &&
+          existing.sourceHandle === layout.sourceHandle &&
+          existing.targetHandle === layout.targetHandle &&
           existing.zIndex === newZIndex &&
           (existing.style as CSSProperties | undefined)?.opacity === edgeOpacity &&
           (existing.style as CSSProperties | undefined)?.pointerEvents === pointerEvents &&
           (existing.labelStyle as CSSProperties | undefined)?.opacity === markerOpacity &&
           (existing.labelBgStyle as CSSProperties | undefined)?.fillOpacity === labelBgOpacity &&
-          (existing.data as { sourceGroupIndex?: number }).sourceGroupIndex === sourceGroupIndex &&
-          (existing.data as { targetGroupIndex?: number }).targetGroupIndex === targetGroupIndex &&
-          (existing.data as { sourceGroupCount?: number }).sourceGroupCount === srcGroup.length &&
-          (existing.data as { targetGroupCount?: number }).targetGroupCount === tgtGroup.length
+          (existing.data as { sourceGroupIndex?: number }).sourceGroupIndex === layout.sourceGroupIndex &&
+          (existing.data as { targetGroupIndex?: number }).targetGroupIndex === layout.targetGroupIndex &&
+          (existing.data as { sourceGroupCount?: number }).sourceGroupCount === layout.sourceGroupCount &&
+          (existing.data as { targetGroupCount?: number }).targetGroupCount === layout.targetGroupCount
         ) {
           return existing
         }
@@ -516,21 +659,21 @@ export function useViewData({
           id: edgeId,
           source: String(e.source_element_id),
           target: String(e.target_element_id),
-          sourceHandle,
-          targetHandle,
+          sourceHandle: layout.sourceHandle,
+          targetHandle: layout.targetHandle,
           type: e.style === 'bezier' ? 'default' : (e.style || 'default'),
           label: e.label ?? '',
           data: {
             ...e,
             __src: e,
-            sourceGroupIndex,
-            sourceGroupCount: srcGroup.length,
-            targetGroupIndex,
-            targetGroupCount: tgtGroup.length,
-            sourceHandleSide: sourceSide,
-            targetHandleSide: targetSide,
-            sourceHandleSlot,
-            targetHandleSlot,
+            sourceGroupIndex: layout.sourceGroupIndex,
+            sourceGroupCount: layout.sourceGroupCount,
+            targetGroupIndex: layout.targetGroupIndex,
+            targetGroupCount: layout.targetGroupCount,
+            sourceHandleSide: layout.sourceHandleSide,
+            targetHandleSide: layout.targetHandleSide,
+            sourceHandleSlot: layout.sourceHandleSlot,
+            targetHandleSlot: layout.targetHandleSlot,
           },
 
           style: { stroke: 'var(--accent)', strokeWidth: 2, opacity: edgeOpacity, pointerEvents },
@@ -543,7 +686,7 @@ export function useViewData({
         }
       })
     })
-  }, [connectors, selectedEdgeId, activeTags, hiddenLayerTags, hoveredLayerTags, viewElements])
+  }, [connectorLayouts, selectedEdgeId, activeTags, hiddenLayerTags, hoveredLayerTags, elementMap])
 
 
   // ── Boost z-index of selected connector ────────────────────────────────────────
