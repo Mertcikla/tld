@@ -13,7 +13,7 @@ import ReactFlow, {
   useReactFlow,
   applyNodeChanges,
 } from 'reactflow'
-import type { EdgeMarker as RFEdgeMarker, Node as RFNode, NodeChange } from 'reactflow'
+import type { Edge as RFEdge, EdgeMarker as RFEdgeMarker, Node as RFNode, NodeChange } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { toPng, toSvg } from 'html-to-image'
 import {
@@ -708,64 +708,105 @@ function ViewEditorInner({
   const contextNodeIdsRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     contextNodeIdsRef.current = new Set(contextNodes.map((n) => n.id))
-    setLiveContextNodes((prev) =>
-      contextNodes.map((n) => {
-        const existing = prev.find((p) => p.id === n.id)
+    setLiveContextNodes((prev) => {
+      const prevById = new Map(prev.map((p) => [p.id, p]))
+      return contextNodes.map((n) => {
+        const existing = prevById.get(n.id)
         if (existing?.width != null && existing?.height != null) {
           return { ...n, width: existing.width, height: existing.height }
         }
         return n
       })
-    )
+    })
   }, [contextNodes])
 
-  const flowNodes = useMemo(() => {
-    const allNodes = [...liveContextNodes, ...rfNodes]
-    const selectedNodeIds = new Set(allNodes.filter((n) => n.selected).map((n) => n.id))
+  const fadedNodeCacheRef = useRef<WeakMap<RFNode, RFNode>>(new WeakMap())
+  const fadedEdgeCacheRef = useRef<WeakMap<RFEdge, RFEdge>>(new WeakMap())
 
-    const allEdges = [...contextConnectors, ...rfEdges]
+  const flowNodes = useMemo(() => {
+    const allNodes = liveContextNodes.length === 0
+      ? rfNodes
+      : rfNodes.length === 0
+        ? liveContextNodes
+        : [...liveContextNodes, ...rfNodes]
+
+    let hasNodeSel = false
+    const selectedNodeIds = new Set<string>()
+    for (const n of allNodes) {
+      if (n.selected) { selectedNodeIds.add(n.id); hasNodeSel = true }
+    }
+
+    const allEdges = contextConnectors.length === 0
+      ? rfEdges
+      : rfEdges.length === 0
+        ? contextConnectors
+        : [...contextConnectors, ...rfEdges]
+
     const selectedEdgeEndPoints = new Set<string>()
-    allEdges.forEach((e) => {
+    let hasEdgeSel = false
+    for (const e of allEdges) {
       if (e.selected) {
         selectedEdgeEndPoints.add(e.source)
         selectedEdgeEndPoints.add(e.target)
+        hasEdgeSel = true
       }
-    })
-
-    const neighborNodeIds = new Set<string>()
-    if (selectedNodeIds.size > 0) {
-      allEdges.forEach((e) => {
-        if (selectedNodeIds.has(e.source)) neighborNodeIds.add(e.target)
-        if (selectedNodeIds.has(e.target)) neighborNodeIds.add(e.source)
-      })
     }
 
-    if (selectedNodeIds.size === 0 && selectedEdgeEndPoints.size === 0) return allNodes
+    const neighborNodeIds = new Set<string>()
+    if (hasNodeSel) {
+      for (const e of allEdges) {
+        if (selectedNodeIds.has(e.source)) neighborNodeIds.add(e.target)
+        if (selectedNodeIds.has(e.target)) neighborNodeIds.add(e.source)
+      }
+    }
 
+    if (!hasNodeSel && !hasEdgeSel) return allNodes
+
+    const cache = fadedNodeCacheRef.current
     return allNodes.map((n) => {
       const isHighlighted = selectedNodeIds.has(n.id) || selectedEdgeEndPoints.has(n.id) || neighborNodeIds.has(n.id)
       if (isHighlighted) return n
-      return {
+      const cached = cache.get(n)
+      if (cached) return cached
+      const faded: RFNode = {
         ...n,
         style: { ...n.style, opacity: (Number(n.style?.opacity ?? 1)) * 0.2 },
       }
+      cache.set(n, faded)
+      return faded
     })
   }, [liveContextNodes, rfNodes, contextConnectors, rfEdges])
 
   const flowEdges = useMemo(() => {
-    const allEdges = [...contextConnectors, ...rfEdges]
-    const allNodes = [...liveContextNodes, ...rfNodes]
-    const selectedNodeIds = new Set(allNodes.filter((n) => n.selected).map((n) => n.id))
-    const hasEdgeSelection = allEdges.some((e) => e.selected)
+    const allEdges = contextConnectors.length === 0
+      ? rfEdges
+      : rfEdges.length === 0
+        ? contextConnectors
+        : [...contextConnectors, ...rfEdges]
+    const allNodes = liveContextNodes.length === 0
+      ? rfNodes
+      : rfNodes.length === 0
+        ? liveContextNodes
+        : [...liveContextNodes, ...rfNodes]
 
-    if (selectedNodeIds.size === 0 && !hasEdgeSelection) return allEdges
+    const selectedNodeIds = new Set<string>()
+    let hasNodeSel = false
+    for (const n of allNodes) {
+      if (n.selected) { selectedNodeIds.add(n.id); hasNodeSel = true }
+    }
+    let hasEdgeSel = false
+    for (const e of allEdges) { if (e.selected) { hasEdgeSel = true; break } }
 
+    if (!hasNodeSel && !hasEdgeSel) return allEdges
+
+    const cache = fadedEdgeCacheRef.current
     return allEdges.map((e) => {
       const isHighlighted = e.selected || selectedNodeIds.has(e.source) || selectedNodeIds.has(e.target)
       if (isHighlighted) return e
-
+      const cached = cache.get(e)
+      if (cached) return cached
       const multiplier = 0.2
-      return {
+      const faded: RFEdge = {
         ...e,
         style: { ...e.style, opacity: (Number(e.style?.opacity ?? 0.8)) * multiplier },
         labelStyle: e.labelStyle ? { ...e.labelStyle, opacity: (Number(e.labelStyle.opacity ?? 1)) * multiplier } : undefined,
@@ -773,6 +814,8 @@ function ViewEditorInner({
         markerEnd: fadeMarker(e.markerEnd, multiplier),
         markerStart: fadeMarker(e.markerStart, multiplier),
       }
+      cache.set(e, faded)
+      return faded
     })
   }, [contextConnectors, rfEdges, liveContextNodes, rfNodes])
 
@@ -870,13 +913,18 @@ function ViewEditorInner({
       [-vw * VIEW_EDITOR_EMPTY_EXTENT_RATIO, -vh * VIEW_EDITOR_EMPTY_EXTENT_RATIO],
       [vw * VIEW_EDITOR_EMPTY_EXTENT_RATIO, vh * VIEW_EDITOR_EMPTY_EXTENT_RATIO],
     ]
-    if (flowNodes.length === 0 && drawingPaths.length === 0) {
+    const boundsNodes = liveContextNodes.length === 0
+      ? rfNodes
+      : rfNodes.length === 0
+        ? liveContextNodes
+        : [...liveContextNodes, ...rfNodes]
+    if (boundsNodes.length === 0 && drawingPaths.length === 0) {
       setComputedMinZoom((prev) => prev === VIEW_EDITOR_MIN_ZOOM_FLOOR ? prev : VIEW_EDITOR_MIN_ZOOM_FLOOR)
       setComputedTranslateExtent((prev) => areTranslateExtentsEqual(prev, emptyExtent) ? prev : emptyExtent)
       return
     }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const n of flowNodes) {
+    for (const n of boundsNodes) {
       minX = Math.min(minX, n.position.x); minY = Math.min(minY, n.position.y)
       maxX = Math.max(maxX, n.position.x + (n.width ?? 180)); maxY = Math.max(maxY, n.position.y + (n.height ?? 80))
     }
@@ -903,7 +951,7 @@ function ViewEditorInner({
     const cx = (minX + maxX) / 2; const cy = (minY + maxY) / 2
     const nextTranslateExtent: [[number, number], [number, number]] = [[cx - spanX / 2, cy - spanY / 2], [cx + spanX / 2, cy + spanY / 2]]
     setComputedTranslateExtent((prev) => areTranslateExtentsEqual(prev, nextTranslateExtent) ? prev : nextTranslateExtent)
-  }, [flowNodes, drawingPaths])
+  }, [rfNodes, liveContextNodes, drawingPaths])
 
   // ── Keyboard shortcuts for drawing ────────────────────────────────────────
   useEffect(() => {
@@ -951,7 +999,27 @@ function ViewEditorInner({
   // ── Share ──────────────────────────────────────────────────────────────────
   const onShare = useCallback(() => {}, [])
 
+  const handleExplorerHoverZoom = useCallback((elementId: number | null, type: 'in' | 'out' | null) => {
+    setHoveredZoom(type && elementId ? { elementId, type } : null)
+  }, [])
+  const handleToggleExplorer = useCallback(() => setIsExplorerOpen((v) => !v), [])
+  const handleCloseLibrary = useCallback(() => setLibraryOpen(false), [])
+  const handleCreateNewLibraryRef = useRef<() => void>(() => {})
+  const handleCreateNewLibrary = useCallback(() => handleCreateNewLibraryRef.current(), [])
+  const handleFocusModeChange = useCallback((v: boolean) => setCrossBranchEnabled(!v), [setCrossBranchEnabled])
+  const handleOpenExport = useCallback(() => exportModal.onOpen(), [exportModal])
+  const handleConnectorSave = useCallback((updated: Connector) => {
+    upsertConnectorGraphSnapshot(updated)
+    setConnectors((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
+  }, [setConnectors])
+  const handleConnectorDeleteInPanel = useCallback((edgeId: number) => {
+    if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
+    setConnectors((prev) => prev.filter((c) => c.id !== edgeId))
+  }, [setConnectors, viewId])
+  const handleViewSave = useCallback((updated: ViewTreeNode) => setView(updated), [setView])
+
   // ── Library helpers ────────────────────────────────────────────────────────
+  // Assigned below; referenced by memoized callbacks (e.g. ElementLibrary onCreateNew).
   const handleAddElementAtCenter = useCallback((forceCenter = false) => {
     if (!canEdit) return
     const rect = containerRef.current?.getBoundingClientRect()
@@ -965,6 +1033,7 @@ function ViewEditorInner({
     }
     showAddingElementAt(cx, cy, true)
   }, [canEdit, showAddingElementAt, lastMousePosRef])
+  handleCreateNewLibraryRef.current = () => handleAddElementAtCenter(true)
 
   const handleTapAdd = useCallback(async (obj: WorkspaceElement) => {
     if (!canEdit || !viewId || existingElementIds.has(obj.id)) return
@@ -1177,8 +1246,8 @@ function ViewEditorInner({
               treeNodes={treeData}
               linksMap={linksMap} viewElements={viewElements}
               onNavigate={canvas.stableOnNavigateToView}
-              onHoverZoom={(elementId, type) => setHoveredZoom(type && elementId ? { elementId, type } : null)}
-              isOpen={isExplorerOpen} onToggle={() => setIsExplorerOpen((v) => !v)}
+              onHoverZoom={handleExplorerHoverZoom}
+              isOpen={isExplorerOpen} onToggle={handleToggleExplorer}
               isMobile={isMobileLayout}
               activeTags={activeTags}
               setActiveTags={handleSetActiveTags}
@@ -1288,9 +1357,9 @@ function ViewEditorInner({
               hasDrawingPaths={drawingPaths.length > 0} drawingVisible={drawingVisible} setDrawingVisible={setDrawingVisible}
               extrasOpen={extrasOpen} setExtrasOpen={setExtrasOpen}
               focusMode={!crossBranchSettings.enabled}
-              onFocusModeChange={(v) => setCrossBranchEnabled(!v)}
+              onFocusModeChange={handleFocusModeChange}
               disableImportExport={disableImportExport}
-              onImport={importModal.onOpen} onExport={() => exportModal.onOpen()} onShare={onShare}
+              onImport={importModal.onOpen} onExport={handleOpenExport} onShare={onShare}
               allTags={availableTags}
               layers={layers}
               tagColors={tagColors}
@@ -1310,8 +1379,8 @@ function ViewEditorInner({
         <ElementLibrary
           existingElementIds={existingElementIds}
           existingElements={existingElements}
-          onCreateNew={() => handleAddElementAtCenter(true)} refresh={libraryRefresh}
-          isOpen={libraryOpen} onClose={() => setLibraryOpen(false)}
+          onCreateNew={handleCreateNewLibrary} refresh={libraryRefresh}
+          isOpen={libraryOpen} onClose={handleCloseLibrary}
           onTapAdd={canEdit ? handleTapAdd : undefined}
           onFindElement={handleFindElement}
           onTouchDrop={canEdit ? handleTouchDrop : undefined}
@@ -1334,14 +1403,8 @@ function ViewEditorInner({
         <ConnectorPanel
           isOpen={connectorPanel.isOpen} onClose={connectorPanel.onClose} connector={selectedEdge}
           orgId={''}
-          onSave={(updated: Connector) => {
-            upsertConnectorGraphSnapshot(updated)
-            setConnectors((prev) => prev.map((connector) => (connector.id === updated.id ? updated : connector)))
-          }} autoSave
-          onDelete={(edgeId: number) => {
-            if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
-            setConnectors((prev) => prev.filter((connector) => connector.id !== edgeId))
-          }}
+          onSave={handleConnectorSave} autoSave
+          onDelete={handleConnectorDeleteInPanel}
           hasBackdrop={isMobileLayout}
           connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
         />
@@ -1355,7 +1418,7 @@ function ViewEditorInner({
         <ViewPanel
           isOpen={viewDetails.isOpen} onClose={viewDetails.onClose}
           view={view as ViewTreeNode}
-          onSave={(updated) => setView(updated)} hasBackdrop={isMobileLayout}
+          onSave={handleViewSave} hasBackdrop={isMobileLayout}
         />
 
         <ExportModal

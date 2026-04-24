@@ -112,7 +112,7 @@ export function useViewContextNeighbours({
     const centerY = (minY + maxY) / 2
     const boundaryW = maxX - minX
     const boundaryH = maxY - minY
-    const totalInset = 100
+    const totalInset = 200
     const padding = 180
     const radiusX = boundaryW / 2 + padding
     const radiusY = boundaryH / 2 + padding

@@ -36,7 +36,6 @@ import {
 } from '../../../utils/edgeDistribution'
 
 const SNAP_RADIUS = 75
-const CONTEXT_BOUNDARY_INSET = 36
 
 interface CanvasInteractionOptions {
   viewId: number | null
@@ -260,37 +259,29 @@ export function useCanvasInteractions({
   const openConnectorPanelRef = useRef(openConnectorPanel)
   openConnectorPanelRef.current = openConnectorPanel
 
-  const resolvePickerMode = useCallback((flowX: number, flowY: number, preferredMode: 'add' | 'connect') => {
+  const resolvePickerMode = useCallback((flowX: number, flowY: number, preferredMode: 'add' | 'connect', forceConnect = false) => {
     if (preferredMode !== 'connect') return preferredMode
+    if (forceConnect) return 'connect'
 
-    const mainNodes = rfNodesRef.current.filter((node) => node.type === 'elementNode')
-    if (mainNodes.length === 0) return preferredMode
+    const boundaryNode = rfNodesRef.current.find((node) => node.type === 'ContextBoundaryElement')
+    if (!boundaryNode) return 'add'
 
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-
-    for (const node of mainNodes) {
-      const width = node.width ?? 200
-      const height = node.height ?? 90
-      minX = Math.min(minX, node.position.x)
-      minY = Math.min(minY, node.position.y)
-      maxX = Math.max(maxX, node.position.x + width)
-      maxY = Math.max(maxY, node.position.y + height)
-    }
+    const boundaryData = boundaryNode.data as { width?: number; height?: number } | undefined
+    const width = boundaryData?.width ?? boundaryNode.width
+    const height = boundaryData?.height ?? boundaryNode.height
+    if (width == null || height == null) return 'add'
 
     const withinBoundary =
-      flowX >= minX - CONTEXT_BOUNDARY_INSET &&
-      flowX <= maxX + CONTEXT_BOUNDARY_INSET &&
-      flowY >= minY - CONTEXT_BOUNDARY_INSET &&
-      flowY <= maxY + CONTEXT_BOUNDARY_INSET
+      flowX >= boundaryNode.position.x &&
+      flowX <= boundaryNode.position.x + width &&
+      flowY >= boundaryNode.position.y &&
+      flowY <= boundaryNode.position.y + height
 
     return withinBoundary ? 'add' : 'connect'
   }, [rfNodesRef])
 
   // ── showAddingElementAt ─────────────────────────────────────────────────────
-  const showAddingElementAt = useCallback((clientX: number, clientY: number, expandResults = false, mode: 'add' | 'connect' = 'add') => {
+  const showAddingElementAt = useCallback((clientX: number, clientY: number, expandResults = false, mode: 'add' | 'connect' = 'add', forceConnect = false) => {
     const rect = containerRef.current?.getBoundingClientRect()
     if (!rect) return
     const flowPos = screenToFlowPositionRef.current({ x: clientX, y: clientY })
@@ -305,7 +296,7 @@ export function useCanvasInteractions({
       ? Math.max(100, Math.min(px, rect.width - 450))
       : Math.max(120, Math.min(px, rect.width - 120))
     const y = Math.max(40, Math.min(py, rect.height - 250))
-    setAddingElementAt({ x, y, flowX, flowY, expandResults, mode: resolvePickerMode(flowX, flowY, mode) })
+    setAddingElementAt({ x, y, flowX, flowY, expandResults, mode: resolvePickerMode(flowX, flowY, mode, forceConnect) })
   }, [containerRef, snapToGrid, resolvePickerMode])
 
   // ── Inline element adder handlers ───────────────────────────────────────────
@@ -633,7 +624,7 @@ export function useCanvasInteractions({
     } else {
       setPendingConnectionSource(sourceElementId)
       suppressNextPaneClickRef.current = true
-      showAddingElementAt(clientX, clientY, true, 'connect')
+      showAddingElementAt(clientX, clientY, true, 'connect', 'shiftKey' in event && event.shiftKey)
     }
   }, [canEdit, setConnectors, showAddingElementAt, rfNodesRef, viewIdRef])
 
@@ -913,7 +904,7 @@ export function useCanvasInteractions({
       } else {
         setInteractionSourceId(null)
         setPendingConnectionSource(sourceId)
-        showAddingElementAt(e.clientX, e.clientY, true, 'connect')
+        showAddingElementAt(e.clientX, e.clientY, true, 'connect', e.shiftKey)
       }
       return
     }
