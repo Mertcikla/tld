@@ -56,7 +56,7 @@ func InstallWizard(cmd *cobra.Command) error {
 		rcFile = filepath.Join(fishDir, "tld.fish")
 		writeDirect = true
 	default:
-		return fmt.Errorf("unsupported shell: %s. Please install manually.", shell)
+		return fmt.Errorf("unsupported shell: %s, please install manually", shell)
 	}
 
 	if writeDirect && shell == "fish" {
@@ -64,7 +64,7 @@ func InstallWizard(cmd *cobra.Command) error {
 		if err != nil {
 			return fmt.Errorf("failed to open %s: %w", rcFile, err)
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		if err := cmd.Root().GenFishCompletion(f, true); err != nil {
 			return fmt.Errorf("failed to generate fish completion: %w", err)
 		}
@@ -78,7 +78,7 @@ func InstallWizard(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("failed to open %s: %w", rcFile, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := f.WriteString(installCmd); err != nil {
 		return fmt.Errorf("failed to write to %s: %w", rcFile, err)

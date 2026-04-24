@@ -13,6 +13,7 @@ import (
 	"github.com/mertcikla/tld/cmd/export"
 	"github.com/mertcikla/tld/cmd/initialize"
 	"github.com/mertcikla/tld/cmd/login"
+	"github.com/mertcikla/tld/cmd/mcp"
 	"github.com/mertcikla/tld/cmd/plan"
 	"github.com/mertcikla/tld/cmd/pull"
 	"github.com/mertcikla/tld/cmd/remove"
@@ -149,6 +150,9 @@ and apply them atomically with 'tld apply'.`,
 	serveCmd := serve.NewServeCmd(nil)
 	serveCmd.GroupID = secondaryGroup.ID
 
+	mcpCmd := mcp.NewMCPCmd(&wdir, &outputFormat, &compactJSON)
+	mcpCmd.GroupID = secondaryGroup.ID
+
 	stopCmd := stop.NewStopCmd()
 	stopCmd.GroupID = secondaryGroup.ID
 
@@ -171,6 +175,7 @@ and apply them atomically with 'tld apply'.`,
 		analyzeCmd,
 		checkCmd,
 		serveCmd,
+		mcpCmd,
 		stopCmd,
 		versionCmd,
 	)
