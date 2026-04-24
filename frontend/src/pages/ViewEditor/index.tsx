@@ -85,6 +85,7 @@ import { useCrossBranchContextSettings } from '../../crossBranch/settings'
 import { removeConnectorGraphSnapshot, upsertConnectorGraphSnapshot, useWorkspaceGraphSnapshot } from '../../crossBranch/store'
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
+import { useStore } from '../../store/useStore'
 
 const nodeTypes = {
   elementNode: ElementNode,
@@ -222,11 +223,33 @@ function ViewEditorInner({
   const [extrasOpen, setExtrasOpen] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
-  const [snapToGrid, setSnapToGrid] = useState(() => {
-    if (typeof window === 'undefined') return false
-    const stored = localStorage.getItem('diag:snapToGrid')
-    return stored === 'true'
-  })
+  const setViewEditorUi = useStore((state) => state.setViewEditorUi)
+  const snapToGrid = useStore((state) => state.snapToGrid)
+  const setStoreSnapToGrid = useStore((state) => state.setSnapToGrid)
+  const upsertStoreConnector = useStore((state) => state.upsertConnector)
+  const removeStoreConnector = useStore((state) => state.removeConnector)
+  const setSnapToGrid = useCallback((snap: boolean) => {
+    setStoreSnapToGrid(snap)
+    if (typeof window !== 'undefined') localStorage.setItem('diag:snapToGrid', String(snap))
+  }, [setStoreSnapToGrid])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    setStoreSnapToGrid(localStorage.getItem('diag:snapToGrid') === 'true')
+  }, [setStoreSnapToGrid])
+
+  useEffect(() => {
+    setViewEditorUi({
+      viewId,
+      canEdit,
+      isOwner,
+      isFreePlan,
+      snapToGrid,
+      selectedElement,
+      selectedConnector: selectedEdge,
+    })
+  }, [canEdit, isFreePlan, isOwner, selectedEdge, selectedElement, setViewEditorUi, snapToGrid, viewId])
+
   useEffect(() => { localStorage.setItem('diag:snapToGrid', String(snapToGrid)) }, [snapToGrid])
   const [, setHoveredZoom] = useState<{ elementId: number | null; type: 'in' | 'out' | null } | null>(null)
   const hoveredZoomRef = useRef<{ elementId: number | null; type: 'in' | 'out' | null } | null>(null)
@@ -623,7 +646,7 @@ function ViewEditorInner({
         })
         const connector = connectorToConnector(newConnector)
         upsertConnectorGraphSnapshot(connector)
-        setConnectors((prev) => [...prev, connector])
+        upsertStoreConnector(connector)
       } catch { /* intentionally empty */ }
     },
     existingElementIds, linksMapRef, parentLinksMapRef,
@@ -641,8 +664,8 @@ function ViewEditorInner({
     handleElementDeleted, handleElementPermanentlyDeleted,
     handleConnectorDeleted: useCallback((edgeId: number) => {
       if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
-      setConnectors((prev) => prev.filter((connector) => connector.id !== edgeId))
-    }, [setConnectors, viewId]),
+      removeStoreConnector(edgeId)
+    }, [removeStoreConnector, viewId]),
     handleUpdateTags,
     drawingCanvasRef,
     snapToGrid,
@@ -998,12 +1021,12 @@ function ViewEditorInner({
   const handleOpenExport = useCallback(() => exportModal.onOpen(), [exportModal])
   const handleConnectorSave = useCallback((updated: Connector) => {
     upsertConnectorGraphSnapshot(updated)
-    setConnectors((prev) => prev.map((c) => (c.id === updated.id ? updated : c)))
-  }, [setConnectors])
+    upsertStoreConnector(updated)
+  }, [upsertStoreConnector])
   const handleConnectorDeleteInPanel = useCallback((edgeId: number) => {
     if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
-    setConnectors((prev) => prev.filter((c) => c.id !== edgeId))
-  }, [setConnectors, viewId])
+    removeStoreConnector(edgeId)
+  }, [removeStoreConnector, viewId])
   const handleViewSave = useCallback((updated: ViewTreeNode) => setView(updated), [setView])
 
   // ── Library helpers ────────────────────────────────────────────────────────
@@ -1298,7 +1321,7 @@ function ViewEditorInner({
                 try {
                   await api.workspace.connectors.delete('', edgeId)
                   removeConnectorGraphSnapshot(viewId, edgeId)
-                  setConnectors((prev) => prev.filter((connector) => connector.id !== edgeId))
+                  removeStoreConnector(edgeId)
                 } catch { /* intentionally empty */ }
               }}
             />
