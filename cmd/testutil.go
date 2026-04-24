@@ -81,7 +81,7 @@ func InitGitRepo(t *testing.T, dir string, filename string, source string) {
 	run("config", "user.email", "test@example.com")
 	run("config", "user.name", "Test User")
 	run("config", "commit.gpgsign", "false")
-	
+
 	absPath := filepath.Join(dir, filename)
 	if err := os.MkdirAll(filepath.Dir(absPath), 0750); err != nil {
 		t.Fatal(err)

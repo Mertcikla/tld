@@ -113,7 +113,7 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 	child := exec.Command(exe, fwdArgs...)
 	child.Stdout = lf
 	child.Stderr = lf
-	child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	child.SysProcAttr = getSysProcAttr()
 
 	if err := child.Start(); err != nil {
 		return fmt.Errorf("start server process: %w", err)
