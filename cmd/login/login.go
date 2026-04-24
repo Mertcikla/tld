@@ -4,15 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
 	"github.com/mertcikla/tld/internal/client"
+	"github.com/mertcikla/tld/internal/cmdutil"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -58,7 +57,7 @@ enter the displayed code at <server>/app/device.`,
 
 			// Step 3: optionally open the browser.
 			if !noBrowser {
-				_ = openBrowser(auth.VerificationUriComplete)
+				_ = cmdutil.OpenBrowser(auth.VerificationUriComplete)
 			}
 
 			// Step 4: poll until approved, denied, or expired.
@@ -197,22 +196,4 @@ func setYAMLKey(mapping *yaml.Node, key, value string) {
 		&yaml.Node{Kind: yaml.ScalarNode, Value: key},
 		&yaml.Node{Kind: yaml.ScalarNode, Value: value},
 	)
-}
-
-// openBrowser opens the given URL in the default system browser.
-func openBrowser(url string) error {
-	var cmd string
-	var args []string
-	switch runtime.GOOS {
-	case "darwin":
-		cmd, args = "open", []string{url}
-	case "windows":
-		cmd, args = "cmd", []string{"/c", "start", url}
-	default:
-		cmd, args = "xdg-open", []string{url}
-	}
-	if err := exec.Command(cmd, args...).Start(); err != nil {
-		return fmt.Errorf("open browser: %w", err)
-	}
-	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mertcikla/tld/internal/localserver"
+	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -21,29 +22,31 @@ func NewStopCmd() *cobra.Command {
 Sends SIGTERM and waits up to 10 seconds for a graceful shutdown.
 Use --kill to send SIGKILL immediately.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runStop(cmd, forceKill)
+			dataDirFlag, _ := cmd.Flags().GetString("data-dir")
+			cfg, _ := workspace.LoadGlobalConfig()
+			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
+			if err != nil {
+				return err
+			}
+			return runStop(cmd, forceKill, dataDir)
 		},
 	}
 
 	cmd.Flags().BoolVar(&forceKill, "kill", false, "force-stop with SIGKILL instead of SIGTERM")
+	cmd.Flags().String("data-dir", "", "directory for database and logs (overrides config and env)")
 	return cmd
 }
 
-func runStop(cmd *cobra.Command, forceKill bool) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
-
-	pidPath := localserver.PIDPath(cwd)
+func runStop(cmd *cobra.Command, forceKill bool, dataDir string) error {
+	pidPath := localserver.PIDPath(dataDir)
 	pid, err := localserver.ReadPID(pidPath)
 	if err != nil {
-		return fmt.Errorf("no server found (could not read %s)", pidPath)
+		return fmt.Errorf("no server running")
 	}
 
 	if !localserver.IsRunning(pid) {
 		_ = os.Remove(pidPath)
-		return fmt.Errorf("no server running (stale pid file removed)")
+		return fmt.Errorf("no server running")
 	}
 
 	proc, err := os.FindProcess(pid)

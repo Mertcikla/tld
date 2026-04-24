@@ -8,12 +8,12 @@ import (
 	"syscall"
 )
 
-func PIDPath(cwd string) string {
-	return filepath.Join(cwd, "data", "tld.pid")
+func PIDPath(dataDir string) string {
+	return filepath.Join(dataDir, "tld.pid")
 }
 
-func LogPath(cwd string) string {
-	return filepath.Join(cwd, "data", "tld.log")
+func LogPath(dataDir string) string {
+	return filepath.Join(dataDir, "tld.log")
 }
 
 func ReadPID(path string) (int, error) {

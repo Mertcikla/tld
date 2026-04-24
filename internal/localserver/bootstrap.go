@@ -39,12 +39,12 @@ func AddrFromEnv() string {
 
 // Bootstrap creates the local server app. opts overrides host/port with the
 // highest priority; falls back to AddrFromEnv() when opts is empty.
-func Bootstrap(cwd string, opts ...ServeOptions) (*App, error) {
+func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 	var o ServeOptions
 	if len(opts) > 0 {
 		o = opts[0]
 	}
-	dbPath := filepath.Join(cwd, "data", "tld.db")
+	dbPath := filepath.Join(dataDir, "tld.db")
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, err
 	}

@@ -860,9 +860,11 @@ function ViewEditorInner({
 
   // ── Dynamic viewport bounds ────────────────────────────────────────────────
   useEffect(() => {
+    const vw = window.innerWidth; const vh = window.innerHeight
+    const emptyExtent: [[number, number], [number, number]] = [[-vw, -vh], [vw, vh]]
     if (flowNodes.length === 0 && drawingPaths.length === 0) {
       setComputedMinZoom((prev) => prev === 0.05 ? prev : 0.05)
-      setComputedTranslateExtent((prev) => prev === undefined ? prev : undefined)
+      setComputedTranslateExtent((prev) => areTranslateExtentsEqual(prev, emptyExtent) ? prev : emptyExtent)
       return
     }
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
@@ -875,17 +877,23 @@ function ViewEditorInner({
     }
     if (!isFinite(minX)) {
       setComputedMinZoom((prev) => prev === 0.05 ? prev : 0.05)
-      setComputedTranslateExtent((prev) => prev === undefined ? prev : undefined)
+      setComputedTranslateExtent((prev) => areTranslateExtentsEqual(prev, emptyExtent) ? prev : emptyExtent)
       return
     }
-    const vw = window.innerWidth; const vh = window.innerHeight
     const bboxW = maxX - minX; const bboxH = maxY - minY
     let minZoom = Math.sqrt((0.12 * vw * vh) / Math.max(1, bboxW * bboxH))
     if (!isFinite(minZoom) || isNaN(minZoom) || minZoom <= 0) minZoom = 0.05
     const nextMinZoom = Math.max(0.05, Math.min(minZoom, 1))
     setComputedMinZoom((prev) => prev === nextMinZoom ? prev : nextMinZoom)
-    const pmX = Math.max(vw * 2, 2000); const pmY = Math.max(vh * 2, 2000)
-    const nextTranslateExtent: [[number, number], [number, number]] = [[minX - pmX, minY - pmY], [maxX + pmX, maxY + pmY]]
+    // Extent must be ≥ viewport at minZoom (else pan locks). Center on content bbox.
+    // Slack = content-proportional so user can always pan a bit past content edges.
+    const vwFlowMax = vw / nextMinZoom; const vhFlowMax = vh / nextMinZoom
+    const slackX = Math.max(bboxW * 0.5, 400)
+    const slackY = Math.max(bboxH * 0.5, 400)
+    const spanX = Math.max(bboxW + 2 * slackX, vwFlowMax + 2 * slackX)
+    const spanY = Math.max(bboxH + 2 * slackY, vhFlowMax + 2 * slackY)
+    const cx = (minX + maxX) / 2; const cy = (minY + maxY) / 2
+    const nextTranslateExtent: [[number, number], [number, number]] = [[cx - spanX / 2, cy - spanY / 2], [cx + spanX / 2, cy + spanY / 2]]
     setComputedTranslateExtent((prev) => areTranslateExtentsEqual(prev, nextTranslateExtent) ? prev : nextTranslateExtent)
   }, [flowNodes, drawingPaths])
 
@@ -1133,7 +1141,7 @@ function ViewEditorInner({
                 onPaneContextMenu={onPaneContextMenu} onPaneClick={onPaneClick}
                 onPaneMouseMove={onPaneMouseMove}
                 onMoveStart={onMoveStart} onMove={onMove} onMoveEnd={onMoveEnd}
-                translateExtent={computedTranslateExtent} minZoom={computedMinZoom}
+                translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={4}
                 onReconnect={onReconnect} onReconnectStart={onReconnectStart} onReconnectEnd={onReconnectEnd}
                 nodeTypes={nodeTypesMemo} edgeTypes={edgeTypesMemo}
                 nodesDraggable={canEdit} connectionMode={ConnectionMode.Loose} connectionRadius={25}

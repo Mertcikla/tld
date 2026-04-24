@@ -10,33 +10,47 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mertcikla/tld/internal/cmdutil"
 	"github.com/mertcikla/tld/internal/localserver"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
 func defaultServeRunE(cmd *cobra.Command, args []string) error {
+	_ = workspace.EnsureGlobalConfig()
+
 	foreground, _ := cmd.Flags().GetBool("foreground")
+	openBrowser, _ := cmd.Flags().GetBool("open")
 	host, _ := cmd.Flags().GetString("host")
 	port, _ := cmd.Flags().GetString("port")
+	dataDirFlag, _ := cmd.Flags().GetString("data-dir")
+
+	cfg, _ := workspace.LoadGlobalConfig()
+	dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
+	if err != nil {
+		return err
+	}
 
 	if foreground {
-		return runForeground(host, port)
+		return runForeground(cmd, host, port, dataDir, openBrowser)
 	}
-	return runBackground(cmd, host, port)
+	return runBackground(cmd, host, port, dataDir, openBrowser)
 }
 
-func runForeground(host, port string) error {
+func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser bool) error {
 	opts := resolveServeOptions(host, port)
 
-	cwd, err := os.Getwd()
+	app, err := localserver.Bootstrap(dataDir, opts)
 	if err != nil {
 		return err
 	}
 
-	app, err := localserver.Bootstrap(cwd, opts)
-	if err != nil {
-		return err
+	PrintLogo(cmd.OutOrStdout())
+	url := "http://" + app.Addr
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Webapp available at %s\n", url)
+
+	if openBrowser {
+		_ = cmdutil.OpenBrowser(url)
 	}
 
 	srv := &http.Server{Addr: app.Addr, Handler: app.Handler}
@@ -56,21 +70,22 @@ func runForeground(host, port string) error {
 	return nil
 }
 
-func runBackground(cmd *cobra.Command, host, port string) error {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
-	}
+func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser bool) error {
+	pidPath := localserver.PIDPath(dataDir)
+	opts := resolveServeOptions(host, port)
+	addr := localserver.ResolveAddr(opts)
+	url := "http://" + addr
 
-	pidPath := localserver.PIDPath(cwd)
 	if pid, err := localserver.ReadPID(pidPath); err == nil && localserver.IsRunning(pid) {
-		opts := resolveServeOptions(host, port)
-		addr := localserver.ResolveAddr(opts)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Server already running (pid %d)\nWebapp available at http://%s\n", pid, addr)
+		PrintLogo(cmd.OutOrStdout())
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Server already running (pid %d)\nWebapp available at %s\n", pid, url)
+		if openBrowser {
+			_ = cmdutil.OpenBrowser(url)
+		}
 		return nil
 	}
 
-	if err := os.MkdirAll(cwd+"/data", 0o755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
 
@@ -86,8 +101,10 @@ func runBackground(cmd *cobra.Command, host, port string) error {
 	if port != "" {
 		fwdArgs = append(fwdArgs, "--port", port)
 	}
+	// Always pass resolved dataDir to foreground child
+	fwdArgs = append(fwdArgs, "--data-dir", dataDir)
 
-	lf, err := os.OpenFile(localserver.LogPath(cwd), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	lf, err := os.OpenFile(localserver.LogPath(dataDir), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
@@ -107,21 +124,23 @@ func runBackground(cmd *cobra.Command, host, port string) error {
 		return fmt.Errorf("write pid file: %w", err)
 	}
 
-	opts := resolveServeOptions(host, port)
-	addr := localserver.ResolveAddr(opts)
-
-	if err := waitReady("http://"+addr+"/api/ready", 10*time.Second); err != nil {
+	if err := waitReady(url+"/api/ready", 10*time.Second); err != nil {
 		_ = child.Process.Kill()
 		_ = os.Remove(pidPath)
-		return fmt.Errorf("server did not become ready: %w\nCheck logs: %s", err, localserver.LogPath(cwd))
+		return fmt.Errorf("server did not become ready: %w\nCheck logs: %s", err, localserver.LogPath(dataDir))
 	}
 
 	if !localserver.IsRunning(child.Process.Pid) {
 		_ = os.Remove(pidPath)
-		return fmt.Errorf("server process exited immediately; check logs: %s", localserver.LogPath(cwd))
+		return fmt.Errorf("server process exited immediately; check logs: %s", localserver.LogPath(dataDir))
 	}
 
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Webapp available at http://%s\n", addr)
+	PrintLogo(cmd.OutOrStdout())
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Webapp available at %s\n", url)
+
+	if openBrowser {
+		_ = cmdutil.OpenBrowser(url)
+	}
 	return nil
 }
 
@@ -175,6 +194,8 @@ or the TLD_ADDR / PORT environment variables.`,
 
 	cmd.Flags().String("host", "", "host address to bind (overrides config and env)")
 	cmd.Flags().String("port", "", "port to listen on (overrides config and env)")
+	cmd.Flags().String("data-dir", "", "directory for database and logs (overrides config and env)")
+	cmd.Flags().Bool("open", false, "open the browser automatically")
 	cmd.Flags().Bool("foreground", false, "run server in foreground (internal)")
 	_ = cmd.Flags().MarkHidden("foreground")
 
