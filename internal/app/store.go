@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -361,9 +362,6 @@ type viewRow struct {
 	UpdatedAt      string
 }
 
-func int64Ptr(v int64) *int64    { return &v }
-func stringPtr(v string) *string { return &v }
-
 func (s *Store) listViewRows(ctx context.Context) ([]viewRow, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, owner_element_id, name, description, level_label, level, created_at, updated_at FROM views ORDER BY id`)
 	if err != nil {
@@ -411,15 +409,15 @@ func (s *Store) childViewMeta(ctx context.Context, elementID int64) (bool, *stri
 func viewNodeFromRow(row viewRow, parentID *int64, depth int) ViewTreeNode {
 	var ownerElementID *int64
 	if row.OwnerElementID.Valid {
-		ownerElementID = int64Ptr(row.OwnerElementID.Int64)
+		ownerElementID = new(row.OwnerElementID.Int64)
 	}
 	var description *string
 	if row.Description.Valid {
-		description = stringPtr(row.Description.String)
+		description = new(row.Description.String)
 	}
 	var levelLabel *string
 	if row.LevelLabel.Valid {
-		levelLabel = stringPtr(row.LevelLabel.String)
+		levelLabel = new(row.LevelLabel.String)
 	}
 	return ViewTreeNode{
 		ID:             row.ID,
@@ -470,9 +468,7 @@ func (s *Store) ViewTree(ctx context.Context) ([]ViewTreeNode, error) {
 			return node
 		}
 		nextStack := make(map[int64]bool, len(stack)+1)
-		for id, onPath := range stack {
-			nextStack[id] = onPath
-		}
+		maps.Copy(nextStack, stack)
 		nextStack[row.ID] = true
 		children := byParent[row.ID]
 		sort.Slice(children, func(i, j int) bool { return children[i].ID < children[j].ID })
@@ -1032,7 +1028,7 @@ func (s *Store) CreateConnector(ctx context.Context, input Connector) (Connector
 		INSERT INTO connectors(view_id, source_element_id, target_element_id, label, description, relationship, direction, style, url, source_handle, target_handle, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		input.ViewID, input.SourceElementID, input.TargetElementID, input.Label, input.Description, input.Relationship,
-		normalizeDirection(stringPtr(input.Direction)), input.Style, input.URL, input.SourceHandle, input.TargetHandle, now, now)
+		normalizeDirection(new(input.Direction)), input.Style, input.URL, input.SourceHandle, input.TargetHandle, now, now)
 	if err != nil {
 		return Connector{}, err
 	}
@@ -1342,7 +1338,7 @@ func (s *Store) ImportPlan(ctx context.Context, elements []PlanElement, connecto
 	if len(elements) > 0 && strings.TrimSpace(elements[0].Name) != "" {
 		viewName = strings.TrimSpace(elements[0].Name)
 	}
-	view, err := s.CreateView(ctx, viewName, stringPtr("Imported"), nil)
+	view, err := s.CreateView(ctx, viewName, new("Imported"), nil)
 	if err != nil {
 		return 0, err
 	}
