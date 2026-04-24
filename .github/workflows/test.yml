@@ -41,7 +41,7 @@ jobs:
 
       - name: Build frontend assets
         working-directory: frontend
-        run: npm run build
+        run: npm run build:app
 
       - name: Verify dependencies
         run: |

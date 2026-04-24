@@ -8,7 +8,7 @@ before:
     - sed -i 's/Version = ".*"/Version = "{{ .Version }}"/' cmd/version/version.go
     - npm --prefix frontend version --no-git-tag-version --allow-same-version {{ .Version }}
     - npm --prefix frontend ci
-    - npm --prefix frontend run build
+    - npm --prefix frontend run build:app
 
 builds:
   - env:

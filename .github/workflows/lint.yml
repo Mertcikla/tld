@@ -37,7 +37,7 @@ jobs:
 
       - name: Build frontend assets
         working-directory: frontend
-        run: npm run build
+        run: npm run build:app
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9

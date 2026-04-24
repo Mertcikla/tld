@@ -52,4 +52,6 @@ jobs:
 
       - name: Publish @tldiagram/core-ui to npm
         working-directory: frontend
-        run: npm publish --access public
+        run: |
+          npm run build
+          npm publish --access public
