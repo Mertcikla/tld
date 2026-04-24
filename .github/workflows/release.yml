@@ -31,6 +31,7 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
@@ -41,6 +42,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Commit version bump
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: bump version to ${{ github.ref_name }} [skip ci]"
+          branch: main
+          file_pattern: 'frontend/package.json frontend/package-lock.json cmd/version/version.go go.mod go.sum'
 
       - name: Publish @tldiagram/core-ui to npm
         working-directory: frontend
