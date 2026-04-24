@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/mertcikla/tld/internal/cmdutil"
+	"github.com/mertcikla/tld/internal/completion"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -77,6 +78,18 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 	_ = c.Flags().MarkHidden("view")
 	_ = c.MarkFlagRequired("from")
 	_ = c.MarkFlagRequired("to")
+
+	elementComp := func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return completion.ElementRefs(wdir)
+	}
+	_ = c.RegisterFlagCompletionFunc("from", elementComp)
+	_ = c.RegisterFlagCompletionFunc("to", elementComp)
+	_ = c.RegisterFlagCompletionFunc("direction", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return completion.ConnectorDirections(), cobra.ShellCompDirectiveNoFileComp
+	})
+	_ = c.RegisterFlagCompletionFunc("view", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return completion.ViewRefs(wdir)
+	})
 	return c
 }
 
