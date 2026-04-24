@@ -10,7 +10,6 @@ import Settings from './pages/Settings'
 import AppearanceSettings from './pages/AppearanceSettings'
 import { HeaderProvider, useHeader } from './components/HeaderContext'
 import TopMenuBar from './components/TopMenuBar'
-import DemoPage, { DemoNavigator } from './demo/DemoPage'
 import { ThemeProvider } from './context/ThemeContext'
 import { ACCENT_DEFAULT, BACKGROUND_DEFAULT, ELEMENT_DEFAULT, hexToRgba } from './constants/colors'
 import { platform } from './platform/local'
@@ -111,9 +110,6 @@ export default function App() {
           {platform.getRoutes({ user: null })}
 
           <Route path="/explore/shared/:token" element={<Box h="100vh" overflow="hidden"><HeaderProvider><SharedInfiniteZoom /></HeaderProvider></Box>} />
-          <Route path="/demo" element={<DemoNavigator />} />
-          <Route path="/demo/:id" element={<DemoPage />} />
-
           <Route
             element={
               <HeaderProvider>

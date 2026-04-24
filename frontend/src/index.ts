@@ -148,7 +148,6 @@ export * from './crossBranch/store'
 export * from './crossBranch/types'
 
 // ─── Demo ────────────────────────────────────────────────────────────────────
-export { default as DemoPage, DemoNavigator } from './demo/DemoPage'
 export * from './demo/viewEditor'
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
