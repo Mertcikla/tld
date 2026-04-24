@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"os"
 	"path"
 	"strings"
@@ -33,6 +34,24 @@ func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID) (*
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
+	})
+
+	mux.HandleFunc("GET /api/views/{id}/thumbnail.svg", func(w http.ResponseWriter, r *http.Request) {
+		viewID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+		if err != nil || viewID <= 0 {
+			http.Error(w, "invalid view id", http.StatusBadRequest)
+			return
+		}
+
+		svg, err := sqliteStore.ThumbnailSVG(r.Context(), viewID)
+		if err != nil {
+			http.Error(w, "thumbnail not found", http.StatusNotFound)
+			return
+		}
+
+		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(svg))
 	})
 
 	wsPath, wsHandler := diagv1connect.NewWorkspaceServiceHandler(wsSvc)

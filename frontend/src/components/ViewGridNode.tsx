@@ -137,7 +137,7 @@ export default function ViewGridNode({ data }: { data: ViewGridNodeData }) {
 
     return () => {
       active = false
-      if (url) {
+      if (url?.startsWith('blob:')) {
         URL.revokeObjectURL(url)
       }
     }
@@ -225,7 +225,7 @@ export default function ViewGridNode({ data }: { data: ViewGridNodeData }) {
               p={2}
               bg="var(--bg-card-solid)"
               style={{
-                filter: 'brightness(0) saturate(100%) invert(35%) sepia(26%) forum-blue(82%) hue-rotate(180deg) brightness(95%) contrast(90%)',
+                filter: 'brightness(0) saturate(100%) invert(35%) sepia(26%) hue-rotate(180deg) brightness(95%) contrast(90%)',
               }}
             />
           ) : (
