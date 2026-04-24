@@ -2,7 +2,6 @@ package serve
 
 import (
 	"bytes"
-	"os"
 	"strings"
 	"testing"
 
@@ -11,8 +10,7 @@ import (
 
 func TestPrintLogo(t *testing.T) {
 	t.Run("no color", func(t *testing.T) {
-		os.Setenv("NO_COLOR", "1")
-		defer os.Unsetenv("NO_COLOR")
+		t.Setenv("NO_COLOR", "1")
 
 		var buf bytes.Buffer
 		PrintLogo(&buf)
@@ -31,8 +29,7 @@ func TestPrintLogo(t *testing.T) {
 		// but we can try to test that it handles NO_COLOR correctly.
 		// To truly test color, we'd need to bypass IsTerminal check or use a real terminal.
 		// For now, let's just ensure NO_COLOR is respected.
-		os.Setenv("NO_COLOR", "1")
-		defer os.Unsetenv("NO_COLOR")
+		t.Setenv("NO_COLOR", "1")
 
 		var buf bytes.Buffer
 		PrintLogo(&buf)

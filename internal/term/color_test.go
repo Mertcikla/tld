@@ -2,14 +2,12 @@ package term
 
 import (
 	"bytes"
-	"os"
 	"testing"
 )
 
 func TestColorize(t *testing.T) {
 	t.Run("no color", func(t *testing.T) {
-		os.Setenv("NO_COLOR", "1")
-		defer os.Unsetenv("NO_COLOR")
+		t.Setenv("NO_COLOR", "1")
 
 		var buf bytes.Buffer
 		text := "hello"

@@ -20,8 +20,8 @@ func PrintLogo(w io.Writer) {
                                         ░███████
 `
 	if term.IsColorEnabled(w) {
-		fmt.Fprintln(w, term.ColorBlue+logo+term.ColorReset)
+		_, _ = fmt.Fprintln(w, term.ColorBlue+logo+term.ColorReset)
 	} else {
-		fmt.Fprintln(w, logo)
+		_, _ = fmt.Fprintln(w, logo)
 	}
 }
