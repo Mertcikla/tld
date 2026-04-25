@@ -2,6 +2,8 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/mertcikla/tld/internal/cmdutil"
 	"github.com/mertcikla/tld/internal/localserver"
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -39,6 +42,7 @@ func defaultServeRunE(cmd *cobra.Command, args []string) error {
 }
 
 func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser bool) error {
+	started := time.Now()
 	opts := resolveServeOptions(host, port)
 
 	app, err := localserver.Bootstrap(dataDir, opts)
@@ -48,7 +52,14 @@ func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 
 	PrintLogo(cmd.OutOrStdout())
 	url := "http://" + app.Addr
-	printServeInfo(cmd.OutOrStdout(), url, dataDir)
+	printServeInfo(cmd.OutOrStdout(), url, serveStatus{
+		Mode:            "foreground",
+		InitializedData: app.InitializedData,
+		Resources:       app.Resources,
+		BindAddr:        app.Addr,
+		Startup:         time.Since(started),
+		DBPath:          app.DBPath,
+	})
 
 	if openBrowser {
 		_ = cmdutil.OpenBrowser(url)
@@ -72,15 +83,26 @@ func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 }
 
 func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser bool) error {
+	started := time.Now()
 	pidPath := localserver.PIDPath(dataDir)
 	opts := resolveServeOptions(host, port)
 	addr := localserver.ResolveAddr(opts)
 	url := "http://" + addr
+	initializedData := databaseWillBeInitialized(dataDir)
 
 	if pid, err := localserver.ReadPID(pidPath); err == nil && localserver.IsRunning(pid) {
 		PrintLogo(cmd.OutOrStdout())
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Server already running (pid %d)\n", pid)
-		printServeInfo(cmd.OutOrStdout(), url, dataDir)
+		ready, _ := getReady(url + "/api/ready")
+		printServeInfo(cmd.OutOrStdout(), url, serveStatus{
+			Mode:            "background",
+			InitializedData: initializedData,
+			Resources:       readyResources(ready),
+			PID:             intPtr(pid),
+			BindAddr:        addr,
+			Startup:         0,
+			DBPath:          localserver.DatabasePath(dataDir),
+		})
 		if openBrowser {
 			_ = cmdutil.OpenBrowser(url)
 		}
@@ -126,7 +148,8 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 		return fmt.Errorf("write pid file: %w", err)
 	}
 
-	if err := waitReady(url+"/api/ready", 10*time.Second); err != nil {
+	ready, err := waitReady(url+"/api/ready", 10*time.Second)
+	if err != nil {
 		_ = child.Process.Kill()
 		_ = os.Remove(pidPath)
 		return fmt.Errorf("server did not become ready: %w\nCheck logs: %s", err, localserver.LogPath(dataDir))
@@ -138,7 +161,15 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 	}
 
 	PrintLogo(cmd.OutOrStdout())
-	printServeInfo(cmd.OutOrStdout(), url, dataDir)
+	printServeInfo(cmd.OutOrStdout(), url, serveStatus{
+		Mode:            "background",
+		InitializedData: initializedData,
+		Resources:       readyResources(ready),
+		PID:             intPtr(child.Process.Pid),
+		BindAddr:        addr,
+		Startup:         time.Since(started),
+		DBPath:          localserver.DatabasePath(dataDir),
+	})
 
 	if openBrowser {
 		_ = cmdutil.OpenBrowser(url)
@@ -146,28 +177,145 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 	return nil
 }
 
-func printServeInfo(out io.Writer, url, dataDir string) {
+type serveStatus struct {
+	Mode            string
+	PID             *int
+	BindAddr        string
+	InitializedData bool
+	Resources       localserver.ResourceCounts
+	Startup         time.Duration
+	DBPath          string
+}
+
+func printServeInfo(out io.Writer, url string, status serveStatus) {
 	cfgPath, _ := workspace.ConfigPath()
-	_, _ = fmt.Fprintf(out, "Webapp available at: %s\n", url)
-	_, _ = fmt.Fprintf(out, "Config path:         %s\n", cfgPath)
-	_, _ = fmt.Fprintf(out, "Data path:           %s\n", dataDir)
+	_, _ = fmt.Fprintf(out, "Mode:                %s\n", printableMode(status.Mode))
+	if status.PID != nil {
+		_, _ = fmt.Fprintf(out, "PID:                 %d\n", *status.PID)
+	}
+	_, _ = fmt.Fprintf(out, "Server status:       %s\n", dataStatus(status.InitializedData))
+	_, _ = fmt.Fprintf(out, "Bind address:        %s\n", status.BindAddr)
+	if !status.InitializedData {
+		_, _ = fmt.Fprintf(out, "Resource counts:     %d views, %d elements, %d connectors\n", status.Resources.Views, status.Resources.Elements, status.Resources.Connectors)
+	}
+	if status.Startup > 0 {
+		_, _ = fmt.Fprintf(out, "Ready in:            %s\n", status.Startup.Round(time.Millisecond))
+	}
+	_, _ = fmt.Fprintf(out, "DB:                  %s\n", styledLocalPath(out, status.DBPath))
+	if info, err := os.Stat(status.DBPath); err == nil {
+		_, _ = fmt.Fprintf(out, "DB size:             %s\n", humanBytes(info.Size()))
+		_, _ = fmt.Fprintf(out, "DB last modified:    %s\n", info.ModTime().Format(time.RFC3339))
+	}
+	_, _ = fmt.Fprintf(out, "Config path:         %s\n", styledLocalPath(out, cfgPath))
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "tlDiagram available at: %s\n", styledWebappURL(out, url))
+	_, _ = fmt.Fprintln(out)
 	_, _ = fmt.Fprintln(out, "Run 'tld stop' to shut down the server")
 }
 
-func waitReady(url string, timeout time.Duration) error {
-	client := &http.Client{Timeout: 2 * time.Second}
+func databaseWillBeInitialized(dataDir string) bool {
+	_, err := os.Stat(localserver.DatabasePath(dataDir))
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func dataStatus(initialized bool) string {
+	if initialized {
+		return "initialized new local data"
+	}
+	return "using existing local data"
+}
+
+func printableMode(mode string) string {
+	if mode == "" {
+		return "unknown"
+	}
+	return mode
+}
+
+func styledLocalPath(out io.Writer, path string) string {
+	return formatLocalPath(path, term.IsColorEnabled(out))
+}
+
+func styledWebappURL(out io.Writer, url string) string {
+	return formatWebappURL(url, term.IsColorEnabled(out))
+}
+
+func formatLocalPath(path string, colorEnabled bool) string {
+	if !colorEnabled {
+		return path
+	}
+	return term.ColorBlue + path + term.ColorReset
+}
+
+func formatWebappURL(url string, colorEnabled bool) string {
+	if !colorEnabled {
+		return url
+	}
+	return term.ColorGreen + term.ColorUnderline + url + term.ColorReset
+}
+
+func humanBytes(size int64) string {
+	const unit = 1024
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+	div, exp := int64(unit), 0
+	for n := size / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
+}
+
+func intPtr(v int) *int { return &v }
+
+type readyInfo struct {
+	OK        bool `json:"ok"`
+	Resources struct {
+		Views      int `json:"views"`
+		Elements   int `json:"elements"`
+		Connectors int `json:"connectors"`
+	} `json:"resources"`
+}
+
+func readyResources(info *readyInfo) localserver.ResourceCounts {
+	if info == nil {
+		return localserver.ResourceCounts{}
+	}
+	return localserver.ResourceCounts{
+		Views:      info.Resources.Views,
+		Elements:   info.Resources.Elements,
+		Connectors: info.Resources.Connectors,
+	}
+}
+
+func waitReady(url string, timeout time.Duration) (*readyInfo, error) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := client.Get(url)
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return nil
-			}
+		ready, err := getReady(url)
+		if err == nil && ready.OK {
+			return ready, nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return fmt.Errorf("timed out after %s", timeout)
+	return nil, fmt.Errorf("timed out after %s", timeout)
+}
+
+func getReady(url string) (*readyInfo, error) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ready status %d", resp.StatusCode)
+	}
+	var ready readyInfo
+	if err := json.NewDecoder(resp.Body).Decode(&ready); err != nil {
+		return nil, err
+	}
+	return &ready, nil
 }
 
 func resolveServeOptions(flagHost, flagPort string) localserver.ServeOptions {
