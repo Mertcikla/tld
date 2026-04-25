@@ -16,10 +16,12 @@ import {
   Text,
   VStack,
   Icon,
+  useDisclosure,
 } from '@chakra-ui/react'
 import { ChevronDownIcon, ChevronRightIcon } from './Icons'
 import { api } from '../api/client'
 import type { ViewTreeNode } from '../types'
+import ConfirmDialog from './ConfirmDialog'
 
 type Algorithm = 'dagre' | 'force'
 
@@ -54,6 +56,7 @@ export default function LayoutSection({ view, canEdit }: Props) {
   const [algo, setAlgo] = useState<Algorithm>('dagre')
   const [running, setRunning] = useState(false)
   const [collisionRunning, setCollisionRunning] = useState(false)
+  const adjustConnectorsConfirm = useDisclosure()
 
   const [dagreConfig, setDagreConfig] = useState<DagreConfig>({
     direction: 'TB',
@@ -570,17 +573,17 @@ export default function LayoutSection({ view, canEdit }: Props) {
           </Button>
           {/* Apply button */}
           <VStack spacing={2} w="full">
-            <Button
-              size="sm"
-              w="full"
-              variant="outline"
-              colorScheme="blue"
-              onClick={handleCollisionRemoval}
-              isLoading={collisionRunning}
-              isDisabled={!canEdit || !view}
-              loadingText="Removing Connector Collisions..."
-              fontWeight="bold"
-              fontSize="xs"
+          <Button
+            size="sm"
+            w="full"
+            variant="outline"
+            colorScheme="blue"
+            onClick={adjustConnectorsConfirm.onOpen}
+            isLoading={collisionRunning}
+            isDisabled={!canEdit || !view}
+            loadingText="Removing Connector Collisions..."
+            fontWeight="bold"
+            fontSize="xs"
               letterSpacing="0.05em"
               textTransform="uppercase"
               h="32px"
@@ -594,6 +597,19 @@ export default function LayoutSection({ view, canEdit }: Props) {
 
         </VStack>
       </Collapse>
+      <ConfirmDialog
+        isOpen={adjustConnectorsConfirm.isOpen}
+        onClose={adjustConnectorsConfirm.onClose}
+        onConfirm={() => {
+          adjustConnectorsConfirm.onClose();
+          void handleCollisionRemoval();
+        }}
+        title="Adjust Connectors"
+        body="This action will re-attach existing connectors to form the shortest path between the elements."
+        confirmLabel="Confirm"
+        confirmColorScheme="blue"
+        isLoading={collisionRunning}
+      />
     </Box>
   )
 }
