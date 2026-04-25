@@ -28,3 +28,7 @@ export const apiBase = trimTrailingSlash(
 export function apiUrl(path: string): string {
   return `${apiBase}${path.startsWith("/") ? path : `/${path}`}`
 }
+
+export function fetchApiAsset(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  return fetch(input, init)
+}

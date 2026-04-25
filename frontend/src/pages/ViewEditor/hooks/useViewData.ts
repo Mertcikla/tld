@@ -1,14 +1,13 @@
 import type { CSSProperties } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MarkerType, type Edge as RFEdge, type Node as RFNode } from 'reactflow'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { MarkerType } from 'reactflow'
 import { api } from '../../../api/client'
 import type {
   ViewTreeNode,
   PlacedElement,
   LibraryElement,
   Connector,
-  IncomingViewConnector,
-  ViewConnector,
   Tag,
 } from '../../../types'
 import {
@@ -18,6 +17,7 @@ import {
   getVisualHandleIdForGroup,
   getVisualHandleSlot,
 } from '../../../utils/edgeDistribution'
+import { buildViewContentLinks, useStore } from '../../../store/useStore'
 
 interface ViewDataOptions {
   viewId: number | null
@@ -170,17 +170,32 @@ export function useViewData({
   stableOnHoverZoom,
   hoveredZoomRef,
 }: ViewDataOptions) {
-  const [view, setView] = useState<ViewTreeNode | null | undefined>(undefined)
-  const [viewElements, setViewElements] = useState<PlacedElement[]>([])
-  const [connectors, setConnectors] = useState<Connector[]>([])
-  const [rfNodes, setRfNodes] = useState<RFNode[]>([])
-  const [rfEdges, setRfEdges] = useState<RFEdge[]>([])
-  const [linksMap, setLinksMap] = useState<Record<number, ViewConnector[]>>({})
-  const [parentLinksMap, setParentLinksMap] = useState<Record<number, ViewConnector[]>>({})
-  const [incomingLinks, setIncomingLinks] = useState<IncomingViewConnector[]>([])
-  const [treeData, setTreeData] = useState<ViewTreeNode[]>([])
-  const [allElements, setAllElements] = useState<LibraryElement[]>([])
-  const [libraryRefresh, setLibraryRefresh] = useState(0)
+  const queryClient = useQueryClient()
+  const view = useStore((state) => state.view)
+  const setView = useStore((state) => state.setView)
+  const viewElements = useStore((state) => state.viewElements)
+  const setViewElements = useStore((state) => state.setViewElements)
+  const connectors = useStore((state) => state.connectors)
+  const setConnectors = useStore((state) => state.setConnectors)
+  const rfNodes = useStore((state) => state.nodes)
+  const setRfNodes = useStore((state) => state.setNodes)
+  const rfEdges = useStore((state) => state.edges)
+  const setRfEdges = useStore((state) => state.setEdges)
+  const linksMap = useStore((state) => state.linksMap)
+  const setLinksMap = useStore((state) => state.setLinksMap)
+  const parentLinksMap = useStore((state) => state.parentLinksMap)
+  const setParentLinksMap = useStore((state) => state.setParentLinksMap)
+  const incomingLinks = useStore((state) => state.incomingLinks)
+  const treeData = useStore((state) => state.treeData)
+  const allElements = useStore((state) => state.allElements)
+  const setAllElements = useStore((state) => state.setAllElements)
+  const libraryRefresh = useStore((state) => state.libraryRefresh)
+  const setLibraryRefresh = useStore((state) => state.setLibraryRefresh)
+  const hydrateViewContent = useStore((state) => state.hydrateViewContent)
+  const resetCanvas = useStore((state) => state.resetCanvas)
+  const removeElementPlacement = useStore((state) => state.removeElementPlacement)
+  const removeElementEverywhere = useStore((state) => state.removeElementEverywhere)
+  const mergeSavedElement = useStore((state) => state.mergeSavedElement)
 
   // Mutable refs for stable callbacks
   const viewElementsRef = useRef(viewElements)
@@ -202,158 +217,90 @@ export function useViewData({
 
   // ── Fetch tree ─────────────────────────────────────────────────────────────
   const refreshGrid = useCallback(async () => {
-    const tree = await api.workspace.views.tree().catch(() => null)
-    if (tree) setTreeData(tree)
-  }, [])
+    const tree = await queryClient.fetchQuery({
+      queryKey: ['workspace', 'views', 'tree'],
+      queryFn: () => api.workspace.views.tree(),
+      staleTime: 0,
+    }).catch(() => null)
+    if (tree) useStore.getState().setTreeData(tree)
+  }, [queryClient])
 
   // ── Fetch view content ──────────────────────────────────────────────────
+  const viewContentQuery = useQuery({
+    queryKey: ['workspace', 'views', viewId, 'editor-content'],
+    enabled: viewId !== null,
+    queryFn: async () => {
+      if (viewId === null) throw new Error('Missing view id')
+      const [diag, content, tree] = await Promise.all([
+        api.workspace.views.get(viewId),
+        api.workspace.views.content(viewId),
+        api.workspace.views.tree(),
+      ])
+      const viewElements = content.placements || []
+      const connectors = content.connectors || []
+      return {
+        view: diag,
+        viewElements,
+        connectors,
+        treeData: tree,
+        ...buildViewContentLinks(tree, viewId, viewElements),
+      }
+    },
+  })
+
   useEffect(() => {
     if (viewId === null) return
-    let active = true
+    if (viewContentQuery.data) hydrateViewContent(viewContentQuery.data)
+  }, [hydrateViewContent, viewContentQuery.data, viewId])
 
-    const load = async () => {
-      try {
-        const [diag, content, tree] = await Promise.all([
-          api.workspace.views.get(viewId),
-          api.workspace.views.content(viewId),
-          api.workspace.views.tree(),
-        ])
-        if (!active) return
-
-        const safeObjs = content.placements || []
-        const safeConnectors = content.connectors || []
-
-        const linksObj: Record<number, ViewConnector[]> = {}
-        const parentLinksObj: Record<number, ViewConnector[]> = {}
-
-        // Helper: recursively find nodes in tree that are owned by elements on canvas (zoom-in)
-        // OR the parent view of the current view (zoom-out)
-        const findViewByOwner = (nodes: ViewTreeNode[], elementId: number): ViewTreeNode | null => {
-          for (const node of nodes) {
-            if (node.owner_element_id !== null && Number(node.owner_element_id) === Number(elementId)) return node
-            const found = findViewByOwner(node.children, elementId)
-            if (found) return found
-          }
-          return null
-        }
-
-        const findViewPath = (nodes: ViewTreeNode[], targetId: number, path: ViewTreeNode[] = []): ViewTreeNode[] | null => {
-          for (const node of nodes) {
-            if (node.id === targetId) return [...path, node]
-            const found = findViewPath(node.children, targetId, [...path, node])
-            if (found) return found
-          }
-          return null
-        }
-
-        const viewPath = findViewPath(tree, viewId)
-        const parentView = viewPath && viewPath.length > 1 ? viewPath[viewPath.length - 2] : null
-        const currentViewInTree = viewPath ? viewPath[viewPath.length - 1] : null
-
-        const incoming: IncomingViewConnector[] = []
-        if (parentView && currentViewInTree?.owner_element_id) {
-          incoming.push({
-            id: 0,
-            element_id: currentViewInTree.owner_element_id,
-            element_name: 'Parent', // Optional: could find name in parentView.placements
-            from_view_id: parentView.id,
-            from_view_name: parentView.name,
-            to_view_id: viewId,
-          })
-        }
-
-        for (const obj of safeObjs) {
-          // Child Link: if there exists a view owned by this element
-          const childView = findViewByOwner(tree, obj.element_id)
-          if (childView) {
-            linksObj[obj.element_id] = [{
-              id: 0,
-              element_id: obj.element_id,
-              from_view_id: viewId,
-              to_view_id: childView.id,
-              to_view_name: childView.name,
-              relation_type: 'child',
-            }]
-          }
-
-          // Parent Link: all elements in a view can 'zoom out' to its structural parent
-          if (parentView) {
-            parentLinksObj[obj.element_id] = [{
-              id: 0,
-              element_id: obj.element_id,
-              from_view_id: parentView.id, // we go TO the parentView, coming FROM the parentView context?
-              to_view_id: parentView.id,
-              to_view_name: parentView.name,
-              relation_type: 'parent',
-            }]
-          }
-        }
-
-        setLinksMap(linksObj)
-        setParentLinksMap(parentLinksObj)
-        setConnectors(safeConnectors)
-        setViewElements(safeObjs)
-        setIncomingLinks(incoming)
-        setView(diag)
-        setTreeData(tree)
-      } catch (err) {
-        console.error('DIAGRAM EDITOR LOAD ERROR:', err)
-        if (active) setView(null)
-      }
+  useEffect(() => {
+    if (viewContentQuery.isError) {
+      console.error('DIAGRAM EDITOR LOAD ERROR:', viewContentQuery.error)
+      setView(null)
     }
-
-    load()
-    return () => { active = false }
-  }, [viewId])
+  }, [setView, viewContentQuery.error, viewContentQuery.isError])
 
   // ── Clear canvas on navigation ─────────────────────────────────────────────
   useEffect(() => {
-    setRfNodes([])
-    setRfEdges([])
-  }, [viewId])
+    resetCanvas()
+  }, [resetCanvas, viewId])
 
   // ── Keep all-org elements for inline adder ──────────────────────────────────
+  const allElementsQuery = useQuery({
+    queryKey: ['elements', 'list', libraryRefresh],
+    queryFn: () => api.elements.list(),
+  })
+
   useEffect(() => {
-    api.elements.list().then(setAllElements).catch(() => { /* intentionally empty */ })
-  }, [libraryRefresh])
+    if (allElementsQuery.data) setAllElements(allElementsQuery.data)
+  }, [allElementsQuery.data, setAllElements])
 
   // ── Refresh elements ────────────────────────────────────────────────────────
   const refreshElements = useCallback(async () => {
     if (viewId === null) return
-    const fresh = await api.workspace.views.content(viewId).catch(() => null)
-    if (fresh) setViewElements(fresh.placements)
-  }, [viewId])
+    const fresh = await queryClient.fetchQuery({
+      queryKey: ['workspace', 'views', viewId, 'content'],
+      queryFn: () => api.workspace.views.content(viewId),
+      staleTime: 0,
+    }).catch(() => null)
+    if (fresh) {
+      setViewElements(fresh.placements)
+      setConnectors(fresh.connectors)
+    }
+  }, [queryClient, setConnectors, setViewElements, viewId])
 
-  // ── CRDT-aware element mutation helpers ────────────────────────────────────
+  // ── Element mutation helpers ───────────────────────────────────────────────
   const handleElementDeleted = useCallback((deletedId: number) => {
-    setViewElements((prev) => prev.filter((o) => o.element_id !== deletedId))
-  }, [])
+    removeElementPlacement(deletedId)
+  }, [removeElementPlacement])
 
   const handleElementPermanentlyDeleted = useCallback((deletedId: number) => {
-    setViewElements((prev) => prev.filter((o) => o.element_id !== deletedId))
-    setLibraryRefresh((n) => n + 1)
-  }, [])
+    removeElementEverywhere(deletedId)
+  }, [removeElementEverywhere])
 
   const handleElementSaved = useCallback((saved: LibraryElement) => {
-    setLibraryRefresh((n) => n + 1)
-    setViewElements((prev) =>
-      prev.map((o) =>
-        o.element_id === saved.id
-          ? {
-            ...o,
-            name: saved.name,
-            description: saved.description,
-            kind: saved.kind,
-            technology: saved.technology,
-            url: saved.url,
-            logo_url: saved.logo_url,
-            technology_connectors: saved.technology_connectors,
-            tags: saved.tags,
-          }
-          : o,
-      ),
-    )
-  }, [])
+    mergeSavedElement(saved)
+  }, [mergeSavedElement])
 
   // ── Stable element ID set ───────────────────────────────────────────────────
   const existingElementIdsRef = useRef<Set<number>>(new Set())
@@ -591,7 +538,7 @@ export function useViewData({
     stableOnZoomIn, stableOnZoomOut, stableOnNavigateToView, stableOnSelect,
     stableOnInteractionStart, stableOnConnectTo, stableOnStartHandleReconnect, stableOnRemoveElement, stableOnHoverZoom,
     stableOnOpenCodePreview, hoveredZoomRef, activeTags, hiddenLayerTags, hoveredLayerTags, hoveredLayerColor, tagColors,
-    nodeConnectionMetaByElementId,
+    nodeConnectionMetaByElementId, setRfNodes,
   ])
 
   // ── Derive RF connectors ────────────────────────────────────────────────────────
@@ -686,7 +633,7 @@ export function useViewData({
         }
       })
     })
-  }, [connectorLayouts, selectedEdgeId, activeTags, hiddenLayerTags, hoveredLayerTags, elementMap])
+  }, [connectorLayouts, selectedEdgeId, activeTags, hiddenLayerTags, hoveredLayerTags, elementMap, setRfEdges])
 
 
   // ── Boost z-index of selected connector ────────────────────────────────────────
@@ -702,7 +649,7 @@ export function useViewData({
       })
       return changed ? next : prev
     })
-  }, [selectedEdgeId])
+  }, [selectedEdgeId, setRfEdges])
 
   return {
     // State

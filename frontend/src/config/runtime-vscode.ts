@@ -28,6 +28,12 @@ export function apiUrl(path: string): string {
   return `${apiBase}${path.startsWith('/') ? path : `/${path}`}`
 }
 
+export function fetchApiAsset(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers)
+  if (window.__TLD_API_KEY__) headers.set('Authorization', `Bearer ${window.__TLD_API_KEY__}`)
+  return fetch(input, { ...init, headers })
+}
+
 export function oauthGoogleStartUrl(): string {
   return apiUrl('/auth/oauth/google')
 }

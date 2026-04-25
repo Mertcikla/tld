@@ -34,6 +34,7 @@ import {
   ensureVisualHandleId,
   getLogicalHandleId,
 } from '../../../utils/edgeDistribution'
+import { useStore } from '../../../store/useStore'
 
 const SNAP_RADIUS = 75
 const CONNECTOR_DRAG_UPDATE_INTERVAL_MS = 25
@@ -218,8 +219,8 @@ export function useCanvasInteractions({
   interactionSourceIdRef,
   hoveredZoomRef,
   hoverPanLockedUntilRef,
-  setViewElements,
-  setConnectors,
+  setViewElements: _setViewElements,
+  setConnectors: _setConnectors,
   setRfNodes,
   setRfEdges,
   setLinksMap,
@@ -254,6 +255,10 @@ export function useCanvasInteractions({
   onMoveStateChange,
 }: CanvasInteractionOptions) {
   const { screenToFlowPosition, setViewport, getViewport, zoomIn, zoomOut } = useReactFlow()
+  const updateElementPosition = useStore((state) => state.updateElementPosition)
+  const removeElementPlacement = useStore((state) => state.removeElementPlacement)
+  const upsertConnector = useStore((state) => state.upsertConnector)
+  const replaceConnector = useStore((state) => state.replaceConnector)
   const screenToFlowPositionRef = useRef(screenToFlowPosition)
   screenToFlowPositionRef.current = screenToFlowPosition
 
@@ -384,11 +389,12 @@ export function useCanvasInteractions({
           source_element_id: sourceId, target_element_id: obj.id,
           source_handle: sourceHandle, target_handle: targetHandle, direction: 'forward',
         })
-        upsertConnectorGraphSnapshot(newConnector)
-        setConnectors((prev) => [...prev, connectorToConnector(newConnector)])
+        const connector = connectorToConnector(newConnector)
+        upsertConnectorGraphSnapshot(connector)
+        upsertConnector(connector)
       }
     } catch { /* intentionally empty */ }
-  }, [canEdit, viewId, addingElementAt, refreshElements, rfNodesRef, setConnectors, viewElementsRef])
+  }, [canEdit, viewId, addingElementAt, refreshElements, rfNodesRef, upsertConnector, viewElementsRef])
 
   const handleConfirmExistingElement = useCallback(async (obj: LibraryElement) => {
     if (!canEdit || viewId === null || !addingElementAt || addingElementAt.mode !== 'add') return
@@ -415,11 +421,12 @@ export function useCanvasInteractions({
           source_element_id: sourceId, target_element_id: obj.id,
           source_handle: sourceHandle, target_handle: targetHandle, direction: 'forward',
         })
-        upsertConnectorGraphSnapshot(newConnector)
-        setConnectors((prev) => [...prev, connectorToConnector(newConnector)])
+        const connector = connectorToConnector(newConnector)
+        upsertConnectorGraphSnapshot(connector)
+        upsertConnector(connector)
       }
     } catch { /* intentionally empty */ }
-  }, [canEdit, viewId, addingElementAt, existingElementIds, refreshElements, rfNodesRef, setConnectors, viewElementsRef])
+  }, [canEdit, viewId, addingElementAt, existingElementIds, refreshElements, rfNodesRef, upsertConnector, viewElementsRef])
 
   const handleConfirmConnectExistingElement = useCallback(async (obj: LibraryElement) => {
     if (!canEdit || viewId === null || !addingElementAt || addingElementAt.mode !== 'connect') return
@@ -440,10 +447,11 @@ export function useCanvasInteractions({
         target_handle: targetHandle,
         direction: 'forward',
       })
-      upsertConnectorGraphSnapshot(newConnector)
-      setConnectors((prev) => [...prev, connectorToConnector(newConnector)])
+      const connector = connectorToConnector(newConnector)
+      upsertConnectorGraphSnapshot(connector)
+      upsertConnector(connector)
     } catch { /* intentionally empty */ }
-  }, [addingElementAt, canEdit, rfNodesRef, setConnectors, viewId])
+  }, [addingElementAt, canEdit, rfNodesRef, upsertConnector, viewId])
 
   // ── Zoom-in / zoom-out stable callbacks ───────────────────────────────────
   const stableOnZoomIn = useCallback(async (elementId: number) => {
@@ -530,10 +538,11 @@ export function useCanvasInteractions({
     try {
       await api.workspace.views.placements.remove(viewId, elementId)
       removePlacementGraphSnapshot(viewId, elementId)
+      removeElementPlacement(elementId)
       handleElementDeleted(elementId)
       setInteractionSourceId(null)
     } catch { /* intentionally empty */ }
-  }, [canEdit, viewId, handleElementDeleted])
+  }, [canEdit, viewId, removeElementPlacement, handleElementDeleted])
 
   // ── Node/connector changes ─────────────────────────────────────────────────────
   const onNodesChange = useCallback((changes: NodeChange[]) => {
@@ -578,13 +587,7 @@ export function useCanvasInteractions({
       return
     }
 
-    setViewElements((prev) =>
-      prev.map((element) =>
-        element.element_id === elementId
-          ? { ...element, position_x: node.position.x, position_y: node.position.y }
-          : element,
-      ),
-    )
+    updateElementPosition(elementId, node.position.x, node.position.y)
     clearTimeout(positionTimers.current[node.id])
     positionTimers.current[node.id] = setTimeout(() => {
       api.workspace.views.placements
@@ -592,7 +595,7 @@ export function useCanvasInteractions({
         .catch(() => { /* intentionally empty */ })
     }, 400)
     delete dragStartPositionsRef.current[node.id]
-  }, [canEdit, setViewElements, viewId, viewElementsRef])
+  }, [canEdit, updateElementPosition, viewId, viewElementsRef])
 
   // ── Connections ────────────────────────────────────────────────────────────
   const onConnect: OnConnect = useCallback(async (params: Connection) => {
@@ -610,10 +613,11 @@ export function useCanvasInteractions({
         source_handle: sourceHandle, target_handle: targetHandle,
         direction: 'forward', style: 'bezier',
       })
-      upsertConnectorGraphSnapshot(newConnector)
-      setConnectors((prev) => [...prev, connectorToConnector(newConnector)])
+      const connector = connectorToConnector(newConnector)
+      upsertConnectorGraphSnapshot(connector)
+      upsertConnector(connector)
     } catch { /* intentionally empty */ }
-  }, [canEdit, setConnectors, viewId])
+  }, [canEdit, upsertConnector, viewId])
 
   const onConnectStart = useCallback((_: React.MouseEvent | React.TouchEvent, { nodeId }: OnConnectStartParams) => {
     if (!canEdit || isReconnectingRef.current) return
@@ -672,15 +676,16 @@ export function useCanvasInteractions({
         source_element_id: sourceElementId, target_element_id: targetElementId,
         source_handle: sourceHandle, target_handle: targetHandle, direction: 'forward',
       }).then((connector) => {
-        upsertConnectorGraphSnapshot(connector)
-        setConnectors((prev) => [...prev, connectorToConnector(connector)])
+        const next = connectorToConnector(connector)
+        upsertConnectorGraphSnapshot(next)
+        upsertConnector(next)
       }).catch(() => { /* intentionally empty */ })
     } else {
       setPendingConnectionSource(sourceElementId)
       suppressNextPaneClickRef.current = true
       showAddingElementAt(clientX, clientY, true, 'connect', 'shiftKey' in event && event.shiftKey)
     }
-  }, [canEdit, setConnectors, showAddingElementAt, rfNodesRef, viewIdRef])
+  }, [canEdit, upsertConnector, showAddingElementAt, rfNodesRef, viewIdRef])
 
   // ── Reconnect ──────────────────────────────────────────────────────────────
   const performReconnect = useCallback(async (oldConnector: RFEdge, newConnection: Connection) => {
@@ -704,12 +709,11 @@ export function useCanvasInteractions({
         style: existingData?.style === 'default' ? 'bezier' : (existingData?.style ?? 'bezier'),
         url: existingData?.url ?? undefined, relationship: existingData?.relationship ?? undefined,
       })
-      upsertConnectorGraphSnapshot(updated)
-      setConnectors((prev) =>
-        prev.map((connector) => (connector.id === edgeId ? connectorToConnector(updated) : connector)),
-      )
+      const connector = connectorToConnector(updated)
+      upsertConnectorGraphSnapshot(connector)
+      replaceConnector(connector)
     } catch { /* intentionally empty */ }
-  }, [canEdit, setConnectors, viewId, setRfEdges, setSelectedEdgeId])
+  }, [canEdit, replaceConnector, viewId, setRfEdges, setSelectedEdgeId])
   const onReconnect = useCallback(async (oldConnector: RFEdge, newConnection: Connection) => {
     await performReconnect(oldConnector, newConnection)
   }, [performReconnect])

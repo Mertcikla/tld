@@ -46,7 +46,7 @@ import {
   ImportService,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/import_service_pb'
 import { transport } from './transport'
-import { apiUrl } from '../config/runtime'
+import { apiUrl, fetchApiAsset } from '../config/runtime'
 
 export interface DependenciesResponse {
   elements: DependencyElement[]
@@ -453,7 +453,14 @@ export const api = {
       delete: (_orgId: string, id: number): Promise<void> =>
         rpc(async () => { await workspaceClient.deleteView({ orgId: '', viewId: id }) }),
 
-      thumbnail: async (id: number): Promise<string | null> => apiUrl(`/views/${id}/thumbnail.svg`),
+      thumbnail: async (id: number): Promise<string | null> => {
+        const res = await fetchApiAsset(apiUrl(`/views/${id}/thumbnail.svg`), {
+          headers: { Accept: 'image/svg+xml' },
+        })
+        if (!res.ok) return null
+        const svg = await res.text()
+        return URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
+      },
 
       placements: {
         list: (diagramId: number): Promise<ElementPlacement[]> =>
