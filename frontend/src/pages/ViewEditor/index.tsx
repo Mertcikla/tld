@@ -226,6 +226,7 @@ function ViewEditorInner({
   const setStoreSnapToGrid = useStore((state) => state.setSnapToGrid)
   const upsertStoreConnector = useStore((state) => state.upsertConnector)
   const removeStoreConnector = useStore((state) => state.removeConnector)
+  const refreshElementsRef = useRef<() => Promise<void>>(async () => {})
   const setSnapToGrid = useCallback((snap: boolean) => {
     setStoreSnapToGrid(snap)
     if (typeof window !== 'undefined') localStorage.setItem('diag:snapToGrid', String(snap))
@@ -429,6 +430,7 @@ function ViewEditorInner({
     handleElementDeleted, handleElementPermanentlyDeleted, handleElementSaved,
     setAllElements: _setAllElements,
   } = data
+  refreshElementsRef.current = refreshElements
 
   const tagCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -641,6 +643,7 @@ function ViewEditorInner({
     handleConnectorDeleted: useCallback((edgeId: number) => {
       if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
       removeStoreConnector(edgeId)
+      void refreshElementsRef.current()
     }, [removeStoreConnector, viewId]),
     handleUpdateTags,
     drawingCanvasRef,
@@ -999,11 +1002,15 @@ function ViewEditorInner({
     upsertConnectorGraphSnapshot(updated)
     upsertStoreConnector(updated)
   }, [upsertStoreConnector])
-  const handleConnectorDeleteInPanel = useCallback((edgeId: number) => {
+  const handleConnectorDeleted = useCallback((edgeId: number) => {
     if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
     removeStoreConnector(edgeId)
+    void refreshElements()
+  }, [refreshElements, removeStoreConnector, viewId])
+  const handleConnectorDeleteInPanel = useCallback((edgeId: number) => {
+    handleConnectorDeleted(edgeId)
     setSelectedEdge(null)
-  }, [removeStoreConnector, viewId, setSelectedEdge])
+  }, [handleConnectorDeleted, setSelectedEdge])
   const handleViewSave = useCallback((updated: ViewTreeNode) => setView(updated), [setView])
 
   // ── Library helpers ────────────────────────────────────────────────────────
