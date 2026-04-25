@@ -180,6 +180,48 @@ export function removePlacedElement(elements: PlacedElement[], elementId: number
   return elements.filter((element) => element.element_id !== elementId)
 }
 
+export function placedElementToLibraryElement(element: PlacedElement): LibraryElement {
+  return {
+    id: element.element_id,
+    name: element.name,
+    kind: element.kind,
+    description: element.description,
+    technology: element.technology,
+    url: element.url,
+    logo_url: element.logo_url,
+    technology_connectors: element.technology_connectors,
+    tags: element.tags,
+    repo: element.repo,
+    branch: element.branch,
+    file_path: element.file_path,
+    language: element.language,
+    created_at: '',
+    updated_at: '',
+    has_view: element.has_view,
+    view_label: element.view_label,
+  }
+}
+
+export function buildElementLibraryItems(allElements: LibraryElement[], viewElements: PlacedElement[]): LibraryElement[] {
+  const byId = new Map<number, LibraryElement>()
+  allElements.forEach((element) => byId.set(element.id, element))
+  viewElements.forEach((element) => {
+    const placed = placedElementToLibraryElement(element)
+    const existing = byId.get(placed.id)
+    byId.set(placed.id, existing
+      ? {
+        ...existing,
+        ...placed,
+        created_at: existing.created_at,
+        updated_at: existing.updated_at,
+        has_view: existing.has_view,
+        view_label: existing.view_label,
+      }
+      : placed)
+  })
+  return Array.from(byId.values())
+}
+
 export function mergeSavedElementIntoPlacements(elements: PlacedElement[], saved: LibraryElement): PlacedElement[] {
   return elements.map((element) =>
     element.element_id === saved.id

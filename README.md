@@ -189,7 +189,7 @@ Use "tld [command] --help" for more information about a command
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `TLD_ADDR` | Host address to bind the server. | `127.0.0.1` |
-| `PORT` | Port for the web UI and API. | `8081` |
+| `PORT` | Port for the web UI and API. | `8060` |
 | `TLD_API_KEY` | API key for cloud synchronization. | - |
 
 ---

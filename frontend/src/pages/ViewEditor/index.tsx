@@ -85,7 +85,7 @@ import { useCrossBranchContextSettings } from '../../crossBranch/settings'
 import { removeConnectorGraphSnapshot, upsertConnectorGraphSnapshot, useWorkspaceGraphSnapshot } from '../../crossBranch/store'
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
-import { useStore } from '../../store/useStore'
+import { buildElementLibraryItems, useStore } from '../../store/useStore'
 
 const nodeTypes = {
   elementNode: ElementNode,
@@ -201,10 +201,8 @@ function ViewEditorInner({
   const closeImportModalRef = useRef(importModal.onClose)
   closeImportModalRef.current = importModal.onClose
 
-
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
-  const [selectedEdgeId, setSelectedEdgeId] = useState<number | null>(null)
   const [selectedProxyConnectorDetails, setSelectedProxyConnectorDetails] = useState<ProxyConnectorDetails | null>(null)
   const [previewElement, setPreviewElement] = useState<PlacedElement | null>(null)
   const [libraryOpen, setLibraryOpen] = useState(() => {
@@ -228,6 +226,7 @@ function ViewEditorInner({
   const setStoreSnapToGrid = useStore((state) => state.setSnapToGrid)
   const upsertStoreConnector = useStore((state) => state.upsertConnector)
   const removeStoreConnector = useStore((state) => state.removeConnector)
+  const refreshElementsRef = useRef<() => Promise<void>>(async () => {})
   const setSnapToGrid = useCallback((snap: boolean) => {
     setStoreSnapToGrid(snap)
     if (typeof window !== 'undefined') localStorage.setItem('diag:snapToGrid', String(snap))
@@ -348,6 +347,7 @@ function ViewEditorInner({
 
   // stableOnConnectTo is wired after canvasInteractions is declared
   const stableOnConnectToRef = useRef<(targetElementId: number) => Promise<void>>(async () => { })
+  const stableOnInteractionStartRef = useRef<(elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => void>(() => { })
   const stableOnStartHandleReconnectRef = useRef<(args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number }) => void>(() => { })
 
   // ── Drawing engine ────────────────────────────────────────────────────────
@@ -370,7 +370,7 @@ function ViewEditorInner({
     viewId,
     interactionSourceId: interactionSourceIdRef.current,
     clickConnectMode: null, // wired after canvasInteractions
-    selectedEdgeId,
+    selectedConnector: selectedEdge,
     activeTags,
     hiddenLayerTags,
     hoveredLayerTags,
@@ -381,7 +381,6 @@ function ViewEditorInner({
     stableOnNavigateToView: useCallback((id: number) => { stableOnNavigateToViewRef.current(id) }, []),
     stableOnSelect: useCallback((obj: PlacedElement) => {
       setSelectedEdge(null)
-      setSelectedEdgeId(null)
       setSelectedProxyConnectorDetails(null)
       closeProxyConnectorPanelRef.current()
       closeConnectorPanelRef.current()
@@ -401,10 +400,9 @@ function ViewEditorInner({
         openCodePreviewRef.current()
       }
     }, []),
-    stableOnInteractionStart: useCallback((elementId: number) => {
-      if (!canEdit) return
-      interactionSourceIdRef.current = interactionSourceIdRef.current === elementId ? null : elementId
-    }, [canEdit]),
+    stableOnInteractionStart: useCallback((elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => {
+      stableOnInteractionStartRef.current(elementId, options)
+    }, []),
     stableOnConnectTo: useCallback(async (targetElementId: number) => {
       await stableOnConnectToRef.current(targetElementId)
     }, []),
@@ -432,6 +430,7 @@ function ViewEditorInner({
     handleElementDeleted, handleElementPermanentlyDeleted, handleElementSaved,
     setAllElements: _setAllElements,
   } = data
+  refreshElementsRef.current = refreshElements
 
   const tagCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -499,27 +498,7 @@ function ViewEditorInner({
     return unsub
   }, [fitView, viewId, refreshElements])
 
-  const existingElements = useMemo(() => {
-    return viewElements.map(obj => ({
-      id: obj.element_id,
-      name: obj.name,
-      kind: obj.kind,
-      description: obj.description,
-      technology: obj.technology,
-      url: obj.url,
-      logo_url: obj.logo_url,
-      technology_connectors: obj.technology_connectors,
-      tags: obj.tags,
-      repo: obj.repo,
-      branch: obj.branch,
-      file_path: obj.file_path,
-      language: obj.language,
-      created_at: '',
-      updated_at: '',
-      has_view: false,
-      view_label: null,
-    } as WorkspaceElement))
-  }, [viewElements])
+  const existingElements = useMemo(() => buildElementLibraryItems(allElements, viewElements), [allElements, viewElements])
 
   const availableTags = useMemo(() => {
     const tags = new Set<string>()
@@ -551,7 +530,6 @@ function ViewEditorInner({
     const match = viewElements.find((element) => element.element_id === requestedElementId)
     if (!match) return
     setSelectedEdge(null)
-    setSelectedEdgeId(null)
     setSelectedProxyConnectorDetails(null)
     closeConnectorPanelRef.current()
     closeProxyConnectorPanelRef.current()
@@ -654,10 +632,10 @@ function ViewEditorInner({
     closeElementPanel: useCallback(() => closeElementPanelRef.current(), []),
     openConnectorPanel: useCallback(() => openConnectorPanelRef.current(), []),
     closeConnectorPanel: useCallback(() => closeConnectorPanelRef.current(), []),
-    selectedElement, selectedEdgeId, connectors,
+    selectedElement, selectedConnector: selectedEdge, connectors,
     layers,
     setSelectedElement,
-    setSelectedEdge, setSelectedEdgeId,
+    setSelectedEdge,
     setSelectedProxyConnectorDetails,
     openProxyConnectorPanel: useCallback(() => openProxyConnectorPanelRef.current(), []),
     closeProxyConnectorPanel: useCallback(() => closeProxyConnectorPanelRef.current(), []),
@@ -665,6 +643,7 @@ function ViewEditorInner({
     handleConnectorDeleted: useCallback((edgeId: number) => {
       if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
       removeStoreConnector(edgeId)
+      void refreshElementsRef.current()
     }, [removeStoreConnector, viewId]),
     handleUpdateTags,
     drawingCanvasRef,
@@ -678,8 +657,9 @@ function ViewEditorInner({
     stableOnNavigateToViewRef.current = canvas.stableOnNavigateToView
     stableOnRemoveElementRef.current = canvas.stableOnRemoveElement
     stableOnConnectToRef.current = canvas.stableOnConnectTo
+    stableOnInteractionStartRef.current = canvas.stableOnInteractionStart
     stableOnStartHandleReconnectRef.current = canvas.stableOnStartHandleReconnect
-  }, [canvas.stableOnZoomIn, canvas.stableOnZoomOut, canvas.stableOnNavigateToView, canvas.stableOnRemoveElement, canvas.stableOnConnectTo, canvas.stableOnStartHandleReconnect])
+  }, [canvas.stableOnZoomIn, canvas.stableOnZoomOut, canvas.stableOnNavigateToView, canvas.stableOnRemoveElement, canvas.stableOnConnectTo, canvas.stableOnInteractionStart, canvas.stableOnStartHandleReconnect])
   const viewName = view?.name ?? null
 
   const [expandedAncestorGroups, setExpandedAncestorGroups] = useState<Set<string>>(new Set())
@@ -702,7 +682,6 @@ function ViewEditorInner({
     onSelectProxyDetails: useCallback((details: ProxyConnectorDetails) => {
       setSelectedElement(null)
       setSelectedEdge(null)
-      setSelectedEdgeId(null)
       closeConnectorPanelRef.current()
       closeElementPanelRef.current()
       setSelectedProxyConnectorDetails(details)
@@ -1023,10 +1002,15 @@ function ViewEditorInner({
     upsertConnectorGraphSnapshot(updated)
     upsertStoreConnector(updated)
   }, [upsertStoreConnector])
-  const handleConnectorDeleteInPanel = useCallback((edgeId: number) => {
+  const handleConnectorDeleted = useCallback((edgeId: number) => {
     if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
     removeStoreConnector(edgeId)
-  }, [removeStoreConnector, viewId])
+    void refreshElements()
+  }, [refreshElements, removeStoreConnector, viewId])
+  const handleConnectorDeleteInPanel = useCallback((edgeId: number) => {
+    handleConnectorDeleted(edgeId)
+    setSelectedEdge(null)
+  }, [handleConnectorDeleted, setSelectedEdge])
   const handleViewSave = useCallback((updated: ViewTreeNode) => setView(updated), [setView])
 
   // ── Library helpers ────────────────────────────────────────────────────────
@@ -1419,8 +1403,8 @@ function ViewEditorInner({
           onSave={handleConnectorSave} autoSave
           onDelete={handleConnectorDeleteInPanel}
           hasBackdrop={isMobileLayout}
-          connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
-        />
+              connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
+          />
         <ProxyConnectorPanel
           isOpen={proxyConnectorPanel.isOpen}
           onClose={proxyConnectorPanel.onClose}
