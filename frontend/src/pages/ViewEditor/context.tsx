@@ -1,4 +1,4 @@
-import { createContext } from 'react'
+import { createContext, useContext } from 'react'
 import type { LibraryElement, Connector } from '../../types'
 import { useStore } from '../../store/useStore'
 
@@ -16,6 +16,7 @@ export interface ViewEditorContextValue {
 export const ViewEditorContext = createContext<ViewEditorContextValue | null>(null)
 
 export function useViewEditorContext(): ViewEditorContextValue {
+  const context = useContext(ViewEditorContext)
   const viewId = useStore((state) => state.viewId)
   const canEdit = useStore((state) => state.canEdit)
   const isOwner = useStore((state) => state.isOwner)
@@ -24,6 +25,8 @@ export function useViewEditorContext(): ViewEditorContextValue {
   const setSnapToGrid = useStore((state) => state.setSnapToGrid)
   const selectedElement = useStore((state) => state.selectedElement)
   const selectedConnector = useStore((state) => state.selectedConnector)
+
+  if (context) return context
 
   return { viewId, canEdit, isOwner, isFreePlan, snapToGrid, setSnapToGrid, selectedElement, selectedConnector }
 }

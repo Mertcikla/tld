@@ -491,8 +491,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
   const handlePermanentDelete = async () => {
     if (isReadOnly || !element) return
     try {
-      if (orgId === undefined) return
-      await api.elements.delete(orgId, element.id)
+      await api.elements.delete(orgId ?? '', element.id)
       onPermanentDelete?.(element.id)
       confirmPermanentDelete.onClose()
       onClose()
