@@ -21,7 +21,7 @@ lint-fe: frontend-deps
 dev: frontend-deps
 	@echo "Starting development stack..."
 	@(cd frontend && npm run dev) & \
-	DEV=true air; \
+	TLD_DATA_DIR=data/dev TLD_CONFIG_DIR=data/dev/config DEV=true air; \
 	wait
 
 proto: ## Update go.mod to latest BSR-published proto versions (run after buf push in proto/)
