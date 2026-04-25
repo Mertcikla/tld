@@ -85,7 +85,7 @@ import { useCrossBranchContextSettings } from '../../crossBranch/settings'
 import { removeConnectorGraphSnapshot, upsertConnectorGraphSnapshot, useWorkspaceGraphSnapshot } from '../../crossBranch/store'
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
-import { useStore } from '../../store/useStore'
+import { buildElementLibraryItems, useStore } from '../../store/useStore'
 
 const nodeTypes = {
   elementNode: ElementNode,
@@ -348,6 +348,7 @@ function ViewEditorInner({
 
   // stableOnConnectTo is wired after canvasInteractions is declared
   const stableOnConnectToRef = useRef<(targetElementId: number) => Promise<void>>(async () => { })
+  const stableOnInteractionStartRef = useRef<(elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => void>(() => { })
   const stableOnStartHandleReconnectRef = useRef<(args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number }) => void>(() => { })
 
   // ── Drawing engine ────────────────────────────────────────────────────────
@@ -401,10 +402,9 @@ function ViewEditorInner({
         openCodePreviewRef.current()
       }
     }, []),
-    stableOnInteractionStart: useCallback((elementId: number) => {
-      if (!canEdit) return
-      interactionSourceIdRef.current = interactionSourceIdRef.current === elementId ? null : elementId
-    }, [canEdit]),
+    stableOnInteractionStart: useCallback((elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => {
+      stableOnInteractionStartRef.current(elementId, options)
+    }, []),
     stableOnConnectTo: useCallback(async (targetElementId: number) => {
       await stableOnConnectToRef.current(targetElementId)
     }, []),
@@ -499,27 +499,7 @@ function ViewEditorInner({
     return unsub
   }, [fitView, viewId, refreshElements])
 
-  const existingElements = useMemo(() => {
-    return viewElements.map(obj => ({
-      id: obj.element_id,
-      name: obj.name,
-      kind: obj.kind,
-      description: obj.description,
-      technology: obj.technology,
-      url: obj.url,
-      logo_url: obj.logo_url,
-      technology_connectors: obj.technology_connectors,
-      tags: obj.tags,
-      repo: obj.repo,
-      branch: obj.branch,
-      file_path: obj.file_path,
-      language: obj.language,
-      created_at: '',
-      updated_at: '',
-      has_view: false,
-      view_label: null,
-    } as WorkspaceElement))
-  }, [viewElements])
+  const existingElements = useMemo(() => buildElementLibraryItems(allElements, viewElements), [allElements, viewElements])
 
   const availableTags = useMemo(() => {
     const tags = new Set<string>()
@@ -678,8 +658,9 @@ function ViewEditorInner({
     stableOnNavigateToViewRef.current = canvas.stableOnNavigateToView
     stableOnRemoveElementRef.current = canvas.stableOnRemoveElement
     stableOnConnectToRef.current = canvas.stableOnConnectTo
+    stableOnInteractionStartRef.current = canvas.stableOnInteractionStart
     stableOnStartHandleReconnectRef.current = canvas.stableOnStartHandleReconnect
-  }, [canvas.stableOnZoomIn, canvas.stableOnZoomOut, canvas.stableOnNavigateToView, canvas.stableOnRemoveElement, canvas.stableOnConnectTo, canvas.stableOnStartHandleReconnect])
+  }, [canvas.stableOnZoomIn, canvas.stableOnZoomOut, canvas.stableOnNavigateToView, canvas.stableOnRemoveElement, canvas.stableOnConnectTo, canvas.stableOnInteractionStart, canvas.stableOnStartHandleReconnect])
   const viewName = view?.name ?? null
 
   const [expandedAncestorGroups, setExpandedAncestorGroups] = useState<Set<string>>(new Set())

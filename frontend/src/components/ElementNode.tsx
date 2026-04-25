@@ -138,7 +138,7 @@ interface NodeData extends PlacedElement {
   onZoomOut: (elementId: number) => void
   onNavigateToDiagram: (viewId: number) => void
   onSelect: (obj: PlacedElement) => void
-  onInteractionStart: (elementId: number) => void
+  onInteractionStart: (elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => void
   onConnectTo: (elementId: number) => void
   onStartHandleReconnect?: (args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number }) => void
   onRemove: (elementId: number) => void
@@ -505,6 +505,15 @@ function ElementNode({ data, selected }: Props) {
                 position={position}
                 id={handleId}
                 className={className}
+                onClick={(e: React.MouseEvent) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  data.onInteractionStart(data.element_id, {
+                    sourceHandle: handleId,
+                    clientX: e.clientX,
+                    clientY: e.clientY,
+                  })
+                }}
                 style={{
                   ...getVisualHandleStyle(position, slot),
                   background: 'var(--accent)',

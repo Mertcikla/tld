@@ -35,7 +35,7 @@ interface ViewDataOptions {
   stableOnNavigateToView: (id: number) => void
   stableOnSelect: (obj: PlacedElement) => void
   stableOnOpenCodePreview: (elementId: number) => void
-  stableOnInteractionStart: (elementId: number) => void
+  stableOnInteractionStart: (elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => void
   stableOnConnectTo: (targetElementId: number) => Promise<void>
   stableOnStartHandleReconnect: (args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number }) => void
   stableOnRemoveElement: (elementId: number) => Promise<void>
