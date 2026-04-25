@@ -33,6 +33,22 @@ func ConfigPath() (string, error) {
 	return filepath.Join(dir, "tld.yaml"), nil
 }
 
+// DataDir returns the default directory for server state, including the
+// local SQLite database and logs.
+func DataDir() (string, error) {
+	if override := os.Getenv("TLD_DATA_DIR"); override != "" {
+		return filepath.Abs(override)
+	}
+	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
+		return filepath.Join(xdg, "tldiagram"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("user home dir: %w", err)
+	}
+	return filepath.Join(home, ".local", "share", "tldiagram"), nil
+}
+
 // WorkspaceConfigPath returns the path to the workspace-local configuration file.
 func WorkspaceConfigPath(dir string) string {
 	return filepath.Join(dir, ".tld.yaml")
@@ -86,7 +102,7 @@ func EnsureGlobalConfig() error {
 serve:
   host: 127.0.0.1
   port: 8060
-  # data_dir: ~/.config/tldiagram/data
+  # data_dir: ~/.local/share/tldiagram
 `
 	return os.WriteFile(path, []byte(defaultConfig), 0o644)
 }
@@ -118,9 +134,9 @@ func ResolveDataDir(cfg *GlobalConfig, flagDir string) (string, error) {
 	}
 
 	// 4. Default
-	base, err := ConfigDir()
+	base, err := DataDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "data"), nil
+	return base, nil
 }

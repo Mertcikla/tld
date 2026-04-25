@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mertcikla/tld/cmd/version"
 	"github.com/mertcikla/tld/internal/term"
 )
 
@@ -22,6 +23,9 @@ func TestPrintLogo(t *testing.T) {
 		if !strings.Contains(output, "░██") {
 			t.Errorf("expected logo content, but not found")
 		}
+		if !strings.Contains(output, "Version:             "+version.Version) {
+			t.Errorf("expected version content, but not found")
+		}
 	})
 
 	t.Run("with color enabled via terminal simulation", func(t *testing.T) {
@@ -35,6 +39,9 @@ func TestPrintLogo(t *testing.T) {
 		PrintLogo(&buf)
 		if strings.Contains(buf.String(), term.ColorBlue) {
 			t.Errorf("expected no color when NO_COLOR is set")
+		}
+		if !strings.Contains(buf.String(), "Version:             "+version.Version) {
+			t.Errorf("expected version content, but not found")
 		}
 	})
 }

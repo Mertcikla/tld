@@ -2,13 +2,14 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"strconv"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/diag/v1/diagv1connect"
@@ -30,10 +31,25 @@ func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID) (*
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /api/ready", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /api/ready", func(w http.ResponseWriter, r *http.Request) {
+		views, elements, connectors, err := apiStore.GetWorkspaceResourceCounts(r.Context(), workspaceID)
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":    false,
+				"error": "resource counts unavailable",
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok": true,
+			"resources": map[string]int{
+				"views":      views,
+				"elements":   elements,
+				"connectors": connectors,
+			},
+		})
 	})
 
 	mux.HandleFunc("GET /api/views/{id}/thumbnail.svg", func(w http.ResponseWriter, r *http.Request) {

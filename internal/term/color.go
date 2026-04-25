@@ -6,11 +6,12 @@ import (
 )
 
 const (
-	ColorGreen  = "\033[32m"
-	ColorBlue   = "\033[34m"
-	ColorYellow = "\033[33m"
-	ColorRed    = "\033[31m"
-	ColorReset  = "\033[0m"
+	ColorGreen     = "\033[32m"
+	ColorBlue      = "\033[34m"
+	ColorYellow    = "\033[33m"
+	ColorRed       = "\033[31m"
+	ColorUnderline = "\033[4m"
+	ColorReset     = "\033[0m"
 )
 
 func IsTerminal(w io.Writer) bool {

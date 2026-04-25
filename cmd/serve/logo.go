@@ -3,6 +3,8 @@ package serve
 import (
 	"fmt"
 	"io"
+
+	"github.com/mertcikla/tld/cmd/version"
 )
 
 func PrintLogo(w io.Writer) {
@@ -15,5 +17,6 @@ func PrintLogo(w io.Writer) {
     ░████ ░██ ░███████
 `
 	_, _ = fmt.Fprintln(w, logo)
+	_, _ = fmt.Fprintf(w, "Version:             %s\n", version.Version)
 
 }

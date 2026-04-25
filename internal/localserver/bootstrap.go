@@ -1,6 +1,8 @@
 package localserver
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,9 +16,17 @@ import (
 var localWorkspaceID = uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
 type App struct {
-	Addr    string
-	DBPath  string
-	Handler http.Handler
+	Addr            string
+	DBPath          string
+	InitializedData bool
+	Resources       ResourceCounts
+	Handler         http.Handler
+}
+
+type ResourceCounts struct {
+	Views      int
+	Elements   int
+	Connectors int
 }
 
 // ServeOptions overrides the address that Bootstrap listens on.
@@ -37,6 +47,10 @@ func AddrFromEnv() string {
 	return envOrDefault("TLD_ADDR", "127.0.0.1:"+envOrDefault("PORT", "8060"))
 }
 
+func DatabasePath(dataDir string) string {
+	return filepath.Join(dataDir, "tld.db")
+}
+
 // Bootstrap creates the local server app. opts overrides host/port with the
 // highest priority; falls back to AddrFromEnv() when opts is empty.
 func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
@@ -44,7 +58,14 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 	if len(opts) > 0 {
 		o = opts[0]
 	}
-	dbPath := filepath.Join(dataDir, "tld.db")
+	dbPath := DatabasePath(dataDir)
+	initializedData := false
+	if _, err := os.Stat(dbPath); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		initializedData = true
+	}
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, err
 	}
@@ -59,6 +80,12 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 		return nil, err
 	}
 
+	apiStore := store.NewAPIAdapter(sqliteStore)
+	views, elements, connectors, err := apiStore.GetWorkspaceResourceCounts(context.Background(), localWorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+
 	srv, err := server.New(sqliteStore, staticFS, localWorkspaceID)
 	if err != nil {
 		return nil, err
@@ -67,8 +94,14 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 	addr := ResolveAddr(o)
 
 	return &App{
-		Addr:    addr,
-		DBPath:  dbPath,
+		Addr:            addr,
+		DBPath:          dbPath,
+		InitializedData: initializedData,
+		Resources: ResourceCounts{
+			Views:      views,
+			Elements:   elements,
+			Connectors: connectors,
+		},
 		Handler: srv.Routes(),
 	}, nil
 }

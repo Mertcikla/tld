@@ -24,4 +24,7 @@ func TestConstants(t *testing.T) {
 	if ColorBlue != "\033[34m" {
 		t.Errorf("expected ColorBlue to be \"\\033[34m\", got %q", ColorBlue)
 	}
+	if ColorUnderline != "\033[4m" {
+		t.Errorf("expected ColorUnderline to be \"\\033[4m\", got %q", ColorUnderline)
+	}
 }

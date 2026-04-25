@@ -3,3 +3,4 @@ frontend/node_modules
 frontend/public
 tmp
 frontend/*.tgz
+.agents
