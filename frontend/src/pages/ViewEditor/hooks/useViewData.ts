@@ -23,7 +23,7 @@ interface ViewDataOptions {
   viewId: number | null
   interactionSourceId: number | null
   clickConnectMode: { sourceNodeId: string; sourceHandle: string; targetHandle?: string } | null
-  selectedEdgeId: number | null
+  selectedConnector: Connector | null
   activeTags: string[]
   hiddenLayerTags: string[]
   hoveredLayerTags: string[] | null
@@ -152,7 +152,7 @@ export function useViewData({
   viewId,
   interactionSourceId,
   clickConnectMode,
-  selectedEdgeId,
+  selectedConnector,
   activeTags,
   hiddenLayerTags,
   hoveredLayerTags,
@@ -170,6 +170,7 @@ export function useViewData({
   stableOnHoverZoom,
   hoveredZoomRef,
 }: ViewDataOptions) {
+  const selectedEdgeId = selectedConnector?.id ?? null
   const queryClient = useQueryClient()
   const view = useStore((state) => state.view)
   const setView = useStore((state) => state.setView)

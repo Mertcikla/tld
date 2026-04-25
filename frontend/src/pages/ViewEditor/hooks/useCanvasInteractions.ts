@@ -131,9 +131,8 @@ export function applyNodeChangesWithStructuralSharing(changes: NodeChange[], nod
 
 export function getConnectorDeletionTarget(
   selectedConnector: Connector | null,
-  selectedEdgeId: number | null,
 ) {
-  return selectedConnector?.id ?? selectedEdgeId
+  return selectedConnector?.id ?? null
 }
 
 interface CanvasInteractionOptions {
@@ -172,12 +171,10 @@ interface CanvasInteractionOptions {
   closeConnectorPanel: () => void
   selectedElement: LibraryElement | null
   selectedConnector: Connector | null
-  selectedEdgeId: number | null
   connectors: Connector[]
   layers: ViewLayer[]
   setSelectedElement: React.Dispatch<React.SetStateAction<LibraryElement | null>>
   setSelectedEdge: (e: Connector | null) => void
-  setSelectedEdgeId: (id: number | null) => void
   setSelectedProxyConnectorDetails: React.Dispatch<React.SetStateAction<import('../../../crossBranch/types').ProxyConnectorDetails | null>>
   openProxyConnectorPanel: () => void
   closeProxyConnectorPanel: () => void
@@ -252,12 +249,10 @@ export function useCanvasInteractions({
   closeConnectorPanel: closeConnectorPanel,
   selectedElement,
   selectedConnector,
-  selectedEdgeId,
   connectors,
   layers,
   setSelectedElement,
   setSelectedEdge,
-  setSelectedEdgeId,
   setSelectedProxyConnectorDetails,
   openProxyConnectorPanel,
   closeProxyConnectorPanel,
@@ -795,7 +790,6 @@ export function useCanvasInteractions({
     const targetId = parseNumericId(newConnection.target)
     if (edgeId === null || sourceId === null || targetId === null) return
     setRfEdges((eds) => reconnectEdge(oldConnector, newConnection, eds))
-    setSelectedEdgeId(null)
     try {
       const existingData = oldConnector.data as Connector
       const sourceHandle = getLogicalHandleId(newConnection.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
@@ -813,7 +807,7 @@ export function useCanvasInteractions({
       upsertConnectorGraphSnapshot(connector)
       replaceConnector(connector)
     } catch { /* intentionally empty */ }
-  }, [canEdit, replaceConnector, viewId, setRfEdges, setSelectedEdgeId])
+  }, [canEdit, replaceConnector, viewId, setRfEdges])
   const onReconnect = useCallback(async (oldConnector: RFEdge, newConnection: Connection) => {
     await performReconnect(oldConnector, newConnection)
   }, [performReconnect])
@@ -1004,7 +998,6 @@ export function useCanvasInteractions({
       setSelectedElement(null)
       closeElementPanel()
       setSelectedEdge(null)
-      setSelectedEdgeId(null)
       closeConnectorPanel()
       setSelectedProxyConnectorDetails((rfConnector.data as { details?: import('../../../crossBranch/types').ProxyConnectorDetails }).details ?? null)
       openProxyConnectorPanel()
@@ -1012,16 +1005,14 @@ export function useCanvasInteractions({
     }
     const clickedId = parseNumericId(rfConnector.id)
     if (clickedId === null) return
-    if (selectedEdgeId === clickedId) {
-      const connector = connectors.find((e) => e.id === clickedId)
-      if (connector) { setSelectedEdge(connector); openConnectorPanelRef.current() }
-      setSelectedEdgeId(null)
-    } else {
-      setSelectedElement(null)
-      closeElementPanel()
-      setSelectedEdgeId(clickedId)
-    }
-  }, [closeConnectorPanel, closeElementPanel, connectors, openProxyConnectorPanel, selectedEdgeId, setSelectedEdge, setSelectedEdgeId, setSelectedElement, setSelectedProxyConnectorDetails])
+    const connector = connectors.find((e) => e.id === clickedId)
+    if (!connector) return
+    setSelectedElement(null)
+    closeElementPanel()
+    setSelectedProxyConnectorDetails(null)
+    setSelectedEdge(connector)
+    openConnectorPanelRef.current()
+  }, [closeElementPanel, connectors, openProxyConnectorPanel, setSelectedEdge, setSelectedElement, setSelectedProxyConnectorDetails])
 
   // ── Pane interactions ─────────────────────────────────────────────────────
   const onPaneClick = useCallback((e: React.MouseEvent) => {
@@ -1030,7 +1021,6 @@ export function useCanvasInteractions({
     setReconnectPicking(null)
     setSelectedElement(null)
     setSelectedEdge(null)
-    setSelectedEdgeId(null)
     setSelectedProxyConnectorDetails(null)
     setConnectorLongPressMenu(null)
     setCanvasMenu(null)
@@ -1064,7 +1054,7 @@ export function useCanvasInteractions({
     setPendingConnectionSource(null)
     pendingConnectionSourceHandleRef.current = null
     setAddingElementAt(null)
-  }, [stableOnConnectTo, showAddingElementAt, closeElementPanel, closeConnectorPanel, closeProxyConnectorPanel, rfNodesRef, interactionSourceIdRef, setSelectedElement, setSelectedEdge, setSelectedEdgeId, setSelectedProxyConnectorDetails])
+  }, [stableOnConnectTo, showAddingElementAt, closeElementPanel, closeConnectorPanel, closeProxyConnectorPanel, rfNodesRef, interactionSourceIdRef, setSelectedElement, setSelectedEdge, setSelectedProxyConnectorDetails])
 
   const onPaneContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -1229,12 +1219,11 @@ export function useCanvasInteractions({
             closeElementPanel()
           }
         } else {
-          const connectorId = getConnectorDeletionTarget(selectedConnector, selectedEdgeId)
+          const connectorId = getConnectorDeletionTarget(selectedConnector)
           if (connectorId === null) return
           api.workspace.connectors.delete('', connectorId).then(() => {
             handleConnectorDeleted(connectorId)
             setSelectedEdge(null)
-            setSelectedEdgeId(null)
             closeConnectorPanel()
           }).catch(() => { /* intentionally empty */ })
         }
@@ -1343,7 +1332,7 @@ export function useCanvasInteractions({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [canEdit, refreshGrid, selectedElement, selectedConnector, selectedEdgeId, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted,  closeElementPanel, closeConnectorPanel, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, setSelectedEdgeId, containerRef, linksMapRef])
+  }, [canEdit, refreshGrid, selectedElement, selectedConnector, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted,  closeElementPanel, closeConnectorPanel, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef])
 
   // ── DnD handlers ──────────────────────────────────────────────────────────
   const onDragOver = useCallback((e: React.DragEvent) => {

@@ -20,15 +20,11 @@ const connector = (id: number): Connector => ({
 })
 
 describe('getConnectorDeletionTarget', () => {
-  it('prefers the open panel connector over the canvas selection id', () => {
-    expect(getConnectorDeletionTarget(connector(7), 3)).toBe(7)
-  })
-
-  it('falls back to the selected edge id when the panel connector is missing', () => {
-    expect(getConnectorDeletionTarget(null, 3)).toBe(3)
+  it('returns the selected connector id', () => {
+    expect(getConnectorDeletionTarget(connector(7))).toBe(7)
   })
 
   it('returns null when nothing is selected', () => {
-    expect(getConnectorDeletionTarget(null, null)).toBeNull()
+    expect(getConnectorDeletionTarget(null)).toBeNull()
   })
 })

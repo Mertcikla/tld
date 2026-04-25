@@ -201,10 +201,8 @@ function ViewEditorInner({
   const closeImportModalRef = useRef(importModal.onClose)
   closeImportModalRef.current = importModal.onClose
 
-
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
-  const [selectedEdgeId, setSelectedEdgeId] = useState<number | null>(null)
   const [selectedProxyConnectorDetails, setSelectedProxyConnectorDetails] = useState<ProxyConnectorDetails | null>(null)
   const [previewElement, setPreviewElement] = useState<PlacedElement | null>(null)
   const [libraryOpen, setLibraryOpen] = useState(() => {
@@ -371,7 +369,7 @@ function ViewEditorInner({
     viewId,
     interactionSourceId: interactionSourceIdRef.current,
     clickConnectMode: null, // wired after canvasInteractions
-    selectedEdgeId,
+    selectedConnector: selectedEdge,
     activeTags,
     hiddenLayerTags,
     hoveredLayerTags,
@@ -382,7 +380,6 @@ function ViewEditorInner({
     stableOnNavigateToView: useCallback((id: number) => { stableOnNavigateToViewRef.current(id) }, []),
     stableOnSelect: useCallback((obj: PlacedElement) => {
       setSelectedEdge(null)
-      setSelectedEdgeId(null)
       setSelectedProxyConnectorDetails(null)
       closeProxyConnectorPanelRef.current()
       closeConnectorPanelRef.current()
@@ -531,7 +528,6 @@ function ViewEditorInner({
     const match = viewElements.find((element) => element.element_id === requestedElementId)
     if (!match) return
     setSelectedEdge(null)
-    setSelectedEdgeId(null)
     setSelectedProxyConnectorDetails(null)
     closeConnectorPanelRef.current()
     closeProxyConnectorPanelRef.current()
@@ -634,10 +630,10 @@ function ViewEditorInner({
     closeElementPanel: useCallback(() => closeElementPanelRef.current(), []),
     openConnectorPanel: useCallback(() => openConnectorPanelRef.current(), []),
     closeConnectorPanel: useCallback(() => closeConnectorPanelRef.current(), []),
-    selectedElement, selectedConnector: selectedEdge, selectedEdgeId, connectors,
+    selectedElement, selectedConnector: selectedEdge, connectors,
     layers,
     setSelectedElement,
-    setSelectedEdge, setSelectedEdgeId,
+    setSelectedEdge,
     setSelectedProxyConnectorDetails,
     openProxyConnectorPanel: useCallback(() => openProxyConnectorPanelRef.current(), []),
     closeProxyConnectorPanel: useCallback(() => closeProxyConnectorPanelRef.current(), []),
@@ -683,7 +679,6 @@ function ViewEditorInner({
     onSelectProxyDetails: useCallback((details: ProxyConnectorDetails) => {
       setSelectedElement(null)
       setSelectedEdge(null)
-      setSelectedEdgeId(null)
       closeConnectorPanelRef.current()
       closeElementPanelRef.current()
       setSelectedProxyConnectorDetails(details)
@@ -1008,8 +1003,7 @@ function ViewEditorInner({
     if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
     removeStoreConnector(edgeId)
     setSelectedEdge(null)
-    setSelectedEdgeId(null)
-  }, [removeStoreConnector, viewId, setSelectedEdge, setSelectedEdgeId])
+  }, [removeStoreConnector, viewId, setSelectedEdge])
   const handleViewSave = useCallback((updated: ViewTreeNode) => setView(updated), [setView])
 
   // ── Library helpers ────────────────────────────────────────────────────────
@@ -1402,8 +1396,8 @@ function ViewEditorInner({
           onSave={handleConnectorSave} autoSave
           onDelete={handleConnectorDeleteInPanel}
           hasBackdrop={isMobileLayout}
-          connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
-        />
+              connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
+          />
         <ProxyConnectorPanel
           isOpen={proxyConnectorPanel.isOpen}
           onClose={proxyConnectorPanel.onClose}
