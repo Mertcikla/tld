@@ -108,6 +108,7 @@ function ViewFloatingMenu({
     >
       <Tooltip label="Create new element (C)" placement="top" openDelay={200}>
         <Button
+          data-testid="vieweditor-toolbar-add-element"
           variant="ghost"
           h="28px"
           px={2.5}

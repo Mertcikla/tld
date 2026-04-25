@@ -16,6 +16,7 @@ interface Props {
   hasBackdrop?: boolean
   zIndex?: number
   children: ReactNode
+  'data-testid'?: string
 }
 
 export default function SlidingPanel({
@@ -30,6 +31,7 @@ export default function SlidingPanel({
   hasBackdrop = true,
   zIndex = 1000,
   children,
+  'data-testid': dataTestId,
 }: Props) {
   // Use width if it's a fixed value, otherwise default to a safe offscreen distance
   const resolvedWidth = typeof width === 'string' ? width : '320px'
@@ -84,6 +86,7 @@ export default function SlidingPanel({
             }}
           >
             <Box
+              data-testid={dataTestId}
               ref={boxRef}
               pointerEvents="auto"
               w={width}

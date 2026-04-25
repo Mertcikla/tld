@@ -459,6 +459,9 @@ function ElementNode({ data, selected }: Props) {
 
   return (
     <ElementContainer
+      data-testid="vieweditor-node"
+      data-element-id={data.element_id}
+      data-node-name={data.name}
       isSelected={selected}
       isSource={isSource}
       isTarget={isTarget}
@@ -805,6 +808,7 @@ function ElementNode({ data, selected }: Props) {
             >
               <VStack spacing={0} align="stretch">
                 <Button
+                  data-testid="vieweditor-node-menu-delete"
                   size="sm"
                   variant="ghost"
                   h="30px"

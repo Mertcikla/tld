@@ -107,6 +107,7 @@ export default function InlineElementAdder({
     >
       <Box position="relative" pointerEvents="auto" transform="translate(-50%, -50%)">
         <Input
+          data-testid="inline-element-adder-input"
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -154,6 +155,7 @@ export default function InlineElementAdder({
             <VStack spacing={0} align="stretch">
               {results.map((item, i) => (
                 <Box
+                  data-testid={item.kind === 'new' ? 'inline-element-adder-create-option' : 'inline-element-adder-existing-option'}
                   key={i}
                   px={3}
                   py={1.5}

@@ -500,7 +500,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
 
   return (
     <>
-      <SlidingPanel isOpen={isOpen} onClose={handleClose} panelKey="element" side={isMobile ? 'left' : 'right'} width="300px" hasBackdrop={hasBackdrop}>
+      <SlidingPanel data-testid="element-panel" isOpen={isOpen} onClose={handleClose} panelKey="element" side={isMobile ? 'left' : 'right'} width="300px" hasBackdrop={hasBackdrop}>
         <PanelHeader title={isEdit ? 'Edit Element' : 'New Element'} onClose={handleClose} />
 
         {/* Body */}
@@ -881,10 +881,10 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
 
             {isEdit && canEdit && (
               <HStack borderTop="1px solid" borderColor="whiteAlpha.100" pt={2} spacing={2}>
-                <Button variant="subtle" size="sm" color="white" _hover={{ bg: 'whiteAlpha.100' }} onClick={handleDelete} flex={1}>
+                <Button data-testid="element-panel-remove" variant="subtle" size="sm" color="white" _hover={{ bg: 'whiteAlpha.100' }} onClick={handleDelete} flex={1}>
                   Remove
                 </Button>
-                <Button variant="subtle" size="sm" color="red.300" _hover={{ bg: 'red.900', color: 'red.100' }} onClick={confirmPermanentDelete.onOpen} flex={1}>
+                <Button data-testid="element-panel-delete-permanent" variant="subtle" size="sm" color="red.300" _hover={{ bg: 'red.900', color: 'red.100' }} onClick={confirmPermanentDelete.onOpen} flex={1}>
                   Delete Element
                 </Button>
               </HStack>

@@ -1206,6 +1206,7 @@ function ViewEditorInner({
             )}
 
             <Box
+              data-testid="vieweditor-canvas"
               position="relative"
               w="full"
               h="full"

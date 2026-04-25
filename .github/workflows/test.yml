@@ -43,6 +43,20 @@ jobs:
         working-directory: frontend
         run: npm run build:app
 
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Build E2E binary
+        run: go build -o /tmp/tld-e2e ./cmd/tld
+
+      - name: Run Playwright E2E tests
+        working-directory: frontend
+        env:
+          TLD_E2E_BINARY: /tmp/tld-e2e
+          TLD_E2E_DATA_DIR: /tmp/tld-playwright-${{ github.run_id }}
+        run: npm run test:e2e
+
       - name: Verify dependencies
         run: |
           go mod tidy

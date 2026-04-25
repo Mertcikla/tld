@@ -38,6 +38,7 @@ export const ConnectorContextMenu: React.FC<ConnectorContextMenuProps> = React.m
 
   return (
     <Box position="absolute" left={`${menu.x}px`} top={`${menu.y}px`}
+      data-testid="vieweditor-canvas-context-menu"
       transform="translate(-50%, calc(-100% - 8px))" zIndex={1000} bg="var(--bg-panel)"
       border="1px solid" borderColor="whiteAlpha.100" rounded="xl" boxShadow="0 8px 32px rgba(0,0,0,0.5)"
       backdropFilter="blur(20px)" p={1.5} minW="192px"
@@ -88,6 +89,7 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = React.memo(({
       onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}>
       <VStack spacing={0} align="stretch">
         <Button size="sm" variant="ghost" h="30px" px={2.5} justifyContent="flex-start"
+          data-testid="vieweditor-canvas-context-add-element"
           color={canEdit ? 'var(--accent)' : 'gray.500'} _hover={{ bg: 'whiteAlpha.100', color: 'var(--accent)' }}
           _disabled={{ opacity: 0.4, cursor: 'not-allowed' }} isDisabled={!canEdit}
           onClick={() => onAddElement(menu.x, menu.y)}>

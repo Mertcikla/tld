@@ -995,6 +995,7 @@ function ViewGridInner({ onShare }: Props) {
 
               {canEdit && (
                 <Button
+                  data-testid="views-new-diagram-button"
                   size="sm"
                   h="32px"
                   leftIcon={<AddIcon fontSize="9px" />}
@@ -1186,6 +1187,7 @@ function ViewGridInner({ onShare }: Props) {
                 Diagram Name
               </FormLabel>
               <Input
+                data-testid="views-new-diagram-name-input"
                 name="name"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
@@ -1206,6 +1208,7 @@ function ViewGridInner({ onShare }: Props) {
               Cancel
             </Button>
             <Button
+              data-testid="views-create-diagram-submit"
               size="sm"
               bg="var(--accent)"
               color="white"
