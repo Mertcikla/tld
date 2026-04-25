@@ -289,7 +289,7 @@ export function useViewData({
     }
   }, [queryClient, setConnectors, setViewElements, viewId])
 
-  // ── CRDT-aware element mutation helpers ────────────────────────────────────
+  // ── Element mutation helpers ───────────────────────────────────────────────
   const handleElementDeleted = useCallback((deletedId: number) => {
     removeElementPlacement(deletedId)
   }, [removeElementPlacement])

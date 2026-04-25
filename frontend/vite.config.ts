@@ -82,7 +82,6 @@ export default defineConfig(async () => {
           target: process.env.VITE_API_TARGET ?? 'http://localhost:8081',
           changeOrigin: true,
           secure: false,
-          ws: true,
         },
       },
     },
