@@ -28,14 +28,17 @@ const IconRadioBox = ({
   isDisabled,
   children,
   title,
+  'data-testid': dataTestId,
 }: {
   isSelected: boolean
   onClick: () => void
   isDisabled?: boolean
   children: React.ReactNode
   title?: string
+  'data-testid'?: string
 }) => (
   <Box
+    data-testid={dataTestId}
     as="button"
     type="button"
     onClick={onClick}
@@ -224,7 +227,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
 
   return (
     <>
-      <SlidingPanel isOpen={isOpen} onClose={handleClose} panelKey="connector" side={isMobile ? 'left' : 'right'} width="300px" hasBackdrop={hasBackdrop}>
+      <SlidingPanel data-testid="connector-panel" isOpen={isOpen} onClose={handleClose} panelKey="connector" side={isMobile ? 'left' : 'right'} width="300px" hasBackdrop={hasBackdrop}>
         <PanelHeader title="Edit Connector" onClose={handleClose} />
 
         {/* Body */}
@@ -233,6 +236,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
             <FormControl isDisabled={isReadOnly} id="connector-label">
               <FormLabel>Label / Name</FormLabel>
               <Input
+                data-testid="connector-panel-label-input"
                 name="label"
                 size="sm"
                 value={label}
@@ -245,6 +249,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
               <FormLabel>Direction</FormLabel>
               <SimpleGrid columns={2} spacing={2}>
                 <IconRadioBox
+                  data-testid="connector-panel-direction-forward"
                   isSelected={direction === 'forward'}
                   onClick={() => { setDirection('forward'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
@@ -253,6 +258,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14m-7-7 7 7-7 7"/></svg>
                 </IconRadioBox>
                 <IconRadioBox
+                  data-testid="connector-panel-direction-backward"
                   isSelected={direction === 'backward'}
                   onClick={() => { setDirection('backward'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
@@ -261,6 +267,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5m7 7-7-7 7-7"/></svg>
                 </IconRadioBox>
                 <IconRadioBox
+                  data-testid="connector-panel-direction-both"
                   isSelected={direction === 'both'}
                   onClick={() => { setDirection('both'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
@@ -269,6 +276,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 8l-4 4 4 4M16 8l4 4-4 4M4 12h16"/></svg>
                 </IconRadioBox>
                 <IconRadioBox
+                  data-testid="connector-panel-direction-none"
                   isSelected={direction === 'none'}
                   onClick={() => { setDirection('none'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
@@ -282,6 +290,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
               <FormLabel>Connector Style</FormLabel>
               <SimpleGrid columns={2} spacing={2}>
                 <IconRadioBox
+                  data-testid="connector-panel-style-smoothstep"
                   isSelected={connectorType === 'smoothstep'}
                   onClick={() => { setConnectorType('smoothstep'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
@@ -290,6 +299,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 19H9C10.6569 19 12 17.6569 12 16V8C12 6.34315 13.3431 5 15 5H19" /></svg>
                 </IconRadioBox>
                 <IconRadioBox
+                  data-testid="connector-panel-style-bezier"
                   isSelected={connectorType === 'bezier'}
                   onClick={() => { setConnectorType('bezier'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
@@ -298,6 +308,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 19C5 11 19 13 19 5" /></svg>
                 </IconRadioBox>
                 <IconRadioBox
+                  data-testid="connector-panel-style-straight"
                   isSelected={connectorType === 'straight'}
                   onClick={() => { setConnectorType('straight'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
@@ -306,6 +317,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 19L19 5" /></svg>
                 </IconRadioBox>
                 <IconRadioBox
+                  data-testid="connector-panel-style-step"
                   isSelected={connectorType === 'step'}
                   onClick={() => { setConnectorType('step'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
@@ -318,6 +330,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
             <FormControl isDisabled={isReadOnly} id="connector-rel-type">
               <FormLabel>Relationship Type</FormLabel>
               <Input
+                data-testid="connector-panel-relationship-input"
                 name="relationship"
                 size="sm"
                 value={relType}
@@ -329,6 +342,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
             <FormControl isDisabled={isReadOnly} id="connector-url">
               <FormLabel>URL</FormLabel>
               <Input
+                data-testid="connector-panel-url-input"
                 name="url"
                 size="sm"
                 value={url}
@@ -340,6 +354,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
             <FormControl isDisabled={isReadOnly} id="connector-description">
               <FormLabel>Description</FormLabel>
               <Textarea
+                data-testid="connector-panel-description-input"
                 name="description"
                 size="sm"
                 value={description}
@@ -360,7 +375,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
         {/* Footer */}
         <HStack px={4} py={3} justify="space-between" flexShrink={0}>
           {canEdit ? (
-            <Button variant="ghost" size="sm" color="red.400" _hover={{ bg: 'red.900', color: 'red.100' }} onClick={confirmDelete.onOpen}>
+            <Button data-testid="connector-panel-delete" variant="ghost" size="sm" color="red.400" _hover={{ bg: 'red.900', color: 'red.100' }} onClick={confirmDelete.onOpen}>
               Delete
             </Button>
           ) : (

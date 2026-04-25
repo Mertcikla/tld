@@ -968,6 +968,7 @@ function ViewGridInner({ onShare }: Props) {
                   <SearchIcon color="whiteAlpha.400" fontSize="10px" />
                 </InputLeftElement>
                 <Input
+                  data-testid="views-search-input"
                   placeholder="Jump to diagram..."
                   value={searchTerm}
                   onChange={(e) => handleSearch(e.target.value)}

@@ -71,7 +71,7 @@ function ExportModal({
   return (
     <Modal isOpen={isOpen} onClose={onClose} isCentered>
       <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
-      <ModalContent mx={4}>
+      <ModalContent mx={4} data-testid="export-modal">
         <ModalHeader>Export Diagram</ModalHeader>
         <ModalCloseButton />
         <ModalBody>
@@ -103,6 +103,7 @@ function ExportModal({
             <FormControl id="export-filename">
               <FormLabel fontSize="sm">Filename</FormLabel>
               <Input
+                data-testid="export-filename-input"
                 name="filename"
                 value={filename}
                 onChange={(e) => setFilename(e.target.value)}
@@ -117,10 +118,10 @@ function ExportModal({
         </ModalBody>
 
         <ModalFooter gap={2}>
-          <Button variant="ghost" size="sm" onClick={onClose} isDisabled={isExporting}>
+          <Button data-testid="export-cancel" variant="ghost" size="sm" onClick={onClose} isDisabled={isExporting}>
             Cancel
           </Button>
-          <Button size="sm" colorScheme="blue" onClick={handleSubmit} isLoading={isExporting}>
+          <Button data-testid="export-submit" size="sm" colorScheme="blue" onClick={handleSubmit} isLoading={isExporting}>
             Export
           </Button>
         </ModalFooter>

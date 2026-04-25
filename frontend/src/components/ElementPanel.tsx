@@ -509,6 +509,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
             <FormControl isRequired isDisabled={isReadOnly}>
               <FormLabel>Name</FormLabel>
               <Input
+                data-testid="element-panel-name-input"
                 size="sm"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -522,6 +523,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
                 <HStack align="flex-start">
                   <InputGroup>
                     <Input
+                      data-testid="element-panel-type-input"
                       ref={typeInputRef}
                       size="sm"
                       value={typeQuery || type}
@@ -571,6 +573,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
                     <VStack spacing={0} align="stretch">
                       {typeResults.map((t) => (
                         <Box
+                          data-testid="element-panel-type-option"
                           key={t}
                           px={2}
                           py={2}
@@ -613,6 +616,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
             <FormControl isDisabled={isReadOnly}>
               <FormLabel>Description</FormLabel>
               <Textarea
+                data-testid="element-panel-description-input"
                 size="sm"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -626,6 +630,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
               <VStack align="stretch" spacing={2}>
                 <HStack align="flex-start">
                   <Input
+                    data-testid="element-panel-technology-input"
                     ref={techInputRef}
                     size="sm"
                     value={technologyQuery}
@@ -657,6 +662,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
                     isDisabled={isReadOnly || technologyLinks.length >= 3}
                   />
                   <Button
+                    data-testid="element-panel-technology-add"
                     size="sm"
                     onClick={addCustomTechnology}
                     isDisabled={isReadOnly || technologyLinks.length >= 3 || !technologyQuery.trim()}
@@ -670,6 +676,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
                     <VStack spacing={0} align="stretch">
                       {technologyResults.map((item, idx) => (
                         <Box
+                          data-testid="element-panel-technology-option"
                           key={item.defaultSlug}
                           px={2}
                           py={2}
@@ -748,6 +755,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
                     <VStack align="stretch" spacing={1}>
                       {technologyLinks.filter((link) => link.type === 'catalog' && !!link.slug).map((link) => (
                         <Radio
+                          data-testid="element-panel-primary-icon-option"
                           key={`primary-${link.slug}`}
                           value={link.slug}
                           isDisabled={isReadOnly}
@@ -767,6 +775,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
             <FormControl isDisabled={isReadOnly}>
               <FormLabel>URL</FormLabel>
               <Input
+                data-testid="element-panel-url-input"
                 size="sm"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}

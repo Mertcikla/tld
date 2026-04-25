@@ -300,6 +300,7 @@ function ElementLibrary({
         <>
           <Box flexShrink={0}>
             <Box
+              data-testid="element-library-new"
               as="button"
               className="panel-action-button"
               onClick={onCreateNew}
@@ -326,6 +327,7 @@ function ElementLibrary({
             <SearchIcon color="gray.500" />
           </InputLeftElement>
           <Input
+            data-testid="element-library-search"
             className="panel-search-input"
             placeholder="Search catalog…"
             value={search}
@@ -333,6 +335,7 @@ function ElementLibrary({
           />
         </InputGroup>
         <Checkbox
+          data-testid="element-library-hide-existing"
           size="sm"
           mt={2}
           ml={0.5}
@@ -385,6 +388,9 @@ function ElementLibrary({
                 openDelay={500}
               >
                 <Box
+                  data-testid="element-library-item"
+                  data-element-id={obj.id}
+                  data-element-name={obj.name}
                   draggable={canEdit && !already && !isMobile}
                   onDragStart={(e) => onDragStart(e, obj)}
                   onPointerDown={(e) => onItemPointerDown(e, obj)}
@@ -415,6 +421,7 @@ function ElementLibrary({
                       {already && onFindElement && (
                         <Tooltip label="Find on canvas" placement="top" openDelay={200}>
                           <IconButton
+                            data-testid="element-library-find"
                             aria-label="Find on canvas"
                             icon={<ViewIcon />}
                             size="xs"
@@ -432,6 +439,7 @@ function ElementLibrary({
                       {canEdit && !already && onTapAdd && (
                         <Tooltip label="Add to canvas" placement="top" openDelay={200}>
                           <IconButton
+                            data-testid="element-library-add"
                             aria-label="Add to canvas"
                             icon={<AddIcon boxSize={2.5} />}
                             size="xs"
@@ -499,7 +507,7 @@ function ElementLibrary({
   )
 
   return (
-    <SlidingPanel isOpen={isOpen} onClose={onClose} panelKey="elementlibrary" side="left" width="300px" hasBackdrop={false} zIndex={1000}>
+    <SlidingPanel data-testid="element-library-panel" isOpen={isOpen} onClose={onClose} panelKey="elementlibrary" side="left" width="300px" hasBackdrop={false} zIndex={1000}>
       <PanelHeader title="Element Library" onClose={onClose} hasCloseButton={isMobile} />
 
       <Box p={0} display="flex" flexDir="column" overflow="hidden" flex={1}>

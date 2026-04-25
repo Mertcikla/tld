@@ -80,6 +80,7 @@ export default function TagUpsert({
     <VStack align="stretch" spacing={2}>
       <Box position="relative">
         <Input
+          data-testid="tag-upsert-input"
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
@@ -114,6 +115,7 @@ export default function TagUpsert({
             <VStack spacing={0} align="stretch">
               {results.map((item, i) => (
                 <Box
+                  data-testid={item.kind === 'new' ? 'tag-upsert-create-option' : 'tag-upsert-existing-option'}
                   key={i}
                   px={3}
                   py={2}

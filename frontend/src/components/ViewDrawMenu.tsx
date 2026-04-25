@@ -70,7 +70,8 @@ function DrawingBtn({ active, disabled, onClick, title, children }: {
   children: React.ReactNode
 }) {
   return (
-    <Box
+  <Box
+      data-testid={title ? `draw-menu-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}` : undefined}
       as="button"
       title={title}
       onClick={disabled ? undefined : onClick}
@@ -150,6 +151,7 @@ export default function ViewDrawMenu({
 
   return (
     <Box
+      data-testid="draw-menu"
       position="absolute"
       top="12px"
       left="50%"
@@ -193,6 +195,8 @@ export default function ViewDrawMenu({
           <Box
             key={c}
             as="button"
+            data-testid="draw-menu-color"
+            data-color={c}
             title={c}
             onClick={() => setDrawingColor(c)}
             w="18px"
@@ -227,6 +231,8 @@ export default function ViewDrawMenu({
           <Box
             key={size}
             as="button"
+            data-testid="draw-menu-width"
+            data-width={size}
             title={drawingTool === 'text' ? `Font size ${size * 5}px` : `Width ${size}px`}
             onClick={() => setDrawingWidth(size)}
             w="30px"

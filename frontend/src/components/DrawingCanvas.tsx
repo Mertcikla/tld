@@ -363,6 +363,10 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(functi
 
   return (
     <canvas
+      data-testid="drawing-canvas"
+      data-path-count={paths.length}
+      data-drawing-tool={mode}
+      data-drawing-visible={isVisible ? 'true' : 'false'}
       ref={canvasRef}
       style={{
         position: 'absolute',

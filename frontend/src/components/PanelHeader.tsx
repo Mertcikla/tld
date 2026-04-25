@@ -23,6 +23,7 @@ export default function PanelHeader({ title, onClose, hasCloseButton = true }: P
         </Text>
         {hasCloseButton && onClose && (
           <CloseButton
+            data-testid="panel-close"
             size="sm"
             color="whiteAlpha.600"
             _hover={{ color: 'white', bg: 'whiteAlpha.100' }}

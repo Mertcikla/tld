@@ -104,7 +104,7 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} size="xl" isCentered>
       <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
-      <ModalContent mx={4}>
+      <ModalContent mx={4} data-testid="import-modal">
         <ModalHeader>{step === 'input' ? 'Import Diagram' : 'Confirm Import'}</ModalHeader>
         <ModalCloseButton />
         <ModalBody>
@@ -120,6 +120,7 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
                     <FormControl>
                       <FormLabel fontSize="sm">Mermaid code</FormLabel>
                       <Textarea
+                        data-testid="import-mermaid-textarea"
                         value={code}
                         onChange={(e) => setCode(e.target.value)}
                         placeholder={MERMAID_PLACEHOLDER}
@@ -136,6 +137,7 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
                     <FormControl>
                       <FormLabel fontSize="sm">Structurizr DSL</FormLabel>
                       <Textarea
+                        data-testid="import-structurizr-textarea"
                         value={code}
                         onChange={(e) => setCode(e.target.value)}
                         placeholder={STRUCTURIZR_PLACEHOLDER}
@@ -182,11 +184,12 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
         <ModalFooter gap={2}>
           {step === 'input' ? (
             <>
-              <Button variant="ghost" size="sm" onClick={onClose}>
+              <Button data-testid="import-cancel" variant="ghost" size="sm" onClick={onClose}>
                 Cancel
               </Button>
               <Button
                 size="sm"
+                data-testid="import-next"
                 colorScheme="blue"
                 onClick={handleNext}
                 isDisabled={!code.trim()}
@@ -197,11 +200,12 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
             </>
           ) : (
             <>
-              <Button variant="ghost" size="sm" onClick={() => setStep('input')} isDisabled={isImporting}>
+              <Button data-testid="import-back" variant="ghost" size="sm" onClick={() => setStep('input')} isDisabled={isImporting}>
                 Back
               </Button>
               <Button
                 size="sm"
+                data-testid="import-confirm"
                 colorScheme="green"
                 onClick={handleSubmit}
                 isLoading={isImporting}

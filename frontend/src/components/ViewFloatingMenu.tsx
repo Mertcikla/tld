@@ -131,6 +131,7 @@ function ViewFloatingMenu({
       <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
       <Tooltip label={focusMode ? 'Show context' : 'Focus on this view'} placement="top" openDelay={200}>
         <Button
+          data-testid="vieweditor-toolbar-focus"
           variant="ghost"
           h="28px"
           px={2.5}
@@ -159,6 +160,7 @@ function ViewFloatingMenu({
           >
             <PopoverTrigger>
               <Button
+                data-testid="vieweditor-toolbar-tags"
                 variant="ghost" h="28px" px={2.5}
                 color={isTagsOpen ? 'var(--accent)' : 'gray.300'}
                 _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
@@ -205,6 +207,7 @@ function ViewFloatingMenu({
                         </Text>
                         <IconButton
                           aria-label={isHidden ? 'Show layer' : 'Hide layer'}
+                          data-testid="vieweditor-toolbar-layer-toggle"
                           icon={isHidden ? <EyeOffSvg size={12} /> : <EyeSvg size={12} />}
                           size="xs"
                           variant="ghost"
@@ -239,6 +242,7 @@ function ViewFloatingMenu({
                         </Text>
                         <IconButton
                           aria-label={isHidden ? 'Show tag' : 'Hide tag'}
+                          data-testid="vieweditor-toolbar-tag-toggle"
                           icon={isHidden ? <EyeOffSvg size={12} /> : <EyeSvg size={12} />}
                           size="xs"
                           variant="ghost"
@@ -265,6 +269,7 @@ function ViewFloatingMenu({
         openDelay={200}
       >
         <Button
+          data-testid="vieweditor-toolbar-draw"
           variant="ghost"
           h="28px"
           px={2.5}
@@ -291,6 +296,7 @@ function ViewFloatingMenu({
             openDelay={200}
           >
             <Button
+              data-testid="vieweditor-toolbar-draw-visibility"
               variant="ghost"
               h="28px"
               minW="28px"
@@ -322,6 +328,7 @@ function ViewFloatingMenu({
           <HStack spacing={1} pl={1} pr={0.5}>
 
             <Button
+              data-testid="vieweditor-toolbar-import"
               variant="ghost"
               h="28px"
               px={2.5}
@@ -338,6 +345,7 @@ function ViewFloatingMenu({
             <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
 
             <Button
+              data-testid="vieweditor-toolbar-export"
               variant="ghost"
               h="28px"
               px={2.5}
@@ -359,6 +367,7 @@ function ViewFloatingMenu({
 
       <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
       <Button
+        data-testid="vieweditor-toolbar-extras"
         variant="ghost"
         h="28px"
         minW="36px"

@@ -35,7 +35,7 @@ export default function ConfirmDialog({
   return (
     <AlertDialog isOpen={isOpen} leastDestructiveRef={cancelRef} onClose={onClose} isCentered>
       <AlertDialogOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
-      <AlertDialogContent mx={4}>
+      <AlertDialogContent mx={4} data-testid="confirm-dialog">
         <AlertDialogHeader>
           {title}
         </AlertDialogHeader>
@@ -45,6 +45,7 @@ export default function ConfirmDialog({
         <AlertDialogFooter gap={2} pt={4}>
           <Button
             ref={cancelRef}
+            data-testid="confirm-dialog-cancel"
             onClick={onClose}
             variant="ghost"
             size="sm"
@@ -52,6 +53,7 @@ export default function ConfirmDialog({
             Cancel
           </Button>
           <Button
+            data-testid="confirm-dialog-confirm"
             onClick={onConfirm}
             isLoading={isLoading}
             size="sm"

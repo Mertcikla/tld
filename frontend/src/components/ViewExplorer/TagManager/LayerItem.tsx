@@ -91,6 +91,9 @@ export const LayerItem: React.FC<Props> = ({
 
   return (
     <Box
+      data-testid="tag-manager-layer"
+      data-layer-id={layer.id}
+      data-layer-name={layer.name}
       borderBottom="1px solid"
       borderColor="whiteAlpha.100"
       bg={isOver ? 'whiteAlpha.100' : 'transparent'}
@@ -120,6 +123,7 @@ export const LayerItem: React.FC<Props> = ({
             onMouseLeave={() => onHover(false)}
           >
             <IconButton
+              data-testid="tag-manager-layer-visibility"
               aria-label={isActive ? 'Hide Layer' : 'Show Layer'}
               icon={isActive ? <EyeIcon size={14} /> : <EyeOffIcon size={14} />}
               size="xs"
@@ -206,6 +210,7 @@ export const LayerItem: React.FC<Props> = ({
               ))}
             </Wrap>
             <IconButton
+              data-testid="tag-manager-layer-delete"
               aria-label="Delete Layer"
               icon={<DeleteIcon />}
               size="xs"

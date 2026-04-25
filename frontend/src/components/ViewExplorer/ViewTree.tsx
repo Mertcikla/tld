@@ -43,6 +43,9 @@ export const ViewTree: React.FC<Props> = ({
           const isFocused = idx === focusedIdx
           return (
             <HStack
+              data-testid="view-explorer-tree-item"
+              data-view-id={node.id}
+              data-view-name={node.name}
               key={node.id}
               ref={(el) => {
                 itemRefs.current[idx] = el as HTMLDivElement | null

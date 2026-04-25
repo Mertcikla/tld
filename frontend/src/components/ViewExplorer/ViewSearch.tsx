@@ -16,6 +16,7 @@ export const ViewSearch: React.FC<Props> = ({ query, setQuery, activeFilter }) =
           <SearchIcon color="gray.500" />
         </InputLeftElement>
         <Input
+          data-testid="view-explorer-search"
           className="panel-search-input"
           placeholder={
             activeFilter === 'out'

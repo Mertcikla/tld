@@ -199,6 +199,7 @@ function LayerButton({
   return (
     <Tooltip label={label} placement="top" openDelay={300} isDisabled={isDisabled}>
       <Box
+        data-testid={variant === 'in' ? 'vieweditor-node-zoom-in' : 'vieweditor-node-zoom-out'}
         as="button"
         w="22px"
         h="22px"

@@ -90,6 +90,8 @@ export const TagItem: React.FC<Props> = ({
     >
       <PopoverTrigger>
         <HStack
+          data-testid="tag-manager-tag"
+          data-tag-name={tag}
           spacing={0}
           align="center"
           px={2}
@@ -111,6 +113,7 @@ export const TagItem: React.FC<Props> = ({
         >
           {onToggleVisibility && (
             <IconButton
+              data-testid="tag-manager-tag-visibility"
               aria-label={isVisible ? 'Hide Tagged Elements' : 'Show Tagged Elements'}
               icon={isVisible ? <EyeIcon size={10} /> : <EyeOffIcon size={10} />}
               size="xs"
@@ -180,6 +183,7 @@ export const TagItem: React.FC<Props> = ({
           )}
           <Tooltip label={description} placement="top" openDelay={500} isDisabled={!description}>
             <Box
+              data-testid="tag-manager-tag-toggle"
               as="button"
               pl={onSetColor ? 2 : 0}
               pr={onRemove ? 1 : 0}
@@ -208,6 +212,7 @@ export const TagItem: React.FC<Props> = ({
           </Tooltip>
           {onRemove && (
             <IconButton
+              data-testid="tag-manager-tag-remove"
               aria-label="Remove tag"
               icon={<SmallCloseIcon />}
               size="xs"
