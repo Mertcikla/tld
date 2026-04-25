@@ -47,7 +47,7 @@ const EXTERNAL_PACKAGES = new Set([
 
   // Layout / force
   'd3-force',
-  'elkjs',
+  'dagre',
 
   // Tree-sitter
   'web-tree-sitter',

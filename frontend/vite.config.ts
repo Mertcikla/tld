@@ -62,7 +62,7 @@ export default defineConfig(async () => {
           manualChunks(id) {
             if (!id.includes('node_modules')) return
             if (id.includes('web-tree-sitter')) return 'tree-sitter'
-            if (id.includes('elkjs')) return 'elk'
+            if (id.includes('dagre') || id.includes('graphlib')) return 'dagre'
             if (id.includes('@codemirror') || id.includes('@uiw/react-codemirror')) return 'codemirror'
             if (id.includes('@chakra-ui') || id.includes('@emotion') || id.includes('framer-motion')) return 'ui'
             if (id.includes('reactflow')) return 'reactflow'

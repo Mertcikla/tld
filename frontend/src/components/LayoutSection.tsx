@@ -21,11 +21,10 @@ import { ChevronDownIcon, ChevronRightIcon } from './Icons'
 import { api } from '../api/client'
 import type { ViewTreeNode } from '../types'
 
-type Algorithm = 'elk' | 'force'
+type Algorithm = 'dagre' | 'force'
 
-interface ElkConfig {
-  algorithm: 'layered' | 'force' | 'mrtree' | 'box'
-  direction: 'RIGHT' | 'LEFT' | 'DOWN' | 'UP'
+interface DagreConfig {
+  direction: 'TB' | 'BT' | 'LR' | 'RL'
   nodeSpacing: number
   layerSpacing: number
 }
@@ -41,7 +40,7 @@ const NODE_W = 200
 const NODE_H = 120
 
 const ALGO_META: Record<Algorithm, { label: string }> = {
-  elk: { label: 'Layered' },
+  dagre: { label: 'Layered' },
   force: { label: 'Organic' },
 }
 
@@ -52,13 +51,12 @@ interface Props {
 
 export default function LayoutSection({ view, canEdit }: Props) {
   const [open, setOpen] = useState(false)
-  const [algo, setAlgo] = useState<Algorithm>('elk')
+  const [algo, setAlgo] = useState<Algorithm>('dagre')
   const [running, setRunning] = useState(false)
   const [collisionRunning, setCollisionRunning] = useState(false)
 
-  const [elkConfig, setElkConfig] = useState<ElkConfig>({
-    algorithm: 'layered',
-    direction: 'DOWN',
+  const [dagreConfig, setDagreConfig] = useState<DagreConfig>({
+    direction: 'TB',
     nodeSpacing: 75,
     layerSpacing: 75,
   })
@@ -199,8 +197,8 @@ export default function LayoutSection({ view, canEdit }: Props) {
       ])
 
       let positions: Map<number, { x: number; y: number }>
-      if (algo === 'elk') {
-        positions = await runElk(objs, edgeList)
+      if (algo === 'dagre') {
+        positions = await runDagre(objs, edgeList)
       } else {
         positions = await runForce(objs, edgeList)
       }
@@ -271,46 +269,45 @@ export default function LayoutSection({ view, canEdit }: Props) {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const runElk = async (objs: any[], edgeList: any[]) => {
+  const runDagre = async (objs: any[], edgeList: any[]) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const ELKModule = await import('elkjs/lib/elk.bundled.js') as any
-    const elk = new ELKModule.default()
-
-    const layoutOptions: Record<string, string> = {
-      'elk.algorithm': elkConfig.algorithm,
-      'elk.spacing.nodeNode': String(elkConfig.nodeSpacing),
-    }
-    if (elkConfig.algorithm === 'layered') {
-      layoutOptions['elk.direction'] = elkConfig.direction
-      layoutOptions['elk.layered.spacing.nodeNodeBetweenLayers'] = String(elkConfig.layerSpacing)
-    }
+    const dagreModule = await import('dagre') as any
+    const dagre = dagreModule.default ?? dagreModule
 
     const objSet = new Set<number>(objs.map((o: { element_id?: number }) => Number(o.element_id)))
-    const graph = {
-      id: 'root',
-      layoutOptions,
-      children: objs.map((obj: { element_id: number }) => ({
-        id: String(obj.element_id),
-        width: NODE_W,
-        height: NODE_H,
-      })),
-      edges: edgeList
-        .filter((e: { source_element_id: number; target_element_id: number }) =>
-          objSet.has(e.source_element_id) && objSet.has(e.target_element_id)
-        )
-        .map((e: { id: number; source_element_id: number; target_element_id: number }) => ({
-          id: String(e.id),
-          sources: [String(e.source_element_id)],
-          targets: [String(e.target_element_id)],
-        })),
-    }
+    const graph = new dagre.graphlib.Graph({ multigraph: true })
+    graph.setGraph({
+      rankdir: dagreConfig.direction,
+      nodesep: dagreConfig.nodeSpacing,
+      ranksep: dagreConfig.layerSpacing,
+      marginx: 0,
+      marginy: 0,
+    })
+    graph.setDefaultEdgeLabel(() => ({}))
 
-    const result = await elk.layout(graph)
+    objs.forEach((obj: { element_id: number }) => {
+      graph.setNode(String(obj.element_id), { width: NODE_W, height: NODE_H })
+    })
+
+    edgeList
+      .filter((e: { source_element_id: number; target_element_id: number }) =>
+        objSet.has(e.source_element_id) && objSet.has(e.target_element_id)
+      )
+      .forEach((e: { id: number; source_element_id: number; target_element_id: number }) => {
+        graph.setEdge(String(e.source_element_id), String(e.target_element_id), {}, String(e.id))
+      })
+
+    dagre.layout(graph)
+
     const positions = new Map<number, { x: number; y: number }>()
-    result.children?.forEach((child: { id: string; x?: number; y?: number }) => {
-      const id = Number(child.id)
+    graph.nodes().forEach((nodeId: string) => {
+      const id = Number(nodeId)
       if (!Number.isFinite(id)) return
-      positions.set(id, { x: child.x ?? 0, y: child.y ?? 0 })
+      const node = graph.node(nodeId) as { x?: number; y?: number }
+      positions.set(id, {
+        x: (node.x ?? 0) - NODE_W / 2,
+        y: (node.y ?? 0) - NODE_H / 2,
+      })
     })
     return positions
   }
@@ -428,54 +425,34 @@ export default function LayoutSection({ view, canEdit }: Props) {
             border="1px solid"
             borderColor="whiteAlpha.100"
           >
-            {algo === 'elk' ? (
+            {algo === 'dagre' ? (
               <Grid templateColumns="1fr 1fr" gap={4}>
                 <FormControl gridColumn="span 2">
-                  <FormLabel {...LabelStyle}>Algorithm</FormLabel>
+                  <FormLabel {...LabelStyle}>Direction</FormLabel>
                   <Select
                     size="xs"
                     variant="filled"
                     bg="whiteAlpha.100"
                     border="none"
                     _hover={{ bg: 'whiteAlpha.200' }}
-                    value={elkConfig.algorithm}
-                    onChange={e => setElkConfig(c => ({ ...c, algorithm: e.target.value as ElkConfig['algorithm'] }))}
+                    value={dagreConfig.direction}
+                    onChange={e => setDagreConfig(c => ({ ...c, direction: e.target.value as DagreConfig['direction'] }))}
                   >
-                    <option value="layered">Layered</option>
-                    <option value="force">Force</option>
-                    <option value="mrtree">Mr. Tree</option>
-                    <option value="box">Box</option>
+                    <option value="TB">Top → Bottom</option>
+                    <option value="BT">Bottom → Top</option>
+                    <option value="LR">Left → Right</option>
+                    <option value="RL">Right → Left</option>
                   </Select>
                 </FormControl>
-
-                {elkConfig.algorithm === 'layered' && (
-                  <FormControl gridColumn="span 2">
-                    <FormLabel {...LabelStyle}>Direction</FormLabel>
-                    <Select
-                      size="xs"
-                      variant="filled"
-                      bg="whiteAlpha.100"
-                      border="none"
-                      _hover={{ bg: 'whiteAlpha.200' }}
-                      value={elkConfig.direction}
-                      onChange={e => setElkConfig(c => ({ ...c, direction: e.target.value as ElkConfig['direction'] }))}
-                    >
-                      <option value="DOWN">Top → Bottom</option>
-                      <option value="UP">Bottom → Top</option>
-                      <option value="RIGHT">Left → Right</option>
-                      <option value="LEFT">Right → Left</option>
-                    </Select>
-                  </FormControl>
-                )}
 
                 <FormControl>
                   <FormLabel {...LabelStyle}>Element Gap</FormLabel>
                   <NumberInput
                     size="xs"
                     variant="filled"
-                    value={elkConfig.nodeSpacing}
+                    value={dagreConfig.nodeSpacing}
                     min={10} max={400} step={10}
-                    onChange={(_, v) => !isNaN(v) && setElkConfig(c => ({ ...c, nodeSpacing: v }))}
+                    onChange={(_, v) => !isNaN(v) && setDagreConfig(c => ({ ...c, nodeSpacing: v }))}
                   >
                     <NumberInputField bg="whiteAlpha.100" border="none" />
                     <NumberInputStepper>
@@ -485,24 +462,22 @@ export default function LayoutSection({ view, canEdit }: Props) {
                   </NumberInput>
                 </FormControl>
 
-                {elkConfig.algorithm === 'layered' && (
-                  <FormControl>
-                    <FormLabel {...LabelStyle}>Layer Gap</FormLabel>
-                    <NumberInput
-                      size="xs"
-                      variant="filled"
-                      value={elkConfig.layerSpacing}
-                      min={10} max={400} step={10}
-                      onChange={(_, v) => !isNaN(v) && setElkConfig(c => ({ ...c, layerSpacing: v }))}
-                    >
-                      <NumberInputField bg="whiteAlpha.100" border="none" />
-                      <NumberInputStepper>
-                        <NumberIncrementStepper border="none" />
-                        <NumberDecrementStepper border="none" />
-                      </NumberInputStepper>
-                    </NumberInput>
-                  </FormControl>
-                )}
+                <FormControl>
+                  <FormLabel {...LabelStyle}>Layer Gap</FormLabel>
+                  <NumberInput
+                    size="xs"
+                    variant="filled"
+                    value={dagreConfig.layerSpacing}
+                    min={10} max={400} step={10}
+                    onChange={(_, v) => !isNaN(v) && setDagreConfig(c => ({ ...c, layerSpacing: v }))}
+                  >
+                    <NumberInputField bg="whiteAlpha.100" border="none" />
+                    <NumberInputStepper>
+                      <NumberIncrementStepper border="none" />
+                      <NumberDecrementStepper border="none" />
+                    </NumberInputStepper>
+                  </NumberInput>
+                </FormControl>
               </Grid>
             ) : (
               <Grid templateColumns="1fr 1fr" gap={4}>
