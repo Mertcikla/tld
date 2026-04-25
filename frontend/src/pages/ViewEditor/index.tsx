@@ -634,7 +634,7 @@ function ViewEditorInner({
     closeElementPanel: useCallback(() => closeElementPanelRef.current(), []),
     openConnectorPanel: useCallback(() => openConnectorPanelRef.current(), []),
     closeConnectorPanel: useCallback(() => closeConnectorPanelRef.current(), []),
-    selectedElement, selectedEdgeId, connectors,
+    selectedElement, selectedConnector: selectedEdge, selectedEdgeId, connectors,
     layers,
     setSelectedElement,
     setSelectedEdge, setSelectedEdgeId,
@@ -1007,7 +1007,9 @@ function ViewEditorInner({
   const handleConnectorDeleteInPanel = useCallback((edgeId: number) => {
     if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
     removeStoreConnector(edgeId)
-  }, [removeStoreConnector, viewId])
+    setSelectedEdge(null)
+    setSelectedEdgeId(null)
+  }, [removeStoreConnector, viewId, setSelectedEdge, setSelectedEdgeId])
   const handleViewSave = useCallback((updated: ViewTreeNode) => setView(updated), [setView])
 
   // ── Library helpers ────────────────────────────────────────────────────────

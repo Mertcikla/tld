@@ -129,6 +129,13 @@ export function applyNodeChangesWithStructuralSharing(changes: NodeChange[], nod
   return didChange ? nextNodes : nodes
 }
 
+export function getConnectorDeletionTarget(
+  selectedConnector: Connector | null,
+  selectedEdgeId: number | null,
+) {
+  return selectedConnector?.id ?? selectedEdgeId
+}
+
 interface CanvasInteractionOptions {
   viewId: number | null
   canEdit: boolean
@@ -164,6 +171,7 @@ interface CanvasInteractionOptions {
   openConnectorPanel: () => void
   closeConnectorPanel: () => void
   selectedElement: LibraryElement | null
+  selectedConnector: Connector | null
   selectedEdgeId: number | null
   connectors: Connector[]
   layers: ViewLayer[]
@@ -243,6 +251,7 @@ export function useCanvasInteractions({
   openConnectorPanel: openConnectorPanel,
   closeConnectorPanel: closeConnectorPanel,
   selectedElement,
+  selectedConnector,
   selectedEdgeId,
   connectors,
   layers,
@@ -1219,9 +1228,12 @@ export function useCanvasInteractions({
             setSelectedElement(null)
             closeElementPanel()
           }
-        } else if (selectedEdgeId) {
-          api.workspace.connectors.delete('', selectedEdgeId).then(() => {
-            handleConnectorDeleted(selectedEdgeId)
+        } else {
+          const connectorId = getConnectorDeletionTarget(selectedConnector, selectedEdgeId)
+          if (connectorId === null) return
+          api.workspace.connectors.delete('', connectorId).then(() => {
+            handleConnectorDeleted(connectorId)
+            setSelectedEdge(null)
             setSelectedEdgeId(null)
             closeConnectorPanel()
           }).catch(() => { /* intentionally empty */ })
@@ -1331,7 +1343,7 @@ export function useCanvasInteractions({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [canEdit, refreshGrid, selectedElement, selectedEdgeId, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted,  closeElementPanel, closeConnectorPanel, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, setSelectedEdgeId, containerRef, linksMapRef])
+  }, [canEdit, refreshGrid, selectedElement, selectedConnector, selectedEdgeId, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted,  closeElementPanel, closeConnectorPanel, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, setSelectedEdgeId, containerRef, linksMapRef])
 
   // ── DnD handlers ──────────────────────────────────────────────────────────
   const onDragOver = useCallback((e: React.DragEvent) => {
