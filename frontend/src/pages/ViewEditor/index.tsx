@@ -915,7 +915,7 @@ function ViewEditorInner({
     return () => observer.disconnect()
   }, [maybeFitView])
 
-  useEffect(() => { setRfNodes([]); setRfEdges([]); needsFitView.current = true }, [viewId, setRfEdges, setRfNodes])
+  useEffect(() => { needsFitView.current = true }, [viewId])
 
   // ── Dynamic viewport bounds ────────────────────────────────────────────────
   useEffect(() => {
