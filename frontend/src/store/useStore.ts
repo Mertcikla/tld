@@ -45,7 +45,6 @@ export type CanvasStoreState = ViewEditorUiState & {
   incomingLinks: IncomingViewConnector[]
   treeData: ViewTreeNode[]
   allElements: LibraryElement[]
-  libraryRefresh: number
 
   setViewEditorUi: (patch: Partial<ViewEditorUiState>) => void
   setSnapToGrid: (snapToGrid: boolean) => void
@@ -61,7 +60,6 @@ export type CanvasStoreState = ViewEditorUiState & {
   setIncomingLinks: (next: StoreSetter<IncomingViewConnector[]>) => void
   setTreeData: (next: StoreSetter<ViewTreeNode[]>) => void
   setAllElements: (next: StoreSetter<LibraryElement[]>) => void
-  setLibraryRefresh: (next: StoreSetter<number>) => void
   resetCanvas: () => void
   hydrateViewContent: (payload: ViewContentPayload) => void
   updateElementPosition: (elementId: number, x: number, y: number) => void
@@ -268,7 +266,6 @@ export const useStore = create<CanvasStoreState>((set) => ({
   incomingLinks: [],
   treeData: [],
   allElements: [],
-  libraryRefresh: 0,
 
   setViewEditorUi: (patch) => set((state) => ({ ...state, ...patch })),
   setSnapToGrid: (snapToGrid) => set({ snapToGrid }),
@@ -284,7 +281,6 @@ export const useStore = create<CanvasStoreState>((set) => ({
   setIncomingLinks: (next) => set((state) => ({ incomingLinks: resolveSetter(next, state.incomingLinks) })),
   setTreeData: (next) => set((state) => ({ treeData: resolveSetter(next, state.treeData) })),
   setAllElements: (next) => set((state) => ({ allElements: resolveSetter(next, state.allElements) })),
-  setLibraryRefresh: (next) => set((state) => ({ libraryRefresh: resolveSetter(next, state.libraryRefresh) })),
   resetCanvas: () => set({ nodes: [], edges: [] }),
   hydrateViewContent: (payload) => set({
     view: payload.view,
@@ -303,11 +299,11 @@ export const useStore = create<CanvasStoreState>((set) => ({
   })),
   removeElementEverywhere: (elementId) => set((state) => ({
     viewElements: removePlacedElement(state.viewElements, elementId),
-    libraryRefresh: state.libraryRefresh + 1,
+    allElements: state.allElements.filter((el) => el.id !== elementId),
   })),
   mergeSavedElement: (saved) => set((state) => ({
     viewElements: mergeSavedElementIntoPlacements(state.viewElements, saved),
-    libraryRefresh: state.libraryRefresh + 1,
+    allElements: state.allElements.map((el) => (el.id === saved.id ? saved : el)),
   })),
   upsertConnector: (connector) => set((state) => ({
     connectors: upsertConnectorInList(state.connectors, connector),

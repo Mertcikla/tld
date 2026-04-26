@@ -422,7 +422,7 @@ function ViewEditorInner({
     view, setView, viewElements, setViewElements, connectors, setConnectors,
     rfNodes, setRfNodes, rfEdges, setRfEdges,
     linksMap, setLinksMap, parentLinksMap, setParentLinksMap,
-    treeData, allElements, libraryRefresh,
+    treeData, allElements,
     existingElementIds,
     viewElementsRef, linksMapRef, parentLinksMapRef, incomingLinksRef,
     treeDataRef, rfNodesRef, rfEdgesRef, viewIdRef,
@@ -1376,7 +1376,7 @@ function ViewEditorInner({
         <ElementLibrary
           existingElementIds={existingElementIds}
           existingElements={existingElements}
-          onCreateNew={handleCreateNewLibrary} refresh={libraryRefresh}
+          onCreateNew={handleCreateNewLibrary}
           isOpen={libraryOpen} onClose={handleCloseLibrary}
           onTapAdd={canEdit ? handleTapAdd : undefined}
           onFindElement={handleFindElement}

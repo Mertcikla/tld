@@ -190,8 +190,6 @@ export function useViewData({
   const treeData = useStore((state) => state.treeData)
   const allElements = useStore((state) => state.allElements)
   const setAllElements = useStore((state) => state.setAllElements)
-  const libraryRefresh = useStore((state) => state.libraryRefresh)
-  const setLibraryRefresh = useStore((state) => state.setLibraryRefresh)
   const hydrateViewContent = useStore((state) => state.hydrateViewContent)
   const resetCanvas = useStore((state) => state.resetCanvas)
   const removeElementPlacement = useStore((state) => state.removeElementPlacement)
@@ -268,7 +266,7 @@ export function useViewData({
 
   // ── Keep all-org elements for inline adder ──────────────────────────────────
   const allElementsQuery = useQuery({
-    queryKey: ['elements', 'list', libraryRefresh],
+    queryKey: ['elements', 'list'],
     queryFn: () => api.elements.list(),
   })
 
@@ -671,8 +669,6 @@ export function useViewData({
     incomingLinks,
     treeData,
     allElements,
-    libraryRefresh,
-    setLibraryRefresh,
     existingElementIds,
     // Stable refs
     viewElementsRef,

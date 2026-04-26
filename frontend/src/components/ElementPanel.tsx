@@ -18,8 +18,6 @@ import {
   PopoverBody,
   PopoverContent,
   PopoverTrigger,
-  Radio,
-  RadioGroup,
   Tag,
   TagCloseButton,
   TagLabel,
@@ -44,6 +42,142 @@ import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
 
 import { useViewEditorContext } from '../pages/ViewEditor/context'
+
+function normalizeTechnologyLabel(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase()
+}
+
+function splitTechnologyLabel(value: string): string[] {
+  return value.split(',').map((part) => part.trim()).filter(Boolean)
+}
+
+function findCatalogItemByLabel(index: Awaited<ReturnType<typeof getTechnologyCatalogIndex>>, label: string): TechnologyCatalogItem | null {
+  const normalized = normalizeTechnologyLabel(label)
+  if (!normalized) return null
+
+  const bySlugMatch = index.bySlug.get(label.trim())
+  if (bySlugMatch) return bySlugMatch
+
+  return index.items.find((item) => (
+    normalizeTechnologyLabel(item.name) === normalized ||
+    normalizeTechnologyLabel(item.nameShort) === normalized ||
+    normalizeTechnologyLabel(item.defaultSlug) === normalized
+  )) ?? null
+}
+
+function dedupeTechnologyLinks(links: TechnologyConnector[]): TechnologyConnector[] {
+  const seenCatalog = new Set<string>()
+  const seenCustom = new Set<string>()
+  const result: TechnologyConnector[] = []
+  let primarySet = false
+
+  for (const link of links) {
+    const label = link.label.trim()
+    if (!label) continue
+
+    if (link.type === 'catalog' && link.slug) {
+      const slug = link.slug.trim()
+      const key = slug.toLowerCase()
+      if (seenCatalog.has(key)) continue
+      seenCatalog.add(key)
+      result.push({
+        type: 'catalog',
+        slug,
+        label,
+        is_primary_icon: !primarySet && !!link.is_primary_icon,
+      })
+      if (link.is_primary_icon) primarySet = true
+      continue
+    }
+
+    const key = normalizeTechnologyLabel(label)
+    if (seenCustom.has(key)) continue
+    seenCustom.add(key)
+    result.push({ type: 'custom', label, is_primary_icon: false })
+  }
+
+  return result.slice(0, 3)
+}
+
+async function normalizeInitialTechnologyLinks(element: LibraryElement): Promise<TechnologyConnector[]> {
+  const rawLinks = element.technology_connectors ?? []
+  const legacyLabels = splitTechnologyLabel(element.technology ?? '')
+
+  if (rawLinks.length === 0 && legacyLabels.length === 0) return []
+
+  const index = await getTechnologyCatalogIndex()
+  const normalized: TechnologyConnector[] = []
+
+  const pushLabel = (label: string, isPrimaryIcon = false) => {
+    const match = findCatalogItemByLabel(index, label)
+    if (match) {
+      normalized.push({
+        type: 'catalog',
+        slug: match.defaultSlug,
+        label: match.name,
+        is_primary_icon: isPrimaryIcon,
+      })
+    } else {
+      normalized.push({ type: 'custom', label: label.trim(), is_primary_icon: false })
+    }
+  }
+
+  for (const link of rawLinks.length > 0 ? rawLinks : legacyLabels.map((label) => ({ type: 'custom' as const, label }))) {
+    if (link.type === 'catalog') {
+      const match = link.slug ? index.bySlug.get(link.slug) : null
+      normalized.push({
+        type: 'catalog',
+        slug: link.slug,
+        label: match?.name ?? link.label,
+        is_primary_icon: !!link.is_primary_icon,
+      })
+      continue
+    }
+
+    const parts = splitTechnologyLabel(link.label)
+    if (parts.length > 1) {
+      for (const part of parts) pushLabel(part)
+    } else {
+      pushLabel(link.label)
+    }
+  }
+
+  for (const label of legacyLabels) {
+    pushLabel(label)
+  }
+
+  return dedupeTechnologyLinks(normalized)
+}
+
+function buildTechnologyFingerprintPayload(
+  element: LibraryElement,
+  links: TechnologyConnector[],
+  type: string,
+) {
+  const normalizedLinks = links.map((link) => ({
+    type: link.type,
+    slug: link.type === 'catalog' ? link.slug : undefined,
+    label: link.label,
+    is_primary_icon: !!link.is_primary_icon,
+  }))
+  const normalizedType = type.trim().toLowerCase()
+  const technology = links.map((link) => link.label).join(', ')
+
+  return {
+    name: element.name,
+    description: element.description ?? '',
+    kind: normalizedType,
+    technology,
+    url: element.url ?? '',
+    logo_url: element.logo_url ?? '',
+    technology_connectors: normalizedLinks,
+    tags: element.tags ?? [],
+    repo: element.repo,
+    branch: element.branch,
+    file_path: element.file_path,
+    language: element.language,
+  }
+}
 
 export interface ElementPanelProps extends ElementPanelSlots {
   isOpen: boolean
@@ -101,6 +235,8 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
   }, [technologyQuery])
 
   useEffect(() => {
+    let cancelled = false
+
     if (element) {
       setName(element.name)
       setDescription(element.description ?? '')
@@ -108,43 +244,39 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
       setTypeQuery('')
       setTypeResults([])
       setUrl(element.url ?? '')
-      const linksFromElement = element.technology_connectors ?? []
-      if (linksFromElement.length > 0) {
-        setTechnologyConnectors(linksFromElement)
-      } else if (element.technology) {
-        setTechnologyConnectors([{ type: 'custom', label: element.technology }])
-      } else {
-        setTechnologyConnectors([])
-      }
       setTags(element.tags ?? [])
       setExplicitLogoClear(false)
 
-      // Initialize autosave fingerprint based on a payload normalized the same way as saves.
-      const initialLinks: TechnologyConnector[] = linksFromElement.length > 0
+      const linksFromElement = element.technology_connectors ?? []
+      const fallbackLinks: TechnologyConnector[] = linksFromElement.length > 0
         ? linksFromElement
         : (element.technology ? [{ type: 'custom', label: element.technology }] : [])
-      const normalizedLinks = initialLinks.map((link) => ({
-        type: link.type,
-        slug: link.type === 'catalog' ? link.slug : undefined,
-        label: link.label,
-        is_primary_icon: !!link.is_primary_icon,
-      }))
-      const normalizedType = (element.kind ?? '').trim().toLowerCase()
-      const technology = initialLinks.map((link) => link.label).join(', ')
-      lastSavedFingerprintRef.current = JSON.stringify({
-        name: element.name,
-        description: element.description ?? '',
-        kind: normalizedType,
-        technology,
-        url: element.url ?? '',
-        logo_url: element.logo_url ?? '',
-        technology_connectors: normalizedLinks,
-        tags: element.tags ?? [],
-        repo: element.repo,
-        branch: element.branch,
-        file_path: element.file_path,
-        language: element.language,
-      })
+      setTechnologyConnectors(fallbackLinks)
+      lastSavedFingerprintRef.current = JSON.stringify(buildTechnologyFingerprintPayload(
+        element,
+        fallbackLinks,
+        element.kind ?? '',
+      ))
+
+      normalizeInitialTechnologyLinks(element)
+        .then((initialLinks) => {
+          if (cancelled) return
+          setTechnologyConnectors(initialLinks)
+          lastSavedFingerprintRef.current = JSON.stringify(buildTechnologyFingerprintPayload(
+            element,
+            initialLinks,
+            element.kind ?? '',
+          ))
+        })
+        .catch(() => {
+          if (cancelled) return
+          setTechnologyConnectors(fallbackLinks)
+          lastSavedFingerprintRef.current = JSON.stringify(buildTechnologyFingerprintPayload(
+            element,
+            fallbackLinks,
+            element.kind ?? '',
+          ))
+        })
     } else {
       setName('')
       setDescription('')
@@ -159,6 +291,10 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
       setTags([])
       setExplicitLogoClear(false)
       lastSavedFingerprintRef.current = ''
+    }
+
+    return () => {
+      cancelled = true
     }
   }, [element, isOpen])
 
@@ -179,7 +315,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
     if (explicitLogoClear) {
       logoUrl = ''
     }
-    if (primarySlug) {
+    if (!explicitLogoClear && primarySlug) {
       const cached = technologyMeta[primarySlug]
       if (cached?.iconUrl) {
         logoUrl = cached.iconUrl
@@ -378,39 +514,27 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
   }
 
   const removeTechnology = (linkToRemove: TechnologyConnector) => {
-    setTechnologyConnectors((prev) => {
-      const next = prev.filter((link) => !(link.type === linkToRemove.type && link.slug === linkToRemove.slug && link.label === linkToRemove.label))
-      const hasPrimaryCatalog = next.some((link) => link.type === 'catalog' && !!link.is_primary_icon)
-      if (hasPrimaryCatalog) return next
-
-      const firstCatalogIndex = next.findIndex((link) => link.type === 'catalog' && !!link.slug)
-      if (firstCatalogIndex === -1) return next
-
-      return next.map((link, index) => ({
-        ...link,
-        is_primary_icon: index === firstCatalogIndex,
-      }))
-    })
+    if (linkToRemove.type === 'catalog' && linkToRemove.is_primary_icon) {
+      setExplicitLogoClear(true)
+    }
+    setTechnologyConnectors((prev) => prev.filter((link) => (
+      !(link.type === linkToRemove.type && link.slug === linkToRemove.slug && link.label === linkToRemove.label)
+    )))
     scheduleAutoSave()
   }
 
-  const markPrimaryIcon = (selectedSlug: string) => {
+  const togglePrimaryIcon = (selectedSlug: string) => {
+    const isDeselecting = selectedPrimarySlug === selectedSlug
     setTechnologyConnectors((prev) => prev.map((link) => {
       if (link.type !== 'catalog') {
         return { ...link, is_primary_icon: false }
       }
       return {
         ...link,
-        is_primary_icon: link.slug === selectedSlug,
+        is_primary_icon: !isDeselecting && link.slug === selectedSlug,
       }
     }))
-    setExplicitLogoClear(false)
-    scheduleAutoSave()
-  }
-
-  const clearPrimaryIcon = () => {
-    setTechnologyConnectors((prev) => prev.map((link) => ({ ...link, is_primary_icon: false })))
-    setExplicitLogoClear(true)
+    setExplicitLogoClear(isDeselecting)
     scheduleAutoSave()
   }
 
@@ -457,7 +581,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
         kind: normalizedType,
         technology: technologyLinks.map((link) => link.label).join(', '),
         url,
-        logo_url: primaryMetadata?.iconUrl ?? '',
+        logo_url: explicitLogoClear ? '' : (primaryMetadata?.iconUrl ?? ''),
         technology_connectors: normalizedLinks,
         tags,
         repo: element?.repo,
@@ -703,11 +827,24 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
                   {technologyLinks.map((link) => {
                     const meta = link.slug ? technologyMeta[link.slug] : undefined
                     const sourceUrl = meta?.websiteUrl || meta?.docsUrl
+                    const isSelectable = link.type === 'catalog' && !!link.slug && !isReadOnly
+                    const isPrimaryIcon = link.type === 'catalog' && !!link.is_primary_icon && !!link.slug
                     return (
                       <WrapItem key={`${link.type}:${link.slug ?? link.label}`}>
                         <Popover trigger={isMobile ? 'click' : 'hover'} placement="top" closeOnBlur>
                           <PopoverTrigger>
-                            <Tag size="sm" variant="subtle" bg="whiteAlpha.100" border="1px solid" borderColor="whiteAlpha.200" cursor="pointer">
+                            <Tag
+                              size="sm"
+                              variant="subtle"
+                              bg={isPrimaryIcon ? 'blue.500' : 'whiteAlpha.100'}
+                              border="1px solid"
+                              borderColor={isPrimaryIcon ? 'blue.300' : 'whiteAlpha.200'}
+                              color={isPrimaryIcon ? 'white' : undefined}
+                              cursor={isSelectable ? 'pointer' : 'default'}
+                              onClick={() => {
+                                if (isSelectable && link.slug) togglePrimaryIcon(link.slug)
+                              }}
+                            >
                               <TagLabel color="white">
                                 {link.type === 'catalog' && meta && (
                                   <Box as="img" src={resolveWithBase(meta.iconUrl)} alt={link.label} boxSize="12px" objectFit="contain" display="inline-block" mr={1.5} verticalAlign="middle" />
@@ -715,7 +852,13 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
                                 {link.label}
                               </TagLabel>
                               {!isReadOnly && (
-                                <TagCloseButton onClick={() => removeTechnology(link)} />
+                                <TagCloseButton
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    removeTechnology(link)
+                                  }}
+                                />
                               )}
                             </Tag>
                           </PopoverTrigger>
@@ -738,28 +881,6 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
                     )
                   })}
                 </Wrap>
-
-                <VStack align="stretch" spacing={1}>
-                  <Text fontSize="xs" color="gray.400">Canvas icon (optional)</Text>
-                  <Button size="xs" variant="ghost" w="fit-content" onClick={clearPrimaryIcon} isDisabled={isReadOnly}>
-                    None
-                  </Button>
-                  <RadioGroup value={selectedPrimarySlug} onChange={markPrimaryIcon}>
-                    <VStack align="stretch" spacing={1}>
-                      {technologyLinks.filter((link) => link.type === 'catalog' && !!link.slug).map((link) => (
-                        <Radio
-                          key={`primary-${link.slug}`}
-                          value={link.slug}
-                          isDisabled={isReadOnly}
-                          size="sm"
-                          colorScheme="blue"
-                        >
-                          <Text fontSize="xs" color="gray.200">{link.label}</Text>
-                        </Radio>
-                      ))}
-                    </VStack>
-                  </RadioGroup>
-                </VStack>
 
                 <Text fontSize="10px" color="gray.500">Maximum 3 linked technologies.</Text>
               </VStack>

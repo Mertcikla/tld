@@ -112,7 +112,6 @@ beforeEach(() => {
     incomingLinks: [],
     treeData: [],
     allElements: [],
-    libraryRefresh: 0,
   })
 })
 
@@ -221,7 +220,6 @@ describe('zustand canvas store', () => {
     useStore.getState().setIncomingLinks([{ id: 1, element_id: 10, element_name: 'E', from_view_id: 1, from_view_name: 'Root', to_view_id: 2 }])
     useStore.getState().setTreeData(tree)
     useStore.getState().setAllElements([libraryElement(10)])
-    useStore.getState().setLibraryRefresh((previous) => previous + 1)
 
     const state = useStore.getState()
     expect(state.view?.id).toBe(1)
@@ -234,7 +232,6 @@ describe('zustand canvas store', () => {
     expect(state.incomingLinks).toHaveLength(1)
     expect(state.treeData).toBe(tree)
     expect(state.allElements).toHaveLength(1)
-    expect(state.libraryRefresh).toBe(1)
   })
 
   it('hydrates and resets canvas data', () => {
@@ -269,13 +266,14 @@ describe('zustand canvas store', () => {
     expect(useStore.getState().viewElements.map((item) => item.element_id)).toEqual([20])
 
     useStore.getState().setViewElements([element(10)])
+    useStore.getState().setAllElements([libraryElement(10)])
     useStore.getState().mergeSavedElement(libraryElement(10))
     expect(useStore.getState().viewElements[0].name).toBe('Saved')
-    expect(useStore.getState().libraryRefresh).toBe(1)
+    expect(useStore.getState().allElements[0].name).toBe('Saved')
 
     useStore.getState().removeElementEverywhere(10)
     expect(useStore.getState().viewElements).toEqual([])
-    expect(useStore.getState().libraryRefresh).toBe(2)
+    expect(useStore.getState().allElements).toEqual([])
 
     useStore.getState().upsertConnector(connector(2))
     useStore.getState().replaceConnector({ ...connector(2), label: 'updated' })
