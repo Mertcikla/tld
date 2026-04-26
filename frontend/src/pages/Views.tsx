@@ -28,6 +28,7 @@ import { AddIcon, CloseIcon, SearchIcon } from '@chakra-ui/icons'
 import { motion, AnimatePresence } from 'framer-motion'
 import ViewsGrid from './ViewsGrid'
 import InfiniteZoom, { type InfiniteZoomHandle } from './InfiniteZoom'
+import { ZoomInIcon } from '../components/Icons'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
 import type { ViewTreeNode } from '../types'
@@ -40,6 +41,20 @@ interface Props {
 type ViewType = 'explore' | 'hierarchy'
 
 const MotionBox = motion.create(Box)
+
+function HierarchyModeIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="8" y="2" width="8" height="5" rx="1.5" fill="none" />
+      <line x1="12" y1="7" x2="12" y2="11.5" />
+      <line x1="4.5" y1="11.5" x2="19.5" y2="11.5" />
+      <line x1="4.5" y1="11.5" x2="4.5" y2="14" />
+      <rect x="1.5" y="14" width="6" height="4.5" rx="1.5" fill="none" />
+      <line x1="19.5" y1="11.5" x2="19.5" y2="14" />
+      <rect x="16.5" y="14" width="6" height="4.5" rx="1.5" fill="none" />
+    </svg>
+  )
+}
 
 function flattenTree(roots: ViewTreeNode[]): ViewTreeNode[] {
   const result: ViewTreeNode[] = []
@@ -75,36 +90,22 @@ function DiagramJumpToolbar({
   onCreateOpen,
 }: DiagramJumpToolbarProps) {
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
-  const toolbarRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
-  const [searchExpanded, setSearchExpanded] = useState(false)
-  const bgColor = 'var(--bg)'
-  const activeColor = 'clay.bg'
+  const [searchFocused, setSearchFocused] = useState(false)
   const inactiveColor = 'gray.400'
-  const showSearchInput = searchExpanded || searchTerm.length > 0 || searchResults.length > 0
-
-  const expandSearch = useCallback(() => {
-    setSearchExpanded(true)
-    window.setTimeout(() => searchInputRef.current?.focus(), 0)
-  }, [])
+  const searchHasContent = searchTerm.length > 0 || searchResults.length > 0
+  const searchIsActive = searchFocused || searchHasContent
+  const showCreateButton = !searchHasContent
+  const desktopSearchWidth = searchHasContent ? 318 : searchFocused ? 236 : 118
 
   const maybeCollapseSearch = useCallback(() => {
     window.setTimeout(() => {
-      if (toolbarRef.current?.contains(document.activeElement)) return
-      if (searchTerm || searchResults.length > 0) return
-      setSearchExpanded(false)
+      setSearchFocused(false)
     }, 80)
-  }, [searchResults.length, searchTerm])
-
-  useEffect(() => {
-    if (searchTerm || searchResults.length > 0) return
-    if (toolbarRef.current?.contains(document.activeElement)) return
-    setSearchExpanded(false)
-  }, [searchResults.length, searchTerm])
+  }, [])
 
   return (
     <Box
-      ref={toolbarRef}
       position="absolute"
       top={isMobileLayout ? 3 : 4}
       left="50%"
@@ -120,172 +121,182 @@ function DiagramJumpToolbar({
         transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
       >
         <Flex
-          bg={bgColor}
-          backdropFilter="blur(18px) saturate(160%)"
+          bg="var(--bg-panel)"
+          backdropFilter="blur(20px)"
           border="1px solid"
           borderColor="whiteAlpha.100"
-          borderRadius={isMobileLayout ? "18px" : "full"}
-          p={1}
-          gap={1}
-          boxShadow="0 10px 32px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255,255,255,0.05)"
+          borderRadius="xl"
+          px={1.5}
+          py={1.5}
+          gap={1.5}
+          boxShadow="0 8px 32px rgba(0,0,0,0.5)"
           align="center"
-          direction={isMobileLayout ? "column" : "row"}
+          w={isMobileLayout ? "full" : "auto"}
+          maxW="full"
+          overflow="hidden"
+          transition="all 0.2s cubic-bezier(0.4, 0, 0.2, 1)"
         >
-          <HStack spacing={1} w={isMobileLayout ? "full" : "auto"}>
+          <HStack
+            spacing={0.5}
+            p={0.5}
+            bg="blackAlpha.200"
+            border="1px solid"
+            borderColor="whiteAlpha.50"
+            borderRadius="lg"
+            flexShrink={0}
+          >
             <Button
               size="sm"
               variant="ghost"
-              borderRadius="full"
+              borderRadius="md"
               position="relative"
-              px={isMobileLayout ? 4 : 6}
-              h="32px"
-              flex={isMobileLayout ? 1 : undefined}
+              px={isMobileLayout ? 2.5 : 3}
+              h="28px"
+              minW={isMobileLayout ? "34px" : "auto"}
               onClick={() => onViewChange('explore')}
               _hover={{ bg: 'transparent' }}
               _active={{ bg: 'transparent' }}
               color={view === 'explore' ? 'white' : inactiveColor}
               transition="color 0.2s"
+              aria-label="Explore view"
             >
               {view === 'explore' && (
                 <MotionBox
                   layoutId="active-pill"
                   position="absolute"
                   inset={0}
-                  bg={activeColor}
-                  borderRadius="full"
+                  bg="var(--bg-element)"
+                  borderRadius="md"
                   zIndex={-1}
-                  transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
+                  transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
                 />
               )}
-              <Text fontSize="xs" fontWeight="bold" zIndex={1}>Explore</Text>
+              <HStack spacing={1.5} zIndex={1}>
+                <ZoomInIcon size={13} strokeWidth={2.4} />
+                <Text fontSize="11px" fontWeight="semibold" display={isMobileLayout ? "none" : "block"}>Explore</Text>
+              </HStack>
             </Button>
             <Button
               size="sm"
               variant="ghost"
-              borderRadius="full"
+              borderRadius="md"
               position="relative"
-              px={isMobileLayout ? 4 : 6}
-              h="32px"
-              flex={isMobileLayout ? 1 : undefined}
+              px={isMobileLayout ? 2.5 : 3}
+              h="28px"
+              minW={isMobileLayout ? "34px" : "auto"}
               onClick={() => onViewChange('hierarchy')}
               _hover={{ bg: 'transparent' }}
               _active={{ bg: 'transparent' }}
               color={view === 'hierarchy' ? 'white' : inactiveColor}
               transition="color 0.2s"
+              aria-label="Hierarchy view"
             >
               {view === 'hierarchy' && (
                 <MotionBox
                   layoutId="active-pill"
                   position="absolute"
                   inset={0}
-                  bg={activeColor}
-                  borderRadius="full"
+                  bg="var(--bg-element)"
+                  borderRadius="md"
                   zIndex={-1}
-                  transition={{ type: 'spring', bounce: 0.2, duration: 0.6 }}
+                  transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
                 />
               )}
-              <Text fontSize="xs" fontWeight="bold" zIndex={1}>Hierarchy</Text>
+              <HStack spacing={1.5} zIndex={1}>
+                <HierarchyModeIcon />
+                <Text fontSize="11px" fontWeight="semibold" display={isMobileLayout ? "none" : "block"}>Hierarchy</Text>
+              </HStack>
             </Button>
           </HStack>
 
-          <Box w={isMobileLayout ? "full" : "1px"} h={isMobileLayout ? "1px" : "20px"} bg="whiteAlpha.100" mx={isMobileLayout ? 0 : 1} />
+          <Box w="1px" h="18px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
 
-          <HStack spacing={1} w={isMobileLayout ? "full" : "auto"}>
-            <Button
-              size="sm"
-              h="32px"
-              leftIcon={<AddIcon fontSize="9px" />}
-              bg="var(--accent)"
-              color="white"
-              _hover={{ bg: "var(--accent)", filter: "brightness(1.1)", transform: 'translateY(-1px)' }}
-              _active={{ transform: 'translateY(0)', filter: "brightness(0.9)" }}
-              variant="solid"
-              borderRadius="full"
-              px={4}
-              fontSize="xs"
-              fontWeight="bold"
-              letterSpacing="0.02em"
-              onClick={onCreateOpen}
-              flexShrink={0}
-              transition="transform 0.18s ease, filter 0.18s ease"
-            >
-              New
-            </Button>
-
-            <AnimatePresence initial={false} mode="wait">
-              {showSearchInput ? (
-                <motion.div
-                  key="search-input"
-                  initial={{ opacity: 0, scale: 0.96 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.96 }}
-                  transition={{ duration: 0.16, ease: "easeOut" }}
-                  style={isMobileLayout ? { flex: 1, minWidth: 0 } : { width: '320px' }}
-                >
-                  <InputGroup size="sm" w="full">
-                    <InputLeftElement pointerEvents="none" h="full">
-                      <SearchIcon color="whiteAlpha.400" fontSize="10px" />
-                    </InputLeftElement>
-                    <Input
-                      ref={searchInputRef}
-                      placeholder="Jump to diagram..."
-                      value={searchTerm}
-                      onChange={(e) => onSearchChange(e.target.value)}
-                      onKeyDown={onSearchKeyDown}
-                      onFocus={() => setSearchExpanded(true)}
-                      onBlur={maybeCollapseSearch}
-                      variant="unstyled"
-                      fontSize="xs"
-                      color="white"
-                      h="32px"
-                      pr={searchTerm ? 8 : 3}
-                      _placeholder={{ color: 'whiteAlpha.300' }}
-                    />
-                    {searchTerm && (
-                      <InputRightElement h="full">
-                        <IconButton
-                          aria-label="Clear search"
-                          icon={<CloseIcon fontSize="8px" />}
-                          size="xs"
-                          variant="ghost"
-                          color="whiteAlpha.400"
-                          _hover={{ color: 'white', bg: 'transparent' }}
-                          onClick={() => {
-                            onSearchChange('')
-                            searchInputRef.current?.focus()
-                          }}
-                        />
-                      </InputRightElement>
-                    )}
-                  </InputGroup>
-                </motion.div>
-              ) : (
-                <motion.div
-                  key="search-button"
-                  initial={{ opacity: 0, scale: 0.96 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.96 }}
-                  transition={{ duration: 0.16, ease: "easeOut" }}
-                >
+          <motion.div
+            animate={isMobileLayout ? undefined : { width: desktopSearchWidth }}
+            transition={{ duration: 0.12, ease: [0.25, 1, 0.5, 1] }}
+            style={{ flex: isMobileLayout ? '1 1 0' : '0 0 auto', minWidth: 0 }}
+          >
+            <InputGroup size="sm" w="full">
+              <InputLeftElement pointerEvents="none" h="28px" w="28px">
+                <SearchIcon color="whiteAlpha.400" fontSize="10px" />
+              </InputLeftElement>
+              <Input
+                ref={searchInputRef}
+                placeholder="Search"
+                value={searchTerm}
+                onChange={(e) => onSearchChange(e.target.value)}
+                onKeyDown={onSearchKeyDown}
+                onFocus={() => {
+                  setSearchFocused(true)
+                }}
+                onBlur={maybeCollapseSearch}
+                bg="blackAlpha.200"
+                border="1px solid"
+                borderColor={searchIsActive ? 'whiteAlpha.200' : 'whiteAlpha.100'}
+                borderRadius="lg"
+                fontSize="11px"
+                color="white"
+                h="28px"
+                pl="28px"
+                pr={searchTerm ? 8 : 2}
+                _placeholder={{ color: 'whiteAlpha.350' }}
+                _hover={{ borderColor: 'whiteAlpha.200' }}
+                _focus={{ borderColor: 'var(--accent)', boxShadow: '0 0 0 1px rgba(var(--accent-rgb), 0.45)' }}
+              />
+              {searchTerm && (
+                <InputRightElement h="28px" w="28px">
                   <IconButton
-                    aria-label="Jump to diagram"
-                    icon={<SearchIcon fontSize="11px" />}
-                    size="sm"
-                    h="32px"
-                    w="32px"
-                    minW="32px"
-                    borderRadius="full"
+                    aria-label="Clear search"
+                    icon={<CloseIcon fontSize="8px" />}
+                    size="xs"
+                    h="22px"
+                    minW="22px"
                     variant="ghost"
-                    color="whiteAlpha.600"
+                    color="whiteAlpha.400"
+                    borderRadius="md"
                     _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
-                    onClick={expandSearch}
-                    onFocus={expandSearch}
-                    onBlur={maybeCollapseSearch}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      onSearchChange('')
+                      searchInputRef.current?.focus()
+                    }}
                   />
-                </motion.div>
+                </InputRightElement>
               )}
-            </AnimatePresence>
-          </HStack>
+            </InputGroup>
+          </motion.div>
+
+          <AnimatePresence initial={false}>
+            {showCreateButton && (
+              <motion.div
+                key="create-button"
+                initial={{ opacity: 0, width: 0 }}
+                animate={{ opacity: 1, width: 'auto' }}
+                exit={{ opacity: 0, width: 0 }}
+                transition={{ duration: 0.12, ease: [0.25, 1, 0.5, 1] }}
+                style={{ overflow: 'hidden', flexShrink: 0 }}
+              >
+                <Button
+                  size="sm"
+                  h="28px"
+                  leftIcon={<AddIcon fontSize="9px" />}
+                  bg="var(--accent)"
+                  color="white"
+                  _hover={{ bg: "var(--accent)", filter: "brightness(1.08)", transform: 'translateY(-1px)' }}
+                  _active={{ transform: 'translateY(0)', filter: "brightness(0.92)" }}
+                  variant="solid"
+                  borderRadius="lg"
+                  px={3}
+                  fontSize="11px"
+                  fontWeight="semibold"
+                  onClick={onCreateOpen}
+                  transition="transform 0.18s ease, filter 0.18s ease"
+                >
+                  New
+                </Button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </Flex>
       </motion.div>
 
@@ -302,7 +313,7 @@ function DiagramJumpToolbar({
               marginTop: '8px',
               left: isMobileLayout ? 0 : 'auto',
               right: 0,
-              width: isMobileLayout ? '100%' : '320px',
+              width: isMobileLayout ? '100%' : searchIsActive ? '318px' : '300px',
               zIndex: 110,
             }}
           >
