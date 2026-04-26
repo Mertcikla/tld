@@ -1,5 +1,5 @@
 // src/pages/InfiniteZoom.tsx Explore page holds the ZUI feature
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import {
   Box,
@@ -34,10 +34,14 @@ interface Props {
   shareSlot?: React.ReactNode
 }
 
+export interface InfiniteZoomHandle {
+  focusDiagram(viewId: number): boolean
+}
+
 const MINI_ONBOARDING_KEY = 'shared_zoom_onboarding_dismissed'
 
 // ── Inner component ────────────────────────────────────────────────
-function InfiniteZoomInner({ sharedToken, shareSlot }: Props) {
+function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<InfiniteZoomHandle>) {
   const navigate = useNavigate()
 
   const [data, setData] = useState<ExploreData | null>(null)
@@ -53,6 +57,12 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props) {
   const zuiRef = useRef<ZUICanvasHandle>(null)
   const crossBranchSurface = sharedToken ? 'zui-shared' : 'zui'
   const { settings: crossBranchSettings, setEnabled: setCrossBranchEnabled } = useCrossBranchContextSettings(crossBranchSurface)
+
+  useImperativeHandle(ref, () => ({
+    focusDiagram(viewId: number) {
+      return zuiRef.current?.focusDiagram(viewId) ?? false
+    },
+  }), [])
 
   // ── No data or No content ────────────────────────────────────────
   const hasPlacements = useMemo(() => {
@@ -387,9 +397,8 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props) {
 
 // ── Exports ───────────────────────────────────────────────────────
 
-export default function InfiniteZoom(props: Props) {
-  return <InfiniteZoomInner {...props} />
-}
+const InfiniteZoom = forwardRef<InfiniteZoomHandle, Props>(InfiniteZoomInner)
+export default InfiniteZoom
 
 export function SharedInfiniteZoom(props: Props) {
   const { token } = useParams()
