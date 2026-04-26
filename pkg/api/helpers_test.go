@@ -63,4 +63,12 @@ func TestConvertTechnologyLinksNormalizesDefaultsAndDefendsUniqueness(t *testing
 	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "custom technology cannot be the primary icon") {
 		t.Fatalf("expected custom primary validation error, got %v", err)
 	}
+
+	got, err = ConvertTechnologyLinks(nil)
+	if err != nil {
+		t.Fatalf("ConvertTechnologyLinks(nil) returned error: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil for nil input, got %#v", got)
+	}
 }

@@ -71,9 +71,20 @@ function dedupeTechnologyLinks(links: TechnologyConnector[]): TechnologyConnecto
   const result: TechnologyConnector[] = []
   let primarySet = false
 
-  for (const link of links) {
+  // Sort links to process primary ones first, ensuring they are preserved during deduping
+  const sortedLinks = [...links].sort((a, b) => {
+    const aPrimary = !!(a.is_primary_icon ?? (a as any).isPrimaryIcon)
+    const bPrimary = !!(b.is_primary_icon ?? (b as any).isPrimaryIcon)
+    if (aPrimary && !bPrimary) return -1
+    if (!aPrimary && bPrimary) return 1
+    return 0
+  })
+
+  for (const link of sortedLinks) {
     const label = link.label.trim()
     if (!label) continue
+
+    const isPrimary = !!(link.is_primary_icon ?? (link as any).isPrimaryIcon)
 
     if (link.type === 'catalog' && link.slug) {
       const slug = link.slug.trim()
@@ -84,9 +95,9 @@ function dedupeTechnologyLinks(links: TechnologyConnector[]): TechnologyConnecto
         type: 'catalog',
         slug,
         label,
-        is_primary_icon: !primarySet && !!link.is_primary_icon,
+        is_primary_icon: !primarySet && isPrimary,
       })
-      if (link.is_primary_icon) primarySet = true
+      if (isPrimary) primarySet = true
       continue
     }
 
@@ -122,31 +133,51 @@ async function normalizeInitialTechnologyLinks(element: LibraryElement): Promise
     }
   }
 
-  for (const link of rawLinks.length > 0 ? rawLinks : legacyLabels.map((label) => ({ type: 'custom' as const, label }))) {
-    if (link.type === 'catalog') {
-      const match = link.slug ? index.bySlug.get(link.slug) : null
-      normalized.push({
-        type: 'catalog',
-        slug: link.slug,
-        label: match?.name ?? link.label,
-        is_primary_icon: !!link.is_primary_icon,
-      })
-      continue
+  if (rawLinks.length > 0) {
+    for (const link of rawLinks) {
+      if (link.type === 'catalog') {
+        const match = link.slug ? index.bySlug.get(link.slug) : null
+        normalized.push({
+          type: 'catalog',
+          slug: link.slug,
+          label: match?.name ?? link.label,
+          is_primary_icon: !!(link.is_primary_icon ?? (link as any).isPrimaryIcon),
+        })
+      } else {
+        const parts = splitTechnologyLabel(link.label)
+        if (parts.length > 1) {
+          for (const part of parts) pushLabel(part)
+        } else {
+          pushLabel(link.label)
+        }
+      }
+    }
+  } else {
+    for (const label of legacyLabels) {
+      pushLabel(label)
+    }
+  }
+
+  // If no catalog item is primary, try to match against element.logo_url or fallback to first catalog item
+  const deduped = dedupeTechnologyLinks(normalized)
+  const hasPrimary = deduped.some(l => l.type === 'catalog' && l.is_primary_icon)
+  if (!hasPrimary) {
+    let bestMatchIndex = -1
+    if (element.logo_url) {
+      bestMatchIndex = deduped.findIndex(l => l.type === 'catalog' && l.slug && element.logo_url?.toLowerCase().includes(l.slug.toLowerCase()))
     }
 
-    const parts = splitTechnologyLabel(link.label)
-    if (parts.length > 1) {
-      for (const part of parts) pushLabel(part)
+    if (bestMatchIndex !== -1) {
+      deduped[bestMatchIndex].is_primary_icon = true
     } else {
-      pushLabel(link.label)
+      const firstCatalog = deduped.find(l => l.type === 'catalog')
+      if (firstCatalog) {
+        firstCatalog.is_primary_icon = true
+      }
     }
   }
 
-  for (const label of legacyLabels) {
-    pushLabel(label)
-  }
-
-  return dedupeTechnologyLinks(normalized)
+  return deduped
 }
 
 function buildTechnologyFingerprintPayload(
@@ -247,10 +278,13 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
       setTags(element.tags ?? [])
       setExplicitLogoClear(false)
 
-      const linksFromElement = element.technology_connectors ?? []
+      const linksFromElement = (element.technology_connectors ?? []).map(tl => ({
+        ...tl,
+        is_primary_icon: !!(tl.is_primary_icon ?? (tl as any).isPrimaryIcon),
+      }))
       const fallbackLinks: TechnologyConnector[] = linksFromElement.length > 0
         ? linksFromElement
-        : (element.technology ? [{ type: 'custom', label: element.technology }] : [])
+        : (element.technology ? [{ type: 'custom', label: element.technology, is_primary_icon: false }] : [])
       setTechnologyConnectors(fallbackLinks)
       lastSavedFingerprintRef.current = JSON.stringify(buildTechnologyFingerprintPayload(
         element,
@@ -299,14 +333,14 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
   }, [element, isOpen])
 
   const buildPayloadAndFingerprint = useCallback(async () => {
-    const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && link.is_primary_icon && link.slug)
+    const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && link.slug)
     const primarySlug = primaryLink?.slug
 
     const normalizedLinks = technologyLinks.map((link) => ({
       type: link.type,
       slug: link.type === 'catalog' ? link.slug : undefined,
       label: link.label,
-      is_primary_icon: !!link.is_primary_icon,
+      is_primary_icon: !!(link.is_primary_icon ?? (link as any).isPrimaryIcon),
     }))
 
     const normalizedType = type.trim().toLowerCase()
@@ -538,7 +572,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
     scheduleAutoSave()
   }
 
-  const selectedPrimarySlug = technologyLinks.find((link) => link.type === 'catalog' && !!link.is_primary_icon && !!link.slug)?.slug ?? ''
+  const selectedPrimarySlug = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && !!link.slug)?.slug ?? ''
 
   const commitTypeFromQuery = () => {
     if (isReadOnly) return
@@ -561,7 +595,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
     if (isReadOnly || !name.trim()) return
     setLoading(true)
     try {
-      const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && link.is_primary_icon && link.slug)
+      const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && link.slug)
       const primaryMetadata = primaryLink?.slug
         ? (technologyMeta[primaryLink.slug] ?? await getTechnologyCatalogItemBySlug(primaryLink.slug))
         : null
@@ -570,7 +604,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
         type: link.type,
         slug: link.type === 'catalog' ? link.slug : undefined,
         label: link.label,
-        is_primary_icon: !!link.is_primary_icon,
+        is_primary_icon: !!(link.is_primary_icon ?? (link as any).isPrimaryIcon),
       }))
 
       const normalizedType = type.trim().toLowerCase()
@@ -828,7 +862,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
                     const meta = link.slug ? technologyMeta[link.slug] : undefined
                     const sourceUrl = meta?.websiteUrl || meta?.docsUrl
                     const isSelectable = link.type === 'catalog' && !!link.slug && !isReadOnly
-                    const isPrimaryIcon = link.type === 'catalog' && !!link.is_primary_icon && !!link.slug
+                    const isPrimaryIcon = link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && !!link.slug
                     return (
                       <WrapItem key={`${link.type}:${link.slug ?? link.label}`}>
                         <Popover trigger={isMobile ? 'click' : 'hover'} placement="top" closeOnBlur>

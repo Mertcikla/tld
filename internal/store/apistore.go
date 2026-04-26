@@ -867,8 +867,11 @@ func layerToProto(layer app.ViewLayer) *diagv1.ViewLayer {
 }
 
 func technologyLinksFromProto(links []*diagv1.TechnologyLink) []app.TechnologyConnector {
-	if len(links) == 0 {
+	if links == nil {
 		return nil
+	}
+	if len(links) == 0 {
+		return []app.TechnologyConnector{}
 	}
 	out := make([]app.TechnologyConnector, 0, len(links))
 	for _, link := range links {

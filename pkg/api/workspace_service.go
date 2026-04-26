@@ -623,33 +623,57 @@ func (s *WorkspaceService) UpdateElement(
 	if err != nil {
 		return nil, err
 	}
-	techLinks, err := ConvertTechnologyLinks(m.GetTechnologyLinks())
-	if err != nil {
-		return nil, err
-	}
-	tags := m.GetTags()
-	if tags == nil {
-		tags = []string{}
-	}
-
 	existing, err := s.Store.GetElement(ctx, elementID, workspaceID)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("element not found"))
 	}
 
+	techLinks, err := ConvertTechnologyLinks(m.GetTechnologyLinks())
+	if err != nil {
+		return nil, err
+	}
+
+	finalTechLinks := techLinks
+	if finalTechLinks == nil {
+		if m.Technology != nil && *m.Technology == "" {
+			finalTechLinks = []*diagv1.TechnologyLink{}
+			techLinks = finalTechLinks
+		} else {
+			finalTechLinks = existing.TechnologyLinks
+		}
+	}
+
+	logoURL := m.LogoUrl
+	hasPrimary := false
+	for _, tl := range finalTechLinks {
+		if tl.GetIsPrimaryIcon() {
+			hasPrimary = true
+			break
+		}
+	}
+	if !hasPrimary {
+		empty := ""
+		logoURL = &empty
+	}
+
+	tags := m.GetTags()
+	if tags == nil {
+		tags = []string{}
+	}
+
 	input := ElementInput{
 		Name:        m.GetName(),
-		Description: OptStr(m.GetDescription()),
-		Kind:        OptStr(m.GetKind()),
-		Technology:  OptStr(m.GetTechnology()),
-		URL:         OptStr(m.GetUrl()),
-		LogoURL:     OptStr(m.GetLogoUrl()),
+		Description: m.Description,
+		Kind:        m.Kind,
+		Technology:  m.Technology,
+		URL:         m.Url,
+		LogoURL:     logoURL,
 		TechLinks:   techLinks,
 		Tags:        tags,
-		Repo:        OptStr(m.GetRepo()),
-		Branch:      OptStr(m.GetBranch()),
-		Language:    OptStr(m.GetLanguage()),
-		FilePath:    OptStr(m.GetFilePath()),
+		Repo:        m.Repo,
+		Branch:      m.Branch,
+		Language:    m.Language,
+		FilePath:    m.FilePath,
 		HasView:     existing.HasView,
 		ViewLabel:   existing.ViewLabel,
 	}

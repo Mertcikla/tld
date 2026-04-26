@@ -62,7 +62,7 @@ function ContextNeighborNode({ data }: Props) {
 
   const logoUrl = useMemo(() => {
     if (data.logo_url) return resolveIconPath(data.logo_url)
-    const selected = data.technology_connectors?.find((link) => link.type === 'catalog' && !!link.is_primary_icon && !!link.slug)
+    const selected = data.technology_connectors?.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && !!link.slug)
     if (!selected?.slug) return undefined
     return resolveIconPath(`/icons/${selected.slug}.png`)
   }, [data.logo_url, data.technology_connectors])
