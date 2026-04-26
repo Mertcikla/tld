@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 )
 
 func PIDPath(dataDir string) string {
@@ -30,9 +29,8 @@ func WritePID(path string, pid int) error {
 
 // IsRunning returns true if a process with the given PID exists and is alive.
 func IsRunning(pid int) bool {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
+	if pid <= 0 {
 		return false
 	}
-	return proc.Signal(syscall.Signal(0)) == nil
+	return processExists(pid)
 }
