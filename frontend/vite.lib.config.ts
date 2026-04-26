@@ -16,6 +16,7 @@ const EXTERNAL_PACKAGES = new Set([
   'react-dom',
   'react/jsx-runtime',
   'react-router-dom',
+  '@tanstack/react-query',
 
   // UI framework host app provides
   '@chakra-ui/react',
