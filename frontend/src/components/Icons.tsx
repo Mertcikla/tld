@@ -5,9 +5,7 @@ export function ZoomOutIcon({ size = 14, strokeWidth = 3 }: { size?: number, str
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="11" cy="11" r="8" />
-      <line x1="21" y1="21" x2="16.65" y2="16.65" />
-      <line x1="8" y1="11" x2="14" y2="11" />
+      <path d="M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0M21 21l-4.343-4.343M8 11h6" />
     </svg>
   )
 }
@@ -16,10 +14,7 @@ export function ZoomInIcon({ size = 14, strokeWidth = 3 }: { size?: number, stro
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="11" cy="11" r="8" />
-      <line x1="21" y1="21" x2="16.65" y2="16.65" />
-      <line x1="11" y1="8" x2="11" y2="14" />
-      <line x1="8" y1="11" x2="14" y2="11" />
+      <path d="M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0M21 21l-4.343-4.343M11 8v6M8 11h6" />
     </svg>
   )
 }
