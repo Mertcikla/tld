@@ -803,6 +803,9 @@ func (s *Store) ElementByID(ctx context.Context, id int64) (LibraryElement, erro
 }
 
 func (s *Store) CreateElement(ctx context.Context, input LibraryElement) (LibraryElement, error) {
+	if err := s.ensureTagColors(ctx, input.Tags); err != nil {
+		return LibraryElement{}, err
+	}
 	now := nowString()
 	res, err := s.db.ExecContext(ctx, `
 		INSERT INTO elements(name, kind, description, technology, url, logo_url, technology_connectors, tags, repo, branch, file_path, language, created_at, updated_at)
@@ -830,6 +833,11 @@ func (s *Store) CreateElement(ctx context.Context, input LibraryElement) (Librar
 }
 
 func (s *Store) UpdateElement(ctx context.Context, id int64, input LibraryElement) (LibraryElement, error) {
+	if input.Tags != nil {
+		if err := s.ensureTagColors(ctx, input.Tags); err != nil {
+			return LibraryElement{}, err
+		}
+	}
 	current, err := s.ElementByID(ctx, id)
 	if err != nil {
 		return LibraryElement{}, err
@@ -1118,6 +1126,34 @@ func (s *Store) Layers(ctx context.Context, viewID int64) ([]ViewLayer, error) {
 }
 
 func (s *Store) CreateLayer(ctx context.Context, viewID int64, name string, tags []string, color *string) (ViewLayer, error) {
+	if err := s.ensureTagColors(ctx, tags); err != nil {
+		return ViewLayer{}, err
+	}
+
+	if color == nil || strings.TrimSpace(*color) == "" {
+		// User said pick unused, usually means relative to existing layers in the same view or global tags.
+		// Frontend uses tagColors.
+		tagsMap, err := s.Tags(ctx)
+		if err != nil {
+			return ViewLayer{}, err
+		}
+		var usedColors []string
+		for _, t := range tagsMap {
+			usedColors = append(usedColors, t.Color)
+		}
+		// Also consider existing layers colors
+		layers, err := s.Layers(ctx, viewID)
+		if err == nil {
+			for _, l := range layers {
+				if l.Color != nil {
+					usedColors = append(usedColors, *l.Color)
+				}
+			}
+		}
+		c := s.pickUnusedColor(ctx, usedColors)
+		color = &c
+	}
+
 	now := nowString()
 	res, err := s.db.ExecContext(ctx, `INSERT INTO view_layers(view_id, name, tags, color, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		viewID, name, jsonString(tags, "[]"), color, now, now)
@@ -1467,4 +1503,63 @@ func trimTo(value string, max int) string {
 func htmlEscape(value string) string {
 	replacer := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;")
 	return replacer.Replace(value)
+}
+
+var SWATCH_COLORS = []string{
+	"#F56565", "#ED8936", "#ECC94B", "#48BB78", "#38B2AC",
+	"#4299E1", "#667EEA", "#9F7AEA", "#ED64A6", "#A0AEC0",
+}
+
+func (s *Store) pickUnusedColor(ctx context.Context, usedColors []string) string {
+	used := make(map[string]bool)
+	for _, c := range usedColors {
+		used[strings.ToUpper(c)] = true
+	}
+
+	var pool []string
+	for _, c := range SWATCH_COLORS {
+		if !used[strings.ToUpper(c)] {
+			pool = append(pool, c)
+		}
+	}
+
+	source := pool
+	if len(source) == 0 {
+		source = SWATCH_COLORS
+	}
+
+	return source[time.Now().UnixNano()%int64(len(source))]
+}
+
+func (s *Store) ensureTagColors(ctx context.Context, tags []string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	existing, err := s.Tags(ctx)
+	if err != nil {
+		return err
+	}
+
+	var usedColors []string
+	for _, t := range existing {
+		usedColors = append(usedColors, t.Color)
+	}
+
+	for _, name := range tags {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := existing[name]; !ok {
+			color := s.pickUnusedColor(ctx, usedColors)
+			if err := s.UpdateTag(ctx, name, color, nil); err != nil {
+				return err
+			}
+			usedColors = append(usedColors, color)
+			// Refresh existing to avoid re-adding same tag if it appears twice in the list
+			existing[name] = Tag{Name: name, Color: color}
+		}
+	}
+	return nil
 }

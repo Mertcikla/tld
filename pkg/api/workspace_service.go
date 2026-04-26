@@ -1030,9 +1030,6 @@ func (s *WorkspaceService) CreateViewLayer(
 		return nil, invalidArg("name", "must not be empty")
 	}
 	color := strings.TrimSpace(m.GetColor())
-	if color == "" {
-		return nil, invalidArg("color", "must not be empty")
-	}
 	l, err := s.Store.CreateViewLayer(ctx, viewID, name, m.GetTags(), color)
 	if err != nil {
 		return nil, storeErr("create layer", err)
