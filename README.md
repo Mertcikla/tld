@@ -49,11 +49,21 @@ Here are some examples that were generated using the agent skill.
 curl -LsSf https://tldiagram.com/install.sh | sh -s serve --open
 ```
 
+Windows:
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://tldiagram.com/install.ps1 | iex; tld serve --open"
+```
+
 OR
 
 ### 1. Install the binary
 ```bash
 curl -LsSf https://tldiagram.com/install.sh | sh
+```
+
+Windows:
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://tldiagram.com/install.ps1 | iex"
 ```
 
 ### 2. Launch the Web UI
