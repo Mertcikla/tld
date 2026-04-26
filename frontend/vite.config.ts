@@ -9,7 +9,8 @@ const appBase = process.env.VITE_APP_BASE ?? "/";
 const apiTargetHost = process.env.VITE_API_TARGET_HOST ?? "127.0.0.1";
 const apiTargetPort = process.env.PORT ?? "8060";
 
-// Middleware that makes /icons/* available as an alias for <base>icons/* in dev.
+// Middleware that makes /icons/* and icon catalog files available as aliases
+// for <base>icons/* in dev.
 // This mirrors the nginx alias used in production so that icon URLs without the
 // /app/ prefix (created on native builds) resolve correctly in the web dev server.
 import type { ViteDevServer, Plugin } from "vite";
@@ -30,6 +31,12 @@ function iconsAliasPlugin() {
             !appBase.startsWith("/icons")
           ) {
             req.url = `${appBase}icons/${req.url.slice("/icons/".length)}`;
+          } else if (
+            req.url &&
+            /^\/icons(?:\.index|\.meta)?\.json(?:[?#].*)?$/.test(req.url) &&
+            appBase !== "/"
+          ) {
+            req.url = `${appBase}${req.url.slice(1)}`;
           }
           next();
         },

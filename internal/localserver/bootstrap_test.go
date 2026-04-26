@@ -125,6 +125,45 @@ func TestBootstrapServesEmbeddedAppIndex(t *testing.T) {
 	}
 }
 
+func TestBootstrapServesIconCatalogAtRootAndAppPrefix(t *testing.T) {
+	app, err := localserver.Bootstrap(t.TempDir())
+	if err != nil {
+		t.Fatalf("bootstrap app: %v", err)
+	}
+
+	server := httptest.NewServer(app.Handler)
+	defer server.Close()
+
+	for _, requestPath := range []string{"/icons.index.json", "/app/icons.index.json", "/icons.meta.json", "/app/icons.meta.json"} {
+		resp, err := http.Get(server.URL + requestPath)
+		if err != nil {
+			t.Fatalf("get %s: %v", requestPath, err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		closeErr := resp.Body.Close()
+		if readErr != nil {
+			t.Fatalf("read %s body: %v", requestPath, readErr)
+		}
+		if closeErr != nil {
+			t.Fatalf("close %s body: %v", requestPath, closeErr)
+		}
+
+		if got, want := resp.StatusCode, http.StatusOK; got != want {
+			t.Fatalf("%s status = %d, want %d; body=%q", requestPath, got, want, string(body))
+		}
+		if got := resp.Header.Get("Content-Type"); !strings.Contains(got, "application/json") {
+			t.Fatalf("%s content-type = %q, want JSON", requestPath, got)
+		}
+		trimmedBody := strings.TrimSpace(string(body))
+		if !strings.HasPrefix(trimmedBody, "[") && !strings.HasPrefix(trimmedBody, "{") {
+			t.Fatalf("%s response does not look like catalog JSON: %.80q", requestPath, string(body))
+		}
+		if got := resp.Header.Get("Cache-Control"); !strings.Contains(got, "max-age") {
+			t.Fatalf("%s cache-control = %q, want cacheable response", requestPath, got)
+		}
+	}
+}
+
 func TestAddrFromEnvPrefersTLDAddrAndFallsBackToPort(t *testing.T) {
 	t.Setenv("PORT", "9091")
 	if got, want := localserver.AddrFromEnv(), "127.0.0.1:9091"; got != want {

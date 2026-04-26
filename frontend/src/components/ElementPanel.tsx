@@ -38,7 +38,7 @@ import ConfirmDialog from './ConfirmDialog'
 import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
 import GitSourceLinker from './GitSourceLinker'
-import { getTechnologyCatalogIndex, getTechnologyCatalogItemBySlug, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
+import { getTechnologyCatalogItemBySlug, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
 import { ZoomInIcon, ZoomOutIcon } from './Icons'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
@@ -287,12 +287,13 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
 
     if (slugs.length === 0) return
 
-    getTechnologyCatalogIndex().then((index) => {
+    Promise.all(slugs.map((slug) => getTechnologyCatalogItemBySlug(slug))).then((items) => {
       setTechnologyMeta((prev) => {
         const next = { ...prev }
-        for (const slug of slugs) {
-          const item = index.bySlug.get(slug)
-          if (item) next[slug] = item
+        for (const item of items) {
+          if (item) {
+            next[item.defaultSlug] = item
+          }
         }
         return next
       })
