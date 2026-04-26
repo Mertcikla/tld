@@ -120,27 +120,16 @@ func serveStatic(static fs.FS, w http.ResponseWriter, r *http.Request) {
 		cleaned = "index.html"
 	}
 
-	candidates := []string{cleaned}
-	if afterApp, ok := strings.CutPrefix(cleaned, "app/"); ok {
-		candidates = append(candidates, afterApp)
-	}
-
 	tryPaths := []string{
+		path.Join("frontend/dist", cleaned),
 		"frontend/dist/index.html",
 	}
-	for _, candidate := range candidates {
-		tryPaths = append([]string{path.Join("frontend/dist", candidate)}, tryPaths...)
-	}
-
 	for _, candidate := range tryPaths {
 		data, err := fs.ReadFile(static, candidate)
 		if err != nil {
 			continue
 		}
 		w.Header().Set("Content-Type", contentType(candidate))
-		if cacheControl := staticCacheControl(candidate); cacheControl != "" {
-			w.Header().Set("Cache-Control", cacheControl)
-		}
 		_, _ = w.Write(data)
 		return
 	}
@@ -165,15 +154,4 @@ func contentType(file string) string {
 	default:
 		return "application/octet-stream"
 	}
-}
-
-func staticCacheControl(file string) string {
-	cleaned := strings.TrimPrefix(path.Clean(strings.TrimPrefix(file, "frontend/dist/")), "/")
-	if cleaned == "icons.index.json" || cleaned == "icons.meta.json" || strings.HasPrefix(cleaned, "icons/") {
-		return "public, max-age=604800"
-	}
-	if strings.HasPrefix(cleaned, "assets/") {
-		return "public, max-age=31536000, immutable"
-	}
-	return ""
 }

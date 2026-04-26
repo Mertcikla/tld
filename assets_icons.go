@@ -49,12 +49,6 @@ func ExtractIcons(dstBase string) error {
 	if err := os.Remove(filepath.Join(dstBase, "icons.json")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.Remove(filepath.Join(dstBase, "icons.index.json")); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.Remove(filepath.Join(dstBase, "icons.meta.json")); err != nil && !os.IsNotExist(err) {
-		return err
-	}
 	return unpackIcons(bytes.NewReader(iconsArchive), dstBase)
 }
 

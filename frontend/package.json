@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "prepare:icons": "go run ../scripts/extract_icons.go ./public",
-    "strip:icons": "rm -rf dist/icons dist/icons.json dist/icons.index.json dist/icons.meta.json",
+    "strip:icons": "rm -rf dist/icons dist/icons.json",
     "dev": "vite --config vite.config.ts",
     "predev": "npm run prepare:icons",
     "dev:lib": "vite build --config vite.lib.config.ts --watch",

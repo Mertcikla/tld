@@ -6,15 +6,6 @@ interface SearchableCatalogItem {
   haystack: string
 }
 
-type CatalogIndexTuple = [
-  defaultSlug: string,
-  name: string,
-  nameShort?: string,
-  provider?: string,
-]
-
-type CatalogMeta = Record<string, Partial<Pick<TechnologyCatalogItem, 'docsUrl' | 'description' | 'websiteUrl'>>>
-
 interface TechnologyCatalogIndex {
   items: TechnologyCatalogItem[]
   searchable: SearchableCatalogItem[]
@@ -22,7 +13,6 @@ interface TechnologyCatalogIndex {
 }
 
 let indexPromise: Promise<TechnologyCatalogIndex> | null = null
-let metaPromise: Promise<CatalogMeta> | null = null
 
 export function resolveWithBase(urlOrPath: string): string {
   if (!urlOrPath) return urlOrPath
@@ -84,78 +74,15 @@ function createHaystack(item: TechnologyCatalogItem): string {
   ].filter(Boolean).join(' '))
 }
 
-function itemFromIndexTuple(tuple: CatalogIndexTuple): TechnologyCatalogItem {
-  const [defaultSlug, name, nameShort = '', provider = ''] = tuple
-  return {
-    defaultSlug,
-    name,
-    nameShort,
-    provider,
-    iconUrl: `/icons/${defaultSlug}.png`,
-    docsUrl: '',
-    description: '',
-    websiteUrl: '',
-  }
-}
-
-function normalizeCatalogItem(item: Partial<TechnologyCatalogItem>): TechnologyCatalogItem | null {
-  const defaultSlug = String(item.defaultSlug || '').trim()
-  const name = String(item.name || '').trim()
-  if (!defaultSlug || !name) return null
-
-  return {
-    defaultSlug,
-    name,
-    nameShort: item.nameShort || '',
-    provider: item.provider || '',
-    iconUrl: item.iconUrl || `/icons/${defaultSlug}.png`,
-    docsUrl: item.docsUrl || '',
-    description: item.description || '',
-    websiteUrl: item.websiteUrl || '',
-  }
-}
-
 async function loadCatalogItems(): Promise<TechnologyCatalogItem[]> {
-  const response = await fetch(resolveWithBase('icons.index.json'), { cache: 'force-cache' })
+  const response = await fetch(resolveWithBase('icons.json'), { cache: 'force-cache' })
   if (!response.ok) {
-    const fallback = await fetch(resolveWithBase('icons.json'), { cache: 'force-cache' })
-    if (!fallback.ok) {
-      throw new Error('Failed to load technology catalog')
-    }
-    const legacyData = await fallback.json()
-    if (!Array.isArray(legacyData)) return []
-    return legacyData
-      .map((item) => normalizeCatalogItem(item))
-      .filter((item): item is TechnologyCatalogItem => item !== null)
+    throw new Error('Failed to load technology catalog')
   }
   const data = await response.json()
   if (!Array.isArray(data)) return []
 
-  return data
-    .map((item) => {
-      if (Array.isArray(item)) return itemFromIndexTuple(item as CatalogIndexTuple)
-      return normalizeCatalogItem(item)
-    })
-    .filter((item): item is TechnologyCatalogItem => item !== null)
-}
-
-async function loadCatalogMeta(): Promise<CatalogMeta> {
-  const response = await fetch(resolveWithBase('icons.meta.json'), { cache: 'force-cache' })
-  if (!response.ok) return {}
-
-  const data = await response.json()
-  return data && typeof data === 'object' && !Array.isArray(data) ? data as CatalogMeta : {}
-}
-
-async function getCatalogMeta(): Promise<CatalogMeta> {
-  if (!metaPromise) {
-    metaPromise = loadCatalogMeta().catch((error) => {
-      metaPromise = null
-      throw error
-    })
-  }
-
-  return metaPromise
+  return data as TechnologyCatalogItem[]
 }
 
 export async function getTechnologyCatalogIndex(): Promise<TechnologyCatalogIndex> {
@@ -212,12 +139,5 @@ export async function getTechnologyCatalogItemBySlug(slug: string): Promise<Tech
   const cleanSlug = slug.trim()
   if (!cleanSlug) return null
   const index = await getTechnologyCatalogIndex()
-  const item = index.bySlug.get(cleanSlug)
-  if (!item) return null
-
-  const meta = await getCatalogMeta().catch((): CatalogMeta => ({}))
-  return {
-    ...item,
-    ...(meta[cleanSlug] ?? {}),
-  }
+  return index.bySlug.get(cleanSlug) ?? null
 }
