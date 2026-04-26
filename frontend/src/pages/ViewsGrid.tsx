@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { SafeBackground } from '../components/SafeBackground'
 import { Text as HeaderText } from '@chakra-ui/react'
@@ -21,11 +21,7 @@ import {
   FormLabel,
   Heading,
   HStack,
-  IconButton,
   Input,
-  InputGroup,
-  InputLeftElement,
-  InputRightElement,
   Modal,
   ModalBody,
   ModalContent,
@@ -37,8 +33,6 @@ import {
   useDisclosure,
   useBreakpointValue,
 } from '@chakra-ui/react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { SearchIcon, CloseIcon, AddIcon } from '@chakra-ui/icons'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
 import type { ViewTreeNode } from '../types'
@@ -323,21 +317,27 @@ const HIERARCHY_EDGE_COLOR = 'rgba(255,255,255,0.2)'
 
 interface Props {
   onShare?: (viewId: number) => void
+  treeData: ViewTreeNode[]
+  loading: boolean
+  focusedId: number | null
+  onFocusChange: (viewId: number | null) => void
+  setTreeData: Dispatch<SetStateAction<ViewTreeNode[]>>
+  refreshTree: () => Promise<void>
 }
 
 // ── Root component - provides ReactFlow context ───────────────────────────────
 
-export default function ViewsGrid({ onShare }: Props) {
+export default function ViewsGrid(props: Props) {
   return (
     <ReactFlowProvider>
-      <ViewGridInner onShare={onShare} />
+      <ViewGridInner {...props} />
     </ReactFlowProvider>
   )
 }
 
 // ── Inner component - has access to useReactFlow() ────────────────────────────
 
-function ViewGridInner({ onShare }: Props) {
+function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, setTreeData, refreshTree }: Props) {
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
   const navigate = useNavigate()
   const { accent } = useAccentColor()
@@ -386,62 +386,9 @@ function ViewGridInner({ onShare }: Props) {
     return () => el.removeEventListener('wheel', onWheel, { capture: true })
   }, [zoomIn, zoomOut])
 
-  // ── Core state ──────────────────────────────────────────────────────────────
-  const [treeData, setTreeData] = useState<ViewTreeNode[]>([])
-  const [loading, setLoading] = useState(true)
-
   // ── Derived tree structures ─────────────────────────────────────────────────
   const roots = useMemo(() => treeData, [treeData])
   const flatTree = useMemo(() => flattenTree(roots), [roots])
-
-  const [focusedId, setFocusedId] = useState<number | null>(null)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [searchResults, setSearchResults] = useState<ViewTreeNode[]>([])
-  const [activeSearchIndex, setActiveSearchIndex] = useState(-1)
-
-  const handleSearch = (term: string) => {
-    setSearchTerm(term)
-    if (term.trim().length < 3) {
-      setSearchResults([])
-      setActiveSearchIndex(-1)
-      return
-    }
-
-    const matches = flatTree
-      .filter(n => n.name.toLowerCase().includes(term.toLowerCase()))
-      .slice(0, 5)
-
-    setSearchResults(matches)
-    if (matches.length > 0) {
-      setActiveSearchIndex(0)
-      setFocusedId(matches[0].id)
-    } else {
-      setActiveSearchIndex(-1)
-    }
-  }
-
-  const handleSearchKeyDown = (e: React.KeyboardEvent) => {
-    if (searchResults.length === 0) return
-
-    if (e.key === 'ArrowDown') {
-      e.preventDefault()
-      const nextIndex = (activeSearchIndex + 1) % searchResults.length
-      setActiveSearchIndex(nextIndex)
-      setFocusedId(searchResults[nextIndex].id)
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault()
-      const nextIndex = (activeSearchIndex - 1 + searchResults.length) % searchResults.length
-      setActiveSearchIndex(nextIndex)
-      setFocusedId(searchResults[nextIndex].id)
-    } else if (e.key === 'Enter') {
-      if (activeSearchIndex >= 0) {
-        navigate(`/views/${searchResults[activeSearchIndex].id}`)
-      }
-    } else if (e.key === 'Escape') {
-      setSearchResults([])
-      setActiveSearchIndex(-1)
-    }
-  }
 
   // Rename
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -461,27 +408,6 @@ function ViewGridInner({ onShare }: Props) {
   const [detailsLoading, setDetailsLoading] = useState(false)
   const { isOpen: isDetailsOpen, onOpen: onDetailsOpen, onClose: onDetailsClose } = useDisclosure()
 
-  // New diagram creation
-  const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } = useDisclosure()
-  const [newName, setNewName] = useState('')
-  const [isCreating, setIsCreating] = useState(false)
-
-  const handleCreate = async () => {
-    if (!newName.trim()) return
-    setIsCreating(true)
-    try {
-      const d = await api.workspace.views.create({ name: newName.trim() })
-      await refresh()
-      navigate(`/views/${d.id}`)
-      onCreateClose()
-      setNewName('')
-    } catch (err: unknown) {
-      toast({ title: 'Failed to create diagram', description: err instanceof Error ? err.message : 'An unexpected error occurred', status: 'error' })
-    } finally {
-      setIsCreating(false)
-    }
-  }
-
   // Delete dialog
   const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null)
   const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onClose: onDeleteClose } = useDisclosure()
@@ -489,21 +415,12 @@ function ViewGridInner({ onShare }: Props) {
   // Level change mode
   const [levelEditingNodeId, setLevelEditingNodeId] = useState<number | null>(null)
 
-  // Share modal
-  // ── Data fetching ───────────────────────────────────────────────────────────
-  const refresh = useCallback(async () => {
-    const tree = await api.workspace.views.tree().catch(() => null)
-    if (tree) {
-      setTreeData(tree)
-      if (tree.length === 0 && !localStorage.getItem('onboarding_shown')) {
-        localStorage.setItem('onboarding_shown', '1')
-        setOnboardingStep(1)
-      }
+  useEffect(() => {
+    if (treeData.length === 0 && !loading && !localStorage.getItem('onboarding_shown')) {
+      localStorage.setItem('onboarding_shown', '1')
+      setOnboardingStep(1)
     }
-    setLoading(false)
-  }, [])
-
-  useEffect(() => { refresh() }, [refresh])
+  }, [loading, treeData.length])
 
   // Fetch node/edge counts
   useEffect(() => {
@@ -545,7 +462,7 @@ function ViewGridInner({ onShare }: Props) {
     await api.workspace.views.rename(id, name).catch(() =>
       setTreeData((d) => d.map((n) => (n.id === id ? { ...n, name: prev.name } : n)))
     )
-  }, [editingId, editName, treeData])
+  }, [editingId, editName, setTreeData, treeData])
 
   const cancelEdit = useCallback(() => setEditingId(null), [])
 
@@ -569,7 +486,7 @@ function ViewGridInner({ onShare }: Props) {
           : n
       )
     )
-  }, [])
+  }, [setTreeData])
 
   // ── Delete ──────────────────────────────────────────────────────────────────
   const handleDeleteConfirm = async () => {
@@ -612,15 +529,15 @@ function ViewGridInner({ onShare }: Props) {
     } catch {
       // global error toast will show
     }
-    await refresh()
-  }, [levelEditingNodeId, treeData, refresh])
+    await refreshTree()
+  }, [levelEditingNodeId, treeData, refreshTree, setTreeData])
 
   const handleOnboardingCreate = async () => {
     setOnboardingCreating(true)
     try {
       const d = await api.workspace.views.create({ name: onboardingName.trim() || 'My First Diagram' })
       setOnboardingDiagramId(d.id)
-      await refresh()
+      await refreshTree()
       setOnboardingStep(2)
     } catch { /* ignore */ } finally {
       setOnboardingCreating(false)
@@ -695,7 +612,7 @@ function ViewGridInner({ onShare }: Props) {
         canEdit,
         isEditing: editingId === n.id,
         editName,
-        onFocus: () => setFocusedId(n.id),
+        onFocus: () => onFocusChange(n.id),
         onOpen: () => navigate(`/views/${n.id}`),
         onStartRename: () => startEdit(n.id, n.name),
         onDetails: () => handleDetailsOpen(n.id),
@@ -782,7 +699,7 @@ function ViewGridInner({ onShare }: Props) {
         if (levelEditingNodeId !== null) {
           setLevelEditingNodeId(null)
         } else {
-          setFocusedId(null)
+          onFocusChange(null)
         }
         return
       }
@@ -794,7 +711,7 @@ function ViewGridInner({ onShare }: Props) {
 
       // Auto-select first card if nothing is focused yet
       if (!focusedId) {
-        if (flatTree.length > 0) setFocusedId(flatTree[0].id)
+        if (flatTree.length > 0) onFocusChange(flatTree[0].id)
         return
       }
 
@@ -816,12 +733,12 @@ function ViewGridInner({ onShare }: Props) {
         nextId = idx < siblings.length - 1 ? siblings[idx + 1].id : null
       }
 
-      if (nextId) setFocusedId(nextId)
+      if (nextId) onFocusChange(nextId)
     }
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [focusedId, flatTree, navigate, levelEditingNodeId])
+  }, [focusedId, flatTree, navigate, levelEditingNodeId, onFocusChange])
 
   // ── Camera: pan to focused node only when it's out of view ──────────────────
   useEffect(() => {
@@ -858,175 +775,6 @@ function ViewGridInner({ onShare }: Props) {
     <Box h="full" display="flex" flexDir="column" position="relative">
       {/* Canvas */}
       <Box flex={1} position="relative">
-        {/* Floating Search Menu - bottom on desktop, top on mobile */}
-        <Box
-          position="absolute"
-          {...(isMobileLayout
-            ? { top: "66px", left: "50%", transform: "translateX(-50%)" }
-            : { bottom: "calc(env(safe-area-inset-bottom, 0px) + var(--topbar-h-total) + 60px)", left: "50%", transform: "translateX(-50%)" }
-          )}
-          zIndex={100}
-          pointerEvents="auto"
-        >
-          <motion.div
-            initial={{ y: isMobileLayout ? -20 : 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-          >
-            <AnimatePresence>
-              {searchResults.length > 0 && (
-                <motion.div
-                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 8, scale: 0.98 }}
-                  transition={{ duration: 0.2, ease: "easeOut" }}
-                  style={{
-                    position: 'absolute',
-                    ...(isMobileLayout
-                      ? { top: '100%', marginTop: '8px' }
-                      : { bottom: '100%', marginBottom: '12px' }
-                    ),
-                    left: 0,
-                    right: 0,
-                    zIndex: 110,
-                  }}
-                >
-                  <Box
-                    bg="var(--bg-panel)"
-                    backdropFilter="blur(24px) saturate(180%)"
-                    border="1px solid"
-                    borderColor="var(--border-main)"
-                    borderRadius="10px"
-                    overflow="hidden"
-                    boxShadow="0 20px 50px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05)"
-                  >
-                    {searchResults.map((result, idx) => (
-                      <Flex
-                        key={result.id}
-                        px={4}
-                        py={2.5}
-                        align="center"
-                        gap={3}
-                        cursor="pointer"
-                        bg={idx === activeSearchIndex ? 'whiteAlpha.100' : 'transparent'}
-                        _hover={{ bg: 'whiteAlpha.50' }}
-                        onClick={() => {
-                          setFocusedId(result.id)
-                          navigate(`/views/${result.id}`)
-                          setSearchResults([])
-                        }}
-                        transition="all 0.15s ease"
-                      >
-                        <Box
-                          w="6px"
-                          h="6px"
-                          borderRadius="full"
-                          bg={idx === activeSearchIndex ? 'var(--accent)' : 'whiteAlpha.300'}
-                          boxShadow={idx === activeSearchIndex ? `0 0 10px var(--accent)` : 'none'}
-                          transition="all 0.2s"
-                        />
-                        <Box flex={1} minW={0}>
-                          <Text color="white" fontSize="xs" fontWeight="600" isTruncated>
-                            {result.name}
-                          </Text>
-                          <Text color="whiteAlpha.500" fontSize="10px" textTransform="uppercase" letterSpacing="0.05em">
-                            Level {result.level} • {result.level_label || 'Diagram'}
-                          </Text>
-                        </Box>
-                        {idx === activeSearchIndex && (
-                          <HStack spacing={1} opacity={0.8}>
-                            <Text color="var(--accent)" fontSize="9px" fontWeight="800" letterSpacing="0.1em">
-                              OPEN
-                            </Text>
-                            <Text color="whiteAlpha.400" fontSize="9px">↵</Text>
-                          </HStack>
-                        )}
-                      </Flex>
-                    ))}
-                  </Box>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <Flex
-              bg="var(--bg-header)"
-              backdropFilter="blur(24px) saturate(180%)"
-              border="1px solid"
-              borderColor="var(--border-main)"
-              borderRadius="10px"
-              pl={4}
-              pr={1.5}
-              py={1.5}
-              gap={3}
-              boxShadow="0 10px 30px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)"
-              align="center"
-              minW={isMobileLayout ? "280px" : "380px"}
-              w={isMobileLayout ? "calc(100vw - 48px)" : undefined}
-            >
-              <InputGroup size="sm" flex={1}>
-                <InputLeftElement pointerEvents="none" h="full">
-                  <SearchIcon color="whiteAlpha.400" fontSize="10px" />
-                </InputLeftElement>
-                <Input
-                  placeholder="Jump to diagram..."
-                  value={searchTerm}
-                  onChange={(e) => handleSearch(e.target.value)}
-                  onKeyDown={handleSearchKeyDown}
-                  variant="unstyled"
-                  fontSize="xs"
-                  color="white"
-                  h="32px"
-                  _placeholder={{ color: 'whiteAlpha.300' }}
-                />
-                {searchTerm && (
-                  <InputRightElement h="full">
-                    <IconButton
-                      aria-label="Clear search"
-                      icon={<CloseIcon fontSize="8px" />}
-                      size="xs"
-                      variant="ghost"
-                      color="whiteAlpha.400"
-                      _hover={{ color: 'white', bg: 'transparent' }}
-                      onClick={() => handleSearch('')}
-                    />
-                  </InputRightElement>
-                )}
-              </InputGroup>
-
-              {canEdit && (
-                <Button
-                  size="sm"
-                  h="32px"
-                  leftIcon={<AddIcon fontSize="9px" />}
-                  bg="var(--accent)"
-                  color="white"
-                  _hover={{
-                    bg: "var(--accent)",
-                    filter: "brightness(1.1)",
-                    transform: 'translateY(-1px)',
-                    boxShadow: `0 0 20px ${hexToRgba(accent, 0.4)}`
-                  }}
-                  _active={{ transform: 'translateY(0)', filter: "brightness(0.9)" }}
-                  variant="solid"
-                  borderRadius="lg"
-                  px={4}
-                  fontSize="xs"
-                  fontWeight="bold"
-                  letterSpacing="0.02em"
-                  onClick={() => {
-                    setNewName('')
-                    onCreateOpen()
-                  }}
-                  boxShadow={`0 4px 12px ${hexToRgba(accent, 0.2)}`}
-                  transition="all 0.2s cubic-bezier(0.4, 0, 0.2, 1)"
-                >
-                  NEW
-                </Button>
-              )}
-            </Flex>
-          </motion.div>
-        </Box>
-
         {/* Level change overlay banner */}
         {levelEditingNodeId && (
           <Flex
@@ -1095,7 +843,7 @@ function ViewGridInner({ onShare }: Props) {
             nodesDraggable={false}
             nodesConnectable={false}
             onPaneClick={() => {
-              setFocusedId(null)
+              onFocusChange(null)
             }}
             style={{
               background: 'var(--bg-canvas)',
@@ -1163,65 +911,6 @@ function ViewGridInner({ onShare }: Props) {
         confirmLabel="Delete"
         confirmColorScheme="red"
       />
-
-      {/* Create Diagram Modal */}
-      <Modal
-        isOpen={isCreateOpen}
-        onClose={onCreateClose}
-        isCentered
-        size="sm"
-      >
-        <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
-        <ModalContent
-          bg="var(--bg-panel)"
-          border="1px solid"
-          borderColor="var(--border-main)"
-          borderRadius="xl"
-          boxShadow="0 24px 64px rgba(0,0,0,0.8)"
-        >
-          <ModalHeader color="gray.100" pb={1} fontSize="md">Create New Diagram</ModalHeader>
-          <ModalBody>
-            <FormControl id="new-view-name">
-              <FormLabel fontSize="xs" color="gray.500" textTransform="uppercase" letterSpacing="0.05em">
-                Diagram Name
-              </FormLabel>
-              <Input
-                name="name"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                size="sm"
-                bg="whiteAlpha.50"
-                border="1px solid"
-                borderColor="whiteAlpha.100"
-                _hover={{ borderColor: 'whiteAlpha.300' }}
-                _focus={{ borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent)' }}
-                autoFocus
-                onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-                placeholder="My New Architecture"
-              />
-            </FormControl>
-          </ModalBody>
-          <ModalFooter gap={2} pt={6}>
-            <Button size="sm" variant="ghost" color="gray.500" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={onCreateClose}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              bg="var(--accent)"
-              color="white"
-              _hover={{ bg: "var(--accent)", filter: "brightness(1.1)" }}
-              _active={{ bg: "var(--accent)", filter: "brightness(0.9)" }}
-              isLoading={isCreating}
-              isDisabled={!newName.trim()}
-              onClick={handleCreate}
-              borderRadius="lg"
-              px={6}
-            >
-              Create
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
 
       {/* Details Drawer */}
       <ViewPanel

@@ -37,6 +37,7 @@ import { buildVisibleProxyConnectors, collectVisibleNodeAnchors, drawVisibleProx
 
 export interface ZUICanvasHandle {
   fitView(): void
+  focusDiagram(viewId: number): boolean
 }
 
 interface Props {
@@ -169,9 +170,78 @@ function getPathAt(
   return []
 }
 
+function findDiagramFocusTarget(groups: DiagramGroupLayout[], viewId: number): PathItem | null {
+  for (const group of groups) {
+    if (group.diagramId === viewId) {
+      return {
+        id: `g-${group.diagramId}`,
+        label: group.label,
+        type: 'group',
+        absX: group.worldX,
+        absY: group.worldY,
+        absW: group.worldW,
+        absH: group.worldH,
+      }
+    }
+
+    const found = findLinkedDiagramInNodes(viewId, group.nodes, 0, 0, 1, 0, 0)
+    if (found) return found
+  }
+  return null
+}
+
+function findLinkedDiagramInNodes(
+  viewId: number,
+  nodes: DiagramGroupLayout['nodes'],
+  parentAbsX: number,
+  parentAbsY: number,
+  parentAbsScale: number,
+  parentChildOffsetX: number,
+  parentChildOffsetY: number,
+): PathItem | null {
+  for (const node of nodes) {
+    const absX = parentAbsX + (node.worldX - parentChildOffsetX) * parentAbsScale
+    const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
+    const absW = node.worldW * parentAbsScale
+    const absH = node.worldH * parentAbsScale
+
+    if (node.linkedDiagramId === viewId) {
+      return {
+        id: node.id,
+        label: node.linkedDiagramLabel || node.label,
+        type: 'node',
+        isCircular: node.isCircular,
+        absX,
+        absY,
+        absW,
+        absH,
+      }
+    }
+
+    if (node.children.length > 0) {
+      const found = findLinkedDiagramInNodes(
+        viewId,
+        node.children,
+        absX,
+        absY,
+        parentAbsScale * node.childScale,
+        node.childOffsetX,
+        node.childOffsetY,
+      )
+      if (found) return found
+    }
+  }
+  return null
+}
+
+function easeOutQuart(t: number): number {
+  return 1 - Math.pow(1 - t, 4)
+}
+
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, highlightedTags, highlightColor, hiddenTags, crossBranchSettings, hoverLocked = false }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const cameraTransitionRef = useRef<number | null>(null)
   const [initialized, setInitialized] = useState(false)
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 })
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
@@ -297,6 +367,10 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
 
   const zoomToPathItem = useCallback((item: PathItem) => {
     if (containerSize.w === 0 || containerSize.h === 0) return
+    if (cameraTransitionRef.current !== null) {
+      cancelAnimationFrame(cameraTransitionRef.current)
+      cameraTransitionRef.current = null
+    }
     setHoveredItem(null, true) // Clear popover immediately on breadcrumb jump
 
     // Use a comfortable padding for the focused item
@@ -316,6 +390,68 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
 
     setViewState({ x, y, zoom })
   }, [containerSize, maxZoom, setViewState, setHoveredItem])
+
+  const focusDiagram = useCallback((viewId: number) => {
+    const el = containerRef.current
+    const target = findDiagramFocusTarget(layout.groups, viewId)
+    if (!el || !target) return false
+
+    const canvasW = el.offsetWidth
+    const canvasH = el.offsetHeight
+    if (canvasW === 0 || canvasH === 0) return false
+
+    setHoveredItem(null, true)
+
+    const padding = isMobileLayout ? 0.18 : 0.16
+    const bboxW = Math.max(1, target.absW)
+    const bboxH = Math.max(1, target.absH)
+    const zoom = Math.min(
+      (canvasW * (1 - padding * 2)) / bboxW,
+      (canvasH * (1 - padding * 2)) / bboxH,
+      maxZoom,
+    )
+
+    const x = (canvasW - bboxW * zoom) / 2 - target.absX * zoom
+    const y = (canvasH - bboxH * zoom) / 2 - target.absY * zoom
+
+    if (cameraTransitionRef.current !== null) {
+      cancelAnimationFrame(cameraTransitionRef.current)
+      cameraTransitionRef.current = null
+    }
+
+    const from = viewStateRef.current
+    const to = { x, y, zoom }
+    const duration = 520
+    const startedAt = performance.now()
+
+    const step = (now: number) => {
+      const t = Math.min(1, (now - startedAt) / duration)
+      const eased = easeOutQuart(t)
+      setViewState({
+        x: from.x + (to.x - from.x) * eased,
+        y: from.y + (to.y - from.y) * eased,
+        zoom: from.zoom + (to.zoom - from.zoom) * eased,
+      })
+
+      if (t < 1) {
+        cameraTransitionRef.current = requestAnimationFrame(step)
+      } else {
+        cameraTransitionRef.current = null
+        setViewState(to)
+      }
+    }
+
+    cameraTransitionRef.current = requestAnimationFrame(step)
+    return true
+  }, [isMobileLayout, layout.groups, maxZoom, setHoveredItem, setViewState, viewStateRef])
+
+  useEffect(() => {
+    return () => {
+      if (cameraTransitionRef.current !== null) {
+        cancelAnimationFrame(cameraTransitionRef.current)
+      }
+    }
+  }, [])
 
   // ── Fit view on mount and when layout changes ────────────────────
   useEffect(() => {
@@ -345,8 +481,9 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
         setHoveredItem(null, true) // Clear popover immediately on fitView
         fitView(el.offsetWidth, el.offsetHeight, layout.bbox)
       },
+      focusDiagram,
     }),
-    [fitView, layout.bbox, setHoveredItem],
+    [fitView, focusDiagram, layout.bbox, setHoveredItem],
   )
 
   // ── RAF render loop ──────────────────────────────────────────────
