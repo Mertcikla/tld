@@ -193,7 +193,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
             {noDiagrams ? 'Create First Diagram' : 'Go to Editor'}
           </Button>
         )}
-        {!noDiagrams && <ExplorePageOnboarding hasDiagrams={!noDiagrams} />}
+        {!noDiagrams && !sharedToken && <ExplorePageOnboarding hasDiagrams={!noDiagrams} />}
       </Center>
     )
   }
@@ -231,7 +231,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
           />
 
           {/* Onboarding overlay */}
-          {data && <ExploreOnboarding hasLinkedNodes={!!(data.navigations?.length > 0)} />}
+          {data && !sharedToken && <ExploreOnboarding hasLinkedNodes={!!(data.navigations?.length > 0)} />}
           <MiniZoomOnboarding isVisible={showMiniOnboarding} />
 
           {/* Bottom toolbar */}
