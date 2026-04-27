@@ -1,6 +1,6 @@
 // src/pages/InfiniteZoom.tsx Explore page holds the ZUI feature
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   Box,
   Button,
@@ -44,6 +44,7 @@ const MINI_ONBOARDING_KEY = 'shared_zoom_onboarding_dismissed'
 // ── Inner component ────────────────────────────────────────────────
 function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<InfiniteZoomHandle>) {
   const navigate = useNavigate()
+  const location = useLocation()
 
   const [data, setData] = useState<ExploreData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -58,6 +59,13 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   const zuiRef = useRef<ZUICanvasHandle>(null)
   const crossBranchSurface = sharedToken ? 'zui-shared' : 'zui'
   const { settings: crossBranchSettings, setEnabled: setCrossBranchEnabled } = useCrossBranchContextSettings(crossBranchSurface)
+
+  const initialCameraFrame = useMemo<ZUICameraFrame | undefined>(() => {
+    const profile = new URLSearchParams(location.search).get('profile')
+    return sharedToken && profile === 'detail-to-overview'
+      ? { profile: 'detail-to-overview', progress: 0 }
+      : undefined
+  }, [location.search, sharedToken])
 
   useImperativeHandle(ref, () => ({
     focusDiagram(viewId: number) {
@@ -245,6 +253,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
             onReady={handleCanvasReady}
             onZoom={handleInteraction}
             onPan={handleInteraction}
+            initialCameraFrame={initialCameraFrame}
             highlightedTags={highlightedTags}
             highlightColor={highlightColor}
             hiddenTags={hiddenTags}

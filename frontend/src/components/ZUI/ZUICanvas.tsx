@@ -51,6 +51,7 @@ interface Props {
   onReady?: () => void
   onZoom?: () => void
   onPan?: () => void
+  initialCameraFrame?: ZUICameraFrame
   highlightedTags?: string[]
   highlightColor?: string
   hiddenTags?: string[]
@@ -319,7 +320,7 @@ function findFirstExpandableNodeInTree(
   return null
 }
 
-export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, highlightedTags, highlightColor, hiddenTags, crossBranchSettings, hoverLocked = false }, ref) {
+export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, initialCameraFrame, highlightedTags, highlightColor, hiddenTags, crossBranchSettings, hoverLocked = false }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const cameraTransitionRef = useRef<number | null>(null)
@@ -583,6 +584,11 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     return true
   }, [layout.groups, maxZoom, setHoveredItem, setViewState])
 
+  const fitInitialView = useCallback((w: number, h: number) => {
+    if (initialCameraFrame && setCameraFrame(initialCameraFrame)) return
+    fitView(w, h, layout.bbox)
+  }, [fitView, initialCameraFrame, layout.bbox, setCameraFrame])
+
   useEffect(() => {
     return () => {
       if (cameraTransitionRef.current !== null) {
@@ -600,14 +606,13 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     // Only set as initialized if we have valid dimensions
     if (w > 0 && h > 0) {
       setContainerSize({ w, h })
-      fitView(w, h, layout.bbox)
+      fitInitialView(w, h)
       if (!initialized) {
         setInitialized(true)
         onReady?.()
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layout, initialized, onReady])
+  }, [initialized, onReady, fitInitialView])
 
   // ── Expose fitView to parent ─────────────────────────────────────
   useImperativeHandle(
@@ -670,7 +675,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
 
       // Trigger initialization if it hasn't happened yet
       if (!initialized && w > 0 && h > 0) {
-        fitView(w, h, layout.bbox)
+        fitInitialView(w, h)
         setInitialized(true)
         onReady?.()
       }
@@ -680,7 +685,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     ro.observe(container)
     resize()
     return () => ro.disconnect()
-  }, [initialized, layout, fitView, onReady])
+  }, [initialized, fitInitialView, onReady])
 
   useEffect(() => {
     if (!initialized) return // Don't start loop until initialized
