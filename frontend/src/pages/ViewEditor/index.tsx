@@ -648,8 +648,9 @@ function ViewEditorInner({
     openProxyConnectorPanel: useCallback(() => openProxyConnectorPanelRef.current(), []),
     closeProxyConnectorPanel: useCallback(() => closeProxyConnectorPanelRef.current(), []),
     handleElementDeleted, handleElementPermanentlyDeleted,
-    handleConnectorDeleted: useCallback((edgeId: number) => {
-      if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
+    handleConnectorDeleted: useCallback((edgeId: number, ownerViewId?: number) => {
+      const vid = ownerViewId ?? viewId
+      if (vid != null) removeConnectorGraphSnapshot(vid, edgeId)
       removeStoreConnector(edgeId)
       void refreshElementsRef.current()
     }, [removeStoreConnector, viewId]),
@@ -1010,13 +1011,15 @@ function ViewEditorInner({
     upsertConnectorGraphSnapshot(updated)
     upsertStoreConnector(updated)
   }, [upsertStoreConnector])
-  const handleConnectorDeleted = useCallback((edgeId: number) => {
-    if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
+  const handleConnectorDeleted = useCallback((edgeId: number, ownerViewId?: number) => {
+    const vid = ownerViewId ?? viewId
+    if (vid != null) removeConnectorGraphSnapshot(vid, edgeId)
     removeStoreConnector(edgeId)
     void refreshElements()
   }, [refreshElements, removeStoreConnector, viewId])
-  const handleConnectorDeleteInPanel = useCallback((edgeId: number) => {
-    handleConnectorDeleted(edgeId)
+
+  const handleConnectorDeleteInPanel = useCallback((edgeId: number, ownerViewId?: number) => {
+    handleConnectorDeleted(edgeId, ownerViewId)
     setSelectedEdge(null)
   }, [handleConnectorDeleted, setSelectedEdge])
   const handleViewSave = useCallback((updated: ViewTreeNode) => setView(updated), [setView])
@@ -1420,6 +1423,13 @@ function ViewEditorInner({
           onClose={proxyConnectorPanel.onClose}
           details={selectedProxyConnectorDetails}
           hasBackdrop={isMobileLayout}
+          onEdit={(connector) => {
+            setSelectedEdge(connector)
+            connectorPanel.onOpen()
+          }}
+          onDelete={(edgeId, ownerViewId) => {
+            handleConnectorDeleteInPanel(edgeId, ownerViewId)
+          }}
         />
 
         <ViewPanel

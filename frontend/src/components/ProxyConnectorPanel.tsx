@@ -1,15 +1,19 @@
-import { Box, Button, HStack, Icon, Text, VStack, Divider, Flex } from '@chakra-ui/react'
+import { Box, Button, HStack, Icon, Text, VStack, Divider, Flex, IconButton } from '@chakra-ui/react'
 import { useNavigate } from 'react-router-dom'
 import type { ProxyConnectorDetails } from '../crossBranch/types'
 import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
-import { ChevronRightIcon, NavigationIcon } from './Icons'
+import { ChevronRightIcon, NavigationIcon, TrashIcon, EditIcon } from './Icons'
+import { useViewEditorContext } from '../pages/ViewEditor/context'
+import type { Connector } from '../types'
 
 interface Props {
   isOpen: boolean
   onClose: () => void
   details: ProxyConnectorDetails | null
   hasBackdrop?: boolean
+  onEdit?: (connector: Connector) => void
+  onDelete?: (connectorId: number, ownerViewId: number) => void
 }
 
 export default function ProxyConnectorPanel({
@@ -17,8 +21,11 @@ export default function ProxyConnectorPanel({
   onClose,
   details,
   hasBackdrop = true,
+  onEdit,
+  onDelete,
 }: Props) {
   const navigate = useNavigate()
+  const { canEdit } = useViewEditorContext()
 
   return (
     <SlidingPanel
@@ -27,6 +34,7 @@ export default function ProxyConnectorPanel({
       panelKey="proxy-connector-panel"
       width={{ base: 'calc(100vw - 24px)', md: '300px' }}
       hasBackdrop={hasBackdrop}
+      zIndex={950}
     >
       <PanelHeader title="Relationships" onClose={onClose} />
 
@@ -71,21 +79,54 @@ export default function ProxyConnectorPanel({
                   >
                     <VStack align="stretch" spacing={3}>
                       <Box>
-                        <HStack spacing={2} mb={1}>
-                          <Text color="white" fontSize="sm" fontWeight="semibold" isTruncated>
-                            {leaf.source.actualElementName}
-                          </Text>
-                          <Icon as={ChevronRightIcon} color="whiteAlpha.400" />
-                          <Text color="white" fontSize="sm" fontWeight="semibold" isTruncated>
-                            {leaf.target.actualElementName}
-                          </Text>
-                        </HStack>
+                        <HStack justify="space-between" align="start">
+                          <VStack align="start" spacing={1} flex={1}>
+                            <HStack spacing={2}>
+                              <Text color="white" fontSize="sm" fontWeight="semibold" isTruncated>
+                                {leaf.source.actualElementName}
+                              </Text>
+                              <Icon as={ChevronRightIcon} color="whiteAlpha.400" />
+                              <Text color="white" fontSize="sm" fontWeight="semibold" isTruncated>
+                                {leaf.target.actualElementName}
+                              </Text>
+                            </HStack>
 
-                        {(leaf.connector.label || leaf.connector.relationship) && (
-                          <Text color="gray.400" fontSize="xs" fontStyle={!leaf.connector.label ? 'italic' : 'normal'}>
-                            {leaf.connector.label || leaf.connector.relationship}
-                          </Text>
-                        )}
+                            {(leaf.connector.label || leaf.connector.relationship) && (
+                              <Text color="gray.400" fontSize="xs" fontStyle={!leaf.connector.label ? 'italic' : 'normal'}>
+                                {leaf.connector.label || leaf.connector.relationship}
+                              </Text>
+                            )}
+                          </VStack>
+
+                          {canEdit && (
+                            <HStack spacing={1} mt={-1}>
+                              <IconButton
+                                aria-label="Edit connector"
+                                icon={<EditIcon size={14} />}
+                                size="xs"
+                                variant="ghost"
+                                color="blue.300"
+                                _hover={{ bg: 'blue.900', color: 'blue.100' }}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onEdit?.(leaf.connector)
+                                }}
+                              />
+                              <IconButton
+                                aria-label="Delete connector"
+                                icon={<TrashIcon size={14} />}
+                                size="xs"
+                                variant="ghost"
+                                color="red.400"
+                                _hover={{ bg: 'red.900', color: 'red.100' }}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  onDelete?.(leaf.connector.id, leaf.ownerViewId)
+                                }}
+                              />
+                            </HStack>
+                          )}
+                        </HStack>
                       </Box>
 
                       {leaf.connector.description && (
@@ -128,3 +169,4 @@ export default function ProxyConnectorPanel({
     </SlidingPanel>
   )
 }
+
