@@ -2,8 +2,6 @@ import { memo } from 'react'
 import { Box, BoxProps, forwardRef } from '@chakra-ui/react'
 import { useAccentColor } from '../context/ThemeContext'
 import { hexToRgba } from '../constants/colors'
-import { TYPE_COLORS } from '../types'
-import { TYPE_COLOR_400 } from './ZUI/renderer'
 
 export interface ElementContainerProps extends BoxProps {
   isSelected?: boolean
@@ -26,8 +24,7 @@ export const ElementContainer = memo(forwardRef<ElementContainerProps, 'div'>(({
 }, ref) => {
   const { accent } = useAccentColor()
 
-  const typeHex = kind ? (TYPE_COLOR_400[kind] || '#a0aec0') : '#a0aec0'
-  const brandedBorder = hexToRgba(typeHex, 0.5)
+  const brandedBorder = hexToRgba('#a0aec0', 0.5)
 
   const borderColor = isSource
     ? accent

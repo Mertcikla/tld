@@ -48,20 +48,6 @@ function getClampedFontSize(baseWorldSize: number, minScreenSize: number, maxScr
   return clamp(baseWorldSize, minScreenSize / zoom, maxScreenSize / zoom)
 }
 
-// ── Chakra v2 type palette - mirrors TYPE_COLORS in src/types/index.ts ─
-// .400 variants: used for type badge text and border tint
-export const TYPE_COLOR_400: Record<string, string> = {
-  person: '#38b2ac',  // teal.400
-  system: '#63b3ed',  // blue.400
-  container: '#9f7aea',  // purple.400
-  component: '#f6ad55',  // orange.400
-  database: '#4fd1c5',  // cyan.400
-  queue: '#f6e05e',  // yellow.400
-  api: '#68d391',  // green.400
-  service: '#f687b3',  // pink.400
-  external: '#a0aec0',  // gray.400
-}
-
 /** Border color: type .400 at 50% alpha - bold branded tint */
 const typeBorderColorCache = new Map<string, string>()
 function typeBorderColor(type: string, alpha = 0.5): string {
@@ -69,8 +55,7 @@ function typeBorderColor(type: string, alpha = 0.5): string {
   const cached = typeBorderColorCache.get(cacheKey)
   if (cached) return cached
 
-  const color = TYPE_COLOR_400[type]
-  const hex = typeof color === 'string' ? color : '#a0aec0'
+  const hex = '#a0aec0'
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
   const b = parseInt(hex.slice(5, 7), 16)
@@ -655,8 +640,7 @@ function drawNode(
         const badgeFontSize = getClampedFontSize(w * 0.05, minBadge, MAX_FONT_BADGE, drawZoom)
         if (badgeFontSize * drawZoom >= 5) {
           ctx.font = `${badgeFontSize}px Inter, system-ui, sans-serif`
-          const badgeColor = TYPE_COLOR_400[node.type]
-          ctx.fillStyle = typeof badgeColor === 'string' ? badgeColor : '#a0aec0'
+          ctx.fillStyle = '#a0aec0'
           const displayType = typeof node.type === 'string' ? node.type.toUpperCase() : 'UNKNOWN'
           ctx.fillText(displayType, x + w / 2, y + h * (0.62 + baseOffset))
         }
