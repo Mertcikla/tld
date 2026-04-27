@@ -142,23 +142,17 @@ function ViewExplorer({
   const children = useMemo(() => {
     if (viewId == null) return []
     const diagMap = new Map<number, NavItem>()
-    flat.forEach((n) => {
-      if (n.parent_view_id === viewId)
-        diagMap.set(n.id, { id: n.id, name: n.name, subtitle: 'Child View' })
-    })
+    
     const objMap = new Map(viewElements.map((o) => [o.element_id, o.name]))
     Object.entries(linksMap).forEach(([elementIdStr, links]) => {
       const elementId = Number(elementIdStr)
-      if (!Number.isFinite(elementId)) return
-      const isOnCanvas = onCanvasIds.has(elementId)
+      if (!Number.isFinite(elementId) || !onCanvasIds.has(elementId)) return
+      
       const objName = objMap.get(elementId) || 'Element'
       links.forEach((link) => {
         const existing = diagMap.get(link.to_view_id)
         if (existing) {
-          if (!existing.elementId && isOnCanvas) existing.elementId = elementId
-          if (existing.subtitle === 'Child View') {
-            existing.subtitle = `Child View (Via ${objName})`
-          } else if (!existing.subtitle?.includes(objName)) {
+          if (!existing.subtitle?.includes(objName)) {
             existing.subtitle = `${existing.subtitle}, ${objName}`
           }
         } else {
@@ -166,13 +160,13 @@ function ViewExplorer({
             id: link.to_view_id,
             name: link.to_view_name,
             subtitle: `Via ${objName}`,
-            elementId: isOnCanvas ? elementId : undefined,
+            elementId: elementId,
           })
         }
       })
     })
     return Array.from(diagMap.values())
-  }, [viewId, flat, linksMap, viewElements, onCanvasIds])
+  }, [viewId, linksMap, viewElements, onCanvasIds])
 
   const viewHoverMap = useMemo(() => {
     const map = new Map<number, { elementId: number | undefined; type: 'in' | 'out' }>()
@@ -184,32 +178,14 @@ function ViewExplorer({
   const filteredByMode = useMemo(() => {
     if (activeFilter === 'out') {
       const parentIds = new Set(parents.map((p) => p.id))
-      const ancestors = new Set<number>()
-      const findAncestors = (id: number) => {
-        const node = treeNodes.find(n => n.id === id)
-        if (node?.parent_view_id) {
-          ancestors.add(node.parent_view_id)
-          findAncestors(node.parent_view_id)
-        }
-      }
-      if (viewId) findAncestors(viewId)
-      return flat.filter((n) => parentIds.has(n.id) || ancestors.has(n.id) || n.id === viewId)
+      return flat.filter((n) => parentIds.has(n.id) || n.id === viewId)
     }
     if (activeFilter === 'in') {
       const childIds = new Set(children.map((c) => c.id))
-      const subtree = new Set<number>()
-      const traverse = (nodes: TreeNode[]) => {
-        nodes.forEach(n => {
-          subtree.add(n.id)
-          traverse(n.children)
-        })
-      }
-      const current = flat.find(n => n.id === viewId)
-      if (current) traverse(current.children)
-      return flat.filter((n) => childIds.has(n.id) || subtree.has(n.id) || n.id === viewId)
+      return flat.filter((n) => childIds.has(n.id) || n.id === viewId)
     }
     return flat
-  }, [flat, parents, children, activeFilter, viewId, treeNodes])
+  }, [flat, parents, children, activeFilter, viewId])
 
   const filtered = useMemo(() => {
     if (!query.trim()) return filteredByMode

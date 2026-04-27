@@ -60,6 +60,7 @@ export const TagManager: React.FC<Props> = ({
   layerCounts,
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false)
+  const [isUnusedCollapsed, setIsUnusedCollapsed] = useState(true)
   const [expandedLayerIds, setExpandedLayerIds] = useState<Set<number>>(new Set())
   const [namingPopover, setNamingPopover] = useState<{
     isOpen: boolean;
@@ -122,7 +123,7 @@ export const TagManager: React.FC<Props> = ({
   const handleConfirmNaming = async (name: string) => {
     const { tags } = namingPopover
     if (!tags || tags.length === 0) return
-    
+
     const color = pickUnusedColor(Object.values(tagColors).map(t => t.color))
     await onCreateLayer(name, tags, color)
     setNamingPopover(prev => ({ ...prev, isOpen: false, targetTag: null, targetLayerId: null }))
@@ -300,28 +301,53 @@ export const TagManager: React.FC<Props> = ({
                     <Divider borderColor="whiteAlpha.100" />
                   )}
                   {unusedTags.length > 0 && (
-                    <Wrap spacing={1} opacity={0.6}>
-                      {unusedTags.map((tag) => (
-                        <WrapItem key={tag}>
-                          <TagItem
-                            tag={tag}
-                            color={tagColors[tag]?.color || '#A0AEC0'}
-                            description={tagColors[tag]?.description || null}
-                            isAssigned={(selectedElement.tags || []).includes(tag)}
-                            tagCount={tagCounts[tag]}
-                            onToggle={() => onToggleTagOnElement(tag)}
-                            onHover={(active) => onHoverLayer(active ? [tag] : null, tagColors[tag]?.color)}
-                            onDropTag={(dragged: string) => handleCreateGroup(tag, dragged, tag)}
-                            onDropLayer={(draggedId: number) => handleCreateGroupFromLayer(tag, draggedId)}
-                            namingPopover={namingPopover.targetTag === tag ? namingPopover : undefined}
-                            onConfirmNaming={handleConfirmNaming}
-                            onCloseNaming={() => setNamingPopover(prev => ({ ...prev, isOpen: false, targetTag: null }))}
-                            onSetColor={(color) => onCreateTag(tag, color)}
-                            onSetDescription={(desc) => onCreateTag(tag, tagColors[tag]?.color, desc)}
-                          />
-                        </WrapItem>
-                      ))}
-                    </Wrap>
+                    <VStack align="stretch" spacing={2}>
+                      <HStack
+                        spacing={1.5}
+                        cursor="pointer"
+                        onClick={() => setIsUnusedCollapsed(!isUnusedCollapsed)}
+                        role="button"
+                        opacity={0.6}
+                        _hover={{ opacity: 1 }}
+                        transition="opacity 0.2s"
+                      >
+                        <Box
+                          transform={isUnusedCollapsed ? 'rotate(-90deg)' : 'none'}
+                          transition="transform 0.2s"
+                          display="flex"
+                          alignItems="center"
+                        >
+                          <ChevronDownIcon size={10} />
+                        </Box>
+                        <Text fontSize="10px" fontWeight="bold" color="gray.500" textTransform="uppercase" letterSpacing="0.05em">
+                          Unused on view ({unusedTags.length})
+                        </Text>
+                      </HStack>
+                      {!isUnusedCollapsed && (
+                        <Wrap spacing={1} opacity={0.6}>
+                          {unusedTags.map((tag) => (
+                            <WrapItem key={tag}>
+                              <TagItem
+                                tag={tag}
+                                color={tagColors[tag]?.color || '#A0AEC0'}
+                                description={tagColors[tag]?.description || null}
+                                isAssigned={(selectedElement.tags || []).includes(tag)}
+                                tagCount={tagCounts[tag]}
+                                onToggle={() => onToggleTagOnElement(tag)}
+                                onHover={(active) => onHoverLayer(active ? [tag] : null, tagColors[tag]?.color)}
+                                onDropTag={(dragged: string) => handleCreateGroup(tag, dragged, tag)}
+                                onDropLayer={(draggedId: number) => handleCreateGroupFromLayer(tag, draggedId)}
+                                namingPopover={namingPopover.targetTag === tag ? namingPopover : undefined}
+                                onConfirmNaming={handleConfirmNaming}
+                                onCloseNaming={() => setNamingPopover(prev => ({ ...prev, isOpen: false, targetTag: null }))}
+                                onSetColor={(color) => onCreateTag(tag, color)}
+                                onSetDescription={(desc) => onCreateTag(tag, tagColors[tag]?.color, desc)}
+                              />
+                            </WrapItem>
+                          ))}
+                        </Wrap>
+                      )}
+                    </VStack>
                   )}
                 </VStack>
               </Box>
@@ -385,26 +411,51 @@ export const TagManager: React.FC<Props> = ({
                     <Divider borderColor="whiteAlpha.100" />
                   )}
                   {unusedTags.length > 0 && (
-                    <Wrap spacing={2} opacity={0.6}>
-                      {unusedTags.map((tag) => (
-                        <WrapItem key={tag}>
-                          <TagItem
-                            tag={tag}
-                            color={tagColors[tag]?.color || '#A0AEC0'}
-                            description={tagColors[tag]?.description || null}
-                            tagCount={tagCounts[tag]}
-                            onHover={(active) => onHoverLayer(active ? [tag] : null, tagColors[tag]?.color)}
-                            onDropTag={(dragged: string) => handleCreateGroup(tag, dragged, tag)}
-                            onDropLayer={(draggedId: number) => handleCreateGroupFromLayer(tag, draggedId)}
-                            namingPopover={namingPopover.targetTag === tag ? namingPopover : undefined}
-                            onConfirmNaming={handleConfirmNaming}
-                            onCloseNaming={() => setNamingPopover(prev => ({ ...prev, isOpen: false, targetTag: null }))}
-                            onSetColor={(color) => onCreateTag(tag, color)}
-                            onSetDescription={(desc) => onCreateTag(tag, tagColors[tag]?.color, desc)}
-                          />
-                        </WrapItem>
-                      ))}
-                    </Wrap>
+                    <VStack align="stretch" spacing={2}>
+                      <HStack
+                        spacing={1.5}
+                        cursor="pointer"
+                        onClick={() => setIsUnusedCollapsed(!isUnusedCollapsed)}
+                        role="button"
+                        opacity={0.6}
+                        _hover={{ opacity: 1 }}
+                        transition="opacity 0.2s"
+                      >
+                        <Box
+                          transform={isUnusedCollapsed ? 'rotate(-90deg)' : 'none'}
+                          transition="transform 0.2s"
+                          display="flex"
+                          alignItems="center"
+                        >
+                          <ChevronDownIcon size={10} />
+                        </Box>
+                        <Text fontSize="10px" fontWeight="bold" color="gray.500" textTransform="uppercase" letterSpacing="0.05em">
+                          Other tags ({unusedTags.length})
+                        </Text>
+                      </HStack>
+                      {!isUnusedCollapsed && (
+                        <Wrap spacing={2} opacity={0.6}>
+                          {unusedTags.map((tag) => (
+                            <WrapItem key={tag}>
+                              <TagItem
+                                tag={tag}
+                                color={tagColors[tag]?.color || '#A0AEC0'}
+                                description={tagColors[tag]?.description || null}
+                                tagCount={tagCounts[tag]}
+                                onHover={(active) => onHoverLayer(active ? [tag] : null, tagColors[tag]?.color)}
+                                onDropTag={(dragged: string) => handleCreateGroup(tag, dragged, tag)}
+                                onDropLayer={(draggedId: number) => handleCreateGroupFromLayer(tag, draggedId)}
+                                namingPopover={namingPopover.targetTag === tag ? namingPopover : undefined}
+                                onConfirmNaming={handleConfirmNaming}
+                                onCloseNaming={() => setNamingPopover(prev => ({ ...prev, isOpen: false, targetTag: null }))}
+                                onSetColor={(color) => onCreateTag(tag, color)}
+                                onSetDescription={(desc) => onCreateTag(tag, tagColors[tag]?.color, desc)}
+                              />
+                            </WrapItem>
+                          ))}
+                        </Wrap>
+                      )}
+                    </VStack>
                   )}
                 </VStack>
               </Box>

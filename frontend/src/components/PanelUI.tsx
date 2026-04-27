@@ -1,7 +1,7 @@
 import React from 'react'
-import { Box } from '@chakra-ui/react'
+import { Box, BoxProps } from '@chakra-ui/react'
 
-export function KbdHint({ children }: { children: string }) {
+export function KbdHint({ children, ...props }: { children: string } & BoxProps) {
   return (
     <Box
       as="span"
@@ -17,6 +17,7 @@ export function KbdHint({ children }: { children: string }) {
       color="whiteAlpha.900"
       flexShrink={0}
       ml={2}
+      {...props}
     >
       {children}
     </Box>
