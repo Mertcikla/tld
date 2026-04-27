@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type MutableRefObject, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, type MutableRefObject, type RefObject } from 'react'
 import { getNodesBounds, getViewportForBounds, type Node as RFNode, type ReactFlowInstance } from 'reactflow'
 
 export interface ViewEditorDemoOptions {
@@ -6,24 +6,19 @@ export interface ViewEditorDemoOptions {
   disableImportExport?: boolean
   hideFlowControls?: boolean
   disableOnboarding?: boolean
+  hideFocusView?: boolean
+  hideExpandExtras?: boolean
 }
 
 export const DEMO_VIEW_EDITOR_OPTIONS: Omit<ViewEditorDemoOptions, 'revealProgress'> = {
   disableImportExport: true,
   hideFlowControls: true,
   disableOnboarding: true,
+  hideFocusView: true,
+  hideExpandExtras: true,
 }
 
-function getCenteredViewport(bounds: { x: number; y: number; width: number; height: number }, width: number, height: number, zoom: number) {
-  const centerX = bounds.x + bounds.width / 2
-  const centerY = bounds.y + bounds.height / 2
 
-  return {
-    x: width / 2 - centerX * zoom,
-    y: height / 2 - centerY * zoom,
-    zoom,
-  }
-}
 
 interface UseDemoRevealViewportArgs {
   demoOptions?: ViewEditorDemoOptions
@@ -44,18 +39,11 @@ export function useDemoRevealViewport({
   needsFitViewRef,
   computedMinZoom,
   setViewport,
-  resetKey,
 }: UseDemoRevealViewportArgs) {
   const clampedRevealProgress = useMemo(() => {
     if (typeof demoOptions?.revealProgress !== 'number') return null
     return Math.max(0, Math.min(1, demoOptions.revealProgress))
   }, [demoOptions?.revealProgress])
-
-  const revealZoomRef = useRef<number | null>(null)
-
-  useEffect(() => {
-    revealZoomRef.current = null
-  }, [resetKey, clampedRevealProgress])
 
   const applyDemoRevealViewport = useCallback(() => {
     if (clampedRevealProgress === null) return false
@@ -73,24 +61,7 @@ export function useDemoRevealViewport({
     const fittedViewport = getViewportForBounds(bounds, width, height, computedMinZoom, 2, 0.1)
     if (![fittedViewport.x, fittedViewport.y, fittedViewport.zoom].every(Number.isFinite)) return false
 
-    if (clampedRevealProgress >= 0.999) {
-      revealZoomRef.current = fittedViewport.zoom
-      setViewport(fittedViewport, { duration: 0 })
-      return true
-    }
-
-    const fixedZoom = revealZoomRef.current ?? fittedViewport.zoom
-    revealZoomRef.current = fixedZoom
-
-    const centeredViewport = getCenteredViewport(bounds, width, height, fixedZoom)
-    const reveal = 1 - Math.pow(1 - clampedRevealProgress, 3)
-    const hiddenOffsetX = Math.max(width * 1.15, bounds.width * fixedZoom * 0.75)
-
-    setViewport({
-      x: centeredViewport.x + hiddenOffsetX * (1 - reveal),
-      y: centeredViewport.y,
-      zoom: fixedZoom,
-    }, { duration: 0 })
+    setViewport(fittedViewport, { duration: 0 })
 
     return true
   }, [clampedRevealProgress, computedMinZoom, containerRef, rfNodesRef, setViewport])

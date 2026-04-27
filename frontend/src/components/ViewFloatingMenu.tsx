@@ -49,6 +49,8 @@ export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
   setHighlightColor: (color: string | null) => void
 
   toolbarSlot?: React.ReactNode
+  hideFocusView?: boolean
+  hideExpandExtras?: boolean
 }
 
 /**
@@ -83,6 +85,8 @@ function ViewFloatingMenu({
   setHighlightColor,
   shareSlot,
   toolbarSlot,
+  hideFocusView = false,
+  hideExpandExtras = false,
 }: ViewFloatingMenuProps) {
   const { canEdit } = useViewEditorContext()
   const { isOpen: isTagsOpen, onClose: onTagsClose, onToggle: onTagsToggle } = useDisclosure()
@@ -127,24 +131,28 @@ function ViewFloatingMenu({
         </Button>
       </Tooltip>
 
-      <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
-      <Tooltip label={focusMode ? 'Show context' : 'Focus on this view'} placement="top" openDelay={200}>
-        <Button
-          variant="ghost"
-          h="28px"
-          px={2.5}
-          color={focusMode ? 'var(--accent)' : 'gray.300'}
-          bg={focusMode ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
-          _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
-          onClick={() => onFocusModeChange(!focusMode)}
-        >
-          <HStack spacing={1.5}>
-            <FocusSvg />
-            <Text fontSize="11px" fontWeight="normal">Focus View</Text>
-            <Box w="6px" h="6px" rounded="full" bg={focusMode ? 'var(--accent)' : 'gray.500'} />
-          </HStack>
-        </Button>
-      </Tooltip>
+      {!hideFocusView && (
+        <>
+          <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
+          <Tooltip label={focusMode ? 'Show context' : 'Focus on this view'} placement="top" openDelay={200}>
+            <Button
+              variant="ghost"
+              h="28px"
+              px={2.5}
+              color={focusMode ? 'var(--accent)' : 'gray.300'}
+              bg={focusMode ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
+              _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+              onClick={() => onFocusModeChange(!focusMode)}
+            >
+              <HStack spacing={1.5}>
+                <FocusSvg />
+                <Text fontSize="11px" fontWeight="normal">Focus View</Text>
+                <Box w="6px" h="6px" rounded="full" bg={focusMode ? 'var(--accent)' : 'gray.500'} />
+              </HStack>
+            </Button>
+          </Tooltip>
+        </>
+      )}
       <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
 
       {(allTags.length > 0 || layers.length > 0) && (
@@ -356,22 +364,26 @@ function ViewFloatingMenu({
         </>
       )}
 
-      <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
-      <Button
-        variant="ghost"
-        h="28px"
-        minW="36px"
-        px={2}
-        display="inline-flex"
-        alignItems="center"
-        justifyContent="center"
-        color="gray.300"
-        _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
-        onClick={() => setExtrasOpen((prev) => !prev)}
-        aria-label={extrasOpen ? 'Collapse extras' : 'Expand extras'}
-      >
-        {extrasOpen ? <CollapseExtrasSvg /> : <ExpandExtrasSvg />}
-      </Button>
+      {!hideExpandExtras && (
+        <>
+          <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
+          <Button
+            variant="ghost"
+            h="28px"
+            minW="36px"
+            px={2}
+            display="inline-flex"
+            alignItems="center"
+            justifyContent="center"
+            color="gray.300"
+            _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+            onClick={() => setExtrasOpen((prev) => !prev)}
+            aria-label={extrasOpen ? 'Collapse extras' : 'Expand extras'}
+          >
+            {extrasOpen ? <CollapseExtrasSvg /> : <ExpandExtrasSvg />}
+          </Button>
+        </>
+      )}
     </HStack>
   )
 }

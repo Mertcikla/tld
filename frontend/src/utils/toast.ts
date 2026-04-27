@@ -52,6 +52,14 @@ const toast: CustomToast = (options: UseToastOptions) => {
   const status = options.status || 'error'
 
   if (status === 'error') {
+    // Silence error toasts if we are on a demo route
+    const isDemoRoute = window.location.pathname.includes('/demo') || 
+                        window.location.pathname.includes('/app/demo');
+
+    if (isDemoRoute) {
+      return undefined
+    }
+
     const summary = getErrorSummary(options)
     
     // Check if an error toast is already active

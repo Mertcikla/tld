@@ -1377,6 +1377,8 @@ function ViewEditorInner({
               setHighlightColor={setHoveredLayerColor}
               shareSlot={shareSlot}
               toolbarSlot={toolbarSlot}
+              hideFocusView={demoOptions?.hideFocusView}
+              hideExpandExtras={demoOptions?.hideExpandExtras}
             />
           </Box>
         </Flex>
