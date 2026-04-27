@@ -38,6 +38,12 @@ import { buildVisibleProxyConnectors, collectVisibleNodeAnchors, drawVisibleProx
 export interface ZUICanvasHandle {
   fitView(): void
   focusDiagram(viewId: number): boolean
+  setCameraFrame(frame: ZUICameraFrame): boolean
+}
+
+export interface ZUICameraFrame {
+  profile: 'detail-to-overview'
+  progress: number
 }
 
 interface Props {
@@ -236,6 +242,81 @@ function findLinkedDiagramInNodes(
 
 function easeOutQuart(t: number): number {
   return 1 - Math.pow(1 - t, 4)
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value))
+}
+
+function fitWorldRect(
+  rect: { x: number; y: number; w: number; h: number },
+  canvasW: number,
+  canvasH: number,
+  maxZoom: number,
+  padding: number,
+): ZUIViewState | null {
+  const bboxW = Math.max(1, rect.w)
+  const bboxH = Math.max(1, rect.h)
+  const zoom = Math.min(
+    (canvasW * (1 - padding * 2)) / bboxW,
+    (canvasH * (1 - padding * 2)) / bboxH,
+    maxZoom,
+  )
+  if (!Number.isFinite(zoom) || zoom <= 0) return null
+
+  return {
+    x: (canvasW - bboxW * zoom) / 2 - rect.x * zoom,
+    y: (canvasH - bboxH * zoom) / 2 - rect.y * zoom,
+    zoom,
+  }
+}
+
+function findFirstExpandableNode(groups: DiagramGroupLayout[]): PathItem | null {
+  for (const group of groups) {
+    const found = findFirstExpandableNodeInTree(group.nodes, 0, 0, 1, 0, 0)
+    if (found) return found
+  }
+  return null
+}
+
+function findFirstExpandableNodeInTree(
+  nodes: DiagramGroupLayout['nodes'],
+  parentAbsX: number,
+  parentAbsY: number,
+  parentAbsScale: number,
+  parentChildOffsetX: number,
+  parentChildOffsetY: number,
+): PathItem | null {
+  for (const node of nodes) {
+    const absX = parentAbsX + (node.worldX - parentChildOffsetX) * parentAbsScale
+    const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
+    const absW = node.worldW * parentAbsScale
+    const absH = node.worldH * parentAbsScale
+
+    if (node.children.length > 0) {
+      return {
+        id: node.id,
+        label: node.linkedDiagramLabel || node.label,
+        type: 'node',
+        isCircular: node.isCircular,
+        absX,
+        absY,
+        absW,
+        absH,
+      }
+    }
+
+    const found = findFirstExpandableNodeInTree(
+      node.children,
+      absX,
+      absY,
+      parentAbsScale * node.childScale,
+      node.childOffsetX,
+      node.childOffsetY,
+    )
+    if (found) return found
+  }
+  return null
 }
 
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, highlightedTags, highlightColor, hiddenTags, crossBranchSettings, hoverLocked = false }, ref) {
@@ -445,6 +526,63 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     return true
   }, [isMobileLayout, layout.groups, maxZoom, setHoveredItem, setViewState, viewStateRef])
 
+  const setCameraFrame = useCallback((frame: ZUICameraFrame) => {
+    if (frame.profile !== 'detail-to-overview') return false
+
+    const el = containerRef.current
+    if (!el) return false
+
+    const canvasW = el.offsetWidth
+    const canvasH = el.offsetHeight
+    if (canvasW === 0 || canvasH === 0) return false
+
+    const detailTarget = findFirstExpandableNode(layout.groups)
+    const overviewTarget = layout.groups[0]
+    if (!detailTarget || !overviewTarget) return false
+
+    const detail = fitWorldRect(
+      {
+        x: detailTarget.absX,
+        y: detailTarget.absY,
+        w: detailTarget.absW,
+        h: detailTarget.absH,
+      },
+      canvasW,
+      canvasH,
+      maxZoom,
+      0.28,
+    )
+
+    const overview = fitWorldRect(
+      {
+        x: overviewTarget.worldX,
+        y: overviewTarget.worldY,
+        w: overviewTarget.worldW,
+        h: overviewTarget.worldH,
+      },
+      canvasW,
+      canvasH,
+      maxZoom,
+      0.18,
+    )
+
+    if (!detail || !overview) return false
+
+    if (cameraTransitionRef.current !== null) {
+      cancelAnimationFrame(cameraTransitionRef.current)
+      cameraTransitionRef.current = null
+    }
+
+    setHoveredItem(null, true)
+    const t = easeOutQuart(clamp01(frame.progress))
+    setViewState({
+      x: detail.x + (overview.x - detail.x) * t,
+      y: detail.y + (overview.y - detail.y) * t,
+      zoom: detail.zoom + (overview.zoom - detail.zoom) * t,
+    })
+    return true
+  }, [layout.groups, maxZoom, setHoveredItem, setViewState])
+
   useEffect(() => {
     return () => {
       if (cameraTransitionRef.current !== null) {
@@ -482,8 +620,9 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
         fitView(el.offsetWidth, el.offsetHeight, layout.bbox)
       },
       focusDiagram,
+      setCameraFrame,
     }),
-    [fitView, focusDiagram, layout.bbox, setHoveredItem],
+    [fitView, focusDiagram, layout.bbox, setCameraFrame, setHoveredItem],
   )
 
   // ── RAF render loop ──────────────────────────────────────────────

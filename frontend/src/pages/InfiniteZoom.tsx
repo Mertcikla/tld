@@ -24,7 +24,7 @@ import { FitViewIcon as FitViewSvg, TagsIcon, EyeIcon, EyeOffIcon, FocusIcon as 
 import ExploreOnboarding from '../components/ExploreOnboarding'
 import ExplorePageOnboarding from '../components/ExplorePageOnboarding'
 import MiniZoomOnboarding from '../components/MiniZoomOnboarding'
-import { ZUICanvas, type ZUICanvasHandle } from '../components/ZUI'
+import { ZUICanvas, type ZUICameraFrame, type ZUICanvasHandle } from '../components/ZUI'
 import { useCrossBranchContextSettings } from '../crossBranch/settings'
 import { primeWorkspaceGraphSnapshot } from '../crossBranch/store'
 
@@ -36,6 +36,7 @@ interface Props {
 
 export interface InfiniteZoomHandle {
   focusDiagram(viewId: number): boolean
+  setCameraFrame(frame: ZUICameraFrame): boolean
 }
 
 const MINI_ONBOARDING_KEY = 'shared_zoom_onboarding_dismissed'
@@ -61,6 +62,9 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   useImperativeHandle(ref, () => ({
     focusDiagram(viewId: number) {
       return zuiRef.current?.focusDiagram(viewId) ?? false
+    },
+    setCameraFrame(frame: ZUICameraFrame) {
+      return zuiRef.current?.setCameraFrame(frame) ?? false
     },
   }), [])
 
@@ -172,6 +176,24 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   const handleCanvasReady = useCallback(() => {
     setCanvasReady(true)
   }, [])
+
+  useEffect(() => {
+    if (!sharedToken) return
+
+    const handleMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: unknown; progress?: unknown; profile?: unknown } | null
+      if (!data || data.type !== 'tldiagram-zui-camera') return
+      if (data.profile !== 'detail-to-overview') return
+
+      const progress = Number(data.progress)
+      if (!Number.isFinite(progress)) return
+
+      zuiRef.current?.setCameraFrame({ profile: 'detail-to-overview', progress })
+    }
+
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [sharedToken])
 
   if (!loading && (!data || (data.tree ?? []).length === 0 || !hasPlacements)) {
     const noDiagrams = !data || (data.tree ?? []).length === 0
