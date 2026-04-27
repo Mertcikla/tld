@@ -132,7 +132,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
     }
   }, [showMiniOnboarding])
   useEffect(() => {
-    const loader = api.explore.load()
+    const loader = sharedToken ? api.explore.loadShared(sharedToken) : api.explore.load()
     loader.then((d) => {
       if (d.password_required) {
         setLoading(false)
@@ -147,23 +147,27 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   // Fetch tag colors and layers once data is loaded (authenticated users only).
   // Only fetch from root tree nodes child/nested diagrams would duplicate the same layers.
   useEffect(() => {
-    if (!data) return
+    if (!data || sharedToken) return
     let cancelled = false
     const rootIds = (data.tree ?? []).map(n => n.id)
     const fetchTagData = async () => {
-      const diagramLayers = await Promise.all(
-        rootIds.map(id => api.workspace.views.layers.list(id)),
-      )
-      if (!cancelled) {
-        // Deduplicate by layer ID in case of any API overlap
-        const seen = new Set<number>()
-        const unique = diagramLayers.flat().filter(l => seen.has(l.id) ? false : (seen.add(l.id), true))
-        setLayers(unique)
+      try {
+        const diagramLayers = await Promise.all(
+          rootIds.map(id => api.workspace.views.layers.list(id)),
+        )
+        if (!cancelled) {
+          // Deduplicate by layer ID in case of any API overlap
+          const seen = new Set<number>()
+          const unique = diagramLayers.flat().filter(l => seen.has(l.id) ? false : (seen.add(l.id), true))
+          setLayers(unique)
+        }
+      } catch {
+        // intentionally empty: layers are not available for public shared pages
       }
     }
     void fetchTagData()
     return () => { cancelled = true }
-  }, [data])
+  }, [data, sharedToken])
 
   const handleCanvasReady = useCallback(() => {
     setCanvasReady(true)
@@ -400,7 +404,8 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
 const InfiniteZoom = forwardRef<InfiniteZoomHandle, Props>(InfiniteZoomInner)
 export default InfiniteZoom
 
-export function SharedInfiniteZoom(props: Props) {
+export const SharedInfiniteZoom = forwardRef<InfiniteZoomHandle, Props>((props, ref) => {
   const { token } = useParams()
-  return <InfiniteZoomInner {...props} sharedToken={token} />
-}
+  const effectiveToken = props.sharedToken ?? token
+  return <InfiniteZoom {...props} ref={ref} sharedToken={effectiveToken} />
+})

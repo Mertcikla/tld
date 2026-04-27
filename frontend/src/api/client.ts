@@ -92,6 +92,7 @@ interface ProtoDiagram {
   updatedAt?: string
   updated_at?: string
   parent_view_id?: number | null
+  parentViewId?: number | null
   children?: ProtoDiagram[]
 }
 
@@ -108,7 +109,9 @@ function mapDiagram(d: ProtoDiagram): ViewTreeNode {
     depth: d.depth ?? 0,
     created_at: d.createdAt ?? d.created_at ?? '',
     updated_at: d.updatedAt ?? d.updated_at ?? '',
-    parent_view_id: d.parent_view_id ?? null,
+    parent_view_id: d.parentViewId != null || d.parent_view_id != null
+      ? Number(d.parentViewId ?? d.parent_view_id)
+      : null,
     children: (d.children ?? []).map(mapDiagram),
   }
 }
@@ -648,6 +651,84 @@ export const api = {
           password_required: false,
         }
       }),
+
+    loadShared: async (token: string, password?: string): Promise<ExploreData & { password_required?: boolean }> => {
+      const init: RequestInit = {
+        method: password ? 'POST' : 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      }
+      if (password) {
+        init.body = JSON.stringify({ password })
+      }
+      const res = await fetch(apiUrl(`/shared/explore/${token}`), init)
+      if (!res.ok) {
+        throw new Error(`Failed to load shared diagram: ${res.statusText}`)
+      }
+      const data = await res.json() as {
+        tree: any[]
+        views: Record<string, { elements: any[]; connectors: any[] }>
+        password_required?: boolean
+      }
+
+      const tree = (data.tree ?? []).map(mapDiagram)
+      const views = Object.fromEntries(
+        Object.entries(data.views ?? {}).map(([key, value]) => [
+          key,
+          {
+            placements: (value.elements ?? []).map(protoPlacedElement),
+            connectors: (value.connectors ?? []).map(protoConnector),
+          },
+        ])
+      )
+
+      // Ensure that the share root is treated as a root (no parent) so that computeLayout
+      // picks it up even if it was nested in the original workspace.
+      const sharedRoot = tree.find(n => String(n.id) === String(data.views[token]?.elements?.[0]?.view_id ?? ''))
+      // Backend actually returns the shareToken.ViewID as the root of the tree it builds.
+      // We should find the node in 'tree' that has no parent *within the returned set*.
+      // For shared explore, the backend typically returns a tree starting at the shared view.
+      tree.forEach(node => {
+        // If the node's parent is not in our tree, it's a root for this shared view.
+        const parentInTree = tree.find(n => n.id === node.parent_view_id)
+        if (!parentInTree) {
+          node.parent_view_id = null
+        }
+      })
+      const navigations: ViewConnector[] = []
+      const elementToChildView = new Map<number, any>()
+      const allViews: any[] = []
+      const flatTree = (nodes: any[]) => {
+        nodes.forEach(n => {
+          allViews.push(n)
+          if (n.owner_element_id) elementToChildView.set(n.owner_element_id, n)
+          if (n.children) flatTree(n.children)
+        })
+      }
+      flatTree(tree)
+
+      Object.values(views).forEach((v: any) => {
+        v.placements.forEach((p: any) => {
+          const childView = elementToChildView.get(p.element_id)
+          if (childView) {
+            navigations.push({
+              id: 0,
+              element_id: p.element_id,
+              from_view_id: p.view_id,
+              to_view_id: childView.id,
+              to_view_name: childView.name,
+              relation_type: 'child',
+            })
+          }
+        })
+      })
+
+      return {
+        tree,
+        views,
+        navigations,
+        password_required: data.password_required,
+      }
+    },
   },
 
   import: {
