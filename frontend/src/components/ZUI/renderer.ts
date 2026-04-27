@@ -50,7 +50,7 @@ function getClampedFontSize(baseWorldSize: number, minScreenSize: number, maxScr
 
 // ── Chakra v2 type palette - mirrors TYPE_COLORS in src/types/index.ts ─
 // .400 variants: used for type badge text and border tint
-const TYPE_COLOR_400: Record<string, string> = {
+export const TYPE_COLOR_400: Record<string, string> = {
   person: '#38b2ac',  // teal.400
   system: '#63b3ed',  // blue.400
   container: '#9f7aea',  // purple.400
@@ -516,6 +516,19 @@ function drawNode(
     traceShape(offset1, offset1)
     ctx.fill()
     ctx.stroke()
+    ctx.restore()
+  }
+
+  // ── Shadow ───────────────────────────────────────────────────────
+  // Subtler shadow for Canvas performance, but provides the depth requested to match ViewEditor
+  if (parentAlpha > 0.5 && screenW > 40) {
+    ctx.save()
+    ctx.globalAlpha = parentAlpha * 0.4
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)'
+    ctx.shadowBlur = 12 / drawZoom
+    ctx.shadowOffsetY = 4 / drawZoom
+    traceShape()
+    ctx.fill()
     ctx.restore()
   }
 
@@ -1183,6 +1196,39 @@ function drawGroupLabel(
 }
 
 
+/** Draw a dot grid matching React Flow default style. */
+function drawGrid(ctx: CanvasRenderingContext2D, view: ZUIViewState, canvasW: number, canvasH: number): void {
+  const gridSize = 20
+  const dotSize = 1.0
+  const color = 'rgba(255, 255, 255, 0.1)' // subtle white dots on dark background
+
+  const left = -view.x / view.zoom
+  const top = -view.y / view.zoom
+  const right = (canvasW - view.x) / view.zoom
+  const bottom = (canvasH - view.y) / view.zoom
+
+  const startX = Math.floor(left / gridSize) * gridSize
+  const startY = Math.floor(top / gridSize) * gridSize
+
+  ctx.save()
+  ctx.fillStyle = color
+  
+  // Dot grid rendering: only show if zoom is not too small
+  if (view.zoom > 0.2) {
+    for (let wx = startX; wx < right; wx += gridSize) {
+      for (let wy = startY; wy < bottom; wy += gridSize) {
+        const sx = wx * view.zoom + view.x
+        const sy = wy * view.zoom + view.y
+        
+        ctx.beginPath()
+        ctx.arc(sx, sy, dotSize, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+  }
+  ctx.restore()
+}
+
 // ── Public: render one frame ───────────────────────────────────────
 
 /**
@@ -1206,6 +1252,7 @@ export function renderFrame(
   ctx.fillStyle = canvasBg
   ctx.fillRect(0, 0, canvasW, canvasH)
 
+  drawGrid(ctx, view, canvasW, canvasH)
 
   // Apply world transform
   ctx.save()
