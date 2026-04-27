@@ -260,7 +260,15 @@ function ViewEditorInner({
   const [tagColors, setTagColors] = useState<Record<string, Tag>>({})
 
   useEffect(() => {
-    // api.workspace.orgs.tagColors.list().then(setTagColors).catch(() => { /* skip */ })
+    api.workspace.orgs.tagColors.list().then((res) => {
+      if (Array.isArray(res)) {
+        const next: Record<string, Tag> = {}
+        res.forEach(t => { next[t.name] = t })
+        setTagColors(next)
+      } else {
+        setTagColors(res)
+      }
+    }).catch(() => { /* skip */ })
   }, [])
 
   const [layers, setLayers] = useState<import('../../types').ViewLayer[]>([])

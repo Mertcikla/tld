@@ -1,13 +1,14 @@
 import { Box, Divider, Flex, HStack, Tag, Text, VStack } from '@chakra-ui/react'
-import { TYPE_COLORS, type PlacedElement } from '../types'
+import { TYPE_COLORS, type PlacedElement, type Tag as TagType } from '../types'
 
 interface Props {
     data: PlacedElement & { hasChildLink?: boolean }
     /** Bounding rect of the node element in screen (viewport) coordinates */
     anchorRect: DOMRect
+    tagColors?: Record<string, TagType>
 }
 
-export default function NodeHoverCard({ data, anchorRect }: Props) {
+export default function NodeHoverCard({ data, anchorRect, tagColors }: Props) {
     const color = TYPE_COLORS[data.kind ?? ''] ?? 'gray'
 
     // Position the card centred above the node using fixed coordinates so it
@@ -101,19 +102,23 @@ export default function NodeHoverCard({ data, anchorRect }: Props) {
                 {/* Tags */}
                 {data.tags && data.tags.length > 0 && (
                     <HStack spacing={1} flexWrap="wrap">
-                        {data.tags.map((tag) => (
-                            <Tag
-                                key={tag}
-                                size="sm"
-                                variant="outline"
-                                colorScheme="gray"
-                                fontSize="9px"
-                                borderColor="rgba(255,255,255,0.1)"
-                                color="gray.500"
-                            >
-                                {tag}
-                            </Tag>
-                        ))}
+                        {data.tags.map((tag) => {
+                            const tagColor = tagColors?.[tag]?.color
+                            return (
+                                <Tag
+                                    key={tag}
+                                    size="sm"
+                                    variant="subtle"
+                                    bg={tagColor ? `color-mix(in srgb, ${tagColor} 12%, transparent)` : 'whiteAlpha.100'}
+                                    color={tagColor || 'gray.400'}
+                                    fontSize="9px"
+                                    borderColor={tagColor ? `color-mix(in srgb, ${tagColor} 30%, transparent)` : 'rgba(255,255,255,0.1)'}
+                                    borderWidth="1px"
+                                >
+                                    {tag}
+                                </Tag>
+                            )
+                        })}
                     </HStack>
                 )}
 

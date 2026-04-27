@@ -8,6 +8,7 @@ import type {
   ExploreData,
   LibraryElement,
   PlacedElement,
+  Tag,
   View,
   ViewConnector,
   ViewLayer,
@@ -333,6 +334,12 @@ export const api = {
   },
 
   workspace: {
+    orgs: {
+      tagColors: {
+        list: (): Promise<Tag[]> => Promise.resolve([]),
+      },
+    },
+
     elements: {
       list: (params?: { limit?: number; offset?: number; search?: string }): Promise<LibraryElement[]> =>
         api.elements.list(params),
