@@ -514,7 +514,17 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     if (!newName.trim()) return
     setIsCreating(true)
     try {
-      const d = await api.workspace.views.create({ name: newName.trim() })
+      let d
+      if (treeData.length > 0) {
+        // Root view already exists. Create a new element in the root view to own this new diagram.
+        const name = newName.trim()
+        const element = await api.workspace.elements.create({ name })
+        const root = treeData[0]
+        await api.workspace.views.placements.add(root.id, element.id, 100, 100)
+        d = await api.workspace.views.create({ name, parent_view_id: element.id })
+      } else {
+        d = await api.workspace.views.create({ name: newName.trim() })
+      }
       await refreshTree()
       navigate(`/views/${d.id}`)
       onCreateClose()
@@ -524,7 +534,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     } finally {
       setIsCreating(false)
     }
-  }, [navigate, newName, onCreateClose, refreshTree])
+  }, [navigate, newName, onCreateClose, refreshTree, treeData])
 
   if (initializing) {
     return (
