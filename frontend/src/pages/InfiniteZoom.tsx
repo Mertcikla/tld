@@ -50,6 +50,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   const [loading, setLoading] = useState(true)
   const [canvasReady, setCanvasReady] = useState(false)
   const [showMiniOnboarding, setShowMiniOnboarding] = useState(false)
+  const [miniOnboardingInteractionSeen, setMiniOnboardingInteractionSeen] = useState(false)
   const [tagColors] = useState<Record<string, import('../types').Tag>>({})
   const [layers, setLayers] = useState<ViewLayer[]>([])
   const [highlightedTags, setHighlightedTags] = useState<string[]>([])
@@ -60,12 +61,14 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   const crossBranchSurface = sharedToken ? 'zui-shared' : 'zui'
   const { settings: crossBranchSettings, setEnabled: setCrossBranchEnabled } = useCrossBranchContextSettings(crossBranchSurface)
 
+  const cameraProfile = useMemo(() => new URLSearchParams(location.search).get('profile'), [location.search])
+  const isDetailToOverviewProfile = sharedToken && cameraProfile === 'detail-to-overview'
+
   const initialCameraFrame = useMemo<ZUICameraFrame | undefined>(() => {
-    const profile = new URLSearchParams(location.search).get('profile')
-    return sharedToken && profile === 'detail-to-overview'
+    return isDetailToOverviewProfile
       ? { profile: 'detail-to-overview', progress: 0 }
       : undefined
-  }, [location.search, sharedToken])
+  }, [isDetailToOverviewProfile])
 
   useImperativeHandle(ref, () => ({
     focusDiagram(viewId: number) {
@@ -132,17 +135,32 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   }, [])
 
   useEffect(() => {
+    if (isDetailToOverviewProfile) return
     if (sharedToken && canvasReady && !localStorage.getItem(MINI_ONBOARDING_KEY)) {
       setShowMiniOnboarding(true)
     }
-  }, [sharedToken, canvasReady])
+  }, [sharedToken, canvasReady, isDetailToOverviewProfile])
 
-  const handleInteraction = useCallback(() => {
+  const dismissMiniOnboarding = useCallback(() => {
     if (showMiniOnboarding) {
       setShowMiniOnboarding(false)
-      localStorage.setItem(MINI_ONBOARDING_KEY, 'true')
+      if (!isDetailToOverviewProfile) {
+        localStorage.setItem(MINI_ONBOARDING_KEY, 'true')
+      }
     }
-  }, [showMiniOnboarding])
+  }, [isDetailToOverviewProfile, showMiniOnboarding])
+
+  const showMiniOnboardingAfterCanvasInteraction = useCallback(() => {
+    if (!isDetailToOverviewProfile || miniOnboardingInteractionSeen) return
+    setMiniOnboardingInteractionSeen(true)
+    setShowMiniOnboarding(true)
+  }, [isDetailToOverviewProfile, miniOnboardingInteractionSeen])
+
+  const handleCanvasZoom = useCallback(() => {
+    setMiniOnboardingInteractionSeen(true)
+    dismissMiniOnboarding()
+  }, [dismissMiniOnboarding])
+
   useEffect(() => {
     const loader = sharedToken ? api.explore.loadShared(sharedToken) : api.explore.load()
     loader.then((d) => {
@@ -251,8 +269,8 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
             ref={zuiRef}
             data={data}
             onReady={handleCanvasReady}
-            onZoom={handleInteraction}
-            onPan={handleInteraction}
+            onZoom={handleCanvasZoom}
+            onPan={showMiniOnboardingAfterCanvasInteraction}
             initialCameraFrame={initialCameraFrame}
             highlightedTags={highlightedTags}
             highlightColor={highlightColor}
@@ -263,7 +281,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
 
           {/* Onboarding overlay */}
           {data && !sharedToken && <ExploreOnboarding hasLinkedNodes={!!(data.navigations?.length > 0)} />}
-          <MiniZoomOnboarding isVisible={showMiniOnboarding} />
+          <MiniZoomOnboarding isVisible={showMiniOnboarding} onClose={dismissMiniOnboarding} />
 
           {/* Bottom toolbar */}
           <Box

@@ -1,18 +1,13 @@
-import { Box, HStack, Text } from '@chakra-ui/react'
-import { keyframes } from '@emotion/react'
+import { Box, CloseButton, HStack, Text } from '@chakra-ui/react'
 import { ZoomInIcon } from './Icons'
 
 interface Props {
   isVisible: boolean
+  onClose?: () => void
 }
 
-const pulseGlow = keyframes`
-  0% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0.4); }
-  70% { box-shadow: 0 0 0 20px rgba(var(--accent-rgb), 0); }
-  100% { box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0); }
-`
 
-export default function MiniZoomOnboarding({ isVisible }: Props) {
+export default function MiniZoomOnboarding({ isVisible, onClose }: Props) {
   return (
     <Box
       position="absolute"
@@ -22,14 +17,14 @@ export default function MiniZoomOnboarding({ isVisible }: Props) {
       zIndex={100}
       opacity={isVisible ? 1 : 0}
       transition="all 0.8s cubic-bezier(0.16, 1, 0.3, 1)"
-      pointerEvents="none"
+      pointerEvents={isVisible ? 'auto' : 'none'}
     >
       <Box
         className="glass"
         px={6}
+        pr={onClose ? 11 : 6}
         py={4}
         borderRadius="12px"
-        animation={isVisible ? `${pulseGlow} 3s infinite` : 'none'}
         position="relative"
         overflow="hidden"
         border="1.5px solid rgba(var(--accent-rgb), 0.3)"
@@ -44,27 +39,39 @@ export default function MiniZoomOnboarding({ isVisible }: Props) {
           bg="var(--accent)"
           opacity={0.8}
         />
-        
+        {onClose && (
+          <CloseButton
+            aria-label="Dismiss zoom hint"
+            position="absolute"
+            top={2}
+            right={2}
+            size="sm"
+            color="whiteAlpha.700"
+            _hover={{ color: 'white', bg: 'whiteAlpha.200' }}
+            onClick={onClose}
+          />
+        )}
+
         <HStack spacing={5} pl={3}>
           <Box color="var(--accent)">
             <ZoomInIcon size={24} />
           </Box>
           <Box>
-            <Text 
-              fontSize="10px" 
-              color="var(--accent)" 
-              fontWeight="900" 
-              letterSpacing="0.15em" 
-              textTransform="uppercase" 
+            <Text
+              fontSize="10px"
+              color="var(--accent)"
+              fontWeight="900"
+              letterSpacing="0.15em"
+              textTransform="uppercase"
               mb={0.5}
               opacity={0.9}
             >
-              Pro Tip
+              Hint:
             </Text>
-            <Text 
-              fontSize="15px" 
-              color="white" 
-              fontWeight="600" 
+            <Text
+              fontSize="15px"
+              color="white"
+              fontWeight="600"
               whiteSpace="nowrap"
               letterSpacing="-0.01em"
             >
