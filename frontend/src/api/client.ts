@@ -75,6 +75,27 @@ function j<T>(schema: Parameters<typeof toJson>[0], msg: Parameters<typeof toJso
   return toJson(schema, msg, { useProtoFieldName: true, emitDefaultValues: true }) as unknown as T
 }
 
+async function fetchWorkspaceRaw(body: Record<string, unknown>) {
+  const res = await fetchApiAsset(apiUrl('/diag.v1.WorkspaceService/GetWorkspace'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Connect-Protocol-Version': '1',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    throw new Error(`GetWorkspace failed: ${res.statusText}`)
+  }
+  return res.json() as Promise<{
+    views?: ProtoDiagram[]
+    total_count?: number
+    totalCount?: number
+    content?: Record<string, { placements?: Record<string, unknown>[]; connectors?: Record<string, unknown>[] }>
+    navigations?: Record<string, unknown>[]
+  }>
+}
+
 // ─── Proto → frontend type mappers ───────────────────────────────────────────
 
 interface ProtoDiagram {
@@ -432,6 +453,29 @@ export const api = {
           })
           const json = j<{ views: ProtoDiagram[] }>(GetWorkspaceResponseSchema, res)
           return (json.views ?? []).map(mapDiagram)
+        }),
+
+      gridData: (): Promise<{
+        views: ViewTreeNode[]
+        content: Record<number, { placements: PlacedElement[]; connectors: Connector[] }>
+      }> =>
+        rpc(async () => {
+          const json = await fetchWorkspaceRaw({
+            includeContent: true,
+            hasView: true,
+          })
+          return {
+            views: (json.views ?? []).map(mapDiagram),
+            content: Object.fromEntries(
+              Object.entries(json.content ?? {}).map(([key, value]) => [
+                Number(key),
+                {
+                  placements: (value.placements ?? []).map(protoPlacedElement),
+                  connectors: (value.connectors ?? []).map(protoConnector),
+                },
+              ])
+            ),
+          }
         }),
 
       get: (id: number): Promise<ViewTreeNode> =>

@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { type Edge as RFEdge, type Node as RFNode } from 'reactflow'
-import type { PlacedElement } from '../../../types'
+import type { Connector, PlacedElement } from '../../../types'
 import type { CrossBranchContextSettings, ProxyConnectorDetails, WorkspaceGraphSnapshot } from '../../../crossBranch/types'
 import { resolveViewProxyGraph } from '../../../crossBranch/resolve'
 
@@ -69,6 +69,23 @@ function isAncestorContextNode(
     (snapshot.descendantsByViewId[ownedViewId]?.includes(descendant.placementViewId) ?? false)
 }
 
+function canonicalElementPairKey(leftId: number, rightId: number) {
+  return leftId <= rightId ? `${leftId}::${rightId}` : `${rightId}::${leftId}`
+}
+
+function canonicalNodePairKey(leftId: string, rightId: string) {
+  return leftId <= rightId ? `${leftId}::${rightId}` : `${rightId}::${leftId}`
+}
+
+function buildDirectConnectorPairSet(connectors: Connector[], visibleElementIds: Set<number>) {
+  const pairs = new Set<string>()
+  for (const connector of connectors) {
+    if (!visibleElementIds.has(connector.source_element_id) || !visibleElementIds.has(connector.target_element_id)) continue
+    pairs.add(canonicalElementPairKey(connector.source_element_id, connector.target_element_id))
+  }
+  return pairs
+}
+
 export function useViewContextNeighbours({
   snapshot,
   settings,
@@ -82,18 +99,35 @@ export function useViewContextNeighbours({
 }: Props) {
   return useMemo(() => {
     if (!snapshot || viewId == null || !settings.enabled) {
-      return { contextNodes: [] as RFNode[], contextConnectors: [] as RFEdge[], proxyConnectorDetailsByKey: {} as Record<string, ProxyConnectorDetails> }
+      return {
+        contextNodes: [] as RFNode[],
+        contextConnectors: [] as RFEdge[],
+        proxyConnectorDetailsByKey: {} as Record<string, ProxyConnectorDetails>,
+        hiddenProxyCountsByPair: {} as Record<string, number>,
+      }
     }
 
     const { proxyNodes, proxyConnectors, proxyConnectorDetailsByKey } = resolveViewProxyGraph(snapshot, viewId, viewElements, settings)
     if (proxyNodes.length === 0 && proxyConnectors.length === 0) {
-      return { contextNodes: [] as RFNode[], contextConnectors: [] as RFEdge[], proxyConnectorDetailsByKey }
+      return {
+        contextNodes: [] as RFNode[],
+        contextConnectors: [] as RFEdge[],
+        proxyConnectorDetailsByKey,
+        hiddenProxyCountsByPair: {} as Record<string, number>,
+      }
     }
 
     const mainNodes = rfNodes.filter((node) => node.type === 'elementNode')
     if (mainNodes.length === 0) {
-      return { contextNodes: [] as RFNode[], contextConnectors: [] as RFEdge[], proxyConnectorDetailsByKey }
+      return {
+        contextNodes: [] as RFNode[],
+        contextConnectors: [] as RFEdge[],
+        proxyConnectorDetailsByKey,
+        hiddenProxyCountsByPair: {} as Record<string, number>,
+      }
     }
+    const visibleElementIds = new Set(viewElements.map((element) => element.element_id))
+    const directConnectorPairs = buildDirectConnectorPairSet(snapshot.connectorsByViewId[viewId] ?? [], visibleElementIds)
 
     let minX = Infinity
     let minY = Infinity
@@ -460,6 +494,7 @@ export function useViewContextNeighbours({
       })
 
     const seenCollapsedPairs = new Set<string>()
+    const hiddenProxyCountsByPair: Record<string, number> = {}
     const contextConnectors: RFEdge[] = proxyConnectors.flatMap((connector) => {
       let sourceId = connector.sourceAnchorId
       let targetId = connector.targetAnchorId
@@ -472,7 +507,11 @@ export function useViewContextNeighbours({
 
       if (sourceId === targetId) return []
 
-      const pairKey = `${sourceId}::${targetId}`
+      const pairKey = canonicalNodePairKey(sourceId, targetId)
+      if (directConnectorPairs.has(pairKey)) {
+        hiddenProxyCountsByPair[pairKey] = (hiddenProxyCountsByPair[pairKey] ?? 0) + connector.details.count
+        return []
+      }
       if (seenCollapsedPairs.has(pairKey)) return []
       seenCollapsedPairs.add(pairKey)
 
@@ -496,6 +535,6 @@ export function useViewContextNeighbours({
       }]
     })
 
-    return { contextNodes: [ContextBoundaryElement, ...contextNodes], contextConnectors, proxyConnectorDetailsByKey }
+    return { contextNodes: [ContextBoundaryElement, ...contextNodes], contextConnectors, proxyConnectorDetailsByKey, hiddenProxyCountsByPair }
   }, [snapshot, settings, viewId, viewElements, rfNodes, stableOnNavigateToView, onSelectProxyDetails, expandedAncestorGroups, onToggleAncestorGroup])
 }

@@ -127,6 +127,10 @@ function areTranslateExtentsEqual(
     left[1][1] === right[1][1]
 }
 
+function canonicalNodePairKey(leftId: string, rightId: string) {
+  return leftId <= rightId ? `${leftId}::${rightId}` : `${rightId}::${leftId}`
+}
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -681,7 +685,7 @@ function ViewEditorInner({
     })
   }, [])
 
-  const { contextNodes, contextConnectors } = useViewContextNeighbours({
+  const { contextNodes, contextConnectors, hiddenProxyCountsByPair } = useViewContextNeighbours({
     snapshot: effectiveWorkspaceSnapshot,
     settings: crossBranchSettings,
     viewId,
@@ -699,6 +703,27 @@ function ViewEditorInner({
     expandedAncestorGroups,
     onToggleAncestorGroup: stableOnToggleAncestorGroup,
   })
+
+  const rfEdgesWithProxyBadges = useMemo(() => {
+    if (Object.keys(hiddenProxyCountsByPair).length === 0) return rfEdges
+
+    let changed = false
+    const next = rfEdges.map((edge) => {
+      const proxyBadgeCount = hiddenProxyCountsByPair[canonicalNodePairKey(edge.source, edge.target)] ?? 0
+      const currentBadgeCount = (edge.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount ?? 0
+      if (proxyBadgeCount === currentBadgeCount) return edge
+      changed = true
+      return {
+        ...edge,
+        data: {
+          ...(edge.data ?? {}),
+          proxyBadgeCount: proxyBadgeCount > 0 ? proxyBadgeCount : undefined,
+        },
+      }
+    })
+
+    return changed ? next : rfEdges
+  }, [hiddenProxyCountsByPair, rfEdges])
 
   // Keep context nodes in state so React Flow can store measured dimensions.
   // When computed positions change (e.g. main node drag), preserve the previously
@@ -736,10 +761,10 @@ function ViewEditorInner({
     }
 
     const allEdges = contextConnectors.length === 0
-      ? rfEdges
-      : rfEdges.length === 0
+      ? rfEdgesWithProxyBadges
+      : rfEdgesWithProxyBadges.length === 0
         ? contextConnectors
-        : [...contextConnectors, ...rfEdges]
+        : [...contextConnectors, ...rfEdgesWithProxyBadges]
 
     const selectedEdgeEndPoints = new Set<string>()
     let hasEdgeSel = false
@@ -774,14 +799,14 @@ function ViewEditorInner({
       cache.set(n, faded)
       return faded
     })
-  }, [liveContextNodes, rfNodes, contextConnectors, rfEdges])
+  }, [liveContextNodes, rfNodes, contextConnectors, rfEdgesWithProxyBadges])
 
   const flowEdges = useMemo(() => {
     const allEdges = contextConnectors.length === 0
-      ? rfEdges
-      : rfEdges.length === 0
+      ? rfEdgesWithProxyBadges
+      : rfEdgesWithProxyBadges.length === 0
         ? contextConnectors
-        : [...contextConnectors, ...rfEdges]
+        : [...contextConnectors, ...rfEdgesWithProxyBadges]
     const allNodes = liveContextNodes.length === 0
       ? rfNodes
       : rfNodes.length === 0
@@ -816,7 +841,7 @@ function ViewEditorInner({
       cache.set(e, faded)
       return faded
     })
-  }, [contextConnectors, rfEdges, liveContextNodes, rfNodes])
+  }, [contextConnectors, rfEdgesWithProxyBadges, liveContextNodes, rfNodes])
 
   // Route onNodesChange: context node changes (dimensions, selection) go to
   // liveContextNodes state; main node changes go to the canvas handler.

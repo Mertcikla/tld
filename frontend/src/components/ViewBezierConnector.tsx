@@ -35,6 +35,7 @@ function ViewBezierConnector({
 }: EdgeProps) {
   const sourceNode = useStore((s) => s.nodeInternals.get(source))
   const targetNode = useStore((s) => s.nodeInternals.get(target))
+  const edge = useStore((s) => s.edges.find((candidate) => candidate.id === id))
 
   const finalSourceX = sourceX
   const finalSourceY = sourceY
@@ -74,6 +75,21 @@ function ViewBezierConnector({
   const text = (!selected && fullText.length > 30) ? `${fullText.slice(0, 30)}...` : fullText
   const textWidth = text ? measureEdgeLabel(text, `${fontWeight} ${fontSize}px Inter, system-ui, sans-serif`) : 0
   const padding = Array.isArray(labelBgPadding) ? labelBgPadding : [2, 4]
+  const proxyBadgeCount = typeof (edge?.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount === 'number'
+    ? (edge?.data as { proxyBadgeCount: number }).proxyBadgeCount
+    : 0
+  const proxyBadgeText = proxyBadgeCount > 0 ? `+${proxyBadgeCount}` : ''
+  const badgeFontSize = 11
+  const badgeHorizontalPadding = 7
+  const badgeSize = 24
+  const labelWidth = textWidth + padding[1] * 2
+  const badgeWidth = proxyBadgeText
+    ? Math.max(badgeSize, measureEdgeLabel(proxyBadgeText, `600 ${badgeFontSize}px Inter, system-ui, sans-serif`) + badgeHorizontalPadding * 2)
+    : 0
+  const labelHeight = text ? fontSize + padding[0] * 2 : 0
+  const badgeGap = text && proxyBadgeText ? 8 : 0
+  const stackWidth = Math.max(labelWidth, badgeWidth)
+  const stackHeight = labelHeight + badgeGap + (proxyBadgeText ? badgeSize : 0)
 
   // Cubic bezier midpoint at t=0.5
   const labelX = 0.125 * finalSourceX + 0.375 * cp1x + 0.375 * cp2x + 0.125 * finalTargetX
@@ -82,15 +98,15 @@ function ViewBezierConnector({
   const labelLayout = useEdgeLabelLayout({
     id,
     preferredX: labelX,
-    preferredY: labelY,
-    width: textWidth + padding[1] * 2,
-    height: fontSize + padding[0] * 2,
+    preferredY: labelY + (stackHeight > 0 ? (stackHeight - labelHeight) / 2 : 0),
+    width: stackWidth,
+    height: stackHeight || (fontSize + padding[0] * 2),
     dx: finalTargetX - finalSourceX,
     dy: finalTargetY - finalSourceY,
   })
 
-  const labelWidth = textWidth + padding[1] * 2
-  const labelPath = text ? ` M ${labelLayout.x - labelWidth / 2},${labelLayout.y} L ${labelLayout.x + labelWidth / 2},${labelLayout.y}` : ''
+  const labelCenterY = labelLayout.y - (proxyBadgeText ? (badgeGap + badgeSize) / 2 : 0)
+  const labelPath = text ? ` M ${labelLayout.x - labelWidth / 2},${labelCenterY} L ${labelLayout.x + labelWidth / 2},${labelCenterY}` : ''
   const combinedInteractionPath = `${interactionPath}${labelPath}`
 
   return (
@@ -108,7 +124,7 @@ function ViewBezierConnector({
         interactionWidth={20}
         style={{ stroke: 'transparent' }}
       />
-      {text && (
+      {(text || proxyBadgeText) && (
         <EdgeLabelRenderer>
           <div
             style={{
@@ -117,22 +133,50 @@ function ViewBezierConnector({
               pointerEvents: 'none',
               opacity: Number(labelStyle?.opacity ?? 1),
               zIndex: 2,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: badgeGap,
             }}
           >
-            <div
-              style={{
-                padding: `${padding[0]}px ${padding[1]}px`,
-                borderRadius: Array.isArray(labelBgBorderRadius) ? labelBgBorderRadius[0] : Number(labelBgBorderRadius ?? 4),
-                background: String(labelBgStyle?.fill ?? 'var(--chakra-colors-gray-900)'),
-                color: String(labelStyle?.fill ?? 'var(--accent)'),
-                fontSize,
-                fontWeight,
-                lineHeight: 1,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {text}
-            </div>
+            {text && (
+              <div
+                style={{
+                  padding: `${padding[0]}px ${padding[1]}px`,
+                  borderRadius: Array.isArray(labelBgBorderRadius) ? labelBgBorderRadius[0] : Number(labelBgBorderRadius ?? 4),
+                  background: String(labelBgStyle?.fill ?? 'var(--chakra-colors-gray-900)'),
+                  color: String(labelStyle?.fill ?? 'var(--accent)'),
+                  fontSize,
+                  fontWeight,
+                  lineHeight: 1,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {text}
+              </div>
+            )}
+            {proxyBadgeText && (
+              <div
+                style={{
+                  minWidth: badgeWidth,
+                  height: badgeSize,
+                  padding: `0 ${badgeHorizontalPadding}px`,
+                  borderRadius: 999,
+                  background: 'var(--bg-element)',
+                  border: '1px dashed rgba(var(--accent-rgb), 0.8)',
+                  color: 'white',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: badgeFontSize,
+                  fontWeight: 600,
+                  lineHeight: 1,
+                  boxShadow: selected ? '0 0 0 1px rgba(255,255,255,0.2)' : 'none',
+                }}
+              >
+                {proxyBadgeText}
+              </div>
+            )}
           </div>
         </EdgeLabelRenderer>
       )}

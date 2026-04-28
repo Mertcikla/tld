@@ -54,6 +54,23 @@ function flattenTree(roots: ViewTreeNode[]): ViewTreeNode[] {
   return result
 }
 
+function filterTreeForGrid(nodes: ViewTreeNode[], allowedIds: Set<number> | null): ViewTreeNode[] {
+  if (!allowedIds) return nodes
+
+  const visit = (node: ViewTreeNode): ViewTreeNode | null => {
+    const children = node.children
+      .map(visit)
+      .filter((child): child is ViewTreeNode => child !== null)
+    const include = allowedIds.has(node.id) || (node.parent_view_id === null && children.length > 0)
+    if (!include) return null
+    return { ...node, children }
+  }
+
+  return nodes
+    .map(visit)
+    .filter((node): node is ViewTreeNode => node !== null)
+}
+
 // ── Layout algorithm ──────────────────────────────────────────────────────────
 
 const CELL_W = 260
@@ -387,7 +404,8 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
   }, [zoomIn, zoomOut])
 
   // ── Derived tree structures ─────────────────────────────────────────────────
-  const roots = useMemo(() => treeData, [treeData])
+  const [gridViewIds, setGridViewIds] = useState<Set<number> | null>(null)
+  const roots = useMemo(() => filterTreeForGrid(treeData, gridViewIds), [treeData, gridViewIds])
   const flatTree = useMemo(() => flattenTree(roots), [roots])
 
   // Rename
@@ -422,28 +440,41 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
     }
   }, [loading, treeData.length])
 
-  // Fetch node/edge counts
+  // Fetch visible grid cards and node/edge counts in one workspace roundtrip.
   useEffect(() => {
     let cancelled = false
-    const ids = flatTree.map((n) => n.id)
-    if (ids.length === 0) { setCountsByDiagram({}); return }
+    if (treeData.length === 0) {
+      setGridViewIds(new Set())
+      setCountsByDiagram({})
+      return
+    }
     ; (async () => {
-      const next: Record<number, { nodes: number; edges: number }> = {}
-      await Promise.all(
-        ids.map(async (id) => {
-          try {
-            const [objs, edges] = await Promise.all([
-              api.workspace.views.placements.list(id),
-              api.workspace.connectors.list(id),
-            ])
-            next[id] = { nodes: objs.length, edges: edges.length }
-          } catch { /* ignore per-diagram failure */ }
+      try {
+        const workspace = await api.workspace.views.gridData()
+        if (cancelled) return
+
+        const visibleIds = new Set(flattenTree(workspace.views).map((view) => view.id))
+        const next: Record<number, { nodes: number; edges: number }> = {}
+
+        visibleIds.forEach((id) => {
+          const content = workspace.content[id]
+          next[id] = {
+            nodes: content?.placements.length ?? 0,
+            edges: content?.connectors.length ?? 0,
+          }
         })
-      )
-      if (!cancelled) setCountsByDiagram((prev) => ({ ...prev, ...next }))
+
+        setGridViewIds(visibleIds)
+        setCountsByDiagram(next)
+      } catch {
+        if (!cancelled) {
+          setGridViewIds(null)
+          setCountsByDiagram({})
+        }
+      }
     })()
     return () => { cancelled = true }
-  }, [flatTree])
+  }, [treeData])
 
   // ── Rename ──────────────────────────────────────────────────────────────────
   const startEdit = useCallback((id: number, name: string) => {

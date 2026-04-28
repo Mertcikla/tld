@@ -39,12 +39,13 @@ func (a *APIAdapter) ListViews(ctx context.Context, _ uuid.UUID) ([]*diagv1.View
 	return out, nil
 }
 
-func (a *APIAdapter) GetViews(ctx context.Context, _ uuid.UUID, ownerElementID *int32, isRoot *bool, search string, limit, offset int) ([]*diagv1.View, int, error) {
+func (a *APIAdapter) GetViews(ctx context.Context, _ uuid.UUID, ownerElementID *int32, isRoot, hasView *bool, search string, limit, offset int) ([]*diagv1.View, int, error) {
 	nodes, err := a.Store.ViewTree(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
 	flat := flattenViewTreeNodes(nodes)
+	hasViewCache := make(map[int64]bool, len(flat))
 	filtered := make([]app.ViewTreeNode, 0, len(flat))
 	for _, node := range flat {
 		if ownerElementID != nil {
@@ -55,6 +56,24 @@ func (a *APIAdapter) GetViews(ctx context.Context, _ uuid.UUID, ownerElementID *
 		if isRoot != nil {
 			nodeIsRoot := node.ParentViewID == nil
 			if nodeIsRoot != *isRoot {
+				continue
+			}
+		}
+		if hasView != nil {
+			nodeHasView := false
+			if node.OwnerElementID != nil {
+				if cached, ok := hasViewCache[*node.OwnerElementID]; ok {
+					nodeHasView = cached
+				} else {
+					element, err := a.Store.legacy.ElementByID(ctx, *node.OwnerElementID)
+					if err != nil {
+						return nil, 0, err
+					}
+					nodeHasView = element.HasView
+					hasViewCache[*node.OwnerElementID] = nodeHasView
+				}
+			}
+			if nodeHasView != *hasView {
 				continue
 			}
 		}
