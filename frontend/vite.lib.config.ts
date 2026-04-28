@@ -60,8 +60,17 @@ const EXTERNAL_PACKAGES = new Set([
   'mermaid-ast',
 ])
 
+const localProtoGenDir = process.env.TLD_LOCAL_PROTO_GEN
+
 export default defineConfig({
   plugins: [react(), tsconfigPaths()] as Plugin[],
+  resolve: localProtoGenDir
+    ? {
+        alias: {
+          '@buf/tldiagramcom_diagram.bufbuild_es': resolve(__dirname, localProtoGenDir),
+        },
+      }
+    : undefined,
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
