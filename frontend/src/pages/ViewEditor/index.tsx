@@ -685,7 +685,7 @@ function ViewEditorInner({
     })
   }, [])
 
-  const { contextNodes, contextConnectors, hiddenProxyCountsByPair } = useViewContextNeighbours({
+  const { contextNodes, contextConnectors, hiddenProxyCountsByPair, hiddenProxyDetailsByPair } = useViewContextNeighbours({
     snapshot: effectiveWorkspaceSnapshot,
     settings: crossBranchSettings,
     viewId,
@@ -709,21 +709,33 @@ function ViewEditorInner({
 
     let changed = false
     const next = rfEdges.map((edge) => {
-      const proxyBadgeCount = hiddenProxyCountsByPair[canonicalNodePairKey(edge.source, edge.target)] ?? 0
+      const pairKey = canonicalNodePairKey(edge.source, edge.target)
+      const proxyBadgeCount = hiddenProxyCountsByPair[pairKey] ?? 0
       const currentBadgeCount = (edge.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount ?? 0
-      if (proxyBadgeCount === currentBadgeCount) return edge
+      const proxyBadgeDetails = hiddenProxyDetailsByPair[pairKey] ?? null
+      const currentBadgeDetails = (edge.data as { proxyBadgeDetails?: ProxyConnectorDetails | null } | undefined)?.proxyBadgeDetails ?? null
+      if (proxyBadgeCount === currentBadgeCount && proxyBadgeDetails === currentBadgeDetails) return edge
       changed = true
       return {
         ...edge,
         data: {
           ...(edge.data ?? {}),
           proxyBadgeCount: proxyBadgeCount > 0 ? proxyBadgeCount : undefined,
+          proxyBadgeDetails,
+          onOpenProxyBadge: (details: ProxyConnectorDetails) => {
+            setSelectedElement(null)
+            setSelectedEdge(null)
+            closeConnectorPanelRef.current()
+            closeElementPanelRef.current()
+            setSelectedProxyConnectorDetails(details)
+            openProxyConnectorPanelRef.current()
+          },
         },
       }
     })
 
     return changed ? next : rfEdges
-  }, [hiddenProxyCountsByPair, rfEdges])
+  }, [hiddenProxyCountsByPair, hiddenProxyDetailsByPair, rfEdges])
 
   // Keep context nodes in state so React Flow can store measured dimensions.
   // When computed positions change (e.g. main node drag), preserve the previously

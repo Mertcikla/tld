@@ -86,6 +86,44 @@ function buildDirectConnectorPairSet(connectors: Connector[], visibleElementIds:
   return pairs
 }
 
+function mergeHiddenProxyDetails(
+  existing: ProxyConnectorDetails | undefined,
+  next: ProxyConnectorDetails,
+): ProxyConnectorDetails {
+  if (!existing) {
+    return {
+      ...next,
+      ownerViewIds: [...next.ownerViewIds],
+      ownerViewNames: [...next.ownerViewNames],
+      connectors: [...next.connectors],
+    }
+  }
+
+  const ownerViews = new Map<number, string>()
+  existing.ownerViewIds.forEach((ownerViewId, index) => {
+    ownerViews.set(ownerViewId, existing.ownerViewNames[index] ?? `View ${ownerViewId}`)
+  })
+  next.ownerViewIds.forEach((ownerViewId, index) => {
+    ownerViews.set(ownerViewId, next.ownerViewNames[index] ?? `View ${ownerViewId}`)
+  })
+
+  const connectors = [...existing.connectors, ...next.connectors]
+  const count = connectors.length
+
+  return {
+    key: existing.key,
+    label: count === 1 ? connectors[0]?.connector.label?.trim() || connectors[0]?.connector.relationship?.trim() || 'Cross-branch' : `${count} connectors`,
+    count,
+    sourceAnchorId: existing.sourceAnchorId,
+    targetAnchorId: existing.targetAnchorId,
+    sourceAnchorName: existing.sourceAnchorName,
+    targetAnchorName: existing.targetAnchorName,
+    ownerViewIds: Array.from(ownerViews.keys()),
+    ownerViewNames: Array.from(ownerViews.values()),
+    connectors,
+  }
+}
+
 export function useViewContextNeighbours({
   snapshot,
   settings,
@@ -104,6 +142,7 @@ export function useViewContextNeighbours({
         contextConnectors: [] as RFEdge[],
         proxyConnectorDetailsByKey: {} as Record<string, ProxyConnectorDetails>,
         hiddenProxyCountsByPair: {} as Record<string, number>,
+        hiddenProxyDetailsByPair: {} as Record<string, ProxyConnectorDetails>,
       }
     }
 
@@ -114,6 +153,7 @@ export function useViewContextNeighbours({
         contextConnectors: [] as RFEdge[],
         proxyConnectorDetailsByKey,
         hiddenProxyCountsByPair: {} as Record<string, number>,
+        hiddenProxyDetailsByPair: {} as Record<string, ProxyConnectorDetails>,
       }
     }
 
@@ -124,6 +164,7 @@ export function useViewContextNeighbours({
         contextConnectors: [] as RFEdge[],
         proxyConnectorDetailsByKey,
         hiddenProxyCountsByPair: {} as Record<string, number>,
+        hiddenProxyDetailsByPair: {} as Record<string, ProxyConnectorDetails>,
       }
     }
     const visibleElementIds = new Set(viewElements.map((element) => element.element_id))
@@ -495,6 +536,7 @@ export function useViewContextNeighbours({
 
     const seenCollapsedPairs = new Set<string>()
     const hiddenProxyCountsByPair: Record<string, number> = {}
+    const hiddenProxyDetailsByPair: Record<string, ProxyConnectorDetails> = {}
     const contextConnectors: RFEdge[] = proxyConnectors.flatMap((connector) => {
       let sourceId = connector.sourceAnchorId
       let targetId = connector.targetAnchorId
@@ -510,6 +552,15 @@ export function useViewContextNeighbours({
       const pairKey = canonicalNodePairKey(sourceId, targetId)
       if (directConnectorPairs.has(pairKey)) {
         hiddenProxyCountsByPair[pairKey] = (hiddenProxyCountsByPair[pairKey] ?? 0) + connector.details.count
+        hiddenProxyDetailsByPair[pairKey] = mergeHiddenProxyDetails(
+          hiddenProxyDetailsByPair[pairKey],
+          {
+            ...connector.details,
+            key: `hidden:${pairKey}`,
+            sourceAnchorId: sourceId,
+            targetAnchorId: targetId,
+          },
+        )
         return []
       }
       if (seenCollapsedPairs.has(pairKey)) return []
@@ -535,6 +586,12 @@ export function useViewContextNeighbours({
       }]
     })
 
-    return { contextNodes: [ContextBoundaryElement, ...contextNodes], contextConnectors, proxyConnectorDetailsByKey, hiddenProxyCountsByPair }
+    return {
+      contextNodes: [ContextBoundaryElement, ...contextNodes],
+      contextConnectors,
+      proxyConnectorDetailsByKey,
+      hiddenProxyCountsByPair,
+      hiddenProxyDetailsByPair,
+    }
   }, [snapshot, settings, viewId, viewElements, rfNodes, stableOnNavigateToView, onSelectProxyDetails, expandedAncestorGroups, onToggleAncestorGroup])
 }

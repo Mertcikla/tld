@@ -1,6 +1,7 @@
-import { memo } from 'react'
+import { memo, useCallback } from 'react'
 import { BaseEdge, EdgeLabelRenderer, Position, useStore, type EdgeProps } from 'reactflow'
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
+import type { ProxyConnectorDetails } from '../crossBranch/types'
 
 const CURVATURE = 0.5
 
@@ -78,6 +79,7 @@ function ViewBezierConnector({
   const proxyBadgeCount = typeof (edge?.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount === 'number'
     ? (edge?.data as { proxyBadgeCount: number }).proxyBadgeCount
     : 0
+  const proxyBadgeDetails = ((edge?.data as { proxyBadgeDetails?: ProxyConnectorDetails | null } | undefined)?.proxyBadgeDetails) ?? null
   const proxyBadgeText = proxyBadgeCount > 0 ? `+${proxyBadgeCount}` : ''
   const badgeFontSize = 11
   const badgeHorizontalPadding = 7
@@ -108,6 +110,13 @@ function ViewBezierConnector({
   const labelCenterY = labelLayout.y - (proxyBadgeText ? (badgeGap + badgeSize) / 2 : 0)
   const labelPath = text ? ` M ${labelLayout.x - labelWidth / 2},${labelCenterY} L ${labelLayout.x + labelWidth / 2},${labelCenterY}` : ''
   const combinedInteractionPath = `${interactionPath}${labelPath}`
+  const handleBadgeClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (!proxyBadgeDetails) return
+    const onOpenProxyBadge = (edge?.data as { onOpenProxyBadge?: (details: ProxyConnectorDetails) => void } | undefined)?.onOpenProxyBadge
+    onOpenProxyBadge?.(proxyBadgeDetails)
+  }, [edge?.data, proxyBadgeDetails])
 
   return (
     <>
@@ -156,7 +165,9 @@ function ViewBezierConnector({
               </div>
             )}
             {proxyBadgeText && (
-              <div
+              <button
+                type="button"
+                onClick={handleBadgeClick}
                 style={{
                   minWidth: badgeWidth,
                   height: badgeSize,
@@ -172,10 +183,13 @@ function ViewBezierConnector({
                   fontWeight: 600,
                   lineHeight: 1,
                   boxShadow: selected ? '0 0 0 1px rgba(255,255,255,0.2)' : 'none',
+                  cursor: proxyBadgeDetails ? 'pointer' : 'default',
+                  pointerEvents: 'auto',
+                  appearance: 'none',
                 }}
               >
                 {proxyBadgeText}
-              </div>
+              </button>
             )}
           </div>
         </EdgeLabelRenderer>
