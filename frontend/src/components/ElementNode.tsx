@@ -463,6 +463,8 @@ function ElementNode({ data, selected }: Props) {
       isSource={isSource}
       isTarget={isTarget}
       isConnectorHighlighted={!!data.isConnectorHighlighted}
+      hasStack={hasChild}
+      kind={data.kind}
       minW="180px"
       maxW="230px"
       cursor={bodyCursor}

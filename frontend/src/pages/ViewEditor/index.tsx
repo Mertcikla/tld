@@ -127,6 +127,10 @@ function areTranslateExtentsEqual(
     left[1][1] === right[1][1]
 }
 
+function canonicalNodePairKey(leftId: string, rightId: string) {
+  return leftId <= rightId ? `${leftId}::${rightId}` : `${rightId}::${leftId}`
+}
+
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -648,8 +652,9 @@ function ViewEditorInner({
     openProxyConnectorPanel: useCallback(() => openProxyConnectorPanelRef.current(), []),
     closeProxyConnectorPanel: useCallback(() => closeProxyConnectorPanelRef.current(), []),
     handleElementDeleted, handleElementPermanentlyDeleted,
-    handleConnectorDeleted: useCallback((edgeId: number) => {
-      if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
+    handleConnectorDeleted: useCallback((edgeId: number, ownerViewId?: number) => {
+      const vid = ownerViewId ?? viewId
+      if (vid != null) removeConnectorGraphSnapshot(vid, edgeId)
       removeStoreConnector(edgeId)
       void refreshElementsRef.current()
     }, [removeStoreConnector, viewId]),
@@ -680,7 +685,7 @@ function ViewEditorInner({
     })
   }, [])
 
-  const { contextNodes, contextConnectors } = useViewContextNeighbours({
+  const { contextNodes, contextConnectors, hiddenProxyCountsByPair, hiddenProxyDetailsByPair } = useViewContextNeighbours({
     snapshot: effectiveWorkspaceSnapshot,
     settings: crossBranchSettings,
     viewId,
@@ -698,6 +703,39 @@ function ViewEditorInner({
     expandedAncestorGroups,
     onToggleAncestorGroup: stableOnToggleAncestorGroup,
   })
+
+  const rfEdgesWithProxyBadges = useMemo(() => {
+    if (Object.keys(hiddenProxyCountsByPair).length === 0) return rfEdges
+
+    let changed = false
+    const next = rfEdges.map((edge) => {
+      const pairKey = canonicalNodePairKey(edge.source, edge.target)
+      const proxyBadgeCount = hiddenProxyCountsByPair[pairKey] ?? 0
+      const currentBadgeCount = (edge.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount ?? 0
+      const proxyBadgeDetails = hiddenProxyDetailsByPair[pairKey] ?? null
+      const currentBadgeDetails = (edge.data as { proxyBadgeDetails?: ProxyConnectorDetails | null } | undefined)?.proxyBadgeDetails ?? null
+      if (proxyBadgeCount === currentBadgeCount && proxyBadgeDetails === currentBadgeDetails) return edge
+      changed = true
+      return {
+        ...edge,
+        data: {
+          ...(edge.data ?? {}),
+          proxyBadgeCount: proxyBadgeCount > 0 ? proxyBadgeCount : undefined,
+          proxyBadgeDetails,
+          onOpenProxyBadge: (details: ProxyConnectorDetails) => {
+            setSelectedElement(null)
+            setSelectedEdge(null)
+            closeConnectorPanelRef.current()
+            closeElementPanelRef.current()
+            setSelectedProxyConnectorDetails(details)
+            openProxyConnectorPanelRef.current()
+          },
+        },
+      }
+    })
+
+    return changed ? next : rfEdges
+  }, [hiddenProxyCountsByPair, hiddenProxyDetailsByPair, rfEdges])
 
   // Keep context nodes in state so React Flow can store measured dimensions.
   // When computed positions change (e.g. main node drag), preserve the previously
@@ -735,10 +773,10 @@ function ViewEditorInner({
     }
 
     const allEdges = contextConnectors.length === 0
-      ? rfEdges
-      : rfEdges.length === 0
+      ? rfEdgesWithProxyBadges
+      : rfEdgesWithProxyBadges.length === 0
         ? contextConnectors
-        : [...contextConnectors, ...rfEdges]
+        : [...contextConnectors, ...rfEdgesWithProxyBadges]
 
     const selectedEdgeEndPoints = new Set<string>()
     let hasEdgeSel = false
@@ -773,14 +811,14 @@ function ViewEditorInner({
       cache.set(n, faded)
       return faded
     })
-  }, [liveContextNodes, rfNodes, contextConnectors, rfEdges])
+  }, [liveContextNodes, rfNodes, contextConnectors, rfEdgesWithProxyBadges])
 
   const flowEdges = useMemo(() => {
     const allEdges = contextConnectors.length === 0
-      ? rfEdges
-      : rfEdges.length === 0
+      ? rfEdgesWithProxyBadges
+      : rfEdgesWithProxyBadges.length === 0
         ? contextConnectors
-        : [...contextConnectors, ...rfEdges]
+        : [...contextConnectors, ...rfEdgesWithProxyBadges]
     const allNodes = liveContextNodes.length === 0
       ? rfNodes
       : rfNodes.length === 0
@@ -815,7 +853,7 @@ function ViewEditorInner({
       cache.set(e, faded)
       return faded
     })
-  }, [contextConnectors, rfEdges, liveContextNodes, rfNodes])
+  }, [contextConnectors, rfEdgesWithProxyBadges, liveContextNodes, rfNodes])
 
   // Route onNodesChange: context node changes (dimensions, selection) go to
   // liveContextNodes state; main node changes go to the canvas handler.
@@ -1010,13 +1048,15 @@ function ViewEditorInner({
     upsertConnectorGraphSnapshot(updated)
     upsertStoreConnector(updated)
   }, [upsertStoreConnector])
-  const handleConnectorDeleted = useCallback((edgeId: number) => {
-    if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
+  const handleConnectorDeleted = useCallback((edgeId: number, ownerViewId?: number) => {
+    const vid = ownerViewId ?? viewId
+    if (vid != null) removeConnectorGraphSnapshot(vid, edgeId)
     removeStoreConnector(edgeId)
     void refreshElements()
   }, [refreshElements, removeStoreConnector, viewId])
-  const handleConnectorDeleteInPanel = useCallback((edgeId: number) => {
-    handleConnectorDeleted(edgeId)
+
+  const handleConnectorDeleteInPanel = useCallback((edgeId: number, ownerViewId?: number) => {
+    handleConnectorDeleted(edgeId, ownerViewId)
     setSelectedEdge(null)
   }, [handleConnectorDeleted, setSelectedEdge])
   const handleViewSave = useCallback((updated: ViewTreeNode) => setView(updated), [setView])
@@ -1420,6 +1460,13 @@ function ViewEditorInner({
           onClose={proxyConnectorPanel.onClose}
           details={selectedProxyConnectorDetails}
           hasBackdrop={isMobileLayout}
+          onEdit={(connector) => {
+            setSelectedEdge(connector)
+            connectorPanel.onOpen()
+          }}
+          onDelete={(edgeId, ownerViewId) => {
+            handleConnectorDeleteInPanel(edgeId, ownerViewId)
+          }}
         />
 
         <ViewPanel

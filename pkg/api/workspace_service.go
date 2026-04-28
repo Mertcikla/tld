@@ -339,8 +339,13 @@ func (s *WorkspaceService) GetWorkspace(
 		ir := m.GetLevel() == 0
 		isRoot = &ir
 	}
+	var hasView *bool
+	if m.HasView != nil {
+		hv := m.GetHasView()
+		hasView = &hv
+	}
 
-	views, totalCount, err := s.Store.GetViews(ctx, workspaceID, ownerElementID, isRoot, m.GetSearch(), int(m.GetLimit()), int(m.GetOffset()))
+	views, totalCount, err := s.Store.GetViews(ctx, workspaceID, ownerElementID, isRoot, hasView, m.GetSearch(), int(m.GetLimit()), int(m.GetOffset()))
 	if err != nil {
 		return nil, storeErr("get views", err)
 	}
@@ -397,7 +402,14 @@ func (s *WorkspaceService) GetWorkspace(
 		}
 
 		resp.Content = make(map[int32]*diagv1.ViewContent)
+		viewIDs := make(map[int32]struct{}, len(views))
+		for _, v := range views {
+			viewIDs[v.Id] = struct{}{}
+		}
 		for _, p := range allPlacements {
+			if _, ok := viewIDs[p.ViewId]; !ok {
+				continue
+			}
 			if _, ok := resp.Content[p.ViewId]; !ok {
 				resp.Content[p.ViewId] = &diagv1.ViewContent{}
 			}
@@ -411,6 +423,9 @@ func (s *WorkspaceService) GetWorkspace(
 			})
 		}
 		for _, c := range allConnectors {
+			if _, ok := viewIDs[c.ViewId]; !ok {
+				continue
+			}
 			if _, ok := resp.Content[c.ViewId]; !ok {
 				resp.Content[c.ViewId] = &diagv1.ViewContent{}
 			}
@@ -425,6 +440,9 @@ func (s *WorkspaceService) GetWorkspace(
 			}
 		}
 		for _, p := range allPlacements {
+			if _, ok := viewIDs[p.ViewId]; !ok {
+				continue
+			}
 			childView, ok := elementToChildView[p.ElementId]
 			if !ok {
 				continue
