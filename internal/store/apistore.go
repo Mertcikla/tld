@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
@@ -611,24 +613,85 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 	return resp, nil
 }
 
-func (a *APIAdapter) ListVersions(context.Context, uuid.UUID, int) ([]*diagv1.WorkspaceVersionInfo, error) {
-	return nil, api.ErrUnimplemented
+func (a *APIAdapter) ListVersions(ctx context.Context, workspaceID uuid.UUID, limit int) ([]*diagv1.WorkspaceVersionInfo, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := a.Store.DB().QueryContext(ctx, `
+		SELECT id, version_id, source, parent_version_id, view_count, element_count, connector_count, description, workspace_hash, created_at
+		FROM workspace_versions
+		ORDER BY id DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*diagv1.WorkspaceVersionInfo
+	for rows.Next() {
+		version, err := scanWorkspaceVersion(rows, workspaceID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, version)
+	}
+	return out, rows.Err()
 }
 
-func (a *APIAdapter) GetLatestVersion(context.Context, uuid.UUID) (*diagv1.WorkspaceVersionInfo, error) {
-	return nil, api.ErrUnimplemented
+func (a *APIAdapter) GetLatestVersion(ctx context.Context, workspaceID uuid.UUID) (*diagv1.WorkspaceVersionInfo, error) {
+	row := a.Store.DB().QueryRowContext(ctx, `
+		SELECT id, version_id, source, parent_version_id, view_count, element_count, connector_count, description, workspace_hash, created_at
+		FROM workspace_versions
+		ORDER BY id DESC
+		LIMIT 1`)
+	version, err := scanWorkspaceVersion(row, workspaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, api.ErrUnimplemented
+	}
+	return version, err
 }
 
-func (a *APIAdapter) CreateVersion(context.Context, uuid.UUID, string, string, *int32, int, int, int, *string, *string) (*diagv1.WorkspaceVersionInfo, error) {
-	return nil, api.ErrUnimplemented
+func (a *APIAdapter) CreateVersion(ctx context.Context, workspaceID uuid.UUID, versionID, source string, parentID *int32, viewCount, elementCount, connectorCount int, description, workspaceHash *string) (*diagv1.WorkspaceVersionInfo, error) {
+	var parent any
+	if parentID != nil {
+		parent = *parentID
+	}
+	res, err := a.Store.DB().ExecContext(ctx, `
+		INSERT INTO workspace_versions(version_id, source, parent_version_id, view_count, element_count, connector_count, description, workspace_hash, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		versionID, source, parent, viewCount, elementCount, connectorCount, description, workspaceHash, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	row := a.Store.DB().QueryRowContext(ctx, `
+		SELECT id, version_id, source, parent_version_id, view_count, element_count, connector_count, description, workspace_hash, created_at
+		FROM workspace_versions
+		WHERE id = ?`, id)
+	return scanWorkspaceVersion(row, workspaceID)
 }
 
-func (a *APIAdapter) GetVersioningEnabled(context.Context, uuid.UUID) (bool, error) {
-	return false, api.ErrUnimplemented
+func (a *APIAdapter) GetVersioningEnabled(ctx context.Context, _ uuid.UUID) (bool, error) {
+	var enabled int
+	err := a.Store.DB().QueryRowContext(ctx, `SELECT cli_versioning_enabled FROM workspace_version_settings WHERE id = 1`).Scan(&enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	return enabled != 0, err
 }
 
-func (a *APIAdapter) SetVersioningEnabled(context.Context, uuid.UUID, bool) error {
-	return api.ErrUnimplemented
+func (a *APIAdapter) SetVersioningEnabled(ctx context.Context, _ uuid.UUID, enabled bool) error {
+	value := 0
+	if enabled {
+		value = 1
+	}
+	_, err := a.Store.DB().ExecContext(ctx, `
+		INSERT INTO workspace_version_settings(id, cli_versioning_enabled)
+		VALUES (1, ?)
+		ON CONFLICT(id) DO UPDATE SET cli_versioning_enabled = excluded.cli_versioning_enabled`, value)
+	return err
 }
 
 func (a *APIAdapter) GetWorkspaceResourceCounts(ctx context.Context, _ uuid.UUID) (views, elements, connectors int, err error) {
@@ -658,6 +721,48 @@ func (a *APIAdapter) ensureRootViewID(ctx context.Context) (int32, error) {
 		}
 	}
 	return 0, fmt.Errorf("root view not found")
+}
+
+type sqlRowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanWorkspaceVersion(row sqlRowScanner, workspaceID uuid.UUID) (*diagv1.WorkspaceVersionInfo, error) {
+	var (
+		id, viewCount, elementCount, connectorCount int64
+		versionID, source, createdAtRaw             string
+		parentID                                    sql.NullInt64
+		description                                 sql.NullString
+		workspaceHash                               sql.NullString
+	)
+	if err := row.Scan(&id, &versionID, &source, &parentID, &viewCount, &elementCount, &connectorCount, &description, &workspaceHash, &createdAtRaw); err != nil {
+		return nil, err
+	}
+	createdAt, err := time.Parse(time.RFC3339, createdAtRaw)
+	if err != nil {
+		createdAt = time.Now().UTC()
+	}
+	info := &diagv1.WorkspaceVersionInfo{
+		Id:             strconv.FormatInt(id, 10),
+		OrgId:          workspaceID.String(),
+		VersionId:      versionID,
+		Source:         source,
+		ViewCount:      int32(viewCount),
+		ElementCount:   int32(elementCount),
+		ConnectorCount: int32(connectorCount),
+		CreatedAt:      timestamppb.New(createdAt),
+	}
+	if parentID.Valid {
+		parent := strconv.FormatInt(parentID.Int64, 10)
+		info.ParentVersionId = &parent
+	}
+	if description.Valid {
+		info.Description = &description.String
+	}
+	if workspaceHash.Valid {
+		info.WorkspaceHash = &workspaceHash.String
+	}
+	return info, nil
 }
 
 func (a *APIAdapter) findPlacedElement(ctx context.Context, viewID, elementID int64) (*diagv1.PlacedElement, error) {

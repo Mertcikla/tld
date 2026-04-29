@@ -54,6 +54,40 @@ export interface DependenciesResponse {
   connectors: DependencyConnector[]
 }
 
+export interface WatchRepository {
+  id: number
+  remote_url: string | null
+  repo_root: string
+  display_name: string
+  branch: string | null
+  head_commit: string | null
+  identity_status: string
+}
+
+export interface WatchVersion {
+  id: number
+  repository_id: number
+  commit_hash: string
+  parent_commit_hash?: string
+  branch?: string
+  representation_hash: string
+  workspace_version_id?: number
+  created_at: string
+}
+
+export interface WatchDiff {
+  id: number
+  version_id: number
+  owner_type: string
+  owner_key: string
+  change_type: string
+  before_hash?: string
+  after_hash?: string
+  resource_type?: string
+  resource_id?: number
+  summary?: string
+}
+
 // ─── RPC clients ─────────────────────────────────────────────────────────────
 
 const workspaceClient = createClient(WorkspaceService, transport)
@@ -750,5 +784,27 @@ export const api = {
           warnings: res.warnings,
         }
       }),
+  },
+
+  watch: {
+    repositories: async (): Promise<WatchRepository[]> => {
+      const res = await fetch(apiUrl('/watch/repositories'))
+      if (!res.ok) throw new Error(`Failed to load watch repositories: ${res.statusText}`)
+      return res.json()
+    },
+    versions: async (repositoryId: number): Promise<WatchVersion[]> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/versions`))
+      if (!res.ok) throw new Error(`Failed to load watch versions: ${res.statusText}`)
+      return res.json()
+    },
+    diffs: async (versionId: number, filters?: { owner_type?: string; change_type?: string }): Promise<WatchDiff[]> => {
+      const params = new URLSearchParams()
+      if (filters?.owner_type) params.set('owner_type', filters.owner_type)
+      if (filters?.change_type) params.set('change_type', filters.change_type)
+      const suffix = params.toString() ? `?${params}` : ''
+      const res = await fetch(apiUrl(`/watch/versions/${versionId}/diffs${suffix}`))
+      if (!res.ok) throw new Error(`Failed to load watch diffs: ${res.statusText}`)
+      return res.json()
+    },
   },
 }

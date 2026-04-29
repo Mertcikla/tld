@@ -21,6 +21,10 @@ type Store struct {
 	db *sql.DB
 }
 
+func (s *Store) DB() *sql.DB {
+	return s.db
+}
+
 type TechnologyConnector struct {
 	Type          string `json:"type"`
 	Slug          string `json:"slug,omitempty"`

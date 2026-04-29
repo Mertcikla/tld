@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 
 	"github.com/mertcikla/tld/internal/app"
@@ -24,6 +25,10 @@ func Open(dbPath string, migrations embed.FS) (*SQLiteStore, error) {
 
 func (s *SQLiteStore) Legacy() *app.Store {
 	return s.legacy
+}
+
+func (s *SQLiteStore) DB() *sql.DB {
+	return s.legacy.DB()
 }
 
 func (s *SQLiteStore) ViewTree(ctx context.Context) ([]core.ViewTreeNode, error) {
