@@ -4,12 +4,17 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"sort"
 	"strings"
 	"time"
+
+	"github.com/viant/sqlite-vec/vector"
 )
 
 const LockHeartbeatTimeout = 30 * time.Second
@@ -261,9 +266,16 @@ func (s *Store) DeleteMissingFiles(ctx context.Context, repositoryID int64, seen
 }
 
 func (s *Store) ReplaceFileSymbols(ctx context.Context, repositoryID, fileID int64, symbols []Symbol) error {
+	existingIdentities, err := s.symbolIdentitiesForFile(ctx, repositoryID, fileID)
+	if err != nil {
+		return err
+	}
+	usedIdentities := map[string]struct{}{}
 	keep := make(map[string]struct{}, len(symbols))
 	for _, sym := range symbols {
 		keep[sym.StableKey] = struct{}{}
+		identityKey := s.matchSymbolIdentity(sym, existingIdentities, usedIdentities)
+		usedIdentities[identityKey] = struct{}{}
 		now := nowString()
 		_, err := s.db.ExecContext(ctx, `
 			INSERT INTO watch_symbols(repository_id, file_id, stable_key, name, qualified_name, kind, start_line, end_line, signature_hash, content_hash, raw_json, created_at, updated_at)
@@ -281,6 +293,9 @@ func (s *Store) ReplaceFileSymbols(ctx context.Context, repositoryID, fileID int
 				updated_at = excluded.updated_at`,
 			repositoryID, fileID, sym.StableKey, sym.Name, sym.QualifiedName, sym.Kind, sym.StartLine, sym.EndLine, sym.SignatureHash, sym.ContentHash, sym.RawJSON, now, now)
 		if err != nil {
+			return err
+		}
+		if err := s.UpsertSymbolIdentity(ctx, repositoryID, identityKey, sym); err != nil {
 			return err
 		}
 	}
@@ -309,6 +324,116 @@ func (s *Store) ReplaceFileSymbols(ctx context.Context, repositoryID, fileID int
 		}
 	}
 	return nil
+}
+
+type storedSymbolIdentity struct {
+	IdentityKey   string
+	StableKey     string
+	FilePath      string
+	Kind          string
+	Name          string
+	QualifiedName string
+	StartLine     int
+	ContentHash   string
+}
+
+func (s *Store) symbolIdentitiesForFile(ctx context.Context, repositoryID, fileID int64) ([]storedSymbolIdentity, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT COALESCE(i.identity_key, ws.stable_key), ws.stable_key, f.path, ws.kind, ws.name, ws.qualified_name, ws.start_line, ws.content_hash
+		FROM watch_symbols ws
+		JOIN watch_files f ON f.id = ws.file_id
+		LEFT JOIN watch_symbol_identities i ON i.repository_id = ws.repository_id AND i.current_stable_key = ws.stable_key
+		WHERE ws.repository_id = ? AND ws.file_id = ?`, repositoryID, fileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []storedSymbolIdentity
+	for rows.Next() {
+		var identity storedSymbolIdentity
+		if err := rows.Scan(&identity.IdentityKey, &identity.StableKey, &identity.FilePath, &identity.Kind, &identity.Name, &identity.QualifiedName, &identity.StartLine, &identity.ContentHash); err != nil {
+			return nil, err
+		}
+		out = append(out, identity)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) matchSymbolIdentity(sym Symbol, existing []storedSymbolIdentity, used map[string]struct{}) string {
+	for _, identity := range existing {
+		if identity.StableKey == sym.StableKey {
+			return identity.IdentityKey
+		}
+	}
+	bestScore := 0.0
+	bestKey := ""
+	for _, identity := range existing {
+		if _, ok := used[identity.IdentityKey]; ok {
+			continue
+		}
+		if identity.FilePath != sym.FilePath || identity.Kind != sym.Kind {
+			continue
+		}
+		lineDelta := absInt(identity.StartLine - sym.StartLine)
+		if lineDelta > 3 {
+			continue
+		}
+		score := 0.35
+		if lineDelta == 0 {
+			score += 0.35
+		} else {
+			score += 0.2
+		}
+		if identity.ContentHash == sym.ContentHash {
+			score += 0.2
+		}
+		if sameQualifierParent(identity.QualifiedName, sym.QualifiedName) {
+			score += 0.1
+		}
+		if score > bestScore {
+			bestScore = score
+			bestKey = identity.IdentityKey
+		}
+	}
+	if bestScore >= 0.70 && bestKey != "" {
+		return bestKey
+	}
+	return sym.StableKey
+}
+
+func (s *Store) UpsertSymbolIdentity(ctx context.Context, repositoryID int64, identityKey string, sym Symbol) error {
+	now := nowString()
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO watch_symbol_identities(repository_id, identity_key, current_stable_key, file_path, kind, name, qualified_name, start_line, content_hash, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(repository_id, identity_key) DO UPDATE SET
+			current_stable_key = excluded.current_stable_key,
+			file_path = excluded.file_path,
+			kind = excluded.kind,
+			name = excluded.name,
+			qualified_name = excluded.qualified_name,
+			start_line = excluded.start_line,
+			content_hash = excluded.content_hash,
+			updated_at = excluded.updated_at`,
+		repositoryID, identityKey, sym.StableKey, sym.FilePath, sym.Kind, sym.Name, sym.QualifiedName, sym.StartLine, sym.ContentHash, now, now)
+	return err
+}
+
+func (s *Store) SymbolIdentityKeys(ctx context.Context, repositoryID int64) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT current_stable_key, identity_key FROM watch_symbol_identities WHERE repository_id = ?`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var stableKey, identityKey string
+		if err := rows.Scan(&stableKey, &identityKey); err != nil {
+			return nil, err
+		}
+		out[stableKey] = identityKey
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) ReplaceReferencesForFiles(ctx context.Context, repositoryID int64, fileIDs []int64, refs []Reference) error {
@@ -493,13 +618,96 @@ func (s *Store) Embedding(ctx context.Context, modelID int64, ownerType, ownerKe
 	return vector, err == nil, err
 }
 
-func (s *Store) SaveEmbedding(ctx context.Context, modelID int64, ownerType, ownerKey, inputHash string, vector []byte) error {
+func (s *Store) SaveEmbedding(ctx context.Context, modelID int64, ownerType, ownerKey, inputHash string, vectorData []byte) error {
+	if err := s.EnsureEmbeddingVectorSchema(ctx); err != nil {
+		return err
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO watch_embeddings(model_id, owner_type, owner_key, input_hash, vector, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT(model_id, owner_type, owner_key, input_hash) DO NOTHING`,
-		modelID, ownerType, ownerKey, inputHash, vector, nowString())
+		modelID, ownerType, ownerKey, inputHash, vectorData, nowString())
+	if err != nil {
+		return err
+	}
+	var embeddingID int64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT id FROM watch_embeddings
+		WHERE model_id = ? AND owner_type = ? AND owner_key = ? AND input_hash = ?`,
+		modelID, ownerType, ownerKey, inputHash).Scan(&embeddingID); err != nil {
+		return err
+	}
+	encoded, err := vector.EncodeEmbedding(bytesToVector(vectorData))
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO _vec_watch_embedding_vec(dataset_id, id, content, meta, embedding)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(dataset_id, id) DO UPDATE SET
+			content = excluded.content,
+			meta = excluded.meta,
+			embedding = excluded.embedding`,
+		embeddingDataset(modelID), fmt.Sprintf("%d", embeddingID), ownerKey, ownerType, encoded)
 	return err
+}
+
+func (s *Store) SimilarEmbeddings(ctx context.Context, modelID int64, query Vector, limit int) ([]int64, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if err := s.EnsureEmbeddingVectorSchema(ctx); err != nil {
+		return nil, err
+	}
+	return s.similarEmbeddingsFallback(ctx, modelID, query, limit)
+}
+
+func (s *Store) similarEmbeddingsFallback(ctx context.Context, modelID int64, query Vector, limit int) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, vector FROM watch_embeddings WHERE model_id = ?`, modelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	type scored struct {
+		ID    int64
+		Score float64
+	}
+	var scoredRows []scored
+	for rows.Next() {
+		var id int64
+		var data []byte
+		if err := rows.Scan(&id, &data); err != nil {
+			return nil, err
+		}
+		scoredRows = append(scoredRows, scored{ID: id, Score: CosineSimilarity(query, bytesToVector(data))})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(scoredRows, func(i, j int) bool { return scoredRows[i].Score > scoredRows[j].Score })
+	if len(scoredRows) > limit {
+		scoredRows = scoredRows[:limit]
+	}
+	out := make([]int64, 0, len(scoredRows))
+	for _, row := range scoredRows {
+		out = append(out, row.ID)
+	}
+	return out, nil
+}
+
+func (s *Store) EnsureEmbeddingVectorSchema(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS _vec_watch_embedding_vec (
+			dataset_id TEXT NOT NULL,
+			id TEXT NOT NULL,
+			content TEXT,
+			meta TEXT,
+			embedding BLOB,
+			PRIMARY KEY(dataset_id, id)
+		)`); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) BeginFilterRun(ctx context.Context, repositoryID int64, settingsHash, rawGraphHash string) (int64, error) {
@@ -790,7 +998,7 @@ func (s *Store) AcquireLock(ctx context.Context, repositoryID int64, pid int, to
 	}
 	now := nowString()
 	cutoff := time.Now().UTC().Add(-staleAfter).Format(time.RFC3339)
-	_, _ = s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stale' WHERE status IN ('active', 'stopping') AND heartbeat_at < ?`, cutoff)
+	_, _ = s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stale' WHERE status IN ('active', 'paused', 'stopping') AND heartbeat_at < ?`, cutoff)
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO watch_locks(id, repository_id, pid, token, started_at, heartbeat_at, status)
 		VALUES (1, ?, ?, ?, ?, ?, 'active')
@@ -801,7 +1009,7 @@ func (s *Store) AcquireLock(ctx context.Context, repositoryID int64, pid int, to
 			started_at = excluded.started_at,
 			heartbeat_at = excluded.heartbeat_at,
 			status = 'active'
-		WHERE watch_locks.status NOT IN ('active', 'stopping') OR watch_locks.heartbeat_at < ?`,
+		WHERE watch_locks.status NOT IN ('active', 'paused', 'stopping') OR watch_locks.heartbeat_at < ?`,
 		repositoryID, pid, token, now, now, cutoff)
 	if err != nil {
 		return Lock{}, err
@@ -820,7 +1028,7 @@ func (s *Store) ActiveLock(ctx context.Context) (Lock, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, repository_id, pid, token, started_at, heartbeat_at, status
 		FROM watch_locks
-		WHERE status IN ('active', 'stopping')
+		WHERE status IN ('active', 'paused', 'stopping')
 		ORDER BY id
 		LIMIT 1`)
 	return scanLock(row)
@@ -848,7 +1056,7 @@ func (s *Store) HeartbeatLock(ctx context.Context, repositoryID int64, token str
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE watch_locks
 		SET heartbeat_at = ?
-		WHERE repository_id = ? AND token = ? AND status = 'active'`,
+		WHERE repository_id = ? AND token = ? AND status IN ('active', 'paused')`,
 		nowString(), repositoryID, token)
 	if err != nil {
 		return Lock{}, err
@@ -857,12 +1065,32 @@ func (s *Store) HeartbeatLock(ctx context.Context, repositoryID int64, token str
 }
 
 func (s *Store) RequestStop(ctx context.Context, repositoryID int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stopping', heartbeat_at = ? WHERE repository_id = ? AND status = 'active'`, nowString(), repositoryID)
+	_, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stopping', heartbeat_at = ? WHERE repository_id = ? AND status IN ('active', 'paused')`, nowString(), repositoryID)
 	return err
 }
 
 func (s *Store) RequestStopActive(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stopping', heartbeat_at = ? WHERE status = 'active'`, nowString())
+	_, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stopping', heartbeat_at = ? WHERE status IN ('active', 'paused')`, nowString())
+	return err
+}
+
+func (s *Store) RequestPause(ctx context.Context, repositoryID int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'paused', heartbeat_at = ? WHERE repository_id = ? AND status = 'active'`, nowString(), repositoryID)
+	return err
+}
+
+func (s *Store) RequestPauseActive(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'paused', heartbeat_at = ? WHERE status = 'active'`, nowString())
+	return err
+}
+
+func (s *Store) RequestResume(ctx context.Context, repositoryID int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'active', heartbeat_at = ? WHERE repository_id = ? AND status = 'paused'`, nowString(), repositoryID)
+	return err
+}
+
+func (s *Store) RequestResumeActive(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'active', heartbeat_at = ? WHERE status = 'paused'`, nowString())
 	return err
 }
 
@@ -1207,6 +1435,41 @@ func managedGitTags() []string {
 
 func filepathToSlash(path string) string {
 	return strings.ReplaceAll(path, "\\", "/")
+}
+
+func absInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func sameQualifierParent(left, right string) bool {
+	leftParent := qualifierParent(left)
+	rightParent := qualifierParent(right)
+	return leftParent != "" && leftParent == rightParent
+}
+
+func qualifierParent(value string) string {
+	if idx := strings.LastIndex(value, "."); idx > 0 {
+		return value[:idx]
+	}
+	return ""
+}
+
+func embeddingDataset(modelID int64) string {
+	return fmt.Sprintf("model:%d", modelID)
+}
+
+func bytesToVector(data []byte) Vector {
+	if len(data)%4 != 0 {
+		return nil
+	}
+	vector := make(Vector, len(data)/4)
+	for i := range vector {
+		vector[i] = math.Float32frombits(binary.LittleEndian.Uint32(data[i*4:]))
+	}
+	return vector
 }
 
 func (s *Store) clusterByStableKey(ctx context.Context, repositoryID int64, stableKey string) (Cluster, error) {

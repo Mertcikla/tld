@@ -100,9 +100,11 @@ type ScanResult struct {
 }
 
 type EmbeddingConfig struct {
-	Provider  string `json:"provider"`
-	Model     string `json:"model"`
-	Dimension int    `json:"dimension"`
+	Provider        string  `json:"provider" yaml:"provider"`
+	Endpoint        string  `json:"endpoint,omitempty" yaml:"endpoint"`
+	Model           string  `json:"model" yaml:"model"`
+	Dimension       int     `json:"dimension" yaml:"dimension"`
+	HealthThreshold float64 `json:"health_threshold,omitempty" yaml:"health_threshold"`
 }
 
 type Thresholds struct {
@@ -115,6 +117,7 @@ type Thresholds struct {
 type RepresentRequest struct {
 	Embedding  EmbeddingConfig `json:"embedding"`
 	Thresholds Thresholds      `json:"thresholds"`
+	Progress   ProgressSink    `json:"-"`
 }
 
 type RepresentResult struct {
@@ -129,6 +132,14 @@ type RepresentResult struct {
 	ConnectorsCreated  int    `json:"connectors_created"`
 	ConnectorsUpdated  int    `json:"connectors_updated"`
 	ViewsCreated       int    `json:"views_created"`
+	EmbeddingCacheHits int    `json:"embedding_cache_hits"`
+	EmbeddingsCreated  int    `json:"embeddings_created"`
+}
+
+type ProgressSink interface {
+	Start(label string, total int)
+	Advance(label string)
+	Finish()
 }
 
 type RepresentationSummary struct {

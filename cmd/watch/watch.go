@@ -3,9 +3,11 @@ package watch
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -16,11 +18,14 @@ import (
 	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/watch"
 	"github.com/mertcikla/tld/internal/workspace"
+	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 )
 
 func NewWatchCmd() *cobra.Command {
 	var host, port, dataDirFlag string
+	var embeddingProvider, embeddingEndpoint, embeddingModel string
+	var embeddingDimension int
 	var noServe, openBrowser, rescan, verbose bool
 	c := &cobra.Command{
 		Use:   "watch [path]",
@@ -39,11 +44,24 @@ func NewWatchCmd() *cobra.Command {
 			if err := os.MkdirAll(dataDir, 0o755); err != nil {
 				return fmt.Errorf("create data dir: %w", err)
 			}
+			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watch booting: data=%s embeddings=%s/%s\n", dataDir, embeddingCfg.Provider, embeddingCfg.Model)
+			progress := newCLIProgress(cmd.ErrOrStderr())
+			if embeddingCfg.Provider != "none" {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "embedding healthcheck: %s %s\n", embeddingCfg.Endpoint, embeddingCfg.Model)
+				checked, health, err := watch.CheckEmbeddingHealth(cmd.Context(), embeddingCfg)
+				if err != nil {
+					return fmt.Errorf("embedding healthcheck failed: %w", err)
+				}
+				embeddingCfg = checked
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "embedding healthcheck ok: dimension=%d similarity=%.3f\n", health.Dimension, health.Similarity)
+			}
 			addr := localserver.ResolveAddr(localserver.ServeOptions{Host: host, Port: port})
 			url := "http://" + addr
 			var srv *http.Server
 			if !noServe {
 				if !serverReady(url) {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "server booting: %s\n", url)
 					app, err := localserver.Bootstrap(dataDir, localserver.ServeOptions{Host: host, Port: port})
 					if err != nil {
 						return err
@@ -56,6 +74,7 @@ func NewWatchCmd() *cobra.Command {
 					}()
 					url = "http://" + app.Addr
 				}
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "server ready: %s\n", url)
 				if openBrowser {
 					_ = cmdutil.OpenBrowser(url)
 				}
@@ -93,7 +112,7 @@ func NewWatchCmd() *cobra.Command {
 			}()
 			errCh := make(chan error, 1)
 			go func() {
-				_, runErr := watch.NewRunner(watchStore).Run(ctx, watch.RunnerOptions{Path: path, Rescan: rescan, Verbose: verbose, Events: events, Ready: ready})
+				_, runErr := watch.NewRunner(watchStore).Run(ctx, watch.RunnerOptions{Path: path, Rescan: rescan, Verbose: verbose, Embedding: embeddingCfg, Progress: progress, Events: events, Ready: ready})
 				errCh <- runErr
 				close(events)
 			}()
@@ -125,8 +144,10 @@ func NewWatchCmd() *cobra.Command {
 	c.Flags().StringVar(&dataDirFlag, "data-dir", "", "directory for the local app database")
 	c.Flags().BoolVar(&noServe, "no-serve", false, "do not start the local app server")
 	c.Flags().BoolVar(&openBrowser, "open", false, "open the webapp in a browser")
-	c.Flags().String("embedding-provider", "none", "embedding provider for representation")
-	c.Flags().String("embedding-model", "", "embedding model for representation")
+	c.Flags().StringVar(&embeddingProvider, "embedding-provider", "", "embedding provider for representation")
+	c.Flags().StringVar(&embeddingEndpoint, "embedding-endpoint", "", "embedding endpoint for representation")
+	c.Flags().StringVar(&embeddingModel, "embedding-model", "", "embedding model for representation")
+	c.Flags().IntVar(&embeddingDimension, "embedding-dimension", 0, "embedding vector dimension")
 	c.Flags().BoolVar(&rescan, "rescan", false, "force a rescan before watching")
 	c.Flags().BoolVar(&verbose, "verbose", false, "print watch events")
 	c.AddCommand(newScanCmd())
@@ -137,6 +158,34 @@ func NewWatchCmd() *cobra.Command {
 func logWatchEvent(cmd *cobra.Command, event watch.Event) bool {
 	out := cmd.OutOrStdout()
 	switch event.Type {
+	case "watch.started":
+		_, _ = fmt.Fprintf(out, "%s started\n", term.Colorize(out, term.ColorGreen, "watch"))
+		return true
+	case "watch.stopped":
+		_, _ = fmt.Fprintf(out, "%s stopped\n", term.Colorize(out, term.ColorYellow, "watch"))
+		return true
+	case "scan.started":
+		_, _ = fmt.Fprintf(out, "%s scanning source graph\n", term.Colorize(out, term.ColorBlue, "watch"))
+		return true
+	case "scan.completed":
+		if scan, ok := event.Data.(watch.ScanResult); ok {
+			_, _ = fmt.Fprintf(out, "%s scan complete: %d files, %d parsed, %d skipped\n", term.Colorize(out, term.ColorGreen, "watch"), scan.FilesSeen, scan.FilesParsed, scan.FilesSkipped)
+			return true
+		}
+		return false
+	case "representation.started":
+		_, _ = fmt.Fprintf(out, "%s materializing representation\n", term.Colorize(out, term.ColorBlue, "watch"))
+		return true
+	case "representation.updated":
+		if rep, ok := event.Data.(watch.RepresentResult); ok {
+			_, _ = fmt.Fprintf(out, "%s representation updated: elements +%d/%d, connectors +%d/%d, embeddings +%d/%d cached\n",
+				term.Colorize(out, term.ColorGreen, "watch"),
+				rep.ElementsCreated, rep.ElementsUpdated,
+				rep.ConnectorsCreated, rep.ConnectorsUpdated,
+				rep.EmbeddingsCreated, rep.EmbeddingCacheHits)
+			return true
+		}
+		return false
 	case "source.changed":
 		result, ok := event.Data.(watch.SourceFileChangeResult)
 		if !ok {
@@ -233,6 +282,7 @@ func newScanCmd() *cobra.Command {
 				return err
 			}
 			scanner := watch.NewScanner(watch.NewStore(sqliteStore.DB()))
+			scanner.Progress = newCLIProgress(cmd.ErrOrStderr())
 			result, err := scanner.Scan(cmd.Context(), path)
 			if err != nil {
 				return err
@@ -254,6 +304,8 @@ func newScanCmd() *cobra.Command {
 
 func newRepresentCmd() *cobra.Command {
 	var dataDirFlag string
+	var embeddingProvider, embeddingEndpoint, embeddingModel string
+	var embeddingDimension int
 	c := &cobra.Command{
 		Use:   "represent [path]",
 		Short: "Materialize a scanned Go repository into the local workspace",
@@ -271,16 +323,28 @@ func newRepresentCmd() *cobra.Command {
 			if err := os.MkdirAll(dataDir, 0o755); err != nil {
 				return fmt.Errorf("create data dir: %w", err)
 			}
+			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
+			progress := newCLIProgress(cmd.ErrOrStderr())
+			if embeddingCfg.Provider != "none" {
+				checked, health, err := watch.CheckEmbeddingHealth(cmd.Context(), embeddingCfg)
+				if err != nil {
+					return fmt.Errorf("embedding healthcheck failed: %w", err)
+				}
+				embeddingCfg = checked
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Embedding:       %s/%s dimension=%d similarity=%.3f\n", embeddingCfg.Provider, embeddingCfg.Model, health.Dimension, health.Similarity)
+			}
 			sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
 			if err != nil {
 				return err
 			}
 			watchStore := watch.NewStore(sqliteStore.DB())
-			scanResult, err := watch.NewScanner(watchStore).Scan(cmd.Context(), path)
+			scanner := watch.NewScanner(watchStore)
+			scanner.Progress = progress
+			scanResult, err := scanner.Scan(cmd.Context(), path)
 			if err != nil {
 				return err
 			}
-			result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{})
+			result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{Embedding: embeddingCfg, Progress: progress})
 			if err != nil {
 				return err
 			}
@@ -297,5 +361,93 @@ func newRepresentCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&dataDirFlag, "data-dir", "", "directory for the local app database")
+	c.Flags().StringVar(&embeddingProvider, "embedding-provider", "", "embedding provider for representation")
+	c.Flags().StringVar(&embeddingEndpoint, "embedding-endpoint", "", "embedding endpoint for representation")
+	c.Flags().StringVar(&embeddingModel, "embedding-model", "", "embedding model for representation")
+	c.Flags().IntVar(&embeddingDimension, "embedding-dimension", 0, "embedding vector dimension")
 	return c
+}
+
+func resolveEmbeddingConfig(cfg *workspace.GlobalConfig, provider, endpoint, model string, dimension int) watch.EmbeddingConfig {
+	embedding := watch.EmbeddingConfig{}
+	if cfg != nil {
+		embedding.Provider = cfg.Watch.Embedding.Provider
+		embedding.Endpoint = cfg.Watch.Embedding.Endpoint
+		embedding.Model = cfg.Watch.Embedding.Model
+		embedding.Dimension = cfg.Watch.Embedding.Dimension
+		embedding.HealthThreshold = cfg.Watch.Embedding.HealthThreshold
+	}
+	if value := os.Getenv("TLD_EMBEDDING_PROVIDER"); value != "" {
+		embedding.Provider = value
+	}
+	if value := os.Getenv("TLD_EMBEDDING_ENDPOINT"); value != "" {
+		embedding.Endpoint = value
+	}
+	if value := os.Getenv("TLD_EMBEDDING_MODEL"); value != "" {
+		embedding.Model = value
+	}
+	if value := os.Getenv("TLD_EMBEDDING_DIMENSION"); value != "" {
+		if parsed, err := strconv.Atoi(value); err == nil {
+			embedding.Dimension = parsed
+		}
+	}
+	if provider != "" {
+		embedding.Provider = provider
+	}
+	if endpoint != "" {
+		embedding.Endpoint = endpoint
+	}
+	if model != "" {
+		embedding.Model = model
+	}
+	if dimension > 0 {
+		embedding.Dimension = dimension
+	}
+	return watch.NormalizeEmbeddingConfig(embedding)
+}
+
+type cliProgress struct {
+	out io.Writer
+	bar *progressbar.ProgressBar
+}
+
+func newCLIProgress(out io.Writer) watch.ProgressSink {
+	if !term.IsTerminal(out) {
+		return nil
+	}
+	return &cliProgress{out: out}
+}
+
+func (p *cliProgress) Start(label string, total int) {
+	if p == nil || total <= 0 {
+		return
+	}
+	p.bar = progressbar.NewOptions(total,
+		progressbar.OptionSetWriter(p.out),
+		progressbar.OptionSetVisibility(true),
+		progressbar.OptionSetDescription(label),
+		progressbar.OptionShowCount(),
+		progressbar.OptionSetWidth(12),
+		progressbar.OptionFullWidth(),
+		progressbar.OptionClearOnFinish(),
+		progressbar.OptionThrottle(60*time.Millisecond),
+	)
+}
+
+func (p *cliProgress) Advance(label string) {
+	if p == nil || p.bar == nil {
+		return
+	}
+	if label != "" {
+		p.bar.Describe(label)
+	}
+	_ = p.bar.Add(1)
+}
+
+func (p *cliProgress) Finish() {
+	if p == nil || p.bar == nil {
+		return
+	}
+	_ = p.bar.Finish()
+	p.bar = nil
 }

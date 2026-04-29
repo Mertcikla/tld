@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
 )
 
@@ -52,7 +54,7 @@ func helper() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{})
+	first, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +66,7 @@ func helper() {}
 	}
 	countsAfterFirst := workspaceCounts(t, db)
 
-	second, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{})
+	second, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +112,7 @@ func TestRepresentDoesNotTouchManualResources(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{}); err != nil {
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,7 +136,7 @@ func TestApplyGitTagsReportsAddedAndRemovedTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{}); err != nil {
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -176,17 +178,202 @@ func TestEmbeddingCacheAvoidsProviderCalls(t *testing.T) {
 		2: {ID: 2, StableKey: "go:b.go:function:B", QualifiedName: "B", Kind: "function", FilePath: "b.go"},
 	}
 	representer := NewRepresenter(store)
-	if err := representer.cacheEmbeddings(context.Background(), modelID, provider, symbols); err != nil {
+	stats, _, err := representer.cacheEmbeddings(context.Background(), modelID, provider, "", []Symbol{
+		symbols[1],
+		symbols[2],
+	}, nil, nil)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if stats.Created != 2 {
+		t.Fatalf("expected two embeddings created, got %+v", stats)
 	}
 	if provider.calls != 1 || provider.inputs != 2 {
 		t.Fatalf("expected one batched provider call for two inputs, got calls=%d inputs=%d", provider.calls, provider.inputs)
 	}
-	if err := representer.cacheEmbeddings(context.Background(), modelID, provider, symbols); err != nil {
+	stats, _, err = representer.cacheEmbeddings(context.Background(), modelID, provider, "", []Symbol{
+		symbols[1],
+		symbols[2],
+	}, nil, nil)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if stats.CacheHits != 2 {
+		t.Fatalf("expected two embedding cache hits, got %+v", stats)
 	}
 	if provider.calls != 1 {
 		t.Fatalf("cache miss recomputed embeddings, calls=%d", provider.calls)
+	}
+}
+
+func TestEmbeddingCacheChunksProviderCallsAndReportsProgress(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	store := NewStore(db)
+	provider := &countingProvider{}
+	model := provider.ModelID()
+	modelID, err := store.EnsureEmbeddingModel(context.Background(), EmbeddingConfig{Provider: model.Provider, Model: model.Model, Dimension: model.Dimension}, model.ConfigHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	symbols := make([]Symbol, 0, defaultEmbeddingBatchSize*2+1)
+	for i := 0; i < defaultEmbeddingBatchSize*2+1; i++ {
+		name := fmt.Sprintf("Symbol%d", i)
+		symbols = append(symbols, Symbol{ID: int64(i + 1), StableKey: "go:a.go:function:" + name, QualifiedName: name, Kind: "function", FilePath: "a.go"})
+	}
+	progress := &recordingProgress{}
+
+	stats, _, err := NewRepresenter(store).cacheEmbeddings(context.Background(), modelID, provider, "", symbols, nil, progress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Created != len(symbols) {
+		t.Fatalf("expected %d embeddings created, got %+v", len(symbols), stats)
+	}
+	if provider.calls != 3 || strings.Join(provider.batchSizes, ",") != "32,32,1" {
+		t.Fatalf("expected chunked provider calls 32,32,1, got calls=%d batchSizes=%v", provider.calls, provider.batchSizes)
+	}
+	if len(progress.starts) != 2 || progress.starts[0] != "Preparing symbol embeddings:65" || progress.starts[1] != "Embedding symbols:65" {
+		t.Fatalf("unexpected progress starts: %v", progress.starts)
+	}
+	if progress.advances != len(symbols)*2 {
+		t.Fatalf("expected prepare and embed progress advances, got %d", progress.advances)
+	}
+}
+
+func TestSymbolEmbeddingTextUsesOutdentedCodeBody(t *testing.T) {
+	repo := t.TempDir()
+	writeFile(t, repo, "a.go", `package main
+
+func Outer() {
+    if true {
+        fmt.Println("body")
+    }
+}
+`)
+	end := 6
+	text := symbolEmbeddingText(repo, Symbol{
+		QualifiedName: "Outer",
+		Kind:          "function",
+		FilePath:      "a.go",
+		StartLine:     3,
+		EndLine:       &end,
+	})
+
+	if !strings.Contains(text, `fmt.Println("body")`) {
+		t.Fatalf("expected embedding text to include code body, got:\n%s", text)
+	}
+	if strings.Contains(text, "Outer\nfunction\na.go") {
+		t.Fatalf("embedding text fell back to metadata instead of source body:\n%s", text)
+	}
+}
+
+func TestShrinkEmbeddingTextFitsApproximateTokenBudget(t *testing.T) {
+	text := shrinkEmbeddingText(strings.Repeat("// comment that should be removed\n", 600) + strings.Repeat("statement := value + otherValue\n", 700))
+	if approximateTokenCount(text) > maxEmbeddingInputApproxTokens {
+		t.Fatalf("expected text within token budget, got %d", approximateTokenCount(text))
+	}
+	if strings.Contains(text, "// comment") {
+		t.Fatalf("expected low-signal comment lines to be dropped")
+	}
+}
+
+func TestOllamaHealthCheckParsesEmbedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"embeddings":[[1,0,0],[0.95,0.05,0]]}`))
+	}))
+	defer server.Close()
+
+	cfg, result, err := CheckEmbeddingHealth(context.Background(), EmbeddingConfig{
+		Provider: "ollama",
+		Endpoint: server.URL,
+		Model:    "jina/jina-embeddings-v2-base-en",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Dimension != 3 || result.Dimension != 3 || result.Similarity < DefaultEmbeddingHealthThreshold {
+		t.Fatalf("unexpected health result cfg=%+v result=%+v", cfg, result)
+	}
+}
+
+func TestSQLiteVecStoresAndQueriesEmbeddings(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	store := NewStore(db)
+	modelID, err := store.EnsureEmbeddingModel(context.Background(), EmbeddingConfig{Provider: "local-deterministic-test", Model: "vec", Dimension: 3}, "vec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveEmbedding(context.Background(), modelID, "symbol", "a", "a", vectorBytes(Vector{1, 0, 0})); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveEmbedding(context.Background(), modelID, "symbol", "b", "b", vectorBytes(Vector{0, 1, 0})); err != nil {
+		t.Fatal(err)
+	}
+	var shadowRows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM _vec_watch_embedding_vec`).Scan(&shadowRows); err != nil {
+		t.Fatal(err)
+	}
+	if shadowRows != 2 {
+		t.Fatalf("expected sqlite-vec shadow rows, got %d", shadowRows)
+	}
+	ids, err := store.SimilarEmbeddings(context.Background(), modelID, Vector{1, 0, 0}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("expected one sqlite-vec match, got %v", ids)
+	}
+}
+
+func TestRenamePreservesGeneratedSymbolElementAndConnector(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	FetchUser()
+}
+
+func FetchUser() {}
+`)
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	beforeElement := symbolElementID(t, db, "FetchUser")
+	beforeConnectors := connectorCount(t, db)
+
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	LoadUser()
+}
+
+func LoadUser() {}
+`)
+	scanResult, err = NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	afterElement := symbolElementID(t, db, "LoadUser")
+	if afterElement != beforeElement {
+		t.Fatalf("rename created a new generated element: before=%d after=%d", beforeElement, afterElement)
+	}
+	if afterConnectors := connectorCount(t, db); afterConnectors != beforeConnectors {
+		t.Fatalf("rename changed connector count: before=%d after=%d", beforeConnectors, afterConnectors)
 	}
 }
 
@@ -369,6 +556,45 @@ func TestRequestStopActiveStopsCurrentLock(t *testing.T) {
 	}
 }
 
+func TestPauseResumeActiveLock(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, 1234, "token", LockHeartbeatTimeout); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RequestPauseActive(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.LockStatus(context.Background(), scanResult.RepositoryID, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "paused" {
+		t.Fatalf("expected paused lock, got %q", status)
+	}
+	if _, err := store.HeartbeatLock(context.Background(), scanResult.RepositoryID, "token"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RequestResumeActive(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status, err = store.LockStatus(context.Background(), scanResult.RepositoryID, "token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "active" {
+		t.Fatalf("expected active lock, got %q", status)
+	}
+}
+
 func TestRunnerEmitsChangeCounter(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -386,6 +612,7 @@ func TestRunnerEmitsChangeCounter(t *testing.T) {
 			PollInterval:      time.Hour,
 			HeartbeatInterval: time.Hour,
 			SummaryInterval:   10 * time.Millisecond,
+			Embedding:         EmbeddingConfig{Provider: "none"},
 			Events:            events,
 			Ready:             ready,
 		})
@@ -437,10 +664,14 @@ func openTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
+	db.SetMaxOpenConns(1)
+	if err := sqlitevec.Register(db); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "003_watch_materialized_workspace.sql", "004_watch_runtime_git_versions.sql"} {
+	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "003_watch_materialized_workspace.sql", "004_watch_runtime_git_versions.sql", "005_watch_embeddings_identity_vec.sql"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", migration))
 		if err != nil {
 			t.Fatal(err)
@@ -453,6 +684,29 @@ func openTestDB(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func symbolElementID(t *testing.T, db *sql.DB, name string) int64 {
+	t.Helper()
+	var id int64
+	if err := db.QueryRow(`
+		SELECT id FROM elements
+		WHERE name = ? AND kind = 'function'`, name).Scan(&id); err != nil {
+		t.Fatalf("find symbol element %s: %v", name, err)
+	}
+	return id
+}
+
+func connectorCount(t *testing.T, db *sql.DB) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM connectors`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count == 0 {
+		t.Fatal("expected at least one generated connector")
+	}
+	return count
 }
 
 type workspaceCount struct {
@@ -506,8 +760,10 @@ func countElementTag(t *testing.T, db *sql.DB, tag string) int {
 }
 
 type countingProvider struct {
-	calls  int
-	inputs int
+	calls      int
+	inputs     int
+	batchSizes []string
+	texts      []string
 }
 
 func (p *countingProvider) ModelID() ModelID {
@@ -517,12 +773,29 @@ func (p *countingProvider) ModelID() ModelID {
 func (p *countingProvider) Embed(_ context.Context, inputs []EmbeddingInput) ([]Vector, error) {
 	p.calls++
 	p.inputs += len(inputs)
+	p.batchSizes = append(p.batchSizes, fmt.Sprint(len(inputs)))
 	out := make([]Vector, 0, len(inputs))
-	for range inputs {
+	for _, input := range inputs {
+		p.texts = append(p.texts, input.Text)
 		out = append(out, Vector{1, 2})
 	}
 	return out, nil
 }
+
+type recordingProgress struct {
+	starts   []string
+	advances int
+}
+
+func (p *recordingProgress) Start(label string, total int) {
+	p.starts = append(p.starts, fmt.Sprintf("%s:%d", label, total))
+}
+
+func (p *recordingProgress) Advance(string) {
+	p.advances++
+}
+
+func (p *recordingProgress) Finish() {}
 
 func initGitRepoNoCommit(t *testing.T) string {
 	t.Helper()

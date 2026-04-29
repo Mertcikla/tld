@@ -14,6 +14,7 @@ require (
 	github.com/speps/go-hashids/v2 v2.0.1
 	github.com/spf13/cobra v1.9.1
 	github.com/tetratelabs/wazero v1.11.0
+	github.com/viant/sqlite-vec v0.3.0
 	go.lsp.dev/jsonrpc2 v0.10.0
 	go.lsp.dev/protocol v0.12.0
 	go.lsp.dev/uri v0.3.0
@@ -37,6 +38,7 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
+	github.com/viant/vec v0.1.1-0.20240628004145-aad750556278 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.lsp.dev/pkg v0.0.0-20210717090340-384b27a52fb2 // indirect
 	go.uber.org/atomic v1.9.0 // indirect

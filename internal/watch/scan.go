@@ -24,6 +24,7 @@ type Scanner struct {
 	Store    *Store
 	Analyzer analyzer.Service
 	Rules    *ignore.Rules
+	Progress ProgressSink
 }
 
 func NewScanner(store *Store) *Scanner {
@@ -85,6 +86,8 @@ func (s *Scanner) Scan(ctx context.Context, path string) (ScanResult, error) {
 		return result, err
 	}
 	result.FilesSeen = len(files)
+	progressStart(s.Progress, "Scanning source files", len(files))
+	defer progressFinish(s.Progress)
 	seen := make(map[string]struct{}, len(files))
 	var parsedFiles []parsedFile
 	var parsedFileIDs []int64
@@ -95,6 +98,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (ScanResult, error) {
 			scanErr = err
 			return result, err
 		}
+		progressAdvance(s.Progress, rel)
 		rel = filepath.ToSlash(rel)
 		seen[rel] = struct{}{}
 		info, err := os.Stat(absFile)
@@ -226,6 +230,7 @@ func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath string, source
 		out = append(out, Symbol{
 			RepositoryID:  repositoryID,
 			FileID:        fileID,
+			FilePath:      relPath,
 			StableKey:     fmt.Sprintf("go:%s:%s:%s", relPath, sym.Kind, qualified),
 			Name:          sym.Name,
 			QualifiedName: qualified,

@@ -29,6 +29,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import ViewsGrid from './ViewsGrid'
 import InfiniteZoom, { type InfiniteZoomHandle } from './InfiniteZoom'
 import { ZoomInIcon } from '../components/Icons'
+import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../components/WatchRuntimePanel'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
 import type { ViewTreeNode } from '../types'
@@ -451,6 +452,14 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     // Initial tree load only; view changes should not refetch the hierarchy.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  useEffect(() => {
+    const refresh = () => {
+      void refreshTree()
+    }
+    window.addEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
+    return () => window.removeEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
+  }, [refreshTree])
 
   const commitSearchResult = useCallback((result: ViewTreeNode) => {
     if (view === 'explore') {

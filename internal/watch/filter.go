@@ -41,7 +41,7 @@ func settingsHash(req RepresentRequest) string {
 	return stableHash(req)
 }
 
-func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds Thresholds, rawGraphHash, settingsHash string) (filterResult, error) {
+func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds Thresholds, rawGraphHash, settingsHash string, embeddings map[int64]Vector) (filterResult, error) {
 	symbols, err := store.SymbolsForRepository(ctx, repositoryID)
 	if err != nil {
 		return filterResult{}, err
@@ -101,6 +101,9 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 			reasons[sym.ID] = "utility noise collapsed"
 		}
 	}
+	if len(embeddings) > 0 {
+		rescueRelatedSymbols(symbols, refs, visible, reasons, embeddings)
+	}
 
 	runID, err := store.BeginFilterRun(ctx, repositoryID, settingsHash, rawGraphHash)
 	if err != nil {
@@ -159,6 +162,38 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 		Incoming:          incoming,
 		Outgoing:          outgoing,
 	}, nil
+}
+
+func rescueRelatedSymbols(symbols []Symbol, refs []Reference, visible map[int64]Symbol, reasons map[int64]string, embeddings map[int64]Vector) {
+	byID := map[int64]Symbol{}
+	for _, sym := range symbols {
+		byID[sym.ID] = sym
+	}
+	for _, ref := range refs {
+		sourceVisible := visible[ref.SourceSymbolID]
+		targetVisible := visible[ref.TargetSymbolID]
+		switch {
+		case sourceVisible.ID != 0 && targetVisible.ID == 0:
+			if target, ok := byID[ref.TargetSymbolID]; ok && embeddingSimilar(sourceVisible.ID, target.ID, embeddings, 0.82) {
+				visible[target.ID] = target
+				reasons[target.ID] = "embedding-similar graph neighbor"
+			}
+		case targetVisible.ID != 0 && sourceVisible.ID == 0:
+			if source, ok := byID[ref.SourceSymbolID]; ok && embeddingSimilar(targetVisible.ID, source.ID, embeddings, 0.82) {
+				visible[source.ID] = source
+				reasons[source.ID] = "embedding-similar graph neighbor"
+			}
+		}
+	}
+}
+
+func embeddingSimilar(leftID, rightID int64, embeddings map[int64]Vector, threshold float64) bool {
+	left, leftOK := embeddings[leftID]
+	right, rightOK := embeddings[rightID]
+	if !leftOK || !rightOK {
+		return false
+	}
+	return CosineSimilarity(left, right) >= threshold
 }
 
 func symbolByID(symbols []Symbol, id int64) (Symbol, bool) {

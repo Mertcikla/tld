@@ -22,6 +22,8 @@ type RunnerOptions struct {
 	Debounce          time.Duration
 	HeartbeatInterval time.Duration
 	SummaryInterval   time.Duration
+	Embedding         EmbeddingConfig
+	Progress          ProgressSink
 	Events            chan<- Event
 	Ready             chan<- RunnerResult
 }
@@ -55,6 +57,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	if r.Scanner == nil {
 		r.Scanner = NewScanner(r.Store)
 	}
+	r.Scanner.Progress = opts.Progress
 	if r.Representer == nil {
 		r.Representer = NewRepresenter(r.Store)
 	}
@@ -84,10 +87,12 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	}
 
 	gitStatus, _ := gitStatusSnapshot(repoRoot)
+	emit(opts.Events, Event{Type: "scan.started", At: nowString()})
 	scan, err := r.Scanner.Scan(ctx, repoRoot)
 	if err != nil {
 		return RunnerResult{}, err
 	}
+	emit(opts.Events, Event{Type: "scan.completed", RepositoryID: scan.RepositoryID, At: nowString(), Data: scan})
 	repo, err := r.Store.Repository(ctx, scan.RepositoryID)
 	if err != nil {
 		return RunnerResult{}, err
@@ -106,8 +111,8 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 		emit(opts.Events, Event{Type: "watch.stopped", RepositoryID: repo.ID, At: nowString()})
 	}()
 
-	emit(opts.Events, Event{Type: "scan.completed", RepositoryID: repo.ID, At: nowString(), Data: scan})
-	rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{})
+	emit(opts.Events, Event{Type: "representation.started", RepositoryID: repo.ID, At: nowString()})
+	rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{Embedding: opts.Embedding, Progress: opts.Progress})
 	if err != nil {
 		return RunnerResult{}, err
 	}
@@ -160,8 +165,18 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			if err == nil && status == "stopping" {
 				return result, nil
 			}
+			if err == nil && status == "paused" {
+				emit(opts.Events, Event{Type: "watch.paused", RepositoryID: repo.ID, At: nowString()})
+			}
 			emit(opts.Events, Event{Type: "watch.heartbeat", RepositoryID: repo.ID, At: nowString()})
 		case <-poll.C:
+			status, err := r.Store.LockStatus(ctx, repo.ID, token)
+			if err == nil && status == "paused" {
+				continue
+			}
+			if err == nil && status == "stopping" {
+				return result, nil
+			}
 			nextSourceSnapshot := sourceFileSnapshot(repoRoot)
 			nextFingerprint := sourceFileFingerprint(nextSourceSnapshot)
 			nextGit, _ := gitStatusSnapshot(repoRoot)
@@ -181,7 +196,8 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 				continue
 			}
 			emit(opts.Events, Event{Type: "scan.completed", RepositoryID: repo.ID, At: nowString(), Data: scan})
-			rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{})
+			emit(opts.Events, Event{Type: "representation.started", RepositoryID: repo.ID, At: nowString()})
+			rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{Embedding: opts.Embedding, Progress: opts.Progress})
 			if err != nil {
 				emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: err.Error()})
 				continue

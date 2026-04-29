@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 func TestScanCommandFailsClearlyOutsideGitRepository(t *testing.T) {
@@ -63,7 +65,7 @@ func helper() {}
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"represent", repo, "--data-dir", dataDir})
+	cmd.SetArgs([]string{"represent", repo, "--data-dir", dataDir, "--embedding-provider", "none"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("represent command: %v\n%s", err, out.String())
 	}
@@ -72,6 +74,25 @@ func helper() {}
 		if !strings.Contains(text, expected) {
 			t.Fatalf("represent output missing %q:\n%s", expected, text)
 		}
+	}
+}
+
+func TestResolveEmbeddingConfigPrecedence(t *testing.T) {
+	t.Setenv("TLD_EMBEDDING_PROVIDER", "local-deterministic-test")
+	t.Setenv("TLD_EMBEDDING_MODEL", "env-model")
+	t.Setenv("TLD_EMBEDDING_DIMENSION", "7")
+	cfg := &workspace.GlobalConfig{}
+	cfg.Watch.Embedding.Provider = "ollama"
+	cfg.Watch.Embedding.Model = "config-model"
+
+	resolved := resolveEmbeddingConfig(cfg, "none", "", "", 0)
+	if resolved.Provider != "none" {
+		t.Fatalf("flag provider should win over env/config, got %+v", resolved)
+	}
+
+	resolved = resolveEmbeddingConfig(cfg, "", "", "", 0)
+	if resolved.Provider != "local-deterministic-test" || resolved.Model != "env-model" || resolved.Dimension != 7 {
+		t.Fatalf("env should win over config, got %+v", resolved)
 	}
 }
 

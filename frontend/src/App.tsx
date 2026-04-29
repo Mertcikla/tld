@@ -11,6 +11,7 @@ import AppearanceSettings from './pages/AppearanceSettings'
 import WatchHistory from './pages/WatchHistory'
 import { HeaderProvider, useHeader } from './components/HeaderContext'
 import TopMenuBar from './components/TopMenuBar'
+import WatchRuntimePanel from './components/WatchRuntimePanel'
 import { ThemeProvider } from './context/ThemeContext'
 import { ACCENT_DEFAULT, BACKGROUND_DEFAULT, ELEMENT_DEFAULT, hexToRgba } from './constants/colors'
 import { platform } from './platform/local'
@@ -32,6 +33,7 @@ function AppLayout() {
       />
       <Box flex="1" overflow="hidden" position="relative">
         <Outlet />
+        <WatchRuntimePanel />
       </Box>
     </Box>
   )

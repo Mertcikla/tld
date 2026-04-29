@@ -64,6 +64,44 @@ export interface WatchRepository {
   identity_status: string
 }
 
+export interface WatchLock {
+  id: number
+  repository_id: number
+  pid: number
+  started_at: string
+  heartbeat_at: string
+  status: 'active' | 'paused' | 'stopping' | 'stale' | 'released' | string
+}
+
+export interface WatchStatus {
+  active: boolean
+  repository?: WatchRepository
+  lock?: WatchLock
+}
+
+export interface WatchRepresentationSummary {
+  repository_id: number
+  raw_graph_hash?: string
+  filter_settings_hash?: string
+  representation_hash?: string
+  last_status?: string
+  last_started_at?: string
+  last_finished_at?: string
+  elements_created: number
+  elements_updated: number
+  connectors_created: number
+  connectors_updated: number
+  views_created: number
+}
+
+export interface WatchEvent {
+  type: string
+  repository_id?: number
+  message?: string
+  at: string
+  data?: unknown
+}
+
 export interface WatchVersion {
   id: number
   repository_id: number
@@ -787,6 +825,16 @@ export const api = {
   },
 
   watch: {
+    status: async (): Promise<WatchStatus> => {
+      const res = await fetch(apiUrl('/watch/status'))
+      if (!res.ok) throw new Error(`Failed to load watch status: ${res.statusText}`)
+      return res.json()
+    },
+    websocketUrl: (): string => {
+      const url = new URL(apiUrl('/watch/ws'), window.location.href)
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      return url.toString()
+    },
     repositories: async (): Promise<WatchRepository[]> => {
       const res = await fetch(apiUrl('/watch/repositories'))
       if (!res.ok) throw new Error(`Failed to load watch repositories: ${res.statusText}`)

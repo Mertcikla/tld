@@ -49,6 +49,9 @@ func (h *Handler) watchWebSocket(w http.ResponseWriter, r *http.Request) {
 		eventType := "watch.stopped"
 		if live {
 			eventType = "watch.heartbeat"
+			if lock.Status == "paused" {
+				eventType = "watch.paused"
+			}
 		}
 		if err := writeWebSocketJSON(rw, Event{Type: eventType, RepositoryID: lock.RepositoryID, At: nowString(), Data: lock}); err != nil {
 			return
@@ -108,6 +111,28 @@ func (h *Handler) watchWebSocketReads(ctx context.Context, reader io.Reader, con
 			continue
 		}
 		switch body.Type {
+		case "watch.pause":
+			if body.RepositoryID > 0 {
+				_ = h.Store.RequestPause(ctx, body.RepositoryID)
+				emitControlEvent(controlEvents, Event{Type: "watch.paused", RepositoryID: body.RepositoryID, At: nowString()})
+			} else {
+				lock, live, _ := h.Store.ActiveLiveLock(ctx, LockHeartbeatTimeout)
+				_ = h.Store.RequestPauseActive(ctx)
+				if live {
+					emitControlEvent(controlEvents, Event{Type: "watch.paused", RepositoryID: lock.RepositoryID, At: nowString(), Data: lock})
+				}
+			}
+		case "watch.resume":
+			if body.RepositoryID > 0 {
+				_ = h.Store.RequestResume(ctx, body.RepositoryID)
+				emitControlEvent(controlEvents, Event{Type: "watch.heartbeat", RepositoryID: body.RepositoryID, At: nowString()})
+			} else {
+				lock, live, _ := h.Store.ActiveLiveLock(ctx, LockHeartbeatTimeout)
+				_ = h.Store.RequestResumeActive(ctx)
+				if live {
+					emitControlEvent(controlEvents, Event{Type: "watch.heartbeat", RepositoryID: lock.RepositoryID, At: nowString(), Data: lock})
+				}
+			}
 		case "watch.stop":
 			if body.RepositoryID > 0 {
 				_ = h.Store.RequestStop(ctx, body.RepositoryID)

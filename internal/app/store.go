@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
 )
 
@@ -245,18 +246,49 @@ func OpenStore(dbPath string, migrations embed.FS) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
+	if err := configureSQLiteDB(db); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
+	if err := sqlitevec.Register(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("register sqlite-vec: %w", err)
+	}
 	if err := applyMigrations(db, migrations); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	store := &Store{db: db}
 	if err := store.ensureBootstrapData(context.Background()); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
+}
+
+func configureSQLiteDB(db *sql.DB) error {
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+
+	pragmas := []string{
+		`PRAGMA busy_timeout = 5000;`,
+		`PRAGMA journal_mode = WAL;`,
+		`PRAGMA synchronous = NORMAL;`,
+		`PRAGMA foreign_keys = ON;`,
+	}
+	for _, pragma := range pragmas {
+		if _, err := db.Exec(pragma); err != nil {
+			return fmt.Errorf("configure sqlite %s: %w", pragma, err)
+		}
+	}
+	return nil
+}
+
+func (s *Store) Close() error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	return s.db.Close()
 }
 
 func (s *Store) ensureBootstrapData(ctx context.Context) error {

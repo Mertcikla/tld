@@ -5,9 +5,17 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
+)
+
+const (
+	defaultEmbeddingBatchSize     = 512
+	maxEmbeddingInputApproxTokens = 8000
+	maxEmbeddingInputChars        = maxEmbeddingInputApproxTokens * 4
 )
 
 type Representer struct {
@@ -48,21 +56,40 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		modelIDPtr = nil
 	}
 
-	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash)
+	allSymbols, err := r.Store.SymbolsForRepository(ctx, repositoryID)
 	if err != nil {
 		return RepresentResult{}, err
 	}
-	if err := r.cacheEmbeddings(ctx, modelID, provider, filtered.VisibleSymbols); err != nil {
+	identityKeys, err := r.Store.SymbolIdentityKeys(ctx, repositoryID)
+	if err != nil {
+		return RepresentResult{}, err
+	}
+	result := RepresentResult{}
+	embeddingVectors := map[int64]Vector{}
+	if model.Provider != "none" {
+		stats, vectors, err := r.cacheEmbeddings(ctx, modelID, provider, repo.RepoRoot, allSymbols, identityKeys, req.Progress)
+		if err != nil {
+			return RepresentResult{}, err
+		}
+		result.EmbeddingCacheHits = stats.CacheHits
+		result.EmbeddingsCreated = stats.Created
+		embeddingVectors = vectors
+	}
+
+	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, embeddingVectors)
+	if err != nil {
 		return RepresentResult{}, err
 	}
 
 	representationHash := representationHash(filtered, req)
-	result := RepresentResult{
+	result = RepresentResult{
 		RepositoryID:       repositoryID,
 		FilterRunID:        filtered.RunID,
 		RawGraphHash:       rawGraphHash,
 		SettingsHash:       settingsHash,
 		RepresentationHash: representationHash,
+		EmbeddingCacheHits: result.EmbeddingCacheHits,
+		EmbeddingsCreated:  result.EmbeddingsCreated,
 	}
 	runID, err := r.Store.BeginRepresentationRun(ctx, repositoryID, rawGraphHash, settingsHash, modelIDPtr, representationHash)
 	if err != nil {
@@ -78,7 +105,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		_ = r.Store.FinishRepresentationRun(context.Background(), runID, status, result, runErr)
 	}()
 
-	stats, err := r.materialize(ctx, repo, filtered, req.Thresholds, settingsHash)
+	stats, err := r.materialize(ctx, repo, filtered, req.Thresholds, settingsHash, identityKeys)
 	if err != nil {
 		runErr = err
 		return result, err
@@ -91,36 +118,224 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	return result, nil
 }
 
-func (r *Representer) cacheEmbeddings(ctx context.Context, modelID int64, provider Provider, symbols map[int64]Symbol) error {
+type embeddingCacheStats struct {
+	CacheHits int
+	Created   int
+}
+
+func progressStart(progress ProgressSink, label string, total int) {
+	if progress != nil {
+		progress.Start(label, total)
+	}
+}
+
+func progressAdvance(progress ProgressSink, label string) {
+	if progress != nil {
+		progress.Advance(label)
+	}
+}
+
+func progressFinish(progress ProgressSink) {
+	if progress != nil {
+		progress.Finish()
+	}
+}
+
+func (r *Representer) cacheEmbeddings(ctx context.Context, modelID int64, provider Provider, repoRoot string, symbols []Symbol, identityKeys map[string]string, progress ProgressSink) (embeddingCacheStats, map[int64]Vector, error) {
+	stats := embeddingCacheStats{}
+	vectorsBySymbol := map[int64]Vector{}
 	model := provider.ModelID()
 	if model.Provider == "none" {
-		return nil
+		return stats, vectorsBySymbol, nil
 	}
 	inputs := make([]EmbeddingInput, 0, len(symbols))
-	for _, sym := range sortedSymbols(symbols) {
-		input := EmbeddingInput{OwnerType: "symbol", OwnerKey: sym.StableKey, Text: sym.QualifiedName + "\n" + sym.Kind + "\n" + sym.FilePath}
-		if _, ok, err := r.Store.Embedding(ctx, modelID, input.OwnerType, input.OwnerKey, inputHash(input)); err != nil {
-			return err
+	missingSymbols := make([]Symbol, 0, len(symbols))
+	progressStart(progress, "Preparing symbol embeddings", len(symbols))
+	for _, sym := range symbols {
+		ownerKey := symbolOwnerKey(sym, identityKeys)
+		input := EmbeddingInput{OwnerType: "symbol", OwnerKey: ownerKey, Text: symbolEmbeddingText(repoRoot, sym)}
+		if data, ok, err := r.Store.Embedding(ctx, modelID, input.OwnerType, input.OwnerKey, inputHash(input)); err != nil {
+			progressFinish(progress)
+			return stats, vectorsBySymbol, err
 		} else if !ok {
 			inputs = append(inputs, input)
+			missingSymbols = append(missingSymbols, sym)
+		} else {
+			stats.CacheHits++
+			vectorsBySymbol[sym.ID] = bytesToVector(data)
 		}
+		progressAdvance(progress, sym.QualifiedName)
 	}
+	progressFinish(progress)
 	if len(inputs) == 0 {
-		return nil
+		return stats, vectorsBySymbol, nil
 	}
-	vectors, err := provider.Embed(ctx, inputs)
-	if err != nil {
-		return err
-	}
-	if len(vectors) != len(inputs) {
-		return fmt.Errorf("embedding provider returned %d vectors for %d inputs", len(vectors), len(inputs))
+
+	vectors := make([]Vector, 0, len(inputs))
+	progressStart(progress, "Embedding symbols", len(inputs))
+	for start := 0; start < len(inputs); start += defaultEmbeddingBatchSize {
+		end := start + defaultEmbeddingBatchSize
+		if end > len(inputs) {
+			end = len(inputs)
+		}
+		chunk := inputs[start:end]
+		chunkVectors, err := provider.Embed(ctx, chunk)
+		if err != nil {
+			progressFinish(progress)
+			return stats, vectorsBySymbol, err
+		}
+		if len(chunkVectors) != len(chunk) {
+			progressFinish(progress)
+			return stats, vectorsBySymbol, fmt.Errorf("embedding provider returned %d vectors for %d inputs", len(chunkVectors), len(chunk))
+		}
+		vectors = append(vectors, chunkVectors...)
+		for _, input := range chunk {
+			progressAdvance(progress, input.OwnerKey)
+		}
 	}
 	for i, input := range inputs {
 		if err := r.Store.SaveEmbedding(ctx, modelID, input.OwnerType, input.OwnerKey, inputHash(input), vectorBytes(vectors[i])); err != nil {
-			return err
+			progressFinish(progress)
+			return stats, vectorsBySymbol, err
+		}
+		stats.Created++
+		vectorsBySymbol[missingSymbols[i].ID] = vectors[i]
+	}
+	progressFinish(progress)
+	return stats, vectorsBySymbol, nil
+}
+
+func symbolEmbeddingText(repoRoot string, sym Symbol) string {
+	body := symbolCodeBody(repoRoot, sym)
+	if strings.TrimSpace(body) == "" {
+		body = sym.QualifiedName + "\n" + sym.Kind + "\n" + sym.FilePath
+	}
+	return shrinkEmbeddingText(outdentCode(body))
+}
+
+func symbolCodeBody(repoRoot string, sym Symbol) string {
+	if strings.TrimSpace(repoRoot) == "" || strings.TrimSpace(sym.FilePath) == "" {
+		return ""
+	}
+	cleanRel := filepath.Clean(filepath.FromSlash(sym.FilePath))
+	if filepath.IsAbs(cleanRel) || cleanRel == "." || cleanRel == ".." || strings.HasPrefix(cleanRel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(repoRoot, cleanRel))
+	if err != nil {
+		return ""
+	}
+	end := sym.StartLine
+	if sym.EndLine != nil {
+		end = *sym.EndLine
+	}
+	return lineRange(strings.Split(string(data), "\n"), sym.StartLine, end)
+}
+
+func outdentCode(code string) string {
+	code = strings.ReplaceAll(code, "\r\n", "\n")
+	code = strings.ReplaceAll(code, "\r", "\n")
+	lines := strings.Split(code, "\n")
+	minIndent := -1
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		indent := leadingIndentWidth(line)
+		if minIndent == -1 || indent < minIndent {
+			minIndent = indent
 		}
 	}
-	return nil
+	if minIndent <= 0 {
+		return strings.TrimSpace(code)
+	}
+	for i, line := range lines {
+		lines[i] = trimIndentWidth(line, minIndent)
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func leadingIndentWidth(line string) int {
+	width := 0
+	for _, r := range line {
+		switch r {
+		case ' ':
+			width++
+		case '\t':
+			width += 4
+		default:
+			return width
+		}
+	}
+	return width
+}
+
+func trimIndentWidth(line string, maxWidth int) string {
+	width := 0
+	for i, r := range line {
+		switch r {
+		case ' ':
+			width++
+		case '\t':
+			width += 4
+		default:
+			return line[i:]
+		}
+		if width >= maxWidth {
+			return line[i+len(string(r)):]
+		}
+	}
+	return ""
+}
+
+func shrinkEmbeddingText(text string) string {
+	text = strings.TrimSpace(text)
+	if approximateTokenCount(text) <= maxEmbeddingInputApproxTokens {
+		return text
+	}
+	text = dropLowSignalCodeLines(text)
+	if approximateTokenCount(text) <= maxEmbeddingInputApproxTokens {
+		return text
+	}
+	if len(text) <= maxEmbeddingInputChars {
+		return text
+	}
+	marker := "\n\n/* ... middle omitted for embedding context ... */\n\n"
+	keep := maxEmbeddingInputChars - len(marker)
+	if keep <= 0 {
+		return text[:maxEmbeddingInputChars]
+	}
+	head := keep * 2 / 3
+	tail := keep - head
+	return strings.TrimSpace(text[:head]) + marker + strings.TrimSpace(text[len(text)-tail:])
+}
+
+func approximateTokenCount(text string) int {
+	if text == "" {
+		return 0
+	}
+	fields := strings.Fields(text)
+	byChars := (len(text) + 3) / 4
+	if byChars > len(fields) {
+		return byChars
+	}
+	return len(fields)
+}
+
+func dropLowSignalCodeLines(text string) string {
+	lines := strings.Split(text, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/*") || strings.HasPrefix(trimmed, "*") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if len(kept) == 0 {
+		return text
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
 type materializeStats struct {
@@ -131,8 +346,8 @@ type materializeStats struct {
 	ViewsCreated      int
 }
 
-func (r *Representer) materialize(ctx context.Context, repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string) (materializeStats, error) {
-	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash}
+func (r *Representer) materialize(ctx context.Context, repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string) (materializeStats, error) {
+	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys}
 	if err := m.ensureTags(ctx); err != nil {
 		return m.stats, err
 	}
@@ -269,7 +484,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 				}
 			}
 			for i, sym := range chunk {
-				elem, err := m.upsertElement(ctx, "symbol", sym.StableKey, elementInput{
+				elem, err := m.upsertElement(ctx, "symbol", symbolOwnerKey(sym, m.identityKeys), elementInput{
 					Name:        sym.QualifiedName,
 					Kind:        sym.Kind,
 					Description: fmt.Sprintf("%s:%d", sym.FilePath, sym.StartLine),
@@ -295,15 +510,20 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, fileElements, symbolElements, symbolViews, repoView); err != nil {
 		return m.stats, err
 	}
+	if err := m.pruneStaleConnectors(ctx); err != nil {
+		return m.stats, err
+	}
 	return m.stats, nil
 }
 
 type materializer struct {
-	store        *Store
-	repo         Repository
-	thresholds   Thresholds
-	settingsHash string
-	stats        materializeStats
+	store            *Store
+	repo             Repository
+	thresholds       Thresholds
+	settingsHash     string
+	identityKeys     map[string]string
+	activeConnectors map[string]struct{}
+	stats            materializeStats
 }
 
 type elementInput struct {
@@ -408,6 +628,9 @@ func (m *materializer) upsertPlacement(ctx context.Context, viewID, elementID in
 }
 
 func (m *materializer) materializeConnectors(ctx context.Context, refs []Reference, symbols map[int64]Symbol, fileElements map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, repoView int64) error {
+	if m.activeConnectors == nil {
+		m.activeConnectors = map[string]struct{}{}
+	}
 	filePairs := map[string]Reference{}
 	symbolConnectorCount := map[int64]int{}
 	for _, ref := range refs {
@@ -424,7 +647,9 @@ func (m *materializer) materializeConnectors(ctx context.Context, refs []Referen
 		if viewID == 0 || viewID != symbolViews[ref.TargetSymbolID] || symbolConnectorCount[viewID] >= m.thresholds.MaxConnectorsPerView {
 			continue
 		}
-		if err := m.upsertConnector(ctx, "reference", fmt.Sprintf("symbol:%d:%d:%s", ref.SourceSymbolID, ref.TargetSymbolID, ref.Kind), viewID, symbolElements[ref.SourceSymbolID], symbolElements[ref.TargetSymbolID], "calls"); err != nil {
+		sourceKey := symbolOwnerKey(source, m.identityKeys)
+		targetKey := symbolOwnerKey(target, m.identityKeys)
+		if err := m.upsertConnector(ctx, "reference", fmt.Sprintf("symbol:%s:%s:%s", sourceKey, targetKey, ref.Kind), viewID, symbolElements[ref.SourceSymbolID], symbolElements[ref.TargetSymbolID], "calls"); err != nil {
 			return err
 		}
 		symbolConnectorCount[viewID]++
@@ -445,6 +670,9 @@ func (m *materializer) materializeConnectors(ctx context.Context, refs []Referen
 func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label string) error {
 	if sourceElementID == 0 || targetElementID == 0 || sourceElementID == targetElementID {
 		return nil
+	}
+	if m.activeConnectors != nil {
+		m.activeConnectors[ownerType+"\x00"+ownerKey] = struct{}{}
 	}
 	if id, ok, err := m.store.MappingResourceID(ctx, m.repo.ID, ownerType, ownerKey, "connector"); err != nil {
 		return err
@@ -477,6 +705,48 @@ func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey 
 	return nil
 }
 
+func (m *materializer) pruneStaleConnectors(ctx context.Context) error {
+	if m.activeConnectors == nil {
+		return nil
+	}
+	rows, err := m.store.db.QueryContext(ctx, `
+		SELECT id, owner_type, owner_key, resource_id
+		FROM watch_materialization
+		WHERE repository_id = ? AND resource_type = 'connector'`, m.repo.ID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type staleMapping struct {
+		ID         int64
+		ResourceID int64
+		OwnerType  string
+		OwnerKey   string
+	}
+	var stale []staleMapping
+	for rows.Next() {
+		var mapping staleMapping
+		if err := rows.Scan(&mapping.ID, &mapping.OwnerType, &mapping.OwnerKey, &mapping.ResourceID); err != nil {
+			return err
+		}
+		if _, ok := m.activeConnectors[mapping.OwnerType+"\x00"+mapping.OwnerKey]; !ok {
+			stale = append(stale, mapping)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, mapping := range stale {
+		if _, err := m.store.db.ExecContext(ctx, `DELETE FROM connectors WHERE id = ?`, mapping.ResourceID); err != nil {
+			return err
+		}
+		if _, err := m.store.db.ExecContext(ctx, `DELETE FROM watch_materialization WHERE id = ?`, mapping.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func elementExists(ctx context.Context, db *sql.DB, id int64) bool {
 	return rowExists(ctx, db, `SELECT 1 FROM elements WHERE id = ?`, id)
 }
@@ -503,6 +773,15 @@ func filesForSymbols(symbols map[int64]Symbol) map[string]struct{} {
 		}
 	}
 	return out
+}
+
+func symbolOwnerKey(sym Symbol, identityKeys map[string]string) string {
+	if identityKeys != nil {
+		if key := strings.TrimSpace(identityKeys[sym.StableKey]); key != "" {
+			return key
+		}
+	}
+	return sym.StableKey
 }
 
 func folderSet(files map[string]struct{}) []string {
