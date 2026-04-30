@@ -10,6 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -266,7 +268,7 @@ func (s *Store) DeleteMissingFiles(ctx context.Context, repositoryID int64, seen
 }
 
 func (s *Store) ReplaceFileSymbols(ctx context.Context, repositoryID, fileID int64, symbols []Symbol) error {
-	existingIdentities, err := s.symbolIdentitiesForFile(ctx, repositoryID, fileID)
+	existingIdentities, err := s.replacementIdentityCandidates(ctx, repositoryID, fileID)
 	if err != nil {
 		return err
 	}
@@ -339,6 +341,7 @@ type storedSymbolIdentity struct {
 	QualifiedName string
 	StartLine     int
 	ContentHash   string
+	MissingFile   bool
 }
 
 func (s *Store) symbolIdentitiesForFile(ctx context.Context, repositoryID, fileID int64) ([]storedSymbolIdentity, error) {
@@ -361,6 +364,70 @@ func (s *Store) symbolIdentitiesForFile(ctx context.Context, repositoryID, fileI
 		out = append(out, identity)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) symbolIdentitiesForRepository(ctx context.Context, repositoryID int64) ([]storedSymbolIdentity, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT COALESCE(i.identity_key, ws.stable_key), ws.stable_key, f.path, ws.kind, ws.name, ws.qualified_name, ws.start_line, ws.content_hash
+		FROM watch_symbols ws
+		JOIN watch_files f ON f.id = ws.file_id
+		LEFT JOIN watch_symbol_identities i ON i.repository_id = ws.repository_id AND i.current_stable_key = ws.stable_key
+		WHERE ws.repository_id = ?`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []storedSymbolIdentity
+	for rows.Next() {
+		var identity storedSymbolIdentity
+		if err := rows.Scan(&identity.IdentityKey, &identity.StableKey, &identity.FilePath, &identity.Kind, &identity.Name, &identity.QualifiedName, &identity.StartLine, &identity.ContentHash); err != nil {
+			return nil, err
+		}
+		out = append(out, identity)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) replacementIdentityCandidates(ctx context.Context, repositoryID, fileID int64) ([]storedSymbolIdentity, error) {
+	currentFile, err := s.symbolIdentitiesForFile(ctx, repositoryID, fileID)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := s.Repository(ctx, repositoryID)
+	if err != nil || strings.TrimSpace(repo.RepoRoot) == "" {
+		return currentFile, err
+	}
+	all, err := s.symbolIdentitiesForRepository(ctx, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]struct{}{}
+	out := make([]storedSymbolIdentity, 0, len(currentFile))
+	for _, identity := range currentFile {
+		seen[identity.IdentityKey] = struct{}{}
+		out = append(out, identity)
+	}
+	for _, identity := range all {
+		if _, ok := seen[identity.IdentityKey]; ok {
+			continue
+		}
+		if identity.FilePath == "" || !sourcePathMissing(repo.RepoRoot, identity.FilePath) {
+			continue
+		}
+		identity.MissingFile = true
+		out = append(out, identity)
+		seen[identity.IdentityKey] = struct{}{}
+	}
+	return out, nil
+}
+
+func sourcePathMissing(repoRoot, relPath string) bool {
+	cleanRel := filepath.Clean(filepath.FromSlash(relPath))
+	if filepath.IsAbs(cleanRel) || cleanRel == "." || cleanRel == ".." || strings.HasPrefix(cleanRel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(repoRoot, cleanRel))
+	return errors.Is(err, os.ErrNotExist)
 }
 
 func (s *Store) matchSymbolIdentity(sym Symbol, existing []storedSymbolIdentity, used map[string]struct{}) string {
@@ -393,6 +460,29 @@ func (s *Store) matchSymbolIdentity(sym Symbol, existing []storedSymbolIdentity,
 		}
 		if sameQualifierParent(identity.QualifiedName, sym.QualifiedName) {
 			score += 0.1
+		}
+		if score > bestScore {
+			bestScore = score
+			bestKey = identity.IdentityKey
+		}
+	}
+	for _, identity := range existing {
+		if _, ok := used[identity.IdentityKey]; ok {
+			continue
+		}
+		if !identity.MissingFile || identity.Kind != sym.Kind || identity.ContentHash == "" || identity.ContentHash != sym.ContentHash {
+			continue
+		}
+		score := 0.80
+		if sameQualifierParent(identity.QualifiedName, sym.QualifiedName) {
+			score += 0.10
+		}
+		if nameTokenSimilarity(identity.QualifiedName, sym.QualifiedName) >= 0.50 {
+			score += 0.05
+		}
+		lineDelta := absInt(identity.StartLine - sym.StartLine)
+		if lineDelta <= 5 {
+			score += 0.05
 		}
 		if score > bestScore {
 			bestScore = score
@@ -1725,6 +1815,38 @@ func qualifierParent(value string) string {
 		return value[:idx]
 	}
 	return ""
+}
+
+func nameTokenSimilarity(left, right string) float64 {
+	leftTokens := splitIdentifierToken(pathBaseQualifier(left))
+	rightTokens := splitIdentifierToken(pathBaseQualifier(right))
+	if len(leftTokens) == 0 || len(rightTokens) == 0 {
+		return 0
+	}
+	leftSet := make(map[string]struct{}, len(leftTokens))
+	for _, token := range leftTokens {
+		leftSet[token] = struct{}{}
+	}
+	intersection := 0
+	union := len(leftSet)
+	for _, token := range rightTokens {
+		if _, ok := leftSet[token]; ok {
+			intersection++
+			continue
+		}
+		union++
+	}
+	if union == 0 {
+		return 0
+	}
+	return float64(intersection) / float64(union)
+}
+
+func pathBaseQualifier(value string) string {
+	if idx := strings.LastIndex(value, "."); idx >= 0 && idx+1 < len(value) {
+		return value[idx+1:]
+	}
+	return value
 }
 
 func embeddingDataset(modelID int64) string {

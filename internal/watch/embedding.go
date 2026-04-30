@@ -10,8 +10,11 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
@@ -24,6 +27,8 @@ const (
 	DefaultOpenAIAPIKey             = "tldcli"
 	DefaultOllamaEndpoint           = "http://localhost:11434"
 	DefaultOllamaModel              = "jina/jina-embeddings-v2-base-en"
+	DefaultLexicalModel             = "lexical-code-fingerprint-v1"
+	DefaultLexicalDimension         = 512
 	DefaultEmbeddingHealthThreshold = 0.70
 	RenameEmbeddingThreshold        = 0.78
 )
@@ -99,6 +104,197 @@ func (p DeterministicProvider) Embed(_ context.Context, inputs []EmbeddingInput)
 		out = append(out, vector)
 	}
 	return out, nil
+}
+
+type LexicalProvider struct {
+	Model     string
+	Dimension int
+}
+
+func (p LexicalProvider) ModelID() ModelID {
+	dimension := p.Dimension
+	if dimension <= 0 {
+		dimension = DefaultLexicalDimension
+	}
+	model := p.Model
+	if strings.TrimSpace(model) == "" {
+		model = DefaultLexicalModel
+	}
+	cfg := EmbeddingConfig{Provider: "local-lexical", Model: model, Dimension: dimension}
+	return ModelID{Provider: cfg.Provider, Model: cfg.Model, Dimension: cfg.Dimension, ConfigHash: stableHash(cfg)}
+}
+
+func (p LexicalProvider) Embed(_ context.Context, inputs []EmbeddingInput) ([]Vector, error) {
+	id := p.ModelID()
+	out := make([]Vector, 0, len(inputs))
+	for _, input := range inputs {
+		out = append(out, lexicalVector(input.Text, id.Dimension))
+	}
+	return out, nil
+}
+
+var lexicalIdentifierRE = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*|\d+(?:\.\d+)?|"[^"\n]*"|'[^'\n]*'|` + "`[^`\n]*`" + `|[{}()[\].,;:+\-*/%=&|!<>^~?]`)
+
+var lexicalKeywords = map[string]struct{}{
+	"break": {}, "case": {}, "catch": {}, "class": {}, "const": {}, "continue": {}, "def": {}, "defer": {}, "do": {}, "else": {}, "enum": {}, "except": {}, "finally": {}, "for": {}, "func": {}, "function": {}, "go": {}, "if": {}, "import": {}, "interface": {}, "lambda": {}, "match": {}, "method": {}, "package": {}, "private": {}, "protected": {}, "public": {}, "raise": {}, "return": {}, "select": {}, "static": {}, "struct": {}, "switch": {}, "throw": {}, "try": {}, "type": {}, "var": {}, "while": {}, "yield": {},
+}
+
+func lexicalVector(text string, dimension int) Vector {
+	if dimension <= 0 {
+		dimension = DefaultLexicalDimension
+	}
+	vector := make(Vector, dimension)
+	tokens := lexicalTokens(text)
+	for i, token := range tokens {
+		lowerToken := strings.ToLower(token)
+		addFeature(vector, "tok:"+lowerToken, 1.0)
+		if _, ok := lexicalKeywords[lowerToken]; ok {
+			addFeature(vector, "kw:"+lowerToken, 1.4)
+		}
+		for _, part := range splitIdentifierToken(token) {
+			addFeature(vector, "id:"+part, 1.2)
+		}
+		for n := 3; n <= 5; n++ {
+			for _, gram := range charNGrams(lowerToken, n) {
+				addFeature(vector, fmt.Sprintf("c%d:%s", n, gram), 0.25)
+			}
+		}
+		if i+1 < len(tokens) {
+			addFeature(vector, "bi:"+lowerToken+"\x00"+strings.ToLower(tokens[i+1]), 0.8)
+		}
+		if i+2 < len(tokens) {
+			addFeature(vector, "tri:"+lowerToken+"\x00"+strings.ToLower(tokens[i+1])+"\x00"+strings.ToLower(tokens[i+2]), 0.45)
+		}
+	}
+	for _, token := range structuralTokens(text) {
+		addFeature(vector, "ast:"+token, 1.0)
+	}
+	normalizeVector(vector)
+	return vector
+}
+
+func lexicalTokens(text string) []string {
+	matches := lexicalIdentifierRE.FindAllString(text, -1)
+	tokens := make([]string, 0, len(matches))
+	for _, match := range matches {
+		token := normalizeLexicalToken(match)
+		if token != "" {
+			tokens = append(tokens, token)
+		}
+	}
+	return tokens
+}
+
+func normalizeLexicalToken(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	switch {
+	case strings.HasPrefix(token, "\"") || strings.HasPrefix(token, "'") || strings.HasPrefix(token, "`"):
+		return "string_lit"
+	case unicode.IsDigit([]rune(token)[0]):
+		return "number_lit"
+	}
+	return token
+}
+
+func splitIdentifierToken(token string) []string {
+	if token == "string_lit" || token == "number_lit" || token == "" {
+		return nil
+	}
+	var parts []string
+	var current []rune
+	flush := func() {
+		if len(current) > 0 {
+			parts = append(parts, strings.ToLower(string(current)))
+			current = nil
+		}
+	}
+	for i, r := range token {
+		if r == '_' || r == '-' || r == '.' {
+			flush()
+			continue
+		}
+		if i > 0 && unicode.IsUpper(r) {
+			flush()
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			current = append(current, unicode.ToLower(r))
+		}
+	}
+	flush()
+	sort.Strings(parts)
+	return compactStrings(parts)
+}
+
+func charNGrams(token string, n int) []string {
+	runes := []rune(token)
+	if len(runes) < n {
+		return nil
+	}
+	out := make([]string, 0, len(runes)-n+1)
+	for i := 0; i+n <= len(runes); i++ {
+		out = append(out, string(runes[i:i+n]))
+	}
+	return out
+}
+
+func structuralTokens(text string) []string {
+	tokens := []string{}
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		for _, marker := range []string{"if", "for", "while", "switch", "match", "try", "catch", "except", "return", "yield", "throw", "raise", "defer", "go"} {
+			if strings.Contains(trimmed, marker) {
+				tokens = append(tokens, marker)
+			}
+		}
+		tokens = append(tokens, fmt.Sprintf("indent:%d", leadingIndentWidth(line)/4))
+	}
+	return tokens
+}
+
+func addFeature(vector Vector, feature string, weight float32) {
+	sum := sha256.Sum256([]byte(feature))
+	index := int(binary.LittleEndian.Uint32(sum[:4]) % uint32(len(vector)))
+	sign := float32(1)
+	if sum[4]&1 == 1 {
+		sign = -1
+	}
+	vector[index] += sign * weight
+}
+
+func normalizeVector(vector Vector) {
+	var norm float64
+	for _, value := range vector {
+		norm += float64(value * value)
+	}
+	if norm == 0 {
+		return
+	}
+	scale := float32(1 / math.Sqrt(norm))
+	for i := range vector {
+		vector[i] *= scale
+	}
+}
+
+func compactStrings(values []string) []string {
+	if len(values) == 0 {
+		return values
+	}
+	out := values[:0]
+	last := ""
+	for _, value := range values {
+		if value == "" || value == last {
+			continue
+		}
+		out = append(out, value)
+		last = value
+	}
+	return out
 }
 
 type OllamaProvider struct {
@@ -325,6 +521,8 @@ func NewEmbeddingProvider(cfg EmbeddingConfig) (Provider, error) {
 		return &OpenAIProvider{Endpoint: cfg.Endpoint, Model: cfg.Model, Dimension: cfg.Dimension, HealthThreshold: cfg.HealthThreshold}, nil
 	case "ollama":
 		return &OllamaProvider{Endpoint: cfg.Endpoint, Model: cfg.Model, Dimension: cfg.Dimension, HealthThreshold: cfg.HealthThreshold}, nil
+	case "local-lexical":
+		return LexicalProvider{Model: cfg.Model, Dimension: cfg.Dimension}, nil
 	case "local-deterministic-test":
 		return DeterministicProvider{Model: cfg.Model, Dimension: cfg.Dimension}, nil
 	default:
@@ -366,6 +564,16 @@ func normalizeEmbeddingConfig(cfg EmbeddingConfig) EmbeddingConfig {
 		if cfg.HealthThreshold <= 0 {
 			cfg.HealthThreshold = DefaultEmbeddingHealthThreshold
 		}
+	}
+	if cfg.Provider == "local-lexical" {
+		cfg.Endpoint = ""
+		if cfg.Model == "" {
+			cfg.Model = DefaultLexicalModel
+		}
+		if cfg.Dimension <= 0 {
+			cfg.Dimension = DefaultLexicalDimension
+		}
+		cfg.HealthThreshold = 0
 	}
 	if cfg.Provider == "local-deterministic-test" && cfg.Dimension <= 0 {
 		cfg.Dimension = 8

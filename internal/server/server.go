@@ -37,6 +37,7 @@ func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID) (*
 
 	mux := http.NewServeMux()
 	watch.NewHandler(watchStore).Register(mux)
+	registerEditorHandlers(mux, watchStore)
 
 	mux.HandleFunc("GET /api/ready", func(w http.ResponseWriter, r *http.Request) {
 		views, elements, connectors, err := apiStore.GetWorkspaceResourceCounts(r.Context(), workspaceID)

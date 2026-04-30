@@ -1,9 +1,12 @@
-import { Box, FormLabel, HStack, Text, Tooltip, VStack, Wrap, WrapItem } from '@chakra-ui/react'
+import { Box, FormLabel, HStack, Select, Text, Tooltip, VStack, Wrap, WrapItem } from '@chakra-ui/react'
 import { ACCENT_OPTIONS, BACKGROUND_OPTIONS, ELEMENT_OPTIONS } from '../constants/colors'
 import { useTheme } from '../context/ThemeContext'
+import { useSourceEditor } from '../utils/sourceEditor'
+import type { SourceEditor } from '../api/client'
 
 export default function AppearanceSettings({ compact = false }: { compact?: boolean }) {
   const { accent, setAccent, background, setBackground, elementColor, setElementColor } = useTheme()
+  const { editor, setEditor } = useSourceEditor()
   const swatchSize = compact ? '28px' : '32px'
   const sectionGap = compact ? 5 : 8
 
@@ -17,6 +20,26 @@ export default function AppearanceSettings({ compact = false }: { compact?: bool
             </Text>
           </Box>
         </HStack>
+      </Box>
+
+      <Box w="full">
+        <FormLabel mb={3} fontSize={compact ? 'xs' : 'sm'} textTransform="uppercase" letterSpacing="0.12em" color="gray.400">
+          Source Editor
+        </FormLabel>
+        <Select
+          size="sm"
+          value={editor}
+          onChange={(event) => setEditor(event.target.value as SourceEditor)}
+          bg="whiteAlpha.50"
+          borderColor="whiteAlpha.200"
+          color="gray.100"
+          maxW="220px"
+          _hover={{ borderColor: 'whiteAlpha.400' }}
+          _focus={{ borderColor: 'blue.400', boxShadow: '0 0 0 1px var(--chakra-colors-blue-400)' }}
+        >
+          <option value="zed">Zed</option>
+          <option value="vscode">VS Code</option>
+        </Select>
       </Box>
 
       <Box w="full">

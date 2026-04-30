@@ -665,6 +665,44 @@ func TestShrinkEmbeddingTextFitsApproximateTokenBudget(t *testing.T) {
 	}
 }
 
+func TestLocalLexicalProviderKeepsRenamedCodeSimilar(t *testing.T) {
+	provider := LexicalProvider{}
+	vectors, err := provider.Embed(context.Background(), []EmbeddingInput{
+		{Text: `func FetchUser(id string) (*User, error) {
+	cacheKey := "user:" + id
+	if cached, ok := cache.Get(cacheKey); ok {
+		return cached, nil
+	}
+	return client.Load(id)
+}`},
+		{Text: `func LoadAccount(accountID string) (*Account, error) {
+	cacheKey := "user:" + accountID
+	if cached, ok := cache.Get(cacheKey); ok {
+		return cached, nil
+	}
+	return client.Load(accountID)
+}`},
+		{Text: `func WriteAudit(event Event) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile("audit.json", data, 0600)
+}`},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := CosineSimilarity(vectors[0], vectors[1])
+	unrelated := CosineSimilarity(vectors[0], vectors[2])
+	if renamed < 0.70 {
+		t.Fatalf("expected renamed implementation to stay similar, got %.3f", renamed)
+	}
+	if unrelated >= renamed {
+		t.Fatalf("expected unrelated implementation below renamed similarity, renamed=%.3f unrelated=%.3f", renamed, unrelated)
+	}
+}
+
 func TestDefaultEmbeddingConfigUsesLocalOpenAIEndpoint(t *testing.T) {
 	cfg := NormalizeEmbeddingConfig(EmbeddingConfig{})
 	if cfg.Provider != "openai" || cfg.Endpoint != DefaultOpenAIEndpoint || cfg.Model != DefaultOpenAIModel {
@@ -804,6 +842,58 @@ func LoadUser() {}
 	}
 	if afterConnectors := connectorCount(t, db); afterConnectors != beforeConnectors {
 		t.Fatalf("rename changed connector count: before=%d after=%d", beforeConnectors, afterConnectors)
+	}
+}
+
+func TestMoveRenamePreservesGeneratedSymbolElement(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	FetchUser()
+}
+
+func FetchUser() int {
+	value := 41
+	return value + 1
+}
+`)
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	beforeElement := symbolElementID(t, db, "FetchUser")
+
+	if err := os.Remove(filepath.Join(repo, "main.go")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, repo, "pkg/users.go", `package pkg
+
+func Main() {
+	LoadAccount()
+}
+
+func LoadAccount() int {
+	value := 41
+	return value + 1
+}
+`)
+	scanResult, err = NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	afterElement := symbolElementID(t, db, "LoadAccount")
+	if afterElement != beforeElement {
+		t.Fatalf("move+rename created a new generated element: before=%d after=%d", beforeElement, afterElement)
 	}
 }
 

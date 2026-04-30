@@ -239,7 +239,7 @@ function ViewEditorInner({
   const setStoreSnapToGrid = useStore((state) => state.setSnapToGrid)
   const upsertStoreConnector = useStore((state) => state.upsertConnector)
   const removeStoreConnector = useStore((state) => state.removeConnector)
-  const refreshElementsRef = useRef<() => Promise<void>>(async () => {})
+  const refreshElementsRef = useRef<() => Promise<void>>(async () => { })
   const setSnapToGrid = useCallback((snap: boolean) => {
     setStoreSnapToGrid(snap)
     if (typeof window !== 'undefined') localStorage.setItem('diag:snapToGrid', String(snap))
@@ -934,7 +934,7 @@ function ViewEditorInner({
       return
     }
 
-    const ok = safeFitView({ duration: 0 })
+    const ok = safeFitView({ duration: 0, padding: 400 })
     if (ok) needsFitView.current = false
     else setTimeout(() => { if (needsFitView.current) maybeFitView() }, 50)
   }, [applyDemoRevealViewport, clampedRevealProgress, safeFitView, rfNodesRef])
@@ -1052,14 +1052,14 @@ function ViewEditorInner({
   useEffect(() => () => setHeader(null), [setHeader])
 
   // ── Share ──────────────────────────────────────────────────────────────────
-  const onShare = useCallback(() => {}, [])
+  const onShare = useCallback(() => { }, [])
 
   const handleExplorerHoverZoom = useCallback((elementId: number | null, type: 'in' | 'out' | null) => {
     setHoveredZoom(type && elementId ? { elementId, type } : null)
   }, [])
   const handleToggleExplorer = useCallback(() => setIsExplorerOpen((v) => !v), [])
   const handleCloseLibrary = useCallback(() => setLibraryOpen(false), [])
-  const handleCreateNewLibraryRef = useRef<() => void>(() => {})
+  const handleCreateNewLibraryRef = useRef<() => void>(() => { })
   const handleCreateNewLibrary = useCallback(() => handleCreateNewLibraryRef.current(), [])
   const handleFocusModeChange = useCallback((v: boolean) => setCrossBranchEnabled(!v), [setCrossBranchEnabled])
   const handleOpenExport = useCallback(() => exportModal.onOpen(), [exportModal])
@@ -1472,8 +1472,8 @@ function ViewEditorInner({
           onSave={handleConnectorSave} autoSave
           onDelete={handleConnectorDeleteInPanel}
           hasBackdrop={isMobileLayout}
-              connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
-          />
+          connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
+        />
         <ProxyConnectorPanel
           isOpen={proxyConnectorPanel.isOpen}
           onClose={proxyConnectorPanel.onClose}

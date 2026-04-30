@@ -438,6 +438,7 @@ func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath, language stri
 		}
 		raw, _ := json.Marshal(sym)
 		endPtr := endLine
+		body := lineRange(lines, sym.Line, endLine)
 		out = append(out, Symbol{
 			RepositoryID:  repositoryID,
 			FileID:        fileID,
@@ -449,11 +450,26 @@ func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath, language stri
 			StartLine:     sym.Line,
 			EndLine:       &endPtr,
 			SignatureHash: hashString(fmt.Sprintf("%s:%s:%d", sym.Kind, qualified, sym.Line)),
-			ContentHash:   hashString(lineRange(lines, sym.Line, endLine)),
+			ContentHash:   hashString(normalizeSymbolContent(body, sym.Name, qualified)),
 			RawJSON:       string(raw),
 		})
 	}
 	return out
+}
+
+func normalizeSymbolContent(body, name, qualified string) string {
+	body = strings.TrimSpace(outdentCode(body))
+	replacements := []string{name}
+	if leaf := pathBaseQualifier(qualified); leaf != "" && leaf != name {
+		replacements = append(replacements, leaf)
+	}
+	for _, replacement := range replacements {
+		if replacement == "" {
+			continue
+		}
+		body = strings.ReplaceAll(body, replacement, "__symbol__")
+	}
+	return body
 }
 
 func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, repositoryID int64, files []parsedFile) ([]Reference, string, error) {

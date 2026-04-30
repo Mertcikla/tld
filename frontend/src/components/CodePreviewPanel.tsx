@@ -2,6 +2,24 @@ import { useEffect, useState, useRef } from 'react'
 import type { SVGProps } from 'react'
 import { Box, Button, CloseButton, HStack, Icon, Spinner, Text, Tooltip, VStack } from '@chakra-ui/react'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
+import CodeMirror, { ReactCodeMirrorRef } from '@uiw/react-codemirror'
+import { EditorView } from '@codemirror/view'
+import { oneDark } from '@codemirror/theme-one-dark'
+import { javascript } from '@codemirror/lang-javascript'
+import { python } from '@codemirror/lang-python'
+import { cpp } from '@codemirror/lang-cpp'
+import { java } from '@codemirror/lang-java'
+import { rust } from '@codemirror/lang-rust'
+
+import SlidingPanel from './SlidingPanel'
+import { api } from '../api/client'
+import { findSymbolByName, getParser, detectLanguage, type SupportedLanguage } from '../utils/treesitter'
+import { githubCache } from '../utils/githubCache'
+import { getGithubRepoVisibility } from '../utils/githubApi'
+import { parseRepoSlug } from '../utils/url'
+import { useSourceEditor } from '../utils/sourceEditor'
+import { toast } from '../utils/toast'
+import type { PlacedElement } from '../types'
 
 const GithubIcon = (props: SVGProps<SVGSVGElement>) => (
   <svg
@@ -34,18 +52,6 @@ const customCodeTheme = EditorView.theme({
     caretColor: "var(--chakra-colors-blue-400)",
   }
 }, { dark: true })
-import CodeMirror, { ReactCodeMirrorRef } from '@uiw/react-codemirror'
-import { EditorView } from '@codemirror/view'
-import { oneDark } from '@codemirror/theme-one-dark'
-import { javascript } from '@codemirror/lang-javascript'
-import { python } from '@codemirror/lang-python'
-import { cpp } from '@codemirror/lang-cpp'
-import { java } from '@codemirror/lang-java'
-import { rust } from '@codemirror/lang-rust'
-
-import SlidingPanel from './SlidingPanel'
-import { findSymbolByName, getParser, detectLanguage, type SupportedLanguage } from '../utils/treesitter'
-import type { PlacedElement } from '../types'
 
 interface Props {
   isOpen: boolean
@@ -69,9 +75,15 @@ function parseAnchor(anchorStr: string):
   return { kind: 'none' }
 }
 
-import { githubCache } from '../utils/githubCache'
-import { getGithubRepoVisibility } from '../utils/githubApi'
-import { parseRepoSlug } from '../utils/url'
+function inferLineFromDescription(description: string | null | undefined, basePath: string): number | null {
+  if (!description || !basePath) return null
+  const match = description.match(/:(\d+)(?::\d+)?$/)
+  if (!match) return null
+  const pathPart = description.slice(0, match.index)
+  if (pathPart && pathPart !== basePath) return null
+  const line = Number(match[1])
+  return Number.isFinite(line) && line > 0 ? line : null
+}
 
 export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop = true }: Props) {
   const [code, setCode] = useState('')
@@ -80,6 +92,8 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   const [resolvedStartLine, setResolvedStartLine] = useState<number | null>(null)
   const [resolvedEndLine, setResolvedEndLine] = useState<number | null>(null)
   const [isPrivateRepo, setIsPrivateRepo] = useState(false)
+  const [openingEditor, setOpeningEditor] = useState(false)
+  const { editor: sourceEditor } = useSourceEditor()
 
   const editorRef = useRef<ReactCodeMirrorRef>(null)
 
@@ -88,6 +102,10 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   const basePath = hashIdx >= 0 ? filePath.slice(0, hashIdx) : filePath
   const symbolInfoStr = hashIdx >= 0 ? filePath.slice(hashIdx + 1) : ''
   const repoSlug = element?.repo ? parseRepoSlug(element.repo) : ''
+  const anchor = parseAnchor(symbolInfoStr)
+  const anchorStartLine = anchor.kind === 'lines' ? anchor.startLine : null
+  const fallbackStartLine = inferLineFromDescription(element?.description, basePath)
+  const editorStartLine = resolvedStartLine ?? anchorStartLine ?? fallbackStartLine
 
   useEffect(() => {
     if (!isOpen || !element || !repoSlug || !basePath) return
@@ -205,8 +223,30 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
   const githubUrl = element?.repo && basePath
     ? `https://github.com/${repoSlug}/blob/${element.branch || 'main'}/${basePath}`
-    + (resolvedStartLine ? `#L${resolvedStartLine}-L${resolvedEndLine ?? resolvedStartLine}` : '')
+    + (editorStartLine ? `#L${editorStartLine}-L${resolvedEndLine ?? editorStartLine}` : '')
     : null
+
+  const handleOpenInEditor = async () => {
+    if (!basePath) return
+    setOpeningEditor(true)
+    try {
+      await api.editor.open({
+        editor: sourceEditor,
+        repo: element?.repo ?? '',
+        file_path: basePath,
+        line: editorStartLine,
+      })
+    } catch (err) {
+      toast({
+        title: 'Failed to open editor',
+        description: err instanceof Error ? err.message : String(err),
+        status: 'error',
+        duration: 4000,
+      })
+    } finally {
+      setOpeningEditor(false)
+    }
+  }
 
   const getLanguageExtension = () => {
     const extensions = [customCodeTheme]
@@ -330,6 +370,40 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
                 transition="all 0.1s"
               >
                 Open in GitHub
+              </Button>
+            </Tooltip>
+          )}
+          {basePath && (
+            <Tooltip label={`Open in ${sourceEditor === 'zed' ? 'Zed' : 'VS Code'}`} placement="bottom">
+              <Button
+                aria-label={`Open in ${sourceEditor === 'zed' ? 'Zed' : 'VS Code'}`}
+                leftIcon={<ExternalLinkIcon w="12px" h="12px" />}
+                size="xs"
+                variant="outline"
+                color="whiteAlpha.700"
+                borderColor="whiteAlpha.200"
+                h="24px"
+                px={2.5}
+                fontSize="11px"
+                fontWeight="600"
+                bg="whiteAlpha.50"
+                isLoading={openingEditor}
+                onClick={handleOpenInEditor}
+                _hover={{
+                  color: 'white',
+                  bg: 'whiteAlpha.100',
+                  borderColor: 'whiteAlpha.400',
+                  textDecoration: 'none',
+                  transform: 'translateY(-0.5px)',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                }}
+                _active={{
+                  bg: 'whiteAlpha.200',
+                  transform: 'translateY(0)',
+                }}
+                transition="all 0.1s"
+              >
+                Open in Editor
               </Button>
             </Tooltip>
           )}

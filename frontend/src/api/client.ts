@@ -151,6 +151,8 @@ export interface WorkspaceVersion {
   created_at: string
 }
 
+export type SourceEditor = 'zed' | 'vscode'
+
 // ─── RPC clients ─────────────────────────────────────────────────────────────
 
 const workspaceClient = createClient(WorkspaceService, transport)
@@ -1059,6 +1061,25 @@ export const api = {
       const res = await fetch(apiUrl(`/watch/versions/${versionId}/diffs${suffix}`))
       if (!res.ok) throw new Error(`Failed to load watch diffs: ${res.statusText}`)
       return res.json()
+    },
+  },
+
+  editor: {
+    open: async (input: { editor: SourceEditor; repo?: string | null; file_path: string; line?: number | null }): Promise<void> => {
+      const res = await fetch(apiUrl('/editor/open'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          editor: input.editor,
+          repo: input.repo ?? '',
+          file_path: input.file_path,
+          line: input.line ?? 0,
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => null) as { error?: string } | null
+        throw new Error(body?.error || `Failed to open editor: ${res.statusText}`)
+      }
     },
   },
 }
