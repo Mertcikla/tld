@@ -27,6 +27,7 @@ import MiniZoomOnboarding from '../components/MiniZoomOnboarding'
 import { ZUICanvas, type ZUICameraFrame, type ZUICanvasHandle } from '../components/ZUI'
 import { useCrossBranchContextSettings } from '../crossBranch/settings'
 import { primeWorkspaceGraphSnapshot } from '../crossBranch/store'
+import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../components/WatchRuntimePanel'
 
 // ── Types ──────────────────────────────────────────────────────────
 interface Props {
@@ -161,9 +162,9 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
     dismissMiniOnboarding()
   }, [dismissMiniOnboarding])
 
-  useEffect(() => {
+  const loadExploreData = useCallback(() => {
     const loader = sharedToken ? api.explore.loadShared(sharedToken) : api.explore.load()
-    loader.then((d) => {
+    return loader.then((d) => {
       if (d.password_required) {
         setLoading(false)
       } else {
@@ -173,6 +174,20 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
       }
     }).catch(() => setLoading(false))
   }, [sharedToken])
+
+  useEffect(() => {
+    void loadExploreData()
+  }, [loadExploreData])
+
+  useEffect(() => {
+    if (sharedToken) return
+    const refresh = () => {
+      setLoading(true)
+      void loadExploreData()
+    }
+    window.addEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
+    return () => window.removeEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
+  }, [loadExploreData, sharedToken])
 
   // Fetch tag colors and layers once data is loaded (authenticated users only).
   // Only fetch from root tree nodes child/nested diagrams would duplicate the same layers.

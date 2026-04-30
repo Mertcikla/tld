@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
@@ -39,19 +41,30 @@ func (a *APIAdapter) ListViews(ctx context.Context, _ uuid.UUID) ([]*diagv1.View
 	return out, nil
 }
 
-func (a *APIAdapter) GetViews(ctx context.Context, _ uuid.UUID, ownerElementID *int32, isRoot *bool, search string, limit, offset int) ([]*diagv1.View, int, error) {
-	nodes, err := a.Store.ViewTree(ctx)
-	if err != nil {
-		return nil, 0, err
+func (a *APIAdapter) GetViews(ctx context.Context, _ uuid.UUID, parentViewID *int32, isRoot *bool, search string, limit, offset int) ([]*diagv1.View, int, error) {
+	var flat []app.ViewTreeNode
+	switch {
+	case parentViewID != nil:
+		nodes, err := a.Store.legacy.ChildViews(ctx, int64(*parentViewID))
+		if err != nil {
+			return nil, 0, err
+		}
+		flat = nodes
+	case isRoot != nil && *isRoot:
+		nodes, err := a.Store.legacy.RootViews(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+		flat = nodes
+	default:
+		nodes, err := a.Store.ViewTree(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+		flat = flattenViewTreeNodes(nodes)
 	}
-	flat := flattenViewTreeNodes(nodes)
 	filtered := make([]app.ViewTreeNode, 0, len(flat))
 	for _, node := range flat {
-		if ownerElementID != nil {
-			if node.OwnerElementID == nil || int32(*node.OwnerElementID) != *ownerElementID {
-				continue
-			}
-		}
 		if isRoot != nil {
 			nodeIsRoot := node.ParentViewID == nil
 			if nodeIsRoot != *isRoot {
@@ -114,17 +127,17 @@ func (a *APIAdapter) DeleteView(ctx context.Context, id int32, _ uuid.UUID) erro
 	return a.Store.legacy.DeleteView(ctx, int64(id))
 }
 
-func (a *APIAdapter) ListElements(ctx context.Context, _ uuid.UUID, limit, offset int32, search string) ([]*diagv1.Element, error) {
-	elements, err := a.Store.legacy.Elements(ctx, int(limit), int(offset), search)
+func (a *APIAdapter) ListElements(ctx context.Context, _ uuid.UUID, limit, offset int32, search string) ([]*diagv1.Element, int, error) {
+	elements, total, err := a.Store.legacy.Elements(ctx, int(limit), int(offset), search)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	out := make([]*diagv1.Element, 0, len(elements))
 	workspaceID := api.WorkspaceIDFromCtx(ctx)
 	for _, element := range elements {
 		out = append(out, elementToProto(element, workspaceID))
 	}
-	return out, nil
+	return out, total, nil
 }
 
 func (a *APIAdapter) GetElement(ctx context.Context, id int32, _ uuid.UUID) (*diagv1.Element, error) {
@@ -198,17 +211,13 @@ func (a *APIAdapter) ListPlacements(ctx context.Context, viewID int32) ([]*diagv
 }
 
 func (a *APIAdapter) ListAllPlacements(ctx context.Context, _ uuid.UUID) ([]*diagv1.PlacedElement, error) {
-	nodes, err := a.Store.ViewTree(ctx)
+	placements, err := a.Store.legacy.AllPlacements(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var out []*diagv1.PlacedElement
-	for _, node := range flattenViewTreeNodes(nodes) {
-		items, err := a.ListPlacements(ctx, int32(node.ID))
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, items...)
+	out := make([]*diagv1.PlacedElement, 0, len(placements))
+	for _, placement := range placements {
+		out = append(out, placedElementToProto(placement))
 	}
 	return out, nil
 }
@@ -261,17 +270,13 @@ func (a *APIAdapter) ListConnectors(ctx context.Context, viewID int32, _ uuid.UU
 }
 
 func (a *APIAdapter) ListAllConnectors(ctx context.Context, _ uuid.UUID) ([]*diagv1.Connector, error) {
-	nodes, err := a.Store.ViewTree(ctx)
+	connectors, err := a.Store.legacy.AllConnectors(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var out []*diagv1.Connector
-	for _, node := range flattenViewTreeNodes(nodes) {
-		items, err := a.ListConnectors(ctx, int32(node.ID), uuid.Nil)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, items...)
+	out := make([]*diagv1.Connector, 0, len(connectors))
+	for _, connector := range connectors {
+		out = append(out, connectorToProto(connector))
 	}
 	return out, nil
 }
@@ -611,40 +616,101 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 	return resp, nil
 }
 
-func (a *APIAdapter) ListVersions(context.Context, uuid.UUID, int) ([]*diagv1.WorkspaceVersionInfo, error) {
-	return nil, api.ErrUnimplemented
+func (a *APIAdapter) ListVersions(ctx context.Context, workspaceID uuid.UUID, limit int) ([]*diagv1.WorkspaceVersionInfo, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := a.Store.DB().QueryContext(ctx, `
+		SELECT id, version_id, source, parent_version_id, view_count, element_count, connector_count, description, workspace_hash, created_at
+		FROM workspace_versions
+		ORDER BY id DESC
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*diagv1.WorkspaceVersionInfo
+	for rows.Next() {
+		version, err := scanWorkspaceVersion(rows, workspaceID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, version)
+	}
+	return out, rows.Err()
 }
 
-func (a *APIAdapter) GetLatestVersion(context.Context, uuid.UUID) (*diagv1.WorkspaceVersionInfo, error) {
-	return nil, api.ErrUnimplemented
+func (a *APIAdapter) GetLatestVersion(ctx context.Context, workspaceID uuid.UUID) (*diagv1.WorkspaceVersionInfo, error) {
+	row := a.Store.DB().QueryRowContext(ctx, `
+		SELECT id, version_id, source, parent_version_id, view_count, element_count, connector_count, description, workspace_hash, created_at
+		FROM workspace_versions
+		ORDER BY id DESC
+		LIMIT 1`)
+	version, err := scanWorkspaceVersion(row, workspaceID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, api.ErrUnimplemented
+	}
+	return version, err
 }
 
-func (a *APIAdapter) CreateVersion(context.Context, uuid.UUID, string, string, *int32, int, int, int, *string, *string) (*diagv1.WorkspaceVersionInfo, error) {
-	return nil, api.ErrUnimplemented
+func (a *APIAdapter) CreateVersion(ctx context.Context, workspaceID uuid.UUID, versionID, source string, parentID *int32, viewCount, elementCount, connectorCount int, description, workspaceHash *string) (*diagv1.WorkspaceVersionInfo, error) {
+	var parent any
+	if parentID != nil {
+		parent = *parentID
+	}
+	res, err := a.Store.DB().ExecContext(ctx, `
+		INSERT INTO workspace_versions(version_id, source, parent_version_id, view_count, element_count, connector_count, description, workspace_hash, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		versionID, source, parent, viewCount, elementCount, connectorCount, description, workspaceHash, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return nil, err
+	}
+	row := a.Store.DB().QueryRowContext(ctx, `
+		SELECT id, version_id, source, parent_version_id, view_count, element_count, connector_count, description, workspace_hash, created_at
+		FROM workspace_versions
+		WHERE id = ?`, id)
+	return scanWorkspaceVersion(row, workspaceID)
 }
 
-func (a *APIAdapter) GetVersioningEnabled(context.Context, uuid.UUID) (bool, error) {
-	return false, api.ErrUnimplemented
+func (a *APIAdapter) GetVersioningEnabled(ctx context.Context, _ uuid.UUID) (bool, error) {
+	var enabled int
+	err := a.Store.DB().QueryRowContext(ctx, `SELECT cli_versioning_enabled FROM workspace_version_settings WHERE id = 1`).Scan(&enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	return enabled != 0, err
 }
 
-func (a *APIAdapter) SetVersioningEnabled(context.Context, uuid.UUID, bool) error {
-	return api.ErrUnimplemented
+func (a *APIAdapter) SetVersioningEnabled(ctx context.Context, _ uuid.UUID, enabled bool) error {
+	value := 0
+	if enabled {
+		value = 1
+	}
+	_, err := a.Store.DB().ExecContext(ctx, `
+		INSERT INTO workspace_version_settings(id, cli_versioning_enabled)
+		VALUES (1, ?)
+		ON CONFLICT(id) DO UPDATE SET cli_versioning_enabled = excluded.cli_versioning_enabled`, value)
+	return err
 }
 
 func (a *APIAdapter) GetWorkspaceResourceCounts(ctx context.Context, _ uuid.UUID) (views, elements, connectors int, err error) {
-	allViews, err := a.Store.ViewTree(ctx)
-	if err != nil {
-		return 0, 0, 0, err
+	for _, item := range []struct {
+		query string
+		dest  *int
+	}{
+		{query: `SELECT COUNT(*) FROM views`, dest: &views},
+		{query: `SELECT COUNT(*) FROM elements`, dest: &elements},
+		{query: `SELECT COUNT(*) FROM connectors`, dest: &connectors},
+	} {
+		if err := a.Store.DB().QueryRowContext(ctx, item.query).Scan(item.dest); err != nil {
+			return 0, 0, 0, err
+		}
 	}
-	allElements, err := a.Store.legacy.Elements(ctx, 0, 0, "")
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	allConnectors, err := a.ListAllConnectors(ctx, uuid.Nil)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	return len(flattenViewTreeNodes(allViews)), len(allElements), len(allConnectors), nil
+	return views, elements, connectors, nil
 }
 
 func (a *APIAdapter) ensureRootViewID(ctx context.Context) (int32, error) {
@@ -658,6 +724,48 @@ func (a *APIAdapter) ensureRootViewID(ctx context.Context) (int32, error) {
 		}
 	}
 	return 0, fmt.Errorf("root view not found")
+}
+
+type sqlRowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanWorkspaceVersion(row sqlRowScanner, workspaceID uuid.UUID) (*diagv1.WorkspaceVersionInfo, error) {
+	var (
+		id, viewCount, elementCount, connectorCount int64
+		versionID, source, createdAtRaw             string
+		parentID                                    sql.NullInt64
+		description                                 sql.NullString
+		workspaceHash                               sql.NullString
+	)
+	if err := row.Scan(&id, &versionID, &source, &parentID, &viewCount, &elementCount, &connectorCount, &description, &workspaceHash, &createdAtRaw); err != nil {
+		return nil, err
+	}
+	createdAt, err := time.Parse(time.RFC3339, createdAtRaw)
+	if err != nil {
+		createdAt = time.Now().UTC()
+	}
+	info := &diagv1.WorkspaceVersionInfo{
+		Id:             strconv.FormatInt(id, 10),
+		OrgId:          workspaceID.String(),
+		VersionId:      versionID,
+		Source:         source,
+		ViewCount:      int32(viewCount),
+		ElementCount:   int32(elementCount),
+		ConnectorCount: int32(connectorCount),
+		CreatedAt:      timestamppb.New(createdAt),
+	}
+	if parentID.Valid {
+		parent := strconv.FormatInt(parentID.Int64, 10)
+		info.ParentVersionId = &parent
+	}
+	if description.Valid {
+		info.Description = &description.String
+	}
+	if workspaceHash.Valid {
+		info.WorkspaceHash = &workspaceHash.String
+	}
+	return info, nil
 }
 
 func (a *APIAdapter) findPlacedElement(ctx context.Context, viewID, elementID int64) (*diagv1.PlacedElement, error) {

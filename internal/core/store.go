@@ -23,7 +23,7 @@ type ViewStore interface {
 }
 
 type ElementStore interface {
-	Elements(ctx context.Context, limit, offset int, search string) ([]LibraryElement, error)
+	Elements(ctx context.Context, limit, offset int, search string) ([]LibraryElement, int, error)
 	ElementByID(ctx context.Context, id int64) (LibraryElement, error)
 	CreateElement(ctx context.Context, input LibraryElement) (LibraryElement, error)
 	UpdateElement(ctx context.Context, id int64, input LibraryElement) (LibraryElement, error)

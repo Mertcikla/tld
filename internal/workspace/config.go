@@ -61,9 +61,22 @@ type ServeConfig struct {
 	DataDir string `yaml:"data_dir"`
 }
 
+type WatchEmbeddingConfig struct {
+	Provider        string  `yaml:"provider"`
+	Endpoint        string  `yaml:"endpoint"`
+	Model           string  `yaml:"model"`
+	Dimension       int     `yaml:"dimension"`
+	HealthThreshold float64 `yaml:"health_threshold"`
+}
+
+type WatchConfig struct {
+	Embedding WatchEmbeddingConfig `yaml:"embedding"`
+}
+
 // GlobalConfig represents the global tld.yaml configuration file.
 type GlobalConfig struct {
 	Serve ServeConfig `yaml:"serve"`
+	Watch WatchConfig `yaml:"watch"`
 }
 
 // LoadGlobalConfig reads the global config file. Missing file is not an error.
@@ -103,6 +116,11 @@ serve:
   host: 127.0.0.1
   port: 8060
   # data_dir: ~/.local/share/tldiagram
+watch:
+  embedding:
+    provider: openai
+    endpoint: http://127.0.0.1:8000/v1/embeddings
+    model: embeddinggemma-300m-4bit
 `
 	return os.WriteFile(path, []byte(defaultConfig), 0o644)
 }

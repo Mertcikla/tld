@@ -39,6 +39,8 @@ interface NeighbourNode {
   position: 'left' | 'right' | 'top' | 'bottom'
 }
 
+const PAGE_SIZE = 50
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 function computeNeighbourCounts(elements: DependencyElement[], connectors: DependencyConnector[]): ElementWithNeighbours[] {
   const counts = new Map<string, Set<string>>()
@@ -258,10 +260,15 @@ export default function Dependencies() {
   const [elements, setElements] = useState<DependencyElement[]>([])
   const [allEdges, setAllEdges] = useState<DependencyConnector[]>([])
   const [loading, setLoading] = useState(true)
+  const [pageLoading, setPageLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [topRatio, setTopRatio] = useState(0.45)
+  const [page, setPage] = useState(0)
+  const [hasNextPage, setHasNextPage] = useState(false)
+  const [totalCount, setTotalCount] = useState(0)
+  const [neighbourElements, setNeighbourElements] = useState<Record<string, DependencyElement>>({})
 
   // Graph layout measurement
   const graphRef = useRef<HTMLDivElement>(null)
@@ -302,14 +309,14 @@ export default function Dependencies() {
           spacing={3}
         >
           <Text fontSize="xs" color="whiteAlpha.800" fontWeight="medium" display={{ base: 'none', compact: 'inline' }}>
-            {elements.length} <Text as="span" color="whiteAlpha.400" fontWeight="normal">elements</Text>
+            {totalCount} <Text as="span" color="whiteAlpha.400" fontWeight="normal">elements</Text>
           </Text>
           <Box w="1px" h="10px" bg="whiteAlpha.200" display={{ base: 'none', compact: 'block' }} />
           <Text fontSize="xs" color="whiteAlpha.800" fontWeight="medium" display={{ base: 'none', compact: 'inline' }}>
             {allEdges.length} <Text as="span" color="whiteAlpha.400" fontWeight="normal">connectors</Text>
           </Text>
           <Text fontSize="xs" color="whiteAlpha.800" fontWeight="medium" display={{ base: 'none', sm: 'inline', compact: 'none' }}>
-            {elements.length}<Text as="span" color="whiteAlpha.400">E</Text>
+            {totalCount}<Text as="span" color="whiteAlpha.400">E</Text>
             <Text as="span" color="whiteAlpha.200" mx={1}>/</Text>
             {allEdges.length}<Text as="span" color="whiteAlpha.400">C</Text>
           </Text>
@@ -317,27 +324,104 @@ export default function Dependencies() {
       ),
     })
     return () => setHeader(null)
-  }, [elements.length, allEdges.length, setHeader])
+  }, [totalCount, allEdges.length, setHeader])
+
+  useEffect(() => {
+    setPage(0)
+  }, [search])
 
   // Data fetch
   useEffect(() => {
-    api.dependencies
-      .list()
-      .then((resp) => {
-        const objs = resp.elements || []
-        const edgs = resp.connectors || []
-        setElements(objs)
-        setAllEdges(edgs)
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      setPageLoading(true)
+      api.dependencies
+        .list({ limit: PAGE_SIZE, offset: page * PAGE_SIZE, search })
+        .then((resp) => {
+          if (cancelled) return
+          const objs = resp.elements || []
+          const edgs = resp.connectors || []
+          const total = resp.totalCount
+          setElements(objs)
+          setAllEdges(edgs)
+          setTotalCount(total ?? page * PAGE_SIZE + objs.length)
+          setHasNextPage(total === undefined ? objs.length === PAGE_SIZE : page * PAGE_SIZE + objs.length < total)
 
-        if (objs.length > 0) {
-          const withCounts = computeNeighbourCounts(objs, edgs)
-          const sorted = [...withCounts].sort((a, b) => b.neighbourCount - a.neighbourCount)
-          setSelectedId(sorted[0].id)
-        }
+          setSelectedId((current) => {
+            if (objs.length === 0) return null
+            if (current && objs.some((obj) => obj.id === current)) return current
+            const withCounts = computeNeighbourCounts(objs, edgs)
+            const sorted = [...withCounts].sort((a, b) => b.neighbourCount - a.neighbourCount)
+            return sorted[0]?.id ?? null
+          })
+        })
+        .catch(() => { /* intentionally empty */ })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false)
+            setPageLoading(false)
+          }
+        })
+    }, 180)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [page, search])
+
+  const elementUniverse = useMemo(() => {
+    const byID = new Map<string, DependencyElement>()
+    elements.forEach((element) => byID.set(element.id, element))
+    Object.values(neighbourElements).forEach((element) => byID.set(element.id, element))
+    return Array.from(byID.values())
+  }, [elements, neighbourElements])
+
+  useEffect(() => {
+    if (selectedId === null) return
+    const known = new Set(elementUniverse.map((element) => element.id))
+    const missing = new Set<string>()
+    allEdges.forEach((connector) => {
+      if (connector.source_element_id === selectedId && !known.has(connector.target_element_id)) {
+        missing.add(connector.target_element_id)
+      }
+      if (connector.target_element_id === selectedId && !known.has(connector.source_element_id)) {
+        missing.add(connector.source_element_id)
+      }
+    })
+    if (missing.size === 0) return
+    let cancelled = false
+    Promise.all(
+      Array.from(missing).slice(0, 120).map((id) =>
+        api.elements.get(Number(id)).then((element) => ({
+          id: String(element.id),
+          name: element.name,
+          type: element.kind,
+          description: element.description,
+          technology: element.technology,
+          url: element.url,
+          logo_url: element.logo_url,
+          technology_connectors: element.technology_connectors,
+          tags: element.tags,
+          repo: element.repo,
+          branch: element.branch,
+          language: element.language,
+          file_path: element.file_path,
+          created_at: element.created_at,
+          updated_at: element.updated_at,
+        } satisfies DependencyElement)).catch(() => null),
+      ),
+    ).then((items) => {
+      if (cancelled) return
+      setNeighbourElements((prev) => {
+        const next = { ...prev }
+        items.forEach((item) => {
+          if (item) next[item.id] = item
+        })
+        return next
       })
-      .catch(() => { /* intentionally empty */ })
-      .finally(() => setLoading(false))
-  }, [])
+    })
+    return () => { cancelled = true }
+  }, [allEdges, elementUniverse, selectedId])
 
   // Derived data
   const elementsWithCounts = useMemo(
@@ -364,12 +448,12 @@ export default function Dependencies() {
 
   const selectedElement = useMemo(() => {
     if (selectedId === null) return null
-    return elements.find((o) => o.id === selectedId) || null
-  }, [elements, selectedId])
+    return elementUniverse.find((o) => o.id === selectedId) || null
+  }, [elementUniverse, selectedId])
   const neighbourGraph = useMemo(() => {
     if (selectedId === null) return []
-    return getNeighbourGraph(selectedId, elements, allEdges)
-  }, [selectedId, elements, allEdges])
+    return getNeighbourGraph(selectedId, elementUniverse, allEdges)
+  }, [selectedId, elementUniverse, allEdges])
 
   // Divider drag
   const startDrag = useCallback(() => {
@@ -528,6 +612,8 @@ export default function Dependencies() {
   const colSpacing = maxCompactLevel >= 3 ? 2 : maxCompactLevel >= 2 ? 3 : maxCompactLevel >= 1 ? 5 : 8
   const nodeSpacing = maxCompactLevel >= 2 ? 1 : maxCompactLevel >= 1 ? 2 : 3
   const selectedCardShadow = `0 0 0 3px ${hexToRgba(accent, 0.38)}, 0 18px 48px ${hexToRgba(accent, 0.12)}, 0 10px 36px rgba(0,0,0,0.55), 0 3px 10px rgba(0,0,0,0.4)`
+  const rangeStart = elements.length > 0 ? page * PAGE_SIZE + 1 : 0
+  const rangeEnd = page * PAGE_SIZE + elements.length
 
   return (
     <Box h="100vh" display="flex" flexDir="column" bg="var(--bg-canvas)">
@@ -594,9 +680,45 @@ export default function Dependencies() {
               </MenuList>
             </Menu>
             <Box flex={1} />
-            <Text fontSize="xs" color="gray.600">
-              {filteredElements.length} element{filteredElements.length !== 1 ? 's' : ''}
+
+            <HStack spacing={4} mr={4} display={{ base: 'none', md: 'flex' }}>
+              <HStack spacing={1.5}>
+                <Text fontSize="xs" color="whiteAlpha.900" fontWeight="bold">{totalCount}</Text>
+                <Text fontSize="xs" color="whiteAlpha.400">elements</Text>
+              </HStack>
+              <HStack spacing={1.5}>
+                <Text fontSize="xs" color="whiteAlpha.900" fontWeight="bold">{allEdges.length}</Text>
+                <Text fontSize="xs" color="whiteAlpha.400">connectors</Text>
+              </HStack>
+            </HStack>
+
+            <Box w="1px" h="12px" bg="whiteAlpha.200" mr={2} display={{ base: 'none', md: 'block' }} />
+
+            <Text fontSize="xs" color="gray.600" fontWeight="medium">
+              {rangeStart}-{rangeEnd} <Text as="span" color="gray.700" display={{ base: 'none', sm: 'inline' }}>of {totalCount}</Text>
             </Text>
+            {pageLoading && <Spinner size="xs" color="gray.500" />}
+            <HStack spacing={1} data-pan-block="true">
+              <Button
+                variant="elevated"
+                size="xs"
+                isDisabled={page === 0 || pageLoading}
+                onClick={() => setPage((current) => Math.max(0, current - 1))}
+              >
+                Previous
+              </Button>
+              <Text fontSize="xs" color="gray.500" minW="48px" textAlign="center">
+                Page {page + 1}
+              </Text>
+              <Button
+                variant="elevated"
+                size="xs"
+                isDisabled={!hasNextPage || pageLoading}
+                onClick={() => setPage((current) => current + 1)}
+              >
+                Next
+              </Button>
+            </HStack>
           </Flex>
 
           {/* Column headers */}
