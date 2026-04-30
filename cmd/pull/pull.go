@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/mertcikla/tld/internal/client"
 	"github.com/mertcikla/tld/internal/cmdutil"
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -53,15 +54,15 @@ you before overwriting them. Use --force to skip the prompt.`,
 					return fmt.Errorf("calculate hash: %w", err)
 				}
 				if currentHash != lockFile.WorkspaceHash {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning: local workspace has uncommitted changes.\n")
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pull will overwrite them. Continue? [yes/no]: ")
+					term.Warn(cmd.OutOrStdout(), "Local workspace has uncommitted changes. Pull will overwrite them.")
+					_, _ = fmt.Fprint(cmd.OutOrStdout(), "  Continue? [yes/no]: ")
 					scanner := bufio.NewScanner(cmd.InOrStdin())
 					if !scanner.Scan() {
 						return errors.New("aborted")
 					}
 					answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 					if answer != "yes" && answer != "y" {
-						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Pull cancelled.")
+						term.Infof(cmd.OutOrStdout(), "Pull cancelled.")
 						return nil
 					}
 				}
@@ -78,7 +79,7 @@ you before overwriting them. Use --force to skip the prompt.`,
 			newWS := cmdutil.ConvertExportResponse(ws, resp.Msg)
 
 			if dryRun {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Would pull: %d elements, %d diagrams, %d connectors\n",
+				term.Infof(cmd.OutOrStdout(), "Would pull: %d elements, %d diagrams, %d connectors",
 					len(newWS.Elements), cmdutil.CountElementDiagrams(newWS), len(newWS.Connectors))
 				return nil
 			}
@@ -123,7 +124,7 @@ you before overwriting them. Use --force to skip the prompt.`,
 				return fmt.Errorf("write lock file: %w", err)
 			}
 
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Pulled %d elements, %d diagrams, %d connectors\n",
+			term.Successf(cmd.OutOrStdout(), "Pulled %d elements, %d diagrams, %d connectors",
 				len(newWS.Elements), cmdutil.CountElementDiagrams(newWS), len(newWS.Connectors))
 
 			return nil

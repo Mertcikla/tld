@@ -5,6 +5,7 @@ import (
 
 	"github.com/mertcikla/tld/internal/cmdutil"
 	"github.com/mertcikla/tld/internal/completion"
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -53,8 +54,8 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if cmdutil.WantsJSON(*format) {
 				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update element", "update", ref)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updated element %q: %s=%q\n", ref, field, value)
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Change recorded locally in elements.yaml. Run 'tld apply' to push to cloud.")
+			term.Successf(cmd.OutOrStdout(), "Updated element %q: %s=%q", ref, field, value)
+			term.Hint(cmd.OutOrStdout(), "Run 'tld apply' to push to cloud.")
 			return nil
 		},
 	}
@@ -91,8 +92,8 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if cmdutil.WantsJSON(*format) {
 				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update connector", "update", ref)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Updated connector %q: %s=%q\n", ref, field, value)
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Change recorded locally in connectors.yaml. Run 'tld apply' to push to cloud.")
+			term.Successf(cmd.OutOrStdout(), "Updated connector %q: %s=%q", ref, field, value)
+			term.Hint(cmd.OutOrStdout(), "Run 'tld apply' to push to cloud.")
 			return nil
 		},
 	}

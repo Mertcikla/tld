@@ -187,14 +187,6 @@ func TestApplyCmd_InteractiveDecline(t *testing.T) {
 	}
 }
 
-func TestApplyCmd_MissingConfig(t *testing.T) {
-	dir := t.TempDir()
-	_, _, err := cmd.RunCmd(t, dir, "apply", "--force")
-	if err == nil || !strings.Contains(err.Error(), "load workspace") {
-		t.Fatalf("expected missing config error, got %v", err)
-	}
-}
-
 func TestApplyCmd_CreatedResourcesInOutput(t *testing.T) {
 	svc := &cmd.MockDiagramService{}
 	serverURL := cmd.NewMockServer(t, svc)

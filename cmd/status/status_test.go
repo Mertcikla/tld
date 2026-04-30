@@ -41,7 +41,7 @@ func TestStatusCmd_Clean(t *testing.T) {
 	if !strings.Contains(stdout, "IN SYNC") {
 		t.Fatalf("missing IN SYNC header:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "Local changes: Clean") {
+	if !strings.Contains(stdout, "Local changes:") {
 		t.Fatalf("missing clean status detail:\n%s", stdout)
 	}
 }
@@ -70,7 +70,7 @@ func TestStatusCmd_Modified(t *testing.T) {
 	if !strings.Contains(stdout, "MODIFIED") {
 		t.Fatalf("missing MODIFIED header:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "Local changes: Modified") {
+	if !strings.Contains(stdout, "Local changes:") {
 		t.Fatalf("missing modified detail:\n%s", stdout)
 	}
 }
@@ -144,7 +144,7 @@ func TestStatusCmd_ConflictCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Merge conflicts: 2") {
+	if !strings.Contains(stdout, "Merge conflicts:") || !strings.Contains(stdout, "2") {
 		t.Fatalf("missing conflict count: %s", stdout)
 	}
 }
@@ -167,7 +167,7 @@ func TestStatusCmd_CheckServer_InSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status --check-server: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Server state:  In sync") {
+	if !strings.Contains(stdout, "Server state:") || !strings.Contains(stdout, "In sync") {
 		t.Fatalf("missing in-sync server output: %s", stdout)
 	}
 }

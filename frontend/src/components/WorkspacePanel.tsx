@@ -1,0 +1,573 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
+import {
+  Badge,
+  Box,
+  Button,
+  Collapse,
+  HStack,
+  IconButton,
+  Menu,
+  MenuButton,
+  MenuList,
+  MenuItem,
+  Spinner,
+  Text,
+  Tooltip,
+  VStack,
+} from '@chakra-ui/react'
+import { ChevronDownIcon, CloseIcon, RepeatIcon, TimeIcon, ViewIcon } from '@chakra-ui/icons'
+import {
+  api,
+  type WatchDiff,
+  type WatchEvent,
+  type WatchLock,
+  type WatchRepresentationSummary,
+  type WatchRepository,
+  type WatchVersion,
+  type WorkspaceVersion,
+} from '../api/client'
+import { buildWorkspaceVersionPreview, useWorkspaceVersionPreview } from '../context/WorkspaceVersionContext'
+
+export const WATCH_REPRESENTATION_UPDATED_EVENT = 'tld:watch-representation-updated'
+
+// ─── Watch helpers ────────────────────────────────────────────────────────────
+
+type WatchLine = {
+  id: number
+  at: string
+  text: string
+  tone: 'info' | 'success' | 'warning' | 'error'
+}
+
+function PauseGlyph() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <rect x="6" y="5" width="4" height="14" rx="1" />
+      <rect x="14" y="5" width="4" height="14" rx="1" />
+    </svg>
+  )
+}
+
+function summarizeEvent(event: WatchEvent): WatchLine | null {
+  const id = Date.now() + Math.random()
+  const at = event.at || new Date().toISOString()
+  const type = event.type
+  if (type === 'watch.heartbeat') return null
+  if (type === 'watch.paused') return { id, at, text: 'Watch paused', tone: 'warning' }
+  if (type === 'watch.stopped') return { id, at, text: 'Watch stopped', tone: 'warning' }
+  if (type === 'watch.error') return { id, at, text: event.message || 'Watch error', tone: 'error' }
+  if (type === 'lock.disabled') return null
+  if (type === 'lock.enabled') return { id, at, text: 'Workspace locked for watch updates', tone: 'info' }
+  if (type === 'version.created') return { id, at, text: 'Watch version created', tone: 'success' }
+  if (type === 'representation.updated') {
+    const data = event.data as Partial<WatchRepresentationSummary> | undefined
+    const changed = [
+      data?.views_created ? `views +${data.views_created}` : '',
+      data?.elements_created || data?.elements_updated ? `elements +${data.elements_created ?? 0}/${data.elements_updated ?? 0}` : '',
+      data?.connectors_created || data?.connectors_updated ? `connectors +${data.connectors_created ?? 0}/${data.connectors_updated ?? 0}` : '',
+    ].filter(Boolean).join(', ')
+    return { id, at, text: changed ? `Representation updated: ${changed}` : 'Representation refreshed', tone: 'success' }
+  }
+  if (type === 'scan.started') {
+    const files = event.changed_files ? ` · ${event.changed_files} files` : ''
+    return { id, at, text: `Scanning${files}`, tone: 'info' }
+  }
+  if (type === 'scan.completed') {
+    const warnings = event.warnings?.length ? ` · ${event.warnings[0]}` : ''
+    return { id, at, text: `Scan complete${warnings}`, tone: event.warnings?.length ? 'warning' : 'success' }
+  }
+  if (type === 'source.changed') {
+    const data = event.data as { change?: { path?: string; change_type?: string }; representation_changed?: boolean } | undefined
+    const path = data?.change?.path ?? 'source file'
+    const suffix = data?.representation_changed ? 'changed the diagram' : 'did not change the diagram'
+    return { id, at, text: `${path} ${suffix}`, tone: data?.representation_changed ? 'success' : 'info' }
+  }
+  return { id, at, text: type, tone: 'info' }
+}
+
+function shortPath(path: string | undefined): string {
+  if (!path) return 'repository'
+  const parts = path.split(/[/\\]/).filter(Boolean)
+  return parts.slice(-2).join('/') || path
+}
+
+function shortHash(value?: string) {
+  if (!value) return ''
+  return value.length > 10 ? value.slice(0, 10) : value
+}
+
+function changeLabel(diffs: WatchDiff[]) {
+  const counts = diffs.reduce((acc, diff) => {
+    const key = diff.change_type || 'changed'
+    acc[key] = (acc[key] ?? 0) + 1
+    return acc
+  }, {} as Record<string, number>)
+  const parts = [
+    counts.added ? `+${counts.added}` : '',
+    counts.updated ? `~${counts.updated}` : '',
+    counts.deleted ? `-${counts.deleted}` : '',
+    counts.changed ? `${counts.changed} changed` : '',
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join('  ') : 'No materialized changes'
+}
+
+// ─── Themed dropdown ──────────────────────────────────────────────────────────
+
+interface ThemedSelectProps<T extends string | number> {
+  value: T | ''
+  options: { value: T; label: string }[]
+  placeholder?: string
+  onChange: (value: T | '') => void
+  isDisabled?: boolean
+  flex?: number
+}
+
+function ThemedSelect<T extends string | number>({ value, options, placeholder, onChange, isDisabled, flex }: ThemedSelectProps<T>) {
+  const selected = options.find((o) => o.value === value)
+  return (
+    <Menu placement="top-start" strategy="fixed">
+      <MenuButton
+        as={Button}
+        rightIcon={<ChevronDownIcon />}
+        size="xs"
+        variant="ghost"
+        isDisabled={isDisabled}
+        flex={flex}
+        minW={0}
+        h="26px"
+        px={2}
+        fontSize="11px"
+        fontWeight="500"
+        color={selected ? 'gray.100' : 'gray.500'}
+        bg="whiteAlpha.50"
+        border="1px solid"
+        borderColor="whiteAlpha.100"
+        borderRadius="md"
+        _hover={{ bg: 'whiteAlpha.100', borderColor: 'whiteAlpha.200' }}
+        _active={{ bg: 'whiteAlpha.150' }}
+        textAlign="left"
+        justifyContent="flex-start"
+        overflow="hidden"
+        sx={{ '> span:first-of-type': { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }}
+      >
+        {selected?.label ?? placeholder ?? '—'}
+      </MenuButton>
+      <MenuList
+        bg="rgba(var(--bg-main-rgb), 0.98)"
+        border="1px solid"
+        borderColor="whiteAlpha.200"
+        borderRadius="lg"
+        boxShadow="0 12px 32px rgba(0,0,0,0.5)"
+        backdropFilter="blur(18px)"
+        minW="200px"
+        maxH="240px"
+        overflowY="auto"
+        zIndex={2000}
+        py={1}
+      >
+        {options.length === 0 && (
+          <MenuItem isDisabled fontSize="11px" color="gray.500" bg="transparent">No options</MenuItem>
+        )}
+        {options.map((opt) => (
+          <MenuItem
+            key={String(opt.value)}
+            fontSize="11px"
+            color={opt.value === value ? 'var(--accent)' : 'gray.200'}
+            fontWeight={opt.value === value ? '600' : '400'}
+            bg="transparent"
+            _hover={{ bg: 'whiteAlpha.100' }}
+            _focus={{ bg: 'whiteAlpha.100' }}
+            py={1.5}
+            px={3}
+            onClick={() => onChange(opt.value)}
+          >
+            {opt.label}
+          </MenuItem>
+        ))}
+      </MenuList>
+    </Menu>
+  )
+}
+
+// ─── Main combined panel ──────────────────────────────────────────────────────
+
+export default function WorkspacePanel() {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
+
+  // ── Version state ─────────────────────────────────────────────────────────
+  const { preview, setPreview, clearPreview, requestFollow } = useWorkspaceVersionPreview()
+  const [versionsOpen, setVersionsOpen] = useState(false)
+  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [repos, setRepos] = useState<WatchRepository[]>([])
+  const [versions, setVersions] = useState<WatchVersion[]>([])
+  const [workspaceVersions, setWorkspaceVersions] = useState<WorkspaceVersion[]>([])
+  const [repoId, setRepoId] = useState<number | ''>('')
+  const [versionId, setVersionId] = useState<number | ''>('')
+  const [diffs, setDiffs] = useState<WatchDiff[]>([])
+
+  const selectedRepo = useMemo(() => repos.find((r) => r.id === repoId) ?? null, [repos, repoId])
+  const selectedVersion = useMemo(() => versions.find((v) => v.id === versionId) ?? null, [versions, versionId])
+
+  const loadVersions = useCallback(async () => {
+    setVersionsLoading(true)
+    try {
+      const [nextRepos, nextWsVersions] = await Promise.all([
+        api.watch.repositories().catch(() => [] as WatchRepository[]),
+        api.versions.list(50).catch(() => [] as WorkspaceVersion[]),
+      ])
+      setRepos(nextRepos)
+      setWorkspaceVersions(nextWsVersions)
+      const nextRepoId = repoId || nextRepos[0]?.id || ''
+      setRepoId(nextRepoId)
+      if (nextRepoId) {
+        const nextVersions = await api.watch.versions(nextRepoId)
+        setVersions(nextVersions)
+        setVersionId(versionId || nextVersions[0]?.id || '')
+      }
+    } finally {
+      setVersionsLoading(false)
+    }
+  }, [repoId, versionId])
+
+  useEffect(() => {
+    if (!versionsOpen && !preview) return
+    void loadVersions()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versionsOpen])
+
+  useEffect(() => {
+    if (!repoId) { setVersions([]); setVersionId(''); return }
+    api.watch.versions(repoId).then((next) => {
+      setVersions(next)
+      setVersionId(next[0]?.id ?? '')
+    }).catch(() => { setVersions([]); setVersionId('') })
+  }, [repoId])
+
+  useEffect(() => {
+    if (!versionId) { setDiffs([]); return }
+    api.watch.diffs(versionId).then(setDiffs).catch(() => setDiffs([]))
+  }, [versionId])
+
+  const applyPreview = useCallback(() => {
+    setPreview(buildWorkspaceVersionPreview({ repository: selectedRepo, version: selectedVersion, workspaceVersions, diffs }))
+  }, [diffs, selectedRepo, selectedVersion, setPreview, workspaceVersions])
+
+  const follow = useCallback(() => {
+    if (!preview && selectedVersion) applyPreview()
+    requestFollow()
+    navigate('/views?view=explore')
+  }, [applyPreview, navigate, preview, requestFollow, selectedVersion])
+
+  const compactSummary = preview ? changeLabel(preview.diffs) : diffs.length > 0 ? changeLabel(diffs) : 'Workspace versions'
+  const activeVersion = preview?.version ?? selectedVersion
+  const activeRepo = preview?.repository ?? selectedRepo
+
+  // ── Watch state ───────────────────────────────────────────────────────────
+  const socketRef = useRef<WebSocket | null>(null)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const lastRepresentationHashRef = useRef('')
+  const [watchActive, setWatchActive] = useState(false)
+  const [watchPaused, setWatchPaused] = useState(false)
+  const [watchRepository, setWatchRepository] = useState<WatchRepository | null>(null)
+  const [watchLock, setWatchLock] = useState<WatchLock | null>(null)
+  const [watchConnected, setWatchConnected] = useState(false)
+  const [watcherMode, setWatcherMode] = useState('')
+  const [languages, setLanguages] = useState<string[]>([])
+  const [watchLines, setWatchLines] = useState<WatchLine[]>([])
+  const [runtimeOpen, setRuntimeOpen] = useState(true)
+
+  const addLine = useCallback((line: WatchLine | null) => {
+    if (!line) return
+    setWatchLines((current) => {
+      if (current[0]?.text === line.text && current[0]?.tone === line.tone) return current
+      return [line, ...current].slice(0, 8)
+    })
+  }, [])
+
+  const refreshWorkspace = useCallback((event: WatchEvent) => {
+    const data = event.data as Partial<WatchRepresentationSummary> | undefined
+    const hash = data?.representation_hash ?? ''
+    if (hash && hash === lastRepresentationHashRef.current) return
+    if (hash) lastRepresentationHashRef.current = hash
+    void queryClient.invalidateQueries({ queryKey: ['workspace', 'views'] })
+    void queryClient.invalidateQueries({ queryKey: ['elements', 'list'] })
+    window.dispatchEvent(new CustomEvent(WATCH_REPRESENTATION_UPDATED_EVENT, { detail: event }))
+  }, [queryClient])
+
+  const handleEvent = useCallback((event: WatchEvent) => {
+    const eventLock = event.data && typeof event.data === 'object' && 'status' in event.data
+      ? event.data as WatchLock : null
+    if (event.repository_id) setWatchLock((current) => eventLock ?? current)
+    if (eventLock) setWatchPaused(eventLock.status === 'paused')
+    if (event.watcher_mode) setWatcherMode(event.watcher_mode)
+    if (event.languages?.length) setLanguages(event.languages)
+    if (event.type === 'watch.paused') setWatchPaused(true)
+    if (event.type === 'watch.heartbeat') {
+      setWatchActive(true)
+      if (eventLock) setWatchPaused(eventLock.status === 'paused')
+    }
+    if (event.type === 'watch.stopped') { setWatchActive(false); setWatchPaused(false) }
+    if (event.type === 'representation.updated') refreshWorkspace(event)
+    if (event.type !== 'watch.stopped' || watchActive) addLine(summarizeEvent(event))
+  }, [watchActive, addLine, refreshWorkspace])
+
+  useEffect(() => {
+    let cancelled = false
+    const poll = async () => {
+      const status = await api.watch.status().catch(() => null)
+      if (!status || cancelled) return
+      setWatchActive(status.active)
+      setWatchRepository(status.repository ?? null)
+      setWatchLock(status.lock ?? null)
+      setWatchPaused(status.lock?.status === 'paused')
+    }
+    void poll()
+    const interval = window.setInterval(poll, 5000)
+    return () => { cancelled = true; window.clearInterval(interval) }
+  }, [])
+
+  useEffect(() => {
+    let disposed = false
+    const connect = () => {
+      if (disposed) return
+      const socket = new WebSocket(api.watch.websocketUrl())
+      socketRef.current = socket
+      socket.onopen = () => setWatchConnected(true)
+      socket.onclose = () => {
+        setWatchConnected(false)
+        if (!disposed) reconnectTimerRef.current = window.setTimeout(connect, 1500)
+      }
+      socket.onerror = () => socket.close()
+      socket.onmessage = (msg) => {
+        try { handleEvent(JSON.parse(msg.data) as WatchEvent) } catch { /* ignore */ }
+      }
+    }
+    connect()
+    return () => {
+      disposed = true
+      if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current)
+      socketRef.current?.close()
+      socketRef.current = null
+    }
+  }, [handleEvent])
+
+  const sendControl = useCallback((type: 'watch.pause' | 'watch.resume' | 'watch.stop') => {
+    const socket = socketRef.current
+    if (!socket || socket.readyState !== WebSocket.OPEN) return
+    socket.send(JSON.stringify({ type, repository_id: watchLock?.repository_id ?? watchRepository?.id ?? 0 }))
+    if (type === 'watch.pause') setWatchPaused(true)
+    if (type === 'watch.resume') setWatchPaused(false)
+    if (type === 'watch.stop') setWatchActive(false)
+  }, [watchLock?.repository_id, watchRepository?.id])
+
+  const watchStatusColor = !watchActive ? 'gray' : watchPaused ? 'yellow' : watchConnected ? 'green' : 'orange'
+  const watchStatusLabel = !watchActive ? 'Stopped' : watchPaused ? 'Paused' : 'Live'
+  const watchTitle = useMemo(() => shortPath(watchRepository?.repo_root), [watchRepository?.repo_root])
+  const watchMode = [watcherMode || (watchConnected ? 'live' : 'connecting'), languages.length ? languages.join(', ') : ''].filter(Boolean).join(' · ')
+
+  const showRuntimeSection = watchActive || watchLines.length > 0
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <Box
+      position="absolute"
+      left={{ base: 3, md: 4 }}
+      bottom={{ base: 'calc(var(--bottomnav-container-h) + 12px)', md: 4 }}
+      zIndex={1001}
+      pointerEvents="auto"
+      w={{ base: 'calc(100vw - 24px)', md: '360px' }}
+      maxW="360px"
+    >
+      <Box
+        bg="rgba(var(--bg-main-rgb), 0.94)"
+        border="1px solid"
+        borderColor={preview ? 'rgba(var(--accent-rgb), 0.45)' : 'whiteAlpha.200'}
+        borderRadius="lg"
+        boxShadow="0 18px 48px rgba(0,0,0,0.45)"
+        backdropFilter="blur(18px)"
+        overflow="hidden"
+      >
+        {/* ── Versions header ── */}
+        <HStack px={3} py={2} spacing={2} justify="space-between">
+          <HStack spacing={2} minW={0} flex={1}>
+            <Badge colorScheme={preview ? 'blue' : 'gray'} borderRadius="md" fontSize="9px" px={1.5}>V</Badge>
+            <Box minW={0} flex={1}>
+              <Text fontSize="11px" fontWeight="700" color="gray.100" noOfLines={1}>
+                {activeRepo?.display_name ?? 'Workspace'}
+              </Text>
+              <Text fontSize="10px" color="gray.500" noOfLines={1}>
+                {activeVersion ? `${shortHash(activeVersion.commit_hash)} · ${compactSummary}` : compactSummary}
+              </Text>
+            </Box>
+          </HStack>
+          <HStack spacing={0.5}>
+            {preview && (
+              <Tooltip label="Clear diff preview" placement="top">
+                <IconButton aria-label="Clear diff preview" icon={<CloseIcon boxSize={2} />} size="xs" variant="ghost" color="whiteAlpha.700" onClick={clearPreview} />
+              </Tooltip>
+            )}
+            <Tooltip label={versionsOpen ? 'Collapse versions' : 'Expand versions'} placement="top">
+              <IconButton
+                aria-label="Workspace versions"
+                icon={<TimeIcon boxSize={3} />}
+                size="xs"
+                variant="ghost"
+                color={versionsOpen ? 'var(--accent)' : 'whiteAlpha.700'}
+                onClick={() => setVersionsOpen((v) => !v)}
+              />
+            </Tooltip>
+          </HStack>
+        </HStack>
+
+        {/* ── Versions body ── */}
+        <Collapse in={versionsOpen} animateOpacity>
+          <VStack align="stretch" spacing={2} px={3} pb={3} borderTop="1px solid" borderColor="whiteAlpha.100">
+            <HStack pt={2.5} spacing={2}>
+              <ThemedSelect<number>
+                flex={1}
+                value={repoId}
+                placeholder="Select repository"
+                options={repos.map((r) => ({ value: r.id, label: r.display_name }))}
+                onChange={(v) => setRepoId(v)}
+              />
+              <Tooltip label="Refresh versions" placement="top">
+                <IconButton
+                  aria-label="Refresh versions"
+                  icon={versionsLoading ? <Spinner size="xs" /> : <RepeatIcon boxSize={3} />}
+                  size="xs"
+                  variant="ghost"
+                  color="whiteAlpha.600"
+                  onClick={loadVersions}
+                />
+              </Tooltip>
+            </HStack>
+
+            <ThemedSelect<number>
+              value={versionId}
+              placeholder="Select version"
+              options={versions.map((v) => ({
+                value: v.id,
+                label: `${shortHash(v.commit_hash)} · ${v.branch || 'detached'} · ${new Date(v.created_at).toLocaleString()}`,
+              }))}
+              onChange={(v) => setVersionId(v)}
+            />
+
+            <HStack spacing={1.5} flexWrap="wrap">
+              <Badge colorScheme="green" fontSize="9px">+{diffs.filter((d) => d.change_type === 'added').length}</Badge>
+              <Badge colorScheme="yellow" fontSize="9px">~{diffs.filter((d) => d.change_type === 'updated').length}</Badge>
+              <Badge colorScheme="red" fontSize="9px">-{diffs.filter((d) => d.change_type === 'deleted').length}</Badge>
+              <Text fontSize="10px" color="gray.500">{workspaceVersions.length} snapshots</Text>
+            </HStack>
+
+            {workspaceVersions.length > 0 && (
+              <VStack align="stretch" spacing={0.5} maxH="72px" overflowY="auto" borderTop="1px solid" borderColor="whiteAlpha.100" pt={1.5}>
+                {workspaceVersions.slice(0, 5).map((v) => (
+                  <HStack key={v.id} justify="space-between" spacing={3}>
+                    <Text fontSize="10px" color="gray.300" noOfLines={1}>{v.description || v.version_id}</Text>
+                    <Text fontSize="10px" color="gray.500" flexShrink={0}>{v.element_count} el · {v.connector_count} conn</Text>
+                  </HStack>
+                ))}
+              </VStack>
+            )}
+
+            <HStack spacing={1.5}>
+              <Button size="xs" leftIcon={<ViewIcon boxSize={2.5} />} onClick={applyPreview} isDisabled={!selectedVersion} h="26px" fontSize="11px">
+                Preview diff
+              </Button>
+              <Button size="xs" variant="outline" onClick={follow} isDisabled={!selectedVersion} h="26px" fontSize="11px">
+                Follow
+              </Button>
+              <Tooltip label="Rollback needs a backend restore endpoint for workspace snapshots.">
+                <Button size="xs" variant="ghost" isDisabled h="26px" fontSize="11px">Rollback</Button>
+              </Tooltip>
+            </HStack>
+          </VStack>
+        </Collapse>
+
+        {/* ── Runtime section (collapsible) ── */}
+        {showRuntimeSection && (
+          <>
+            <HStack
+              px={3}
+              py={1.5}
+              justify="space-between"
+              borderTop="1px solid"
+              borderColor="whiteAlpha.100"
+              cursor="pointer"
+              onClick={() => setRuntimeOpen((v) => !v)}
+              _hover={{ bg: 'whiteAlpha.50' }}
+              transition="background 0.15s"
+            >
+              <HStack spacing={2} minW={0} flex={1}>
+                <Badge colorScheme={watchStatusColor} variant="subtle" borderRadius="md" fontSize="9px" px={1.5}>{watchStatusLabel}</Badge>
+                <Text fontSize="10px" fontWeight="600" color="gray.300" noOfLines={1}>{watchTitle}</Text>
+                {watchMode ? <Text fontSize="9px" color="gray.500" noOfLines={1}>{watchMode}</Text> : null}
+              </HStack>
+              <HStack spacing={0.5} onClick={(e) => e.stopPropagation()}>
+                {watchActive && (
+                  <>
+                    <Tooltip label={watchPaused ? 'Resume watch' : 'Pause watch'} placement="top">
+                      <IconButton
+                        aria-label={watchPaused ? 'Resume watch' : 'Pause watch'}
+                        icon={watchPaused ? <RepeatIcon boxSize={3} /> : <PauseGlyph />}
+                        size="xs"
+                        variant="ghost"
+                        color="whiteAlpha.700"
+                        onClick={() => sendControl(watchPaused ? 'watch.resume' : 'watch.pause')}
+                      />
+                    </Tooltip>
+                    <Tooltip label="Stop watch" placement="top">
+                      <IconButton
+                        aria-label="Stop watch"
+                        icon={<CloseIcon boxSize={2} />}
+                        size="xs"
+                        variant="ghost"
+                        color="whiteAlpha.700"
+                        onClick={() => sendControl('watch.stop')}
+                      />
+                    </Tooltip>
+                  </>
+                )}
+                <Box
+                  as="span"
+                  display="flex"
+                  alignItems="center"
+                  color="whiteAlpha.400"
+                  transform={runtimeOpen ? 'rotate(180deg)' : 'rotate(0deg)'}
+                  transition="transform 0.2s"
+                  ml={0.5}
+                >
+                  <ChevronDownIcon boxSize={3} />
+                </Box>
+              </HStack>
+            </HStack>
+
+            <Collapse in={runtimeOpen} animateOpacity>
+              <VStack align="stretch" spacing={0} maxH="140px" overflowY="auto">
+                {watchLines.length === 0 ? (
+                  <Text px={3} py={2} fontSize="11px" color="gray.500">Waiting for watch output…</Text>
+                ) : watchLines.map((line) => (
+                  <HStack key={line.id} px={3} py={1.5} spacing={2} borderTop="1px solid" borderColor="whiteAlpha.50" align="flex-start">
+                    <Text fontSize="9px" color="gray.600" fontFamily="mono" flexShrink={0}>
+                      {new Date(line.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </Text>
+                    <Text
+                      fontSize="11px"
+                      color={line.tone === 'error' ? 'red.200' : line.tone === 'warning' ? 'yellow.200' : line.tone === 'success' ? 'green.200' : 'gray.400'}
+                      noOfLines={2}
+                    >
+                      {line.text}
+                    </Text>
+                  </HStack>
+                ))}
+              </VStack>
+            </Collapse>
+          </>
+        )}
+      </Box>
+    </Box>
+  )
+}

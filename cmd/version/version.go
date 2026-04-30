@@ -1,8 +1,7 @@
 package version
 
 import (
-	"fmt"
-
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/spf13/cobra"
 )
 
@@ -15,7 +14,7 @@ func NewVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "Print the version number of tld",
 		Run: func(cmd *cobra.Command, _ []string) {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "tld version %s\n", Version)
+			term.Infof(cmd.OutOrStdout(), "tld version %s", Version)
 		},
 	}
 }

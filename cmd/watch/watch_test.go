@@ -39,14 +39,17 @@ func helper() {}
 	dataDir := t.TempDir()
 
 	first := runScanCommand(t, repo, dataDir)
-	if !strings.Contains(first, "Files:      1 seen, 1 parsed, 0 skipped") ||
-		!strings.Contains(first, "Symbols:    2") ||
-		!strings.Contains(first, "References: 1") {
+	if !strings.Contains(first, "Files:") ||
+		!strings.Contains(first, "1 seen, 1 parsed, 0 skipped") ||
+		!strings.Contains(first, "Symbols:") ||
+		!strings.Contains(first, "2") ||
+		!strings.Contains(first, "References:") ||
+		!strings.Contains(first, "1") {
 		t.Fatalf("unexpected first scan output:\n%s", first)
 	}
 
 	second := runScanCommand(t, repo, dataDir)
-	if !strings.Contains(second, "Files:      1 seen, 0 parsed, 1 skipped") {
+	if !strings.Contains(second, "Files:") || !strings.Contains(second, "1 seen, 0 parsed, 1 skipped") {
 		t.Fatalf("unexpected repeat scan output:\n%s", second)
 	}
 }

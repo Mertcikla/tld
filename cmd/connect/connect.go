@@ -6,6 +6,7 @@ import (
 
 	"github.com/mertcikla/tld/internal/cmdutil"
 	"github.com/mertcikla/tld/internal/completion"
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -59,8 +60,8 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if cmdutil.WantsJSON(*format) {
 				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "connect", "connect", fmt.Sprintf("%s:%s", from, to))
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Appended connector %s -> %s in view %s to connectors.yaml\n", from, to, view)
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Change recorded locally in connectors.yaml. Run 'tld apply' to push to cloud.")
+			term.Successf(cmd.OutOrStdout(), "Connector %s → %s added in view %s", from, to, view)
+			term.Hint(cmd.OutOrStdout(), "Run 'tld apply' to push to cloud.")
 			return nil
 		},
 	}

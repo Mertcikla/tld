@@ -27,7 +27,7 @@ import MiniZoomOnboarding from '../components/MiniZoomOnboarding'
 import { ZUICanvas, type ZUICameraFrame, type ZUICanvasHandle } from '../components/ZUI'
 import { useCrossBranchContextSettings } from '../crossBranch/settings'
 import { primeWorkspaceGraphSnapshot } from '../crossBranch/store'
-import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../components/WatchRuntimePanel'
+import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../components/WorkspacePanel'
 import { useWorkspaceVersionPreview } from '../context/WorkspaceVersionContext'
 
 // ── Types ──────────────────────────────────────────────────────────

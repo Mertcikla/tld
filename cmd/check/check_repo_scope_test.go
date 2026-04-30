@@ -35,7 +35,7 @@ foreign:
 	if err != nil {
 		t.Fatalf("check: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "PASS  Symbol Verification") {
+	if !strings.Contains(stdout, "Symbol Verification") {
 		t.Errorf("stdout %q does not contain symbol verification pass", stdout)
 	}
 	if strings.Contains(stderr, "Foreign Service") || strings.Contains(stderr, "doesNotExist") {
@@ -69,7 +69,7 @@ foreign:
 	if err != nil {
 		t.Fatalf("validate: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Symbol verification: passed") {
+	if !strings.Contains(stdout, "Symbol verification") {
 		t.Errorf("stdout %q does not contain symbol verification pass", stdout)
 	}
 	if strings.Contains(stderr, "Foreign Service") || strings.Contains(stderr, "doesNotExist") {

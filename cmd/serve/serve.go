@@ -194,28 +194,28 @@ type serveStatus struct {
 
 func printServeInfo(out io.Writer, url string, status serveStatus) {
 	cfgPath, _ := workspace.ConfigPath()
-	_, _ = fmt.Fprintf(out, "Mode:                %s\n", printableMode(status.Mode))
+	term.Label(out, 20, "Mode", printableMode(status.Mode))
 	if status.PID != nil {
-		_, _ = fmt.Fprintf(out, "PID:                 %d\n", *status.PID)
+		term.Label(out, 20, "PID", fmt.Sprintf("%d", *status.PID))
 	}
-	_, _ = fmt.Fprintf(out, "Server status:       %s\n", dataStatus(status.InitializedData))
-	_, _ = fmt.Fprintf(out, "Bind address:        %s\n", status.BindAddr)
+	term.Label(out, 20, "Server status", dataStatus(status.InitializedData))
+	term.Label(out, 20, "Bind address", status.BindAddr)
 	if !status.InitializedData {
-		_, _ = fmt.Fprintf(out, "Resource counts:     %d views, %d elements, %d connectors\n", status.Resources.Views, status.Resources.Elements, status.Resources.Connectors)
+		term.Label(out, 20, "Resource counts", fmt.Sprintf("%d views, %d elements, %d connectors", status.Resources.Views, status.Resources.Elements, status.Resources.Connectors))
 	}
 	if status.Startup > 0 {
-		_, _ = fmt.Fprintf(out, "Ready in:            %s\n", status.Startup.Round(time.Millisecond))
+		term.Label(out, 20, "Ready in", status.Startup.Round(time.Millisecond).String())
 	}
-	_, _ = fmt.Fprintf(out, "DB:                  %s\n", styledLocalPath(out, status.DBPath))
+	term.Label(out, 20, "DB", term.Path(out, status.DBPath))
 	if info, err := os.Stat(status.DBPath); err == nil {
-		_, _ = fmt.Fprintf(out, "DB size:             %s\n", humanBytes(info.Size()))
-		_, _ = fmt.Fprintf(out, "DB last modified:    %s\n", info.ModTime().Format(time.RFC3339))
+		term.Label(out, 20, "DB size", humanBytes(info.Size()))
+		term.Label(out, 20, "DB last modified", info.ModTime().Format(time.RFC3339))
 	}
-	_, _ = fmt.Fprintf(out, "Config path:         %s\n", styledLocalPath(out, cfgPath))
-	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintf(out, "tlDiagram available at: %s\n", styledWebappURL(out, url))
-	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintln(out, "Run 'tld stop' to shut down the server")
+	term.Label(out, 20, "Config path", term.Path(out, cfgPath))
+	term.Separator(out)
+	_, _ = fmt.Fprintf(out, "  tlDiagram available at: %s\n", term.URL(out, url))
+	term.Separator(out)
+	term.Hint(out, "Run 'tld stop' to shut down the server")
 }
 
 func databaseWillBeInitialized(dataDir string) bool {
@@ -235,14 +235,6 @@ func printableMode(mode string) string {
 		return "unknown"
 	}
 	return mode
-}
-
-func styledLocalPath(out io.Writer, path string) string {
-	return formatLocalPath(path, term.IsColorEnabled(out))
-}
-
-func styledWebappURL(out io.Writer, url string) string {
-	return formatWebappURL(url, term.IsColorEnabled(out))
 }
 
 func formatLocalPath(path string, colorEnabled bool) string {

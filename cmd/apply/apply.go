@@ -15,6 +15,7 @@ import (
 	"github.com/mertcikla/tld/internal/cmdutil"
 	"github.com/mertcikla/tld/internal/planner"
 	"github.com/mertcikla/tld/internal/reporter"
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/proto"
@@ -92,17 +93,15 @@ func NewApplyCmd(wdir *string) *cobra.Command {
 						return fmt.Errorf("server drift check failed: %w", err)
 					}
 					if hasDrift {
-						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Warning: The server has changes that are not in your local YAML.")
-						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  Run `tld pull` to merge them first, or use --force-apply to overwrite.")
-						if _, err := fmt.Fprint(cmd.OutOrStdout(), "  Continue anyway? [yes/no]: "); err != nil {
-							return err
-						}
+						term.Warn(cmd.OutOrStdout(), "The server has changes that are not in your local YAML.")
+						term.Hint(cmd.OutOrStdout(), "Run `tld pull` to merge them first, or use --force-apply to overwrite.")
+						_, _ = fmt.Fprint(cmd.OutOrStdout(), "  Continue anyway? [yes/no]: ")
 						if !scanner.Scan() {
 							return errors.New("aborted")
 						}
 						answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 						if answer != "yes" && answer != "y" {
-							_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Apply cancelled.")
+							term.Info(cmd.OutOrStdout(), "Apply cancelled.")
 							return nil
 						}
 					}
@@ -134,13 +133,13 @@ func NewApplyCmd(wdir *string) *cobra.Command {
 			}
 
 			if !force {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Apply %d resources? [yes/no]: ", total)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Apply %d resources? [yes/no]: ", total)
 				if !scanner.Scan() {
 					return errors.New("aborted")
 				}
 				answer := strings.TrimSpace(strings.ToLower(scanner.Text()))
 				if answer != "yes" && answer != "y" {
-					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Apply cancelled.")
+					term.Info(cmd.OutOrStdout(), "Apply cancelled.")
 					return nil
 				}
 			}
@@ -151,11 +150,11 @@ func NewApplyCmd(wdir *string) *cobra.Command {
 				if cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
 					return cmdutil.WriteCommandError(cmd.OutOrStdout(), cmd.Root().PersistentFlags().Lookup("compact").Value.String() == "true", "apply", err)
 				}
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Apply failed:", err)
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  Target URL: %s\n", client.NormalizeURL(ws.Config.ServerURL))
+				term.Fail(cmd.ErrOrStderr(), fmt.Sprintf("Apply failed: %v", err))
+				term.Label(cmd.ErrOrStderr(), 12, "Target URL", client.NormalizeURL(ws.Config.ServerURL))
 
 				if connectErr := new(connect.Error); errors.As(err, &connectErr) {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  Code: %s\n", connectErr.Code().String())
+					term.Label(cmd.ErrOrStderr(), 12, "Code", connectErr.Code().String())
 					if len(connectErr.Details()) > 0 {
 						_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "  Details:")
 						for _, detail := range connectErr.Details() {
@@ -164,7 +163,7 @@ func NewApplyCmd(wdir *string) *cobra.Command {
 					}
 				}
 
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Transaction rolled back.")
+				term.Info(cmd.ErrOrStderr(), "Transaction rolled back.")
 				reporter.RenderExecutionMarkdown(cmd.ErrOrStderr(), plan, nil, false, false)
 				return cmdutil.WithUnauthorizedHint("apply failed", err)
 			}
@@ -195,7 +194,7 @@ func NewApplyCmd(wdir *string) *cobra.Command {
 			}
 			currentWS.Meta = meta
 			if err := workspace.Save(currentWS); err != nil {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to rewrite workspace metadata: %v\n", err)
+				term.Warnf(cmd.ErrOrStderr(), "Failed to rewrite workspace metadata: %v", err)
 			}
 
 			if cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
@@ -205,7 +204,7 @@ func NewApplyCmd(wdir *string) *cobra.Command {
 			reporter.RenderExecutionMarkdown(cmd.OutOrStdout(), plan, resp.Msg, true, verbose)
 
 			if len(resp.Msg.Drift) > 0 {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: %d drift item(s) detected\n", len(resp.Msg.Drift))
+				term.Warnf(cmd.ErrOrStderr(), "%d drift item(s) detected", len(resp.Msg.Drift))
 				return fmt.Errorf("%d drift item(s) detected", len(resp.Msg.Drift))
 			}
 			return nil
@@ -243,7 +242,7 @@ func autoPullAndRebuild(cmd *cobra.Command, ws *workspace.Workspace, lockFile *w
 		return nil, 0, nil
 	}
 	if !cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Version conflict detected during force apply. Pulling and retrying once...")
+		term.Warnf(cmd.ErrOrStderr(), "Version conflict detected during force apply. Pulling and retrying once...")
 	}
 	newPlan, err := pullAndRebuildPlan(cmd, ws, lockFile, wdir, recreateIDs)
 	if err != nil {
@@ -279,22 +278,22 @@ func detectAndHandleConflicts(
 
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Version conflict detected:\n")
 	if resp.Msg.Version != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "- Remote has newer version %s (%s) via %s\n",
+		term.Warnf(cmd.ErrOrStderr(), "Remote has newer version %s (%s) via %s",
 			resp.Msg.Version.VersionId, resp.Msg.Version.CreatedAt.AsTime().Format(time.RFC3339), resp.Msg.Version.CreatedBy)
 	}
 
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "- %d conflicts detected:\n", len(resp.Msg.Conflicts))
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  %d conflicts detected:\n", len(resp.Msg.Conflicts))
 	for _, conflict := range resp.Msg.Conflicts {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  * %s \"%s\" (local %s, remote %s)\n",
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "    * %s %q (local %s, remote %s)\n",
 			conflict.ResourceType, conflict.Ref,
 			conflict.LocalUpdatedAt.AsTime().Format(time.RFC3339),
 			conflict.RemoteUpdatedAt.AsTime().Format(time.RFC3339))
 	}
 
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "\nOptions:\n")
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[1] Abort and review changes\n")
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[2] Pull & Merge (fetch server state and merge locally)\n")
-	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[3] Force Apply (overwrite remote changes)\n")
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  [1] Abort and review changes\n")
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  [2] Pull & Merge (fetch server state and merge locally)\n")
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  [3] Force Apply (overwrite remote changes)\n")
 	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "\nChoose option [1-3]: ")
 
 	if !scanner.Scan() {
@@ -304,20 +303,20 @@ func detectAndHandleConflicts(
 	choice := strings.TrimSpace(scanner.Text())
 	switch choice {
 	case "1":
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Apply aborted.")
+		term.Info(cmd.OutOrStdout(), "Apply aborted.")
 		return nil, errors.New("apply aborted by user")
 
 	case "2":
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Pulling server state and merging locally...")
+		term.Info(cmd.OutOrStdout(), "Pulling server state and merging locally...")
 		newPlan, err := pullAndRebuildPlan(cmd, ws, lockFile, wdir, recreateIDs)
 		if err != nil {
 			return nil, fmt.Errorf("pull & merge: %w", err)
 		}
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Merge complete. Proceeding with apply...")
+		term.Success(cmd.OutOrStdout(), "Merge complete. Proceeding with apply...")
 		return newPlan, nil
 
 	case "3":
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Proceeding with force apply...")
+		term.Info(cmd.OutOrStdout(), "Proceeding with force apply...")
 		return nil, nil
 
 	default:

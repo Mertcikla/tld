@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/mertcikla/tld/internal/client"
 	"github.com/mertcikla/tld/internal/cmdutil"
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -51,9 +52,12 @@ enter the displayed code at <server>/app/device.`,
 			}
 
 			// Step 2: inform the user.
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nOpen the following URL to log in:\n\n  %s\n\n", auth.VerificationUriComplete)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Or navigate to %s and enter the code:\n\n  %s\n\n", auth.VerificationUri, auth.UserCode)
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Waiting for authorisation… (press Ctrl+C to cancel)")
+			term.Separator(cmd.OutOrStdout())
+			term.Infof(cmd.OutOrStdout(), "Open the following URL to log in:\n\n  %s", term.URL(cmd.OutOrStdout(), auth.VerificationUriComplete))
+			term.Separator(cmd.OutOrStdout())
+			term.Infof(cmd.OutOrStdout(), "Or navigate to %s and enter the code:\n\n  %s", auth.VerificationUri, auth.UserCode)
+			term.Separator(cmd.OutOrStdout())
+			term.Info(cmd.OutOrStdout(), "Waiting for authorisation… (press Ctrl+C to cancel)")
 
 			// Step 3: optionally open the browser.
 			if !noBrowser {
@@ -75,7 +79,8 @@ enter the displayed code at <server>/app/device.`,
 			}
 
 			cfgPath, _ := workspace.ConfigPath()
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nAuthorised! Config written to %s\n", cfgPath)
+			term.Separator(cmd.OutOrStdout())
+			term.Successf(cmd.OutOrStdout(), "Authorised! Config written to %s", term.Path(cmd.OutOrStdout(), cfgPath))
 			return nil
 		},
 	}

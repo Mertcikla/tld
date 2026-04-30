@@ -51,23 +51,23 @@ func NewWatchCmd() *cobra.Command {
 			}
 			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
 			watchSettings := resolveWatchSettings(cfg, languageFlags, watcherMode, pollInterval, debounce, maxElements, maxConnectors, maxIncoming, maxOutgoing)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watch booting: data=%s embeddings=%s/%s\n", dataDir, embeddingCfg.Provider, embeddingCfg.Model)
+			term.Infof(cmd.OutOrStdout(), "watch booting: data=%s embeddings=%s/%s", term.Path(cmd.OutOrStdout(), dataDir), embeddingCfg.Provider, embeddingCfg.Model)
 			progress := newCLIProgress(cmd.ErrOrStderr())
 			if embeddingCfg.Provider != "none" {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "embedding healthcheck: %s %s\n", embeddingCfg.Endpoint, embeddingCfg.Model)
+				term.Infof(cmd.OutOrStdout(), "embedding healthcheck: %s %s", embeddingCfg.Endpoint, embeddingCfg.Model)
 				checked, health, err := watch.CheckEmbeddingHealth(cmd.Context(), embeddingCfg)
 				if err != nil {
 					return fmt.Errorf("embedding healthcheck failed: %w", err)
 				}
 				embeddingCfg = checked
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "embedding healthcheck ok: dimension=%d similarity=%.3f\n", health.Dimension, health.Similarity)
+				term.Successf(cmd.OutOrStdout(), "embedding healthcheck ok: dimension=%d similarity=%.3f", health.Dimension, health.Similarity)
 			}
 			addr := localserver.ResolveAddr(localserver.ServeOptions{Host: host, Port: port})
 			url := "http://" + addr
 			var srv *http.Server
 			if !noServe {
 				if !serverReady(url) {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "server booting: %s\n", url)
+					term.Infof(cmd.OutOrStdout(), "server booting: %s", url)
 					app, err := localserver.Bootstrap(dataDir, localserver.ServeOptions{Host: host, Port: port})
 					if err != nil {
 						return err
@@ -75,12 +75,12 @@ func NewWatchCmd() *cobra.Command {
 					srv = &http.Server{Addr: app.Addr, Handler: app.Handler}
 					go func() {
 						if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-							_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "server error: %v\n", err)
+							term.Failf(cmd.ErrOrStderr(), "server error: %v", err)
 						}
 					}()
 					url = "http://" + app.Addr
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "server ready: %s\n", url)
+				term.Successf(cmd.OutOrStdout(), "server ready: %s", term.URL(cmd.OutOrStdout(), url))
 				if openBrowser {
 					_ = cmdutil.OpenBrowser(url)
 				}
@@ -132,13 +132,15 @@ func NewWatchCmd() *cobra.Command {
 				return nil
 			}
 			repo := result.Repository
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Watching:            %s\n", repo.RepoRoot)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Repository:          %s\n", repoIdentity(repo))
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Branch:              %s\n", result.GitStatus.Branch)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "HEAD:                %s\n", result.GitStatus.HeadCommit)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Mode:                watch\n")
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "tlDiagram available at: %s\n\n", url)
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Press Ctrl-C to stop watching.")
+			term.Separator(cmd.OutOrStdout())
+			term.Label(cmd.OutOrStdout(), 20, "Watching", repo.RepoRoot)
+			term.Label(cmd.OutOrStdout(), 20, "Repository", repoIdentity(repo))
+			term.Label(cmd.OutOrStdout(), 20, "Branch", result.GitStatus.Branch)
+			term.Label(cmd.OutOrStdout(), 20, "HEAD", result.GitStatus.HeadCommit)
+			term.Label(cmd.OutOrStdout(), 20, "Mode", "watch")
+			term.Label(cmd.OutOrStdout(), 20, "tlDiagram available at", term.URL(cmd.OutOrStdout(), url))
+			term.Separator(cmd.OutOrStdout())
+			term.Hint(cmd.OutOrStdout(), "Press Ctrl-C to stop watching.")
 			if err := <-errCh; err != nil {
 				return err
 			}
@@ -309,13 +311,13 @@ func newScanCmd() *cobra.Command {
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Repository: %d\n", result.RepositoryID)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Scan run:   %d\n", result.ScanRunID)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Files:      %d seen, %d parsed, %d skipped\n", result.FilesSeen, result.FilesParsed, result.FilesSkipped)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Symbols:    %d\n", result.SymbolsSeen)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "References: %d\n", result.ReferencesSeen)
+			term.Label(cmd.OutOrStdout(), 15, "Repository", fmt.Sprintf("%d", result.RepositoryID))
+			term.Label(cmd.OutOrStdout(), 15, "Scan run", fmt.Sprintf("%d", result.ScanRunID))
+			term.Label(cmd.OutOrStdout(), 15, "Files", fmt.Sprintf("%d seen, %d parsed, %d skipped", result.FilesSeen, result.FilesParsed, result.FilesSkipped))
+			term.Label(cmd.OutOrStdout(), 15, "Symbols", fmt.Sprintf("%d", result.SymbolsSeen))
+			term.Label(cmd.OutOrStdout(), 15, "References", fmt.Sprintf("%d", result.ReferencesSeen))
 			if result.Warning != "" {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Warning:    %s\n", result.Warning)
+				term.Warn(cmd.OutOrStdout(), result.Warning)
 			}
 			return nil
 		},
@@ -384,15 +386,15 @@ func newRepresentCmd() *cobra.Command {
 					Representation watch.RepresentResult `json:"representation"`
 				}{Scan: scanResult, Representation: result})
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Repository:      %d\n", result.RepositoryID)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Scan run:        %d\n", scanResult.ScanRunID)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Filter run:      %d\n", result.FilterRunID)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Represent run:   %d\n", result.RepresentationRun)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Elements:        %d created, %d updated\n", result.ElementsCreated, result.ElementsUpdated)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Connectors:      %d created, %d updated\n", result.ConnectorsCreated, result.ConnectorsUpdated)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Views:           %d created\n", result.ViewsCreated)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Raw graph hash:  %s\n", result.RawGraphHash)
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Representation: %s\n", result.RepresentationHash)
+			term.Label(cmd.OutOrStdout(), 18, "Repository", fmt.Sprintf("%d", result.RepositoryID))
+			term.Label(cmd.OutOrStdout(), 18, "Scan run", fmt.Sprintf("%d", scanResult.ScanRunID))
+			term.Label(cmd.OutOrStdout(), 18, "Filter run", fmt.Sprintf("%d", result.FilterRunID))
+			term.Label(cmd.OutOrStdout(), 18, "Represent run", fmt.Sprintf("%d", result.RepresentationRun))
+			term.Label(cmd.OutOrStdout(), 18, "Elements", fmt.Sprintf("%d created, %d updated", result.ElementsCreated, result.ElementsUpdated))
+			term.Label(cmd.OutOrStdout(), 18, "Connectors", fmt.Sprintf("%d created, %d updated", result.ConnectorsCreated, result.ConnectorsUpdated))
+			term.Label(cmd.OutOrStdout(), 18, "Views", fmt.Sprintf("%d created", result.ViewsCreated))
+			term.Label(cmd.OutOrStdout(), 18, "Raw graph hash", result.RawGraphHash)
+			term.Label(cmd.OutOrStdout(), 18, "Representation", result.RepresentationHash)
 			return nil
 		},
 	}

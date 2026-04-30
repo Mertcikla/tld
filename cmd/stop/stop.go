@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/mertcikla/tld/internal/localserver"
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -59,7 +60,7 @@ func runStop(cmd *cobra.Command, forceKill bool, dataDir string) error {
 			return fmt.Errorf("kill: %w", err)
 		}
 		_ = os.Remove(pidPath)
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Server killed.")
+		term.Success(cmd.OutOrStdout(), "Server killed.")
 		return nil
 	}
 
@@ -71,7 +72,7 @@ func runStop(cmd *cobra.Command, forceKill bool, dataDir string) error {
 	for time.Now().Before(deadline) {
 		if !localserver.IsRunning(pid) {
 			_ = os.Remove(pidPath)
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Server stopped.")
+			term.Success(cmd.OutOrStdout(), "Server stopped.")
 			return nil
 		}
 		time.Sleep(200 * time.Millisecond)
