@@ -118,9 +118,9 @@ serve:
   # data_dir: ~/.local/share/tldiagram
 watch:
   embedding:
-    provider: ollama
-    endpoint: http://localhost:11434
-    model: jina/jina-embeddings-v2-base-en
+    provider: openai
+    endpoint: http://127.0.0.1:8000/v1/embeddings
+    model: embeddinggemma-300m-4bit
 `
 	return os.WriteFile(path, []byte(defaultConfig), 0o644)
 }

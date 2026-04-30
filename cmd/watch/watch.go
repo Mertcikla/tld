@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -409,6 +410,7 @@ func resolveEmbeddingConfig(cfg *workspace.GlobalConfig, provider, endpoint, mod
 type cliProgress struct {
 	out io.Writer
 	bar *progressbar.ProgressBar
+	mu  sync.Mutex
 }
 
 func newCLIProgress(out io.Writer) watch.ProgressSink {
@@ -422,6 +424,8 @@ func (p *cliProgress) Start(label string, total int) {
 	if p == nil || total <= 0 {
 		return
 	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.bar = progressbar.NewOptions(total,
 		progressbar.OptionSetWriter(p.out),
 		progressbar.OptionSetVisibility(true),
@@ -430,12 +434,18 @@ func (p *cliProgress) Start(label string, total int) {
 		progressbar.OptionSetWidth(12),
 		progressbar.OptionFullWidth(),
 		progressbar.OptionClearOnFinish(),
+		progressbar.OptionUseANSICodes(true),
 		progressbar.OptionThrottle(60*time.Millisecond),
 	)
 }
 
 func (p *cliProgress) Advance(label string) {
-	if p == nil || p.bar == nil {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar == nil {
 		return
 	}
 	if label != "" {
@@ -445,7 +455,12 @@ func (p *cliProgress) Advance(label string) {
 }
 
 func (p *cliProgress) Finish() {
-	if p == nil || p.bar == nil {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar == nil {
 		return
 	}
 	_ = p.bar.Finish()

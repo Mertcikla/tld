@@ -12,10 +12,16 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/openai/openai-go"
+	"github.com/openai/openai-go/option"
 )
 
 const (
-	DefaultEmbeddingProvider        = "ollama"
+	DefaultEmbeddingProvider        = "openai"
+	DefaultOpenAIEndpoint           = "http://127.0.0.1:8000/v1/embeddings"
+	DefaultOpenAIModel              = "embeddinggemma-300m-4bit"
+	DefaultOpenAIAPIKey             = "tldcli"
 	DefaultOllamaEndpoint           = "http://localhost:11434"
 	DefaultOllamaModel              = "jina/jina-embeddings-v2-base-en"
 	DefaultEmbeddingHealthThreshold = 0.70
@@ -204,11 +210,119 @@ func (p *OllamaProvider) embedTexts(ctx context.Context, texts []string) ([]Vect
 	return nil, fmt.Errorf("ollama embed response did not include embeddings")
 }
 
+type OpenAIProvider struct {
+	Endpoint        string
+	Model           string
+	Dimension       int
+	HealthThreshold float64
+	Client          *http.Client
+}
+
+func (p *OpenAIProvider) ModelID() ModelID {
+	cfg := normalizeEmbeddingConfig(EmbeddingConfig{
+		Provider:        "openai",
+		Endpoint:        p.Endpoint,
+		Model:           p.Model,
+		Dimension:       p.Dimension,
+		HealthThreshold: p.HealthThreshold,
+	})
+	return ModelID{Provider: cfg.Provider, Model: cfg.Model, Dimension: cfg.Dimension, ConfigHash: stableHash(cfg)}
+}
+
+func (p *OpenAIProvider) Embed(ctx context.Context, inputs []EmbeddingInput) ([]Vector, error) {
+	if len(inputs) == 0 {
+		return []Vector{}, nil
+	}
+	texts := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		texts = append(texts, input.Text)
+	}
+	vectors, err := p.embedTexts(ctx, texts)
+	if err != nil {
+		return nil, err
+	}
+	if len(vectors) != len(inputs) {
+		return nil, fmt.Errorf("openai returned %d embeddings for %d inputs", len(vectors), len(inputs))
+	}
+	if len(vectors) > 0 && p.Dimension <= 0 {
+		p.Dimension = len(vectors[0])
+	}
+	return vectors, nil
+}
+
+func (p *OpenAIProvider) HealthCheck(ctx context.Context) (HealthResult, error) {
+	texts := []string{
+		"Why is the sky blue?",
+		"What causes the sky to look blue during the day?",
+	}
+	vectors, err := p.embedTexts(ctx, texts)
+	if err != nil {
+		return HealthResult{}, err
+	}
+	if len(vectors) != 2 || len(vectors[0]) == 0 || len(vectors[1]) == 0 {
+		return HealthResult{}, fmt.Errorf("openai healthcheck returned empty embeddings")
+	}
+	if len(vectors[0]) != len(vectors[1]) {
+		return HealthResult{}, fmt.Errorf("openai healthcheck returned mismatched dimensions %d and %d", len(vectors[0]), len(vectors[1]))
+	}
+	sim := CosineSimilarity(vectors[0], vectors[1])
+	threshold := p.HealthThreshold
+	if threshold <= 0 {
+		threshold = DefaultEmbeddingHealthThreshold
+	}
+	if sim < threshold {
+		return HealthResult{}, fmt.Errorf("openai healthcheck similarity %.3f is below threshold %.3f", sim, threshold)
+	}
+	p.Dimension = len(vectors[0])
+	return HealthResult{Dimension: len(vectors[0]), Similarity: sim}, nil
+}
+
+func (p *OpenAIProvider) embedTexts(ctx context.Context, texts []string) ([]Vector, error) {
+	opts := []option.RequestOption{
+		option.WithBaseURL(openAIBaseURL(p.Endpoint)),
+		option.WithAPIKey(DefaultOpenAIAPIKey),
+		option.WithRequestTimeout(30 * time.Second),
+	}
+	if p.Client != nil {
+		opts = append(opts, option.WithHTTPClient(p.Client))
+	}
+	client := openai.NewClient(opts...)
+	resp, err := client.Embeddings.New(ctx, openai.EmbeddingNewParams{
+		Model: openai.EmbeddingModel(p.Model),
+		Input: openai.EmbeddingNewParamsInputUnion{OfArrayOfStrings: texts},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("openai embeddings request: %w", err)
+	}
+	vectors := make([]Vector, 0, len(resp.Data))
+	for _, item := range resp.Data {
+		vector := make(Vector, len(item.Embedding))
+		for i, value := range item.Embedding {
+			vector[i] = float32(value)
+		}
+		vectors = append(vectors, vector)
+	}
+	return vectors, nil
+}
+
+func openAIBaseURL(endpoint string) string {
+	endpoint = strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if endpoint == "" {
+		endpoint = DefaultOpenAIEndpoint
+	}
+	if strings.HasSuffix(endpoint, "/embeddings") {
+		return strings.TrimSuffix(endpoint, "/embeddings")
+	}
+	return endpoint
+}
+
 func NewEmbeddingProvider(cfg EmbeddingConfig) (Provider, error) {
 	cfg = normalizeEmbeddingConfig(cfg)
 	switch cfg.Provider {
 	case "none":
 		return NoopProvider{}, nil
+	case "openai":
+		return &OpenAIProvider{Endpoint: cfg.Endpoint, Model: cfg.Model, Dimension: cfg.Dimension, HealthThreshold: cfg.HealthThreshold}, nil
 	case "ollama":
 		return &OllamaProvider{Endpoint: cfg.Endpoint, Model: cfg.Model, Dimension: cfg.Dimension, HealthThreshold: cfg.HealthThreshold}, nil
 	case "local-deterministic-test":
@@ -230,6 +344,17 @@ func normalizeEmbeddingConfig(cfg EmbeddingConfig) EmbeddingConfig {
 		cfg.Model = ""
 		cfg.Dimension = 0
 		cfg.HealthThreshold = 0
+	}
+	if cfg.Provider == "openai" {
+		if cfg.Endpoint == "" {
+			cfg.Endpoint = DefaultOpenAIEndpoint
+		}
+		if cfg.Model == "" {
+			cfg.Model = DefaultOpenAIModel
+		}
+		if cfg.HealthThreshold <= 0 {
+			cfg.HealthThreshold = DefaultEmbeddingHealthThreshold
+		}
 	}
 	if cfg.Provider == "ollama" {
 		if cfg.Endpoint == "" {

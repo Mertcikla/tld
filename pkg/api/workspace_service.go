@@ -329,10 +329,10 @@ func (s *WorkspaceService) GetWorkspace(
 	}
 	m := req.Msg
 
-	var ownerElementID *int32
+	var parentViewID *int32
 	if m.GetParentId() != 0 {
 		pid := m.GetParentId()
-		ownerElementID = &pid
+		parentViewID = &pid
 	}
 	var isRoot *bool
 	if m.Level != nil {
@@ -340,7 +340,7 @@ func (s *WorkspaceService) GetWorkspace(
 		isRoot = &ir
 	}
 
-	views, totalCount, err := s.Store.GetViews(ctx, workspaceID, ownerElementID, isRoot, m.GetSearch(), int(m.GetLimit()), int(m.GetOffset()))
+	views, totalCount, err := s.Store.GetViews(ctx, workspaceID, parentViewID, isRoot, m.GetSearch(), int(m.GetLimit()), int(m.GetOffset()))
 	if err != nil {
 		return nil, storeErr("get views", err)
 	}

@@ -125,6 +125,72 @@ func TestRepresentDoesNotTouchManualResources(t *testing.T) {
 	}
 }
 
+func TestLargeRepresentationPrunesDetailedSymbolElements(t *testing.T) {
+	previousLimit := maxDetailedSymbolElements
+	maxDetailedSymbolElements = 100
+	defer func() { maxDetailedSymbolElements = previousLimit }()
+
+	db := openTestDB(t)
+	defer db.Close()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "pkg/busy.go", `package pkg
+
+func Func0() {}
+func Func1() {}
+func Func2() {}
+func Func3() {}
+func Func4() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := RepresentRequest{
+		Embedding: EmbeddingConfig{Provider: "none"},
+		Thresholds: Thresholds{
+			MaxElementsPerView:   2,
+			MaxConnectorsPerView: 2,
+		},
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+	if count := elementKindCount(t, db, "function"); count != 5 {
+		t.Fatalf("expected detailed symbol elements before large-mode pruning, got %d", count)
+	}
+
+	maxDetailedSymbolElements = 3
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+	if count := elementKindCount(t, db, "function"); count != 0 {
+		t.Fatalf("expected large-mode rerun to prune detailed symbol elements, got %d", count)
+	}
+	if count := materializationOwnerTypeCount(t, db, "symbol"); count != 0 {
+		t.Fatalf("expected stale symbol materialization mappings to be pruned, got %d", count)
+	}
+	if count := elementKindCount(t, db, "cluster"); count == 0 {
+		t.Fatalf("expected cluster elements to summarize the large file")
+	}
+}
+
+func TestEmbeddingCandidateSymbolsAreCappedDeterministically(t *testing.T) {
+	symbols := map[int64]Symbol{
+		3: {ID: 3, StableKey: "go:b.go:function:C", FilePath: "b.go", StartLine: 1},
+		1: {ID: 1, StableKey: "go:a.go:function:A", FilePath: "a.go", StartLine: 10},
+		2: {ID: 2, StableKey: "go:a.go:function:B", FilePath: "a.go", StartLine: 2},
+	}
+	candidates := embeddingCandidateSymbols(symbols, 2)
+	if len(candidates) != 2 {
+		t.Fatalf("expected capped candidates, got %d", len(candidates))
+	}
+	if candidates[0].ID != 2 || candidates[1].ID != 1 {
+		t.Fatalf("unexpected candidate order: %+v", candidates)
+	}
+}
+
 func TestApplyGitTagsReportsAddedAndRemovedTags(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -230,10 +296,12 @@ func TestEmbeddingCacheChunksProviderCallsAndReportsProgress(t *testing.T) {
 	if stats.Created != len(symbols) {
 		t.Fatalf("expected %d embeddings created, got %+v", len(symbols), stats)
 	}
-	if provider.calls != 3 || strings.Join(provider.batchSizes, ",") != "32,32,1" {
-		t.Fatalf("expected chunked provider calls 32,32,1, got calls=%d batchSizes=%v", provider.calls, provider.batchSizes)
+	expectedBatchSizes := fmt.Sprintf("%d,%d,1", defaultEmbeddingBatchSize, defaultEmbeddingBatchSize)
+	if provider.calls != 3 || strings.Join(provider.batchSizes, ",") != expectedBatchSizes {
+		t.Fatalf("expected chunked provider calls %s, got calls=%d batchSizes=%v", expectedBatchSizes, provider.calls, provider.batchSizes)
 	}
-	if len(progress.starts) != 2 || progress.starts[0] != "Preparing symbol embeddings:65" || progress.starts[1] != "Embedding symbols:65" {
+	expectedProgressTotal := fmt.Sprintf("%d", defaultEmbeddingBatchSize*2+1)
+	if len(progress.starts) != 2 || progress.starts[0] != "Preparing symbol embeddings:"+expectedProgressTotal || progress.starts[1] != "Embedding symbols:"+expectedProgressTotal {
 		t.Fatalf("unexpected progress starts: %v", progress.starts)
 	}
 	if progress.advances != len(symbols)*2 {
@@ -275,6 +343,49 @@ func TestShrinkEmbeddingTextFitsApproximateTokenBudget(t *testing.T) {
 	}
 	if strings.Contains(text, "// comment") {
 		t.Fatalf("expected low-signal comment lines to be dropped")
+	}
+}
+
+func TestDefaultEmbeddingConfigUsesLocalOpenAIEndpoint(t *testing.T) {
+	cfg := NormalizeEmbeddingConfig(EmbeddingConfig{})
+	if cfg.Provider != "openai" || cfg.Endpoint != DefaultOpenAIEndpoint || cfg.Model != DefaultOpenAIModel {
+		t.Fatalf("unexpected default embedding config: %+v", cfg)
+	}
+}
+
+func TestOpenAIHealthCheckUsesCompatibleEmbeddingsEndpoint(t *testing.T) {
+	var requestBody struct {
+		Model string   `json:"model"`
+		Input []string `json:"input"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/embeddings" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if auth := r.Header.Get("Authorization"); auth == "" {
+			t.Fatalf("expected authorization header for OpenAI-compatible request")
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","model":"text-embedding-embeddinggemma-300m-qat","data":[{"object":"embedding","index":0,"embedding":[1,0,0]},{"object":"embedding","index":1,"embedding":[0.95,0.05,0]}],"usage":{"prompt_tokens":1,"total_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	cfg, result, err := CheckEmbeddingHealth(context.Background(), EmbeddingConfig{
+		Provider: "openai",
+		Endpoint: server.URL + "/v1/embeddings",
+		Model:    "text-embedding-embeddinggemma-300m-qat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestBody.Model != "text-embedding-embeddinggemma-300m-qat" || len(requestBody.Input) != 2 {
+		t.Fatalf("unexpected embeddings request body: %+v", requestBody)
+	}
+	if cfg.Dimension != 3 || result.Dimension != 3 || result.Similarity < DefaultEmbeddingHealthThreshold {
+		t.Fatalf("unexpected health result cfg=%+v result=%+v", cfg, result)
 	}
 }
 
@@ -671,7 +782,7 @@ func openTestDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "003_watch_materialized_workspace.sql", "004_watch_runtime_git_versions.sql", "005_watch_embeddings_identity_vec.sql"} {
+	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "003_watch_materialized_workspace.sql", "004_watch_runtime_git_versions.sql", "005_watch_embeddings_identity_vec.sql", "006_workspace_read_indexes.sql"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", migration))
 		if err != nil {
 			t.Fatal(err)
@@ -705,6 +816,24 @@ func connectorCount(t *testing.T, db *sql.DB) int {
 	}
 	if count == 0 {
 		t.Fatal("expected at least one generated connector")
+	}
+	return count
+}
+
+func elementKindCount(t *testing.T, db *sql.DB, kind string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM elements WHERE kind = ?`, kind).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func materializationOwnerTypeCount(t *testing.T, db *sql.DB, ownerType string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM watch_materialization WHERE owner_type = ?`, ownerType).Scan(&count); err != nil {
+		t.Fatal(err)
 	}
 	return count
 }

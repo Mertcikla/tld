@@ -72,7 +72,7 @@ type ConnectorInput struct {
 type Store interface {
 	// Views
 	ListViews(ctx context.Context, workspaceID uuid.UUID) ([]*diagv1.View, error)
-	GetViews(ctx context.Context, workspaceID uuid.UUID, ownerElementID *int32, isRoot *bool, search string, limit, offset int) ([]*diagv1.View, int, error)
+	GetViews(ctx context.Context, workspaceID uuid.UUID, parentViewID *int32, isRoot *bool, search string, limit, offset int) ([]*diagv1.View, int, error)
 	GetView(ctx context.Context, id int32, workspaceID uuid.UUID) (*diagv1.View, error)
 	CreateView(ctx context.Context, workspaceID uuid.UUID, ownerElementID *int32, name string, label *string, isRoot bool) (*diagv1.View, error)
 	UpdateView(ctx context.Context, id int32, workspaceID uuid.UUID, name string, label *string) (*diagv1.View, error)

@@ -326,6 +326,10 @@ func (s *Store) ReplaceFileSymbols(ctx context.Context, repositoryID, fileID int
 	return nil
 }
 
+func (s *Store) CachedFileByPath(ctx context.Context, repositoryID int64, path string) (File, bool, error) {
+	return s.fileByPath(ctx, repositoryID, path)
+}
+
 type storedSymbolIdentity struct {
 	IdentityKey   string
 	StableKey     string
@@ -828,14 +832,17 @@ func (s *Store) MappingResourceID(ctx context.Context, repositoryID int64, owner
 }
 
 func (s *Store) SaveMapping(ctx context.Context, repositoryID int64, ownerType, ownerKey, resourceType string, resourceID int64) error {
-	now := nowString()
+	return s.SaveMappingAt(ctx, repositoryID, ownerType, ownerKey, resourceType, resourceID, nowString())
+}
+
+func (s *Store) SaveMappingAt(ctx context.Context, repositoryID int64, ownerType, ownerKey, resourceType string, resourceID int64, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO watch_materialization(repository_id, owner_type, owner_key, resource_type, resource_id, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(repository_id, owner_type, owner_key, resource_type) DO UPDATE SET
 			resource_id = excluded.resource_id,
 			updated_at = excluded.updated_at`,
-		repositoryID, ownerType, ownerKey, resourceType, resourceID, now, now)
+		repositoryID, ownerType, ownerKey, resourceType, resourceID, updatedAt, updatedAt)
 	return err
 }
 

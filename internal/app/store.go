@@ -427,6 +427,44 @@ func (s *Store) parentViewForOwner(ctx context.Context, ownerElementID int64, ex
 	return &viewID, nil
 }
 
+func (s *Store) parentViewMap(ctx context.Context, rows []viewRow) (map[int64]*int64, error) {
+	ownerViewIDs := make(map[int64][]int64, len(rows))
+	parentMap := make(map[int64]*int64, len(rows))
+	for _, row := range rows {
+		parentMap[row.ID] = nil
+		if row.OwnerElementID.Valid {
+			ownerViewIDs[row.OwnerElementID.Int64] = append(ownerViewIDs[row.OwnerElementID.Int64], row.ID)
+		}
+	}
+	if len(ownerViewIDs) == 0 {
+		return parentMap, nil
+	}
+
+	placementRows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT p.element_id, p.view_id
+		FROM placements p
+		JOIN views v ON v.owner_element_id = p.element_id
+		ORDER BY p.element_id, p.view_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = placementRows.Close() }()
+	for placementRows.Next() {
+		var elementID, parentID int64
+		if err := placementRows.Scan(&elementID, &parentID); err != nil {
+			return nil, err
+		}
+		for _, childID := range ownerViewIDs[elementID] {
+			if parentID == childID || parentMap[childID] != nil {
+				continue
+			}
+			pid := parentID
+			parentMap[childID] = &pid
+		}
+	}
+	return parentMap, placementRows.Err()
+}
+
 func (s *Store) childViewMeta(ctx context.Context, elementID int64) (bool, *string, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT level_label FROM views WHERE owner_element_id = ? ORDER BY id LIMIT 1`, elementID)
 	var label sql.NullString
@@ -440,6 +478,37 @@ func (s *Store) childViewMeta(ctx context.Context, elementID int64) (bool, *stri
 		return true, &label.String, nil
 	}
 	return true, nil, nil
+}
+
+type childViewMetaValue struct {
+	hasView bool
+	label   *string
+}
+
+func (s *Store) childViewMetaMap(ctx context.Context) (map[int64]childViewMetaValue, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT owner_element_id, level_label FROM views WHERE owner_element_id IS NOT NULL ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int64]childViewMetaValue{}
+	for rows.Next() {
+		var elementID int64
+		var label sql.NullString
+		if err := rows.Scan(&elementID, &label); err != nil {
+			return nil, err
+		}
+		if _, exists := out[elementID]; exists {
+			continue
+		}
+		meta := childViewMetaValue{hasView: true}
+		if label.Valid {
+			labelCopy := label.String
+			meta.label = &labelCopy
+		}
+		out[elementID] = meta
+	}
+	return out, rows.Err()
 }
 
 func viewNodeFromRow(row viewRow, parentID *int64, depth int) ViewTreeNode {
@@ -475,24 +544,19 @@ func (s *Store) ViewTree(ctx context.Context) ([]ViewTreeNode, error) {
 	if err != nil {
 		return nil, err
 	}
+	parentMap, err := s.parentViewMap(ctx, rows)
+	if err != nil {
+		return nil, err
+	}
 	rowByID := make(map[int64]viewRow, len(rows))
 	byParent := map[int64][]viewRow{}
 	var roots []viewRow
-	parentMap := map[int64]*int64{}
 	for _, row := range rows {
 		rowByID[row.ID] = row
-		if row.OwnerElementID.Valid {
-			parentID, err := s.parentViewForOwner(ctx, row.OwnerElementID.Int64, row.ID)
-			if err != nil {
-				return nil, err
-			}
-			parentMap[row.ID] = parentID
-			if parentID != nil {
-				byParent[*parentID] = append(byParent[*parentID], row)
-				continue
-			}
+		if parentID := parentMap[row.ID]; parentID != nil {
+			byParent[*parentID] = append(byParent[*parentID], row)
+			continue
 		}
-		parentMap[row.ID] = nil
 		roots = append(roots, row)
 	}
 	visited := make(map[int64]bool, len(rows))
@@ -784,6 +848,10 @@ func (s *Store) Elements(ctx context.Context, limit, offset int, search string) 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	viewMeta, err := s.childViewMetaMap(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	out := make([]LibraryElement, 0, len(scanned))
 	for _, row := range scanned {
@@ -822,12 +890,10 @@ func (s *Store) Elements(ctx context.Context, limit, offset int, search string) 
 		if row.Language.Valid {
 			elem.Language = &row.Language.String
 		}
-		hasView, label, err := s.childViewMeta(ctx, elem.ID)
-		if err != nil {
-			return nil, err
+		if meta, ok := viewMeta[elem.ID]; ok {
+			elem.HasView = meta.hasView
+			elem.ViewLabel = meta.label
 		}
-		elem.HasView = hasView
-		elem.ViewLabel = label
 		out = append(out, elem)
 	}
 	return out, nil
@@ -985,18 +1051,69 @@ func (s *Store) Placements(ctx context.Context, viewID int64) ([]PlacedElement, 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	viewMeta, err := s.childViewMetaMap(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	out := make([]PlacedElement, 0, len(scanned))
 	for _, row := range scanned {
 		item := row.item
 		item.TechnologyConnectors = parseTechnologyConnectors(row.techRaw)
 		item.Tags = parseStrings(row.tagRaw)
-		hasView, label, err := s.childViewMeta(ctx, item.ElementID)
-		if err != nil {
+		if meta, ok := viewMeta[item.ElementID]; ok {
+			item.HasView = meta.hasView
+			item.ViewLabel = meta.label
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func (s *Store) AllPlacements(ctx context.Context) ([]PlacedElement, error) {
+	type placementRow struct {
+		item    PlacedElement
+		techRaw string
+		tagRaw  string
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.id, p.view_id, p.element_id, p.position_x, p.position_y,
+		       e.name, e.kind, e.description, e.technology, e.url, e.logo_url, e.technology_connectors, e.tags, e.repo, e.branch, e.file_path, e.language, e.created_at, e.updated_at
+		FROM placements p
+		JOIN elements e ON e.id = p.element_id
+		ORDER BY p.view_id, p.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	scanned := make([]placementRow, 0)
+	for rows.Next() {
+		var row placementRow
+		if err := rows.Scan(&row.item.ID, &row.item.ViewID, &row.item.ElementID, &row.item.PositionX, &row.item.PositionY,
+			&row.item.Name, &row.item.Kind, &row.item.Description, &row.item.Technology, &row.item.URL, &row.item.LogoURL,
+			&row.techRaw, &row.tagRaw, &row.item.Repo, &row.item.Branch, &row.item.FilePath, &row.item.Language, new(string), new(string)); err != nil {
 			return nil, err
 		}
-		item.HasView = hasView
-		item.ViewLabel = label
+		scanned = append(scanned, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	viewMeta, err := s.childViewMetaMap(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]PlacedElement, 0, len(scanned))
+	for _, row := range scanned {
+		item := row.item
+		item.TechnologyConnectors = parseTechnologyConnectors(row.techRaw)
+		item.Tags = parseStrings(row.tagRaw)
+		if meta, ok := viewMeta[item.ElementID]; ok {
+			item.HasView = meta.hasView
+			item.ViewLabel = meta.label
+		}
 		out = append(out, item)
 	}
 	return out, nil
@@ -1051,6 +1168,25 @@ func (s *Store) Connectors(ctx context.Context, viewID int64) ([]Connector, erro
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, view_id, source_element_id, target_element_id, label, description, relationship, direction, style, url, source_handle, target_handle, created_at, updated_at
 		FROM connectors WHERE view_id = ? ORDER BY id`, viewID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]Connector, 0)
+	for rows.Next() {
+		var item Connector
+		if err := rows.Scan(&item.ID, &item.ViewID, &item.SourceElementID, &item.TargetElementID, &item.Label, &item.Description, &item.Relationship, &item.Direction, &item.Style, &item.URL, &item.SourceHandle, &item.TargetHandle, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AllConnectors(ctx context.Context) ([]Connector, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, view_id, source_element_id, target_element_id, label, description, relationship, direction, style, url, source_handle, target_handle, created_at, updated_at
+		FROM connectors ORDER BY view_id, id`)
 	if err != nil {
 		return nil, err
 	}

@@ -41,7 +41,7 @@ func (a *APIAdapter) ListViews(ctx context.Context, _ uuid.UUID) ([]*diagv1.View
 	return out, nil
 }
 
-func (a *APIAdapter) GetViews(ctx context.Context, _ uuid.UUID, ownerElementID *int32, isRoot *bool, search string, limit, offset int) ([]*diagv1.View, int, error) {
+func (a *APIAdapter) GetViews(ctx context.Context, _ uuid.UUID, parentViewID *int32, isRoot *bool, search string, limit, offset int) ([]*diagv1.View, int, error) {
 	nodes, err := a.Store.ViewTree(ctx)
 	if err != nil {
 		return nil, 0, err
@@ -49,8 +49,8 @@ func (a *APIAdapter) GetViews(ctx context.Context, _ uuid.UUID, ownerElementID *
 	flat := flattenViewTreeNodes(nodes)
 	filtered := make([]app.ViewTreeNode, 0, len(flat))
 	for _, node := range flat {
-		if ownerElementID != nil {
-			if node.OwnerElementID == nil || int32(*node.OwnerElementID) != *ownerElementID {
+		if parentViewID != nil {
+			if node.ParentViewID == nil || int32(*node.ParentViewID) != *parentViewID {
 				continue
 			}
 		}
@@ -200,17 +200,13 @@ func (a *APIAdapter) ListPlacements(ctx context.Context, viewID int32) ([]*diagv
 }
 
 func (a *APIAdapter) ListAllPlacements(ctx context.Context, _ uuid.UUID) ([]*diagv1.PlacedElement, error) {
-	nodes, err := a.Store.ViewTree(ctx)
+	placements, err := a.Store.legacy.AllPlacements(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var out []*diagv1.PlacedElement
-	for _, node := range flattenViewTreeNodes(nodes) {
-		items, err := a.ListPlacements(ctx, int32(node.ID))
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, items...)
+	out := make([]*diagv1.PlacedElement, 0, len(placements))
+	for _, placement := range placements {
+		out = append(out, placedElementToProto(placement))
 	}
 	return out, nil
 }
@@ -263,17 +259,13 @@ func (a *APIAdapter) ListConnectors(ctx context.Context, viewID int32, _ uuid.UU
 }
 
 func (a *APIAdapter) ListAllConnectors(ctx context.Context, _ uuid.UUID) ([]*diagv1.Connector, error) {
-	nodes, err := a.Store.ViewTree(ctx)
+	connectors, err := a.Store.legacy.AllConnectors(ctx)
 	if err != nil {
 		return nil, err
 	}
-	var out []*diagv1.Connector
-	for _, node := range flattenViewTreeNodes(nodes) {
-		items, err := a.ListConnectors(ctx, int32(node.ID), uuid.Nil)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, items...)
+	out := make([]*diagv1.Connector, 0, len(connectors))
+	for _, connector := range connectors {
+		out = append(out, connectorToProto(connector))
 	}
 	return out, nil
 }
@@ -695,19 +687,19 @@ func (a *APIAdapter) SetVersioningEnabled(ctx context.Context, _ uuid.UUID, enab
 }
 
 func (a *APIAdapter) GetWorkspaceResourceCounts(ctx context.Context, _ uuid.UUID) (views, elements, connectors int, err error) {
-	allViews, err := a.Store.ViewTree(ctx)
-	if err != nil {
-		return 0, 0, 0, err
+	for _, item := range []struct {
+		query string
+		dest  *int
+	}{
+		{query: `SELECT COUNT(*) FROM views`, dest: &views},
+		{query: `SELECT COUNT(*) FROM elements`, dest: &elements},
+		{query: `SELECT COUNT(*) FROM connectors`, dest: &connectors},
+	} {
+		if err := a.Store.DB().QueryRowContext(ctx, item.query).Scan(item.dest); err != nil {
+			return 0, 0, 0, err
+		}
 	}
-	allElements, err := a.Store.legacy.Elements(ctx, 0, 0, "")
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	allConnectors, err := a.ListAllConnectors(ctx, uuid.Nil)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	return len(flattenViewTreeNodes(allViews)), len(allElements), len(allConnectors), nil
+	return views, elements, connectors, nil
 }
 
 func (a *APIAdapter) ensureRootViewID(ctx context.Context) (int32, error) {

@@ -10,12 +10,18 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
-	defaultEmbeddingBatchSize     = 512
+	defaultEmbeddingBatchSize     = 256
 	maxEmbeddingInputApproxTokens = 8000
 	maxEmbeddingInputChars        = maxEmbeddingInputApproxTokens * 4
+)
+
+var (
+	maxEmbeddingSymbolsPerRun = 5000
+	maxDetailedSymbolElements = 5000
 )
 
 type Representer struct {
@@ -56,29 +62,30 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		modelIDPtr = nil
 	}
 
-	allSymbols, err := r.Store.SymbolsForRepository(ctx, repositoryID)
-	if err != nil {
-		return RepresentResult{}, err
-	}
 	identityKeys, err := r.Store.SymbolIdentityKeys(ctx, repositoryID)
 	if err != nil {
 		return RepresentResult{}, err
 	}
+	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, nil)
+	if err != nil {
+		return RepresentResult{}, err
+	}
+
 	result := RepresentResult{}
-	embeddingVectors := map[int64]Vector{}
 	if model.Provider != "none" {
-		stats, vectors, err := r.cacheEmbeddings(ctx, modelID, provider, repo.RepoRoot, allSymbols, identityKeys, req.Progress)
+		embeddingSymbols := embeddingCandidateSymbols(filtered.VisibleSymbols, maxEmbeddingSymbolsPerRun)
+		stats, vectors, err := r.cacheEmbeddings(ctx, modelID, provider, repo.RepoRoot, embeddingSymbols, identityKeys, req.Progress)
 		if err != nil {
 			return RepresentResult{}, err
 		}
 		result.EmbeddingCacheHits = stats.CacheHits
 		result.EmbeddingsCreated = stats.Created
-		embeddingVectors = vectors
-	}
-
-	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, embeddingVectors)
-	if err != nil {
-		return RepresentResult{}, err
+		if len(embeddingSymbols) == len(filtered.VisibleSymbols) {
+			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, vectors)
+			if err != nil {
+				return RepresentResult{}, err
+			}
+		}
 	}
 
 	representationHash := representationHash(filtered, req)
@@ -203,6 +210,14 @@ func (r *Representer) cacheEmbeddings(ctx context.Context, modelID int64, provid
 	}
 	progressFinish(progress)
 	return stats, vectorsBySymbol, nil
+}
+
+func embeddingCandidateSymbols(symbols map[int64]Symbol, limit int) []Symbol {
+	out := sortedSymbols(symbols)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }
 
 func symbolEmbeddingText(repoRoot string, sym Symbol) string {
@@ -347,7 +362,7 @@ type materializeStats struct {
 }
 
 func (r *Representer) materialize(ctx context.Context, repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string) (materializeStats, error) {
-	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys}
+	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys, runMarker: time.Now().UTC().Format(time.RFC3339Nano)}
 	if err := m.ensureTags(ctx); err != nil {
 		return m.stats, err
 	}
@@ -442,6 +457,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 
 	symbolElements := map[int64]int64{}
 	symbolViews := map[int64]int64{}
+	detailedSymbols := len(filtered.VisibleSymbols) <= maxDetailedSymbolElements
 	for file, symbols := range symbolsByFile(filtered.VisibleSymbols) {
 		fileView := fileViews[file]
 		if fileView == 0 {
@@ -483,6 +499,9 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 					return m.stats, err
 				}
 			}
+			if !detailedSymbols {
+				continue
+			}
 			for i, sym := range chunk {
 				elem, err := m.upsertElement(ctx, "symbol", symbolOwnerKey(sym, m.identityKeys), elementInput{
 					Name:        sym.QualifiedName,
@@ -510,20 +529,20 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, fileElements, symbolElements, symbolViews, repoView); err != nil {
 		return m.stats, err
 	}
-	if err := m.pruneStaleConnectors(ctx); err != nil {
+	if err := m.pruneStaleResources(ctx); err != nil {
 		return m.stats, err
 	}
 	return m.stats, nil
 }
 
 type materializer struct {
-	store            *Store
-	repo             Repository
-	thresholds       Thresholds
-	settingsHash     string
-	identityKeys     map[string]string
-	activeConnectors map[string]struct{}
-	stats            materializeStats
+	store        *Store
+	repo         Repository
+	thresholds   Thresholds
+	settingsHash string
+	identityKeys map[string]string
+	runMarker    string
+	stats        materializeStats
 }
 
 type elementInput struct {
@@ -569,6 +588,9 @@ func (m *materializer) upsertElement(ctx context.Context, ownerType, ownerKey st
 		if err != nil {
 			return 0, err
 		}
+		if err := m.saveMapping(ctx, ownerType, ownerKey, "element", id); err != nil {
+			return 0, err
+		}
 		m.stats.ElementsUpdated++
 		return id, nil
 	}
@@ -587,7 +609,7 @@ func (m *materializer) upsertElement(ctx context.Context, ownerType, ownerKey st
 	if err != nil {
 		return 0, err
 	}
-	if err := m.store.SaveMapping(ctx, m.repo.ID, ownerType, ownerKey, "element", id); err != nil {
+	if err := m.saveMapping(ctx, ownerType, ownerKey, "element", id); err != nil {
 		return 0, err
 	}
 	m.stats.ElementsCreated++
@@ -598,8 +620,10 @@ func (m *materializer) upsertView(ctx context.Context, ownerType, ownerKey strin
 	if id, ok, err := m.store.MappingResourceID(ctx, m.repo.ID, ownerType, ownerKey, "view"); err != nil {
 		return 0, err
 	} else if ok && viewExists(ctx, m.store.db, id) {
-		_, err := m.store.db.ExecContext(ctx, `UPDATE views SET owner_element_id = ?, name = ?, level_label = ?, updated_at = ? WHERE id = ?`, ownerElementID, name, label, nowString(), id)
-		return id, err
+		if _, err := m.store.db.ExecContext(ctx, `UPDATE views SET owner_element_id = ?, name = ?, level_label = ?, updated_at = ? WHERE id = ?`, ownerElementID, name, label, nowString(), id); err != nil {
+			return 0, err
+		}
+		return id, m.saveMapping(ctx, ownerType, ownerKey, "view", id)
 	}
 	now := nowString()
 	res, err := m.store.db.ExecContext(ctx, `INSERT INTO views(owner_element_id, name, level_label, level, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)`, ownerElementID, name, label, now, now)
@@ -610,7 +634,7 @@ func (m *materializer) upsertView(ctx context.Context, ownerType, ownerKey strin
 	if err != nil {
 		return 0, err
 	}
-	if err := m.store.SaveMapping(ctx, m.repo.ID, ownerType, ownerKey, "view", id); err != nil {
+	if err := m.saveMapping(ctx, ownerType, ownerKey, "view", id); err != nil {
 		return 0, err
 	}
 	m.stats.ViewsCreated++
@@ -628,9 +652,6 @@ func (m *materializer) upsertPlacement(ctx context.Context, viewID, elementID in
 }
 
 func (m *materializer) materializeConnectors(ctx context.Context, refs []Reference, symbols map[int64]Symbol, fileElements map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, repoView int64) error {
-	if m.activeConnectors == nil {
-		m.activeConnectors = map[string]struct{}{}
-	}
 	filePairs := map[string]Reference{}
 	symbolConnectorCount := map[int64]int{}
 	for _, ref := range refs {
@@ -654,7 +675,12 @@ func (m *materializer) materializeConnectors(ctx context.Context, refs []Referen
 		}
 		symbolConnectorCount[viewID]++
 	}
-	for key, ref := range filePairs {
+	fileConnectorCount := 0
+	for _, key := range sortedKeys(filePairs) {
+		if fileConnectorCount >= m.thresholds.MaxConnectorsPerView {
+			break
+		}
+		ref := filePairs[key]
 		source := symbols[ref.SourceSymbolID]
 		target := symbols[ref.TargetSymbolID]
 		if fileElements[source.FilePath] == 0 || fileElements[target.FilePath] == 0 {
@@ -663,6 +689,7 @@ func (m *materializer) materializeConnectors(ctx context.Context, refs []Referen
 		if err := m.upsertConnector(ctx, "file-reference", "file:"+key, repoView, fileElements[source.FilePath], fileElements[target.FilePath], "references"); err != nil {
 			return err
 		}
+		fileConnectorCount++
 	}
 	return nil
 }
@@ -670,9 +697,6 @@ func (m *materializer) materializeConnectors(ctx context.Context, refs []Referen
 func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label string) error {
 	if sourceElementID == 0 || targetElementID == 0 || sourceElementID == targetElementID {
 		return nil
-	}
-	if m.activeConnectors != nil {
-		m.activeConnectors[ownerType+"\x00"+ownerKey] = struct{}{}
 	}
 	if id, ok, err := m.store.MappingResourceID(ctx, m.repo.ID, ownerType, ownerKey, "connector"); err != nil {
 		return err
@@ -682,6 +706,9 @@ func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey 
 			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, relationship = ?, direction = 'forward', style = 'solid', updated_at = ?
 			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, label, nowString(), id)
 		if err != nil {
+			return err
+		}
+		if err := m.saveMapping(ctx, ownerType, ownerKey, "connector", id); err != nil {
 			return err
 		}
 		m.stats.ConnectorsUpdated++
@@ -698,51 +725,44 @@ func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey 
 	if err != nil {
 		return err
 	}
-	if err := m.store.SaveMapping(ctx, m.repo.ID, ownerType, ownerKey, "connector", id); err != nil {
+	if err := m.saveMapping(ctx, ownerType, ownerKey, "connector", id); err != nil {
 		return err
 	}
 	m.stats.ConnectorsCreated++
 	return nil
 }
 
-func (m *materializer) pruneStaleConnectors(ctx context.Context) error {
-	if m.activeConnectors == nil {
+func (m *materializer) saveMapping(ctx context.Context, ownerType, ownerKey, resourceType string, resourceID int64) error {
+	return m.store.SaveMappingAt(ctx, m.repo.ID, ownerType, ownerKey, resourceType, resourceID, m.runMarker)
+}
+
+func (m *materializer) pruneStaleResources(ctx context.Context) error {
+	if m.runMarker == "" {
 		return nil
 	}
-	rows, err := m.store.db.QueryContext(ctx, `
-		SELECT id, owner_type, owner_key, resource_id
-		FROM watch_materialization
-		WHERE repository_id = ? AND resource_type = 'connector'`, m.repo.ID)
-	if err != nil {
+	for _, item := range []struct {
+		resourceType string
+		tableName    string
+	}{
+		{resourceType: "connector", tableName: "connectors"},
+		{resourceType: "view", tableName: "views"},
+		{resourceType: "element", tableName: "elements"},
+	} {
+		query := fmt.Sprintf(`
+			DELETE FROM %s
+			WHERE id IN (
+				SELECT resource_id
+				FROM watch_materialization
+				WHERE repository_id = ? AND resource_type = ? AND updated_at != ?
+			)`, item.tableName)
+		if _, err := m.store.db.ExecContext(ctx, query, m.repo.ID, item.resourceType, m.runMarker); err != nil {
+			return err
+		}
+	}
+	if _, err := m.store.db.ExecContext(ctx, `
+		DELETE FROM watch_materialization
+		WHERE repository_id = ? AND updated_at != ?`, m.repo.ID, m.runMarker); err != nil {
 		return err
-	}
-	defer rows.Close()
-	type staleMapping struct {
-		ID         int64
-		ResourceID int64
-		OwnerType  string
-		OwnerKey   string
-	}
-	var stale []staleMapping
-	for rows.Next() {
-		var mapping staleMapping
-		if err := rows.Scan(&mapping.ID, &mapping.OwnerType, &mapping.OwnerKey, &mapping.ResourceID); err != nil {
-			return err
-		}
-		if _, ok := m.activeConnectors[mapping.OwnerType+"\x00"+mapping.OwnerKey]; !ok {
-			stale = append(stale, mapping)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, mapping := range stale {
-		if _, err := m.store.db.ExecContext(ctx, `DELETE FROM connectors WHERE id = ?`, mapping.ResourceID); err != nil {
-			return err
-		}
-		if _, err := m.store.db.ExecContext(ctx, `DELETE FROM watch_materialization WHERE id = ?`, mapping.ID); err != nil {
-			return err
-		}
 	}
 	return nil
 }

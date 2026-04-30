@@ -506,6 +506,37 @@ export const api = {
           return (json.views ?? []).map(mapDiagram)
         }),
 
+      treeAround: async (
+        viewId: number,
+        opts: { ancestorLevels?: number; descendantLevels?: number } = {},
+      ): Promise<ViewTreeNode[]> => {
+        const ancestorLevels = opts.ancestorLevels ?? 2
+        const descendantLevels = opts.descendantLevels ?? 2
+        const current = await api.workspace.views.get(viewId)
+
+        const ancestors: ViewTreeNode[] = []
+        let cursor: ViewTreeNode = current
+        for (let depth = 0; depth < ancestorLevels && cursor.parent_view_id != null; depth += 1) {
+          const parent = await api.workspace.views.get(cursor.parent_view_id)
+          ancestors.unshift(parent)
+          cursor = parent
+        }
+
+        const withDescendants = async (node: ViewTreeNode, remainingDepth: number): Promise<ViewTreeNode> => {
+          const scoped: ViewTreeNode = { ...node, children: [] }
+          if (remainingDepth <= 0) return scoped
+          const children = await api.workspace.views.treeChildren(node.id)
+          scoped.children = await Promise.all(children.map((child) => withDescendants(child, remainingDepth - 1)))
+          return scoped
+        }
+
+        let scoped = await withDescendants(current, descendantLevels)
+        for (let index = ancestors.length - 1; index >= 0; index -= 1) {
+          scoped = { ...ancestors[index], children: [scoped] }
+        }
+        return [scoped]
+      },
+
       get: (id: number): Promise<ViewTreeNode> =>
         rpc(async () => {
           const res = await workspaceClient.getView({ viewId: id })

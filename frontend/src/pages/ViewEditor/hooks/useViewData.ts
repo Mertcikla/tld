@@ -216,13 +216,14 @@ export function useViewData({
 
   // ── Fetch tree ─────────────────────────────────────────────────────────────
   const refreshGrid = useCallback(async () => {
+    if (viewId === null) return
     const tree = await queryClient.fetchQuery({
-      queryKey: ['workspace', 'views', 'tree'],
-      queryFn: () => api.workspace.views.tree(),
+      queryKey: ['workspace', 'views', viewId, 'editor-tree'],
+      queryFn: () => api.workspace.views.treeAround(viewId, { ancestorLevels: 2, descendantLevels: 2 }),
       staleTime: 0,
     }).catch(() => null)
     if (tree) useStore.getState().setTreeData(tree)
-  }, [queryClient])
+  }, [queryClient, viewId])
 
   // ── Fetch view content ──────────────────────────────────────────────────
   const viewContentQuery = useQuery({
@@ -233,7 +234,7 @@ export function useViewData({
       const [diag, content, tree] = await Promise.all([
         api.workspace.views.get(viewId),
         api.workspace.views.content(viewId),
-        api.workspace.views.tree(),
+        api.workspace.views.treeAround(viewId, { ancestorLevels: 2, descendantLevels: 2 }),
       ])
       const viewElements = content.placements || []
       const connectors = content.connectors || []
