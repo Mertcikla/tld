@@ -339,6 +339,80 @@ func helper() {}
 	t.Fatalf("expected updated element diff with +1 line, got %+v", diffs)
 }
 
+func TestCreateVersionForHeadCanBaselineAlreadyRepresentedCommit(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := gitStatusSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &Runner{Store: store}
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+func Other() {}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingDiffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, next.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiff(pendingDiffs, "element", "added") {
+		t.Fatalf("expected uncommitted representation to have pending element diff, got %+v", pendingDiffs)
+	}
+
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add other")
+	status, err = gitStatusSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, next.RepresentationHash, true); err != nil {
+		t.Fatal(err)
+	}
+	latest, found, err := store.LatestWatchVersion(context.Background(), scan.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || latest.CommitHash != status.HeadCommit {
+		t.Fatalf("expected latest version for committed head, got found=%v version=%+v status=%+v", found, latest, status)
+	}
+	committedDiffs, err := store.WatchDiffs(context.Background(), latest.ID, "", "", "", "", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(committedDiffs) != 0 {
+		t.Fatalf("expected committed baseline version to have no pending diffs, got %+v", committedDiffs)
+	}
+}
+
 func TestWatchDiffsFilterByResourceTypeAndLanguage(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()

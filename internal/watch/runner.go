@@ -127,7 +127,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep, Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
 	_, _ = r.Store.ApplyGitTags(ctx, repo.ID, gitStatus)
 	if gitStatus.HeadCommit != "" {
-		_ = r.createVersionForHead(ctx, repo.ID, gitStatus, rep.RepresentationHash)
+		_ = r.createVersionForHead(ctx, repo.ID, gitStatus, rep.RepresentationHash, false)
 	}
 
 	result := RunnerResult{Repository: repo, InitialScan: scan, InitialRep: rep, GitStatus: gitStatus, Token: token}
@@ -200,6 +200,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			}
 			time.Sleep(opts.Debounce)
 			stableSourceSnapshot := sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
+			sourceChanged := sourceFileFingerprint(stableSourceSnapshot) != lastFingerprint
 			nextGit, _ = gitStatusSnapshot(repoRoot)
 			nextGitFingerprint = gitStatusFingerprint(nextGit)
 			sourceChanges := diffSourceFileSnapshots(lastSourceSnapshot, stableSourceSnapshot)
@@ -254,7 +255,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			result.InitialRep = rep
 			emit(opts.Events, Event{Type: "git.statusChanged", RepositoryID: repo.ID, At: nowString(), Data: nextGit})
 			if nextGit.HeadCommit != "" && nextGit.HeadCommit != lastHead {
-				if err := r.createVersionForHead(ctx, repo.ID, nextGit, rep.RepresentationHash); err != nil {
+				if err := r.createVersionForHead(ctx, repo.ID, nextGit, rep.RepresentationHash, !sourceChanged); err != nil {
 					emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: err.Error()})
 				} else {
 					emit(opts.Events, Event{Type: "version.created", RepositoryID: repo.ID, At: nowString(), Data: map[string]string{"commit_hash": nextGit.HeadCommit}})
@@ -268,7 +269,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	}
 }
 
-func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, status GitStatus, representationHash string) error {
+func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, status GitStatus, representationHash string, baselineOnly bool) error {
 	latest, found, err := r.Store.LatestWatchVersion(ctx, repositoryID)
 	if err != nil {
 		return err
@@ -293,9 +294,12 @@ func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, s
 	if found {
 		parent = latest.CommitHash
 	}
-	diffs, err := r.Store.BuildWatchDiffs(ctx, repositoryID, representationHash)
-	if err != nil {
-		return err
+	var diffs []RepresentationDiff
+	if !baselineOnly {
+		diffs, err = r.Store.BuildWatchDiffs(ctx, repositoryID, representationHash)
+		if err != nil {
+			return err
+		}
 	}
 	_, err = r.Store.CreateWatchVersion(ctx, repositoryID, status.HeadCommit, parent, status.Branch, representationHash, workspaceID, diffs)
 	return err
