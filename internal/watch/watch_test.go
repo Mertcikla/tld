@@ -151,6 +151,79 @@ func TestScanForceRescanReparsesCachedFiles(t *testing.T) {
 	}
 }
 
+func TestNormalizeSettingsFiltersLanguagesAndDefaultsDurations(t *testing.T) {
+	settings := NormalizeSettings(Settings{
+		Languages: []string{"TypeScript", "go", "rust", "bogus", "go", ""},
+		Watcher:   "unknown",
+		Thresholds: Thresholds{
+			MaxElementsPerView: 4,
+		},
+	})
+	if strings.Join(settings.Languages, ",") != "go,typescript" {
+		t.Fatalf("unexpected normalized languages: %#v", settings.Languages)
+	}
+	if settings.Watcher != WatcherAuto {
+		t.Fatalf("unknown watcher should normalize to auto, got %q", settings.Watcher)
+	}
+	if settings.PollInterval <= 0 || settings.Debounce <= 0 {
+		t.Fatalf("expected default durations, got poll=%s debounce=%s", settings.PollInterval, settings.Debounce)
+	}
+	if settings.Thresholds.MaxElementsPerView != 4 || settings.Thresholds.MaxConnectorsPerView <= 0 {
+		t.Fatalf("expected provided threshold plus defaults, got %+v", settings.Thresholds)
+	}
+
+	fallback := NormalizeSettings(Settings{Languages: []string{"rust", "bogus"}})
+	if len(fallback.Languages) == 0 || !languageAllowed("go", languageSet(fallback.Languages)) {
+		t.Fatalf("invalid-only language list should fall back to defaults, got %#v", fallback.Languages)
+	}
+}
+
+func TestSourceSnapshotsRespectLanguagesAndReportChangeLanguage(t *testing.T) {
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc Main() {}\n")
+	writeFile(t, repo, "web/app.ts", "export function render() { return 1 }\n")
+	writeFile(t, repo, "README.md", "# ignored\n")
+
+	settings := Settings{Languages: []string{"typescript"}}
+	snapshot := sourceFileSnapshot(repo, settings, nil)
+	if len(snapshot) != 1 || snapshot["web/app.ts"] == "" {
+		t.Fatalf("expected only TypeScript source file, got %#v", snapshot)
+	}
+
+	changes := diffSourceFileSnapshots(
+		map[string]string{"old.py": "python:1:1", "same.ts": "typescript:1:1", "changed.go": "go:1:1"},
+		map[string]string{"same.ts": "typescript:1:1", "changed.go": "go:2:1", "new.cpp": "cpp:1:1"},
+	)
+	if got := changeSummary(changes); got != "changed.go:modified:go,new.cpp:added:cpp,old.py:deleted:python" {
+		t.Fatalf("unexpected source changes: %s (%+v)", got, changes)
+	}
+}
+
+func TestSourceWatcherFiltersRelevantEvents(t *testing.T) {
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc Main() {}\n")
+	writeFile(t, repo, "web/app.ts", "export function render() { return 1 }\n")
+	writeFile(t, repo, "README.md", "# ignored\n")
+	allowed := languageSet([]string{"typescript"})
+
+	if sourceEventRelevant(repo, filepath.Join(repo, "main.go"), allowed, nil) {
+		t.Fatal("Go event should be ignored when only TypeScript is allowed")
+	}
+	if !sourceEventRelevant(repo, filepath.Join(repo, "web", "app.ts"), allowed, nil) {
+		t.Fatal("TypeScript event should be relevant")
+	}
+	if sourceEventRelevant(repo, filepath.Join(repo, "README.md"), allowed, nil) {
+		t.Fatal("non-source event should be ignored")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	watcher := newSourceWatcher(ctx, repo, Settings{Watcher: WatcherPoll}, nil)
+	if watcher.Mode != WatcherPoll || watcher.Events != nil {
+		t.Fatalf("poll watcher should not create fs event channel, got %+v", watcher)
+	}
+}
+
 func TestWatchDiffsCaptureWorkspaceResourceChanges(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -203,6 +276,54 @@ func other() {}
 	}
 	if !hasDiff(diffs, "symbol", "added") || !hasDiff(diffs, "file", "updated") || !hasDiff(diffs, "element", "added") {
 		t.Fatalf("expected symbol/file/element diffs, got %+v", diffs)
+	}
+}
+
+func TestWatchDiffsFilterByResourceTypeAndLanguage(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, rep.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "", "main", rep.RepresentationHash, nil, diffs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	symbolDiffs, err := store.WatchDiffs(context.Background(), version.ID, "", "added", "symbol", "go", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(symbolDiffs) == 0 {
+		t.Fatalf("expected Go symbol diffs, got none from %+v", diffs)
+	}
+	for _, diff := range symbolDiffs {
+		if diff.ResourceType == nil || *diff.ResourceType != "symbol" || diff.ChangeType != "added" || diff.Language == nil || *diff.Language != "go" {
+			t.Fatalf("diff did not satisfy filters: %+v", diff)
+		}
+	}
+
+	none, err := store.WatchDiffs(context.Background(), version.ID, "", "", "symbol", "python", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("expected no Python symbol diffs, got %+v", none)
 	}
 }
 
@@ -1093,6 +1214,22 @@ func hasDiff(diffs []RepresentationDiff, resourceType, changeType string) bool {
 		}
 	}
 	return false
+}
+
+func languageSet(languages []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(languages))
+	for _, language := range languages {
+		out[language] = struct{}{}
+	}
+	return out
+}
+
+func changeSummary(changes []SourceFileChange) string {
+	parts := make([]string, 0, len(changes))
+	for _, change := range changes {
+		parts = append(parts, change.Path+":"+change.ChangeType+":"+change.Language)
+	}
+	return strings.Join(parts, ",")
 }
 
 type testPlacement struct {

@@ -2,11 +2,13 @@ package watch
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mertcikla/tld/internal/workspace"
 )
@@ -77,6 +79,84 @@ func helper() {}
 	}
 }
 
+func TestScanCommandJSONRespectsLanguageFlag(t *testing.T) {
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc Main() {}\n")
+	writeFile(t, repo, "web/app.ts", "export function render() { return 1 }\n")
+	dataDir := t.TempDir()
+
+	cmd := NewWatchCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"scan", repo, "--data-dir", dataDir, "--language", "typescript", "--json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("scan command: %v\n%s", err, out.String())
+	}
+	var result struct {
+		FilesSeen   int `json:"files_seen"`
+		FilesParsed int `json:"files_parsed"`
+		SymbolsSeen int `json:"symbols_seen"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON output %q: %v", out.String(), err)
+	}
+	if result.FilesSeen != 1 || result.FilesParsed != 1 || result.SymbolsSeen == 0 {
+		t.Fatalf("expected only TypeScript file in JSON scan result, got %+v\n%s", result, out.String())
+	}
+}
+
+func TestDiffCommandJSONAndFailOnDrift(t *testing.T) {
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+	dataDir := t.TempDir()
+
+	cmd := NewWatchCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"diff", repo, "--data-dir", dataDir, "--embedding-provider", "none"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("diff command: %v\n%s", err, out.String())
+	}
+	var payload struct {
+		Changed bool `json:"changed"`
+		Scan    struct {
+			FilesSeen int `json:"files_seen"`
+		} `json:"scan"`
+		Diffs []struct {
+			ChangeType   string  `json:"change_type"`
+			ResourceType *string `json:"resource_type"`
+		} `json:"diffs"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid JSON output %q: %v", out.String(), err)
+	}
+	if !payload.Changed || payload.Scan.FilesSeen != 1 || len(payload.Diffs) == 0 {
+		t.Fatalf("unexpected diff payload: %+v\n%s", payload, out.String())
+	}
+
+	cmd = NewWatchCmd()
+	out.Reset()
+	var errOut bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"diff", repo, "--data-dir", dataDir, "--embedding-provider", "none", "--fail-on-drift"})
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "drift detected") {
+		t.Fatalf("expected fail-on-drift error, got %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
+	}
+	var driftPayload struct {
+		Changed bool `json:"changed"`
+	}
+	if err := json.NewDecoder(strings.NewReader(out.String())).Decode(&driftPayload); err != nil || !driftPayload.Changed {
+		t.Fatalf("fail-on-drift should print a JSON payload before usage text, payload=%+v err=%v output=%q", driftPayload, err, out.String())
+	}
+}
+
 func TestResolveEmbeddingConfigPrecedence(t *testing.T) {
 	t.Setenv("TLD_EMBEDDING_PROVIDER", "local-deterministic-test")
 	t.Setenv("TLD_EMBEDDING_MODEL", "env-model")
@@ -93,6 +173,42 @@ func TestResolveEmbeddingConfigPrecedence(t *testing.T) {
 	resolved = resolveEmbeddingConfig(cfg, "", "", "", 0)
 	if resolved.Provider != "local-deterministic-test" || resolved.Model != "env-model" || resolved.Dimension != 7 {
 		t.Fatalf("env should win over config, got %+v", resolved)
+	}
+}
+
+func TestResolveWatchSettingsPrecedence(t *testing.T) {
+	t.Setenv("TLD_WATCH_LANGUAGES", "python,typescript")
+	t.Setenv("TLD_WATCH_WATCHER", "poll")
+	t.Setenv("TLD_WATCH_POLL_INTERVAL", "3s")
+	t.Setenv("TLD_WATCH_DEBOUNCE", "250ms")
+	cfg := &workspace.GlobalConfig{}
+	cfg.Watch.Languages = []string{"go"}
+	cfg.Watch.Watcher = "fsnotify"
+	cfg.Watch.PollInterval = "9s"
+	cfg.Watch.Debounce = "8s"
+	cfg.Watch.Thresholds.MaxElementsPerView = 11
+	cfg.Watch.Thresholds.MaxConnectorsPerView = 12
+
+	envResolved := resolveWatchSettings(cfg, nil, "", "", "", 0, 0, 0, 0)
+	if strings.Join(envResolved.Languages, ",") != "python,typescript" ||
+		envResolved.Watcher != "poll" ||
+		envResolved.PollInterval != 3*time.Second ||
+		envResolved.Debounce != 250*time.Millisecond ||
+		envResolved.Thresholds.MaxElementsPerView != 11 ||
+		envResolved.Thresholds.MaxConnectorsPerView != 12 {
+		t.Fatalf("env/config precedence resolved incorrectly: %+v", envResolved)
+	}
+
+	flagResolved := resolveWatchSettings(cfg, []string{"java"}, "fsnotify", "1s", "2s", 21, 22, 23, 24)
+	if strings.Join(flagResolved.Languages, ",") != "java" ||
+		flagResolved.Watcher != "fsnotify" ||
+		flagResolved.PollInterval != time.Second ||
+		flagResolved.Debounce != 2*time.Second ||
+		flagResolved.Thresholds.MaxElementsPerView != 21 ||
+		flagResolved.Thresholds.MaxConnectorsPerView != 22 ||
+		flagResolved.Thresholds.MaxIncomingPerElement != 23 ||
+		flagResolved.Thresholds.MaxOutgoingPerElement != 24 {
+		t.Fatalf("flag precedence resolved incorrectly: %+v", flagResolved)
 	}
 }
 
