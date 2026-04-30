@@ -8,7 +8,6 @@ import Dependencies from './pages/Dependencies'
 import { SharedInfiniteZoom } from './pages/InfiniteZoom'
 import Settings from './pages/Settings'
 import AppearanceSettings from './pages/AppearanceSettings'
-import WatchHistory from './pages/WatchHistory'
 import { HeaderProvider, useHeader } from './components/HeaderContext'
 import TopMenuBar from './components/TopMenuBar'
 import WorkspacePanel from './components/WorkspacePanel'
@@ -127,7 +126,6 @@ export default function App() {
             <Route path="views" element={<ViewsPage />} />
             <Route path="views/:id" element={<ViewEditor />} />
             <Route path="dependencies" element={<Dependencies />} />
-            <Route path="watch/history" element={<WatchHistory />} />
             <Route path="explore" element={<Navigate to="/views" replace />} />
             <Route path="settings" element={<Settings />}>
               <Route index element={<Navigate to="appearance" replace />} />

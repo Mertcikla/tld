@@ -66,7 +66,7 @@ function summarizeEvent(event: WatchEvent): WatchLine | null {
   if (type === 'watch.error') return { id, at, text: event.message || 'Watch error', tone: 'error' }
   if (type === 'lock.disabled') return null
   if (type === 'lock.enabled') return { id, at, text: 'Workspace locked for watch updates', tone: 'info' }
-  if (type === 'version.created') return { id, at, text: 'Watch version created', tone: 'success' }
+  if (type === 'version.created') return null
   if (type === 'representation.updated') {
     const data = event.data as Partial<WatchRepresentationSummary> | undefined
     const changed = [
@@ -74,7 +74,7 @@ function summarizeEvent(event: WatchEvent): WatchLine | null {
       data?.elements_created || data?.elements_updated ? `elements +${data.elements_created ?? 0}/${data.elements_updated ?? 0}` : '',
       data?.connectors_created || data?.connectors_updated ? `connectors +${data.connectors_created ?? 0}/${data.connectors_updated ?? 0}` : '',
     ].filter(Boolean).join(', ')
-    return { id, at, text: changed ? `Representation updated: ${changed}` : 'Representation refreshed', tone: 'success' }
+    return { id, at, text: changed ? `Workspace updated: ${changed}` : 'Workspace refreshed', tone: 'success' }
   }
   if (type === 'scan.started') {
     const files = event.changed_files ? ` · ${event.changed_files} files` : ''
@@ -99,14 +99,9 @@ function shortPath(path: string | undefined): string {
   return parts.slice(-2).join('/') || path
 }
 
-function shortHash(value?: string) {
-  if (!value) return ''
-  return value.length > 10 ? value.slice(0, 10) : value
-}
-
 function versionLabel(version: WatchVersion) {
   const subject = version.commit_message?.trim()
-  return [shortHash(version.commit_hash), subject].filter(Boolean).join(' · ')
+  return subject || `Version ${new Date(version.created_at).toLocaleTimeString()}`
 }
 
 function changeLabel(diffs: WatchDiff[]) {
@@ -515,51 +510,33 @@ export default function WorkspacePanel() {
               onChange={(v) => setVersionId(v)}
             />
 
-            <VStack align="stretch" spacing={1.5}>
-              <HStack spacing={1.5} flexWrap="wrap">
-                <Badge colorScheme="green" fontSize="9px">+{diffs.filter((d) => d.change_type === 'added').length}</Badge>
-                <Badge colorScheme="yellow" fontSize="9px">~{diffs.filter((d) => d.change_type === 'updated').length}</Badge>
-                <Badge colorScheme="red" fontSize="9px">-{diffs.filter((d) => d.change_type === 'deleted').length}</Badge>
-                <Text fontSize="10px" color="gray.500">{workspaceVersions.length} snapshots</Text>
-              </HStack>
+            <VStack align="stretch" spacing={2.5}>
               <Box
                 px={2}
-                py={1.5}
+                py={2}
                 border="1px solid"
                 borderColor="whiteAlpha.100"
                 borderRadius="md"
                 bg="whiteAlpha.50"
               >
-                <HStack spacing={1} fontFamily="mono" fontSize="10px" minW={0}>
+                <HStack spacing={1} fontFamily="mono" fontSize="10px" minW={0} opacity={0.8}>
                   <Text color="gray.300" noOfLines={1}>
                     {diffSummary.files.added + diffSummary.files.updated + diffSummary.files.deleted + diffSummary.files.changed} files changed,
                   </Text>
                   <Text color="green.300">+{diffSummary.files.addedLines}</Text>
                   <Text color="red.300">-{diffSummary.files.removedLines}</Text>
                 </HStack>
-                <HStack spacing={2} mt={1} flexWrap="wrap">
-                  <Text fontSize="10px" color="gray.400" noOfLines={1}>TLD</Text>
-                  <Text fontSize="10px" color="green.300" fontFamily="mono">+{diffSummary.elements.added} elements</Text>
-                  <Text fontSize="10px" color="red.300" fontFamily="mono">-{diffSummary.elements.deleted} elements</Text>
-                  <Text fontSize="10px" color="green.300" fontFamily="mono">+{diffSummary.connectors.added} connectors</Text>
-                  <Text fontSize="10px" color="red.300" fontFamily="mono">-{diffSummary.connectors.deleted} connectors</Text>
+                <HStack spacing={2} mt={1.5} flexWrap="wrap">
+                  <Badge variant="subtle" colorScheme="blue" fontSize="8px" px={1}>TLD</Badge>
+                  <Text fontSize="10px" color="green.300" fontFamily="mono">+{diffSummary.elements.added} / {diffSummary.connectors.added}</Text>
+                  <Text fontSize="10px" color="red.300" fontFamily="mono">-{diffSummary.elements.deleted} / {diffSummary.connectors.deleted}</Text>
+                  <Text fontSize="10px" color="gray.500" ml="auto">{workspaceVersions.length} snapshots</Text>
                 </HStack>
               </Box>
             </VStack>
 
-            {workspaceVersions.length > 0 && (
-              <VStack align="stretch" spacing={0.5} maxH="72px" overflowY="auto" borderTop="1px solid" borderColor="whiteAlpha.100" pt={1.5}>
-                {workspaceVersions.slice(0, 5).map((v) => (
-                  <HStack key={v.id} justify="space-between" spacing={3}>
-                    <Text fontSize="10px" color="gray.300" noOfLines={1}>{v.description || v.version_id}</Text>
-                    <Text fontSize="10px" color="gray.500" flexShrink={0}>{v.element_count} el · {v.connector_count} conn</Text>
-                  </HStack>
-                ))}
-              </VStack>
-            )}
-
             {diffLocations.length > 0 && (
-              <VStack align="stretch" spacing={1} maxH="116px" overflowY="auto" borderTop="1px solid" borderColor="whiteAlpha.100" pt={1.5}>
+              <VStack align="stretch" spacing={1} maxH="160px" overflowY="auto" borderTop="1px solid" borderColor="whiteAlpha.100" pt={2.5}>
                 {diffLocations.map((target) => (
                   <Button
                     key={target.key}
