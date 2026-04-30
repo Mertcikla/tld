@@ -3,17 +3,19 @@ module github.com/mertcikla/tld
 go 1.26.1
 
 require (
-	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.19.2-20260428080830-2484ec1e7a43.1
-	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.11-20260428080830-2484ec1e7a43.1
+	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.19.2-20260430110110-9c62eb8958e3.1
+	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.11-20260430110110-9c62eb8958e3.1
 	connectrpc.com/connect v1.19.2
 	github.com/bmatcuk/doublestar/v4 v4.6.1
 	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/odvcencio/gotreesitter v0.15.2
+	github.com/openai/openai-go v1.12.0
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/speps/go-hashids/v2 v2.0.1
 	github.com/spf13/cobra v1.9.1
 	github.com/tetratelabs/wazero v1.11.0
+	github.com/viant/sqlite-vec v0.3.0
 	go.lsp.dev/jsonrpc2 v0.10.0
 	go.lsp.dev/protocol v0.12.0
 	go.lsp.dev/uri v0.3.0
@@ -37,6 +39,11 @@ require (
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
+	github.com/tidwall/gjson v1.14.4 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
+	github.com/viant/vec v0.1.1-0.20240628004145-aad750556278 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	go.lsp.dev/pkg v0.0.0-20210717090340-384b27a52fb2 // indirect
 	go.uber.org/atomic v1.9.0 // indirect

@@ -168,7 +168,7 @@ function buildNodes(
       }))
 
     const derivedPrimaryIconPath = (() => {
-      const selected = obj.technology_connectors?.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && !!link.slug)
+      const selected = obj.technology_connectors?.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!link.slug)
       if (!selected?.slug) return null
       return resolveIconPath(`/icons/${selected.slug}.png`)
     })()

@@ -189,7 +189,6 @@ export function useViewData({
   const incomingLinks = useStore((state) => state.incomingLinks)
   const treeData = useStore((state) => state.treeData)
   const allElements = useStore((state) => state.allElements)
-  const setAllElements = useStore((state) => state.setAllElements)
   const hydrateViewContent = useStore((state) => state.hydrateViewContent)
   const resetCanvas = useStore((state) => state.resetCanvas)
   const removeElementPlacement = useStore((state) => state.removeElementPlacement)
@@ -216,13 +215,14 @@ export function useViewData({
 
   // ── Fetch tree ─────────────────────────────────────────────────────────────
   const refreshGrid = useCallback(async () => {
+    if (viewId === null) return
     const tree = await queryClient.fetchQuery({
-      queryKey: ['workspace', 'views', 'tree'],
-      queryFn: () => api.workspace.views.tree(),
+      queryKey: ['workspace', 'views', viewId, 'editor-tree'],
+      queryFn: () => api.workspace.views.treeAround(viewId, { ancestorLevels: 2, descendantLevels: 2 }),
       staleTime: 0,
     }).catch(() => null)
     if (tree) useStore.getState().setTreeData(tree)
-  }, [queryClient])
+  }, [queryClient, viewId])
 
   // ── Fetch view content ──────────────────────────────────────────────────
   const viewContentQuery = useQuery({
@@ -233,7 +233,7 @@ export function useViewData({
       const [diag, content, tree] = await Promise.all([
         api.workspace.views.get(viewId),
         api.workspace.views.content(viewId),
-        api.workspace.views.tree(),
+        api.workspace.views.treeAround(viewId, { ancestorLevels: 2, descendantLevels: 2 }),
       ])
       const viewElements = content.placements || []
       const connectors = content.connectors || []
@@ -263,16 +263,6 @@ export function useViewData({
   useEffect(() => {
     resetCanvas()
   }, [resetCanvas, viewId])
-
-  // ── Keep all-org elements for inline adder ──────────────────────────────────
-  const allElementsQuery = useQuery({
-    queryKey: ['elements', 'list'],
-    queryFn: () => api.elements.list(),
-  })
-
-  useEffect(() => {
-    if (allElementsQuery.data) setAllElements(allElementsQuery.data)
-  }, [allElementsQuery.data, setAllElements])
 
   // ── Refresh elements ────────────────────────────────────────────────────────
   const refreshElements = useCallback(async () => {
@@ -685,6 +675,5 @@ export function useViewData({
     handleElementDeleted,
     handleElementPermanentlyDeleted,
     handleElementSaved,
-    setAllElements,
   }
 }

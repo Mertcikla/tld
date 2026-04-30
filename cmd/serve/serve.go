@@ -20,6 +20,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	backgroundReadyTimeout = 30 * time.Second
+	readyRequestTimeout    = 10 * time.Second
+)
+
 func defaultServeRunE(cmd *cobra.Command, args []string) error {
 	_ = workspace.EnsureGlobalConfig()
 
@@ -148,7 +153,7 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 		return fmt.Errorf("write pid file: %w", err)
 	}
 
-	ready, err := waitReady(url+"/api/ready", 10*time.Second)
+	ready, err := waitReady(url+"/api/ready", backgroundReadyTimeout)
 	if err != nil {
 		_ = child.Process.Kill()
 		_ = os.Remove(pidPath)
@@ -302,7 +307,7 @@ func waitReady(url string, timeout time.Duration) (*readyInfo, error) {
 }
 
 func getReady(url string) (*readyInfo, error) {
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{Timeout: readyRequestTimeout}
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err

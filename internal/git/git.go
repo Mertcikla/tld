@@ -5,10 +5,21 @@ package git
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
+
+type Status struct {
+	Branch     string
+	HeadCommit string
+	RemoteURL  string
+	Staged     []string
+	Unstaged   []string
+	Untracked  []string
+	Deleted    []string
+}
 
 // DetectBranch returns the current branch name for the git repo rooted at dir.
 func DetectBranch(dir string) (string, error) {
@@ -32,6 +43,38 @@ func DetectRemoteURL(dir string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// DetectHeadCommit returns the current HEAD commit SHA for the git repo at dir.
+func DetectHeadCommit(dir string) (string, error) {
+	out, err := run(dir, "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("detect head commit: %w", err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// FileBlobHash returns the git blob hash for a tracked file at HEAD/index.
+// filePath may be absolute or relative to dir.
+func FileBlobHash(dir, filePath string) (string, error) {
+	rel := filePath
+	if filepath.IsAbs(filePath) {
+		var err error
+		rel, err = filepath.Rel(dir, filePath)
+		if err != nil {
+			return "", fmt.Errorf("file blob hash: %w", err)
+		}
+	}
+	rel = filepath.ToSlash(rel)
+	out, err := run(dir, "ls-files", "-s", "--", rel)
+	if err != nil {
+		return "", fmt.Errorf("file blob hash: %w", err)
+	}
+	fields := strings.Fields(out)
+	if len(fields) < 2 {
+		return "", fmt.Errorf("file blob hash: %q is not tracked", rel)
+	}
+	return fields[1], nil
+}
+
 // FileLastCommitAt returns the timestamp of the most recent commit that touched filePath
 // in the git repo rooted at dir.  filePath may be absolute or relative to dir.
 func FileLastCommitAt(dir, filePath string) (time.Time, error) {
@@ -50,6 +93,43 @@ func FileLastCommitAt(dir, filePath string) (time.Time, error) {
 	return time.Unix(unix, 0).UTC(), nil
 }
 
+func StatusSnapshot(dir string) (Status, error) {
+	status := Status{
+		Branch:     detectBestEffort(func() (string, error) { return DetectBranch(dir) }),
+		HeadCommit: detectBestEffort(func() (string, error) { return DetectHeadCommit(dir) }),
+		RemoteURL:  detectBestEffort(func() (string, error) { return DetectRemoteURL(dir) }),
+	}
+	out, err := run(dir, "status", "--porcelain=v1", "-z")
+	if err != nil {
+		return status, fmt.Errorf("git status: %w", err)
+	}
+	entries := strings.Split(out, "\x00")
+	for i := 0; i < len(entries); i++ {
+		entry := entries[i]
+		if entry == "" || len(entry) < 4 {
+			continue
+		}
+		x, y := entry[0], entry[1]
+		path := strings.TrimSpace(entry[3:])
+		if x == 'R' || x == 'C' {
+			i++
+		}
+		if x != ' ' && x != '?' {
+			status.Staged = append(status.Staged, filepath.ToSlash(path))
+		}
+		if y != ' ' && y != '?' {
+			status.Unstaged = append(status.Unstaged, filepath.ToSlash(path))
+		}
+		if x == '?' && y == '?' {
+			status.Untracked = append(status.Untracked, filepath.ToSlash(path))
+		}
+		if x == 'D' || y == 'D' {
+			status.Deleted = append(status.Deleted, filepath.ToSlash(path))
+		}
+	}
+	return status, nil
+}
+
 // RepoRoot returns the absolute path of the top-level git working tree for the
 // repository that contains dir.
 func RepoRoot(dir string) (string, error) {
@@ -58,6 +138,14 @@ func RepoRoot(dir string) (string, error) {
 		return "", fmt.Errorf("repo root: %w", err)
 	}
 	return strings.TrimSpace(out), nil
+}
+
+func detectBestEffort(fn func() (string, error)) string {
+	value, err := fn()
+	if err != nil {
+		return ""
+	}
+	return value
 }
 
 // run executes git with the given args in dir and returns the combined stdout output.

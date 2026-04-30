@@ -33,6 +33,17 @@ func (s *WorkspaceService) hooks() WorkspaceHooks {
 	return s.Hooks
 }
 
+func intToInt32(n int) int32 {
+	switch {
+	case n > math.MaxInt32:
+		return math.MaxInt32
+	case n < math.MinInt32:
+		return math.MinInt32
+	default:
+		return int32(n) //nolint:gosec // clamped above
+	}
+}
+
 // ─── CLI RPCs ─────────────────────────────────────────────────────────────────
 
 func (s *WorkspaceService) CreateView(
@@ -268,7 +279,11 @@ func (s *WorkspaceService) ExportWorkspace(
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error { var e error; views, e = s.Store.ListViews(gctx, workspaceID); return e })
-	g.Go(func() error { var e error; elements, e = s.Store.ListElements(gctx, workspaceID, 0, 0, ""); return e })
+	g.Go(func() error {
+		var e error
+		elements, _, e = s.Store.ListElements(gctx, workspaceID, 0, 0, "")
+		return e
+	})
 	g.Go(func() error { var e error; placements, e = s.Store.ListAllPlacements(gctx, workspaceID); return e })
 	g.Go(func() error { var e error; connectors, e = s.Store.ListAllConnectors(gctx, workspaceID); return e })
 	g.Go(func() error { var e error; layers, e = s.Store.ListAllViewLayers(gctx, workspaceID); return e })
@@ -329,36 +344,22 @@ func (s *WorkspaceService) GetWorkspace(
 	}
 	m := req.Msg
 
-	var ownerElementID *int32
+	var parentViewID *int32
 	if m.GetParentId() != 0 {
 		pid := m.GetParentId()
-		ownerElementID = &pid
+		parentViewID = &pid
 	}
 	var isRoot *bool
 	if m.Level != nil {
 		ir := m.GetLevel() == 0
 		isRoot = &ir
 	}
-	var hasView *bool
-	if m.HasView != nil {
-		hv := m.GetHasView()
-		hasView = &hv
-	}
-
-	views, totalCount, err := s.Store.GetViews(ctx, workspaceID, ownerElementID, isRoot, hasView, m.GetSearch(), int(m.GetLimit()), int(m.GetOffset()))
+	views, totalCount, err := s.Store.GetViews(ctx, workspaceID, parentViewID, isRoot, m.GetSearch(), int(m.GetLimit()), int(m.GetOffset()))
 	if err != nil {
 		return nil, storeErr("get views", err)
 	}
 
-	var tc int32
-	switch {
-	case totalCount > math.MaxInt32:
-		tc = math.MaxInt32
-	case totalCount < math.MinInt32:
-		tc = math.MinInt32
-	default:
-		tc = int32(totalCount) //nolint:gosec // clamped above
-	}
+	tc := intToInt32(totalCount)
 
 	viewMap := make(map[int32]*diagv1.View)
 	for _, v := range views {
@@ -554,14 +555,19 @@ func (s *WorkspaceService) ListElements(
 	if err := s.hooks().CheckRead(ctx, workspaceID); err != nil {
 		return nil, err
 	}
-	elements, err := s.Store.ListElements(ctx, workspaceID, req.Msg.Limit, req.Msg.Offset, req.Msg.Search)
+	elements, totalCount, err := s.Store.ListElements(ctx, workspaceID, req.Msg.Limit, req.Msg.Offset, req.Msg.Search)
 	if err != nil {
 		return nil, storeErr("list elements", err)
 	}
 	if elements == nil {
 		elements = []*diagv1.Element{}
 	}
-	return connect.NewResponse(&diagv1.ListElementsResponse{Elements: elements}), nil
+	return connect.NewResponse(&diagv1.ListElementsResponse{
+		Elements: elements,
+		Pagination: &diagv1.Pagination{
+			TotalCount: intToInt32(totalCount),
+		},
+	}), nil
 }
 
 func (s *WorkspaceService) GetElement(

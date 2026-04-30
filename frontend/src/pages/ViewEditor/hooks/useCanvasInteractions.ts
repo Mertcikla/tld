@@ -90,6 +90,18 @@ function findNearestHandleTargetInCache(targets: HandleTarget[], clientX: number
   }
 }
 
+function flattenViewTree(nodes: ViewTreeNode[]): ViewTreeNode[] {
+  const out: ViewTreeNode[] = []
+  const walk = (items: ViewTreeNode[]) => {
+    items.forEach((item) => {
+      out.push(item)
+      walk(item.children ?? [])
+    })
+  }
+  walk(nodes)
+  return out
+}
+
 export function applyNodeChangesWithStructuralSharing(changes: NodeChange[], nodes: RFNode[]) {
   if (changes.length === 0) return nodes
 
@@ -1012,7 +1024,7 @@ export function useCanvasInteractions({
     setSelectedProxyConnectorDetails(null)
     setSelectedEdge(connector)
     openConnectorPanelRef.current()
-  }, [closeElementPanel, connectors, openProxyConnectorPanel, setSelectedEdge, setSelectedElement, setSelectedProxyConnectorDetails])
+  }, [closeConnectorPanel, closeElementPanel, connectors, openProxyConnectorPanel, setSelectedEdge, setSelectedElement, setSelectedProxyConnectorDetails])
 
   // ── Pane interactions ─────────────────────────────────────────────────────
   const onPaneClick = useCallback((e: React.MouseEvent) => {
@@ -1265,7 +1277,7 @@ export function useCanvasInteractions({
       const cid = viewIdRef.current
       if (!cid) return
       const incoming = incomingLinksRef.current
-      const tree = treeDataRef.current
+      const tree = flattenViewTree(treeDataRef.current)
       const nav = navigateRef.current
       const links = linksMapRef.current
       const treeNode = tree.find((n) => n.id === cid)

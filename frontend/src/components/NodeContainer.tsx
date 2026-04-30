@@ -18,7 +18,7 @@ export const ElementContainer = memo(forwardRef<ElementContainerProps, 'div'>(({
   isTarget,
   isConnectorHighlighted,
   hasStack,
-  kind,
+  kind: _kind,
   children,
   ...props
 }, ref) => {
