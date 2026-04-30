@@ -642,16 +642,69 @@ func (s *Store) Views(ctx context.Context) ([]ViewSummary, error) {
 }
 
 func (s *Store) ViewByID(ctx context.Context, id int64) (ViewTreeNode, error) {
-	tree, err := s.ViewTree(ctx)
-	if err != nil {
+	row := s.db.QueryRowContext(ctx, `SELECT id, owner_element_id, name, description, level_label, level, created_at, updated_at FROM views WHERE id = ?`, id)
+	var view viewRow
+	if err := row.Scan(&view.ID, &view.OwnerElementID, &view.Name, &view.Description, &view.LevelLabel, &view.Level, &view.CreatedAt, &view.UpdatedAt); err != nil {
 		return ViewTreeNode{}, err
 	}
-	for _, node := range flattenTree(tree) {
-		if node.ID == id {
-			return node, nil
+	var parentID *int64
+	var err error
+	if view.OwnerElementID.Valid {
+		parentID, err = s.parentViewForOwner(ctx, view.OwnerElementID.Int64, view.ID)
+		if err != nil {
+			return ViewTreeNode{}, err
 		}
 	}
-	return ViewTreeNode{}, sql.ErrNoRows
+	return viewNodeFromRow(view, parentID, 0), nil
+}
+
+func (s *Store) ChildViews(ctx context.Context, parentViewID int64) ([]ViewTreeNode, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT v.id, v.owner_element_id, v.name, v.description, v.level_label, v.level, v.created_at, v.updated_at
+		FROM views v
+		JOIN placements p ON p.element_id = v.owner_element_id
+		WHERE p.view_id = ? AND v.id != ?
+		ORDER BY v.id`, parentViewID, parentViewID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []ViewTreeNode{}
+	for rows.Next() {
+		var row viewRow
+		if err := rows.Scan(&row.ID, &row.OwnerElementID, &row.Name, &row.Description, &row.LevelLabel, &row.Level, &row.CreatedAt, &row.UpdatedAt); err != nil {
+			return nil, err
+		}
+		parentID := parentViewID
+		out = append(out, viewNodeFromRow(row, &parentID, 0))
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RootViews(ctx context.Context) ([]ViewTreeNode, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT v.id, v.owner_element_id, v.name, v.description, v.level_label, v.level, v.created_at, v.updated_at
+		FROM views v
+		WHERE v.owner_element_id IS NULL
+		   OR NOT EXISTS (
+		     SELECT 1 FROM placements p
+		     WHERE p.element_id = v.owner_element_id
+		       AND p.view_id != v.id
+		   )
+		ORDER BY v.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []ViewTreeNode{}
+	for rows.Next() {
+		var row viewRow
+		if err := rows.Scan(&row.ID, &row.OwnerElementID, &row.Name, &row.Description, &row.LevelLabel, &row.Level, &row.CreatedAt, &row.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, viewNodeFromRow(row, nil, 0))
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) CreateView(ctx context.Context, name string, levelLabel *string, ownerElementID *int64) (ViewSummary, error) {
@@ -785,7 +838,7 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
-func (s *Store) Elements(ctx context.Context, limit, offset int, search string) ([]LibraryElement, error) {
+func (s *Store) Elements(ctx context.Context, limit, offset int, search string) ([]LibraryElement, int, error) {
 	type elementRow struct {
 		ID          int64
 		Name        string
@@ -804,13 +857,19 @@ func (s *Store) Elements(ctx context.Context, limit, offset int, search string) 
 		UpdatedAt   string
 	}
 
-	query := `SELECT id, name, kind, description, technology, url, logo_url, technology_connectors, tags, repo, branch, file_path, language, created_at, updated_at FROM elements`
+	where := ""
 	args := []any{}
 	if strings.TrimSpace(search) != "" {
-		query += ` WHERE LOWER(name) LIKE LOWER(?) OR LOWER(COALESCE(description, '')) LIKE LOWER(?)`
+		where = ` WHERE LOWER(name) LIKE LOWER(?) OR LOWER(COALESCE(description, '')) LIKE LOWER(?)`
 		pattern := "%" + strings.TrimSpace(search) + "%"
 		args = append(args, pattern, pattern)
 	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM elements`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	query := `SELECT id, name, kind, description, technology, url, logo_url, technology_connectors, tags, repo, branch, file_path, language, created_at, updated_at FROM elements` + where
 	query += ` ORDER BY updated_at DESC`
 	if limit > 0 {
 		query += ` LIMIT ? OFFSET ?`
@@ -818,7 +877,7 @@ func (s *Store) Elements(ctx context.Context, limit, offset int, search string) 
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer func() { _ = rows.Close() }()
 	scanned := make([]elementRow, 0)
@@ -841,16 +900,16 @@ func (s *Store) Elements(ctx context.Context, limit, offset int, search string) 
 			&row.CreatedAt,
 			&row.UpdatedAt,
 		); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		scanned = append(scanned, row)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	viewMeta, err := s.childViewMetaMap(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	out := make([]LibraryElement, 0, len(scanned))
@@ -896,7 +955,7 @@ func (s *Store) Elements(ctx context.Context, limit, offset int, search string) 
 		}
 		out = append(out, elem)
 	}
-	return out, nil
+	return out, total, nil
 }
 
 func (s *Store) ElementByID(ctx context.Context, id int64) (LibraryElement, error) {
@@ -1486,7 +1545,7 @@ func (s *Store) Explore(ctx context.Context) (ExploreData, error) {
 }
 
 func (s *Store) Dependencies(ctx context.Context) (map[string]any, error) {
-	elements, err := s.Elements(ctx, 0, 0, "")
+	elements, _, err := s.Elements(ctx, 0, 0, "")
 	if err != nil {
 		return nil, err
 	}

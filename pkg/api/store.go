@@ -79,7 +79,7 @@ type Store interface {
 	DeleteView(ctx context.Context, id int32, workspaceID uuid.UUID) error
 
 	// Elements
-	ListElements(ctx context.Context, workspaceID uuid.UUID, limit, offset int32, search string) ([]*diagv1.Element, error)
+	ListElements(ctx context.Context, workspaceID uuid.UUID, limit, offset int32, search string) ([]*diagv1.Element, int, error)
 	GetElement(ctx context.Context, id int32, workspaceID uuid.UUID) (*diagv1.Element, error)
 	CreateElement(ctx context.Context, workspaceID uuid.UUID, input ElementInput) (*diagv1.Element, error)
 	UpdateElement(ctx context.Context, id int32, workspaceID uuid.UUID, input ElementInput) (*diagv1.Element, error)

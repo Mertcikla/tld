@@ -436,7 +436,6 @@ function ViewEditorInner({
     treeDataRef, rfNodesRef, rfEdgesRef, viewIdRef,
     refreshGrid, refreshElements,
     handleElementDeleted, handleElementPermanentlyDeleted, handleElementSaved,
-    setAllElements: _setAllElements,
   } = data
   refreshElementsRef.current = refreshElements
 
@@ -510,10 +509,11 @@ function ViewEditorInner({
 
   const availableTags = useMemo(() => {
     const tags = new Set<string>()
+    viewElements.forEach((o) => o.tags?.forEach((t: string) => tags.add(t)))
     allElements.forEach((o) => o.tags?.forEach((t: string) => tags.add(t)))
     Object.keys(tagColors).forEach((t) => tags.add(t))
     return Array.from(tags).sort((a, b) => a.localeCompare(b))
-  }, [allElements, tagColors])
+  }, [allElements, tagColors, viewElements])
 
   const effectiveWorkspaceSnapshot = useMemo(() => {
     if (viewId == null) return workspaceGraphSnapshot

@@ -42,18 +42,29 @@ func (a *APIAdapter) ListViews(ctx context.Context, _ uuid.UUID) ([]*diagv1.View
 }
 
 func (a *APIAdapter) GetViews(ctx context.Context, _ uuid.UUID, parentViewID *int32, isRoot *bool, search string, limit, offset int) ([]*diagv1.View, int, error) {
-	nodes, err := a.Store.ViewTree(ctx)
-	if err != nil {
-		return nil, 0, err
+	var flat []app.ViewTreeNode
+	switch {
+	case parentViewID != nil:
+		nodes, err := a.Store.legacy.ChildViews(ctx, int64(*parentViewID))
+		if err != nil {
+			return nil, 0, err
+		}
+		flat = nodes
+	case isRoot != nil && *isRoot:
+		nodes, err := a.Store.legacy.RootViews(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+		flat = nodes
+	default:
+		nodes, err := a.Store.ViewTree(ctx)
+		if err != nil {
+			return nil, 0, err
+		}
+		flat = flattenViewTreeNodes(nodes)
 	}
-	flat := flattenViewTreeNodes(nodes)
 	filtered := make([]app.ViewTreeNode, 0, len(flat))
 	for _, node := range flat {
-		if parentViewID != nil {
-			if node.ParentViewID == nil || int32(*node.ParentViewID) != *parentViewID {
-				continue
-			}
-		}
 		if isRoot != nil {
 			nodeIsRoot := node.ParentViewID == nil
 			if nodeIsRoot != *isRoot {
@@ -116,17 +127,17 @@ func (a *APIAdapter) DeleteView(ctx context.Context, id int32, _ uuid.UUID) erro
 	return a.Store.legacy.DeleteView(ctx, int64(id))
 }
 
-func (a *APIAdapter) ListElements(ctx context.Context, _ uuid.UUID, limit, offset int32, search string) ([]*diagv1.Element, error) {
-	elements, err := a.Store.legacy.Elements(ctx, int(limit), int(offset), search)
+func (a *APIAdapter) ListElements(ctx context.Context, _ uuid.UUID, limit, offset int32, search string) ([]*diagv1.Element, int, error) {
+	elements, total, err := a.Store.legacy.Elements(ctx, int(limit), int(offset), search)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	out := make([]*diagv1.Element, 0, len(elements))
 	workspaceID := api.WorkspaceIDFromCtx(ctx)
 	for _, element := range elements {
 		out = append(out, elementToProto(element, workspaceID))
 	}
-	return out, nil
+	return out, total, nil
 }
 
 func (a *APIAdapter) GetElement(ctx context.Context, id int32, _ uuid.UUID) (*diagv1.Element, error) {

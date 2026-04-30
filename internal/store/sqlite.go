@@ -143,12 +143,12 @@ func (s *SQLiteStore) ThumbnailSVG(ctx context.Context, viewID int64) (string, e
 	return s.legacy.ThumbnailSVG(ctx, viewID)
 }
 
-func (s *SQLiteStore) Elements(ctx context.Context, limit, offset int, search string) ([]core.LibraryElement, error) {
-	out, err := s.legacy.Elements(ctx, limit, offset, search)
+func (s *SQLiteStore) Elements(ctx context.Context, limit, offset int, search string) ([]core.LibraryElement, int, error) {
+	out, total, err := s.legacy.Elements(ctx, limit, offset, search)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return convertSlice(out, func(v app.LibraryElement) core.LibraryElement { return core.LibraryElement(v) }), nil
+	return convertSlice(out, func(v app.LibraryElement) core.LibraryElement { return core.LibraryElement(v) }), total, nil
 }
 
 func (s *SQLiteStore) ElementByID(ctx context.Context, id int64) (core.LibraryElement, error) {

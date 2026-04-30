@@ -52,6 +52,7 @@ import { apiUrl, fetchApiAsset } from '../config/runtime'
 export interface DependenciesResponse {
   elements: DependencyElement[]
   connectors: DependencyConnector[]
+  totalCount?: number
 }
 
 export interface WatchRepository {
@@ -131,6 +132,7 @@ export interface WatchDiff {
 const workspaceClient = createClient(WorkspaceService, transport)
 const dependencyClient = createClient(DependencyService, transport)
 const importClient = createClient(ImportService, transport)
+let dependencyConnectorsCache: Promise<DependencyConnector[]> | null = null
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -229,6 +231,26 @@ function protoElementToLibrary(e: Record<string, unknown>): LibraryElement {
   }
 }
 
+function libraryElementToDependency(element: LibraryElement): DependencyElement {
+  return {
+    id: String(element.id),
+    name: element.name,
+    type: element.kind,
+    description: element.description,
+    technology: element.technology,
+    url: element.url,
+    logo_url: element.logo_url,
+    technology_connectors: element.technology_connectors,
+    tags: element.tags,
+    repo: element.repo,
+    branch: element.branch,
+    language: element.language,
+    file_path: element.file_path,
+    created_at: element.created_at,
+    updated_at: element.updated_at,
+  }
+}
+
 function protoPlacedElement(p: Record<string, unknown>): PlacedElement {
   return {
     id: Number(p.id ?? 0),
@@ -274,6 +296,25 @@ function protoConnector(e: Record<string, unknown>): Connector {
     target_handle: (e.target_handle ?? null) as string | null,
     created_at: String(e.created_at ?? new Date().toISOString()),
     updated_at: String(e.updated_at ?? new Date().toISOString()),
+  }
+}
+
+function protoDependencyConnector(e: Record<string, unknown>): DependencyConnector {
+  return {
+    id: String(e.id ?? 0),
+    view_id: String(e.view_id ?? e.viewId ?? 0),
+    source_element_id: String(e.source_element_id ?? e.sourceElementId ?? 0),
+    target_element_id: String(e.target_element_id ?? e.targetElementId ?? 0),
+    label: (e.label ?? null) as string | null,
+    description: (e.description ?? null) as string | null,
+    relationship_type: (e.relationship_type ?? e.relationshipType ?? e.relationship ?? null) as string | null,
+    direction: String(e.direction ?? 'forward'),
+    connector_type: String(e.connector_type ?? e.connectorType ?? e.style ?? 'solid'),
+    url: (e.url ?? null) as string | null,
+    source_handle: (e.source_handle ?? e.sourceHandle ?? null) as string | null,
+    target_handle: (e.target_handle ?? e.targetHandle ?? null) as string | null,
+    created_at: String(e.created_at ?? e.createdAt ?? ''),
+    updated_at: String(e.updated_at ?? e.updatedAt ?? ''),
   }
 }
 
@@ -723,8 +764,41 @@ export const api = {
   },
 
   dependencies: {
-    list: (): Promise<DependenciesResponse> =>
+    list: (params?: { limit?: number; offset?: number; search?: string }): Promise<DependenciesResponse> =>
       rpc(async () => {
+        if (params) {
+          if (!dependencyConnectorsCache) {
+            dependencyConnectorsCache = workspaceClient.listConnectors({ viewId: 0 })
+              .then((res) => {
+                const connectorJson = j<{ connectors: Record<string, unknown>[] }>(ListConnectorsResponseSchema, res)
+                return (connectorJson.connectors ?? []).map(protoDependencyConnector)
+              })
+          }
+          const [elements, connectors] = await Promise.all([
+            workspaceClient.listElements({
+              limit: params.limit ?? 0,
+              offset: params.offset ?? 0,
+              search: params.search ?? '',
+            }).then((res) => {
+              const json = j<{
+                elements: Record<string, unknown>[]
+                pagination?: { totalCount?: number; total_count?: number }
+              }>(ListElementsResponseSchema, res)
+              return {
+                elements: (json.elements ?? []).map(protoElementToLibrary),
+                totalCount: json.pagination
+                  ? Number(json.pagination.totalCount ?? json.pagination.total_count ?? 0)
+                  : undefined,
+              }
+            }),
+            dependencyConnectorsCache,
+          ])
+          return {
+            elements: elements.elements.map(libraryElementToDependency),
+            connectors,
+            totalCount: elements.totalCount,
+          }
+        }
         const res = await dependencyClient.listDependencies({})
         return j<DependenciesResponse>(ListDependenciesResponseSchema, res)
       }),

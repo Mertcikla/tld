@@ -189,7 +189,6 @@ export function useViewData({
   const incomingLinks = useStore((state) => state.incomingLinks)
   const treeData = useStore((state) => state.treeData)
   const allElements = useStore((state) => state.allElements)
-  const setAllElements = useStore((state) => state.setAllElements)
   const hydrateViewContent = useStore((state) => state.hydrateViewContent)
   const resetCanvas = useStore((state) => state.resetCanvas)
   const removeElementPlacement = useStore((state) => state.removeElementPlacement)
@@ -264,16 +263,6 @@ export function useViewData({
   useEffect(() => {
     resetCanvas()
   }, [resetCanvas, viewId])
-
-  // ── Keep all-org elements for inline adder ──────────────────────────────────
-  const allElementsQuery = useQuery({
-    queryKey: ['elements', 'list'],
-    queryFn: () => api.elements.list(),
-  })
-
-  useEffect(() => {
-    if (allElementsQuery.data) setAllElements(allElementsQuery.data)
-  }, [allElementsQuery.data, setAllElements])
 
   // ── Refresh elements ────────────────────────────────────────────────────────
   const refreshElements = useCallback(async () => {
@@ -686,6 +675,5 @@ export function useViewData({
     handleElementDeleted,
     handleElementPermanentlyDeleted,
     handleElementSaved,
-    setAllElements,
   }
 }
