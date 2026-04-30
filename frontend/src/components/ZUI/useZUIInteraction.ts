@@ -392,6 +392,12 @@ export function calculateMaxZoom(groups: DiagramGroupLayout[], canvasW: number):
 }
 
 const MIN_ZOOM = 0.4
+const ZUI_NATIVE_WHEEL_SELECTOR = '[data-zui-native-wheel="true"]'
+
+function shouldIgnoreCapturedWheel(e: WheelEvent): boolean {
+  const target = e.target
+  return target instanceof Element && target.closest(ZUI_NATIVE_WHEEL_SELECTOR) !== null
+}
 
 function clampZoom(z: number, prevZ: number, maxZ: number): number {
   if (z > prevZ) {
@@ -590,6 +596,17 @@ export function useZUIInteraction(
     if (!el) return
 
     function onWheel(e: WheelEvent) {
+      if (shouldIgnoreCapturedWheel(e)) return
+
+      const rect = el!.getBoundingClientRect()
+      const isInsideCanvas =
+        e.clientX >= rect.left &&
+        e.clientX <= rect.right &&
+        e.clientY >= rect.top &&
+        e.clientY <= rect.bottom
+
+      if (!isInsideCanvas) return
+
       // Heuristic to distinguish between trackpad and physical mouse wheel:
       // 1. If ctrlKey is true, it's a pinch (trackpad) or Ctrl+Wheel. We always zoom.
       // 2. If deltaMode !== 0, it's a physical mouse wheel (DOM_DELTA_LINE/PAGE). We zoom.
@@ -619,7 +636,6 @@ export function useZUIInteraction(
       const isRealMouseWheel = e.deltaMode !== 0 || isNotchedWheel
 
       if (isPinch || isRealMouseWheel) {
-        const rect = el!.getBoundingClientRect()
         const focalX = e.clientX - rect.left
         const focalY = e.clientY - rect.top
 
@@ -843,7 +859,7 @@ export function useZUIInteraction(
 
     el.style.cursor = 'grab'
 
-    el.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true })
     el.addEventListener('mousedown', onMouseDown)
     el.addEventListener('mouseleave', onMouseOut)
     el.addEventListener('mouseout', onMouseOut)
@@ -856,7 +872,7 @@ export function useZUIInteraction(
     el.addEventListener('touchcancel', onTouchEnd)
 
     return () => {
-      el.removeEventListener('wheel', onWheel)
+      window.removeEventListener('wheel', onWheel, { capture: true })
       el.removeEventListener('mousedown', onMouseDown)
       el.removeEventListener('mouseleave', onMouseOut)
       el.removeEventListener('mouseout', onMouseOut)

@@ -371,6 +371,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
                     </PopoverTrigger>
                     <Portal>
                       <PopoverContent
+                        data-zui-native-wheel="true"
                         bg="glass.bg"
                         backdropFilter="blur(16px)"
                         borderColor="glass.border"
