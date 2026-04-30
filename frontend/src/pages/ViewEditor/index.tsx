@@ -208,6 +208,14 @@ function ViewEditorInner({
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
   const [selectedProxyConnectorDetails, setSelectedProxyConnectorDetails] = useState<ProxyConnectorDetails | null>(null)
+
+  const [prevViewId, setPrevViewId] = useState(viewId)
+  if (viewId !== prevViewId) {
+    setPrevViewId(viewId)
+    setSelectedElement(null)
+    setSelectedEdge(null)
+    setSelectedProxyConnectorDetails(null)
+  }
   const [previewElement, setPreviewElement] = useState<PlacedElement | null>(null)
   const [libraryOpen, setLibraryOpen] = useState(() => {
     if (typeof window === 'undefined') return false
@@ -940,7 +948,15 @@ function ViewEditorInner({
     return () => observer.disconnect()
   }, [maybeFitView])
 
-  useEffect(() => { needsFitView.current = true }, [viewId])
+  useEffect(() => {
+    setSelectedElement(null)
+    setSelectedEdge(null)
+    setSelectedProxyConnectorDetails(null)
+    elementPanel.onClose()
+    connectorPanel.onClose()
+    proxyConnectorPanel.onClose()
+    needsFitView.current = true
+  }, [viewId])
 
   // ── Dynamic viewport bounds ────────────────────────────────────────────────
   useEffect(() => {

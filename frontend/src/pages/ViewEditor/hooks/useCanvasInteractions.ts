@@ -488,7 +488,14 @@ export function useCanvasInteractions({
   // ── Zoom-in / zoom-out stable callbacks ───────────────────────────────────
   const stableOnZoomIn = useCallback(async (elementId: number) => {
     const childLinks = linksMapRef.current[elementId] || []
-    if (childLinks.length > 0) { navigateRef.current(`/views/${childLinks[0].to_view_id}`); return }
+    if (childLinks.length > 0) {
+      setSelectedElement(null)
+      setSelectedEdge(null)
+      closeElementPanel()
+      closeConnectorPanel()
+      navigateRef.current(`/views/${childLinks[0].to_view_id}`)
+      return
+    }
 
     const obj = viewElementsRef.current.find((o) => o.element_id === elementId)
     if (obj?.has_view) {
@@ -503,6 +510,10 @@ export function useCanvasInteractions({
       }
       const existingView = findInTree(treeDataRef.current)
       if (existingView) {
+        setSelectedElement(null)
+        setSelectedEdge(null)
+        closeElementPanel()
+        closeConnectorPanel()
         navigateRef.current(`/views/${existingView.id}`)
         return
       }
@@ -518,9 +529,13 @@ export function useCanvasInteractions({
         [elementId]: [...(prev[elementId] || []),
         { id: 0, element_id: elementId, from_view_id: cid, to_view_id: newView.id, to_view_name: newView.name, relation_type: 'child' as const }],
       }))
+      setSelectedElement(null)
+      setSelectedEdge(null)
+      closeElementPanel()
+      closeConnectorPanel()
       navigateRef.current(`/views/${newView.id}`)
     } catch { /* intentionally empty */ }
-  }, [canEdit, linksMapRef, viewIdRef, viewElementsRef, navigateRef, setLinksMap, treeDataRef])
+  }, [canEdit, linksMapRef, viewIdRef, viewElementsRef, navigateRef, setLinksMap, treeDataRef, setSelectedElement, setSelectedEdge, closeElementPanel, closeConnectorPanel])
 
   const stableOnZoomOut = useCallback(async (elementId: number) => {
     const parentLinks = parentLinksMapRef.current[elementId] || []
@@ -529,7 +544,14 @@ export function useCanvasInteractions({
     // from the clicked element's ID for elements like functions/classes that
     // don't own a view themselves).
     const anyParentLink = parentLinks[0] ?? Object.values(parentLinksMapRef.current).flat()[0]
-    if (anyParentLink) { navigateRef.current(`/views/${anyParentLink.from_view_id}`); return }
+    if (anyParentLink) {
+      setSelectedElement(null)
+      setSelectedEdge(null)
+      closeElementPanel()
+      closeConnectorPanel()
+      navigateRef.current(`/views/${anyParentLink.from_view_id}`)
+      return
+    }
 
     // Final fallback: use current view's parent_view_id if available
     const findInTreeById = (nodes: ViewTreeNode[], id: number): ViewTreeNode | null => {
@@ -542,13 +564,21 @@ export function useCanvasInteractions({
     }
     const currentView = findInTreeById(treeDataRef.current, viewIdRef.current || -1)
     if (currentView?.parent_view_id) {
+      setSelectedElement(null)
+      setSelectedEdge(null)
+      closeElementPanel()
+      closeConnectorPanel()
       navigateRef.current(`/views/${currentView.parent_view_id}`)
     }
-  }, [parentLinksMapRef, navigateRef, treeDataRef, viewIdRef])
+  }, [parentLinksMapRef, navigateRef, treeDataRef, viewIdRef, setSelectedElement, setSelectedEdge, closeElementPanel, closeConnectorPanel])
 
   const stableOnNavigateToView = useCallback((id: number) => {
+    setSelectedElement(null)
+    setSelectedEdge(null)
+    closeElementPanel()
+    closeConnectorPanel()
     navigateRef.current(`/views/${id}`)
-  }, [navigateRef])
+  }, [navigateRef, setSelectedElement, setSelectedEdge, closeElementPanel, closeConnectorPanel])
 
   const stableOnHoverZoom = useCallback((elementId: number, type: 'in' | 'out' | null) => {
     const prev = hoveredZoomRef.current
