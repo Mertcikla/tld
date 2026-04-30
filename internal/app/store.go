@@ -327,6 +327,9 @@ func applyMigrations(db *sql.DB, migrations embed.FS) error {
 			return err
 		}
 		if _, err := db.Exec(string(sqlBytes)); err != nil {
+			if strings.Contains(err.Error(), "duplicate column name") {
+				continue
+			}
 			return fmt.Errorf("apply migration %s: %w", entry.Name(), err)
 		}
 	}

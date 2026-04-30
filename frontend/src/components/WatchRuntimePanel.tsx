@@ -10,7 +10,7 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import { CloseIcon, RepeatIcon } from '@chakra-ui/icons'
-import { api, type WatchEvent, type WatchLock, type WatchRepresentationSummary, type WatchRepository } from '../api/client'
+import { api, type WatchDiff, type WatchEvent, type WatchLock, type WatchRepository, type WatchVersion } from '../api/client'
 
 export const WATCH_REPRESENTATION_UPDATED_EVENT = 'tld:watch-representation-updated'
 
@@ -40,16 +40,7 @@ function summarizeEvent(event: WatchEvent): WatchLine | null {
   if (type === 'watch.error') return { id, at, text: event.message || 'Watch error', tone: 'error' }
   if (type === 'lock.disabled') return null
   if (type === 'lock.enabled') return { id, at, text: 'Workspace locked for watch updates', tone: 'info' }
-  if (type === 'version.created') return { id, at, text: 'Watch version created', tone: 'success' }
-  if (type === 'representation.updated') {
-    const data = event.data as Partial<WatchRepresentationSummary> | undefined
-    const changed = [
-      data?.views_created ? `views +${data.views_created}` : '',
-      data?.elements_created || data?.elements_updated ? `elements +${data.elements_created ?? 0}/${data.elements_updated ?? 0}` : '',
-      data?.connectors_created || data?.connectors_updated ? `connectors +${data.connectors_created ?? 0}/${data.connectors_updated ?? 0}` : '',
-    ].filter(Boolean).join(', ')
-    return { id, at, text: changed ? `Representation updated: ${changed}` : 'Representation refreshed', tone: 'success' }
-  }
+  if (type === 'version.created' || type === 'representation.updated') return null
   if (type === 'scan.started') {
     const files = event.changed_files ? ` · ${event.changed_files} files` : ''
     return { id, at, text: `Scanning${files}`, tone: 'info' }
@@ -65,6 +56,34 @@ function summarizeEvent(event: WatchEvent): WatchLine | null {
     return { id, at, text: `${path} ${suffix}`, tone: data?.representation_changed ? 'success' : 'info' }
   }
   return { id, at, text: type, tone: 'info' }
+}
+
+function summarizeDiff(diff: WatchDiff, at: string, index: number): WatchLine | null {
+  const target = diff.resource_type === 'connector'
+    ? connectorLabel(diff)
+    : shortPath(diff.summary || diff.owner_key)
+  if (!target || diff.owner_type === 'repository') return null
+
+  const added = Math.max(0, diff.added_lines ?? 0)
+  const removed = Math.max(0, diff.removed_lines ?? 0)
+  const delta = [
+    added > 0 ? `+${added}` : '',
+    removed > 0 ? `-${removed}` : '',
+  ].filter(Boolean).join(' ')
+  const verb = diff.change_type === 'added' ? 'added' : diff.change_type === 'deleted' ? 'removed' : 'changed'
+  const text = `${verb} ${target}${delta ? ` ${delta}` : ''}`
+  return {
+    id: Date.now() + index + Math.random(),
+    at,
+    text,
+    tone: diff.change_type === 'deleted' ? 'warning' : 'success',
+  }
+}
+
+function connectorLabel(diff: WatchDiff): string {
+  const value = (diff.summary || diff.owner_key || '').trim()
+  if (!value) return 'connector'
+  return value
 }
 
 function shortPath(path: string | undefined): string {
@@ -95,8 +114,22 @@ export default function WatchRuntimePanel() {
     })
   }, [])
 
+  const addLines = useCallback((nextLines: WatchLine[]) => {
+    if (nextLines.length === 0) return
+    setLines((current) => {
+      const merged = [...nextLines, ...current]
+      const seen = new Set<string>()
+      return merged.filter((line) => {
+        const key = `${line.text}:${line.tone}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      }).slice(0, 8)
+    })
+  }, [])
+
   const refreshWorkspace = useCallback((event: WatchEvent) => {
-    const data = event.data as Partial<WatchRepresentationSummary> | undefined
+    const data = event.data as { representation_hash?: string } | undefined
     const hash = data?.representation_hash ?? ''
     if (hash && hash === lastRepresentationHashRef.current) return
     if (hash) lastRepresentationHashRef.current = hash
@@ -105,6 +138,19 @@ export default function WatchRuntimePanel() {
     void queryClient.invalidateQueries({ queryKey: ['elements', 'list'] })
     window.dispatchEvent(new CustomEvent(WATCH_REPRESENTATION_UPDATED_EVENT, { detail: event }))
   }, [queryClient])
+
+  const loadVersionDiffLines = useCallback(async (event: WatchEvent) => {
+    const data = event.data as { diffs?: WatchDiff[] } | undefined
+    let diffs = data?.diffs ?? []
+    if (event.type === 'version.created' && diffs.length === 0) {
+      const version = event.data as Partial<WatchVersion> | undefined
+      if (!version?.id) return
+      diffs = await api.watch.diffs(version.id).catch(() => [])
+    }
+    const preferred = diffs.filter((diff) => diff.resource_type === 'file' || diff.resource_type === 'connector')
+    const displayDiffs = preferred.length > 0 ? preferred : diffs.filter((diff) => diff.owner_type !== 'repository')
+    addLines(displayDiffs.map((diff, index) => summarizeDiff(diff, event.at, index)).filter((line): line is WatchLine => Boolean(line)))
+  }, [addLines])
 
   const handleEvent = useCallback((event: WatchEvent) => {
     const eventLock = event.data && typeof event.data === 'object' && 'status' in event.data
@@ -127,9 +173,10 @@ export default function WatchRuntimePanel() {
       setPaused(false)
     }
     if (event.type === 'representation.updated') refreshWorkspace(event)
+    if (event.type === 'representation.updated' || event.type === 'version.created') void loadVersionDiffLines(event)
 
     if (event.type !== 'watch.stopped' || active) addLine(summarizeEvent(event))
-  }, [active, addLine, refreshWorkspace])
+  }, [active, addLine, loadVersionDiffLines, refreshWorkspace])
 
   useEffect(() => {
     let cancelled = false

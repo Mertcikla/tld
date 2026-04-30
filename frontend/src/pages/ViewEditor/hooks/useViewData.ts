@@ -423,6 +423,7 @@ export function useViewData({
       const hoveredSet = hoveredLayerTags !== null ? new Set(hoveredLayerTags) : null
       const isClickConnectMode = clickConnectMode !== null
       const versionElementChanges = versionPreview?.elementChanges
+      const versionElementLineDeltas = versionPreview?.elementLineDeltas
       const versionActive = !!versionPreview
 
       return viewElements.map((obj) => {
@@ -435,6 +436,7 @@ export function useViewData({
         const isLayerHighlighted = hoveredSet !== null && objTags.some((t) => hoveredSet.has(t))
         const isSoftFocused = hoveredSet !== null && !isLayerHighlighted
         const versionChangeType = versionElementChanges?.get(obj.element_id)
+        const versionLineDelta = versionElementLineDeltas?.get(obj.element_id)
         const isDimmedByVersionPreview = versionActive && !versionChangeType
 
         const newZIndex = versionChangeType ? 20 : isLayerHighlighted ? 10 : interactionSourceId === obj.element_id ? 1000 : 0
@@ -488,7 +490,8 @@ export function useViewData({
           existing.data.selectedHandleIds === connectionMeta.selectedHandleIds &&
           existing.data.reconnectCandidates === connectionMeta.reconnectCandidates &&
           existing.data.isConnectorHighlighted === connectionMeta.isConnectorHighlighted &&
-          existing.data.versionChangeType === versionChangeType
+          existing.data.versionChangeType === versionChangeType &&
+          existing.data.versionLineDelta === versionLineDelta
         ) {
           return existing
         }
@@ -529,6 +532,7 @@ export function useViewData({
             reconnectCandidates: connectionMeta.reconnectCandidates,
             isConnectorHighlighted: connectionMeta.isConnectorHighlighted,
             versionChangeType,
+            versionLineDelta,
           },
         }
       })

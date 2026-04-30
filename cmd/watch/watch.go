@@ -102,9 +102,15 @@ func NewWatchCmd() *cobra.Command {
 			defer stop()
 			events := make(chan watch.Event, 16)
 			ready := make(chan watch.RunnerResult, 1)
+			watchProgress := newWatchActivityProgress(cmd.ErrOrStderr())
+			defer func() {
+				if watchProgress != nil {
+					watchProgress.Stop()
+				}
+			}()
 			go func() {
 				for event := range events {
-					if logWatchEvent(cmd, event) {
+					if logWatchEvent(cmd, event, watchProgress) {
 						continue
 					}
 					if verbose || event.Type == "watch.error" || event.Type == "version.created" {
@@ -172,13 +178,19 @@ func NewWatchCmd() *cobra.Command {
 	return c
 }
 
-func logWatchEvent(cmd *cobra.Command, event watch.Event) bool {
+func logWatchEvent(cmd *cobra.Command, event watch.Event, activity *watchActivityProgress) bool {
 	out := cmd.OutOrStdout()
 	switch event.Type {
 	case "watch.started":
+		if activity != nil {
+			activity.Start("watching for changes")
+		}
 		_, _ = fmt.Fprintf(out, "%s started\n", term.Colorize(out, term.ColorGreen, "watch"))
 		return true
 	case "watch.stopped":
+		if activity != nil {
+			activity.Stop()
+		}
 		_, _ = fmt.Fprintf(out, "%s stopped\n", term.Colorize(out, term.ColorYellow, "watch"))
 		return true
 	case "scan.started":
@@ -208,6 +220,9 @@ func logWatchEvent(cmd *cobra.Command, event watch.Event) bool {
 		if !ok {
 			return false
 		}
+		if activity != nil {
+			activity.Advance("")
+		}
 		status := term.Colorize(out, term.ColorYellow, "no representation update")
 		if result.RepresentationChanged {
 			status = term.Colorize(out, term.ColorGreen, "representation updated")
@@ -225,11 +240,26 @@ func logWatchEvent(cmd *cobra.Command, event watch.Event) bool {
 		if !ok {
 			return false
 		}
-		_, _ = fmt.Fprintf(out, "%s changes processed: %d total, %d in the last minute\n",
-			term.Colorize(out, term.ColorBlue, "watch"),
-			counter.TotalChangesProcessed,
-			counter.IntervalChangesProcessed,
-		)
+		if activity != nil {
+			if counter.IntervalChangesProcessed > 0 {
+				activity.Advance(fmt.Sprintf("watching: %d total, %d in last minute", counter.TotalChangesProcessed, counter.IntervalChangesProcessed))
+			} else {
+				activity.Advance(fmt.Sprintf("watching: %d total", counter.TotalChangesProcessed))
+			}
+			return true
+		}
+		if counter.IntervalChangesProcessed > 0 {
+			_, _ = fmt.Fprintf(out, "%s changes processed: %d total, %d in the last minute\n",
+				term.Colorize(out, term.ColorBlue, "watch"),
+				counter.TotalChangesProcessed,
+				counter.IntervalChangesProcessed,
+			)
+		} else {
+			_, _ = fmt.Fprintf(out, "%s changes processed: %d total\n",
+				term.Colorize(out, term.ColorBlue, "watch"),
+				counter.TotalChangesProcessed,
+			)
+		}
 		return true
 	case "watch.error":
 		message := event.Message
@@ -571,11 +601,98 @@ type cliProgress struct {
 	mu  sync.Mutex
 }
 
+type watchActivityProgress struct {
+	out    io.Writer
+	bar    *progressbar.ProgressBar
+	mu     sync.Mutex
+	ticker *time.Ticker
+	stopCh chan struct{}
+}
+
 func newCLIProgress(out io.Writer) watch.ProgressSink {
 	if !term.IsTerminal(out) {
 		return nil
 	}
 	return &cliProgress{out: out}
+}
+
+func newWatchActivityProgress(out io.Writer) *watchActivityProgress {
+	if !term.IsTerminal(out) {
+		return nil
+	}
+	return &watchActivityProgress{out: out}
+}
+
+func (p *watchActivityProgress) Start(label string) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar != nil {
+		if label != "" {
+			p.bar.Describe(label)
+		}
+		return
+	}
+	p.bar = progressbar.NewOptions(-1,
+		progressbar.OptionSetWriter(p.out),
+		progressbar.OptionSetVisibility(true),
+		progressbar.OptionSetDescription(label),
+		progressbar.OptionSetWidth(12),
+		progressbar.OptionShowIts(),
+		progressbar.OptionClearOnFinish(),
+		progressbar.OptionUseANSICodes(true),
+		progressbar.OptionThrottle(60*time.Millisecond),
+		progressbar.OptionSetPredictTime(false),
+	)
+	p.ticker = time.NewTicker(200 * time.Millisecond)
+	p.stopCh = make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-p.ticker.C:
+				p.Advance("")
+			case <-p.stopCh:
+				return
+			}
+		}
+	}()
+}
+
+func (p *watchActivityProgress) Advance(label string) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar == nil {
+		return
+	}
+	if label != "" {
+		p.bar.Describe(label)
+	}
+	_ = p.bar.Add(1)
+}
+
+func (p *watchActivityProgress) Stop() {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.ticker != nil {
+		p.ticker.Stop()
+		p.ticker = nil
+	}
+	if p.stopCh != nil {
+		close(p.stopCh)
+		p.stopCh = nil
+	}
+	if p.bar != nil {
+		_ = p.bar.Finish()
+		p.bar = nil
+	}
 }
 
 func (p *cliProgress) Start(label string, total int) {

@@ -156,6 +156,7 @@ interface NodeData extends PlacedElement {
   reconnectCandidates?: readonly { handleId: string; edgeId: string; endpoint: 'source' | 'target'; selected: boolean }[]
   isConnectorHighlighted?: boolean
   versionChangeType?: 'added' | 'updated' | 'deleted' | 'changed'
+  versionLineDelta?: { added: number; removed: number }
 }
 
 interface Props {
@@ -496,28 +497,6 @@ function ElementNode({ data, selected }: Props) {
         transition: 'outline 0.15s, outline-color 0.15s, opacity 0.15s',
       } as React.CSSProperties}
     >
-      {data.versionChangeType && (
-        <Box
-          position="absolute"
-          top="-10px"
-          left="10px"
-          zIndex={12}
-          px={2}
-          py="1px"
-          rounded="md"
-          bg="var(--bg-panel)"
-          border="1px solid"
-          borderColor={versionColor}
-          color={versionColor}
-          fontSize="10px"
-          fontWeight="800"
-          lineHeight="14px"
-          textTransform="uppercase"
-          pointerEvents="none"
-        >
-          {data.versionChangeType}
-        </Box>
-      )}
       {HANDLE_CONFIGS.flatMap(({ side, position }) =>
         HANDLE_SLOTS.map((slot) => {
           const handleId = getVisualHandleId(side, slot)
@@ -734,62 +713,108 @@ function ElementNode({ data, selected }: Props) {
       )}
 
       {/* Code Preview Icon/Link in Bottom Right Corner */}
-      {((data.repo || data.url) && !window.__TLD_VSCODE__) && (
-        <Box
+      {!window.__TLD_VSCODE__ && ((data.repo || data.url) || data.versionLineDelta) && (
+        <HStack
           position="absolute"
           bottom="8px"
           right="8px"
           zIndex={10}
+          spacing={1}
+          align="center"
         >
-          <Tooltip
-            label={
-              data.repo
-                ? `View source: ${data.file_path?.includes('#') ? (() => { try { return JSON.parse(data.file_path.split('#')[1]).name } catch { return 'Link' } })() : 'Link'}${data.url ? ' / URL' : ''}`
-                : 'Open Link'
-            }
-            placement="top"
-            isDisabled={data.isCanvasMoving}
-          >
-            <Box
-              as="button"
-              display="flex"
-              alignItems="center"
-              justifyContent="center"
-              w="18px"
+          {data.versionLineDelta && (
+            <HStack
+              spacing={1}
               h="18px"
+              px={1.5}
               rounded="md"
-              color="whiteAlpha.900"
-              _hover={{ color: 'blue.300', bg: 'whiteAlpha.200', transform: 'scale(1.1)' }}
-              transition="all 0.15s"
-              onClick={(e: React.MouseEvent) => {
-                e.stopPropagation()
-                if (data.repo) {
-                  data.onOpenCodePreview?.(data.element_id)
-                } else if (data.url) {
-                  window.open(data.url, '_blank', 'noopener,noreferrer')
-                }
-              }}
-              onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+              bg="rgba(var(--bg-main-rgb), 0.86)"
+              border="1px solid"
+              borderColor="whiteAlpha.300"
+              boxShadow="0 4px 12px rgba(0,0,0,0.28)"
+              pointerEvents="none"
             >
-              <LinkIcon w={2.5} h={2.5} />
-            </Box>
-          </Tooltip>
-        </Box>
+              {data.versionLineDelta.added > 0 && (
+                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="green.300">+{data.versionLineDelta.added}</Text>
+              )}
+              {data.versionLineDelta.removed > 0 && (
+                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="red.300">-{data.versionLineDelta.removed}</Text>
+              )}
+            </HStack>
+          )}
+          {(data.repo || data.url) && !window.__TLD_VSCODE__ && (
+            <Tooltip
+              label={
+                data.repo
+                  ? `View source: ${data.file_path?.includes('#') ? (() => { try { return JSON.parse(data.file_path.split('#')[1]).name } catch { return 'Link' } })() : 'Link'}${data.url ? ' / URL' : ''}`
+                  : 'Open Link'
+              }
+              placement="top"
+              isDisabled={data.isCanvasMoving}
+            >
+              <Box
+                as="button"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                w="18px"
+                h="18px"
+                rounded="md"
+                color="whiteAlpha.900"
+                _hover={{ color: 'blue.300', bg: 'whiteAlpha.200', transform: 'scale(1.1)' }}
+                transition="all 0.15s"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation()
+                  if (data.repo) {
+                    data.onOpenCodePreview?.(data.element_id)
+                  } else if (data.url) {
+                    window.open(data.url, '_blank', 'noopener,noreferrer')
+                  }
+                }}
+                onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+              >
+                <LinkIcon w={2.5} h={2.5} />
+              </Box>
+            </Tooltip>
+          )}
+        </HStack>
       )}
 
       {/* VSCode specific file link with hover preview */}
       {window.__TLD_VSCODE__ && data.file_path && (
-        <Box
+        <HStack
           position="absolute"
           bottom="8px"
           right="8px"
           zIndex={10}
+          spacing={1}
+          align="center"
         >
+          {data.versionLineDelta && (
+            <HStack
+              spacing={1}
+              h="18px"
+              px={1.5}
+              rounded="md"
+              bg="rgba(var(--bg-main-rgb), 0.86)"
+              border="1px solid"
+              borderColor="whiteAlpha.300"
+              boxShadow="0 4px 12px rgba(0,0,0,0.28)"
+              pointerEvents="none"
+            >
+              {data.versionLineDelta.added > 0 && (
+                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="green.300">+{data.versionLineDelta.added}</Text>
+              )}
+              {data.versionLineDelta.removed > 0 && (
+                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="red.300">-{data.versionLineDelta.removed}</Text>
+              )}
+            </HStack>
+          )}
           <VscodeCodePreview
             filePath={data.file_path}
             isCanvasMoving={data.isCanvasMoving}
           />
-        </Box>
+        </HStack>
       )}
 
       {selected && !isSource && (

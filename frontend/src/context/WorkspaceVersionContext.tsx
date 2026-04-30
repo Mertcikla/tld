@@ -3,12 +3,18 @@ import type { WatchDiff, WatchRepository, WatchVersion, WorkspaceVersion } from 
 
 export type VersionChangeType = 'added' | 'updated' | 'deleted' | 'changed'
 
+export interface VersionLineDelta {
+  added: number
+  removed: number
+}
+
 export interface WorkspaceVersionPreview {
   repository: WatchRepository | null
   version: WatchVersion | null
   workspaceVersions: WorkspaceVersion[]
   diffs: WatchDiff[]
   elementChanges: Map<number, VersionChangeType>
+  elementLineDeltas: Map<number, VersionLineDelta>
   connectorChanges: Map<number, VersionChangeType>
   summary: {
     added: number
@@ -42,6 +48,7 @@ export function buildWorkspaceVersionPreview(args: {
   diffs: WatchDiff[]
 }): WorkspaceVersionPreview {
   const elementChanges = new Map<number, VersionChangeType>()
+  const elementLineDeltas = new Map<number, VersionLineDelta>()
   const connectorChanges = new Map<number, VersionChangeType>()
   const summary = { added: 0, updated: 0, deleted: 0, changed: 0, elements: 0, connectors: 0 }
 
@@ -50,6 +57,11 @@ export function buildWorkspaceVersionPreview(args: {
     summary[change] += 1
     if (diff.resource_type === 'element' && diff.resource_id) {
       elementChanges.set(diff.resource_id, change)
+      const added = Math.max(0, diff.added_lines ?? 0)
+      const removed = Math.max(0, diff.removed_lines ?? 0)
+      if (added > 0 || removed > 0) {
+        elementLineDeltas.set(diff.resource_id, { added, removed })
+      }
       summary.elements += 1
     }
     if (diff.resource_type === 'connector' && diff.resource_id) {
@@ -64,6 +76,7 @@ export function buildWorkspaceVersionPreview(args: {
     workspaceVersions: args.workspaceVersions,
     diffs: args.diffs,
     elementChanges,
+    elementLineDeltas,
     connectorChanges,
     summary,
   }

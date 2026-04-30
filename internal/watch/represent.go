@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mertcikla/tld/internal/layout"
 )
 
 const (
@@ -510,18 +512,18 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 			if !detailedSymbols {
 				continue
 			}
-				for i, sym := range chunk {
-					language := languageFromStableKey(sym.StableKey)
-					elem, err := m.upsertElement(ctx, "symbol", symbolOwnerKey(sym, m.identityKeys), elementInput{
-						Name:        sym.QualifiedName,
-						Kind:        sym.Kind,
-						Description: fmt.Sprintf("%s:%d", sym.FilePath, sym.StartLine),
-						Technology:  technologyLabel(language),
-						Repo:        repoIdentity(repo),
-						Branch:      nullStringValue(repo.Branch),
-						FilePath:    sym.FilePath,
-						Language:    language,
-					})
+			for i, sym := range chunk {
+				language := languageFromStableKey(sym.StableKey)
+				elem, err := m.upsertElement(ctx, "symbol", symbolOwnerKey(sym, m.identityKeys), elementInput{
+					Name:        sym.QualifiedName,
+					Kind:        sym.Kind,
+					Description: fmt.Sprintf("%s:%d", sym.FilePath, sym.StartLine),
+					Technology:  technologyLabel(language),
+					Repo:        repoIdentity(repo),
+					Branch:      nullStringValue(repo.Branch),
+					FilePath:    sym.FilePath,
+					Language:    language,
+				})
 				if err != nil {
 					return m.stats, err
 				}
@@ -757,17 +759,15 @@ func (m *materializer) layoutView(ctx context.Context, viewID int64, targets map
 	if err != nil {
 		return err
 	}
-	if force {
-		next := layeredWatchLayout(targets, connectors)
-		occupied := occupiedWatchCells(placements, targets)
+	if force || hasNoPreservedPlacements(placements, targets) {
+		next := organicWatchLayout(targets, connectors)
 		for _, elementID := range sortedInt64Set(targets) {
-			desired := next[elementID]
-			x, y := nearestFreeWatchCell(desired.X, desired.Y, occupied)
-			occupied[watchCellKey(x, y)] = struct{}{}
-			if _, err := m.store.db.ExecContext(ctx, `UPDATE placements SET position_x = ?, position_y = ?, updated_at = ? WHERE view_id = ? AND element_id = ?`, x, y, nowString(), viewID, elementID); err != nil {
+			pos := next[elementID]
+			if _, err := m.store.db.ExecContext(ctx, `UPDATE placements SET position_x = ?, position_y = ?, updated_at = ? WHERE view_id = ? AND element_id = ?`, pos.X, pos.Y, nowString(), viewID, elementID); err != nil {
 				return err
 			}
 		}
+		_ = placements // already committed; kept for potential future collision pass
 		return nil
 	}
 
@@ -787,6 +787,18 @@ func (m *materializer) layoutView(ctx context.Context, viewID int64, targets map
 		}
 	}
 	return nil
+}
+
+func hasNoPreservedPlacements(placements []watchPlacementNode, targets map[int64]struct{}) bool {
+	if len(targets) == 0 {
+		return false
+	}
+	for _, p := range placements {
+		if _, isTarget := targets[p.ElementID]; !isTarget {
+			return false
+		}
+	}
+	return true
 }
 
 func (m *materializer) viewPlacementNodes(ctx context.Context, viewID int64) ([]watchPlacementNode, error) {
@@ -823,7 +835,78 @@ func (m *materializer) viewLayoutConnectors(ctx context.Context, viewID int64) (
 	return out, rows.Err()
 }
 
-func layeredWatchLayout(targets map[int64]struct{}, connectors []watchLayoutConnector) map[int64]watchPlacementNode {
+// organicWatchLayout runs the force-directed OrganicLayout on the target element
+// set, using only the connectors that exist between those targets.
+// It returns a position map keyed by element ID.
+func organicWatchLayout(targets map[int64]struct{}, connectors []watchLayoutConnector) map[int64]watchPlacementNode {
+	// Build layout nodes.
+	nodeByID := make(map[int64]*layout.Node, len(targets))
+	nodes := make([]*layout.Node, 0, len(targets))
+	for id := range targets {
+		n := &layout.Node{ID: id}
+		nodeByID[id] = n
+		nodes = append(nodes, n)
+	}
+
+	// Build layout edges (only between targets).
+	var edges []*layout.Edge
+	for _, c := range connectors {
+		src, srcOK := nodeByID[c.Source]
+		tgt, tgtOK := nodeByID[c.Target]
+		if srcOK && tgtOK {
+			edges = append(edges, &layout.Edge{Source: src, Target: tgt})
+		}
+	}
+
+	layout.OrganicLayout(nodes, edges)
+	applyDirectedWatchLevels(nodes, connectors, targets)
+
+	out := make(map[int64]watchPlacementNode, len(nodes))
+	for _, n := range nodes {
+		out[n.ID] = watchPlacementNode{ElementID: n.ID, X: n.X, Y: n.Y}
+	}
+	return out
+}
+
+func applyDirectedWatchLevels(nodes []*layout.Node, connectors []watchLayoutConnector, targets map[int64]struct{}) {
+	if len(nodes) == 0 {
+		return
+	}
+	level := directedWatchLevels(targets, connectors)
+	maxLevel := 0
+	for _, value := range level {
+		if value > maxLevel {
+			maxLevel = value
+		}
+	}
+	if maxLevel == 0 {
+		return
+	}
+	nodesByLevel := map[int][]*layout.Node{}
+	for _, n := range nodes {
+		nodesByLevel[level[n.ID]] = append(nodesByLevel[level[n.ID]], n)
+	}
+	for _, col := range sortedLayoutNodeLevels(nodesByLevel) {
+		group := nodesByLevel[col]
+		sort.Slice(group, func(i, j int) bool {
+			if group[i].Y == group[j].Y {
+				return group[i].ID < group[j].ID
+			}
+			return group[i].Y < group[j].Y
+		})
+		for row, n := range group {
+			n.X = float64(col) * watchLayoutGapX
+			if row > 0 {
+				minY := group[row-1].Y + watchLayoutGapY
+				if n.Y < minY {
+					n.Y = minY
+				}
+			}
+		}
+	}
+}
+
+func directedWatchLevels(targets map[int64]struct{}, connectors []watchLayoutConnector) map[int64]int {
 	level := map[int64]int{}
 	for id := range targets {
 		level[id] = 0
@@ -837,8 +920,12 @@ func layeredWatchLayout(targets map[int64]struct{}, connectors []watchLayoutConn
 			if _, ok := targets[c.Target]; !ok {
 				continue
 			}
-			if level[c.Target] <= level[c.Source] {
-				level[c.Target] = level[c.Source] + 1
+			if level[c.Source] >= len(targets)-1 {
+				continue
+			}
+			next := level[c.Source] + 1
+			if level[c.Target] < next {
+				level[c.Target] = next
 				changed = true
 			}
 		}
@@ -846,21 +933,20 @@ func layeredWatchLayout(targets map[int64]struct{}, connectors []watchLayoutConn
 			break
 		}
 	}
-	columns := map[int][]int64{}
-	for id, col := range level {
-		if col >= len(targets) {
-			col = 0
-		}
-		columns[col] = append(columns[col], id)
-	}
-	out := map[int64]watchPlacementNode{}
-	for _, col := range sortedIntKeys(columns) {
-		ids := columns[col]
-		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-		for row, id := range ids {
-			out[id] = watchPlacementNode{ElementID: id, X: float64(col) * watchLayoutGapX, Y: float64(row) * watchLayoutGapY}
+	for id, value := range level {
+		if value >= len(targets) {
+			level[id] = 0
 		}
 	}
+	return level
+}
+
+func sortedLayoutNodeLevels(values map[int][]*layout.Node) []int {
+	out := make([]int, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Ints(out)
 	return out
 }
 
@@ -1039,15 +1125,6 @@ func sortedInt64Set(values map[int64]struct{}) []int64 {
 		out = append(out, value)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
-	return out
-}
-
-func sortedIntKeys(values map[int][]int64) []int {
-	out := make([]int, 0, len(values))
-	for value := range values {
-		out = append(out, value)
-	}
-	sort.Ints(out)
 	return out
 }
 

@@ -59,6 +59,11 @@ func (h *Handler) watchWebSocket(w http.ResponseWriter, r *http.Request) {
 		if live {
 			summary, err := h.Store.RepresentationSummary(ctx, lock.RepositoryID)
 			if err == nil && summary.RepresentationHash != "" && summary.RepresentationHash != lastRepresentationHash {
+				if lastRepresentationHash != "" {
+					if diffs, diffErr := h.Store.BuildWatchDiffs(ctx, lock.RepositoryID, summary.RepresentationHash); diffErr == nil {
+						summary.Diffs = diffs
+					}
+				}
 				lastRepresentationHash = summary.RepresentationHash
 				if err := writeWebSocketJSON(rw, Event{Type: "representation.updated", RepositoryID: lock.RepositoryID, At: nowString(), Data: summary}); err != nil {
 					return

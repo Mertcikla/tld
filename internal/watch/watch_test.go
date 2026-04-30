@@ -249,6 +249,9 @@ func helper() {}
 	if err != nil {
 		t.Fatal(err)
 	}
+	if connector := findDiff(firstDiffs, "connector", "added"); connector == nil || connector.Summary == nil || !strings.Contains(*connector.Summary, "->") {
+		t.Fatalf("expected connector diff summary to include endpoint arrow, got %+v", connector)
+	}
 	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "", "main", rep.RepresentationHash, nil, firstDiffs); err != nil {
 		t.Fatal(err)
 	}
@@ -277,6 +280,63 @@ func other() {}
 	if !hasDiff(diffs, "symbol", "added") || !hasDiff(diffs, "file", "updated") || !hasDiff(diffs, "element", "added") {
 		t.Fatalf("expected symbol/file/element diffs, got %+v", diffs)
 	}
+}
+
+func TestWatchDiffsIncludeElementLineDeltas(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	helper()
+}
+
+func helper() {}
+`)
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDiffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, rep.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "", "main", rep.RepresentationHash, nil, firstDiffs); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	helper()
+	helper()
+}
+
+func helper() {}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, next.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, diff := range diffs {
+		if diff.ResourceType != nil && *diff.ResourceType == "element" && diff.ChangeType == "updated" && diff.AddedLines == 1 {
+			return
+		}
+	}
+	t.Fatalf("expected updated element diff with +1 line, got %+v", diffs)
 }
 
 func TestWatchDiffsFilterByResourceTypeAndLanguage(t *testing.T) {
@@ -359,6 +419,47 @@ func C() {}
 	}
 	if b.x == c.x && b.y == c.y {
 		t.Fatalf("initial layout overlapped connected callees: B=%+v C=%+v", b, c)
+	}
+}
+
+func TestRepresentRelayoutsFreshPlacementsWithExistingMappings(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func A() {
+	B()
+	C()
+}
+
+func B() {}
+func C() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`DELETE FROM placements`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	a := functionPlacement(t, db, "A")
+	b := functionPlacement(t, db, "B")
+	c := functionPlacement(t, db, "C")
+	if b.x <= a.x || c.x <= a.x {
+		t.Fatalf("fresh placements with existing mappings should use full layout: A=%+v B=%+v C=%+v", a, b, c)
+	}
+	if b.x == c.x && b.y == c.y {
+		t.Fatalf("fresh placements with existing mappings overlapped connected callees: B=%+v C=%+v", b, c)
 	}
 }
 
@@ -1191,7 +1292,7 @@ func openTestDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "003_watch_materialized_workspace.sql", "004_watch_runtime_git_versions.sql", "005_watch_embeddings_identity_vec.sql", "006_workspace_read_indexes.sql", "007_watch_version_resources.sql"} {
+	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "003_watch_materialized_workspace.sql", "004_watch_runtime_git_versions.sql", "005_watch_embeddings_identity_vec.sql", "006_workspace_read_indexes.sql", "007_watch_version_resources.sql", "008_watch_diff_line_counts.sql"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", migration))
 		if err != nil {
 			t.Fatal(err)
@@ -1298,12 +1399,16 @@ func countElementTag(t *testing.T, db *sql.DB, tag string) int {
 }
 
 func hasDiff(diffs []RepresentationDiff, resourceType, changeType string) bool {
+	return findDiff(diffs, resourceType, changeType) != nil
+}
+
+func findDiff(diffs []RepresentationDiff, resourceType, changeType string) *RepresentationDiff {
 	for _, diff := range diffs {
 		if diff.ResourceType != nil && *diff.ResourceType == resourceType && diff.ChangeType == changeType {
-			return true
+			return &diff
 		}
 	}
-	return false
+	return nil
 }
 
 func languageSet(languages []string) map[string]struct{} {

@@ -98,6 +98,7 @@ export interface WatchRepresentationSummary {
   connectors_created: number
   connectors_updated: number
   views_created: number
+  diffs?: WatchDiff[]
 }
 
 export interface WatchEvent {
@@ -136,6 +137,8 @@ export interface WatchDiff {
   resource_id?: number
   language?: string
   summary?: string
+  added_lines?: number
+  removed_lines?: number
 }
 
 export interface WorkspaceVersion {

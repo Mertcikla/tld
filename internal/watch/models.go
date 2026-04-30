@@ -155,22 +155,23 @@ type ProgressSink interface {
 }
 
 type RepresentationSummary struct {
-	RepositoryID       int64   `json:"repository_id"`
-	RawGraphHash       string  `json:"raw_graph_hash,omitempty"`
-	SettingsHash       string  `json:"filter_settings_hash,omitempty"`
-	RepresentationHash string  `json:"representation_hash,omitempty"`
-	LastStatus         string  `json:"last_status,omitempty"`
-	LastStartedAt      string  `json:"last_started_at,omitempty"`
-	LastFinishedAt     *string `json:"last_finished_at,omitempty"`
-	ElementsCreated    int     `json:"elements_created"`
-	ElementsUpdated    int     `json:"elements_updated"`
-	ConnectorsCreated  int     `json:"connectors_created"`
-	ConnectorsUpdated  int     `json:"connectors_updated"`
-	ViewsCreated       int     `json:"views_created"`
-	VisibleSymbols     int     `json:"visible_symbols"`
-	HiddenSymbols      int     `json:"hidden_symbols"`
-	VisibleReferences  int     `json:"visible_references"`
-	HiddenReferences   int     `json:"hidden_references"`
+	RepositoryID       int64                `json:"repository_id"`
+	RawGraphHash       string               `json:"raw_graph_hash,omitempty"`
+	SettingsHash       string               `json:"filter_settings_hash,omitempty"`
+	RepresentationHash string               `json:"representation_hash,omitempty"`
+	LastStatus         string               `json:"last_status,omitempty"`
+	LastStartedAt      string               `json:"last_started_at,omitempty"`
+	LastFinishedAt     *string              `json:"last_finished_at,omitempty"`
+	ElementsCreated    int                  `json:"elements_created"`
+	ElementsUpdated    int                  `json:"elements_updated"`
+	ConnectorsCreated  int                  `json:"connectors_created"`
+	ConnectorsUpdated  int                  `json:"connectors_updated"`
+	ViewsCreated       int                  `json:"views_created"`
+	VisibleSymbols     int                  `json:"visible_symbols"`
+	HiddenSymbols      int                  `json:"hidden_symbols"`
+	VisibleReferences  int                  `json:"visible_references"`
+	HiddenReferences   int                  `json:"hidden_references"`
+	Diffs              []RepresentationDiff `json:"diffs,omitempty"`
 }
 
 type FilterDecision struct {
@@ -287,6 +288,8 @@ type RepresentationDiff struct {
 	ResourceID   *int64  `json:"resource_id,omitempty"`
 	Language     *string `json:"language,omitempty"`
 	Summary      *string `json:"summary,omitempty"`
+	AddedLines   int     `json:"added_lines,omitempty"`
+	RemovedLines int     `json:"removed_lines,omitempty"`
 }
 
 func (r Repository) JSON() RepositoryJSON {
