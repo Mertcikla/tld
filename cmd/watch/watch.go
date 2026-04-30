@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -491,7 +490,7 @@ func newDiffCmd() *cobra.Command {
 	return c
 }
 
-func resolveEmbeddingConfig(cfg *workspace.GlobalConfig, provider, endpoint, model string, dimension int) watch.EmbeddingConfig {
+func resolveEmbeddingConfig(cfg *workspace.Config, provider, endpoint, model string, dimension int) watch.EmbeddingConfig {
 	embedding := watch.EmbeddingConfig{}
 	if cfg != nil {
 		embedding.Provider = cfg.Watch.Embedding.Provider
@@ -499,20 +498,6 @@ func resolveEmbeddingConfig(cfg *workspace.GlobalConfig, provider, endpoint, mod
 		embedding.Model = cfg.Watch.Embedding.Model
 		embedding.Dimension = cfg.Watch.Embedding.Dimension
 		embedding.HealthThreshold = cfg.Watch.Embedding.HealthThreshold
-	}
-	if value := os.Getenv("TLD_EMBEDDING_PROVIDER"); value != "" {
-		embedding.Provider = value
-	}
-	if value := os.Getenv("TLD_EMBEDDING_ENDPOINT"); value != "" {
-		embedding.Endpoint = value
-	}
-	if value := os.Getenv("TLD_EMBEDDING_MODEL"); value != "" {
-		embedding.Model = value
-	}
-	if value := os.Getenv("TLD_EMBEDDING_DIMENSION"); value != "" {
-		if parsed, err := strconv.Atoi(value); err == nil {
-			embedding.Dimension = parsed
-		}
 	}
 	if provider != "" {
 		embedding.Provider = provider
@@ -529,7 +514,7 @@ func resolveEmbeddingConfig(cfg *workspace.GlobalConfig, provider, endpoint, mod
 	return watch.NormalizeEmbeddingConfig(embedding)
 }
 
-func resolveWatchSettings(cfg *workspace.GlobalConfig, languages []string, watcherMode, pollInterval, debounce string, maxElements, maxConnectors, maxIncoming, maxOutgoing int) watch.Settings {
+func resolveWatchSettings(cfg *workspace.Config, languages []string, watcherMode, pollInterval, debounce string, maxElements, maxConnectors, maxIncoming, maxOutgoing int) watch.Settings {
 	settings := watch.DefaultSettings()
 	if cfg != nil {
 		settings.Languages = cfg.Watch.Languages
@@ -542,18 +527,6 @@ func resolveWatchSettings(cfg *workspace.GlobalConfig, languages []string, watch
 			MaxIncomingPerElement: cfg.Watch.Thresholds.MaxIncomingPerElement,
 			MaxOutgoingPerElement: cfg.Watch.Thresholds.MaxOutgoingPerElement,
 		}
-	}
-	if value := os.Getenv("TLD_WATCH_LANGUAGES"); value != "" {
-		settings.Languages = splitCSV(value)
-	}
-	if value := os.Getenv("TLD_WATCH_WATCHER"); value != "" {
-		settings.Watcher = value
-	}
-	if value := os.Getenv("TLD_WATCH_POLL_INTERVAL"); value != "" {
-		settings.PollInterval = parseDurationOrZero(value)
-	}
-	if value := os.Getenv("TLD_WATCH_DEBOUNCE"); value != "" {
-		settings.Debounce = parseDurationOrZero(value)
 	}
 	if len(languages) > 0 {
 		settings.Languages = languages
@@ -588,17 +561,6 @@ func parseDurationOrZero(value string) time.Duration {
 		return 0
 	}
 	return parsed
-}
-
-func splitCSV(value string) []string {
-	parts := strings.Split(value, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if trimmed := strings.TrimSpace(part); trimmed != "" {
-			out = append(out, trimmed)
-		}
-	}
-	return out
 }
 
 type cliProgress struct {

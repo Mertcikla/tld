@@ -34,9 +34,6 @@ func NewPlanCmd(wdir *string) *cobra.Command {
 
 			// Override strictness if flag is set
 			if strictness > 0 {
-				if ws.Config.Validation == nil {
-					ws.Config.Validation = &workspace.ValidationConfig{}
-				}
 				ws.Config.Validation.Level = strictness
 			}
 
@@ -103,9 +100,9 @@ func NewPlanCmd(wdir *string) *cobra.Command {
 
 			// Evaluate Diagram warnings
 			if len(warnings) > 0 {
-				level := workspace.DefaultValidationLevel
-				if ws.Config.Validation != nil && ws.Config.Validation.Level > 0 {
-					level = ws.Config.Validation.Level
+				level := ws.Config.Validation.Level
+				if level == 0 {
+					level = workspace.DefaultValidationLevel
 				}
 				levelNames := map[int]string{1: "Minimal", 2: "Standard", 3: "Strict"}
 				_, _ = fmt.Fprintf(out, "\n## Architectural Warnings (Level %d: %s)\n\n", level, levelNames[level])

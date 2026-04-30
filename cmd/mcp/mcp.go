@@ -249,9 +249,6 @@ func registerTools(server *mcpsdk.Server, wdir *string) {
 		repoCtx := cmdutil.DetectRepoScope(cmdutil.GetWorkingDir(), *wdir)
 		rules := ws.IgnoreRulesForRepository(repoCtx.Name)
 		if a.Strictness > 0 {
-			if ws.Config.Validation == nil {
-				ws.Config.Validation = &workspace.ValidationConfig{}
-			}
 			ws.Config.Validation.Level = a.Strictness
 		}
 		out := ""

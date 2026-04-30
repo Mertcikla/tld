@@ -46,16 +46,16 @@ func TestLoad_MinimalWorkspace(t *testing.T) {
 	}
 }
 
-func TestLoad_MissingConfigFile(t *testing.T) {
+func TestLoad_MissingConfigFileReturnsDefaults(t *testing.T) {
 	dir := t.TempDir()
-	setupConfig(t)
+	setupConfig(t) // config file doesn't exist yet
 
-	_, err := workspace.Load(dir)
-	if err == nil {
-		t.Fatal("expected error, got nil")
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
 	}
-	if !strings.Contains(err.Error(), "read tld.yaml") {
-		t.Fatalf("error %q does not contain 'read tld.yaml'", err.Error())
+	if ws.Config.ServerURL != "https://tldiagram.com" {
+		t.Fatalf("expected default ServerURL, got %q", ws.Config.ServerURL)
 	}
 }
 
@@ -67,16 +67,15 @@ func TestLoad_MalformedConfigYAML(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "parse tld.yaml") {
-		t.Fatalf("error %q does not contain 'parse tld.yaml'", err.Error())
+	if !strings.Contains(err.Error(), "parse global config") {
+		t.Fatalf("error %q does not contain 'parse global config'", err.Error())
 	}
 }
 
 func TestLoad_APIKeyFromEnv(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, setupConfig(t), minimalConfig())
-	_ = os.Setenv("TLD_API_KEY", "env-test-key")
-	t.Cleanup(func() { _ = os.Unsetenv("TLD_API_KEY") })
+	t.Setenv("TLD_API_KEY", "env-test-key")
 
 	ws, err := workspace.Load(dir)
 	if err != nil {
@@ -87,18 +86,17 @@ func TestLoad_APIKeyFromEnv(t *testing.T) {
 	}
 }
 
-func TestLoad_APIKeyFileOverridesEnv(t *testing.T) {
+func TestLoad_EnvOverridesAPIKeyFile(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, setupConfig(t), "server_url: http://localhost\napi_key: file-key\norg_id: \"\"\n")
-	_ = os.Setenv("TLD_API_KEY", "env-key")
-	t.Cleanup(func() { _ = os.Unsetenv("TLD_API_KEY") })
+	t.Setenv("TLD_API_KEY", "env-key")
 
 	ws, err := workspace.Load(dir)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if ws.Config.APIKey != "file-key" {
-		t.Fatalf("APIKey = %q, want file-key", ws.Config.APIKey)
+	if ws.Config.APIKey != "env-key" {
+		t.Fatalf("APIKey = %q, want env-key", ws.Config.APIKey)
 	}
 }
 

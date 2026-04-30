@@ -110,13 +110,8 @@ func NewInitCmd() *cobra.Command {
 			if _, err := os.Stat(cfgPath); err == nil {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Initialized workspace at %s (global config already exists at %s)\n", dir, cfgPath)
 			} else {
-				cfg := `# tld global configuration
-server_url: https://tldiagram.com
-api_key: ""        # or set TLD_API_KEY env var
-org_id: ""         # UUID of your organisation
-`
-				if err := os.WriteFile(cfgPath, []byte(cfg), 0600); err != nil {
-					return fmt.Errorf("write tld.yaml: %w", err)
+				if err := workspace.EnsureGlobalConfig(); err != nil {
+					return fmt.Errorf("ensure global config: %w", err)
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Initialized workspace at %s\n", dir)
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Global configuration file created: %s\n", cfgPath)

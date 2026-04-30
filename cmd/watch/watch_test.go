@@ -158,12 +158,19 @@ func Main() {}
 }
 
 func TestResolveEmbeddingConfigPrecedence(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
 	t.Setenv("TLD_EMBEDDING_PROVIDER", "local-deterministic-test")
 	t.Setenv("TLD_EMBEDDING_MODEL", "env-model")
 	t.Setenv("TLD_EMBEDDING_DIMENSION", "7")
-	cfg := &workspace.GlobalConfig{}
-	cfg.Watch.Embedding.Provider = "ollama"
-	cfg.Watch.Embedding.Model = "config-model"
+
+	// Write a config file to test that env overrides it
+	writeFile(t, configDir, "tld.yaml", "watch:\n  embedding:\n    provider: ollama\n    model: config-model\n")
+
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
 
 	resolved := resolveEmbeddingConfig(cfg, "none", "", "", 0)
 	if resolved.Provider != "none" {
@@ -177,17 +184,20 @@ func TestResolveEmbeddingConfigPrecedence(t *testing.T) {
 }
 
 func TestResolveWatchSettingsPrecedence(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
 	t.Setenv("TLD_WATCH_LANGUAGES", "python,typescript")
 	t.Setenv("TLD_WATCH_WATCHER", "poll")
 	t.Setenv("TLD_WATCH_POLL_INTERVAL", "3s")
 	t.Setenv("TLD_WATCH_DEBOUNCE", "250ms")
-	cfg := &workspace.GlobalConfig{}
-	cfg.Watch.Languages = []string{"go"}
-	cfg.Watch.Watcher = "fsnotify"
-	cfg.Watch.PollInterval = "9s"
-	cfg.Watch.Debounce = "8s"
-	cfg.Watch.Thresholds.MaxElementsPerView = 11
-	cfg.Watch.Thresholds.MaxConnectorsPerView = 12
+
+	// Write a config file to test that env overrides it
+	writeFile(t, configDir, "tld.yaml", "watch:\n  languages: [go]\n  watcher: fsnotify\n  poll_interval: 9s\n  debounce: 8s\n  thresholds:\n    max_elements_per_view: 11\n    max_connectors_per_view: 12\n")
+
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
 
 	envResolved := resolveWatchSettings(cfg, nil, "", "", "", 0, 0, 0, 0)
 	if strings.Join(envResolved.Languages, ",") != "python,typescript" ||

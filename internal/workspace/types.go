@@ -8,14 +8,6 @@ import (
 	"github.com/mertcikla/tld/internal/ignore"
 )
 
-// Config is parsed from the user's global tld.yaml.
-type Config struct {
-	ServerURL   string            `yaml:"server_url"`
-	APIKey      string            `yaml:"api_key"`
-	WorkspaceID string            `yaml:"org_id"`
-	Validation  *ValidationConfig `yaml:"validation,omitempty"`
-}
-
 // WorkspaceConfig is parsed from the workspace-local .tld.yaml.
 type WorkspaceConfig struct {
 	ProjectName  string                `yaml:"project_name,omitempty"`
@@ -35,16 +27,6 @@ type Repository struct {
 	Root     string            `yaml:"root,omitempty"`
 	Config   *RepositoryConfig `yaml:"config,omitempty"`
 	Exclude  []string          `yaml:"exclude,omitempty"`
-}
-
-// ValidationConfig represents workspace validation settings.
-const DefaultValidationLevel = 2
-
-type ValidationConfig struct {
-	Level           int      `yaml:"level"`
-	AllowLowInsight bool     `yaml:"allow_low_insight"`
-	IncludeRules    []string `yaml:"include_rules,omitempty"`
-	ExcludeRules    []string `yaml:"exclude_rules,omitempty"`
 }
 
 // ViewPlacement is an element placement within another element's internal view.
