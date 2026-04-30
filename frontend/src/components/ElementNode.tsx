@@ -317,7 +317,7 @@ function ElementNode({ data, selected }: Props) {
   }, [data.reconnectCandidates])
 
   const derivedPrimaryIconPath = (() => {
-    const selected = data.technology_connectors?.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && !!link.slug)
+    const selected = data.technology_connectors?.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!link.slug)
     if (!selected?.slug) return undefined
     return resolveIconPath(`/icons/${selected.slug}.png`)
   })()
@@ -463,6 +463,8 @@ function ElementNode({ data, selected }: Props) {
       isSource={isSource}
       isTarget={isTarget}
       isConnectorHighlighted={!!data.isConnectorHighlighted}
+      hasStack={hasChild}
+      kind={data.kind}
       minW="180px"
       maxW="230px"
       cursor={bodyCursor}

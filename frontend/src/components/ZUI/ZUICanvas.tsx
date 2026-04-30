@@ -33,7 +33,13 @@ import type { DiagramGroupLayout, ZUIViewState } from './types'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import type { ZUIResolvedConnector } from '../../crossBranch/resolve'
-import { buildVisibleProxyConnectors, collectVisibleNodeAnchors, drawVisibleProxyConnectors, findHoveredProxyConnector } from './proxy'
+import {
+  buildVisibleProxyConnectors,
+  collectVisibleNodeAnchors,
+  drawVisibleDirectProxyBadges,
+  drawVisibleProxyConnectors,
+  findHoveredProxyConnector,
+} from './proxy'
 
 export interface ZUICanvasHandle {
   fitView(): void
@@ -371,14 +377,15 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   // Connector topology: expensive O(connectors) resolution only when visibility set changes.
   const proxyConnectors = useMemo(() => {
     const resolved = buildVisibleProxyConnectors(workspaceSnapshot, anchors.visibleAnchors, crossBranchSettings)
-    proxyConnectorsRef.current = resolved
+    proxyConnectorsRef.current = resolved.connectors
     return resolved
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceSnapshot, visibleElementSig, crossBranchSettings])
 
   const visibleProxyState = useMemo(() => ({
     ...anchors,
-    proxyConnectors,
+    proxyConnectors: proxyConnectors.connectors,
+    hiddenProxyBadges: proxyConnectors.hiddenBadges,
   }), [anchors, proxyConnectors])
 
   const visibleProxyStateRef = useRef(visibleProxyState)
@@ -730,6 +737,14 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
           labelBgRef.current,
           occupiedLabelRects,
         )
+        drawVisibleDirectProxyBadges(
+          ctx,
+          visibleProxyStateRef.current.hiddenProxyBadges,
+          visibleProxyStateRef.current.byNodeId,
+          currentView.zoom,
+          labelBgRef.current,
+          occupiedLabelRects,
+        )
         ctx.restore()
         ctx.restore()
         lastView = currentView
@@ -956,6 +971,19 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
                         {hoveredItem.data.details.sourceAnchorName} &rarr; {hoveredItem.data.details.targetAnchorName}
                       </Text>
                       <Text fontSize="xs" color="gray.400">{hoveredItem.data.details.label}</Text>
+                    </VStack>
+                    <VStack align="start" spacing={1} width="full">
+                      <Text color="gray.400" fontSize="2xs" fontWeight="600" letterSpacing="wider">UNDERLYING PATHS</Text>
+                      {hoveredItem.data.details.connectors.slice(0, 4).map((leaf, index) => (
+                        <Text key={`${leaf.connector.id}-${index}`} fontSize="xs" color="gray.200">
+                          {leaf.source.actualElementName} &rarr; {leaf.target.actualElementName}
+                        </Text>
+                      ))}
+                      {hoveredItem.data.details.connectors.length > 4 && (
+                        <Text fontSize="xs" color="gray.500">
+                          +{hoveredItem.data.details.connectors.length - 4} more
+                        </Text>
+                      )}
                     </VStack>
                     <Divider borderColor="whiteAlpha.200" />
                     <VStack align="stretch" spacing={2} width="full">

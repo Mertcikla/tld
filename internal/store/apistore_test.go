@@ -14,7 +14,7 @@ func TestGetWorkspaceResourceCountsUsesTableCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sqliteStore.Legacy().Close()
+	defer func() { _ = sqliteStore.Legacy().Close() }()
 
 	db := sqliteStore.DB()
 	if _, err := db.Exec(`
@@ -46,7 +46,7 @@ func TestGetViewsFiltersDirectChildrenByParentViewID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer sqliteStore.Legacy().Close()
+	defer func() { _ = sqliteStore.Legacy().Close() }()
 
 	db := sqliteStore.DB()
 	if _, err := db.Exec(`

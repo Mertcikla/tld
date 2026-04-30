@@ -20,7 +20,7 @@ import (
 
 func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_representation_runs", "watch_locks", "watch_versions", "watch_representation_diffs", "workspace_versions"} {
 		var name string
@@ -38,7 +38,7 @@ func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 
 func TestRepresentMaterializesWorkspaceIdempotently(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "cmd/app/main.go", `package main
 
@@ -98,7 +98,7 @@ func helper() {}
 
 func TestRepresentDoesNotTouchManualResources(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "main.go", "package main\nfunc Main() {}\n")
 	res, err := db.Exec(`INSERT INTO elements(name, tags, technology_connectors, created_at, updated_at) VALUES ('Manual', '[]', '[]', 'now', 'now')`)
@@ -131,7 +131,7 @@ func TestLargeRepresentationPrunesDetailedSymbolElements(t *testing.T) {
 	defer func() { maxDetailedSymbolElements = previousLimit }()
 
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "pkg/busy.go", `package pkg
 
@@ -193,7 +193,7 @@ func TestEmbeddingCandidateSymbolsAreCappedDeterministically(t *testing.T) {
 
 func TestApplyGitTagsReportsAddedAndRemovedTags(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "main.go", "package main\nfunc Main() {}\n")
 
@@ -231,7 +231,7 @@ func TestApplyGitTagsReportsAddedAndRemovedTags(t *testing.T) {
 
 func TestEmbeddingCacheAvoidsProviderCalls(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	store := NewStore(db)
 	provider := &countingProvider{}
 	model := provider.ModelID()
@@ -274,7 +274,7 @@ func TestEmbeddingCacheAvoidsProviderCalls(t *testing.T) {
 
 func TestEmbeddingCacheChunksProviderCallsAndReportsProgress(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	store := NewStore(db)
 	provider := &countingProvider{}
 	model := provider.ModelID()
@@ -413,7 +413,7 @@ func TestOllamaHealthCheckParsesEmbedResponse(t *testing.T) {
 
 func TestSQLiteVecStoresAndQueriesEmbeddings(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	store := NewStore(db)
 	modelID, err := store.EnsureEmbeddingModel(context.Background(), EmbeddingConfig{Provider: "local-deterministic-test", Model: "vec", Dimension: 3}, "vec")
 	if err != nil {
@@ -443,7 +443,7 @@ func TestSQLiteVecStoresAndQueriesEmbeddings(t *testing.T) {
 
 func TestRenamePreservesGeneratedSymbolElementAndConnector(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "main.go", `package main
 
@@ -498,7 +498,7 @@ func TestClusterStableKeyIsDeterministic(t *testing.T) {
 
 func TestScanLocalOnlyRepositoryIsIdempotent(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "main.go", `package main
 
@@ -552,7 +552,7 @@ func helper() {}
 
 func TestScanUsesRemoteURLIdentity(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	runGit(t, repo, "remote", "add", "origin", "git@github.com:owner/repo.git")
 	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
@@ -572,7 +572,7 @@ func TestScanUsesRemoteURLIdentity(t *testing.T) {
 
 func TestScanRemovesDeletedFiles(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "one.go", "package main\nfunc one() {}\n")
 	writeFile(t, repo, "two.go", "package main\nfunc two() {}\n")
@@ -599,7 +599,7 @@ func TestScanRemovesDeletedFiles(t *testing.T) {
 
 func TestScanFailsClearlyOutsideGitRepository(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	_, err := NewScanner(NewStore(db)).Scan(context.Background(), t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "not inside a git repository") {
 		t.Fatalf("expected git repository error, got %v", err)
@@ -608,7 +608,7 @@ func TestScanFailsClearlyOutsideGitRepository(t *testing.T) {
 
 func TestStatusEndpointReportsActiveWatch(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
 
@@ -643,7 +643,7 @@ func TestStatusEndpointReportsActiveWatch(t *testing.T) {
 
 func TestRequestStopActiveStopsCurrentLock(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
 
@@ -669,7 +669,7 @@ func TestRequestStopActiveStopsCurrentLock(t *testing.T) {
 
 func TestPauseResumeActiveLock(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
 
@@ -708,7 +708,7 @@ func TestPauseResumeActiveLock(t *testing.T) {
 
 func TestRunnerEmitsChangeCounter(t *testing.T) {
 	db := openTestDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
 
@@ -867,7 +867,7 @@ func countElementTag(t *testing.T, db *sql.DB, tag string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	count := 0
 	for rows.Next() {
 		var raw string

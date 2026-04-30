@@ -48,20 +48,6 @@ function getClampedFontSize(baseWorldSize: number, minScreenSize: number, maxScr
   return clamp(baseWorldSize, minScreenSize / zoom, maxScreenSize / zoom)
 }
 
-// ── Chakra v2 type palette - mirrors TYPE_COLORS in src/types/index.ts ─
-// .400 variants: used for type badge text and border tint
-const TYPE_COLOR_400: Record<string, string> = {
-  person: '#38b2ac',  // teal.400
-  system: '#63b3ed',  // blue.400
-  container: '#9f7aea',  // purple.400
-  component: '#f6ad55',  // orange.400
-  database: '#4fd1c5',  // cyan.400
-  queue: '#f6e05e',  // yellow.400
-  api: '#68d391',  // green.400
-  service: '#f687b3',  // pink.400
-  external: '#a0aec0',  // gray.400
-}
-
 /** Border color: type .400 at 50% alpha - bold branded tint */
 const typeBorderColorCache = new Map<string, string>()
 function typeBorderColor(type: string, alpha = 0.5): string {
@@ -69,8 +55,7 @@ function typeBorderColor(type: string, alpha = 0.5): string {
   const cached = typeBorderColorCache.get(cacheKey)
   if (cached) return cached
 
-  const color = TYPE_COLOR_400[type]
-  const hex = typeof color === 'string' ? color : '#a0aec0'
+  const hex = '#a0aec0'
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
   const b = parseInt(hex.slice(5, 7), 16)
@@ -519,6 +504,19 @@ function drawNode(
     ctx.restore()
   }
 
+  // ── Shadow ───────────────────────────────────────────────────────
+  // Subtler shadow for Canvas performance, but provides the depth requested to match ViewEditor
+  if (parentAlpha > 0.5 && screenW > 40) {
+    ctx.save()
+    ctx.globalAlpha = parentAlpha * 0.4
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)'
+    ctx.shadowBlur = 12 / drawZoom
+    ctx.shadowOffsetY = 4 / drawZoom
+    traceShape()
+    ctx.fill()
+    ctx.restore()
+  }
+
   // ── Background ───────────────────────────────────────────────────
   // We draw two backgrounds:
   // 1. A base background (canvasBg) that remains opaque (total 'alpha').
@@ -642,8 +640,7 @@ function drawNode(
         const badgeFontSize = getClampedFontSize(w * 0.05, minBadge, MAX_FONT_BADGE, drawZoom)
         if (badgeFontSize * drawZoom >= 5) {
           ctx.font = `${badgeFontSize}px Inter, system-ui, sans-serif`
-          const badgeColor = TYPE_COLOR_400[node.type]
-          ctx.fillStyle = typeof badgeColor === 'string' ? badgeColor : '#a0aec0'
+          ctx.fillStyle = '#a0aec0'
           const displayType = typeof node.type === 'string' ? node.type.toUpperCase() : 'UNKNOWN'
           ctx.fillText(displayType, x + w / 2, y + h * (0.62 + baseOffset))
         }
@@ -1183,6 +1180,39 @@ function drawGroupLabel(
 }
 
 
+/** Draw a dot grid matching React Flow default style. */
+function drawGrid(ctx: CanvasRenderingContext2D, view: ZUIViewState, canvasW: number, canvasH: number): void {
+  const gridSize = 20
+  const dotSize = 1.0
+  const color = 'rgba(255, 255, 255, 0.1)' // subtle white dots on dark background
+
+  const left = -view.x / view.zoom
+  const top = -view.y / view.zoom
+  const right = (canvasW - view.x) / view.zoom
+  const bottom = (canvasH - view.y) / view.zoom
+
+  const startX = Math.floor(left / gridSize) * gridSize
+  const startY = Math.floor(top / gridSize) * gridSize
+
+  ctx.save()
+  ctx.fillStyle = color
+  
+  // Dot grid rendering: only show if zoom is not too small
+  if (view.zoom > 0.2) {
+    for (let wx = startX; wx < right; wx += gridSize) {
+      for (let wy = startY; wy < bottom; wy += gridSize) {
+        const sx = wx * view.zoom + view.x
+        const sy = wy * view.zoom + view.y
+        
+        ctx.beginPath()
+        ctx.arc(sx, sy, dotSize, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+  }
+  ctx.restore()
+}
+
 // ── Public: render one frame ───────────────────────────────────────
 
 /**
@@ -1206,6 +1236,7 @@ export function renderFrame(
   ctx.fillStyle = canvasBg
   ctx.fillRect(0, 0, canvasW, canvasH)
 
+  drawGrid(ctx, view, canvasW, canvasH)
 
   // Apply world transform
   ctx.save()

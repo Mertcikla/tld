@@ -9,6 +9,7 @@ import type {
   LibraryElement,
   PlacedElement,
   Tag,
+  TechnologyConnector,
   View,
   ViewConnector,
   ViewLayer,
@@ -149,6 +150,27 @@ function j<T>(schema: Parameters<typeof toJson>[0], msg: Parameters<typeof toJso
   return toJson(schema, msg, { useProtoFieldName: true, emitDefaultValues: true }) as unknown as T
 }
 
+async function fetchWorkspaceRaw(body: Record<string, unknown>) {
+  const res = await fetchApiAsset(apiUrl('/diag.v1.WorkspaceService/GetWorkspace'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Connect-Protocol-Version': '1',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    throw new Error(`GetWorkspace failed: ${res.statusText}`)
+  }
+  return res.json() as Promise<{
+    views?: ProtoDiagram[]
+    total_count?: number
+    totalCount?: number
+    content?: Record<string, { placements?: Record<string, unknown>[]; connectors?: Record<string, unknown>[] }>
+    navigations?: Record<string, unknown>[]
+  }>
+}
+
 // ─── Proto → frontend type mappers ───────────────────────────────────────────
 
 interface ProtoDiagram {
@@ -213,10 +235,10 @@ function protoElementToLibrary(e: Record<string, unknown>): LibraryElement {
     technology: (e.technology ?? null) as string | null,
     url: (e.url ?? null) as string | null,
     logo_url: (e.logo_url ?? e.logoUrl ?? null) as string | null,
-    technology_connectors: ((e.technology_connectors ?? e.technologyLinks ?? []) as any[]).map(tl => ({
-      type: tl.type,
+    technology_connectors: ((e.technology_connectors ?? e.technologyLinks ?? []) as Array<{ type?: string; slug?: string; label?: string; is_primary_icon?: boolean; isPrimaryIcon?: boolean }>).map(tl => ({
+      type: (tl.type ?? 'custom') as TechnologyConnector['type'],
       slug: tl.slug,
-      label: tl.label,
+      label: tl.label ?? '',
       is_primary_icon: !!(tl.is_primary_icon ?? tl.isPrimaryIcon),
     })),
     tags: (e.tags ?? []) as string[],
@@ -264,10 +286,10 @@ function protoPlacedElement(p: Record<string, unknown>): PlacedElement {
     technology: (p.technology ?? null) as string | null,
     url: (p.url ?? null) as string | null,
     logo_url: (p.logo_url ?? p.logoUrl ?? null) as string | null,
-    technology_connectors: ((p.technology_connect_ors ?? p.technology_connectors ?? p.technologyLinks ?? []) as any[]).map(tl => ({
-      type: tl.type,
+    technology_connectors: ((p.technology_connect_ors ?? p.technology_connectors ?? p.technologyLinks ?? []) as Array<{ type?: string; slug?: string; label?: string; is_primary_icon?: boolean; isPrimaryIcon?: boolean }>).map(tl => ({
+      type: (tl.type ?? 'custom') as TechnologyConnector['type'],
       slug: tl.slug,
-      label: tl.label,
+      label: tl.label ?? '',
       is_primary_icon: !!(tl.is_primary_icon ?? tl.isPrimaryIcon),
     })),
     tags: (p.tags ?? []) as string[],
@@ -578,6 +600,29 @@ export const api = {
         return [scoped]
       },
 
+      gridData: (): Promise<{
+        views: ViewTreeNode[]
+        content: Record<number, { placements: PlacedElement[]; connectors: Connector[] }>
+      }> =>
+        rpc(async () => {
+          const json = await fetchWorkspaceRaw({
+            includeContent: true,
+            hasView: true,
+          })
+          return {
+            views: (json.views ?? []).map(mapDiagram),
+            content: Object.fromEntries(
+              Object.entries(json.content ?? {}).map(([key, value]) => [
+                Number(key),
+                {
+                  placements: (value.placements ?? []).map(protoPlacedElement),
+                  connectors: (value.connectors ?? []).map(protoConnector),
+                },
+              ])
+            ),
+          }
+        }),
+
       get: (id: number): Promise<ViewTreeNode> =>
         rpc(async () => {
           const res = await workspaceClient.getView({ viewId: id })
@@ -842,8 +887,8 @@ export const api = {
         throw new Error(`Failed to load shared diagram: ${res.statusText}`)
       }
       const data = await res.json() as {
-        tree: any[]
-        views: Record<string, { elements: any[]; connectors: any[] }>
+        tree: ProtoDiagram[]
+        views: Record<string, { elements: Record<string, unknown>[]; connectors: Record<string, unknown>[] }>
         password_required?: boolean
       }
 
@@ -860,7 +905,7 @@ export const api = {
 
       // Ensure that the share root is treated as a root (no parent) so that computeLayout
       // picks it up even if it was nested in the original workspace.
-      const sharedRoot = tree.find(n => String(n.id) === String(data.views[token]?.elements?.[0]?.view_id ?? ''))
+      const _sharedRoot = tree.find(n => String(n.id) === String(data.views[token]?.elements?.[0]?.view_id ?? ''))
       // Backend actually returns the shareToken.ViewID as the root of the tree it builds.
       // We should find the node in 'tree' that has no parent *within the returned set*.
       // For shared explore, the backend typically returns a tree starting at the shared view.
@@ -872,9 +917,9 @@ export const api = {
         }
       })
       const navigations: ViewConnector[] = []
-      const elementToChildView = new Map<number, any>()
-      const allViews: any[] = []
-      const flatTree = (nodes: any[]) => {
+      const elementToChildView = new Map<number, ViewTreeNode>()
+      const allViews: ViewTreeNode[] = []
+      const flatTree = (nodes: ViewTreeNode[]) => {
         nodes.forEach(n => {
           allViews.push(n)
           if (n.owner_element_id) elementToChildView.set(n.owner_element_id, n)
@@ -883,8 +928,8 @@ export const api = {
       }
       flatTree(tree)
 
-      Object.values(views).forEach((v: any) => {
-        v.placements.forEach((p: any) => {
+      Object.values(views).forEach((v) => {
+        v.placements.forEach((p) => {
           const childView = elementToChildView.get(p.element_id)
           if (childView) {
             navigations.push({

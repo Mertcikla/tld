@@ -39,7 +39,14 @@ function iconsAliasPlugin() {
 }
 
 export default defineConfig(async () => {
-  const plugins: Plugin[] = [react(), tsconfigPaths(), iconsAliasPlugin()];
+  const plugins: Plugin[] = [
+    react(),
+    tsconfigPaths({
+      projects: [fileURLToPath(new URL("./tsconfig.json", import.meta.url))],
+      ignoreConfigErrors: true,
+    }),
+    iconsAliasPlugin(),
+  ];
 
   return {
     plugins,

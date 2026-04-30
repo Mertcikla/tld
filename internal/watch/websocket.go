@@ -24,7 +24,7 @@ func (h *Handler) watchWebSocket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
@@ -242,13 +242,14 @@ func readWebSocketMessage(r io.Reader) ([]byte, error) {
 	}
 	masked := hdr[1]&0x80 != 0
 	length := int(hdr[1] & 0x7f)
-	if length == 126 {
+	switch length {
+	case 126:
 		var ext [2]byte
 		if _, err := io.ReadFull(r, ext[:]); err != nil {
 			return nil, err
 		}
 		length = int(binary.BigEndian.Uint16(ext[:]))
-	} else if length == 127 {
+	case 127:
 		var ext [8]byte
 		if _, err := io.ReadFull(r, ext[:]); err != nil {
 			return nil, err

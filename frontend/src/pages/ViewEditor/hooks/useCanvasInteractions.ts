@@ -1024,7 +1024,7 @@ export function useCanvasInteractions({
     setSelectedProxyConnectorDetails(null)
     setSelectedEdge(connector)
     openConnectorPanelRef.current()
-  }, [closeElementPanel, connectors, openProxyConnectorPanel, setSelectedEdge, setSelectedElement, setSelectedProxyConnectorDetails])
+  }, [closeConnectorPanel, closeElementPanel, connectors, openProxyConnectorPanel, setSelectedEdge, setSelectedElement, setSelectedProxyConnectorDetails])
 
   // ── Pane interactions ─────────────────────────────────────────────────────
   const onPaneClick = useCallback((e: React.MouseEvent) => {

@@ -628,7 +628,7 @@ func (a *APIAdapter) ListVersions(ctx context.Context, workspaceID uuid.UUID, li
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []*diagv1.WorkspaceVersionInfo
 	for rows.Next() {
 		version, err := scanWorkspaceVersion(rows, workspaceID)

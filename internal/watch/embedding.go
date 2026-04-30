@@ -190,7 +190,7 @@ func (p *OllamaProvider) embedTexts(ctx context.Context, texts []string) ([]Vect
 	if err != nil {
 		return nil, fmt.Errorf("ollama embed request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("ollama embed request failed: %s", resp.Status)
 	}

@@ -313,10 +313,6 @@ func gitStatusFingerprint(status GitStatus) string {
 	return hashString(strings.Join(parts, "\n"))
 }
 
-func repositoryFingerprint(repoRoot string) string {
-	return sourceFileFingerprint(sourceFileSnapshot(repoRoot))
-}
-
 func sourceFileSnapshot(repoRoot string) map[string]string {
 	files := map[string]string{}
 	_ = filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, err error) error {

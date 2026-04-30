@@ -133,7 +133,7 @@ func (s *Store) Repositories(ctx context.Context) ([]Repository, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var repos []Repository
 	for rows.Next() {
 		var repo Repository
@@ -242,7 +242,7 @@ func (s *Store) DeleteMissingFiles(ctx context.Context, repositoryID int64, seen
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var ids []int64
 	for rows.Next() {
 		var id int64
@@ -303,7 +303,7 @@ func (s *Store) ReplaceFileSymbols(ctx context.Context, repositoryID, fileID int
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var deleteIDs []int64
 	for rows.Next() {
 		var id int64
@@ -351,7 +351,7 @@ func (s *Store) symbolIdentitiesForFile(ctx context.Context, repositoryID, fileI
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []storedSymbolIdentity
 	for rows.Next() {
 		var identity storedSymbolIdentity
@@ -428,7 +428,7 @@ func (s *Store) SymbolIdentityKeys(ctx context.Context, repositoryID int64) (map
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	out := map[string]string{}
 	for rows.Next() {
 		var stableKey, identityKey string
@@ -509,7 +509,7 @@ func (s *Store) QuerySymbols(ctx context.Context, repositoryID int64, q SymbolQu
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Symbol
 	for rows.Next() {
 		var sym Symbol
@@ -552,7 +552,7 @@ func (s *Store) QueryReferences(ctx context.Context, repositoryID int64, q Refer
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Reference
 	for rows.Next() {
 		var ref Reference
@@ -671,7 +671,7 @@ func (s *Store) similarEmbeddingsFallback(ctx context.Context, modelID int64, qu
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	type scored struct {
 		ID    int64
 		Score float64
@@ -783,7 +783,7 @@ func (s *Store) Clusters(ctx context.Context, repositoryID int64) ([]Cluster, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Cluster
 	for rows.Next() {
 		cluster, err := scanCluster(rows)
@@ -855,7 +855,7 @@ func (s *Store) Materialization(ctx context.Context, repositoryID int64) ([]Mate
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []MaterializationMapping
 	for rows.Next() {
 		var item MaterializationMapping
@@ -905,7 +905,7 @@ func (s *Store) FilterDecisions(ctx context.Context, repositoryID int64, q Filte
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []FilterDecision
 	for rows.Next() {
 		var item FilterDecision
@@ -962,7 +962,7 @@ func (s *Store) RawGraphHash(ctx context.Context, repositoryID int64) (string, e
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	h := sha256.New()
 	for rows.Next() {
 		var stableKey, signatureHash, contentHash string
@@ -984,14 +984,14 @@ func (s *Store) RawGraphHash(ctx context.Context, repositoryID int64) (string, e
 	if err != nil {
 		return "", err
 	}
-	defer refRows.Close()
+	defer func() { _ = refRows.Close() }()
 	for refRows.Next() {
 		var sourceKey, targetKey string
 		var kind, evidenceHash string
 		if err := refRows.Scan(&sourceKey, &targetKey, &kind, &evidenceHash); err != nil {
 			return "", err
 		}
-		_, _ = h.Write([]byte(fmt.Sprintf("r:%s:%s:%s:%s\n", sourceKey, targetKey, kind, evidenceHash)))
+		_, _ = fmt.Fprintf(h, "r:%s:%s:%s:%s\n", sourceKey, targetKey, kind, evidenceHash)
 	}
 	if err := refRows.Err(); err != nil {
 		return "", err
@@ -1152,7 +1152,7 @@ func (s *Store) ApplyGitTags(ctx context.Context, repositoryID int64, status Git
 	if err != nil {
 		return GitTagUpdateResult{}, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	type update struct {
 		id   int64
 		tags []string
@@ -1245,7 +1245,7 @@ func (s *Store) WatchVersions(ctx context.Context, repositoryID int64, limit int
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Version
 	for rows.Next() {
 		version, err := scanVersion(rows)
@@ -1318,7 +1318,7 @@ func (s *Store) WatchDiffs(ctx context.Context, versionID int64, ownerType, chan
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []RepresentationDiff
 	for rows.Next() {
 		var diff RepresentationDiff
