@@ -270,6 +270,9 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 }
 
 func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, status GitStatus, representationHash string, baselineOnly bool) error {
+	if gitStatusClean(status) {
+		baselineOnly = true
+	}
 	latest, found, err := r.Store.LatestWatchVersion(ctx, repositoryID)
 	if err != nil {
 		return err
@@ -281,7 +284,10 @@ func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, s
 	if err != nil {
 		return err
 	}
-	description := "tld watch " + shortHash(status.HeadCommit)
+	description := strings.TrimSpace(status.HeadMessage)
+	if description == "" {
+		description = "tld watch " + shortHash(status.HeadCommit)
+	}
 	workspaceVersionID, err := r.Store.CreateWorkspaceVersion(ctx, status.HeadCommit, "watch", nil, views, elements, connectors, &description, &representationHash)
 	if err != nil && !strings.Contains(err.Error(), "constraint failed") {
 		return err
@@ -301,25 +307,30 @@ func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, s
 			return err
 		}
 	}
-	_, err = r.Store.CreateWatchVersion(ctx, repositoryID, status.HeadCommit, parent, status.Branch, representationHash, workspaceID, diffs)
+	_, err = r.Store.CreateWatchVersion(ctx, repositoryID, status.HeadCommit, strings.TrimSpace(status.HeadMessage), parent, status.Branch, representationHash, workspaceID, diffs)
 	return err
 }
 
 func gitStatusSnapshot(repoRoot string) (GitStatus, error) {
 	status, err := tldgit.StatusSnapshot(repoRoot)
 	return GitStatus{
-		Branch:     status.Branch,
-		HeadCommit: status.HeadCommit,
-		RemoteURL:  status.RemoteURL,
-		Staged:     status.Staged,
-		Unstaged:   status.Unstaged,
-		Untracked:  status.Untracked,
-		Deleted:    status.Deleted,
+		Branch:      status.Branch,
+		HeadCommit:  status.HeadCommit,
+		HeadMessage: status.HeadMessage,
+		RemoteURL:   status.RemoteURL,
+		Staged:      status.Staged,
+		Unstaged:    status.Unstaged,
+		Untracked:   status.Untracked,
+		Deleted:     status.Deleted,
 	}, err
 }
 
+func gitStatusClean(status GitStatus) bool {
+	return len(status.Staged) == 0 && len(status.Unstaged) == 0 && len(status.Untracked) == 0 && len(status.Deleted) == 0
+}
+
 func gitStatusFingerprint(status GitStatus) string {
-	parts := []string{status.Branch, status.HeadCommit, status.RemoteURL}
+	parts := []string{status.Branch, status.HeadCommit, status.HeadMessage, status.RemoteURL}
 	appendPaths := func(kind string, paths []string) {
 		sorted := append([]string(nil), paths...)
 		sort.Strings(sorted)

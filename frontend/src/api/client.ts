@@ -118,6 +118,7 @@ export interface WatchVersion {
   id: number
   repository_id: number
   commit_hash: string
+  commit_message?: string
   parent_commit_hash?: string
   branch?: string
   representation_hash: string

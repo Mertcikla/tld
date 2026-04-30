@@ -12,13 +12,14 @@ import (
 )
 
 type Status struct {
-	Branch     string
-	HeadCommit string
-	RemoteURL  string
-	Staged     []string
-	Unstaged   []string
-	Untracked  []string
-	Deleted    []string
+	Branch      string
+	HeadCommit  string
+	HeadMessage string
+	RemoteURL   string
+	Staged      []string
+	Unstaged    []string
+	Untracked   []string
+	Deleted     []string
 }
 
 // DetectBranch returns the current branch name for the git repo rooted at dir.
@@ -48,6 +49,15 @@ func DetectHeadCommit(dir string) (string, error) {
 	out, err := run(dir, "rev-parse", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("detect head commit: %w", err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// DetectHeadMessage returns the subject line for HEAD.
+func DetectHeadMessage(dir string) (string, error) {
+	out, err := run(dir, "log", "-1", "--format=%s")
+	if err != nil {
+		return "", fmt.Errorf("detect head message: %w", err)
 	}
 	return strings.TrimSpace(out), nil
 }
@@ -95,9 +105,10 @@ func FileLastCommitAt(dir, filePath string) (time.Time, error) {
 
 func StatusSnapshot(dir string) (Status, error) {
 	status := Status{
-		Branch:     detectBestEffort(func() (string, error) { return DetectBranch(dir) }),
-		HeadCommit: detectBestEffort(func() (string, error) { return DetectHeadCommit(dir) }),
-		RemoteURL:  detectBestEffort(func() (string, error) { return DetectRemoteURL(dir) }),
+		Branch:      detectBestEffort(func() (string, error) { return DetectBranch(dir) }),
+		HeadCommit:  detectBestEffort(func() (string, error) { return DetectHeadCommit(dir) }),
+		HeadMessage: detectBestEffort(func() (string, error) { return DetectHeadMessage(dir) }),
+		RemoteURL:   detectBestEffort(func() (string, error) { return DetectRemoteURL(dir) }),
 	}
 	out, err := run(dir, "status", "--porcelain=v1", "-z")
 	if err != nil {

@@ -220,13 +220,14 @@ type Lock struct {
 }
 
 type GitStatus struct {
-	Branch     string   `json:"branch"`
-	HeadCommit string   `json:"head_commit"`
-	RemoteURL  string   `json:"remote_url"`
-	Staged     []string `json:"staged"`
-	Unstaged   []string `json:"unstaged"`
-	Untracked  []string `json:"untracked"`
-	Deleted    []string `json:"deleted"`
+	Branch      string   `json:"branch"`
+	HeadCommit  string   `json:"head_commit"`
+	HeadMessage string   `json:"head_message,omitempty"`
+	RemoteURL   string   `json:"remote_url"`
+	Staged      []string `json:"staged"`
+	Unstaged    []string `json:"unstaged"`
+	Untracked   []string `json:"untracked"`
+	Deleted     []string `json:"deleted"`
 }
 
 type GitTagUpdateResult struct {
@@ -269,6 +270,7 @@ type Version struct {
 	ID                 int64  `json:"id"`
 	RepositoryID       int64  `json:"repository_id"`
 	CommitHash         string `json:"commit_hash"`
+	CommitMessage      string `json:"commit_message,omitempty"`
 	ParentCommitHash   string `json:"parent_commit_hash,omitempty"`
 	Branch             string `json:"branch,omitempty"`
 	RepresentationHash string `json:"representation_hash"`

@@ -104,6 +104,11 @@ function shortHash(value?: string) {
   return value.length > 10 ? value.slice(0, 10) : value
 }
 
+function versionLabel(version: WatchVersion) {
+  const subject = version.commit_message?.trim()
+  return [shortHash(version.commit_hash), subject].filter(Boolean).join(' · ')
+}
+
 function changeLabel(diffs: WatchDiff[]) {
   const summary = summarizeWatchDiffs(diffs)
   const total = summary.elements.added + summary.elements.updated + summary.elements.deleted + summary.elements.changed +
@@ -210,6 +215,19 @@ export default function WorkspacePanel() {
 
   const selectedRepo = useMemo(() => repos.find((r) => r.id === repoId) ?? null, [repos, repoId])
   const selectedVersion = useMemo(() => versions.find((v) => v.id === versionId) ?? null, [versions, versionId])
+
+  const selectLatestWatchVersion = useCallback(async (targetRepoId: number) => {
+    const nextVersions = await api.watch.versions(targetRepoId)
+    setVersions(nextVersions)
+    const latest = nextVersions[0] ?? null
+    setVersionId(latest?.id ?? '')
+    if (!latest) {
+      setDiffs([])
+      return
+    }
+    const latestDiffs = await api.watch.diffs(latest.id).catch(() => [] as WatchDiff[])
+    setDiffs(latestDiffs)
+  }, [])
 
   const loadVersions = useCallback(async () => {
     setVersionsLoading(true)
@@ -334,9 +352,23 @@ export default function WorkspacePanel() {
       if (eventLock) setWatchPaused(eventLock.status === 'paused')
     }
     if (event.type === 'watch.stopped') { setWatchActive(false); setWatchPaused(false) }
-    if (event.type === 'representation.updated') refreshWorkspace(event)
+    if (event.type === 'representation.updated') {
+      const data = event.data as Partial<WatchRepresentationSummary> | undefined
+      if (Array.isArray(data?.diffs)) setDiffs(data.diffs)
+      refreshWorkspace(event)
+    }
+    if (event.type === 'version.created') {
+      const version = event.data as Partial<WatchVersion> | undefined
+      const targetRepoId = event.repository_id || version?.repository_id || watchLock?.repository_id || watchRepository?.id || 0
+      clearPreview()
+      setDiffs([])
+      if (targetRepoId > 0) {
+        setRepoId(targetRepoId)
+        void selectLatestWatchVersion(targetRepoId)
+      }
+    }
     if (event.type !== 'watch.stopped' || watchActive) addLine(summarizeEvent(event))
-  }, [watchActive, addLine, refreshWorkspace])
+  }, [watchActive, addLine, clearPreview, refreshWorkspace, selectLatestWatchVersion, watchLock?.repository_id, watchRepository?.id])
 
   useEffect(() => {
     let cancelled = false
@@ -423,7 +455,7 @@ export default function WorkspacePanel() {
                 {activeRepo?.display_name ?? 'Workspace'}
               </Text>
               <Text fontSize="10px" color="gray.500" noOfLines={1}>
-                {activeVersion ? `${shortHash(activeVersion.commit_hash)} · ${compactSummary}` : compactSummary}
+                {activeVersion ? `${versionLabel(activeVersion)} · ${compactSummary}` : compactSummary}
               </Text>
             </Box>
           </HStack>
@@ -474,7 +506,7 @@ export default function WorkspacePanel() {
               placeholder="Select version"
               options={versions.map((v) => ({
                 value: v.id,
-                label: `${shortHash(v.commit_hash)} · ${v.branch || 'detached'} · ${new Date(v.created_at).toLocaleString()}`,
+                label: `${versionLabel(v)} · ${v.branch || 'detached'} · ${new Date(v.created_at).toLocaleString()}`,
               }))}
               onChange={(v) => setVersionId(v)}
             />

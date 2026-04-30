@@ -1294,13 +1294,13 @@ func (s *Store) ApplyGitTags(ctx context.Context, repositoryID int64, status Git
 	return result, nil
 }
 
-func (s *Store) CreateWatchVersion(ctx context.Context, repositoryID int64, commitHash, parentCommitHash, branch, representationHash string, workspaceVersionID *int64, diffs []RepresentationDiff) (Version, error) {
+func (s *Store) CreateWatchVersion(ctx context.Context, repositoryID int64, commitHash, commitMessage, parentCommitHash, branch, representationHash string, workspaceVersionID *int64, diffs []RepresentationDiff) (Version, error) {
 	now := nowString()
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO watch_versions(repository_id, commit_hash, parent_commit_hash, branch, representation_hash, workspace_version_id, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO watch_versions(repository_id, commit_hash, commit_message, parent_commit_hash, branch, representation_hash, workspace_version_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(repository_id, commit_hash, representation_hash) DO NOTHING`,
-		repositoryID, commitHash, nullString(parentCommitHash), nullString(branch), representationHash, workspaceVersionID, now)
+		repositoryID, commitHash, nullString(commitMessage), nullString(parentCommitHash), nullString(branch), representationHash, workspaceVersionID, now)
 	if err != nil {
 		return Version{}, err
 	}
@@ -1325,7 +1325,7 @@ func (s *Store) CreateWatchVersion(ctx context.Context, repositoryID int64, comm
 
 func (s *Store) WatchVersion(ctx context.Context, repositoryID int64, commitHash, representationHash string) (Version, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, repository_id, commit_hash, parent_commit_hash, branch, representation_hash, workspace_version_id, created_at
+		SELECT id, repository_id, commit_hash, commit_message, parent_commit_hash, branch, representation_hash, workspace_version_id, created_at
 		FROM watch_versions
 		WHERE repository_id = ? AND commit_hash = ? AND representation_hash = ?`, repositoryID, commitHash, representationHash)
 	return scanVersion(row)
@@ -1336,7 +1336,7 @@ func (s *Store) WatchVersions(ctx context.Context, repositoryID int64, limit int
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, repository_id, commit_hash, parent_commit_hash, branch, representation_hash, workspace_version_id, created_at
+		SELECT id, repository_id, commit_hash, commit_message, parent_commit_hash, branch, representation_hash, workspace_version_id, created_at
 		FROM watch_versions
 		WHERE repository_id = ?
 		ORDER BY id DESC
@@ -1358,7 +1358,7 @@ func (s *Store) WatchVersions(ctx context.Context, repositoryID int64, limit int
 
 func (s *Store) LatestWatchVersion(ctx context.Context, repositoryID int64) (Version, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT id, repository_id, commit_hash, parent_commit_hash, branch, representation_hash, workspace_version_id, created_at
+		SELECT id, repository_id, commit_hash, commit_message, parent_commit_hash, branch, representation_hash, workspace_version_id, created_at
 		FROM watch_versions
 		WHERE repository_id = ?
 		ORDER BY id DESC
@@ -1870,11 +1870,15 @@ func scanLock(row rowScanner) (Lock, error) {
 
 func scanVersion(row rowScanner) (Version, error) {
 	var version Version
+	var message sql.NullString
 	var parent sql.NullString
 	var branch sql.NullString
 	var workspaceVersionID sql.NullInt64
-	if err := row.Scan(&version.ID, &version.RepositoryID, &version.CommitHash, &parent, &branch, &version.RepresentationHash, &workspaceVersionID, &version.CreatedAt); err != nil {
+	if err := row.Scan(&version.ID, &version.RepositoryID, &version.CommitHash, &message, &parent, &branch, &version.RepresentationHash, &workspaceVersionID, &version.CreatedAt); err != nil {
 		return Version{}, err
+	}
+	if message.Valid {
+		version.CommitMessage = message.String
 	}
 	if parent.Valid {
 		version.ParentCommitHash = parent.String

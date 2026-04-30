@@ -252,7 +252,7 @@ func helper() {}
 	if connector := findDiff(firstDiffs, "connector", "added"); connector == nil || connector.Summary == nil || !strings.Contains(*connector.Summary, "->") {
 		t.Fatalf("expected connector diff summary to include endpoint arrow, got %+v", connector)
 	}
-	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "", "main", rep.RepresentationHash, nil, firstDiffs); err != nil {
+	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "first commit", "", "main", rep.RepresentationHash, nil, firstDiffs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -307,7 +307,7 @@ func helper() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "", "main", rep.RepresentationHash, nil, firstDiffs); err != nil {
+	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "first commit", "", "main", rep.RepresentationHash, nil, firstDiffs); err != nil {
 		t.Fatal(err)
 	}
 
@@ -394,7 +394,7 @@ func Other() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, next.RepresentationHash, true); err != nil {
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, next.RepresentationHash, false); err != nil {
 		t.Fatal(err)
 	}
 	latest, found, err := store.LatestWatchVersion(context.Background(), scan.RepositoryID)
@@ -410,6 +410,9 @@ func Other() {}
 	}
 	if len(committedDiffs) != 0 {
 		t.Fatalf("expected committed baseline version to have no pending diffs, got %+v", committedDiffs)
+	}
+	if latest.CommitMessage != "add other" {
+		t.Fatalf("expected commit message to be stored, got %q", latest.CommitMessage)
 	}
 }
 
@@ -434,7 +437,7 @@ func Main() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	version, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "", "main", rep.RepresentationHash, nil, diffs)
+	version, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "first commit", "", "main", rep.RepresentationHash, nil, diffs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1366,7 +1369,7 @@ func openTestDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "003_watch_materialized_workspace.sql", "004_watch_runtime_git_versions.sql", "005_watch_embeddings_identity_vec.sql", "006_workspace_read_indexes.sql", "007_watch_version_resources.sql", "008_watch_diff_line_counts.sql"} {
+	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "003_watch_materialized_workspace.sql", "004_watch_runtime_git_versions.sql", "005_watch_embeddings_identity_vec.sql", "006_workspace_read_indexes.sql", "007_watch_version_resources.sql", "008_watch_diff_line_counts.sql", "009_watch_commit_messages.sql"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", migration))
 		if err != nil {
 			t.Fatal(err)
