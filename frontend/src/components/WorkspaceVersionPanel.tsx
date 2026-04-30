@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   Badge,
   Box,
-  Button,
   Collapse,
   HStack,
   IconButton,
@@ -13,9 +11,10 @@ import {
   Tooltip,
   VStack,
 } from '@chakra-ui/react'
-import { CloseIcon, RepeatIcon, TimeIcon, ViewIcon } from '@chakra-ui/icons'
+import { CloseIcon, RepeatIcon, TimeIcon } from '@chakra-ui/icons'
 import { api, type WatchDiff, type WatchRepository, type WatchVersion, type WorkspaceVersion } from '../api/client'
 import { buildWorkspaceVersionPreview, useWorkspaceVersionPreview } from '../context/WorkspaceVersionContext'
+import { formatTldStatLine, summarizeWatchDiffs } from '../utils/watchDiffSummary'
 
 function shortHash(value?: string) {
   if (!value) return ''
@@ -23,23 +22,14 @@ function shortHash(value?: string) {
 }
 
 function changeLabel(diffs: WatchDiff[]) {
-  const counts = diffs.reduce((acc, diff) => {
-    const key = diff.change_type || 'changed'
-    acc[key] = (acc[key] ?? 0) + 1
-    return acc
-  }, {} as Record<string, number>)
-  const parts = [
-    counts.added ? `+${counts.added}` : '',
-    counts.updated ? `~${counts.updated}` : '',
-    counts.deleted ? `-${counts.deleted}` : '',
-    counts.changed ? `${counts.changed} changed` : '',
-  ].filter(Boolean)
-  return parts.length > 0 ? parts.join('  ') : 'No materialized changes'
+  const summary = summarizeWatchDiffs(diffs)
+  const total = summary.elements.added + summary.elements.updated + summary.elements.deleted + summary.elements.changed +
+    summary.connectors.added + summary.connectors.updated + summary.connectors.deleted + summary.connectors.changed
+  return total > 0 ? formatTldStatLine(summary) : 'No materialized changes'
 }
 
 export default function WorkspaceVersionPanel() {
-  const navigate = useNavigate()
-  const { preview, setPreview, clearPreview, requestFollow } = useWorkspaceVersionPreview()
+  const { preview, setPreview, clearPreview } = useWorkspaceVersionPreview()
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [repos, setRepos] = useState<WatchRepository[]>([])
@@ -103,7 +93,8 @@ export default function WorkspaceVersionPanel() {
     api.watch.diffs(versionId).then(setDiffs).catch(() => setDiffs([]))
   }, [versionId])
 
-  const applyPreview = useCallback(() => {
+  useEffect(() => {
+    if (!selectedVersion) return
     setPreview(buildWorkspaceVersionPreview({
       repository: selectedRepo,
       version: selectedVersion,
@@ -112,15 +103,10 @@ export default function WorkspaceVersionPanel() {
     }))
   }, [diffs, selectedRepo, selectedVersion, setPreview, workspaceVersions])
 
-  const follow = useCallback(() => {
-    if (!preview && selectedVersion) applyPreview()
-    requestFollow()
-    navigate('/views?view=explore')
-  }, [applyPreview, navigate, preview, requestFollow, selectedVersion])
-
   const compactSummary = preview ? changeLabel(preview.diffs) : diffs.length > 0 ? changeLabel(diffs) : 'Workspace versions'
   const activeVersion = preview?.version ?? selectedVersion
   const activeRepo = preview?.repository ?? selectedRepo
+  const diffSummary = useMemo(() => summarizeWatchDiffs(diffs), [diffs])
 
   return (
     <Box
@@ -192,6 +178,19 @@ export default function WorkspaceVersionPanel() {
               </Text>
             </HStack>
 
+            <Box px={2} py={1.5} border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" bg="whiteAlpha.50">
+              <HStack spacing={1} fontFamily="mono" fontSize="11px" minW={0}>
+                <Text color="gray.300" noOfLines={1}>
+                  {diffSummary.files.added + diffSummary.files.updated + diffSummary.files.deleted + diffSummary.files.changed} files changed,
+                </Text>
+                <Text color="green.300">+{diffSummary.files.addedLines}</Text>
+                <Text color="red.300">-{diffSummary.files.removedLines}</Text>
+              </HStack>
+              <Text fontSize="11px" color="gray.400" noOfLines={1}>
+                TLD · {formatTldStatLine(diffSummary)}
+              </Text>
+            </Box>
+
             {workspaceVersions.length > 0 && (
               <VStack align="stretch" spacing={1} maxH="92px" overflowY="auto" borderTop="1px solid" borderColor="whiteAlpha.100" pt={2}>
                 {workspaceVersions.slice(0, 5).map((version) => (
@@ -206,20 +205,6 @@ export default function WorkspaceVersionPanel() {
                 ))}
               </VStack>
             )}
-
-            <HStack spacing={2}>
-              <Button size="sm" leftIcon={<ViewIcon />} onClick={applyPreview} isDisabled={!selectedVersion}>
-                Preview diff
-              </Button>
-              <Button size="sm" variant="outline" onClick={follow} isDisabled={!selectedVersion}>
-                Follow
-              </Button>
-              <Tooltip label="Rollback needs a backend restore endpoint for workspace snapshots.">
-                <Button size="sm" variant="ghost" isDisabled>
-                  Rollback
-                </Button>
-              </Tooltip>
-            </HStack>
           </VStack>
         </Collapse>
       </Box>

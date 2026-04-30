@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   Box,
@@ -13,6 +14,7 @@ import {
   MenuItem,
   MenuList,
   Spinner,
+  Badge,
   Tag,
   Text,
   VStack,
@@ -27,6 +29,7 @@ import { ElementBody } from '../components/NodeBody'
 import DependenciesOnboarding from '../components/DependenciesOnboarding'
 import { useTheme } from '../context/ThemeContext'
 import { hexToRgba } from '../constants/colors'
+import { useWorkspaceVersionPreview, type VersionChangeType } from '../context/WorkspaceVersionContext'
 
 // ── Data types ─────────────────────────────────────────────────────────────
 interface ElementWithNeighbours extends DependencyElement {
@@ -177,11 +180,13 @@ function NeighbourCard({
   onClick,
   setRef,
   compactLevel = 0,
+  versionChangeType,
 }: {
   node: NeighbourNode
   onClick: () => void
   setRef?: (el: HTMLDivElement | null) => void
   compactLevel?: number
+  versionChangeType?: VersionChangeType
 }) {
   const cardPadding = compactLevel >= 3 ? 1 : compactLevel >= 2 ? 1.5 : compactLevel >= 1 ? 2 : 3
   const showTech = compactLevel < 2
@@ -197,6 +202,13 @@ function NeighbourCard({
       compactLevel >= 2 ? (nameLen > 20 ? '2xs' : 'xs') :
         compactLevel >= 1 ? (nameLen > 22 ? 'xs' : 'sm') :
           (nameLen > 24 ? 'xs' : 'sm')
+  const versionColor = versionChangeType === 'added'
+    ? 'green.300'
+    : versionChangeType === 'deleted'
+      ? 'red.300'
+      : versionChangeType
+        ? 'yellow.300'
+        : undefined
 
   return (
     <motion.div
@@ -214,6 +226,9 @@ function NeighbourCard({
         p={0}
         cursor="pointer"
         borderColor="whiteAlpha.200"
+        outline={versionColor ? '2px solid' : undefined}
+        outlineColor={versionColor}
+        outlineOffset={versionColor ? '2px' : undefined}
         _hover={{ borderColor: 'var(--accent)', boxShadow: '0 0 0 1px rgba(var(--accent-rgb), 0.25)' }}
       >
         <ElementBody
@@ -256,6 +271,8 @@ const TYPE_HEX: Record<string, string> = {
 export default function Dependencies() {
   const setHeader = useSetHeader()
   const { accent, elementColor } = useTheme()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { preview: versionPreview } = useWorkspaceVersionPreview()
 
   const [elements, setElements] = useState<DependencyElement[]>([])
   const [allEdges, setAllEdges] = useState<DependencyConnector[]>([])
@@ -293,6 +310,19 @@ export default function Dependencies() {
   }, [])
 
   useEffect(() => { applyPan(0, 0) }, [selectedId, applyPan])
+
+  useEffect(() => {
+    const requestedId = searchParams.get('element')
+    if (requestedId) setSelectedId(requestedId)
+  }, [searchParams])
+
+  const selectElement = useCallback((id: string | null) => {
+    setSelectedId(id)
+    const next = new URLSearchParams(searchParams)
+    if (id) next.set('element', id)
+    else next.delete('element')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   // Header
   useEffect(() => {
@@ -762,6 +792,15 @@ export default function Dependencies() {
                 const color = TYPE_COLORS[typeKey] ?? 'gray'
                 const accentHex = TYPE_HEX[typeKey] ?? '#718096'
                 const isSelected = selectedId === obj.id
+                const versionChangeType = versionPreview?.elementChanges.get(Number(obj.id))
+                const versionLineDelta = versionPreview?.elementLineDeltas.get(Number(obj.id))
+                const versionColor = versionChangeType === 'added'
+                  ? 'green.300'
+                  : versionChangeType === 'deleted'
+                    ? 'red.300'
+                    : versionChangeType
+                      ? 'yellow.300'
+                      : undefined
 
                 return (
                   <Flex
@@ -775,9 +814,12 @@ export default function Dependencies() {
                     bg={isSelected ? 'rgba(66,153,225,0.07)' : 'transparent'}
                     _hover={{ bg: isSelected ? 'rgba(66,153,225,0.1)' : 'whiteAlpha.50' }}
                     transition="background 0.1s"
-                    onClick={() => setSelectedId(isSelected ? null : obj.id)}
+                    onClick={() => selectElement(isSelected ? null : obj.id)}
                     position="relative"
                     role="row"
+                    outline={versionColor ? '1px solid' : undefined}
+                    outlineColor={versionColor}
+                    outlineOffset="-1px"
                   >
                     {/* Left type-color accent */}
                     <Box
@@ -791,14 +833,28 @@ export default function Dependencies() {
 
                     {/* Name */}
                     <Box flex={1} minW={0} mr={4}>
-                      <Text
-                        fontSize="sm"
-                        fontWeight={isSelected ? 'semibold' : 'medium'}
-                        color={isSelected ? 'white' : 'gray.100'}
-                        noOfLines={1}
-                      >
-                        {obj.name}
-                      </Text>
+                      <HStack spacing={2} minW={0}>
+                        <Text
+                          fontSize="sm"
+                          fontWeight={isSelected ? 'semibold' : 'medium'}
+                          color={isSelected ? 'white' : 'gray.100'}
+                          noOfLines={1}
+                          minW={0}
+                        >
+                          {obj.name}
+                        </Text>
+                        {versionChangeType && (
+                          <Badge colorScheme={versionChangeType === 'added' ? 'green' : versionChangeType === 'deleted' ? 'red' : 'yellow'} fontSize="8px" flexShrink={0}>
+                            {versionChangeType === 'added' ? '+' : versionChangeType === 'deleted' ? '-' : '~'}
+                          </Badge>
+                        )}
+                        {versionLineDelta && (
+                          <HStack spacing={1} flexShrink={0}>
+                            {versionLineDelta.added > 0 && <Text fontSize="10px" color="green.300" fontWeight="800">+{versionLineDelta.added}</Text>}
+                            {versionLineDelta.removed > 0 && <Text fontSize="10px" color="red.300" fontWeight="800">-{versionLineDelta.removed}</Text>}
+                          </HStack>
+                        )}
+                      </HStack>
                     </Box>
 
                     {/* Type badge */}
@@ -922,7 +978,8 @@ export default function Dependencies() {
                                   key={n.element.id}
                                   node={n}
                                   compactLevel={maxCompactLevel}
-                                  onClick={() => setSelectedId(n.element.id)}
+                                  versionChangeType={versionPreview?.elementChanges.get(Number(n.element.id))}
+                                  onClick={() => selectElement(n.element.id)}
                                 />
                               ))}
                             </HStack>
@@ -945,7 +1002,8 @@ export default function Dependencies() {
                                     key={n.element.id}
                                     node={n}
                                     compactLevel={leftCompactLevel}
-                                    onClick={() => setSelectedId(n.element.id)}
+                                    versionChangeType={versionPreview?.elementChanges.get(Number(n.element.id))}
+                                    onClick={() => selectElement(n.element.id)}
                                   />
                                 ))}
                               </VStack>
@@ -966,6 +1024,9 @@ export default function Dependencies() {
                           bg={elementColor}
                           borderColor={accent}
                           borderWidth="2px"
+                          outline={versionPreview?.elementChanges.get(Number(selectedId)) ? '3px solid' : undefined}
+                          outlineColor={versionPreview?.elementChanges.get(Number(selectedId)) === 'added' ? 'green.300' : versionPreview?.elementChanges.get(Number(selectedId)) === 'deleted' ? 'red.300' : versionPreview?.elementChanges.get(Number(selectedId)) ? 'yellow.300' : undefined}
+                          outlineOffset="3px"
                           boxShadow={selectedCardShadow}
                         >
                           <ElementBody
@@ -995,10 +1056,11 @@ export default function Dependencies() {
                                 {column.map((n) => (
                                   <NeighbourCard
                                     key={n.element.id}
-                                    node={n}
-                                    compactLevel={rightCompactLevel}
-                                    onClick={() => setSelectedId(n.element.id)}
-                                  />
+                                  node={n}
+                                  compactLevel={rightCompactLevel}
+                                  versionChangeType={versionPreview?.elementChanges.get(Number(n.element.id))}
+                                  onClick={() => selectElement(n.element.id)}
+                                />
                                 ))}
                               </VStack>
                             ))}
@@ -1019,7 +1081,8 @@ export default function Dependencies() {
                                   key={n.element.id}
                                   node={n}
                                   compactLevel={maxCompactLevel}
-                                  onClick={() => setSelectedId(n.element.id)}
+                                  versionChangeType={versionPreview?.elementChanges.get(Number(n.element.id))}
+                                  onClick={() => selectElement(n.element.id)}
                                 />
                               ))}
                             </HStack>

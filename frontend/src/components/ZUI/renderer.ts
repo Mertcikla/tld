@@ -131,9 +131,15 @@ export function setHiddenTags(tags: Set<string>): void {
 
 let currentVersionElementChanges: Map<number, string> = new Map()
 let currentVersionConnectorChanges: Map<number, string> = new Map()
-export function setVersionDiff(elementChanges: Map<number, string>, connectorChanges: Map<number, string>): void {
+let currentVersionElementLineDeltas: Map<number, { added: number; removed: number }> = new Map()
+export function setVersionDiff(
+  elementChanges: Map<number, string>,
+  connectorChanges: Map<number, string>,
+  elementLineDeltas: Map<number, { added: number; removed: number }> = new Map(),
+): void {
   currentVersionElementChanges = elementChanges
   currentVersionConnectorChanges = connectorChanges
+  currentVersionElementLineDeltas = elementLineDeltas
 }
 
 /**
@@ -801,6 +807,34 @@ function drawNode(
       traceShape()
       ctx.stroke()
       ctx.restore()
+
+      const delta = currentVersionElementLineDeltas.get(node.elementId)
+      if (delta && (delta.added > 0 || delta.removed > 0) && drawScreenW > 52) {
+        const addText = delta.added > 0 ? `+${delta.added}` : ''
+        const removeText = delta.removed > 0 ? `-${delta.removed}` : ''
+        const badgeText = [addText, removeText].filter(Boolean).join(' ')
+        const fontSize = getClampedFontSize(12, 8, 13, drawZoom)
+        ctx.save()
+        ctx.globalAlpha = parentAlpha
+        ctx.font = `800 ${fontSize}px Inter, system-ui, sans-serif`
+        const textWidth = ctx.measureText(badgeText).width
+        const badgeW = textWidth + 12 / drawZoom
+        const badgeH = 20 / drawZoom
+        const badgeX = x + w - badgeW - 6 / drawZoom
+        const badgeY = y + h - badgeH - 6 / drawZoom
+        ctx.fillStyle = 'rgba(17, 24, 39, 0.9)'
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)'
+        ctx.lineWidth = 1 / drawZoom
+        ctx.beginPath()
+        ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 5 / drawZoom)
+        ctx.fill()
+        ctx.stroke()
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillStyle = delta.added > 0 && delta.removed === 0 ? '#68d391' : delta.removed > 0 && delta.added === 0 ? '#fc8181' : '#e2e8f0'
+        ctx.fillText(badgeText, badgeX + badgeW / 2, badgeY + badgeH / 2)
+        ctx.restore()
+      }
     }
   }
 

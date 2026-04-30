@@ -412,6 +412,22 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     }
   }, [searchParams])
 
+  useEffect(() => {
+    const focusId = Number(searchParams.get('focus') ?? 0)
+    if (view !== 'explore' || !Number.isFinite(focusId) || focusId <= 0) return
+    let attempts = 0
+    let timer: number | null = null
+    const focus = () => {
+      attempts += 1
+      if (exploreRef.current?.focusDiagram(focusId)) return
+      if (attempts < 12) timer = window.setTimeout(focus, 150)
+    }
+    focus()
+    return () => {
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [searchParams, view])
+
   const refreshTree = useCallback(async () => {
     setTreeLoading(true)
     const tree = await api.workspace.views.tree().catch(() => null)

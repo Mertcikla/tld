@@ -779,7 +779,11 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   }, [hiddenTags])
 
   useEffect(() => {
-    setRendererVersionDiff(versionPreview?.elementChanges ?? new Map(), versionPreview?.connectorChanges ?? new Map())
+    setRendererVersionDiff(
+      versionPreview?.elementChanges ?? new Map(),
+      versionPreview?.connectorChanges ?? new Map(),
+      versionPreview?.elementLineDeltas ?? new Map(),
+    )
     needsRedrawRef.current = true
   }, [versionPreview])
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   Badge,
@@ -17,7 +17,7 @@ import {
   Tooltip,
   VStack,
 } from '@chakra-ui/react'
-import { ChevronDownIcon, CloseIcon, RepeatIcon, TimeIcon, ViewIcon } from '@chakra-ui/icons'
+import { ChevronDownIcon, CloseIcon, RepeatIcon, TimeIcon } from '@chakra-ui/icons'
 import {
   api,
   type WatchDiff,
@@ -29,6 +29,12 @@ import {
   type WorkspaceVersion,
 } from '../api/client'
 import { buildWorkspaceVersionPreview, useWorkspaceVersionPreview } from '../context/WorkspaceVersionContext'
+import {
+  buildWatchDiffLocations,
+  formatTldStatLine,
+  summarizeWatchDiffs,
+  type WatchDiffLocation,
+} from '../utils/watchDiffSummary'
 
 export const WATCH_REPRESENTATION_UPDATED_EVENT = 'tld:watch-representation-updated'
 
@@ -99,18 +105,10 @@ function shortHash(value?: string) {
 }
 
 function changeLabel(diffs: WatchDiff[]) {
-  const counts = diffs.reduce((acc, diff) => {
-    const key = diff.change_type || 'changed'
-    acc[key] = (acc[key] ?? 0) + 1
-    return acc
-  }, {} as Record<string, number>)
-  const parts = [
-    counts.added ? `+${counts.added}` : '',
-    counts.updated ? `~${counts.updated}` : '',
-    counts.deleted ? `-${counts.deleted}` : '',
-    counts.changed ? `${counts.changed} changed` : '',
-  ].filter(Boolean)
-  return parts.length > 0 ? parts.join('  ') : 'No materialized changes'
+  const summary = summarizeWatchDiffs(diffs)
+  const total = summary.elements.added + summary.elements.updated + summary.elements.deleted + summary.elements.changed +
+    summary.connectors.added + summary.connectors.updated + summary.connectors.deleted + summary.connectors.changed
+  return total > 0 ? formatTldStatLine(summary) : 'No materialized changes'
 }
 
 // ─── Themed dropdown ──────────────────────────────────────────────────────────
@@ -195,6 +193,7 @@ function ThemedSelect<T extends string | number>({ value, options, placeholder, 
 
 export default function WorkspacePanel() {
   const navigate = useNavigate()
+  const location = useLocation()
   const queryClient = useQueryClient()
 
   // ── Version state ─────────────────────────────────────────────────────────
@@ -207,6 +206,7 @@ export default function WorkspacePanel() {
   const [repoId, setRepoId] = useState<number | ''>('')
   const [versionId, setVersionId] = useState<number | ''>('')
   const [diffs, setDiffs] = useState<WatchDiff[]>([])
+  const [diffLocations, setDiffLocations] = useState<WatchDiffLocation[]>([])
 
   const selectedRepo = useMemo(() => repos.find((r) => r.id === repoId) ?? null, [repos, repoId])
   const selectedVersion = useMemo(() => versions.find((v) => v.id === versionId) ?? null, [versions, versionId])
@@ -251,19 +251,43 @@ export default function WorkspacePanel() {
     api.watch.diffs(versionId).then(setDiffs).catch(() => setDiffs([]))
   }, [versionId])
 
-  const applyPreview = useCallback(() => {
+  useEffect(() => {
+    if (!diffs.length) {
+      setDiffLocations([])
+      return
+    }
+    let cancelled = false
+    api.explore.load().then((data) => {
+      if (!cancelled) setDiffLocations(buildWatchDiffLocations(data, diffs).slice(0, 24))
+    }).catch(() => {
+      if (!cancelled) setDiffLocations([])
+    })
+    return () => { cancelled = true }
+  }, [diffs])
+
+  useEffect(() => {
+    if (!selectedVersion) return
     setPreview(buildWorkspaceVersionPreview({ repository: selectedRepo, version: selectedVersion, workspaceVersions, diffs }))
   }, [diffs, selectedRepo, selectedVersion, setPreview, workspaceVersions])
 
-  const follow = useCallback(() => {
-    if (!preview && selectedVersion) applyPreview()
+  const navigateToDiffLocation = useCallback((target: WatchDiffLocation) => {
     requestFollow()
-    navigate('/views?view=explore')
-  }, [applyPreview, navigate, preview, requestFollow, selectedVersion])
+    if (location.pathname === '/dependencies' && target.resourceType === 'element' && target.resourceId) {
+      navigate(`/dependencies?element=${target.resourceId}`)
+      return
+    }
+    if (location.pathname.startsWith('/views/') && !location.pathname.startsWith('/views?')) {
+      const elementQuery = target.resourceType === 'element' && target.resourceId ? `?element=${target.resourceId}` : ''
+      navigate(`/views/${target.viewId}${elementQuery}`)
+      return
+    }
+    navigate(`/views?view=explore&focus=${target.viewId}`)
+  }, [location.pathname, navigate, requestFollow])
 
   const compactSummary = preview ? changeLabel(preview.diffs) : diffs.length > 0 ? changeLabel(diffs) : 'Workspace versions'
   const activeVersion = preview?.version ?? selectedVersion
   const activeRepo = preview?.repository ?? selectedRepo
+  const diffSummary = useMemo(() => summarizeWatchDiffs(diffs), [diffs])
 
   // ── Watch state ───────────────────────────────────────────────────────────
   const socketRef = useRef<WebSocket | null>(null)
@@ -455,12 +479,37 @@ export default function WorkspacePanel() {
               onChange={(v) => setVersionId(v)}
             />
 
-            <HStack spacing={1.5} flexWrap="wrap">
-              <Badge colorScheme="green" fontSize="9px">+{diffs.filter((d) => d.change_type === 'added').length}</Badge>
-              <Badge colorScheme="yellow" fontSize="9px">~{diffs.filter((d) => d.change_type === 'updated').length}</Badge>
-              <Badge colorScheme="red" fontSize="9px">-{diffs.filter((d) => d.change_type === 'deleted').length}</Badge>
-              <Text fontSize="10px" color="gray.500">{workspaceVersions.length} snapshots</Text>
-            </HStack>
+            <VStack align="stretch" spacing={1.5}>
+              <HStack spacing={1.5} flexWrap="wrap">
+                <Badge colorScheme="green" fontSize="9px">+{diffs.filter((d) => d.change_type === 'added').length}</Badge>
+                <Badge colorScheme="yellow" fontSize="9px">~{diffs.filter((d) => d.change_type === 'updated').length}</Badge>
+                <Badge colorScheme="red" fontSize="9px">-{diffs.filter((d) => d.change_type === 'deleted').length}</Badge>
+                <Text fontSize="10px" color="gray.500">{workspaceVersions.length} snapshots</Text>
+              </HStack>
+              <Box
+                px={2}
+                py={1.5}
+                border="1px solid"
+                borderColor="whiteAlpha.100"
+                borderRadius="md"
+                bg="whiteAlpha.50"
+              >
+                <HStack spacing={1} fontFamily="mono" fontSize="10px" minW={0}>
+                  <Text color="gray.300" noOfLines={1}>
+                    {diffSummary.files.added + diffSummary.files.updated + diffSummary.files.deleted + diffSummary.files.changed} files changed,
+                  </Text>
+                  <Text color="green.300">+{diffSummary.files.addedLines}</Text>
+                  <Text color="red.300">-{diffSummary.files.removedLines}</Text>
+                </HStack>
+                <HStack spacing={2} mt={1} flexWrap="wrap">
+                  <Text fontSize="10px" color="gray.400" noOfLines={1}>TLD</Text>
+                  <Text fontSize="10px" color="green.300" fontFamily="mono">+{diffSummary.elements.added} elements</Text>
+                  <Text fontSize="10px" color="red.300" fontFamily="mono">-{diffSummary.elements.deleted} elements</Text>
+                  <Text fontSize="10px" color="green.300" fontFamily="mono">+{diffSummary.connectors.added} connectors</Text>
+                  <Text fontSize="10px" color="red.300" fontFamily="mono">-{diffSummary.connectors.deleted} connectors</Text>
+                </HStack>
+              </Box>
+            </VStack>
 
             {workspaceVersions.length > 0 && (
               <VStack align="stretch" spacing={0.5} maxH="72px" overflowY="auto" borderTop="1px solid" borderColor="whiteAlpha.100" pt={1.5}>
@@ -473,17 +522,44 @@ export default function WorkspacePanel() {
               </VStack>
             )}
 
-            <HStack spacing={1.5}>
-              <Button size="xs" leftIcon={<ViewIcon boxSize={2.5} />} onClick={applyPreview} isDisabled={!selectedVersion} h="26px" fontSize="11px">
-                Preview diff
-              </Button>
-              <Button size="xs" variant="outline" onClick={follow} isDisabled={!selectedVersion} h="26px" fontSize="11px">
-                Follow
-              </Button>
-              <Tooltip label="Rollback needs a backend restore endpoint for workspace snapshots.">
-                <Button size="xs" variant="ghost" isDisabled h="26px" fontSize="11px">Rollback</Button>
-              </Tooltip>
-            </HStack>
+            {diffLocations.length > 0 && (
+              <VStack align="stretch" spacing={1} maxH="116px" overflowY="auto" borderTop="1px solid" borderColor="whiteAlpha.100" pt={1.5}>
+                {diffLocations.map((target) => (
+                  <Button
+                    key={target.key}
+                    variant="ghost"
+                    size="xs"
+                    h="auto"
+                    minH="28px"
+                    justifyContent="flex-start"
+                    px={2}
+                    py={1}
+                    fontSize="10px"
+                    color="gray.200"
+                    onClick={() => navigateToDiffLocation(target)}
+                  >
+                    <HStack w="full" spacing={2} minW={0}>
+                      <Badge
+                        colorScheme={target.changeType === 'added' ? 'green' : target.changeType === 'deleted' ? 'red' : 'yellow'}
+                        fontSize="8px"
+                      >
+                        {target.resourceType}
+                      </Badge>
+                      <Box minW={0} flex={1} textAlign="left">
+                        <Text noOfLines={1}>{target.summary || target.label}</Text>
+                        <Text color="gray.500" noOfLines={1}>{target.viewName}</Text>
+                      </Box>
+                      {(target.addedLines > 0 || target.removedLines > 0) && (
+                        <HStack spacing={1} flexShrink={0}>
+                          {target.addedLines > 0 && <Text color="green.300">+{target.addedLines}</Text>}
+                          {target.removedLines > 0 && <Text color="red.300">-{target.removedLines}</Text>}
+                        </HStack>
+                      )}
+                    </HStack>
+                  </Button>
+                ))}
+              </VStack>
+            )}
           </VStack>
         </Collapse>
 

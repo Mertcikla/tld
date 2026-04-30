@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react'
 import type { WatchDiff, WatchRepository, WatchVersion, WorkspaceVersion } from '../api/client'
+import { normalizeWatchChangeType } from '../utils/watchDiffSummary'
 
 export type VersionChangeType = 'added' | 'updated' | 'deleted' | 'changed'
 
@@ -36,11 +37,6 @@ interface WorkspaceVersionContextValue {
 
 const WorkspaceVersionContext = createContext<WorkspaceVersionContextValue | null>(null)
 
-function normalizeChangeType(value: string): VersionChangeType {
-  if (value === 'added' || value === 'updated' || value === 'deleted') return value
-  return 'changed'
-}
-
 export function buildWorkspaceVersionPreview(args: {
   repository: WatchRepository | null
   version: WatchVersion | null
@@ -53,7 +49,7 @@ export function buildWorkspaceVersionPreview(args: {
   const summary = { added: 0, updated: 0, deleted: 0, changed: 0, elements: 0, connectors: 0 }
 
   args.diffs.forEach((diff) => {
-    const change = normalizeChangeType(diff.change_type)
+    const change = normalizeWatchChangeType(diff.change_type)
     summary[change] += 1
     if (diff.resource_type === 'element' && diff.resource_id) {
       elementChanges.set(diff.resource_id, change)
