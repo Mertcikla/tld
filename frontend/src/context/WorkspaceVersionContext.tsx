@@ -41,14 +41,15 @@ export function buildWorkspaceVersionPreview(args: {
   repository: WatchRepository | null
   version: WatchVersion | null
   workspaceVersions: WorkspaceVersion[]
-  diffs: WatchDiff[]
+  diffs: WatchDiff[] | null | undefined
 }): WorkspaceVersionPreview {
+  const diffs = Array.isArray(args.diffs) ? args.diffs : []
   const elementChanges = new Map<number, VersionChangeType>()
   const elementLineDeltas = new Map<number, VersionLineDelta>()
   const connectorChanges = new Map<number, VersionChangeType>()
   const summary = { added: 0, updated: 0, deleted: 0, changed: 0, elements: 0, connectors: 0 }
 
-  args.diffs.forEach((diff) => {
+  diffs.forEach((diff) => {
     const change = normalizeWatchChangeType(diff.change_type)
     summary[change] += 1
     if (diff.resource_type === 'element' && diff.resource_id) {
@@ -70,7 +71,7 @@ export function buildWorkspaceVersionPreview(args: {
     repository: args.repository,
     version: args.version,
     workspaceVersions: args.workspaceVersions,
-    diffs: args.diffs,
+    diffs,
     elementChanges,
     elementLineDeltas,
     connectorChanges,

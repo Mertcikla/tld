@@ -40,13 +40,13 @@ export function emptyWatchResourceStat(): WatchResourceStat {
   return { added: 0, updated: 0, deleted: 0, changed: 0, addedLines: 0, removedLines: 0 }
 }
 
-export function summarizeWatchDiffs(diffs: WatchDiff[]): WatchDiffSummary {
+export function summarizeWatchDiffs(diffs: WatchDiff[] | null | undefined): WatchDiffSummary {
   const summary = {
     files: emptyWatchResourceStat(),
     elements: emptyWatchResourceStat(),
     connectors: emptyWatchResourceStat(),
   }
-  diffs.forEach((diff) => {
+  ;(Array.isArray(diffs) ? diffs : []).forEach((diff) => {
     const bucket =
       diff.resource_type === 'file' || diff.owner_type === 'file'
         ? summary.files
@@ -90,7 +90,7 @@ function connectorName(connector: Connector): string {
   return connector.label || connector.relationship || `connector ${connector.id}`
 }
 
-export function buildWatchDiffLocations(data: ExploreData, diffs: WatchDiff[]): WatchDiffLocation[] {
+export function buildWatchDiffLocations(data: ExploreData, diffs: WatchDiff[] | null | undefined): WatchDiffLocation[] {
   const views = flattenViews(data.tree ?? [])
   const elementViews = new Map<number, WatchDiffLocation[]>()
   const connectorViews = new Map<number, WatchDiffLocation>()
@@ -130,7 +130,7 @@ export function buildWatchDiffLocations(data: ExploreData, diffs: WatchDiff[]): 
   })
 
   const locations: WatchDiffLocation[] = []
-  diffs.forEach((diff) => {
+  ;(Array.isArray(diffs) ? diffs : []).forEach((diff) => {
     if (!diff.resource_id) return
     const base = {
       changeType: normalizeWatchChangeType(diff.change_type),

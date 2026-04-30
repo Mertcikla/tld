@@ -116,6 +116,10 @@ function changeLabel(diffs: WatchDiff[]) {
   return total > 0 ? formatTldStatLine(summary) : 'No materialized changes'
 }
 
+function normalizeDiffs(value: WatchDiff[] | null | undefined): WatchDiff[] {
+  return Array.isArray(value) ? value : []
+}
+
 // ─── Themed dropdown ──────────────────────────────────────────────────────────
 
 interface ThemedSelectProps<T extends string | number> {
@@ -226,7 +230,7 @@ export default function WorkspacePanel() {
       return
     }
     const latestDiffs = await api.watch.diffs(latest.id).catch(() => [] as WatchDiff[])
-    setDiffs(latestDiffs)
+    setDiffs(normalizeDiffs(latestDiffs))
   }, [])
 
   const loadVersions = useCallback(async () => {
@@ -266,7 +270,7 @@ export default function WorkspacePanel() {
 
   useEffect(() => {
     if (!versionId) { setDiffs([]); return }
-    api.watch.diffs(versionId).then(setDiffs).catch(() => setDiffs([]))
+    api.watch.diffs(versionId).then((next) => setDiffs(normalizeDiffs(next))).catch(() => setDiffs([]))
   }, [versionId])
 
   useEffect(() => {
@@ -354,7 +358,7 @@ export default function WorkspacePanel() {
     if (event.type === 'watch.stopped') { setWatchActive(false); setWatchPaused(false) }
     if (event.type === 'representation.updated') {
       const data = event.data as Partial<WatchRepresentationSummary> | undefined
-      if (Array.isArray(data?.diffs)) setDiffs(data.diffs)
+      if ('diffs' in (data ?? {})) setDiffs(normalizeDiffs(data?.diffs))
       refreshWorkspace(event)
     }
     if (event.type === 'version.created') {

@@ -602,11 +602,13 @@ type cliProgress struct {
 }
 
 type watchActivityProgress struct {
-	out    io.Writer
-	bar    *progressbar.ProgressBar
-	mu     sync.Mutex
-	ticker *time.Ticker
-	stopCh chan struct{}
+	out       io.Writer
+	mu        sync.Mutex
+	ticker    *time.Ticker
+	stopCh    chan struct{}
+	startTime time.Time
+	dots      int
+	label     string
 }
 
 func newCLIProgress(out io.Writer) watch.ProgressSink {
@@ -629,35 +631,39 @@ func (p *watchActivityProgress) Start(label string) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.bar != nil {
+	if p.ticker != nil {
 		if label != "" {
-			p.bar.Describe(label)
+			p.label = label
+			p.renderLocked(false)
 		}
 		return
 	}
-	p.bar = progressbar.NewOptions(-1,
-		progressbar.OptionSetWriter(p.out),
-		progressbar.OptionSetVisibility(true),
-		progressbar.OptionSetDescription(label),
-		progressbar.OptionSetWidth(12),
-		progressbar.OptionShowIts(),
-		progressbar.OptionClearOnFinish(),
-		progressbar.OptionUseANSICodes(true),
-		progressbar.OptionThrottle(60*time.Millisecond),
-		progressbar.OptionSetPredictTime(false),
-	)
-	p.ticker = time.NewTicker(200 * time.Millisecond)
+	p.label = label
+	p.startTime = time.Now()
+	p.ticker = time.NewTicker(1 * time.Second)
 	p.stopCh = make(chan struct{})
+	p.renderLocked(false)
 	go func() {
 		for {
 			select {
 			case <-p.ticker.C:
-				p.Advance("")
+				p.mu.Lock()
+				p.renderLocked(true)
+				p.mu.Unlock()
 			case <-p.stopCh:
 				return
 			}
 		}
 	}()
+}
+
+func (p *watchActivityProgress) renderLocked(incrementDots bool) {
+	if incrementDots {
+		p.dots = (p.dots + 1) % 4
+	}
+	dotsStr := strings.Repeat(".", p.dots) + strings.Repeat(" ", 3-p.dots)
+	elapsed := time.Since(p.startTime).Round(time.Second)
+	_, _ = fmt.Fprintf(p.out, "\r\033[K%s%s [%s]", term.Colorize(p.out, term.ColorCyan, p.label), dotsStr, elapsed)
 }
 
 func (p *watchActivityProgress) Advance(label string) {
@@ -666,13 +672,13 @@ func (p *watchActivityProgress) Advance(label string) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.bar == nil {
+	if p.ticker == nil {
 		return
 	}
 	if label != "" {
-		p.bar.Describe(label)
+		p.label = label
+		p.renderLocked(false)
 	}
-	_ = p.bar.Add(1)
 }
 
 func (p *watchActivityProgress) Stop() {
@@ -689,10 +695,7 @@ func (p *watchActivityProgress) Stop() {
 		close(p.stopCh)
 		p.stopCh = nil
 	}
-	if p.bar != nil {
-		_ = p.bar.Finish()
-		p.bar = nil
-	}
+	_, _ = fmt.Fprintf(p.out, "\r\033[K")
 }
 
 func (p *cliProgress) Start(label string, total int) {

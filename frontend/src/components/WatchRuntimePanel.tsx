@@ -141,11 +141,11 @@ export default function WatchRuntimePanel() {
 
   const loadVersionDiffLines = useCallback(async (event: WatchEvent) => {
     const data = event.data as { diffs?: WatchDiff[] } | undefined
-    let diffs = data?.diffs ?? []
+    let diffs = Array.isArray(data?.diffs) ? data.diffs : []
     if (event.type === 'version.created' && diffs.length === 0) {
       const version = event.data as Partial<WatchVersion> | undefined
       if (!version?.id) return
-      diffs = await api.watch.diffs(version.id).catch(() => [])
+      diffs = await api.watch.diffs(version.id).then((next) => Array.isArray(next) ? next : []).catch(() => [])
     }
     const preferred = diffs.filter((diff) => diff.resource_type === 'file' || diff.resource_type === 'connector')
     const displayDiffs = preferred.length > 0 ? preferred : diffs.filter((diff) => diff.owner_type !== 'repository')
