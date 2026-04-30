@@ -12,7 +12,9 @@ import WatchHistory from './pages/WatchHistory'
 import { HeaderProvider, useHeader } from './components/HeaderContext'
 import TopMenuBar from './components/TopMenuBar'
 import WatchRuntimePanel from './components/WatchRuntimePanel'
+import WorkspaceVersionPanel from './components/WorkspaceVersionPanel'
 import { ThemeProvider } from './context/ThemeContext'
+import { WorkspaceVersionProvider } from './context/WorkspaceVersionContext'
 import { ACCENT_DEFAULT, BACKGROUND_DEFAULT, ELEMENT_DEFAULT, hexToRgba } from './constants/colors'
 import { platform } from './platform/local'
 
@@ -33,6 +35,7 @@ function AppLayout() {
       />
       <Box flex="1" overflow="hidden" position="relative">
         <Outlet />
+        <WorkspaceVersionPanel />
         <WatchRuntimePanel />
       </Box>
     </Box>
@@ -112,11 +115,13 @@ export default function App() {
         <Routes>
           {platform.getRoutes({ user: null })}
 
-          <Route path="/explore/shared/:token" element={<Box h="100vh" overflow="hidden"><HeaderProvider><SharedInfiniteZoom /></HeaderProvider></Box>} />
+          <Route path="/explore/shared/:token" element={<Box h="100vh" overflow="hidden"><HeaderProvider><WorkspaceVersionProvider><SharedInfiniteZoom /></WorkspaceVersionProvider></HeaderProvider></Box>} />
           <Route
             element={
               <HeaderProvider>
-                <AppLayout />
+                <WorkspaceVersionProvider>
+                  <AppLayout />
+                </WorkspaceVersionProvider>
               </HeaderProvider>
             }
           >

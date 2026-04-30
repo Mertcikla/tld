@@ -27,11 +27,12 @@ import { Link as RouterLink } from 'react-router-dom'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import type { ExploreData } from '../../types'
 import { computeLayout } from './layout'
-import { renderFrame, getExpandThresholds, setOnImageLoadCallback, setHighlightedTags as setRendererHighlightedTags, setHiddenTags as setRendererHiddenTags, setHighlightColor as setRendererHighlightColor } from './renderer'
+import { renderFrame, getExpandThresholds, setOnImageLoadCallback, setHighlightedTags as setRendererHighlightedTags, setHiddenTags as setRendererHiddenTags, setHighlightColor as setRendererHighlightColor, setVersionDiff as setRendererVersionDiff } from './renderer'
 import { useZUIInteraction } from './useZUIInteraction'
 import type { DiagramGroupLayout, ZUIViewState } from './types'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
+import type { WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
 import type { ZUIResolvedConnector } from '../../crossBranch/resolve'
 import {
   buildVisibleProxyConnectors,
@@ -61,6 +62,7 @@ interface Props {
   highlightedTags?: string[]
   highlightColor?: string
   hiddenTags?: string[]
+  versionPreview?: WorkspaceVersionPreview | null
   crossBranchSettings: CrossBranchContextSettings
   hoverLocked?: boolean
 }
@@ -326,7 +328,7 @@ function findFirstExpandableNodeInTree(
   return null
 }
 
-export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, initialCameraFrame, highlightedTags, highlightColor, hiddenTags, crossBranchSettings, hoverLocked = false }, ref) {
+export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, initialCameraFrame, highlightedTags, highlightColor, hiddenTags, versionPreview, crossBranchSettings, hoverLocked = false }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const cameraTransitionRef = useRef<number | null>(null)
@@ -777,6 +779,11 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   }, [hiddenTags])
 
   useEffect(() => {
+    setRendererVersionDiff(versionPreview?.elementChanges ?? new Map(), versionPreview?.connectorChanges ?? new Map())
+    needsRedrawRef.current = true
+  }, [versionPreview])
+
+  useEffect(() => {
     setHoverLocked(hoverLocked)
   }, [hoverLocked, setHoverLocked])
 
@@ -786,6 +793,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       setRendererHighlightedTags(new Set())
       setRendererHighlightColor('')
       setRendererHiddenTags(new Set())
+      setRendererVersionDiff(new Map(), new Map())
     }
   }, [])
 

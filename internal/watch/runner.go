@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mertcikla/tld/internal/analyzer"
 	tldgit "github.com/mertcikla/tld/internal/git"
+	"github.com/mertcikla/tld/internal/ignore"
 )
 
 type RunnerOptions struct {
@@ -23,6 +25,7 @@ type RunnerOptions struct {
 	HeartbeatInterval time.Duration
 	SummaryInterval   time.Duration
 	Embedding         EmbeddingConfig
+	Settings          Settings
 	Progress          ProgressSink
 	Events            chan<- Event
 	Ready             chan<- RunnerResult
@@ -64,11 +67,12 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	if opts.Path == "" {
 		opts.Path = "."
 	}
+	settings := NormalizeSettings(opts.Settings)
 	if opts.PollInterval <= 0 {
-		opts.PollInterval = time.Second
+		opts.PollInterval = settings.PollInterval
 	}
 	if opts.Debounce <= 0 {
-		opts.Debounce = 500 * time.Millisecond
+		opts.Debounce = settings.Debounce
 	}
 	if opts.HeartbeatInterval <= 0 {
 		opts.HeartbeatInterval = 2 * time.Second
@@ -76,6 +80,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	if opts.SummaryInterval <= 0 {
 		opts.SummaryInterval = time.Minute
 	}
+	r.Scanner.Settings = settings
 
 	absPath, err := filepath.Abs(opts.Path)
 	if err != nil {
@@ -87,12 +92,12 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	}
 
 	gitStatus, _ := gitStatusSnapshot(repoRoot)
-	emit(opts.Events, Event{Type: "scan.started", At: nowString()})
-	scan, err := r.Scanner.Scan(ctx, repoRoot)
+	emit(opts.Events, Event{Type: "scan.started", At: nowString(), Phase: "scan", WatcherMode: settings.Watcher, Languages: settings.Languages})
+	scan, err := r.Scanner.ScanWithOptions(ctx, repoRoot, ScanOptions{Force: opts.Rescan})
 	if err != nil {
 		return RunnerResult{}, err
 	}
-	emit(opts.Events, Event{Type: "scan.completed", RepositoryID: scan.RepositoryID, At: nowString(), Data: scan})
+	emit(opts.Events, Event{Type: "scan.completed", RepositoryID: scan.RepositoryID, At: nowString(), Data: scan, Phase: "scan", WatcherMode: settings.Watcher, Languages: settings.Languages, Warnings: scan.Warnings})
 	repo, err := r.Store.Repository(ctx, scan.RepositoryID)
 	if err != nil {
 		return RunnerResult{}, err
@@ -103,7 +108,10 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 		return RunnerResult{}, err
 	}
 	_ = lock
-	emit(opts.Events, Event{Type: "watch.started", RepositoryID: repo.ID, At: nowString(), Data: repo.JSON()})
+	sourceWatcher := newSourceWatcher(ctx, repoRoot, settings, r.Scanner.Rules)
+	watcherMode := sourceWatcher.Mode
+	warnings := append([]string{}, sourceWatcher.Warnings...)
+	emit(opts.Events, Event{Type: "watch.started", RepositoryID: repo.ID, At: nowString(), Data: repo.JSON(), Phase: "watch", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
 	emit(opts.Events, Event{Type: "lock.enabled", RepositoryID: repo.ID, At: nowString()})
 	defer func() {
 		_ = r.Store.ReleaseLock(context.Background(), repo.ID, token)
@@ -111,12 +119,12 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 		emit(opts.Events, Event{Type: "watch.stopped", RepositoryID: repo.ID, At: nowString()})
 	}()
 
-	emit(opts.Events, Event{Type: "representation.started", RepositoryID: repo.ID, At: nowString()})
-	rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{Embedding: opts.Embedding, Progress: opts.Progress})
+	emit(opts.Events, Event{Type: "representation.started", RepositoryID: repo.ID, At: nowString(), Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
+	rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{Embedding: opts.Embedding, Thresholds: settings.Thresholds, Progress: opts.Progress})
 	if err != nil {
 		return RunnerResult{}, err
 	}
-	emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep})
+	emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep, Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
 	_, _ = r.Store.ApplyGitTags(ctx, repo.ID, gitStatus)
 	if gitStatus.HeadCommit != "" {
 		_ = r.createVersionForHead(ctx, repo.ID, gitStatus, rep.RepresentationHash)
@@ -129,7 +137,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 		default:
 		}
 	}
-	lastSourceSnapshot := sourceFileSnapshot(repoRoot)
+	lastSourceSnapshot := sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
 	lastFingerprint := sourceFileFingerprint(lastSourceSnapshot)
 	lastHead := gitStatus.HeadCommit
 	lastGitFingerprint := gitStatusFingerprint(gitStatus)
@@ -151,6 +159,8 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 				Type:         "watch.changeCounter",
 				RepositoryID: repo.ID,
 				At:           nowString(),
+				WatcherMode:  watcherMode,
+				Languages:    settings.Languages,
 				Data: ChangeCounter{
 					TotalChangesProcessed:    totalChangesProcessed,
 					IntervalChangesProcessed: intervalChangesProcessed,
@@ -168,7 +178,11 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			if err == nil && status == "paused" {
 				emit(opts.Events, Event{Type: "watch.paused", RepositoryID: repo.ID, At: nowString()})
 			}
-			emit(opts.Events, Event{Type: "watch.heartbeat", RepositoryID: repo.ID, At: nowString()})
+			emit(opts.Events, Event{Type: "watch.heartbeat", RepositoryID: repo.ID, At: nowString(), Phase: "watch", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
+		case _, ok := <-sourceWatcher.Events:
+			if ok {
+				poll.Reset(time.Millisecond)
+			}
 		case <-poll.C:
 			status, err := r.Store.LockStatus(ctx, repo.ID, token)
 			if err == nil && status == "paused" {
@@ -177,7 +191,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			if err == nil && status == "stopping" {
 				return result, nil
 			}
-			nextSourceSnapshot := sourceFileSnapshot(repoRoot)
+			nextSourceSnapshot := sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
 			nextFingerprint := sourceFileFingerprint(nextSourceSnapshot)
 			nextGit, _ := gitStatusSnapshot(repoRoot)
 			nextGitFingerprint := gitStatusFingerprint(nextGit)
@@ -185,24 +199,25 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 				continue
 			}
 			time.Sleep(opts.Debounce)
-			stableSourceSnapshot := sourceFileSnapshot(repoRoot)
+			stableSourceSnapshot := sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
 			nextGit, _ = gitStatusSnapshot(repoRoot)
 			nextGitFingerprint = gitStatusFingerprint(nextGit)
 			sourceChanges := diffSourceFileSnapshots(lastSourceSnapshot, stableSourceSnapshot)
-			emit(opts.Events, Event{Type: "scan.started", RepositoryID: repo.ID, At: nowString()})
-			scan, err := r.Scanner.Scan(ctx, repoRoot)
+			emit(opts.Events, Event{Type: "scan.started", RepositoryID: repo.ID, At: nowString(), Phase: "scan", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: warnings})
+			scan, err := r.Scanner.ScanWithOptions(ctx, repoRoot, ScanOptions{})
 			if err != nil {
 				emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: err.Error()})
 				continue
 			}
-			emit(opts.Events, Event{Type: "scan.completed", RepositoryID: repo.ID, At: nowString(), Data: scan})
-			emit(opts.Events, Event{Type: "representation.started", RepositoryID: repo.ID, At: nowString()})
-			rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{Embedding: opts.Embedding, Progress: opts.Progress})
+			eventWarnings := append(append([]string{}, warnings...), scan.Warnings...)
+			emit(opts.Events, Event{Type: "scan.completed", RepositoryID: repo.ID, At: nowString(), Data: scan, Phase: "scan", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
+			emit(opts.Events, Event{Type: "representation.started", RepositoryID: repo.ID, At: nowString(), Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
+			rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{Embedding: opts.Embedding, Thresholds: settings.Thresholds, Progress: opts.Progress})
 			if err != nil {
 				emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: err.Error()})
 				continue
 			}
-			emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep})
+			emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep, Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
 			tagResult, _ := r.Store.ApplyGitTags(ctx, repo.ID, nextGit)
 			representationChanged := rep.RepresentationHash != result.InitialRep.RepresentationHash ||
 				rep.ElementsCreated > 0 ||
@@ -217,6 +232,11 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 					Type:         "source.changed",
 					RepositoryID: repo.ID,
 					At:           nowString(),
+					Phase:        "watch",
+					WatcherMode:  watcherMode,
+					Languages:    settings.Languages,
+					ChangedFiles: len(sourceChanges),
+					Warnings:     eventWarnings,
 					Data: SourceFileChangeResult{
 						Change:                change,
 						RepresentationChanged: representationChanged,
@@ -269,18 +289,15 @@ func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, s
 	if err == nil {
 		workspaceID = &workspaceVersionID
 	}
-	changeType := "updated"
-	if !found {
-		changeType = "added"
-	}
-	summary := "Representation " + changeType + " for " + shortHash(status.HeadCommit)
-	diff := RepresentationDiff{OwnerType: "repository", OwnerKey: fmt.Sprintf("%d", repositoryID), ChangeType: changeType, AfterHash: &representationHash, Summary: &summary}
 	parent := ""
 	if found {
 		parent = latest.CommitHash
-		diff.BeforeHash = &latest.RepresentationHash
 	}
-	_, err = r.Store.CreateWatchVersion(ctx, repositoryID, status.HeadCommit, parent, status.Branch, representationHash, workspaceID, []RepresentationDiff{diff})
+	diffs, err := r.Store.BuildWatchDiffs(ctx, repositoryID, representationHash)
+	if err != nil {
+		return err
+	}
+	_, err = r.Store.CreateWatchVersion(ctx, repositoryID, status.HeadCommit, parent, status.Branch, representationHash, workspaceID, diffs)
 	return err
 }
 
@@ -313,18 +330,37 @@ func gitStatusFingerprint(status GitStatus) string {
 	return hashString(strings.Join(parts, "\n"))
 }
 
-func sourceFileSnapshot(repoRoot string) map[string]string {
+func sourceFileSnapshot(repoRoot string, settings Settings, rules *ignore.Rules) map[string]string {
 	files := map[string]string{}
+	settings = NormalizeSettings(settings)
+	allowed := map[string]struct{}{}
+	for _, language := range settings.Languages {
+		allowed[language] = struct{}{}
+	}
+	if rules == nil {
+		rules = &ignore.Rules{}
+	}
 	_ = filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() || filepath.Ext(path) != ".go" {
+		if err != nil {
 			return nil
 		}
 		rel, _ := filepath.Rel(repoRoot, path)
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if rel != "." && (rules.ShouldIgnorePath(rel) || isHiddenBuildOutput(d.Name())) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		language, ok := analyzer.DetectLanguage(path)
+		if !ok || !languageAllowed(string(language), allowed) || rules.ShouldIgnorePath(rel) {
+			return nil
+		}
 		info, err := d.Info()
 		if err != nil {
 			return nil
 		}
-		files[filepath.ToSlash(rel)] = info.ModTime().UTC().Format(time.RFC3339Nano) + ":" + fmt.Sprint(info.Size())
+		files[rel] = string(language) + ":" + info.ModTime().UTC().Format(time.RFC3339Nano) + ":" + fmt.Sprint(info.Size())
 		return nil
 	})
 	return files
@@ -351,14 +387,14 @@ func diffSourceFileSnapshots(before, after map[string]string) []SourceFileChange
 		prev, ok := before[path]
 		switch {
 		case !ok:
-			changes = append(changes, SourceFileChange{Path: path, ChangeType: "added"})
+			changes = append(changes, SourceFileChange{Path: path, ChangeType: "added", Language: sourceSnapshotLanguage(next)})
 		case prev != next:
-			changes = append(changes, SourceFileChange{Path: path, ChangeType: "modified"})
+			changes = append(changes, SourceFileChange{Path: path, ChangeType: "modified", Language: sourceSnapshotLanguage(next)})
 		}
 	}
 	for path := range before {
 		if _, ok := seen[path]; !ok {
-			changes = append(changes, SourceFileChange{Path: path, ChangeType: "deleted"})
+			changes = append(changes, SourceFileChange{Path: path, ChangeType: "deleted", Language: sourceSnapshotLanguage(before[path])})
 		}
 	}
 	sort.Slice(changes, func(i, j int) bool {
@@ -368,6 +404,13 @@ func diffSourceFileSnapshots(before, after map[string]string) []SourceFileChange
 		return changes[i].Path < changes[j].Path
 	})
 	return changes
+}
+
+func sourceSnapshotLanguage(value string) string {
+	if idx := strings.Index(value, ":"); idx > 0 {
+		return value[:idx]
+	}
+	return ""
 }
 
 func randomToken() string {

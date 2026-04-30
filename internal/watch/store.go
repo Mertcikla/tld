@@ -867,6 +867,12 @@ func (s *Store) Materialization(ctx context.Context, repositoryID int64) ([]Mate
 	return out, rows.Err()
 }
 
+func (s *Store) RepositoryMaterializationCount(ctx context.Context, repositoryID int64) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM watch_materialization WHERE repository_id = ?`, repositoryID).Scan(&count)
+	return count, err
+}
+
 type FilterDecisionQuery struct {
 	OwnerType string
 	Decision  string
@@ -1221,6 +1227,9 @@ func (s *Store) CreateWatchVersion(ctx context.Context, repositoryID int64, comm
 			return Version{}, err
 		}
 	}
+	if err := s.SaveWatchVersionResources(ctx, version.ID, repositoryID); err != nil {
+		return Version{}, err
+	}
 	return version, nil
 }
 
@@ -1295,7 +1304,7 @@ func (s *Store) CreateWorkspaceVersion(ctx context.Context, versionID, source st
 	return res.LastInsertId()
 }
 
-func (s *Store) WatchDiffs(ctx context.Context, versionID int64, ownerType, changeType string, limit int) ([]RepresentationDiff, error) {
+func (s *Store) WatchDiffs(ctx context.Context, versionID int64, ownerType, changeType, resourceType, language string, limit int) ([]RepresentationDiff, error) {
 	if limit <= 0 {
 		limit = 200
 	}
@@ -1311,6 +1320,10 @@ func (s *Store) WatchDiffs(ctx context.Context, versionID int64, ownerType, chan
 	if changeType != "" {
 		query += ` AND change_type = ?`
 		args = append(args, changeType)
+	}
+	if resourceType != "" {
+		query += ` AND resource_type = ?`
+		args = append(args, resourceType)
 	}
 	query += ` ORDER BY id LIMIT ?`
 	args = append(args, limit)
@@ -1333,10 +1346,260 @@ func (s *Store) WatchDiffs(ctx context.Context, versionID int64, ownerType, chan
 		if resourceID.Valid {
 			diff.ResourceID = &resourceID.Int64
 		}
+		if lang := diffLanguage(diff); lang != "" {
+			diff.Language = &lang
+		}
 		diff.Summary = nullStringPtr(summary)
-		out = append(out, diff)
+		if language == "" || (diff.Language != nil && *diff.Language == language) {
+			out = append(out, diff)
+		}
 	}
 	return out, rows.Err()
+}
+
+type watchResourceSnapshot struct {
+	OwnerType    string
+	OwnerKey     string
+	ResourceType string
+	ResourceID   *int64
+	Language     string
+	Hash         string
+	Summary      string
+}
+
+func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, representationHash string) ([]RepresentationDiff, error) {
+	current, err := s.CurrentWatchResourceSnapshots(ctx, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	latest, found, err := s.LatestWatchVersion(ctx, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	previous := map[string]watchResourceSnapshot{}
+	if found {
+		previous, err = s.WatchVersionResourceSnapshots(ctx, latest.ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var diffs []RepresentationDiff
+	repoKey := fmt.Sprintf("%d", repositoryID)
+	repoSummary := "Representation added"
+	change := "added"
+	if found {
+		change = "updated"
+		repoSummary = "Representation updated"
+	}
+	diffs = append(diffs, RepresentationDiff{OwnerType: "repository", OwnerKey: repoKey, ChangeType: change, BeforeHash: stringPtrIf(found, latest.RepresentationHash), AfterHash: &representationHash, Summary: &repoSummary})
+	for key, next := range current {
+		prev, ok := previous[key]
+		if !ok {
+			diffs = append(diffs, snapshotDiff(next, "added", nil, &next.Hash))
+			continue
+		}
+		if prev.Hash != next.Hash || ptrInt64Value(prev.ResourceID) != ptrInt64Value(next.ResourceID) {
+			before, after := prev.Hash, next.Hash
+			diffs = append(diffs, snapshotDiff(next, "updated", &before, &after))
+		}
+		delete(previous, key)
+	}
+	for _, prev := range previous {
+		before := prev.Hash
+		diffs = append(diffs, snapshotDiff(prev, "deleted", &before, nil))
+	}
+	sort.Slice(diffs, func(i, j int) bool {
+		if diffs[i].OwnerType == diffs[j].OwnerType {
+			return diffs[i].OwnerKey < diffs[j].OwnerKey
+		}
+		return diffs[i].OwnerType < diffs[j].OwnerType
+	})
+	return diffs, nil
+}
+
+func (s *Store) CurrentWatchResourceSnapshots(ctx context.Context, repositoryID int64) (map[string]watchResourceSnapshot, error) {
+	out := map[string]watchResourceSnapshot{}
+	fileRows, err := s.db.QueryContext(ctx, `SELECT id, path, language, worktree_hash FROM watch_files WHERE repository_id = ?`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	for fileRows.Next() {
+		var id int64
+		var path, language, hash string
+		if err := fileRows.Scan(&id, &path, &language, &hash); err != nil {
+			_ = fileRows.Close()
+			return nil, err
+		}
+		out[resourceSnapshotKey("file", path, "file")] = watchResourceSnapshot{OwnerType: "file", OwnerKey: path, ResourceType: "file", ResourceID: &id, Language: language, Hash: hash, Summary: path}
+	}
+	if err := fileRows.Close(); err != nil {
+		return nil, err
+	}
+	symRows, err := s.db.QueryContext(ctx, `
+		SELECT s.id, COALESCE(i.identity_key, s.stable_key), s.stable_key, s.content_hash, s.signature_hash, s.qualified_name
+		FROM watch_symbols s
+		LEFT JOIN watch_symbol_identities i ON i.repository_id = s.repository_id AND i.current_stable_key = s.stable_key
+		WHERE s.repository_id = ?`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	for symRows.Next() {
+		var id int64
+		var key, stableKey, contentHash, signatureHash, name string
+		if err := symRows.Scan(&id, &key, &stableKey, &contentHash, &signatureHash, &name); err != nil {
+			_ = symRows.Close()
+			return nil, err
+		}
+		hash := hashString(contentHash + ":" + signatureHash)
+		out[resourceSnapshotKey("symbol", key, "symbol")] = watchResourceSnapshot{OwnerType: "symbol", OwnerKey: key, ResourceType: "symbol", ResourceID: &id, Language: languageFromStableKey(stableKey), Hash: hash, Summary: name}
+	}
+	if err := symRows.Close(); err != nil {
+		return nil, err
+	}
+	mapRows, err := s.db.QueryContext(ctx, `
+		SELECT owner_type, owner_key, resource_type, resource_id
+		FROM watch_materialization
+		WHERE repository_id = ?`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	type materializedMapping struct {
+		OwnerType    string
+		OwnerKey     string
+		ResourceType string
+		ResourceID   int64
+	}
+	var mappings []materializedMapping
+	for mapRows.Next() {
+		var mapping materializedMapping
+		if err := mapRows.Scan(&mapping.OwnerType, &mapping.OwnerKey, &mapping.ResourceType, &mapping.ResourceID); err != nil {
+			_ = mapRows.Close()
+			return nil, err
+		}
+		mappings = append(mappings, mapping)
+	}
+	if err := mapRows.Close(); err != nil {
+		return nil, err
+	}
+	for _, mapping := range mappings {
+		hash, summary, language, err := s.materializedResourceHash(ctx, mapping.ResourceType, mapping.ResourceID)
+		if err != nil {
+			continue
+		}
+		id := mapping.ResourceID
+		out[resourceSnapshotKey(mapping.OwnerType, mapping.OwnerKey, mapping.ResourceType)] = watchResourceSnapshot{OwnerType: mapping.OwnerType, OwnerKey: mapping.OwnerKey, ResourceType: mapping.ResourceType, ResourceID: &id, Language: language, Hash: hash, Summary: summary}
+	}
+	return out, nil
+}
+
+func (s *Store) materializedResourceHash(ctx context.Context, resourceType string, resourceID int64) (string, string, string, error) {
+	switch resourceType {
+	case "element":
+		var name, kind, description, repo, branch, filePath, language sql.NullString
+		err := s.db.QueryRowContext(ctx, `SELECT name, kind, description, repo, branch, file_path, language FROM elements WHERE id = ?`, resourceID).Scan(&name, &kind, &description, &repo, &branch, &filePath, &language)
+		if err != nil {
+			return "", "", "", err
+		}
+		raw := strings.Join([]string{name.String, kind.String, description.String, repo.String, branch.String, filePath.String, language.String}, "\n")
+		return hashString(raw), name.String, language.String, nil
+	case "view":
+		var name, label sql.NullString
+		err := s.db.QueryRowContext(ctx, `SELECT name, level_label FROM views WHERE id = ?`, resourceID).Scan(&name, &label)
+		if err != nil {
+			return "", "", "", err
+		}
+		return hashString(name.String + "\n" + label.String), name.String, "", nil
+	case "connector":
+		var viewID, sourceID, targetID int64
+		var label, relationship sql.NullString
+		err := s.db.QueryRowContext(ctx, `SELECT view_id, source_element_id, target_element_id, label, relationship FROM connectors WHERE id = ?`, resourceID).Scan(&viewID, &sourceID, &targetID, &label, &relationship)
+		if err != nil {
+			return "", "", "", err
+		}
+		raw := fmt.Sprintf("%d:%d:%d:%s:%s", viewID, sourceID, targetID, label.String, relationship.String)
+		return hashString(raw), label.String, "", nil
+	default:
+		return "", "", "", fmt.Errorf("unsupported resource type %q", resourceType)
+	}
+}
+
+func (s *Store) WatchVersionResourceSnapshots(ctx context.Context, versionID int64) (map[string]watchResourceSnapshot, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT owner_type, owner_key, resource_type, resource_id, language, resource_hash, summary
+		FROM watch_version_resources
+		WHERE version_id = ?`, versionID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]watchResourceSnapshot{}
+	for rows.Next() {
+		var item watchResourceSnapshot
+		var resourceID sql.NullInt64
+		var language, summary sql.NullString
+		if err := rows.Scan(&item.OwnerType, &item.OwnerKey, &item.ResourceType, &resourceID, &language, &item.Hash, &summary); err != nil {
+			return nil, err
+		}
+		if resourceID.Valid {
+			item.ResourceID = &resourceID.Int64
+		}
+		item.Language = language.String
+		item.Summary = summary.String
+		out[resourceSnapshotKey(item.OwnerType, item.OwnerKey, item.ResourceType)] = item
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SaveWatchVersionResources(ctx context.Context, versionID, repositoryID int64) error {
+	snapshots, err := s.CurrentWatchResourceSnapshots(ctx, repositoryID)
+	if err != nil {
+		return err
+	}
+	for _, item := range snapshots {
+		_, err := s.db.ExecContext(ctx, `
+			INSERT OR REPLACE INTO watch_version_resources(version_id, owner_type, owner_key, resource_type, resource_id, language, resource_hash, summary)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			versionID, item.OwnerType, item.OwnerKey, item.ResourceType, item.ResourceID, nullString(item.Language), item.Hash, nullString(item.Summary))
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func snapshotDiff(snapshot watchResourceSnapshot, changeType string, beforeHash, afterHash *string) RepresentationDiff {
+	resourceType := snapshot.ResourceType
+	summary := snapshot.Summary
+	language := snapshot.Language
+	return RepresentationDiff{OwnerType: snapshot.OwnerType, OwnerKey: snapshot.OwnerKey, ChangeType: changeType, BeforeHash: beforeHash, AfterHash: afterHash, ResourceType: &resourceType, ResourceID: snapshot.ResourceID, Language: &language, Summary: &summary}
+}
+
+func resourceSnapshotKey(ownerType, ownerKey, resourceType string) string {
+	return ownerType + "\x00" + ownerKey + "\x00" + resourceType
+}
+
+func ptrInt64Value(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func stringPtrIf(ok bool, value string) *string {
+	if !ok {
+		return nil
+	}
+	return &value
+}
+
+func diffLanguage(diff RepresentationDiff) string {
+	if diff.Language != nil {
+		return *diff.Language
+	}
+	if diff.OwnerType == "symbol" || diff.ResourceType != nil && *diff.ResourceType == "symbol" {
+		return languageFromStableKey(diff.OwnerKey)
+	}
+	return ""
 }
 
 func (s *Store) fileByPath(ctx context.Context, repositoryID int64, path string) (File, bool, error) {

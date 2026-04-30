@@ -129,6 +129,13 @@ export function setHiddenTags(tags: Set<string>): void {
   currentHiddenTags = tags
 }
 
+let currentVersionElementChanges: Map<number, string> = new Map()
+let currentVersionConnectorChanges: Map<number, string> = new Map()
+export function setVersionDiff(elementChanges: Map<number, string>, connectorChanges: Map<number, string>): void {
+  currentVersionElementChanges = elementChanges
+  currentVersionConnectorChanges = connectorChanges
+}
+
 /**
  * Get image from cache or start loading it.
  * Returns the image if already loaded, null otherwise.
@@ -774,6 +781,29 @@ function drawNode(
     }
   }
 
+  if ((currentVersionElementChanges.size > 0 || currentVersionConnectorChanges.size > 0) && parentAlpha > 0.05) {
+    const change = currentVersionElementChanges.get(node.elementId)
+    if (!change) {
+      ctx.save()
+      ctx.globalAlpha = parentAlpha * 0.9
+      ctx.fillStyle = canvasBg
+      traceShape()
+      ctx.fill()
+      ctx.restore()
+    } else {
+      const color = change === 'added' ? '#68d391' : change === 'deleted' ? '#fc8181' : '#f6e05e'
+      ctx.save()
+      ctx.globalAlpha = parentAlpha
+      ctx.shadowColor = color
+      ctx.shadowBlur = 8 / drawZoom
+      ctx.strokeStyle = color
+      ctx.lineWidth = 2.5 / drawZoom
+      traceShape()
+      ctx.stroke()
+      ctx.restore()
+    }
+  }
+
   if (!hasChildren && screenW > thresholds.end) {
     ctx.restore()
   }
@@ -930,7 +960,9 @@ function drawEdges(
       )
 
       ctx.save()
-      ctx.globalAlpha = alpha * 0.8
+      const edgeChange = currentVersionConnectorChanges.get(edge.id)
+      const versionPreviewActive = currentVersionElementChanges.size > 0 || currentVersionConnectorChanges.size > 0
+      ctx.globalAlpha = versionPreviewActive && !edgeChange ? alpha * 0.1 : alpha * 0.8
       ctx.strokeStyle = accent
       ctx.lineWidth = 2 / zoom
 

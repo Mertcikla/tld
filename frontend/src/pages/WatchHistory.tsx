@@ -33,6 +33,8 @@ export default function WatchHistory() {
   const [loading, setLoading] = useState(true)
   const [ownerFilter, setOwnerFilter] = useState('')
   const [changeFilter, setChangeFilter] = useState('')
+  const [resourceFilter, setResourceFilter] = useState('')
+  const [languageFilter, setLanguageFilter] = useState('')
 
   const currentRepo = useMemo(() => repos.find((repo) => repo.id === repoId) ?? null, [repos, repoId])
 
@@ -82,8 +84,8 @@ export default function WatchHistory() {
       setDiffs([])
       return
     }
-    api.watch.diffs(selectedVersion, { owner_type: ownerFilter, change_type: changeFilter }).then(setDiffs)
-  }, [selectedVersion, ownerFilter, changeFilter])
+    api.watch.diffs(selectedVersion, { owner_type: ownerFilter, change_type: changeFilter, resource_type: resourceFilter, language: languageFilter }).then(setDiffs)
+  }, [selectedVersion, ownerFilter, changeFilter, resourceFilter, languageFilter])
 
   if (loading) {
     return (
@@ -157,6 +159,24 @@ export default function WatchHistory() {
             <option value="updated">Updated</option>
             <option value="deleted">Deleted</option>
           </Select>
+          <Select size="sm" maxW="220px" value={resourceFilter} onChange={(event) => setResourceFilter(event.target.value)}>
+            <option value="">All resources</option>
+            <option value="file">File</option>
+            <option value="symbol">Symbol</option>
+            <option value="element">Element</option>
+            <option value="view">View</option>
+            <option value="connector">Connector</option>
+          </Select>
+          <Select size="sm" maxW="220px" value={languageFilter} onChange={(event) => setLanguageFilter(event.target.value)}>
+            <option value="">All languages</option>
+            <option value="go">Go</option>
+            <option value="typescript">TypeScript</option>
+            <option value="javascript">JavaScript</option>
+            <option value="python">Python</option>
+            <option value="java">Java</option>
+            <option value="c">C</option>
+            <option value="cpp">C++</option>
+          </Select>
         </HStack>
 
         <Box overflowX="auto" border="1px solid var(--border-subtle)" borderRadius="8px">
@@ -166,6 +186,7 @@ export default function WatchHistory() {
                 <Th>Change</Th>
                 <Th>Owner</Th>
                 <Th>Resource</Th>
+                <Th>Language</Th>
                 <Th>Summary</Th>
                 <Th></Th>
               </Tr>
@@ -176,6 +197,7 @@ export default function WatchHistory() {
                   <Td>{diff.change_type}</Td>
                   <Td>{diff.owner_type}</Td>
                   <Td fontFamily="mono">{diff.resource_id ?? diff.owner_key}</Td>
+                  <Td>{diff.language || ''}</Td>
                   <Td>{diff.summary || ''}</Td>
                   <Td textAlign="right">
                     {diff.resource_type === 'element' && diff.resource_id && (
@@ -188,7 +210,7 @@ export default function WatchHistory() {
               ))}
               {diffs.length === 0 && (
                 <Tr>
-                  <Td colSpan={5}>
+                  <Td colSpan={6}>
                     <Text color="var(--text-muted)">No diffs match the current filters.</Text>
                   </Td>
                 </Tr>

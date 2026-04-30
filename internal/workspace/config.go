@@ -69,8 +69,20 @@ type WatchEmbeddingConfig struct {
 	HealthThreshold float64 `yaml:"health_threshold"`
 }
 
+type WatchThresholdConfig struct {
+	MaxElementsPerView    int `yaml:"max_elements_per_view"`
+	MaxConnectorsPerView  int `yaml:"max_connectors_per_view"`
+	MaxIncomingPerElement int `yaml:"max_incoming_per_element"`
+	MaxOutgoingPerElement int `yaml:"max_outgoing_per_element"`
+}
+
 type WatchConfig struct {
-	Embedding WatchEmbeddingConfig `yaml:"embedding"`
+	Languages    []string             `yaml:"languages"`
+	Watcher      string               `yaml:"watcher"`
+	PollInterval string               `yaml:"poll_interval"`
+	Debounce     string               `yaml:"debounce"`
+	Thresholds   WatchThresholdConfig `yaml:"thresholds"`
+	Embedding    WatchEmbeddingConfig `yaml:"embedding"`
 }
 
 // GlobalConfig represents the global tld.yaml configuration file.
@@ -117,6 +129,10 @@ serve:
   port: 8060
   # data_dir: ~/.local/share/tldiagram
 watch:
+  # languages: [go, python, typescript, javascript, java, c, cpp]
+  # watcher: auto # auto, fsnotify, or poll
+  # poll_interval: 1s
+  # debounce: 500ms
   embedding:
     provider: openai
     endpoint: http://127.0.0.1:8000/v1/embeddings

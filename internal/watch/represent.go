@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -362,7 +364,11 @@ type materializeStats struct {
 }
 
 func (r *Representer) materialize(ctx context.Context, repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string) (materializeStats, error) {
-	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys, runMarker: time.Now().UTC().Format(time.RFC3339Nano)}
+	initialLayout, err := r.Store.RepositoryMaterializationCount(ctx, repo.ID)
+	if err != nil {
+		return materializeStats{}, err
+	}
+	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys, initialLayout: initialLayout == 0, runMarker: time.Now().UTC().Format(time.RFC3339Nano), newPlacements: map[int64]map[int64]struct{}{}}
 	if err := m.ensureTags(ctx); err != nil {
 		return m.stats, err
 	}
@@ -370,13 +376,14 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	if err != nil {
 		return m.stats, err
 	}
+	repoLanguage := dominantLanguage(filtered.VisibleSymbols)
 	repoElem, err := m.upsertElement(ctx, "repository", fmt.Sprintf("repository:%d", repo.ID), elementInput{
 		Name:       repo.DisplayName,
 		Kind:       "repository",
-		Technology: "Go",
+		Technology: technologyLabel(repoLanguage),
 		Repo:       repoIdentity(repo),
 		Branch:     nullStringValue(repo.Branch),
-		Language:   "go",
+		Language:   repoLanguage,
 	})
 	if err != nil {
 		return m.stats, err
@@ -402,11 +409,11 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		elem, err := m.upsertElement(ctx, "folder", "folder:"+folder, elementInput{
 			Name:       path.Base(folder),
 			Kind:       "folder",
-			Technology: "Go",
+			Technology: technologyLabel(repoLanguage),
 			Repo:       repoIdentity(repo),
 			Branch:     nullStringValue(repo.Branch),
 			FilePath:   folder,
-			Language:   "go",
+			Language:   repoLanguage,
 		})
 		if err != nil {
 			return m.stats, err
@@ -425,6 +432,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	fileElements := map[string]int64{}
 	fileViews := map[string]int64{}
 	for i, file := range sortedKeys(visibleFiles) {
+		fileLanguage := languageForFile(file, filtered.VisibleSymbols)
 		parentView := repoView
 		if dir := path.Dir(file); dir != "." {
 			if id, ok := folderViews[dir]; ok {
@@ -434,11 +442,11 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		elem, err := m.upsertElement(ctx, "file", "file:"+file, elementInput{
 			Name:       path.Base(file),
 			Kind:       "file",
-			Technology: "Go",
+			Technology: technologyLabel(fileLanguage),
 			Repo:       repoIdentity(repo),
 			Branch:     nullStringValue(repo.Branch),
 			FilePath:   file,
-			Language:   "go",
+			Language:   fileLanguage,
 		})
 		if err != nil {
 			return m.stats, err
@@ -481,11 +489,11 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 				clusterElem, err := m.upsertElement(ctx, "cluster", clusterKey, elementInput{
 					Name:       cluster.Name,
 					Kind:       "cluster",
-					Technology: "Go",
+					Technology: technologyLabel(languageFromStableKey(chunk[0].StableKey)),
 					Repo:       repoIdentity(repo),
 					Branch:     nullStringValue(repo.Branch),
 					FilePath:   file,
-					Language:   "go",
+					Language:   languageFromStableKey(chunk[0].StableKey),
 				})
 				if err != nil {
 					return m.stats, err
@@ -502,17 +510,18 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 			if !detailedSymbols {
 				continue
 			}
-			for i, sym := range chunk {
-				elem, err := m.upsertElement(ctx, "symbol", symbolOwnerKey(sym, m.identityKeys), elementInput{
-					Name:        sym.QualifiedName,
-					Kind:        sym.Kind,
-					Description: fmt.Sprintf("%s:%d", sym.FilePath, sym.StartLine),
-					Technology:  "Go",
-					Repo:        repoIdentity(repo),
-					Branch:      nullStringValue(repo.Branch),
-					FilePath:    sym.FilePath,
-					Language:    "go",
-				})
+				for i, sym := range chunk {
+					language := languageFromStableKey(sym.StableKey)
+					elem, err := m.upsertElement(ctx, "symbol", symbolOwnerKey(sym, m.identityKeys), elementInput{
+						Name:        sym.QualifiedName,
+						Kind:        sym.Kind,
+						Description: fmt.Sprintf("%s:%d", sym.FilePath, sym.StartLine),
+						Technology:  technologyLabel(language),
+						Repo:        repoIdentity(repo),
+						Branch:      nullStringValue(repo.Branch),
+						FilePath:    sym.FilePath,
+						Language:    language,
+					})
 				if err != nil {
 					return m.stats, err
 				}
@@ -532,17 +541,22 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	if err := m.pruneStaleResources(ctx); err != nil {
 		return m.stats, err
 	}
+	if err := m.layoutPlacements(ctx); err != nil {
+		return m.stats, err
+	}
 	return m.stats, nil
 }
 
 type materializer struct {
-	store        *Store
-	repo         Repository
-	thresholds   Thresholds
-	settingsHash string
-	identityKeys map[string]string
-	runMarker    string
-	stats        materializeStats
+	store         *Store
+	repo          Repository
+	thresholds    Thresholds
+	settingsHash  string
+	identityKeys  map[string]string
+	initialLayout bool
+	runMarker     string
+	newPlacements map[int64]map[int64]struct{}
+	stats         materializeStats
 }
 
 type elementInput struct {
@@ -642,13 +656,406 @@ func (m *materializer) upsertView(ctx context.Context, ownerType, ownerKey strin
 }
 
 func (m *materializer) upsertPlacement(ctx context.Context, viewID, elementID int64, x, y float64) error {
+	var existingID int64
+	err := m.store.db.QueryRowContext(ctx, `SELECT id FROM placements WHERE view_id = ? AND element_id = ?`, viewID, elementID).Scan(&existingID)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	now := nowString()
-	_, err := m.store.db.ExecContext(ctx, `
+	_, err = m.store.db.ExecContext(ctx, `
 		INSERT INTO placements(view_id, element_id, position_x, position_y, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(view_id, element_id) DO UPDATE SET position_x = excluded.position_x, position_y = excluded.position_y, updated_at = excluded.updated_at`,
+		VALUES (?, ?, ?, ?, ?, ?)`,
 		viewID, elementID, x, y, now, now)
+	if err == nil {
+		m.markNewPlacement(viewID, elementID)
+	}
 	return err
+}
+
+func (m *materializer) markNewPlacement(viewID, elementID int64) {
+	if m.newPlacements == nil {
+		m.newPlacements = map[int64]map[int64]struct{}{}
+	}
+	if m.newPlacements[viewID] == nil {
+		m.newPlacements[viewID] = map[int64]struct{}{}
+	}
+	m.newPlacements[viewID][elementID] = struct{}{}
+}
+
+const (
+	watchLayoutNodeWidth  = 140.0
+	watchLayoutNodeHeight = 80.0
+	watchLayoutGapX       = 260.0
+	watchLayoutGapY       = 170.0
+)
+
+type watchPlacementNode struct {
+	ElementID int64
+	X         float64
+	Y         float64
+}
+
+type watchLayoutConnector struct {
+	Source int64
+	Target int64
+}
+
+func (m *materializer) layoutPlacements(ctx context.Context) error {
+	targets := m.newPlacements
+	if m.initialLayout {
+		var err error
+		targets, err = m.generatedPlacementsByView(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	for viewID, elementIDs := range targets {
+		if len(elementIDs) == 0 {
+			continue
+		}
+		if err := m.layoutView(ctx, viewID, elementIDs, m.initialLayout); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *materializer) generatedPlacementsByView(ctx context.Context) (map[int64]map[int64]struct{}, error) {
+	rows, err := m.store.db.QueryContext(ctx, `
+		SELECT p.view_id, p.element_id
+		FROM placements p
+		JOIN watch_materialization wm
+		  ON wm.repository_id = ? AND wm.resource_type = 'element' AND wm.resource_id = p.element_id
+		ORDER BY p.view_id, p.id`, m.repo.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int64]map[int64]struct{}{}
+	for rows.Next() {
+		var viewID, elementID int64
+		if err := rows.Scan(&viewID, &elementID); err != nil {
+			return nil, err
+		}
+		if out[viewID] == nil {
+			out[viewID] = map[int64]struct{}{}
+		}
+		out[viewID][elementID] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+func (m *materializer) layoutView(ctx context.Context, viewID int64, targets map[int64]struct{}, force bool) error {
+	placements, err := m.viewPlacementNodes(ctx, viewID)
+	if err != nil {
+		return err
+	}
+	connectors, err := m.viewLayoutConnectors(ctx, viewID)
+	if err != nil {
+		return err
+	}
+	if force {
+		next := layeredWatchLayout(targets, connectors)
+		occupied := occupiedWatchCells(placements, targets)
+		for _, elementID := range sortedInt64Set(targets) {
+			desired := next[elementID]
+			x, y := nearestFreeWatchCell(desired.X, desired.Y, occupied)
+			occupied[watchCellKey(x, y)] = struct{}{}
+			if _, err := m.store.db.ExecContext(ctx, `UPDATE placements SET position_x = ?, position_y = ?, updated_at = ? WHERE view_id = ? AND element_id = ?`, x, y, nowString(), viewID, elementID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	positioned := map[int64]watchPlacementNode{}
+	for _, p := range placements {
+		if _, isNew := targets[p.ElementID]; !isNew {
+			positioned[p.ElementID] = p
+		}
+	}
+	occupied := occupiedWatchCells(placements, targets)
+	for _, elementID := range sortedInt64Set(targets) {
+		x, y := bestIncrementalWatchPosition(elementID, positioned, occupied, connectors)
+		occupied[watchCellKey(x, y)] = struct{}{}
+		positioned[elementID] = watchPlacementNode{ElementID: elementID, X: x, Y: y}
+		if _, err := m.store.db.ExecContext(ctx, `UPDATE placements SET position_x = ?, position_y = ?, updated_at = ? WHERE view_id = ? AND element_id = ?`, x, y, nowString(), viewID, elementID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *materializer) viewPlacementNodes(ctx context.Context, viewID int64) ([]watchPlacementNode, error) {
+	rows, err := m.store.db.QueryContext(ctx, `SELECT element_id, position_x, position_y FROM placements WHERE view_id = ? ORDER BY id`, viewID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []watchPlacementNode
+	for rows.Next() {
+		var p watchPlacementNode
+		if err := rows.Scan(&p.ElementID, &p.X, &p.Y); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (m *materializer) viewLayoutConnectors(ctx context.Context, viewID int64) ([]watchLayoutConnector, error) {
+	rows, err := m.store.db.QueryContext(ctx, `SELECT source_element_id, target_element_id FROM connectors WHERE view_id = ? ORDER BY id`, viewID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []watchLayoutConnector
+	for rows.Next() {
+		var c watchLayoutConnector
+		if err := rows.Scan(&c.Source, &c.Target); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func layeredWatchLayout(targets map[int64]struct{}, connectors []watchLayoutConnector) map[int64]watchPlacementNode {
+	level := map[int64]int{}
+	for id := range targets {
+		level[id] = 0
+	}
+	for i := 0; i < len(targets); i++ {
+		changed := false
+		for _, c := range connectors {
+			if _, ok := targets[c.Source]; !ok {
+				continue
+			}
+			if _, ok := targets[c.Target]; !ok {
+				continue
+			}
+			if level[c.Target] <= level[c.Source] {
+				level[c.Target] = level[c.Source] + 1
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	columns := map[int][]int64{}
+	for id, col := range level {
+		if col >= len(targets) {
+			col = 0
+		}
+		columns[col] = append(columns[col], id)
+	}
+	out := map[int64]watchPlacementNode{}
+	for _, col := range sortedIntKeys(columns) {
+		ids := columns[col]
+		sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+		for row, id := range ids {
+			out[id] = watchPlacementNode{ElementID: id, X: float64(col) * watchLayoutGapX, Y: float64(row) * watchLayoutGapY}
+		}
+	}
+	return out
+}
+
+func bestIncrementalWatchPosition(elementID int64, positioned map[int64]watchPlacementNode, occupied map[string]struct{}, connectors []watchLayoutConnector) (float64, float64) {
+	candidates := watchLayoutCandidates(positioned)
+	bestX, bestY := 0.0, 0.0
+	bestScore := math.Inf(1)
+	for _, candidate := range candidates {
+		if _, blocked := occupied[watchCellKey(candidate.X, candidate.Y)]; blocked {
+			continue
+		}
+		score := incrementalWatchScore(elementID, candidate, positioned, connectors)
+		if score < bestScore {
+			bestScore = score
+			bestX, bestY = candidate.X, candidate.Y
+		}
+	}
+	if math.IsInf(bestScore, 1) {
+		return nearestFreeWatchCell(0, 0, occupied)
+	}
+	return bestX, bestY
+}
+
+func incrementalWatchScore(elementID int64, candidate watchPlacementNode, positioned map[int64]watchPlacementNode, connectors []watchLayoutConnector) float64 {
+	score := math.Abs(candidate.X)*0.01 + math.Abs(candidate.Y)*0.01
+	candidateEdges := [][2]watchPlacementNode{}
+	existingEdges := [][2]watchPlacementNode{}
+	for _, c := range connectors {
+		source, sourceOK := positioned[c.Source]
+		target, targetOK := positioned[c.Target]
+		if c.Source == elementID {
+			source, sourceOK = candidate, true
+		}
+		if c.Target == elementID {
+			target, targetOK = candidate, true
+		}
+		if sourceOK && targetOK {
+			edge := [2]watchPlacementNode{source, target}
+			if c.Source == elementID || c.Target == elementID {
+				candidateEdges = append(candidateEdges, edge)
+				score += watchDistance(source, target)
+			} else {
+				existingEdges = append(existingEdges, edge)
+			}
+		}
+	}
+	if len(candidateEdges) == 0 {
+		return score + nearestWatchNeighborDistance(candidate, positioned)
+	}
+	for _, candidateEdge := range candidateEdges {
+		for _, existingEdge := range existingEdges {
+			if candidateEdge[0].ElementID == existingEdge[0].ElementID || candidateEdge[0].ElementID == existingEdge[1].ElementID ||
+				candidateEdge[1].ElementID == existingEdge[0].ElementID || candidateEdge[1].ElementID == existingEdge[1].ElementID {
+				continue
+			}
+			if watchSegmentsIntersect(candidateEdge[0], candidateEdge[1], existingEdge[0], existingEdge[1]) {
+				score += 10000
+			}
+		}
+	}
+	return score
+}
+
+func watchLayoutCandidates(positioned map[int64]watchPlacementNode) []watchPlacementNode {
+	minCol, maxCol, minRow, maxRow := 0, 4, 0, 3
+	if len(positioned) > 0 {
+		minCol, maxCol, minRow, maxRow = math.MaxInt, math.MinInt, math.MaxInt, math.MinInt
+		for _, p := range positioned {
+			col := int(math.Round(p.X / watchLayoutGapX))
+			row := int(math.Round(p.Y / watchLayoutGapY))
+			if col < minCol {
+				minCol = col
+			}
+			if col > maxCol {
+				maxCol = col
+			}
+			if row < minRow {
+				minRow = row
+			}
+			if row > maxRow {
+				maxRow = row
+			}
+		}
+		minCol--
+		maxCol += 2
+		minRow--
+		maxRow += 2
+	}
+	out := make([]watchPlacementNode, 0, (maxCol-minCol+1)*(maxRow-minRow+1))
+	for col := minCol; col <= maxCol; col++ {
+		for row := minRow; row <= maxRow; row++ {
+			out = append(out, watchPlacementNode{X: float64(col) * watchLayoutGapX, Y: float64(row) * watchLayoutGapY})
+		}
+	}
+	return out
+}
+
+func occupiedWatchCells(placements []watchPlacementNode, ignored map[int64]struct{}) map[string]struct{} {
+	occupied := map[string]struct{}{}
+	for _, p := range placements {
+		if _, ok := ignored[p.ElementID]; ok {
+			continue
+		}
+		occupied[watchCellKey(p.X, p.Y)] = struct{}{}
+	}
+	return occupied
+}
+
+func nearestFreeWatchCell(x, y float64, occupied map[string]struct{}) (float64, float64) {
+	baseCol := int(math.Round(x / watchLayoutGapX))
+	baseRow := int(math.Round(y / watchLayoutGapY))
+	for radius := 0; radius < 200; radius++ {
+		for col := baseCol - radius; col <= baseCol+radius; col++ {
+			for row := baseRow - radius; row <= baseRow+radius; row++ {
+				if watchAbsInt(col-baseCol) != radius && watchAbsInt(row-baseRow) != radius {
+					continue
+				}
+				nx, ny := float64(col)*watchLayoutGapX, float64(row)*watchLayoutGapY
+				if _, ok := occupied[watchCellKey(nx, ny)]; !ok {
+					return nx, ny
+				}
+			}
+		}
+	}
+	return x, y
+}
+
+func watchCellKey(x, y float64) string {
+	return fmt.Sprintf("%d:%d", int(math.Round(x/watchLayoutGapX)), int(math.Round(y/watchLayoutGapY)))
+}
+
+func watchDistance(a, b watchPlacementNode) float64 {
+	return math.Hypot(a.X-b.X, a.Y-b.Y)
+}
+
+func nearestWatchNeighborDistance(candidate watchPlacementNode, positioned map[int64]watchPlacementNode) float64 {
+	if len(positioned) == 0 {
+		return 0
+	}
+	best := math.Inf(1)
+	for _, p := range positioned {
+		if d := watchDistance(candidate, p); d < best {
+			best = d
+		}
+	}
+	return best
+}
+
+func watchCenter(p watchPlacementNode) (float64, float64) {
+	return p.X + watchLayoutNodeWidth/2, p.Y + watchLayoutNodeHeight/2
+}
+
+func watchSegmentsIntersect(a, b, c, d watchPlacementNode) bool {
+	ax, ay := watchCenter(a)
+	bx, by := watchCenter(b)
+	cx, cy := watchCenter(c)
+	dx, dy := watchCenter(d)
+	return segmentOrientation(ax, ay, cx, cy, dx, dy) != segmentOrientation(bx, by, cx, cy, dx, dy) &&
+		segmentOrientation(ax, ay, bx, by, cx, cy) != segmentOrientation(ax, ay, bx, by, dx, dy)
+}
+
+func segmentOrientation(ax, ay, bx, by, cx, cy float64) int {
+	value := (by-ay)*(cx-bx) - (bx-ax)*(cy-by)
+	if math.Abs(value) < 0.000001 {
+		return 0
+	}
+	if value > 0 {
+		return 1
+	}
+	return -1
+}
+
+func sortedInt64Set(values map[int64]struct{}) []int64 {
+	out := make([]int64, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func sortedIntKeys(values map[int][]int64) []int {
+	out := make([]int, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Ints(out)
+	return out
+}
+
+func watchAbsInt(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 func (m *materializer) materializeConnectors(ctx context.Context, refs []Reference, symbols map[int64]Symbol, fileElements map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, repoView int64) error {
@@ -827,6 +1234,75 @@ func folderSet(files map[string]struct{}) []string {
 		return di < dj
 	})
 	return out
+}
+
+func dominantLanguage(symbols map[int64]Symbol) string {
+	counts := map[string]int{}
+	for _, sym := range symbols {
+		language := languageFromStableKey(sym.StableKey)
+		if language != "" {
+			counts[language]++
+		}
+	}
+	best := "source"
+	bestCount := 0
+	for language, count := range counts {
+		if count > bestCount || (count == bestCount && language < best) {
+			best = language
+			bestCount = count
+		}
+	}
+	return best
+}
+
+func languageForFile(file string, symbols map[int64]Symbol) string {
+	counts := map[string]int{}
+	for _, sym := range symbols {
+		if sym.FilePath != file {
+			continue
+		}
+		language := languageFromStableKey(sym.StableKey)
+		if language != "" {
+			counts[language]++
+		}
+	}
+	best := dominantLanguage(symbols)
+	bestCount := 0
+	for language, count := range counts {
+		if count > bestCount || (count == bestCount && language < best) {
+			best = language
+			bestCount = count
+		}
+	}
+	return best
+}
+
+func languageFromStableKey(stableKey string) string {
+	if idx := strings.Index(stableKey, ":"); idx > 0 {
+		return stableKey[:idx]
+	}
+	return "source"
+}
+
+func technologyLabel(language string) string {
+	switch language {
+	case "go":
+		return "Go"
+	case "typescript":
+		return "TypeScript"
+	case "javascript":
+		return "JavaScript"
+	case "python":
+		return "Python"
+	case "java":
+		return "Java"
+	case "cpp":
+		return "C++"
+	case "c":
+		return "C"
+	default:
+		return "Source"
+	}
 }
 
 func symbolsByFile(symbols map[int64]Symbol) map[string][]Symbol {

@@ -2,12 +2,14 @@ package watch
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -27,6 +29,9 @@ func NewWatchCmd() *cobra.Command {
 	var host, port, dataDirFlag string
 	var embeddingProvider, embeddingEndpoint, embeddingModel string
 	var embeddingDimension int
+	var languageFlags []string
+	var watcherMode, pollInterval, debounce string
+	var maxElements, maxConnectors, maxIncoming, maxOutgoing int
 	var noServe, openBrowser, rescan, verbose bool
 	c := &cobra.Command{
 		Use:   "watch [path]",
@@ -46,6 +51,7 @@ func NewWatchCmd() *cobra.Command {
 				return fmt.Errorf("create data dir: %w", err)
 			}
 			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
+			watchSettings := resolveWatchSettings(cfg, languageFlags, watcherMode, pollInterval, debounce, maxElements, maxConnectors, maxIncoming, maxOutgoing)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watch booting: data=%s embeddings=%s/%s\n", dataDir, embeddingCfg.Provider, embeddingCfg.Model)
 			progress := newCLIProgress(cmd.ErrOrStderr())
 			if embeddingCfg.Provider != "none" {
@@ -113,7 +119,7 @@ func NewWatchCmd() *cobra.Command {
 			}()
 			errCh := make(chan error, 1)
 			go func() {
-				_, runErr := watch.NewRunner(watchStore).Run(ctx, watch.RunnerOptions{Path: path, Rescan: rescan, Verbose: verbose, Embedding: embeddingCfg, Progress: progress, Events: events, Ready: ready})
+				_, runErr := watch.NewRunner(watchStore).Run(ctx, watch.RunnerOptions{Path: path, Rescan: rescan, Verbose: verbose, Embedding: embeddingCfg, Settings: watchSettings, Progress: progress, Events: events, Ready: ready})
 				errCh <- runErr
 				close(events)
 			}()
@@ -149,10 +155,19 @@ func NewWatchCmd() *cobra.Command {
 	c.Flags().StringVar(&embeddingEndpoint, "embedding-endpoint", "", "embedding endpoint for representation")
 	c.Flags().StringVar(&embeddingModel, "embedding-model", "", "embedding model for representation")
 	c.Flags().IntVar(&embeddingDimension, "embedding-dimension", 0, "embedding vector dimension")
+	c.Flags().StringSliceVar(&languageFlags, "language", nil, "source language to watch (repeatable)")
+	c.Flags().StringVar(&watcherMode, "watcher", "", "watcher backend: auto, fsnotify, or poll")
+	c.Flags().StringVar(&pollInterval, "poll-interval", "", "poll interval (for example 1s)")
+	c.Flags().StringVar(&debounce, "debounce", "", "change debounce duration (for example 500ms)")
+	c.Flags().IntVar(&maxElements, "max-elements-per-view", 0, "maximum generated elements per view")
+	c.Flags().IntVar(&maxConnectors, "max-connectors-per-view", 0, "maximum generated connectors per view")
+	c.Flags().IntVar(&maxIncoming, "max-incoming-per-element", 0, "maximum incoming references per element before collapsing")
+	c.Flags().IntVar(&maxOutgoing, "max-outgoing-per-element", 0, "maximum outgoing references per element before collapsing")
 	c.Flags().BoolVar(&rescan, "rescan", false, "force a rescan before watching")
 	c.Flags().BoolVar(&verbose, "verbose", false, "print watch events")
 	c.AddCommand(newScanCmd())
 	c.AddCommand(newRepresentCmd())
+	c.AddCommand(newDiffCmd())
 	return c
 }
 
@@ -261,9 +276,11 @@ func serverReady(url string) bool {
 
 func newScanCmd() *cobra.Command {
 	var dataDirFlag string
+	var languageFlags []string
+	var jsonOut, rescan bool
 	c := &cobra.Command{
 		Use:   "scan [path]",
-		Short: "Scan a Go repository into the local raw code graph",
+		Short: "Scan a repository into the local raw code graph",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := "."
@@ -278,15 +295,20 @@ func newScanCmd() *cobra.Command {
 			if err := os.MkdirAll(dataDir, 0o755); err != nil {
 				return fmt.Errorf("create data dir: %w", err)
 			}
+			watchSettings := resolveWatchSettings(cfg, languageFlags, "", "", "", 0, 0, 0, 0)
 			sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
 			if err != nil {
 				return err
 			}
 			scanner := watch.NewScanner(watch.NewStore(sqliteStore.DB()))
+			scanner.Settings = watchSettings
 			scanner.Progress = newCLIProgress(cmd.ErrOrStderr())
-			result, err := scanner.Scan(cmd.Context(), path)
+			result, err := scanner.ScanWithOptions(cmd.Context(), path, watch.ScanOptions{Force: rescan})
 			if err != nil {
 				return err
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(result)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Repository: %d\n", result.RepositoryID)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Scan run:   %d\n", result.ScanRunID)
@@ -300,6 +322,9 @@ func newScanCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&dataDirFlag, "data-dir", "", "directory for the local app database")
+	c.Flags().StringSliceVar(&languageFlags, "language", nil, "source language to scan (repeatable)")
+	c.Flags().BoolVar(&rescan, "rescan", false, "force reparsing files even if cached")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print machine-readable JSON")
 	return c
 }
 
@@ -307,9 +332,12 @@ func newRepresentCmd() *cobra.Command {
 	var dataDirFlag string
 	var embeddingProvider, embeddingEndpoint, embeddingModel string
 	var embeddingDimension int
+	var languageFlags []string
+	var jsonOut, rescan bool
+	var maxElements, maxConnectors, maxIncoming, maxOutgoing int
 	c := &cobra.Command{
 		Use:   "represent [path]",
-		Short: "Materialize a scanned Go repository into the local workspace",
+		Short: "Materialize a scanned repository into the local workspace",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := "."
@@ -325,6 +353,7 @@ func newRepresentCmd() *cobra.Command {
 				return fmt.Errorf("create data dir: %w", err)
 			}
 			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
+			watchSettings := resolveWatchSettings(cfg, languageFlags, "", "", "", maxElements, maxConnectors, maxIncoming, maxOutgoing)
 			progress := newCLIProgress(cmd.ErrOrStderr())
 			if embeddingCfg.Provider != "none" {
 				checked, health, err := watch.CheckEmbeddingHealth(cmd.Context(), embeddingCfg)
@@ -340,14 +369,21 @@ func newRepresentCmd() *cobra.Command {
 			}
 			watchStore := watch.NewStore(sqliteStore.DB())
 			scanner := watch.NewScanner(watchStore)
+			scanner.Settings = watchSettings
 			scanner.Progress = progress
-			scanResult, err := scanner.Scan(cmd.Context(), path)
+			scanResult, err := scanner.ScanWithOptions(cmd.Context(), path, watch.ScanOptions{Force: rescan})
 			if err != nil {
 				return err
 			}
-			result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{Embedding: embeddingCfg, Progress: progress})
+			result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{Embedding: embeddingCfg, Thresholds: watchSettings.Thresholds, Progress: progress})
 			if err != nil {
 				return err
+			}
+			if jsonOut {
+				return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
+					Scan           watch.ScanResult      `json:"scan"`
+					Representation watch.RepresentResult `json:"representation"`
+				}{Scan: scanResult, Representation: result})
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Repository:      %d\n", result.RepositoryID)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Scan run:        %d\n", scanResult.ScanRunID)
@@ -366,6 +402,92 @@ func newRepresentCmd() *cobra.Command {
 	c.Flags().StringVar(&embeddingEndpoint, "embedding-endpoint", "", "embedding endpoint for representation")
 	c.Flags().StringVar(&embeddingModel, "embedding-model", "", "embedding model for representation")
 	c.Flags().IntVar(&embeddingDimension, "embedding-dimension", 0, "embedding vector dimension")
+	c.Flags().StringSliceVar(&languageFlags, "language", nil, "source language to scan (repeatable)")
+	c.Flags().IntVar(&maxElements, "max-elements-per-view", 0, "maximum generated elements per view")
+	c.Flags().IntVar(&maxConnectors, "max-connectors-per-view", 0, "maximum generated connectors per view")
+	c.Flags().IntVar(&maxIncoming, "max-incoming-per-element", 0, "maximum incoming references per element before collapsing")
+	c.Flags().IntVar(&maxOutgoing, "max-outgoing-per-element", 0, "maximum outgoing references per element before collapsing")
+	c.Flags().BoolVar(&rescan, "rescan", false, "force reparsing files even if cached")
+	c.Flags().BoolVar(&jsonOut, "json", false, "print machine-readable JSON")
+	return c
+}
+
+func newDiffCmd() *cobra.Command {
+	var dataDirFlag string
+	var embeddingProvider, embeddingEndpoint, embeddingModel string
+	var embeddingDimension int
+	var languageFlags []string
+	var failOnDrift bool
+	var maxElements, maxConnectors, maxIncoming, maxOutgoing int
+	c := &cobra.Command{
+		Use:   "diff [path]",
+		Short: "Scan and report watch representation drift as JSON",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			path := "."
+			if len(args) > 0 {
+				path = args[0]
+			}
+			cfg, _ := workspace.LoadGlobalConfig()
+			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(dataDir, 0o755); err != nil {
+				return fmt.Errorf("create data dir: %w", err)
+			}
+			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
+			watchSettings := resolveWatchSettings(cfg, languageFlags, "", "", "", maxElements, maxConnectors, maxIncoming, maxOutgoing)
+			sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
+			if err != nil {
+				return err
+			}
+			watchStore := watch.NewStore(sqliteStore.DB())
+			scanner := watch.NewScanner(watchStore)
+			scanner.Settings = watchSettings
+			scanResult, err := scanner.ScanWithOptions(cmd.Context(), path, watch.ScanOptions{})
+			if err != nil {
+				return err
+			}
+			result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{Embedding: embeddingCfg, Thresholds: watchSettings.Thresholds})
+			if err != nil {
+				return err
+			}
+			diffs, err := watchStore.BuildWatchDiffs(cmd.Context(), scanResult.RepositoryID, result.RepresentationHash)
+			if err != nil {
+				return err
+			}
+			latest, found, err := watchStore.LatestWatchVersion(cmd.Context(), scanResult.RepositoryID)
+			if err != nil {
+				return err
+			}
+			changed := !found || latest.RepresentationHash != result.RepresentationHash || len(diffs) > 1
+			payload := struct {
+				Changed        bool                       `json:"changed"`
+				Scan           watch.ScanResult           `json:"scan"`
+				Representation watch.RepresentResult      `json:"representation"`
+				Diffs          []watch.RepresentationDiff `json:"diffs"`
+			}{Changed: changed, Scan: scanResult, Representation: result, Diffs: diffs}
+			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(payload); err != nil {
+				return err
+			}
+			if failOnDrift && changed {
+				return fmt.Errorf("watch representation drift detected")
+			}
+			return nil
+		},
+	}
+	c.Flags().StringVar(&dataDirFlag, "data-dir", "", "directory for the local app database")
+	c.Flags().StringVar(&embeddingProvider, "embedding-provider", "", "embedding provider for representation")
+	c.Flags().StringVar(&embeddingEndpoint, "embedding-endpoint", "", "embedding endpoint for representation")
+	c.Flags().StringVar(&embeddingModel, "embedding-model", "", "embedding model for representation")
+	c.Flags().IntVar(&embeddingDimension, "embedding-dimension", 0, "embedding vector dimension")
+	c.Flags().StringSliceVar(&languageFlags, "language", nil, "source language to scan (repeatable)")
+	c.Flags().IntVar(&maxElements, "max-elements-per-view", 0, "maximum generated elements per view")
+	c.Flags().IntVar(&maxConnectors, "max-connectors-per-view", 0, "maximum generated connectors per view")
+	c.Flags().IntVar(&maxIncoming, "max-incoming-per-element", 0, "maximum incoming references per element before collapsing")
+	c.Flags().IntVar(&maxOutgoing, "max-outgoing-per-element", 0, "maximum outgoing references per element before collapsing")
+	c.Flags().BoolVar(&failOnDrift, "fail-on-drift", false, "exit nonzero when representation drift is detected")
 	return c
 }
 
@@ -405,6 +527,78 @@ func resolveEmbeddingConfig(cfg *workspace.GlobalConfig, provider, endpoint, mod
 		embedding.Dimension = dimension
 	}
 	return watch.NormalizeEmbeddingConfig(embedding)
+}
+
+func resolveWatchSettings(cfg *workspace.GlobalConfig, languages []string, watcherMode, pollInterval, debounce string, maxElements, maxConnectors, maxIncoming, maxOutgoing int) watch.Settings {
+	settings := watch.DefaultSettings()
+	if cfg != nil {
+		settings.Languages = cfg.Watch.Languages
+		settings.Watcher = cfg.Watch.Watcher
+		settings.PollInterval = parseDurationOrZero(cfg.Watch.PollInterval)
+		settings.Debounce = parseDurationOrZero(cfg.Watch.Debounce)
+		settings.Thresholds = watch.Thresholds{
+			MaxElementsPerView:    cfg.Watch.Thresholds.MaxElementsPerView,
+			MaxConnectorsPerView:  cfg.Watch.Thresholds.MaxConnectorsPerView,
+			MaxIncomingPerElement: cfg.Watch.Thresholds.MaxIncomingPerElement,
+			MaxOutgoingPerElement: cfg.Watch.Thresholds.MaxOutgoingPerElement,
+		}
+	}
+	if value := os.Getenv("TLD_WATCH_LANGUAGES"); value != "" {
+		settings.Languages = splitCSV(value)
+	}
+	if value := os.Getenv("TLD_WATCH_WATCHER"); value != "" {
+		settings.Watcher = value
+	}
+	if value := os.Getenv("TLD_WATCH_POLL_INTERVAL"); value != "" {
+		settings.PollInterval = parseDurationOrZero(value)
+	}
+	if value := os.Getenv("TLD_WATCH_DEBOUNCE"); value != "" {
+		settings.Debounce = parseDurationOrZero(value)
+	}
+	if len(languages) > 0 {
+		settings.Languages = languages
+	}
+	if watcherMode != "" {
+		settings.Watcher = watcherMode
+	}
+	if pollInterval != "" {
+		settings.PollInterval = parseDurationOrZero(pollInterval)
+	}
+	if debounce != "" {
+		settings.Debounce = parseDurationOrZero(debounce)
+	}
+	if maxElements > 0 {
+		settings.Thresholds.MaxElementsPerView = maxElements
+	}
+	if maxConnectors > 0 {
+		settings.Thresholds.MaxConnectorsPerView = maxConnectors
+	}
+	if maxIncoming > 0 {
+		settings.Thresholds.MaxIncomingPerElement = maxIncoming
+	}
+	if maxOutgoing > 0 {
+		settings.Thresholds.MaxOutgoingPerElement = maxOutgoing
+	}
+	return watch.NormalizeSettings(settings)
+}
+
+func parseDurationOrZero(value string) time.Duration {
+	parsed, err := time.ParseDuration(strings.TrimSpace(value))
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 type cliProgress struct {

@@ -50,6 +50,14 @@ function summarizeEvent(event: WatchEvent): WatchLine | null {
     ].filter(Boolean).join(', ')
     return { id, at, text: changed ? `Representation updated: ${changed}` : 'Representation refreshed', tone: 'success' }
   }
+  if (type === 'scan.started') {
+    const files = event.changed_files ? ` · ${event.changed_files} files` : ''
+    return { id, at, text: `Scanning${files}`, tone: 'info' }
+  }
+  if (type === 'scan.completed') {
+    const warnings = event.warnings?.length ? ` · ${event.warnings[0]}` : ''
+    return { id, at, text: `Scan complete${warnings}`, tone: event.warnings?.length ? 'warning' : 'success' }
+  }
   if (type === 'source.changed') {
     const data = event.data as { change?: { path?: string; change_type?: string }; representation_changed?: boolean } | undefined
     const path = data?.change?.path ?? 'source file'
@@ -75,6 +83,8 @@ export default function WatchRuntimePanel() {
   const [repository, setRepository] = useState<WatchRepository | null>(null)
   const [lock, setLock] = useState<WatchLock | null>(null)
   const [connected, setConnected] = useState(false)
+  const [watcherMode, setWatcherMode] = useState('')
+  const [languages, setLanguages] = useState<string[]>([])
   const [lines, setLines] = useState<WatchLine[]>([])
 
   const addLine = useCallback((line: WatchLine | null) => {
@@ -105,6 +115,8 @@ export default function WatchRuntimePanel() {
       setLock((current) => eventLock ?? current)
     }
     if (eventLock) setPaused(eventLock.status === 'paused')
+    if (event.watcher_mode) setWatcherMode(event.watcher_mode)
+    if (event.languages?.length) setLanguages(event.languages)
     if (event.type === 'watch.paused') setPaused(true)
     if (event.type === 'watch.heartbeat') {
       setActive(true)
@@ -180,6 +192,7 @@ export default function WatchRuntimePanel() {
   const statusColor = !active ? 'gray' : paused ? 'yellow' : connected ? 'green' : 'orange'
   const statusLabel = !active ? 'Stopped' : paused ? 'Paused' : 'Watching'
   const title = useMemo(() => shortPath(repository?.repo_root), [repository?.repo_root])
+  const mode = [watcherMode || (connected ? 'live' : 'connecting'), languages.length ? languages.join(', ') : ''].filter(Boolean).join(' · ')
 
   if (!active && lines.length === 0) return null
 
@@ -202,7 +215,8 @@ export default function WatchRuntimePanel() {
       <HStack px={3} py={2.5} justify="space-between" borderBottom="1px solid" borderColor="whiteAlpha.100">
         <HStack spacing={2} minW={0}>
           <Badge colorScheme={statusColor} variant="subtle" borderRadius="md">{statusLabel}</Badge>
-          <Text fontSize="12px" fontWeight="700" color="gray.100" noOfLines={1}>{title}</Text>
+              <Text fontSize="12px" fontWeight="700" color="gray.100" noOfLines={1}>{title}</Text>
+              <Text fontSize="10px" color="gray.500" noOfLines={1}>{mode}</Text>
         </HStack>
         <HStack spacing={1}>
           {active && (

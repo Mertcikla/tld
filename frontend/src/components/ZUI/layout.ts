@@ -159,6 +159,7 @@ function buildNodes(
     const edgesOut = (views[String(diagramId)]?.connectors ?? [])
       .filter((e) => e.source_element_id === obj.element_id)
       .map((e) => ({
+        id: e.id,
         targetId: nodeId(diagramId, e.target_element_id),
         label: e.label ?? '',
         direction: e.direction ?? 'forward',
@@ -253,6 +254,7 @@ export function computeLayout(data: ExploreData): ZUILayout {
 
     // Edges within the same diagram (world-level, not children)
     const edges = (diagData.connectors ?? []).map((e) => ({
+      id: e.id,
       sourceId: nodeId(diag.id, e.source_element_id),
       targetId: nodeId(diag.id, e.target_element_id),
       label: e.label ?? '',

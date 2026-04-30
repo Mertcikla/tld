@@ -22,7 +22,7 @@ func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
 
-	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_representation_runs", "watch_locks", "watch_versions", "watch_representation_diffs", "workspace_versions"} {
+	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_representation_runs", "watch_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
 			t.Fatalf("missing table %s: %v", table, err)
@@ -93,6 +93,204 @@ func helper() {}
 	}
 	if len(decisions) < 3 {
 		t.Fatalf("expected symbol and reference decisions, got %+v", decisions)
+	}
+}
+
+func TestScanCollectsConfiguredLanguages(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc Main() {}\n")
+	writeFile(t, repo, "src/app.ts", "export function render() { return helper() }\nfunction helper() { return 1 }\n")
+
+	store := NewStore(db)
+	scanner := NewScanner(store)
+	scanner.Settings = Settings{Languages: []string{"go", "typescript"}}
+	result, err := scanner.Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FilesSeen != 2 || result.FilesParsed != 2 {
+		t.Fatalf("expected two parsed source files, got %+v", result)
+	}
+	symbols, err := store.SymbolsForRepository(context.Background(), result.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seenLanguages := map[string]bool{}
+	for _, sym := range symbols {
+		seenLanguages[languageFromStableKey(sym.StableKey)] = true
+	}
+	if !seenLanguages["go"] || !seenLanguages["typescript"] {
+		t.Fatalf("expected go and typescript stable keys, got %#v", seenLanguages)
+	}
+}
+
+func TestScanForceRescanReparsesCachedFiles(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc Main() {}\n")
+
+	store := NewStore(db)
+	scanner := NewScanner(store)
+	first, err := scanner.Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := scanner.Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forced, err := scanner.ScanWithOptions(context.Background(), repo, ScanOptions{Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.FilesParsed != 1 || second.FilesSkipped != 1 || forced.FilesParsed != 1 {
+		t.Fatalf("unexpected scan cache behavior: first=%+v second=%+v forced=%+v", first, second, forced)
+	}
+}
+
+func TestWatchDiffsCaptureWorkspaceResourceChanges(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	helper()
+}
+
+func helper() {}
+`)
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDiffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, rep.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "", "main", rep.RepresentationHash, nil, firstDiffs); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	helper()
+	other()
+}
+
+func helper() {}
+func other() {}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, next.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiff(diffs, "symbol", "added") || !hasDiff(diffs, "file", "updated") || !hasDiff(diffs, "element", "added") {
+		t.Fatalf("expected symbol/file/element diffs, got %+v", diffs)
+	}
+}
+
+func TestRepresentInitialLayoutFollowsConnectors(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func A() {
+	B()
+	C()
+}
+
+func B() {}
+func C() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	a := functionPlacement(t, db, "A")
+	b := functionPlacement(t, db, "B")
+	c := functionPlacement(t, db, "C")
+	if b.x <= a.x || c.x <= a.x {
+		t.Fatalf("initial layout should place callees to the right of caller: A=%+v B=%+v C=%+v", a, b, c)
+	}
+	if b.x == c.x && b.y == c.y {
+		t.Fatalf("initial layout overlapped connected callees: B=%+v C=%+v", b, c)
+	}
+}
+
+func TestRepresentIncrementalLayoutPreservesExistingPlacements(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func A() {
+	B()
+}
+
+func B() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	b := functionPlacement(t, db, "B")
+	if _, err := db.Exec(`UPDATE placements SET position_x = 780, position_y = 510 WHERE id = ?`, b.placementID); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, repo, "main.go", `package main
+
+func A() {
+	B()
+	C()
+}
+
+func B() {}
+func C() {}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	b = functionPlacement(t, db, "B")
+	c := functionPlacement(t, db, "C")
+	if b.x != 780 || b.y != 510 {
+		t.Fatalf("incremental layout moved existing placement B: %+v", b)
+	}
+	if c.x == b.x && c.y == b.y {
+		t.Fatalf("incremental layout placed new function on occupied B cell: B=%+v C=%+v", b, c)
 	}
 }
 
@@ -782,7 +980,7 @@ func openTestDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "003_watch_materialized_workspace.sql", "004_watch_runtime_git_versions.sql", "005_watch_embeddings_identity_vec.sql", "006_workspace_read_indexes.sql"} {
+	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "003_watch_materialized_workspace.sql", "004_watch_runtime_git_versions.sql", "005_watch_embeddings_identity_vec.sql", "006_workspace_read_indexes.sql", "007_watch_version_resources.sql"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", migration))
 		if err != nil {
 			t.Fatal(err)
@@ -886,6 +1084,38 @@ func countElementTag(t *testing.T, db *sql.DB, tag string) int {
 		t.Fatal(err)
 	}
 	return count
+}
+
+func hasDiff(diffs []RepresentationDiff, resourceType, changeType string) bool {
+	for _, diff := range diffs {
+		if diff.ResourceType != nil && *diff.ResourceType == resourceType && diff.ChangeType == changeType {
+			return true
+		}
+	}
+	return false
+}
+
+type testPlacement struct {
+	placementID int64
+	elementID   int64
+	x           float64
+	y           float64
+}
+
+func functionPlacement(t *testing.T, db *sql.DB, name string) testPlacement {
+	t.Helper()
+	row := db.QueryRow(`
+		SELECT p.id, p.element_id, p.position_x, p.position_y
+		FROM placements p
+		JOIN elements e ON e.id = p.element_id
+		WHERE e.kind = 'function' AND (e.name = ? OR e.name LIKE ?)
+		ORDER BY p.id
+		LIMIT 1`, name, "%."+name)
+	var p testPlacement
+	if err := row.Scan(&p.placementID, &p.elementID, &p.x, &p.y); err != nil {
+		t.Fatalf("function placement %q: %v", name, err)
+	}
+	return p
 }
 
 type countingProvider struct {

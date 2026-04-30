@@ -241,7 +241,7 @@ func (h *Handler) versionDiffs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	query := r.URL.Query()
-	diffs, err := h.Store.WatchDiffs(r.Context(), versionID, query.Get("owner_type"), query.Get("change_type"), parseInt(query.Get("limit"), 200))
+	diffs, err := h.Store.WatchDiffs(r.Context(), versionID, query.Get("owner_type"), query.Get("change_type"), query.Get("resource_type"), query.Get("language"), parseInt(query.Get("limit"), 200))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "list watch diffs")
 		return

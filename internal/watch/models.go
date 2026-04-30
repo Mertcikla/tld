@@ -1,6 +1,9 @@
 package watch
 
-import "database/sql"
+import (
+	"database/sql"
+	"time"
+)
 
 const SettingsHash = ""
 
@@ -89,14 +92,15 @@ type Summary struct {
 }
 
 type ScanResult struct {
-	RepositoryID   int64  `json:"repository_id"`
-	ScanRunID      int64  `json:"scan_run_id"`
-	FilesSeen      int    `json:"files_seen"`
-	FilesParsed    int    `json:"files_parsed"`
-	FilesSkipped   int    `json:"files_skipped"`
-	SymbolsSeen    int    `json:"symbols_seen"`
-	ReferencesSeen int    `json:"references_seen"`
-	Warning        string `json:"warning,omitempty"`
+	RepositoryID   int64    `json:"repository_id"`
+	ScanRunID      int64    `json:"scan_run_id"`
+	FilesSeen      int      `json:"files_seen"`
+	FilesParsed    int      `json:"files_parsed"`
+	FilesSkipped   int      `json:"files_skipped"`
+	SymbolsSeen    int      `json:"symbols_seen"`
+	ReferencesSeen int      `json:"references_seen"`
+	Warning        string   `json:"warning,omitempty"`
+	Warnings       []string `json:"warnings,omitempty"`
 }
 
 type EmbeddingConfig struct {
@@ -112,6 +116,14 @@ type Thresholds struct {
 	MaxConnectorsPerView  int `json:"max_connectors_per_view"`
 	MaxIncomingPerElement int `json:"max_incoming_per_element"`
 	MaxOutgoingPerElement int `json:"max_outgoing_per_element"`
+}
+
+type Settings struct {
+	Languages    []string      `json:"languages"`
+	Watcher      string        `json:"watcher"`
+	PollInterval time.Duration `json:"poll_interval"`
+	Debounce     time.Duration `json:"debounce"`
+	Thresholds   Thresholds    `json:"thresholds"`
 }
 
 type RepresentRequest struct {
@@ -224,6 +236,7 @@ type GitTagUpdateResult struct {
 type SourceFileChange struct {
 	Path       string `json:"path"`
 	ChangeType string `json:"change_type"`
+	Language   string `json:"language,omitempty"`
 }
 
 type SourceFileChangeResult struct {
@@ -239,11 +252,16 @@ type ChangeCounter struct {
 }
 
 type Event struct {
-	Type         string `json:"type"`
-	RepositoryID int64  `json:"repository_id,omitempty"`
-	Message      string `json:"message,omitempty"`
-	At           string `json:"at"`
-	Data         any    `json:"data,omitempty"`
+	Type         string   `json:"type"`
+	RepositoryID int64    `json:"repository_id,omitempty"`
+	Message      string   `json:"message,omitempty"`
+	At           string   `json:"at"`
+	Data         any      `json:"data,omitempty"`
+	Phase        string   `json:"phase,omitempty"`
+	WatcherMode  string   `json:"watcher_mode,omitempty"`
+	Languages    []string `json:"languages,omitempty"`
+	ChangedFiles int      `json:"changed_files,omitempty"`
+	Warnings     []string `json:"warnings,omitempty"`
 }
 
 type Version struct {
@@ -267,6 +285,7 @@ type RepresentationDiff struct {
 	AfterHash    *string `json:"after_hash,omitempty"`
 	ResourceType *string `json:"resource_type,omitempty"`
 	ResourceID   *int64  `json:"resource_id,omitempty"`
+	Language     *string `json:"language,omitempty"`
 	Summary      *string `json:"summary,omitempty"`
 }
 

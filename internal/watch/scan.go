@@ -28,6 +28,7 @@ type Scanner struct {
 	Analyzer analyzer.Service
 	Rules    *ignore.Rules
 	Progress ProgressSink
+	Settings Settings
 }
 
 type synchronizedProgress struct {
@@ -71,6 +72,14 @@ func NewScanner(store *Store) *Scanner {
 }
 
 func (s *Scanner) Scan(ctx context.Context, path string) (ScanResult, error) {
+	return s.ScanWithOptions(ctx, path, ScanOptions{})
+}
+
+type ScanOptions struct {
+	Force bool
+}
+
+func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOptions) (ScanResult, error) {
 	if s == nil || s.Store == nil {
 		return ScanResult{}, fmt.Errorf("watch scanner requires a store")
 	}
@@ -86,6 +95,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (ScanResult, error) {
 		return ScanResult{}, fmt.Errorf("%s is not inside a git repository: %w", path, err)
 	}
 	repoRoot = filepath.Clean(repoRoot)
+	settings := NormalizeSettings(s.Settings)
 
 	repoInput := RepositoryInput{
 		RemoteURL:    detectString(func() (string, error) { return tldgit.DetectRemoteURL(repoRoot) }),
@@ -93,7 +103,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (ScanResult, error) {
 		DisplayName:  filepath.Base(repoRoot),
 		Branch:       detectString(func() (string, error) { return tldgit.DetectBranch(repoRoot) }),
 		HeadCommit:   detectString(func() (string, error) { return tldgit.DetectHeadCommit(repoRoot) }),
-		SettingsHash: SettingsHash,
+		SettingsHash: stableHash(settings),
 	}
 	repo, err := s.Store.EnsureRepository(ctx, repoInput)
 	if err != nil {
@@ -101,7 +111,11 @@ func (s *Scanner) Scan(ctx context.Context, path string) (ScanResult, error) {
 	}
 	result := ScanResult{RepositoryID: repo.ID}
 
-	runID, err := s.Store.BeginScanRun(ctx, repo.ID, "full")
+	mode := "incremental"
+	if opts.Force {
+		mode = "full"
+	}
+	runID, err := s.Store.BeginScanRun(ctx, repo.ID, mode)
 	if err != nil {
 		return ScanResult{}, err
 	}
@@ -116,7 +130,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (ScanResult, error) {
 	}()
 
 	workers := runtime.NumCPU()
-	files, err := s.collectGoFiles(repoRoot, workers)
+	files, err := s.collectSourceFiles(repoRoot, workers, settings.Languages)
 	if err != nil {
 		scanErr = err
 		return result, err
@@ -129,7 +143,7 @@ func (s *Scanner) Scan(ctx context.Context, path string) (ScanResult, error) {
 	var parsedFiles []parsedFile
 	var parsedFileIDs []int64
 
-	fileResults, err := s.scanFiles(ctx, repo.ID, repoRoot, files, workers, progress)
+	fileResults, err := s.scanFiles(ctx, repo.ID, repoRoot, files, workers, progress, opts.Force)
 	if err != nil {
 		scanErr = err
 		return result, err
@@ -165,6 +179,9 @@ func (s *Scanner) Scan(ctx context.Context, path string) (ScanResult, error) {
 		return result, err
 	}
 	result.Warning = warning
+	if warning != "" {
+		result.Warnings = append(result.Warnings, warning)
+	}
 	if err := s.Store.ReplaceReferencesForFiles(ctx, repo.ID, parsedFileIDs, refs); err != nil {
 		scanErr = err
 		return result, err
@@ -187,7 +204,7 @@ type scanFileResult struct {
 	SymbolsSeen int
 }
 
-func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot string, files []string, workers int, progress ProgressSink) ([]scanFileResult, error) {
+func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot string, files []string, workers int, progress ProgressSink, force bool) ([]scanFileResult, error) {
 	if workers <= 0 {
 		workers = 1
 	}
@@ -204,7 +221,7 @@ func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot st
 			defer wg.Done()
 			workerAnalyzer := analyzer.NewService()
 			for absFile := range jobs {
-				fileResult, err := s.scanFile(ctx, workerAnalyzer, repositoryID, repoRoot, absFile, progress)
+				fileResult, err := s.scanFile(ctx, workerAnalyzer, repositoryID, repoRoot, absFile, progress, force)
 				if err != nil {
 					select {
 					case errs <- err:
@@ -242,7 +259,7 @@ func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot st
 	return out, nil
 }
 
-func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service, repositoryID int64, repoRoot, absFile string, progress ProgressSink) (scanFileResult, error) {
+func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service, repositoryID int64, repoRoot, absFile string, progress ProgressSink, force bool) (scanFileResult, error) {
 	rel, err := filepath.Rel(repoRoot, absFile)
 	if err != nil {
 		return scanFileResult{}, err
@@ -250,9 +267,15 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	rel = filepath.ToSlash(rel)
 	defer progressAdvance(progress, rel)
 	result := scanFileResult{RelPath: rel}
+	language, ok := analyzer.DetectLanguage(absFile)
+	if !ok {
+		result.Skipped = true
+		return result, nil
+	}
+	languageName := string(language)
 	info, err := os.Stat(absFile)
 	if err != nil {
-		file, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, "go", "", "", 0, 0, "error", err)
+		file, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, "", "", 0, 0, "error", err)
 		if upsertErr != nil {
 			return result, upsertErr
 		}
@@ -261,8 +284,8 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	}
 	if cached, ok, err := s.Store.CachedFileByPath(ctx, repositoryID, rel); err != nil {
 		return result, err
-	} else if ok && cached.SizeBytes == info.Size() && cached.MtimeUnix == info.ModTime().Unix() && cached.WorktreeHash != "" && cached.ScanStatus != "error" {
-		if _, _, err := s.Store.UpsertFile(ctx, repositoryID, rel, "go", nullStringValue(cached.GitBlobHash), cached.WorktreeHash, info.Size(), info.ModTime().Unix(), "parsed", nil); err != nil {
+	} else if !force && ok && cached.SizeBytes == info.Size() && cached.MtimeUnix == info.ModTime().Unix() && cached.WorktreeHash != "" && cached.ScanStatus != "error" {
+		if _, _, err := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, nullStringValue(cached.GitBlobHash), cached.WorktreeHash, info.Size(), info.ModTime().Unix(), "parsed", nil); err != nil {
 			return result, err
 		}
 		result.Skipped = true
@@ -270,26 +293,26 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	}
 	data, err := os.ReadFile(absFile)
 	if err != nil {
-		_, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, "go", "", "", info.Size(), info.ModTime().Unix(), "error", err)
+		_, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, "", "", info.Size(), info.ModTime().Unix(), "error", err)
 		return result, upsertErr
 	}
 	worktreeHash := hashBytes(data)
 	blobHash := detectString(func() (string, error) { return tldgit.FileBlobHash(repoRoot, rel) })
-	file, skipped, err := s.Store.UpsertFile(ctx, repositoryID, rel, "go", blobHash, worktreeHash, info.Size(), info.ModTime().Unix(), "parsed", nil)
+	file, skipped, err := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, blobHash, worktreeHash, info.Size(), info.ModTime().Unix(), "parsed", nil)
 	if err != nil {
 		return result, err
 	}
 	result.File = file
-	if skipped {
+	if !force && skipped {
 		result.Skipped = true
 		return result, nil
 	}
 	extracted, err := workerAnalyzer.ExtractPath(ctx, absFile, s.Rules, nil)
 	if err != nil {
-		_, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, "go", blobHash, worktreeHash, info.Size(), info.ModTime().Unix(), "error", err)
+		_, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, blobHash, worktreeHash, info.Size(), info.ModTime().Unix(), "error", err)
 		return result, upsertErr
 	}
-	symbols := watchSymbolsFromAnalyzer(repositoryID, file.ID, rel, data, extracted.Symbols)
+	symbols := watchSymbolsFromAnalyzer(repositoryID, file.ID, rel, languageName, data, extracted.Symbols)
 	if err := s.Store.ReplaceFileSymbols(ctx, repositoryID, file.ID, symbols); err != nil {
 		return result, err
 	}
@@ -299,7 +322,7 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	return result, nil
 }
 
-func (s *Scanner) collectGoFiles(root string, workers int) ([]string, error) {
+func (s *Scanner) collectSourceFiles(root string, workers int, languages []string) ([]string, error) {
 	var files []string
 	rules := s.Rules
 	if rules == nil {
@@ -324,7 +347,7 @@ func (s *Scanner) collectGoFiles(root string, workers int) ([]string, error) {
 		go func() {
 			defer wg.Done()
 			for entryPath := range jobs {
-				found, err := s.collectGoFilesUnder(root, entryPath, rules)
+				found, err := s.collectSourceFilesUnder(root, entryPath, rules, languages)
 				if err != nil {
 					select {
 					case errs <- err:
@@ -361,8 +384,12 @@ func (s *Scanner) collectGoFiles(root string, workers int) ([]string, error) {
 	return files, nil
 }
 
-func (s *Scanner) collectGoFilesUnder(root, start string, rules *ignore.Rules) ([]string, error) {
+func (s *Scanner) collectSourceFilesUnder(root, start string, rules *ignore.Rules, languages []string) ([]string, error) {
 	var files []string
+	allowed := map[string]struct{}{}
+	for _, language := range NormalizeSettings(Settings{Languages: languages}).Languages {
+		allowed[language] = struct{}{}
+	}
 	err := filepath.WalkDir(start, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -375,18 +402,21 @@ func (s *Scanner) collectGoFilesUnder(root, start string, rules *ignore.Rules) (
 			}
 			return nil
 		}
-		if filepath.Ext(path) != ".go" {
+		language, ok := analyzer.DetectLanguage(path)
+		if !ok || !languageAllowed(string(language), allowed) {
 			return nil
 		}
 		if rules.ShouldIgnorePath(rel) {
 			return nil
 		}
-		generated, err := isGeneratedGoFile(path)
-		if err != nil {
-			return nil
-		}
-		if generated {
-			return nil
+		if language == analyzer.LanguageGo {
+			generated, err := isGeneratedGoFile(path)
+			if err != nil {
+				return nil
+			}
+			if generated {
+				return nil
+			}
 		}
 		files = append(files, path)
 		return nil
@@ -394,7 +424,7 @@ func (s *Scanner) collectGoFilesUnder(root, start string, rules *ignore.Rules) (
 	return files, err
 }
 
-func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath string, source []byte, symbols []analyzer.Symbol) []Symbol {
+func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath, language string, source []byte, symbols []analyzer.Symbol) []Symbol {
 	out := make([]Symbol, 0, len(symbols))
 	lines := strings.Split(string(source), "\n")
 	for _, sym := range symbols {
@@ -412,7 +442,7 @@ func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath string, source
 			RepositoryID:  repositoryID,
 			FileID:        fileID,
 			FilePath:      relPath,
-			StableKey:     fmt.Sprintf("go:%s:%s:%s", relPath, sym.Kind, qualified),
+			StableKey:     fmt.Sprintf("%s:%s:%s:%s", language, relPath, sym.Kind, qualified),
 			Name:          sym.Name,
 			QualifiedName: qualified,
 			Kind:          sym.Kind,
@@ -454,7 +484,7 @@ func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, reposi
 			if parsedRef.Kind != "" && parsedRef.Kind != "call" {
 				continue
 			}
-			target, ok := resolveTargetSymbol(ctx, resolver, repoRoot, parsedRef, byName, symbols)
+			target, ok := resolveTargetSymbol(ctx, resolver, repoRoot, file.File.Language, parsedRef, byName, symbols)
 			if !ok {
 				continue
 			}
@@ -483,8 +513,8 @@ func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, reposi
 	return refs, warning, nil
 }
 
-func resolveTargetSymbol(ctx context.Context, resolver *goDefinitionResolver, repoRoot string, ref analyzer.Ref, byName map[string][]Symbol, symbols []Symbol) (Symbol, bool) {
-	if resolver != nil {
+func resolveTargetSymbol(ctx context.Context, resolver *goDefinitionResolver, repoRoot, sourceLanguage string, ref analyzer.Ref, byName map[string][]Symbol, symbols []Symbol) (Symbol, bool) {
+	if resolver != nil && sourceLanguage == string(analyzer.LanguageGo) {
 		locations, err := resolver.Resolve(ctx, ref)
 		if err == nil {
 			for _, location := range locations {

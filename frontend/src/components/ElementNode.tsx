@@ -155,6 +155,7 @@ interface NodeData extends PlacedElement {
   selectedHandleIds?: readonly string[]
   reconnectCandidates?: readonly { handleId: string; edgeId: string; endpoint: 'source' | 'target'; selected: boolean }[]
   isConnectorHighlighted?: boolean
+  versionChangeType?: 'added' | 'updated' | 'deleted' | 'changed'
 }
 
 interface Props {
@@ -456,6 +457,13 @@ function ElementNode({ data, selected }: Props) {
   const isTarget = !!data.interactionSourceId && !isSource
 
   const bodyCursor = isSource ? 'crosshair' : isTarget ? 'cell' : 'pointer'
+  const versionColor = data.versionChangeType === 'added'
+    ? 'green.300'
+    : data.versionChangeType === 'deleted'
+      ? 'red.300'
+      : data.versionChangeType
+        ? 'yellow.300'
+        : undefined
 
   return (
     <ElementContainer
@@ -468,9 +476,9 @@ function ElementNode({ data, selected }: Props) {
       minW="180px"
       maxW="230px"
       cursor={bodyCursor}
-      outline={isDraggedOver ? '2px solid' : undefined}
-      outlineColor={isDraggedOver ? 'var(--accent)' : undefined}
-      outlineOffset={isDraggedOver ? '2px' : undefined}
+      outline={isDraggedOver || versionColor ? '2px solid' : undefined}
+      outlineColor={isDraggedOver ? 'var(--accent)' : versionColor}
+      outlineOffset={isDraggedOver || versionColor ? '2px' : undefined}
       borderTopWidth={data.layerHighlightColor ? '2px' : undefined}
       borderTopColor={data.layerHighlightColor ?? undefined}
       onClick={handleBodyClick}
@@ -485,9 +493,31 @@ function ElementNode({ data, selected }: Props) {
       style={{
         userSelect: 'none',
         WebkitUserSelect: 'none',
-        transition: 'outline 0.15s, outline-color 0.15s',
+        transition: 'outline 0.15s, outline-color 0.15s, opacity 0.15s',
       } as React.CSSProperties}
     >
+      {data.versionChangeType && (
+        <Box
+          position="absolute"
+          top="-10px"
+          left="10px"
+          zIndex={12}
+          px={2}
+          py="1px"
+          rounded="md"
+          bg="var(--bg-panel)"
+          border="1px solid"
+          borderColor={versionColor}
+          color={versionColor}
+          fontSize="10px"
+          fontWeight="800"
+          lineHeight="14px"
+          textTransform="uppercase"
+          pointerEvents="none"
+        >
+          {data.versionChangeType}
+        </Box>
+      )}
       {HANDLE_CONFIGS.flatMap(({ side, position }) =>
         HANDLE_SLOTS.map((slot) => {
           const handleId = getVisualHandleId(side, slot)

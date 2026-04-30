@@ -28,6 +28,7 @@ import { ZUICanvas, type ZUICameraFrame, type ZUICanvasHandle } from '../compone
 import { useCrossBranchContextSettings } from '../crossBranch/settings'
 import { primeWorkspaceGraphSnapshot } from '../crossBranch/store'
 import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../components/WatchRuntimePanel'
+import { useWorkspaceVersionPreview } from '../context/WorkspaceVersionContext'
 
 // ── Types ──────────────────────────────────────────────────────────
 interface Props {
@@ -61,6 +62,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   const zuiRef = useRef<ZUICanvasHandle>(null)
   const crossBranchSurface = sharedToken ? 'zui-shared' : 'zui'
   const { settings: crossBranchSettings, setEnabled: setCrossBranchEnabled } = useCrossBranchContextSettings(crossBranchSurface)
+  const { preview: versionPreview } = useWorkspaceVersionPreview()
 
   const cameraProfile = useMemo(() => new URLSearchParams(location.search).get('profile'), [location.search])
   const isDetailToOverviewProfile = sharedToken && cameraProfile === 'detail-to-overview'
@@ -290,6 +292,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
             highlightedTags={highlightedTags}
             highlightColor={highlightColor}
             hiddenTags={hiddenTags}
+            versionPreview={versionPreview}
             crossBranchSettings={crossBranchSettings}
             hoverLocked={isTagsOpen}
           />

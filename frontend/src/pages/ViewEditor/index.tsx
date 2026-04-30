@@ -86,6 +86,7 @@ import { removeConnectorGraphSnapshot, upsertConnectorGraphSnapshot, useWorkspac
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
 import { buildElementLibraryItems, useStore } from '../../store/useStore'
+import { useWorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
 
 const nodeTypes = {
   elementNode: ElementNode,
@@ -269,6 +270,7 @@ function ViewEditorInner({
   const [activeTags, setActiveTags] = useState<string[]>([])
   const activeTagsRef = useRef<string[]>([])
   activeTagsRef.current = activeTags
+  const { preview: versionPreview } = useWorkspaceVersionPreview()
   const [tagColors, setTagColors] = useState<Record<string, Tag>>({})
 
   useEffect(() => {
@@ -396,6 +398,7 @@ function ViewEditorInner({
     hoveredLayerTags,
     hoveredLayerColor,
     tagColors,
+    versionPreview,
     stableOnZoomIn: useCallback(async (id: number) => { await stableOnZoomInRef.current(id) }, []),
     stableOnZoomOut: useCallback(async (id: number) => { await stableOnZoomOutRef.current(id) }, []),
     stableOnNavigateToView: useCallback((id: number) => { stableOnNavigateToViewRef.current(id) }, []),

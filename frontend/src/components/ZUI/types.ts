@@ -71,6 +71,7 @@ export interface LayoutNode {
 
   // ── Edges within the same diagram ────────────────────────────────
   edgesOut: Array<{
+    id: number
     /** LayoutNode id of the target. */
     targetId: string
     label: string
@@ -103,6 +104,7 @@ export interface DiagramGroupLayout {
   nodes: LayoutNode[]
   /** Edges whose both endpoints are in this diagram. */
   edges: Array<{
+    id: number
     sourceId: string
     targetId: string
     label: string

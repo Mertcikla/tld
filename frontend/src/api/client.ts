@@ -47,6 +47,10 @@ import {
 import {
   ImportService,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/import_service_pb'
+import {
+  WorkspaceVersionService,
+  type WorkspaceVersionInfo,
+} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_version_service_pb'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset } from '../config/runtime'
 
@@ -102,6 +106,11 @@ export interface WatchEvent {
   message?: string
   at: string
   data?: unknown
+  phase?: string
+  watcher_mode?: string
+  languages?: string[]
+  changed_files?: number
+  warnings?: string[]
 }
 
 export interface WatchVersion {
@@ -125,7 +134,21 @@ export interface WatchDiff {
   after_hash?: string
   resource_type?: string
   resource_id?: number
+  language?: string
   summary?: string
+}
+
+export interface WorkspaceVersion {
+  id: string
+  version_id: string
+  source: string
+  parent_version_id?: string
+  view_count: number
+  element_count: number
+  connector_count: number
+  description?: string
+  workspace_hash?: string
+  created_at: string
 }
 
 // ─── RPC clients ─────────────────────────────────────────────────────────────
@@ -133,6 +156,7 @@ export interface WatchDiff {
 const workspaceClient = createClient(WorkspaceService, transport)
 const dependencyClient = createClient(DependencyService, transport)
 const importClient = createClient(ImportService, transport)
+const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
 let dependencyConnectorsCache: Promise<DependencyConnector[]> | null = null
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -148,6 +172,28 @@ async function rpc<T>(call: () => Promise<T>): Promise<T> {
 
 function j<T>(schema: Parameters<typeof toJson>[0], msg: Parameters<typeof toJson>[1]): T {
   return toJson(schema, msg, { useProtoFieldName: true, emitDefaultValues: true }) as unknown as T
+}
+
+function timestampToISOString(value: WorkspaceVersionInfo['createdAt']): string {
+  if (!value) return ''
+  const seconds = typeof value.seconds === 'bigint' ? Number(value.seconds) : Number(value.seconds ?? 0)
+  const nanos = Number(value.nanos ?? 0)
+  return new Date(seconds * 1000 + Math.floor(nanos / 1_000_000)).toISOString()
+}
+
+function mapWorkspaceVersion(version: WorkspaceVersionInfo): WorkspaceVersion {
+  return {
+    id: version.id,
+    version_id: version.versionId,
+    source: version.source,
+    parent_version_id: version.parentVersionId,
+    view_count: version.viewCount,
+    element_count: version.elementCount,
+    connector_count: version.connectorCount,
+    description: version.description,
+    workspace_hash: version.workspaceHash,
+    created_at: timestampToISOString(version.createdAt),
+  }
 }
 
 async function fetchWorkspaceRaw(body: Record<string, unknown>) {
@@ -974,6 +1020,14 @@ export const api = {
       }),
   },
 
+  versions: {
+    list: (limit = 50): Promise<WorkspaceVersion[]> =>
+      rpc(async () => {
+        const res = await workspaceVersionClient.listVersions({ limit })
+        return (res.versions ?? []).map(mapWorkspaceVersion)
+      }),
+  },
+
   watch: {
     status: async (): Promise<WatchStatus> => {
       const res = await fetch(apiUrl('/watch/status'))
@@ -995,10 +1049,12 @@ export const api = {
       if (!res.ok) throw new Error(`Failed to load watch versions: ${res.statusText}`)
       return res.json()
     },
-    diffs: async (versionId: number, filters?: { owner_type?: string; change_type?: string }): Promise<WatchDiff[]> => {
+    diffs: async (versionId: number, filters?: { owner_type?: string; change_type?: string; resource_type?: string; language?: string }): Promise<WatchDiff[]> => {
       const params = new URLSearchParams()
       if (filters?.owner_type) params.set('owner_type', filters.owner_type)
       if (filters?.change_type) params.set('change_type', filters.change_type)
+      if (filters?.resource_type) params.set('resource_type', filters.resource_type)
+      if (filters?.language) params.set('language', filters.language)
       const suffix = params.toString() ? `?${params}` : ''
       const res = await fetch(apiUrl(`/watch/versions/${versionId}/diffs${suffix}`))
       if (!res.ok) throw new Error(`Failed to load watch diffs: ${res.statusText}`)
