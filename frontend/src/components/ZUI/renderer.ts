@@ -26,12 +26,15 @@ const CONNECTOR_MAX_ALPHA = 0.95
 const CONNECTOR_LINE_PX = 2
 
 // ── Screen-space font limits (px) ──────────────────────────────────
-const MIN_FONT_NAME = 10
-const MAX_FONT_NAME = 50
-const MIN_FONT_BADGE = 12
-const MAX_FONT_BADGE = 30
 const MIN_FONT_HINT = 12
 const MAX_FONT_HINT = 24
+
+// Match ViewEditor ElementNode: nameSize="xl" (20px) and typeSize="2xs"
+// (10px), rounded="lg" (8px), on the default 85px-high node.
+const VIEW_EDITOR_NODE_H = 85
+const NAME_FONT_TO_NODE_H = 20 / VIEW_EDITOR_NODE_H
+const TYPE_FONT_TO_NODE_H = 10 / VIEW_EDITOR_NODE_H
+const RADIUS_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
 
 export interface ScreenRect {
   left: number
@@ -451,7 +454,7 @@ function drawNode(
 
   const parentAlpha = alpha * (1 - t)
   const childAlpha = alpha * t
-  const r = 8 / drawZoom  // matches Chakra rounded="lg" (8px)
+  const r = h * RADIUS_TO_NODE_H
 
   const borderColor = typeBorderColor(node.type)
 
@@ -594,10 +597,7 @@ function drawNode(
 
   // ── Label - portal shows "PORTAL" badge in accent; otherwise type badge ─
   if (screenW >= MIN_LABEL_PX && parentAlpha > 0.1) {
-    // Dynamic minimum: don't let font be larger than a fraction of node height on screen
-    const minName = Math.min(MIN_FONT_NAME, screenW * 0.35)
-    // w=200, so 0.10w = 20px (Chakra 'xl')
-    const nameFontSize = getClampedFontSize(w * 0.10, minName, MAX_FONT_NAME, drawZoom)
+    const nameFontSize = h * NAME_FONT_TO_NODE_H
     const screenFontSize = nameFontSize * drawZoom
 
     if (screenFontSize >= 6) {
@@ -626,9 +626,7 @@ function drawNode(
 
       // Type badge - using regular element type display
       if (drawScreenW > BADGE_THRESHOLD) {
-        const minBadge = Math.min(MIN_FONT_BADGE, screenW * 0.20)
-        // 0.05w = 10px (Chakra '2xs')
-        const badgeFontSize = getClampedFontSize(w * 0.05, minBadge, MAX_FONT_BADGE, drawZoom)
+        const badgeFontSize = h * TYPE_FONT_TO_NODE_H
         if (badgeFontSize * drawZoom >= 5) {
           ctx.font = `${badgeFontSize}px Inter, system-ui, sans-serif`
           ctx.fillStyle = '#a0aec0'
