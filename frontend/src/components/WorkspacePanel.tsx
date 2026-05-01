@@ -12,6 +12,7 @@ import {
   MenuButton,
   MenuList,
   MenuItem,
+  Portal,
   Spinner,
   Text,
   Tooltip,
@@ -156,39 +157,43 @@ function ThemedSelect<T extends string | number>({ value, options, placeholder, 
       >
         {selected?.label ?? placeholder ?? '—'}
       </MenuButton>
-      <MenuList
-        bg="rgba(var(--bg-main-rgb), 0.98)"
-        border="1px solid"
-        borderColor="whiteAlpha.200"
-        borderRadius="lg"
-        boxShadow="0 12px 32px rgba(0,0,0,0.5)"
-        backdropFilter="blur(18px)"
-        minW="200px"
-        maxH="240px"
-        overflowY="auto"
-        zIndex={2000}
-        py={1}
-      >
-        {options.length === 0 && (
-          <MenuItem isDisabled fontSize="11px" color="gray.500" bg="transparent">No options</MenuItem>
-        )}
-        {options.map((opt) => (
-          <MenuItem
-            key={String(opt.value)}
-            fontSize="11px"
-            color={opt.value === value ? 'var(--accent)' : 'gray.200'}
-            fontWeight={opt.value === value ? '600' : '400'}
-            bg="transparent"
-            _hover={{ bg: 'whiteAlpha.100' }}
-            _focus={{ bg: 'whiteAlpha.100' }}
-            py={1.5}
-            px={3}
-            onClick={() => onChange(opt.value)}
-          >
-            {opt.label}
-          </MenuItem>
-        ))}
-      </MenuList>
+      <Portal>
+        <MenuList
+          data-zui-native-wheel="true"
+          bg="rgba(var(--bg-main-rgb), 0.98)"
+          border="1px solid"
+          borderColor="whiteAlpha.200"
+          borderRadius="lg"
+          boxShadow="0 12px 32px rgba(0,0,0,0.5)"
+          backdropFilter="blur(18px)"
+          minW="200px"
+          maxH="240px"
+          overflowY="auto"
+          zIndex={2000}
+          py={1}
+          sx={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+        >
+          {options.length === 0 && (
+            <MenuItem isDisabled fontSize="11px" color="gray.500" bg="transparent">No options</MenuItem>
+          )}
+          {options.map((opt) => (
+            <MenuItem
+              key={String(opt.value)}
+              fontSize="11px"
+              color={opt.value === value ? 'var(--accent)' : 'gray.200'}
+              fontWeight={opt.value === value ? '600' : '400'}
+              bg="transparent"
+              _hover={{ bg: 'whiteAlpha.100' }}
+              _focus={{ bg: 'whiteAlpha.100' }}
+              py={1.5}
+              px={3}
+              onClick={() => onChange(opt.value)}
+            >
+              {opt.label}
+            </MenuItem>
+          ))}
+        </MenuList>
+      </Portal>
     </Menu>
   )
 }
@@ -428,6 +433,7 @@ export default function WorkspacePanel() {
   // ── Render ────────────────────────────────────────────────────────────────
   return (
     <Box
+      data-zui-native-wheel="true"
       position="absolute"
       left={{ base: 3, md: 4 }}
       bottom={{ base: 'calc(var(--bottomnav-container-h) + 12px)', md: 4 }}
@@ -435,6 +441,11 @@ export default function WorkspacePanel() {
       pointerEvents="auto"
       w={{ base: 'calc(100vw - 24px)', md: '360px' }}
       maxW="360px"
+      sx={{
+        overscrollBehavior: 'contain',
+        WebkitOverflowScrolling: 'touch',
+        touchAction: 'pan-y',
+      }}
     >
       <Box
         bg="rgba(var(--bg-main-rgb), 0.94)"
@@ -473,9 +484,9 @@ export default function WorkspacePanel() {
           </HStack>
           <HStack spacing={0.5}>
             {preview && (
-              <Tooltip label="Clear diff preview" placement="top">
+              <Tooltip label="Hide diffs" placement="top">
                 <Button
-                  aria-label="Clear diff preview"
+                  aria-label="Hide diffs"
                   leftIcon={<CloseIcon boxSize={2} />}
                   size="xs"
                   variant="outline"
@@ -488,7 +499,7 @@ export default function WorkspacePanel() {
                   _hover={{ bg: 'whiteAlpha.100', color: 'white', borderColor: 'whiteAlpha.300' }}
                   onClick={clearPreview}
                 >
-                  Clear diff
+                  Hide diffs
                 </Button>
               </Tooltip>
             )}
@@ -566,7 +577,17 @@ export default function WorkspacePanel() {
             </VStack>
 
             {diffLocations.length > 0 && (
-              <VStack align="stretch" spacing={1} maxH="160px" overflowY="auto" borderTop="1px solid" borderColor="whiteAlpha.100" pt={2.5}>
+              <VStack
+                data-zui-native-wheel="true"
+                align="stretch"
+                spacing={1}
+                maxH="160px"
+                overflowY="auto"
+                borderTop="1px solid"
+                borderColor="whiteAlpha.100"
+                pt={2.5}
+                sx={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+              >
                 {diffLocations.map((target) => (
                   <Button
                     key={target.key}
@@ -665,7 +686,14 @@ export default function WorkspacePanel() {
             </HStack>
 
             <Collapse in={runtimeOpen} animateOpacity>
-              <VStack align="stretch" spacing={0} maxH="140px" overflowY="auto">
+              <VStack
+                data-zui-native-wheel="true"
+                align="stretch"
+                spacing={0}
+                maxH="140px"
+                overflowY="auto"
+                sx={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+              >
                 {watchLines.length === 0 ? (
                   <Text px={3} py={2} fontSize="11px" color="gray.500">Waiting for watch output…</Text>
                 ) : watchLines.map((line) => (
