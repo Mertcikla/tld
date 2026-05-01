@@ -13,12 +13,11 @@ import {
   MenuList,
   MenuItem,
   Portal,
-  Spinner,
   Text,
   Tooltip,
   VStack,
 } from '@chakra-ui/react'
-import { ChevronDownIcon, CloseIcon, RepeatIcon, TimeIcon } from '@chakra-ui/icons'
+import { ChevronDownIcon, CloseIcon, RepeatIcon, TimeIcon, ViewIcon, ViewOffIcon } from '@chakra-ui/icons'
 import {
   api,
   type WatchDiff,
@@ -208,7 +207,7 @@ export default function WorkspacePanel() {
   // ── Version state ─────────────────────────────────────────────────────────
   const { preview, setPreview, clearPreview, requestFollow } = useWorkspaceVersionPreview()
   const [versionsOpen, setVersionsOpen] = useState(false)
-  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [diffVisible, setDiffVisible] = useState(true)
   const [repos, setRepos] = useState<WatchRepository[]>([])
   const [versions, setVersions] = useState<WatchVersion[]>([])
   const [workspaceVersions, setWorkspaceVersions] = useState<WorkspaceVersion[]>([])
@@ -234,23 +233,18 @@ export default function WorkspacePanel() {
   }, [])
 
   const loadVersions = useCallback(async () => {
-    setVersionsLoading(true)
-    try {
-      const [nextRepos, nextWsVersions] = await Promise.all([
-        api.watch.repositories().catch(() => [] as WatchRepository[]),
-        api.versions.list(50).catch(() => [] as WorkspaceVersion[]),
-      ])
-      setRepos(nextRepos)
-      setWorkspaceVersions(nextWsVersions)
-      const nextRepoId = repoId || nextRepos[0]?.id || ''
-      setRepoId(nextRepoId)
-      if (nextRepoId) {
-        const nextVersions = await api.watch.versions(nextRepoId)
-        setVersions(nextVersions)
-        setVersionId(versionId || nextVersions[0]?.id || '')
-      }
-    } finally {
-      setVersionsLoading(false)
+    const [nextRepos, nextWsVersions] = await Promise.all([
+      api.watch.repositories().catch(() => [] as WatchRepository[]),
+      api.versions.list(50).catch(() => [] as WorkspaceVersion[]),
+    ])
+    setRepos(nextRepos)
+    setWorkspaceVersions(nextWsVersions)
+    const nextRepoId = repoId || nextRepos[0]?.id || ''
+    setRepoId(nextRepoId)
+    if (nextRepoId) {
+      const nextVersions = await api.watch.versions(nextRepoId)
+      setVersions(nextVersions)
+      setVersionId(versionId || nextVersions[0]?.id || '')
     }
   }, [repoId, versionId])
 
@@ -288,9 +282,12 @@ export default function WorkspacePanel() {
   }, [diffs])
 
   useEffect(() => {
-    if (!selectedVersion) return
+    if (!selectedVersion || !diffVisible) {
+      clearPreview()
+      return
+    }
     setPreview(buildWorkspaceVersionPreview({ repository: selectedRepo, version: selectedVersion, workspaceVersions, diffs }))
-  }, [diffs, selectedRepo, selectedVersion, setPreview, workspaceVersions])
+  }, [clearPreview, diffVisible, diffs, selectedRepo, selectedVersion, setPreview, workspaceVersions])
 
   const navigateToDiffLocation = useCallback((target: WatchDiffLocation) => {
     requestFollow()
@@ -483,23 +480,23 @@ export default function WorkspacePanel() {
             </Box>
           </HStack>
           <HStack spacing={0.5}>
-            {preview && (
-              <Tooltip label="Hide diffs" placement="top">
+            {activeVersion && (
+              <Tooltip label={diffVisible ? 'Hide diffs' : 'Show diffs'} placement="top">
                 <Button
-                  aria-label="Hide diffs"
-                  leftIcon={<CloseIcon boxSize={2} />}
+                  aria-label={diffVisible ? 'Hide diffs' : 'Show diffs'}
+                  leftIcon={diffVisible ? <ViewOffIcon boxSize={3} /> : <ViewIcon boxSize={3} />}
                   size="xs"
                   variant="outline"
                   h="24px"
                   px={2}
                   fontSize="10px"
-                  color="whiteAlpha.800"
-                  borderColor="whiteAlpha.200"
-                  bg="whiteAlpha.50"
+                  color={diffVisible ? 'white' : 'whiteAlpha.700'}
+                  borderColor={diffVisible ? 'rgba(var(--accent-rgb), 0.45)' : 'whiteAlpha.200'}
+                  bg={diffVisible ? 'rgba(var(--accent-rgb), 0.18)' : 'whiteAlpha.50'}
                   _hover={{ bg: 'whiteAlpha.100', color: 'white', borderColor: 'whiteAlpha.300' }}
-                  onClick={clearPreview}
+                  onClick={() => setDiffVisible((visible) => !visible)}
                 >
-                  Hide diffs
+                  {diffVisible ? 'Hide diffs' : 'Show diffs'}
                 </Button>
               </Tooltip>
             )}
@@ -521,25 +518,14 @@ export default function WorkspacePanel() {
         {/* ── Versions body ── */}
         <Collapse in={versionsOpen} animateOpacity>
           <VStack align="stretch" spacing={2} px={3} pb={3} borderTop="1px solid" borderColor="whiteAlpha.100">
-            <HStack pt={2.5} spacing={2}>
+            <Box pt={2.5}>
               <ThemedSelect<number>
-                flex={1}
                 value={repoId}
                 placeholder="Select repository"
                 options={repos.map((r) => ({ value: r.id, label: r.display_name }))}
                 onChange={(v) => setRepoId(v)}
               />
-              <Tooltip label="Refresh versions" placement="top">
-                <IconButton
-                  aria-label="Refresh versions"
-                  icon={versionsLoading ? <Spinner size="xs" /> : <RepeatIcon boxSize={3} />}
-                  size="xs"
-                  variant="ghost"
-                  color="whiteAlpha.600"
-                  onClick={loadVersions}
-                />
-              </Tooltip>
-            </HStack>
+            </Box>
 
             <ThemedSelect<number>
               value={versionId}
