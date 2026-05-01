@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { buildWorkspaceGraphSnapshot } from './graph'
 import { resolveZUIProxyConnectors } from './resolve'
+import type { ResolveZUIProxyConnectorOptions, ZUIConnectorAnchorInfo } from './resolve'
 import type { Connector, ExploreData, PlacedElement, ViewTreeNode } from '../types'
+import type { CrossBranchContextSettings } from './types'
 
 function placedElement(view_id: number, element_id: number, name: string): PlacedElement {
   return {
@@ -39,6 +41,40 @@ function connector(id: number, view_id: number, source_element_id: number, targe
     target_handle: null,
     created_at: '2024-01-01',
     updated_at: '2024-01-01',
+  }
+}
+
+function zuiSettings(overrides: Partial<CrossBranchContextSettings> = {}): CrossBranchContextSettings {
+  return {
+    enabled: true,
+    depth: 5,
+    connectorBudget: 50,
+    connectorPriority: 'external',
+    ...overrides,
+  }
+}
+
+function anchor(nodeId: string, x: number, y = 0): ZUIConnectorAnchorInfo {
+  return {
+    nodeId,
+    worldX: x,
+    worldY: y,
+    worldW: 10,
+    worldH: 10,
+  }
+}
+
+function viewportOptions(anchorsByElementId: Map<number, ZUIConnectorAnchorInfo>): ResolveZUIProxyConnectorOptions {
+  return {
+    anchorsByElementId,
+    viewport: {
+      minX: 0,
+      minY: 0,
+      maxX: 100,
+      maxY: 100,
+      centerX: 50,
+      centerY: 50,
+    },
   }
 }
 
@@ -117,7 +153,7 @@ describe('resolveZUIProxyConnectors', () => {
         [1, 'd1-o1'],
         [2, 'd1-o2'],
       ]),
-      { enabled: true, depth: 5 },
+      zuiSettings(),
     )
 
     expect(resolved.connectors).toHaveLength(0)
@@ -142,7 +178,7 @@ describe('resolveZUIProxyConnectors', () => {
         [2, 'd1-o2'],
         [3, 'd2-o3'],
       ]),
-      { enabled: true, depth: 5 },
+      zuiSettings(),
     )
 
     expect(resolved.hiddenBadges).toHaveLength(0)
@@ -163,7 +199,7 @@ describe('resolveZUIProxyConnectors', () => {
         [3, 'd2-o3'],
         [4, 'd3-o4'],
       ]),
-      { enabled: true, depth: 5 },
+      zuiSettings(),
     )
 
     expect(resolved.hiddenBadges).toHaveLength(0)
@@ -195,14 +231,14 @@ describe('resolveZUIProxyConnectors', () => {
         [4, 'd2-o4'],
         [5, 'd2-o5'],
       ]),
-      { enabled: true, depth: 5, maxProxyConnectorGroups: 2 },
+      zuiSettings({ connectorBudget: 2 }),
     )
 
     expect(resolved.connectors).toHaveLength(2)
-    expect(resolved.omittedConnectorCount).toBe(2)
+    expect(resolved.omittedConnectorCount).toBe(3)
   })
 
-  it('does not reveal new connector groups when depth is lowered under a budget', () => {
+  it('reducing the budget keeps a subset of the larger-budget result', () => {
     const connectors = [
       connector(1, 1, 4, 2, 'deep-one'),
       connector(2, 1, 4, 2, 'deep-two'),
@@ -216,19 +252,91 @@ describe('resolveZUIProxyConnectors', () => {
       [4, 'd3-o4'],
     ])
 
-    const depthTwo = resolveZUIProxyConnectors(
+    const budgetTwo = resolveZUIProxyConnectors(
       snapshot,
       visibleNodes,
-      { enabled: true, depth: 2, maxProxyConnectorGroups: 1 },
+      zuiSettings({ connectorBudget: 2 }),
     )
-    const depthOne = resolveZUIProxyConnectors(
+    const budgetOne = resolveZUIProxyConnectors(
       snapshot,
       visibleNodes,
-      { enabled: true, depth: 1, maxProxyConnectorGroups: 1 },
+      zuiSettings({ connectorBudget: 1 }),
     )
 
-    const depthTwoKeys = new Set(depthTwo.connectors.map((item) => item.key))
-    expect(depthTwo.connectors).toHaveLength(1)
-    expect(depthOne.connectors.every((item) => depthTwoKeys.has(item.key))).toBe(true)
+    const budgetTwoKeys = new Set(budgetTwo.connectors.map((item) => item.key))
+    expect(budgetTwo.connectors).toHaveLength(2)
+    expect(budgetOne.connectors).toHaveLength(1)
+    expect(budgetOne.connectors.every((item) => budgetTwoKeys.has(item.key))).toBe(true)
+  })
+
+  it('prioritizes one-near one-far connector groups in external mode', () => {
+    const data = baseData([
+      connector(1, 1, 3, 2, 'near-far'),
+      connector(2, 1, 4, 2, 'near-near'),
+    ])
+    data.views['2'].placements = [
+      placedElement(2, 3, 'External Far'),
+      placedElement(2, 4, 'Internal Near'),
+    ]
+    const snapshot = buildWorkspaceGraphSnapshot(data)
+    const visibleNodes = new Map([
+      [2, 'd1-o2'],
+      [3, 'd2-o3'],
+      [4, 'd2-o4'],
+    ])
+    const options = viewportOptions(new Map([
+      [2, anchor('d1-o2', 45, 45)],
+      [3, anchor('d2-o3', 400, 45)],
+      [4, anchor('d2-o4', 60, 45)],
+    ]))
+
+    const resolved = resolveZUIProxyConnectors(
+      snapshot,
+      visibleNodes,
+      zuiSettings({ connectorBudget: 1, connectorPriority: 'external' }),
+      options,
+    )
+
+    expect(resolved.connectors).toHaveLength(1)
+    expect(resolved.connectors[0].details.connectors[0].connector.label).toBe('near-far')
+  })
+
+  it('prioritizes both-near connector groups in internal mode', () => {
+    const data = baseData([
+      connector(1, 1, 3, 2, 'near-far'),
+      connector(2, 1, 4, 2, 'near-near'),
+    ])
+    data.views['2'].placements = [
+      placedElement(2, 3, 'External Far'),
+      placedElement(2, 4, 'Internal Near'),
+    ]
+    const snapshot = buildWorkspaceGraphSnapshot(data)
+    const visibleNodes = new Map([
+      [2, 'd1-o2'],
+      [3, 'd2-o3'],
+      [4, 'd2-o4'],
+    ])
+    const options = viewportOptions(new Map([
+      [2, anchor('d1-o2', 45, 45)],
+      [3, anchor('d2-o3', 400, 45)],
+      [4, anchor('d2-o4', 60, 45)],
+    ]))
+
+    const resolved = resolveZUIProxyConnectors(
+      snapshot,
+      visibleNodes,
+      zuiSettings({ connectorBudget: 1, connectorPriority: 'internal' }),
+      options,
+    )
+
+    expect(resolved.connectors).toHaveLength(1)
+    expect(resolved.connectors[0].details.connectors[0].connector.label).toBe('near-near')
+  })
+
+  it('uses a default budget of 50 and external priority in test settings', () => {
+    expect(zuiSettings()).toMatchObject({
+      connectorBudget: 50,
+      connectorPriority: 'external',
+    })
   })
 })

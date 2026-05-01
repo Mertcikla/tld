@@ -34,7 +34,6 @@ import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import type { WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
 import type { ZUIResolvedConnector } from '../../crossBranch/resolve'
-import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
 import {
   buildVisibleProxyConnectors,
   collectVisibleNodeAnchors,
@@ -367,27 +366,47 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     [layout.groups, viewState, containerSize.w, hiddenTags],
   )
 
-  const minConnectorAnchorAlpha = crossBranchSettings.minConnectorAnchorAlpha ?? DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA
+  const viewportBounds = useMemo(() => {
+    const zoom = Math.max(0.0001, viewState.zoom)
+    const minX = -viewState.x / zoom
+    const minY = -viewState.y / zoom
+    const maxX = (containerSize.w - viewState.x) / zoom
+    const maxY = (containerSize.h - viewState.y) / zoom
+    return {
+      minX,
+      minY,
+      maxX,
+      maxY,
+      centerX: (minX + maxX) / 2,
+      centerY: (minY + maxY) / 2,
+    }
+  }, [containerSize.h, containerSize.w, viewState])
 
-  // A stable string key encoding which element→nodeId pairs are currently
-  // eligible for connector resolution. This tracks alpha threshold crossings
-  // so zooming out cannot keep stale high-detail connector topology alive.
+  // A stable string key encoding which element→nodeId pairs are currently visible.
+  // This only changes when nodes cross zoom-expansion thresholds not on every pan pixel.
   const visibleElementSig = useMemo(() =>
     Array.from(anchors.visibleAnchors.entries())
-      .filter(([, anchor]) => anchor.renderAlpha >= minConnectorAnchorAlpha)
       .sort(([a], [b]) => a - b)
-      .map(([id, anchor]) => `${id}:${anchor.nodeId}`)
+      .map(([id, anchor]) => `${id}:${anchor.nodeId}:${Math.round(anchor.worldX)}:${Math.round(anchor.worldY)}:${Math.round(anchor.worldW)}:${Math.round(anchor.worldH)}`)
       .join(','),
-    [anchors.visibleAnchors, minConnectorAnchorAlpha],
+    [anchors.visibleAnchors],
   )
 
-  // Connector topology: expensive O(connectors) resolution only when visibility set changes.
+  const viewportSig = useMemo(() => [
+    Math.round(viewportBounds.minX),
+    Math.round(viewportBounds.minY),
+    Math.round(viewportBounds.maxX),
+    Math.round(viewportBounds.maxY),
+  ].join(':'), [viewportBounds])
+
+  // Connector topology: recompute when visible anchors or viewport bounds change,
+  // because the connector budget is ranked relative to the current viewport.
   const proxyConnectors = useMemo(() => {
-    const resolved = buildVisibleProxyConnectors(workspaceSnapshot, anchors.visibleAnchors, crossBranchSettings)
+    const resolved = buildVisibleProxyConnectors(workspaceSnapshot, anchors.visibleAnchors, crossBranchSettings, viewportBounds)
     proxyConnectorsRef.current = resolved.connectors
     return resolved
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceSnapshot, visibleElementSig, crossBranchSettings])
+  }, [workspaceSnapshot, visibleElementSig, viewportSig, crossBranchSettings])
 
   const visibleProxyState = useMemo(() => ({
     ...anchors,

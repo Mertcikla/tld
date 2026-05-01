@@ -62,7 +62,12 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   const { isOpen: isTagsOpen, onClose: onTagsClose, onToggle: onTagsToggle } = useDisclosure()
   const zuiRef = useRef<ZUICanvasHandle>(null)
   const crossBranchSurface = sharedToken ? 'zui-shared' : 'zui'
-  const { settings: crossBranchSettings, setEnabled: setCrossBranchEnabled, setDepth: setCrossBranchDepth } = useCrossBranchContextSettings(crossBranchSurface)
+  const {
+    settings: crossBranchSettings,
+    setEnabled: setCrossBranchEnabled,
+    setConnectorBudget: setCrossBranchConnectorBudget,
+    setConnectorPriority: setCrossBranchConnectorPriority,
+  } = useCrossBranchContextSettings(crossBranchSurface)
   const { preview: versionPreview } = useWorkspaceVersionPreview()
 
   const cameraProfile = useMemo(() => new URLSearchParams(location.search).get('profile'), [location.search])
@@ -337,7 +342,8 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
               <CrossBranchControls
                 settings={crossBranchSettings}
                 onEnabledChange={setCrossBranchEnabled}
-                onDepthChange={setCrossBranchDepth}
+                onBudgetChange={setCrossBranchConnectorBudget}
+                onPriorityChange={setCrossBranchConnectorPriority}
                 label="Branches"
               />
 

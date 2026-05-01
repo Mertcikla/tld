@@ -1,6 +1,7 @@
 import {
   resolveZUIProxyConnectors,
   type ZUIHiddenProxyBadge,
+  type ZUIViewportBounds,
   type ZUIProxyResolution,
   type ZUIResolvedConnector,
 } from '../../crossBranch/resolve'
@@ -290,17 +291,24 @@ export function buildVisibleProxyConnectors(
   snapshot: WorkspaceGraphSnapshot | null,
   visibleAnchors: Map<number, VisibleNodeAnchor>,
   settings: CrossBranchContextSettings,
+  viewport?: ZUIViewportBounds | null,
 ): ZUIProxyResolution {
   const minAlpha = settings.minConnectorAnchorAlpha ?? DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA
-  const connectorAnchors = new Map(
-    Array.from(visibleAnchors.entries())
-      .filter(([, anchor]) => anchor.renderAlpha >= minAlpha)
-      .map(([elementId, anchor]) => [elementId, anchor.nodeId]),
-  )
+  const eligibleAnchors = Array.from(visibleAnchors.entries())
+    .filter(([, anchor]) => anchor.renderAlpha >= minAlpha)
+  const connectorAnchors = new Map(eligibleAnchors.map(([elementId, anchor]) => [elementId, anchor.nodeId]))
+  const anchorsByElementId = new Map(eligibleAnchors.map(([elementId, anchor]) => [elementId, {
+    nodeId: anchor.nodeId,
+    worldX: anchor.worldX,
+    worldY: anchor.worldY,
+    worldW: anchor.worldW,
+    worldH: anchor.worldH,
+  }]))
   return resolveZUIProxyConnectors(
     snapshot,
     connectorAnchors,
     settings,
+    { viewport, anchorsByElementId },
   )
 }
 

@@ -3,12 +3,19 @@ import type { Connector, ExploreData, PlacedElement, ViewTreeNode } from '../typ
 export const CROSS_BRANCH_DEPTH_ALL = 5
 export const CROSS_BRANCH_DEPTH_MIN = 1
 export const CROSS_BRANCH_DEPTH_MAX = CROSS_BRANCH_DEPTH_ALL
+export const CROSS_BRANCH_CONNECTOR_BUDGET_MIN = 10
+export const CROSS_BRANCH_CONNECTOR_BUDGET_MAX = 200
+export const CROSS_BRANCH_CONNECTOR_BUDGET_DEFAULT = 50
+
+export type CrossBranchConnectorPriority = 'external' | 'internal'
 
 export type CrossBranchSurface = 'editor' | 'zui' | 'zui-shared'
 
 export interface CrossBranchContextSettings {
   enabled: boolean
   depth: number
+  connectorBudget: number
+  connectorPriority: CrossBranchConnectorPriority
   minConnectorAnchorAlpha?: number
   maxProxyConnectorGroups?: number
 }

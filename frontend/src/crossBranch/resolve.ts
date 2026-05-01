@@ -1,8 +1,8 @@
 import type { Connector, PlacedElement } from '../types'
-import { CROSS_BRANCH_DEPTH_ALL } from './types'
-import { DEFAULT_MAX_PROXY_CONNECTOR_GROUPS } from './settings'
+import { CROSS_BRANCH_CONNECTOR_BUDGET_DEFAULT, CROSS_BRANCH_DEPTH_ALL } from './types'
 import type {
   AggregatedProxyConnector,
+  CrossBranchConnectorPriority,
   CrossBranchContextSettings,
   GraphPlacementRef,
   ProxyConnectorDetails,
@@ -537,6 +537,29 @@ export interface ZUIProxyResolution {
   omittedConnectorCount: number
 }
 
+export interface ZUIViewportBounds {
+  minX: number
+  minY: number
+  maxX: number
+  maxY: number
+  centerX: number
+  centerY: number
+}
+
+export interface ZUIConnectorAnchorInfo {
+  nodeId: string
+  worldX: number
+  worldY: number
+  worldW: number
+  worldH: number
+}
+
+export interface ResolveZUIProxyConnectorOptions {
+  viewport?: ZUIViewportBounds | null
+  anchorsByElementId?: Map<number, ZUIConnectorAnchorInfo>
+  connectorPriority?: CrossBranchConnectorPriority
+}
+
 function endpointPathForOwnerView(snapshot: WorkspaceGraphSnapshot, ownerViewId: number, elementId: number): number[] {
   const placement = chooseBestPlacement(snapshot, elementId, ownerViewId, ownerViewId)
   if (!placement) return [elementId]
@@ -613,10 +636,76 @@ function usesDeepestVisibleAnchor(
   return visibleEndpointCandidates(snapshot, ownerViewId, actualElementId, visibleElements)[0]?.anchorElementId === anchorElementId
 }
 
+function anchorCenter(anchor: ZUIConnectorAnchorInfo) {
+  return {
+    x: anchor.worldX + anchor.worldW / 2,
+    y: anchor.worldY + anchor.worldH / 2,
+  }
+}
+
+function anchorIsInViewport(anchor: ZUIConnectorAnchorInfo, viewport: ZUIViewportBounds): boolean {
+  const center = anchorCenter(anchor)
+  return center.x >= viewport.minX &&
+    center.x <= viewport.maxX &&
+    center.y >= viewport.minY &&
+    center.y <= viewport.maxY
+}
+
+function normalizedDistanceToViewportCenter(anchor: ZUIConnectorAnchorInfo, viewport: ZUIViewportBounds): number {
+  const center = anchorCenter(anchor)
+  const dx = center.x - viewport.centerX
+  const dy = center.y - viewport.centerY
+  const diagonal = Math.max(1, Math.hypot(viewport.maxX - viewport.minX, viewport.maxY - viewport.minY))
+  return Math.hypot(dx, dy) / diagonal
+}
+
+function viewportPriorityScore(
+  connector: ZUIResolvedConnector,
+  options: ResolveZUIProxyConnectorOptions | undefined,
+): number {
+  const viewport = options?.viewport
+  const anchors = options?.anchorsByElementId
+  const source = anchors?.get(connector.sourceAnchorElementId)
+  const target = anchors?.get(connector.targetAnchorElementId)
+  if (!viewport || !source || !target) {
+    return connector.maxDepth * 100 + connector.sourceDepth + connector.targetDepth
+  }
+
+  const sourceDistance = normalizedDistanceToViewportCenter(source, viewport)
+  const targetDistance = normalizedDistanceToViewportCenter(target, viewport)
+  const nearDistance = Math.min(sourceDistance, targetDistance)
+  const farDistance = Math.max(sourceDistance, targetDistance)
+  const sourceInViewport = anchorIsInViewport(source, viewport)
+  const targetInViewport = anchorIsInViewport(target, viewport)
+  const inViewportCount = Number(sourceInViewport) + Number(targetInViewport)
+
+  if (connector.details.connectors.length === 0) return Number.MAX_SAFE_INTEGER
+
+  if (options?.connectorPriority === 'internal') {
+    return (sourceDistance + targetDistance) * 1000 + farDistance * 400 - inViewportCount * 250
+  }
+
+  return nearDistance * 1000 - farDistance * 320 - (inViewportCount > 0 ? 300 : 0) + (inViewportCount === 2 ? 160 : 0)
+}
+
+function connectorTouchesViewport(
+  connector: ZUIResolvedConnector,
+  options: ResolveZUIProxyConnectorOptions | undefined,
+): boolean {
+  const viewport = options?.viewport
+  const anchors = options?.anchorsByElementId
+  if (!viewport || !anchors) return true
+  const source = anchors.get(connector.sourceAnchorElementId)
+  const target = anchors.get(connector.targetAnchorElementId)
+  if (!source || !target) return false
+  return anchorIsInViewport(source, viewport) || anchorIsInViewport(target, viewport)
+}
+
 export function resolveZUIProxyConnectors(
   snapshot: WorkspaceGraphSnapshot | null,
   visibleNodeIdsByElementId: Map<number, string>,
   settings: CrossBranchContextSettings,
+  options?: ResolveZUIProxyConnectorOptions,
 ): ZUIProxyResolution {
   if (!snapshot || !settings.enabled || visibleNodeIdsByElementId.size === 0) {
     return { connectors: [], hiddenBadges: [], omittedConnectorCount: 0 }
@@ -777,16 +866,24 @@ export function resolveZUIProxyConnectors(
 
   const visibleResolved = resolved
     .filter((connector) => connector.sourceNodeId && connector.targetNodeId)
+    .filter((connector) => connectorTouchesViewport(connector, options))
     .sort((left, right) => {
+      const scoreDelta = viewportPriorityScore(left, {
+        ...options,
+        connectorPriority: settings.connectorPriority,
+      }) - viewportPriorityScore(right, {
+        ...options,
+        connectorPriority: settings.connectorPriority,
+      })
+      if (scoreDelta !== 0) return scoreDelta
       if (right.details.count !== left.details.count) return right.details.count - left.details.count
       if (left.maxDepth !== right.maxDepth) return left.maxDepth - right.maxDepth
-      return (left.sourceDepth + left.targetDepth) - (right.sourceDepth + right.targetDepth)
+      const depthDelta = (left.sourceDepth + left.targetDepth) - (right.sourceDepth + right.targetDepth)
+      if (depthDelta !== 0) return depthDelta
+      return left.key.localeCompare(right.key)
     })
-  const maxGroups = settings.maxProxyConnectorGroups ?? DEFAULT_MAX_PROXY_CONNECTOR_GROUPS
+  const maxGroups = settings.connectorBudget ?? settings.maxProxyConnectorGroups ?? CROSS_BRANCH_CONNECTOR_BUDGET_DEFAULT
   const budgetedResolved = maxGroups > 0 ? visibleResolved.slice(0, maxGroups) : visibleResolved
-  const depthFilteredResolved = settings.depth < CROSS_BRANCH_DEPTH_ALL
-    ? budgetedResolved.filter((connector) => connector.maxDepth <= settings.depth)
-    : budgetedResolved
   const omittedConnectorIds = new Set<number>()
   if (maxGroups > 0) {
     for (const connector of visibleResolved.slice(maxGroups)) {
@@ -798,7 +895,7 @@ export function resolveZUIProxyConnectors(
   const omittedConnectorCount = omittedConnectorIds.size
 
   return {
-    connectors: depthFilteredResolved,
+    connectors: budgetedResolved,
     hiddenBadges: hiddenBadges.filter((badge) => badge.sourceNodeId && badge.targetNodeId),
     omittedConnectorCount,
   }
