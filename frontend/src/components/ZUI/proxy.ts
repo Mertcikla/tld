@@ -25,6 +25,10 @@ function clamp(value: number, min: number, max: number) {
   return value < min ? min : value > max ? max : value
 }
 
+function connectorAlpha(alpha: number): number {
+  return clamp(alpha * 1.1, 0.35, 0.95)
+}
+
 function transitionT(screenW: number, start: number, end: number): number {
   return clamp((screenW - start) / (end - start), 0, 1)
 }
@@ -315,10 +319,10 @@ export function drawVisibleProxyConnectors(
       const stubEndX = start.x + ux * stubLength
       const stubEndY = start.y + uy * stubLength
       const gradient = ctx.createLinearGradient(start.x, start.y, stubEndX, stubEndY)
-      gradient.addColorStop(0, `rgba(255, 255, 255, ${0.24 * alpha})`)
+      gradient.addColorStop(0, `rgba(255, 255, 255, ${0.36 * connectorAlpha(alpha)})`)
       gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
       ctx.strokeStyle = gradient
-      ctx.lineWidth = 1.5 / zoom
+      ctx.lineWidth = 2 / zoom
       ctx.beginPath()
       ctx.moveTo(start.x, start.y)
       ctx.lineTo(stubEndX, stubEndY)
@@ -327,9 +331,9 @@ export function drawVisibleProxyConnectors(
       continue
     }
 
-    ctx.globalAlpha = alpha
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)'
-    ctx.lineWidth = 2 / zoom
+    ctx.globalAlpha = connectorAlpha(alpha)
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.46)'
+    ctx.lineWidth = 2.4 / zoom
     ctx.beginPath()
     ctx.moveTo(sourcePoint.x, sourcePoint.y)
     ctx.lineTo(targetPoint.x, targetPoint.y)
@@ -364,7 +368,7 @@ export function drawVisibleProxyConnectors(
       badgeRadius,
     )
     ctx.fill()
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)'
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)'
     ctx.lineWidth = 1 / zoom
     ctx.stroke()
     ctx.fillStyle = 'white'

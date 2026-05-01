@@ -21,6 +21,9 @@ export function getExpandThresholds(canvasW: number) {
 const MIN_LABEL_PX = 12    // below this screen width, skip label text
 const MIN_DRAW_PX = 2     // below this screen width, skip node entirely
 const BADGE_THRESHOLD = 100 // node width in screen pixels below which we hide type badge and zoom icon
+const CONNECTOR_MIN_ALPHA = 0.32
+const CONNECTOR_MAX_ALPHA = 0.95
+const CONNECTOR_LINE_PX = 2
 
 // ── Screen-space font limits (px) ──────────────────────────────────
 const MIN_FONT_NAME = 10
@@ -164,6 +167,15 @@ function getOrLoadImage(url: string | null): HTMLImageElement | null {
 
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v
+}
+
+function connectorAlpha(alpha: number): number {
+  return clamp(alpha * 1.15, CONNECTOR_MIN_ALPHA, CONNECTOR_MAX_ALPHA)
+}
+
+function normalizeEdgeRouteType(type: string | null | undefined): 'bezier' | 'straight' | 'step' | 'smoothstep' {
+  if (type === 'straight' || type === 'step' || type === 'smoothstep') return type
+  return 'bezier'
 }
 
 function transitionT(screenW: number, start: number, end: number): number {
@@ -723,7 +735,7 @@ function drawNode(
 
     // Recursive children's edges DRAWN FIRST (below nodes)
     if (childAlpha > 0.2) {
-      drawEdges(ctx, node.children, childAlpha * 0.5, edgeZoom, thresholds, accent, labelBg, occupiedLabelRects)
+      drawEdges(ctx, node.children, childAlpha * 0.8, edgeZoom, thresholds, accent, labelBg, occupiedLabelRects)
     }
 
     const nextAbsScale = absScale * node.childScale
@@ -943,7 +955,7 @@ function drawEdges(
       }
 
       const dir = edge.direction ?? 'forward'
-      const type = edge.type || 'bezier'
+      const type = normalizeEdgeRouteType(edge.type)
 
       // ── Effective visual dimensions (handles capping) ─────────────
       const hasSourceChildren = node.children && node.children.length > 0
@@ -996,9 +1008,9 @@ function drawEdges(
       ctx.save()
       const edgeChange = currentVersionConnectorChanges.get(edge.id)
       const versionPreviewActive = currentVersionElementChanges.size > 0 || currentVersionConnectorChanges.size > 0
-      ctx.globalAlpha = versionPreviewActive && !edgeChange ? alpha * 0.1 : alpha * 0.8
+      ctx.globalAlpha = versionPreviewActive && !edgeChange ? Math.max(alpha * 0.18, 0.08) : connectorAlpha(alpha)
       ctx.strokeStyle = accent
-      ctx.lineWidth = 2 / zoom
+      ctx.lineWidth = CONNECTOR_LINE_PX / zoom
 
       let midX = (sH.x + tH.x) / 2
       let midY = (sH.y + tH.y) / 2
@@ -1262,14 +1274,14 @@ function drawGrid(ctx: CanvasRenderingContext2D, view: ZUIViewState, canvasW: nu
 
   ctx.save()
   ctx.fillStyle = color
-  
+
   // Dot grid rendering: only show if zoom is not too small
   if (view.zoom > 0.2) {
     for (let wx = startX; wx < right; wx += gridSize) {
       for (let wy = startY; wy < bottom; wy += gridSize) {
         const sx = wx * view.zoom + view.x
         const sy = wy * view.zoom + view.y
-        
+
         ctx.beginPath()
         ctx.arc(sx, sy, dotSize, 0, Math.PI * 2)
         ctx.fill()
