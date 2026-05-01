@@ -201,4 +201,34 @@ describe('resolveZUIProxyConnectors', () => {
     expect(resolved.connectors).toHaveLength(2)
     expect(resolved.omittedConnectorCount).toBe(2)
   })
+
+  it('does not reveal new connector groups when depth is lowered under a budget', () => {
+    const connectors = [
+      connector(1, 1, 4, 2, 'deep-one'),
+      connector(2, 1, 4, 2, 'deep-two'),
+      connector(3, 1, 3, 2, 'shallow'),
+    ]
+    const snapshot = buildWorkspaceGraphSnapshot(baseData(connectors))
+    const visibleNodes = new Map([
+      [1, 'd1-o1'],
+      [2, 'd1-o2'],
+      [3, 'd2-o3'],
+      [4, 'd3-o4'],
+    ])
+
+    const depthTwo = resolveZUIProxyConnectors(
+      snapshot,
+      visibleNodes,
+      { enabled: true, depth: 2, maxProxyConnectorGroups: 1 },
+    )
+    const depthOne = resolveZUIProxyConnectors(
+      snapshot,
+      visibleNodes,
+      { enabled: true, depth: 1, maxProxyConnectorGroups: 1 },
+    )
+
+    const depthTwoKeys = new Set(depthTwo.connectors.map((item) => item.key))
+    expect(depthTwo.connectors).toHaveLength(1)
+    expect(depthOne.connectors.every((item) => depthTwoKeys.has(item.key))).toBe(true)
+  })
 })

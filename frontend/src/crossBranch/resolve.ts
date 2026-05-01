@@ -641,7 +641,6 @@ export function resolveZUIProxyConnectors(
     for (const sourceCandidate of sourceCandidates) {
       for (const targetCandidate of targetCandidates) {
         if (sourceCandidate.anchorElementId === targetCandidate.anchorElementId) continue
-        if (settings.depth < CROSS_BRANCH_DEPTH_ALL && Math.max(sourceCandidate.depth, targetCandidate.depth) > settings.depth) continue
         if (
           sourceCandidate.actualElementId === sourceCandidate.anchorElementId &&
           targetCandidate.actualElementId === targetCandidate.anchorElementId &&
@@ -785,6 +784,9 @@ export function resolveZUIProxyConnectors(
     })
   const maxGroups = settings.maxProxyConnectorGroups ?? DEFAULT_MAX_PROXY_CONNECTOR_GROUPS
   const budgetedResolved = maxGroups > 0 ? visibleResolved.slice(0, maxGroups) : visibleResolved
+  const depthFilteredResolved = settings.depth < CROSS_BRANCH_DEPTH_ALL
+    ? budgetedResolved.filter((connector) => connector.maxDepth <= settings.depth)
+    : budgetedResolved
   const omittedConnectorIds = new Set<number>()
   if (maxGroups > 0) {
     for (const connector of visibleResolved.slice(maxGroups)) {
@@ -796,7 +798,7 @@ export function resolveZUIProxyConnectors(
   const omittedConnectorCount = omittedConnectorIds.size
 
   return {
-    connectors: budgetedResolved,
+    connectors: depthFilteredResolved,
     hiddenBadges: hiddenBadges.filter((badge) => badge.sourceNodeId && badge.targetNodeId),
     omittedConnectorCount,
   }
