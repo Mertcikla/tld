@@ -221,13 +221,23 @@ export function collectVisibleNodeAnchors(
   return { visibleAnchors, byNodeId }
 }
 
-function getDirectAnchorPoint(anchor: VisibleNodeAnchor, towards: VisibleNodeAnchor) {
+function getAnchorCenter(anchor: VisibleNodeAnchor) {
+  return {
+    x: anchor.worldX + anchor.worldW / 2,
+    y: anchor.worldY + anchor.worldH / 2,
+  }
+}
+
+function containsPoint(anchor: VisibleNodeAnchor, x: number, y: number) {
+  return x >= anchor.worldX &&
+    x <= anchor.worldX + anchor.worldW &&
+    y >= anchor.worldY &&
+    y <= anchor.worldY + anchor.worldH
+}
+
+function getRectBoundaryPoint(anchor: VisibleNodeAnchor, dx: number, dy: number) {
   const cx = anchor.worldX + anchor.worldW / 2
   const cy = anchor.worldY + anchor.worldH / 2
-  const tx = towards.worldX + towards.worldW / 2
-  const ty = towards.worldY + towards.worldH / 2
-  const dx = tx - cx
-  const dy = ty - cy
   const hw = anchor.worldW / 2
   const hh = anchor.worldH / 2
 
@@ -246,6 +256,33 @@ function getDirectAnchorPoint(anchor: VisibleNodeAnchor, towards: VisibleNodeAnc
     y: cy + Math.sign(dy) * hh,
     x: cx + Math.sign(dy) * hh * (dx / dy),
   }
+}
+
+function getDirectAnchorPoint(anchor: VisibleNodeAnchor, towards: VisibleNodeAnchor) {
+  const anchorCenter = getAnchorCenter(anchor)
+  const towardsCenter = getAnchorCenter(towards)
+
+  // Nested anchors represent parent/child nodes. Aim the child endpoint away
+  // from the parent center so proxy lines attach to the nearer child edge.
+  if (containsPoint(towards, anchorCenter.x, anchorCenter.y)) {
+    return getRectBoundaryPoint(
+      anchor,
+      anchorCenter.x - towardsCenter.x,
+      anchorCenter.y - towardsCenter.y,
+    )
+  }
+
+  return getRectBoundaryPoint(
+    anchor,
+    towardsCenter.x - anchorCenter.x,
+    towardsCenter.y - anchorCenter.y,
+  )
+}
+
+function getDirectAnchorPoints(source: VisibleNodeAnchor, target: VisibleNodeAnchor) {
+  const sourcePoint = getDirectAnchorPoint(source, target)
+  const targetPoint = getDirectAnchorPoint(target, source)
+  return { sourcePoint, targetPoint }
 }
 
 export function buildVisibleProxyConnectors(
@@ -293,8 +330,7 @@ export function drawVisibleProxyConnectors(
     const alpha = Math.min(source.renderAlpha, target.renderAlpha)
     if (alpha < 0.01) continue
 
-    const sourcePoint = getDirectAnchorPoint(source, target)
-    const targetPoint = getDirectAnchorPoint(target, source)
+    const { sourcePoint, targetPoint } = getDirectAnchorPoints(source, target)
     const midX = (sourcePoint.x + targetPoint.x) / 2
     const midY = (sourcePoint.y + targetPoint.y) / 2
     const label = String(connector.details.count)
@@ -395,8 +431,7 @@ export function drawVisibleDirectProxyBadges(
     const alpha = Math.min(source.renderAlpha, target.renderAlpha)
     if (alpha < 0.01) continue
 
-    const sourcePoint = getDirectAnchorPoint(source, target)
-    const targetPoint = getDirectAnchorPoint(target, source)
+    const { sourcePoint, targetPoint } = getDirectAnchorPoints(source, target)
     const midX = (sourcePoint.x + targetPoint.x) / 2
     const midY = (sourcePoint.y + targetPoint.y) / 2
     const label = `+${badge.count}`
@@ -457,10 +492,11 @@ export function findHoveredProxyConnector(
     const source = visibleAnchorsByNodeId.get(connector.sourceNodeId)
     const target = visibleAnchorsByNodeId.get(connector.targetNodeId)
     if (!source || !target) continue
-    const x1 = source.worldX + source.worldW / 2
-    const y1 = source.worldY + source.worldH / 2
-    const x2 = target.worldX + target.worldW / 2
-    const y2 = target.worldY + target.worldH / 2
+    const { sourcePoint, targetPoint } = getDirectAnchorPoints(source, target)
+    const x1 = sourcePoint.x
+    const y1 = sourcePoint.y
+    const x2 = targetPoint.x
+    const y2 = targetPoint.y
     const dx = x2 - x1
     const dy = y2 - y1
     const l2 = dx * dx + dy * dy
