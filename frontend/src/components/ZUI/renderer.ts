@@ -316,29 +316,7 @@ function drawZoomInIcon(ctx: CanvasRenderingContext2D, x: number, y: number, siz
   ctx.restore()
 }
 
-/** Draw a portal arrow icon (↗) for portal nodes. */
-function drawPortalIcon(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, strokeWidth: number, color: string): void {
-  ctx.save()
-  ctx.strokeStyle = color
-  ctx.lineWidth = strokeWidth
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.translate(x, y)
-  const s = size / 16
-  ctx.scale(s, s)
-  ctx.beginPath()
-  // Arrow shaft: (2,14) → (13,3)
-  ctx.moveTo(2, 14)
-  ctx.lineTo(13, 3)
-  // Arrow head
-  ctx.moveTo(5, 3)
-  ctx.lineTo(13, 3)
-  ctx.lineTo(13, 11)
-  ctx.stroke()
-  ctx.restore()
-}
-
-/** Draw a cycle icon (↺) for circular nodes. */
+/** Draw a cycle icon (↺) for circular nodes. NOT USED CURRENTLY */
 function drawCycleIcon(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, strokeWidth: number, color: string): void {
   ctx.save()
   ctx.strokeStyle = color
@@ -379,18 +357,6 @@ function portalTintColor(accent: string, alpha: number): string {
   const rgba = `rgba(${r},${g},${b},${alpha})`
   portalTintColorCache.set(cacheKey, rgba)
   return rgba
-}
-
-/** Draw a squiggly line from (x1, y1) to (x2, y2). */
-function drawSquigglyLine(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, zoom: number): void {
-  ctx.save()
-  ctx.beginPath()
-  ctx.moveTo(x1, y1)
-  ctx.lineTo(x2, y2)
-  const dashLen = 6 / zoom
-  ctx.setLineDash([dashLen, dashLen * 1.5])
-  ctx.stroke()
-  ctx.restore()
 }
 
 /** Calculate coordinate for a named handle on a node. */
@@ -530,7 +496,7 @@ function drawNode(
   }
 
   // ── Shadow ───────────────────────────────────────────────────────
-  // Subtler shadow for Canvas performance, but provides the depth requested to match ViewEditor
+  // Subtler shadow for Canvas performance
   if (parentAlpha > 0.5 && screenW > 40) {
     ctx.save()
     ctx.globalAlpha = parentAlpha * 0.4
@@ -764,11 +730,8 @@ function drawNode(
     ctx.strokeStyle = accent
     if (node.isCircular) {
       drawCycleIcon(ctx, x + w - iconSize - padding, y + padding, iconSize, 3.5, accent)
-    } else if (node.isPortal) {
-      // Portal: use arrow icon instead of magnifying glass
-      drawPortalIcon(ctx, x + w - iconSize - padding, y + padding, iconSize, 3.5, accent)
     } else {
-      drawZoomInIcon(ctx, x + w - iconSize - padding, y + padding, iconSize, 3.5)
+      drawZoomInIcon(ctx, x + w - iconSize - padding, y + padding, iconSize, 2.5)
     }
     ctx.restore()
   }
@@ -1340,44 +1303,9 @@ export function renderFrame(
     ctx.strokeStyle = accent
     ctx.lineWidth = 2 / view.zoom
     ctx.setLineDash([2, 2])
-    // Only draw the border around the diagram part (not portals)
+    // Only draw the border around the diagram part
     ctx.strokeRect(group.worldX + group.diagramX, group.worldY + group.diagramY, group.diagramW, group.diagramH)
     ctx.setLineDash([])
-    ctx.restore()
-
-    // ── Squiggly edges to portal nodes ────────────────────────────────
-    ctx.save()
-    ctx.strokeStyle = accent
-    ctx.setLineDash([])
-    ctx.lineWidth = 2 / view.zoom
-    ctx.globalAlpha = 0.6
-    for (const node of group.nodes) {
-      if (node.isPortal) {
-        // Draw squiggle/dash from diagram box boundary to portal box boundary
-        const cx = group.worldX + group.diagramX + group.diagramW / 2
-        const cy = group.worldY + group.diagramY + group.diagramH / 2
-        const px = node.worldX + node.worldW / 2
-        const py = node.worldY + node.worldH / 2
-
-        const dx = px - cx
-        const dy = py - cy
-
-        const getBBoxIntersection = (boxW: number, boxH: number, targetDX: number, targetDY: number) => {
-          const hw = boxW / 2 + 10 // pad
-          const hh = boxH / 2 + 10 // pad
-          if (Math.abs(targetDX * hh) > Math.abs(targetDY * hw)) {
-            return { x: Math.sign(targetDX) * hw, y: targetDY * (hw / Math.abs(targetDX)) }
-          } else {
-            return { x: targetDX * (hh / Math.abs(targetDY)), y: Math.sign(targetDY) * hh }
-          }
-        }
-
-        const start = getBBoxIntersection(group.diagramW, group.diagramH, dx, dy)
-        const end = getBBoxIntersection(node.worldW, node.worldH, -dx, -dy)
-
-        drawSquigglyLine(ctx, cx + start.x, cy + start.y, px + end.x, py + end.y, view.zoom)
-      }
-    }
     ctx.restore()
 
     // Edges in this group

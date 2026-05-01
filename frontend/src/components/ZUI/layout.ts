@@ -14,8 +14,8 @@ import { resolveIconPath } from '../../utils/url'
 
 // ── Constants ──────────────────────────────────────────────────────
 
-export const NODE_W = 200
-export const NODE_H = 100
+export const NODE_W = 180
+export const NODE_H = 85
 const GROUP_PAD = 80         // padding inside a diagram group box
 const GROUP_SPACING = 400    // horizontal gap between root diagrams
 const CHILD_PAD = 4         // padding inside a node when rendering children
