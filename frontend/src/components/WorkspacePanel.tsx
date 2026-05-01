@@ -448,7 +448,20 @@ export default function WorkspacePanel() {
         {/* ── Versions header ── */}
         <HStack px={3} py={2} spacing={2} justify="space-between">
           <HStack spacing={2} minW={0} flex={1}>
-            <Badge colorScheme={preview ? 'blue' : 'gray'} borderRadius="md" fontSize="9px" px={1.5}>V</Badge>
+            <Box
+              display="inline-flex"
+              alignItems="center"
+              justifyContent="center"
+              w="20px"
+              h="20px"
+              flexShrink={0}
+              borderRadius="md"
+              color={preview ? 'blue.200' : 'gray.400'}
+              bg={preview ? 'blue.500' : 'whiteAlpha.100'}
+              boxShadow={preview ? '0 0 12px rgba(66, 153, 225, 0.35)' : 'none'}
+            >
+              <TimeIcon boxSize={3} />
+            </Box>
             <Box minW={0} flex={1}>
               <Text fontSize="11px" fontWeight="700" color="gray.100" noOfLines={1}>
                 {activeRepo?.display_name ?? 'Workspace'}
@@ -461,16 +474,33 @@ export default function WorkspacePanel() {
           <HStack spacing={0.5}>
             {preview && (
               <Tooltip label="Clear diff preview" placement="top">
-                <IconButton aria-label="Clear diff preview" icon={<CloseIcon boxSize={2} />} size="xs" variant="ghost" color="whiteAlpha.700" onClick={clearPreview} />
+                <Button
+                  aria-label="Clear diff preview"
+                  leftIcon={<CloseIcon boxSize={2} />}
+                  size="xs"
+                  variant="outline"
+                  h="24px"
+                  px={2}
+                  fontSize="10px"
+                  color="whiteAlpha.800"
+                  borderColor="whiteAlpha.200"
+                  bg="whiteAlpha.50"
+                  _hover={{ bg: 'whiteAlpha.100', color: 'white', borderColor: 'whiteAlpha.300' }}
+                  onClick={clearPreview}
+                >
+                  Clear diff
+                </Button>
               </Tooltip>
             )}
             <Tooltip label={versionsOpen ? 'Collapse versions' : 'Expand versions'} placement="top">
               <IconButton
                 aria-label="Workspace versions"
-                icon={<TimeIcon boxSize={3} />}
+                icon={<ChevronDownIcon boxSize={3} />}
                 size="xs"
                 variant="ghost"
                 color={versionsOpen ? 'var(--accent)' : 'whiteAlpha.700'}
+                transform={versionsOpen ? 'rotate(180deg)' : 'rotate(0deg)'}
+                transition="transform 0.2s, color 0.2s"
                 onClick={() => setVersionsOpen((v) => !v)}
               />
             </Tooltip>
@@ -620,17 +650,17 @@ export default function WorkspacePanel() {
                     </Tooltip>
                   </>
                 )}
-                <Box
-                  as="span"
-                  display="flex"
-                  alignItems="center"
+                <IconButton
+                  aria-label={runtimeOpen ? 'Collapse runtime' : 'Expand runtime'}
+                  icon={<ChevronDownIcon boxSize={3} />}
+                  size="xs"
+                  variant="ghost"
                   color="whiteAlpha.400"
                   transform={runtimeOpen ? 'rotate(180deg)' : 'rotate(0deg)'}
-                  transition="transform 0.2s"
-                  ml={0.5}
-                >
-                  <ChevronDownIcon boxSize={3} />
-                </Box>
+                  transition="transform 0.2s, color 0.2s"
+                  _hover={{ color: 'whiteAlpha.700', bg: 'whiteAlpha.100' }}
+                  onClick={() => setRuntimeOpen((v) => !v)}
+                />
               </HStack>
             </HStack>
 

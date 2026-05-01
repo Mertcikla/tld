@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
-import { Box, Spinner, Center } from '@chakra-ui/react'
+import { Box, Spinner, Center, IconButton, Tooltip } from '@chakra-ui/react'
+import { ViewIcon, ViewOffIcon } from '@chakra-ui/icons'
 import { api } from './api/client'
 import ViewEditor from './pages/ViewEditor'
 import ViewsPage from './pages/Views'
@@ -18,6 +19,7 @@ import { platform } from './platform/local'
 
 function AppLayout() {
   const header = useHeader()
+  const [workspacePanelVisible, setWorkspacePanelVisible] = useState(true)
   const node = header && typeof header === 'object' && 'node' in header ? (header as { node: React.ReactNode }).node : header
   const hideMobileBar = header && typeof header === 'object' && 'hideMobileBar' in header ? !!(header as { hideMobileBar?: boolean }).hideMobileBar : false
 
@@ -33,7 +35,7 @@ function AppLayout() {
       />
       <Box flex="1" overflow="hidden" position="relative">
         <Outlet />
-        <WorkspacePanel />
+        {workspacePanelVisible && <WorkspacePanel />}
       </Box>
     </Box>
   )
