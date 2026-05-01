@@ -17,7 +17,7 @@ import {
   Tooltip,
   VStack,
 } from '@chakra-ui/react'
-import { ChevronDownIcon, CloseIcon, RepeatIcon, TimeIcon, ViewIcon, ViewOffIcon } from '@chakra-ui/icons'
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, RepeatIcon, TimeIcon, ViewIcon, ViewOffIcon } from '@chakra-ui/icons'
 import {
   api,
   type WatchDiff,
@@ -215,6 +215,7 @@ export default function WorkspacePanel() {
   const [versionId, setVersionId] = useState<number | ''>('')
   const [diffs, setDiffs] = useState<WatchDiff[]>([])
   const [diffLocations, setDiffLocations] = useState<WatchDiffLocation[]>([])
+  const [activeDiffLocationKey, setActiveDiffLocationKey] = useState<string | null>(null)
 
   const selectedRepo = useMemo(() => repos.find((r) => r.id === repoId) ?? null, [repos, repoId])
   const selectedVersion = useMemo(() => versions.find((v) => v.id === versionId) ?? null, [versions, versionId])
@@ -274,12 +275,23 @@ export default function WorkspacePanel() {
     }
     let cancelled = false
     api.explore.load().then((data) => {
-      if (!cancelled) setDiffLocations(buildWatchDiffLocations(data, diffs).slice(0, 24))
+      if (!cancelled) setDiffLocations(buildWatchDiffLocations(data, diffs))
     }).catch(() => {
       if (!cancelled) setDiffLocations([])
     })
     return () => { cancelled = true }
   }, [diffs])
+
+  const displayedDiffLocations = useMemo(() => diffLocations.slice(0, 24), [diffLocations])
+  const navigableDiffLocations = useMemo(() => {
+    const elementLocations = diffLocations.filter((target) => target.resourceType === 'element')
+    return elementLocations.length > 0 ? elementLocations : diffLocations
+  }, [diffLocations])
+  const activeDiffLocationIndex = useMemo(() => {
+    if (!activeDiffLocationKey) return -1
+    const index = navigableDiffLocations.findIndex((target) => target.key === activeDiffLocationKey)
+    return index >= 0 ? index : -1
+  }, [activeDiffLocationKey, navigableDiffLocations])
 
   useEffect(() => {
     if (!selectedVersion || !diffVisible) {
@@ -290,6 +302,7 @@ export default function WorkspacePanel() {
   }, [clearPreview, diffVisible, diffs, selectedRepo, selectedVersion, setPreview, workspaceVersions])
 
   const navigateToDiffLocation = useCallback((target: WatchDiffLocation) => {
+    setActiveDiffLocationKey(target.key)
     requestFollow({
       resourceType: target.resourceType,
       resourceId: target.resourceId,
@@ -308,10 +321,22 @@ export default function WorkspacePanel() {
     navigate(`/views?view=explore&focus=${target.viewId}`)
   }, [location.pathname, navigate, requestFollow])
 
+  const navigateDiffLocationByOffset = useCallback((offset: number) => {
+    if (navigableDiffLocations.length === 0) return
+    const nextIndex = activeDiffLocationIndex < 0
+      ? offset > 0 ? 0 : navigableDiffLocations.length - 1
+      : (activeDiffLocationIndex + offset + navigableDiffLocations.length) % navigableDiffLocations.length
+    navigateToDiffLocation(navigableDiffLocations[nextIndex])
+  }, [activeDiffLocationIndex, navigableDiffLocations, navigateToDiffLocation])
+
   const compactSummary = preview ? changeLabel(preview.diffs) : diffs.length > 0 ? changeLabel(diffs) : 'Workspace versions'
   const activeVersion = preview?.version ?? selectedVersion
   const activeRepo = preview?.repository ?? selectedRepo
   const diffSummary = useMemo(() => summarizeWatchDiffs(diffs), [diffs])
+  const totalFileChanges = diffSummary.files.added + diffSummary.files.updated + diffSummary.files.deleted + diffSummary.files.changed
+  const totalTldChanges = diffSummary.elements.added + diffSummary.elements.updated + diffSummary.elements.deleted + diffSummary.elements.changed +
+    diffSummary.connectors.added + diffSummary.connectors.updated + diffSummary.connectors.deleted + diffSummary.connectors.changed
+  const activeDiffLocation = activeDiffLocationIndex >= 0 ? navigableDiffLocations[activeDiffLocationIndex] : null
 
   // ── Watch state ───────────────────────────────────────────────────────────
   const socketRef = useRef<WebSocket | null>(null)
@@ -459,66 +484,116 @@ export default function WorkspacePanel() {
         overflow="hidden"
       >
         {/* ── Versions header ── */}
-        <HStack px={3} py={2} spacing={2} justify="space-between">
-          <HStack spacing={2} minW={0} flex={1}>
-            <Box
-              display="inline-flex"
-              alignItems="center"
-              justifyContent="center"
-              w="20px"
-              h="20px"
-              flexShrink={0}
-              borderRadius="md"
-              color={preview ? 'blue.200' : 'gray.400'}
-              bg={preview ? 'blue.500' : 'whiteAlpha.100'}
-              boxShadow={preview ? '0 0 12px rgba(66, 153, 225, 0.35)' : 'none'}
-            >
-              <TimeIcon boxSize={3} />
-            </Box>
-            <Box minW={0} flex={1}>
-              <Text fontSize="11px" fontWeight="700" color="gray.100" noOfLines={1}>
+        <VStack align="stretch" spacing={2} px={3} py={3}>
+          <HStack spacing={2} justify="space-between" align="flex-start">
+            <HStack spacing={2} minW={0} flex={1}>
+              <Box
+                display="inline-flex"
+                alignItems="center"
+                justifyContent="center"
+                w="24px"
+                h="24px"
+                flexShrink={0}
+                borderRadius="md"
+                color={preview ? 'blue.200' : 'gray.400'}
+                bg={preview ? 'blue.500' : 'whiteAlpha.100'}
+                boxShadow={preview ? '0 0 12px rgba(66, 153, 225, 0.35)' : 'none'}
+              >
+                <TimeIcon boxSize={3.5} />
+              </Box>
+              <Box minW={0} flex={1}>
                 {activeRepo?.display_name ?? 'Workspace'}
-              </Text>
-              <Text fontSize="10px" color="gray.500" noOfLines={1}>
-                {activeVersion ? `${versionLabel(activeVersion)} · ${compactSummary}` : compactSummary}
-              </Text>
-            </Box>
-          </HStack>
-          <HStack spacing={0.5}>
-            {activeVersion && (
-              <Tooltip label={diffVisible ? 'Hide diffs' : 'Show diffs'} placement="top">
-                <Button
-                  aria-label={diffVisible ? 'Hide diffs' : 'Show diffs'}
-                  leftIcon={diffVisible ? <ViewOffIcon boxSize={3} /> : <ViewIcon boxSize={3} />}
+
+                <Text fontSize="10px" color="gray.500" noOfLines={1}>
+                  {totalTldChanges > 0 ? `${totalTldChanges} changed elements and connectors` : 'Workspace versions'}
+                </Text>
+              </Box>
+            </HStack>
+            <HStack spacing={0.5}>
+              {activeVersion && (
+                <Tooltip label={diffVisible ? 'Hide diffs' : 'Show diffs'} placement="top">
+                  <Button
+                    aria-label={diffVisible ? 'Hide diffs' : 'Show diffs'}
+                    leftIcon={diffVisible ? <ViewOffIcon boxSize={3} /> : <ViewIcon boxSize={3} />}
+                    size="xs"
+                    variant="outline"
+                    h="24px"
+                    px={2}
+                    fontSize="10px"
+                    color={diffVisible ? 'white' : 'whiteAlpha.700'}
+                    borderColor={diffVisible ? 'rgba(var(--accent-rgb), 0.45)' : 'whiteAlpha.200'}
+                    bg={diffVisible ? 'rgba(var(--accent-rgb), 0.18)' : 'whiteAlpha.50'}
+                    _hover={{ bg: 'whiteAlpha.100', color: 'white', borderColor: 'whiteAlpha.300' }}
+                    onClick={() => setDiffVisible((visible) => !visible)}
+                  >
+                    {diffVisible ? 'Hide diffs' : 'Show diffs'}
+                  </Button>
+                </Tooltip>
+              )}
+              <Tooltip label={versionsOpen ? 'Collapse versions' : 'Expand versions'} placement="top">
+                <IconButton
+                  aria-label="Workspace versions"
+                  icon={<ChevronDownIcon boxSize={3} />}
                   size="xs"
-                  variant="outline"
-                  h="24px"
-                  px={2}
-                  fontSize="10px"
-                  color={diffVisible ? 'white' : 'whiteAlpha.700'}
-                  borderColor={diffVisible ? 'rgba(var(--accent-rgb), 0.45)' : 'whiteAlpha.200'}
-                  bg={diffVisible ? 'rgba(var(--accent-rgb), 0.18)' : 'whiteAlpha.50'}
-                  _hover={{ bg: 'whiteAlpha.100', color: 'white', borderColor: 'whiteAlpha.300' }}
-                  onClick={() => setDiffVisible((visible) => !visible)}
-                >
-                  {diffVisible ? 'Hide diffs' : 'Show diffs'}
-                </Button>
+                  variant="ghost"
+                  color={versionsOpen ? 'var(--accent)' : 'whiteAlpha.700'}
+                  transform={versionsOpen ? 'rotate(180deg)' : 'rotate(0deg)'}
+                  transition="transform 0.2s, color 0.2s"
+                  onClick={() => setVersionsOpen((v) => !v)}
+                />
               </Tooltip>
-            )}
-            <Tooltip label={versionsOpen ? 'Collapse versions' : 'Expand versions'} placement="top">
-              <IconButton
-                aria-label="Workspace versions"
-                icon={<ChevronDownIcon boxSize={3} />}
-                size="xs"
-                variant="ghost"
-                color={versionsOpen ? 'var(--accent)' : 'whiteAlpha.700'}
-                transform={versionsOpen ? 'rotate(180deg)' : 'rotate(0deg)'}
-                transition="transform 0.2s, color 0.2s"
-                onClick={() => setVersionsOpen((v) => !v)}
-              />
-            </Tooltip>
+            </HStack>
           </HStack>
-        </HStack>
+
+          <Box
+            px={2}
+            py={2}
+            border="1px solid"
+            borderColor="whiteAlpha.100"
+            borderRadius="md"
+            bg="whiteAlpha.50"
+          >
+            <HStack spacing={1.5} fontFamily="mono" fontSize="10px" minW={0} opacity={0.85}>
+              <Text color="gray.300" noOfLines={1} flex={1} minW={0}>{compactSummary}</Text>
+            </HStack>
+            <HStack spacing={2} mt={1.5} minW={0}>
+              <Badge variant="subtle" colorScheme="blue" fontSize="8px" px={1}>TLD</Badge>
+              <Text fontSize="10px" color="green.300" fontFamily="mono">+{diffSummary.elements.added} / {diffSummary.connectors.added}</Text>
+              <Text fontSize="10px" color="red.300" fontFamily="mono">-{diffSummary.elements.deleted} / {diffSummary.connectors.deleted}</Text>
+              <Text fontSize="10px" color="gray.500" noOfLines={1} flex={1} minW={0}>
+                {activeDiffLocation ? `${activeDiffLocationIndex + 1}/${navigableDiffLocations.length} ${activeDiffLocation.label}` : `${totalTldChanges} changes`}
+              </Text>
+              <HStack spacing={0.5} flexShrink={0}>
+                <Tooltip label="Previous changed element" placement="top">
+                  <IconButton
+                    aria-label="Previous changed element"
+                    icon={<ChevronLeftIcon boxSize={3.5} />}
+                    size="xs"
+                    variant="ghost"
+                    h="22px"
+                    minW="22px"
+                    color="whiteAlpha.700"
+                    isDisabled={navigableDiffLocations.length === 0}
+                    onClick={() => navigateDiffLocationByOffset(-1)}
+                  />
+                </Tooltip>
+                <Tooltip label="Next changed element" placement="top">
+                  <IconButton
+                    aria-label="Next changed element"
+                    icon={<ChevronRightIcon boxSize={3.5} />}
+                    size="xs"
+                    variant="ghost"
+                    h="22px"
+                    minW="22px"
+                    color="whiteAlpha.700"
+                    isDisabled={navigableDiffLocations.length === 0}
+                    onClick={() => navigateDiffLocationByOffset(1)}
+                  />
+                </Tooltip>
+              </HStack>
+            </HStack>
+          </Box>
+        </VStack>
 
         {/* ── Versions body ── */}
         <Collapse in={versionsOpen} animateOpacity>
@@ -542,32 +617,28 @@ export default function WorkspacePanel() {
               onChange={(v) => setVersionId(v)}
             />
 
-            <VStack align="stretch" spacing={2.5}>
-              <Box
-                px={2}
-                py={2}
-                border="1px solid"
-                borderColor="whiteAlpha.100"
-                borderRadius="md"
-                bg="whiteAlpha.50"
-              >
-                <HStack spacing={1} fontFamily="mono" fontSize="10px" minW={0} opacity={0.8}>
-                  <Text color="gray.300" noOfLines={1}>
-                    {diffSummary.files.added + diffSummary.files.updated + diffSummary.files.deleted + diffSummary.files.changed} files changed,
-                  </Text>
-                  <Text color="green.300">+{diffSummary.files.addedLines}</Text>
-                  <Text color="red.300">-{diffSummary.files.removedLines}</Text>
-                </HStack>
-                <HStack spacing={2} mt={1.5} flexWrap="wrap">
-                  <Badge variant="subtle" colorScheme="blue" fontSize="8px" px={1}>TLD</Badge>
-                  <Text fontSize="10px" color="green.300" fontFamily="mono">+{diffSummary.elements.added} / {diffSummary.connectors.added}</Text>
-                  <Text fontSize="10px" color="red.300" fontFamily="mono">-{diffSummary.elements.deleted} / {diffSummary.connectors.deleted}</Text>
-                  <Text fontSize="10px" color="gray.500" ml="auto">{workspaceVersions.length} snapshots</Text>
-                </HStack>
-              </Box>
-            </VStack>
+            <Box
+              px={2}
+              py={2}
+              border="1px solid"
+              borderColor="whiteAlpha.100"
+              borderRadius="md"
+              bg="whiteAlpha.50"
+            >
+              <Text fontSize="10px" color="gray.500" noOfLines={1}>
+                {activeVersion ? `${activeVersion.branch || 'detached'} · ${new Date(activeVersion.created_at).toLocaleString()}` : activeRepo?.display_name ?? 'Repository'}
+              </Text>
+              <HStack spacing={1} mt={1} fontFamily="mono" fontSize="10px" minW={0} opacity={0.85}>
+                <Text color="gray.300" noOfLines={1}>
+                  {totalFileChanges} files changed
+                </Text>
+                <Text color="green.300">+{diffSummary.files.addedLines}</Text>
+                <Text color="red.300">-{diffSummary.files.removedLines}</Text>
+                <Text color="gray.500" ml="auto">{workspaceVersions.length} snapshots</Text>
+              </HStack>
+            </Box>
 
-            {diffLocations.length > 0 && (
+            {displayedDiffLocations.length > 0 && (
               <VStack
                 data-zui-native-wheel="true"
                 align="stretch"
@@ -579,7 +650,7 @@ export default function WorkspacePanel() {
                 pt={2.5}
                 sx={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
               >
-                {diffLocations.map((target) => (
+                {displayedDiffLocations.map((target) => (
                   <Button
                     key={target.key}
                     variant="ghost"
@@ -590,7 +661,8 @@ export default function WorkspacePanel() {
                     px={2}
                     py={1}
                     fontSize="10px"
-                    color="gray.200"
+                    color={activeDiffLocationKey === target.key ? 'white' : 'gray.200'}
+                    bg={activeDiffLocationKey === target.key ? 'whiteAlpha.100' : 'transparent'}
                     onClick={() => navigateToDiffLocation(target)}
                   >
                     <HStack w="full" spacing={2} minW={0}>
