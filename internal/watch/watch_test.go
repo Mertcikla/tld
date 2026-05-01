@@ -622,6 +622,55 @@ func TestRepresentDoesNotTouchManualResources(t *testing.T) {
 	}
 }
 
+func TestRepresentAssignsUsefulSemanticTags(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "internal/watch/scan.go", `package watch
+
+func ScanRepository() {
+	RepresentRepository()
+}
+
+func RepresentRepository() {}
+`)
+	writeFile(t, repo, "internal/server/http.go", `package server
+
+func ServeAPI() {}
+`)
+	writeFile(t, repo, "cmd/tld/main.go", `package main
+
+func ExecuteCLI() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tag := range []string{"tld:watch", "watch:generated", "watch:go", "lang:go"} {
+		if count := countElementTag(t, db, tag); count != 0 {
+			t.Fatalf("expected unhelpful tag %q to be omitted, found on %d elements", tag, count)
+		}
+	}
+	for _, tag := range []string{"role:watch", "area:internal", "kind:function", "graph:entrypoint"} {
+		if count := countElementTag(t, db, tag); count < 2 {
+			t.Fatalf("expected useful tag %q on multiple elements, found %d", tag, count)
+		}
+	}
+
+	tags := elementTagsByName(t, db, "ScanRepository")
+	for _, tag := range []string{"role:watch", "area:internal", "kind:function", "graph:entrypoint"} {
+		if !stringSliceContains(tags, tag) {
+			t.Fatalf("expected ScanRepository to include %q, got %v", tag, tags)
+		}
+	}
+}
+
 func TestLargeRepresentationPrunesDetailedSymbolElements(t *testing.T) {
 	previousLimit := maxDetailedSymbolElements
 	maxDetailedSymbolElements = 100
@@ -1473,6 +1522,28 @@ func countElementTag(t *testing.T, db *sql.DB, tag string) int {
 		t.Fatal(err)
 	}
 	return count
+}
+
+func elementTagsByName(t *testing.T, db *sql.DB, name string) []string {
+	t.Helper()
+	var raw string
+	if err := db.QueryRow(`SELECT tags FROM elements WHERE name = ? ORDER BY id LIMIT 1`, name).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var tags []string
+	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
+		t.Fatal(err)
+	}
+	return tags
+}
+
+func stringSliceContains(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }
 
 func hasDiff(diffs []RepresentationDiff, resourceType, changeType string) bool {

@@ -365,12 +365,283 @@ type materializeStats struct {
 	ViewsCreated      int
 }
 
+const (
+	minSemanticTagCoverage      = 2
+	maxSemanticTagsPerElement   = 5
+	maxUsefulSemanticTagRatio   = 0.70
+	semanticTagOwnerKeyJoinChar = "\x00"
+)
+
+type semanticTagPlan struct {
+	approved map[string]struct{}
+	byOwner  map[string][]string
+}
+
+type semanticTagDefinitionInfo struct {
+	Color       string
+	Description string
+}
+
+func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string) semanticTagPlan {
+	candidates := map[string][]string{}
+	add := func(ownerType, ownerKey string, tags ...string) {
+		key := semanticTagOwnerKey(ownerType, ownerKey)
+		candidates[key] = uniqueSemanticTags(append(candidates[key], tags...))
+	}
+
+	repoLanguage := dominantLanguage(filtered.VisibleSymbols)
+	add("repository", fmt.Sprintf("repository:%d", repo.ID), semanticLanguageTag(repoLanguage))
+
+	visibleFiles := filesForSymbols(filtered.VisibleSymbols)
+	for _, folder := range folderSet(visibleFiles) {
+		add("folder", "folder:"+folder, semanticPathTags(folder, repoLanguage)...)
+	}
+	for file := range visibleFiles {
+		add("file", "file:"+file, semanticPathTags(file, languageForFile(file, filtered.VisibleSymbols))...)
+	}
+
+	for file, symbols := range symbolsByFile(filtered.VisibleSymbols) {
+		chunks := chunkSymbols(symbols, thresholds.MaxElementsPerView)
+		for _, chunk := range chunks {
+			if len(chunks) <= 1 || len(chunk) == 0 {
+				continue
+			}
+			keys := make([]string, 0, len(chunk))
+			for _, sym := range chunk {
+				keys = append(keys, sym.StableKey)
+			}
+			clusterKey := stableClusterKey(repo.ID, file, settingsHash, keys)
+			add("cluster", clusterKey, semanticPathTags(file, languageFromStableKey(chunk[0].StableKey))...)
+		}
+	}
+
+	for _, sym := range sortedSymbols(filtered.VisibleSymbols) {
+		tags := semanticPathTags(sym.FilePath, languageFromStableKey(sym.StableKey))
+		tags = append(tags, semanticKindTag(sym.Kind))
+		tags = append(tags, semanticSymbolRoleTags(sym, filtered.Incoming[sym.ID], filtered.Outgoing[sym.ID])...)
+		add("symbol", symbolOwnerKey(sym, identityKeys), tags...)
+	}
+
+	counts := map[string]int{}
+	for _, tags := range candidates {
+		for _, tag := range tags {
+			counts[tag]++
+		}
+	}
+	total := len(candidates)
+	maxCoverage := int(math.Floor(float64(total) * maxUsefulSemanticTagRatio))
+	if maxCoverage < minSemanticTagCoverage {
+		maxCoverage = total - 1
+	}
+	approved := map[string]struct{}{}
+	for tag, count := range counts {
+		if count < minSemanticTagCoverage {
+			continue
+		}
+		if total > 1 && count > maxCoverage {
+			continue
+		}
+		approved[tag] = struct{}{}
+	}
+
+	byOwner := map[string][]string{}
+	for key, tags := range candidates {
+		var kept []string
+		for _, tag := range tags {
+			if _, ok := approved[tag]; ok {
+				kept = append(kept, tag)
+			}
+		}
+		sort.SliceStable(kept, func(i, j int) bool {
+			left, right := semanticTagPriority(kept[i]), semanticTagPriority(kept[j])
+			if left == right {
+				return kept[i] < kept[j]
+			}
+			return left < right
+		})
+		if len(kept) > maxSemanticTagsPerElement {
+			kept = kept[:maxSemanticTagsPerElement]
+		}
+		byOwner[key] = kept
+	}
+	return semanticTagPlan{approved: approved, byOwner: byOwner}
+}
+
+func (p semanticTagPlan) tagsFor(ownerType, ownerKey string) []string {
+	tags := p.byOwner[semanticTagOwnerKey(ownerType, ownerKey)]
+	return append([]string(nil), tags...)
+}
+
+func (p semanticTagPlan) approvedTags() []string {
+	tags := make([]string, 0, len(p.approved))
+	for tag := range p.approved {
+		tags = append(tags, tag)
+	}
+	sort.Strings(tags)
+	return tags
+}
+
+func semanticTagOwnerKey(ownerType, ownerKey string) string {
+	return ownerType + semanticTagOwnerKeyJoinChar + ownerKey
+}
+
+func uniqueSemanticTags(tags []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(strings.ToLower(tag))
+		if tag == "" {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	return out
+}
+
+func semanticPathTags(filePath, language string) []string {
+	var tags []string
+	if area := semanticAreaTag(filePath); area != "" {
+		tags = append(tags, area)
+	}
+	tags = append(tags, semanticRoleTags(filePath)...)
+	if tag := semanticLanguageTag(language); tag != "" {
+		tags = append(tags, tag)
+	}
+	return tags
+}
+
+func semanticAreaTag(filePath string) string {
+	parts := strings.Split(strings.Trim(filePath, "/"), "/")
+	if len(parts) == 0 || parts[0] == "" || len(parts) == 1 {
+		return ""
+	}
+	return "area:" + semanticTagSlug(parts[0])
+}
+
+func semanticLanguageTag(language string) string {
+	language = strings.TrimSpace(strings.ToLower(language))
+	if language == "" || language == "source" {
+		return ""
+	}
+	return "lang:" + semanticTagSlug(language)
+}
+
+func semanticKindTag(kind string) string {
+	kind = strings.TrimSpace(strings.ToLower(kind))
+	if kind == "" {
+		return ""
+	}
+	return "kind:" + semanticTagSlug(kind)
+}
+
+func semanticSymbolRoleTags(sym Symbol, incoming, outgoing int) []string {
+	var tags []string
+	if isExportedSymbol(sym) {
+		tags = append(tags, "graph:entrypoint")
+	}
+	if incoming >= 3 {
+		tags = append(tags, "graph:fan-in")
+	}
+	if outgoing >= 3 {
+		tags = append(tags, "graph:fan-out")
+	}
+	nameText := strings.ToLower(sym.Name + " " + sym.QualifiedName + " " + sym.Kind)
+	tags = append(tags, semanticRoleTags(nameText)...)
+	return tags
+}
+
+func semanticRoleTags(text string) []string {
+	lower := strings.ToLower(text)
+	rules := []struct {
+		tag      string
+		keywords []string
+	}{
+		{"role:watch", []string{"watch", "watcher", "scan", "scanner", "represent", "materializ", "embedding"}},
+		{"role:cli", []string{"cmd/", "/cmd/", "cli", "command", "cobra"}},
+		{"role:api", []string{"api", "http", "server", "handler", "route", "rpc", "websocket"}},
+		{"role:persistence", []string{"store", "db", "database", "sqlite", "migration", "schema", "repository"}},
+		{"role:ui", []string{"frontend", "component", "view", "react", "canvas", "zui"}},
+		{"role:analysis", []string{"analyzer", "symbol", "parser", "importer", "planner", "dependency"}},
+		{"role:versioning", []string{"git", "version", "history", "commit", "branch"}},
+		{"role:config", []string{"config", "setting", "option", "threshold"}},
+		{"role:test", []string{"test", "_test.go", "fixture", "mock"}},
+	}
+	var tags []string
+	for _, rule := range rules {
+		for _, keyword := range rule.keywords {
+			if strings.Contains(lower, keyword) {
+				tags = append(tags, rule.tag)
+				break
+			}
+		}
+	}
+	return tags
+}
+
+func semanticTagSlug(value string) string {
+	value = strings.TrimSpace(strings.ToLower(value))
+	var b strings.Builder
+	lastDash := false
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		default:
+			if !lastDash && b.Len() > 0 {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func semanticTagPriority(tag string) int {
+	switch {
+	case strings.HasPrefix(tag, "role:"):
+		return 0
+	case strings.HasPrefix(tag, "area:"):
+		return 1
+	case strings.HasPrefix(tag, "kind:"):
+		return 2
+	case strings.HasPrefix(tag, "graph:"):
+		return 3
+	case strings.HasPrefix(tag, "lang:"):
+		return 4
+	default:
+		return 5
+	}
+}
+
+func semanticTagDefinition(tag string) semanticTagDefinitionInfo {
+	switch {
+	case strings.HasPrefix(tag, "area:"):
+		return semanticTagDefinitionInfo{Color: "#2563eb", Description: "Generated source area tag"}
+	case strings.HasPrefix(tag, "role:"):
+		return semanticTagDefinitionInfo{Color: "#7c3aed", Description: "Generated code role tag"}
+	case strings.HasPrefix(tag, "kind:"):
+		return semanticTagDefinitionInfo{Color: "#0f766e", Description: "Generated symbol kind tag"}
+	case strings.HasPrefix(tag, "graph:"):
+		return semanticTagDefinitionInfo{Color: "#b45309", Description: "Generated graph-shape tag"}
+	case strings.HasPrefix(tag, "lang:"):
+		return semanticTagDefinitionInfo{Color: "#475569", Description: "Generated source language tag"}
+	default:
+		return semanticTagDefinitionInfo{Color: "#64748b", Description: "Generated watch tag"}
+	}
+}
+
 func (r *Representer) materialize(ctx context.Context, repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string) (materializeStats, error) {
 	initialLayout, err := r.Store.RepositoryMaterializationCount(ctx, repo.ID)
 	if err != nil {
 		return materializeStats{}, err
 	}
-	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys, initialLayout: initialLayout == 0, runMarker: time.Now().UTC().Format(time.RFC3339Nano), newPlacements: map[int64]map[int64]struct{}{}}
+	tagPlan := buildSemanticTagPlan(repo, filtered, thresholds, settingsHash, identityKeys)
+	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys, tagPlan: tagPlan, initialLayout: initialLayout == 0, runMarker: time.Now().UTC().Format(time.RFC3339Nano), newPlacements: map[int64]map[int64]struct{}{}}
 	if err := m.ensureTags(ctx); err != nil {
 		return m.stats, err
 	}
@@ -386,6 +657,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		Repo:       repoIdentity(repo),
 		Branch:     nullStringValue(repo.Branch),
 		Language:   repoLanguage,
+		Tags:       tagPlan.tagsFor("repository", fmt.Sprintf("repository:%d", repo.ID)),
 	})
 	if err != nil {
 		return m.stats, err
@@ -416,6 +688,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 			Branch:     nullStringValue(repo.Branch),
 			FilePath:   folder,
 			Language:   repoLanguage,
+			Tags:       tagPlan.tagsFor("folder", "folder:"+folder),
 		})
 		if err != nil {
 			return m.stats, err
@@ -449,6 +722,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 			Branch:     nullStringValue(repo.Branch),
 			FilePath:   file,
 			Language:   fileLanguage,
+			Tags:       tagPlan.tagsFor("file", "file:"+file),
 		})
 		if err != nil {
 			return m.stats, err
@@ -496,6 +770,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 					Branch:     nullStringValue(repo.Branch),
 					FilePath:   file,
 					Language:   languageFromStableKey(chunk[0].StableKey),
+					Tags:       tagPlan.tagsFor("cluster", clusterKey),
 				})
 				if err != nil {
 					return m.stats, err
@@ -523,6 +798,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 					Branch:      nullStringValue(repo.Branch),
 					FilePath:    sym.FilePath,
 					Language:    language,
+					Tags:        tagPlan.tagsFor("symbol", symbolOwnerKey(sym, m.identityKeys)),
 				})
 				if err != nil {
 					return m.stats, err
@@ -555,6 +831,7 @@ type materializer struct {
 	thresholds    Thresholds
 	settingsHash  string
 	identityKeys  map[string]string
+	tagPlan       semanticTagPlan
 	initialLayout bool
 	runMarker     string
 	newPlacements map[int64]map[int64]struct{}
@@ -570,13 +847,16 @@ type elementInput struct {
 	Branch      string
 	FilePath    string
 	Language    string
+	Tags        []string
 }
 
 func (m *materializer) ensureTags(ctx context.Context) error {
-	for _, tag := range []string{"tld:watch", "watch:generated", "watch:go"} {
+	for _, tag := range m.tagPlan.approvedTags() {
+		def := semanticTagDefinition(tag)
 		if _, err := m.store.db.ExecContext(ctx, `
-			INSERT INTO tags(name, color, description) VALUES (?, '#64748b', 'Generated by tld watch')
-			ON CONFLICT(name) DO NOTHING`, tag); err != nil {
+			INSERT INTO tags(name, color, description) VALUES (?, ?, ?)
+			ON CONFLICT(name) DO UPDATE SET color = excluded.color, description = excluded.description`,
+			tag, def.Color, def.Description); err != nil {
 			return err
 		}
 	}
@@ -593,7 +873,7 @@ func (m *materializer) upsertElement(ctx context.Context, ownerType, ownerKey st
 	if id, ok, err := m.store.MappingResourceID(ctx, m.repo.ID, ownerType, ownerKey, "element"); err != nil {
 		return 0, err
 	} else if ok && elementExists(ctx, m.store.db, id) {
-		tags, _ := json.Marshal([]string{"tld:watch", "watch:generated", "watch:go"})
+		tags, _ := json.Marshal(input.Tags)
 		techLinks, _ := json.Marshal([]map[string]string{{"type": "technology", "slug": "go", "label": "Go"}})
 		_, err := m.store.db.ExecContext(ctx, `
 			UPDATE elements
@@ -611,7 +891,7 @@ func (m *materializer) upsertElement(ctx context.Context, ownerType, ownerKey st
 		return id, nil
 	}
 	now := nowString()
-	tags, _ := json.Marshal([]string{"tld:watch", "watch:generated", "watch:go"})
+	tags, _ := json.Marshal(input.Tags)
 	techLinks, _ := json.Marshal([]map[string]string{{"type": "technology", "slug": "go", "label": "Go"}})
 	res, err := m.store.db.ExecContext(ctx, `
 		INSERT INTO elements(name, kind, description, technology, technology_connectors, tags, repo, branch, file_path, language, created_at, updated_at)
