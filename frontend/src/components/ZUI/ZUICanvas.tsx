@@ -34,6 +34,7 @@ import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import type { WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
 import type { ZUIResolvedConnector } from '../../crossBranch/resolve'
+import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
 import {
   buildVisibleProxyConnectors,
   collectVisibleNodeAnchors,
@@ -366,14 +367,18 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     [layout.groups, viewState, containerSize.w, hiddenTags],
   )
 
-  // A stable string key encoding which element→nodeId pairs are currently visible.
-  // This only changes when nodes cross zoom-expansion thresholds not on every pan pixel.
+  const minConnectorAnchorAlpha = crossBranchSettings.minConnectorAnchorAlpha ?? DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA
+
+  // A stable string key encoding which element→nodeId pairs are currently
+  // eligible for connector resolution. This tracks alpha threshold crossings
+  // so zooming out cannot keep stale high-detail connector topology alive.
   const visibleElementSig = useMemo(() =>
     Array.from(anchors.visibleAnchors.entries())
+      .filter(([, anchor]) => anchor.renderAlpha >= minConnectorAnchorAlpha)
       .sort(([a], [b]) => a - b)
       .map(([id, anchor]) => `${id}:${anchor.nodeId}`)
       .join(','),
-    [anchors.visibleAnchors],
+    [anchors.visibleAnchors, minConnectorAnchorAlpha],
   )
 
   // Connector topology: expensive O(connectors) resolution only when visibility set changes.
