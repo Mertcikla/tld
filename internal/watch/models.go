@@ -112,10 +112,11 @@ type EmbeddingConfig struct {
 }
 
 type Thresholds struct {
-	MaxElementsPerView    int `json:"max_elements_per_view"`
-	MaxConnectorsPerView  int `json:"max_connectors_per_view"`
-	MaxIncomingPerElement int `json:"max_incoming_per_element"`
-	MaxOutgoingPerElement int `json:"max_outgoing_per_element"`
+	MaxElementsPerView            int `json:"max_elements_per_view"`
+	MaxConnectorsPerView          int `json:"max_connectors_per_view"`
+	MaxIncomingPerElement         int `json:"max_incoming_per_element"`
+	MaxOutgoingPerElement         int `json:"max_outgoing_per_element"`
+	MaxExpandedConnectorsPerGroup int `json:"max_expanded_connectors_per_group"`
 }
 
 type Settings struct {

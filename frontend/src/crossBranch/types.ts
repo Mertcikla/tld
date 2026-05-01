@@ -9,6 +9,8 @@ export type CrossBranchSurface = 'editor' | 'zui' | 'zui-shared'
 export interface CrossBranchContextSettings {
   enabled: boolean
   depth: number
+  minConnectorAnchorAlpha?: number
+  maxProxyConnectorGroups?: number
 }
 
 export interface GraphPlacementRef {

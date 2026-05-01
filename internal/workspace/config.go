@@ -91,10 +91,11 @@ type WatchEmbeddingConfig struct {
 }
 
 type WatchThresholdConfig struct {
-	MaxElementsPerView    int `yaml:"max_elements_per_view"`
-	MaxConnectorsPerView  int `yaml:"max_connectors_per_view"`
-	MaxIncomingPerElement int `yaml:"max_incoming_per_element"`
-	MaxOutgoingPerElement int `yaml:"max_outgoing_per_element"`
+	MaxElementsPerView            int `yaml:"max_elements_per_view"`
+	MaxConnectorsPerView          int `yaml:"max_connectors_per_view"`
+	MaxIncomingPerElement         int `yaml:"max_incoming_per_element"`
+	MaxOutgoingPerElement         int `yaml:"max_outgoing_per_element"`
+	MaxExpandedConnectorsPerGroup int `yaml:"max_expanded_connectors_per_group"`
 }
 
 type WatchConfig struct {
@@ -125,10 +126,11 @@ func DefaultConfig() *Config {
 			PollInterval: "1s",
 			Debounce:     "500ms",
 			Thresholds: WatchThresholdConfig{
-				MaxElementsPerView:    100,
-				MaxConnectorsPerView:  200,
-				MaxIncomingPerElement: 20,
-				MaxOutgoingPerElement: 20,
+				MaxElementsPerView:            100,
+				MaxConnectorsPerView:          200,
+				MaxIncomingPerElement:         20,
+				MaxOutgoingPerElement:         20,
+				MaxExpandedConnectorsPerGroup: 24,
 			},
 			Embedding: WatchEmbeddingConfig{
 				Provider:        "local-lexical",

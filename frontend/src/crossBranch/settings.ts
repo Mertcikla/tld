@@ -3,6 +3,8 @@ import type { CrossBranchContextSettings, CrossBranchSurface } from './types'
 import { CROSS_BRANCH_DEPTH_ALL } from './types'
 
 const STORAGE_PREFIX = 'diag:cross-branch'
+export const DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA = 0.35
+export const DEFAULT_MAX_PROXY_CONNECTOR_GROUPS = 32
 
 function storageKey(surface: CrossBranchSurface) {
   return `${STORAGE_PREFIX}:${surface}`
@@ -12,6 +14,8 @@ function defaultSettings(surface: CrossBranchSurface): CrossBranchContextSetting
   return {
     enabled: surface !== 'zui-shared',
     depth: CROSS_BRANCH_DEPTH_ALL,
+    minConnectorAnchorAlpha: DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA,
+    maxProxyConnectorGroups: DEFAULT_MAX_PROXY_CONNECTOR_GROUPS,
   }
 }
 
@@ -25,6 +29,12 @@ function readSettings(surface: CrossBranchSurface): CrossBranchContextSettings {
     return {
       enabled: parsed.enabled ?? defaults.enabled,
       depth: typeof parsed.depth === 'number' ? parsed.depth : CROSS_BRANCH_DEPTH_ALL,
+      minConnectorAnchorAlpha: typeof parsed.minConnectorAnchorAlpha === 'number'
+        ? parsed.minConnectorAnchorAlpha
+        : defaults.minConnectorAnchorAlpha,
+      maxProxyConnectorGroups: typeof parsed.maxProxyConnectorGroups === 'number'
+        ? parsed.maxProxyConnectorGroups
+        : defaults.maxProxyConnectorGroups,
     }
   } catch {
     return defaults

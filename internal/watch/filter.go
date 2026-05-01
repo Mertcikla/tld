@@ -32,6 +32,9 @@ func defaultThresholds(thresholds Thresholds) Thresholds {
 	if thresholds.MaxOutgoingPerElement <= 0 {
 		thresholds.MaxOutgoingPerElement = 40
 	}
+	if thresholds.MaxExpandedConnectorsPerGroup <= 0 {
+		thresholds.MaxExpandedConnectorsPerGroup = 24
+	}
 	return thresholds
 }
 

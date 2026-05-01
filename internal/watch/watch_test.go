@@ -96,6 +96,93 @@ func helper() {}
 	}
 }
 
+func TestRepresentCollapsesHighRawReferenceFolderPairs(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "internal/pkg/lib.go", `package pkg
+
+func Target0() {}
+func Target1() {}
+func Target2() {}
+func Target3() {}
+func Target4() {}
+func Target5() {}
+func Target6() {}
+func Target7() {}
+func Target8() {}
+func Target9() {}
+`)
+	writeFile(t, repo, "cmd/app/main.go", `package main
+
+import "example.com/test/internal/pkg"
+
+func Main() {
+	pkg.Target0()
+	pkg.Target1()
+	pkg.Target2()
+	pkg.Target3()
+	pkg.Target4()
+	pkg.Target5()
+	pkg.Target6()
+	pkg.Target7()
+	pkg.Target8()
+	pkg.Target9()
+}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := RepresentRequest{
+		Embedding: EmbeddingConfig{Provider: "none"},
+		Thresholds: Thresholds{
+			MaxExpandedConnectorsPerGroup: 4,
+		},
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+
+	var label string
+	err = db.QueryRow(`
+		SELECT c.label
+		FROM connectors c
+		JOIN elements s ON s.id = c.source_element_id
+		JOIN elements t ON t.id = c.target_element_id
+		WHERE s.name = 'cmd' AND t.name = 'internal'`).Scan(&label)
+	if err != nil {
+		t.Fatalf("expected collapsed cmd -> internal connector: %v", err)
+	}
+	if label != "10 references" {
+		t.Fatalf("expected raw reference count label, got %q", label)
+	}
+}
+
+func TestRepresentPrioritizesCrossFolderAggregatesOverFilePairs(t *testing.T) {
+	groups := map[string][]filePairReference{
+		"file:cmd/a.go->cmd/b.go": {
+			{Key: "cmd/a.go->cmd/b.go", Count: 500},
+		},
+		"folder:cmd->internal": {
+			{Key: "cmd/a.go->internal/b.go", Count: 20},
+		},
+		"file:assets.go->internal/a.go": {
+			{Key: "assets.go->internal/a.go", Count: 200},
+		},
+	}
+
+	keys := sortedFileGroupKeys(groups)
+	if len(keys) < 3 {
+		t.Fatalf("expected sorted keys, got %+v", keys)
+	}
+	if keys[0] != "folder:cmd->internal" {
+		t.Fatalf("expected cross-folder aggregate to be materialized first, got %+v", keys)
+	}
+}
+
 func TestScanCollectsConfiguredLanguages(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()

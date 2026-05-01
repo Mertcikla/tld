@@ -30,7 +30,7 @@ func NewWatchCmd() *cobra.Command {
 	var embeddingDimension int
 	var languageFlags []string
 	var watcherMode, pollInterval, debounce string
-	var maxElements, maxConnectors, maxIncoming, maxOutgoing int
+	var maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup int
 	var noServe, openBrowser, rescan, verbose bool
 	c := &cobra.Command{
 		Use:   "watch [path]",
@@ -50,7 +50,7 @@ func NewWatchCmd() *cobra.Command {
 				return fmt.Errorf("create data dir: %w", err)
 			}
 			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
-			watchSettings := resolveWatchSettings(cfg, languageFlags, watcherMode, pollInterval, debounce, maxElements, maxConnectors, maxIncoming, maxOutgoing)
+			watchSettings := resolveWatchSettings(cfg, languageFlags, watcherMode, pollInterval, debounce, maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup)
 			term.Infof(cmd.OutOrStdout(), "watch booting: data=%s embeddings=%s/%s", term.Path(cmd.OutOrStdout(), dataDir), embeddingCfg.Provider, embeddingCfg.Model)
 			progress := newCLIProgress(cmd.ErrOrStderr())
 			if embeddingCfg.Provider != "none" {
@@ -170,6 +170,7 @@ func NewWatchCmd() *cobra.Command {
 	c.Flags().IntVar(&maxConnectors, "max-connectors-per-view", 0, "maximum generated connectors per view")
 	c.Flags().IntVar(&maxIncoming, "max-incoming-per-element", 0, "maximum incoming references per element before collapsing")
 	c.Flags().IntVar(&maxOutgoing, "max-outgoing-per-element", 0, "maximum outgoing references per element before collapsing")
+	c.Flags().IntVar(&maxExpandedGroup, "max-expanded-connectors-per-group", 0, "maximum file-pair connectors to expand before collapsing to a folder connector")
 	c.Flags().BoolVar(&rescan, "rescan", false, "force a rescan before watching")
 	c.Flags().BoolVar(&verbose, "verbose", false, "print watch events")
 	c.AddCommand(newScanCmd())
@@ -326,7 +327,7 @@ func newScanCmd() *cobra.Command {
 			if err := os.MkdirAll(dataDir, 0o755); err != nil {
 				return fmt.Errorf("create data dir: %w", err)
 			}
-			watchSettings := resolveWatchSettings(cfg, languageFlags, "", "", "", 0, 0, 0, 0)
+			watchSettings := resolveWatchSettings(cfg, languageFlags, "", "", "", 0, 0, 0, 0, 0)
 			sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
 			if err != nil {
 				return err
@@ -365,7 +366,7 @@ func newRepresentCmd() *cobra.Command {
 	var embeddingDimension int
 	var languageFlags []string
 	var jsonOut, rescan bool
-	var maxElements, maxConnectors, maxIncoming, maxOutgoing int
+	var maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup int
 	c := &cobra.Command{
 		Use:   "represent [path]",
 		Short: "Materialize a scanned repository into the local workspace",
@@ -384,7 +385,7 @@ func newRepresentCmd() *cobra.Command {
 				return fmt.Errorf("create data dir: %w", err)
 			}
 			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
-			watchSettings := resolveWatchSettings(cfg, languageFlags, "", "", "", maxElements, maxConnectors, maxIncoming, maxOutgoing)
+			watchSettings := resolveWatchSettings(cfg, languageFlags, "", "", "", maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup)
 			progress := newCLIProgress(cmd.ErrOrStderr())
 			if embeddingCfg.Provider != "none" {
 				checked, health, err := watch.CheckEmbeddingHealth(cmd.Context(), embeddingCfg)
@@ -438,6 +439,7 @@ func newRepresentCmd() *cobra.Command {
 	c.Flags().IntVar(&maxConnectors, "max-connectors-per-view", 0, "maximum generated connectors per view")
 	c.Flags().IntVar(&maxIncoming, "max-incoming-per-element", 0, "maximum incoming references per element before collapsing")
 	c.Flags().IntVar(&maxOutgoing, "max-outgoing-per-element", 0, "maximum outgoing references per element before collapsing")
+	c.Flags().IntVar(&maxExpandedGroup, "max-expanded-connectors-per-group", 0, "maximum file-pair connectors to expand before collapsing to a folder connector")
 	c.Flags().BoolVar(&rescan, "rescan", false, "force reparsing files even if cached")
 	c.Flags().BoolVar(&jsonOut, "json", false, "print machine-readable JSON")
 	return c
@@ -449,7 +451,7 @@ func newDiffCmd() *cobra.Command {
 	var embeddingDimension int
 	var languageFlags []string
 	var failOnDrift bool
-	var maxElements, maxConnectors, maxIncoming, maxOutgoing int
+	var maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup int
 	c := &cobra.Command{
 		Use:   "diff [path]",
 		Short: "Scan and report watch representation drift as JSON",
@@ -468,7 +470,7 @@ func newDiffCmd() *cobra.Command {
 				return fmt.Errorf("create data dir: %w", err)
 			}
 			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
-			watchSettings := resolveWatchSettings(cfg, languageFlags, "", "", "", maxElements, maxConnectors, maxIncoming, maxOutgoing)
+			watchSettings := resolveWatchSettings(cfg, languageFlags, "", "", "", maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup)
 			sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
 			if err != nil {
 				return err
@@ -518,6 +520,7 @@ func newDiffCmd() *cobra.Command {
 	c.Flags().IntVar(&maxConnectors, "max-connectors-per-view", 0, "maximum generated connectors per view")
 	c.Flags().IntVar(&maxIncoming, "max-incoming-per-element", 0, "maximum incoming references per element before collapsing")
 	c.Flags().IntVar(&maxOutgoing, "max-outgoing-per-element", 0, "maximum outgoing references per element before collapsing")
+	c.Flags().IntVar(&maxExpandedGroup, "max-expanded-connectors-per-group", 0, "maximum file-pair connectors to expand before collapsing to a folder connector")
 	c.Flags().BoolVar(&failOnDrift, "fail-on-drift", false, "exit nonzero when representation drift is detected")
 	return c
 }
@@ -546,7 +549,7 @@ func resolveEmbeddingConfig(cfg *workspace.Config, provider, endpoint, model str
 	return watch.NormalizeEmbeddingConfig(embedding)
 }
 
-func resolveWatchSettings(cfg *workspace.Config, languages []string, watcherMode, pollInterval, debounce string, maxElements, maxConnectors, maxIncoming, maxOutgoing int) watch.Settings {
+func resolveWatchSettings(cfg *workspace.Config, languages []string, watcherMode, pollInterval, debounce string, maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup int) watch.Settings {
 	settings := watch.DefaultSettings()
 	if cfg != nil {
 		settings.Languages = cfg.Watch.Languages
@@ -554,10 +557,11 @@ func resolveWatchSettings(cfg *workspace.Config, languages []string, watcherMode
 		settings.PollInterval = parseDurationOrZero(cfg.Watch.PollInterval)
 		settings.Debounce = parseDurationOrZero(cfg.Watch.Debounce)
 		settings.Thresholds = watch.Thresholds{
-			MaxElementsPerView:    cfg.Watch.Thresholds.MaxElementsPerView,
-			MaxConnectorsPerView:  cfg.Watch.Thresholds.MaxConnectorsPerView,
-			MaxIncomingPerElement: cfg.Watch.Thresholds.MaxIncomingPerElement,
-			MaxOutgoingPerElement: cfg.Watch.Thresholds.MaxOutgoingPerElement,
+			MaxElementsPerView:            cfg.Watch.Thresholds.MaxElementsPerView,
+			MaxConnectorsPerView:          cfg.Watch.Thresholds.MaxConnectorsPerView,
+			MaxIncomingPerElement:         cfg.Watch.Thresholds.MaxIncomingPerElement,
+			MaxOutgoingPerElement:         cfg.Watch.Thresholds.MaxOutgoingPerElement,
+			MaxExpandedConnectorsPerGroup: cfg.Watch.Thresholds.MaxExpandedConnectorsPerGroup,
 		}
 	}
 	if len(languages) > 0 {
@@ -583,6 +587,9 @@ func resolveWatchSettings(cfg *workspace.Config, languages []string, watcherMode
 	}
 	if maxOutgoing > 0 {
 		settings.Thresholds.MaxOutgoingPerElement = maxOutgoing
+	}
+	if maxExpandedGroup > 0 {
+		settings.Thresholds.MaxExpandedConnectorsPerGroup = maxExpandedGroup
 	}
 	return watch.NormalizeSettings(settings)
 }

@@ -202,7 +202,7 @@ func TestResolveWatchSettingsPrecedence(t *testing.T) {
 		t.Fatalf("LoadGlobalConfig: %v", err)
 	}
 
-	envResolved := resolveWatchSettings(cfg, nil, "", "", "", 0, 0, 0, 0)
+	envResolved := resolveWatchSettings(cfg, nil, "", "", "", 0, 0, 0, 0, 0)
 	if strings.Join(envResolved.Languages, ",") != "python,typescript" ||
 		envResolved.Watcher != "poll" ||
 		envResolved.PollInterval != 3*time.Second ||
@@ -212,7 +212,7 @@ func TestResolveWatchSettingsPrecedence(t *testing.T) {
 		t.Fatalf("env/config precedence resolved incorrectly: %+v", envResolved)
 	}
 
-	flagResolved := resolveWatchSettings(cfg, []string{"java"}, "fsnotify", "1s", "2s", 21, 22, 23, 24)
+	flagResolved := resolveWatchSettings(cfg, []string{"java"}, "fsnotify", "1s", "2s", 21, 22, 23, 24, 25)
 	if strings.Join(flagResolved.Languages, ",") != "java" ||
 		flagResolved.Watcher != "fsnotify" ||
 		flagResolved.PollInterval != time.Second ||
@@ -220,7 +220,8 @@ func TestResolveWatchSettingsPrecedence(t *testing.T) {
 		flagResolved.Thresholds.MaxElementsPerView != 21 ||
 		flagResolved.Thresholds.MaxConnectorsPerView != 22 ||
 		flagResolved.Thresholds.MaxIncomingPerElement != 23 ||
-		flagResolved.Thresholds.MaxOutgoingPerElement != 24 {
+		flagResolved.Thresholds.MaxOutgoingPerElement != 24 ||
+		flagResolved.Thresholds.MaxExpandedConnectorsPerGroup != 25 {
 		t.Fatalf("flag precedence resolved incorrectly: %+v", flagResolved)
 	}
 }

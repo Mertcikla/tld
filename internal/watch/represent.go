@@ -672,6 +672,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 
 	visibleFiles := filesForSymbols(filtered.VisibleSymbols)
 	folders := folderSet(visibleFiles)
+	folderElements := map[string]int64{}
 	folderViews := map[string]int64{}
 	for _, folder := range folders {
 		parentView := repoView
@@ -701,6 +702,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		if err != nil {
 			return m.stats, err
 		}
+		folderElements[folder] = elem
 		folderViews[folder] = view
 	}
 
@@ -813,7 +815,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		}
 	}
 
-	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, fileElements, symbolElements, symbolViews, repoView); err != nil {
+	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, folderElements, fileElements, symbolElements, symbolViews, repoView); err != nil {
 		return m.stats, err
 	}
 	if err := m.pruneStaleResources(ctx); err != nil {
@@ -1415,17 +1417,26 @@ func watchAbsInt(value int) int {
 	return value
 }
 
-func (m *materializer) materializeConnectors(ctx context.Context, refs []Reference, symbols map[int64]Symbol, fileElements map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, repoView int64) error {
-	filePairs := map[string]Reference{}
+type filePairReference struct {
+	Key   string
+	Ref   Reference
+	Count int
+}
+
+func (m *materializer) materializeConnectors(ctx context.Context, refs []Reference, symbols map[int64]Symbol, folderElements map[string]int64, fileElements map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, repoView int64) error {
+	filePairs := map[string]filePairReference{}
 	symbolConnectorCount := map[int64]int{}
 	for _, ref := range refs {
 		source := symbols[ref.SourceSymbolID]
 		target := symbols[ref.TargetSymbolID]
 		if source.FilePath != "" && target.FilePath != "" && source.FilePath != target.FilePath {
 			key := source.FilePath + "->" + target.FilePath
-			if _, ok := filePairs[key]; !ok {
-				filePairs[key] = ref
+			pair := filePairs[key]
+			if pair.Count == 0 {
+				pair = filePairReference{Key: key, Ref: ref}
 			}
+			pair.Count++
+			filePairs[key] = pair
 			continue
 		}
 		viewID := symbolViews[ref.SourceSymbolID]
@@ -1439,23 +1450,100 @@ func (m *materializer) materializeConnectors(ctx context.Context, refs []Referen
 		}
 		symbolConnectorCount[viewID]++
 	}
-	fileConnectorCount := 0
+
+	fileGroups := map[string][]filePairReference{}
 	for _, key := range sortedKeys(filePairs) {
+		pair := filePairs[key]
+		source := symbols[pair.Ref.SourceSymbolID]
+		target := symbols[pair.Ref.TargetSymbolID]
+		sourceGroup := connectorGroupFolder(source.FilePath)
+		targetGroup := connectorGroupFolder(target.FilePath)
+		if sourceGroup == "" || targetGroup == "" || sourceGroup == targetGroup || folderElements[sourceGroup] == 0 || folderElements[targetGroup] == 0 {
+			fileGroups["file:"+key] = append(fileGroups["file:"+key], pair)
+			continue
+		}
+		groupKey := "folder:" + sourceGroup + "->" + targetGroup
+		fileGroups[groupKey] = append(fileGroups[groupKey], pair)
+	}
+
+	fileConnectorCount := 0
+	for _, groupKey := range sortedFileGroupKeys(fileGroups) {
 		if fileConnectorCount >= m.thresholds.MaxConnectorsPerView {
 			break
 		}
-		ref := filePairs[key]
-		source := symbols[ref.SourceSymbolID]
-		target := symbols[ref.TargetSymbolID]
-		if fileElements[source.FilePath] == 0 || fileElements[target.FilePath] == 0 {
+		group := fileGroups[groupKey]
+		if len(group) == 0 {
 			continue
 		}
-		if err := m.upsertConnector(ctx, "file-reference", "file:"+key, repoView, fileElements[source.FilePath], fileElements[target.FilePath], "references"); err != nil {
-			return err
+		rawReferenceCount := filePairReferenceCount(group)
+		if strings.HasPrefix(groupKey, "folder:") && rawReferenceCount > m.thresholds.MaxExpandedConnectorsPerGroup {
+			first := group[0].Ref
+			source := symbols[first.SourceSymbolID]
+			target := symbols[first.TargetSymbolID]
+			sourceGroup := connectorGroupFolder(source.FilePath)
+			targetGroup := connectorGroupFolder(target.FilePath)
+			if err := m.upsertConnector(ctx, "folder-reference", groupKey, repoView, folderElements[sourceGroup], folderElements[targetGroup], fmt.Sprintf("%d references", rawReferenceCount)); err != nil {
+				return err
+			}
+			fileConnectorCount++
+			continue
 		}
-		fileConnectorCount++
+		for _, item := range group {
+			if fileConnectorCount >= m.thresholds.MaxConnectorsPerView {
+				break
+			}
+			ref := item.Ref
+			source := symbols[ref.SourceSymbolID]
+			target := symbols[ref.TargetSymbolID]
+			if fileElements[source.FilePath] == 0 || fileElements[target.FilePath] == 0 {
+				continue
+			}
+			if err := m.upsertConnector(ctx, "file-reference", "file:"+item.Key, repoView, fileElements[source.FilePath], fileElements[target.FilePath], "references"); err != nil {
+				return err
+			}
+			fileConnectorCount++
+		}
 	}
 	return nil
+}
+
+func filePairReferenceCount(group []filePairReference) int {
+	count := 0
+	for _, item := range group {
+		count += item.Count
+	}
+	return count
+}
+
+func sortedFileGroupKeys(groups map[string][]filePairReference) []string {
+	keys := sortedKeys(groups)
+	sort.SliceStable(keys, func(i, j int) bool {
+		left := keys[i]
+		right := keys[j]
+		leftCross := strings.HasPrefix(left, "folder:")
+		rightCross := strings.HasPrefix(right, "folder:")
+		if leftCross != rightCross {
+			return leftCross
+		}
+		leftCount := filePairReferenceCount(groups[left])
+		rightCount := filePairReferenceCount(groups[right])
+		if leftCount != rightCount {
+			return leftCount > rightCount
+		}
+		return left < right
+	})
+	return keys
+}
+
+func connectorGroupFolder(filePath string) string {
+	dir := path.Dir(filePath)
+	if dir == "." || dir == "/" || dir == "" {
+		return ""
+	}
+	if idx := strings.Index(dir, "/"); idx >= 0 {
+		return dir[:idx]
+	}
+	return dir
 }
 
 func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label string) error {

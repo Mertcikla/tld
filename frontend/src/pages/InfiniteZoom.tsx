@@ -20,12 +20,13 @@ import {
 } from '@chakra-ui/react'
 import { api } from '../api/client'
 import type { ExploreData, ViewLayer } from '../types'
-import { FitViewIcon as FitViewSvg, TagsIcon, EyeIcon, EyeOffIcon, FocusIcon as FocusSvg } from '../components/Icons'
+import { FitViewIcon as FitViewSvg, TagsIcon, EyeIcon, EyeOffIcon } from '../components/Icons'
 import ExploreOnboarding from '../components/ExploreOnboarding'
 import ExplorePageOnboarding from '../components/ExplorePageOnboarding'
 import MiniZoomOnboarding from '../components/MiniZoomOnboarding'
 import { ZUICanvas, type ZUICameraFrame, type ZUICanvasHandle } from '../components/ZUI'
 import { useCrossBranchContextSettings } from '../crossBranch/settings'
+import CrossBranchControls from '../components/CrossBranchControls'
 import { primeWorkspaceGraphSnapshot } from '../crossBranch/store'
 import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../components/WorkspacePanel'
 import { useWorkspaceVersionPreview } from '../context/WorkspaceVersionContext'
@@ -61,7 +62,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   const { isOpen: isTagsOpen, onClose: onTagsClose, onToggle: onTagsToggle } = useDisclosure()
   const zuiRef = useRef<ZUICanvasHandle>(null)
   const crossBranchSurface = sharedToken ? 'zui-shared' : 'zui'
-  const { settings: crossBranchSettings, setEnabled: setCrossBranchEnabled } = useCrossBranchContextSettings(crossBranchSurface)
+  const { settings: crossBranchSettings, setEnabled: setCrossBranchEnabled, setDepth: setCrossBranchDepth } = useCrossBranchContextSettings(crossBranchSurface)
   const { preview: versionPreview } = useWorkspaceVersionPreview()
 
   const cameraProfile = useMemo(() => new URLSearchParams(location.search).get('profile'), [location.search])
@@ -333,21 +334,12 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
               {shareSlot}
 
               <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
-              <Tooltip label={!crossBranchSettings.enabled ? 'Show branches' : 'Focus on this view'} placement="top" openDelay={200}>
-                <Button
-                  variant="ghost" h="28px" px={2.5}
-                  color={!crossBranchSettings.enabled ? 'var(--accent)' : 'gray.300'}
-                  bg={!crossBranchSettings.enabled ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
-                  _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
-                  onClick={() => setCrossBranchEnabled(!crossBranchSettings.enabled)}
-                >
-                  <HStack spacing={1.5}>
-                    <FocusSvg />
-                    <Text fontSize="11px" fontWeight="normal">Focus View</Text>
-                    <Box w="6px" h="6px" rounded="full" bg={!crossBranchSettings.enabled ? 'var(--accent)' : 'gray.500'} />
-                  </HStack>
-                </Button>
-              </Tooltip>
+              <CrossBranchControls
+                settings={crossBranchSettings}
+                onEnabledChange={setCrossBranchEnabled}
+                onDepthChange={setCrossBranchDepth}
+                label="Branches"
+              />
 
               {(allTags.length > 0 || layers.length > 0) && (
                 <>

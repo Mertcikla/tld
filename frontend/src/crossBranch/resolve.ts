@@ -1,5 +1,6 @@
 import type { Connector, PlacedElement } from '../types'
 import { CROSS_BRANCH_DEPTH_ALL } from './types'
+import { DEFAULT_MAX_PROXY_CONNECTOR_GROUPS } from './settings'
 import type {
   AggregatedProxyConnector,
   CrossBranchContextSettings,
@@ -533,6 +534,7 @@ export interface ZUIHiddenProxyBadge {
 export interface ZUIProxyResolution {
   connectors: ZUIResolvedConnector[]
   hiddenBadges: ZUIHiddenProxyBadge[]
+  omittedConnectorCount: number
 }
 
 function endpointPathForOwnerView(snapshot: WorkspaceGraphSnapshot, ownerViewId: number, elementId: number): number[] {
@@ -617,7 +619,7 @@ export function resolveZUIProxyConnectors(
   settings: CrossBranchContextSettings,
 ): ZUIProxyResolution {
   if (!snapshot || !settings.enabled || visibleNodeIdsByElementId.size === 0) {
-    return { connectors: [], hiddenBadges: [] }
+    return { connectors: [], hiddenBadges: [], omittedConnectorCount: 0 }
   }
 
   const visibleElements = new Set(visibleNodeIdsByElementId.keys())
@@ -774,8 +776,28 @@ export function resolveZUIProxyConnectors(
     })
   }
 
+  const visibleResolved = resolved
+    .filter((connector) => connector.sourceNodeId && connector.targetNodeId)
+    .sort((left, right) => {
+      if (right.details.count !== left.details.count) return right.details.count - left.details.count
+      if (left.maxDepth !== right.maxDepth) return left.maxDepth - right.maxDepth
+      return (left.sourceDepth + left.targetDepth) - (right.sourceDepth + right.targetDepth)
+    })
+  const maxGroups = settings.maxProxyConnectorGroups ?? DEFAULT_MAX_PROXY_CONNECTOR_GROUPS
+  const budgetedResolved = maxGroups > 0 ? visibleResolved.slice(0, maxGroups) : visibleResolved
+  const omittedConnectorIds = new Set<number>()
+  if (maxGroups > 0) {
+    for (const connector of visibleResolved.slice(maxGroups)) {
+      for (const leaf of connector.details.connectors) {
+        omittedConnectorIds.add(leaf.connector.id)
+      }
+    }
+  }
+  const omittedConnectorCount = omittedConnectorIds.size
+
   return {
-    connectors: resolved.filter((connector) => connector.sourceNodeId && connector.targetNodeId),
+    connectors: budgetedResolved,
     hiddenBadges: hiddenBadges.filter((badge) => badge.sourceNodeId && badge.targetNodeId),
+    omittedConnectorCount,
   }
 }

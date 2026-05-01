@@ -172,4 +172,33 @@ describe('resolveZUIProxyConnectors', () => {
       [2, 4],
     ])
   })
+
+  it('budgets visible connector groups and reports the omitted leaf count', () => {
+    const data = baseData([
+      connector(1, 1, 3, 2, 'one'),
+      connector(2, 1, 4, 2, 'two'),
+      connector(3, 1, 5, 2, 'three'),
+    ])
+    data.views['2'].placements = [
+      placedElement(2, 3, 'AA'),
+      placedElement(2, 4, 'AB'),
+      placedElement(2, 5, 'AC'),
+    ]
+    const snapshot = buildWorkspaceGraphSnapshot(data)
+
+    const resolved = resolveZUIProxyConnectors(
+      snapshot,
+      new Map([
+        [1, 'd1-o1'],
+        [2, 'd1-o2'],
+        [3, 'd2-o3'],
+        [4, 'd2-o4'],
+        [5, 'd2-o5'],
+      ]),
+      { enabled: true, depth: 5, maxProxyConnectorGroups: 2 },
+    )
+
+    expect(resolved.connectors).toHaveLength(2)
+    expect(resolved.omittedConnectorCount).toBe(2)
+  })
 })

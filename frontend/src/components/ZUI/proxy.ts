@@ -8,6 +8,7 @@ import type { WorkspaceGraphSnapshot } from '../../crossBranch/types'
 import type { LayoutNode, ZUIViewState, HoveredItem } from './types'
 import { getExpandThresholds, pickEdgeLabelPosition, type ScreenRect } from './renderer'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
+import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
 
 export interface VisibleNodeAnchor {
   nodeId: string
@@ -290,9 +291,15 @@ export function buildVisibleProxyConnectors(
   visibleAnchors: Map<number, VisibleNodeAnchor>,
   settings: CrossBranchContextSettings,
 ): ZUIProxyResolution {
+  const minAlpha = settings.minConnectorAnchorAlpha ?? DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA
+  const connectorAnchors = new Map(
+    Array.from(visibleAnchors.entries())
+      .filter(([, anchor]) => anchor.renderAlpha >= minAlpha)
+      .map(([elementId, anchor]) => [elementId, anchor.nodeId]),
+  )
   return resolveZUIProxyConnectors(
     snapshot,
-    new Map(Array.from(visibleAnchors.entries()).map(([elementId, anchor]) => [elementId, anchor.nodeId])),
+    connectorAnchors,
     settings,
   )
 }
