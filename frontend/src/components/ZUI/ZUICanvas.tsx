@@ -32,7 +32,7 @@ import { useZUIInteraction } from './useZUIInteraction'
 import type { DiagramGroupLayout, ZUIViewState } from './types'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
-import type { WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
+import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
 import type { ZUIResolvedConnector } from '../../crossBranch/resolve'
 import {
   buildVisibleProxyConnectors,
@@ -63,6 +63,7 @@ interface Props {
   highlightColor?: string
   hiddenTags?: string[]
   versionPreview?: WorkspaceVersionPreview | null
+  versionFollowTarget?: WorkspaceVersionFollowTarget | null
   crossBranchSettings: CrossBranchContextSettings
   hoverLocked?: boolean
 }
@@ -328,7 +329,7 @@ function findFirstExpandableNodeInTree(
   return null
 }
 
-export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, initialCameraFrame, highlightedTags, highlightColor, hiddenTags, versionPreview, crossBranchSettings, hoverLocked = false }, ref) {
+export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, initialCameraFrame, highlightedTags, highlightColor, hiddenTags, versionPreview, versionFollowTarget, crossBranchSettings, hoverLocked = false }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const cameraTransitionRef = useRef<number | null>(null)
@@ -807,13 +808,19 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   }, [hiddenTags])
 
   useEffect(() => {
+    const pulsedElementChanges = new Map<number, string>()
+    const pulsedElementLineDeltas = new Map<number, { added: number; removed: number }>()
+    if (versionFollowTarget?.resourceType === 'element' && versionFollowTarget.resourceId) {
+      const change = versionFollowTarget.changeType ?? versionPreview?.elementChanges.get(versionFollowTarget.resourceId)
+      if (change) pulsedElementChanges.set(versionFollowTarget.resourceId, change)
+    }
     setRendererVersionDiff(
-      versionPreview?.elementChanges ?? new Map(),
+      pulsedElementChanges,
       versionPreview?.connectorChanges ?? new Map(),
-      versionPreview?.elementLineDeltas ?? new Map(),
+      versionPreview?.elementLineDeltas ?? pulsedElementLineDeltas,
     )
     needsRedrawRef.current = true
-  }, [versionPreview])
+  }, [versionPreview, versionFollowTarget])
 
   useEffect(() => {
     setHoverLocked(hoverLocked)

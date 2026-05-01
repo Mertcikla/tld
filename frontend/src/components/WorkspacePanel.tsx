@@ -290,7 +290,12 @@ export default function WorkspacePanel() {
   }, [clearPreview, diffVisible, diffs, selectedRepo, selectedVersion, setPreview, workspaceVersions])
 
   const navigateToDiffLocation = useCallback((target: WatchDiffLocation) => {
-    requestFollow()
+    requestFollow({
+      resourceType: target.resourceType,
+      resourceId: target.resourceId,
+      viewId: target.viewId,
+      changeType: target.changeType,
+    })
     if (location.pathname === '/dependencies' && target.resourceType === 'element' && target.resourceId) {
       navigate(`/dependencies?element=${target.resourceId}`)
       return

@@ -18,7 +18,7 @@ import {
   getVisualHandleSlot,
 } from '../../../utils/edgeDistribution'
 import { buildViewContentLinks, useStore } from '../../../store/useStore'
-import type { WorkspaceVersionPreview } from '../../../context/WorkspaceVersionContext'
+import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../../context/WorkspaceVersionContext'
 
 interface ViewDataOptions {
   viewId: number | null
@@ -31,6 +31,7 @@ interface ViewDataOptions {
   hoveredLayerColor: string | null
   tagColors: Record<string, Tag>
   versionPreview?: WorkspaceVersionPreview | null
+  versionFollowTarget?: WorkspaceVersionFollowTarget | null
   // Node-level callbacks (stable refs from parent)
   stableOnZoomIn: (elementId: number) => Promise<void>
   stableOnZoomOut: (elementId: number) => Promise<void>
@@ -162,6 +163,7 @@ export function useViewData({
   hoveredLayerColor,
   tagColors,
   versionPreview,
+  versionFollowTarget,
   stableOnZoomIn,
   stableOnZoomOut,
   stableOnNavigateToView,
@@ -437,9 +439,12 @@ export function useViewData({
         const isSoftFocused = hoveredSet !== null && !isLayerHighlighted
         const versionChangeType = versionElementChanges?.get(obj.element_id)
         const versionLineDelta = versionElementLineDeltas?.get(obj.element_id)
+        const versionPulseChangeType = versionFollowTarget?.resourceType === 'element' && versionFollowTarget.resourceId === obj.element_id
+          ? versionFollowTarget.changeType ?? versionChangeType
+          : undefined
         const isDimmedByVersionPreview = versionActive && !versionChangeType
 
-        const newZIndex = versionChangeType ? 20 : isLayerHighlighted ? 10 : interactionSourceId === obj.element_id ? 1000 : 0
+        const newZIndex = versionPulseChangeType ? 20 : isLayerHighlighted ? 10 : interactionSourceId === obj.element_id ? 1000 : 0
         const newStyle = isInactive
           ? HIDDEN_STYLE
           : isSoftFocused
@@ -490,7 +495,7 @@ export function useViewData({
           existing.data.selectedHandleIds === connectionMeta.selectedHandleIds &&
           existing.data.reconnectCandidates === connectionMeta.reconnectCandidates &&
           existing.data.isConnectorHighlighted === connectionMeta.isConnectorHighlighted &&
-          existing.data.versionChangeType === versionChangeType &&
+          existing.data.versionChangeType === versionPulseChangeType &&
           existing.data.versionLineDelta === versionLineDelta
         ) {
           return existing
@@ -531,7 +536,7 @@ export function useViewData({
             selectedHandleIds: connectionMeta.selectedHandleIds,
             reconnectCandidates: connectionMeta.reconnectCandidates,
             isConnectorHighlighted: connectionMeta.isConnectorHighlighted,
-            versionChangeType,
+            versionChangeType: versionPulseChangeType,
             versionLineDelta,
           },
         }
@@ -543,7 +548,7 @@ export function useViewData({
     stableOnZoomIn, stableOnZoomOut, stableOnNavigateToView, stableOnSelect,
     stableOnInteractionStart, stableOnConnectTo, stableOnStartHandleReconnect, stableOnRemoveElement, stableOnHoverZoom,
     stableOnOpenCodePreview, hoveredZoomRef, activeTags, hiddenLayerTags, hoveredLayerTags, hoveredLayerColor, tagColors,
-    nodeConnectionMetaByElementId, setRfNodes, versionPreview,
+    nodeConnectionMetaByElementId, setRfNodes, versionPreview, versionFollowTarget,
   ])
 
   // ── Derive RF connectors ────────────────────────────────────────────────────────

@@ -270,7 +270,7 @@ function ViewEditorInner({
   const [activeTags, setActiveTags] = useState<string[]>([])
   const activeTagsRef = useRef<string[]>([])
   activeTagsRef.current = activeTags
-  const { preview: versionPreview } = useWorkspaceVersionPreview()
+  const { preview: versionPreview, followTarget: versionFollowTarget } = useWorkspaceVersionPreview()
   const [tagColors, setTagColors] = useState<Record<string, Tag>>({})
 
   useEffect(() => {
@@ -399,6 +399,7 @@ function ViewEditorInner({
     hoveredLayerColor,
     tagColors,
     versionPreview,
+    versionFollowTarget,
     stableOnZoomIn: useCallback(async (id: number) => { await stableOnZoomInRef.current(id) }, []),
     stableOnZoomOut: useCallback(async (id: number) => { await stableOnZoomOutRef.current(id) }, []),
     stableOnNavigateToView: useCallback((id: number) => { stableOnNavigateToViewRef.current(id) }, []),

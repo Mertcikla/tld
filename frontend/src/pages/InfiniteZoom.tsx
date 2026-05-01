@@ -68,7 +68,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
     setConnectorBudget: setCrossBranchConnectorBudget,
     setConnectorPriority: setCrossBranchConnectorPriority,
   } = useCrossBranchContextSettings(crossBranchSurface)
-  const { preview: versionPreview } = useWorkspaceVersionPreview()
+  const { preview: versionPreview, followTarget: versionFollowTarget } = useWorkspaceVersionPreview()
 
   const cameraProfile = useMemo(() => new URLSearchParams(location.search).get('profile'), [location.search])
   const isDetailToOverviewProfile = sharedToken && cameraProfile === 'detail-to-overview'
@@ -299,6 +299,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
             highlightColor={highlightColor}
             hiddenTags={hiddenTags}
             versionPreview={versionPreview}
+            versionFollowTarget={versionFollowTarget}
             crossBranchSettings={crossBranchSettings}
             hoverLocked={isTagsOpen}
           />

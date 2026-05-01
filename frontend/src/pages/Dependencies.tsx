@@ -272,7 +272,11 @@ export default function Dependencies() {
   const setHeader = useSetHeader()
   const { accent, elementColor } = useTheme()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { preview: versionPreview } = useWorkspaceVersionPreview()
+  const { preview: versionPreview, followTarget: versionFollowTarget } = useWorkspaceVersionPreview()
+  const versionPulseChangeForElement = useCallback((elementId: number): VersionChangeType | undefined => {
+    if (versionFollowTarget?.resourceType !== 'element' || versionFollowTarget.resourceId !== elementId) return undefined
+    return versionFollowTarget.changeType ?? versionPreview?.elementChanges.get(elementId)
+  }, [versionFollowTarget, versionPreview])
 
   const [elements, setElements] = useState<DependencyElement[]>([])
   const [allEdges, setAllEdges] = useState<DependencyConnector[]>([])
@@ -792,7 +796,7 @@ export default function Dependencies() {
                 const color = TYPE_COLORS[typeKey] ?? 'gray'
                 const accentHex = TYPE_HEX[typeKey] ?? '#718096'
                 const isSelected = selectedId === obj.id
-                const versionChangeType = versionPreview?.elementChanges.get(Number(obj.id))
+                const versionChangeType = versionPulseChangeForElement(Number(obj.id))
                 const versionLineDelta = versionPreview?.elementLineDeltas.get(Number(obj.id))
                 const versionColor = versionChangeType === 'added'
                   ? 'green.300'
@@ -978,7 +982,7 @@ export default function Dependencies() {
                                   key={n.element.id}
                                   node={n}
                                   compactLevel={maxCompactLevel}
-                                  versionChangeType={versionPreview?.elementChanges.get(Number(n.element.id))}
+                                  versionChangeType={versionPulseChangeForElement(Number(n.element.id))}
                                   onClick={() => selectElement(n.element.id)}
                                 />
                               ))}
@@ -1002,7 +1006,7 @@ export default function Dependencies() {
                                     key={n.element.id}
                                     node={n}
                                     compactLevel={leftCompactLevel}
-                                    versionChangeType={versionPreview?.elementChanges.get(Number(n.element.id))}
+                                    versionChangeType={versionPulseChangeForElement(Number(n.element.id))}
                                     onClick={() => selectElement(n.element.id)}
                                   />
                                 ))}
@@ -1024,8 +1028,8 @@ export default function Dependencies() {
                           bg={elementColor}
                           borderColor={accent}
                           borderWidth="2px"
-                          outline={versionPreview?.elementChanges.get(Number(selectedId)) ? '3px solid' : undefined}
-                          outlineColor={versionPreview?.elementChanges.get(Number(selectedId)) === 'added' ? 'green.300' : versionPreview?.elementChanges.get(Number(selectedId)) === 'deleted' ? 'red.300' : versionPreview?.elementChanges.get(Number(selectedId)) ? 'yellow.300' : undefined}
+                          outline={selectedId && versionPulseChangeForElement(Number(selectedId)) ? '3px solid' : undefined}
+                          outlineColor={selectedId && versionPulseChangeForElement(Number(selectedId)) === 'added' ? 'green.300' : selectedId && versionPulseChangeForElement(Number(selectedId)) === 'deleted' ? 'red.300' : selectedId && versionPulseChangeForElement(Number(selectedId)) ? 'yellow.300' : undefined}
                           outlineOffset="3px"
                           boxShadow={selectedCardShadow}
                         >
@@ -1058,7 +1062,7 @@ export default function Dependencies() {
                                     key={n.element.id}
                                   node={n}
                                   compactLevel={rightCompactLevel}
-                                  versionChangeType={versionPreview?.elementChanges.get(Number(n.element.id))}
+                                  versionChangeType={versionPulseChangeForElement(Number(n.element.id))}
                                   onClick={() => selectElement(n.element.id)}
                                 />
                                 ))}
@@ -1081,7 +1085,7 @@ export default function Dependencies() {
                                   key={n.element.id}
                                   node={n}
                                   compactLevel={maxCompactLevel}
-                                  versionChangeType={versionPreview?.elementChanges.get(Number(n.element.id))}
+                                  versionChangeType={versionPulseChangeForElement(Number(n.element.id))}
                                   onClick={() => selectElement(n.element.id)}
                                 />
                               ))}

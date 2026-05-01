@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { WatchDiff, WatchRepository, WatchVersion, WorkspaceVersion } from '../api/client'
 import { normalizeWatchChangeType } from '../utils/watchDiffSummary'
 
@@ -27,12 +27,21 @@ export interface WorkspaceVersionPreview {
   }
 }
 
+export interface WorkspaceVersionFollowTarget {
+  token: number
+  resourceType: string
+  resourceId?: number
+  viewId?: number
+  changeType?: VersionChangeType
+}
+
 interface WorkspaceVersionContextValue {
   preview: WorkspaceVersionPreview | null
   followToken: number
+  followTarget: WorkspaceVersionFollowTarget | null
   setPreview: (preview: WorkspaceVersionPreview | null) => void
   clearPreview: () => void
-  requestFollow: () => void
+  requestFollow: (target?: Omit<WorkspaceVersionFollowTarget, 'token'>) => void
 }
 
 const WorkspaceVersionContext = createContext<WorkspaceVersionContextValue | null>(null)
@@ -82,9 +91,31 @@ export function buildWorkspaceVersionPreview(args: {
 export function WorkspaceVersionProvider({ children }: { children: React.ReactNode }) {
   const [preview, setPreview] = useState<WorkspaceVersionPreview | null>(null)
   const [followToken, setFollowToken] = useState(0)
+  const [followTarget, setFollowTarget] = useState<WorkspaceVersionFollowTarget | null>(null)
+  const followClearTimerRef = useRef<number | null>(null)
   const clearPreview = useCallback(() => setPreview(null), [])
-  const requestFollow = useCallback(() => setFollowToken((value) => value + 1), [])
-  const value = useMemo(() => ({ preview, followToken, setPreview, clearPreview, requestFollow }), [preview, followToken, clearPreview, requestFollow])
+  const requestFollow = useCallback((target?: Omit<WorkspaceVersionFollowTarget, 'token'>) => {
+    setFollowToken((value) => value + 1)
+    if (followClearTimerRef.current !== null) {
+      window.clearTimeout(followClearTimerRef.current)
+      followClearTimerRef.current = null
+    }
+    if (!target) {
+      setFollowTarget(null)
+      return
+    }
+    setFollowTarget({ ...target, token: Date.now() })
+    followClearTimerRef.current = window.setTimeout(() => {
+      setFollowTarget(null)
+      followClearTimerRef.current = null
+    }, 1600)
+  }, [])
+  useEffect(() => {
+    return () => {
+      if (followClearTimerRef.current !== null) window.clearTimeout(followClearTimerRef.current)
+    }
+  }, [])
+  const value = useMemo(() => ({ preview, followToken, followTarget, setPreview, clearPreview, requestFollow }), [preview, followToken, followTarget, clearPreview, requestFollow])
   return <WorkspaceVersionContext.Provider value={value}>{children}</WorkspaceVersionContext.Provider>
 }
 
