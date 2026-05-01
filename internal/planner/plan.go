@@ -111,6 +111,9 @@ func buildFromElements(ws *workspace.Workspace, recreateIDs bool) (*Plan, error)
 		if element.FilePath != "" {
 			planElement.FilePath = &element.FilePath
 		}
+		if len(element.Tags) > 0 {
+			planElement.Tags = append([]string(nil), element.Tags...)
+		}
 		if element.ViewLabel != "" {
 			planElement.ViewLabel = &element.ViewLabel
 		}

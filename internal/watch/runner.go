@@ -108,7 +108,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 		return RunnerResult{}, err
 	}
 	_ = lock
-	sourceWatcher := newSourceWatcher(ctx, repoRoot, settings, r.Scanner.Rules)
+	sourceWatcher := newSourceWatcher(ctx, repoRoot, settings, r.Scanner.EffectiveRules)
 	watcherMode := sourceWatcher.Mode
 	warnings := append([]string{}, sourceWatcher.Warnings...)
 	emit(opts.Events, Event{Type: "watch.started", RepositoryID: repo.ID, At: nowString(), Data: repo.JSON(), Phase: "watch", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})

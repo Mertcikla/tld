@@ -24,11 +24,12 @@ import (
 )
 
 type Scanner struct {
-	Store    *Store
-	Analyzer analyzer.Service
-	Rules    *ignore.Rules
-	Progress ProgressSink
-	Settings Settings
+	Store          *Store
+	Analyzer       analyzer.Service
+	Rules          *ignore.Rules
+	EffectiveRules *ignore.Rules
+	Progress       ProgressSink
+	Settings       Settings
 }
 
 type synchronizedProgress struct {
@@ -95,6 +96,15 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 		return ScanResult{}, fmt.Errorf("%s is not inside a git repository: %w", path, err)
 	}
 	repoRoot = filepath.Clean(repoRoot)
+	gitignoreRules, err := ignore.LoadGitIgnore(repoRoot)
+	if err != nil {
+		return ScanResult{}, fmt.Errorf("load .gitignore rules: %w", err)
+	}
+	effectiveRules := ignore.Merge(s.Rules, gitignoreRules)
+	if effectiveRules == nil {
+		effectiveRules = &ignore.Rules{}
+	}
+	s.EffectiveRules = effectiveRules
 	settings := NormalizeSettings(s.Settings)
 
 	repoInput := RepositoryInput{
@@ -130,7 +140,7 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	}()
 
 	workers := runtime.NumCPU()
-	files, err := s.collectSourceFiles(repoRoot, workers, settings.Languages)
+	files, err := s.collectSourceFiles(repoRoot, workers, settings.Languages, effectiveRules)
 	if err != nil {
 		scanErr = err
 		return result, err
@@ -143,7 +153,7 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	var parsedFiles []parsedFile
 	var parsedFileIDs []int64
 
-	fileResults, err := s.scanFiles(ctx, repo.ID, repoRoot, files, workers, progress, opts.Force)
+	fileResults, err := s.scanFiles(ctx, repo.ID, repoRoot, files, workers, progress, opts.Force, effectiveRules)
 	if err != nil {
 		scanErr = err
 		return result, err
@@ -204,7 +214,7 @@ type scanFileResult struct {
 	SymbolsSeen int
 }
 
-func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot string, files []string, workers int, progress ProgressSink, force bool) ([]scanFileResult, error) {
+func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot string, files []string, workers int, progress ProgressSink, force bool, rules *ignore.Rules) ([]scanFileResult, error) {
 	if workers <= 0 {
 		workers = 1
 	}
@@ -221,7 +231,7 @@ func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot st
 			defer wg.Done()
 			workerAnalyzer := analyzer.NewService()
 			for absFile := range jobs {
-				fileResult, err := s.scanFile(ctx, workerAnalyzer, repositoryID, repoRoot, absFile, progress, force)
+				fileResult, err := s.scanFile(ctx, workerAnalyzer, repositoryID, repoRoot, absFile, progress, force, rules)
 				if err != nil {
 					select {
 					case errs <- err:
@@ -259,7 +269,7 @@ func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot st
 	return out, nil
 }
 
-func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service, repositoryID int64, repoRoot, absFile string, progress ProgressSink, force bool) (scanFileResult, error) {
+func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service, repositoryID int64, repoRoot, absFile string, progress ProgressSink, force bool, rules *ignore.Rules) (scanFileResult, error) {
 	rel, err := filepath.Rel(repoRoot, absFile)
 	if err != nil {
 		return scanFileResult{}, err
@@ -307,7 +317,7 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 		result.Skipped = true
 		return result, nil
 	}
-	extracted, err := workerAnalyzer.ExtractPath(ctx, absFile, s.Rules, nil)
+	extracted, err := workerAnalyzer.ExtractPath(ctx, absFile, rules, nil)
 	if err != nil {
 		_, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, blobHash, worktreeHash, info.Size(), info.ModTime().Unix(), "error", err)
 		return result, upsertErr
@@ -322,9 +332,8 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	return result, nil
 }
 
-func (s *Scanner) collectSourceFiles(root string, workers int, languages []string) ([]string, error) {
+func (s *Scanner) collectSourceFiles(root string, workers int, languages []string, rules *ignore.Rules) ([]string, error) {
 	var files []string
-	rules := s.Rules
 	if rules == nil {
 		rules = &ignore.Rules{}
 	}

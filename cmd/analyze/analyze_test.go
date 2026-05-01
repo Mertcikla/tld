@@ -126,6 +126,46 @@ func TestAnalyzeCmd_CreatesFolderHierarchy(t *testing.T) {
 	}
 }
 
+func TestAnalyzeCmd_AssignsCodeownersTags(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	repoDir := filepath.Join(dir, "app")
+	cmd.InitGitRepo(t, repoDir, filepath.Join("internal", "service", "service.go"), "package service\nfunc Run() {}\n")
+	if err := os.WriteFile(filepath.Join(repoDir, "CODEOWNERS"), []byte("/internal/service/* @org/service-team:random(2)\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := cmd.RunCmd(t, dir, "analyze", repoDir)
+	if err != nil {
+		t.Fatalf("analyze: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	matched := 0
+	for _, element := range ws.Elements {
+		if element.Kind != "folder" && element.Kind != "file" && element.Symbol == "" {
+			continue
+		}
+		if element.FilePath == filepath.Join("internal", "service") ||
+			element.FilePath == filepath.Join("internal", "service", "service.go") ||
+			element.Symbol == "Run" {
+			matched++
+			if !analyzeStringSliceContains(element.Tags, "owner:@org/service-team") {
+				t.Fatalf("expected %s (%s) to include CODEOWNERS tag, got %v", element.Name, element.Kind, element.Tags)
+			}
+			if analyzeStringSliceContains(element.Tags, "owner:@org/service-team:random(2)") {
+				t.Fatalf("expected extended assignment suffix to be stripped, got %v", element.Tags)
+			}
+		}
+	}
+	if matched != 3 {
+		t.Fatalf("matched CODEOWNERS-tagged analyze elements = %d, want 3; elements=%+v", matched, ws.Elements)
+	}
+}
+
 func TestAnalyzeCmd_ReusesExistingElements(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
@@ -380,6 +420,41 @@ func TestAnalyzeCmd_ExcludeRules(t *testing.T) {
 	}
 }
 
+func TestAnalyzeCmd_RespectsGitIgnore(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.InitGitRepo(t, dir, "main.go", "package main\nfunc Main() {}\n")
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("ignored.go\nnested/\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ignored.go"), []byte("package main\nfunc Ignored() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "nested"), 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "nested", "ignored.go"), []byte("package nested\nfunc NestedIgnored() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := cmd.RunCmd(t, dir, "analyze", dir); err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ref := findAnalyzeElementRefBySymbolOptional(ws, "Main"); ref == "" {
+		t.Fatalf("expected Main symbol, got %+v", ws.Elements)
+	}
+	if ref := findAnalyzeElementRefBySymbolOptional(ws, "Ignored"); ref != "" {
+		t.Fatalf("ignored symbol was analyzed at ref %q: %+v", ref, ws.Elements[ref])
+	}
+	if ref := findAnalyzeElementRefBySymbolOptional(ws, "NestedIgnored"); ref != "" {
+		t.Fatalf("nested ignored symbol was analyzed at ref %q: %+v", ref, ws.Elements[ref])
+	}
+}
+
 func TestAnalyzeCmd_GeneratedNamesAreGloballyUnique(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
@@ -491,12 +566,19 @@ func findAnalyzeElementRefByKindAndPath(t *testing.T, ws *workspace.Workspace, k
 
 func findAnalyzeElementRefBySymbol(t *testing.T, ws *workspace.Workspace, symbol string) string {
 	t.Helper()
+	if ref := findAnalyzeElementRefBySymbolOptional(ws, symbol); ref != "" {
+		return ref
+	}
+	t.Fatalf("expected symbol element for %s, got %+v", symbol, ws.Elements)
+	return ""
+}
+
+func findAnalyzeElementRefBySymbolOptional(ws *workspace.Workspace, symbol string) string {
 	for ref, element := range ws.Elements {
 		if element.Symbol == symbol {
 			return ref
 		}
 	}
-	t.Fatalf("expected symbol element for %s, got %+v", symbol, ws.Elements)
 	return ""
 }
 
@@ -566,4 +648,13 @@ func assertBidirectionalAnalyzeConnector(t *testing.T, ws *workspace.Workspace, 
 		}
 	}
 	t.Fatalf("expected bidirectional connector %s <-> %s (%s), got %+v", left, right, label, ws.Connectors)
+}
+
+func analyzeStringSliceContains(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/mertcikla/tld/internal/analyzer"
 	"github.com/mertcikla/tld/internal/cmdutil"
+	"github.com/mertcikla/tld/internal/codeowners"
 	"github.com/mertcikla/tld/internal/git"
 	"github.com/mertcikla/tld/internal/ignore"
 	"github.com/mertcikla/tld/internal/term"
@@ -96,7 +97,10 @@ for cross-file call references.`,
 				countProgress.Describe(fmt.Sprintf("%s Counting scan plan", analyzeSpinnerFrames[0]))
 			}
 			for _, repoCtx := range repoScopes {
-				rules := ws.IgnoreRulesForRepository(repoCtx.Name)
+				rules, err := analyzeRulesForRepository(ws, repoCtx)
+				if err != nil {
+					return err
+				}
 				scanRoot := absPath
 				if scanConfiguredRepositories {
 					scanRoot = repoCtx.Root
@@ -140,7 +144,10 @@ for cross-file call references.`,
 				if progress != nil {
 					progress.Describe(fmt.Sprintf("%s Scanning %s (%d/%d)", analyzeSpinnerFrames[processedEntries%len(analyzeSpinnerFrames)], repoCtx.Name, i+1, len(repoScopes)))
 				}
-				rules := ws.IgnoreRulesForRepository(repoCtx.Name)
+				rules, err := analyzeRulesForRepository(ws, repoCtx)
+				if err != nil {
+					return err
+				}
 				scanRoot := absPath
 				if scanConfiguredRepositories {
 					scanRoot = repoCtx.Root
@@ -154,6 +161,10 @@ for cross-file call references.`,
 					if b, err := git.DetectBranch(repoCtx.Root); err == nil {
 						branch = b
 					}
+				}
+				ownerMatcher, err := codeowners.Load(repoCtx.Root)
+				if err != nil {
+					return fmt.Errorf("load CODEOWNERS: %w", err)
 				}
 
 				scanResult, err := analyzeService.ExtractPath(ctx, scanRoot, rules, func(path string, isDir bool) {
@@ -275,6 +286,7 @@ for cross-file call references.`,
 						Repo:       repoURL,
 						Branch:     branch,
 						FilePath:   relPath,
+						Tags:       ownerMatcher.TagsForPath(relPath),
 						Technology: "Folder",
 						ParentRef:  parentRef,
 						Identity: analyzeElementIdentity{
@@ -322,6 +334,7 @@ for cross-file call references.`,
 						Repo:       repoURL,
 						Branch:     branch,
 						FilePath:   relPath,
+						Tags:       ownerMatcher.TagsForPath(relPath),
 						HasView:    hasFileSymbols,
 						ViewLabel:  fileName,
 						Technology: fileTech,
@@ -369,6 +382,7 @@ for cross-file call references.`,
 						Branch:      branch,
 						FilePath:    relPath,
 						Symbol:      sym.Name,
+						Tags:        ownerMatcher.TagsForPath(relPath),
 						ParentName:  sym.Parent,
 						Technology:  sym.Technology,
 						Description: sym.Description,
@@ -549,6 +563,14 @@ func ensureAnalyzeRepositoriesRegistered(ws *workspace.Workspace, repoScopes []c
 	return nil
 }
 
+func analyzeRulesForRepository(ws *workspace.Workspace, repoCtx cmdutil.RepoScope) (*ignore.Rules, error) {
+	gitignoreRules, err := ignore.LoadGitIgnore(repoCtx.Root)
+	if err != nil {
+		return nil, fmt.Errorf("load .gitignore rules: %w", err)
+	}
+	return ignore.Merge(ws.IgnoreRulesForRepository(repoCtx.Name), gitignoreRules), nil
+}
+
 func analyzeRepositoryLocalDir(workspaceRoot, repoRoot string) string {
 	if workspaceRoot == "" || repoRoot == "" {
 		return repoRoot
@@ -697,6 +719,7 @@ type analyzeElementSpec struct {
 	Branch      string
 	FilePath    string
 	Symbol      string
+	Tags        []string
 	ParentName  string
 	HasView     bool
 	ViewLabel   string
@@ -794,6 +817,7 @@ func ensureAnalyzeElement(wdir string, dryRun bool, ws *workspace.Workspace, kno
 		if elementSpec.URL == "" {
 			elementSpec.URL = existing.URL
 		}
+		elementSpec.Tags = mergeAnalyzeTags(existing.Tags, elementSpec.Tags)
 	}
 	if ws.Elements == nil {
 		ws.Elements = make(map[string]*workspace.Element)
@@ -819,6 +843,7 @@ func analyzeElementToWorkspaceElement(spec analyzeElementSpec) *workspace.Elemen
 		Branch:      spec.Branch,
 		FilePath:    spec.FilePath,
 		Symbol:      spec.Symbol,
+		Tags:        cloneAnalyzeStrings(spec.Tags),
 		HasView:     spec.HasView,
 		ViewLabel:   spec.ViewLabel,
 		Technology:  spec.Technology,
@@ -827,6 +852,40 @@ func analyzeElementToWorkspaceElement(spec analyzeElementSpec) *workspace.Elemen
 			ParentRef: spec.ParentRef,
 		}},
 	}
+}
+
+func mergeAnalyzeTags(existing, generated []string) []string {
+	out := make([]string, 0, len(existing)+len(generated))
+	seen := map[string]struct{}{}
+	add := func(tag string) {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			return
+		}
+		if _, ok := seen[tag]; ok {
+			return
+		}
+		seen[tag] = struct{}{}
+		out = append(out, tag)
+	}
+	for _, tag := range existing {
+		if strings.HasPrefix(tag, "owner:") {
+			continue
+		}
+		add(tag)
+	}
+	for _, tag := range generated {
+		add(tag)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func cloneAnalyzeStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]string(nil), values...)
 }
 
 func findAnalyzeElementRef(ws *workspace.Workspace, identity analyzeElementIdentity) (string, bool) {

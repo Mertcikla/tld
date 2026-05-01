@@ -213,6 +213,32 @@ func TestScanCollectsConfiguredLanguages(t *testing.T) {
 	}
 }
 
+func TestScanRespectsGitIgnore(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, ".gitignore", "ignored.go\nnested/\n")
+	writeFile(t, repo, "main.go", "package main\nfunc Main() {}\n")
+	writeFile(t, repo, "ignored.go", "package main\nfunc Ignored() {}\n")
+	writeFile(t, repo, "nested/ignored.go", "package nested\nfunc NestedIgnored() {}\n")
+
+	store := NewStore(db)
+	result, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FilesSeen != 1 || result.FilesParsed != 1 {
+		t.Fatalf("expected only non-ignored source file to be scanned, got %+v", result)
+	}
+	symbols, err := store.SymbolsForRepository(context.Background(), result.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(symbols) != 1 || symbols[0].Name != "Main" {
+		t.Fatalf("expected only Main symbol, got %+v", symbols)
+	}
+}
+
 func TestScanForceRescanReparsesCachedFiles(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -755,6 +781,52 @@ func ExecuteCLI() {}
 		if !stringSliceContains(tags, tag) {
 			t.Fatalf("expected ScanRepository to include %q, got %v", tag, tags)
 		}
+	}
+}
+
+func TestRepresentAssignsCodeownersTags(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "CODEOWNERS", `
+/frontend/* @org/web-team:random(2)
+/backend/* @backend @org/backend:least_busy(3)
+`)
+	writeFile(t, repo, "frontend/app.go", `package frontend
+
+func Render() {}
+`)
+	writeFile(t, repo, "backend/server.go", `package backend
+
+func Serve() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, name := range []string{"frontend", "app.go", "Render"} {
+		tags := elementTagsByName(t, db, name)
+		if !stringSliceContains(tags, "owner:@org/web-team") {
+			t.Fatalf("expected %s to include CODEOWNERS tag, got %v", name, tags)
+		}
+		if stringSliceContains(tags, "owner:@org/web-team:random(2)") {
+			t.Fatalf("expected %s extended assignment suffix to be stripped, got %v", name, tags)
+		}
+	}
+	backendTags := elementTagsByName(t, db, "Serve")
+	for _, tag := range []string{"owner:@backend", "owner:@org/backend"} {
+		if !stringSliceContains(backendTags, tag) {
+			t.Fatalf("expected backend symbol to include %q, got %v", tag, backendTags)
+		}
+	}
+	if count := countElementTag(t, db, "owner:@org/web-team"); count < 3 {
+		t.Fatalf("expected rare CODEOWNERS tag to bypass semantic coverage filtering, found on %d elements", count)
 	}
 }
 

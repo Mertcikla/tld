@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mertcikla/tld/internal/codeowners"
 	"github.com/mertcikla/tld/internal/layout"
 )
 
@@ -116,7 +117,12 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		_ = r.Store.FinishRepresentationRun(context.Background(), runID, status, result, runErr)
 	}()
 
-	stats, err := r.materialize(ctx, repo, filtered, req.Thresholds, settingsHash, identityKeys)
+	ownerMatcher, err := codeowners.Load(repo.RepoRoot)
+	if err != nil {
+		runErr = err
+		return result, err
+	}
+	stats, err := r.materialize(ctx, repo, filtered, req.Thresholds, settingsHash, identityKeys, ownerMatcher)
 	if err != nil {
 		runErr = err
 		return result, err
@@ -382,7 +388,7 @@ type semanticTagDefinitionInfo struct {
 	Description string
 }
 
-func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string) semanticTagPlan {
+func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string, ownerMatcher *codeowners.Matcher) semanticTagPlan {
 	candidates := map[string][]string{}
 	add := func(ownerType, ownerKey string, tags ...string) {
 		key := semanticTagOwnerKey(ownerType, ownerKey)
@@ -394,10 +400,10 @@ func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thr
 
 	visibleFiles := filesForSymbols(filtered.VisibleSymbols)
 	for _, folder := range folderSet(visibleFiles) {
-		add("folder", "folder:"+folder, semanticPathTags(folder, repoLanguage)...)
+		add("folder", "folder:"+folder, append(semanticPathTags(folder, repoLanguage), ownerMatcher.TagsForPath(folder)...)...)
 	}
 	for file := range visibleFiles {
-		add("file", "file:"+file, semanticPathTags(file, languageForFile(file, filtered.VisibleSymbols))...)
+		add("file", "file:"+file, append(semanticPathTags(file, languageForFile(file, filtered.VisibleSymbols)), ownerMatcher.TagsForPath(file)...)...)
 	}
 
 	for file, symbols := range symbolsByFile(filtered.VisibleSymbols) {
@@ -419,13 +425,18 @@ func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thr
 		tags := semanticPathTags(sym.FilePath, languageFromStableKey(sym.StableKey))
 		tags = append(tags, semanticKindTag(sym.Kind))
 		tags = append(tags, semanticSymbolRoleTags(sym, filtered.Incoming[sym.ID], filtered.Outgoing[sym.ID])...)
+		tags = append(tags, ownerMatcher.TagsForPath(sym.FilePath)...)
 		add("symbol", symbolOwnerKey(sym, identityKeys), tags...)
 	}
 
 	counts := map[string]int{}
+	forced := map[string]struct{}{}
 	for _, tags := range candidates {
 		for _, tag := range tags {
 			counts[tag]++
+			if strings.HasPrefix(tag, "owner:") {
+				forced[tag] = struct{}{}
+			}
 		}
 	}
 	total := len(candidates)
@@ -435,6 +446,10 @@ func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thr
 	}
 	approved := map[string]struct{}{}
 	for tag, count := range counts {
+		if _, ok := forced[tag]; ok {
+			approved[tag] = struct{}{}
+			continue
+		}
 		if count < minSemanticTagCoverage {
 			continue
 		}
@@ -459,12 +474,40 @@ func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thr
 			}
 			return left < right
 		})
-		if len(kept) > maxSemanticTagsPerElement {
-			kept = kept[:maxSemanticTagsPerElement]
-		}
-		byOwner[key] = kept
+		byOwner[key] = limitSemanticTags(kept)
 	}
 	return semanticTagPlan{approved: approved, byOwner: byOwner}
+}
+
+func limitSemanticTags(tags []string) []string {
+	if len(tags) <= maxSemanticTagsPerElement {
+		return tags
+	}
+	var forced []string
+	var regular []string
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, "owner:") {
+			forced = append(forced, tag)
+			continue
+		}
+		regular = append(regular, tag)
+	}
+	limit := maxSemanticTagsPerElement - len(forced)
+	if limit < 0 {
+		limit = 0
+	}
+	if len(regular) > limit {
+		regular = regular[:limit]
+	}
+	out := append(regular, forced...)
+	sort.SliceStable(out, func(i, j int) bool {
+		left, right := semanticTagPriority(out[i]), semanticTagPriority(out[j])
+		if left == right {
+			return out[i] < out[j]
+		}
+		return left < right
+	})
+	return out
 }
 
 func (p semanticTagPlan) tagsFor(ownerType, ownerKey string) []string {
@@ -489,7 +532,10 @@ func uniqueSemanticTags(tags []string) []string {
 	seen := map[string]struct{}{}
 	out := make([]string, 0, len(tags))
 	for _, tag := range tags {
-		tag = strings.TrimSpace(strings.ToLower(tag))
+		tag = strings.TrimSpace(tag)
+		if !strings.HasPrefix(tag, "owner:") {
+			tag = strings.ToLower(tag)
+		}
 		if tag == "" {
 			continue
 		}
@@ -613,8 +659,10 @@ func semanticTagPriority(tag string) int {
 		return 3
 	case strings.HasPrefix(tag, "lang:"):
 		return 4
-	default:
+	case strings.HasPrefix(tag, "owner:"):
 		return 5
+	default:
+		return 6
 	}
 }
 
@@ -630,17 +678,19 @@ func semanticTagDefinition(tag string) semanticTagDefinitionInfo {
 		return semanticTagDefinitionInfo{Color: "#b45309", Description: "Generated graph-shape tag"}
 	case strings.HasPrefix(tag, "lang:"):
 		return semanticTagDefinitionInfo{Color: "#475569", Description: "Generated source language tag"}
+	case strings.HasPrefix(tag, "owner:"):
+		return semanticTagDefinitionInfo{Color: "#334155", Description: "Generated CODEOWNERS tag"}
 	default:
 		return semanticTagDefinitionInfo{Color: "#64748b", Description: "Generated watch tag"}
 	}
 }
 
-func (r *Representer) materialize(ctx context.Context, repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string) (materializeStats, error) {
+func (r *Representer) materialize(ctx context.Context, repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string, ownerMatcher *codeowners.Matcher) (materializeStats, error) {
 	initialLayout, err := r.Store.RepositoryMaterializationCount(ctx, repo.ID)
 	if err != nil {
 		return materializeStats{}, err
 	}
-	tagPlan := buildSemanticTagPlan(repo, filtered, thresholds, settingsHash, identityKeys)
+	tagPlan := buildSemanticTagPlan(repo, filtered, thresholds, settingsHash, identityKeys, ownerMatcher)
 	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys, tagPlan: tagPlan, initialLayout: initialLayout == 0, runMarker: time.Now().UTC().Format(time.RFC3339Nano), newPlacements: map[int64]map[int64]struct{}{}}
 	if err := m.ensureTags(ctx); err != nil {
 		return m.stats, err
