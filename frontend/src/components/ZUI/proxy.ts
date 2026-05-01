@@ -318,6 +318,7 @@ export function drawVisibleProxyConnectors(
   visibleAnchorsByNodeId: Map<string, VisibleNodeAnchor>,
   zoom: number,
   labelBg: string,
+  accent: string,
   occupiedLabelRects: ScreenRect[],
 ) {
   const connectorsByActualPair = new Map<string, ZUIResolvedConnector[]>()
@@ -382,13 +383,16 @@ export function drawVisibleProxyConnectors(
       continue
     }
 
-    ctx.globalAlpha = connectorAlpha(alpha)
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.46)'
-    ctx.lineWidth = 2.4 / zoom
+    ctx.globalAlpha = connectorAlpha(alpha) * 0.8
+    ctx.strokeStyle = accent
+    ctx.lineWidth = 1 / zoom
+    ctx.lineCap = 'round'
+    ctx.setLineDash([1 / zoom, 4 / zoom])
     ctx.beginPath()
     ctx.moveTo(sourcePoint.x, sourcePoint.y)
     ctx.lineTo(targetPoint.x, targetPoint.y)
     ctx.stroke()
+    ctx.setLineDash([])
     const fontSize = 11 / zoom
     ctx.font = `${fontSize}px Inter, system-ui, sans-serif`
     const textMetrics = ctx.measureText(label)
@@ -419,9 +423,11 @@ export function drawVisibleProxyConnectors(
       badgeRadius,
     )
     ctx.fill()
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.38)'
+    ctx.strokeStyle = accent
     ctx.lineWidth = 1 / zoom
+    ctx.setLineDash([1 / zoom, 4 / zoom])
     ctx.stroke()
+    ctx.setLineDash([])
     ctx.fillStyle = 'white'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'

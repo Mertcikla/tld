@@ -418,9 +418,12 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   visibleProxyStateRef.current = visibleProxyState
 
   const labelBgRef = useRef('#171923')
+  const accentRef = useRef('#63b3ed')
   useEffect(() => {
     const update = () => {
-      labelBgRef.current = getComputedStyle(document.documentElement).getPropertyValue('--chakra-colors-gray-900').trim() || '#171923'
+      const styles = getComputedStyle(document.documentElement)
+      labelBgRef.current = styles.getPropertyValue('--chakra-colors-gray-900').trim() || '#171923'
+      accentRef.current = styles.getPropertyValue('--accent').trim() || '#63b3ed'
       needsRedrawRef.current = true
     }
     update()
@@ -761,6 +764,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
           visibleProxyStateRef.current.byNodeId,
           currentView.zoom,
           labelBgRef.current,
+          accentRef.current,
           occupiedLabelRects,
         )
         drawVisibleDirectProxyBadges(
