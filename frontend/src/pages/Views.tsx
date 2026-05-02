@@ -32,7 +32,7 @@ import { ZoomInIcon } from '../components/Icons'
 import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../components/WorkspacePanel'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
-import type { ViewTreeNode } from '../types'
+import type { ExploreData, PlacedElement, ViewTreeNode } from '../types'
 
 interface Props {
   shareSlot?: React.ReactNode
@@ -67,14 +67,112 @@ function flattenTree(roots: ViewTreeNode[]): ViewTreeNode[] {
   return result
 }
 
+type JumpSearchResult =
+  | {
+    type: 'view'
+    key: string
+    name: string
+    viewId: number
+    level: number
+    levelLabel: string | null
+  }
+  | {
+    type: 'element'
+    key: string
+    name: string
+    viewId: number
+    viewName: string
+    elementId: number
+    kind: string | null
+  }
+
+function jumpResultSubtitle(result: JumpSearchResult): string {
+  if (result.type === 'view') {
+    return `Level ${result.level} • ${result.levelLabel || 'Diagram'}`
+  }
+  return `${result.kind || 'Element'} • ${result.viewName}`
+}
+
+function jumpResultActionLabel(view: ViewType): string {
+  if (view === 'explore') return 'ZOOM'
+  return 'OPEN'
+}
+
+function searchScore(value: string, normalizedTerm: string): number {
+  const normalizedValue = value.toLowerCase()
+  if (normalizedValue === normalizedTerm) return 0
+  if (normalizedValue.startsWith(normalizedTerm)) return 1
+  return normalizedValue.includes(normalizedTerm) ? 2 : 3
+}
+
+function placementMatches(placement: PlacedElement, normalizedTerm: string): boolean {
+  return [
+    placement.name,
+    placement.kind,
+    placement.technology,
+    placement.file_path,
+    ...(placement.tags ?? []),
+  ]
+    .filter(Boolean)
+    .some((value) => String(value).toLowerCase().includes(normalizedTerm))
+}
+
+function buildJumpSearchResults(term: string, flatTree: ViewTreeNode[], exploreData: ExploreData | null): JumpSearchResult[] {
+  const normalized = term.trim().toLowerCase()
+  if (normalized.length < 3) return []
+
+  const viewById = new Map(flatTree.map((node) => [node.id, node]))
+  const viewResults: JumpSearchResult[] = flatTree
+    .filter((node) => node.name.toLowerCase().includes(normalized))
+    .sort((a, b) => searchScore(a.name, normalized) - searchScore(b.name, normalized) || a.name.localeCompare(b.name))
+    .slice(0, 4)
+    .map((node) => ({
+      type: 'view',
+      key: `view:${node.id}`,
+      name: node.name,
+      viewId: node.id,
+      level: node.level,
+      levelLabel: node.level_label,
+    }))
+
+  const elementResults: JumpSearchResult[] = []
+  if (exploreData) {
+    Object.entries(exploreData.views ?? {}).forEach(([viewIdText, content]) => {
+      const viewId = Number(viewIdText)
+      if (!Number.isFinite(viewId)) return
+      const viewName = viewById.get(viewId)?.name ?? `View ${viewId}`
+      ;(content.placements ?? []).forEach((placement) => {
+        if (!placementMatches(placement, normalized)) return
+        elementResults.push({
+          type: 'element',
+          key: `element:${viewId}:${placement.element_id}`,
+          name: placement.name || `Element ${placement.element_id}`,
+          viewId,
+          viewName,
+          elementId: placement.element_id,
+          kind: placement.kind,
+        })
+      })
+    })
+  }
+
+  const dedupedElements = Array.from(
+    new Map(elementResults.map((result) => [result.key, result])).values(),
+  )
+    .sort((a, b) => searchScore(a.name, normalized) - searchScore(b.name, normalized) || a.name.localeCompare(b.name))
+    .slice(0, 6)
+
+  return [...viewResults, ...dedupedElements].slice(0, 8)
+}
+
 interface DiagramJumpToolbarProps {
   view: ViewType
   searchTerm: string
-  searchResults: ViewTreeNode[]
+  searchResults: JumpSearchResult[]
   activeSearchIndex: number
   onSearchChange: (term: string) => void
   onSearchKeyDown: (e: React.KeyboardEvent) => void
-  onResultClick: (result: ViewTreeNode) => void
+  onResultClick: (result: JumpSearchResult) => void
   onViewChange: (view: ViewType) => void
   onCreateOpen: () => void
 }
@@ -329,7 +427,7 @@ function DiagramJumpToolbar({
             >
               {searchResults.map((result, idx) => (
                 <Flex
-                  key={result.id}
+                  key={result.key}
                   px={4}
                   py={2.5}
                   align="center"
@@ -353,13 +451,13 @@ function DiagramJumpToolbar({
                       {result.name}
                     </Text>
                     <Text color="whiteAlpha.500" fontSize="10px" textTransform="uppercase" letterSpacing="0.05em">
-                      Level {result.level} • {result.level_label || 'Diagram'}
+                      {jumpResultSubtitle(result)}
                     </Text>
                   </Box>
                   {idx === activeSearchIndex && (
                     <HStack spacing={1} opacity={0.8}>
                       <Text color="var(--accent)" fontSize="9px" fontWeight="800" letterSpacing="0.1em">
-                        {view === 'explore' ? 'ZOOM' : 'OPEN'}
+                        {jumpResultActionLabel(view)}
                       </Text>
                       <Text color="whiteAlpha.400" fontSize="9px">↵</Text>
                     </HStack>
@@ -385,14 +483,32 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
   const [treeLoading, setTreeLoading] = useState(true)
   const [focusedHierarchyId, setFocusedHierarchyId] = useState<number | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
-  const [searchResults, setSearchResults] = useState<ViewTreeNode[]>([])
+  const [searchResults, setSearchResults] = useState<JumpSearchResult[]>([])
   const [activeSearchIndex, setActiveSearchIndex] = useState(-1)
+  const [exploreSearchData, setExploreSearchData] = useState<ExploreData | null>(null)
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } = useDisclosure()
   const [newName, setNewName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const exploreRef = useRef<InfiniteZoomHandle>(null)
+  const exploreSearchLoadRef = useRef<Promise<ExploreData | null> | null>(null)
 
   const flatTree = useMemo(() => flattenTree(treeData), [treeData])
+
+  const ensureExploreSearchData = useCallback(() => {
+    if (exploreSearchData || exploreSearchLoadRef.current) return
+    exploreSearchLoadRef.current = api.explore.load()
+      .then((data) => {
+        if (!data.password_required) {
+          setExploreSearchData(data)
+          return data
+        }
+        return null
+      })
+      .catch(() => null)
+      .finally(() => {
+        exploreSearchLoadRef.current = null
+      })
+  }, [exploreSearchData])
 
   const handleViewChange = useCallback((newView: ViewType) => {
     setView(newView)
@@ -434,8 +550,21 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     }
   }, [searchParams, view])
 
+  useEffect(() => {
+    const trimmed = searchTerm.trim()
+    if (trimmed.length < 3) return
+
+    const matches = buildJumpSearchResults(trimmed, flatTree, exploreSearchData)
+    setSearchResults(matches)
+    setActiveSearchIndex(matches.length > 0 ? 0 : -1)
+    if (view === 'hierarchy' && matches[0]) {
+      setFocusedHierarchyId(matches[0].viewId)
+    }
+  }, [exploreSearchData, flatTree, searchTerm, view])
+
   const refreshTree = useCallback(async () => {
     setTreeLoading(true)
+    setExploreSearchData(null)
     const tree = await api.workspace.views.tree().catch(() => null)
     if (tree) {
       setTreeData(tree)
@@ -483,17 +612,30 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     return () => window.removeEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
   }, [refreshTree])
 
-  const commitSearchResult = useCallback((result: ViewTreeNode) => {
+  const commitSearchResult = useCallback((result: JumpSearchResult) => {
     if (view === 'explore') {
-      exploreRef.current?.focusDiagram(result.id)
+      const newParams = new URLSearchParams(searchParams)
+      newParams.set('view', 'explore')
+      newParams.set('focus', String(result.viewId))
+      if (result.type === 'element') {
+        newParams.set('element', String(result.elementId))
+        exploreRef.current?.focusElement(result.viewId, result.elementId)
+      } else {
+        newParams.delete('element')
+        exploreRef.current?.focusDiagram(result.viewId)
+      }
+      setSearchParams(newParams, { replace: true })
+    } else if (result.type === 'element') {
+      setFocusedHierarchyId(result.viewId)
+      navigate(`/views/${result.viewId}?element=${result.elementId}`)
     } else {
-      setFocusedHierarchyId(result.id)
-      navigate(`/views/${result.id}`)
+      setFocusedHierarchyId(result.viewId)
+      navigate(`/views/${result.viewId}`)
     }
     setSearchResults([])
     setActiveSearchIndex(-1)
     setSearchTerm('')
-  }, [navigate, view])
+  }, [navigate, searchParams, setSearchParams, view])
 
   const handleSearchChange = useCallback((term: string) => {
     setSearchTerm(term)
@@ -502,20 +644,8 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
       setActiveSearchIndex(-1)
       return
     }
-
-    const normalized = term.trim().toLowerCase()
-    const matches = flatTree
-      .filter((n) => n.name.toLowerCase().includes(normalized))
-      .slice(0, 5)
-
-    setSearchResults(matches)
-    if (matches.length > 0) {
-      setActiveSearchIndex(0)
-      if (view === 'hierarchy') setFocusedHierarchyId(matches[0].id)
-    } else {
-      setActiveSearchIndex(-1)
-    }
-  }, [flatTree, view])
+    ensureExploreSearchData()
+  }, [ensureExploreSearchData])
 
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -529,12 +659,12 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
       e.preventDefault()
       const nextIndex = (activeSearchIndex + 1) % searchResults.length
       setActiveSearchIndex(nextIndex)
-      if (view === 'hierarchy') setFocusedHierarchyId(searchResults[nextIndex].id)
+      if (view === 'hierarchy') setFocusedHierarchyId(searchResults[nextIndex].viewId)
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       const nextIndex = (activeSearchIndex - 1 + searchResults.length) % searchResults.length
       setActiveSearchIndex(nextIndex)
-      if (view === 'hierarchy') setFocusedHierarchyId(searchResults[nextIndex].id)
+      if (view === 'hierarchy') setFocusedHierarchyId(searchResults[nextIndex].viewId)
     } else if (e.key === 'Enter' && activeSearchIndex >= 0) {
       e.preventDefault()
       commitSearchResult(searchResults[activeSearchIndex])
