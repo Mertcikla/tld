@@ -19,8 +19,6 @@ import (
 	analyzerlsp "github.com/mertcikla/tld/internal/analyzer/lsp"
 	tldgit "github.com/mertcikla/tld/internal/git"
 	"github.com/mertcikla/tld/internal/ignore"
-	"go.lsp.dev/protocol"
-	"go.lsp.dev/uri"
 )
 
 type Scanner struct {
@@ -498,10 +496,8 @@ func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, reposi
 		})
 	}
 
-	resolver, warning := newGoDefinitionResolver(ctx, repoRoot)
-	if resolver != nil {
-		defer func() { _ = resolver.Close() }()
-	}
+	resolver := analyzerlsp.NewMultiLanguageResolver(repoRoot)
+	defer func() { _ = resolver.Close() }()
 
 	var refs []Reference
 	for _, file := range files {
@@ -509,7 +505,7 @@ func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, reposi
 			if parsedRef.Kind != "" && parsedRef.Kind != "call" {
 				continue
 			}
-			target, ok := resolveTargetSymbol(ctx, resolver, repoRoot, file.File.Language, parsedRef, byName, symbols)
+			target, ok := resolveTargetSymbol(ctx, resolver, repoRoot, parsedRef, byName, symbols)
 			if !ok {
 				continue
 			}
@@ -535,15 +531,15 @@ func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, reposi
 			})
 		}
 	}
-	return refs, warning, nil
+	return refs, "", nil
 }
 
-func resolveTargetSymbol(ctx context.Context, resolver *goDefinitionResolver, repoRoot, sourceLanguage string, ref analyzer.Ref, byName map[string][]Symbol, symbols []Symbol) (Symbol, bool) {
-	if resolver != nil && sourceLanguage == string(analyzer.LanguageGo) {
-		locations, err := resolver.Resolve(ctx, ref)
+func resolveTargetSymbol(ctx context.Context, resolver *analyzerlsp.MultiLanguageResolver, repoRoot string, ref analyzer.Ref, byName map[string][]Symbol, symbols []Symbol) (Symbol, bool) {
+	if resolver != nil {
+		locations, err := resolver.ResolveDefinitions(ctx, ref)
 		if err == nil {
 			for _, location := range locations {
-				if sym, ok := symbolAtLocation(repoRoot, symbols, location); ok {
+				if sym, ok := symbolAtLocation(repoRoot, symbols, definitionLocation{FilePath: location.FilePath, Line: location.Line}); ok {
 					return sym, true
 				}
 			}
@@ -561,97 +557,6 @@ type definitionLocation struct {
 	Line     int
 }
 
-type goDefinitionResolver struct {
-	root     string
-	session  *analyzerlsp.Session
-	opened   map[string]struct{}
-	contents map[string]string
-}
-
-func newGoDefinitionResolver(ctx context.Context, root string) (*goDefinitionResolver, string) {
-	session, err := analyzerlsp.StartSession(ctx, analyzerlsp.SessionConfig{
-		Language: analyzer.LanguageGo,
-		RootDir:  root,
-	})
-	if err != nil {
-		return nil, "gopls unavailable; references were resolved with parser-only local symbols"
-	}
-	if !session.SupportsDefinition() {
-		_ = session.Close()
-		return nil, "gopls does not support definition lookup; references were resolved with parser-only local symbols"
-	}
-	return &goDefinitionResolver{
-		root:     root,
-		session:  session,
-		opened:   make(map[string]struct{}),
-		contents: make(map[string]string),
-	}, ""
-}
-
-func (r *goDefinitionResolver) Resolve(ctx context.Context, ref analyzer.Ref) ([]definitionLocation, error) {
-	if r == nil || r.session == nil || ref.FilePath == "" || ref.Line <= 0 {
-		return nil, nil
-	}
-	if err := r.openDocument(ctx, ref.FilePath); err != nil {
-		return nil, err
-	}
-	column := 0
-	if ref.Column > 0 {
-		column = ref.Column - 1
-	}
-	locations, err := r.session.Definition(ctx, &protocol.DefinitionParams{
-		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
-			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(ref.FilePath)},
-			Position: protocol.Position{
-				Line:      uint32(ref.Line - 1),
-				Character: uint32(column),
-			},
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]definitionLocation, 0, len(locations))
-	for _, location := range locations {
-		filePath := filepath.Clean(location.URI.Filename())
-		if filePath == "" {
-			continue
-		}
-		out = append(out, definitionLocation{
-			FilePath: filePath,
-			Line:     int(location.Range.Start.Line) + 1,
-		})
-	}
-	return out, nil
-}
-
-func (r *goDefinitionResolver) openDocument(ctx context.Context, filePath string) error {
-	cleanPath := filepath.Clean(filePath)
-	if _, ok := r.opened[cleanPath]; ok {
-		return nil
-	}
-	content, ok := r.contents[cleanPath]
-	if !ok {
-		data, err := os.ReadFile(cleanPath)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", cleanPath, err)
-		}
-		content = string(data)
-		r.contents[cleanPath] = content
-	}
-	if err := r.session.OpenDocument(ctx, cleanPath, content); err != nil {
-		return fmt.Errorf("open %s in language server: %w", cleanPath, err)
-	}
-	r.opened[cleanPath] = struct{}{}
-	return nil
-}
-
-func (r *goDefinitionResolver) Close() error {
-	if r == nil || r.session == nil {
-		return nil
-	}
-	return r.session.Close()
-}
 
 func symbolAtLocation(repoRoot string, symbols []Symbol, location definitionLocation) (Symbol, bool) {
 	rel, err := filepath.Rel(repoRoot, location.FilePath)
