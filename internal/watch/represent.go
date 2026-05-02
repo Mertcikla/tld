@@ -1639,34 +1639,7 @@ func (m *materializer) saveMapping(ctx context.Context, ownerType, ownerKey, res
 }
 
 func (m *materializer) pruneStaleResources(ctx context.Context) error {
-	if m.runMarker == "" {
-		return nil
-	}
-	for _, item := range []struct {
-		resourceType string
-		tableName    string
-	}{
-		{resourceType: "connector", tableName: "connectors"},
-		{resourceType: "view", tableName: "views"},
-		{resourceType: "element", tableName: "elements"},
-	} {
-		query := fmt.Sprintf(`
-			DELETE FROM %s
-			WHERE id IN (
-				SELECT resource_id
-				FROM watch_materialization
-				WHERE repository_id = ? AND resource_type = ? AND updated_at != ?
-			)`, item.tableName)
-		if _, err := m.store.db.ExecContext(ctx, query, m.repo.ID, item.resourceType, m.runMarker); err != nil {
-			return err
-		}
-	}
-	if _, err := m.store.db.ExecContext(ctx, `
-		DELETE FROM watch_materialization
-		WHERE repository_id = ? AND updated_at != ?`, m.repo.ID, m.runMarker); err != nil {
-		return err
-	}
-	return nil
+	return m.store.PruneStaleMaterializedResources(ctx, m.repo.ID, m.runMarker)
 }
 
 func elementExists(ctx context.Context, db *sql.DB, id int64) bool {

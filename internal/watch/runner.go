@@ -272,6 +272,9 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, status GitStatus, representationHash string, baselineOnly bool) error {
 	if gitStatusClean(status) {
 		baselineOnly = true
+		if err := r.Store.PruneDeletedMaterializedResources(ctx, repositoryID); err != nil {
+			return err
+		}
 	}
 	latest, found, err := r.Store.LatestWatchVersion(ctx, repositoryID)
 	if err != nil {
@@ -297,7 +300,10 @@ func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, s
 		workspaceID = &workspaceVersionID
 	}
 	parent := ""
-	if found {
+	if repo, err := r.Store.Repository(ctx, repositoryID); err == nil {
+		parent, _ = tldgit.DetectParentCommit(repo.RepoRoot)
+	}
+	if parent == "" && found {
 		parent = latest.CommitHash
 	}
 	var diffs []RepresentationDiff

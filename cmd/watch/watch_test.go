@@ -10,19 +10,44 @@ import (
 	"testing"
 	"time"
 
+	assets "github.com/mertcikla/tld"
+	"github.com/mertcikla/tld/internal/localserver"
+	storepkg "github.com/mertcikla/tld/internal/store"
 	"github.com/mertcikla/tld/internal/workspace"
 )
 
-func TestScanCommandFailsClearlyOutsideGitRepository(t *testing.T) {
-	cmd := NewWatchCmd()
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"scan", t.TempDir(), "--data-dir", t.TempDir()})
+func TestWatchSubcommandsFailClearlyOutsideGitRepositoryWithoutRepositoryRows(t *testing.T) {
+	for _, subcommand := range []string{"scan", "represent", "diff"} {
+		t.Run(subcommand, func(t *testing.T) {
+			dataDir := t.TempDir()
+			cmd := NewWatchCmd()
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetErr(&out)
+			args := []string{subcommand, t.TempDir(), "--data-dir", dataDir}
+			if subcommand == "represent" || subcommand == "diff" {
+				args = append(args, "--embedding-provider", "none")
+			}
+			cmd.SetArgs(args)
 
-	err := cmd.Execute()
-	if err == nil || !strings.Contains(err.Error(), "not inside a git repository") {
-		t.Fatalf("expected outside-git error, got %v", err)
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), "not inside a git repository") {
+				t.Fatalf("expected outside-git error, got %v\n%s", err, out.String())
+			}
+
+			sqliteStore, err := storepkg.Open(localserver.DatabasePath(dataDir), assets.FS)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = sqliteStore.DB().Close() }()
+			var repositories int
+			if err := sqliteStore.DB().QueryRow(`SELECT COUNT(*) FROM watch_repositories`).Scan(&repositories); err != nil {
+				t.Fatal(err)
+			}
+			if repositories != 0 {
+				t.Fatalf("expected no watch repository rows after failed %s, found %d", subcommand, repositories)
+			}
+		})
 	}
 }
 

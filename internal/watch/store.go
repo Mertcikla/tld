@@ -430,6 +430,128 @@ func sourcePathMissing(repoRoot, relPath string) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
+func filePathFromStableKey(stableKey string) (string, bool) {
+	parts := strings.SplitN(stableKey, ":", 4)
+	if len(parts) < 4 || strings.TrimSpace(parts[1]) == "" {
+		return "", false
+	}
+	return filepathToSlash(parts[1]), true
+}
+
+func (s *Store) materializedOwnerFilePath(ctx context.Context, repositoryID int64, ownerType, ownerKey string) (string, bool, error) {
+	switch ownerType {
+	case "file":
+		path := strings.TrimPrefix(ownerKey, "file:")
+		if strings.TrimSpace(path) == "" {
+			return "", false, nil
+		}
+		return filepathToSlash(path), true, nil
+	case "symbol":
+		var path string
+		err := s.db.QueryRowContext(ctx, `
+			SELECT file_path
+			FROM watch_symbol_identities
+			WHERE repository_id = ? AND (identity_key = ? OR current_stable_key = ?)
+			ORDER BY updated_at DESC
+			LIMIT 1`, repositoryID, ownerKey, ownerKey).Scan(&path)
+		if err == nil && strings.TrimSpace(path) != "" {
+			return filepathToSlash(path), true, nil
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return "", false, err
+		}
+		if path, ok := filePathFromStableKey(ownerKey); ok {
+			return path, true, nil
+		}
+		return "", false, nil
+	default:
+		return "", false, nil
+	}
+}
+
+func (s *Store) materializedOwnerMissing(ctx context.Context, repositoryID int64, ownerType, ownerKey string) (bool, error) {
+	repo, err := s.Repository(ctx, repositoryID)
+	if err != nil {
+		return false, err
+	}
+	path, ok, err := s.materializedOwnerFilePath(ctx, repositoryID, ownerType, ownerKey)
+	if err != nil || !ok {
+		return false, err
+	}
+	return sourcePathMissing(repo.RepoRoot, path), nil
+}
+
+func (s *Store) deletedMaterializedElementIDs(ctx context.Context, repositoryID int64) (map[int64]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT resource_id, owner_type, owner_key
+		FROM watch_materialization
+		WHERE repository_id = ? AND resource_type = 'element' AND owner_type IN ('file', 'symbol')`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	type elementOwner struct {
+		id        int64
+		ownerType string
+		ownerKey  string
+	}
+	var owners []elementOwner
+	for rows.Next() {
+		var id int64
+		var ownerType, ownerKey string
+		if err := rows.Scan(&id, &ownerType, &ownerKey); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		owners = append(owners, elementOwner{id: id, ownerType: ownerType, ownerKey: ownerKey})
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	out := map[int64]struct{}{}
+	for _, owner := range owners {
+		missing, err := s.materializedOwnerMissing(ctx, repositoryID, owner.ownerType, owner.ownerKey)
+		if err != nil {
+			return nil, err
+		}
+		if missing {
+			out[owner.id] = struct{}{}
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) connectorTouchesElements(ctx context.Context, connectorID int64, elementIDs map[int64]struct{}) (bool, error) {
+	if len(elementIDs) == 0 {
+		return false, nil
+	}
+	var sourceID, targetID int64
+	err := s.db.QueryRowContext(ctx, `SELECT source_element_id, target_element_id FROM connectors WHERE id = ?`, connectorID).Scan(&sourceID, &targetID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	_, sourceDeleted := elementIDs[sourceID]
+	_, targetDeleted := elementIDs[targetID]
+	return sourceDeleted || targetDeleted, nil
+}
+
+func (s *Store) materializationMappingTombstoned(ctx context.Context, repositoryID int64, mapping watchMaterializationMapping, deletedElementIDs map[int64]struct{}) (bool, error) {
+	switch mapping.ResourceType {
+	case "element", "view":
+		return s.materializedOwnerMissing(ctx, repositoryID, mapping.OwnerType, mapping.OwnerKey)
+	case "connector":
+		return s.connectorTouchesElements(ctx, mapping.ResourceID, deletedElementIDs)
+	default:
+		return false, nil
+	}
+}
+
 func (s *Store) matchSymbolIdentity(sym Symbol, existing []storedSymbolIdentity, used map[string]struct{}) string {
 	for _, identity := range existing {
 		if identity.StableKey == sym.StableKey {
@@ -957,6 +1079,146 @@ func (s *Store) Materialization(ctx context.Context, repositoryID int64) ([]Mate
 	return out, rows.Err()
 }
 
+type watchMaterializationMapping struct {
+	ID           int64
+	OwnerType    string
+	OwnerKey     string
+	ResourceType string
+	ResourceID   int64
+	UpdatedAt    string
+}
+
+func (s *Store) staleMaterializationMappings(ctx context.Context, repositoryID int64, runMarker string) ([]watchMaterializationMapping, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, owner_type, owner_key, resource_type, resource_id, updated_at
+		FROM watch_materialization
+		WHERE repository_id = ? AND updated_at != ?`, repositoryID, runMarker)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []watchMaterializationMapping
+	for rows.Next() {
+		var item watchMaterializationMapping
+		if err := rows.Scan(&item.ID, &item.OwnerType, &item.OwnerKey, &item.ResourceType, &item.ResourceID, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sortMaterializationMappingsForDelete(out)
+	return out, nil
+}
+
+func (s *Store) allMaterializationMappings(ctx context.Context, repositoryID int64) ([]watchMaterializationMapping, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, owner_type, owner_key, resource_type, resource_id, updated_at
+		FROM watch_materialization
+		WHERE repository_id = ?`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []watchMaterializationMapping
+	for rows.Next() {
+		var item watchMaterializationMapping
+		if err := rows.Scan(&item.ID, &item.OwnerType, &item.OwnerKey, &item.ResourceType, &item.ResourceID, &item.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sortMaterializationMappingsForDelete(out)
+	return out, nil
+}
+
+func sortMaterializationMappingsForDelete(items []watchMaterializationMapping) {
+	order := map[string]int{"connector": 0, "view": 1, "element": 2}
+	sort.Slice(items, func(i, j int) bool {
+		left, right := order[items[i].ResourceType], order[items[j].ResourceType]
+		if left == right {
+			return items[i].ID < items[j].ID
+		}
+		return left < right
+	})
+}
+
+func (s *Store) deleteMaterializationMapping(ctx context.Context, mapping watchMaterializationMapping) error {
+	var query string
+	switch mapping.ResourceType {
+	case "connector":
+		query = `DELETE FROM connectors WHERE id = ?`
+	case "view":
+		query = `DELETE FROM views WHERE id = ?`
+	case "element":
+		query = `DELETE FROM elements WHERE id = ?`
+	default:
+		query = ""
+	}
+	if query != "" {
+		if _, err := s.db.ExecContext(ctx, query, mapping.ResourceID); err != nil {
+			return err
+		}
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM watch_materialization WHERE id = ?`, mapping.ID)
+	return err
+}
+
+func (s *Store) PruneStaleMaterializedResources(ctx context.Context, repositoryID int64, runMarker string) error {
+	if runMarker == "" {
+		return nil
+	}
+	mappings, err := s.staleMaterializationMappings(ctx, repositoryID, runMarker)
+	if err != nil {
+		return err
+	}
+	deletedElementIDs, err := s.deletedMaterializedElementIDs(ctx, repositoryID)
+	if err != nil {
+		return err
+	}
+	for _, mapping := range mappings {
+		tombstoned, err := s.materializationMappingTombstoned(ctx, repositoryID, mapping, deletedElementIDs)
+		if err != nil {
+			return err
+		}
+		if tombstoned {
+			continue
+		}
+		if err := s.deleteMaterializationMapping(ctx, mapping); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) PruneDeletedMaterializedResources(ctx context.Context, repositoryID int64) error {
+	mappings, err := s.allMaterializationMappings(ctx, repositoryID)
+	if err != nil {
+		return err
+	}
+	deletedElementIDs, err := s.deletedMaterializedElementIDs(ctx, repositoryID)
+	if err != nil {
+		return err
+	}
+	for _, mapping := range mappings {
+		tombstoned, err := s.materializationMappingTombstoned(ctx, repositoryID, mapping, deletedElementIDs)
+		if err != nil {
+			return err
+		}
+		if !tombstoned {
+			continue
+		}
+		if err := s.deleteMaterializationMapping(ctx, mapping); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) RepositoryMaterializationCount(ctx context.Context, repositoryID int64) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM watch_materialization WHERE repository_id = ?`, repositoryID).Scan(&count)
@@ -1242,7 +1504,7 @@ func (s *Store) ApplyGitTags(ctx context.Context, repositoryID int64, status Git
 	addTags(status.Untracked, "git:untracked")
 	addTags(status.Deleted, "watch:deleted")
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT resource_id, owner_key
+		SELECT resource_id, owner_type, owner_key
 		FROM watch_materialization
 		WHERE repository_id = ? AND resource_type = 'element' AND owner_type IN ('file', 'symbol')`, repositoryID)
 	if err != nil {
@@ -1255,26 +1517,38 @@ func (s *Store) ApplyGitTags(ctx context.Context, repositoryID int64, status Git
 	}
 	var updates []update
 	var allElementIDs []int64
+	type elementOwner struct {
+		id        int64
+		ownerType string
+		ownerKey  string
+	}
+	var owners []elementOwner
 	for rows.Next() {
 		var id int64
-		var ownerKey string
-		if err := rows.Scan(&id, &ownerKey); err != nil {
+		var ownerType, ownerKey string
+		if err := rows.Scan(&id, &ownerType, &ownerKey); err != nil {
 			return GitTagUpdateResult{}, err
 		}
 		allElementIDs = append(allElementIDs, id)
-		file := strings.TrimPrefix(ownerKey, "file:")
-		if strings.HasPrefix(ownerKey, "go:") {
-			parts := strings.Split(ownerKey, ":")
-			if len(parts) >= 2 {
-				file = parts[1]
-			}
-		}
-		if tags := files[file]; len(tags) > 0 {
-			updates = append(updates, update{id: id, tags: tags})
-		}
+		owners = append(owners, elementOwner{id: id, ownerType: ownerType, ownerKey: ownerKey})
 	}
 	if err := rows.Err(); err != nil {
 		return GitTagUpdateResult{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return GitTagUpdateResult{}, err
+	}
+	for _, owner := range owners {
+		file, ok, err := s.materializedOwnerFilePath(ctx, repositoryID, owner.ownerType, owner.ownerKey)
+		if err != nil {
+			return GitTagUpdateResult{}, err
+		}
+		if !ok {
+			continue
+		}
+		if tags := files[file]; len(tags) > 0 {
+			updates = append(updates, update{id: owner.id, tags: tags})
+		}
 	}
 	var result GitTagUpdateResult
 	for _, id := range allElementIDs {
@@ -1320,7 +1594,27 @@ func (s *Store) CreateWatchVersion(ctx context.Context, repositoryID int64, comm
 	if err := s.SaveWatchVersionResources(ctx, version.ID, repositoryID); err != nil {
 		return Version{}, err
 	}
+	if err := s.PruneWatchVersions(ctx, repositoryID, 5); err != nil {
+		return Version{}, err
+	}
 	return version, nil
+}
+
+func (s *Store) PruneWatchVersions(ctx context.Context, repositoryID int64, keep int) error {
+	if keep <= 0 {
+		keep = 5
+	}
+	_, err := s.db.ExecContext(ctx, `
+		DELETE FROM watch_versions
+		WHERE repository_id = ?
+		  AND id NOT IN (
+			SELECT id
+			FROM watch_versions
+			WHERE repository_id = ?
+			ORDER BY id DESC
+			LIMIT ?
+		  )`, repositoryID, repositoryID, keep)
+	return err
 }
 
 func (s *Store) WatchVersion(ctx context.Context, repositoryID int64, commitHash, representationHash string) (Version, error) {
@@ -1549,23 +1843,21 @@ func (s *Store) CurrentWatchResourceSnapshots(ctx context.Context, repositoryID 
 	if err := symRows.Close(); err != nil {
 		return nil, err
 	}
+	deletedElementIDs, err := s.deletedMaterializedElementIDs(ctx, repositoryID)
+	if err != nil {
+		return nil, err
+	}
 	mapRows, err := s.db.QueryContext(ctx, `
-		SELECT owner_type, owner_key, resource_type, resource_id
+		SELECT id, owner_type, owner_key, resource_type, resource_id, updated_at
 		FROM watch_materialization
 		WHERE repository_id = ?`, repositoryID)
 	if err != nil {
 		return nil, err
 	}
-	type materializedMapping struct {
-		OwnerType    string
-		OwnerKey     string
-		ResourceType string
-		ResourceID   int64
-	}
-	var mappings []materializedMapping
+	var mappings []watchMaterializationMapping
 	for mapRows.Next() {
-		var mapping materializedMapping
-		if err := mapRows.Scan(&mapping.OwnerType, &mapping.OwnerKey, &mapping.ResourceType, &mapping.ResourceID); err != nil {
+		var mapping watchMaterializationMapping
+		if err := mapRows.Scan(&mapping.ID, &mapping.OwnerType, &mapping.OwnerKey, &mapping.ResourceType, &mapping.ResourceID, &mapping.UpdatedAt); err != nil {
 			_ = mapRows.Close()
 			return nil, err
 		}
@@ -1575,6 +1867,13 @@ func (s *Store) CurrentWatchResourceSnapshots(ctx context.Context, repositoryID 
 		return nil, err
 	}
 	for _, mapping := range mappings {
+		tombstoned, err := s.materializationMappingTombstoned(ctx, repositoryID, mapping, deletedElementIDs)
+		if err != nil {
+			return nil, err
+		}
+		if tombstoned {
+			continue
+		}
 		hash, summary, language, lineCount, err := s.materializedResourceHash(ctx, repositoryID, mapping.OwnerType, mapping.OwnerKey, mapping.ResourceType, mapping.ResourceID)
 		if err != nil {
 			continue

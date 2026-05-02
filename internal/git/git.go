@@ -62,6 +62,15 @@ func DetectHeadMessage(dir string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
+// DetectParentCommit returns the first parent commit SHA for HEAD.
+func DetectParentCommit(dir string) (string, error) {
+	out, err := run(dir, "rev-parse", "HEAD^")
+	if err != nil {
+		return "", fmt.Errorf("detect parent commit: %w", err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
 // FileBlobHash returns the git blob hash for a tracked file at HEAD/index.
 // filePath may be absolute or relative to dir.
 func FileBlobHash(dir, filePath string) (string, error) {

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	tldgit "github.com/mertcikla/tld/internal/git"
 	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
 )
@@ -526,6 +527,473 @@ func Other() {}
 	}
 	if latest.CommitMessage != "add other" {
 		t.Fatalf("expected commit message to be stored, got %q", latest.CommitMessage)
+	}
+}
+
+func TestCreateVersionForHeadStoresDirtyHeadDiffsAndMetadata(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := gitStatusSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &Runner{Store: store}
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false); err != nil {
+		t.Fatal(err)
+	}
+	firstHead := status.HeadCommit
+
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+func Committed() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add committed")
+	intermediateHead, err := tldgit.DetectHeadCommit(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+func Committed() {}
+func SecondCommitted() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "add second committed")
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+func Committed() {}
+func SecondCommitted() {}
+func Dirty() {}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	dirtyRep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err = gitStatusSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gitStatusClean(status) {
+		t.Fatalf("test setup should have a dirty worktree: %+v", status)
+	}
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, dirtyRep.RepresentationHash, false); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, found, err := store.LatestWatchVersion(context.Background(), scan.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || latest.CommitHash != status.HeadCommit || latest.CommitMessage != "add second committed" || latest.ParentCommitHash != intermediateHead || latest.Branch == "" || latest.WorkspaceVersionID == nil {
+		t.Fatalf("dirty head version metadata was not stored correctly: found=%v latest=%+v status=%+v first=%s intermediate=%s", found, latest, status, firstHead, intermediateHead)
+	}
+	diffs, err := store.WatchDiffs(context.Background(), latest.ID, "", "", "", "", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiff(diffs, "element", "added") {
+		t.Fatalf("expected dirty head snapshot to retain pending representation diffs, got %+v", diffs)
+	}
+}
+
+func TestCreateWatchVersionRetainsOnlyFiveRecentSnapshots(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resourceType := "element"
+	resourceID := int64(1)
+	for i := 1; i <= 6; i++ {
+		after := fmt.Sprintf("after-%d", i)
+		summary := fmt.Sprintf("snapshot %d", i)
+		diffs := []RepresentationDiff{{
+			OwnerType:    "symbol",
+			OwnerKey:     fmt.Sprintf("go:main.go:function:Main%d", i),
+			ChangeType:   "added",
+			AfterHash:    &after,
+			ResourceType: &resourceType,
+			ResourceID:   &resourceID,
+			Summary:      &summary,
+			AddedLines:   1,
+		}}
+		if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, fmt.Sprintf("commit-%d", i), fmt.Sprintf("commit %d", i), "", "main", fmt.Sprintf("%s-%d", rep.RepresentationHash, i), nil, diffs); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	versions, err := store.WatchVersions(context.Background(), scan.RepositoryID, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(versions) != 5 {
+		t.Fatalf("expected only five retained watch versions, got %d: %+v", len(versions), versions)
+	}
+	for i, version := range versions {
+		expected := fmt.Sprintf("commit-%d", 6-i)
+		if version.CommitHash != expected {
+			t.Fatalf("expected retained version %d to be %s, got %+v", i, expected, version)
+		}
+	}
+	var oldestDiffs int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM watch_representation_diffs d
+		JOIN watch_versions v ON v.id = d.version_id
+		WHERE v.repository_id = ? AND v.commit_hash = 'commit-1'`, scan.RepositoryID).Scan(&oldestDiffs); err != nil {
+		t.Fatal(err)
+	}
+	if oldestDiffs != 0 {
+		t.Fatalf("expected oldest snapshot diffs to be pruned, found %d", oldestDiffs)
+	}
+	var resources int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM watch_version_resources`).Scan(&resources); err != nil {
+		t.Fatal(err)
+	}
+	if resources == 0 {
+		t.Fatal("expected retained snapshots to keep version resources")
+	}
+	var materializedElements int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM elements`).Scan(&materializedElements); err != nil {
+		t.Fatal(err)
+	}
+	if materializedElements == 0 {
+		t.Fatal("snapshot pruning should not delete current materialized workspace resources")
+	}
+}
+
+func TestDeletedFileTombstonesMaterializedResourcesAndDiffs(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	helper()
+}
+
+func helper() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "initial", "", "main", rep.RepresentationHash, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repo, "main.go")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := gitStatusSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyGitTags(context.Background(), scan.RepositoryID, status); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := store.Summary(context.Background(), scan.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Files != 0 || summary.Symbols != 0 {
+		t.Fatalf("raw graph should remove deleted file and symbols, got %+v", summary)
+	}
+	if tagged := countElementTag(t, db, "watch:deleted"); tagged == 0 {
+		t.Fatal("expected tombstoned materialized resources to receive watch:deleted")
+	}
+	if count := materializationOwnerTypeCount(t, db, "file"); count == 0 {
+		t.Fatal("expected deleted file materialization mapping to be retained as tombstone")
+	}
+	diffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, rep.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiff(diffs, "file", "deleted") || !hasDiff(diffs, "symbol", "deleted") || !hasDiff(diffs, "element", "deleted") {
+		t.Fatalf("expected deleted raw and materialized diffs, got %+v", diffs)
+	}
+}
+
+func TestRestoredDeletedFileRemovesTombstoneTagsAndReusesResources(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	source := `package main
+
+func Main() {}
+`
+	writeFile(t, repo, "main.go", source)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	fileElementID, ok, err := store.MappingResourceID(context.Background(), scan.RepositoryID, "file", "file:main.go", "element")
+	if err != nil || !ok {
+		t.Fatalf("expected file element mapping, ok=%v err=%v", ok, err)
+	}
+	if err := os.Remove(filepath.Join(repo, "main.go")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := gitStatusSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyGitTags(context.Background(), scan.RepositoryID, status); err != nil {
+		t.Fatal(err)
+	}
+	if tagged := countElementTag(t, db, "watch:deleted"); tagged == 0 {
+		t.Fatal("expected deletion to create tombstone tag")
+	}
+
+	writeFile(t, repo, "main.go", source)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	status, err = gitStatusSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyGitTags(context.Background(), scan.RepositoryID, status); err != nil {
+		t.Fatal(err)
+	}
+	nextFileElementID, ok, err := store.MappingResourceID(context.Background(), scan.RepositoryID, "file", "file:main.go", "element")
+	if err != nil || !ok {
+		t.Fatalf("expected restored file element mapping, ok=%v err=%v", ok, err)
+	}
+	if nextFileElementID != fileElementID {
+		t.Fatalf("expected restored file to reuse element %d, got %d", fileElementID, nextFileElementID)
+	}
+	if tagged := countElementTag(t, db, "watch:deleted"); tagged != 0 {
+		t.Fatalf("expected restore to remove watch:deleted, found %d tagged elements", tagged)
+	}
+}
+
+func TestCleanHeadPrunesDeletedMaterializedTombstones(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := gitStatusSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &Runner{Store: store}
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(filepath.Join(repo, "main.go")); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "-u")
+	runGit(t, repo, "commit", "-m", "delete main")
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err = gitStatusSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !gitStatusClean(status) {
+		t.Fatalf("test setup should have clean status after deletion commit: %+v", status)
+	}
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, next.RepresentationHash, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if count := materializationOwnerTypeCount(t, db, "file"); count != 0 {
+		t.Fatalf("expected clean baseline to prune deleted file mappings, got %d", count)
+	}
+	if count := materializationOwnerTypeCount(t, db, "symbol"); count != 0 {
+		t.Fatalf("expected clean baseline to prune deleted symbol mappings, got %d", count)
+	}
+	if tagged := countElementTag(t, db, "watch:deleted"); tagged != 0 {
+		t.Fatalf("expected clean baseline cleanup to remove tombstone tags with resources, found %d", tagged)
+	}
+	latest, found, err := store.LatestWatchVersion(context.Background(), scan.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || latest.CommitHash != status.HeadCommit {
+		t.Fatalf("expected clean deletion baseline version, found=%v latest=%+v status=%+v", found, latest, status)
+	}
+	diffs, err := store.WatchDiffs(context.Background(), latest.ID, "", "", "", "", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diffs) != 0 {
+		t.Fatalf("expected clean baseline to store no pending diffs, got %+v", diffs)
+	}
+}
+
+func TestDirtyHeadRetainsDeletedMaterializedTombstonesAndDiffs(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "gone.go", `package main
+
+func Gone() {}
+`)
+	writeFile(t, repo, "keep.go", `package main
+
+func Keep() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := gitStatusSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &Runner{Store: store}
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(filepath.Join(repo, "gone.go")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, repo, "keep.go", `package main
+
+func Keep() {}
+func Added() {}
+`)
+	runGit(t, repo, "add", "keep.go")
+	runGit(t, repo, "commit", "-m", "add keep symbol")
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err = gitStatusSnapshot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gitStatusClean(status) || len(status.Deleted) == 0 {
+		t.Fatalf("test setup should retain dirty deleted file after HEAD change: %+v", status)
+	}
+	if _, err := store.ApplyGitTags(context.Background(), scan.RepositoryID, status); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, next.RepresentationHash, false); err != nil {
+		t.Fatal(err)
+	}
+
+	if tagged := countElementTag(t, db, "watch:deleted"); tagged == 0 {
+		t.Fatal("expected dirty head to retain deleted tombstones")
+	}
+	if count := materializationOwnerTypeCount(t, db, "file"); count == 0 {
+		t.Fatal("expected dirty head to retain deleted file mapping")
+	}
+	latest, found, err := store.LatestWatchVersion(context.Background(), scan.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || latest.CommitHash != status.HeadCommit {
+		t.Fatalf("expected dirty head snapshot, found=%v latest=%+v status=%+v", found, latest, status)
+	}
+	diffs, err := store.WatchDiffs(context.Background(), latest.ID, "", "", "", "", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasDiff(diffs, "file", "deleted") || !hasDiff(diffs, "element", "deleted") {
+		t.Fatalf("expected dirty head snapshot to retain deleted diffs, got %+v", diffs)
 	}
 }
 
@@ -1561,6 +2029,67 @@ func TestRunnerEmitsChangeCounter(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("runner did not emit change counter")
 		}
+	}
+}
+
+func TestRunnerResolvesSubdirectoryToRepositoryRootBeforeReady(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "cmd/app/main.go", `package main
+
+func Main() {}
+`)
+	subdir := filepath.Join(repo, "cmd", "app")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	events := make(chan Event, 32)
+	ready := make(chan RunnerResult, 1)
+	done := make(chan error, 1)
+	go func() {
+		_, err := NewRunner(NewStore(db)).Run(ctx, RunnerOptions{
+			Path:              subdir,
+			PollInterval:      time.Hour,
+			HeartbeatInterval: time.Hour,
+			SummaryInterval:   time.Hour,
+			Embedding:         EmbeddingConfig{Provider: "none"},
+			Events:            events,
+			Ready:             ready,
+		})
+		done <- err
+		close(events)
+	}()
+
+	var result RunnerResult
+	select {
+	case result = <-ready:
+	case err := <-done:
+		t.Fatalf("runner exited before ready: %v", err)
+	case <-time.After(time.Second):
+		t.Fatal("runner did not become ready")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("runner did not stop")
+	}
+	expectedRoot, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actualRoot, err := filepath.EvalSymlinks(result.Repository.RepoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actualRoot != expectedRoot {
+		t.Fatalf("expected runner repository root %q, got %q", expectedRoot, actualRoot)
+	}
+	if result.InitialScan.RepositoryID == 0 || result.InitialRep.RepositoryID == 0 {
+		t.Fatalf("expected initial scan and representation before ready, got %+v", result)
 	}
 }
 
