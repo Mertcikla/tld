@@ -417,31 +417,6 @@ export function drawVisibleProxyConnectors(
     ctx.save()
     const isProvenanceStub = provenanceKeys.has(connector.key)
     if (isProvenanceStub) {
-      const stubFromSource = connector.sourceDepth >= connector.targetDepth
-      const start = stubFromSource ? sourcePoint : targetPoint
-      const end = stubFromSource ? targetPoint : sourcePoint
-      const dx = end.x - start.x
-      const dy = end.y - start.y
-      const length = Math.hypot(dx, dy)
-      if (length <= 0) {
-        ctx.restore()
-        continue
-      }
-
-      const stubLength = Math.min(length * 0.34, 120 / zoom)
-      const ux = dx / length
-      const uy = dy / length
-      const stubEndX = start.x + ux * stubLength
-      const stubEndY = start.y + uy * stubLength
-      const gradient = ctx.createLinearGradient(start.x, start.y, stubEndX, stubEndY)
-      gradient.addColorStop(0, `rgba(255, 255, 255, ${0.36 * connectorAlpha(alpha)})`)
-      gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
-      ctx.strokeStyle = gradient
-      ctx.lineWidth = 2 / zoom
-      ctx.beginPath()
-      ctx.moveTo(start.x, start.y)
-      ctx.lineTo(stubEndX, stubEndY)
-      ctx.stroke()
       ctx.restore()
       continue
     }
