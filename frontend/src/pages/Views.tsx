@@ -414,11 +414,17 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
 
   useEffect(() => {
     const focusId = Number(searchParams.get('focus') ?? 0)
+    const elementId = Number(searchParams.get('element') ?? 0)
     if (view !== 'explore' || !Number.isFinite(focusId) || focusId <= 0) return
     let attempts = 0
     let timer: number | null = null
     const focus = () => {
       attempts += 1
+      if (Number.isFinite(elementId) && elementId > 0) {
+        if (exploreRef.current?.focusElement(focusId, elementId)) return
+        if (attempts < 12) timer = window.setTimeout(focus, 150)
+        return
+      }
       if (exploreRef.current?.focusDiagram(focusId)) return
       if (attempts < 12) timer = window.setTimeout(focus, 150)
     }

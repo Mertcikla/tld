@@ -318,7 +318,8 @@ export default function WorkspacePanel() {
       navigate(`/views/${target.viewId}${elementQuery}`)
       return
     }
-    navigate(`/views?view=explore&focus=${target.viewId}`)
+    const elementQuery = target.resourceType === 'element' && target.resourceId ? `&element=${target.resourceId}` : ''
+    navigate(`/views?view=explore&focus=${target.viewId}${elementQuery}`)
   }, [location.pathname, navigate, requestFollow])
 
   const navigateDiffLocationByOffset = useCallback((offset: number) => {

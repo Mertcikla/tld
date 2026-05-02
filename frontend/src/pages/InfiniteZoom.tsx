@@ -39,6 +39,7 @@ interface Props {
 
 export interface InfiniteZoomHandle {
   focusDiagram(viewId: number): boolean
+  focusElement(viewId: number, elementId: number): boolean
   setCameraFrame(frame: ZUICameraFrame): boolean
 }
 
@@ -82,6 +83,9 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   useImperativeHandle(ref, () => ({
     focusDiagram(viewId: number) {
       return zuiRef.current?.focusDiagram(viewId) ?? false
+    },
+    focusElement(viewId: number, elementId: number) {
+      return zuiRef.current?.focusElement(viewId, elementId) ?? false
     },
     setCameraFrame(frame: ZUICameraFrame) {
       return zuiRef.current?.setCameraFrame(frame) ?? false

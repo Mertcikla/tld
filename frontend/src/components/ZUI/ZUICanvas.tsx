@@ -30,6 +30,7 @@ import { computeLayout } from './layout'
 import { renderFrame, getExpandThresholds, setOnImageLoadCallback, setHighlightedTags as setRendererHighlightedTags, setHiddenTags as setRendererHiddenTags, setHighlightColor as setRendererHighlightColor, setVersionDiff as setRendererVersionDiff } from './renderer'
 import { useZUIInteraction } from './useZUIInteraction'
 import type { DiagramGroupLayout, ZUIViewState } from './types'
+import { findDiagramFocusTarget, findElementFocusTarget, viewportForFocusTarget } from './focus'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
@@ -45,6 +46,7 @@ import {
 export interface ZUICanvasHandle {
   fitView(): void
   focusDiagram(viewId: number): boolean
+  focusElement(viewId: number, elementId: number): boolean
   setCameraFrame(frame: ZUICameraFrame): boolean
 }
 
@@ -184,70 +186,6 @@ function getPathAt(
     }
   }
   return []
-}
-
-function findDiagramFocusTarget(groups: DiagramGroupLayout[], viewId: number): PathItem | null {
-  for (const group of groups) {
-    if (group.diagramId === viewId) {
-      return {
-        id: `g-${group.diagramId}`,
-        label: group.label,
-        type: 'group',
-        absX: group.worldX,
-        absY: group.worldY,
-        absW: group.worldW,
-        absH: group.worldH,
-      }
-    }
-
-    const found = findLinkedDiagramInNodes(viewId, group.nodes, 0, 0, 1, 0, 0)
-    if (found) return found
-  }
-  return null
-}
-
-function findLinkedDiagramInNodes(
-  viewId: number,
-  nodes: DiagramGroupLayout['nodes'],
-  parentAbsX: number,
-  parentAbsY: number,
-  parentAbsScale: number,
-  parentChildOffsetX: number,
-  parentChildOffsetY: number,
-): PathItem | null {
-  for (const node of nodes) {
-    const absX = parentAbsX + (node.worldX - parentChildOffsetX) * parentAbsScale
-    const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
-    const absW = node.worldW * parentAbsScale
-    const absH = node.worldH * parentAbsScale
-
-    if (node.linkedDiagramId === viewId) {
-      return {
-        id: node.id,
-        label: node.linkedDiagramLabel || node.label,
-        type: 'node',
-        isCircular: node.isCircular,
-        absX,
-        absY,
-        absW,
-        absH,
-      }
-    }
-
-    if (node.children.length > 0) {
-      const found = findLinkedDiagramInNodes(
-        viewId,
-        node.children,
-        absX,
-        absY,
-        parentAbsScale * node.childScale,
-        node.childOffsetX,
-        node.childOffsetY,
-      )
-      if (found) return found
-    }
-  }
-  return null
 }
 
 function easeOutQuart(t: number): number {
@@ -510,36 +448,13 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     setViewState({ x, y, zoom })
   }, [containerSize, maxZoom, setViewState, setHoveredItem])
 
-  const focusDiagram = useCallback((viewId: number) => {
-    const el = containerRef.current
-    const target = findDiagramFocusTarget(layout.groups, viewId)
-    if (!el || !target) return false
-
-    const canvasW = el.offsetWidth
-    const canvasH = el.offsetHeight
-    if (canvasW === 0 || canvasH === 0) return false
-
-    setHoveredItem(null, true)
-
-    const padding = isMobileLayout ? 0.18 : 0.16
-    const bboxW = Math.max(1, target.absW)
-    const bboxH = Math.max(1, target.absH)
-    const zoom = Math.min(
-      (canvasW * (1 - padding * 2)) / bboxW,
-      (canvasH * (1 - padding * 2)) / bboxH,
-      maxZoom,
-    )
-
-    const x = (canvasW - bboxW * zoom) / 2 - target.absX * zoom
-    const y = (canvasH - bboxH * zoom) / 2 - target.absY * zoom
-
+  const animateToViewport = useCallback((to: ZUIViewState) => {
     if (cameraTransitionRef.current !== null) {
       cancelAnimationFrame(cameraTransitionRef.current)
       cameraTransitionRef.current = null
     }
 
     const from = viewStateRef.current
-    const to = { x, y, zoom }
     const duration = 520
     const startedAt = performance.now()
 
@@ -561,8 +476,62 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     }
 
     cameraTransitionRef.current = requestAnimationFrame(step)
+  }, [setViewState, viewStateRef])
+
+  const focusDiagram = useCallback((viewId: number) => {
+    const el = containerRef.current
+    const target = findDiagramFocusTarget(layout.groups, viewId)
+    if (!el || !target) return false
+
+    const canvasW = el.offsetWidth
+    const canvasH = el.offsetHeight
+    if (canvasW === 0 || canvasH === 0) return false
+
+    const to = viewportForFocusTarget(
+      target,
+      canvasW,
+      canvasH,
+      maxZoom,
+      isMobileLayout ? 0.18 : 0.16,
+      {
+        preferContent: true,
+        minTargetScreenW: isMobileLayout ? 180 : 260,
+        minChildScreenW: isMobileLayout ? 76 : 104,
+      },
+    )
+    if (!to) return false
+
+    setHoveredItem(null, true)
+    animateToViewport(to)
     return true
-  }, [isMobileLayout, layout.groups, maxZoom, setHoveredItem, setViewState, viewStateRef])
+  }, [animateToViewport, isMobileLayout, layout.groups, maxZoom, setHoveredItem])
+
+  const focusElement = useCallback((viewId: number, elementId: number) => {
+    const el = containerRef.current
+    const target = findElementFocusTarget(layout.groups, viewId, elementId)
+    if (!el || !target) return false
+
+    const canvasW = el.offsetWidth
+    const canvasH = el.offsetHeight
+    if (canvasW === 0 || canvasH === 0) return false
+
+    const to = viewportForFocusTarget(
+      target,
+      canvasW,
+      canvasH,
+      maxZoom,
+      isMobileLayout ? 0.2 : 0.18,
+      {
+        minTargetScreenW: isMobileLayout ? 220 : 320,
+        keepParentVisible: true,
+      },
+    )
+    if (!to) return false
+
+    setHoveredItem(null, true)
+    animateToViewport(to)
+    return true
+  }, [animateToViewport, isMobileLayout, layout.groups, maxZoom, setHoveredItem])
 
   const setCameraFrame = useCallback((frame: ZUICameraFrame) => {
     if (frame.profile !== 'detail-to-overview') return false
@@ -662,9 +631,10 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
         fitView(el.offsetWidth, el.offsetHeight, layout.bbox)
       },
       focusDiagram,
+      focusElement,
       setCameraFrame,
     }),
-    [fitView, focusDiagram, layout.bbox, setCameraFrame, setHoveredItem],
+    [fitView, focusDiagram, focusElement, layout.bbox, setCameraFrame, setHoveredItem],
   )
 
   // ── RAF render loop ──────────────────────────────────────────────
@@ -821,6 +791,15 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     )
     needsRedrawRef.current = true
   }, [versionPreview, versionFollowTarget])
+
+  useEffect(() => {
+    if (!initialized || !versionFollowTarget?.viewId) return
+    if (versionFollowTarget.resourceType === 'element' && versionFollowTarget.resourceId) {
+      focusElement(versionFollowTarget.viewId, versionFollowTarget.resourceId)
+      return
+    }
+    focusDiagram(versionFollowTarget.viewId)
+  }, [focusDiagram, focusElement, initialized, versionFollowTarget?.resourceId, versionFollowTarget?.resourceType, versionFollowTarget?.token, versionFollowTarget?.viewId])
 
   useEffect(() => {
     setHoverLocked(hoverLocked)

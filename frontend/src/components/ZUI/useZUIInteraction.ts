@@ -4,8 +4,8 @@ import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import type { BBox, DiagramGroupLayout, LayoutNode, ZUIViewState, HoveredItem } from './types'
 import { getExpandThresholds } from './renderer'
 
-function constrainViewState(view: ZUIViewState, canvasW: number, canvasH: number, bbox: BBox): ZUIViewState {
-  const padding = 600 // pixels
+export function constrainViewState(view: ZUIViewState, canvasW: number, canvasH: number, bbox: BBox): ZUIViewState {
+  const padding = Math.min(600, canvasW * 0.45, canvasH * 0.45)
   const minX = padding - bbox.maxX * view.zoom
   const maxX = canvasW - padding - bbox.minX * view.zoom
   const minY = padding - bbox.maxY * view.zoom
