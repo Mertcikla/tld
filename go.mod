@@ -7,6 +7,7 @@ require (
 	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.11-20260430110110-9c62eb8958e3.1
 	connectrpc.com/connect v1.19.2
 	github.com/bmatcuk/doublestar/v4 v4.6.1
+	github.com/fsnotify/fsnotify v1.10.0
 	github.com/google/uuid v1.6.0
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/odvcencio/gotreesitter v0.15.2
@@ -28,7 +29,6 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/fsnotify/fsnotify v1.10.0 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
