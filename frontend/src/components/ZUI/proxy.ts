@@ -287,6 +287,69 @@ function getDirectAnchorPoints(source: VisibleNodeAnchor, target: VisibleNodeAnc
   return { sourcePoint, targetPoint }
 }
 
+function getDevicePixelRatio(): number {
+  return typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1
+}
+
+function roundRectPath(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, h, r)
+}
+
+function drawFixedScreenProxyBadge(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  labelPos: { x: number; y: number },
+  badgeCssW: number,
+  badgeCssH: number,
+  labelBg: string,
+  strokeStyle: string,
+  lineDashCss: number[],
+  fontWeight = 600,
+) {
+  const matrix = ctx.getTransform()
+  const dpr = getDevicePixelRatio()
+  const centerX = matrix.a * labelPos.x + matrix.c * labelPos.y + matrix.e
+  const centerY = matrix.b * labelPos.x + matrix.d * labelPos.y + matrix.f
+  const badgeW = badgeCssW * dpr
+  const badgeH = badgeCssH * dpr
+  const radius = badgeH / 2
+
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.fillStyle = labelBg
+  roundRectPath(ctx, centerX - badgeW / 2, centerY - badgeH / 2, badgeW, badgeH, radius)
+  ctx.fill()
+  ctx.strokeStyle = strokeStyle
+  ctx.lineWidth = dpr
+  ctx.setLineDash(lineDashCss.map((value) => value * dpr))
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.fillStyle = 'white'
+  ctx.font = `${fontWeight} ${11 * dpr}px Inter, system-ui, sans-serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(label, centerX, centerY)
+  ctx.restore()
+}
+
+function measureProxyBadge(ctx: CanvasRenderingContext2D, label: string, zoom: number, fontWeight = 600) {
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.font = `${fontWeight} 11px Inter, system-ui, sans-serif`
+  const textW = ctx.measureText(label).width
+  ctx.restore()
+
+  const badgeCssW = Math.max(24, textW + 14)
+  const badgeCssH = 24
+  return {
+    badgeCssW,
+    badgeCssH,
+    worldW: badgeCssW / zoom,
+    worldH: badgeCssH / zoom,
+  }
+}
+
 export function buildVisibleProxyConnectors(
   snapshot: WorkspaceGraphSnapshot | null,
   visibleAnchors: Map<number, VisibleNodeAnchor>,
@@ -393,45 +456,18 @@ export function drawVisibleProxyConnectors(
     ctx.lineTo(targetPoint.x, targetPoint.y)
     ctx.stroke()
     ctx.setLineDash([])
-    const fontSize = 11 / zoom
-    ctx.font = `${fontSize}px Inter, system-ui, sans-serif`
-    const textMetrics = ctx.measureText(label)
-    const textW = textMetrics.width
-    const textH = fontSize
+    const badge = measureProxyBadge(ctx, label, zoom)
     const labelPos = pickEdgeLabelPosition(
       ctx.getTransform(),
       midX,
       midY,
-      textW,
-      textH,
+      badge.worldW,
+      badge.worldH,
       targetPoint.x - sourcePoint.x,
       targetPoint.y - sourcePoint.y,
       occupiedLabelRects,
     )
-    const px = 6 / zoom
-    const py = 4 / zoom
-    const badgeW = textW + px * 2
-    const badgeH = textH + py * 2
-    const badgeRadius = badgeH / 2
-    ctx.fillStyle = labelBg
-    ctx.beginPath()
-    ctx.roundRect(
-      labelPos.x - badgeW / 2,
-      labelPos.y - badgeH / 2,
-      badgeW,
-      badgeH,
-      badgeRadius,
-    )
-    ctx.fill()
-    ctx.strokeStyle = accent
-    ctx.lineWidth = 1 / zoom
-    ctx.setLineDash([1 / zoom, 4 / zoom])
-    ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = 'white'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(label, labelPos.x, labelPos.y)
+    drawFixedScreenProxyBadge(ctx, label, labelPos, badge.badgeCssW, badge.badgeCssH, labelBg, accent, [1, 4])
 
     ctx.restore()
   }
@@ -459,44 +495,27 @@ export function drawVisibleDirectProxyBadges(
 
     ctx.save()
     ctx.globalAlpha = alpha
-    const fontSize = 11 / zoom
-    ctx.font = `${fontSize}px Inter, system-ui, sans-serif`
-    const textMetrics = ctx.measureText(label)
-    const textW = textMetrics.width
-    const textH = fontSize
+    const badgeMetrics = measureProxyBadge(ctx, label, zoom)
     const labelPos = pickEdgeLabelPosition(
       ctx.getTransform(),
       midX,
       midY,
-      textW,
-      textH,
+      badgeMetrics.worldW,
+      badgeMetrics.worldH,
       targetPoint.x - sourcePoint.x,
       targetPoint.y - sourcePoint.y,
       occupiedLabelRects,
     )
-    const px = 7 / zoom
-    const badgeW = Math.max(24 / zoom, textW + px * 2)
-    const badgeH = 24 / zoom
-    const badgeRadius = badgeH / 2
-    ctx.fillStyle = labelBg
-    ctx.beginPath()
-    ctx.roundRect(
-      labelPos.x - badgeW / 2,
-      labelPos.y - badgeH / 2,
-      badgeW,
-      badgeH,
-      badgeRadius,
+    drawFixedScreenProxyBadge(
+      ctx,
+      label,
+      labelPos,
+      badgeMetrics.badgeCssW,
+      badgeMetrics.badgeCssH,
+      labelBg,
+      'rgba(255, 255, 255, 0.5)',
+      [4, 3],
     )
-    ctx.fill()
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'
-    ctx.lineWidth = 1 / zoom
-    ctx.setLineDash([4 / zoom, 3 / zoom])
-    ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = 'white'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(label, labelPos.x, labelPos.y)
     ctx.restore()
   }
 }
