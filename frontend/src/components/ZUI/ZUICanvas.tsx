@@ -30,7 +30,7 @@ import { computeLayout } from './layout'
 import { renderFrame, getExpandThresholds, setOnImageLoadCallback, setHighlightedTags as setRendererHighlightedTags, setHiddenTags as setRendererHiddenTags, setHighlightColor as setRendererHighlightColor, setVersionDiff as setRendererVersionDiff } from './renderer'
 import { useZUIInteraction } from './useZUIInteraction'
 import type { DiagramGroupLayout, ZUIViewState } from './types'
-import { findDiagramFocusTarget, findElementFocusTarget, viewportForFocusTarget } from './focus'
+import { findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget } from './focus'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
@@ -487,18 +487,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     const canvasH = el.offsetHeight
     if (canvasW === 0 || canvasH === 0) return false
 
-    const to = viewportForFocusTarget(
-      target,
-      canvasW,
-      canvasH,
-      maxZoom,
-      isMobileLayout ? 0.18 : 0.16,
-      {
-        preferContent: true,
-        minTargetScreenW: isMobileLayout ? 180 : 260,
-        minChildScreenW: isMobileLayout ? 76 : 104,
-      },
-    )
+    const to = viewportForDiagramFocusTarget(target, canvasW, canvasH, maxZoom, isMobileLayout)
     if (!to) return false
 
     setHoveredItem(null, true)
@@ -515,17 +504,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     const canvasH = el.offsetHeight
     if (canvasW === 0 || canvasH === 0) return false
 
-    const to = viewportForFocusTarget(
-      target,
-      canvasW,
-      canvasH,
-      maxZoom,
-      isMobileLayout ? 0.2 : 0.18,
-      {
-        minTargetScreenW: isMobileLayout ? 220 : 320,
-        keepParentVisible: true,
-      },
-    )
+    const to = viewportForElementFocusTarget(target, canvasW, canvasH, maxZoom, isMobileLayout)
     if (!to) return false
 
     setHoveredItem(null, true)

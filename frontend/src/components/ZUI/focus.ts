@@ -48,7 +48,11 @@ function boundsForRects(rects: Rect[]): Rect | null {
     return null
   }
 
-  return { x: minX, y: minY, w: Math.max(0.0001, maxX - minX), h: Math.max(0.0001, maxY - minY) }
+  return { x: minX, y: minY, w: positiveSize(maxX - minX), h: positiveSize(maxY - minY) }
+}
+
+function positiveSize(value: number): number {
+  return Number.isFinite(value) && value > 0 ? value : 0.0001
 }
 
 function childContentRect(node: LayoutNode, absX: number, absY: number, absScale: number): Rect | null {
@@ -205,8 +209,8 @@ export function viewportForFocusTarget(
     h: target.absH,
   }
 
-  const bboxW = Math.max(0.0001, rect.w)
-  const bboxH = Math.max(0.0001, rect.h)
+  const bboxW = positiveSize(rect.w)
+  const bboxH = positiveSize(rect.h)
   const fitZoom = Math.min(
     (canvasW * (1 - padding * 2)) / bboxW,
     (canvasH * (1 - padding * 2)) / bboxH,
@@ -235,7 +239,7 @@ export function viewportForFocusTarget(
   if (target.node?.children.length && options.keepParentVisible) {
     const thresholds = getExpandThresholds(canvasW)
     const maxParentScreenW = thresholds.start + (thresholds.end - thresholds.start) * 0.78
-    zoom = Math.min(zoom, maxParentScreenW / Math.max(0.0001, target.absW))
+    zoom = Math.min(zoom, maxParentScreenW / positiveSize(target.absW))
   }
 
   if (!Number.isFinite(zoom) || zoom <= 0) return null
@@ -245,4 +249,45 @@ export function viewportForFocusTarget(
     y: (canvasH - bboxH * zoom) / 2 - rect.y * zoom,
     zoom,
   }
+}
+
+export function viewportForDiagramFocusTarget(
+  target: ZUIFocusTarget,
+  canvasW: number,
+  canvasH: number,
+  maxZoom: number,
+  isMobileLayout: boolean,
+): ZUIViewState | null {
+  return viewportForFocusTarget(
+    target,
+    canvasW,
+    canvasH,
+    maxZoom,
+    isMobileLayout ? 0.18 : 0.16,
+    {
+      preferContent: true,
+      minTargetScreenW: isMobileLayout ? 180 : 260,
+      minChildScreenW: isMobileLayout ? 76 : 104,
+    },
+  )
+}
+
+export function viewportForElementFocusTarget(
+  target: ZUIFocusTarget,
+  canvasW: number,
+  canvasH: number,
+  maxZoom: number,
+  isMobileLayout: boolean,
+): ZUIViewState | null {
+  return viewportForFocusTarget(
+    target,
+    canvasW,
+    canvasH,
+    maxZoom,
+    isMobileLayout ? 0.2 : 0.18,
+    {
+      minTargetScreenW: isMobileLayout ? 220 : 320,
+      keepParentVisible: true,
+    },
+  )
 }
