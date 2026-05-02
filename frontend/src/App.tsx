@@ -24,7 +24,7 @@ function AppLayout() {
   const hideMobileBar = header && typeof header === 'object' && 'hideMobileBar' in header ? !!(header as { hideMobileBar?: boolean }).hideMobileBar : false
 
   return (
-    <Box h="100vh" display="flex" flexDirection="column" bg="var(--bg-canvas)" overflow="hidden">
+    <Box h="100dvh" display="flex" flexDirection="column" bg="var(--bg-canvas)" overflow="hidden">
       <TopMenuBar hideMobileBar={hideMobileBar}>
         {node}
       </TopMenuBar>
@@ -33,7 +33,7 @@ function AppLayout() {
         mb={{ base: 'var(--topbar-content-gap)', sm: '0px' }}
         flexShrink={0}
       />
-      <Box flex="1" overflow="hidden" position="relative">
+      <Box flex="1" minH={0} overflow="hidden" position="relative">
         <Outlet />
         {workspacePanelVisible && <WorkspacePanel />}
       </Box>
@@ -82,7 +82,7 @@ function HomeRedirect() {
 
   if (loading) {
     return (
-      <Center h="100vh">
+      <Center h="100%">
         <Spinner size="xl" />
       </Center>
     )
@@ -102,7 +102,7 @@ export default function App() {
 
   if (!ready) {
     return (
-      <Center h="100vh">
+      <Center h="100dvh">
         <Spinner size="xl" />
       </Center>
     )
@@ -110,11 +110,11 @@ export default function App() {
 
   return (
     <ThemeProvider>
-      <Box minH="100vh" bg="var(--bg-canvas)">
+      <Box h="100dvh" bg="var(--bg-canvas)" overflow="hidden">
         <Routes>
           {platform.getRoutes({ user: null })}
 
-          <Route path="/explore/shared/:token" element={<Box h="100vh" overflow="hidden"><HeaderProvider><WorkspaceVersionProvider><SharedInfiniteZoom /></WorkspaceVersionProvider></HeaderProvider></Box>} />
+          <Route path="/explore/shared/:token" element={<Box h="100dvh" overflow="hidden"><HeaderProvider><WorkspaceVersionProvider><SharedInfiniteZoom /></WorkspaceVersionProvider></HeaderProvider></Box>} />
           <Route
             element={
               <HeaderProvider>

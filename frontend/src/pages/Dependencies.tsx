@@ -615,7 +615,7 @@ export default function Dependencies() {
 
   if (loading) {
     return (
-      <Flex h="100vh" align="center" justify="center">
+      <Flex h="100%" align="center" justify="center">
         <Spinner size="xl" color="blue.500" thickness="3px" />
       </Flex>
     )
@@ -650,7 +650,7 @@ export default function Dependencies() {
   const rangeEnd = page * PAGE_SIZE + elements.length
 
   return (
-    <Box h="100vh" display="flex" flexDir="column" bg="var(--bg-canvas)">
+    <Box h="100%" display="flex" flexDir="column" bg="var(--bg-canvas)">
       <Box ref={containerRef} flex={1} display="flex" flexDir="column" overflow="hidden">
 
         {/* ── Top: Listing ──────────────────────────────────────────────────── */}

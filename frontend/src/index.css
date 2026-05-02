@@ -42,6 +42,17 @@
     --rf-panel-bl-bottom: 82px;
 }
 
+html,
+body,
+#root {
+    height: 100%;
+    overflow: hidden;
+}
+
+body {
+    margin: 0;
+}
+
 .react-flow {
     background-color: var(--bg-canvas);
 }

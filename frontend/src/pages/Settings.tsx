@@ -28,7 +28,7 @@ export default function Settings({ extraNavItems = [] }: SettingsProps) {
 
 
   return (
-    <Flex direction="column" h="100vh">
+    <Flex direction="column" h="100%">
       <Flex flex={1} overflow="hidden" direction={{ base: 'column', md: 'row' }}>
         {/* Sidebar (hidden on small screens) */}
         <VStack

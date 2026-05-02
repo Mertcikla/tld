@@ -1174,10 +1174,10 @@ function ViewEditorInner({
   // Render states
   // ─────────────────────────────────────────────────────────────────────────────
   if (view === undefined) {
-    return <Flex h={{ base: '100vh', sm: 'calc(100vh - var(--editor-top-offset, 48px))' }} align="center" justify="center"><Spinner size="xl" /></Flex>
+    return <Flex h="100%" align="center" justify="center"><Spinner size="xl" /></Flex>
   }
   if (view === null) {
-    return <Flex h={{ base: '100vh', sm: 'calc(100vh - var(--editor-top-offset, 48px))' }} align="center" justify="center"><Text>View not found.</Text></Flex>
+    return <Flex h="100%" align="center" justify="center"><Text>View not found.</Text></Flex>
   }
 
   return (
@@ -1185,7 +1185,7 @@ function ViewEditorInner({
       viewId, canEdit, isOwner, isFreePlan, snapToGrid, setSnapToGrid,
       selectedElement, selectedConnector: selectedEdge
     }}>
-      <Box h={{ base: '100vh', sm: 'calc(100vh - var(--editor-top-offset, 48px))' }} display="flex" flexDir="column">
+      <Box h="100%" display="flex" flexDir="column">
         <Flex flex={1} overflow="hidden">
           <Box
             ref={containerRef}
