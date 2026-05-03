@@ -187,7 +187,7 @@ func Main() {}
 	}
 }
 
-func TestWatchDryRunPrintsSameDiffPayloadAsDiffCommand(t *testing.T) {
+func TestWatchDryRunGroupsSameDiffPayloadAsDiffCommand(t *testing.T) {
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "main.go", `package main
 
@@ -204,14 +204,17 @@ func Main() {}
 		t.Fatalf("watch --dry-run command: %v\n%s", err, dryRunOut.String())
 	}
 	var dryRunPayload struct {
-		Changed bool                          `json:"changed"`
-		Diffs   []watchpkg.RepresentationDiff `json:"diffs"`
+		Changed bool                                                `json:"changed"`
+		Diffs   map[string]map[string][]watchpkg.RepresentationDiff `json:"diffs"`
 	}
 	if err := json.Unmarshal(dryRunOut.Bytes(), &dryRunPayload); err != nil {
 		t.Fatalf("invalid dry-run JSON output %q: %v", dryRunOut.String(), err)
 	}
 	if !dryRunPayload.Changed || len(dryRunPayload.Diffs) == 0 {
 		t.Fatalf("unexpected dry-run payload: %+v\n%s", dryRunPayload, dryRunOut.String())
+	}
+	if _, ok := dryRunPayload.Diffs["added"]["element"]; !ok {
+		t.Fatalf("expected dry-run diffs to be grouped by change_type then resource_type, got %+v", dryRunPayload.Diffs)
 	}
 	if strings.Contains(dryRunOut.String(), "Watching") {
 		t.Fatalf("dry-run should exit after printing JSON, got watch output:\n%s", dryRunOut.String())
@@ -231,7 +234,7 @@ func Main() {}
 	if err := json.Unmarshal(diffOut.Bytes(), &diffPayload); err != nil {
 		t.Fatalf("invalid diff JSON output %q: %v", diffOut.String(), err)
 	}
-	if !sameDiffPayload(dryRunPayload.Diffs, diffPayload.Diffs) {
+	if !sameDiffPayload(flattenGroupedDiffPayload(dryRunPayload.Diffs), diffPayload.Diffs) {
 		t.Fatalf("watch --dry-run diffs should match watch diff diffs\n dry-run: %+v\n diff: %+v", dryRunPayload.Diffs, diffPayload.Diffs)
 	}
 }
@@ -256,7 +259,7 @@ func Main() {}
 	}
 	var payload struct {
 		Changed bool `json:"changed"`
-		Diffs   []struct {
+		Diffs   map[string]map[string][]struct {
 			ChangeType   string  `json:"change_type"`
 			ResourceType *string `json:"resource_type"`
 		} `json:"diffs"`
@@ -267,11 +270,25 @@ func Main() {}
 	if payload.Changed {
 		t.Fatalf("clean HEAD dry-run should initialize without drift, got %+v", payload)
 	}
-	for _, diff := range payload.Diffs {
-		if diff.ResourceType != nil && diff.ChangeType == "added" {
-			t.Fatalf("clean HEAD dry-run should not include added resource diffs, got %+v", payload.Diffs)
+	for _, byResource := range payload.Diffs {
+		for _, diffs := range byResource {
+			for _, diff := range diffs {
+				if diff.ResourceType != nil && diff.ChangeType == "added" {
+					t.Fatalf("clean HEAD dry-run should not include added resource diffs, got %+v", payload.Diffs)
+				}
+			}
 		}
 	}
+}
+
+func flattenGroupedDiffPayload(grouped map[string]map[string][]watchpkg.RepresentationDiff) []watchpkg.RepresentationDiff {
+	var out []watchpkg.RepresentationDiff
+	for _, byResource := range grouped {
+		for _, diffs := range byResource {
+			out = append(out, diffs...)
+		}
+	}
+	return out
 }
 
 func sameDiffPayload(a, b []watchpkg.RepresentationDiff) bool {

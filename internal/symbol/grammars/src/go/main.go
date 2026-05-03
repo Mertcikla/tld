@@ -31,6 +31,10 @@ type Ref struct {
 	Line int    `json:"line"`
 }
 
+type Reffer struct {
+	Name string `json:"name"`
+	Line int    `json:"line"`
+}
 type Result struct {
 	Symbols []Symbol `json:"symbols"`
 	Refs    []Ref    `json:"refs"`

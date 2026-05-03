@@ -56,6 +56,7 @@ func NewWatchCmd() *cobra.Command {
 					MaxExpandedGroup:   maxExpandedGroup,
 					Rescan:             rescan,
 					FailOnDrift:        failOnDrift,
+					GroupDiffs:         true,
 				})
 			}
 			cfg, _ := workspace.LoadGlobalConfig()
@@ -525,6 +526,7 @@ type watchDiffOptions struct {
 	MaxExpandedGroup   int
 	Rescan             bool
 	FailOnDrift        bool
+	GroupDiffs         bool
 }
 
 type watchDiffPayload struct {
@@ -532,6 +534,13 @@ type watchDiffPayload struct {
 	Scan           watch.ScanResult           `json:"scan"`
 	Representation watch.RepresentResult      `json:"representation"`
 	Diffs          []watch.RepresentationDiff `json:"diffs"`
+}
+
+type watchGroupedDiffPayload struct {
+	Changed        bool                                             `json:"changed"`
+	Scan           watch.ScanResult                                 `json:"scan"`
+	Representation watch.RepresentResult                            `json:"representation"`
+	Diffs          map[string]map[string][]watch.RepresentationDiff `json:"diffs"`
 }
 
 func runWatchDiff(cmd *cobra.Command, path string, opts watchDiffOptions) error {
@@ -570,7 +579,10 @@ func runWatchDiff(cmd *cobra.Command, path string, opts watchDiffOptions) error 
 		return err
 	}
 	changed := found && latest.RepresentationHash != result.RepresentationHash || hasWatchDriftDiffs(diffs)
-	payload := watchDiffPayload{Changed: changed, Scan: scanResult, Representation: result, Diffs: diffs}
+	var payload any = watchDiffPayload{Changed: changed, Scan: scanResult, Representation: result, Diffs: diffs}
+	if opts.GroupDiffs {
+		payload = watchGroupedDiffPayload{Changed: changed, Scan: scanResult, Representation: result, Diffs: groupWatchDiffs(diffs)}
+	}
 	if err := json.NewEncoder(cmd.OutOrStdout()).Encode(payload); err != nil {
 		return err
 	}
@@ -578,6 +590,32 @@ func runWatchDiff(cmd *cobra.Command, path string, opts watchDiffOptions) error 
 		return fmt.Errorf("watch representation drift detected")
 	}
 	return nil
+}
+
+func groupWatchDiffs(diffs []watch.RepresentationDiff) map[string]map[string][]watch.RepresentationDiff {
+	grouped := map[string]map[string][]watch.RepresentationDiff{}
+	for _, diff := range diffs {
+		changeType := strings.TrimSpace(diff.ChangeType)
+		if changeType == "" {
+			changeType = "updated"
+		}
+		resourceType := diffResourceType(diff)
+		if _, ok := grouped[changeType]; !ok {
+			grouped[changeType] = map[string][]watch.RepresentationDiff{}
+		}
+		grouped[changeType][resourceType] = append(grouped[changeType][resourceType], diff)
+	}
+	return grouped
+}
+
+func diffResourceType(diff watch.RepresentationDiff) string {
+	if diff.ResourceType != nil && strings.TrimSpace(*diff.ResourceType) != "" {
+		return strings.TrimSpace(*diff.ResourceType)
+	}
+	if strings.TrimSpace(diff.OwnerType) != "" {
+		return strings.TrimSpace(diff.OwnerType)
+	}
+	return "unknown"
 }
 
 func hasWatchDriftDiffs(diffs []watch.RepresentationDiff) bool {
