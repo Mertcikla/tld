@@ -332,33 +332,10 @@ export default function Dependencies() {
   useEffect(() => {
     setHeader({
       hideMobileBar: true,
-      node: (
-        <HStack
-          bg="whiteAlpha.50"
-          border="1px solid"
-          borderColor="whiteAlpha.100"
-          px={3}
-          py={1}
-          borderRadius="md"
-          spacing={3}
-        >
-          <Text fontSize="xs" color="whiteAlpha.800" fontWeight="medium" display={{ base: 'none', compact: 'inline' }}>
-            {totalCount} <Text as="span" color="whiteAlpha.400" fontWeight="normal">elements</Text>
-          </Text>
-          <Box w="1px" h="10px" bg="whiteAlpha.200" display={{ base: 'none', compact: 'block' }} />
-          <Text fontSize="xs" color="whiteAlpha.800" fontWeight="medium" display={{ base: 'none', compact: 'inline' }}>
-            {allEdges.length} <Text as="span" color="whiteAlpha.400" fontWeight="normal">connectors</Text>
-          </Text>
-          <Text fontSize="xs" color="whiteAlpha.800" fontWeight="medium" display={{ base: 'none', sm: 'inline', compact: 'none' }}>
-            {totalCount}<Text as="span" color="whiteAlpha.400">E</Text>
-            <Text as="span" color="whiteAlpha.200" mx={1}>/</Text>
-            {allEdges.length}<Text as="span" color="whiteAlpha.400">C</Text>
-          </Text>
-        </HStack>
-      ),
+      node: null,
     })
     return () => setHeader(null)
-  }, [totalCount, allEdges.length, setHeader])
+  }, [setHeader])
 
   useEffect(() => {
     setPage(0)
