@@ -17,6 +17,7 @@ type filterResult struct {
 	VisibleReferences []Reference
 	Incoming          map[int64]int
 	Outgoing          map[int64]int
+	ChangedFiles      map[string]struct{}
 }
 
 func defaultThresholds(thresholds Thresholds) Thresholds {
@@ -44,7 +45,7 @@ func settingsHash(req RepresentRequest) string {
 	return stableHash(req)
 }
 
-func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds Thresholds, rawGraphHash, settingsHash string, embeddings map[int64]Vector) (filterResult, error) {
+func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds Thresholds, rawGraphHash, settingsHash string, embeddings map[int64]Vector, forcedVisibleSymbols map[int64]string) (filterResult, error) {
 	symbols, err := store.SymbolsForRepository(ctx, repositoryID)
 	if err != nil {
 		return filterResult{}, err
@@ -72,6 +73,15 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 			reasons[sym.ID] = "has resolved outgoing reference"
 		}
 	}
+	for _, sym := range symbols {
+		if reason, ok := forcedVisibleSymbols[sym.ID]; ok {
+			visible[sym.ID] = sym
+			if strings.TrimSpace(reason) == "" {
+				reason = "changed since latest watch version"
+			}
+			reasons[sym.ID] = reason
+		}
+	}
 	changed := true
 	for changed {
 		changed = false
@@ -92,6 +102,9 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 
 	for _, sym := range symbols {
 		if isExportedSymbol(sym) {
+			continue
+		}
+		if _, forced := forcedVisibleSymbols[sym.ID]; forced {
 			continue
 		}
 		if outgoing[sym.ID] > thresholds.MaxOutgoingPerElement || incoming[sym.ID] > thresholds.MaxIncomingPerElement {

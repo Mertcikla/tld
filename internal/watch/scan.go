@@ -275,12 +275,11 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	rel = filepath.ToSlash(rel)
 	defer progressAdvance(progress, rel)
 	result := scanFileResult{RelPath: rel}
-	language, ok := analyzer.DetectLanguage(absFile)
+	languageName, parseable, ok := watchedFileLanguage(absFile)
 	if !ok {
 		result.Skipped = true
 		return result, nil
 	}
-	languageName := string(language)
 	info, err := os.Stat(absFile)
 	if err != nil {
 		file, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, "", "", 0, 0, "error", err)
@@ -292,8 +291,8 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	}
 	if cached, ok, err := s.Store.CachedFileByPath(ctx, repositoryID, rel); err != nil {
 		return result, err
-	} else if !force && ok && cached.SizeBytes == info.Size() && cached.MtimeUnix == info.ModTime().Unix() && cached.WorktreeHash != "" && cached.ScanStatus != "error" {
-		if _, _, err := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, nullStringValue(cached.GitBlobHash), cached.WorktreeHash, info.Size(), info.ModTime().Unix(), "parsed", nil); err != nil {
+	} else if !force && ok && cached.SizeBytes == info.Size() && cached.MtimeUnix == info.ModTime().UnixNano() && cached.WorktreeHash != "" && cached.ScanStatus != "error" {
+		if _, _, err := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, nullStringValue(cached.GitBlobHash), cached.WorktreeHash, info.Size(), info.ModTime().UnixNano(), "parsed", nil); err != nil {
 			return result, err
 		}
 		result.Skipped = true
@@ -301,12 +300,12 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	}
 	data, err := os.ReadFile(absFile)
 	if err != nil {
-		_, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, "", "", info.Size(), info.ModTime().Unix(), "error", err)
+		_, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, "", "", info.Size(), info.ModTime().UnixNano(), "error", err)
 		return result, upsertErr
 	}
 	worktreeHash := hashBytes(data)
 	blobHash := detectString(func() (string, error) { return tldgit.FileBlobHash(repoRoot, rel) })
-	file, skipped, err := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, blobHash, worktreeHash, info.Size(), info.ModTime().Unix(), "parsed", nil)
+	file, skipped, err := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, blobHash, worktreeHash, info.Size(), info.ModTime().UnixNano(), "parsed", nil)
 	if err != nil {
 		return result, err
 	}
@@ -315,9 +314,12 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 		result.Skipped = true
 		return result, nil
 	}
+	if !parseable {
+		return result, nil
+	}
 	extracted, err := workerAnalyzer.ExtractPath(ctx, absFile, rules, nil)
 	if err != nil {
-		_, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, blobHash, worktreeHash, info.Size(), info.ModTime().Unix(), "error", err)
+		_, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, blobHash, worktreeHash, info.Size(), info.ModTime().UnixNano(), "error", err)
 		return result, upsertErr
 	}
 	symbols := watchSymbolsFromAnalyzer(repositoryID, file.ID, rel, languageName, data, extracted.Symbols)
@@ -328,6 +330,18 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	result.SymbolsSeen = len(symbols)
 	result.Refs = extracted.Refs
 	return result, nil
+}
+
+func watchedFileLanguage(path string) (language string, parseable bool, ok bool) {
+	if language, ok := analyzer.DetectLanguage(path); ok {
+		return string(language), true, true
+	}
+	switch strings.ToLower(filepath.Base(path)) {
+	case "package.json", "package-lock.json":
+		return "json", false, true
+	default:
+		return "", false, false
+	}
 }
 
 func (s *Scanner) collectSourceFiles(root string, workers int, languages []string, rules *ignore.Rules) ([]string, error) {
@@ -409,14 +423,14 @@ func (s *Scanner) collectSourceFilesUnder(root, start string, rules *ignore.Rule
 			}
 			return nil
 		}
-		language, ok := analyzer.DetectLanguage(path)
-		if !ok || !languageAllowed(string(language), allowed) {
+		language, parseable, ok := watchedFileLanguage(path)
+		if !ok || (parseable && !languageAllowed(language, allowed)) {
 			return nil
 		}
 		if rules.ShouldIgnorePath(rel) {
 			return nil
 		}
-		if language == analyzer.LanguageGo {
+		if parseable && language == string(analyzer.LanguageGo) {
 			generated, err := isGeneratedGoFile(path)
 			if err != nil {
 				return nil
@@ -556,7 +570,6 @@ type definitionLocation struct {
 	FilePath string
 	Line     int
 }
-
 
 func symbolAtLocation(repoRoot string, symbols []Symbol, location definitionLocation) (Symbol, bool) {
 	rel, err := filepath.Rel(repoRoot, location.FilePath)

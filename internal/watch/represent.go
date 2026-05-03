@@ -71,10 +71,15 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	if err != nil {
 		return RepresentResult{}, err
 	}
-	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, nil)
+	changedRaw, err := r.Store.ChangedRawResourcesSinceLatest(ctx, repositoryID)
 	if err != nil {
 		return RepresentResult{}, err
 	}
+	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, nil, changedRaw.Symbols)
+	if err != nil {
+		return RepresentResult{}, err
+	}
+	filtered.ChangedFiles = changedRaw.Files
 
 	result := RepresentResult{}
 	if model.Provider != "none" {
@@ -86,10 +91,11 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		result.EmbeddingCacheHits = stats.CacheHits
 		result.EmbeddingsCreated = stats.Created
 		if len(embeddingSymbols) == len(filtered.VisibleSymbols) {
-			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, vectors)
+			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, vectors, changedRaw.Symbols)
 			if err != nil {
 				return RepresentResult{}, err
 			}
+			filtered.ChangedFiles = changedRaw.Files
 		}
 	}
 
@@ -721,6 +727,9 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	}
 
 	visibleFiles := filesForSymbols(filtered.VisibleSymbols)
+	for file := range filtered.ChangedFiles {
+		visibleFiles[file] = struct{}{}
+	}
 	folders := folderSet(visibleFiles)
 	folderElements := map[string]int64{}
 	folderViews := map[string]int64{}
@@ -758,8 +767,15 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 
 	fileElements := map[string]int64{}
 	fileViews := map[string]int64{}
+	fileLanguages, err := m.store.FileLanguages(ctx, repo.ID)
+	if err != nil {
+		return m.stats, err
+	}
 	for i, file := range sortedKeys(visibleFiles) {
 		fileLanguage := languageForFile(file, filtered.VisibleSymbols)
+		if language := strings.TrimSpace(fileLanguages[file]); language != "" {
+			fileLanguage = language
+		}
 		parentView := repoView
 		if dir := path.Dir(file); dir != "." {
 			if id, ok := folderViews[dir]; ok {
@@ -1844,6 +1860,9 @@ func repoIdentity(repo Repository) string {
 
 func representationHash(filtered filterResult, req RepresentRequest) string {
 	parts := []string{filtered.RawGraphHash, filtered.SettingsHash, stableHash(req)}
+	for _, file := range sortedKeys(filtered.ChangedFiles) {
+		parts = append(parts, "f:"+file)
+	}
 	for _, sym := range sortedSymbols(filtered.VisibleSymbols) {
 		parts = append(parts, "s:"+sym.StableKey)
 	}

@@ -453,6 +453,141 @@ func helper() {}
 	t.Fatalf("expected updated element diff with +1 line, got %+v", diffs)
 }
 
+func TestWatchDiffsMaterializeChangedPackageManifests(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "frontend/package.json", `{
+  "name": "@tldiagram/core-ui",
+  "dependencies": {
+    "@buf/tldiagramcom_diagram.bufbuild_es": "^2.11.0"
+  }
+}
+`)
+	writeFile(t, repo, "frontend/package-lock.json", `{
+  "name": "@tldiagram/core-ui",
+  "packages": {
+    "": {
+      "dependencies": {
+        "@buf/tldiagramcom_diagram.bufbuild_es": "^2.11.0"
+      }
+    }
+  }
+}
+`)
+	writeFile(t, repo, "frontend/src/App.tsx", `export function App() {
+  return null
+}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial frontend")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "initial frontend", "", "main", rep.RepresentationHash, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, repo, "frontend/package.json", `{
+  "name": "@tldiagram/core-ui",
+  "dependencies": {
+    "@buf/tldiagramcom_diagram.bufbuild_es": "^2.12.0"
+  }
+}
+`)
+	writeFile(t, repo, "frontend/package-lock.json", `{
+  "name": "@tldiagram/core-ui",
+  "packages": {
+    "": {
+      "dependencies": {
+        "@buf/tldiagramcom_diagram.bufbuild_es": "^2.12.0"
+      }
+    }
+  }
+}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, next.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"frontend/package.json", "frontend/package-lock.json"} {
+		diff := findDiffByOwner(diffs, "file", "file:"+path, "element", "updated")
+		if diff == nil {
+			t.Fatalf("expected changed manifest %s to produce updated file element diff, got %+v", path, diffs)
+		}
+		if diff.AddedLines == 0 || diff.RemovedLines == 0 {
+			t.Fatalf("expected accurate line delta for %s, got %+v", path, diff)
+		}
+	}
+}
+
+func TestWatchDiffsMaterializeChangedHiddenSymbolAsUpdated(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "frontend/src/pages/ViewsGrid.tsx", `function viewGridInner() {
+  return 'grid'
+}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial hidden symbol")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "initial hidden symbol", "", "main", rep.RepresentationHash, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if count := materializationOwnerTypeCount(t, db, "symbol"); count != 0 {
+		t.Fatalf("expected hidden symbol to be omitted from the baseline materialization, got %d symbol mappings", count)
+	}
+
+	writeFile(t, repo, "frontend/src/pages/ViewsGrid.tsx", `function viewGridInner() {
+  const mode = 'grid'
+  return mode
+}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, next.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerKey := "typescript:frontend/src/pages/ViewsGrid.tsx:function:viewGridInner"
+	diff := findDiffByOwner(diffs, "symbol", ownerKey, "element", "updated")
+	if diff == nil {
+		t.Fatalf("expected changed hidden symbol to produce updated symbol element diff, got %+v", diffs)
+	}
+	if diff.AddedLines != 2 || diff.RemovedLines != 1 {
+		t.Fatalf("expected changed hidden symbol to report exact line diff, got %+v", diff)
+	}
+}
+
 func TestCreateVersionForHeadCanBaselineAlreadyRepresentedCommit(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -2302,6 +2437,15 @@ func hasDiff(diffs []RepresentationDiff, resourceType, changeType string) bool {
 func findDiff(diffs []RepresentationDiff, resourceType, changeType string) *RepresentationDiff {
 	for _, diff := range diffs {
 		if diff.ResourceType != nil && *diff.ResourceType == resourceType && diff.ChangeType == changeType {
+			return &diff
+		}
+	}
+	return nil
+}
+
+func findDiffByOwner(diffs []RepresentationDiff, ownerType, ownerKey, resourceType, changeType string) *RepresentationDiff {
+	for _, diff := range diffs {
+		if diff.OwnerType == ownerType && diff.OwnerKey == ownerKey && diff.ResourceType != nil && *diff.ResourceType == resourceType && diff.ChangeType == changeType {
 			return &diff
 		}
 	}

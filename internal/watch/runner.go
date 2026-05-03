@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mertcikla/tld/internal/analyzer"
 	tldgit "github.com/mertcikla/tld/internal/git"
 	"github.com/mertcikla/tld/internal/ignore"
 )
@@ -373,15 +372,15 @@ func sourceFileSnapshot(repoRoot string, settings Settings, rules *ignore.Rules)
 			}
 			return nil
 		}
-		language, ok := analyzer.DetectLanguage(path)
-		if !ok || !languageAllowed(string(language), allowed) || rules.ShouldIgnorePath(rel) {
+		language, parseable, ok := watchedFileLanguage(path)
+		if !ok || (parseable && !languageAllowed(language, allowed)) || rules.ShouldIgnorePath(rel) {
 			return nil
 		}
 		info, err := d.Info()
 		if err != nil {
 			return nil
 		}
-		files[rel] = string(language) + ":" + info.ModTime().UTC().Format(time.RFC3339Nano) + ":" + fmt.Sprint(info.Size())
+		files[rel] = language + ":" + info.ModTime().UTC().Format(time.RFC3339Nano) + ":" + fmt.Sprint(info.Size())
 		return nil
 	})
 	return files

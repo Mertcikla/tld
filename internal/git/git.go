@@ -22,6 +22,11 @@ type Status struct {
 	Deleted     []string
 }
 
+type LineDiff struct {
+	Added   int
+	Removed int
+}
+
 // DetectBranch returns the current branch name for the git repo rooted at dir.
 func DetectBranch(dir string) (string, error) {
 	out, err := run(dir, "branch", "--show-current")
@@ -148,6 +153,33 @@ func StatusSnapshot(dir string) (Status, error) {
 		}
 	}
 	return status, nil
+}
+
+func LineDiffsAgainstHead(dir string) (map[string]LineDiff, error) {
+	out, err := run(dir, "diff", "--numstat", "HEAD", "--")
+	if err != nil {
+		return nil, fmt.Errorf("git diff numstat: %w", err)
+	}
+	diffs := map[string]LineDiff{}
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 3 || fields[0] == "-" || fields[1] == "-" {
+			continue
+		}
+		added, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		removed, err := strconv.Atoi(fields[1])
+		if err != nil {
+			continue
+		}
+		diffs[filepath.ToSlash(fields[2])] = LineDiff{Added: added, Removed: removed}
+	}
+	return diffs, nil
 }
 
 // RepoRoot returns the absolute path of the top-level git working tree for the

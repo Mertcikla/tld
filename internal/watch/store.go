@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	tldgit "github.com/mertcikla/tld/internal/git"
 	"github.com/viant/sqlite-vec/vector"
 )
 
@@ -1792,6 +1793,65 @@ type watchResourceSnapshot struct {
 	LineCount    int
 }
 
+type changedRawResources struct {
+	Files   map[string]struct{}
+	Symbols map[int64]string
+}
+
+func (s *Store) ChangedRawResourcesSinceLatest(ctx context.Context, repositoryID int64) (changedRawResources, error) {
+	changed := changedRawResources{Files: map[string]struct{}{}, Symbols: map[int64]string{}}
+	latest, found, err := s.LatestWatchVersion(ctx, repositoryID)
+	if err != nil || !found {
+		return changed, err
+	}
+	previous, err := s.WatchVersionResourceSnapshots(ctx, latest.ID)
+	if err != nil {
+		return changed, err
+	}
+	current, err := s.CurrentWatchResourceSnapshots(ctx, repositoryID)
+	if err != nil {
+		return changed, err
+	}
+	for key, next := range current {
+		if next.OwnerType != next.ResourceType {
+			continue
+		}
+		if next.ResourceType != "file" && next.ResourceType != "symbol" {
+			continue
+		}
+		prev, ok := previous[key]
+		if !ok || prev.Hash == next.Hash {
+			continue
+		}
+		switch next.ResourceType {
+		case "file":
+			changed.Files[next.OwnerKey] = struct{}{}
+		case "symbol":
+			if next.ResourceID != nil {
+				changed.Symbols[*next.ResourceID] = "changed since latest watch version"
+			}
+		}
+	}
+	return changed, nil
+}
+
+func (s *Store) FileLanguages(ctx context.Context, repositoryID int64) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT path, language FROM watch_files WHERE repository_id = ?`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var path, language string
+		if err := rows.Scan(&path, &language); err != nil {
+			return nil, err
+		}
+		out[path] = language
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, representationHash string) ([]RepresentationDiff, error) {
 	current, err := s.CurrentWatchResourceSnapshots(ctx, repositoryID)
 	if err != nil {
@@ -1808,6 +1868,8 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 			return nil, err
 		}
 	}
+	previousBaseline := cloneWatchResourceSnapshots(previous)
+	lineDiffs := s.gitLineDiffsAgainstHead(ctx, repositoryID)
 	var diffs []RepresentationDiff
 	repoKey := fmt.Sprintf("%d", repositoryID)
 	repoSummary := "Representation added"
@@ -1820,18 +1882,31 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 	for key, next := range current {
 		prev, ok := previous[key]
 		if !ok {
-			diffs = append(diffs, snapshotDiff(next, "added", nil, &next.Hash, nil))
+			if prevRaw, rawOK := previousRawSnapshotForMaterialized(previousBaseline, current, next); rawOK {
+				before, after := prevRaw.Hash, next.Hash
+				diff := snapshotDiff(next, "updated", &before, &after, &prevRaw)
+				applyGitLineDiff(&diff, next, lineDiffs)
+				diffs = append(diffs, diff)
+				continue
+			}
+			diff := snapshotDiff(next, "added", nil, &next.Hash, nil)
+			applyGitLineDiff(&diff, next, lineDiffs)
+			diffs = append(diffs, diff)
 			continue
 		}
 		if prev.Hash != next.Hash || ptrInt64Value(prev.ResourceID) != ptrInt64Value(next.ResourceID) {
 			before, after := prev.Hash, next.Hash
-			diffs = append(diffs, snapshotDiff(next, "updated", &before, &after, &prev))
+			diff := snapshotDiff(next, "updated", &before, &after, &prev)
+			applyGitLineDiff(&diff, next, lineDiffs)
+			diffs = append(diffs, diff)
 		}
 		delete(previous, key)
 	}
 	for _, prev := range previous {
 		before := prev.Hash
-		diffs = append(diffs, snapshotDiff(prev, "deleted", &before, nil, nil))
+		diff := snapshotDiff(prev, "deleted", &before, nil, nil)
+		applyGitLineDiff(&diff, prev, lineDiffs)
+		diffs = append(diffs, diff)
 	}
 	sort.Slice(diffs, func(i, j int) bool {
 		if diffs[i].OwnerType == diffs[j].OwnerType {
@@ -1840,6 +1915,14 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 		return diffs[i].OwnerType < diffs[j].OwnerType
 	})
 	return diffs, nil
+}
+
+func cloneWatchResourceSnapshots(in map[string]watchResourceSnapshot) map[string]watchResourceSnapshot {
+	out := make(map[string]watchResourceSnapshot, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 func (s *Store) CurrentWatchResourceSnapshots(ctx context.Context, repositoryID int64) (map[string]watchResourceSnapshot, error) {
@@ -2037,6 +2120,73 @@ func snapshotDiff(snapshot watchResourceSnapshot, changeType string, beforeHash,
 	language := snapshot.Language
 	addedLines, removedLines := lineDelta(changeType, snapshot.LineCount, previous)
 	return RepresentationDiff{OwnerType: snapshot.OwnerType, OwnerKey: snapshot.OwnerKey, ChangeType: changeType, BeforeHash: beforeHash, AfterHash: afterHash, ResourceType: &resourceType, ResourceID: snapshot.ResourceID, Language: &language, Summary: &summary, AddedLines: addedLines, RemovedLines: removedLines}
+}
+
+func previousRawSnapshotForMaterialized(previous, current map[string]watchResourceSnapshot, snapshot watchResourceSnapshot) (watchResourceSnapshot, bool) {
+	if snapshot.ResourceType != "element" {
+		return watchResourceSnapshot{}, false
+	}
+	rawType := ""
+	rawOwnerKey := snapshot.OwnerKey
+	switch snapshot.OwnerType {
+	case "file":
+		rawType = "file"
+		rawOwnerKey = strings.TrimPrefix(snapshot.OwnerKey, "file:")
+	case "symbol":
+		rawType = "symbol"
+	default:
+		return watchResourceSnapshot{}, false
+	}
+	rawKey := resourceSnapshotKey(snapshot.OwnerType, rawOwnerKey, rawType)
+	prev, ok := previous[rawKey]
+	if !ok {
+		return watchResourceSnapshot{}, false
+	}
+	next, ok := current[rawKey]
+	if !ok || prev.Hash == next.Hash {
+		return watchResourceSnapshot{}, false
+	}
+	return prev, true
+}
+
+func (s *Store) gitLineDiffsAgainstHead(ctx context.Context, repositoryID int64) map[string]tldgit.LineDiff {
+	repo, err := s.Repository(ctx, repositoryID)
+	if err != nil || strings.TrimSpace(repo.RepoRoot) == "" {
+		return nil
+	}
+	diffs, err := tldgit.LineDiffsAgainstHead(repo.RepoRoot)
+	if err != nil {
+		return nil
+	}
+	return diffs
+}
+
+func applyGitLineDiff(diff *RepresentationDiff, snapshot watchResourceSnapshot, lineDiffs map[string]tldgit.LineDiff) {
+	if diff == nil || len(lineDiffs) == 0 || diff.ChangeType != "updated" {
+		return
+	}
+	file := snapshotDiffFilePath(snapshot)
+	if file == "" {
+		return
+	}
+	lineDiff, ok := lineDiffs[file]
+	if !ok {
+		return
+	}
+	diff.AddedLines = lineDiff.Added
+	diff.RemovedLines = lineDiff.Removed
+}
+
+func snapshotDiffFilePath(snapshot watchResourceSnapshot) string {
+	switch snapshot.OwnerType {
+	case "file":
+		return strings.TrimPrefix(snapshot.OwnerKey, "file:")
+	case "symbol":
+		if file, ok := filePathFromStableKey(snapshot.OwnerKey); ok {
+			return file
+		}
+	}
+	return ""
 }
 
 func materializedLineCount(ctx context.Context, db *sql.DB, repositoryID int64, ownerType, ownerKey, filePath string) int {
