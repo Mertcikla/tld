@@ -1066,8 +1066,7 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
               onFocusChange(null)
             }}
             style={{
-              background: 'var(--bg-canvas)',
-              boxShadow: 'inset 0 0 100px rgba(0,0,0,0.6)'
+              background: 'var(--bg-canvas)'
             }}
           >
             {/* Micro dots for high precision technical feel */}

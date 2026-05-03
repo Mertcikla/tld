@@ -877,15 +877,10 @@ export const api = {
               offset: params.offset ?? 0,
               search: params.search ?? '',
             }).then((res) => {
-              const json = j<{
-                elements: Record<string, unknown>[]
-                pagination?: { totalCount?: number; total_count?: number }
-              }>(ListElementsResponseSchema, res)
+              const json = j<{ elements: Record<string, unknown>[] }>(ListElementsResponseSchema, res)
               return {
                 elements: (json.elements ?? []).map(protoElementToLibrary),
-                totalCount: json.pagination
-                  ? Number(json.pagination.totalCount ?? json.pagination.total_count ?? 0)
-                  : undefined,
+                totalCount: res.pagination ? Number(res.pagination.totalCount) : undefined,
               }
             }),
             dependencyConnectorsCache,
