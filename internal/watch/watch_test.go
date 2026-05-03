@@ -1880,7 +1880,7 @@ func TestStatusEndpointReportsActiveWatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, 1234, "token", LockHeartbeatTimeout); err != nil {
+	if _, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, os.Getpid(), "token", LockHeartbeatTimeout); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1904,6 +1904,67 @@ func TestStatusEndpointReportsActiveWatch(t *testing.T) {
 	}
 }
 
+func TestAcquireLockReplacesDeadProcessLock(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalProcessCheck := watchProcessIsRunning
+	t.Cleanup(func() { watchProcessIsRunning = originalProcessCheck })
+	watchProcessIsRunning = func(pid int) bool { return pid == os.Getpid() }
+
+	if _, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, 999999, "dead-token", LockHeartbeatTimeout); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, os.Getpid(), "live-token", LockHeartbeatTimeout)
+	if err != nil {
+		t.Fatalf("expected dead process lock to be replaced: %v", err)
+	}
+	if lock.Token != "live-token" || lock.PID != os.Getpid() {
+		t.Fatalf("unexpected replacement lock: %+v", lock)
+	}
+}
+
+func TestActiveLiveLockTreatsDeadProcessAsStale(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalProcessCheck := watchProcessIsRunning
+	t.Cleanup(func() { watchProcessIsRunning = originalProcessCheck })
+	watchProcessIsRunning = func(pid int) bool { return false }
+
+	if _, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, 999999, "dead-token", LockHeartbeatTimeout); err != nil {
+		t.Fatal(err)
+	}
+	lock, live, err := store.ActiveLiveLock(context.Background(), LockHeartbeatTimeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live || lock.Token != "dead-token" {
+		t.Fatalf("expected dead process lock to be non-live: live=%v lock=%+v", live, lock)
+	}
+	status, err := store.LockStatus(context.Background(), scanResult.RepositoryID, "dead-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "stale" {
+		t.Fatalf("expected stale lock, got %q", status)
+	}
+}
+
 func TestRequestStopActiveStopsCurrentLock(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -1915,7 +1976,7 @@ func TestRequestStopActiveStopsCurrentLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, 1234, "token", LockHeartbeatTimeout); err != nil {
+	if _, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, os.Getpid(), "token", LockHeartbeatTimeout); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RequestStopActive(context.Background()); err != nil {
@@ -1941,7 +2002,7 @@ func TestPauseResumeActiveLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, 1234, "token", LockHeartbeatTimeout); err != nil {
+	if _, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, os.Getpid(), "token", LockHeartbeatTimeout); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.RequestPauseActive(context.Background()); err != nil {

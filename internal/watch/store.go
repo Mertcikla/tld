@@ -1363,7 +1363,9 @@ func (s *Store) AcquireLock(ctx context.Context, repositoryID int64, pid int, to
 	}
 	now := nowString()
 	cutoff := time.Now().UTC().Add(-staleAfter).Format(time.RFC3339)
-	_, _ = s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stale' WHERE status IN ('active', 'paused', 'stopping') AND heartbeat_at < ?`, cutoff)
+	if err := s.markStaleLocks(ctx, cutoff); err != nil {
+		return Lock{}, err
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO watch_locks(id, repository_id, pid, token, started_at, heartbeat_at, status)
 		VALUES (1, ?, ?, ?, ?, ?, 'active')
@@ -1389,6 +1391,43 @@ func (s *Store) AcquireLock(ctx context.Context, repositoryID int64, pid int, to
 	return lock, nil
 }
 
+func (s *Store) markStaleLocks(ctx context.Context, cutoff string) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stale' WHERE status IN ('active', 'paused', 'stopping') AND heartbeat_at < ?`, cutoff); err != nil {
+		return err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, pid
+		FROM watch_locks
+		WHERE status IN ('active', 'paused', 'stopping')`)
+	if err != nil {
+		return err
+	}
+	var staleIDs []int64
+	for rows.Next() {
+		var id int64
+		var pid int
+		if err := rows.Scan(&id, &pid); err != nil {
+			return err
+		}
+		if !watchProcessIsRunning(pid) {
+			staleIDs = append(staleIDs, id)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, id := range staleIDs {
+		if _, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stale' WHERE id = ? AND status IN ('active', 'paused', 'stopping')`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) ActiveLock(ctx context.Context) (Lock, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, repository_id, pid, token, started_at, heartbeat_at, status
@@ -1411,7 +1450,8 @@ func (s *Store) ActiveLiveLock(ctx context.Context, staleAfter time.Duration) (L
 		return Lock{}, false, err
 	}
 	heartbeat, err := time.Parse(time.RFC3339, lock.HeartbeatAt)
-	if err != nil || time.Since(heartbeat) > staleAfter || lock.Status == "stale" || lock.Status == "released" {
+	if err != nil || time.Since(heartbeat) > staleAfter || !watchProcessIsRunning(lock.PID) || lock.Status == "stale" || lock.Status == "released" {
+		_, _ = s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stale' WHERE id = ? AND status IN ('active', 'paused', 'stopping')`, lock.ID)
 		return lock, false, nil
 	}
 	return lock, true, nil
