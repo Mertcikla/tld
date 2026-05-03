@@ -448,10 +448,17 @@ func (s *Scanner) collectSourceFilesUnder(root, start string, rules *ignore.Rule
 func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath, language string, source []byte, symbols []analyzer.Symbol) []Symbol {
 	out := make([]Symbol, 0, len(symbols))
 	lines := strings.Split(string(source), "\n")
+	baseKeyCounts := make(map[string]int, len(symbols))
 	for _, sym := range symbols {
-		qualified := sym.Name
-		if sym.Parent != "" {
-			qualified = sym.Parent + "." + sym.Name
+		baseKeyCounts[watchSymbolStableKey(language, relPath, sym)]++
+	}
+	baseKeySeen := make(map[string]int, len(baseKeyCounts))
+	for _, sym := range symbols {
+		qualified := watchSymbolQualifiedName(sym)
+		stableKey := watchSymbolStableKey(language, relPath, sym)
+		if baseKeyCounts[stableKey] > 1 {
+			baseKeySeen[stableKey]++
+			stableKey = fmt.Sprintf("%s:line:%d:ordinal:%d", stableKey, sym.Line, baseKeySeen[stableKey])
 		}
 		endLine := sym.EndLine
 		if endLine <= 0 {
@@ -464,7 +471,7 @@ func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath, language stri
 			RepositoryID:  repositoryID,
 			FileID:        fileID,
 			FilePath:      relPath,
-			StableKey:     fmt.Sprintf("%s:%s:%s:%s", language, relPath, sym.Kind, qualified),
+			StableKey:     stableKey,
 			Name:          sym.Name,
 			QualifiedName: qualified,
 			Kind:          sym.Kind,
@@ -476,6 +483,17 @@ func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath, language stri
 		})
 	}
 	return out
+}
+
+func watchSymbolQualifiedName(sym analyzer.Symbol) string {
+	if sym.Parent == "" {
+		return sym.Name
+	}
+	return sym.Parent + "." + sym.Name
+}
+
+func watchSymbolStableKey(language, relPath string, sym analyzer.Symbol) string {
+	return fmt.Sprintf("%s:%s:%s:%s", language, relPath, sym.Kind, watchSymbolQualifiedName(sym))
 }
 
 func normalizeSymbolContent(body, name, qualified string) string {

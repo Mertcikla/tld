@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mertcikla/tld/internal/analyzer"
 	tldgit "github.com/mertcikla/tld/internal/git"
 	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
@@ -1972,6 +1973,46 @@ func TestClusterStableKeyIsDeterministic(t *testing.T) {
 	right := stableClusterKey(42, "pkg", "settings", []string{"b", "c", "a"})
 	if left != right {
 		t.Fatalf("stable cluster key changed with member order: %s != %s", left, right)
+	}
+}
+
+func TestWatchSymbolsFromAnalyzerKeepsSameNameMethodsDistinct(t *testing.T) {
+	source := []byte(`package main
+
+func (p *Page) Render() {}
+func (c *Card) Render() {}
+`)
+	symbols := watchSymbolsFromAnalyzer(1, 2, "view.go", "go", source, []analyzer.Symbol{
+		{Name: "Render", Kind: "method", Parent: "Page", Line: 3, EndLine: 3},
+		{Name: "Render", Kind: "method", Parent: "Card", Line: 4, EndLine: 4},
+	})
+	if len(symbols) != 2 {
+		t.Fatalf("symbols = %d, want 2", len(symbols))
+	}
+	if symbols[0].StableKey == symbols[1].StableKey {
+		t.Fatalf("stable keys collided: %+v", symbols)
+	}
+	if symbols[0].QualifiedName != "Page.Render" || symbols[1].QualifiedName != "Card.Render" {
+		t.Fatalf("qualified names = %q, %q", symbols[0].QualifiedName, symbols[1].QualifiedName)
+	}
+}
+
+func TestWatchSymbolsFromAnalyzerDisambiguatesDuplicateKeys(t *testing.T) {
+	source := []byte("void render();\nvoid render(int value);\n")
+	symbols := watchSymbolsFromAnalyzer(1, 2, "view.h", "cpp", source, []analyzer.Symbol{
+		{Name: "render", Kind: "function", Line: 1, EndLine: 1},
+		{Name: "render", Kind: "function", Line: 2, EndLine: 2},
+	})
+	if len(symbols) != 2 {
+		t.Fatalf("symbols = %d, want 2", len(symbols))
+	}
+	if symbols[0].StableKey == symbols[1].StableKey {
+		t.Fatalf("stable keys collided: %+v", symbols)
+	}
+	for _, sym := range symbols {
+		if sym.QualifiedName != "render" {
+			t.Fatalf("qualified name = %q, want render", sym.QualifiedName)
+		}
 	}
 }
 

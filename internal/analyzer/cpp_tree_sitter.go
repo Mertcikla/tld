@@ -20,6 +20,7 @@ func (p *cppParser) ParseFile(ctx context.Context, path string, source []byte) (
 	result := &Result{}
 	root := parsed.tree.RootNode()
 	p.walkNode(root, parsed.lang, source, path, "", result)
+	p.appendTopLevelFunctionDeclarations(source, path, result)
 	return result, nil
 }
 
@@ -90,15 +91,12 @@ func (p *cppParser) appendFunction(node *gotreesitter.Node, lang *gotreesitter.L
 }
 
 func (p *cppParser) appendMemberDeclaration(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte, path, parent string, result *Result) {
-	if parent == "" {
-		return
-	}
 	declarator := childByFieldName(node, lang, "declarator")
-	if !cppHasFunctionDeclarator(declarator, lang) {
-		return
-	}
 	name, owner := cppFunctionInfo(declarator, source)
-	if name == "" {
+	if name == "" && parent == "" {
+		name, owner = cppDeclarationInfo(node, source)
+	}
+	if name == "" || (!cppHasFunctionDeclarator(declarator, lang) && parent != "") {
 		return
 	}
 	owner = cppResolveOwner(owner, parent)
@@ -137,6 +135,72 @@ func cppFunctionInfo(declarator *gotreesitter.Node, source []byte) (string, stri
 	if text == "" || !strings.Contains(text, "(") {
 		return "", ""
 	}
+	return cppFunctionName(text), cppFunctionOwner(text)
+}
+
+func cppDeclarationInfo(node *gotreesitter.Node, source []byte) (string, string) {
+	if node == nil {
+		return "", ""
+	}
+	text := strings.TrimSpace(nodeText(node, source))
+	if !cppLooksLikeTopLevelFunctionDeclaration(text) {
+		return "", ""
+	}
+	return cppDeclarationInfoFromText(text)
+}
+
+func cppLooksLikeTopLevelFunctionDeclaration(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" || !strings.HasSuffix(text, ";") || !strings.Contains(text, "(") || strings.Contains(text, "=") || strings.Contains(text, "(*") {
+		return false
+	}
+	if beforeCall := cppBeforeCall(text); strings.Contains(beforeCall, "{") || strings.Contains(beforeCall, "}") {
+		return false
+	}
+	lower := strings.ToLower(text)
+	for _, prefix := range []string{"typedef ", "if ", "if(", "for ", "for(", "while ", "while(", "switch ", "switch(", "return "} {
+		if strings.HasPrefix(lower, prefix) {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *cppParser) appendTopLevelFunctionDeclarations(source []byte, path string, result *Result) {
+	seen := make(map[string]struct{}, len(result.Symbols))
+	for _, sym := range result.Symbols {
+		seen[fmt.Sprintf("%s:%s:%d", sym.Kind, sym.Name, sym.Line)] = struct{}{}
+	}
+	depth := 0
+	for index, line := range strings.Split(string(source), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if depth == 0 && cppLooksLikeTopLevelFunctionDeclaration(trimmed) {
+			name, owner := cppDeclarationInfoFromText(trimmed)
+			if name != "" {
+				kind := cppFunctionKind(name, owner)
+				key := fmt.Sprintf("%s:%s:%d", kind, name, index+1)
+				if _, ok := seen[key]; !ok {
+					result.Symbols = append(result.Symbols, Symbol{
+						Name:     name,
+						Kind:     kind,
+						FilePath: path,
+						Line:     index + 1,
+						EndLine:  index + 1,
+						Parent:   owner,
+					})
+					seen[key] = struct{}{}
+				}
+			}
+		}
+		depth += strings.Count(line, "{")
+		depth -= strings.Count(line, "}")
+		if depth < 0 {
+			depth = 0
+		}
+	}
+}
+
+func cppDeclarationInfoFromText(text string) (string, string) {
 	return cppFunctionName(text), cppFunctionOwner(text)
 }
 
