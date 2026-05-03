@@ -273,7 +273,7 @@ func TestNormalizeSettingsFiltersLanguagesAndDefaultsDurations(t *testing.T) {
 			MaxElementsPerView: 4,
 		},
 	})
-	if strings.Join(settings.Languages, ",") != "go,typescript" {
+	if strings.Join(settings.Languages, ",") != "go,rust,typescript" {
 		t.Fatalf("unexpected normalized languages: %#v", settings.Languages)
 	}
 	if settings.Watcher != WatcherAuto {
@@ -286,7 +286,7 @@ func TestNormalizeSettingsFiltersLanguagesAndDefaultsDurations(t *testing.T) {
 		t.Fatalf("expected provided threshold plus defaults, got %+v", settings.Thresholds)
 	}
 
-	fallback := NormalizeSettings(Settings{Languages: []string{"rust", "bogus"}})
+	fallback := NormalizeSettings(Settings{Languages: []string{"bogus"}})
 	if len(fallback.Languages) == 0 || !languageAllowed("go", languageSet(fallback.Languages)) {
 		t.Fatalf("invalid-only language list should fall back to defaults, got %#v", fallback.Languages)
 	}

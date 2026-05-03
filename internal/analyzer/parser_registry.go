@@ -16,6 +16,7 @@ type parserRegistry struct {
 func newDefaultParserRegistry() *parserRegistry {
 	return &parserRegistry{
 		parsers: map[Language]fileParser{
+			LanguageC:          &cppParser{},
 			LanguageCPP:        &cppParser{},
 			LanguageGo:         &goParser{},
 			LanguageJava:       &javaParser{},

@@ -17,9 +17,6 @@ const (
 func DefaultSettings() Settings {
 	langs := make([]string, 0, len(analyzer.SupportedLanguages()))
 	for _, spec := range analyzer.SupportedLanguages() {
-		if spec.Language == analyzer.LanguageRust {
-			continue
-		}
 		langs = append(langs, string(spec.Language))
 	}
 	sort.Strings(langs)
@@ -62,9 +59,6 @@ func normalizeLanguages(values []string) []string {
 	for _, value := range values {
 		lang := strings.ToLower(strings.TrimSpace(value))
 		if lang == "" {
-			continue
-		}
-		if analyzer.Language(lang) == analyzer.LanguageRust {
 			continue
 		}
 		if _, ok := analyzer.LanguageSpecFor(analyzer.Language(lang)); !ok {
