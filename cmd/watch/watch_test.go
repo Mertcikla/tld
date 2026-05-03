@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	assets "github.com/mertcikla/tld"
 	"github.com/mertcikla/tld/internal/localserver"
 	storepkg "github.com/mertcikla/tld/internal/store"
+	watchpkg "github.com/mertcikla/tld/internal/watch"
 	"github.com/mertcikla/tld/internal/workspace"
 )
 
@@ -183,6 +185,116 @@ func Main() {}
 	if err := json.NewDecoder(strings.NewReader(out.String())).Decode(&driftPayload); err != nil || !driftPayload.Changed {
 		t.Fatalf("fail-on-drift should print a JSON payload before usage text, payload=%+v err=%v output=%q", driftPayload, err, out.String())
 	}
+}
+
+func TestWatchDryRunPrintsSameDiffPayloadAsDiffCommand(t *testing.T) {
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+	dataDir := t.TempDir()
+
+	dryRunCmd := NewWatchCmd()
+	var dryRunOut bytes.Buffer
+	dryRunCmd.SetOut(&dryRunOut)
+	dryRunCmd.SetErr(&dryRunOut)
+	dryRunCmd.SetArgs([]string{"--dry-run", repo, "--data-dir", dataDir, "--embedding-provider", "none"})
+	if err := dryRunCmd.Execute(); err != nil {
+		t.Fatalf("watch --dry-run command: %v\n%s", err, dryRunOut.String())
+	}
+	var dryRunPayload struct {
+		Changed bool                          `json:"changed"`
+		Diffs   []watchpkg.RepresentationDiff `json:"diffs"`
+	}
+	if err := json.Unmarshal(dryRunOut.Bytes(), &dryRunPayload); err != nil {
+		t.Fatalf("invalid dry-run JSON output %q: %v", dryRunOut.String(), err)
+	}
+	if !dryRunPayload.Changed || len(dryRunPayload.Diffs) == 0 {
+		t.Fatalf("unexpected dry-run payload: %+v\n%s", dryRunPayload, dryRunOut.String())
+	}
+	if strings.Contains(dryRunOut.String(), "Watching") {
+		t.Fatalf("dry-run should exit after printing JSON, got watch output:\n%s", dryRunOut.String())
+	}
+
+	diffCmd := NewWatchCmd()
+	var diffOut bytes.Buffer
+	diffCmd.SetOut(&diffOut)
+	diffCmd.SetErr(&diffOut)
+	diffCmd.SetArgs([]string{"diff", repo, "--data-dir", dataDir, "--embedding-provider", "none"})
+	if err := diffCmd.Execute(); err != nil {
+		t.Fatalf("watch diff command: %v\n%s", err, diffOut.String())
+	}
+	var diffPayload struct {
+		Diffs []watchpkg.RepresentationDiff `json:"diffs"`
+	}
+	if err := json.Unmarshal(diffOut.Bytes(), &diffPayload); err != nil {
+		t.Fatalf("invalid diff JSON output %q: %v", diffOut.String(), err)
+	}
+	if !sameDiffPayload(dryRunPayload.Diffs, diffPayload.Diffs) {
+		t.Fatalf("watch --dry-run diffs should match watch diff diffs\n dry-run: %+v\n diff: %+v", dryRunPayload.Diffs, diffPayload.Diffs)
+	}
+}
+
+func TestWatchDryRunCleanHeadInitializesWithoutDrift(t *testing.T) {
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+	dataDir := t.TempDir()
+
+	cmd := NewWatchCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--dry-run", repo, "--data-dir", dataDir, "--embedding-provider", "none"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("watch --dry-run command: %v\n%s", err, out.String())
+	}
+	var payload struct {
+		Changed bool `json:"changed"`
+		Diffs   []struct {
+			ChangeType   string  `json:"change_type"`
+			ResourceType *string `json:"resource_type"`
+		} `json:"diffs"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatalf("invalid dry-run JSON output %q: %v", out.String(), err)
+	}
+	if payload.Changed {
+		t.Fatalf("clean HEAD dry-run should initialize without drift, got %+v", payload)
+	}
+	for _, diff := range payload.Diffs {
+		if diff.ResourceType != nil && diff.ChangeType == "added" {
+			t.Fatalf("clean HEAD dry-run should not include added resource diffs, got %+v", payload.Diffs)
+		}
+	}
+}
+
+func sameDiffPayload(a, b []watchpkg.RepresentationDiff) bool {
+	canonical := func(diffs []watchpkg.RepresentationDiff) []string {
+		out := make([]string, 0, len(diffs))
+		for _, diff := range diffs {
+			data, _ := json.Marshal(diff)
+			out = append(out, string(data))
+		}
+		sort.Strings(out)
+		return out
+	}
+	left := canonical(a)
+	right := canonical(b)
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestResolveEmbeddingConfigPrecedence(t *testing.T) {

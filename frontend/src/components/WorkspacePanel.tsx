@@ -106,8 +106,8 @@ function versionLabel(version: WatchVersion) {
 
 function changeLabel(diffs: WatchDiff[]) {
   const summary = summarizeWatchDiffs(diffs)
-  const total = summary.elements.added + summary.elements.updated + summary.elements.deleted + summary.elements.changed +
-    summary.connectors.added + summary.connectors.updated + summary.connectors.deleted + summary.connectors.changed
+  const total = summary.elements.added + summary.elements.updated + summary.elements.deleted + summary.elements.initialized +
+    summary.connectors.added + summary.connectors.updated + summary.connectors.deleted + summary.connectors.initialized
   return total > 0 ? formatTldStatLine(summary) : 'No materialized changes'
 }
 
@@ -334,9 +334,9 @@ export default function WorkspacePanel() {
   const activeVersion = preview?.version ?? selectedVersion
   const activeRepo = preview?.repository ?? selectedRepo
   const diffSummary = useMemo(() => summarizeWatchDiffs(diffs), [diffs])
-  const totalFileChanges = diffSummary.files.added + diffSummary.files.updated + diffSummary.files.deleted + diffSummary.files.changed
-  const totalTldChanges = diffSummary.elements.added + diffSummary.elements.updated + diffSummary.elements.deleted + diffSummary.elements.changed +
-    diffSummary.connectors.added + diffSummary.connectors.updated + diffSummary.connectors.deleted + diffSummary.connectors.changed
+  const totalFileChanges = diffSummary.files.added + diffSummary.files.updated + diffSummary.files.deleted + diffSummary.files.initialized
+  const totalTldChanges = diffSummary.elements.added + diffSummary.elements.updated + diffSummary.elements.deleted + diffSummary.elements.initialized +
+    diffSummary.connectors.added + diffSummary.connectors.updated + diffSummary.connectors.deleted + diffSummary.connectors.initialized
   const activeDiffLocation = activeDiffLocationIndex >= 0 ? navigableDiffLocations[activeDiffLocationIndex] : null
 
   // ── Watch state ───────────────────────────────────────────────────────────

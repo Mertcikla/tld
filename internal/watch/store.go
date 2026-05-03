@@ -1870,10 +1870,11 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 	}
 	previousBaseline := cloneWatchResourceSnapshots(previous)
 	lineDiffs := s.gitLineDiffsAgainstHead(ctx, repositoryID)
+	worktreeChanges := s.gitWorktreeChangesAgainstHead(ctx, repositoryID)
 	var diffs []RepresentationDiff
 	repoKey := fmt.Sprintf("%d", repositoryID)
-	repoSummary := "Representation added"
-	change := "added"
+	repoSummary := "Representation initialized"
+	change := "initialized"
 	if found {
 		change = "updated"
 		repoSummary = "Representation updated"
@@ -1889,7 +1890,11 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 				diffs = append(diffs, diff)
 				continue
 			}
-			diff := snapshotDiff(next, "added", nil, &next.Hash, nil)
+			changeType := "added"
+			if !found {
+				changeType = initialSnapshotChangeType(next, worktreeChanges)
+			}
+			diff := snapshotDiff(next, changeType, nil, &next.Hash, nil)
 			applyGitLineDiff(&diff, next, lineDiffs)
 			diffs = append(diffs, diff)
 			continue
@@ -1915,6 +1920,29 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 		return diffs[i].OwnerType < diffs[j].OwnerType
 	})
 	return diffs, nil
+}
+
+func initialSnapshotChangeType(snapshot watchResourceSnapshot, changes map[string]tldgit.WorktreeChange) string {
+	if len(changes) == 0 {
+		return "initialized"
+	}
+	paths := snapshotDiffFilePaths(snapshot)
+	if len(paths) == 0 {
+		return "initialized"
+	}
+	hasUpdated := false
+	for _, path := range paths {
+		switch changes[path] {
+		case tldgit.WorktreeAdded:
+			return "added"
+		case tldgit.WorktreeUpdated:
+			hasUpdated = true
+		}
+	}
+	if hasUpdated {
+		return "updated"
+	}
+	return "initialized"
 }
 
 func cloneWatchResourceSnapshots(in map[string]watchResourceSnapshot) map[string]watchResourceSnapshot {
@@ -2161,6 +2189,18 @@ func (s *Store) gitLineDiffsAgainstHead(ctx context.Context, repositoryID int64)
 	return diffs
 }
 
+func (s *Store) gitWorktreeChangesAgainstHead(ctx context.Context, repositoryID int64) map[string]tldgit.WorktreeChange {
+	repo, err := s.Repository(ctx, repositoryID)
+	if err != nil || strings.TrimSpace(repo.RepoRoot) == "" {
+		return nil
+	}
+	changes, err := tldgit.WorktreeChangesAgainstHead(repo.RepoRoot)
+	if err != nil {
+		return nil
+	}
+	return changes
+}
+
 func applyGitLineDiff(diff *RepresentationDiff, snapshot watchResourceSnapshot, lineDiffs map[string]tldgit.LineDiff) {
 	if diff == nil || len(lineDiffs) == 0 || diff.ChangeType != "updated" {
 		return
@@ -2178,15 +2218,63 @@ func applyGitLineDiff(diff *RepresentationDiff, snapshot watchResourceSnapshot, 
 }
 
 func snapshotDiffFilePath(snapshot watchResourceSnapshot) string {
+	paths := snapshotDiffFilePaths(snapshot)
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
+}
+
+func snapshotDiffFilePaths(snapshot watchResourceSnapshot) []string {
 	switch snapshot.OwnerType {
 	case "file":
-		return strings.TrimPrefix(snapshot.OwnerKey, "file:")
+		if path := strings.TrimPrefix(snapshot.OwnerKey, "file:"); strings.TrimSpace(path) != "" {
+			return []string{filepathToSlash(path)}
+		}
 	case "symbol":
 		if file, ok := filePathFromStableKey(snapshot.OwnerKey); ok {
-			return file
+			return []string{file}
+		}
+	case "file-reference":
+		return filePairPaths(strings.TrimPrefix(snapshot.OwnerKey, "file:"))
+	case "reference":
+		return referenceOwnerPaths(snapshot.OwnerKey)
+	}
+	return nil
+}
+
+func filePairPaths(value string) []string {
+	parts := strings.Split(value, "->")
+	if len(parts) != 2 {
+		return nil
+	}
+	var out []string
+	for _, part := range parts {
+		if path := filepathToSlash(strings.TrimSpace(part)); path != "" {
+			out = append(out, path)
 		}
 	}
-	return ""
+	return out
+}
+
+func referenceOwnerPaths(ownerKey string) []string {
+	ownerKey = strings.TrimPrefix(ownerKey, "symbol:")
+	parts := strings.Split(ownerKey, ":")
+	seen := map[string]struct{}{}
+	var out []string
+	for i := 0; i+3 < len(parts); i++ {
+		candidate := strings.Join(parts[i:i+4], ":")
+		path, ok := filePathFromStableKey(candidate)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[path]; exists {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	return out
 }
 
 func materializedLineCount(ctx context.Context, db *sql.DB, repositoryID int64, ownerType, ownerKey, filePath string) int {

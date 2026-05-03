@@ -396,6 +396,87 @@ func other() {}
 	}
 }
 
+func TestInitialWatchDiffsUseInitializedForCleanHeadResources(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, rep.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findDiffByOwner(diffs, "file", "main.go", "file", "initialized") == nil {
+		t.Fatalf("expected clean HEAD file to be initialized, got %+v", diffs)
+	}
+	if hasDiff(diffs, "file", "added") || hasDiff(diffs, "symbol", "added") || hasDiff(diffs, "element", "added") {
+		t.Fatalf("clean HEAD initial diff should not mark resources added, got %+v", diffs)
+	}
+}
+
+func TestInitialWatchDiffsClassifyWorktreeChangesAgainstHead(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+	writeFile(t, repo, "untouched.go", `package main
+
+func Untouched() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+func Dirty() {}
+`)
+	writeFile(t, repo, "new.go", `package main
+
+func NewFile() {}
+`)
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, rep.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if findDiffByOwner(diffs, "file", "main.go", "file", "updated") == nil {
+		t.Fatalf("expected modified tracked file to be updated, got %+v", diffs)
+	}
+	if findDiffByOwner(diffs, "file", "new.go", "file", "added") == nil {
+		t.Fatalf("expected untracked file to be added, got %+v", diffs)
+	}
+	if findDiffByOwner(diffs, "file", "untouched.go", "file", "initialized") == nil {
+		t.Fatalf("expected untouched tracked file to be initialized, got %+v", diffs)
+	}
+}
+
 func TestWatchDiffsIncludeElementLineDeltas(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()

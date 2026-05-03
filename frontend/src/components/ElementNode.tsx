@@ -155,7 +155,7 @@ interface NodeData extends PlacedElement {
   selectedHandleIds?: readonly string[]
   reconnectCandidates?: readonly { handleId: string; edgeId: string; endpoint: 'source' | 'target'; selected: boolean }[]
   isConnectorHighlighted?: boolean
-  versionChangeType?: 'added' | 'updated' | 'deleted' | 'changed'
+  versionChangeType?: 'added' | 'updated' | 'deleted' | 'initialized'
   versionLineDelta?: { added: number; removed: number }
 }
 

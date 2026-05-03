@@ -1,13 +1,13 @@
 import type { Connector, ExploreData, ViewTreeNode } from '../types'
 import type { WatchDiff } from '../api/client'
 
-export type WatchChangeType = 'added' | 'updated' | 'deleted' | 'changed'
+export type WatchChangeType = 'added' | 'updated' | 'deleted' | 'initialized'
 
 export interface WatchResourceStat {
   added: number
   updated: number
   deleted: number
-  changed: number
+  initialized: number
   addedLines: number
   removedLines: number
 }
@@ -32,12 +32,12 @@ export interface WatchDiffSummary {
 }
 
 export function normalizeWatchChangeType(value: string): WatchChangeType {
-  if (value === 'added' || value === 'updated' || value === 'deleted') return value
-  return 'changed'
+  if (value === 'added' || value === 'updated' || value === 'deleted' || value === 'initialized') return value
+  return 'updated'
 }
 
 export function emptyWatchResourceStat(): WatchResourceStat {
-  return { added: 0, updated: 0, deleted: 0, changed: 0, addedLines: 0, removedLines: 0 }
+  return { added: 0, updated: 0, deleted: 0, initialized: 0, addedLines: 0, removedLines: 0 }
 }
 
 export function summarizeWatchDiffs(diffs: WatchDiff[] | null | undefined): WatchDiffSummary {
@@ -64,7 +64,7 @@ export function summarizeWatchDiffs(diffs: WatchDiff[] | null | undefined): Watc
 }
 
 export function formatStatLine(label: string, stat: WatchResourceStat): string {
-  const total = stat.added + stat.updated + stat.deleted + stat.changed
+  const total = stat.added + stat.updated + stat.deleted + stat.initialized
   const parts = [`${total} ${label}${total === 1 ? '' : 's'} changed`]
   if (stat.addedLines > 0) parts.push(`+${stat.addedLines}`)
   if (stat.removedLines > 0) parts.push(`-${stat.removedLines}`)
@@ -106,7 +106,7 @@ export function buildWatchDiffLocations(data: ExploreData, diffs: WatchDiff[] | 
         label: placement.name || `element ${placement.element_id}`,
         resourceType: 'element',
         resourceId: placement.element_id,
-        changeType: 'changed',
+        changeType: 'updated',
         addedLines: 0,
         removedLines: 0,
         viewId,
@@ -120,7 +120,7 @@ export function buildWatchDiffLocations(data: ExploreData, diffs: WatchDiff[] | 
         label: connectorName(connector),
         resourceType: 'connector',
         resourceId: connector.id,
-        changeType: 'changed',
+        changeType: 'updated',
         addedLines: 0,
         removedLines: 0,
         viewId,

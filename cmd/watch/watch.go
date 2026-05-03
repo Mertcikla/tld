@@ -31,7 +31,7 @@ func NewWatchCmd() *cobra.Command {
 	var languageFlags []string
 	var watcherMode, pollInterval, debounce string
 	var maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup int
-	var noServe, openBrowser, rescan, verbose bool
+	var noServe, openBrowser, rescan, verbose, dryRun, failOnDrift bool
 	c := &cobra.Command{
 		Use:   "watch [path]",
 		Short: "Scan and materialize source repositories into the local workspace",
@@ -40,6 +40,23 @@ func NewWatchCmd() *cobra.Command {
 			path := "."
 			if len(args) > 0 {
 				path = args[0]
+			}
+			if dryRun {
+				return runWatchDiff(cmd, path, watchDiffOptions{
+					DataDirFlag:        dataDirFlag,
+					EmbeddingProvider:  embeddingProvider,
+					EmbeddingEndpoint:  embeddingEndpoint,
+					EmbeddingModel:     embeddingModel,
+					EmbeddingDimension: embeddingDimension,
+					LanguageFlags:      languageFlags,
+					MaxElements:        maxElements,
+					MaxConnectors:      maxConnectors,
+					MaxIncoming:        maxIncoming,
+					MaxOutgoing:        maxOutgoing,
+					MaxExpandedGroup:   maxExpandedGroup,
+					Rescan:             rescan,
+					FailOnDrift:        failOnDrift,
+				})
 			}
 			cfg, _ := workspace.LoadGlobalConfig()
 			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
@@ -158,6 +175,7 @@ func NewWatchCmd() *cobra.Command {
 	c.Flags().StringVar(&dataDirFlag, "data-dir", "", "directory for the local app database")
 	c.Flags().BoolVar(&noServe, "no-serve", false, "do not start the local app server")
 	c.Flags().BoolVar(&openBrowser, "open", false, "open the webapp in a browser")
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "scan, materialize, print frontend-equivalent watch diffs as JSON, and exit")
 	c.Flags().StringVar(&embeddingProvider, "embedding-provider", "", "embedding provider for representation")
 	c.Flags().StringVar(&embeddingEndpoint, "embedding-endpoint", "", "embedding endpoint for representation")
 	c.Flags().StringVar(&embeddingModel, "embedding-model", "", "embedding model for representation")
@@ -172,6 +190,7 @@ func NewWatchCmd() *cobra.Command {
 	c.Flags().IntVar(&maxOutgoing, "max-outgoing-per-element", 0, "maximum outgoing references per element before collapsing")
 	c.Flags().IntVar(&maxExpandedGroup, "max-expanded-connectors-per-group", 0, "maximum file-pair connectors to expand before collapsing to a folder connector")
 	c.Flags().BoolVar(&rescan, "rescan", false, "force a rescan before watching")
+	c.Flags().BoolVar(&failOnDrift, "fail-on-drift", false, "with --dry-run, exit nonzero when representation drift is detected")
 	c.Flags().BoolVar(&verbose, "verbose", false, "print watch events")
 	c.AddCommand(newScanCmd())
 	c.AddCommand(newRepresentCmd())
@@ -461,53 +480,20 @@ func newDiffCmd() *cobra.Command {
 			if len(args) > 0 {
 				path = args[0]
 			}
-			cfg, _ := workspace.LoadGlobalConfig()
-			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
-			if err != nil {
-				return err
-			}
-			if err := os.MkdirAll(dataDir, 0o755); err != nil {
-				return fmt.Errorf("create data dir: %w", err)
-			}
-			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
-			watchSettings := resolveWatchSettings(cfg, languageFlags, "", "", "", maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup)
-			sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
-			if err != nil {
-				return err
-			}
-			watchStore := watch.NewStore(sqliteStore.DB())
-			scanner := watch.NewScanner(watchStore)
-			scanner.Settings = watchSettings
-			scanResult, err := scanner.ScanWithOptions(cmd.Context(), path, watch.ScanOptions{})
-			if err != nil {
-				return err
-			}
-			result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{Embedding: embeddingCfg, Thresholds: watchSettings.Thresholds})
-			if err != nil {
-				return err
-			}
-			diffs, err := watchStore.BuildWatchDiffs(cmd.Context(), scanResult.RepositoryID, result.RepresentationHash)
-			if err != nil {
-				return err
-			}
-			latest, found, err := watchStore.LatestWatchVersion(cmd.Context(), scanResult.RepositoryID)
-			if err != nil {
-				return err
-			}
-			changed := !found || latest.RepresentationHash != result.RepresentationHash || len(diffs) > 1
-			payload := struct {
-				Changed        bool                       `json:"changed"`
-				Scan           watch.ScanResult           `json:"scan"`
-				Representation watch.RepresentResult      `json:"representation"`
-				Diffs          []watch.RepresentationDiff `json:"diffs"`
-			}{Changed: changed, Scan: scanResult, Representation: result, Diffs: diffs}
-			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(payload); err != nil {
-				return err
-			}
-			if failOnDrift && changed {
-				return fmt.Errorf("watch representation drift detected")
-			}
-			return nil
+			return runWatchDiff(cmd, path, watchDiffOptions{
+				DataDirFlag:        dataDirFlag,
+				EmbeddingProvider:  embeddingProvider,
+				EmbeddingEndpoint:  embeddingEndpoint,
+				EmbeddingModel:     embeddingModel,
+				EmbeddingDimension: embeddingDimension,
+				LanguageFlags:      languageFlags,
+				MaxElements:        maxElements,
+				MaxConnectors:      maxConnectors,
+				MaxIncoming:        maxIncoming,
+				MaxOutgoing:        maxOutgoing,
+				MaxExpandedGroup:   maxExpandedGroup,
+				FailOnDrift:        failOnDrift,
+			})
 		},
 	}
 	c.Flags().StringVar(&dataDirFlag, "data-dir", "", "directory for the local app database")
@@ -523,6 +509,84 @@ func newDiffCmd() *cobra.Command {
 	c.Flags().IntVar(&maxExpandedGroup, "max-expanded-connectors-per-group", 0, "maximum file-pair connectors to expand before collapsing to a folder connector")
 	c.Flags().BoolVar(&failOnDrift, "fail-on-drift", false, "exit nonzero when representation drift is detected")
 	return c
+}
+
+type watchDiffOptions struct {
+	DataDirFlag        string
+	EmbeddingProvider  string
+	EmbeddingEndpoint  string
+	EmbeddingModel     string
+	EmbeddingDimension int
+	LanguageFlags      []string
+	MaxElements        int
+	MaxConnectors      int
+	MaxIncoming        int
+	MaxOutgoing        int
+	MaxExpandedGroup   int
+	Rescan             bool
+	FailOnDrift        bool
+}
+
+type watchDiffPayload struct {
+	Changed        bool                       `json:"changed"`
+	Scan           watch.ScanResult           `json:"scan"`
+	Representation watch.RepresentResult      `json:"representation"`
+	Diffs          []watch.RepresentationDiff `json:"diffs"`
+}
+
+func runWatchDiff(cmd *cobra.Command, path string, opts watchDiffOptions) error {
+	cfg, _ := workspace.LoadGlobalConfig()
+	dataDir, err := workspace.ResolveDataDir(cfg, opts.DataDirFlag)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
+	embeddingCfg := resolveEmbeddingConfig(cfg, opts.EmbeddingProvider, opts.EmbeddingEndpoint, opts.EmbeddingModel, opts.EmbeddingDimension)
+	watchSettings := resolveWatchSettings(cfg, opts.LanguageFlags, "", "", "", opts.MaxElements, opts.MaxConnectors, opts.MaxIncoming, opts.MaxOutgoing, opts.MaxExpandedGroup)
+	sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sqliteStore.DB().Close() }()
+	watchStore := watch.NewStore(sqliteStore.DB())
+	scanner := watch.NewScanner(watchStore)
+	scanner.Settings = watchSettings
+	scanResult, err := scanner.ScanWithOptions(cmd.Context(), path, watch.ScanOptions{Force: opts.Rescan})
+	if err != nil {
+		return err
+	}
+	result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{Embedding: embeddingCfg, Thresholds: watchSettings.Thresholds})
+	if err != nil {
+		return err
+	}
+	diffs, err := watchStore.BuildWatchDiffs(cmd.Context(), scanResult.RepositoryID, result.RepresentationHash)
+	if err != nil {
+		return err
+	}
+	latest, found, err := watchStore.LatestWatchVersion(cmd.Context(), scanResult.RepositoryID)
+	if err != nil {
+		return err
+	}
+	changed := found && latest.RepresentationHash != result.RepresentationHash || hasWatchDriftDiffs(diffs)
+	payload := watchDiffPayload{Changed: changed, Scan: scanResult, Representation: result, Diffs: diffs}
+	if err := json.NewEncoder(cmd.OutOrStdout()).Encode(payload); err != nil {
+		return err
+	}
+	if opts.FailOnDrift && changed {
+		return fmt.Errorf("watch representation drift detected")
+	}
+	return nil
+}
+
+func hasWatchDriftDiffs(diffs []watch.RepresentationDiff) bool {
+	for _, diff := range diffs {
+		if diff.ChangeType != "initialized" && diff.OwnerType != "repository" {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveEmbeddingConfig(cfg *workspace.Config, provider, endpoint, model string, dimension int) watch.EmbeddingConfig {

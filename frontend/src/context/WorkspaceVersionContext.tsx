@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { WatchDiff, WatchRepository, WatchVersion, WorkspaceVersion } from '../api/client'
 import { normalizeWatchChangeType } from '../utils/watchDiffSummary'
 
-export type VersionChangeType = 'added' | 'updated' | 'deleted' | 'changed'
+export type VersionChangeType = 'added' | 'updated' | 'deleted' | 'initialized'
 
 export interface VersionLineDelta {
   added: number
@@ -21,7 +21,7 @@ export interface WorkspaceVersionPreview {
     added: number
     updated: number
     deleted: number
-    changed: number
+    initialized: number
     elements: number
     connectors: number
   }
@@ -56,7 +56,7 @@ export function buildWorkspaceVersionPreview(args: {
   const elementChanges = new Map<number, VersionChangeType>()
   const elementLineDeltas = new Map<number, VersionLineDelta>()
   const connectorChanges = new Map<number, VersionChangeType>()
-  const summary = { added: 0, updated: 0, deleted: 0, changed: 0, elements: 0, connectors: 0 }
+  const summary = { added: 0, updated: 0, deleted: 0, initialized: 0, elements: 0, connectors: 0 }
 
   diffs.forEach((diff) => {
     const change = normalizeWatchChangeType(diff.change_type)

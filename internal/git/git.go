@@ -27,6 +27,14 @@ type LineDiff struct {
 	Removed int
 }
 
+type WorktreeChange string
+
+const (
+	WorktreeAdded   WorktreeChange = "added"
+	WorktreeUpdated WorktreeChange = "updated"
+	WorktreeDeleted WorktreeChange = "deleted"
+)
+
 // DetectBranch returns the current branch name for the git repo rooted at dir.
 func DetectBranch(dir string) (string, error) {
 	out, err := run(dir, "branch", "--show-current")
@@ -153,6 +161,60 @@ func StatusSnapshot(dir string) (Status, error) {
 		}
 	}
 	return status, nil
+}
+
+func WorktreeChangesAgainstHead(dir string) (map[string]WorktreeChange, error) {
+	status, err := StatusSnapshot(dir)
+	if err != nil {
+		return nil, err
+	}
+	changes := map[string]WorktreeChange{}
+	if status.HeadCommit != "" {
+		out, err := run(dir, "diff", "--name-status", "HEAD", "--")
+		if err != nil {
+			return nil, fmt.Errorf("git diff name-status: %w", err)
+		}
+		for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			fields := strings.Split(line, "\t")
+			if len(fields) < 2 {
+				continue
+			}
+			code := strings.TrimSpace(fields[0])
+			switch {
+			case strings.HasPrefix(code, "R") || strings.HasPrefix(code, "C"):
+				if len(fields) >= 3 {
+					changes[filepath.ToSlash(fields[1])] = WorktreeDeleted
+					changes[filepath.ToSlash(fields[2])] = WorktreeAdded
+				}
+			case strings.HasPrefix(code, "A"):
+				changes[filepath.ToSlash(fields[1])] = WorktreeAdded
+			case strings.HasPrefix(code, "D"):
+				changes[filepath.ToSlash(fields[1])] = WorktreeDeleted
+			default:
+				changes[filepath.ToSlash(fields[1])] = WorktreeUpdated
+			}
+		}
+	}
+	for _, path := range status.Untracked {
+		changes[filepath.ToSlash(path)] = WorktreeAdded
+	}
+	if status.HeadCommit == "" {
+		for _, path := range status.Staged {
+			changes[filepath.ToSlash(path)] = WorktreeAdded
+		}
+		for _, path := range status.Unstaged {
+			if _, ok := changes[filepath.ToSlash(path)]; !ok {
+				changes[filepath.ToSlash(path)] = WorktreeAdded
+			}
+		}
+		for _, path := range status.Deleted {
+			changes[filepath.ToSlash(path)] = WorktreeDeleted
+		}
+	}
+	return changes, nil
 }
 
 func LineDiffsAgainstHead(dir string) (map[string]LineDiff, error) {
