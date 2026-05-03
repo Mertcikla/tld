@@ -78,6 +78,7 @@ const CELL_H = 150
 const GAP_H = 80
 const GAP_V = 120
 const COMPACT_WORKSPACE_THRESHOLD = 32
+const LAYOUT_TRANSITION = 'transform 560ms cubic-bezier(0.16, 1, 0.3, 1), opacity 260ms ease, filter 260ms ease'
 
 interface GridDisplayNode {
   id: string
@@ -286,6 +287,33 @@ function buildDisplayTree(roots: ViewTreeNode[], focusedId: number | null): Grid
   return roots
     .map((root) => makeNode(root, null))
     .filter((node): node is GridDisplayNode => node !== null)
+}
+
+function buildStableLayoutIds(flat: ViewTreeNode[], focusedId: number | null): Set<string> {
+  const stable = new Set<string>()
+  const byId = new Map(flat.map((node) => [node.id, node]))
+
+  if (focusedId === null) {
+    flat.forEach((node) => {
+      if (node.parent_view_id === null || node.depth <= 1) stable.add(String(node.id))
+    })
+    return stable
+  }
+
+  const focused = byId.get(focusedId)
+  if (!focused) return stable
+
+  let cursor: ViewTreeNode | undefined = focused
+  while (cursor) {
+    stable.add(String(cursor.id))
+    cursor = cursor.parent_view_id ? byId.get(cursor.parent_view_id) : undefined
+  }
+
+  flat.forEach((node) => {
+    if (node.parent_view_id === focused.parent_view_id) stable.add(String(node.id))
+  })
+
+  return stable
 }
 
 
@@ -685,7 +713,44 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
     [roots, focusedId]
   )
   const displayFlat = useMemo(() => flattenDisplayTree(displayTree), [displayTree])
-  const layoutPositions = useMemo(() => computeDisplayLayout(displayTree), [displayTree])
+  const rawLayoutPositions = useMemo(() => computeDisplayLayout(displayTree), [displayTree])
+  const stableLayoutIds = useMemo(() => buildStableLayoutIds(flatTree, focusedId), [flatTree, focusedId])
+  const previousLayoutRef = useRef<Map<string, { x: number; y: number }>>(new Map())
+
+  const layoutPositions = useMemo(() => {
+    const next = new Map(rawLayoutPositions)
+    const previousLayout = previousLayoutRef.current
+
+    if (focusedId !== null) {
+      const focusedKey = String(focusedId)
+      const previousFocusedPosition = previousLayout.get(focusedKey)
+      const nextFocusedPosition = next.get(focusedKey)
+
+      if (previousFocusedPosition && nextFocusedPosition) {
+        const dx = previousFocusedPosition.x - nextFocusedPosition.x
+        const dy = previousFocusedPosition.y - nextFocusedPosition.y
+
+        if (dx !== 0 || dy !== 0) {
+          next.forEach((position, id) => {
+            next.set(id, { x: position.x + dx, y: position.y + dy })
+          })
+        }
+      }
+    }
+
+    stableLayoutIds.forEach((id) => {
+      const previousPosition = previousLayout.get(id)
+      if (previousPosition && next.has(id)) {
+        next.set(id, previousPosition)
+      }
+    })
+
+    return next
+  }, [rawLayoutPositions, focusedId, stableLayoutIds])
+
+  useEffect(() => {
+    previousLayoutRef.current = layoutPositions
+  }, [layoutPositions])
 
   // Stable during drag (layoutPositions only changes after treeData refresh, never on mouse moves)
   const computedMinZoom = useMemo(() => {
@@ -775,6 +840,10 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
           wasdKey: isCluster ? undefined : wasdTargets[n.id],
         } satisfies ViewGridNodeData,
         draggable: false,
+        style: {
+          transition: LAYOUT_TRANSITION,
+          zIndex: displayNode.kind === 'cluster' ? 1 : focusedId === n.id ? 3 : 2,
+        },
       }
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
