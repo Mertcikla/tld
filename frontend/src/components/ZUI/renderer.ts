@@ -181,8 +181,82 @@ function normalizeEdgeRouteType(type: string | null | undefined): 'bezier' | 'st
   return 'bezier'
 }
 
-function transitionT(screenW: number, start: number, end: number): number {
+export interface ZUITransitionRebase {
+  preserveChildAlphaNodeIds: Set<string>
+}
+
+export function transitionT(screenW: number, start: number, end: number): number {
   return clamp((screenW - start) / (end - start), 0, 1)
+}
+
+export function buildCameraTransitionRebase(
+  groups: DiagramGroupLayout[],
+  view: ZUIViewState,
+  canvasW: number,
+  canvasH: number,
+  thresholds: { start: number; end: number },
+): ZUITransitionRebase {
+  if (canvasW <= 0 || canvasH <= 0 || view.zoom <= 0) {
+    return { preserveChildAlphaNodeIds: new Set() }
+  }
+
+  const worldCenterX = (canvasW / 2 - view.x) / view.zoom
+  const worldCenterY = (canvasH / 2 - view.y) / view.zoom
+  const path: Array<{ id: string; t: number }> = []
+
+  for (const group of groups) {
+    if (
+      worldCenterX < group.worldX ||
+      worldCenterX > group.worldX + group.worldW ||
+      worldCenterY < group.worldY ||
+      worldCenterY > group.worldY + group.worldH
+    ) {
+      continue
+    }
+
+    let currentX = worldCenterX
+    let currentY = worldCenterY
+    let currentNodes = group.nodes
+    let cumulativeScale = 1
+
+    while (true) {
+      const node = currentNodes.find((candidate) =>
+        currentX >= candidate.worldX &&
+        currentX <= candidate.worldX + candidate.worldW &&
+        currentY >= candidate.worldY &&
+        currentY <= candidate.worldY + candidate.worldH
+      )
+
+      if (!node) break
+
+      const hasChildren = node.children && node.children.length > 0
+      const screenW = node.worldW * view.zoom * cumulativeScale
+      const t = hasChildren ? transitionT(screenW, thresholds.start, thresholds.end) : 0
+      path.push({ id: node.id, t })
+
+      if (!hasChildren || t <= 0.05 || node.childScale <= 0) break
+
+      currentX = (currentX - node.worldX) / node.childScale + node.childOffsetX
+      currentY = (currentY - node.worldY) / node.childScale + node.childOffsetY
+      currentNodes = node.children
+      cumulativeScale *= node.childScale
+    }
+
+    break
+  }
+
+  const activeTransitionIndexes = path
+    .map((entry, index) => ({ ...entry, index }))
+    .filter((entry) => entry.t > 0.05 && entry.t < 0.95)
+
+  if (activeTransitionIndexes.length <= 1) {
+    return { preserveChildAlphaNodeIds: new Set() }
+  }
+
+  const deepestActiveIndex = activeTransitionIndexes[activeTransitionIndexes.length - 1].index
+  return {
+    preserveChildAlphaNodeIds: new Set(path.slice(0, deepestActiveIndex).map((entry) => entry.id)),
+  }
 }
 
 function rectsOverlap(a: ScreenRect, b: ScreenRect): boolean {
@@ -422,6 +496,7 @@ function drawNode(
   absY: number,
   absScale: number,
   occupiedLabelRects: ScreenRect[],
+  transitionRebase: ZUITransitionRebase,
 ): void {
   if (screenW < MIN_DRAW_PX || alpha < 0.01) return
 
@@ -453,7 +528,7 @@ function drawNode(
   }
 
   const parentAlpha = alpha * (1 - t)
-  const childAlpha = alpha * t
+  const childAlpha = transitionRebase.preserveChildAlphaNodeIds.has(node.id) ? alpha : alpha * t
   const r = h * RADIUS_TO_NODE_H
 
   const borderColor = typeBorderColor(node.type)
@@ -711,7 +786,7 @@ function drawNode(
       if (!isVisible(childAbsX, childAbsY, childAbsW, childAbsH, view, canvasW, canvasH)) continue
 
       const childScreenW = child.worldW * childZoom
-      drawNode(ctx, child, childScreenW, thresholds, childAlpha, childZoom, nodeBg, canvasBg, view, canvasW, canvasH, accent, labelBg, childAbsX, childAbsY, nextAbsScale, occupiedLabelRects)
+      drawNode(ctx, child, childScreenW, thresholds, childAlpha, childZoom, nodeBg, canvasBg, view, canvasW, canvasH, accent, labelBg, childAbsX, childAbsY, nextAbsScale, occupiedLabelRects, transitionRebase)
     }
 
     ctx.restore()
@@ -1284,6 +1359,7 @@ export function renderFrame(
   ctx.scale(view.zoom, view.zoom)
 
   const thresholds = getExpandThresholds(canvasW)
+  const transitionRebase = buildCameraTransitionRebase(groups, view, canvasW, canvasH, thresholds)
   const occupiedLabelRects = frameLabelRects
   occupiedLabelRects.length = 0
 
@@ -1316,7 +1392,7 @@ export function renderFrame(
         continue
       }
       const screenW = node.worldW * view.zoom
-      drawNode(ctx, node, screenW, thresholds, 1, view.zoom, nodeBg, canvasBg, view, canvasW, canvasH, accent, labelBg, node.worldX, node.worldY, 1, occupiedLabelRects)
+      drawNode(ctx, node, screenW, thresholds, 1, view.zoom, nodeBg, canvasBg, view, canvasW, canvasH, accent, labelBg, node.worldX, node.worldY, 1, occupiedLabelRects, transitionRebase)
     }
   }
 

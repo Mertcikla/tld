@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { computeLayout } from './layout'
 import { findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget, viewportForFocusTarget, type ZUIFocusTarget } from './focus'
 import { calculateMaxZoom, constrainViewState } from './useZUIInteraction'
-import { getExpandThresholds } from './renderer'
+import { buildCameraTransitionRebase, getExpandThresholds } from './renderer'
 import type { ExploreData, PlacedElement, ViewConnector, ViewTreeNode } from '../../types'
-import type { ZUIViewState } from './types'
+import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 
 function treeNode(id: number, name: string, ownerElementId: number | null, parentViewId: number | null, children: ViewTreeNode[] = []): ViewTreeNode {
   return {
@@ -39,6 +39,51 @@ function placed(viewId: number, elementId: number, x: number, y: number, hasView
     tags: [],
     has_view: hasView,
     view_label: null,
+  }
+}
+
+function testNode(id: string, children: LayoutNode[] = [], childScale = 0.8): LayoutNode {
+  return {
+    id,
+    elementId: Number(id.replace(/\D/g, '')) || 1,
+    diagramId: 1,
+    worldX: 0,
+    worldY: 0,
+    worldW: 180,
+    worldH: 85,
+    label: id,
+    type: 'service',
+    logoUrl: null,
+    description: null,
+    technology: null,
+    tags: [],
+    ancestorElementIds: [],
+    pathElementIds: [],
+    children,
+    childScale,
+    childOffsetX: 0,
+    childOffsetY: 0,
+    edgesOut: [],
+  }
+}
+
+function testGroup(nodes: LayoutNode[]): DiagramGroupLayout {
+  return {
+    diagramId: 1,
+    label: 'Root',
+    description: null,
+    level: 0,
+    levelLabel: null,
+    worldX: 0,
+    worldY: 0,
+    worldW: 180,
+    worldH: 85,
+    diagramW: 180,
+    diagramH: 85,
+    diagramX: 0,
+    diagramY: 0,
+    nodes,
+    edges: [],
   }
 }
 
@@ -228,6 +273,42 @@ function expectScreenRectVisible(
 }
 
 describe('ZUI focus targets', () => {
+  it('rebases stacked camera-center transitions without forcing ancestor expansion', () => {
+    const grandchild = testNode('node-3', [])
+    const child = testNode('node-2', [grandchild])
+    const parent = testNode('node-1', [child])
+    const groups = [testGroup([parent])]
+    const thresholds = getExpandThresholds(1200)
+
+    const rebase = buildCameraTransitionRebase(
+      groups,
+      { x: 420, y: 315, zoom: 2.2 },
+      1200,
+      800,
+      thresholds,
+    )
+
+    expect(rebase.preserveChildAlphaNodeIds.has('node-1')).toBe(true)
+    expect(rebase.preserveChildAlphaNodeIds.has('node-2')).toBe(false)
+  })
+
+  it('does not rebase when only one camera-center transition is active', () => {
+    const child = testNode('node-2', [])
+    const parent = testNode('node-1', [child])
+    const groups = [testGroup([parent])]
+    const thresholds = getExpandThresholds(1200)
+
+    const rebase = buildCameraTransitionRebase(
+      groups,
+      { x: 420, y: 315, zoom: 1.9 },
+      1200,
+      800,
+      thresholds,
+    )
+
+    expect(rebase.preserveChildAlphaNodeIds.size).toBe(0)
+  })
+
   it('finds and centers an element inside a deeply nested view', () => {
     const layout = computeLayout(nestedExploreData())
     const target = findElementFocusTarget(layout.groups, 4, 401)
