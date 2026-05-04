@@ -5,6 +5,7 @@ import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
   getHandleFlowPosition,
+  getHandleSlotOffsetFromId,
   getLogicalHandleId,
   getVisualHandleIdForGroup,
 } from '../../utils/edgeDistribution'
@@ -660,10 +661,25 @@ function portalTintColor(accent: string, alpha: number): string {
 }
 
 /** Calculate coordinate for a named handle on a node. */
-function getHandlePos(nodeX: number, nodeY: number, nodeW: number, nodeH: number, handleId: string | null, isSource: boolean): { x: number, y: number, pos: 'top' | 'bottom' | 'left' | 'right' } {
+function getHandlePos(nodeX: number, nodeY: number, nodeW: number, nodeH: number, handleId: string | null, isSource: boolean, slotScale = 1): { x: number, y: number, pos: 'top' | 'bottom' | 'left' | 'right' } {
   const fallback = isSource ? DEFAULT_SOURCE_HANDLE_SIDE : DEFAULT_TARGET_HANDLE_SIDE
-  const { x, y, side } = getHandleFlowPosition(nodeX, nodeY, nodeW, nodeH, handleId, fallback)
-  return { x, y, pos: side }
+  if (slotScale === 1) {
+    const { x, y, side } = getHandleFlowPosition(nodeX, nodeY, nodeW, nodeH, handleId, fallback)
+    return { x, y, pos: side }
+  }
+
+  const side = getLogicalHandleId(handleId, fallback) ?? fallback
+  const offset = getHandleSlotOffsetFromId(handleId) * slotScale
+  switch (side) {
+    case 'top':
+      return { x: nodeX + nodeW / 2 + offset, y: nodeY, pos: side }
+    case 'bottom':
+      return { x: nodeX + nodeW / 2 + offset, y: nodeY + nodeH, pos: side }
+    case 'left':
+      return { x: nodeX, y: nodeY + nodeH / 2 + offset, pos: side }
+    case 'right':
+      return { x: nodeX + nodeW, y: nodeY + nodeH / 2 + offset, pos: side }
+  }
 }
 
 /** Draw a closed arrow head matching React Flow MarkerType.ArrowClosed. */
@@ -1255,6 +1271,7 @@ function drawEdges(
         effHSource,
         getVisualHandleIdForGroup(sourceSide, sourceGroupIndex, Math.max(srcGroup.length, 1)),
         true,
+        sSource,
       )
       const tH = getHandlePos(
         effXTarget,
@@ -1263,6 +1280,7 @@ function drawEdges(
         effHTarget,
         getVisualHandleIdForGroup(targetSide, targetGroupIndex, Math.max(tgtGroup.length, 1)),
         false,
+        sTarget,
       )
 
       ctx.save()
