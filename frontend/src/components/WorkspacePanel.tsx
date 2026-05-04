@@ -133,14 +133,14 @@ function ThemedSelect<T extends string | number>({ value, options, placeholder, 
       <MenuButton
         as={Button}
         rightIcon={<ChevronDownIcon />}
-        size="xs"
+        size="sm"
         variant="ghost"
         isDisabled={isDisabled}
         flex={flex}
         minW={0}
-        h="26px"
-        px={2}
-        fontSize="11px"
+        h="32px"
+        px={3}
+        fontSize="13px"
         fontWeight="500"
         color={selected ? 'gray.100' : 'gray.500'}
         bg="whiteAlpha.50"
@@ -173,18 +173,18 @@ function ThemedSelect<T extends string | number>({ value, options, placeholder, 
           sx={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
         >
           {options.length === 0 && (
-            <MenuItem isDisabled fontSize="11px" color="gray.500" bg="transparent">No options</MenuItem>
+            <MenuItem isDisabled fontSize="13px" color="gray.500" bg="transparent">No options</MenuItem>
           )}
           {options.map((opt) => (
             <MenuItem
               key={String(opt.value)}
-              fontSize="11px"
+              fontSize="13px"
               color={opt.value === value ? 'var(--accent)' : 'gray.200'}
               fontWeight={opt.value === value ? '600' : '400'}
               bg="transparent"
               _hover={{ bg: 'whiteAlpha.100' }}
               _focus={{ bg: 'whiteAlpha.100' }}
-              py={1.5}
+              py={2}
               px={3}
               onClick={() => onChange(opt.value)}
             >
@@ -467,8 +467,8 @@ export default function WorkspacePanel() {
       bottom={{ base: 'calc(var(--bottomnav-container-h) + 12px)', md: 4 }}
       zIndex={1001}
       pointerEvents="auto"
-      w={{ base: 'calc(100vw - 24px)', md: '360px' }}
-      maxW="360px"
+      w={{ base: 'calc(100vw - 24px)', md: '420px' }}
+      maxW="420px"
       sx={{
         overscrollBehavior: 'contain',
         WebkitOverflowScrolling: 'touch',
@@ -485,42 +485,43 @@ export default function WorkspacePanel() {
         overflow="hidden"
       >
         {/* ── Versions header ── */}
-        <VStack align="stretch" spacing={2} px={3} py={3}>
-          <HStack spacing={2} justify="space-between" align="flex-start">
-            <HStack spacing={2} minW={0} flex={1}>
+        <VStack align="stretch" spacing={4} px={4} py={4}>
+          <HStack spacing={3} justify="space-between" align="center">
+            <HStack spacing={3} minW={0} flex={1}>
               <Box
-                display="inline-flex"
+                display="flex"
                 alignItems="center"
                 justifyContent="center"
-                w="24px"
-                h="24px"
+                w="32px"
+                h="32px"
                 flexShrink={0}
                 borderRadius="md"
                 color={preview ? 'blue.200' : 'gray.400'}
                 bg={preview ? 'blue.500' : 'whiteAlpha.100'}
                 boxShadow={preview ? '0 0 12px rgba(66, 153, 225, 0.35)' : 'none'}
               >
-                <TimeIcon boxSize={3.5} />
+                <TimeIcon boxSize={4} />
               </Box>
-              <Box minW={0} flex={1}>
-                {activeRepo?.display_name ?? 'Workspace'}
-
-                <Text fontSize="10px" color="gray.500" noOfLines={1}>
+              <VStack spacing={0} align="flex-start" minW={0} flex={1}>
+                <Text fontSize="16px" fontWeight="500" color="white" noOfLines={1}>
+                  {activeRepo?.display_name ?? 'tld'}
+                </Text>
+                <Text fontSize="13px" color="gray.400" noOfLines={1}>
                   {totalTldChanges > 0 ? `${totalTldChanges} changed elements and connectors` : 'Workspace versions'}
                 </Text>
-              </Box>
+              </VStack>
             </HStack>
-            <HStack spacing={0.5}>
+            <HStack spacing={2}>
               {activeVersion && (
                 <Tooltip label={diffVisible ? 'Hide diffs' : 'Show diffs'} placement="top">
                   <Button
                     aria-label={diffVisible ? 'Hide diffs' : 'Show diffs'}
-                    leftIcon={diffVisible ? <ViewOffIcon boxSize={3} /> : <ViewIcon boxSize={3} />}
-                    size="xs"
+                    leftIcon={diffVisible ? <ViewOffIcon boxSize={3.5} /> : <ViewIcon boxSize={3.5} />}
+                    size="sm"
                     variant="outline"
-                    h="24px"
-                    px={2}
-                    fontSize="10px"
+                    h="32px"
+                    px={3}
+                    fontSize="13px"
                     color={diffVisible ? 'white' : 'whiteAlpha.700'}
                     borderColor={diffVisible ? 'rgba(var(--accent-rgb), 0.45)' : 'whiteAlpha.200'}
                     bg={diffVisible ? 'rgba(var(--accent-rgb), 0.18)' : 'whiteAlpha.50'}
@@ -534,8 +535,8 @@ export default function WorkspacePanel() {
               <Tooltip label={versionsOpen ? 'Collapse versions' : 'Expand versions'} placement="top">
                 <IconButton
                   aria-label="Workspace versions"
-                  icon={<ChevronDownIcon boxSize={3} />}
-                  size="xs"
+                  icon={<ChevronDownIcon boxSize={4} />}
+                  size="sm"
                   variant="ghost"
                   color={versionsOpen ? 'var(--accent)' : 'whiteAlpha.700'}
                   transform={versionsOpen ? 'rotate(180deg)' : 'rotate(0deg)'}
@@ -547,32 +548,34 @@ export default function WorkspacePanel() {
           </HStack>
 
           <Box
-            px={2}
-            py={2}
+            px={4}
+            py={3}
             border="1px solid"
             borderColor="whiteAlpha.100"
             borderRadius="md"
             bg="whiteAlpha.50"
           >
-            <HStack spacing={1.5} fontFamily="mono" fontSize="10px" minW={0} opacity={0.85}>
-              <Text color="gray.300" noOfLines={1} flex={1} minW={0}>{compactSummary}</Text>
+            <HStack spacing={2} minW={0} opacity={0.85}>
+              <Text fontSize="13px" fontFamily="mono" color="gray.300" noOfLines={1} flex={1} minW={0}>
+                {compactSummary}
+              </Text>
             </HStack>
-            <HStack spacing={2} mt={1.5} minW={0}>
-              <Badge variant="subtle" colorScheme="blue" fontSize="8px" px={1}>TLD</Badge>
-              <Text fontSize="10px" color="green.300" fontFamily="mono">+{diffSummary.elements.added} / {diffSummary.connectors.added}</Text>
-              <Text fontSize="10px" color="red.300" fontFamily="mono">-{diffSummary.elements.deleted} / {diffSummary.connectors.deleted}</Text>
-              <Text fontSize="10px" color="gray.500" noOfLines={1} flex={1} minW={0}>
+            <HStack spacing={3} mt={3} minW={0} align="center">
+              <Badge variant="solid" bg="whiteAlpha.200" color="blue.200" fontSize="10px" px={1.5} py={0.5} borderRadius="sm" textTransform="none">TLD</Badge>
+              <Text fontSize="13px" color="green.400" fontFamily="mono">+{diffSummary.elements.added} / {diffSummary.connectors.added}</Text>
+              <Text fontSize="13px" color="red.400" fontFamily="mono">-{diffSummary.elements.deleted} / {diffSummary.connectors.deleted}</Text>
+              <Text fontSize="13px" color="gray.500" noOfLines={1} flex={1} minW={0}>
                 {activeDiffLocation ? `${activeDiffLocationIndex + 1}/${navigableDiffLocations.length} ${activeDiffLocation.label}` : `${totalTldChanges} changes`}
               </Text>
-              <HStack spacing={0.5} flexShrink={0}>
+              <HStack spacing={1} flexShrink={0}>
                 <Tooltip label="Previous changed element" placement="top">
                   <IconButton
                     aria-label="Previous changed element"
-                    icon={<ChevronLeftIcon boxSize={3.5} />}
+                    icon={<ChevronLeftIcon boxSize={4} />}
                     size="xs"
                     variant="ghost"
-                    h="22px"
-                    minW="22px"
+                    h="24px"
+                    minW="24px"
                     color="whiteAlpha.700"
                     isDisabled={navigableDiffLocations.length === 0}
                     onClick={() => navigateDiffLocationByOffset(-1)}
@@ -581,11 +584,11 @@ export default function WorkspacePanel() {
                 <Tooltip label="Next changed element" placement="top">
                   <IconButton
                     aria-label="Next changed element"
-                    icon={<ChevronRightIcon boxSize={3.5} />}
+                    icon={<ChevronRightIcon boxSize={4} />}
                     size="xs"
                     variant="ghost"
-                    h="22px"
-                    minW="22px"
+                    h="24px"
+                    minW="24px"
                     color="whiteAlpha.700"
                     isDisabled={navigableDiffLocations.length === 0}
                     onClick={() => navigateDiffLocationByOffset(1)}
@@ -598,14 +601,16 @@ export default function WorkspacePanel() {
 
         {/* ── Versions body ── */}
         <Collapse in={versionsOpen} animateOpacity>
-          <VStack align="stretch" spacing={2} px={3} pb={3} borderTop="1px solid" borderColor="whiteAlpha.100">
-            <Box pt={2.5}>
-              <ThemedSelect<number>
-                value={repoId}
-                placeholder="Select repository"
-                options={repos.map((r) => ({ value: r.id, label: r.display_name }))}
-                onChange={(v) => setRepoId(v)}
-              />
+          <VStack align="stretch" spacing={3} px={4} pb={4} borderTop="1px solid" borderColor="whiteAlpha.100">
+            <Box pt={3}>
+              <Box w="fit-content">
+                <ThemedSelect<number>
+                  value={repoId}
+                  placeholder="Select repository"
+                  options={repos.map((r) => ({ value: r.id, label: r.display_name }))}
+                  onChange={(v) => setRepoId(v)}
+                />
+              </Box>
             </Box>
 
             <ThemedSelect<number>
@@ -619,22 +624,22 @@ export default function WorkspacePanel() {
             />
 
             <Box
-              px={2}
-              py={2}
+              px={4}
+              py={3}
               border="1px solid"
               borderColor="whiteAlpha.100"
               borderRadius="md"
               bg="whiteAlpha.50"
             >
-              <Text fontSize="10px" color="gray.500" noOfLines={1}>
+              <Text fontSize="13px" color="gray.400" noOfLines={1} mb={2}>
                 {activeVersion ? `${activeVersion.branch || 'detached'} · ${new Date(activeVersion.created_at).toLocaleString()}` : activeRepo?.display_name ?? 'Repository'}
               </Text>
-              <HStack spacing={1} mt={1} fontFamily="mono" fontSize="10px" minW={0} opacity={0.85}>
+              <HStack spacing={2} fontFamily="mono" fontSize="13px" minW={0} opacity={0.85} align="center">
                 <Text color="gray.300" noOfLines={1}>
                   {totalFileChanges} files changed
                 </Text>
-                <Text color="green.300">+{diffSummary.files.addedLines}</Text>
-                <Text color="red.300">-{diffSummary.files.removedLines}</Text>
+                <Text color="green.400">+{diffSummary.files.addedLines}</Text>
+                <Text color="red.400">-{diffSummary.files.removedLines}</Text>
                 <Text color="gray.500" ml="auto">{workspaceVersions.length} snapshots</Text>
               </HStack>
             </Box>
@@ -644,32 +649,32 @@ export default function WorkspacePanel() {
                 data-zui-native-wheel="true"
                 align="stretch"
                 spacing={1}
-                maxH="160px"
+                maxH="180px"
                 overflowY="auto"
                 borderTop="1px solid"
                 borderColor="whiteAlpha.100"
-                pt={2.5}
+                pt={3}
                 sx={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
               >
                 {displayedDiffLocations.map((target) => (
                   <Button
                     key={target.key}
                     variant="ghost"
-                    size="xs"
+                    size="sm"
                     h="auto"
-                    minH="28px"
+                    minH="32px"
                     justifyContent="flex-start"
-                    px={2}
-                    py={1}
-                    fontSize="10px"
+                    px={3}
+                    py={1.5}
+                    fontSize="12px"
                     color={activeDiffLocationKey === target.key ? 'white' : 'gray.200'}
                     bg={activeDiffLocationKey === target.key ? 'whiteAlpha.100' : 'transparent'}
                     onClick={() => navigateToDiffLocation(target)}
                   >
-                    <HStack w="full" spacing={2} minW={0}>
+                    <HStack w="full" spacing={3} minW={0}>
                       <Badge
                         colorScheme={target.changeType === 'added' ? 'green' : target.changeType === 'deleted' ? 'red' : 'yellow'}
-                        fontSize="8px"
+                        fontSize="9px"
                       >
                         {target.resourceType}
                       </Badge>
@@ -678,9 +683,9 @@ export default function WorkspacePanel() {
                         <Text color="gray.500" noOfLines={1}>{target.viewName}</Text>
                       </Box>
                       {(target.addedLines > 0 || target.removedLines > 0) && (
-                        <HStack spacing={1} flexShrink={0}>
-                          {target.addedLines > 0 && <Text color="green.300">+{target.addedLines}</Text>}
-                          {target.removedLines > 0 && <Text color="red.300">-{target.removedLines}</Text>}
+                        <HStack spacing={1.5} flexShrink={0}>
+                          {target.addedLines > 0 && <Text color="green.400">+{target.addedLines}</Text>}
+                          {target.removedLines > 0 && <Text color="red.400">-{target.removedLines}</Text>}
                         </HStack>
                       )}
                     </HStack>
@@ -693,43 +698,53 @@ export default function WorkspacePanel() {
 
         {/* ── Runtime section (collapsible) ── */}
         {showRuntimeSection && (
-          <>
+          <Box borderTop="1px solid" borderColor="whiteAlpha.100">
             <HStack
-              px={3}
-              py={1.5}
+              px={4}
+              py={3}
               justify="space-between"
-              borderTop="1px solid"
-              borderColor="whiteAlpha.100"
               cursor="pointer"
               onClick={() => setRuntimeOpen((v) => !v)}
               _hover={{ bg: 'whiteAlpha.50' }}
               transition="background 0.15s"
             >
-              <HStack spacing={2} minW={0} flex={1}>
-                <Badge colorScheme={watchStatusColor} variant="subtle" borderRadius="md" fontSize="9px" px={1.5}>{watchStatusLabel}</Badge>
-                <Text fontSize="10px" fontWeight="600" color="gray.300" noOfLines={1}>{watchTitle}</Text>
-                {watchMode ? <Text fontSize="9px" color="gray.500" noOfLines={1}>{watchMode}</Text> : null}
+              <HStack spacing={3} minW={0} flex={1}>
+                <Badge
+                  bg={watchStatusColor === 'green' ? 'green.900' : 'whiteAlpha.200'}
+                  color={watchStatusColor === 'green' ? 'green.200' : 'white'}
+                  borderRadius="sm"
+                  textTransform="none"
+                  fontSize="10px"
+                  px={1.5}
+                  py={0.5}
+                >
+                  {watchStatusLabel.toUpperCase()}
+                </Badge>
+                <Text fontSize="13px" fontWeight="500" color="gray.300" noOfLines={1}>{watchTitle}</Text>
+                {watchMode ? <Text fontSize="12px" color="gray.500" noOfLines={1}>{watchMode}</Text> : null}
               </HStack>
-              <HStack spacing={0.5} onClick={(e) => e.stopPropagation()}>
+              <HStack spacing={1} onClick={(e) => e.stopPropagation()}>
                 {watchActive && (
                   <>
                     <Tooltip label={watchPaused ? 'Resume watch' : 'Pause watch'} placement="top">
                       <IconButton
                         aria-label={watchPaused ? 'Resume watch' : 'Pause watch'}
-                        icon={watchPaused ? <RepeatIcon boxSize={3} /> : <PauseGlyph />}
-                        size="xs"
+                        icon={watchPaused ? <RepeatIcon boxSize={3.5} /> : <PauseGlyph />}
+                        size="sm"
                         variant="ghost"
-                        color="whiteAlpha.700"
+                        color="gray.400"
+                        _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
                         onClick={() => sendControl(watchPaused ? 'watch.resume' : 'watch.pause')}
                       />
                     </Tooltip>
                     <Tooltip label="Stop watch" placement="top">
                       <IconButton
                         aria-label="Stop watch"
-                        icon={<CloseIcon boxSize={2} />}
-                        size="xs"
+                        icon={<CloseIcon boxSize={2.5} />}
+                        size="sm"
                         variant="ghost"
-                        color="whiteAlpha.700"
+                        color="gray.400"
+                        _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
                         onClick={() => sendControl('watch.stop')}
                       />
                     </Tooltip>
@@ -737,13 +752,13 @@ export default function WorkspacePanel() {
                 )}
                 <IconButton
                   aria-label={runtimeOpen ? 'Collapse runtime' : 'Expand runtime'}
-                  icon={<ChevronDownIcon boxSize={3} />}
-                  size="xs"
+                  icon={<ChevronDownIcon boxSize={4} />}
+                  size="sm"
                   variant="ghost"
-                  color="whiteAlpha.400"
+                  color="gray.400"
                   transform={runtimeOpen ? 'rotate(180deg)' : 'rotate(0deg)'}
                   transition="transform 0.2s, color 0.2s"
-                  _hover={{ color: 'whiteAlpha.700', bg: 'whiteAlpha.100' }}
+                  _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
                   onClick={() => setRuntimeOpen((v) => !v)}
                 />
               </HStack>
@@ -754,21 +769,23 @@ export default function WorkspacePanel() {
                 data-zui-native-wheel="true"
                 align="stretch"
                 spacing={0}
-                maxH="140px"
+                maxH="180px"
                 overflowY="auto"
+                pb={2}
                 sx={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
               >
                 {watchLines.length === 0 ? (
-                  <Text px={3} py={2} fontSize="11px" color="gray.500">Waiting for watch output…</Text>
+                  <Text px={4} py={2} fontSize="13px" color="gray.500">Waiting for watch output…</Text>
                 ) : watchLines.map((line) => (
-                  <HStack key={line.id} px={3} py={1.5} spacing={2} borderTop="1px solid" borderColor="whiteAlpha.50" align="flex-start">
-                    <Text fontSize="9px" color="gray.600" fontFamily="mono" flexShrink={0}>
+                  <HStack key={line.id} px={4} py={2} spacing={3} borderTop="1px solid" borderColor="whiteAlpha.50" align="flex-start">
+                    <Text fontSize="12px" color="gray.500" fontFamily="mono" flexShrink={0} pt={0.5}>
                       {new Date(line.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                     </Text>
                     <Text
-                      fontSize="11px"
-                      color={line.tone === 'error' ? 'red.200' : line.tone === 'warning' ? 'yellow.200' : line.tone === 'success' ? 'green.200' : 'gray.400'}
+                      fontSize="13px"
+                      color={line.tone === 'error' ? 'red.300' : line.tone === 'warning' ? 'yellow.300' : line.tone === 'success' ? 'green.300' : 'gray.400'}
                       noOfLines={2}
+                      lineHeight="1.4"
                     >
                       {line.text}
                     </Text>
@@ -776,7 +793,7 @@ export default function WorkspacePanel() {
                 ))}
               </VStack>
             </Collapse>
-          </>
+          </Box>
         )}
       </Box>
     </Box>
