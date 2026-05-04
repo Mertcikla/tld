@@ -10,7 +10,7 @@ import type {
   ExploreData,
   ViewConnector,
 } from '../../types'
-import { resolveIconPath } from '../../utils/url'
+import { resolveElementIconUrl } from '../../utils/elementIcon'
 
 // ── Constants ──────────────────────────────────────────────────────
 
@@ -168,12 +168,6 @@ function buildNodes(
         type: e.style || 'bezier',
       }))
 
-    const derivedPrimaryIconPath = (() => {
-      const selected = obj.technology_connectors?.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!link.slug)
-      if (!selected?.slug) return null
-      return resolveIconPath(`/icons/${selected.slug}.png`)
-    })()
-
     return {
       id: nodeId(diagramId, obj.element_id),
       elementId: obj.element_id,
@@ -184,7 +178,7 @@ function buildNodes(
       worldH: NODE_H,
       label: obj.name,
       type: obj.kind ?? 'system',
-      logoUrl: obj.logo_url ? resolveIconPath(obj.logo_url) : derivedPrimaryIconPath,
+      logoUrl: resolveElementIconUrl(obj.logo_url, obj.technology_connectors),
       description: obj.description ?? null,
       technology: obj.technology ?? null,
       tags: obj.tags ?? [],

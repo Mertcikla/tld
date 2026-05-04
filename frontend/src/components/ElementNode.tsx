@@ -7,7 +7,7 @@ import { useAccentColor } from '../context/ThemeContext'
 import type { PlacedElement, ViewConnector, Tag } from '../types'
 import { ElementContainer } from './NodeContainer'
 import { ElementBody } from './NodeBody'
-import { resolveIconPath } from '../utils/url'
+import { resolveElementIconUrl } from '../utils/elementIcon'
 import { ZoomInIcon, ZoomOutIcon, TrashIcon as TrashSvg, EditIcon as EditSvg } from './Icons'
 import { vscodeBridge } from '../lib/vscodeBridge'
 import type { ExtensionToWebviewMessage } from '../types/vscode-messages'
@@ -318,13 +318,7 @@ function ElementNode({ data, selected }: Props) {
     return next
   }, [data.reconnectCandidates])
 
-  const derivedPrimaryIconPath = (() => {
-    const selected = data.technology_connectors?.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!link.slug)
-    if (!selected?.slug) return undefined
-    return resolveIconPath(`/icons/${selected.slug}.png`)
-  })()
-
-  const nodeLogoUrl = data.logo_url ? resolveIconPath(data.logo_url) : derivedPrimaryIconPath
+  const nodeLogoUrl = resolveElementIconUrl(data.logo_url, data.technology_connectors) ?? undefined
 
   const technologyLinkCount = (data.technology_connectors || []).filter((l) => !!l.label).length
   const technologyParts = (data.technology || '')

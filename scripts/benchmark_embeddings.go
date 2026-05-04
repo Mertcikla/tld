@@ -25,6 +25,7 @@ type embeddingResponse struct {
 		Embedding []float64 `json:"embedding"`
 	} `json:"data"`
 }
+
 func main() {
 	endpoint := flag.String("endpoint", envDefault("TLD_EMBEDDING_ENDPOINT", "http://127.0.0.1:8000/v1/embeddings"), "OpenAI-compatible embeddings endpoint")
 	model := flag.String("model", envDefault("TLD_EMBEDDING_MODEL", "embeddinggemma-300m-4bit"), "embedding model")

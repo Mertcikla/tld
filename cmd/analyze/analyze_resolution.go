@@ -53,7 +53,6 @@ func (r *analyzeLSPResolver) Close() error {
 	return r.inner.Close()
 }
 
-
 func resolveAnalyzeTargetRef(ctx context.Context, resolver analyzeDefinitionResolver, ref analyzer.Ref, symbols []analyzer.Symbol, refBySymbol map[analyzeElementLookupKey]string, refsByName map[string][]string) string {
 	if resolver != nil {
 		locations, err := resolver.ResolveDefinitions(ctx, ref)

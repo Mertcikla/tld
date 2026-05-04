@@ -918,6 +918,13 @@ type elementInput struct {
 	Tags        []string
 }
 
+type materializedTechnologyLink struct {
+	Type          string `json:"type"`
+	Slug          string `json:"slug,omitempty"`
+	Label         string `json:"label"`
+	IsPrimaryIcon bool   `json:"is_primary_icon,omitempty"`
+}
+
 func (m *materializer) ensureTags(ctx context.Context) error {
 	for _, tag := range m.tagPlan.approvedTags() {
 		def := semanticTagDefinition(tag)
@@ -942,7 +949,7 @@ func (m *materializer) upsertElement(ctx context.Context, ownerType, ownerKey st
 		return 0, err
 	} else if ok && elementExists(ctx, m.store.db, id) {
 		tags, _ := json.Marshal(input.Tags)
-		techLinks, _ := json.Marshal([]map[string]string{{"type": "technology", "slug": "go", "label": "Go"}})
+		techLinks, _ := json.Marshal(technologyLinksForLanguage(input.Language))
 		_, err := m.store.db.ExecContext(ctx, `
 			UPDATE elements
 			SET name = ?, kind = ?, description = ?, technology = ?, technology_connectors = ?, tags = ?, repo = ?, branch = ?, file_path = ?, language = ?, updated_at = ?
@@ -960,7 +967,7 @@ func (m *materializer) upsertElement(ctx context.Context, ownerType, ownerKey st
 	}
 	now := nowString()
 	tags, _ := json.Marshal(input.Tags)
-	techLinks, _ := json.Marshal([]map[string]string{{"type": "technology", "slug": "go", "label": "Go"}})
+	techLinks, _ := json.Marshal(technologyLinksForLanguage(input.Language))
 	res, err := m.store.db.ExecContext(ctx, `
 		INSERT INTO elements(name, kind, description, technology, technology_connectors, tags, repo, branch, file_path, language, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1786,6 +1793,46 @@ func technologyLabel(language string) string {
 		return "C"
 	default:
 		return "Source"
+	}
+}
+
+func technologyLinksForLanguage(language string) []materializedTechnologyLink {
+	label := technologyLabel(language)
+	slug := technologyCatalogSlug(language)
+	if slug == "" {
+		if label == "" {
+			return []materializedTechnologyLink{}
+		}
+		return []materializedTechnologyLink{{Type: "custom", Label: label}}
+	}
+	return []materializedTechnologyLink{{
+		Type:          "catalog",
+		Slug:          slug,
+		Label:         label,
+		IsPrimaryIcon: true,
+	}}
+}
+
+func technologyCatalogSlug(language string) string {
+	switch language {
+	case "go":
+		return "golang"
+	case "typescript":
+		return "typescript"
+	case "javascript":
+		return "javascript"
+	case "python":
+		return "python"
+	case "java":
+		return "java"
+	case "cpp":
+		return "c-plusplus"
+	case "c":
+		return "c"
+	case "json":
+		return "json-javascript-object-notation"
+	default:
+		return ""
 	}
 }
 

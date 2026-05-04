@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +96,99 @@ func helper() {}
 	}
 	if len(decisions) < 3 {
 		t.Fatalf("expected symbol and reference decisions, got %+v", decisions)
+	}
+}
+
+func TestRepresentMaterializesCatalogPrimaryIconFromLanguage(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "cmd/app/main.go", `package main
+
+func Main() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw string
+	if err := db.QueryRow(`SELECT technology_connectors FROM elements WHERE name = 'main.go'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var links []materializedTechnologyLink
+	if err := json.Unmarshal([]byte(raw), &links); err != nil {
+		t.Fatal(err)
+	}
+	want := materializedTechnologyLink{Type: "catalog", Slug: "golang", Label: "Go", IsPrimaryIcon: true}
+	if len(links) != 1 || links[0] != want {
+		t.Fatalf("technology links for main.go = %+v, want %+v", links, want)
+	}
+
+	var fileElementID int64
+	if err := db.QueryRow(`SELECT id FROM elements WHERE name = 'main.go'`).Scan(&fileElementID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE elements SET logo_url = '' WHERE id = ?`, fileElementID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	var logoURL sql.NullString
+	if err := db.QueryRow(`SELECT logo_url FROM elements WHERE id = ?`, fileElementID).Scan(&logoURL); err != nil {
+		t.Fatal(err)
+	}
+	if !logoURL.Valid || logoURL.String != "" {
+		t.Fatalf("watch rerun should preserve explicit no-icon logo_url, got valid=%v value=%q", logoURL.Valid, logoURL.String)
+	}
+}
+
+func TestTechnologyLinksForLanguage(t *testing.T) {
+	tests := []struct {
+		name     string
+		language string
+		want     []materializedTechnologyLink
+	}{
+		{
+			name:     "go",
+			language: "go",
+			want: []materializedTechnologyLink{{
+				Type:          "catalog",
+				Slug:          "golang",
+				Label:         "Go",
+				IsPrimaryIcon: true,
+			}},
+		},
+		{
+			name:     "typescript",
+			language: "typescript",
+			want: []materializedTechnologyLink{{
+				Type:          "catalog",
+				Slug:          "typescript",
+				Label:         "TypeScript",
+				IsPrimaryIcon: true,
+			}},
+		},
+		{
+			name:     "unknown source",
+			language: "ruby",
+			want:     []materializedTechnologyLink{{Type: "custom", Label: "Source"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := technologyLinksForLanguage(tt.language)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("technologyLinksForLanguage(%q) = %+v, want %+v", tt.language, got, tt.want)
+			}
+		})
 	}
 }
 

@@ -7,9 +7,9 @@ import (
 
 // ANSI color/style constants for richer output.
 const (
-	ColorCyan    = "\033[36m"
-	ColorBold    = "\033[1m"
-	ColorDim     = "\033[2m"
+	ColorCyan              = "\033[36m"
+	ColorBold              = "\033[1m"
+	ColorDim               = "\033[2m"
 	StyleUnderlineGreenURL = ColorGreen + ColorUnderline
 )
 
