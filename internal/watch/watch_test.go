@@ -2312,42 +2312,20 @@ func TestRunnerEmitsChangeCounter(t *testing.T) {
 		close(events)
 	}()
 
-	select {
-	case <-ready:
-	case err := <-done:
-		t.Fatalf("runner exited before ready: %v", err)
-	case <-time.After(time.Second):
-		t.Fatal("runner did not become ready")
-	}
+	waitForRunnerReady(t, ready, done, "change counter runner")
 
-	for {
-		select {
-		case event := <-events:
-			if event.Type == "watch.changeCounter" {
-				counter, ok := event.Data.(ChangeCounter)
-				if !ok {
-					t.Fatalf("unexpected counter payload: %#v", event.Data)
-				}
-				if counter.TotalChangesProcessed != 0 || counter.IntervalChangesProcessed != 0 {
-					t.Fatalf("unexpected idle counter: %+v", counter)
-				}
-				cancel()
-				select {
-				case err := <-done:
-					if err != nil {
-						t.Fatal(err)
-					}
-				case <-time.After(time.Second):
-					t.Fatal("runner did not stop")
-				}
-				return
-			}
-		case err := <-done:
-			t.Fatalf("runner exited before counter: %v", err)
-		case <-time.After(time.Second):
-			t.Fatal("runner did not emit change counter")
-		}
+	event := waitForRunnerEvent(t, events, done, "watch.changeCounter", func(event Event) bool {
+		return event.Type == "watch.changeCounter"
+	})
+	counter, ok := event.Data.(ChangeCounter)
+	if !ok {
+		t.Fatalf("unexpected counter payload: %#v", event.Data)
 	}
+	if counter.TotalChangesProcessed != 0 || counter.IntervalChangesProcessed != 0 {
+		t.Fatalf("unexpected idle counter: %+v", counter)
+	}
+	cancel()
+	waitForRunnerDone(t, done, "change counter runner")
 }
 
 func TestRunnerResolvesSubdirectoryToRepositoryRootBeforeReady(t *testing.T) {
@@ -2378,23 +2356,9 @@ func Main() {}
 		close(events)
 	}()
 
-	var result RunnerResult
-	select {
-	case result = <-ready:
-	case err := <-done:
-		t.Fatalf("runner exited before ready: %v", err)
-	case <-time.After(time.Second):
-		t.Fatal("runner did not become ready")
-	}
+	result := waitForRunnerReady(t, ready, done, "subdirectory runner")
 	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("runner did not stop")
-	}
+	waitForRunnerDone(t, done, "subdirectory runner")
 	expectedRoot, err := filepath.EvalSymlinks(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -2437,6 +2401,51 @@ func openTestDB(t *testing.T) *sql.DB {
 		t.Fatal(err)
 	}
 	return db
+}
+
+func waitForRunnerReady(t *testing.T, ready <-chan RunnerResult, done <-chan error, label string) RunnerResult {
+	t.Helper()
+	select {
+	case result := <-ready:
+		return result
+	case err := <-done:
+		t.Fatalf("%s exited before ready: %v", label, err)
+	case <-time.After(2 * time.Second):
+		t.Fatalf("%s did not become ready", label)
+	}
+	return RunnerResult{}
+}
+
+func waitForRunnerDone(t *testing.T, done <-chan error, label string) {
+	t.Helper()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("%s did not stop", label)
+	}
+}
+
+func waitForRunnerEvent(t *testing.T, events <-chan Event, done <-chan error, label string, matches func(Event) bool) Event {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				t.Fatalf("%s events channel closed before event", label)
+			}
+			if matches(event) {
+				return event
+			}
+		case err := <-done:
+			t.Fatalf("runner exited before %s: %v", label, err)
+		case <-deadline:
+			t.Fatalf("runner did not emit %s", label)
+		}
+	}
 }
 
 func symbolElementID(t *testing.T, db *sql.DB, name string) int64 {
