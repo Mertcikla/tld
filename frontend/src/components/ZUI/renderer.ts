@@ -172,6 +172,38 @@ function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v
 }
 
+export function viewOriginX(view: ZUIViewState): number {
+  return view.originX ?? 0
+}
+
+export function viewOriginY(view: ZUIViewState): number {
+  return view.originY ?? 0
+}
+
+export function worldToScreenX(worldX: number, view: ZUIViewState): number {
+  return (worldX - viewOriginX(view)) * view.zoom + view.x
+}
+
+export function worldToScreenY(worldY: number, view: ZUIViewState): number {
+  return (worldY - viewOriginY(view)) * view.zoom + view.y
+}
+
+export function screenToWorldX(screenX: number, view: ZUIViewState): number {
+  return viewOriginX(view) + (screenX - view.x) / view.zoom
+}
+
+export function screenToWorldY(screenY: number, view: ZUIViewState): number {
+  return viewOriginY(view) + (screenY - view.y) / view.zoom
+}
+
+export function rawCameraView(view: ZUIViewState): ZUIViewState {
+  return {
+    x: view.x - viewOriginX(view) * view.zoom,
+    y: view.y - viewOriginY(view) * view.zoom,
+    zoom: view.zoom,
+  }
+}
+
 function connectorAlpha(alpha: number): number {
   return clamp(alpha * 1.15, CONNECTOR_MIN_ALPHA, CONNECTOR_MAX_ALPHA)
 }
@@ -200,8 +232,8 @@ export function buildCameraTransitionRebase(
     return { preserveChildAlphaNodeIds: new Set() }
   }
 
-  const worldCenterX = (canvasW / 2 - view.x) / view.zoom
-  const worldCenterY = (canvasH / 2 - view.y) / view.zoom
+  const worldCenterX = screenToWorldX(canvasW / 2, view)
+  const worldCenterY = screenToWorldY(canvasH / 2, view)
   const path: Array<{ id: string; t: number }> = []
 
   for (const group of groups) {
@@ -349,8 +381,8 @@ export function isVisible(
   worldX: number, worldY: number, worldW: number, worldH: number,
   view: ZUIViewState, canvasW: number, canvasH: number,
 ): boolean {
-  const sx = worldX * view.zoom + view.x
-  const sy = worldY * view.zoom + view.y
+  const sx = worldToScreenX(worldX, view)
+  const sy = worldToScreenY(worldY, view)
   const sw = worldW * view.zoom
   const sh = worldH * view.zoom
   return sx + sw > 0 && sy + sh > 0 && sx < canvasW && sy < canvasH
@@ -361,11 +393,202 @@ export function isFullyVisible(
   worldX: number, worldY: number, worldW: number, worldH: number,
   view: ZUIViewState, canvasW: number, canvasH: number,
 ): boolean {
-  const sx = worldX * view.zoom + view.x
-  const sy = worldY * view.zoom + view.y
+  const sx = worldToScreenX(worldX, view)
+  const sy = worldToScreenY(worldY, view)
   const sw = worldW * view.zoom
   const sh = worldH * view.zoom
   return sx >= 0 && sy >= 0 && sx + sw <= canvasW && sy + sh <= canvasH
+}
+
+export interface ZUICameraRebase {
+  originX: number
+  originY: number
+  view: ZUIViewState
+}
+
+export function getCameraRebase(view: ZUIViewState, canvasW: number, canvasH: number): ZUICameraRebase {
+  const zoom = Math.max(0.0001, view.zoom)
+  return {
+    originX: screenToWorldX(canvasW / 2, { ...view, zoom }),
+    originY: screenToWorldY(canvasH / 2, { ...view, zoom }),
+    view: {
+      x: canvasW / 2,
+      y: canvasH / 2,
+      zoom: view.zoom,
+    },
+  }
+}
+
+function rebaseRootNodeForRender(node: LayoutNode, rebase: ZUICameraRebase): LayoutNode {
+  return {
+    ...node,
+    worldX: node.worldX - rebase.originX,
+    worldY: node.worldY - rebase.originY,
+  }
+}
+
+interface RebasedRenderGroup {
+  sourceNodes: LayoutNode[]
+  group: DiagramGroupLayout
+}
+
+const rebasedRenderGroupCache = new WeakMap<DiagramGroupLayout, RebasedRenderGroup>()
+
+function rebaseGroupForRender(group: DiagramGroupLayout, rebase: ZUICameraRebase): DiagramGroupLayout {
+  let cached = rebasedRenderGroupCache.get(group)
+  if (!cached || cached.sourceNodes !== group.nodes) {
+    cached = {
+      sourceNodes: group.nodes,
+      group: {
+        ...group,
+        nodes: group.nodes.map((node) => rebaseRootNodeForRender(node, rebase)),
+      },
+    }
+    rebasedRenderGroupCache.set(group, cached)
+  }
+
+  cached.group.worldX = group.worldX - rebase.originX
+  cached.group.worldY = group.worldY - rebase.originY
+  cached.group.worldW = group.worldW
+  cached.group.worldH = group.worldH
+  cached.group.diagramW = group.diagramW
+  cached.group.diagramH = group.diagramH
+  cached.group.diagramX = group.diagramX
+  cached.group.diagramY = group.diagramY
+  cached.group.edges = group.edges
+
+  for (let index = 0; index < group.nodes.length; index += 1) {
+    const source = group.nodes[index]
+    const target = cached.group.nodes[index]
+    Object.assign(target, source, {
+      worldX: source.worldX - rebase.originX,
+      worldY: source.worldY - rebase.originY,
+    })
+  }
+
+  return cached.group
+}
+
+interface FocusedFlattenedLayer {
+  nodes: LayoutNode[]
+  view: ZUIViewState
+}
+
+function flattenNodeForRender(
+  node: LayoutNode,
+  absX: number,
+  absY: number,
+  layerScale: number,
+  rebase: ZUICameraRebase,
+): LayoutNode {
+  return {
+    ...node,
+    worldX: (absX - rebase.originX) / layerScale,
+    worldY: (absY - rebase.originY) / layerScale,
+    worldW: node.worldW,
+    worldH: node.worldH,
+    children: [],
+  }
+}
+
+function flattenSiblingLayerForRender(
+  nodes: LayoutNode[],
+  parentAbsX: number,
+  parentAbsY: number,
+  parentAbsScale: number,
+  parentChildOffsetX: number,
+  parentChildOffsetY: number,
+  rebase: ZUICameraRebase,
+): LayoutNode[] {
+  return nodes.map((node) => {
+    const absX = parentAbsX + (node.worldX - parentChildOffsetX) * parentAbsScale
+    const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
+    return flattenNodeForRender(node, absX, absY, parentAbsScale, rebase)
+  })
+}
+
+export function findFocusedFlattenedLayerForTest(
+  groups: DiagramGroupLayout[],
+  view: ZUIViewState,
+  canvasW: number,
+  canvasH: number,
+  thresholds: { start: number; end: number },
+  rebase: ZUICameraRebase,
+): FocusedFlattenedLayer | null {
+  if (canvasW <= 0 || canvasH <= 0 || view.zoom < 1_000_000) return null
+
+  const worldCenterX = screenToWorldX(canvasW / 2, view)
+  const worldCenterY = screenToWorldY(canvasH / 2, view)
+
+  for (const group of groups) {
+    if (
+      worldCenterX < group.worldX ||
+      worldCenterX > group.worldX + group.worldW ||
+      worldCenterY < group.worldY ||
+      worldCenterY > group.worldY + group.worldH
+    ) {
+      continue
+    }
+
+    let currentX = worldCenterX
+    let currentY = worldCenterY
+    let currentNodes = group.nodes
+    let parentAbsX = 0
+    let parentAbsY = 0
+    let parentAbsScale = 1
+    let parentChildOffsetX = 0
+    let parentChildOffsetY = 0
+    let focusedLayer: FocusedFlattenedLayer | null = null
+
+    while (true) {
+      const node = currentNodes.find((candidate) =>
+        currentX >= candidate.worldX &&
+        currentX <= candidate.worldX + candidate.worldW &&
+        currentY >= candidate.worldY &&
+        currentY <= candidate.worldY + candidate.worldH
+      )
+      if (!node) break
+
+      const absX = parentAbsX + (node.worldX - parentChildOffsetX) * parentAbsScale
+      const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
+      const hasChildren = node.children && node.children.length > 0
+      const screenW = node.worldW * parentAbsScale * view.zoom
+      const t = hasChildren ? transitionT(screenW, thresholds.start, thresholds.end) : 0
+
+      if (!hasChildren || t < 0.95 || node.childScale <= 0) break
+
+      const childAbsScale = parentAbsScale * node.childScale
+      focusedLayer = {
+        nodes: flattenSiblingLayerForRender(
+          node.children,
+          absX,
+          absY,
+          childAbsScale,
+          node.childOffsetX,
+          node.childOffsetY,
+          rebase,
+        ),
+        view: {
+          x: canvasW / 2,
+          y: canvasH / 2,
+          zoom: view.zoom * childAbsScale,
+        },
+      }
+
+      currentX = (currentX - node.worldX) / node.childScale + node.childOffsetX
+      currentY = (currentY - node.worldY) / node.childScale + node.childOffsetY
+      currentNodes = node.children
+      parentAbsX = absX
+      parentAbsY = absY
+      parentAbsScale = childAbsScale
+      parentChildOffsetX = node.childOffsetX
+      parentChildOffsetY = node.childOffsetY
+    }
+
+    return focusedLayer
+  }
+
+  return null
 }
 
 /** Draw the ZoomIn magnifying glass icon. */
@@ -724,13 +947,13 @@ function drawNode(
 
       if (t > 0.8) {
         // Sticky hint Y: stick to viewport bottom
-        const viewportBottomWorld = (canvasH - screenFontSize - view.y) / view.zoom
+        const viewportBottomWorld = screenToWorldY(canvasH - screenFontSize, view)
         hintY = Math.min(hintY, viewportBottomWorld)
         hintY = Math.max(hintY, y + h / 2) // avoid overlapping center
 
         // Sticky hint X: stick to viewport sides
-        const vwL = -view.x / view.zoom
-        const vwR = (canvasW - view.x) / view.zoom
+        const vwL = screenToWorldX(0, view)
+        const vwR = screenToWorldX(canvasW, view)
 
         ctx.save()
         ctx.font = `${hintFontSize}px Inter, system-ui, sans-serif`
@@ -1260,7 +1483,7 @@ function drawGroupLabel(
   const labelY = group.worldY + group.diagramY - 22 / view.zoom
 
   // Ensure label is within viewport
-  const screenY = labelY * view.zoom + view.y
+  const screenY = worldToScreenY(labelY, view)
   if (screenY < -20 || screenY > canvasH + 20) return
 
   ctx.save()
@@ -1300,11 +1523,12 @@ function drawGrid(ctx: CanvasRenderingContext2D, view: ZUIViewState, canvasW: nu
   const gridSize = 20
   const dotSize = 1.0
   const color = 'rgba(255, 255, 255, 0.1)' // subtle white dots on dark background
+  const rebase = getCameraRebase(view, canvasW, canvasH)
 
-  const left = -view.x / view.zoom
-  const top = -view.y / view.zoom
-  const right = (canvasW - view.x) / view.zoom
-  const bottom = (canvasH - view.y) / view.zoom
+  const left = screenToWorldX(0, view)
+  const top = screenToWorldY(0, view)
+  const right = screenToWorldX(canvasW, view)
+  const bottom = screenToWorldY(canvasH, view)
 
   const startX = Math.floor(left / gridSize) * gridSize
   const startY = Math.floor(top / gridSize) * gridSize
@@ -1316,8 +1540,8 @@ function drawGrid(ctx: CanvasRenderingContext2D, view: ZUIViewState, canvasW: nu
   if (view.zoom > 0.2) {
     for (let wx = startX; wx < right; wx += gridSize) {
       for (let wy = startY; wy < bottom; wy += gridSize) {
-        const sx = wx * view.zoom + view.x
-        const sy = wy * view.zoom + view.y
+        const sx = (wx - rebase.originX) * rebase.view.zoom + rebase.view.x
+        const sy = (wy - rebase.originY) * rebase.view.zoom + rebase.view.y
 
         ctx.beginPath()
         ctx.arc(sx, sy, dotSize, 0, Math.PI * 2)
@@ -1353,30 +1577,52 @@ export function renderFrame(
 
   drawGrid(ctx, view, canvasW, canvasH)
 
+  const rebase = getCameraRebase(view, canvasW, canvasH)
+  const renderView = rebase.view
+  const renderGroups = groups.map((group) => rebaseGroupForRender(group, rebase))
+
   // Apply world transform
   ctx.save()
-  ctx.translate(view.x, view.y)
-  ctx.scale(view.zoom, view.zoom)
+  ctx.translate(renderView.x, renderView.y)
+  ctx.scale(renderView.zoom, renderView.zoom)
 
   const thresholds = getExpandThresholds(canvasW)
-  const transitionRebase = buildCameraTransitionRebase(groups, view, canvasW, canvasH, thresholds)
+  const transitionRebase = buildCameraTransitionRebase(renderGroups, renderView, canvasW, canvasH, thresholds)
   const occupiedLabelRects = frameLabelRects
   occupiedLabelRects.length = 0
+  const focusedLayer = findFocusedFlattenedLayerForTest(groups, view, canvasW, canvasH, thresholds, rebase)
 
-  for (const group of groups) {
-    if (!isVisible(group.worldX, group.worldY, group.worldW, group.worldH, view, canvasW, canvasH)) {
+  if (focusedLayer) {
+    ctx.restore()
+    ctx.save()
+    ctx.translate(focusedLayer.view.x, focusedLayer.view.y)
+    ctx.scale(focusedLayer.view.zoom, focusedLayer.view.zoom)
+    drawEdges(ctx, focusedLayer.nodes, 0.7, focusedLayer.view.zoom, thresholds, accent, labelBg, occupiedLabelRects)
+    for (const node of focusedLayer.nodes) {
+      if (!isVisible(node.worldX, node.worldY, node.worldW, node.worldH, focusedLayer.view, canvasW, canvasH)) {
+        continue
+      }
+      const screenW = node.worldW * focusedLayer.view.zoom
+      drawNode(ctx, node, screenW, thresholds, 1, focusedLayer.view.zoom, nodeBg, canvasBg, focusedLayer.view, canvasW, canvasH, accent, labelBg, node.worldX, node.worldY, 1, occupiedLabelRects, transitionRebase)
+    }
+    ctx.restore()
+    return occupiedLabelRects
+  }
+
+  for (const group of renderGroups) {
+    if (!isVisible(group.worldX, group.worldY, group.worldW, group.worldH, renderView, canvasW, canvasH)) {
       continue
     }
 
-    drawGroupLabel(ctx, group, view, canvasW, canvasH, accent)
+    drawGroupLabel(ctx, group, renderView, canvasW, canvasH, accent)
 
     // ── Group box (diagram elements container) ──────────────────────────
-    const borderAlpha = clamp(0.5 - view.zoom * 0.05, 0.15, 0.5)
+    const borderAlpha = clamp(0.5 - renderView.zoom * 0.05, 0.15, 0.5)
 
     ctx.save()
     ctx.globalAlpha = borderAlpha
     ctx.strokeStyle = accent
-    ctx.lineWidth = 2 / view.zoom
+    ctx.lineWidth = 2 / renderView.zoom
     ctx.setLineDash([2, 2])
     // Only draw the border around the diagram part
     ctx.strokeRect(group.worldX + group.diagramX, group.worldY + group.diagramY, group.diagramW, group.diagramH)
@@ -1384,15 +1630,15 @@ export function renderFrame(
     ctx.restore()
 
     // Edges in this group
-    drawEdges(ctx, group.nodes, 0.7, view.zoom, thresholds, accent, labelBg, occupiedLabelRects)
+    drawEdges(ctx, group.nodes, 0.7, renderView.zoom, thresholds, accent, labelBg, occupiedLabelRects)
 
     // Nodes in this group
     for (const node of group.nodes) {
-      if (!isVisible(node.worldX, node.worldY, node.worldW, node.worldH, view, canvasW, canvasH)) {
+      if (!isVisible(node.worldX, node.worldY, node.worldW, node.worldH, renderView, canvasW, canvasH)) {
         continue
       }
-      const screenW = node.worldW * view.zoom
-      drawNode(ctx, node, screenW, thresholds, 1, view.zoom, nodeBg, canvasBg, view, canvasW, canvasH, accent, labelBg, node.worldX, node.worldY, 1, occupiedLabelRects, transitionRebase)
+      const screenW = node.worldW * renderView.zoom
+      drawNode(ctx, node, screenW, thresholds, 1, renderView.zoom, nodeBg, canvasBg, renderView, canvasW, canvasH, accent, labelBg, node.worldX, node.worldY, 1, occupiedLabelRects, transitionRebase)
     }
   }
 

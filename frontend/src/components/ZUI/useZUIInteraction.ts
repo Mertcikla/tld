@@ -2,23 +2,39 @@
 
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import type { BBox, DiagramGroupLayout, LayoutNode, ZUIViewState, HoveredItem } from './types'
-import { getExpandThresholds } from './renderer'
+import { getExpandThresholds, screenToWorldX, screenToWorldY, viewOriginX, viewOriginY } from './renderer'
 
 export function constrainViewState(view: ZUIViewState, canvasW: number, canvasH: number, bbox: BBox): ZUIViewState {
   const padding = Math.min(600, canvasW * 0.45, canvasH * 0.45)
-  const minX = padding - bbox.maxX * view.zoom
-  const maxX = canvasW - padding - bbox.minX * view.zoom
-  const minY = padding - bbox.maxY * view.zoom
-  const maxY = canvasH - padding - bbox.minY * view.zoom
+  const normalized = normalizeViewState(view, canvasW, canvasH)
+  const halfVisibleX = Math.max(0, canvasW / 2 - padding) / normalized.zoom
+  const halfVisibleY = Math.max(0, canvasH / 2 - padding) / normalized.zoom
+  const minOriginX = bbox.minX - halfVisibleX
+  const maxOriginX = bbox.maxX + halfVisibleX
+  const minOriginY = bbox.minY - halfVisibleY
+  const maxOriginY = bbox.maxY + halfVisibleY
 
-  let { x, y } = view
-  if (maxX >= minX) x = Math.max(minX, Math.min(maxX, x))
-  else x = (minX + maxX) / 2
+  return {
+    ...normalized,
+    originX: maxOriginX >= minOriginX
+      ? Math.max(minOriginX, Math.min(maxOriginX, viewOriginX(normalized)))
+      : (minOriginX + maxOriginX) / 2,
+    originY: maxOriginY >= minOriginY
+      ? Math.max(minOriginY, Math.min(maxOriginY, viewOriginY(normalized)))
+      : (minOriginY + maxOriginY) / 2,
+  }
+}
 
-  if (maxY >= minY) y = Math.max(minY, Math.min(maxY, y))
-  else y = (minY + maxY) / 2
-
-  return { ...view, x, y }
+function normalizeViewState(view: ZUIViewState, canvasW: number, canvasH: number): ZUIViewState {
+  const zoom = Math.max(0.0001, view.zoom)
+  return {
+    ...view,
+    x: canvasW / 2,
+    y: canvasH / 2,
+    zoom,
+    originX: screenToWorldX(canvasW / 2, { ...view, zoom }),
+    originY: screenToWorldY(canvasH / 2, { ...view, zoom }),
+  }
 }
 
 interface DeepestNodeResult {
@@ -418,11 +434,16 @@ function zoomAround(
   maxZoom: number,
 ): ZUIViewState {
   const newZoom = clampZoom(view.zoom * factor, view.zoom, maxZoom)
-  const scale = newZoom / view.zoom
+  const worldX = screenToWorldX(focalX, view)
+  const worldY = screenToWorldY(focalY, view)
+  const originX = viewOriginX(view)
+  const originY = viewOriginY(view)
   return {
+    originX,
+    originY,
     zoom: newZoom,
-    x: focalX - (focalX - view.x) * scale,
-    y: focalY - (focalY - view.y) * scale,
+    x: focalX - (worldX - originX) * newZoom,
+    y: focalY - (worldY - originY) * newZoom,
   }
 }
 
@@ -644,8 +665,8 @@ export function useZUIInteraction(
         factor = Math.max(0.85, Math.min(1.15, factor))
 
         setViewState((prev) => {
-          const worldX = (focalX - prev.x) / prev.zoom
-          const worldY = (focalY - prev.y) / prev.zoom
+          const worldX = screenToWorldX(focalX, prev)
+          const worldY = screenToWorldY(focalY, prev)
           const thresholds = getExpandThresholds(rect.width)
           const deepest = findDeepestAt(worldX, worldY, groupsRef.current, prev, thresholds)
 
@@ -693,8 +714,8 @@ export function useZUIInteraction(
 
       // Hover detection
       const view = viewStateRef.current
-      const worldX = (screenX - view.x) / view.zoom
-      const worldY = (screenY - view.y) / view.zoom
+      const worldX = screenToWorldX(screenX, view)
+      const worldY = screenToWorldY(screenY, view)
       const thresholds = getExpandThresholds(rect.width)
 
       const deepest = findDeepestAt(worldX, worldY, groupsRef.current, view, thresholds)
@@ -747,8 +768,8 @@ export function useZUIInteraction(
       setHoveredItem(null, true) // Clear popover immediately on double-click zoom
 
       setViewState((prev) => {
-        const worldX = (focalX - prev.x) / prev.zoom
-        const worldY = (focalY - prev.y) / prev.zoom
+        const worldX = screenToWorldX(focalX, prev)
+        const worldY = screenToWorldY(focalY, prev)
         const thresholds = getExpandThresholds(rect.width)
         const deepest = findDeepestAt(worldX, worldY, groupsRef.current, prev, thresholds)
 
@@ -818,8 +839,8 @@ export function useZUIInteraction(
           if (isFinite(factor) && factor > 0) {
             setViewState((prev) => {
               const rect = el!.getBoundingClientRect()
-              const worldX = (mid.x - prev.x) / prev.zoom
-              const worldY = (mid.y - prev.y) / prev.zoom
+              const worldX = screenToWorldX(mid.x, prev)
+              const worldY = screenToWorldY(mid.y, prev)
               const thresholds = getExpandThresholds(rect.width)
               const deepest = findDeepestAt(worldX, worldY, groupsRef.current, prev, thresholds)
 

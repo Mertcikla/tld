@@ -10,6 +10,10 @@ export interface ZUIViewState {
   y: number
   /** Current zoom multiplier (1 = 1 world-pixel per screen-pixel). */
   zoom: number
+  /** World-space X rendered at the local camera origin. Keeps x screen-sized at deep zoom. */
+  originX?: number
+  /** World-space Y rendered at the local camera origin. Keeps y screen-sized at deep zoom. */
+  originY?: number
 }
 
 /**

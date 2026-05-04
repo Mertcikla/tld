@@ -27,7 +27,7 @@ import { Link as RouterLink } from 'react-router-dom'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import type { ExploreData } from '../../types'
 import { computeLayout } from './layout'
-import { renderFrame, getExpandThresholds, setOnImageLoadCallback, setHighlightedTags as setRendererHighlightedTags, setHiddenTags as setRendererHiddenTags, setHighlightColor as setRendererHighlightColor, setVersionDiff as setRendererVersionDiff } from './renderer'
+import { renderFrame, getExpandThresholds, getCameraRebase, rawCameraView, screenToWorldX, screenToWorldY, worldToScreenX, worldToScreenY, setOnImageLoadCallback, setHighlightedTags as setRendererHighlightedTags, setHiddenTags as setRendererHiddenTags, setHighlightColor as setRendererHighlightColor, setVersionDiff as setRendererVersionDiff } from './renderer'
 import { useZUIInteraction } from './useZUIInteraction'
 import type { DiagramGroupLayout, ZUIViewState } from './types'
 import { findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget } from './focus'
@@ -41,6 +41,7 @@ import {
   drawVisibleDirectProxyBadges,
   drawVisibleProxyConnectors,
   findHoveredProxyConnector,
+  type VisibleNodeAnchor,
 } from './proxy'
 
 export interface ZUICanvasHandle {
@@ -82,6 +83,22 @@ interface PathItem {
   absH: number
 }
 
+function rebaseVisibleNodeAnchors(
+  anchors: Map<string, VisibleNodeAnchor>,
+  originX: number,
+  originY: number,
+): Map<string, VisibleNodeAnchor> {
+  const rebased = new Map<string, VisibleNodeAnchor>()
+  for (const [nodeId, anchor] of anchors) {
+    rebased.set(nodeId, {
+      ...anchor,
+      worldX: anchor.worldX - originX,
+      worldY: anchor.worldY - originY,
+    })
+  }
+  return rebased
+}
+
 function getPathAt(
   view: ZUIViewState,
   groups: DiagramGroupLayout[],
@@ -91,8 +108,8 @@ function getPathAt(
   if (canvasW === 0 || canvasH === 0) return []
 
   // World center of the screen
-  const worldCenterX = (canvasW / 2 - view.x) / view.zoom
-  const worldCenterY = (canvasH / 2 - view.y) / view.zoom
+  const worldCenterX = screenToWorldX(canvasW / 2, view)
+  const worldCenterY = screenToWorldY(canvasH / 2, view)
   const thresholds = getExpandThresholds(canvasW)
 
   for (const group of groups) {
@@ -274,6 +291,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const [initialized, setInitialized] = useState(false)
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 })
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
+  const debugViewport = useMemo(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugZuiCamera'), [])
 
   // ── Layout ──────────────────────────────────────────────────────
   const layout = useMemo(() => computeLayout(data), [data])
@@ -307,10 +325,11 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
 
   const viewportBounds = useMemo(() => {
     const zoom = Math.max(0.0001, viewState.zoom)
-    const minX = -viewState.x / zoom
-    const minY = -viewState.y / zoom
-    const maxX = (containerSize.w - viewState.x) / zoom
-    const maxY = (containerSize.h - viewState.y) / zoom
+    const stableView = { ...viewState, zoom }
+    const minX = screenToWorldX(0, stableView)
+    const minY = screenToWorldY(0, stableView)
+    const maxX = screenToWorldX(containerSize.w, stableView)
+    const maxY = screenToWorldY(containerSize.h, stableView)
     return {
       minX,
       minY,
@@ -320,6 +339,28 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       centerY: (minY + maxY) / 2,
     }
   }, [containerSize.h, containerSize.w, viewState])
+
+  useEffect(() => {
+    if (!debugViewport) return
+    const cameraRebase = getCameraRebase(viewState, containerSize.w, containerSize.h)
+    console.debug('[ZUICanvas] viewport', {
+      x: viewState.x,
+      y: viewState.y,
+      zoom: viewState.zoom,
+      width: containerSize.w,
+      height: containerSize.h,
+      minX: viewportBounds.minX,
+      minY: viewportBounds.minY,
+      maxX: viewportBounds.maxX,
+      maxY: viewportBounds.maxY,
+      centerX: viewportBounds.centerX,
+      centerY: viewportBounds.centerY,
+      renderX: cameraRebase.view.x,
+      renderY: cameraRebase.view.y,
+      renderOriginX: cameraRebase.originX,
+      renderOriginY: cameraRebase.originY,
+    })
+  }, [containerSize.h, containerSize.w, debugViewport, viewState, viewportBounds])
 
   // A stable string key encoding which element→nodeId pairs are currently visible.
   // This only changes when nodes cross zoom-expansion thresholds not on every pan pixel.
@@ -390,8 +431,8 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       absY = g.worldY + g.diagramY - absH
     }
 
-    const sx = absX * viewState.zoom + viewState.x
-    const sy = absY * viewState.zoom + viewState.y
+    const sx = worldToScreenX(absX, viewState)
+    const sy = worldToScreenY(absY, viewState)
     const sw = absW * viewState.zoom
     const sh = absH * viewState.zoom
 
@@ -454,7 +495,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       cameraTransitionRef.current = null
     }
 
-    const from = viewStateRef.current
+    const from = rawCameraView(viewStateRef.current)
     const duration = 520
     const startedAt = performance.now()
 
@@ -705,14 +746,20 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
         ctx.save()
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         const occupiedLabelRects = renderFrame(ctx, layout.groups, currentView, w, h)
+        const cameraRebase = getCameraRebase(currentView, w, h)
+        const rebasedProxyAnchors = rebaseVisibleNodeAnchors(
+          visibleProxyStateRef.current.byNodeId,
+          cameraRebase.originX,
+          cameraRebase.originY,
+        )
         ctx.save()
-        ctx.translate(currentView.x, currentView.y)
-        ctx.scale(currentView.zoom, currentView.zoom)
+        ctx.translate(cameraRebase.view.x, cameraRebase.view.y)
+        ctx.scale(cameraRebase.view.zoom, cameraRebase.view.zoom)
         drawVisibleProxyConnectors(
           ctx,
           visibleProxyStateRef.current.proxyConnectors,
-          visibleProxyStateRef.current.byNodeId,
-          currentView.zoom,
+          rebasedProxyAnchors,
+          cameraRebase.view.zoom,
           labelBgRef.current,
           accentRef.current,
           occupiedLabelRects,
@@ -720,8 +767,8 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
         drawVisibleDirectProxyBadges(
           ctx,
           visibleProxyStateRef.current.hiddenProxyBadges,
-          visibleProxyStateRef.current.byNodeId,
-          currentView.zoom,
+          rebasedProxyAnchors,
+          cameraRebase.view.zoom,
           labelBgRef.current,
           occupiedLabelRects,
         )

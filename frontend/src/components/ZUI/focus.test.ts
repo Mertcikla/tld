@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { computeLayout } from './layout'
 import { findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget, viewportForFocusTarget, type ZUIFocusTarget } from './focus'
 import { calculateMaxZoom, constrainViewState } from './useZUIInteraction'
-import { buildCameraTransitionRebase, getExpandThresholds } from './renderer'
+import { buildCameraTransitionRebase, findFocusedFlattenedLayerForTest, getCameraRebase, getExpandThresholds, rawCameraView, worldToScreenX, worldToScreenY } from './renderer'
 import type { ExploreData, PlacedElement, ViewConnector, ViewTreeNode } from '../../types'
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 
@@ -220,12 +220,23 @@ function viewsIn(data: ExploreData): number[] {
 
 function screenRect(target: ZUIFocusTarget, viewport: ZUIViewState) {
   return {
-    left: target.absX * viewport.zoom + viewport.x,
-    top: target.absY * viewport.zoom + viewport.y,
-    right: (target.absX + target.absW) * viewport.zoom + viewport.x,
-    bottom: (target.absY + target.absH) * viewport.zoom + viewport.y,
+    left: worldToScreenX(target.absX, viewport),
+    top: worldToScreenY(target.absY, viewport),
+    right: worldToScreenX(target.absX + target.absW, viewport),
+    bottom: worldToScreenY(target.absY + target.absH, viewport),
     width: target.absW * viewport.zoom,
     height: target.absH * viewport.zoom,
+  }
+}
+
+function worldScreenRect(rect: { x: number; y: number; w: number; h: number }, viewport: ZUIViewState) {
+  return {
+    left: worldToScreenX(rect.x, viewport),
+    top: worldToScreenY(rect.y, viewport),
+    right: worldToScreenX(rect.x + rect.w, viewport),
+    bottom: worldToScreenY(rect.y + rect.h, viewport),
+    width: rect.w * viewport.zoom,
+    height: rect.h * viewport.zoom,
   }
 }
 
@@ -273,6 +284,53 @@ function expectScreenRectVisible(
 }
 
 describe('ZUI focus targets', () => {
+  it('rebases a high-zoom camera to a small centered render transform', () => {
+    const rebase = getCameraRebase(
+      { x: -147_317_059.10654327, y: -184_315_493.52577353, zoom: 906_732.1382976775 },
+      997,
+      975,
+    )
+
+    expect(rebase.originX).toBeCloseTo(162.47086805935993, 10)
+    expect(rebase.originY).toBeCloseTo(203.27500619070713, 10)
+    expect(rebase.view).toEqual({
+      x: 498.5,
+      y: 487.5,
+      zoom: 906_732.1382976775,
+    })
+  })
+
+  it('flattens the focused deepest layer at extreme zoom', () => {
+    const layout = computeLayout(deepSingleChainExploreData(8))
+    const elementTarget = findElementFocusTarget(layout.groups, 8, 9001)
+    expect(elementTarget).not.toBeNull()
+    const constrained = {
+      x: 498.5,
+      y: 487.5,
+      zoom: 13_610_091,
+      originX: elementTarget!.absX + elementTarget!.absW / 2,
+      originY: elementTarget!.absY + elementTarget!.absH / 2,
+    }
+    const rebase = getCameraRebase(constrained, 997, 975)
+    const layer = findFocusedFlattenedLayerForTest(
+      layout.groups,
+      constrained,
+      997,
+      975,
+      getExpandThresholds(997),
+      rebase,
+    )
+
+    expect(layer?.nodes.length).toBeGreaterThan(0)
+    const target = layer!.nodes.find((node) => node.elementId === 9001)
+    expect(target).toBeTruthy()
+    const left = worldToScreenX(target!.worldX, layer!.view)
+    const right = worldToScreenX(target!.worldX + target!.worldW, layer!.view)
+    expect(Number.isFinite(left)).toBe(true)
+    expect(Number.isFinite(right)).toBe(true)
+    expect(right - left).toBeGreaterThan(0)
+  })
+
   it('rebases stacked camera-center transitions without forcing ancestor expansion', () => {
     const grandchild = testNode('node-3', [])
     const child = testNode('node-2', [grandchild])
@@ -450,14 +508,7 @@ describe('ZUI focus targets', () => {
       expect((rect.top + rect.bottom) / 2, `view ${viewId} target center y`).toBeLessThanOrEqual(canvasH)
 
       if (target!.contentRect) {
-        const contentRect = {
-          left: target!.contentRect.x * finalViewport.zoom + finalViewport.x,
-          top: target!.contentRect.y * finalViewport.zoom + finalViewport.y,
-          right: (target!.contentRect.x + target!.contentRect.w) * finalViewport.zoom + finalViewport.x,
-          bottom: (target!.contentRect.y + target!.contentRect.h) * finalViewport.zoom + finalViewport.y,
-          width: target!.contentRect.w * finalViewport.zoom,
-          height: target!.contentRect.h * finalViewport.zoom,
-        }
+        const contentRect = worldScreenRect(target!.contentRect, finalViewport)
         expect(contentRect.width, `view ${viewId} content width`).toBeGreaterThan(0)
         expect(contentRect.height, `view ${viewId} content height`).toBeGreaterThan(0)
         expect((contentRect.left + contentRect.right) / 2, `view ${viewId} content center x`).toBeGreaterThanOrEqual(0)
@@ -477,7 +528,7 @@ describe('ZUI focus targets', () => {
       maxY: 1200,
     })
 
-    expect(constrained.x).toBe(targetView.x)
-    expect(constrained.y).toBe(targetView.y)
+    expect(rawCameraView(constrained).x).toBeCloseTo(targetView.x)
+    expect(rawCameraView(constrained).y).toBeCloseTo(targetView.y)
   })
 })
