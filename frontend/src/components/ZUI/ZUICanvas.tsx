@@ -33,14 +33,16 @@ import type { DiagramGroupLayout, ZUIViewState } from './types'
 import { findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget } from './focus'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
+import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
 import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
-import type { ZUIResolvedConnector } from '../../crossBranch/resolve'
 import {
+  buildProxyConnectorSpatialIndex,
   buildVisibleProxyConnectors,
   collectVisibleNodeAnchors,
   drawVisibleDirectProxyBadges,
   drawVisibleProxyConnectors,
   findHoveredProxyConnector,
+  type ProxyConnectorSpatialIndex,
   type VisibleNodeAnchor,
 } from './proxy'
 
@@ -97,6 +99,10 @@ function rebaseVisibleNodeAnchors(
     })
   }
   return rebased
+}
+
+function anchorViewForZoom(zoom: number): ZUIViewState {
+  return { x: 0, y: 0, zoom: Math.max(0.0001, zoom) }
 }
 
 function getPathAt(
@@ -296,14 +302,15 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   // ── Layout ──────────────────────────────────────────────────────
   const layout = useMemo(() => computeLayout(data), [data])
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
-  // Holds the most-recently resolved connector topology so hover detection can
-  // use it without re-running the expensive O(connectors) resolution on every mousemove.
-  const proxyConnectorsRef = useRef<ZUIResolvedConnector[]>([])
+  // Holds the latest proxy hover index so mousemove can query it without
+  // rebuilding anchors or connector geometry.
+  const proxyHoverIndexRef = useRef<ProxyConnectorSpatialIndex | null>(null)
 
-  const resolveHoveredProxyItem = useCallback((worldX: number, worldY: number, view: ZUIViewState, canvasW: number) => {
-    const freshAnchors = collectVisibleNodeAnchors(layout.groups, view, canvasW, hiddenTags)
-    return findHoveredProxyConnector(worldX, worldY, proxyConnectorsRef.current, freshAnchors.byNodeId, view)
-  }, [hiddenTags, layout.groups])
+  const resolveHoveredProxyItem = useCallback((worldX: number, worldY: number, view: ZUIViewState) => {
+    const index = proxyHoverIndexRef.current
+    if (!index) return null
+    return findHoveredProxyConnector(worldX, worldY, index, view)
+  }, [])
 
   // ── Interaction ─────────────────────────────────────────────────
   const { viewState, viewStateRef, setViewState, fitView, maxZoom, hoveredItem, setHoveredItem, setHoverLocked } = useZUIInteraction(
@@ -317,10 +324,11 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     resolveHoveredProxyItem,
   )
 
-  // Anchor positions recompute every render (fast tree traversal, view-dependent).
+  // Anchor positions are zoom-dependent, but not pan-dependent. Keeping pan out
+  // of this memo avoids re-walking the ZUI tree during drag/trackpad movement.
   const anchors = useMemo(() =>
-    collectVisibleNodeAnchors(layout.groups, viewState, containerSize.w || 1, hiddenTags),
-    [layout.groups, viewState, containerSize.w, hiddenTags],
+    collectVisibleNodeAnchors(layout.groups, anchorViewForZoom(viewState.zoom), containerSize.w || 1, hiddenTags),
+    [layout.groups, viewState.zoom, containerSize.w, hiddenTags],
   )
 
   const viewportBounds = useMemo(() => {
@@ -367,26 +375,32 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const visibleElementSig = useMemo(() =>
     Array.from(anchors.visibleAnchors.entries())
       .sort(([a], [b]) => a - b)
-      .map(([id, anchor]) => `${id}:${anchor.nodeId}:${Math.round(anchor.worldX)}:${Math.round(anchor.worldY)}:${Math.round(anchor.worldW)}:${Math.round(anchor.worldH)}`)
+      .map(([id, anchor]) => `${id}:${anchor.nodeId}:${anchor.renderAlpha >= (crossBranchSettings.minConnectorAnchorAlpha ?? DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA) ? 1 : 0}`)
       .join(','),
-    [anchors.visibleAnchors],
+    [anchors.visibleAnchors, crossBranchSettings.minConnectorAnchorAlpha],
   )
+  const proxySettingsSig = [
+    crossBranchSettings.enabled,
+    crossBranchSettings.depth,
+    crossBranchSettings.connectorBudget,
+    crossBranchSettings.connectorPriority,
+    crossBranchSettings.minConnectorAnchorAlpha ?? '',
+    crossBranchSettings.maxProxyConnectorGroups ?? '',
+  ].join(':')
 
-  const viewportSig = useMemo(() => [
-    Math.round(viewportBounds.minX),
-    Math.round(viewportBounds.minY),
-    Math.round(viewportBounds.maxX),
-    Math.round(viewportBounds.maxY),
-  ].join(':'), [viewportBounds])
-
-  // Connector topology: recompute when visible anchors or viewport bounds change,
-  // because the connector budget is ranked relative to the current viewport.
+  // Connector topology follows visible anchor identity, not camera position.
+  // Continuous pan/zoom renders reuse the previous topology until zoom changes
+  // which elements have visible/eligible anchors.
   const proxyConnectors = useMemo(() => {
-    const resolved = buildVisibleProxyConnectors(workspaceSnapshot, anchors.visibleAnchors, crossBranchSettings, viewportBounds)
-    proxyConnectorsRef.current = resolved.connectors
+    const resolved = buildVisibleProxyConnectors(workspaceSnapshot, anchors.visibleAnchors, crossBranchSettings)
     return resolved
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceSnapshot, visibleElementSig, viewportSig, crossBranchSettings])
+  }, [workspaceSnapshot, visibleElementSig, proxySettingsSig])
+
+  const proxyHoverIndex = useMemo(() => (
+    buildProxyConnectorSpatialIndex(proxyConnectors.connectors, anchors.byNodeId)
+  ), [proxyConnectors.connectors, anchors.byNodeId])
+  proxyHoverIndexRef.current = proxyHoverIndex
 
   const visibleProxyState = useMemo(() => ({
     ...anchors,

@@ -350,6 +350,79 @@ function measureProxyBadge(ctx: CanvasRenderingContext2D, label: string, zoom: n
   }
 }
 
+interface IndexedProxyConnector {
+  connector: ZUIResolvedConnector
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  midX: number
+  midY: number
+}
+
+export interface ProxyConnectorSpatialIndex {
+  cellSize: number
+  cells: Map<string, IndexedProxyConnector[]>
+}
+
+const PROXY_CONNECTOR_INDEX_CELL_SIZE = 360
+
+function proxyCellKey(cx: number, cy: number): string {
+  return `${cx},${cy}`
+}
+
+function addProxyConnectorToSpatialIndex(index: ProxyConnectorSpatialIndex, connector: IndexedProxyConnector): void {
+  const minX = Math.min(connector.x1, connector.x2)
+  const maxX = Math.max(connector.x1, connector.x2)
+  const minY = Math.min(connector.y1, connector.y2)
+  const maxY = Math.max(connector.y1, connector.y2)
+  const startX = Math.floor(minX / index.cellSize)
+  const endX = Math.floor(maxX / index.cellSize)
+  const startY = Math.floor(minY / index.cellSize)
+  const endY = Math.floor(maxY / index.cellSize)
+
+  for (let cx = startX; cx <= endX; cx++) {
+    for (let cy = startY; cy <= endY; cy++) {
+      const key = proxyCellKey(cx, cy)
+      let bucket = index.cells.get(key)
+      if (!bucket) {
+        bucket = []
+        index.cells.set(key, bucket)
+      }
+      bucket.push(connector)
+    }
+  }
+}
+
+export function buildProxyConnectorSpatialIndex(
+  connectors: ZUIResolvedConnector[],
+  visibleAnchorsByNodeId: Map<string, VisibleNodeAnchor>,
+): ProxyConnectorSpatialIndex {
+  const index: ProxyConnectorSpatialIndex = {
+    cellSize: PROXY_CONNECTOR_INDEX_CELL_SIZE,
+    cells: new Map(),
+  }
+
+  for (const connector of connectors) {
+    const source = visibleAnchorsByNodeId.get(connector.sourceNodeId)
+    const target = visibleAnchorsByNodeId.get(connector.targetNodeId)
+    if (!source || !target) continue
+
+    const { sourcePoint, targetPoint } = getDirectAnchorPoints(source, target)
+    addProxyConnectorToSpatialIndex(index, {
+      connector,
+      x1: sourcePoint.x,
+      y1: sourcePoint.y,
+      x2: targetPoint.x,
+      y2: targetPoint.y,
+      midX: (sourcePoint.x + targetPoint.x) / 2,
+      midY: (sourcePoint.y + targetPoint.y) / 2,
+    })
+  }
+
+  return index
+}
+
 export function buildVisibleProxyConnectors(
   snapshot: WorkspaceGraphSnapshot | null,
   visibleAnchors: Map<number, VisibleNodeAnchor>,
@@ -498,46 +571,64 @@ export function drawVisibleDirectProxyBadges(
 export function findHoveredProxyConnector(
   worldX: number,
   worldY: number,
-  connectors: ZUIResolvedConnector[],
-  visibleAnchorsByNodeId: Map<string, VisibleNodeAnchor>,
+  index: ProxyConnectorSpatialIndex,
   view: ZUIViewState,
 ): HoveredItem | null {
   const threshold = 18 / view.zoom
-  for (const connector of connectors) {
-    const source = visibleAnchorsByNodeId.get(connector.sourceNodeId)
-    const target = visibleAnchorsByNodeId.get(connector.targetNodeId)
-    if (!source || !target) continue
-    const { sourcePoint, targetPoint } = getDirectAnchorPoints(source, target)
-    const x1 = sourcePoint.x
-    const y1 = sourcePoint.y
-    const x2 = targetPoint.x
-    const y2 = targetPoint.y
-    const dx = x2 - x1
-    const dy = y2 - y1
-    const l2 = dx * dx + dy * dy
-    if (l2 === 0) continue
-    let t = ((worldX - x1) * dx + (worldY - y1) * dy) / l2
-    t = Math.max(0, Math.min(1, t))
-    const nearestX = x1 + t * dx
-    const nearestY = y1 + t * dy
-    const dist = Math.sqrt((worldX - nearestX) ** 2 + (worldY - nearestY) ** 2)
-    if (dist > threshold) continue
+  const startX = Math.floor((worldX - threshold) / index.cellSize)
+  const endX = Math.floor((worldX + threshold) / index.cellSize)
+  const startY = Math.floor((worldY - threshold) / index.cellSize)
+  const endY = Math.floor((worldY + threshold) / index.cellSize)
+  const thresholdSquared = threshold * threshold
+  const seen = new Set<string>()
+  let bestConnector: IndexedProxyConnector | null = null
+  let bestDistSquared = thresholdSquared
 
-    return {
-      type: 'edge',
-      data: {
-        sourceId: connector.details.sourceAnchorName,
-        targetId: connector.details.targetAnchorName,
-        label: connector.details.label || 'Cross-branch connector',
-        diagramId: connector.details.ownerViewIds[0] ?? 0,
-        sourceObjId: connector.sourceAnchorElementId,
-        targetObjId: connector.targetAnchorElementId,
-        isProxy: true,
-        details: connector.details,
-      },
-      absX: (x1 + x2) / 2,
-      absY: (y1 + y2) / 2,
+  for (let cx = startX; cx <= endX; cx++) {
+    for (let cy = startY; cy <= endY; cy++) {
+      const bucket = index.cells.get(proxyCellKey(cx, cy))
+      if (!bucket) continue
+
+      for (const indexed of bucket) {
+        const connector = indexed.connector
+        if (seen.has(connector.key)) continue
+        seen.add(connector.key)
+        const x1 = indexed.x1
+        const y1 = indexed.y1
+        const x2 = indexed.x2
+        const y2 = indexed.y2
+        const dx = x2 - x1
+        const dy = y2 - y1
+        const l2 = dx * dx + dy * dy
+        if (l2 === 0) continue
+        let t = ((worldX - x1) * dx + (worldY - y1) * dy) / l2
+        t = Math.max(0, Math.min(1, t))
+        const nearestX = x1 + t * dx
+        const nearestY = y1 + t * dy
+        const distSquared = (worldX - nearestX) ** 2 + (worldY - nearestY) ** 2
+        if (distSquared > bestDistSquared) continue
+        bestDistSquared = distSquared
+        bestConnector = indexed
+      }
     }
   }
-  return null
+
+  if (!bestConnector) return null
+
+  const connector = bestConnector.connector
+  return {
+    type: 'edge',
+    data: {
+      sourceId: connector.details.sourceAnchorName,
+      targetId: connector.details.targetAnchorName,
+      label: connector.details.label || 'Cross-branch connector',
+      diagramId: connector.details.ownerViewIds[0] ?? 0,
+      sourceObjId: connector.sourceAnchorElementId,
+      targetObjId: connector.targetAnchorElementId,
+      isProxy: true,
+      details: connector.details,
+    },
+    absX: bestConnector.midX,
+    absY: bestConnector.midY,
+  }
 }

@@ -13,6 +13,31 @@ import type {
 } from './types'
 import { allConnectors, findLowestCommonAncestorViewId, isDescendantView, relativeOwnerElementPath, viewName } from './graph'
 
+const connectorsBySnapshotCache = new WeakMap<WorkspaceGraphSnapshot, Connector[]>()
+const endpointPathCacheBySnapshot = new WeakMap<WorkspaceGraphSnapshot, Map<string, number[]>>()
+
+function connectorsForSnapshot(snapshot: WorkspaceGraphSnapshot): Connector[] {
+  const cached = connectorsBySnapshotCache.get(snapshot)
+  if (cached) return cached
+
+  const connectors = allConnectors(snapshot)
+  connectorsBySnapshotCache.set(snapshot, connectors)
+  return connectors
+}
+
+function endpointPathCacheForSnapshot(snapshot: WorkspaceGraphSnapshot): Map<string, number[]> {
+  let cache = endpointPathCacheBySnapshot.get(snapshot)
+  if (!cache) {
+    cache = new Map()
+    endpointPathCacheBySnapshot.set(snapshot, cache)
+  }
+  return cache
+}
+
+function endpointPathCacheKey(ownerViewId: number, elementId: number): string {
+  return `${ownerViewId}:${elementId}`
+}
+
 function firstPlacementForElement(snapshot: WorkspaceGraphSnapshot, elementId: number): GraphPlacementRef | null {
   return snapshot.placementsByElementId[elementId]?.[0] ?? null
 }
@@ -561,12 +586,23 @@ export interface ResolveZUIProxyConnectorOptions {
 }
 
 function endpointPathForOwnerView(snapshot: WorkspaceGraphSnapshot, ownerViewId: number, elementId: number): number[] {
+  const cache = endpointPathCacheForSnapshot(snapshot)
+  const key = endpointPathCacheKey(ownerViewId, elementId)
+  const cached = cache.get(key)
+  if (cached) return cached
+
   const placement = chooseBestPlacement(snapshot, elementId, ownerViewId, ownerViewId)
-  if (!placement) return [elementId]
+  if (!placement) {
+    const path = [elementId]
+    cache.set(key, path)
+    return path
+  }
   const owners = relativeOwnerElementPath(snapshot, snapshot.ancestorsByViewId[placement.viewId]?.[0] ?? placement.viewId, placement.viewId)
   const path = [...owners]
   if (path[path.length - 1] !== elementId) path.push(elementId)
-  return path.length > 0 ? path : [elementId]
+  const resolvedPath = path.length > 0 ? path : [elementId]
+  cache.set(key, resolvedPath)
+  return resolvedPath
 }
 
 interface ZUIEndpointCandidate {
@@ -626,14 +662,8 @@ function isNativelyRenderedInZUI(
     visibleNodeIdsByElementId.get(targetAnchorElementId) === `d${connector.view_id}-o${targetAnchorElementId}`
 }
 
-function usesDeepestVisibleAnchor(
-  snapshot: WorkspaceGraphSnapshot,
-  ownerViewId: number,
-  actualElementId: number,
-  anchorElementId: number,
-  visibleElements: Set<number>,
-): boolean {
-  return visibleEndpointCandidates(snapshot, ownerViewId, actualElementId, visibleElements)[0]?.anchorElementId === anchorElementId
+function visibleEndpointCandidateCacheKey(ownerViewId: number, actualElementId: number): string {
+  return `${ownerViewId}:${actualElementId}`
 }
 
 function anchorCenter(anchor: ZUIConnectorAnchorInfo) {
@@ -712,19 +742,30 @@ export function resolveZUIProxyConnectors(
   }
 
   const visibleElements = new Set(visibleNodeIdsByElementId.keys())
+  const connectors = connectorsForSnapshot(snapshot)
+  const endpointCandidateCache = new Map<string, ZUIEndpointCandidate[]>()
+  const endpointCandidates = (ownerViewId: number, actualElementId: number): ZUIEndpointCandidate[] => {
+    const key = visibleEndpointCandidateCacheKey(ownerViewId, actualElementId)
+    const cached = endpointCandidateCache.get(key)
+    if (cached) return cached
+
+    const candidates = visibleEndpointCandidates(snapshot, ownerViewId, actualElementId, visibleElements)
+    endpointCandidateCache.set(key, candidates)
+    return candidates
+  }
   const grouped = new Map<string, ProxyConnectorLeaf[]>()
   const nativeVisiblePairs = new Set<string>()
 
-  for (const connector of allConnectors(snapshot)) {
+  for (const connector of connectors) {
     if (!visibleElements.has(connector.source_element_id) || !visibleElements.has(connector.target_element_id)) continue
     if (!isNativelyRenderedInZUI(connector, connector.source_element_id, connector.target_element_id, visibleNodeIdsByElementId)) continue
     const [leftAnchorElementId, rightAnchorElementId] = canonicalPairElements(connector.source_element_id, connector.target_element_id)
     nativeVisiblePairs.add([leftAnchorElementId, rightAnchorElementId].join('::'))
   }
 
-  for (const connector of allConnectors(snapshot)) {
-    const sourceCandidates = visibleEndpointCandidates(snapshot, connector.view_id, connector.source_element_id, visibleElements)
-    const targetCandidates = visibleEndpointCandidates(snapshot, connector.view_id, connector.target_element_id, visibleElements)
+  for (const connector of connectors) {
+    const sourceCandidates = endpointCandidates(connector.view_id, connector.source_element_id)
+    const targetCandidates = endpointCandidates(connector.view_id, connector.target_element_id)
     const seenPairsForConnector = new Set<string>()
 
     for (const sourceCandidate of sourceCandidates) {
@@ -825,9 +866,9 @@ export function resolveZUIProxyConnectors(
     const isDirectChildBadgeOnly = leaves.every((leaf) => {
       if (Math.max(leaf.source.depth, leaf.target.depth) !== 1) return false
       const sourceOk = leaf.source.actualElementId === leaf.source.anchorElementId ||
-        usesDeepestVisibleAnchor(snapshot, leaf.ownerViewId, leaf.source.actualElementId, leaf.source.anchorElementId, visibleElements)
+        endpointCandidates(leaf.ownerViewId, leaf.source.actualElementId)[0]?.anchorElementId === leaf.source.anchorElementId
       const targetOk = leaf.target.actualElementId === leaf.target.anchorElementId ||
-        usesDeepestVisibleAnchor(snapshot, leaf.ownerViewId, leaf.target.actualElementId, leaf.target.anchorElementId, visibleElements)
+        endpointCandidates(leaf.ownerViewId, leaf.target.actualElementId)[0]?.anchorElementId === leaf.target.anchorElementId
       return sourceOk && targetOk
     })
     const pairHasNativeDirect = nativeVisiblePairs.has(key)
