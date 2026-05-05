@@ -832,6 +832,95 @@ func TestWatchDiffsMaterializeChangedHiddenSymbolAsUpdated(t *testing.T) {
 	}
 }
 
+func TestRepresentForcesChangedSymbolReferenceEndpoints(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func callerOne() {
+	sharedEndpoint()
+}
+
+func callerTwo() {
+	sharedEndpoint()
+}
+
+func changedHidden() string {
+	return "quiet"
+}
+
+func sharedEndpoint() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial context")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := RepresentRequest{
+		Embedding: EmbeddingConfig{Provider: "none"},
+		Thresholds: Thresholds{
+			MaxIncomingPerElement: 1,
+		},
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "initial context", "", "main", rep.RepresentationHash, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, repo, "main.go", `package main
+
+func callerOne() {
+	sharedEndpoint()
+}
+
+func callerTwo() {
+	sharedEndpoint()
+}
+
+func changedHidden() string {
+	sharedEndpoint()
+	return "changed"
+}
+
+func sharedEndpoint() {}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+
+	shared, err := symbolsByName(context.Background(), store, scan.RepositoryID, "sharedEndpoint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisions, err := store.FilterDecisions(context.Background(), scan.RepositoryID, FilterDecisionQuery{Decision: "visible"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filterDecisionHasReason(decisions, shared.ID, "endpoint of changed symbol") {
+		t.Fatalf("expected shared endpoint to be forced visible, got decisions %+v", decisions)
+	}
+	var connectorID int64
+	err = db.QueryRow(`
+		SELECT c.id
+		FROM connectors c
+		JOIN elements s ON s.id = c.source_element_id
+		JOIN elements t ON t.id = c.target_element_id
+		WHERE s.name = 'changedHidden' AND t.name = 'sharedEndpoint'`).Scan(&connectorID)
+	if err != nil {
+		t.Fatalf("expected connector from changed symbol to forced endpoint: %v", err)
+	}
+}
+
 func TestWatchDiffsAttributeLineDiffsToSymbolRanges(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -2745,6 +2834,28 @@ func symbolElementID(t *testing.T, db *sql.DB, name string) int64 {
 		t.Fatalf("find symbol element %s: %v", name, err)
 	}
 	return id
+}
+
+func symbolsByName(ctx context.Context, store *Store, repositoryID int64, name string) (Symbol, error) {
+	symbols, err := store.QuerySymbols(ctx, repositoryID, SymbolQuery{Search: name, Limit: -1})
+	if err != nil {
+		return Symbol{}, err
+	}
+	for _, sym := range symbols {
+		if sym.Name == name || sym.QualifiedName == name {
+			return sym, nil
+		}
+	}
+	return Symbol{}, fmt.Errorf("symbol %q not found", name)
+}
+
+func filterDecisionHasReason(decisions []FilterDecision, ownerID int64, reason string) bool {
+	for _, decision := range decisions {
+		if decision.OwnerType == "symbol" && decision.OwnerID == ownerID && decision.Reason == reason {
+			return true
+		}
+	}
+	return false
 }
 
 func connectorCount(t *testing.T, db *sql.DB) int {

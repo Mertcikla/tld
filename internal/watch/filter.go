@@ -82,6 +82,10 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 			reasons[sym.ID] = reason
 		}
 	}
+	forcedContextSymbols := map[int64]struct{}{}
+	for id := range forcedVisibleSymbols {
+		forcedContextSymbols[id] = struct{}{}
+	}
 	changed := true
 	for changed {
 		changed = false
@@ -99,12 +103,13 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 			}
 		}
 	}
+	forceChangedSymbolEndpoints(symbols, refs, forcedVisibleSymbols, visible, reasons, forcedContextSymbols)
 
 	for _, sym := range symbols {
 		if isExportedSymbol(sym) {
 			continue
 		}
-		if _, forced := forcedVisibleSymbols[sym.ID]; forced {
+		if _, forced := forcedContextSymbols[sym.ID]; forced {
 			continue
 		}
 		if outgoing[sym.ID] > thresholds.MaxOutgoingPerElement || incoming[sym.ID] > thresholds.MaxIncomingPerElement {
@@ -198,6 +203,33 @@ func rescueRelatedSymbols(symbols []Symbol, refs []Reference, visible map[int64]
 			if source, ok := byID[ref.SourceSymbolID]; ok && embeddingSimilar(targetVisible.ID, source.ID, embeddings, 0.82) {
 				visible[source.ID] = source
 				reasons[source.ID] = "embedding-similar graph neighbor"
+			}
+		}
+	}
+}
+
+func forceChangedSymbolEndpoints(symbols []Symbol, refs []Reference, changedSymbols map[int64]string, visible map[int64]Symbol, reasons map[int64]string, forced map[int64]struct{}) {
+	if len(changedSymbols) == 0 {
+		return
+	}
+	byID := map[int64]Symbol{}
+	for _, sym := range symbols {
+		byID[sym.ID] = sym
+	}
+	for _, ref := range refs {
+		if _, ok := changedSymbols[ref.SourceSymbolID]; ok {
+			if target, ok := byID[ref.TargetSymbolID]; ok {
+				visible[target.ID] = target
+				forced[target.ID] = struct{}{}
+				reasons[target.ID] = "endpoint of changed symbol"
+			}
+			continue
+		}
+		if _, ok := changedSymbols[ref.TargetSymbolID]; ok {
+			if source, ok := byID[ref.SourceSymbolID]; ok {
+				visible[source.ID] = source
+				forced[source.ID] = struct{}{}
+				reasons[source.ID] = "endpoint of changed symbol"
 			}
 		}
 	}
