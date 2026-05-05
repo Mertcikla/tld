@@ -54,6 +54,11 @@ import {
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset } from '../config/runtime'
 
+async function responseError(res: Response, fallback: string): Promise<Error> {
+  const body = await res.json().catch(() => null) as { error?: string } | null
+  return new Error(body?.error || `${fallback}: ${res.statusText}`)
+}
+
 export interface DependenciesResponse {
   elements: DependencyElement[]
   connectors: DependencyConnector[]
@@ -1089,7 +1094,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       })
-      if (!res.ok) throw new Error(`Failed to show watch context: ${res.statusText}`)
+      if (!res.ok) throw await responseError(res, 'Failed to show watch context')
       return res.json()
     },
     hideContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
@@ -1098,7 +1103,7 @@ export const api = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       })
-      if (!res.ok) throw new Error(`Failed to clean watch context: ${res.statusText}`)
+      if (!res.ok) throw await responseError(res, 'Failed to clean watch context')
       return res.json()
     },
   },
@@ -1116,8 +1121,7 @@ export const api = {
         }),
       })
       if (!res.ok) {
-        const body = await res.json().catch(() => null) as { error?: string } | null
-        throw new Error(body?.error || `Failed to open editor: ${res.statusText}`)
+        throw await responseError(res, 'Failed to open editor')
       }
     },
   },
