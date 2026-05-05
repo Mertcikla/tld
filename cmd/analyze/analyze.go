@@ -61,6 +61,19 @@ for cross-file call references.`,
 				return err
 			}
 
+			rulesCache := make(map[string]*ignore.Rules)
+			getRules := func(repoCtx cmdutil.RepoScope) (*ignore.Rules, error) {
+				if rules, ok := rulesCache[repoCtx.Root]; ok {
+					return rules, nil
+				}
+				rules, err := analyzeRulesForRepository(ws, repoCtx)
+				if err != nil {
+					return nil, err
+				}
+				rulesCache[repoCtx.Root] = rules
+				return rules, nil
+			}
+
 			ctx := cmd.Context()
 			totalElements := 0
 			totalConnectors := 0
@@ -97,7 +110,7 @@ for cross-file call references.`,
 				countProgress.Describe(fmt.Sprintf("%s Counting scan plan", analyzeSpinnerFrames[0]))
 			}
 			for _, repoCtx := range repoScopes {
-				rules, err := analyzeRulesForRepository(ws, repoCtx)
+				rules, err := getRules(repoCtx)
 				if err != nil {
 					return err
 				}
@@ -144,7 +157,7 @@ for cross-file call references.`,
 				if progress != nil {
 					progress.Describe(fmt.Sprintf("%s Scanning %s (%d/%d)", analyzeSpinnerFrames[processedEntries%len(analyzeSpinnerFrames)], repoCtx.Name, i+1, len(repoScopes)))
 				}
-				rules, err := analyzeRulesForRepository(ws, repoCtx)
+				rules, err := getRules(repoCtx)
 				if err != nil {
 					return err
 				}
