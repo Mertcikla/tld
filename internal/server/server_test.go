@@ -2,10 +2,12 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld"
 	localstore "github.com/mertcikla/tld/internal/store"
+	"github.com/mertcikla/tld/internal/watch"
 )
 
 func TestServerReadyReportsResourceCounts(t *testing.T) {
@@ -75,6 +78,49 @@ func TestServerInjectsWorkspaceIDIntoConnectRPCResponses(t *testing.T) {
 	}
 	if got := resp.Msg.GetElements()[0].GetOrgId(); got != workspaceID.String() {
 		t.Fatalf("org id = %q, want %s", got, workspaceID)
+	}
+}
+
+func TestWatchSessionLeaseDoesNotBlockWorkspaceWrites(t *testing.T) {
+	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
+	repositoryID := insertWatchRepository(t, sqliteStore.DB())
+	watchStore := watch.NewStore(sqliteStore.DB())
+	if _, err := watchStore.AcquireLock(context.Background(), repositoryID, os.Getpid(), "session-token", watch.LockHeartbeatTimeout); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(routes)
+	t.Cleanup(srv.Close)
+
+	client := diagv1connect.NewWorkspaceServiceClient(srv.Client(), srv.URL+"/api")
+	resp, err := client.CreateElement(context.Background(), connect.NewRequest(&diagv1.CreateElementRequest{Name: "Manual"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetElement().GetName() != "Manual" {
+		t.Fatalf("created element = %+v", resp.Msg.GetElement())
+	}
+}
+
+func TestWatchApplyLeaseBlocksWorkspaceWrites(t *testing.T) {
+	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
+	repositoryID := insertWatchRepository(t, sqliteStore.DB())
+	watchStore := watch.NewStore(sqliteStore.DB())
+	if err := watchStore.AcquireApplyLock(context.Background(), repositoryID, os.Getpid(), "apply-token", watch.LockHeartbeatTimeout); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(routes)
+	t.Cleanup(srv.Close)
+
+	client := diagv1connect.NewWorkspaceServiceClient(srv.Client(), srv.URL+"/api")
+	_, err := client.CreateElement(context.Background(), connect.NewRequest(&diagv1.CreateElementRequest{Name: "Manual"}))
+	if code := connect.CodeOf(err); code != connect.CodeFailedPrecondition {
+		t.Fatalf("code = %s, want failed_precondition: %v", code, err)
+	}
+	if err := watchStore.ReleaseApplyLock(context.Background(), repositoryID, "apply-token"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreateElement(context.Background(), connect.NewRequest(&diagv1.CreateElementRequest{Name: "Manual"})); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -139,6 +185,23 @@ func TestServerRoutesThumbnailAndStaticFallback(t *testing.T) {
 			}
 		})
 	}
+}
+
+func insertWatchRepository(t *testing.T, db interface {
+	Exec(string, ...any) (sql.Result, error)
+}) int64 {
+	t.Helper()
+	res, err := db.Exec(`
+		INSERT INTO watch_repositories(remote_url, repo_root, display_name, branch, head_commit, identity_status, settings_hash, created_at, updated_at)
+		VALUES ('local', ?, 'repo', 'main', '', 'clean', '', 'now', 'now')`, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func newTestServer(t *testing.T, workspaceID uuid.UUID, static fs.FS) (*localstore.SQLiteStore, http.Handler) {

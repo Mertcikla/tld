@@ -132,6 +132,14 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		runErr = err
 		return result, err
 	}
+	applyToken := randomToken()
+	if err := r.Store.AcquireApplyLock(ctx, repositoryID, os.Getpid(), applyToken, LockHeartbeatTimeout); err != nil {
+		runErr = err
+		return result, err
+	}
+	defer func() {
+		_ = r.Store.ReleaseApplyLock(context.Background(), repositoryID, applyToken)
+	}()
 	stats, err := r.materialize(ctx, repo, filtered, req.Thresholds, settingsHash, identityKeys, ownerMatcher)
 	if err != nil {
 		runErr = err
@@ -142,6 +150,10 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	result.ConnectorsCreated = stats.ConnectorsCreated
 	result.ConnectorsUpdated = stats.ConnectorsUpdated
 	result.ViewsCreated = stats.ViewsCreated
+	result.ElementsPreserved = stats.ElementsPreserved
+	result.ConnectorsPreserved = stats.ConnectorsPreserved
+	result.ViewsPreserved = stats.ViewsPreserved
+	result.DeletesPreserved = stats.DeletesPreserved
 	return result, nil
 }
 
@@ -374,11 +386,15 @@ func dropLowSignalCodeLines(text string) string {
 }
 
 type materializeStats struct {
-	ElementsCreated   int
-	ElementsUpdated   int
-	ConnectorsCreated int
-	ConnectorsUpdated int
-	ViewsCreated      int
+	ElementsCreated     int
+	ElementsUpdated     int
+	ConnectorsCreated   int
+	ConnectorsUpdated   int
+	ViewsCreated        int
+	ElementsPreserved   int
+	ConnectorsPreserved int
+	ViewsPreserved      int
+	DeletesPreserved    int
 }
 
 const (
@@ -950,25 +966,33 @@ func (m *materializer) workspaceRootViewID(ctx context.Context) (int64, error) {
 }
 
 func (m *materializer) upsertElement(ctx context.Context, ownerType, ownerKey string, input elementInput) (int64, error) {
-	if id, ok, err := m.store.MappingResourceID(ctx, m.repo.ID, ownerType, ownerKey, "element"); err != nil {
+	if state, ok, err := m.store.MappingState(ctx, m.repo.ID, ownerType, ownerKey, "element"); err != nil {
 		return 0, err
-	} else if ok && elementExists(ctx, m.store.db, id) {
+	} else if ok && elementExists(ctx, m.store.db, state.ResourceID) {
+		dirty, err := m.mappingDirty(ctx, ownerType, ownerKey, "element", state)
+		if err != nil {
+			return 0, err
+		}
+		if dirty {
+			m.stats.ElementsPreserved++
+			return state.ResourceID, m.saveMapping(ctx, ownerType, ownerKey, "element", state.ResourceID)
+		}
 		tags, _ := json.Marshal(input.Tags)
 		techLinks, _ := json.Marshal(technologyLinksForLanguage(input.Language))
-		_, err := m.store.db.ExecContext(ctx, `
+		_, err = m.store.db.ExecContext(ctx, `
 			UPDATE elements
 			SET name = ?, kind = ?, description = ?, technology = ?, technology_connectors = ?, tags = ?, repo = ?, branch = ?, file_path = ?, language = ?, updated_at = ?
 			WHERE id = ?`,
 			input.Name, nullString(input.Kind), nullString(input.Description), nullString(input.Technology), string(techLinks), string(tags),
-			nullString(input.Repo), nullString(input.Branch), nullString(input.FilePath), nullString(input.Language), nowString(), id)
+			nullString(input.Repo), nullString(input.Branch), nullString(input.FilePath), nullString(input.Language), nowString(), state.ResourceID)
 		if err != nil {
 			return 0, err
 		}
-		if err := m.saveMapping(ctx, ownerType, ownerKey, "element", id); err != nil {
+		if err := m.saveMappingWithCurrentHash(ctx, ownerType, ownerKey, "element", state.ResourceID); err != nil {
 			return 0, err
 		}
 		m.stats.ElementsUpdated++
-		return id, nil
+		return state.ResourceID, nil
 	}
 	now := nowString()
 	tags, _ := json.Marshal(input.Tags)
@@ -985,7 +1009,7 @@ func (m *materializer) upsertElement(ctx context.Context, ownerType, ownerKey st
 	if err != nil {
 		return 0, err
 	}
-	if err := m.saveMapping(ctx, ownerType, ownerKey, "element", id); err != nil {
+	if err := m.saveMappingWithCurrentHash(ctx, ownerType, ownerKey, "element", id); err != nil {
 		return 0, err
 	}
 	m.stats.ElementsCreated++
@@ -993,13 +1017,21 @@ func (m *materializer) upsertElement(ctx context.Context, ownerType, ownerKey st
 }
 
 func (m *materializer) upsertView(ctx context.Context, ownerType, ownerKey string, ownerElementID int64, name, label string) (int64, error) {
-	if id, ok, err := m.store.MappingResourceID(ctx, m.repo.ID, ownerType, ownerKey, "view"); err != nil {
+	if state, ok, err := m.store.MappingState(ctx, m.repo.ID, ownerType, ownerKey, "view"); err != nil {
 		return 0, err
-	} else if ok && viewExists(ctx, m.store.db, id) {
-		if _, err := m.store.db.ExecContext(ctx, `UPDATE views SET owner_element_id = ?, name = ?, level_label = ?, updated_at = ? WHERE id = ?`, ownerElementID, name, label, nowString(), id); err != nil {
+	} else if ok && viewExists(ctx, m.store.db, state.ResourceID) {
+		dirty, err := m.mappingDirty(ctx, ownerType, ownerKey, "view", state)
+		if err != nil {
 			return 0, err
 		}
-		return id, m.saveMapping(ctx, ownerType, ownerKey, "view", id)
+		if dirty {
+			m.stats.ViewsPreserved++
+			return state.ResourceID, m.saveMapping(ctx, ownerType, ownerKey, "view", state.ResourceID)
+		}
+		if _, err := m.store.db.ExecContext(ctx, `UPDATE views SET owner_element_id = ?, name = ?, level_label = ?, updated_at = ? WHERE id = ?`, ownerElementID, name, label, nowString(), state.ResourceID); err != nil {
+			return 0, err
+		}
+		return state.ResourceID, m.saveMappingWithCurrentHash(ctx, ownerType, ownerKey, "view", state.ResourceID)
 	}
 	now := nowString()
 	res, err := m.store.db.ExecContext(ctx, `INSERT INTO views(owner_element_id, name, level_label, level, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?)`, ownerElementID, name, label, now, now)
@@ -1010,7 +1042,7 @@ func (m *materializer) upsertView(ctx context.Context, ownerType, ownerKey strin
 	if err != nil {
 		return 0, err
 	}
-	if err := m.saveMapping(ctx, ownerType, ownerKey, "view", id); err != nil {
+	if err := m.saveMappingWithCurrentHash(ctx, ownerType, ownerKey, "view", id); err != nil {
 		return 0, err
 	}
 	m.stats.ViewsCreated++
@@ -1644,17 +1676,25 @@ func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey 
 	if sourceElementID == 0 || targetElementID == 0 || sourceElementID == targetElementID {
 		return nil
 	}
-	if id, ok, err := m.store.MappingResourceID(ctx, m.repo.ID, ownerType, ownerKey, "connector"); err != nil {
+	if state, ok, err := m.store.MappingState(ctx, m.repo.ID, ownerType, ownerKey, "connector"); err != nil {
 		return err
-	} else if ok && connectorExists(ctx, m.store.db, id) {
-		_, err := m.store.db.ExecContext(ctx, `
-			UPDATE connectors
-			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, relationship = ?, direction = 'forward', style = 'solid', updated_at = ?
-			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, label, nowString(), id)
+	} else if ok && connectorExists(ctx, m.store.db, state.ResourceID) {
+		dirty, err := m.mappingDirty(ctx, ownerType, ownerKey, "connector", state)
 		if err != nil {
 			return err
 		}
-		if err := m.saveMapping(ctx, ownerType, ownerKey, "connector", id); err != nil {
+		if dirty {
+			m.stats.ConnectorsPreserved++
+			return m.saveMapping(ctx, ownerType, ownerKey, "connector", state.ResourceID)
+		}
+		_, err = m.store.db.ExecContext(ctx, `
+			UPDATE connectors
+			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, relationship = ?, direction = 'forward', style = 'solid', updated_at = ?
+			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, label, nowString(), state.ResourceID)
+		if err != nil {
+			return err
+		}
+		if err := m.saveMappingWithCurrentHash(ctx, ownerType, ownerKey, "connector", state.ResourceID); err != nil {
 			return err
 		}
 		m.stats.ConnectorsUpdated++
@@ -1671,7 +1711,7 @@ func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey 
 	if err != nil {
 		return err
 	}
-	if err := m.saveMapping(ctx, ownerType, ownerKey, "connector", id); err != nil {
+	if err := m.saveMappingWithCurrentHash(ctx, ownerType, ownerKey, "connector", id); err != nil {
 		return err
 	}
 	m.stats.ConnectorsCreated++
@@ -1682,8 +1722,44 @@ func (m *materializer) saveMapping(ctx context.Context, ownerType, ownerKey, res
 	return m.store.SaveMappingAt(ctx, m.repo.ID, ownerType, ownerKey, resourceType, resourceID, m.runMarker)
 }
 
+func (m *materializer) saveMappingWithCurrentHash(ctx context.Context, ownerType, ownerKey, resourceType string, resourceID int64) error {
+	resourceHash, exists, err := m.store.WatchResourceHash(ctx, resourceType, resourceID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return m.saveMapping(ctx, ownerType, ownerKey, resourceType, resourceID)
+	}
+	return m.store.SaveMappingHashAt(ctx, m.repo.ID, ownerType, ownerKey, resourceType, resourceID, resourceHash, m.runMarker)
+}
+
+func (m *materializer) mappingDirty(ctx context.Context, ownerType, ownerKey, resourceType string, state materializationState) (bool, error) {
+	if state.Dirty {
+		return true, nil
+	}
+	if state.LastWatchHash == nil {
+		return false, nil
+	}
+	currentHash, exists, err := m.store.WatchResourceHash(ctx, resourceType, state.ResourceID)
+	if err != nil {
+		return false, err
+	}
+	if !exists || currentHash == *state.LastWatchHash {
+		return false, nil
+	}
+	if err := m.store.MarkMappingDirty(ctx, m.repo.ID, ownerType, ownerKey, resourceType, state.ResourceID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 func (m *materializer) pruneStaleResources(ctx context.Context) error {
-	return m.store.PruneStaleMaterializedResources(ctx, m.repo.ID, m.runMarker)
+	preserved, err := m.store.PruneStaleMaterializedResources(ctx, m.repo.ID, m.runMarker)
+	if err != nil {
+		return err
+	}
+	m.stats.DeletesPreserved += preserved
+	return nil
 }
 
 func elementExists(ctx context.Context, db *sql.DB, id int64) bool {

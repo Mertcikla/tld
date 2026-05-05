@@ -26,7 +26,7 @@ func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
 
-	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_context_policies", "watch_representation_runs", "watch_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
+	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_context_policies", "watch_representation_runs", "watch_locks", "watch_apply_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
 			t.Fatalf("missing table %s: %v", table, err)
@@ -352,6 +352,222 @@ func helper() {}
 	}
 	if len(decisions) < 3 {
 		t.Fatalf("expected symbol and reference decisions, got %+v", decisions)
+	}
+}
+
+func TestRepresentPreservesDirtyElementButAddsNewConnector(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	helper()
+}
+
+func helper() {}
+`)
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	helperID := elementIDByName(t, db, "helper")
+	if _, err := db.Exec(`UPDATE elements SET name = 'User Helper', description = 'manual edit', updated_at = 'user' WHERE id = ?`, helperID); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	helper()
+}
+
+func extra() {
+	helper()
+}
+
+func helper() {}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ElementsPreserved == 0 {
+		t.Fatalf("expected dirty element to be preserved, got %+v", next)
+	}
+	var name, description string
+	if err := db.QueryRow(`SELECT name, description FROM elements WHERE id = ?`, helperID).Scan(&name, &description); err != nil {
+		t.Fatal(err)
+	}
+	if name != "User Helper" || description != "manual edit" {
+		t.Fatalf("dirty element was overwritten: name=%q description=%q", name, description)
+	}
+	if !connectorExistsBetween(t, db, "extra", "User Helper") {
+		t.Fatal("expected watch to add a new connector to the dirty endpoint")
+	}
+}
+
+func TestRepresentDoesNotTreatUpdatedAtOnlyAsDirty(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	mainID := elementIDByName(t, db, "Main")
+	if _, err := db.Exec(`UPDATE elements SET updated_at = 'user' WHERE id = ?`, mainID); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ElementsPreserved != 0 {
+		t.Fatalf("updated_at-only change should not be dirty, got %+v", next)
+	}
+	var dirty int
+	if err := db.QueryRow(`SELECT dirty FROM watch_materialization WHERE resource_type = 'element' AND resource_id = ?`, mainID).Scan(&dirty); err != nil {
+		t.Fatal(err)
+	}
+	if dirty != 0 {
+		t.Fatalf("updated_at-only change marked dirty = %d", dirty)
+	}
+}
+
+func TestPruneDeletedSourcePreservesDirtyElement(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	mainID := elementIDByName(t, db, "Main")
+	if _, err := db.Exec(`UPDATE elements SET name = 'User Main', updated_at = 'user' WHERE id = ?`, mainID); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repo, "main.go")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !elementNameExists(t, db, "User Main") {
+		t.Fatal("dirty element should remain after backing source is deleted")
+	}
+	var mappingCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM watch_materialization WHERE repository_id = ? AND resource_type = 'element' AND resource_id = ?`, scan.RepositoryID, mainID).Scan(&mappingCount); err != nil {
+		t.Fatal(err)
+	}
+	if mappingCount == 0 {
+		t.Fatal("dirty element mapping should remain after backing source is deleted")
+	}
+}
+
+func TestRepresentPreservesDirtyConnector(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	helper()
+}
+
+func helper() {}
+`)
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	connectorID := connectorIDBetween(t, db, "Main", "helper")
+	if _, err := db.Exec(`UPDATE connectors SET label = 'manual label', relationship = 'manual relationship', style = 'dashed', updated_at = 'user' WHERE id = ?`, connectorID); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ConnectorsPreserved == 0 || next.ConnectorsUpdated != 0 {
+		t.Fatalf("expected dirty connector to be preserved without update, got %+v", next)
+	}
+	var label, relationship, style string
+	if err := db.QueryRow(`SELECT label, relationship, style FROM connectors WHERE id = ?`, connectorID).Scan(&label, &relationship, &style); err != nil {
+		t.Fatal(err)
+	}
+	if label != "manual label" || relationship != "manual relationship" || style != "dashed" {
+		t.Fatalf("dirty connector was overwritten: label=%q relationship=%q style=%q", label, relationship, style)
+	}
+}
+
+func TestRepresentPreservesDirtyView(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	viewID := materializedResourceID(t, db, scan.RepositoryID, "file", "file:main.go", "view")
+	if _, err := db.Exec(`UPDATE views SET name = 'User View', level_label = 'Manual', updated_at = 'user' WHERE id = ?`, viewID); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ViewsPreserved == 0 {
+		t.Fatalf("expected dirty view to be preserved, got %+v", next)
+	}
+	var name, label string
+	if err := db.QueryRow(`SELECT name, level_label FROM views WHERE id = ?`, viewID).Scan(&name, &label); err != nil {
+		t.Fatal(err)
+	}
+	if name != "User View" || label != "Manual" {
+		t.Fatalf("dirty view was overwritten: name=%q label=%q", name, label)
 	}
 }
 
@@ -3020,7 +3236,7 @@ func openTestDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql"} {
+	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "005_watch_materialization_dirty_state.sql"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", migration))
 		if err != nil {
 			t.Fatal(err)
@@ -3146,6 +3362,22 @@ func connectorExistsBetween(t *testing.T, db *sql.DB, sourceName, targetName str
 		t.Fatal(err)
 	}
 	return true
+}
+
+func connectorIDBetween(t *testing.T, db *sql.DB, sourceName, targetName string) int64 {
+	t.Helper()
+	var id int64
+	if err := db.QueryRow(`
+		SELECT c.id
+		FROM connectors c
+		JOIN elements s ON s.id = c.source_element_id
+		JOIN elements target ON target.id = c.target_element_id
+		WHERE s.name = ? AND target.name = ?
+		ORDER BY c.id
+		LIMIT 1`, sourceName, targetName).Scan(&id); err != nil {
+		t.Fatalf("connector %s -> %s: %v", sourceName, targetName, err)
+	}
+	return id
 }
 
 func activePolicyCount(t *testing.T, db *sql.DB, repositoryID int64, action, ownerType string) int {

@@ -1044,6 +1044,38 @@ func (s *Store) MappingResourceID(ctx context.Context, repositoryID int64, owner
 	return id, err == nil, err
 }
 
+type materializationState struct {
+	ResourceID      int64
+	LastWatchHash   *string
+	Dirty           bool
+	DirtyDetectedAt *string
+}
+
+func (s *Store) MappingState(ctx context.Context, repositoryID int64, ownerType, ownerKey, resourceType string) (materializationState, bool, error) {
+	var state materializationState
+	var lastHash sql.NullString
+	var dirtyAt sql.NullString
+	var dirty int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT resource_id, last_watch_hash, dirty, dirty_detected_at FROM watch_materialization
+		WHERE repository_id = ? AND owner_type = ? AND owner_key = ? AND resource_type = ?`,
+		repositoryID, ownerType, ownerKey, resourceType).Scan(&state.ResourceID, &lastHash, &dirty, &dirtyAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return materializationState{}, false, nil
+	}
+	if err != nil {
+		return materializationState{}, false, err
+	}
+	if lastHash.Valid {
+		state.LastWatchHash = &lastHash.String
+	}
+	if dirtyAt.Valid {
+		state.DirtyDetectedAt = &dirtyAt.String
+	}
+	state.Dirty = dirty != 0
+	return state, true, nil
+}
+
 func (s *Store) SaveMapping(ctx context.Context, repositoryID int64, ownerType, ownerKey, resourceType string, resourceID int64) error {
 	return s.SaveMappingAt(ctx, repositoryID, ownerType, ownerKey, resourceType, resourceID, nowString())
 }
@@ -1059,9 +1091,144 @@ func (s *Store) SaveMappingAt(ctx context.Context, repositoryID int64, ownerType
 	return err
 }
 
+func (s *Store) SaveMappingHashAt(ctx context.Context, repositoryID int64, ownerType, ownerKey, resourceType string, resourceID int64, resourceHash string, updatedAt string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO watch_materialization(repository_id, owner_type, owner_key, resource_type, resource_id, last_watch_hash, dirty, dirty_detected_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, ?)
+		ON CONFLICT(repository_id, owner_type, owner_key, resource_type) DO UPDATE SET
+			resource_id = excluded.resource_id,
+			last_watch_hash = excluded.last_watch_hash,
+			dirty = 0,
+			dirty_detected_at = NULL,
+			updated_at = excluded.updated_at`,
+		repositoryID, ownerType, ownerKey, resourceType, resourceID, resourceHash, updatedAt, updatedAt)
+	return err
+}
+
+func (s *Store) MarkMappingDirty(ctx context.Context, repositoryID int64, ownerType, ownerKey, resourceType string, resourceID int64) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE watch_materialization
+		SET dirty = 1,
+		    dirty_detected_at = COALESCE(dirty_detected_at, ?),
+		    updated_at = ?
+		WHERE repository_id = ? AND owner_type = ? AND owner_key = ? AND resource_type = ? AND resource_id = ?`,
+		nowString(), nowString(), repositoryID, ownerType, ownerKey, resourceType, resourceID)
+	return err
+}
+
+func (s *Store) WatchResourceHash(ctx context.Context, resourceType string, resourceID int64) (string, bool, error) {
+	switch resourceType {
+	case "element":
+		return s.watchElementHash(ctx, resourceID)
+	case "connector":
+		return s.watchConnectorHash(ctx, resourceID)
+	case "view":
+		return s.watchViewHash(ctx, resourceID)
+	default:
+		return "", false, fmt.Errorf("unsupported watch resource type %q", resourceType)
+	}
+}
+
+func (s *Store) watchElementHash(ctx context.Context, id int64) (string, bool, error) {
+	var kind, description, technology, repo, branch, filePath, language sql.NullString
+	var name, techLinks, tags string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT name, kind, description, technology, technology_connectors, tags, repo, branch, file_path, language
+		FROM elements WHERE id = ?`, id).Scan(&name, &kind, &description, &technology, &techLinks, &tags, &repo, &branch, &filePath, &language)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	payload := map[string]any{
+		"name":                  name,
+		"kind":                  nullableString(kind),
+		"description":           nullableString(description),
+		"technology":            nullableString(technology),
+		"technology_connectors": normalizedJSONValue(techLinks),
+		"tags":                  normalizedJSONValue(tags),
+		"repo":                  nullableString(repo),
+		"branch":                nullableString(branch),
+		"file_path":             nullableString(filePath),
+		"language":              nullableString(language),
+	}
+	return hashCanonicalPayload(payload), true, nil
+}
+
+func (s *Store) watchConnectorHash(ctx context.Context, id int64) (string, bool, error) {
+	var label, relationship sql.NullString
+	var viewID, sourceID, targetID int64
+	var direction, style string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT view_id, source_element_id, target_element_id, label, relationship, direction, style
+		FROM connectors WHERE id = ?`, id).Scan(&viewID, &sourceID, &targetID, &label, &relationship, &direction, &style)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	payload := map[string]any{
+		"view_id":           viewID,
+		"source_element_id": sourceID,
+		"target_element_id": targetID,
+		"label":             nullableString(label),
+		"relationship":      nullableString(relationship),
+		"direction":         direction,
+		"style":             style,
+	}
+	return hashCanonicalPayload(payload), true, nil
+}
+
+func (s *Store) watchViewHash(ctx context.Context, id int64) (string, bool, error) {
+	var ownerID sql.NullInt64
+	var levelLabel sql.NullString
+	var name string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT owner_element_id, name, level_label
+		FROM views WHERE id = ?`, id).Scan(&ownerID, &name, &levelLabel)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	var owner any
+	if ownerID.Valid {
+		owner = ownerID.Int64
+	}
+	payload := map[string]any{
+		"owner_element_id": owner,
+		"name":             name,
+		"level_label":      nullableString(levelLabel),
+	}
+	return hashCanonicalPayload(payload), true, nil
+}
+
+func hashCanonicalPayload(payload any) string {
+	data, _ := json.Marshal(payload)
+	return hashBytes(data)
+}
+
+func nullableString(value sql.NullString) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.String
+}
+
+func normalizedJSONValue(raw string) any {
+	var value any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil {
+		return raw
+	}
+	return value
+}
+
 func (s *Store) Materialization(ctx context.Context, repositoryID int64) ([]MaterializationMapping, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, repository_id, owner_type, owner_key, resource_type, resource_id, created_at, updated_at
+		SELECT id, repository_id, owner_type, owner_key, resource_type, resource_id, last_watch_hash, dirty, dirty_detected_at, created_at, updated_at
 		FROM watch_materialization
 		WHERE repository_id = ?
 		ORDER BY owner_type, owner_key, resource_type`, repositoryID)
@@ -1072,8 +1239,18 @@ func (s *Store) Materialization(ctx context.Context, repositoryID int64) ([]Mate
 	var out []MaterializationMapping
 	for rows.Next() {
 		var item MaterializationMapping
-		if err := rows.Scan(&item.ID, &item.RepositoryID, &item.OwnerType, &item.OwnerKey, &item.ResourceType, &item.ResourceID, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		var lastHash sql.NullString
+		var dirtyAt sql.NullString
+		var dirty int
+		if err := rows.Scan(&item.ID, &item.RepositoryID, &item.OwnerType, &item.OwnerKey, &item.ResourceType, &item.ResourceID, &lastHash, &dirty, &dirtyAt, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if lastHash.Valid {
+			item.LastWatchHash = &lastHash.String
+		}
+		item.Dirty = dirty != 0
+		if dirtyAt.Valid {
+			item.DirtyDetectedAt = &dirtyAt.String
 		}
 		out = append(out, item)
 	}
@@ -1081,17 +1258,20 @@ func (s *Store) Materialization(ctx context.Context, repositoryID int64) ([]Mate
 }
 
 type watchMaterializationMapping struct {
-	ID           int64
-	OwnerType    string
-	OwnerKey     string
-	ResourceType string
-	ResourceID   int64
-	UpdatedAt    string
+	ID              int64
+	OwnerType       string
+	OwnerKey        string
+	ResourceType    string
+	ResourceID      int64
+	LastWatchHash   *string
+	Dirty           bool
+	DirtyDetectedAt *string
+	UpdatedAt       string
 }
 
 func (s *Store) staleMaterializationMappings(ctx context.Context, repositoryID int64, runMarker string) ([]watchMaterializationMapping, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, owner_type, owner_key, resource_type, resource_id, updated_at
+		SELECT id, owner_type, owner_key, resource_type, resource_id, last_watch_hash, dirty, dirty_detected_at, updated_at
 		FROM watch_materialization
 		WHERE repository_id = ? AND updated_at != ?`, repositoryID, runMarker)
 	if err != nil {
@@ -1101,8 +1281,18 @@ func (s *Store) staleMaterializationMappings(ctx context.Context, repositoryID i
 	var out []watchMaterializationMapping
 	for rows.Next() {
 		var item watchMaterializationMapping
-		if err := rows.Scan(&item.ID, &item.OwnerType, &item.OwnerKey, &item.ResourceType, &item.ResourceID, &item.UpdatedAt); err != nil {
+		var lastHash sql.NullString
+		var dirtyAt sql.NullString
+		var dirty int
+		if err := rows.Scan(&item.ID, &item.OwnerType, &item.OwnerKey, &item.ResourceType, &item.ResourceID, &lastHash, &dirty, &dirtyAt, &item.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if lastHash.Valid {
+			item.LastWatchHash = &lastHash.String
+		}
+		item.Dirty = dirty != 0
+		if dirtyAt.Valid {
+			item.DirtyDetectedAt = &dirtyAt.String
 		}
 		out = append(out, item)
 	}
@@ -1115,7 +1305,7 @@ func (s *Store) staleMaterializationMappings(ctx context.Context, repositoryID i
 
 func (s *Store) allMaterializationMappings(ctx context.Context, repositoryID int64) ([]watchMaterializationMapping, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, owner_type, owner_key, resource_type, resource_id, updated_at
+		SELECT id, owner_type, owner_key, resource_type, resource_id, last_watch_hash, dirty, dirty_detected_at, updated_at
 		FROM watch_materialization
 		WHERE repository_id = ?`, repositoryID)
 	if err != nil {
@@ -1125,8 +1315,18 @@ func (s *Store) allMaterializationMappings(ctx context.Context, repositoryID int
 	var out []watchMaterializationMapping
 	for rows.Next() {
 		var item watchMaterializationMapping
-		if err := rows.Scan(&item.ID, &item.OwnerType, &item.OwnerKey, &item.ResourceType, &item.ResourceID, &item.UpdatedAt); err != nil {
+		var lastHash sql.NullString
+		var dirtyAt sql.NullString
+		var dirty int
+		if err := rows.Scan(&item.ID, &item.OwnerType, &item.OwnerKey, &item.ResourceType, &item.ResourceID, &lastHash, &dirty, &dirtyAt, &item.UpdatedAt); err != nil {
 			return nil, err
+		}
+		if lastHash.Valid {
+			item.LastWatchHash = &lastHash.String
+		}
+		item.Dirty = dirty != 0
+		if dirtyAt.Valid {
+			item.DirtyDetectedAt = &dirtyAt.String
 		}
 		out = append(out, item)
 	}
@@ -1169,31 +1369,40 @@ func (s *Store) deleteMaterializationMapping(ctx context.Context, mapping watchM
 	return err
 }
 
-func (s *Store) PruneStaleMaterializedResources(ctx context.Context, repositoryID int64, runMarker string) error {
+func (s *Store) PruneStaleMaterializedResources(ctx context.Context, repositoryID int64, runMarker string) (int, error) {
 	if runMarker == "" {
-		return nil
+		return 0, nil
 	}
 	mappings, err := s.staleMaterializationMappings(ctx, repositoryID, runMarker)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	deletedElementIDs, err := s.deletedMaterializedElementIDs(ctx, repositoryID)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	preserved := 0
 	for _, mapping := range mappings {
 		tombstoned, err := s.materializationMappingTombstoned(ctx, repositoryID, mapping, deletedElementIDs)
 		if err != nil {
-			return err
+			return preserved, err
 		}
 		if tombstoned {
 			continue
 		}
+		dirty, err := s.mappingResourceDirty(ctx, repositoryID, mapping)
+		if err != nil {
+			return preserved, err
+		}
+		if dirty {
+			preserved++
+			continue
+		}
 		if err := s.deleteMaterializationMapping(ctx, mapping); err != nil {
-			return err
+			return preserved, err
 		}
 	}
-	return nil
+	return preserved, nil
 }
 
 func (s *Store) PruneDeletedMaterializedResources(ctx context.Context, repositoryID int64) error {
@@ -1213,11 +1422,41 @@ func (s *Store) PruneDeletedMaterializedResources(ctx context.Context, repositor
 		if !tombstoned {
 			continue
 		}
+		dirty, err := s.mappingResourceDirty(ctx, repositoryID, mapping)
+		if err != nil {
+			return err
+		}
+		if dirty {
+			continue
+		}
 		if err := s.deleteMaterializationMapping(ctx, mapping); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (s *Store) mappingResourceDirty(ctx context.Context, repositoryID int64, mapping watchMaterializationMapping) (bool, error) {
+	if mapping.Dirty {
+		return true, nil
+	}
+	if mapping.LastWatchHash == nil {
+		return false, nil
+	}
+	currentHash, exists, err := s.WatchResourceHash(ctx, mapping.ResourceType, mapping.ResourceID)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil
+	}
+	if currentHash == *mapping.LastWatchHash {
+		return false, nil
+	}
+	if err := s.MarkMappingDirty(ctx, repositoryID, mapping.OwnerType, mapping.OwnerKey, mapping.ResourceType, mapping.ResourceID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (s *Store) RepositoryMaterializationCount(ctx context.Context, repositoryID int64) (int, error) {
@@ -1520,6 +1759,72 @@ func (s *Store) LockStatus(ctx context.Context, repositoryID int64, token string
 
 func (s *Store) ReleaseLock(ctx context.Context, repositoryID int64, token string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'released', heartbeat_at = ? WHERE repository_id = ? AND token = ?`, nowString(), repositoryID, token)
+	return err
+}
+
+func (s *Store) AcquireApplyLock(ctx context.Context, repositoryID int64, pid int, token string, staleAfter time.Duration) error {
+	if staleAfter <= 0 {
+		staleAfter = LockHeartbeatTimeout
+	}
+	now := nowString()
+	cutoff := time.Now().UTC().Add(-staleAfter).Format(time.RFC3339)
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO watch_apply_locks(id, repository_id, pid, token, started_at, heartbeat_at, status)
+		VALUES (1, ?, ?, ?, ?, ?, 'active')
+		ON CONFLICT(id) DO UPDATE SET
+			repository_id = excluded.repository_id,
+			pid = excluded.pid,
+			token = excluded.token,
+			started_at = excluded.started_at,
+			heartbeat_at = excluded.heartbeat_at,
+			status = 'active'
+		WHERE watch_apply_locks.status != 'active' OR watch_apply_locks.heartbeat_at < ?`,
+		repositoryID, pid, token, now, now, cutoff)
+	if err != nil {
+		return err
+	}
+	live, err := s.ActiveApplyLock(ctx, staleAfter)
+	if err != nil || !live {
+		return err
+	}
+	var got string
+	err = s.db.QueryRowContext(ctx, `SELECT token FROM watch_apply_locks WHERE id = 1 AND status = 'active'`).Scan(&got)
+	if err != nil {
+		return err
+	}
+	if got != token {
+		return fmt.Errorf("watch apply is already active")
+	}
+	return nil
+}
+
+func (s *Store) ActiveApplyLock(ctx context.Context, staleAfter time.Duration) (bool, error) {
+	if staleAfter <= 0 {
+		staleAfter = LockHeartbeatTimeout
+	}
+	var id int64
+	var pid int
+	var heartbeatAt, status string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, pid, heartbeat_at, status
+		FROM watch_apply_locks
+		WHERE id = 1 AND status = 'active'`).Scan(&id, &pid, &heartbeatAt, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	heartbeat, err := time.Parse(time.RFC3339, heartbeatAt)
+	if err != nil || time.Since(heartbeat) > staleAfter || !watchProcessIsRunning(pid) || status != "active" {
+		_, _ = s.db.ExecContext(ctx, `UPDATE watch_apply_locks SET status = 'stale' WHERE id = ? AND status = 'active'`, id)
+		return false, nil
+	}
+	return true, nil
+}
+
+func (s *Store) ReleaseApplyLock(ctx context.Context, repositoryID int64, token string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE watch_apply_locks SET status = 'released', heartbeat_at = ? WHERE repository_id = ? AND token = ?`, nowString(), repositoryID, token)
 	return err
 }
 

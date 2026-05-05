@@ -110,11 +110,11 @@ func (h watchLockHooks) CheckWrite(ctx context.Context, _ uuid.UUID, resourceTyp
 	if h.store == nil {
 		return nil
 	}
-	lock, live, err := h.store.ActiveLiveLock(ctx, watch.LockHeartbeatTimeout)
-	if err != nil || !live {
+	applying, err := h.store.ActiveApplyLock(ctx, watch.LockHeartbeatTimeout)
+	if err != nil || !applying {
 		return err
 	}
-	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("workspace is locked by tld watch for repository %d; stop watch before editing %s", lock.RepositoryID, resourceType))
+	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("workspace is being updated by tld watch; retry editing %s shortly", resourceType))
 }
 
 func (h watchLockHooks) CheckApplyPlan(ctx context.Context, workspaceID uuid.UUID, _ *diagv1.ApplyPlanRequest) error {

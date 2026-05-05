@@ -134,19 +134,23 @@ type RepresentRequest struct {
 }
 
 type RepresentResult struct {
-	RepositoryID       int64  `json:"repository_id"`
-	RepresentationRun  int64  `json:"representation_run_id"`
-	FilterRunID        int64  `json:"filter_run_id"`
-	RawGraphHash       string `json:"raw_graph_hash"`
-	SettingsHash       string `json:"settings_hash"`
-	RepresentationHash string `json:"representation_hash"`
-	ElementsCreated    int    `json:"elements_created"`
-	ElementsUpdated    int    `json:"elements_updated"`
-	ConnectorsCreated  int    `json:"connectors_created"`
-	ConnectorsUpdated  int    `json:"connectors_updated"`
-	ViewsCreated       int    `json:"views_created"`
-	EmbeddingCacheHits int    `json:"embedding_cache_hits"`
-	EmbeddingsCreated  int    `json:"embeddings_created"`
+	RepositoryID        int64  `json:"repository_id"`
+	RepresentationRun   int64  `json:"representation_run_id"`
+	FilterRunID         int64  `json:"filter_run_id"`
+	RawGraphHash        string `json:"raw_graph_hash"`
+	SettingsHash        string `json:"settings_hash"`
+	RepresentationHash  string `json:"representation_hash"`
+	ElementsCreated     int    `json:"elements_created"`
+	ElementsUpdated     int    `json:"elements_updated"`
+	ConnectorsCreated   int    `json:"connectors_created"`
+	ConnectorsUpdated   int    `json:"connectors_updated"`
+	ViewsCreated        int    `json:"views_created"`
+	ElementsPreserved   int    `json:"elements_preserved"`
+	ConnectorsPreserved int    `json:"connectors_preserved"`
+	ViewsPreserved      int    `json:"views_preserved"`
+	DeletesPreserved    int    `json:"deletes_preserved"`
+	EmbeddingCacheHits  int    `json:"embedding_cache_hits"`
+	EmbeddingsCreated   int    `json:"embeddings_created"`
 }
 
 type ProgressSink interface {
@@ -200,14 +204,17 @@ type Cluster struct {
 }
 
 type MaterializationMapping struct {
-	ID           int64  `json:"id"`
-	RepositoryID int64  `json:"repository_id"`
-	OwnerType    string `json:"owner_type"`
-	OwnerKey     string `json:"owner_key"`
-	ResourceType string `json:"resource_type"`
-	ResourceID   int64  `json:"resource_id"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	ID              int64   `json:"id"`
+	RepositoryID    int64   `json:"repository_id"`
+	OwnerType       string  `json:"owner_type"`
+	OwnerKey        string  `json:"owner_key"`
+	ResourceType    string  `json:"resource_type"`
+	ResourceID      int64   `json:"resource_id"`
+	LastWatchHash   *string `json:"last_watch_hash,omitempty"`
+	Dirty           bool    `json:"dirty"`
+	DirtyDetectedAt *string `json:"dirty_detected_at,omitempty"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
 }
 
 type ContextPolicy struct {
