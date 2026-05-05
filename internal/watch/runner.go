@@ -3,7 +3,9 @@ package watch
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -168,9 +170,15 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			intervalChangesProcessed = 0
 		case <-heartbeat.C:
 			if _, err := r.Store.HeartbeatLock(ctx, repo.ID, token); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return result, nil
+				}
 				return result, err
 			}
 			status, err := r.Store.LockStatus(ctx, repo.ID, token)
+			if errors.Is(err, sql.ErrNoRows) {
+				return result, nil
+			}
 			if err == nil && status == "stopping" {
 				return result, nil
 			}
@@ -184,6 +192,9 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			}
 		case <-poll.C:
 			status, err := r.Store.LockStatus(ctx, repo.ID, token)
+			if errors.Is(err, sql.ErrNoRows) {
+				return result, nil
+			}
 			if err == nil && status == "paused" {
 				continue
 			}

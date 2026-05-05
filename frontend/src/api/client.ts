@@ -83,6 +83,7 @@ export interface WatchStatus {
   active: boolean
   repository?: WatchRepository
   lock?: WatchLock
+  connected_clients?: number
 }
 
 export interface WatchRepresentationSummary {

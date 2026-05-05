@@ -1439,6 +1439,15 @@ func (s *Store) ActiveLock(ctx context.Context) (Lock, error) {
 	return scanLock(row)
 }
 
+func (s *Store) lockByRepositoryToken(ctx context.Context, repositoryID int64, token string) (Lock, error) {
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, repository_id, pid, token, started_at, heartbeat_at, status
+		FROM watch_locks
+		WHERE repository_id = ? AND token = ?
+		LIMIT 1`, repositoryID, token)
+	return scanLock(row)
+}
+
 func (s *Store) ActiveLiveLock(ctx context.Context, staleAfter time.Duration) (Lock, bool, error) {
 	if staleAfter <= 0 {
 		staleAfter = LockHeartbeatTimeout
@@ -1459,7 +1468,7 @@ func (s *Store) ActiveLiveLock(ctx context.Context, staleAfter time.Duration) (L
 }
 
 func (s *Store) HeartbeatLock(ctx context.Context, repositoryID int64, token string) (Lock, error) {
-	_, err := s.db.ExecContext(ctx, `
+	res, err := s.db.ExecContext(ctx, `
 		UPDATE watch_locks
 		SET heartbeat_at = ?
 		WHERE repository_id = ? AND token = ? AND status IN ('active', 'paused')`,
@@ -1467,7 +1476,10 @@ func (s *Store) HeartbeatLock(ctx context.Context, repositoryID int64, token str
 	if err != nil {
 		return Lock{}, err
 	}
-	return s.ActiveLock(ctx)
+	if rows, err := res.RowsAffected(); err == nil && rows == 0 {
+		return Lock{}, sql.ErrNoRows
+	}
+	return s.lockByRepositoryToken(ctx, repositoryID, token)
 }
 
 func (s *Store) RequestStop(ctx context.Context, repositoryID int64) error {

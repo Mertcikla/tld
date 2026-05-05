@@ -62,6 +62,7 @@ function summarizeEvent(event: WatchEvent): WatchLine | null {
   const at = event.at || new Date().toISOString()
   const type = event.type
   if (type === 'watch.heartbeat') return null
+  if (type === 'watch.connected') return { id, at, text: 'Watch stream connected', tone: 'success' }
   if (type === 'watch.paused') return { id, at, text: 'Watch paused', tone: 'warning' }
   if (type === 'watch.stopped') return { id, at, text: 'Watch stopped', tone: 'warning' }
   if (type === 'watch.error') return { id, at, text: event.message || 'Watch error', tone: 'error' }
@@ -114,6 +115,15 @@ function changeLabel(diffs: WatchDiff[]) {
 
 function normalizeDiffs(value: WatchDiff[] | null | undefined): WatchDiff[] {
   return Array.isArray(value) ? value : []
+}
+
+function mergeRepositoryOption(repos: WatchRepository[], repo: WatchRepository | null | undefined): WatchRepository[] {
+  if (!repo) return repos
+  const existing = repos.find((item) => item.id === repo.id)
+  if (existing) {
+    return repos.map((item) => item.id === repo.id ? { ...item, ...repo } : item)
+  }
+  return [repo, ...repos]
 }
 
 function ResourceCountDisplay({ summary }: { summary: WatchDiffSummary }) {
@@ -271,8 +281,23 @@ export default function WorkspacePanel() {
   const [diffs, setDiffs] = useState<WatchDiff[]>([])
   const [diffLocations, setDiffLocations] = useState<WatchDiffLocation[]>([])
   const [activeDiffLocationKey, setActiveDiffLocationKey] = useState<string | null>(null)
+  const [watchActive, setWatchActive] = useState(false)
+  const [watchPaused, setWatchPaused] = useState(false)
+  const [watchRepository, setWatchRepository] = useState<WatchRepository | null>(null)
+  const [watchLock, setWatchLock] = useState<WatchLock | null>(null)
+  const [watchConnected, setWatchConnected] = useState(false)
+  const [watcherMode, setWatcherMode] = useState('')
+  const [languages, setLanguages] = useState<string[]>([])
+  const [watchLines, setWatchLines] = useState<WatchLine[]>([])
+  const [runtimeOpen, setRuntimeOpen] = useState(true)
 
-  const selectedRepo = useMemo(() => repos.find((r) => r.id === repoId) ?? null, [repos, repoId])
+  const repoOptions = useMemo(() => mergeRepositoryOption(repos, watchRepository), [repos, watchRepository])
+  const selectedRepo = useMemo(() => {
+    const selected = repoOptions.find((r) => r.id === repoId)
+    if (selected) return selected
+    if (!repoId || watchRepository?.id === repoId) return watchRepository ?? null
+    return null
+  }, [repoOptions, repoId, watchRepository])
   const selectedVersion = useMemo(() => versions.find((v) => v.id === versionId) ?? null, [versions, versionId])
 
   const selectLatestWatchVersion = useCallback(async (targetRepoId: number) => {
@@ -293,16 +318,17 @@ export default function WorkspacePanel() {
       api.watch.repositories().catch(() => [] as WatchRepository[]),
       api.versions.list(50).catch(() => [] as WorkspaceVersion[]),
     ])
-    setRepos(nextRepos)
+    const mergedRepos = mergeRepositoryOption(nextRepos, watchRepository)
+    setRepos(mergedRepos)
     setWorkspaceVersions(nextWsVersions)
-    const nextRepoId = repoId || nextRepos[0]?.id || ''
+    const nextRepoId = repoId || watchRepository?.id || mergedRepos[0]?.id || ''
     setRepoId(nextRepoId)
     if (nextRepoId) {
       const nextVersions = await api.watch.versions(nextRepoId)
       setVersions(nextVersions)
       setVersionId(versionId || nextVersions[0]?.id || '')
     }
-  }, [repoId, versionId])
+  }, [repoId, versionId, watchRepository])
 
   useEffect(() => {
     if (!versionsOpen && !preview) return
@@ -398,17 +424,10 @@ export default function WorkspacePanel() {
   // ── Watch state ───────────────────────────────────────────────────────────
   const socketRef = useRef<WebSocket | null>(null)
   const reconnectTimerRef = useRef<number | null>(null)
+  const reconnectAttemptRef = useRef(0)
+  const lastWatchMessageAtRef = useRef(0)
+  const socketHealthTimerRef = useRef<number | null>(null)
   const lastRepresentationHashRef = useRef('')
-  const [watchActive, setWatchActive] = useState(false)
-  const [watchPaused, setWatchPaused] = useState(false)
-  const [watchRepository, setWatchRepository] = useState<WatchRepository | null>(null)
-  const [watchLock, setWatchLock] = useState<WatchLock | null>(null)
-  const [watchConnected, setWatchConnected] = useState(false)
-  const [watcherMode, setWatcherMode] = useState('')
-  const [languages, setLanguages] = useState<string[]>([])
-  const [watchLines, setWatchLines] = useState<WatchLine[]>([])
-  const [runtimeOpen, setRuntimeOpen] = useState(true)
-
   const addLine = useCallback((line: WatchLine | null) => {
     if (!line) return
     setWatchLines((current) => {
@@ -457,6 +476,11 @@ export default function WorkspacePanel() {
     }
     if (event.type !== 'watch.stopped' || watchActive) addLine(summarizeEvent(event))
   }, [watchActive, addLine, clearPreview, refreshWorkspace, selectLatestWatchVersion, watchLock?.repository_id, watchRepository?.id])
+  const handleEventRef = useRef(handleEvent)
+
+  useEffect(() => {
+    handleEventRef.current = handleEvent
+  }, [handleEvent])
 
   useEffect(() => {
     let cancelled = false
@@ -467,6 +491,10 @@ export default function WorkspacePanel() {
       setWatchRepository(status.repository ?? null)
       setWatchLock(status.lock ?? null)
       setWatchPaused(status.lock?.status === 'paused')
+      if (status.repository) {
+        setRepos((current) => mergeRepositoryOption(current, status.repository))
+        setRepoId((current) => current || status.repository?.id || '')
+      }
     }
     void poll()
     const interval = window.setInterval(poll, 5000)
@@ -475,28 +503,52 @@ export default function WorkspacePanel() {
 
   useEffect(() => {
     let disposed = false
+    const scheduleReconnect = () => {
+      if (disposed) return
+      const delay = Math.min(5000, 1000 * 2 ** Math.min(reconnectAttemptRef.current, 3))
+      reconnectAttemptRef.current += 1
+      reconnectTimerRef.current = window.setTimeout(connect, delay)
+    }
     const connect = () => {
       if (disposed) return
       const socket = new WebSocket(api.watch.websocketUrl())
       socketRef.current = socket
-      socket.onopen = () => setWatchConnected(true)
+      lastWatchMessageAtRef.current = Date.now()
+      socket.onopen = () => {
+        setWatchConnected(true)
+        reconnectAttemptRef.current = 0
+        lastWatchMessageAtRef.current = Date.now()
+        addLine({ id: Date.now() + Math.random(), at: new Date().toISOString(), text: 'Watch stream connected', tone: 'success' })
+        try { socket.send(JSON.stringify({ type: 'watch.status' })) } catch { /* ignore */ }
+      }
       socket.onclose = () => {
         setWatchConnected(false)
-        if (!disposed) reconnectTimerRef.current = window.setTimeout(connect, 1500)
+        if (!disposed) {
+          addLine({ id: Date.now() + Math.random(), at: new Date().toISOString(), text: 'Watch stream reconnecting', tone: 'warning' })
+          scheduleReconnect()
+        }
       }
       socket.onerror = () => socket.close()
       socket.onmessage = (msg) => {
-        try { handleEvent(JSON.parse(msg.data) as WatchEvent) } catch { /* ignore */ }
+        lastWatchMessageAtRef.current = Date.now()
+        try { handleEventRef.current(JSON.parse(msg.data) as WatchEvent) } catch { /* ignore */ }
       }
     }
     connect()
+    socketHealthTimerRef.current = window.setInterval(() => {
+      const socket = socketRef.current
+      if (socket?.readyState === WebSocket.OPEN && Date.now() - lastWatchMessageAtRef.current > 10000) {
+        socket.close()
+      }
+    }, 5000)
     return () => {
       disposed = true
       if (reconnectTimerRef.current !== null) window.clearTimeout(reconnectTimerRef.current)
+      if (socketHealthTimerRef.current !== null) window.clearInterval(socketHealthTimerRef.current)
       socketRef.current?.close()
       socketRef.current = null
     }
-  }, [handleEvent])
+  }, [addLine])
 
   const sendControl = useCallback((type: 'watch.pause' | 'watch.resume' | 'watch.stop') => {
     const socket = socketRef.current
@@ -547,7 +599,7 @@ export default function WorkspacePanel() {
               <ThemedSelect<number>
                 value={repoId}
                 placeholder="Repository"
-                options={repos.map((r) => ({ value: r.id, label: r.display_name }))}
+                options={repoOptions.map((r) => ({ value: r.id, label: r.display_name || shortPath(r.repo_root) }))}
                 onChange={(v) => setRepoId(v)}
                 flex={1}
               />

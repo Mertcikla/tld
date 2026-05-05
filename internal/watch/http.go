@@ -41,7 +41,10 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !live {
-		writeJSON(w, http.StatusOK, map[string]any{"active": false})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"active":            false,
+			"connected_clients": WatchWebSocketClientCount(),
+		})
 		return
 	}
 	repo, err := h.Store.Repository(r.Context(), lock.RepositoryID)
@@ -50,9 +53,10 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"active":     true,
-		"repository": repo.JSON(),
-		"lock":       lock,
+		"active":            true,
+		"repository":        repo.JSON(),
+		"lock":              lock,
+		"connected_clients": WatchWebSocketClientCount(),
 	})
 }
 

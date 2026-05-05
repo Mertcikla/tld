@@ -12,8 +12,15 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+var watchWebSocketClients atomic.Int64
+
+func WatchWebSocketClientCount() int {
+	return int(watchWebSocketClients.Load())
+}
 
 func (h *Handler) watchWebSocket(w http.ResponseWriter, r *http.Request) {
 	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
@@ -24,12 +31,18 @@ func (h *Handler) watchWebSocket(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	clients := watchWebSocketClients.Add(1)
 	defer func() { _ = conn.Close() }()
+	defer watchWebSocketClients.Add(-1)
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	controlEvents := make(chan Event, 4)
 	go h.watchWebSocketReads(ctx, rw, controlEvents, cancel)
+
+	if err := writeWebSocketJSON(rw, Event{Type: "watch.connected", At: nowString(), Data: map[string]int64{"clients": clients}}); err != nil {
+		return
+	}
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()

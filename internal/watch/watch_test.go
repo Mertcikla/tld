@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -2517,6 +2518,61 @@ func TestPauseResumeActiveLock(t *testing.T) {
 	if status != "active" {
 		t.Fatalf("expected active lock, got %q", status)
 	}
+}
+
+func TestHeartbeatLockReportsMissingOwnLock(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, os.Getpid(), "token", LockHeartbeatTimeout); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReleaseLock(context.Background(), scanResult.RepositoryID, "token"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.HeartbeatLock(context.Background(), scanResult.RepositoryID, "token"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected missing lock error, got %v", err)
+	}
+}
+
+func TestRunnerStopsCleanlyWhenOwnLockIsReleased(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(chan Event, 32)
+	ready := make(chan RunnerResult, 1)
+	done := make(chan error, 1)
+	store := NewStore(db)
+	go func() {
+		_, err := NewRunner(store).Run(ctx, RunnerOptions{
+			Path:              repo,
+			PollInterval:      time.Hour,
+			HeartbeatInterval: 10 * time.Millisecond,
+			SummaryInterval:   time.Hour,
+			Embedding:         EmbeddingConfig{Provider: "none"},
+			Events:            events,
+			Ready:             ready,
+		})
+		done <- err
+		close(events)
+	}()
+
+	result := waitForRunnerReady(t, ready, done, "released-lock runner")
+	if err := store.ReleaseLock(context.Background(), result.Repository.ID, result.Token); err != nil {
+		t.Fatal(err)
+	}
+	waitForRunnerDone(t, done, "released-lock runner")
 }
 
 func TestRunnerEmitsChangeCounter(t *testing.T) {

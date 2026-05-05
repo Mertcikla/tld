@@ -120,7 +120,7 @@ func NewWatchCmd() *cobra.Command {
 			defer stop()
 			events := make(chan watch.Event, 16)
 			ready := make(chan watch.RunnerResult, 1)
-			watchProgress := newWatchActivityProgress(cmd.ErrOrStderr())
+			watchProgress := newWatchActivityProgress(cmd.ErrOrStderr(), watchClientCounter(url))
 			defer func() {
 				if watchProgress != nil {
 					watchProgress.Stop()
@@ -324,6 +324,36 @@ func serverReady(url string) bool {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode == http.StatusOK
+}
+
+func watchClientCounter(url string) func() int {
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	var mu sync.Mutex
+	var cached int
+	var checkedAt time.Time
+	return func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		if time.Since(checkedAt) < time.Second {
+			return cached
+		}
+		checkedAt = time.Now()
+		resp, err := client.Get(url + "/api/watch/status")
+		if err != nil {
+			cached = watch.WatchWebSocketClientCount()
+			return cached
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var status struct {
+			ConnectedClients int `json:"connected_clients"`
+		}
+		if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&status) != nil {
+			cached = watch.WatchWebSocketClientCount()
+			return cached
+		}
+		cached = status.ConnectedClients
+		return cached
+	}
 }
 
 func newScanCmd() *cobra.Command {
@@ -711,13 +741,14 @@ type cliProgress struct {
 }
 
 type watchActivityProgress struct {
-	out       io.Writer
-	mu        sync.Mutex
-	ticker    *time.Ticker
-	stopCh    chan struct{}
-	startTime time.Time
-	dots      int
-	label     string
+	out         io.Writer
+	mu          sync.Mutex
+	ticker      *time.Ticker
+	stopCh      chan struct{}
+	startTime   time.Time
+	dots        int
+	label       string
+	clientCount func() int
 }
 
 func newCLIProgress(out io.Writer) watch.ProgressSink {
@@ -727,11 +758,11 @@ func newCLIProgress(out io.Writer) watch.ProgressSink {
 	return &cliProgress{out: out}
 }
 
-func newWatchActivityProgress(out io.Writer) *watchActivityProgress {
+func newWatchActivityProgress(out io.Writer, clientCount func() int) *watchActivityProgress {
 	if !term.IsTerminal(out) {
 		return nil
 	}
-	return &watchActivityProgress{out: out}
+	return &watchActivityProgress{out: out, clientCount: clientCount}
 }
 
 func (p *watchActivityProgress) Start(label string) {
@@ -772,7 +803,16 @@ func (p *watchActivityProgress) renderLocked(incrementDots bool) {
 	}
 	dotsStr := strings.Repeat(".", p.dots) + strings.Repeat(" ", 3-p.dots)
 	elapsed := time.Since(p.startTime).Round(time.Second)
-	_, _ = fmt.Fprintf(p.out, "\r\033[K%s%s [%s]", term.Colorize(p.out, term.ColorCyan, p.label), dotsStr, elapsed)
+	clientLabel := ""
+	if p.clientCount != nil {
+		clients := p.clientCount()
+		plural := "s"
+		if clients == 1 {
+			plural = ""
+		}
+		clientLabel = fmt.Sprintf(" · %d client%s connected", clients, plural)
+	}
+	_, _ = fmt.Fprintf(p.out, "\r\033[K%s%s [%s]%s", term.Colorize(p.out, term.ColorCyan, p.label), dotsStr, elapsed, clientLabel)
 }
 
 func (p *watchActivityProgress) Advance(label string) {
