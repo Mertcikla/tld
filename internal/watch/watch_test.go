@@ -567,8 +567,75 @@ func NewFile() {}
 	if findDiffByOwner(diffs, "file", "new.go", "file", "added") == nil {
 		t.Fatalf("expected untracked file to be added, got %+v", diffs)
 	}
-	if findDiffByOwner(diffs, "file", "untouched.go", "file", "initialized") == nil {
-		t.Fatalf("expected untouched tracked file to be initialized, got %+v", diffs)
+	if findDiffByOwner(diffs, "file", "untouched.go", "file", "initialized") != nil {
+		t.Fatalf("expected untouched tracked file to be suppressed, got %+v", diffs)
+	}
+	for _, diff := range diffs {
+		if diff.ChangeType == "initialized" && diff.OwnerType != "repository" {
+			t.Fatalf("expected only repository initialized diff during dirty initial scan, got %+v", diffs)
+		}
+	}
+}
+
+func TestInitialDirtyWatchDiffsOnlyEmitDirtyAttributedConnectors(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "alpha.go", `package main
+
+func Alpha() {
+	alphaHelper()
+}
+
+func alphaHelper() {}
+`)
+	writeFile(t, repo, "beta.go", `package main
+
+func Beta() {}
+func betaHelper() {}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	writeFile(t, repo, "beta.go", `package main
+
+func Beta() {
+	betaHelper()
+}
+
+func betaHelper() {}
+`)
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, rep.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var connectorDiffs []RepresentationDiff
+	for _, diff := range diffs {
+		if diff.ResourceType != nil && *diff.ResourceType == "connector" {
+			connectorDiffs = append(connectorDiffs, diff)
+			if strings.Contains(diff.OwnerKey, "alpha.go") {
+				t.Fatalf("expected clean alpha connector to be suppressed, got %+v in %+v", diff, diffs)
+			}
+		}
+	}
+	if len(connectorDiffs) == 0 {
+		t.Fatalf("expected dirty beta connector diff, got %+v", diffs)
+	}
+	if findDiffByOwner(diffs, "file", "alpha.go", "file", "initialized") != nil {
+		t.Fatalf("expected clean alpha file to be suppressed, got %+v", diffs)
+	}
+	if findDiffByOwner(diffs, "file", "beta.go", "file", "updated") == nil {
+		t.Fatalf("expected dirty beta file update, got %+v", diffs)
 	}
 }
 
@@ -761,6 +828,77 @@ func TestWatchDiffsMaterializeChangedHiddenSymbolAsUpdated(t *testing.T) {
 	}
 	if diff.AddedLines != 2 || diff.RemovedLines != 1 {
 		t.Fatalf("expected changed hidden symbol to report exact line diff, got %+v", diff)
+	}
+}
+
+func TestWatchDiffsAttributeLineDiffsToSymbolRanges(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Alpha() string {
+	return "alpha"
+}
+
+func Beta() string {
+	return "beta"
+}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial symbols")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "initial symbols", "", "main", rep.RepresentationHash, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, repo, "main.go", `package main
+
+func Alpha() string {
+	value := "alpha"
+	return value
+}
+
+func Beta() string {
+	first := "be"
+	second := "ta"
+	return first + second
+}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, next.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	alpha := findDiffByOwner(diffs, "symbol", "go:main.go:function:Alpha", "symbol", "updated")
+	if alpha == nil {
+		t.Fatalf("expected Alpha symbol diff, got %+v", diffs)
+	}
+	if alpha.AddedLines != 2 || alpha.RemovedLines != 1 {
+		t.Fatalf("expected Alpha to receive only its hunk lines, got %+v", alpha)
+	}
+	beta := findDiffByOwner(diffs, "symbol", "go:main.go:function:Beta", "symbol", "updated")
+	if beta == nil {
+		t.Fatalf("expected Beta symbol diff, got %+v", diffs)
+	}
+	if beta.AddedLines != 3 || beta.RemovedLines != 1 {
+		t.Fatalf("expected Beta to receive only its hunk lines, got %+v", beta)
 	}
 }
 

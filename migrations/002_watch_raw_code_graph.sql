@@ -370,6 +370,9 @@ CREATE TABLE IF NOT EXISTS watch_version_resources (
   resource_hash TEXT NOT NULL,
   summary TEXT NULL,
   line_count INTEGER NOT NULL DEFAULT 0,
+  file_path TEXT NULL,
+  start_line INTEGER NOT NULL DEFAULT 0,
+  end_line INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY(version_id, owner_type, owner_key, resource_type),
   FOREIGN KEY (version_id) REFERENCES watch_versions(id) ON DELETE CASCADE
 );

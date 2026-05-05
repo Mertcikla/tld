@@ -34,6 +34,7 @@ import {
   formatTldStatLine,
   summarizeWatchDiffs,
   type WatchDiffLocation,
+  type WatchDiffSummary,
 } from '../utils/watchDiffSummary'
 
 export const WATCH_REPRESENTATION_UPDATED_EVENT = 'tld:watch-representation-updated'
@@ -113,6 +114,60 @@ function changeLabel(diffs: WatchDiff[]) {
 
 function normalizeDiffs(value: WatchDiff[] | null | undefined): WatchDiff[] {
   return Array.isArray(value) ? value : []
+}
+
+function ResourceCountDisplay({ summary }: { summary: WatchDiffSummary }) {
+  const rows = [
+    { label: 'Elements', stat: summary.elements },
+    { label: 'Connectors', stat: summary.connectors },
+  ]
+  const total = rows.reduce((sum, row) => (
+    sum + row.stat.added + row.stat.updated + row.stat.deleted + row.stat.initialized
+  ), 0)
+  const changes = [
+    { key: 'added', label: 'added', color: 'green.300' },
+    { key: 'updated', label: 'updated', color: 'yellow.300' },
+    { key: 'deleted', label: 'deleted', color: 'red.300' },
+    { key: 'initialized', label: 'initialized', color: 'blue.300' },
+  ] as const
+
+  return (
+    <Box
+      px={4}
+      py={3}
+      border="1px solid"
+      borderColor="whiteAlpha.100"
+      borderRadius="md"
+      bg="whiteAlpha.50"
+    >
+      <HStack justify="space-between" mb={2} spacing={3}>
+        <Text fontSize="12px" color="gray.400" fontWeight="700" textTransform="uppercase">
+          Diagram resources
+        </Text>
+        <Text fontSize="11px" color="gray.500">{total} total</Text>
+      </HStack>
+      <VStack align="stretch" spacing={1.5}>
+        {rows.map((row) => (
+          <HStack key={row.label} spacing={2} minW={0} justify="space-between">
+            <Text fontSize="12px" color="gray.300" fontWeight="600" minW="76px">{row.label}</Text>
+            <HStack spacing={2} justify="flex-end" flexWrap="wrap">
+              {changes.map((change) => {
+                const count = row.stat[change.key]
+                return count > 0 ? (
+                  <Text key={change.key} fontSize="11px" color={change.color} fontFamily="mono">
+                    {count} {change.label}
+                  </Text>
+                ) : null
+              })}
+              {row.stat.added + row.stat.updated + row.stat.deleted + row.stat.initialized === 0 && (
+                <Text fontSize="11px" color="gray.600" fontFamily="mono">none</Text>
+              )}
+            </HStack>
+          </HStack>
+        ))}
+      </VStack>
+    </Box>
+  )
 }
 
 // ─── Themed dropdown ──────────────────────────────────────────────────────────
@@ -337,6 +392,8 @@ export default function WorkspacePanel() {
   const totalTldChanges = diffSummary.elements.added + diffSummary.elements.updated + diffSummary.elements.deleted + diffSummary.elements.initialized +
     diffSummary.connectors.added + diffSummary.connectors.updated + diffSummary.connectors.deleted + diffSummary.connectors.initialized
   const activeDiffLocation = activeDiffLocationIndex >= 0 ? navigableDiffLocations[activeDiffLocationIndex] : null
+  const headerAddedLines = activeDiffLocation?.addedLines ?? diffSummary.elements.addedLines + diffSummary.connectors.addedLines
+  const headerRemovedLines = activeDiffLocation?.removedLines ?? diffSummary.elements.removedLines + diffSummary.connectors.removedLines
 
   // ── Watch state ───────────────────────────────────────────────────────────
   const socketRef = useRef<WebSocket | null>(null)
@@ -545,10 +602,10 @@ export default function WorkspacePanel() {
           >
             <HStack spacing={3} minW={0} flex={1}>
               <Text fontSize="13px" color="green.400" fontWeight="700" fontFamily="mono">
-                +{diffSummary.elements.added + diffSummary.connectors.added}
+                +{headerAddedLines}
               </Text>
               <Text fontSize="13px" color="red.400" fontWeight="700" fontFamily="mono">
-                -{diffSummary.elements.deleted + diffSummary.connectors.deleted}
+                -{headerRemovedLines}
               </Text>
               <Text fontSize="12px" color="gray.400" fontWeight="500" noOfLines={1} flex={1}>
                 {activeDiffLocation
@@ -615,6 +672,8 @@ export default function WorkspacePanel() {
                 <Text color="gray.500" ml="auto" fontSize="11px">{workspaceVersions.length} snapshots</Text>
               </HStack>
             </Box>
+
+            <ResourceCountDisplay summary={diffSummary} />
 
             {displayedDiffLocations.length > 0 && (
               <VStack

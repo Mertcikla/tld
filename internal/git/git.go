@@ -27,6 +27,16 @@ type LineDiff struct {
 	Removed int
 }
 
+type LineHunk struct {
+	File         string
+	OldStart     int
+	OldLineCount int
+	NewStart     int
+	NewLineCount int
+	AddedLines   []int
+	RemovedLines []int
+}
+
 type WorktreeChange string
 
 const (
@@ -242,6 +252,98 @@ func LineDiffsAgainstHead(dir string) (map[string]LineDiff, error) {
 		diffs[filepath.ToSlash(fields[2])] = LineDiff{Added: added, Removed: removed}
 	}
 	return diffs, nil
+}
+
+func LineHunksAgainstHead(dir string) (map[string][]LineHunk, error) {
+	out, err := run(dir, "diff", "--unified=0", "HEAD", "--")
+	if err != nil {
+		return nil, fmt.Errorf("git diff hunks: %w", err)
+	}
+	return ParseLineHunks(out), nil
+}
+
+func ParseLineHunks(diff string) map[string][]LineHunk {
+	hunks := map[string][]LineHunk{}
+	file := ""
+	var current *LineHunk
+	oldLine, newLine := 0, 0
+	flush := func() {
+		if current != nil && file != "" {
+			current.File = file
+			hunks[file] = append(hunks[file], *current)
+		}
+		current = nil
+	}
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			flush()
+			file = parseDiffGitPath(line)
+		case strings.HasPrefix(line, "+++ b/"):
+			file = filepath.ToSlash(strings.TrimPrefix(line, "+++ b/"))
+		case strings.HasPrefix(line, "@@ "):
+			flush()
+			hunk, ok := parseHunkHeader(line)
+			if !ok {
+				continue
+			}
+			current = &hunk
+			oldLine = hunk.OldStart
+			newLine = hunk.NewStart
+		case current != nil && strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+			current.AddedLines = append(current.AddedLines, newLine)
+			newLine++
+		case current != nil && strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+			current.RemovedLines = append(current.RemovedLines, oldLine)
+			oldLine++
+		case current != nil && strings.HasPrefix(line, " "):
+			oldLine++
+			newLine++
+		}
+	}
+	flush()
+	return hunks
+}
+
+func parseDiffGitPath(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) < 4 {
+		return ""
+	}
+	path := strings.TrimPrefix(fields[3], "b/")
+	return filepath.ToSlash(path)
+}
+
+func parseHunkHeader(line string) (LineHunk, bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 3 || !strings.HasPrefix(fields[1], "-") || !strings.HasPrefix(fields[2], "+") {
+		return LineHunk{}, false
+	}
+	oldStart, oldCount, ok := parseHunkRange(strings.TrimPrefix(fields[1], "-"))
+	if !ok {
+		return LineHunk{}, false
+	}
+	newStart, newCount, ok := parseHunkRange(strings.TrimPrefix(fields[2], "+"))
+	if !ok {
+		return LineHunk{}, false
+	}
+	return LineHunk{OldStart: oldStart, OldLineCount: oldCount, NewStart: newStart, NewLineCount: newCount}, true
+}
+
+func parseHunkRange(value string) (int, int, bool) {
+	parts := strings.SplitN(value, ",", 2)
+	start, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	count := 1
+	if len(parts) == 2 {
+		count, err = strconv.Atoi(parts[1])
+		if err != nil {
+			return 0, 0, false
+		}
+	}
+	return start, count, true
 }
 
 // RepoRoot returns the absolute path of the top-level git working tree for the

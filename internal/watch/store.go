@@ -1791,6 +1791,9 @@ type watchResourceSnapshot struct {
 	Hash         string
 	Summary      string
 	LineCount    int
+	FilePath     string
+	StartLine    int
+	EndLine      int
 }
 
 type changedRawResources struct {
@@ -1870,6 +1873,7 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 	}
 	previousBaseline := cloneWatchResourceSnapshots(previous)
 	lineDiffs := s.gitLineDiffsAgainstHead(ctx, repositoryID)
+	lineHunks := s.gitLineHunksAgainstHead(ctx, repositoryID)
 	worktreeChanges := s.gitWorktreeChangesAgainstHead(ctx, repositoryID)
 	var diffs []RepresentationDiff
 	repoKey := fmt.Sprintf("%d", repositoryID)
@@ -1878,6 +1882,8 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 	if found {
 		change = "updated"
 		repoSummary = "Representation updated"
+	} else if len(worktreeChanges) > 0 {
+		repoSummary = "Representation initialized from dirty worktree"
 	}
 	diffs = append(diffs, RepresentationDiff{OwnerType: "repository", OwnerKey: repoKey, ChangeType: change, BeforeHash: stringPtrIf(found, latest.RepresentationHash), AfterHash: &representationHash, Summary: &repoSummary})
 	for key, next := range current {
@@ -1886,23 +1892,27 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 			if prevRaw, rawOK := previousRawSnapshotForMaterialized(previousBaseline, current, next); rawOK {
 				before, after := prevRaw.Hash, next.Hash
 				diff := snapshotDiff(next, "updated", &before, &after, &prevRaw)
-				applyGitLineDiff(&diff, next, lineDiffs)
+				applyGitLineDiff(&diff, next, &prevRaw, lineDiffs, lineHunks)
 				diffs = append(diffs, diff)
 				continue
 			}
 			changeType := "added"
 			if !found {
-				changeType = initialSnapshotChangeType(next, worktreeChanges)
+				var emit bool
+				changeType, emit = shouldEmitInitialSnapshotDiff(next, worktreeChanges)
+				if !emit {
+					continue
+				}
 			}
 			diff := snapshotDiff(next, changeType, nil, &next.Hash, nil)
-			applyGitLineDiff(&diff, next, lineDiffs)
+			applyGitLineDiff(&diff, next, nil, lineDiffs, lineHunks)
 			diffs = append(diffs, diff)
 			continue
 		}
 		if prev.Hash != next.Hash || ptrInt64Value(prev.ResourceID) != ptrInt64Value(next.ResourceID) {
 			before, after := prev.Hash, next.Hash
 			diff := snapshotDiff(next, "updated", &before, &after, &prev)
-			applyGitLineDiff(&diff, next, lineDiffs)
+			applyGitLineDiff(&diff, next, &prev, lineDiffs, lineHunks)
 			diffs = append(diffs, diff)
 		}
 		delete(previous, key)
@@ -1910,7 +1920,7 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 	for _, prev := range previous {
 		before := prev.Hash
 		diff := snapshotDiff(prev, "deleted", &before, nil, nil)
-		applyGitLineDiff(&diff, prev, lineDiffs)
+		applyGitLineDiff(&diff, prev, nil, lineDiffs, lineHunks)
 		diffs = append(diffs, diff)
 	}
 	sort.Slice(diffs, func(i, j int) bool {
@@ -1920,6 +1930,14 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 		return diffs[i].OwnerType < diffs[j].OwnerType
 	})
 	return diffs, nil
+}
+
+func shouldEmitInitialSnapshotDiff(snapshot watchResourceSnapshot, changes map[string]tldgit.WorktreeChange) (string, bool) {
+	changeType := initialSnapshotChangeType(snapshot, changes)
+	if len(changes) > 0 && changeType == "initialized" {
+		return changeType, false
+	}
+	return changeType, true
 }
 
 func initialSnapshotChangeType(snapshot watchResourceSnapshot, changes map[string]tldgit.WorktreeChange) string {
@@ -1972,8 +1990,9 @@ func (s *Store) CurrentWatchResourceSnapshots(ctx context.Context, repositoryID 
 		return nil, err
 	}
 	symRows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, COALESCE(i.identity_key, s.stable_key), s.stable_key, s.content_hash, s.signature_hash, s.qualified_name, s.start_line, s.end_line
+		SELECT s.id, COALESCE(i.identity_key, s.stable_key), s.stable_key, f.path, s.content_hash, s.signature_hash, s.qualified_name, s.start_line, s.end_line
 		FROM watch_symbols s
+		JOIN watch_files f ON f.id = s.file_id
 		LEFT JOIN watch_symbol_identities i ON i.repository_id = s.repository_id AND i.current_stable_key = s.stable_key
 		WHERE s.repository_id = ?`, repositoryID)
 	if err != nil {
@@ -1981,15 +2000,16 @@ func (s *Store) CurrentWatchResourceSnapshots(ctx context.Context, repositoryID 
 	}
 	for symRows.Next() {
 		var id int64
-		var key, stableKey, contentHash, signatureHash, name string
+		var key, stableKey, filePath, contentHash, signatureHash, name string
 		var startLine int
 		var endLine sql.NullInt64
-		if err := symRows.Scan(&id, &key, &stableKey, &contentHash, &signatureHash, &name, &startLine, &endLine); err != nil {
+		if err := symRows.Scan(&id, &key, &stableKey, &filePath, &contentHash, &signatureHash, &name, &startLine, &endLine); err != nil {
 			_ = symRows.Close()
 			return nil, err
 		}
 		hash := hashString(contentHash + ":" + signatureHash)
-		out[resourceSnapshotKey("symbol", key, "symbol")] = watchResourceSnapshot{OwnerType: "symbol", OwnerKey: key, ResourceType: "symbol", ResourceID: &id, Language: languageFromStableKey(stableKey), Hash: hash, Summary: name, LineCount: lineCountFromRange(startLine, endLine)}
+		end := normalizedEndLine(startLine, endLine)
+		out[resourceSnapshotKey("symbol", key, "symbol")] = watchResourceSnapshot{OwnerType: "symbol", OwnerKey: key, ResourceType: "symbol", ResourceID: &id, Language: languageFromStableKey(stableKey), Hash: hash, Summary: name, LineCount: lineCountFromRange(startLine, endLine), FilePath: filepathToSlash(filePath), StartLine: startLine, EndLine: end}
 	}
 	if err := symRows.Close(); err != nil {
 		return nil, err
@@ -2030,7 +2050,8 @@ func (s *Store) CurrentWatchResourceSnapshots(ctx context.Context, repositoryID 
 			continue
 		}
 		id := mapping.ResourceID
-		out[resourceSnapshotKey(mapping.OwnerType, mapping.OwnerKey, mapping.ResourceType)] = watchResourceSnapshot{OwnerType: mapping.OwnerType, OwnerKey: mapping.OwnerKey, ResourceType: mapping.ResourceType, ResourceID: &id, Language: language, Hash: hash, Summary: summary, LineCount: lineCount}
+		filePath, startLine, endLine := materializedSourceRange(ctx, s.db, repositoryID, mapping.OwnerType, mapping.OwnerKey, "")
+		out[resourceSnapshotKey(mapping.OwnerType, mapping.OwnerKey, mapping.ResourceType)] = watchResourceSnapshot{OwnerType: mapping.OwnerType, OwnerKey: mapping.OwnerKey, ResourceType: mapping.ResourceType, ResourceID: &id, Language: language, Hash: hash, Summary: summary, LineCount: lineCount, FilePath: filePath, StartLine: startLine, EndLine: endLine}
 	}
 	return out, nil
 }
@@ -2099,8 +2120,11 @@ func elementName(ctx context.Context, db *sql.DB, id int64) string {
 }
 
 func (s *Store) WatchVersionResourceSnapshots(ctx context.Context, versionID int64) (map[string]watchResourceSnapshot, error) {
+	if err := s.ensureWatchVersionResourceRangeColumns(ctx); err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT owner_type, owner_key, resource_type, resource_id, language, resource_hash, summary, line_count
+		SELECT owner_type, owner_key, resource_type, resource_id, language, resource_hash, summary, line_count, file_path, start_line, end_line
 		FROM watch_version_resources
 		WHERE version_id = ?`, versionID)
 	if err != nil {
@@ -2111,8 +2135,8 @@ func (s *Store) WatchVersionResourceSnapshots(ctx context.Context, versionID int
 	for rows.Next() {
 		var item watchResourceSnapshot
 		var resourceID sql.NullInt64
-		var language, summary sql.NullString
-		if err := rows.Scan(&item.OwnerType, &item.OwnerKey, &item.ResourceType, &resourceID, &language, &item.Hash, &summary, &item.LineCount); err != nil {
+		var language, summary, filePath sql.NullString
+		if err := rows.Scan(&item.OwnerType, &item.OwnerKey, &item.ResourceType, &resourceID, &language, &item.Hash, &summary, &item.LineCount, &filePath, &item.StartLine, &item.EndLine); err != nil {
 			return nil, err
 		}
 		if resourceID.Valid {
@@ -2120,22 +2144,39 @@ func (s *Store) WatchVersionResourceSnapshots(ctx context.Context, versionID int
 		}
 		item.Language = language.String
 		item.Summary = summary.String
+		item.FilePath = filepathToSlash(filePath.String)
 		out[resourceSnapshotKey(item.OwnerType, item.OwnerKey, item.ResourceType)] = item
 	}
 	return out, rows.Err()
 }
 
 func (s *Store) SaveWatchVersionResources(ctx context.Context, versionID, repositoryID int64) error {
+	if err := s.ensureWatchVersionResourceRangeColumns(ctx); err != nil {
+		return err
+	}
 	snapshots, err := s.CurrentWatchResourceSnapshots(ctx, repositoryID)
 	if err != nil {
 		return err
 	}
 	for _, item := range snapshots {
 		_, err := s.db.ExecContext(ctx, `
-			INSERT OR REPLACE INTO watch_version_resources(version_id, owner_type, owner_key, resource_type, resource_id, language, resource_hash, summary, line_count)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			versionID, item.OwnerType, item.OwnerKey, item.ResourceType, item.ResourceID, nullString(item.Language), item.Hash, nullString(item.Summary), item.LineCount)
+			INSERT OR REPLACE INTO watch_version_resources(version_id, owner_type, owner_key, resource_type, resource_id, language, resource_hash, summary, line_count, file_path, start_line, end_line)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			versionID, item.OwnerType, item.OwnerKey, item.ResourceType, item.ResourceID, nullString(item.Language), item.Hash, nullString(item.Summary), item.LineCount, nullString(item.FilePath), item.StartLine, item.EndLine)
 		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) ensureWatchVersionResourceRangeColumns(ctx context.Context) error {
+	for _, stmt := range []string{
+		`ALTER TABLE watch_version_resources ADD COLUMN file_path TEXT NULL`,
+		`ALTER TABLE watch_version_resources ADD COLUMN start_line INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE watch_version_resources ADD COLUMN end_line INTEGER NOT NULL DEFAULT 0`,
+	} {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return err
 		}
 	}
@@ -2189,6 +2230,18 @@ func (s *Store) gitLineDiffsAgainstHead(ctx context.Context, repositoryID int64)
 	return diffs
 }
 
+func (s *Store) gitLineHunksAgainstHead(ctx context.Context, repositoryID int64) map[string][]tldgit.LineHunk {
+	repo, err := s.Repository(ctx, repositoryID)
+	if err != nil || strings.TrimSpace(repo.RepoRoot) == "" {
+		return nil
+	}
+	hunks, err := tldgit.LineHunksAgainstHead(repo.RepoRoot)
+	if err != nil {
+		return nil
+	}
+	return hunks
+}
+
 func (s *Store) gitWorktreeChangesAgainstHead(ctx context.Context, repositoryID int64) map[string]tldgit.WorktreeChange {
 	repo, err := s.Repository(ctx, repositoryID)
 	if err != nil || strings.TrimSpace(repo.RepoRoot) == "" {
@@ -2201,7 +2254,7 @@ func (s *Store) gitWorktreeChangesAgainstHead(ctx context.Context, repositoryID 
 	return changes
 }
 
-func applyGitLineDiff(diff *RepresentationDiff, snapshot watchResourceSnapshot, lineDiffs map[string]tldgit.LineDiff) {
+func applyGitLineDiff(diff *RepresentationDiff, snapshot watchResourceSnapshot, previous *watchResourceSnapshot, lineDiffs map[string]tldgit.LineDiff, lineHunks map[string][]tldgit.LineHunk) {
 	if diff == nil || len(lineDiffs) == 0 || diff.ChangeType != "updated" {
 		return
 	}
@@ -2209,12 +2262,52 @@ func applyGitLineDiff(diff *RepresentationDiff, snapshot watchResourceSnapshot, 
 	if file == "" {
 		return
 	}
+	if symbolLineAttributionCandidate(snapshot) {
+		if added, removed, ok := symbolLineDiff(snapshot, previous, lineHunks[file]); ok {
+			diff.AddedLines = added
+			diff.RemovedLines = removed
+			return
+		}
+	}
 	lineDiff, ok := lineDiffs[file]
 	if !ok {
 		return
 	}
 	diff.AddedLines = lineDiff.Added
 	diff.RemovedLines = lineDiff.Removed
+}
+
+func symbolLineAttributionCandidate(snapshot watchResourceSnapshot) bool {
+	return snapshot.OwnerType == "symbol" || (snapshot.ResourceType == "element" && snapshot.OwnerType == "symbol")
+}
+
+func symbolLineDiff(snapshot watchResourceSnapshot, previous *watchResourceSnapshot, hunks []tldgit.LineHunk) (int, int, bool) {
+	if len(hunks) == 0 || snapshot.StartLine <= 0 || snapshot.EndLine <= 0 {
+		return 0, 0, false
+	}
+	oldStart, oldEnd := snapshot.StartLine, snapshot.EndLine
+	if previous != nil && previous.StartLine > 0 && previous.EndLine > 0 {
+		oldStart, oldEnd = previous.StartLine, previous.EndLine
+	}
+	added, removed := 0, 0
+	for _, hunk := range hunks {
+		added += countLinesInRange(hunk.AddedLines, snapshot.StartLine, snapshot.EndLine)
+		removed += countLinesInRange(hunk.RemovedLines, oldStart, oldEnd)
+	}
+	return added, removed, true
+}
+
+func countLinesInRange(lines []int, start, end int) int {
+	if start <= 0 || end < start {
+		return 0
+	}
+	count := 0
+	for _, line := range lines {
+		if line >= start && line <= end {
+			count++
+		}
+	}
+	return count
 }
 
 func snapshotDiffFilePath(snapshot watchResourceSnapshot) string {
@@ -2226,6 +2319,9 @@ func snapshotDiffFilePath(snapshot watchResourceSnapshot) string {
 }
 
 func snapshotDiffFilePaths(snapshot watchResourceSnapshot) []string {
+	if path := filepathToSlash(snapshot.FilePath); path != "" {
+		return []string{path}
+	}
 	switch snapshot.OwnerType {
 	case "file":
 		if path := strings.TrimPrefix(snapshot.OwnerKey, "file:"); strings.TrimSpace(path) != "" {
@@ -2306,6 +2402,43 @@ func symbolLineCount(ctx context.Context, db *sql.DB, repositoryID int64, ownerK
 	return lineCountFromRange(startLine, endLine)
 }
 
+func materializedSourceRange(ctx context.Context, db *sql.DB, repositoryID int64, ownerType, ownerKey, fallbackFilePath string) (string, int, int) {
+	switch ownerType {
+	case "symbol":
+		return symbolLineRange(ctx, db, repositoryID, ownerKey)
+	case "file":
+		path := strings.TrimPrefix(ownerKey, "file:")
+		if strings.TrimSpace(path) == "" {
+			path = fallbackFilePath
+		}
+		return filepathToSlash(path), 0, 0
+	default:
+		if path := sourceAnchorFilePath(fallbackFilePath); path != "" {
+			start, end := sourceAnchorRange(fallbackFilePath)
+			return path, start, end
+		}
+	}
+	return filepathToSlash(fallbackFilePath), 0, 0
+}
+
+func symbolLineRange(ctx context.Context, db *sql.DB, repositoryID int64, ownerKey string) (string, int, int) {
+	var filePath string
+	var startLine int
+	var endLine sql.NullInt64
+	err := db.QueryRowContext(ctx, `
+		SELECT f.path, s.start_line, s.end_line
+		FROM watch_symbols s
+		JOIN watch_files f ON f.id = s.file_id
+		LEFT JOIN watch_symbol_identities i ON i.repository_id = s.repository_id AND i.current_stable_key = s.stable_key
+		WHERE s.repository_id = ? AND COALESCE(i.identity_key, s.stable_key) = ?
+		ORDER BY s.id
+		LIMIT 1`, repositoryID, ownerKey).Scan(&filePath, &startLine, &endLine)
+	if err != nil {
+		return "", 0, 0
+	}
+	return filepathToSlash(filePath), startLine, normalizedEndLine(startLine, endLine)
+}
+
 func symbolSnapshotHash(ctx context.Context, db *sql.DB, repositoryID int64, ownerKey string) string {
 	var contentHash, signatureHash string
 	var startLine int
@@ -2321,6 +2454,16 @@ func symbolSnapshotHash(ctx context.Context, db *sql.DB, repositoryID int64, own
 		return ""
 	}
 	return fmt.Sprintf("%s:%s:%d", contentHash, signatureHash, lineCountFromRange(startLine, endLine))
+}
+
+func normalizedEndLine(startLine int, endLine sql.NullInt64) int {
+	if startLine <= 0 {
+		return 0
+	}
+	if endLine.Valid && int(endLine.Int64) >= startLine {
+		return int(endLine.Int64)
+	}
+	return startLine
 }
 
 func lineCountFromRange(startLine int, endLine sql.NullInt64) int {
@@ -2354,27 +2497,43 @@ func fileLineCount(ctx context.Context, db *sql.DB, repositoryID int64, filePath
 }
 
 func sourceAnchorLineCount(filePath string) int {
+	start, end := sourceAnchorRange(filePath)
+	if start <= 0 || end < start {
+		return 0
+	}
+	return end - start + 1
+}
+
+func sourceAnchorRange(filePath string) (int, int) {
 	hash := strings.IndexByte(filePath, '#')
 	if hash < 0 || hash == len(filePath)-1 {
-		return 0
+		return 0, 0
 	}
 	var anchor struct {
 		StartLine int `json:"startLine"`
 		EndLine   int `json:"endLine"`
 	}
 	if err := json.Unmarshal([]byte(filePath[hash+1:]), &anchor); err != nil {
-		return 0
+		return 0, 0
 	}
 	if anchor.StartLine <= 0 {
-		return 0
+		return 0, 0
 	}
 	if anchor.EndLine <= 0 {
 		anchor.EndLine = anchor.StartLine
 	}
 	if anchor.EndLine < anchor.StartLine {
-		return 0
+		return 0, 0
 	}
-	return anchor.EndLine - anchor.StartLine + 1
+	return anchor.StartLine, anchor.EndLine
+}
+
+func sourceAnchorFilePath(filePath string) string {
+	hash := strings.IndexByte(filePath, '#')
+	if hash < 0 {
+		return filepathToSlash(filePath)
+	}
+	return filepathToSlash(filePath[:hash])
 }
 
 func lineDelta(changeType string, lineCount int, previous *watchResourceSnapshot) (int, int) {
