@@ -80,11 +80,29 @@ func openInEditor(ctx context.Context, store *watch.Store, req openEditorRequest
 	return nil
 }
 
-func resolveEditorPath(ctx context.Context, store *watch.Store, repoValue string, filePath string) (string, error) {
+type repositoryFetcher interface {
+	Repositories(ctx context.Context) ([]watch.Repository, error)
+}
+
+func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue string, filePath string) (string, error) {
 	cleanFile := strings.TrimSpace(filePath)
-	if filepath.IsAbs(cleanFile) {
-		return filepath.Clean(cleanFile), nil
+
+	repos, err := store.Repositories(ctx)
+	if err != nil {
+		return "", fmt.Errorf("load watched repositories: %w", err)
 	}
+
+	if filepath.IsAbs(cleanFile) {
+		cleanFile = filepath.Clean(cleanFile)
+		for _, repo := range repos {
+			root := filepath.Clean(repo.RepoRoot)
+			if cleanFile == root || strings.HasPrefix(cleanFile, root+string(filepath.Separator)) {
+				return cleanFile, nil
+			}
+		}
+		return "", errors.New("absolute file_path must reside within a watched repository")
+	}
+
 	if strings.HasPrefix(cleanFile, "~") {
 		return "", errors.New("file_path must be absolute or relative to a watched repository")
 	}
@@ -94,10 +112,6 @@ func resolveEditorPath(ctx context.Context, store *watch.Store, repoValue string
 		return "", errors.New("file_path must stay inside the watched repository")
 	}
 
-	repos, err := store.Repositories(ctx)
-	if err != nil {
-		return "", fmt.Errorf("load watched repositories: %w", err)
-	}
 	if len(repos) == 0 {
 		return "", errors.New("no watched repositories are available to resolve this relative file path")
 	}
