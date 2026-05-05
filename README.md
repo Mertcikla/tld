@@ -11,7 +11,7 @@ Designed for local-first development and private self-hosting, `tld` allows team
 ## Key Features
 
 - **Full-Featured Web UI**: A React frontend designed, polished and optimized to handle complex architectures while attempting to intelligently show and hide details.
-- **Git diff visualization**: Seemlessly sync and visualize the changes you or your agent are making live in diagram form. Inspect the dependencies and intervene when necessary.
+- **Git diff visualization**: Seamlessly sync and visualize the changes you or your agent are making live in diagram form. Inspect the dependencies and intervene when necessary.
 - **Bi-directional Sync**: Seamlessly sync changes between your local YAML files, the self-hosted web UI, and the cloud version at tlDiagram.com.
 - **Standalone Distribution**: A single, dependency-free binary containing both the server and the web application.
 - **CLI built that speaks agent**: Use the [agent skill](./skills/create-diagram/SKILL.md) and teach your agent how to create a diagram of your codebase with the exact detail level you need. You can prompt your agent to add/remove details as needed. 
@@ -166,7 +166,7 @@ Flags:
       --format string      output format: text or json (default "text")
   -h, --help               help for tld
   -v, --version            version for tld
-  -w, --workspace string   workspace directory (default "tld")
+  -w, --workspace string   workspace directory (prefers .tld, then tld; empty when neither exists)
 
 Use "tld [command] --help" for more information about a command
 

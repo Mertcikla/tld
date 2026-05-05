@@ -71,7 +71,7 @@ and apply them atomically with 'tld apply'.`,
 	}
 
 	var wdir string
-	defaultWdir := "."
+	defaultWdir := ""
 	if _, err := os.Stat(".tld"); err == nil {
 		defaultWdir = ".tld"
 	} else if _, err := os.Stat("tld"); err == nil {
