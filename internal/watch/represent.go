@@ -71,11 +71,15 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	if err != nil {
 		return RepresentResult{}, err
 	}
+	contextPolicies, err := r.Store.ActiveContextPolicySet(ctx, repositoryID)
+	if err != nil {
+		return RepresentResult{}, err
+	}
 	changedRaw, err := r.Store.ChangedRawResourcesSinceLatest(ctx, repositoryID)
 	if err != nil {
 		return RepresentResult{}, err
 	}
-	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, nil, changedRaw.Symbols)
+	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, nil, changedRaw.Symbols, contextPolicies, identityKeys)
 	if err != nil {
 		return RepresentResult{}, err
 	}
@@ -91,7 +95,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		result.EmbeddingCacheHits = stats.CacheHits
 		result.EmbeddingsCreated = stats.Created
 		if len(embeddingSymbols) == len(filtered.VisibleSymbols) {
-			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, vectors, changedRaw.Symbols)
+			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, vectors, changedRaw.Symbols, contextPolicies, identityKeys)
 			if err != nil {
 				return RepresentResult{}, err
 			}
@@ -697,7 +701,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		return materializeStats{}, err
 	}
 	tagPlan := buildSemanticTagPlan(repo, filtered, thresholds, settingsHash, identityKeys, ownerMatcher)
-	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys, tagPlan: tagPlan, initialLayout: initialLayout == 0, runMarker: time.Now().UTC().Format(time.RFC3339Nano), newPlacements: map[int64]map[int64]struct{}{}}
+	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys, contextPolicies: filtered.ContextPolicies, tagPlan: tagPlan, initialLayout: initialLayout == 0, runMarker: time.Now().UTC().Format(time.RFC3339Nano), newPlacements: map[int64]map[int64]struct{}{}}
 	if err := m.ensureTags(ctx); err != nil {
 		return m.stats, err
 	}
@@ -894,16 +898,17 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 }
 
 type materializer struct {
-	store         *Store
-	repo          Repository
-	thresholds    Thresholds
-	settingsHash  string
-	identityKeys  map[string]string
-	tagPlan       semanticTagPlan
-	initialLayout bool
-	runMarker     string
-	newPlacements map[int64]map[int64]struct{}
-	stats         materializeStats
+	store           *Store
+	repo            Repository
+	thresholds      Thresholds
+	settingsHash    string
+	identityKeys    map[string]string
+	contextPolicies contextPolicySet
+	tagPlan         semanticTagPlan
+	initialLayout   bool
+	runMarker       string
+	newPlacements   map[int64]map[int64]struct{}
+	stats           materializeStats
 }
 
 type elementInput struct {
@@ -1518,7 +1523,11 @@ func (m *materializer) materializeConnectors(ctx context.Context, refs []Referen
 		}
 		sourceKey := symbolOwnerKey(source, m.identityKeys)
 		targetKey := symbolOwnerKey(target, m.identityKeys)
-		if err := m.upsertConnector(ctx, "reference", fmt.Sprintf("symbol:%s:%s:%s", sourceKey, targetKey, ref.Kind), viewID, symbolElements[ref.SourceSymbolID], symbolElements[ref.TargetSymbolID], "calls"); err != nil {
+		ownerKey := fmt.Sprintf("symbol:%s:%s:%s", sourceKey, targetKey, ref.Kind)
+		if m.contextPolicyHidden("reference", ownerKey) {
+			continue
+		}
+		if err := m.upsertConnector(ctx, "reference", ownerKey, viewID, symbolElements[ref.SourceSymbolID], symbolElements[ref.TargetSymbolID], "calls"); err != nil {
 			return err
 		}
 		symbolConnectorCount[viewID]++
@@ -1550,6 +1559,9 @@ func (m *materializer) materializeConnectors(ctx context.Context, refs []Referen
 		}
 		rawReferenceCount := filePairReferenceCount(group)
 		if strings.HasPrefix(groupKey, "folder:") && rawReferenceCount > m.thresholds.MaxExpandedConnectorsPerGroup {
+			if m.contextPolicyHidden("folder-reference", groupKey) {
+				continue
+			}
 			first := group[0].Ref
 			source := symbols[first.SourceSymbolID]
 			target := symbols[first.TargetSymbolID]
@@ -1571,13 +1583,22 @@ func (m *materializer) materializeConnectors(ctx context.Context, refs []Referen
 			if fileElements[source.FilePath] == 0 || fileElements[target.FilePath] == 0 {
 				continue
 			}
-			if err := m.upsertConnector(ctx, "file-reference", "file:"+item.Key, repoView, fileElements[source.FilePath], fileElements[target.FilePath], "references"); err != nil {
+			ownerKey := "file:" + item.Key
+			if m.contextPolicyHidden("file-reference", ownerKey) {
+				continue
+			}
+			if err := m.upsertConnector(ctx, "file-reference", ownerKey, repoView, fileElements[source.FilePath], fileElements[target.FilePath], "references"); err != nil {
 				return err
 			}
 			fileConnectorCount++
 		}
 	}
 	return nil
+}
+
+func (m *materializer) contextPolicyHidden(ownerType, ownerKey string) bool {
+	_, hidden := m.contextPolicies.Hide[ownerMapKey(ownerType, ownerKey)]
+	return hidden
 }
 
 func filePairReferenceCount(group []filePairReference) int {

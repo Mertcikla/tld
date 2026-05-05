@@ -26,7 +26,7 @@ func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
 
-	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_representation_runs", "watch_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
+	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_context_policies", "watch_representation_runs", "watch_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
 			t.Fatalf("missing table %s: %v", table, err)
@@ -37,6 +37,104 @@ func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, index).Scan(&name); err != nil {
 			t.Fatalf("missing index %s: %v", index, err)
 		}
+	}
+}
+
+func TestContextShowAndHideRoundTripGeneratedSymbol(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+
+func quietHelper() string {
+	return "quiet"
+}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+	if elementNameExists(t, db, "quietHelper") {
+		t.Fatal("quiet helper should start hidden")
+	}
+	fileElementID := elementIDByName(t, db, "main.go")
+	show, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "element", ResourceID: fileElementID}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if show.PoliciesCreated == 0 || show.OwnersAffected == 0 {
+		t.Fatalf("expected show policies, got %+v", show)
+	}
+	if !elementNameExists(t, db, "quietHelper") {
+		t.Fatal("quiet helper should be materialized after show context")
+	}
+	manualID := insertManualElement(t, db, "Manual note")
+	quietID := symbolElementID(t, db, "quietHelper")
+	hide, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "element", ResourceID: quietID}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hide.ElementsRemoved == 0 {
+		t.Fatalf("expected hide to remove a generated symbol, got %+v", hide)
+	}
+	if elementNameExists(t, db, "quietHelper") {
+		t.Fatal("quiet helper should be pruned after hide context")
+	}
+	var manualName string
+	if err := db.QueryRow(`SELECT name FROM elements WHERE id = ?`, manualID).Scan(&manualName); err != nil {
+		t.Fatalf("manual element was removed: %v", err)
+	}
+}
+
+func TestContextHTTPHandlers(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+
+func quietHelper() string {
+	return "quiet"
+}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	fileElementID := elementIDByName(t, db, "main.go")
+	mux := http.NewServeMux()
+	NewHandler(store).Register(mux)
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/watch/repositories/%d/context/show", scanResult.RepositoryID), strings.NewReader(fmt.Sprintf(`{"resource_type":"element","resource_id":%d}`, fileElementID)))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("show context status = %d body %s", rec.Code, rec.Body.String())
+	}
+	if !elementNameExists(t, db, "quietHelper") {
+		t.Fatal("quiet helper should be materialized by HTTP show context")
+	}
+
+	manualID := insertManualElement(t, db, "Manual only")
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/watch/repositories/%d/context/hide", scanResult.RepositoryID), strings.NewReader(fmt.Sprintf(`{"resource_type":"element","resource_id":%d}`, manualID)))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("manual-only hide status = %d, want 400", rec.Code)
 	}
 }
 
@@ -2832,6 +2930,43 @@ func symbolElementID(t *testing.T, db *sql.DB, name string) int64 {
 		SELECT id FROM elements
 		WHERE name = ? AND kind = 'function'`, name).Scan(&id); err != nil {
 		t.Fatalf("find symbol element %s: %v", name, err)
+	}
+	return id
+}
+
+func elementIDByName(t *testing.T, db *sql.DB, name string) int64 {
+	t.Helper()
+	var id int64
+	if err := db.QueryRow(`SELECT id FROM elements WHERE name = ? ORDER BY id LIMIT 1`, name).Scan(&id); err != nil {
+		t.Fatalf("find element %s: %v", name, err)
+	}
+	return id
+}
+
+func elementNameExists(t *testing.T, db *sql.DB, name string) bool {
+	t.Helper()
+	var id int64
+	err := db.QueryRow(`SELECT id FROM elements WHERE name = ? ORDER BY id LIMIT 1`, name).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return true
+}
+
+func insertManualElement(t *testing.T, db *sql.DB, name string) int64 {
+	t.Helper()
+	res, err := db.Exec(`
+		INSERT INTO elements(name, kind, description, technology_connectors, tags, created_at, updated_at)
+		VALUES (?, 'note', '', '[]', '[]', 'now', 'now')`, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
 	}
 	return id
 }

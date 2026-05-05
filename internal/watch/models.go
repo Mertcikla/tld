@@ -210,6 +210,38 @@ type MaterializationMapping struct {
 	UpdatedAt    string `json:"updated_at"`
 }
 
+type ContextPolicy struct {
+	ID           int64  `json:"id"`
+	RepositoryID int64  `json:"repository_id"`
+	OwnerType    string `json:"owner_type"`
+	OwnerKey     string `json:"owner_key"`
+	Action       string `json:"action"`
+	Scope        string `json:"scope"`
+	Active       bool   `json:"active"`
+	Reason       string `json:"reason"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
+}
+
+type ContextResourceRequest struct {
+	ResourceType string `json:"resource_type"`
+	ResourceID   int64  `json:"resource_id"`
+}
+
+type ContextActionResult struct {
+	RepositoryID        int64                 `json:"repository_id"`
+	Action              string                `json:"action"`
+	PoliciesCreated     int                   `json:"policies_created"`
+	PoliciesUpdated     int                   `json:"policies_updated"`
+	PoliciesDeactivated int                   `json:"policies_deactivated"`
+	OwnersAffected      int                   `json:"owners_affected"`
+	ElementsRemoved     int                   `json:"elements_removed"`
+	ConnectorsRemoved   int                   `json:"connectors_removed"`
+	ViewsRemoved        int                   `json:"views_removed"`
+	Representation      RepresentResult       `json:"representation"`
+	Summary             RepresentationSummary `json:"summary"`
+}
+
 type Lock struct {
 	ID           int64  `json:"id"`
 	RepositoryID int64  `json:"repository_id"`

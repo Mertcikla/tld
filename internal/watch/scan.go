@@ -78,6 +78,111 @@ type ScanOptions struct {
 	Force bool
 }
 
+func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, relFiles []string, opts ScanOptions) (ScanResult, error) {
+	if s == nil || s.Store == nil {
+		return ScanResult{}, fmt.Errorf("watch scanner requires a store")
+	}
+	if s.Analyzer == nil {
+		s.Analyzer = analyzer.NewService()
+	}
+	repoRoot := filepath.Clean(repo.RepoRoot)
+	gitignoreRules, err := ignore.LoadGitIgnore(repoRoot)
+	if err != nil {
+		return ScanResult{}, fmt.Errorf("load .gitignore rules: %w", err)
+	}
+	effectiveRules := ignore.Merge(s.Rules, gitignoreRules)
+	if effectiveRules == nil {
+		effectiveRules = &ignore.Rules{}
+	}
+	s.EffectiveRules = effectiveRules
+	settings := NormalizeSettings(s.Settings)
+	allowed := map[string]struct{}{}
+	for _, language := range settings.Languages {
+		allowed[language] = struct{}{}
+	}
+
+	files := make([]string, 0, len(relFiles))
+	seenRel := map[string]struct{}{}
+	for _, rel := range relFiles {
+		rel = filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
+		if rel == "." || rel == ".." || filepath.IsAbs(rel) || strings.HasPrefix(rel, "../") {
+			continue
+		}
+		absFile := filepath.Join(repoRoot, filepath.FromSlash(rel))
+		language, parseable, ok := watchedFileLanguage(absFile)
+		if !ok || (parseable && !languageAllowed(language, allowed)) || effectiveRules.ShouldIgnorePath(rel) {
+			continue
+		}
+		if _, ok := seenRel[rel]; ok {
+			continue
+		}
+		seenRel[rel] = struct{}{}
+		files = append(files, absFile)
+	}
+	sort.Strings(files)
+	result := ScanResult{RepositoryID: repo.ID, FilesSeen: len(files)}
+	mode := "focused"
+	if opts.Force {
+		mode = "focused-force"
+	}
+	runID, err := s.Store.BeginScanRun(ctx, repo.ID, mode)
+	if err != nil {
+		return ScanResult{}, err
+	}
+	result.ScanRunID = runID
+	status := "completed"
+	var scanErr error
+	defer func() {
+		if scanErr != nil {
+			status = "failed"
+		}
+		_ = s.Store.FinishScanRun(context.Background(), runID, status, result, scanErr)
+	}()
+	if len(files) == 0 {
+		return result, nil
+	}
+	workers := runtime.NumCPU()
+	progress := &synchronizedProgress{sink: s.Progress}
+	progressStart(progress, "Scanning context files", len(files))
+	defer progressFinish(progress)
+	fileResults, err := s.scanFiles(ctx, repo.ID, repoRoot, files, workers, progress, opts.Force, effectiveRules)
+	if err != nil {
+		scanErr = err
+		return result, err
+	}
+	var parsedFiles []parsedFile
+	var parsedFileIDs []int64
+	for _, fileResult := range fileResults {
+		if fileResult.Skipped {
+			result.FilesSkipped++
+		}
+		if fileResult.Parsed {
+			result.FilesParsed++
+			result.SymbolsSeen += fileResult.SymbolsSeen
+			parsedFiles = append(parsedFiles, parsedFile{File: fileResult.File, Refs: fileResult.Refs})
+			parsedFileIDs = append(parsedFileIDs, fileResult.File.ID)
+		}
+	}
+	if len(parsedFileIDs) == 0 {
+		return result, nil
+	}
+	refs, warning, err := s.resolveReferences(ctx, repoRoot, repo.ID, parsedFiles)
+	if err != nil {
+		scanErr = err
+		return result, err
+	}
+	result.Warning = warning
+	if warning != "" {
+		result.Warnings = append(result.Warnings, warning)
+	}
+	if err := s.Store.ReplaceReferencesForFiles(ctx, repo.ID, parsedFileIDs, refs); err != nil {
+		scanErr = err
+		return result, err
+	}
+	result.ReferencesSeen = len(refs)
+	return result, nil
+}
+
 func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOptions) (ScanResult, error) {
 	if s == nil || s.Store == nil {
 		return ScanResult{}, fmt.Errorf("watch scanner requires a store")

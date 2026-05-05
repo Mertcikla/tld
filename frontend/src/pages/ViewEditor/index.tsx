@@ -87,6 +87,7 @@ import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
 import { buildElementLibraryItems, useStore } from '../../store/useStore'
 import { useWorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
+import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../../components/WorkspacePanel'
 
 const nodeTypes = {
   elementNode: ElementNode,
@@ -454,6 +455,40 @@ function ViewEditorInner({
     handleElementDeleted, handleElementPermanentlyDeleted, handleElementSaved,
   } = data
   refreshElementsRef.current = refreshElements
+
+  const resolveWatchRepositoryId = useCallback(async () => {
+    const status = await api.watch.status().catch(() => null)
+    if (status?.repository?.id) return status.repository.id
+    const repositories = await api.watch.repositories().catch(() => [])
+    return repositories[0]?.id ?? null
+  }, [])
+
+  const applyWatchContextAction = useCallback(async (action: 'show' | 'hide', resourceType: 'element' | 'view', resourceId: number) => {
+    const repositoryId = await resolveWatchRepositoryId()
+    if (!repositoryId) {
+      toast({ status: 'warning', title: 'No watch repository found' })
+      return
+    }
+    try {
+      const result = action === 'show'
+        ? await api.watch.showContext(repositoryId, { resource_type: resourceType, resource_id: resourceId })
+        : await api.watch.hideContext(repositoryId, { resource_type: resourceType, resource_id: resourceId })
+      await refreshGrid()
+      await refreshElements()
+      window.dispatchEvent(new CustomEvent(WATCH_REPRESENTATION_UPDATED_EVENT, {
+        detail: { type: 'representation.updated', repository_id: repositoryId, at: new Date().toISOString(), data: result.summary },
+      }))
+      toast({
+        status: 'success',
+        title: action === 'show' ? 'Context revealed' : 'Noise cleaned',
+        description: action === 'show'
+          ? `${result.owners_affected} watch owner${result.owners_affected === 1 ? '' : 's'} marked as context.`
+          : `${result.elements_removed + result.connectors_removed + result.views_removed} generated item${result.elements_removed + result.connectors_removed + result.views_removed === 1 ? '' : 's'} removed.`,
+      })
+    } catch (err) {
+      toast({ status: 'error', title: action === 'show' ? 'Failed to show context' : 'Failed to clean noise', description: String(err) })
+    }
+  }, [refreshElements, refreshGrid, resolveWatchRepositoryId, toast])
 
   const tagCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -1423,6 +1458,8 @@ function ViewEditorInner({
               extrasOpen={extrasOpen} setExtrasOpen={setExtrasOpen}
               focusMode={!crossBranchSettings.enabled}
               onFocusModeChange={handleFocusModeChange}
+              onShowViewContext={viewId != null ? () => { void applyWatchContextAction('show', 'view', viewId) } : undefined}
+              onHideViewContext={viewId != null ? () => { void applyWatchContextAction('hide', 'view', viewId) } : undefined}
               disableImportExport={disableImportExport}
               onImport={importModal.onOpen} onExport={handleOpenExport} onShare={onShare}
               allTags={availableTags}
@@ -1457,6 +1494,8 @@ function ViewEditorInner({
           isOpen={elementPanel.isOpen} onClose={elementPanel.onClose} element={selectedElement}
           onSave={handleElementSaved} autoSave
           onDelete={handleElementDeleted} onPermanentDelete={handleElementPermanentlyDeleted}
+          onShowContext={(id) => applyWatchContextAction('show', 'element', id)}
+          onHideContext={(id) => applyWatchContextAction('hide', 'element', id)}
           orgId={''}
           links={selectedElement ? (linksMap[selectedElement.id] || EMPTY_LINKS) : EMPTY_LINKS}
           parentLinks={selectedElement ? (parentLinksMap[selectedElement.id] || EMPTY_LINKS) : EMPTY_LINKS}

@@ -26,12 +26,47 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/watch/repositories/{id}/raw-graph/references", h.rawGraphReferences)
 	mux.HandleFunc("POST /api/watch/repositories/{id}/reassociate", h.reassociateRepository)
 	mux.HandleFunc("POST /api/watch/repositories/{id}/represent", h.representRepository)
+	mux.HandleFunc("POST /api/watch/repositories/{id}/context/show", h.showContext)
+	mux.HandleFunc("POST /api/watch/repositories/{id}/context/hide", h.hideContext)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/representation/summary", h.representationSummary)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/filter-decisions", h.filterDecisions)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/clusters", h.clusters)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/materialization", h.materialization)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/versions", h.versions)
 	mux.HandleFunc("GET /api/watch/versions/{id}/diffs", h.versionDiffs)
+}
+
+func (h *Handler) showContext(w http.ResponseWriter, r *http.Request) {
+	h.contextAction(w, r, contextActionShow)
+}
+
+func (h *Handler) hideContext(w http.ResponseWriter, r *http.Request) {
+	h.contextAction(w, r, contextActionHide)
+}
+
+func (h *Handler) contextAction(w http.ResponseWriter, r *http.Request, action string) {
+	repositoryID, ok := parseIDPath(w, r, "id")
+	if !ok {
+		return
+	}
+	var body struct {
+		ContextResourceRequest
+		Represent RepresentRequest `json:"represent,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	representReq := body.Represent
+	if representReq.Embedding.Provider == "" {
+		representReq.Embedding.Provider = "none"
+	}
+	result, err := h.Store.ApplyContextAction(r.Context(), repositoryID, action, body.ContextResourceRequest, representReq)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {

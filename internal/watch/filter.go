@@ -18,6 +18,7 @@ type filterResult struct {
 	Incoming          map[int64]int
 	Outgoing          map[int64]int
 	ChangedFiles      map[string]struct{}
+	ContextPolicies   contextPolicySet
 }
 
 func defaultThresholds(thresholds Thresholds) Thresholds {
@@ -45,7 +46,7 @@ func settingsHash(req RepresentRequest) string {
 	return stableHash(req)
 }
 
-func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds Thresholds, rawGraphHash, settingsHash string, embeddings map[int64]Vector, forcedVisibleSymbols map[int64]string) (filterResult, error) {
+func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds Thresholds, rawGraphHash, settingsHash string, embeddings map[int64]Vector, forcedVisibleSymbols map[int64]string, contextPolicies contextPolicySet, identityKeys map[string]string) (filterResult, error) {
 	symbols, err := store.SymbolsForRepository(ctx, repositoryID)
 	if err != nil {
 		return filterResult{}, err
@@ -82,9 +83,33 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 			reasons[sym.ID] = reason
 		}
 	}
+	for _, sym := range symbols {
+		if reason, ok := contextPolicies.Show[ownerMapKey("symbol", symbolOwnerKey(sym, identityKeys))]; ok {
+			visible[sym.ID] = sym
+			if strings.TrimSpace(reason) == "" {
+				reason = "user marked as context"
+			}
+			reasons[sym.ID] = reason
+		}
+		if reason, ok := contextPolicies.Show[ownerMapKey("symbol", sym.StableKey)]; ok {
+			visible[sym.ID] = sym
+			if strings.TrimSpace(reason) == "" {
+				reason = "user marked as context"
+			}
+			reasons[sym.ID] = reason
+		}
+	}
 	forcedContextSymbols := map[int64]struct{}{}
 	for id := range forcedVisibleSymbols {
 		forcedContextSymbols[id] = struct{}{}
+	}
+	for _, sym := range symbols {
+		if _, ok := contextPolicies.Show[ownerMapKey("symbol", symbolOwnerKey(sym, identityKeys))]; ok {
+			forcedContextSymbols[sym.ID] = struct{}{}
+		}
+		if _, ok := contextPolicies.Show[ownerMapKey("symbol", sym.StableKey)]; ok {
+			forcedContextSymbols[sym.ID] = struct{}{}
+		}
 	}
 	changed := true
 	for changed {
@@ -106,10 +131,10 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 	forceChangedSymbolEndpoints(symbols, refs, forcedVisibleSymbols, visible, reasons, forcedContextSymbols)
 
 	for _, sym := range symbols {
-		if isExportedSymbol(sym) {
+		if _, forced := forcedContextSymbols[sym.ID]; forced {
 			continue
 		}
-		if _, forced := forcedContextSymbols[sym.ID]; forced {
+		if isExportedSymbol(sym) {
 			continue
 		}
 		if outgoing[sym.ID] > thresholds.MaxOutgoingPerElement || incoming[sym.ID] > thresholds.MaxIncomingPerElement {
@@ -124,6 +149,16 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 	}
 	if len(embeddings) > 0 {
 		rescueRelatedSymbols(symbols, refs, visible, reasons, embeddings)
+	}
+	for _, sym := range symbols {
+		if _, ok := contextPolicies.Hide[ownerMapKey("symbol", symbolOwnerKey(sym, identityKeys))]; ok {
+			delete(visible, sym.ID)
+			reasons[sym.ID] = "user marked as noise"
+		}
+		if _, ok := contextPolicies.Hide[ownerMapKey("symbol", sym.StableKey)]; ok {
+			delete(visible, sym.ID)
+			reasons[sym.ID] = "user marked as noise"
+		}
 	}
 
 	runID, err := store.BeginFilterRun(ctx, repositoryID, settingsHash, rawGraphHash)
@@ -156,10 +191,20 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 
 	var visibleRefs []Reference
 	hiddenRefs := 0
+	byID := map[int64]Symbol{}
+	for _, sym := range symbols {
+		byID[sym.ID] = sym
+	}
 	for _, ref := range refs {
 		_, sourceOK := visible[ref.SourceSymbolID]
 		_, targetOK := visible[ref.TargetSymbolID]
-		if sourceOK && targetOK {
+		refOwnerKey := referenceOwnerKey(ref, byID, identityKeys)
+		if _, hidden := contextPolicies.Hide[ownerMapKey("reference", refOwnerKey)]; hidden {
+			hiddenRefs++
+			if err := store.SaveFilterDecision(ctx, runID, "reference", ref.ID, "hidden", "user marked as noise", nil); err != nil {
+				return filterResult{}, err
+			}
+		} else if sourceOK && targetOK {
 			visibleRefs = append(visibleRefs, ref)
 			if err := store.SaveFilterDecision(ctx, runID, "reference", ref.ID, "visible", "connects visible symbols", nil); err != nil {
 				return filterResult{}, err
@@ -182,6 +227,7 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 		VisibleReferences: visibleRefs,
 		Incoming:          incoming,
 		Outgoing:          outgoing,
+		ContextPolicies:   contextPolicies,
 	}, nil
 }
 

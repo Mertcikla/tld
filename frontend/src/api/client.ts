@@ -102,6 +102,27 @@ export interface WatchRepresentationSummary {
   diffs?: WatchDiff[]
 }
 
+export interface WatchContextActionResponse {
+  repository_id: number
+  action: 'show' | 'hide' | string
+  policies_created: number
+  policies_updated: number
+  policies_deactivated: number
+  owners_affected: number
+  elements_removed: number
+  connectors_removed: number
+  views_removed: number
+  representation: {
+    repository_id: number
+    representation_run_id: number
+    filter_run_id: number
+    raw_graph_hash: string
+    filter_settings_hash: string
+    representation_hash: string
+  }
+  summary: WatchRepresentationSummary
+}
+
 export interface WatchEvent {
   type: string
   repository_id?: number
@@ -1060,6 +1081,24 @@ export const api = {
       const suffix = params.toString() ? `?${params}` : ''
       const res = await fetch(apiUrl(`/watch/versions/${versionId}/diffs${suffix}`))
       if (!res.ok) throw new Error(`Failed to load watch diffs: ${res.statusText}`)
+      return res.json()
+    },
+    showContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/context/show`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      })
+      if (!res.ok) throw new Error(`Failed to show watch context: ${res.statusText}`)
+      return res.json()
+    },
+    hideContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/context/hide`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      })
+      if (!res.ok) throw new Error(`Failed to clean watch context: ${res.statusText}`)
       return res.json()
     },
   },
