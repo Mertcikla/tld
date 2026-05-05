@@ -34,7 +34,10 @@ func defaultServeRunE(cmd *cobra.Command, args []string) error {
 	port, _ := cmd.Flags().GetString("port")
 	dataDirFlag, _ := cmd.Flags().GetString("data-dir")
 
-	cfg, _ := workspace.LoadGlobalConfig()
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
 	dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
 	if err != nil {
 		return err
@@ -48,7 +51,11 @@ func defaultServeRunE(cmd *cobra.Command, args []string) error {
 
 func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser bool) error {
 	started := time.Now()
-	opts := resolveServeOptions(host, port)
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
+	opts := resolveServeOptions(cfg, host, port)
 
 	app, err := localserver.Bootstrap(dataDir, opts)
 	if err != nil {
@@ -90,7 +97,11 @@ func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser bool) error {
 	started := time.Now()
 	pidPath := localserver.PIDPath(dataDir)
-	opts := resolveServeOptions(host, port)
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
+	opts := resolveServeOptions(cfg, host, port)
 	addr := localserver.ResolveAddr(opts)
 	url := "http://" + addr
 	initializedData := databaseWillBeInitialized(dataDir)
@@ -124,11 +135,11 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 	}
 
 	fwdArgs := []string{"serve", "--foreground"}
-	if host != "" {
-		fwdArgs = append(fwdArgs, "--host", host)
+	if opts.Host != "" {
+		fwdArgs = append(fwdArgs, "--host", opts.Host)
 	}
-	if port != "" {
-		fwdArgs = append(fwdArgs, "--port", port)
+	if opts.Port != "" {
+		fwdArgs = append(fwdArgs, "--port", opts.Port)
 	}
 	// Always pass resolved dataDir to foreground child
 	fwdArgs = append(fwdArgs, "--data-dir", dataDir)
@@ -315,17 +326,9 @@ func getReady(url string) (*readyInfo, error) {
 	return &ready, nil
 }
 
-func resolveServeOptions(flagHost, flagPort string) localserver.ServeOptions {
-	cfg, _ := workspace.LoadGlobalConfig()
-	host := cfg.Serve.Host
-	port := cfg.Serve.Port
-	if flagHost != "" {
-		host = flagHost
-	}
-	if flagPort != "" {
-		port = flagPort
-	}
-	return localserver.ServeOptions{Host: host, Port: port}
+func resolveServeOptions(cfg *workspace.Config, flagHost, flagPort string) localserver.ServeOptions {
+	serve := workspace.ResolveServeOptions(cfg, flagHost, flagPort)
+	return localserver.ServeOptions{Host: serve.Host, Port: serve.Port}
 }
 
 func NewServeCmd(runE func(*cobra.Command, []string) error) *cobra.Command {

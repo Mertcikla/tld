@@ -8,6 +8,7 @@ import (
 	"github.com/mertcikla/tld/cmd/analyze"
 	"github.com/mertcikla/tld/cmd/apply"
 	"github.com/mertcikla/tld/cmd/check"
+	configcmd "github.com/mertcikla/tld/cmd/config"
 	"github.com/mertcikla/tld/cmd/connect"
 	"github.com/mertcikla/tld/cmd/diff"
 	"github.com/mertcikla/tld/cmd/export"
@@ -148,6 +149,9 @@ and apply them atomically with 'tld apply'.`,
 	checkCmd := check.NewCheckCmd(&wdir)
 	checkCmd.GroupID = secondaryGroup.ID
 
+	configCmd := configcmd.NewConfigCmd()
+	configCmd.GroupID = secondaryGroup.ID
+
 	watchCmd := watchcmd.NewWatchCmd()
 	watchCmd.GroupID = secondaryGroup.ID
 
@@ -178,6 +182,7 @@ and apply them atomically with 'tld apply'.`,
 		renameCmd,
 		analyzeCmd,
 		checkCmd,
+		configCmd,
 		watchCmd,
 		serveCmd,
 		mcpCmd,

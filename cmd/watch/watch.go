@@ -59,7 +59,10 @@ func NewWatchCmd() *cobra.Command {
 					GroupDiffs:         true,
 				})
 			}
-			cfg, _ := workspace.LoadGlobalConfig()
+			cfg, err := workspace.LoadGlobalConfig()
+			if err != nil {
+				return err
+			}
 			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
 			if err != nil {
 				return err
@@ -80,13 +83,15 @@ func NewWatchCmd() *cobra.Command {
 				embeddingCfg = checked
 				term.Successf(cmd.OutOrStdout(), "embedding healthcheck ok: dimension=%d similarity=%.3f", health.Dimension, health.Similarity)
 			}
-			addr := localserver.ResolveAddr(localserver.ServeOptions{Host: host, Port: port})
+			serveCfg := workspace.ResolveServeOptions(cfg, host, port)
+			serveOpts := localserver.ServeOptions{Host: serveCfg.Host, Port: serveCfg.Port}
+			addr := localserver.ResolveAddr(serveOpts)
 			url := "http://" + addr
 			var srv *http.Server
 			if !noServe {
 				if !serverReady(url) {
 					term.Infof(cmd.OutOrStdout(), "server booting: %s", url)
-					app, err := localserver.Bootstrap(dataDir, localserver.ServeOptions{Host: host, Port: port})
+					app, err := localserver.Bootstrap(dataDir, serveOpts)
 					if err != nil {
 						return err
 					}
@@ -369,7 +374,10 @@ func newScanCmd() *cobra.Command {
 			if len(args) > 0 {
 				path = args[0]
 			}
-			cfg, _ := workspace.LoadGlobalConfig()
+			cfg, err := workspace.LoadGlobalConfig()
+			if err != nil {
+				return err
+			}
 			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
 			if err != nil {
 				return err
@@ -426,7 +434,10 @@ func newRepresentCmd() *cobra.Command {
 			if len(args) > 0 {
 				path = args[0]
 			}
-			cfg, _ := workspace.LoadGlobalConfig()
+			cfg, err := workspace.LoadGlobalConfig()
+			if err != nil {
+				return err
+			}
 			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
 			if err != nil {
 				return err
@@ -574,7 +585,10 @@ type watchGroupedDiffPayload struct {
 }
 
 func runWatchDiff(cmd *cobra.Command, path string, opts watchDiffOptions) error {
-	cfg, _ := workspace.LoadGlobalConfig()
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
 	dataDir, err := workspace.ResolveDataDir(cfg, opts.DataDirFlag)
 	if err != nil {
 		return err

@@ -4,11 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strconv"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // ConfigDir returns the path to the global configuration directory.
@@ -65,6 +61,7 @@ type Config struct {
 	Validation  ValidationConfig `yaml:"validation"`
 	Serve       ServeConfig      `yaml:"serve"`
 	Watch       WatchConfig      `yaml:"watch"`
+	Completion  CompletionConfig `yaml:"completion"`
 }
 
 // ValidationConfig represents workspace validation settings.
@@ -98,6 +95,13 @@ type WatchThresholdConfig struct {
 	MaxExpandedConnectorsPerGroup int `yaml:"max_expanded_connectors_per_group"`
 }
 
+type WatchLayoutConfig struct {
+	LinkDistance    float64 `yaml:"link_distance"`
+	ChargeStrength  float64 `yaml:"charge_strength"`
+	CollideRadius   float64 `yaml:"collide_radius"`
+	GravityStrength float64 `yaml:"gravity_strength"`
+}
+
 type WatchConfig struct {
 	Languages    []string             `yaml:"languages"`
 	Watcher      string               `yaml:"watcher"`
@@ -105,6 +109,11 @@ type WatchConfig struct {
 	Debounce     string               `yaml:"debounce"`
 	Thresholds   WatchThresholdConfig `yaml:"thresholds"`
 	Embedding    WatchEmbeddingConfig `yaml:"embedding"`
+	Layout       WatchLayoutConfig    `yaml:"layout"`
+}
+
+type CompletionConfig struct {
+	Remote bool `yaml:"remote"`
 }
 
 const DefaultValidationLevel = 2
@@ -138,6 +147,12 @@ func DefaultConfig() *Config {
 				Model:           "embeddinggemma-300m-4bit",
 				HealthThreshold: 0.70,
 			},
+			Layout: WatchLayoutConfig{
+				LinkDistance:    100,
+				ChargeStrength:  -400,
+				CollideRadius:   180,
+				GravityStrength: 0.05,
+			},
 		},
 	}
 }
@@ -145,134 +160,16 @@ func DefaultConfig() *Config {
 // LoadGlobalConfig reads the global config file, applies defaults to missing fields,
 // handles environment variable overrides, and persists any added defaults back to YAML.
 func LoadGlobalConfig() (*Config, error) {
-	path, err := ConfigPath()
+	state, err := LoadGlobalConfigState()
 	if err != nil {
-		return DefaultConfig(), nil
+		return nil, err
 	}
-
-	cfg := DefaultConfig()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// Save default config if missing entirely
-			_ = SaveGlobalConfig(cfg)
-			return cfg, nil
-		}
-		return nil, fmt.Errorf("read global config: %w", err)
-	}
-
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("parse global config: %w", err)
-	}
-
-	// baseCfg holds File + Defaults (no overrides) for comparison and saving.
-	baseCfg := *cfg
-
-	// Apply Env Overrides to cfg (but not baseCfg)
-	applyEnvOverrides(cfg)
-
-	// If the file was missing fields that we've now filled with defaults,
-	// save the baseCfg (the one without env overrides) back to disk.
-	if shouldSave(data, &baseCfg) {
-		_ = SaveGlobalConfig(&baseCfg)
-	}
-
-	return cfg, nil
-}
-
-// shouldSave returns true if the current base config has fields that weren't in the original data.
-func shouldSave(originalData []byte, cfg *Config) bool {
-	if len(originalData) == 0 {
-		return true
-	}
-	// Simple approach: marshal and compare. If we added fields, it will be different.
-	// We use a normalized marshaling to avoid noise from formatting.
-	var current map[string]any
-	_ = yaml.Unmarshal(originalData, &current)
-
-	newData, _ := yaml.Marshal(cfg)
-	var updated map[string]any
-	_ = yaml.Unmarshal(newData, &updated)
-
-	return !reflect.DeepEqual(current, updated)
-}
-
-func applyEnvOverrides(cfg *Config) {
-	envs := []struct {
-		key    string
-		target *string
-		label  string
-	}{
-		{"TLD_SERVER_URL", &cfg.ServerURL, "server_url"},
-		{"TLD_API_KEY", &cfg.APIKey, "api_key"},
-		{"TLD_ORG_ID", &cfg.WorkspaceID, "org_id"},
-		{"TLD_HOST", &cfg.Serve.Host, "serve.host"},
-		{"PORT", &cfg.Serve.Port, "serve.port"},
-		{"TLD_WATCH_WATCHER", &cfg.Watch.Watcher, "watch.watcher"},
-		{"TLD_WATCH_POLL_INTERVAL", &cfg.Watch.PollInterval, "watch.poll_interval"},
-		{"TLD_WATCH_DEBOUNCE", &cfg.Watch.Debounce, "watch.debounce"},
-		{"TLD_EMBEDDING_PROVIDER", &cfg.Watch.Embedding.Provider, "watch.embedding.provider"},
-		{"TLD_EMBEDDING_ENDPOINT", &cfg.Watch.Embedding.Endpoint, "watch.embedding.endpoint"},
-		{"TLD_EMBEDDING_MODEL", &cfg.Watch.Embedding.Model, "watch.embedding.model"},
-	}
-
-	for _, env := range envs {
-		if v := os.Getenv(env.key); v != "" {
-			if *env.target != v {
-				fmt.Fprintf(os.Stderr, "Notice: %s overridden by %s\n", env.label, env.key)
-				*env.target = v
-			}
-		}
-	}
-
-	// Numeric overrides
-	if v := os.Getenv("TLD_EMBEDDING_DIMENSION"); v != "" {
-		if d, err := strconv.Atoi(v); err == nil {
-			if cfg.Watch.Embedding.Dimension != d {
-				fmt.Fprintf(os.Stderr, "Notice: watch.embedding.dimension overridden by TLD_EMBEDDING_DIMENSION\n")
-				cfg.Watch.Embedding.Dimension = d
-			}
-		}
-	}
-
-	// Slice overrides
-	if v := os.Getenv("TLD_WATCH_LANGUAGES"); v != "" {
-		langs := strings.Split(v, ",")
-		for i := range langs {
-			langs[i] = strings.TrimSpace(langs[i])
-		}
-		if !reflect.DeepEqual(cfg.Watch.Languages, langs) {
-			fmt.Fprintf(os.Stderr, "Notice: watch.languages overridden by TLD_WATCH_LANGUAGES\n")
-			cfg.Watch.Languages = langs
-		}
-	}
-
-	// TLD_ADDR overrides both host and port if it contains a colon
-	if addr := os.Getenv("TLD_ADDR"); addr != "" {
-		parts := strings.Split(addr, ":")
-		if len(parts) == 2 {
-			fmt.Fprintf(os.Stderr, "Notice: serve.host and serve.port overridden by TLD_ADDR\n")
-			cfg.Serve.Host = parts[0]
-			cfg.Serve.Port = parts[1]
-		}
-	}
+	return state.Config, nil
 }
 
 // SaveGlobalConfig writes the config back to the global configuration file.
 func SaveGlobalConfig(cfg *Config) error {
-	path, err := ConfigPath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return err
-	}
-	header := "# tlDiagram global configuration\n"
-	return os.WriteFile(path, append([]byte(header), data...), 0o644)
+	return SaveGlobalConfigPreservingUnknown(cfg, nil)
 }
 
 // EnsureGlobalConfig ensures the global config file exists with full defaults.

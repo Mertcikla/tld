@@ -49,7 +49,10 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 			if err != nil {
 				return fmt.Errorf("load workspace: %w", err)
 			}
-			cfg, _ := workspace.LoadGlobalConfig()
+			cfg, err := workspace.LoadGlobalConfig()
+			if err != nil {
+				return err
+			}
 			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
 			if err != nil {
 				return err

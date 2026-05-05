@@ -24,7 +24,10 @@ Sends SIGTERM and waits up to 10 seconds for a graceful shutdown.
 Use --kill to send SIGKILL immediately.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dataDirFlag, _ := cmd.Flags().GetString("data-dir")
-			cfg, _ := workspace.LoadGlobalConfig()
+			cfg, err := workspace.LoadGlobalConfig()
+			if err != nil {
+				return err
+			}
 			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
 			if err != nil {
 				return err

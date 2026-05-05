@@ -6,9 +6,9 @@ package layout
 import (
 	"math"
 	"math/rand/v2"
-	"os"
-	"strconv"
 	"time"
+
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 const (
@@ -22,20 +22,12 @@ const (
 
 // Tunable layout parameters — override via environment variables.
 var (
-	LinkDistance    = getEnvFloat("LAYOUT_LINK_DISTANCE", 100.0)
-	ChargeStrength  = getEnvFloat("LAYOUT_CHARGE_STRENGTH", -400.0)
-	CollideRadius   = getEnvFloat("LAYOUT_COLLIDE_RADIUS", 180.0)
-	GravityStrength = getEnvFloat("LAYOUT_GRAVITY_STRENGTH", 0.05)
+	layoutConfig    = workspace.ResolveWatchLayoutConfig()
+	LinkDistance    = layoutConfig.LinkDistance
+	ChargeStrength  = layoutConfig.ChargeStrength
+	CollideRadius   = layoutConfig.CollideRadius
+	GravityStrength = layoutConfig.GravityStrength
 )
-
-func getEnvFloat(key string, def float64) float64 {
-	if v := os.Getenv(key); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			return f
-		}
-	}
-	return def
-}
 
 // Node is a positioned graph node. ID matches an element_id in the placements table.
 type Node struct {
