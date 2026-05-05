@@ -9,6 +9,7 @@ import (
 	"github.com/mertcikla/tld/cmd/version"
 
 	"github.com/mertcikla/tld/cmd"
+	"github.com/mertcikla/tld/internal/workspace"
 )
 
 func TestRootCmd_HelpMatchesReferenceSurface(t *testing.T) {
@@ -87,39 +88,24 @@ func TestConnectCmd_HelpHidesStyleFlag(t *testing.T) {
 
 func TestAnalyzeCmd_EmptyGoFileDoesNotChangeWorkspaceContents(t *testing.T) {
 	dir := t.TempDir()
+	dataDir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
 
-	file := filepath.Join(dir, "empty.go")
-	if err := os.WriteFile(file, []byte("package main\n"), 0600); err != nil {
-		t.Fatalf("write empty.go: %v", err)
-	}
+	repoDir := filepath.Join(dir, "repo")
+	cmd.InitGitRepo(t, repoDir, "empty.go", "package main\n")
 
-	beforeElements, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
-	if err != nil {
-		t.Fatalf("read elements.yaml before analyze: %v", err)
-	}
-	beforeConnectors, err := os.ReadFile(filepath.Join(dir, "connectors.yaml"))
-	if err != nil {
-		t.Fatalf("read connectors.yaml before analyze: %v", err)
-	}
-
-	stdout, stderr, err := cmd.RunCmd(t, dir, "analyze", file)
+	stdout, stderr, err := cmd.RunCmd(t, dir, "analyze", repoDir, "--data-dir", dataDir, "--embedding-provider", "none")
 	if err != nil {
 		t.Fatalf("analyze empty.go: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-
-	afterElements, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+	ws, err := workspace.Load(dir)
 	if err != nil {
-		t.Fatalf("read elements.yaml after analyze: %v", err)
+		t.Fatal(err)
 	}
-	afterConnectors, err := os.ReadFile(filepath.Join(dir, "connectors.yaml"))
-	if err != nil {
-		t.Fatalf("read connectors.yaml after analyze: %v", err)
+	if len(ws.Connectors) != 0 {
+		t.Fatalf("empty Go file should not create connectors: %+v", ws.Connectors)
 	}
-	if string(beforeElements) != string(afterElements) {
-		t.Fatalf("elements.yaml changed for an empty Go file\nbefore:\n%s\nafter:\n%s", beforeElements, afterElements)
-	}
-	if string(beforeConnectors) != string(afterConnectors) {
-		t.Fatalf("connectors.yaml changed for an empty Go file\nbefore:\n%s\nafter:\n%s", beforeConnectors, afterConnectors)
+	if len(ws.Elements) == 0 {
+		t.Fatalf("watch-backed analyze should materialize repository/file context")
 	}
 }

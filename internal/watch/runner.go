@@ -81,8 +81,6 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	if opts.SummaryInterval <= 0 {
 		opts.SummaryInterval = time.Minute
 	}
-	r.Scanner.Settings = settings
-
 	absPath, err := filepath.Abs(opts.Path)
 	if err != nil {
 		return RunnerResult{}, err
@@ -94,15 +92,14 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 
 	gitStatus, _ := gitStatusSnapshot(repoRoot)
 	emit(opts.Events, Event{Type: "scan.started", At: nowString(), Phase: "scan", WatcherMode: settings.Watcher, Languages: settings.Languages})
-	scan, err := r.Scanner.ScanWithOptions(ctx, repoRoot, ScanOptions{Force: opts.Rescan})
+	once, err := r.RunOnce(ctx, OneShotOptions{Path: repoRoot, Rescan: opts.Rescan, Embedding: opts.Embedding, Settings: settings, Progress: opts.Progress})
 	if err != nil {
 		return RunnerResult{}, err
 	}
+	scan := once.Scan
 	emit(opts.Events, Event{Type: "scan.completed", RepositoryID: scan.RepositoryID, At: nowString(), Data: scan, Phase: "scan", WatcherMode: settings.Watcher, Languages: settings.Languages, Warnings: scan.Warnings})
-	repo, err := r.Store.Repository(ctx, scan.RepositoryID)
-	if err != nil {
-		return RunnerResult{}, err
-	}
+	emit(opts.Events, Event{Type: "representation.started", RepositoryID: scan.RepositoryID, At: nowString(), Phase: "represent", WatcherMode: settings.Watcher, Languages: settings.Languages, Warnings: scan.Warnings})
+	repo := once.Repository
 	token := randomToken()
 	lock, err := r.Store.AcquireLock(ctx, repo.ID, os.Getpid(), token, LockHeartbeatTimeout)
 	if err != nil {
@@ -120,11 +117,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 		emit(opts.Events, Event{Type: "watch.stopped", RepositoryID: repo.ID, At: nowString()})
 	}()
 
-	emit(opts.Events, Event{Type: "representation.started", RepositoryID: repo.ID, At: nowString(), Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
-	rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{Embedding: opts.Embedding, Thresholds: settings.Thresholds, Progress: opts.Progress})
-	if err != nil {
-		return RunnerResult{}, err
-	}
+	rep := once.Representation
 	emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep, Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
 	_, _ = r.Store.ApplyGitTags(ctx, repo.ID, gitStatus)
 	if gitStatus.HeadCommit != "" {
@@ -215,19 +208,16 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			nextGitFingerprint = gitStatusFingerprint(nextGit)
 			sourceChanges := diffSourceFileSnapshots(lastSourceSnapshot, stableSourceSnapshot)
 			emit(opts.Events, Event{Type: "scan.started", RepositoryID: repo.ID, At: nowString(), Phase: "scan", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: warnings})
-			scan, err := r.Scanner.ScanWithOptions(ctx, repoRoot, ScanOptions{})
+			once, err := r.RunOnce(ctx, OneShotOptions{Path: repoRoot, Embedding: opts.Embedding, Settings: settings, Progress: opts.Progress})
 			if err != nil {
 				emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: err.Error()})
 				continue
 			}
+			scan := once.Scan
 			eventWarnings := append(append([]string{}, warnings...), scan.Warnings...)
 			emit(opts.Events, Event{Type: "scan.completed", RepositoryID: repo.ID, At: nowString(), Data: scan, Phase: "scan", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
 			emit(opts.Events, Event{Type: "representation.started", RepositoryID: repo.ID, At: nowString(), Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
-			rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{Embedding: opts.Embedding, Thresholds: settings.Thresholds, Progress: opts.Progress})
-			if err != nil {
-				emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: err.Error()})
-				continue
-			}
+			rep := once.Representation
 			emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep, Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
 			tagResult, _ := r.Store.ApplyGitTags(ctx, repo.ID, nextGit)
 			representationChanged := rep.RepresentationHash != result.InitialRep.RepresentationHash ||

@@ -590,28 +590,18 @@ func runWatchDiff(cmd *cobra.Command, path string, opts watchDiffOptions) error 
 	}
 	defer func() { _ = sqliteStore.DB().Close() }()
 	watchStore := watch.NewStore(sqliteStore.DB())
-	scanner := watch.NewScanner(watchStore)
-	scanner.Settings = watchSettings
-	scanResult, err := scanner.ScanWithOptions(cmd.Context(), path, watch.ScanOptions{Force: opts.Rescan})
+	once, err := watch.NewRunner(watchStore).RunOnce(cmd.Context(), watch.OneShotOptions{Path: path, Rescan: opts.Rescan, Embedding: embeddingCfg, Settings: watchSettings})
 	if err != nil {
 		return err
 	}
-	result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{Embedding: embeddingCfg, Thresholds: watchSettings.Thresholds})
+	latest, found, err := watchStore.LatestWatchVersion(cmd.Context(), once.Scan.RepositoryID)
 	if err != nil {
 		return err
 	}
-	diffs, err := watchStore.BuildWatchDiffs(cmd.Context(), scanResult.RepositoryID, result.RepresentationHash)
-	if err != nil {
-		return err
-	}
-	latest, found, err := watchStore.LatestWatchVersion(cmd.Context(), scanResult.RepositoryID)
-	if err != nil {
-		return err
-	}
-	changed := found && latest.RepresentationHash != result.RepresentationHash || hasWatchDriftDiffs(diffs)
-	var payload any = watchDiffPayload{Changed: changed, Scan: scanResult, Representation: result, Diffs: diffs}
+	changed := found && latest.RepresentationHash != once.Representation.RepresentationHash || hasWatchDriftDiffs(once.Diffs)
+	var payload any = watchDiffPayload{Changed: changed, Scan: once.Scan, Representation: once.Representation, Diffs: once.Diffs}
 	if opts.GroupDiffs {
-		payload = watchGroupedDiffPayload{Changed: changed, Scan: scanResult, Representation: result, Diffs: groupWatchDiffs(diffs)}
+		payload = watchGroupedDiffPayload{Changed: changed, Scan: once.Scan, Representation: once.Representation, Diffs: groupWatchDiffs(once.Diffs)}
 	}
 	if err := json.NewEncoder(cmd.OutOrStdout()).Encode(payload); err != nil {
 		return err

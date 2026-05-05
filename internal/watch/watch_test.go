@@ -51,6 +51,7 @@ func Main() {}
 func quietHelper() string {
 	return "quiet"
 }
+
 `)
 
 	store := NewStore(db)
@@ -91,6 +92,34 @@ func quietHelper() string {
 	var manualName string
 	if err := db.QueryRow(`SELECT name FROM elements WHERE id = ?`, manualID).Scan(&manualName); err != nil {
 		t.Fatalf("manual element was removed: %v", err)
+	}
+}
+
+func TestRunnerRunOnceScansAndRepresentsRepository(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+
+	store := NewStore(db)
+	result, err := NewRunner(store).RunOnce(context.Background(), OneShotOptions{
+		Path:      repo,
+		Embedding: EmbeddingConfig{Provider: "none"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Repository.ID == 0 || result.Scan.RepositoryID == 0 {
+		t.Fatalf("missing repository/scan ids: %+v", result)
+	}
+	if result.Representation.RepresentationHash == "" {
+		t.Fatalf("missing representation hash: %+v", result.Representation)
+	}
+	if result.Scan.FilesParsed == 0 || result.Representation.ElementsCreated == 0 {
+		t.Fatalf("expected parsed files and materialized elements: scan=%+v representation=%+v", result.Scan, result.Representation)
 	}
 }
 

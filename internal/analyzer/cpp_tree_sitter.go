@@ -171,33 +171,156 @@ func (p *cppParser) appendTopLevelFunctionDeclarations(source []byte, path strin
 	for _, sym := range result.Symbols {
 		seen[fmt.Sprintf("%s:%s:%d", sym.Kind, sym.Name, sym.Line)] = struct{}{}
 	}
+
 	depth := 0
-	for index, line := range strings.Split(string(source), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if depth == 0 && cppLooksLikeTopLevelFunctionDeclaration(trimmed) {
-			name, owner := cppDeclarationInfoFromText(trimmed)
-			if name != "" {
-				kind := cppFunctionKind(name, owner)
-				key := fmt.Sprintf("%s:%s:%d", kind, name, index+1)
-				if _, ok := seen[key]; !ok {
-					result.Symbols = append(result.Symbols, Symbol{
-						Name:     name,
-						Kind:     kind,
-						FilePath: path,
-						Line:     index + 1,
-						EndLine:  index + 1,
-						Parent:   owner,
-					})
-					seen[key] = struct{}{}
-				}
+	inSingleComment := false
+	inMultiComment := false
+	inString := false
+	inChar := false
+	escapeNext := false
+
+	var currentDecl strings.Builder
+	declLine := 0
+	lineNum := 1
+
+	for i := 0; i < len(source); i++ {
+		c := source[i]
+
+		if c == '\n' {
+			lineNum++
+			inSingleComment = false
+			escapeNext = false
+			if depth == 0 && currentDecl.Len() > 0 && currentDecl.String()[currentDecl.Len()-1] != ' ' {
+				currentDecl.WriteByte(' ')
+			}
+			continue
+		}
+
+		if escapeNext {
+			escapeNext = false
+			continue
+		}
+
+		if inSingleComment {
+			continue
+		}
+
+		if inMultiComment {
+			if c == '*' && i+1 < len(source) && source[i+1] == '/' {
+				inMultiComment = false
+				i++
+			}
+			continue
+		}
+
+		if inString {
+			switch c {
+			case '\\':
+				escapeNext = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+
+		if inChar {
+			switch c {
+			case '\\':
+				escapeNext = true
+			case '\'':
+				inChar = false
+			}
+			continue
+		}
+
+		if c == '/' && i+1 < len(source) {
+			if source[i+1] == '/' {
+				inSingleComment = true
+				i++
+				continue
+			} else if source[i+1] == '*' {
+				inMultiComment = true
+				i++
+				continue
 			}
 		}
-		depth += strings.Count(line, "{")
-		depth -= strings.Count(line, "}")
-		if depth < 0 {
-			depth = 0
+
+		if c == '"' {
+			inString = true
+			continue
+		}
+
+		if c == '\'' {
+			inChar = true
+			continue
+		}
+
+		if c == '{' {
+			depth++
+			currentDecl.Reset()
+			continue
+		}
+
+		if c == '}' {
+			depth--
+			if depth < 0 {
+				depth = 0
+			}
+			currentDecl.Reset()
+			continue
+		}
+
+		if depth == 0 {
+			isSpace := c == ' ' || c == '\t' || c == '\r'
+			if currentDecl.Len() == 0 && !isSpace {
+				declLine = lineNum
+			}
+
+			if isSpace {
+				if currentDecl.Len() > 0 && currentDecl.String()[currentDecl.Len()-1] != ' ' {
+					currentDecl.WriteByte(' ')
+				}
+			} else {
+				currentDecl.WriteByte(c)
+			}
+
+			if c == ';' {
+				declStr := currentDecl.String()
+				if cppLooksLikeTopLevelFunctionDeclaration(declStr) {
+					name, owner := cppDeclarationInfoFromText(declStr)
+					if name != "" {
+						kind := cppFunctionKind(name, owner)
+						key := fmt.Sprintf("%s:%s:%d", kind, name, declLine)
+						if _, ok := seen[key]; !ok {
+							if cppHasDeclarationSymbol(result.Symbols, kind, name, owner, declLine, lineNum) {
+								currentDecl.Reset()
+								continue
+							}
+							result.Symbols = append(result.Symbols, Symbol{
+								Name:     name,
+								Kind:     kind,
+								FilePath: path,
+								Line:     declLine,
+								EndLine:  lineNum,
+								Parent:   owner,
+							})
+							seen[key] = struct{}{}
+						}
+					}
+				}
+				currentDecl.Reset()
+			}
 		}
 	}
+}
+
+func cppHasDeclarationSymbol(symbols []Symbol, kind, name, owner string, startLine, endLine int) bool {
+	for _, sym := range symbols {
+		if sym.Kind == kind && sym.Name == name && sym.Parent == owner && sym.Line >= startLine && sym.Line <= endLine {
+			return true
+		}
+	}
+	return false
 }
 
 func cppDeclarationInfoFromText(text string) (string, string) {
