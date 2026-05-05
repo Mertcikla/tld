@@ -138,6 +138,163 @@ func quietHelper() string {
 	}
 }
 
+func TestContextShowFocusedRescanRevealsNewSymbols(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+	fileElementID := elementIDByName(t, db, "main.go")
+
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+
+func newPrivateContext() string {
+	return "new"
+}
+`)
+	show, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "element", ResourceID: fileElementID}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if show.OwnersAffected == 0 {
+		t.Fatalf("expected focused show to affect owners, got %+v", show)
+	}
+	if !elementNameExists(t, db, "newPrivateContext") {
+		t.Fatal("focused show context should rescan the file and reveal newly added private symbols")
+	}
+	decisions, err := store.FilterDecisions(context.Background(), scanResult.RepositoryID, FilterDecisionQuery{Decision: "visible"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sym, err := symbolsByName(context.Background(), store, scanResult.RepositoryID, "newPrivateContext")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filterDecisionHasReason(decisions, sym.ID, "user marked as context") {
+		t.Fatalf("expected new private symbol to be forced visible by context policy, got %+v", decisions)
+	}
+}
+
+func TestContextHideElementCleansImmediateGeneratedNeighborsOnly(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	helper()
+}
+
+func helper() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+	mainID := symbolElementID(t, db, "Main")
+	if !elementNameExists(t, db, "helper") || !connectorExistsBetween(t, db, "Main", "helper") {
+		t.Fatal("expected generated helper neighbor and connector before hide context")
+	}
+	manualID := insertManualElement(t, db, "Manual neighbor note")
+
+	hide, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "element", ResourceID: mainID}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hide.ConnectorsRemoved == 0 || hide.ElementsRemoved == 0 {
+		t.Fatalf("expected hide to remove generated neighbor and connector, got %+v", hide)
+	}
+	if !elementNameExists(t, db, "Main") {
+		t.Fatal("selected exported element should remain")
+	}
+	if elementNameExists(t, db, "helper") || connectorExistsBetween(t, db, "Main", "helper") {
+		t.Fatal("immediate generated neighbor context should be cleaned")
+	}
+	var manualName string
+	if err := db.QueryRow(`SELECT name FROM elements WHERE id = ?`, manualID).Scan(&manualName); err != nil {
+		t.Fatalf("manual element was removed: %v", err)
+	}
+}
+
+func TestContextViewCleanupAndShowHidePrecedence(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+
+func quietHelper() string {
+	return "quiet"
+}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+	fileElementID := elementIDByName(t, db, "main.go")
+	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "element", ResourceID: fileElementID}, req); err != nil {
+		t.Fatal(err)
+	}
+	quietID := symbolElementID(t, db, "quietHelper")
+	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "element", ResourceID: quietID}, req); err != nil {
+		t.Fatal(err)
+	}
+	if activePolicyCount(t, db, scanResult.RepositoryID, contextActionHide, "symbol") == 0 {
+		t.Fatal("expected active hide policy after hiding shown symbol")
+	}
+	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "element", ResourceID: fileElementID}, req); err != nil {
+		t.Fatal(err)
+	}
+	if activePolicyCount(t, db, scanResult.RepositoryID, contextActionHide, "symbol") != 0 {
+		t.Fatal("show context should deactivate matching active hide policy")
+	}
+	if !elementNameExists(t, db, "quietHelper") {
+		t.Fatal("quiet helper should be restored after show overrides hide")
+	}
+
+	fileViewID := materializedResourceID(t, db, scanResult.RepositoryID, "file", "file:main.go", "view")
+	hide, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "view", ResourceID: fileViewID}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hide.ElementsRemoved == 0 {
+		t.Fatalf("expected view cleanup to remove generated symbol noise, got %+v", hide)
+	}
+	if elementNameExists(t, db, "quietHelper") {
+		t.Fatal("view cleanup should remove private generated symbol noise")
+	}
+	if !elementNameExists(t, db, "Main") {
+		t.Fatal("view cleanup should preserve exported entrypoint")
+	}
+}
+
 func TestRepresentMaterializesWorkspaceIdempotently(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -2967,6 +3124,50 @@ func insertManualElement(t *testing.T, db *sql.DB, name string) int64 {
 	id, err := res.LastInsertId()
 	if err != nil {
 		t.Fatal(err)
+	}
+	return id
+}
+
+func connectorExistsBetween(t *testing.T, db *sql.DB, sourceName, targetName string) bool {
+	t.Helper()
+	var id int64
+	err := db.QueryRow(`
+		SELECT c.id
+		FROM connectors c
+		JOIN elements s ON s.id = c.source_element_id
+		JOIN elements target ON target.id = c.target_element_id
+		WHERE s.name = ? AND target.name = ?
+		ORDER BY c.id
+		LIMIT 1`, sourceName, targetName).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return true
+}
+
+func activePolicyCount(t *testing.T, db *sql.DB, repositoryID int64, action, ownerType string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM watch_context_policies
+		WHERE repository_id = ? AND action = ? AND owner_type = ? AND active = 1`, repositoryID, action, ownerType).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+func materializedResourceID(t *testing.T, db *sql.DB, repositoryID int64, ownerType, ownerKey, resourceType string) int64 {
+	t.Helper()
+	var id int64
+	if err := db.QueryRow(`
+		SELECT resource_id
+		FROM watch_materialization
+		WHERE repository_id = ? AND owner_type = ? AND owner_key = ? AND resource_type = ?`, repositoryID, ownerType, ownerKey, resourceType).Scan(&id); err != nil {
+		t.Fatalf("materialized resource %s/%s/%s: %v", ownerType, ownerKey, resourceType, err)
 	}
 	return id
 }

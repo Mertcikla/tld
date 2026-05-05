@@ -288,6 +288,9 @@ func (s *Store) rankHideOwners(ctx context.Context, repositoryID int64, owners [
 	}
 	var out []contextOwner
 	for _, owner := range uniqueContextOwners(owners) {
+		if owner.OwnerType == "file" || owner.OwnerType == "folder" {
+			continue
+		}
 		if _, ok := keep[ownerKey(owner)]; ok {
 			continue
 		}

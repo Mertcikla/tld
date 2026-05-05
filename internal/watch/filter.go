@@ -84,14 +84,7 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 		}
 	}
 	for _, sym := range symbols {
-		if reason, ok := contextPolicies.Show[ownerMapKey("symbol", symbolOwnerKey(sym, identityKeys))]; ok {
-			visible[sym.ID] = sym
-			if strings.TrimSpace(reason) == "" {
-				reason = "user marked as context"
-			}
-			reasons[sym.ID] = reason
-		}
-		if reason, ok := contextPolicies.Show[ownerMapKey("symbol", sym.StableKey)]; ok {
+		if reason, ok := contextPolicies.showSymbol(sym, identityKeys); ok {
 			visible[sym.ID] = sym
 			if strings.TrimSpace(reason) == "" {
 				reason = "user marked as context"
@@ -104,10 +97,7 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 		forcedContextSymbols[id] = struct{}{}
 	}
 	for _, sym := range symbols {
-		if _, ok := contextPolicies.Show[ownerMapKey("symbol", symbolOwnerKey(sym, identityKeys))]; ok {
-			forcedContextSymbols[sym.ID] = struct{}{}
-		}
-		if _, ok := contextPolicies.Show[ownerMapKey("symbol", sym.StableKey)]; ok {
+		if _, ok := contextPolicies.showSymbol(sym, identityKeys); ok {
 			forcedContextSymbols[sym.ID] = struct{}{}
 		}
 	}
@@ -151,11 +141,7 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 		rescueRelatedSymbols(symbols, refs, visible, reasons, embeddings)
 	}
 	for _, sym := range symbols {
-		if _, ok := contextPolicies.Hide[ownerMapKey("symbol", symbolOwnerKey(sym, identityKeys))]; ok {
-			delete(visible, sym.ID)
-			reasons[sym.ID] = "user marked as noise"
-		}
-		if _, ok := contextPolicies.Hide[ownerMapKey("symbol", sym.StableKey)]; ok {
+		if _, ok := contextPolicies.hideSymbol(sym, identityKeys); ok {
 			delete(visible, sym.ID)
 			reasons[sym.ID] = "user marked as noise"
 		}
@@ -229,6 +215,38 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 		Outgoing:          outgoing,
 		ContextPolicies:   contextPolicies,
 	}, nil
+}
+
+func (p contextPolicySet) showSymbol(sym Symbol, identityKeys map[string]string) (string, bool) {
+	return p.symbolPolicy(p.Show, sym, identityKeys)
+}
+
+func (p contextPolicySet) hideSymbol(sym Symbol, identityKeys map[string]string) (string, bool) {
+	return p.symbolPolicy(p.Hide, sym, identityKeys)
+}
+
+func (p contextPolicySet) symbolPolicy(policies map[string]string, sym Symbol, identityKeys map[string]string) (string, bool) {
+	for _, key := range []string{
+		ownerMapKey("symbol", symbolOwnerKey(sym, identityKeys)),
+		ownerMapKey("symbol", sym.StableKey),
+		ownerMapKey("file", "file:"+sym.FilePath),
+	} {
+		if reason, ok := policies[key]; ok {
+			return reason, true
+		}
+	}
+	dir := path.Dir(sym.FilePath)
+	for dir != "." && dir != "/" && dir != "" {
+		if reason, ok := policies[ownerMapKey("folder", "folder:"+dir)]; ok {
+			return reason, true
+		}
+		next := path.Dir(dir)
+		if next == dir {
+			break
+		}
+		dir = next
+	}
+	return "", false
 }
 
 func rescueRelatedSymbols(symbols []Symbol, refs []Reference, visible map[int64]Symbol, reasons map[int64]string, embeddings map[int64]Vector) {
