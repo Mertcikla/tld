@@ -29,16 +29,25 @@ import { motion, AnimatePresence } from 'framer-motion'
 import ViewsGrid from './ViewsGrid'
 import InfiniteZoom, { type InfiniteZoomHandle } from './InfiniteZoom'
 import { ZoomInIcon } from '../components/Icons'
+import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../components/WorkspacePanel'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
-import type { ViewTreeNode } from '../types'
+import type { ExploreData, ViewTreeNode } from '../types'
+import {
+  buildJumpSearchResults,
+  flattenTree,
+  jumpResultActionLabel,
+  jumpResultSubtitle,
+  type JumpSearchResult,
+  type JumpViewMode,
+} from './viewsJumpSearch'
 
 interface Props {
   shareSlot?: React.ReactNode
   onShareView?: (viewId: number) => void
 }
 
-type ViewType = 'explore' | 'hierarchy'
+type ViewType = JumpViewMode
 
 const MotionBox = motion.create(Box)
 
@@ -56,24 +65,14 @@ function HierarchyModeIcon({ size = 13 }: { size?: number }) {
   )
 }
 
-function flattenTree(roots: ViewTreeNode[]): ViewTreeNode[] {
-  const result: ViewTreeNode[] = []
-  const traverse = (node: ViewTreeNode) => {
-    result.push(node)
-    node.children.forEach(traverse)
-  }
-  roots.forEach(traverse)
-  return result
-}
-
 interface DiagramJumpToolbarProps {
   view: ViewType
   searchTerm: string
-  searchResults: ViewTreeNode[]
+  searchResults: JumpSearchResult[]
   activeSearchIndex: number
   onSearchChange: (term: string) => void
   onSearchKeyDown: (e: React.KeyboardEvent) => void
-  onResultClick: (result: ViewTreeNode) => void
+  onResultClick: (result: JumpSearchResult) => void
   onViewChange: (view: ViewType) => void
   onCreateOpen: () => void
 }
@@ -328,7 +327,7 @@ function DiagramJumpToolbar({
             >
               {searchResults.map((result, idx) => (
                 <Flex
-                  key={result.id}
+                  key={result.key}
                   px={4}
                   py={2.5}
                   align="center"
@@ -352,13 +351,13 @@ function DiagramJumpToolbar({
                       {result.name}
                     </Text>
                     <Text color="whiteAlpha.500" fontSize="10px" textTransform="uppercase" letterSpacing="0.05em">
-                      Level {result.level} • {result.level_label || 'Diagram'}
+                      {jumpResultSubtitle(result)}
                     </Text>
                   </Box>
                   {idx === activeSearchIndex && (
                     <HStack spacing={1} opacity={0.8}>
                       <Text color="var(--accent)" fontSize="9px" fontWeight="800" letterSpacing="0.1em">
-                        {view === 'explore' ? 'ZOOM' : 'OPEN'}
+                        {jumpResultActionLabel(view)}
                       </Text>
                       <Text color="whiteAlpha.400" fontSize="9px">↵</Text>
                     </HStack>
@@ -384,14 +383,32 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
   const [treeLoading, setTreeLoading] = useState(true)
   const [focusedHierarchyId, setFocusedHierarchyId] = useState<number | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
-  const [searchResults, setSearchResults] = useState<ViewTreeNode[]>([])
+  const [searchResults, setSearchResults] = useState<JumpSearchResult[]>([])
   const [activeSearchIndex, setActiveSearchIndex] = useState(-1)
+  const [exploreSearchData, setExploreSearchData] = useState<ExploreData | null>(null)
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } = useDisclosure()
   const [newName, setNewName] = useState('')
   const [isCreating, setIsCreating] = useState(false)
   const exploreRef = useRef<InfiniteZoomHandle>(null)
+  const exploreSearchLoadRef = useRef<Promise<ExploreData | null> | null>(null)
 
   const flatTree = useMemo(() => flattenTree(treeData), [treeData])
+
+  const ensureExploreSearchData = useCallback(() => {
+    if (exploreSearchData || exploreSearchLoadRef.current) return
+    exploreSearchLoadRef.current = api.explore.load()
+      .then((data) => {
+        if (!data.password_required) {
+          setExploreSearchData(data)
+          return data
+        }
+        return null
+      })
+      .catch(() => null)
+      .finally(() => {
+        exploreSearchLoadRef.current = null
+      })
+  }, [exploreSearchData])
 
   const handleViewChange = useCallback((newView: ViewType) => {
     setView(newView)
@@ -411,8 +428,43 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     }
   }, [searchParams])
 
+  useEffect(() => {
+    const focusId = Number(searchParams.get('focus') ?? 0)
+    const elementId = Number(searchParams.get('element') ?? 0)
+    if (view !== 'explore' || !Number.isFinite(focusId) || focusId <= 0) return
+    let attempts = 0
+    let timer: number | null = null
+    const focus = () => {
+      attempts += 1
+      if (Number.isFinite(elementId) && elementId > 0) {
+        if (exploreRef.current?.focusElement(focusId, elementId)) return
+        if (attempts < 12) timer = window.setTimeout(focus, 150)
+        return
+      }
+      if (exploreRef.current?.focusDiagram(focusId)) return
+      if (attempts < 12) timer = window.setTimeout(focus, 150)
+    }
+    focus()
+    return () => {
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [searchParams, view])
+
+  useEffect(() => {
+    const trimmed = searchTerm.trim()
+    if (trimmed.length < 3) return
+
+    const matches = buildJumpSearchResults(trimmed, flatTree, exploreSearchData)
+    setSearchResults(matches)
+    setActiveSearchIndex(matches.length > 0 ? 0 : -1)
+    if (view === 'hierarchy' && matches[0]) {
+      setFocusedHierarchyId(matches[0].viewId)
+    }
+  }, [exploreSearchData, flatTree, searchTerm, view])
+
   const refreshTree = useCallback(async () => {
     setTreeLoading(true)
+    setExploreSearchData(null)
     const tree = await api.workspace.views.tree().catch(() => null)
     if (tree) {
       setTreeData(tree)
@@ -452,17 +504,38 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const commitSearchResult = useCallback((result: ViewTreeNode) => {
+  useEffect(() => {
+    const refresh = () => {
+      void refreshTree()
+    }
+    window.addEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
+    return () => window.removeEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
+  }, [refreshTree])
+
+  const commitSearchResult = useCallback((result: JumpSearchResult) => {
     if (view === 'explore') {
-      exploreRef.current?.focusDiagram(result.id)
+      const newParams = new URLSearchParams(searchParams)
+      newParams.set('view', 'explore')
+      newParams.set('focus', String(result.viewId))
+      if (result.type === 'element') {
+        newParams.set('element', String(result.elementId))
+        exploreRef.current?.focusElement(result.viewId, result.elementId)
+      } else {
+        newParams.delete('element')
+        exploreRef.current?.focusDiagram(result.viewId)
+      }
+      setSearchParams(newParams, { replace: true })
+    } else if (result.type === 'element') {
+      setFocusedHierarchyId(result.viewId)
+      navigate(`/views/${result.viewId}?element=${result.elementId}`)
     } else {
-      setFocusedHierarchyId(result.id)
-      navigate(`/views/${result.id}`)
+      setFocusedHierarchyId(result.viewId)
+      navigate(`/views/${result.viewId}`)
     }
     setSearchResults([])
     setActiveSearchIndex(-1)
     setSearchTerm('')
-  }, [navigate, view])
+  }, [navigate, searchParams, setSearchParams, view])
 
   const handleSearchChange = useCallback((term: string) => {
     setSearchTerm(term)
@@ -471,20 +544,8 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
       setActiveSearchIndex(-1)
       return
     }
-
-    const normalized = term.trim().toLowerCase()
-    const matches = flatTree
-      .filter((n) => n.name.toLowerCase().includes(normalized))
-      .slice(0, 5)
-
-    setSearchResults(matches)
-    if (matches.length > 0) {
-      setActiveSearchIndex(0)
-      if (view === 'hierarchy') setFocusedHierarchyId(matches[0].id)
-    } else {
-      setActiveSearchIndex(-1)
-    }
-  }, [flatTree, view])
+    ensureExploreSearchData()
+  }, [ensureExploreSearchData])
 
   const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -498,12 +559,12 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
       e.preventDefault()
       const nextIndex = (activeSearchIndex + 1) % searchResults.length
       setActiveSearchIndex(nextIndex)
-      if (view === 'hierarchy') setFocusedHierarchyId(searchResults[nextIndex].id)
+      if (view === 'hierarchy') setFocusedHierarchyId(searchResults[nextIndex].viewId)
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       const nextIndex = (activeSearchIndex - 1 + searchResults.length) % searchResults.length
       setActiveSearchIndex(nextIndex)
-      if (view === 'hierarchy') setFocusedHierarchyId(searchResults[nextIndex].id)
+      if (view === 'hierarchy') setFocusedHierarchyId(searchResults[nextIndex].viewId)
     } else if (e.key === 'Enter' && activeSearchIndex >= 0) {
       e.preventDefault()
       commitSearchResult(searchResults[activeSearchIndex])
@@ -514,7 +575,17 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     if (!newName.trim()) return
     setIsCreating(true)
     try {
-      const d = await api.workspace.views.create({ name: newName.trim() })
+      let d
+      if (treeData.length > 0) {
+        // Root view already exists. Create a new element in the root view to own this new diagram.
+        const name = newName.trim()
+        const element = await api.workspace.elements.create({ name })
+        const root = treeData[0]
+        await api.workspace.views.placements.add(root.id, element.id, 100, 100)
+        d = await api.workspace.views.create({ name, parent_view_id: element.id })
+      } else {
+        d = await api.workspace.views.create({ name: newName.trim() })
+      }
       await refreshTree()
       navigate(`/views/${d.id}`)
       onCreateClose()
@@ -524,7 +595,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     } finally {
       setIsCreating(false)
     }
-  }, [navigate, newName, onCreateClose, refreshTree])
+  }, [navigate, newName, onCreateClose, refreshTree, treeData])
 
   if (initializing) {
     return (

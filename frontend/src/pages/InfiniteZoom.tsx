@@ -20,13 +20,16 @@ import {
 } from '@chakra-ui/react'
 import { api } from '../api/client'
 import type { ExploreData, ViewLayer } from '../types'
-import { FitViewIcon as FitViewSvg, TagsIcon, EyeIcon, EyeOffIcon, FocusIcon as FocusSvg } from '../components/Icons'
+import { FitViewIcon as FitViewSvg, TagsIcon, EyeIcon, EyeOffIcon } from '../components/Icons'
 import ExploreOnboarding from '../components/ExploreOnboarding'
 import ExplorePageOnboarding from '../components/ExplorePageOnboarding'
 import MiniZoomOnboarding from '../components/MiniZoomOnboarding'
 import { ZUICanvas, type ZUICameraFrame, type ZUICanvasHandle } from '../components/ZUI'
 import { useCrossBranchContextSettings } from '../crossBranch/settings'
+import CrossBranchControls from '../components/CrossBranchControls'
 import { primeWorkspaceGraphSnapshot } from '../crossBranch/store'
+import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../components/WorkspacePanel'
+import { useWorkspaceVersionPreview } from '../context/WorkspaceVersionContext'
 
 // ── Types ──────────────────────────────────────────────────────────
 interface Props {
@@ -36,6 +39,7 @@ interface Props {
 
 export interface InfiniteZoomHandle {
   focusDiagram(viewId: number): boolean
+  focusElement(viewId: number, elementId: number): boolean
   setCameraFrame(frame: ZUICameraFrame): boolean
 }
 
@@ -59,7 +63,13 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   const { isOpen: isTagsOpen, onClose: onTagsClose, onToggle: onTagsToggle } = useDisclosure()
   const zuiRef = useRef<ZUICanvasHandle>(null)
   const crossBranchSurface = sharedToken ? 'zui-shared' : 'zui'
-  const { settings: crossBranchSettings, setEnabled: setCrossBranchEnabled } = useCrossBranchContextSettings(crossBranchSurface)
+  const {
+    settings: crossBranchSettings,
+    setEnabled: setCrossBranchEnabled,
+    setConnectorBudget: setCrossBranchConnectorBudget,
+    setConnectorPriority: setCrossBranchConnectorPriority,
+  } = useCrossBranchContextSettings(crossBranchSurface)
+  const { preview: versionPreview, followTarget: versionFollowTarget } = useWorkspaceVersionPreview()
 
   const cameraProfile = useMemo(() => new URLSearchParams(location.search).get('profile'), [location.search])
   const isDetailToOverviewProfile = sharedToken && cameraProfile === 'detail-to-overview'
@@ -73,6 +83,9 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   useImperativeHandle(ref, () => ({
     focusDiagram(viewId: number) {
       return zuiRef.current?.focusDiagram(viewId) ?? false
+    },
+    focusElement(viewId: number, elementId: number) {
+      return zuiRef.current?.focusElement(viewId, elementId) ?? false
     },
     setCameraFrame(frame: ZUICameraFrame) {
       return zuiRef.current?.setCameraFrame(frame) ?? false
@@ -161,9 +174,9 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
     dismissMiniOnboarding()
   }, [dismissMiniOnboarding])
 
-  useEffect(() => {
+  const loadExploreData = useCallback(() => {
     const loader = sharedToken ? api.explore.loadShared(sharedToken) : api.explore.load()
-    loader.then((d) => {
+    return loader.then((d) => {
       if (d.password_required) {
         setLoading(false)
       } else {
@@ -173,6 +186,20 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
       }
     }).catch(() => setLoading(false))
   }, [sharedToken])
+
+  useEffect(() => {
+    void loadExploreData()
+  }, [loadExploreData])
+
+  useEffect(() => {
+    if (sharedToken) return
+    const refresh = () => {
+      setLoading(true)
+      void loadExploreData()
+    }
+    window.addEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
+    return () => window.removeEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
+  }, [loadExploreData, sharedToken])
 
   // Fetch tag colors and layers once data is loaded (authenticated users only).
   // Only fetch from root tree nodes child/nested diagrams would duplicate the same layers.
@@ -275,6 +302,8 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
             highlightedTags={highlightedTags}
             highlightColor={highlightColor}
             hiddenTags={hiddenTags}
+            versionPreview={versionPreview}
+            versionFollowTarget={versionFollowTarget}
             crossBranchSettings={crossBranchSettings}
             hoverLocked={isTagsOpen}
           />
@@ -315,21 +344,13 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
               {shareSlot}
 
               <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
-              <Tooltip label={!crossBranchSettings.enabled ? 'Show branches' : 'Focus on this view'} placement="top" openDelay={200}>
-                <Button
-                  variant="ghost" h="28px" px={2.5}
-                  color={!crossBranchSettings.enabled ? 'var(--accent)' : 'gray.300'}
-                  bg={!crossBranchSettings.enabled ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
-                  _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
-                  onClick={() => setCrossBranchEnabled(!crossBranchSettings.enabled)}
-                >
-                  <HStack spacing={1.5}>
-                    <FocusSvg />
-                    <Text fontSize="11px" fontWeight="normal">Focus View</Text>
-                    <Box w="6px" h="6px" rounded="full" bg={!crossBranchSettings.enabled ? 'var(--accent)' : 'gray.500'} />
-                  </HStack>
-                </Button>
-              </Tooltip>
+              <CrossBranchControls
+                settings={crossBranchSettings}
+                onEnabledChange={setCrossBranchEnabled}
+                onBudgetChange={setCrossBranchConnectorBudget}
+                onPriorityChange={setCrossBranchConnectorPriority}
+                label="Branches"
+              />
 
               {(allTags.length > 0 || layers.length > 0) && (
                 <>
@@ -356,6 +377,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
                     </PopoverTrigger>
                     <Portal>
                       <PopoverContent
+                        data-zui-native-wheel="true"
                         bg="glass.bg"
                         backdropFilter="blur(16px)"
                         borderColor="glass.border"

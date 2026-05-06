@@ -55,6 +55,7 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 			Branch:      e.GetBranch(),
 			Language:    e.GetLanguage(),
 			FilePath:    e.GetFilePath(),
+			Tags:        cloneStrings(e.GetTags()),
 			HasView:     e.GetHasView(),
 			ViewLabel:   strings.TrimSpace(e.GetViewLabel()),
 		}
@@ -158,6 +159,13 @@ func exportedDiagramLabel(diagram *diagv1.View, elementName string) string {
 		return name
 	}
 	return ""
+}
+
+func cloneStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return append([]string(nil), values...)
 }
 
 func buildDiagramOwnerIndex(msg *diagv1.ExportOrganizationResponse, elements map[string]*workspace.Element, objectIDToRef map[int32]string) map[int32]string {

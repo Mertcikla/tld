@@ -27,17 +27,29 @@ import { Link as RouterLink } from 'react-router-dom'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import type { ExploreData } from '../../types'
 import { computeLayout } from './layout'
-import { renderFrame, getExpandThresholds, setOnImageLoadCallback, setHighlightedTags as setRendererHighlightedTags, setHiddenTags as setRendererHiddenTags, setHighlightColor as setRendererHighlightColor } from './renderer'
+import { renderFrame, getExpandThresholds, getCameraRebase, rawCameraView, screenToWorldX, screenToWorldY, worldToScreenX, worldToScreenY, setOnImageLoadCallback, setHighlightedTags as setRendererHighlightedTags, setHiddenTags as setRendererHiddenTags, setHighlightColor as setRendererHighlightColor, setVersionDiff as setRendererVersionDiff } from './renderer'
 import { useZUIInteraction } from './useZUIInteraction'
 import type { DiagramGroupLayout, ZUIViewState } from './types'
+import { findDiagramFocusTarget, findElementFocusTarget, viewportForDiagramFocusTarget, viewportForElementFocusTarget } from './focus'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
-import type { ZUIResolvedConnector } from '../../crossBranch/resolve'
-import { buildVisibleProxyConnectors, collectVisibleNodeAnchors, drawVisibleProxyConnectors, findHoveredProxyConnector } from './proxy'
+import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
+import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
+import {
+  buildProxyConnectorSpatialIndex,
+  buildVisibleProxyConnectors,
+  collectVisibleNodeAnchors,
+  drawVisibleDirectProxyBadges,
+  drawVisibleProxyConnectors,
+  findHoveredProxyConnector,
+  type ProxyConnectorSpatialIndex,
+  type VisibleNodeAnchor,
+} from './proxy'
 
 export interface ZUICanvasHandle {
   fitView(): void
   focusDiagram(viewId: number): boolean
+  focusElement(viewId: number, elementId: number): boolean
   setCameraFrame(frame: ZUICameraFrame): boolean
 }
 
@@ -55,6 +67,8 @@ interface Props {
   highlightedTags?: string[]
   highlightColor?: string
   hiddenTags?: string[]
+  versionPreview?: WorkspaceVersionPreview | null
+  versionFollowTarget?: WorkspaceVersionFollowTarget | null
   crossBranchSettings: CrossBranchContextSettings
   hoverLocked?: boolean
 }
@@ -71,6 +85,26 @@ interface PathItem {
   absH: number
 }
 
+function rebaseVisibleNodeAnchors(
+  anchors: Map<string, VisibleNodeAnchor>,
+  originX: number,
+  originY: number,
+): Map<string, VisibleNodeAnchor> {
+  const rebased = new Map<string, VisibleNodeAnchor>()
+  for (const [nodeId, anchor] of anchors) {
+    rebased.set(nodeId, {
+      ...anchor,
+      worldX: anchor.worldX - originX,
+      worldY: anchor.worldY - originY,
+    })
+  }
+  return rebased
+}
+
+function anchorViewForZoom(zoom: number): ZUIViewState {
+  return { x: 0, y: 0, zoom: Math.max(0.0001, zoom) }
+}
+
 function getPathAt(
   view: ZUIViewState,
   groups: DiagramGroupLayout[],
@@ -80,8 +114,8 @@ function getPathAt(
   if (canvasW === 0 || canvasH === 0) return []
 
   // World center of the screen
-  const worldCenterX = (canvasW / 2 - view.x) / view.zoom
-  const worldCenterY = (canvasH / 2 - view.y) / view.zoom
+  const worldCenterX = screenToWorldX(canvasW / 2, view)
+  const worldCenterY = screenToWorldY(canvasH / 2, view)
   const thresholds = getExpandThresholds(canvasW)
 
   for (const group of groups) {
@@ -177,70 +211,6 @@ function getPathAt(
   return []
 }
 
-function findDiagramFocusTarget(groups: DiagramGroupLayout[], viewId: number): PathItem | null {
-  for (const group of groups) {
-    if (group.diagramId === viewId) {
-      return {
-        id: `g-${group.diagramId}`,
-        label: group.label,
-        type: 'group',
-        absX: group.worldX,
-        absY: group.worldY,
-        absW: group.worldW,
-        absH: group.worldH,
-      }
-    }
-
-    const found = findLinkedDiagramInNodes(viewId, group.nodes, 0, 0, 1, 0, 0)
-    if (found) return found
-  }
-  return null
-}
-
-function findLinkedDiagramInNodes(
-  viewId: number,
-  nodes: DiagramGroupLayout['nodes'],
-  parentAbsX: number,
-  parentAbsY: number,
-  parentAbsScale: number,
-  parentChildOffsetX: number,
-  parentChildOffsetY: number,
-): PathItem | null {
-  for (const node of nodes) {
-    const absX = parentAbsX + (node.worldX - parentChildOffsetX) * parentAbsScale
-    const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
-    const absW = node.worldW * parentAbsScale
-    const absH = node.worldH * parentAbsScale
-
-    if (node.linkedDiagramId === viewId) {
-      return {
-        id: node.id,
-        label: node.linkedDiagramLabel || node.label,
-        type: 'node',
-        isCircular: node.isCircular,
-        absX,
-        absY,
-        absW,
-        absH,
-      }
-    }
-
-    if (node.children.length > 0) {
-      const found = findLinkedDiagramInNodes(
-        viewId,
-        node.children,
-        absX,
-        absY,
-        parentAbsScale * node.childScale,
-        node.childOffsetX,
-        node.childOffsetY,
-      )
-      if (found) return found
-    }
-  }
-  return null
-}
-
 function easeOutQuart(t: number): number {
   return 1 - Math.pow(1 - t, 4)
 }
@@ -320,25 +290,27 @@ function findFirstExpandableNodeInTree(
   return null
 }
 
-export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, initialCameraFrame, highlightedTags, highlightColor, hiddenTags, crossBranchSettings, hoverLocked = false }, ref) {
+export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, initialCameraFrame, highlightedTags, highlightColor, hiddenTags, versionPreview, versionFollowTarget, crossBranchSettings, hoverLocked = false }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const cameraTransitionRef = useRef<number | null>(null)
   const [initialized, setInitialized] = useState(false)
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 })
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
+  const debugViewport = useMemo(() => typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('debugZuiCamera'), [])
 
   // ── Layout ──────────────────────────────────────────────────────
   const layout = useMemo(() => computeLayout(data), [data])
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
-  // Holds the most-recently resolved connector topology so hover detection can
-  // use it without re-running the expensive O(connectors) resolution on every mousemove.
-  const proxyConnectorsRef = useRef<ZUIResolvedConnector[]>([])
+  // Holds the latest proxy hover index so mousemove can query it without
+  // rebuilding anchors or connector geometry.
+  const proxyHoverIndexRef = useRef<ProxyConnectorSpatialIndex | null>(null)
 
-  const resolveHoveredProxyItem = useCallback((worldX: number, worldY: number, view: ZUIViewState, canvasW: number) => {
-    const freshAnchors = collectVisibleNodeAnchors(layout.groups, view, canvasW, hiddenTags)
-    return findHoveredProxyConnector(worldX, worldY, proxyConnectorsRef.current, freshAnchors.byNodeId, view)
-  }, [hiddenTags, layout.groups])
+  const resolveHoveredProxyItem = useCallback((worldX: number, worldY: number, view: ZUIViewState) => {
+    const index = proxyHoverIndexRef.current
+    if (!index) return null
+    return findHoveredProxyConnector(worldX, worldY, index, view)
+  }, [])
 
   // ── Interaction ─────────────────────────────────────────────────
   const { viewState, viewStateRef, setViewState, fitView, maxZoom, hoveredItem, setHoveredItem, setHoverLocked } = useZUIInteraction(
@@ -352,42 +324,100 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     resolveHoveredProxyItem,
   )
 
-  // Anchor positions recompute every render (fast tree traversal, view-dependent).
+  // Anchor positions are zoom-dependent, but not pan-dependent. Keeping pan out
+  // of this memo avoids re-walking the ZUI tree during drag/trackpad movement.
   const anchors = useMemo(() =>
-    collectVisibleNodeAnchors(layout.groups, viewState, containerSize.w || 1, hiddenTags),
-    [layout.groups, viewState, containerSize.w, hiddenTags],
+    collectVisibleNodeAnchors(layout.groups, anchorViewForZoom(viewState.zoom), containerSize.w || 1, hiddenTags),
+    [layout.groups, viewState.zoom, containerSize.w, hiddenTags],
   )
+
+  const viewportBounds = useMemo(() => {
+    const zoom = Math.max(0.0001, viewState.zoom)
+    const stableView = { ...viewState, zoom }
+    const minX = screenToWorldX(0, stableView)
+    const minY = screenToWorldY(0, stableView)
+    const maxX = screenToWorldX(containerSize.w, stableView)
+    const maxY = screenToWorldY(containerSize.h, stableView)
+    return {
+      minX,
+      minY,
+      maxX,
+      maxY,
+      centerX: (minX + maxX) / 2,
+      centerY: (minY + maxY) / 2,
+    }
+  }, [containerSize.h, containerSize.w, viewState])
+
+  useEffect(() => {
+    if (!debugViewport) return
+    const cameraRebase = getCameraRebase(viewState, containerSize.w, containerSize.h)
+    console.debug('[ZUICanvas] viewport', {
+      x: viewState.x,
+      y: viewState.y,
+      zoom: viewState.zoom,
+      width: containerSize.w,
+      height: containerSize.h,
+      minX: viewportBounds.minX,
+      minY: viewportBounds.minY,
+      maxX: viewportBounds.maxX,
+      maxY: viewportBounds.maxY,
+      centerX: viewportBounds.centerX,
+      centerY: viewportBounds.centerY,
+      renderX: cameraRebase.view.x,
+      renderY: cameraRebase.view.y,
+      renderOriginX: cameraRebase.originX,
+      renderOriginY: cameraRebase.originY,
+    })
+  }, [containerSize.h, containerSize.w, debugViewport, viewState, viewportBounds])
 
   // A stable string key encoding which element→nodeId pairs are currently visible.
   // This only changes when nodes cross zoom-expansion thresholds not on every pan pixel.
   const visibleElementSig = useMemo(() =>
     Array.from(anchors.visibleAnchors.entries())
       .sort(([a], [b]) => a - b)
-      .map(([id, anchor]) => `${id}:${anchor.nodeId}`)
+      .map(([id, anchor]) => `${id}:${anchor.nodeId}:${anchor.renderAlpha >= (crossBranchSettings.minConnectorAnchorAlpha ?? DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA) ? 1 : 0}`)
       .join(','),
-    [anchors.visibleAnchors],
+    [anchors.visibleAnchors, crossBranchSettings.minConnectorAnchorAlpha],
   )
+  const proxySettingsSig = [
+    crossBranchSettings.enabled,
+    crossBranchSettings.depth,
+    crossBranchSettings.connectorBudget,
+    crossBranchSettings.connectorPriority,
+    crossBranchSettings.minConnectorAnchorAlpha ?? '',
+    crossBranchSettings.maxProxyConnectorGroups ?? '',
+  ].join(':')
 
-  // Connector topology: expensive O(connectors) resolution only when visibility set changes.
+  // Connector topology follows visible anchor identity, not camera position.
+  // Continuous pan/zoom renders reuse the previous topology until zoom changes
+  // which elements have visible/eligible anchors.
   const proxyConnectors = useMemo(() => {
     const resolved = buildVisibleProxyConnectors(workspaceSnapshot, anchors.visibleAnchors, crossBranchSettings)
-    proxyConnectorsRef.current = resolved
     return resolved
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspaceSnapshot, visibleElementSig, crossBranchSettings])
+  }, [workspaceSnapshot, visibleElementSig, proxySettingsSig])
+
+  const proxyHoverIndex = useMemo(() => (
+    buildProxyConnectorSpatialIndex(proxyConnectors.connectors, anchors.byNodeId)
+  ), [proxyConnectors.connectors, anchors.byNodeId])
+  proxyHoverIndexRef.current = proxyHoverIndex
 
   const visibleProxyState = useMemo(() => ({
     ...anchors,
-    proxyConnectors,
+    proxyConnectors: proxyConnectors.connectors,
+    hiddenProxyBadges: proxyConnectors.hiddenBadges,
   }), [anchors, proxyConnectors])
 
   const visibleProxyStateRef = useRef(visibleProxyState)
   visibleProxyStateRef.current = visibleProxyState
 
   const labelBgRef = useRef('#171923')
+  const accentRef = useRef('#63b3ed')
   useEffect(() => {
     const update = () => {
-      labelBgRef.current = getComputedStyle(document.documentElement).getPropertyValue('--chakra-colors-gray-900').trim() || '#171923'
+      const styles = getComputedStyle(document.documentElement)
+      labelBgRef.current = styles.getPropertyValue('--chakra-colors-gray-900').trim() || '#171923'
+      accentRef.current = styles.getPropertyValue('--accent').trim() || '#63b3ed'
       needsRedrawRef.current = true
     }
     update()
@@ -415,8 +445,8 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       absY = g.worldY + g.diagramY - absH
     }
 
-    const sx = absX * viewState.zoom + viewState.x
-    const sy = absY * viewState.zoom + viewState.y
+    const sx = worldToScreenX(absX, viewState)
+    const sy = worldToScreenY(absY, viewState)
     const sw = absW * viewState.zoom
     const sh = absH * viewState.zoom
 
@@ -473,36 +503,13 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     setViewState({ x, y, zoom })
   }, [containerSize, maxZoom, setViewState, setHoveredItem])
 
-  const focusDiagram = useCallback((viewId: number) => {
-    const el = containerRef.current
-    const target = findDiagramFocusTarget(layout.groups, viewId)
-    if (!el || !target) return false
-
-    const canvasW = el.offsetWidth
-    const canvasH = el.offsetHeight
-    if (canvasW === 0 || canvasH === 0) return false
-
-    setHoveredItem(null, true)
-
-    const padding = isMobileLayout ? 0.18 : 0.16
-    const bboxW = Math.max(1, target.absW)
-    const bboxH = Math.max(1, target.absH)
-    const zoom = Math.min(
-      (canvasW * (1 - padding * 2)) / bboxW,
-      (canvasH * (1 - padding * 2)) / bboxH,
-      maxZoom,
-    )
-
-    const x = (canvasW - bboxW * zoom) / 2 - target.absX * zoom
-    const y = (canvasH - bboxH * zoom) / 2 - target.absY * zoom
-
+  const animateToViewport = useCallback((to: ZUIViewState) => {
     if (cameraTransitionRef.current !== null) {
       cancelAnimationFrame(cameraTransitionRef.current)
       cameraTransitionRef.current = null
     }
 
-    const from = viewStateRef.current
-    const to = { x, y, zoom }
+    const from = rawCameraView(viewStateRef.current)
     const duration = 520
     const startedAt = performance.now()
 
@@ -524,8 +531,41 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     }
 
     cameraTransitionRef.current = requestAnimationFrame(step)
+  }, [setViewState, viewStateRef])
+
+  const focusDiagram = useCallback((viewId: number) => {
+    const el = containerRef.current
+    const target = findDiagramFocusTarget(layout.groups, viewId)
+    if (!el || !target) return false
+
+    const canvasW = el.offsetWidth
+    const canvasH = el.offsetHeight
+    if (canvasW === 0 || canvasH === 0) return false
+
+    const to = viewportForDiagramFocusTarget(target, canvasW, canvasH, maxZoom, isMobileLayout)
+    if (!to) return false
+
+    setHoveredItem(null, true)
+    animateToViewport(to)
     return true
-  }, [isMobileLayout, layout.groups, maxZoom, setHoveredItem, setViewState, viewStateRef])
+  }, [animateToViewport, isMobileLayout, layout.groups, maxZoom, setHoveredItem])
+
+  const focusElement = useCallback((viewId: number, elementId: number) => {
+    const el = containerRef.current
+    const target = findElementFocusTarget(layout.groups, viewId, elementId)
+    if (!el || !target) return false
+
+    const canvasW = el.offsetWidth
+    const canvasH = el.offsetHeight
+    if (canvasW === 0 || canvasH === 0) return false
+
+    const to = viewportForElementFocusTarget(target, canvasW, canvasH, maxZoom, isMobileLayout)
+    if (!to) return false
+
+    setHoveredItem(null, true)
+    animateToViewport(to)
+    return true
+  }, [animateToViewport, isMobileLayout, layout.groups, maxZoom, setHoveredItem])
 
   const setCameraFrame = useCallback((frame: ZUICameraFrame) => {
     if (frame.profile !== 'detail-to-overview') return false
@@ -625,9 +665,10 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
         fitView(el.offsetWidth, el.offsetHeight, layout.bbox)
       },
       focusDiagram,
+      focusElement,
       setCameraFrame,
     }),
-    [fitView, focusDiagram, layout.bbox, setCameraFrame, setHoveredItem],
+    [fitView, focusDiagram, focusElement, layout.bbox, setCameraFrame, setHoveredItem],
   )
 
   // ── RAF render loop ──────────────────────────────────────────────
@@ -719,14 +760,29 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
         ctx.save()
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         const occupiedLabelRects = renderFrame(ctx, layout.groups, currentView, w, h)
+        const cameraRebase = getCameraRebase(currentView, w, h)
+        const rebasedProxyAnchors = rebaseVisibleNodeAnchors(
+          visibleProxyStateRef.current.byNodeId,
+          cameraRebase.originX,
+          cameraRebase.originY,
+        )
         ctx.save()
-        ctx.translate(currentView.x, currentView.y)
-        ctx.scale(currentView.zoom, currentView.zoom)
+        ctx.translate(cameraRebase.view.x, cameraRebase.view.y)
+        ctx.scale(cameraRebase.view.zoom, cameraRebase.view.zoom)
         drawVisibleProxyConnectors(
           ctx,
           visibleProxyStateRef.current.proxyConnectors,
-          visibleProxyStateRef.current.byNodeId,
-          currentView.zoom,
+          rebasedProxyAnchors,
+          cameraRebase.view.zoom,
+          labelBgRef.current,
+          accentRef.current,
+          occupiedLabelRects,
+        )
+        drawVisibleDirectProxyBadges(
+          ctx,
+          visibleProxyStateRef.current.hiddenProxyBadges,
+          rebasedProxyAnchors,
+          cameraRebase.view.zoom,
           labelBgRef.current,
           occupiedLabelRects,
         )
@@ -762,6 +818,30 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   }, [hiddenTags])
 
   useEffect(() => {
+    const pulsedElementChanges = new Map<number, string>()
+    const pulsedElementLineDeltas = new Map<number, { added: number; removed: number }>()
+    if (versionFollowTarget?.resourceType === 'element' && versionFollowTarget.resourceId) {
+      const change = versionFollowTarget.changeType ?? versionPreview?.elementChanges.get(versionFollowTarget.resourceId)
+      if (change) pulsedElementChanges.set(versionFollowTarget.resourceId, change)
+    }
+    setRendererVersionDiff(
+      pulsedElementChanges,
+      versionPreview?.connectorChanges ?? new Map(),
+      versionPreview?.elementLineDeltas ?? pulsedElementLineDeltas,
+    )
+    needsRedrawRef.current = true
+  }, [versionPreview, versionFollowTarget])
+
+  useEffect(() => {
+    if (!initialized || !versionFollowTarget?.viewId) return
+    if (versionFollowTarget.resourceType === 'element' && versionFollowTarget.resourceId) {
+      focusElement(versionFollowTarget.viewId, versionFollowTarget.resourceId)
+      return
+    }
+    focusDiagram(versionFollowTarget.viewId)
+  }, [focusDiagram, focusElement, initialized, versionFollowTarget?.resourceId, versionFollowTarget?.resourceType, versionFollowTarget?.token, versionFollowTarget?.viewId])
+
+  useEffect(() => {
     setHoverLocked(hoverLocked)
   }, [hoverLocked, setHoverLocked])
 
@@ -771,6 +851,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       setRendererHighlightedTags(new Set())
       setRendererHighlightColor('')
       setRendererHiddenTags(new Set())
+      setRendererVersionDiff(new Map(), new Map())
     }
   }, [])
 
@@ -956,6 +1037,19 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
                         {hoveredItem.data.details.sourceAnchorName} &rarr; {hoveredItem.data.details.targetAnchorName}
                       </Text>
                       <Text fontSize="xs" color="gray.400">{hoveredItem.data.details.label}</Text>
+                    </VStack>
+                    <VStack align="start" spacing={1} width="full">
+                      <Text color="gray.400" fontSize="2xs" fontWeight="600" letterSpacing="wider">UNDERLYING PATHS</Text>
+                      {hoveredItem.data.details.connectors.slice(0, 4).map((leaf, index) => (
+                        <Text key={`${leaf.connector.id}-${index}`} fontSize="xs" color="gray.200">
+                          {leaf.source.actualElementName} &rarr; {leaf.target.actualElementName}
+                        </Text>
+                      ))}
+                      {hoveredItem.data.details.connectors.length > 4 && (
+                        <Text fontSize="xs" color="gray.500">
+                          +{hoveredItem.data.details.connectors.length - 4} more
+                        </Text>
+                      )}
                     </VStack>
                     <Divider borderColor="whiteAlpha.200" />
                     <VStack align="stretch" spacing={2} width="full">

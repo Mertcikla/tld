@@ -20,6 +20,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const (
+	backgroundReadyTimeout = 30 * time.Second
+	readyRequestTimeout    = 10 * time.Second
+)
+
 func defaultServeRunE(cmd *cobra.Command, args []string) error {
 	_ = workspace.EnsureGlobalConfig()
 
@@ -29,7 +34,10 @@ func defaultServeRunE(cmd *cobra.Command, args []string) error {
 	port, _ := cmd.Flags().GetString("port")
 	dataDirFlag, _ := cmd.Flags().GetString("data-dir")
 
-	cfg, _ := workspace.LoadGlobalConfig()
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
 	dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
 	if err != nil {
 		return err
@@ -43,7 +51,11 @@ func defaultServeRunE(cmd *cobra.Command, args []string) error {
 
 func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser bool) error {
 	started := time.Now()
-	opts := resolveServeOptions(host, port)
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
+	opts := resolveServeOptions(cfg, host, port)
 
 	app, err := localserver.Bootstrap(dataDir, opts)
 	if err != nil {
@@ -85,7 +97,11 @@ func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser bool) error {
 	started := time.Now()
 	pidPath := localserver.PIDPath(dataDir)
-	opts := resolveServeOptions(host, port)
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		return err
+	}
+	opts := resolveServeOptions(cfg, host, port)
 	addr := localserver.ResolveAddr(opts)
 	url := "http://" + addr
 	initializedData := databaseWillBeInitialized(dataDir)
@@ -119,11 +135,11 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 	}
 
 	fwdArgs := []string{"serve", "--foreground"}
-	if host != "" {
-		fwdArgs = append(fwdArgs, "--host", host)
+	if opts.Host != "" {
+		fwdArgs = append(fwdArgs, "--host", opts.Host)
 	}
-	if port != "" {
-		fwdArgs = append(fwdArgs, "--port", port)
+	if opts.Port != "" {
+		fwdArgs = append(fwdArgs, "--port", opts.Port)
 	}
 	// Always pass resolved dataDir to foreground child
 	fwdArgs = append(fwdArgs, "--data-dir", dataDir)
@@ -148,7 +164,7 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 		return fmt.Errorf("write pid file: %w", err)
 	}
 
-	ready, err := waitReady(url+"/api/ready", 10*time.Second)
+	ready, err := waitReady(url+"/api/ready", backgroundReadyTimeout)
 	if err != nil {
 		_ = child.Process.Kill()
 		_ = os.Remove(pidPath)
@@ -189,28 +205,28 @@ type serveStatus struct {
 
 func printServeInfo(out io.Writer, url string, status serveStatus) {
 	cfgPath, _ := workspace.ConfigPath()
-	_, _ = fmt.Fprintf(out, "Mode:                %s\n", printableMode(status.Mode))
+	term.Label(out, 20, "Mode", printableMode(status.Mode))
 	if status.PID != nil {
-		_, _ = fmt.Fprintf(out, "PID:                 %d\n", *status.PID)
+		term.Label(out, 20, "PID", fmt.Sprintf("%d", *status.PID))
 	}
-	_, _ = fmt.Fprintf(out, "Server status:       %s\n", dataStatus(status.InitializedData))
-	_, _ = fmt.Fprintf(out, "Bind address:        %s\n", status.BindAddr)
+	term.Label(out, 20, "Server status", dataStatus(status.InitializedData))
+	term.Label(out, 20, "Bind address", status.BindAddr)
 	if !status.InitializedData {
-		_, _ = fmt.Fprintf(out, "Resource counts:     %d views, %d elements, %d connectors\n", status.Resources.Views, status.Resources.Elements, status.Resources.Connectors)
+		term.Label(out, 20, "Resource counts", fmt.Sprintf("%d views, %d elements, %d connectors", status.Resources.Views, status.Resources.Elements, status.Resources.Connectors))
 	}
 	if status.Startup > 0 {
-		_, _ = fmt.Fprintf(out, "Ready in:            %s\n", status.Startup.Round(time.Millisecond))
+		term.Label(out, 20, "Ready in", status.Startup.Round(time.Millisecond).String())
 	}
-	_, _ = fmt.Fprintf(out, "DB:                  %s\n", styledLocalPath(out, status.DBPath))
+	term.Label(out, 20, "DB", term.Path(out, status.DBPath))
 	if info, err := os.Stat(status.DBPath); err == nil {
-		_, _ = fmt.Fprintf(out, "DB size:             %s\n", humanBytes(info.Size()))
-		_, _ = fmt.Fprintf(out, "DB last modified:    %s\n", info.ModTime().Format(time.RFC3339))
+		term.Label(out, 20, "DB size", humanBytes(info.Size()))
+		term.Label(out, 20, "DB last modified", info.ModTime().Format(time.RFC3339))
 	}
-	_, _ = fmt.Fprintf(out, "Config path:         %s\n", styledLocalPath(out, cfgPath))
-	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintf(out, "tlDiagram available at: %s\n", styledWebappURL(out, url))
-	_, _ = fmt.Fprintln(out)
-	_, _ = fmt.Fprintln(out, "Run 'tld stop' to shut down the server")
+	term.Label(out, 20, "Config path", term.Path(out, cfgPath))
+	term.Separator(out)
+	_, _ = fmt.Fprintf(out, "  tlDiagram available at: %s\n", term.URL(out, url))
+	term.Separator(out)
+	term.Hint(out, "Run 'tld stop' to shut down the server")
 }
 
 func databaseWillBeInitialized(dataDir string) bool {
@@ -230,14 +246,6 @@ func printableMode(mode string) string {
 		return "unknown"
 	}
 	return mode
-}
-
-func styledLocalPath(out io.Writer, path string) string {
-	return formatLocalPath(path, term.IsColorEnabled(out))
-}
-
-func styledWebappURL(out io.Writer, url string) string {
-	return formatWebappURL(url, term.IsColorEnabled(out))
 }
 
 func formatLocalPath(path string, colorEnabled bool) string {
@@ -302,7 +310,7 @@ func waitReady(url string, timeout time.Duration) (*readyInfo, error) {
 }
 
 func getReady(url string) (*readyInfo, error) {
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{Timeout: readyRequestTimeout}
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err
@@ -318,17 +326,9 @@ func getReady(url string) (*readyInfo, error) {
 	return &ready, nil
 }
 
-func resolveServeOptions(flagHost, flagPort string) localserver.ServeOptions {
-	cfg, _ := workspace.LoadGlobalConfig()
-	host := cfg.Serve.Host
-	port := cfg.Serve.Port
-	if flagHost != "" {
-		host = flagHost
-	}
-	if flagPort != "" {
-		port = flagPort
-	}
-	return localserver.ServeOptions{Host: host, Port: port}
+func resolveServeOptions(cfg *workspace.Config, flagHost, flagPort string) localserver.ServeOptions {
+	serve := workspace.ResolveServeOptions(cfg, flagHost, flagPort)
+	return localserver.ServeOptions{Host: serve.Host, Port: serve.Port}
 }
 
 func NewServeCmd(runE func(*cobra.Command, []string) error) *cobra.Command {

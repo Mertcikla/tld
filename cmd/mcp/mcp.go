@@ -249,9 +249,6 @@ func registerTools(server *mcpsdk.Server, wdir *string) {
 		repoCtx := cmdutil.DetectRepoScope(cmdutil.GetWorkingDir(), *wdir)
 		rules := ws.IgnoreRulesForRepository(repoCtx.Name)
 		if a.Strictness > 0 {
-			if ws.Config.Validation == nil {
-				ws.Config.Validation = &workspace.ValidationConfig{}
-			}
 			ws.Config.Validation.Level = a.Strictness
 		}
 		out := ""
@@ -455,13 +452,17 @@ Accepts the same --host, --port, --data-dir flags as 'tld serve'.`,
 			port, _ := cmd.Flags().GetString("port")
 			dataDirFlag, _ := cmd.Flags().GetString("data-dir")
 
-			cfg, _ := workspace.LoadGlobalConfig()
+			cfg, err := workspace.LoadGlobalConfig()
+			if err != nil {
+				return err
+			}
 			dataDir, err := workspace.ResolveDataDir(cfg, dataDirFlag)
 			if err != nil {
 				return err
 			}
+			serveCfg := workspace.ResolveServeOptions(cfg, host, port)
 
-			if err := ensureServeRunning(cmd, host, port, dataDir); err != nil {
+			if err := ensureServeRunning(cmd, serveCfg.Host, serveCfg.Port, dataDir); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed to start tld serve in background: %v\n", err)
 			}
 

@@ -1,8 +1,8 @@
-# tld
+[![Logo](./frontend/logo/tld.svg)](https://tldiagram.com)
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/mertcikla/tld)](https://go.dev/) [![License](https://img.shields.io/github/license/mertcikla/tld)](./LICENSE) [![Build Status](https://img.shields.io/github/actions/workflow/status/mertcikla/tld/test.yml?branch=main)](https://github.com/mertcikla/tld/actions) [![Go Report Card](https://goreportcard.com/badge/github.com/mertcikla/tld)](https://goreportcard.com/report/github.com/mertcikla/tld)
 
-`tld` provides a complete software architecture management platform that bundles a high-performance Go backend with an interactive React frontend into a single, standalone binary. Includes a CLI to enable managing diagrams from the shell or in CI.
+`tld` provides a complete software architecture management platform that bundles a high-performance Go backend with an interactive React frontend into a single, standalone binary. Includes a CLI to enable managing diagrams from the shell or in CI. 
 
 Designed for local-first development and private self-hosting, `tld` allows teams to visualize, document, and manage their system architecture using a combination of a rich web UI and "Diagrams as Code" workflows.
 
@@ -11,6 +11,7 @@ Designed for local-first development and private self-hosting, `tld` allows team
 ## Key Features
 
 - **Full-Featured Web UI**: A React frontend designed, polished and optimized to handle complex architectures while attempting to intelligently show and hide details.
+- **Git diff visualization**: Seamlessly sync and visualize the changes you or your agent are making live in diagram form. Inspect the dependencies and intervene when necessary.
 - **Bi-directional Sync**: Seamlessly sync changes between your local YAML files, the self-hosted web UI, and the cloud version at tlDiagram.com.
 - **Standalone Distribution**: A single, dependency-free binary containing both the server and the web application.
 - **CLI built that speaks agent**: Use the [agent skill](./skills/create-diagram/SKILL.md) and teach your agent how to create a diagram of your codebase with the exact detail level you need. You can prompt your agent to add/remove details as needed. 
@@ -26,20 +27,6 @@ Here are some examples that were generated using the agent skill.
 
 - **Diagrams as Code**: A Git-like workflow (`plan`/`apply`) to manage architectural evolution alongside your source code.
 - **Automated Codebase Analysis**: (Preview) Built-in tree-sitter integration to automatically discover architecture components in Go, Java, Python, C++, and TypeScript (more soon™ (hopefully)).
-
----
-
-## Table of Contents
-
-1. [Quick Start](#quick-start)
-2. [Deployment & Self-Hosting](#deployment--self-hosting)
-3. [The tlDiagram Workflow](#the-tldiagram-workflow)
-4. [Tech Stack](#tech-stack)
-5. [Development Setup](#development-setup)
-6. [Commands Reference](#commands-reference)
-7. [Workspace Structure](#workspace-structure)
-8. [Environment Variables](#environment-variables)
-9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -86,6 +73,9 @@ Run `tld serve` in any directory to start a local instance that uses your curren
 1. Provide a persistent volume for the `.tld/` directory (where YAMLs and the SQLite cache are stored).
 2. Set `TLD_ADDR=0.0.0.0` and `PORT=8060`.
 
+### Configuration
+Various configuration options are available in `~/.config/tldiagram/tld.yaml`
+
 ---
 
 ## The tlDiagram Workflow
@@ -97,8 +87,6 @@ Run `tld serve` in any directory to start a local instance that uses your curren
 3. **Commit**: Save your changes. All UI edits are persisted to `elements.yaml` and `connectors.yaml`. Commit these to Git to version your architecture.
 
 ---
-
-## Tech Stack
 
 - **Backend**: Go 1.26+ 
   - *CLI*: Cobra
@@ -178,7 +166,7 @@ Flags:
       --format string      output format: text or json (default "text")
   -h, --help               help for tld
   -v, --version            version for tld
-  -w, --workspace string   workspace directory (default "tld")
+  -w, --workspace string   workspace directory (prefers .tld, then tld; empty when neither exists)
 
 Use "tld [command] --help" for more information about a command
 

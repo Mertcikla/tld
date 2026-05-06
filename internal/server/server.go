@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httputil"
@@ -13,8 +14,11 @@ import (
 	"strings"
 
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/diag/v1/diagv1connect"
+	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
+	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/internal/store"
+	"github.com/mertcikla/tld/internal/watch"
 	"github.com/mertcikla/tld/pkg/api"
 )
 
@@ -24,12 +28,16 @@ type Server struct {
 
 func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID) (*Server, error) {
 	apiStore := store.NewAPIAdapter(sqliteStore)
-	wsSvc := &api.WorkspaceService{Store: apiStore}
+	watchStore := watch.NewStore(sqliteStore.DB())
+	lockHooks := watchLockHooks{store: watchStore}
+	wsSvc := &api.WorkspaceService{Store: apiStore, Hooks: lockHooks}
 	depSvc := &api.DependencyService{Store: apiStore}
 	importSvc := &api.ImportService{Store: apiStore}
-	versionSvc := &api.WorkspaceVersionService{Store: apiStore}
+	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: lockHooks}
 
 	mux := http.NewServeMux()
+	watch.NewHandler(watchStore).Register(mux)
+	registerEditorHandlers(mux, watchStore)
 
 	mux.HandleFunc("GET /api/ready", func(w http.ResponseWriter, r *http.Request) {
 		views, elements, connectors, err := apiStore.GetWorkspaceResourceCounts(r.Context(), workspaceID)
@@ -91,6 +99,26 @@ func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID) (*
 	})
 
 	return &Server{handler: handler}, nil
+}
+
+type watchLockHooks struct {
+	api.NopWorkspaceHooks
+	store *watch.Store
+}
+
+func (h watchLockHooks) CheckWrite(ctx context.Context, _ uuid.UUID, resourceType string) error {
+	if h.store == nil {
+		return nil
+	}
+	applying, err := h.store.ActiveApplyLock(ctx, watch.LockHeartbeatTimeout)
+	if err != nil || !applying {
+		return err
+	}
+	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("workspace is being updated by tld watch; retry editing %s shortly", resourceType))
+}
+
+func (h watchLockHooks) CheckApplyPlan(ctx context.Context, workspaceID uuid.UUID, _ *diagv1.ApplyPlanRequest) error {
+	return h.CheckWrite(ctx, workspaceID, "workspace")
 }
 
 func (s *Server) Routes() http.Handler {

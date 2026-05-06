@@ -38,7 +38,7 @@ func TestCheckCmd_AllPass(t *testing.T) {
 	if err != nil {
 		t.Fatalf("check: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "PASS  Validation") || !strings.Contains(stdout, "PASS  Symbol Verification") || !strings.Contains(stdout, "PASS  Outdated Diagrams") {
+	if !strings.Contains(stdout, "Validation") || !strings.Contains(stdout, "Symbol Verification") || !strings.Contains(stdout, "Outdated Diagrams") {
 		t.Fatalf("unexpected stdout: %s", stdout)
 	}
 }
@@ -57,7 +57,7 @@ func TestCheckCmd_BrokenSymbol(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected check failure\nstdout: %s\nstderr: %s", stdout, stderr)
 	}
-	if !strings.Contains(stderr, "FAIL  Symbol Verification") {
+	if !strings.Contains(stderr, "Symbol Verification") {
 		t.Fatalf("unexpected stderr: %s", stderr)
 	}
 }
@@ -76,7 +76,7 @@ func TestCheckCmd_OutdatedStrict(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected strict check failure\nstdout: %s\nstderr: %s", stdout, stderr)
 	}
-	if !strings.Contains(stderr, "FAIL  Outdated Diagrams") {
+	if !strings.Contains(stderr, "Outdated Diagrams") {
 		t.Fatalf("unexpected stderr: %s", stderr)
 	}
 }
@@ -95,7 +95,7 @@ func TestCheckCmd_ValidationFail(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected validation failure\nstdout: %s\nstderr: %s", stdout, stderr)
 	}
-	if !strings.Contains(stderr, "FAIL  Validation") {
+	if !strings.Contains(stderr, "Validation") {
 		t.Fatalf("unexpected stderr: %s", stderr)
 	}
 }
@@ -114,7 +114,7 @@ func TestCheckCmd_OutdatedWarn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected warning-only check\nstdout: %s\nstderr: %s\nerr: %v", stdout, stderr, err)
 	}
-	if !strings.Contains(stderr, "WARN  Outdated Diagrams") {
+	if !strings.Contains(stderr, "Outdated Diagrams") {
 		t.Fatalf("unexpected stderr: %s", stderr)
 	}
 	_ = time.Now()

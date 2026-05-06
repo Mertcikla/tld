@@ -7,7 +7,7 @@ import { useAccentColor } from '../context/ThemeContext'
 import type { PlacedElement, ViewConnector, Tag } from '../types'
 import { ElementContainer } from './NodeContainer'
 import { ElementBody } from './NodeBody'
-import { resolveIconPath } from '../utils/url'
+import { resolveElementIconUrl } from '../utils/elementIcon'
 import { ZoomInIcon, ZoomOutIcon, TrashIcon as TrashSvg, EditIcon as EditSvg } from './Icons'
 import { vscodeBridge } from '../lib/vscodeBridge'
 import type { ExtensionToWebviewMessage } from '../types/vscode-messages'
@@ -155,6 +155,8 @@ interface NodeData extends PlacedElement {
   selectedHandleIds?: readonly string[]
   reconnectCandidates?: readonly { handleId: string; edgeId: string; endpoint: 'source' | 'target'; selected: boolean }[]
   isConnectorHighlighted?: boolean
+  versionChangeType?: 'added' | 'updated' | 'deleted' | 'initialized'
+  versionLineDelta?: { added: number; removed: number }
 }
 
 interface Props {
@@ -316,13 +318,7 @@ function ElementNode({ data, selected }: Props) {
     return next
   }, [data.reconnectCandidates])
 
-  const derivedPrimaryIconPath = (() => {
-    const selected = data.technology_connectors?.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && !!link.slug)
-    if (!selected?.slug) return undefined
-    return resolveIconPath(`/icons/${selected.slug}.png`)
-  })()
-
-  const nodeLogoUrl = data.logo_url ? resolveIconPath(data.logo_url) : derivedPrimaryIconPath
+  const nodeLogoUrl = resolveElementIconUrl(data.logo_url, data.technology_connectors) ?? undefined
 
   const technologyLinkCount = (data.technology_connectors || []).filter((l) => !!l.label).length
   const technologyParts = (data.technology || '')
@@ -456,6 +452,13 @@ function ElementNode({ data, selected }: Props) {
   const isTarget = !!data.interactionSourceId && !isSource
 
   const bodyCursor = isSource ? 'crosshair' : isTarget ? 'cell' : 'pointer'
+  const versionColor = data.versionChangeType === 'added'
+    ? 'green.300'
+    : data.versionChangeType === 'deleted'
+      ? 'red.300'
+      : data.versionChangeType
+        ? 'yellow.300'
+        : undefined
 
   return (
     <ElementContainer
@@ -463,12 +466,14 @@ function ElementNode({ data, selected }: Props) {
       isSource={isSource}
       isTarget={isTarget}
       isConnectorHighlighted={!!data.isConnectorHighlighted}
+      hasStack={hasChild}
+      kind={data.kind}
       minW="180px"
       maxW="230px"
       cursor={bodyCursor}
-      outline={isDraggedOver ? '2px solid' : undefined}
-      outlineColor={isDraggedOver ? 'var(--accent)' : undefined}
-      outlineOffset={isDraggedOver ? '2px' : undefined}
+      outline={isDraggedOver || versionColor ? '2px solid' : undefined}
+      outlineColor={isDraggedOver ? 'var(--accent)' : versionColor}
+      outlineOffset={isDraggedOver || versionColor ? '2px' : undefined}
       borderTopWidth={data.layerHighlightColor ? '2px' : undefined}
       borderTopColor={data.layerHighlightColor ?? undefined}
       onClick={handleBodyClick}
@@ -483,7 +488,7 @@ function ElementNode({ data, selected }: Props) {
       style={{
         userSelect: 'none',
         WebkitUserSelect: 'none',
-        transition: 'outline 0.15s, outline-color 0.15s',
+        transition: 'outline 0.15s, outline-color 0.15s, opacity 0.15s',
       } as React.CSSProperties}
     >
       {HANDLE_CONFIGS.flatMap(({ side, position }) =>
@@ -702,62 +707,108 @@ function ElementNode({ data, selected }: Props) {
       )}
 
       {/* Code Preview Icon/Link in Bottom Right Corner */}
-      {((data.repo || data.url) && !window.__TLD_VSCODE__) && (
-        <Box
+      {!window.__TLD_VSCODE__ && ((data.repo || data.url) || data.versionLineDelta) && (
+        <HStack
           position="absolute"
           bottom="8px"
           right="8px"
           zIndex={10}
+          spacing={1}
+          align="center"
         >
-          <Tooltip
-            label={
-              data.repo
-                ? `View source: ${data.file_path?.includes('#') ? (() => { try { return JSON.parse(data.file_path.split('#')[1]).name } catch { return 'Link' } })() : 'Link'}${data.url ? ' / URL' : ''}`
-                : 'Open Link'
-            }
-            placement="top"
-            isDisabled={data.isCanvasMoving}
-          >
-            <Box
-              as="button"
-              display="flex"
-              alignItems="center"
-              justifyContent="center"
-              w="18px"
+          {data.versionLineDelta && (
+            <HStack
+              spacing={1}
               h="18px"
+              px={1.5}
               rounded="md"
-              color="whiteAlpha.900"
-              _hover={{ color: 'blue.300', bg: 'whiteAlpha.200', transform: 'scale(1.1)' }}
-              transition="all 0.15s"
-              onClick={(e: React.MouseEvent) => {
-                e.stopPropagation()
-                if (data.repo) {
-                  data.onOpenCodePreview?.(data.element_id)
-                } else if (data.url) {
-                  window.open(data.url, '_blank', 'noopener,noreferrer')
-                }
-              }}
-              onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+              bg="rgba(var(--bg-main-rgb), 0.86)"
+              border="1px solid"
+              borderColor="whiteAlpha.300"
+              boxShadow="0 4px 12px rgba(0,0,0,0.28)"
+              pointerEvents="none"
             >
-              <LinkIcon w={2.5} h={2.5} />
-            </Box>
-          </Tooltip>
-        </Box>
+              {data.versionLineDelta.added > 0 && (
+                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="green.300">+{data.versionLineDelta.added}</Text>
+              )}
+              {data.versionLineDelta.removed > 0 && (
+                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="red.300">-{data.versionLineDelta.removed}</Text>
+              )}
+            </HStack>
+          )}
+          {(data.repo || data.url) && !window.__TLD_VSCODE__ && (
+            <Tooltip
+              label={
+                data.repo
+                  ? `View source: ${data.file_path?.includes('#') ? (() => { try { return JSON.parse(data.file_path.split('#')[1]).name } catch { return 'Link' } })() : 'Link'}${data.url ? ' / URL' : ''}`
+                  : 'Open Link'
+              }
+              placement="top"
+              isDisabled={data.isCanvasMoving}
+            >
+              <Box
+                as="button"
+                display="flex"
+                alignItems="center"
+                justifyContent="center"
+                w="18px"
+                h="18px"
+                rounded="md"
+                color="whiteAlpha.900"
+                _hover={{ color: 'blue.300', bg: 'whiteAlpha.200', transform: 'scale(1.1)' }}
+                transition="all 0.15s"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation()
+                  if (data.repo) {
+                    data.onOpenCodePreview?.(data.element_id)
+                  } else if (data.url) {
+                    window.open(data.url, '_blank', 'noopener,noreferrer')
+                  }
+                }}
+                onPointerDown={(e: React.PointerEvent) => e.stopPropagation()}
+              >
+                <LinkIcon w={2.5} h={2.5} />
+              </Box>
+            </Tooltip>
+          )}
+        </HStack>
       )}
 
       {/* VSCode specific file link with hover preview */}
       {window.__TLD_VSCODE__ && data.file_path && (
-        <Box
+        <HStack
           position="absolute"
           bottom="8px"
           right="8px"
           zIndex={10}
+          spacing={1}
+          align="center"
         >
+          {data.versionLineDelta && (
+            <HStack
+              spacing={1}
+              h="18px"
+              px={1.5}
+              rounded="md"
+              bg="rgba(var(--bg-main-rgb), 0.86)"
+              border="1px solid"
+              borderColor="whiteAlpha.300"
+              boxShadow="0 4px 12px rgba(0,0,0,0.28)"
+              pointerEvents="none"
+            >
+              {data.versionLineDelta.added > 0 && (
+                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="green.300">+{data.versionLineDelta.added}</Text>
+              )}
+              {data.versionLineDelta.removed > 0 && (
+                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="red.300">-{data.versionLineDelta.removed}</Text>
+              )}
+            </HStack>
+          )}
           <VscodeCodePreview
             filePath={data.file_path}
             isCanvasMoving={data.isCanvasMoving}
           />
-        </Box>
+        </HStack>
       )}
 
       {selected && !isSource && (

@@ -10,7 +10,6 @@ package completion
 
 import (
 	"context"
-	"os"
 	"sort"
 	"time"
 
@@ -39,7 +38,11 @@ func loadWS(wdir *string) *workspace.Workspace {
 }
 
 func remoteEnabled() bool {
-	return os.Getenv(remoteEnvVar) == "1"
+	state, err := workspace.LoadGlobalConfigStateNoRepair()
+	if err != nil {
+		return false
+	}
+	return state.Config.Completion.Remote
 }
 
 // remoteElements fetches elements from the API with a short deadline. Any

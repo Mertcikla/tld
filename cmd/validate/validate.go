@@ -5,6 +5,7 @@ import (
 
 	"github.com/mertcikla/tld/internal/cmdutil"
 	"github.com/mertcikla/tld/internal/planner"
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -26,45 +27,40 @@ func NewValidateCmd(wdir *string) *cobra.Command {
 
 			// Override strictness if flag is set
 			if strictness > 0 {
-				if ws.Config.Validation == nil {
-					ws.Config.Validation = &workspace.ValidationConfig{}
-				}
 				ws.Config.Validation.Level = strictness
 			}
 
 			errs := ws.Validate()
 			if len(errs) > 0 {
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Validation errors:")
+				term.Fail(cmd.ErrOrStderr(), "Validation errors:")
 				for _, e := range errs {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", e)
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "    - %s\n", e)
 				}
 				return fmt.Errorf("%d validation error(s)", len(errs))
 			}
 
 			broken := cmdutil.CheckSymbols(cmd.Context(), ws, repoCtx, rules)
 			if len(broken) > 0 {
-				_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Symbol verification errors:")
+				term.Fail(cmd.ErrOrStderr(), "Symbol verification errors:")
 				for _, msg := range broken {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", msg)
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "    - %s\n", msg)
 				}
 				return fmt.Errorf("%d symbol verification error(s)", len(broken))
 			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Symbol verification: passed")
+			term.Success(cmd.OutOrStdout(), "Symbol verification passed")
 
 			if len(ws.Elements) > 0 || len(ws.Connectors) > 0 {
 				diagramCount := cmdutil.CountElementDiagrams(ws)
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Workspace valid: %d elements, %d diagrams, %d connectors\n",
-					len(ws.Elements), diagramCount, len(ws.Connectors))
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Element workspace: %d elements, %d diagrams, %d connectors\n",
+				term.Successf(cmd.OutOrStdout(), "Workspace valid: %d elements, %d diagrams, %d connectors",
 					len(ws.Elements), diagramCount, len(ws.Connectors))
 			}
 
 			// Evaluate Architectural warnings
 			warnings := planner.AnalyzePlan(ws)
 			if len(warnings) > 0 {
-				level := workspace.DefaultValidationLevel
-				if ws.Config.Validation != nil && ws.Config.Validation.Level > 0 {
-					level = ws.Config.Validation.Level
+				level := ws.Config.Validation.Level
+				if level == 0 {
+					level = workspace.DefaultValidationLevel
 				}
 				levelNames := map[int]string{1: "Minimal", 2: "Standard", 3: "Strict"}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\n## Architectural Warnings (Level %d: %s)\n\n", level, levelNames[level])

@@ -13,7 +13,7 @@ func TestResolveDataDirDefaultsToAppDataDir(t *testing.T) {
 	xdgData := filepath.Join(t.TempDir(), "xdg-data")
 	t.Setenv("XDG_DATA_HOME", xdgData)
 
-	got, err := workspace.ResolveDataDir(&workspace.GlobalConfig{}, "")
+	got, err := workspace.ResolveDataDir(&workspace.Config{}, "")
 	if err != nil {
 		t.Fatalf("ResolveDataDir: %v", err)
 	}

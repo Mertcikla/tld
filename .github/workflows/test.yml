@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 jobs:
   test:
@@ -49,11 +50,16 @@ jobs:
           git diff --exit-code
 
       - name: Run unit tests with race detection
-        run: go test -race -shuffle=on -coverprofile=coverage.txt ./...
+        run: |
+          go install gotest.tools/gotestsum@latest
+          gotestsum \
+            --junitfile results.xml \
+            --format testdox \
+            ./...
 
-      - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v5
+      - name: Publish Test Results
+        uses: dorny/test-reporter@v1
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          file: ./coverage.txt
-          fail_ci_if_error: false
+          name: Go Tests
+          path: results.xml
+          reporter: java-junit

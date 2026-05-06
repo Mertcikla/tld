@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   Box,
@@ -13,6 +14,7 @@ import {
   MenuItem,
   MenuList,
   Spinner,
+  Badge,
   Tag,
   Text,
   VStack,
@@ -27,6 +29,7 @@ import { ElementBody } from '../components/NodeBody'
 import DependenciesOnboarding from '../components/DependenciesOnboarding'
 import { useTheme } from '../context/ThemeContext'
 import { hexToRgba } from '../constants/colors'
+import { useWorkspaceVersionPreview, type VersionChangeType } from '../context/WorkspaceVersionContext'
 
 // ── Data types ─────────────────────────────────────────────────────────────
 interface ElementWithNeighbours extends DependencyElement {
@@ -38,6 +41,8 @@ interface NeighbourNode {
   connectors: DependencyConnector[]
   position: 'left' | 'right' | 'top' | 'bottom'
 }
+
+const PAGE_SIZE = 50
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 function computeNeighbourCounts(elements: DependencyElement[], connectors: DependencyConnector[]): ElementWithNeighbours[] {
@@ -175,11 +180,13 @@ function NeighbourCard({
   onClick,
   setRef,
   compactLevel = 0,
+  versionChangeType,
 }: {
   node: NeighbourNode
   onClick: () => void
   setRef?: (el: HTMLDivElement | null) => void
   compactLevel?: number
+  versionChangeType?: VersionChangeType
 }) {
   const cardPadding = compactLevel >= 3 ? 1 : compactLevel >= 2 ? 1.5 : compactLevel >= 1 ? 2 : 3
   const showTech = compactLevel < 2
@@ -195,6 +202,13 @@ function NeighbourCard({
       compactLevel >= 2 ? (nameLen > 20 ? '2xs' : 'xs') :
         compactLevel >= 1 ? (nameLen > 22 ? 'xs' : 'sm') :
           (nameLen > 24 ? 'xs' : 'sm')
+  const versionColor = versionChangeType === 'added'
+    ? 'green.300'
+    : versionChangeType === 'deleted'
+      ? 'red.300'
+      : versionChangeType
+        ? 'yellow.300'
+        : undefined
 
   return (
     <motion.div
@@ -212,6 +226,9 @@ function NeighbourCard({
         p={0}
         cursor="pointer"
         borderColor="whiteAlpha.200"
+        outline={versionColor ? '2px solid' : undefined}
+        outlineColor={versionColor}
+        outlineOffset={versionColor ? '2px' : undefined}
         _hover={{ borderColor: 'var(--accent)', boxShadow: '0 0 0 1px rgba(var(--accent-rgb), 0.25)' }}
       >
         <ElementBody
@@ -254,14 +271,25 @@ const TYPE_HEX: Record<string, string> = {
 export default function Dependencies() {
   const setHeader = useSetHeader()
   const { accent, elementColor } = useTheme()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const { preview: versionPreview, followTarget: versionFollowTarget } = useWorkspaceVersionPreview()
+  const versionPulseChangeForElement = useCallback((elementId: number): VersionChangeType | undefined => {
+    if (versionFollowTarget?.resourceType !== 'element' || versionFollowTarget.resourceId !== elementId) return undefined
+    return versionFollowTarget.changeType ?? versionPreview?.elementChanges.get(elementId)
+  }, [versionFollowTarget, versionPreview])
 
   const [elements, setElements] = useState<DependencyElement[]>([])
   const [allEdges, setAllEdges] = useState<DependencyConnector[]>([])
   const [loading, setLoading] = useState(true)
+  const [pageLoading, setPageLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [topRatio, setTopRatio] = useState(0.45)
+  const [page, setPage] = useState(0)
+  const [hasNextPage, setHasNextPage] = useState(false)
+  const [totalCount, setTotalCount] = useState(0)
+  const [neighbourElements, setNeighbourElements] = useState<Record<string, DependencyElement>>({})
 
   // Graph layout measurement
   const graphRef = useRef<HTMLDivElement>(null)
@@ -287,57 +315,124 @@ export default function Dependencies() {
 
   useEffect(() => { applyPan(0, 0) }, [selectedId, applyPan])
 
+  useEffect(() => {
+    const requestedId = searchParams.get('element')
+    if (requestedId) setSelectedId(requestedId)
+  }, [searchParams])
+
+  const selectElement = useCallback((id: string | null) => {
+    setSelectedId(id)
+    const next = new URLSearchParams(searchParams)
+    if (id) next.set('element', id)
+    else next.delete('element')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
+
   // Header
   useEffect(() => {
     setHeader({
       hideMobileBar: true,
-      node: (
-        <HStack
-          bg="whiteAlpha.50"
-          border="1px solid"
-          borderColor="whiteAlpha.100"
-          px={3}
-          py={1}
-          borderRadius="md"
-          spacing={3}
-        >
-          <Text fontSize="xs" color="whiteAlpha.800" fontWeight="medium" display={{ base: 'none', compact: 'inline' }}>
-            {elements.length} <Text as="span" color="whiteAlpha.400" fontWeight="normal">elements</Text>
-          </Text>
-          <Box w="1px" h="10px" bg="whiteAlpha.200" display={{ base: 'none', compact: 'block' }} />
-          <Text fontSize="xs" color="whiteAlpha.800" fontWeight="medium" display={{ base: 'none', compact: 'inline' }}>
-            {allEdges.length} <Text as="span" color="whiteAlpha.400" fontWeight="normal">connectors</Text>
-          </Text>
-          <Text fontSize="xs" color="whiteAlpha.800" fontWeight="medium" display={{ base: 'none', sm: 'inline', compact: 'none' }}>
-            {elements.length}<Text as="span" color="whiteAlpha.400">E</Text>
-            <Text as="span" color="whiteAlpha.200" mx={1}>/</Text>
-            {allEdges.length}<Text as="span" color="whiteAlpha.400">C</Text>
-          </Text>
-        </HStack>
-      ),
+      node: null,
     })
     return () => setHeader(null)
-  }, [elements.length, allEdges.length, setHeader])
+  }, [setHeader])
+
+  useEffect(() => {
+    setPage(0)
+  }, [search])
 
   // Data fetch
   useEffect(() => {
-    api.dependencies
-      .list()
-      .then((resp) => {
-        const objs = resp.elements || []
-        const edgs = resp.connectors || []
-        setElements(objs)
-        setAllEdges(edgs)
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      setPageLoading(true)
+      api.dependencies
+        .list({ limit: PAGE_SIZE, offset: page * PAGE_SIZE, search })
+        .then((resp) => {
+          if (cancelled) return
+          const objs = resp.elements || []
+          const edgs = resp.connectors || []
+          const total = resp.totalCount
+          setElements(objs)
+          setAllEdges(edgs)
+          setTotalCount(total ?? page * PAGE_SIZE + objs.length)
+          setHasNextPage(total === undefined ? objs.length === PAGE_SIZE : page * PAGE_SIZE + objs.length < total)
 
-        if (objs.length > 0) {
-          const withCounts = computeNeighbourCounts(objs, edgs)
-          const sorted = [...withCounts].sort((a, b) => b.neighbourCount - a.neighbourCount)
-          setSelectedId(sorted[0].id)
-        }
+          setSelectedId((current) => {
+            if (objs.length === 0) return null
+            if (current && objs.some((obj) => obj.id === current)) return current
+            const withCounts = computeNeighbourCounts(objs, edgs)
+            const sorted = [...withCounts].sort((a, b) => b.neighbourCount - a.neighbourCount)
+            return sorted[0]?.id ?? null
+          })
+        })
+        .catch(() => { /* intentionally empty */ })
+        .finally(() => {
+          if (!cancelled) {
+            setLoading(false)
+            setPageLoading(false)
+          }
+        })
+    }, 180)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [page, search])
+
+  const elementUniverse = useMemo(() => {
+    const byID = new Map<string, DependencyElement>()
+    elements.forEach((element) => byID.set(element.id, element))
+    Object.values(neighbourElements).forEach((element) => byID.set(element.id, element))
+    return Array.from(byID.values())
+  }, [elements, neighbourElements])
+
+  useEffect(() => {
+    if (selectedId === null) return
+    const known = new Set(elementUniverse.map((element) => element.id))
+    const missing = new Set<string>()
+    allEdges.forEach((connector) => {
+      if (connector.source_element_id === selectedId && !known.has(connector.target_element_id)) {
+        missing.add(connector.target_element_id)
+      }
+      if (connector.target_element_id === selectedId && !known.has(connector.source_element_id)) {
+        missing.add(connector.source_element_id)
+      }
+    })
+    if (missing.size === 0) return
+    let cancelled = false
+    Promise.all(
+      Array.from(missing).slice(0, 120).map((id) =>
+        api.elements.get(Number(id)).then((element) => ({
+          id: String(element.id),
+          name: element.name,
+          type: element.kind,
+          description: element.description,
+          technology: element.technology,
+          url: element.url,
+          logo_url: element.logo_url,
+          technology_connectors: element.technology_connectors,
+          tags: element.tags,
+          repo: element.repo,
+          branch: element.branch,
+          language: element.language,
+          file_path: element.file_path,
+          created_at: element.created_at,
+          updated_at: element.updated_at,
+        } satisfies DependencyElement)).catch(() => null),
+      ),
+    ).then((items) => {
+      if (cancelled) return
+      setNeighbourElements((prev) => {
+        const next = { ...prev }
+        items.forEach((item) => {
+          if (item) next[item.id] = item
+        })
+        return next
       })
-      .catch(() => { /* intentionally empty */ })
-      .finally(() => setLoading(false))
-  }, [])
+    })
+    return () => { cancelled = true }
+  }, [allEdges, elementUniverse, selectedId])
 
   // Derived data
   const elementsWithCounts = useMemo(
@@ -364,12 +459,12 @@ export default function Dependencies() {
 
   const selectedElement = useMemo(() => {
     if (selectedId === null) return null
-    return elements.find((o) => o.id === selectedId) || null
-  }, [elements, selectedId])
+    return elementUniverse.find((o) => o.id === selectedId) || null
+  }, [elementUniverse, selectedId])
   const neighbourGraph = useMemo(() => {
     if (selectedId === null) return []
-    return getNeighbourGraph(selectedId, elements, allEdges)
-  }, [selectedId, elements, allEdges])
+    return getNeighbourGraph(selectedId, elementUniverse, allEdges)
+  }, [selectedId, elementUniverse, allEdges])
 
   // Divider drag
   const startDrag = useCallback(() => {
@@ -497,7 +592,7 @@ export default function Dependencies() {
 
   if (loading) {
     return (
-      <Flex h="100vh" align="center" justify="center">
+      <Flex h="100%" align="center" justify="center">
         <Spinner size="xl" color="blue.500" thickness="3px" />
       </Flex>
     )
@@ -528,9 +623,11 @@ export default function Dependencies() {
   const colSpacing = maxCompactLevel >= 3 ? 2 : maxCompactLevel >= 2 ? 3 : maxCompactLevel >= 1 ? 5 : 8
   const nodeSpacing = maxCompactLevel >= 2 ? 1 : maxCompactLevel >= 1 ? 2 : 3
   const selectedCardShadow = `0 0 0 3px ${hexToRgba(accent, 0.38)}, 0 18px 48px ${hexToRgba(accent, 0.12)}, 0 10px 36px rgba(0,0,0,0.55), 0 3px 10px rgba(0,0,0,0.4)`
+  const rangeStart = elements.length > 0 ? page * PAGE_SIZE + 1 : 0
+  const rangeEnd = page * PAGE_SIZE + elements.length
 
   return (
-    <Box h="100vh" display="flex" flexDir="column" bg="var(--bg-canvas)">
+    <Box h="100%" display="flex" flexDir="column" bg="var(--bg-canvas)">
       <Box ref={containerRef} flex={1} display="flex" flexDir="column" overflow="hidden">
 
         {/* ── Top: Listing ──────────────────────────────────────────────────── */}
@@ -594,9 +691,45 @@ export default function Dependencies() {
               </MenuList>
             </Menu>
             <Box flex={1} />
-            <Text fontSize="xs" color="gray.600">
-              {filteredElements.length} element{filteredElements.length !== 1 ? 's' : ''}
+
+            <HStack spacing={4} mr={4} display={{ base: 'none', md: 'flex' }}>
+              <HStack spacing={1.5}>
+                <Text fontSize="xs" color="whiteAlpha.900" fontWeight="bold">{totalCount}</Text>
+                <Text fontSize="xs" color="whiteAlpha.400">elements</Text>
+              </HStack>
+              <HStack spacing={1.5}>
+                <Text fontSize="xs" color="whiteAlpha.900" fontWeight="bold">{allEdges.length}</Text>
+                <Text fontSize="xs" color="whiteAlpha.400">connectors</Text>
+              </HStack>
+            </HStack>
+
+            <Box w="1px" h="12px" bg="whiteAlpha.200" mr={2} display={{ base: 'none', md: 'block' }} />
+
+            <Text fontSize="xs" color="gray.600" fontWeight="medium">
+              {rangeStart}-{rangeEnd} <Text as="span" color="gray.700" display={{ base: 'none', sm: 'inline' }}>of {totalCount}</Text>
             </Text>
+            {pageLoading && <Spinner size="xs" color="gray.500" />}
+            <HStack spacing={1} data-pan-block="true">
+              <Button
+                variant="elevated"
+                size="xs"
+                isDisabled={page === 0 || pageLoading}
+                onClick={() => setPage((current) => Math.max(0, current - 1))}
+              >
+                Previous
+              </Button>
+              <Text fontSize="xs" color="gray.500" minW="48px" textAlign="center">
+                Page {page + 1}
+              </Text>
+              <Button
+                variant="elevated"
+                size="xs"
+                isDisabled={!hasNextPage || pageLoading}
+                onClick={() => setPage((current) => current + 1)}
+              >
+                Next
+              </Button>
+            </HStack>
           </Flex>
 
           {/* Column headers */}
@@ -640,6 +773,15 @@ export default function Dependencies() {
                 const color = TYPE_COLORS[typeKey] ?? 'gray'
                 const accentHex = TYPE_HEX[typeKey] ?? '#718096'
                 const isSelected = selectedId === obj.id
+                const versionChangeType = versionPulseChangeForElement(Number(obj.id))
+                const versionLineDelta = versionPreview?.elementLineDeltas.get(Number(obj.id))
+                const versionColor = versionChangeType === 'added'
+                  ? 'green.300'
+                  : versionChangeType === 'deleted'
+                    ? 'red.300'
+                    : versionChangeType
+                      ? 'yellow.300'
+                      : undefined
 
                 return (
                   <Flex
@@ -653,9 +795,12 @@ export default function Dependencies() {
                     bg={isSelected ? 'rgba(66,153,225,0.07)' : 'transparent'}
                     _hover={{ bg: isSelected ? 'rgba(66,153,225,0.1)' : 'whiteAlpha.50' }}
                     transition="background 0.1s"
-                    onClick={() => setSelectedId(isSelected ? null : obj.id)}
+                    onClick={() => selectElement(isSelected ? null : obj.id)}
                     position="relative"
                     role="row"
+                    outline={versionColor ? '1px solid' : undefined}
+                    outlineColor={versionColor}
+                    outlineOffset="-1px"
                   >
                     {/* Left type-color accent */}
                     <Box
@@ -669,14 +814,28 @@ export default function Dependencies() {
 
                     {/* Name */}
                     <Box flex={1} minW={0} mr={4}>
-                      <Text
-                        fontSize="sm"
-                        fontWeight={isSelected ? 'semibold' : 'medium'}
-                        color={isSelected ? 'white' : 'gray.100'}
-                        noOfLines={1}
-                      >
-                        {obj.name}
-                      </Text>
+                      <HStack spacing={2} minW={0}>
+                        <Text
+                          fontSize="sm"
+                          fontWeight={isSelected ? 'semibold' : 'medium'}
+                          color={isSelected ? 'white' : 'gray.100'}
+                          noOfLines={1}
+                          minW={0}
+                        >
+                          {obj.name}
+                        </Text>
+                        {versionChangeType && (
+                          <Badge colorScheme={versionChangeType === 'added' ? 'green' : versionChangeType === 'deleted' ? 'red' : 'yellow'} fontSize="8px" flexShrink={0}>
+                            {versionChangeType === 'added' ? '+' : versionChangeType === 'deleted' ? '-' : '~'}
+                          </Badge>
+                        )}
+                        {versionLineDelta && (
+                          <HStack spacing={1} flexShrink={0}>
+                            {versionLineDelta.added > 0 && <Text fontSize="10px" color="green.300" fontWeight="800">+{versionLineDelta.added}</Text>}
+                            {versionLineDelta.removed > 0 && <Text fontSize="10px" color="red.300" fontWeight="800">-{versionLineDelta.removed}</Text>}
+                          </HStack>
+                        )}
+                      </HStack>
                     </Box>
 
                     {/* Type badge */}
@@ -800,7 +959,8 @@ export default function Dependencies() {
                                   key={n.element.id}
                                   node={n}
                                   compactLevel={maxCompactLevel}
-                                  onClick={() => setSelectedId(n.element.id)}
+                                  versionChangeType={versionPulseChangeForElement(Number(n.element.id))}
+                                  onClick={() => selectElement(n.element.id)}
                                 />
                               ))}
                             </HStack>
@@ -823,7 +983,8 @@ export default function Dependencies() {
                                     key={n.element.id}
                                     node={n}
                                     compactLevel={leftCompactLevel}
-                                    onClick={() => setSelectedId(n.element.id)}
+                                    versionChangeType={versionPulseChangeForElement(Number(n.element.id))}
+                                    onClick={() => selectElement(n.element.id)}
                                   />
                                 ))}
                               </VStack>
@@ -844,6 +1005,9 @@ export default function Dependencies() {
                           bg={elementColor}
                           borderColor={accent}
                           borderWidth="2px"
+                          outline={selectedId && versionPulseChangeForElement(Number(selectedId)) ? '3px solid' : undefined}
+                          outlineColor={selectedId && versionPulseChangeForElement(Number(selectedId)) === 'added' ? 'green.300' : selectedId && versionPulseChangeForElement(Number(selectedId)) === 'deleted' ? 'red.300' : selectedId && versionPulseChangeForElement(Number(selectedId)) ? 'yellow.300' : undefined}
+                          outlineOffset="3px"
                           boxShadow={selectedCardShadow}
                         >
                           <ElementBody
@@ -873,10 +1037,11 @@ export default function Dependencies() {
                                 {column.map((n) => (
                                   <NeighbourCard
                                     key={n.element.id}
-                                    node={n}
-                                    compactLevel={rightCompactLevel}
-                                    onClick={() => setSelectedId(n.element.id)}
-                                  />
+                                  node={n}
+                                  compactLevel={rightCompactLevel}
+                                  versionChangeType={versionPulseChangeForElement(Number(n.element.id))}
+                                  onClick={() => selectElement(n.element.id)}
+                                />
                                 ))}
                               </VStack>
                             ))}
@@ -897,7 +1062,8 @@ export default function Dependencies() {
                                   key={n.element.id}
                                   node={n}
                                   compactLevel={maxCompactLevel}
-                                  onClick={() => setSelectedId(n.element.id)}
+                                  versionChangeType={versionPulseChangeForElement(Number(n.element.id))}
+                                  onClick={() => selectElement(n.element.id)}
                                 />
                               ))}
                             </HStack>

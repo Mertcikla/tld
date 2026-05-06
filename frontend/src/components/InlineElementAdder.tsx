@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Box, Badge, HStack, Input, Text, VStack } from '@chakra-ui/react'
 import type { LibraryElement } from '../types'
 import { TYPE_COLORS } from '../types'
+import { api } from '../api/client'
 
 interface Props {
   x: number
@@ -35,6 +36,7 @@ export default function InlineElementAdder({
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   const [busy, setBusy] = useState(false)
+  const [remoteElements, setRemoteElements] = useState<LibraryElement[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -42,14 +44,40 @@ export default function InlineElementAdder({
     return () => clearTimeout(t)
   }, [])
 
+  useEffect(() => {
+    const trimmed = query.trim()
+    if (!trimmed) {
+      setRemoteElements([])
+      return
+    }
+    let cancelled = false
+    const timer = setTimeout(() => {
+      api.elements.list({ limit: 8, offset: 0, search: trimmed })
+        .then((items) => {
+          if (!cancelled) setRemoteElements(items)
+        })
+        .catch(() => {
+          if (!cancelled) setRemoteElements([])
+        })
+    }, 150)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [query])
+
   const filtered = (() => {
     if (!query.trim()) return []
+    const byID = new Map<number, LibraryElement>()
+    remoteElements.forEach((element) => byID.set(element.id, element))
+    allElements.forEach((element) => byID.set(element.id, element))
+    const candidates = Array.from(byID.values())
     try {
       const re = new RegExp(query, 'i')
-      return allElements.filter((o) => re.test(o.name)).slice(0, 8)
+      return candidates.filter((o) => re.test(o.name)).slice(0, 8)
     } catch {
       const q = query.toLowerCase()
-      return allElements.filter((o) => o.name.toLowerCase().includes(q)).slice(0, 8)
+      return candidates.filter((o) => o.name.toLowerCase().includes(q)).slice(0, 8)
     }
   })()
 

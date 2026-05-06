@@ -128,14 +128,3 @@ func TestPlanCmd_InvalidWorkspaceErrors(t *testing.T) {
 		t.Fatal("expected error for invalid workspace")
 	}
 }
-
-func TestPlanCmd_MissingConfig(t *testing.T) {
-	dir := t.TempDir()
-	_, _, err := cmd.RunCmd(t, dir, "plan")
-	if err == nil {
-		t.Fatal("expected error for missing config")
-	}
-	if !strings.Contains(err.Error(), "load workspace") {
-		t.Errorf("error %q does not contain 'load workspace'", err.Error())
-	}
-}

@@ -5,6 +5,7 @@ import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
   getHandleFlowPosition,
+  getHandleSlotOffsetFromId,
   getLogicalHandleId,
   getVisualHandleIdForGroup,
 } from '../../utils/edgeDistribution'
@@ -21,14 +22,20 @@ export function getExpandThresholds(canvasW: number) {
 const MIN_LABEL_PX = 12    // below this screen width, skip label text
 const MIN_DRAW_PX = 2     // below this screen width, skip node entirely
 const BADGE_THRESHOLD = 100 // node width in screen pixels below which we hide type badge and zoom icon
+const CONNECTOR_MIN_ALPHA = 0.32
+const CONNECTOR_MAX_ALPHA = 0.95
+const CONNECTOR_LINE_PX = 2
 
 // ── Screen-space font limits (px) ──────────────────────────────────
-const MIN_FONT_NAME = 10
-const MAX_FONT_NAME = 50
-const MIN_FONT_BADGE = 12
-const MAX_FONT_BADGE = 30
 const MIN_FONT_HINT = 12
 const MAX_FONT_HINT = 24
+
+// Match ViewEditor ElementNode: nameSize="xl" (20px) and typeSize="2xs"
+// (10px), rounded="lg" (8px), on the default 85px-high node.
+const VIEW_EDITOR_NODE_H = 85
+const NAME_FONT_TO_NODE_H = 20 / VIEW_EDITOR_NODE_H
+const TYPE_FONT_TO_NODE_H = 10 / VIEW_EDITOR_NODE_H
+const RADIUS_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
 
 export interface ScreenRect {
   left: number
@@ -48,20 +55,6 @@ function getClampedFontSize(baseWorldSize: number, minScreenSize: number, maxScr
   return clamp(baseWorldSize, minScreenSize / zoom, maxScreenSize / zoom)
 }
 
-// ── Chakra v2 type palette - mirrors TYPE_COLORS in src/types/index.ts ─
-// .400 variants: used for type badge text and border tint
-const TYPE_COLOR_400: Record<string, string> = {
-  person: '#38b2ac',  // teal.400
-  system: '#63b3ed',  // blue.400
-  container: '#9f7aea',  // purple.400
-  component: '#f6ad55',  // orange.400
-  database: '#4fd1c5',  // cyan.400
-  queue: '#f6e05e',  // yellow.400
-  api: '#68d391',  // green.400
-  service: '#f687b3',  // pink.400
-  external: '#a0aec0',  // gray.400
-}
-
 /** Border color: type .400 at 50% alpha - bold branded tint */
 const typeBorderColorCache = new Map<string, string>()
 function typeBorderColor(type: string, alpha = 0.5): string {
@@ -69,8 +62,7 @@ function typeBorderColor(type: string, alpha = 0.5): string {
   const cached = typeBorderColorCache.get(cacheKey)
   if (cached) return cached
 
-  const color = TYPE_COLOR_400[type]
-  const hex = typeof color === 'string' ? color : '#a0aec0'
+  const hex = '#a0aec0'
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
   const b = parseInt(hex.slice(5, 7), 16)
@@ -144,6 +136,19 @@ export function setHiddenTags(tags: Set<string>): void {
   currentHiddenTags = tags
 }
 
+let currentVersionElementChanges: Map<number, string> = new Map()
+let currentVersionConnectorChanges: Map<number, string> = new Map()
+let currentVersionElementLineDeltas: Map<number, { added: number; removed: number }> = new Map()
+export function setVersionDiff(
+  elementChanges: Map<number, string>,
+  connectorChanges: Map<number, string>,
+  elementLineDeltas: Map<number, { added: number; removed: number }> = new Map(),
+): void {
+  currentVersionElementChanges = elementChanges
+  currentVersionConnectorChanges = connectorChanges
+  currentVersionElementLineDeltas = elementLineDeltas
+}
+
 /**
  * Get image from cache or start loading it.
  * Returns the image if already loaded, null otherwise.
@@ -168,8 +173,123 @@ function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v
 }
 
-function transitionT(screenW: number, start: number, end: number): number {
+export function viewOriginX(view: ZUIViewState): number {
+  return view.originX ?? 0
+}
+
+export function viewOriginY(view: ZUIViewState): number {
+  return view.originY ?? 0
+}
+
+export function worldToScreenX(worldX: number, view: ZUIViewState): number {
+  return (worldX - viewOriginX(view)) * view.zoom + view.x
+}
+
+export function worldToScreenY(worldY: number, view: ZUIViewState): number {
+  return (worldY - viewOriginY(view)) * view.zoom + view.y
+}
+
+export function screenToWorldX(screenX: number, view: ZUIViewState): number {
+  return viewOriginX(view) + (screenX - view.x) / view.zoom
+}
+
+export function screenToWorldY(screenY: number, view: ZUIViewState): number {
+  return viewOriginY(view) + (screenY - view.y) / view.zoom
+}
+
+export function rawCameraView(view: ZUIViewState): ZUIViewState {
+  return {
+    x: view.x - viewOriginX(view) * view.zoom,
+    y: view.y - viewOriginY(view) * view.zoom,
+    zoom: view.zoom,
+  }
+}
+
+function connectorAlpha(alpha: number): number {
+  return clamp(alpha * 1.15, CONNECTOR_MIN_ALPHA, CONNECTOR_MAX_ALPHA)
+}
+
+function normalizeEdgeRouteType(type: string | null | undefined): 'bezier' | 'straight' | 'step' | 'smoothstep' {
+  if (type === 'straight' || type === 'step' || type === 'smoothstep') return type
+  return 'bezier'
+}
+
+export interface ZUITransitionRebase {
+  preserveChildAlphaNodeIds: Set<string>
+}
+
+export function transitionT(screenW: number, start: number, end: number): number {
   return clamp((screenW - start) / (end - start), 0, 1)
+}
+
+export function buildCameraTransitionRebase(
+  groups: DiagramGroupLayout[],
+  view: ZUIViewState,
+  canvasW: number,
+  canvasH: number,
+  thresholds: { start: number; end: number },
+): ZUITransitionRebase {
+  if (canvasW <= 0 || canvasH <= 0 || view.zoom <= 0) {
+    return { preserveChildAlphaNodeIds: new Set() }
+  }
+
+  const worldCenterX = screenToWorldX(canvasW / 2, view)
+  const worldCenterY = screenToWorldY(canvasH / 2, view)
+  const path: Array<{ id: string; t: number }> = []
+
+  for (const group of groups) {
+    if (
+      worldCenterX < group.worldX ||
+      worldCenterX > group.worldX + group.worldW ||
+      worldCenterY < group.worldY ||
+      worldCenterY > group.worldY + group.worldH
+    ) {
+      continue
+    }
+
+    let currentX = worldCenterX
+    let currentY = worldCenterY
+    let currentNodes = group.nodes
+    let cumulativeScale = 1
+
+    while (true) {
+      const node = currentNodes.find((candidate) =>
+        currentX >= candidate.worldX &&
+        currentX <= candidate.worldX + candidate.worldW &&
+        currentY >= candidate.worldY &&
+        currentY <= candidate.worldY + candidate.worldH
+      )
+
+      if (!node) break
+
+      const hasChildren = node.children && node.children.length > 0
+      const screenW = node.worldW * view.zoom * cumulativeScale
+      const t = hasChildren ? transitionT(screenW, thresholds.start, thresholds.end) : 0
+      path.push({ id: node.id, t })
+
+      if (!hasChildren || t <= 0.05 || node.childScale <= 0) break
+
+      currentX = (currentX - node.worldX) / node.childScale + node.childOffsetX
+      currentY = (currentY - node.worldY) / node.childScale + node.childOffsetY
+      currentNodes = node.children
+      cumulativeScale *= node.childScale
+    }
+
+    break
+  }
+
+  const activeTransitionIndexes = path
+    .map((entry, index) => ({ ...entry, index }))
+    .filter((entry) => entry.t > 0.05 && entry.t < 0.95)
+
+  if (activeTransitionIndexes.length <= 1) {
+    return { preserveChildAlphaNodeIds: new Set() }
+  }
+
+  const deepestActiveIndex = activeTransitionIndexes[activeTransitionIndexes.length - 1].index
+  return {
+    preserveChildAlphaNodeIds: new Set(path.slice(0, deepestActiveIndex).map((entry) => entry.id)),
+  }
 }
 
 function rectsOverlap(a: ScreenRect, b: ScreenRect): boolean {
@@ -262,8 +382,8 @@ export function isVisible(
   worldX: number, worldY: number, worldW: number, worldH: number,
   view: ZUIViewState, canvasW: number, canvasH: number,
 ): boolean {
-  const sx = worldX * view.zoom + view.x
-  const sy = worldY * view.zoom + view.y
+  const sx = worldToScreenX(worldX, view)
+  const sy = worldToScreenY(worldY, view)
   const sw = worldW * view.zoom
   const sh = worldH * view.zoom
   return sx + sw > 0 && sy + sh > 0 && sx < canvasW && sy < canvasH
@@ -274,11 +394,202 @@ export function isFullyVisible(
   worldX: number, worldY: number, worldW: number, worldH: number,
   view: ZUIViewState, canvasW: number, canvasH: number,
 ): boolean {
-  const sx = worldX * view.zoom + view.x
-  const sy = worldY * view.zoom + view.y
+  const sx = worldToScreenX(worldX, view)
+  const sy = worldToScreenY(worldY, view)
   const sw = worldW * view.zoom
   const sh = worldH * view.zoom
   return sx >= 0 && sy >= 0 && sx + sw <= canvasW && sy + sh <= canvasH
+}
+
+export interface ZUICameraRebase {
+  originX: number
+  originY: number
+  view: ZUIViewState
+}
+
+export function getCameraRebase(view: ZUIViewState, canvasW: number, canvasH: number): ZUICameraRebase {
+  const zoom = Math.max(0.0001, view.zoom)
+  return {
+    originX: screenToWorldX(canvasW / 2, { ...view, zoom }),
+    originY: screenToWorldY(canvasH / 2, { ...view, zoom }),
+    view: {
+      x: canvasW / 2,
+      y: canvasH / 2,
+      zoom: view.zoom,
+    },
+  }
+}
+
+function rebaseRootNodeForRender(node: LayoutNode, rebase: ZUICameraRebase): LayoutNode {
+  return {
+    ...node,
+    worldX: node.worldX - rebase.originX,
+    worldY: node.worldY - rebase.originY,
+  }
+}
+
+interface RebasedRenderGroup {
+  sourceNodes: LayoutNode[]
+  group: DiagramGroupLayout
+}
+
+const rebasedRenderGroupCache = new WeakMap<DiagramGroupLayout, RebasedRenderGroup>()
+
+function rebaseGroupForRender(group: DiagramGroupLayout, rebase: ZUICameraRebase): DiagramGroupLayout {
+  let cached = rebasedRenderGroupCache.get(group)
+  if (!cached || cached.sourceNodes !== group.nodes) {
+    cached = {
+      sourceNodes: group.nodes,
+      group: {
+        ...group,
+        nodes: group.nodes.map((node) => rebaseRootNodeForRender(node, rebase)),
+      },
+    }
+    rebasedRenderGroupCache.set(group, cached)
+  }
+
+  cached.group.worldX = group.worldX - rebase.originX
+  cached.group.worldY = group.worldY - rebase.originY
+  cached.group.worldW = group.worldW
+  cached.group.worldH = group.worldH
+  cached.group.diagramW = group.diagramW
+  cached.group.diagramH = group.diagramH
+  cached.group.diagramX = group.diagramX
+  cached.group.diagramY = group.diagramY
+  cached.group.edges = group.edges
+
+  for (let index = 0; index < group.nodes.length; index += 1) {
+    const source = group.nodes[index]
+    const target = cached.group.nodes[index]
+    Object.assign(target, source, {
+      worldX: source.worldX - rebase.originX,
+      worldY: source.worldY - rebase.originY,
+    })
+  }
+
+  return cached.group
+}
+
+interface FocusedFlattenedLayer {
+  nodes: LayoutNode[]
+  view: ZUIViewState
+}
+
+function flattenNodeForRender(
+  node: LayoutNode,
+  absX: number,
+  absY: number,
+  layerScale: number,
+  rebase: ZUICameraRebase,
+): LayoutNode {
+  return {
+    ...node,
+    worldX: (absX - rebase.originX) / layerScale,
+    worldY: (absY - rebase.originY) / layerScale,
+    worldW: node.worldW,
+    worldH: node.worldH,
+    children: [],
+  }
+}
+
+function flattenSiblingLayerForRender(
+  nodes: LayoutNode[],
+  parentAbsX: number,
+  parentAbsY: number,
+  parentAbsScale: number,
+  parentChildOffsetX: number,
+  parentChildOffsetY: number,
+  rebase: ZUICameraRebase,
+): LayoutNode[] {
+  return nodes.map((node) => {
+    const absX = parentAbsX + (node.worldX - parentChildOffsetX) * parentAbsScale
+    const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
+    return flattenNodeForRender(node, absX, absY, parentAbsScale, rebase)
+  })
+}
+
+export function findFocusedFlattenedLayerForTest(
+  groups: DiagramGroupLayout[],
+  view: ZUIViewState,
+  canvasW: number,
+  canvasH: number,
+  thresholds: { start: number; end: number },
+  rebase: ZUICameraRebase,
+): FocusedFlattenedLayer | null {
+  if (canvasW <= 0 || canvasH <= 0 || view.zoom < 1_000_000) return null
+
+  const worldCenterX = screenToWorldX(canvasW / 2, view)
+  const worldCenterY = screenToWorldY(canvasH / 2, view)
+
+  for (const group of groups) {
+    if (
+      worldCenterX < group.worldX ||
+      worldCenterX > group.worldX + group.worldW ||
+      worldCenterY < group.worldY ||
+      worldCenterY > group.worldY + group.worldH
+    ) {
+      continue
+    }
+
+    let currentX = worldCenterX
+    let currentY = worldCenterY
+    let currentNodes = group.nodes
+    let parentAbsX = 0
+    let parentAbsY = 0
+    let parentAbsScale = 1
+    let parentChildOffsetX = 0
+    let parentChildOffsetY = 0
+    let focusedLayer: FocusedFlattenedLayer | null = null
+
+    while (true) {
+      const node = currentNodes.find((candidate) =>
+        currentX >= candidate.worldX &&
+        currentX <= candidate.worldX + candidate.worldW &&
+        currentY >= candidate.worldY &&
+        currentY <= candidate.worldY + candidate.worldH
+      )
+      if (!node) break
+
+      const absX = parentAbsX + (node.worldX - parentChildOffsetX) * parentAbsScale
+      const absY = parentAbsY + (node.worldY - parentChildOffsetY) * parentAbsScale
+      const hasChildren = node.children && node.children.length > 0
+      const screenW = node.worldW * parentAbsScale * view.zoom
+      const t = hasChildren ? transitionT(screenW, thresholds.start, thresholds.end) : 0
+
+      if (!hasChildren || t < 0.95 || node.childScale <= 0) break
+
+      const childAbsScale = parentAbsScale * node.childScale
+      focusedLayer = {
+        nodes: flattenSiblingLayerForRender(
+          node.children,
+          absX,
+          absY,
+          childAbsScale,
+          node.childOffsetX,
+          node.childOffsetY,
+          rebase,
+        ),
+        view: {
+          x: canvasW / 2,
+          y: canvasH / 2,
+          zoom: view.zoom * childAbsScale,
+        },
+      }
+
+      currentX = (currentX - node.worldX) / node.childScale + node.childOffsetX
+      currentY = (currentY - node.worldY) / node.childScale + node.childOffsetY
+      currentNodes = node.children
+      parentAbsX = absX
+      parentAbsY = absY
+      parentAbsScale = childAbsScale
+      parentChildOffsetX = node.childOffsetX
+      parentChildOffsetY = node.childOffsetY
+    }
+
+    return focusedLayer
+  }
+
+  return null
 }
 
 /** Draw the ZoomIn magnifying glass icon. */
@@ -306,29 +617,7 @@ function drawZoomInIcon(ctx: CanvasRenderingContext2D, x: number, y: number, siz
   ctx.restore()
 }
 
-/** Draw a portal arrow icon (↗) for portal nodes. */
-function drawPortalIcon(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, strokeWidth: number, color: string): void {
-  ctx.save()
-  ctx.strokeStyle = color
-  ctx.lineWidth = strokeWidth
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.translate(x, y)
-  const s = size / 16
-  ctx.scale(s, s)
-  ctx.beginPath()
-  // Arrow shaft: (2,14) → (13,3)
-  ctx.moveTo(2, 14)
-  ctx.lineTo(13, 3)
-  // Arrow head
-  ctx.moveTo(5, 3)
-  ctx.lineTo(13, 3)
-  ctx.lineTo(13, 11)
-  ctx.stroke()
-  ctx.restore()
-}
-
-/** Draw a cycle icon (↺) for circular nodes. */
+/** Draw a cycle icon (↺) for circular nodes. NOT USED CURRENTLY */
 function drawCycleIcon(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, strokeWidth: number, color: string): void {
   ctx.save()
   ctx.strokeStyle = color
@@ -371,23 +660,26 @@ function portalTintColor(accent: string, alpha: number): string {
   return rgba
 }
 
-/** Draw a squiggly line from (x1, y1) to (x2, y2). */
-function drawSquigglyLine(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, zoom: number): void {
-  ctx.save()
-  ctx.beginPath()
-  ctx.moveTo(x1, y1)
-  ctx.lineTo(x2, y2)
-  const dashLen = 6 / zoom
-  ctx.setLineDash([dashLen, dashLen * 1.5])
-  ctx.stroke()
-  ctx.restore()
-}
-
 /** Calculate coordinate for a named handle on a node. */
-function getHandlePos(nodeX: number, nodeY: number, nodeW: number, nodeH: number, handleId: string | null, isSource: boolean): { x: number, y: number, pos: 'top' | 'bottom' | 'left' | 'right' } {
+function getHandlePos(nodeX: number, nodeY: number, nodeW: number, nodeH: number, handleId: string | null, isSource: boolean, slotScale = 1): { x: number, y: number, pos: 'top' | 'bottom' | 'left' | 'right' } {
   const fallback = isSource ? DEFAULT_SOURCE_HANDLE_SIDE : DEFAULT_TARGET_HANDLE_SIDE
-  const { x, y, side } = getHandleFlowPosition(nodeX, nodeY, nodeW, nodeH, handleId, fallback)
-  return { x, y, pos: side }
+  if (slotScale === 1) {
+    const { x, y, side } = getHandleFlowPosition(nodeX, nodeY, nodeW, nodeH, handleId, fallback)
+    return { x, y, pos: side }
+  }
+
+  const side = getLogicalHandleId(handleId, fallback) ?? fallback
+  const offset = getHandleSlotOffsetFromId(handleId) * slotScale
+  switch (side) {
+    case 'top':
+      return { x: nodeX + nodeW / 2 + offset, y: nodeY, pos: side }
+    case 'bottom':
+      return { x: nodeX + nodeW / 2 + offset, y: nodeY + nodeH, pos: side }
+    case 'left':
+      return { x: nodeX, y: nodeY + nodeH / 2 + offset, pos: side }
+    case 'right':
+      return { x: nodeX + nodeW, y: nodeY + nodeH / 2 + offset, pos: side }
+  }
 }
 
 /** Draw a closed arrow head matching React Flow MarkerType.ArrowClosed. */
@@ -443,6 +735,7 @@ function drawNode(
   absY: number,
   absScale: number,
   occupiedLabelRects: ScreenRect[],
+  transitionRebase: ZUITransitionRebase,
 ): void {
   if (screenW < MIN_DRAW_PX || alpha < 0.01) return
 
@@ -474,8 +767,8 @@ function drawNode(
   }
 
   const parentAlpha = alpha * (1 - t)
-  const childAlpha = alpha * t
-  const r = 8 / drawZoom  // matches Chakra rounded="lg" (8px)
+  const childAlpha = transitionRebase.preserveChildAlphaNodeIds.has(node.id) ? alpha : alpha * t
+  const r = h * RADIUS_TO_NODE_H
 
   const borderColor = typeBorderColor(node.type)
 
@@ -516,6 +809,19 @@ function drawNode(
     traceShape(offset1, offset1)
     ctx.fill()
     ctx.stroke()
+    ctx.restore()
+  }
+
+  // ── Shadow ───────────────────────────────────────────────────────
+  // Subtler shadow for Canvas performance
+  if (parentAlpha > 0.5 && screenW > 40) {
+    ctx.save()
+    ctx.globalAlpha = parentAlpha * 0.4
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.5)'
+    ctx.shadowBlur = 12 / drawZoom
+    ctx.shadowOffsetY = 4 / drawZoom
+    traceShape()
+    ctx.fill()
     ctx.restore()
   }
 
@@ -605,10 +911,7 @@ function drawNode(
 
   // ── Label - portal shows "PORTAL" badge in accent; otherwise type badge ─
   if (screenW >= MIN_LABEL_PX && parentAlpha > 0.1) {
-    // Dynamic minimum: don't let font be larger than a fraction of node height on screen
-    const minName = Math.min(MIN_FONT_NAME, screenW * 0.35)
-    // w=200, so 0.10w = 20px (Chakra 'xl')
-    const nameFontSize = getClampedFontSize(w * 0.10, minName, MAX_FONT_NAME, drawZoom)
+    const nameFontSize = h * NAME_FONT_TO_NODE_H
     const screenFontSize = nameFontSize * drawZoom
 
     if (screenFontSize >= 6) {
@@ -637,13 +940,10 @@ function drawNode(
 
       // Type badge - using regular element type display
       if (drawScreenW > BADGE_THRESHOLD) {
-        const minBadge = Math.min(MIN_FONT_BADGE, screenW * 0.20)
-        // 0.05w = 10px (Chakra '2xs')
-        const badgeFontSize = getClampedFontSize(w * 0.05, minBadge, MAX_FONT_BADGE, drawZoom)
+        const badgeFontSize = h * TYPE_FONT_TO_NODE_H
         if (badgeFontSize * drawZoom >= 5) {
           ctx.font = `${badgeFontSize}px Inter, system-ui, sans-serif`
-          const badgeColor = TYPE_COLOR_400[node.type]
-          ctx.fillStyle = typeof badgeColor === 'string' ? badgeColor : '#a0aec0'
+          ctx.fillStyle = '#a0aec0'
           const displayType = typeof node.type === 'string' ? node.type.toUpperCase() : 'UNKNOWN'
           ctx.fillText(displayType, x + w / 2, y + h * (0.62 + baseOffset))
         }
@@ -663,13 +963,13 @@ function drawNode(
 
       if (t > 0.8) {
         // Sticky hint Y: stick to viewport bottom
-        const viewportBottomWorld = (canvasH - screenFontSize - view.y) / view.zoom
+        const viewportBottomWorld = screenToWorldY(canvasH - screenFontSize, view)
         hintY = Math.min(hintY, viewportBottomWorld)
         hintY = Math.max(hintY, y + h / 2) // avoid overlapping center
 
         // Sticky hint X: stick to viewport sides
-        const vwL = -view.x / view.zoom
-        const vwR = (canvasW - view.x) / view.zoom
+        const vwL = screenToWorldX(0, view)
+        const vwR = screenToWorldX(canvasW, view)
 
         ctx.save()
         ctx.font = `${hintFontSize}px Inter, system-ui, sans-serif`
@@ -713,7 +1013,7 @@ function drawNode(
 
     // Recursive children's edges DRAWN FIRST (below nodes)
     if (childAlpha > 0.2) {
-      drawEdges(ctx, node.children, childAlpha * 0.5, edgeZoom, thresholds, accent, labelBg, occupiedLabelRects)
+      drawEdges(ctx, node.children, childAlpha * 0.8, edgeZoom, thresholds, accent, labelBg, occupiedLabelRects)
     }
 
     const nextAbsScale = absScale * node.childScale
@@ -725,7 +1025,7 @@ function drawNode(
       if (!isVisible(childAbsX, childAbsY, childAbsW, childAbsH, view, canvasW, canvasH)) continue
 
       const childScreenW = child.worldW * childZoom
-      drawNode(ctx, child, childScreenW, thresholds, childAlpha, childZoom, nodeBg, canvasBg, view, canvasW, canvasH, accent, labelBg, childAbsX, childAbsY, nextAbsScale, occupiedLabelRects)
+      drawNode(ctx, child, childScreenW, thresholds, childAlpha, childZoom, nodeBg, canvasBg, view, canvasW, canvasH, accent, labelBg, childAbsX, childAbsY, nextAbsScale, occupiedLabelRects, transitionRebase)
     }
 
     ctx.restore()
@@ -742,11 +1042,8 @@ function drawNode(
     ctx.strokeStyle = accent
     if (node.isCircular) {
       drawCycleIcon(ctx, x + w - iconSize - padding, y + padding, iconSize, 3.5, accent)
-    } else if (node.isPortal) {
-      // Portal: use arrow icon instead of magnifying glass
-      drawPortalIcon(ctx, x + w - iconSize - padding, y + padding, iconSize, 3.5, accent)
     } else {
-      drawZoomInIcon(ctx, x + w - iconSize - padding, y + padding, iconSize, 3.5)
+      drawZoomInIcon(ctx, x + w - iconSize - padding, y + padding, iconSize, 2.5)
     }
     ctx.restore()
   }
@@ -775,6 +1072,58 @@ function drawNode(
       ctx.shadowBlur = 0
       ctx.restore()
     }
+  }
+
+  if ((currentVersionElementChanges.size > 0 || currentVersionConnectorChanges.size > 0) && parentAlpha > 0.05) {
+    const change = currentVersionElementChanges.get(node.elementId)
+    if (!change) {
+      ctx.save()
+      ctx.globalAlpha = parentAlpha * 0.9
+      ctx.fillStyle = canvasBg
+      traceShape()
+      ctx.fill()
+      ctx.restore()
+    } else {
+      const color = change === 'added' ? '#68d391' : change === 'deleted' ? '#fc8181' : '#f6e05e'
+      ctx.save()
+      ctx.globalAlpha = parentAlpha
+      ctx.shadowColor = color
+      ctx.shadowBlur = 8 / drawZoom
+      ctx.strokeStyle = color
+      ctx.lineWidth = 2.5 / drawZoom
+      traceShape()
+      ctx.stroke()
+      ctx.restore()
+
+    }
+  }
+
+  const delta = currentVersionElementLineDeltas.get(node.elementId)
+  if (delta && (delta.added > 0 || delta.removed > 0) && drawScreenW > 52 && parentAlpha > 0.05) {
+    const addText = delta.added > 0 ? `+${delta.added}` : ''
+    const removeText = delta.removed > 0 ? `-${delta.removed}` : ''
+    const badgeText = [addText, removeText].filter(Boolean).join(' ')
+    const fontSize = getClampedFontSize(12, 8, 13, drawZoom)
+    ctx.save()
+    ctx.globalAlpha = parentAlpha
+    ctx.font = `800 ${fontSize}px Inter, system-ui, sans-serif`
+    const textWidth = ctx.measureText(badgeText).width
+    const badgeW = textWidth + 12 / drawZoom
+    const badgeH = 20 / drawZoom
+    const badgeX = x + w - badgeW - 6 / drawZoom
+    const badgeY = y + h - badgeH - 6 / drawZoom
+    ctx.fillStyle = 'rgba(17, 24, 39, 0.9)'
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)'
+    ctx.lineWidth = 1 / drawZoom
+    ctx.beginPath()
+    ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 5 / drawZoom)
+    ctx.fill()
+    ctx.stroke()
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillStyle = delta.added > 0 && delta.removed === 0 ? '#68d391' : delta.removed > 0 && delta.added === 0 ? '#fc8181' : '#e2e8f0'
+    ctx.fillText(badgeText, badgeX + badgeW / 2, badgeY + badgeH / 2)
+    ctx.restore()
   }
 
   if (!hasChildren && screenW > thresholds.end) {
@@ -882,7 +1231,7 @@ function drawEdges(
       }
 
       const dir = edge.direction ?? 'forward'
-      const type = edge.type || 'bezier'
+      const type = normalizeEdgeRouteType(edge.type)
 
       // ── Effective visual dimensions (handles capping) ─────────────
       const hasSourceChildren = node.children && node.children.length > 0
@@ -922,6 +1271,7 @@ function drawEdges(
         effHSource,
         getVisualHandleIdForGroup(sourceSide, sourceGroupIndex, Math.max(srcGroup.length, 1)),
         true,
+        sSource,
       )
       const tH = getHandlePos(
         effXTarget,
@@ -930,12 +1280,15 @@ function drawEdges(
         effHTarget,
         getVisualHandleIdForGroup(targetSide, targetGroupIndex, Math.max(tgtGroup.length, 1)),
         false,
+        sTarget,
       )
 
       ctx.save()
-      ctx.globalAlpha = alpha * 0.8
+      const edgeChange = currentVersionConnectorChanges.get(edge.id)
+      const versionPreviewActive = currentVersionElementChanges.size > 0 || currentVersionConnectorChanges.size > 0
+      ctx.globalAlpha = versionPreviewActive && !edgeChange ? Math.max(alpha * 0.18, 0.08) : connectorAlpha(alpha)
       ctx.strokeStyle = accent
-      ctx.lineWidth = 2 / zoom
+      ctx.lineWidth = CONNECTOR_LINE_PX / zoom
 
       let midX = (sH.x + tH.x) / 2
       let midY = (sH.y + tH.y) / 2
@@ -1148,7 +1501,7 @@ function drawGroupLabel(
   const labelY = group.worldY + group.diagramY - 22 / view.zoom
 
   // Ensure label is within viewport
-  const screenY = labelY * view.zoom + view.y
+  const screenY = worldToScreenY(labelY, view)
   if (screenY < -20 || screenY > canvasH + 20) return
 
   ctx.save()
@@ -1183,6 +1536,40 @@ function drawGroupLabel(
 }
 
 
+/** Draw a dot grid matching React Flow default style. */
+function drawGrid(ctx: CanvasRenderingContext2D, view: ZUIViewState, canvasW: number, canvasH: number): void {
+  const gridSize = 20
+  const dotSize = 1.0
+  const color = 'rgba(255, 255, 255, 0.1)' // subtle white dots on dark background
+  const rebase = getCameraRebase(view, canvasW, canvasH)
+
+  const left = screenToWorldX(0, view)
+  const top = screenToWorldY(0, view)
+  const right = screenToWorldX(canvasW, view)
+  const bottom = screenToWorldY(canvasH, view)
+
+  const startX = Math.floor(left / gridSize) * gridSize
+  const startY = Math.floor(top / gridSize) * gridSize
+
+  ctx.save()
+  ctx.fillStyle = color
+
+  // Dot grid rendering: only show if zoom is not too small
+  if (view.zoom > 0.2) {
+    for (let wx = startX; wx < right; wx += gridSize) {
+      for (let wy = startY; wy < bottom; wy += gridSize) {
+        const sx = (wx - rebase.originX) * rebase.view.zoom + rebase.view.x
+        const sy = (wy - rebase.originY) * rebase.view.zoom + rebase.view.y
+
+        ctx.beginPath()
+        ctx.arc(sx, sy, dotSize, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+  }
+  ctx.restore()
+}
+
 // ── Public: render one frame ───────────────────────────────────────
 
 /**
@@ -1206,81 +1593,70 @@ export function renderFrame(
   ctx.fillStyle = canvasBg
   ctx.fillRect(0, 0, canvasW, canvasH)
 
+  drawGrid(ctx, view, canvasW, canvasH)
+
+  const rebase = getCameraRebase(view, canvasW, canvasH)
+  const renderView = rebase.view
+  const renderGroups = groups.map((group) => rebaseGroupForRender(group, rebase))
 
   // Apply world transform
   ctx.save()
-  ctx.translate(view.x, view.y)
-  ctx.scale(view.zoom, view.zoom)
+  ctx.translate(renderView.x, renderView.y)
+  ctx.scale(renderView.zoom, renderView.zoom)
 
   const thresholds = getExpandThresholds(canvasW)
+  const transitionRebase = buildCameraTransitionRebase(renderGroups, renderView, canvasW, canvasH, thresholds)
   const occupiedLabelRects = frameLabelRects
   occupiedLabelRects.length = 0
+  const focusedLayer = findFocusedFlattenedLayerForTest(groups, view, canvasW, canvasH, thresholds, rebase)
 
-  for (const group of groups) {
-    if (!isVisible(group.worldX, group.worldY, group.worldW, group.worldH, view, canvasW, canvasH)) {
+  if (focusedLayer) {
+    ctx.restore()
+    ctx.save()
+    ctx.translate(focusedLayer.view.x, focusedLayer.view.y)
+    ctx.scale(focusedLayer.view.zoom, focusedLayer.view.zoom)
+    drawEdges(ctx, focusedLayer.nodes, 0.7, focusedLayer.view.zoom, thresholds, accent, labelBg, occupiedLabelRects)
+    for (const node of focusedLayer.nodes) {
+      if (!isVisible(node.worldX, node.worldY, node.worldW, node.worldH, focusedLayer.view, canvasW, canvasH)) {
+        continue
+      }
+      const screenW = node.worldW * focusedLayer.view.zoom
+      drawNode(ctx, node, screenW, thresholds, 1, focusedLayer.view.zoom, nodeBg, canvasBg, focusedLayer.view, canvasW, canvasH, accent, labelBg, node.worldX, node.worldY, 1, occupiedLabelRects, transitionRebase)
+    }
+    ctx.restore()
+    return occupiedLabelRects
+  }
+
+  for (const group of renderGroups) {
+    if (!isVisible(group.worldX, group.worldY, group.worldW, group.worldH, renderView, canvasW, canvasH)) {
       continue
     }
 
-    drawGroupLabel(ctx, group, view, canvasW, canvasH, accent)
+    drawGroupLabel(ctx, group, renderView, canvasW, canvasH, accent)
 
     // ── Group box (diagram elements container) ──────────────────────────
-    const borderAlpha = clamp(0.5 - view.zoom * 0.05, 0.15, 0.5)
+    const borderAlpha = clamp(0.5 - renderView.zoom * 0.05, 0.15, 0.5)
 
     ctx.save()
     ctx.globalAlpha = borderAlpha
     ctx.strokeStyle = accent
-    ctx.lineWidth = 2 / view.zoom
+    ctx.lineWidth = 2 / renderView.zoom
     ctx.setLineDash([2, 2])
-    // Only draw the border around the diagram part (not portals)
+    // Only draw the border around the diagram part
     ctx.strokeRect(group.worldX + group.diagramX, group.worldY + group.diagramY, group.diagramW, group.diagramH)
     ctx.setLineDash([])
     ctx.restore()
 
-    // ── Squiggly edges to portal nodes ────────────────────────────────
-    ctx.save()
-    ctx.strokeStyle = accent
-    ctx.setLineDash([])
-    ctx.lineWidth = 2 / view.zoom
-    ctx.globalAlpha = 0.6
-    for (const node of group.nodes) {
-      if (node.isPortal) {
-        // Draw squiggle/dash from diagram box boundary to portal box boundary
-        const cx = group.worldX + group.diagramX + group.diagramW / 2
-        const cy = group.worldY + group.diagramY + group.diagramH / 2
-        const px = node.worldX + node.worldW / 2
-        const py = node.worldY + node.worldH / 2
-
-        const dx = px - cx
-        const dy = py - cy
-
-        const getBBoxIntersection = (boxW: number, boxH: number, targetDX: number, targetDY: number) => {
-          const hw = boxW / 2 + 10 // pad
-          const hh = boxH / 2 + 10 // pad
-          if (Math.abs(targetDX * hh) > Math.abs(targetDY * hw)) {
-            return { x: Math.sign(targetDX) * hw, y: targetDY * (hw / Math.abs(targetDX)) }
-          } else {
-            return { x: targetDX * (hh / Math.abs(targetDY)), y: Math.sign(targetDY) * hh }
-          }
-        }
-
-        const start = getBBoxIntersection(group.diagramW, group.diagramH, dx, dy)
-        const end = getBBoxIntersection(node.worldW, node.worldH, -dx, -dy)
-
-        drawSquigglyLine(ctx, cx + start.x, cy + start.y, px + end.x, py + end.y, view.zoom)
-      }
-    }
-    ctx.restore()
-
     // Edges in this group
-    drawEdges(ctx, group.nodes, 0.7, view.zoom, thresholds, accent, labelBg, occupiedLabelRects)
+    drawEdges(ctx, group.nodes, 0.7, renderView.zoom, thresholds, accent, labelBg, occupiedLabelRects)
 
     // Nodes in this group
     for (const node of group.nodes) {
-      if (!isVisible(node.worldX, node.worldY, node.worldW, node.worldH, view, canvasW, canvasH)) {
+      if (!isVisible(node.worldX, node.worldY, node.worldW, node.worldH, renderView, canvasW, canvasH)) {
         continue
       }
-      const screenW = node.worldW * view.zoom
-      drawNode(ctx, node, screenW, thresholds, 1, view.zoom, nodeBg, canvasBg, view, canvasW, canvasH, accent, labelBg, node.worldX, node.worldY, 1, occupiedLabelRects)
+      const screenW = node.worldW * renderView.zoom
+      drawNode(ctx, node, screenW, thresholds, 1, renderView.zoom, nodeBg, canvasBg, renderView, canvasW, canvasH, accent, labelBg, node.worldX, node.worldY, 1, occupiedLabelRects, transitionRebase)
     }
   }
 

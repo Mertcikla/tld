@@ -20,7 +20,7 @@ import {
 import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, LinkIcon } from '@chakra-ui/icons'
 import type { PlacedElement } from '../types'
 import { TYPE_COLORS } from '../types'
-import { resolveIconPath } from '../utils/url'
+import { resolveElementIconUrl } from '../utils/elementIcon'
 import { ElementBody } from './NodeBody'
 import { ElementContainer } from './NodeContainer'
 
@@ -61,10 +61,7 @@ function ContextNeighborNode({ data }: Props) {
   const color = TYPE_COLORS[data.kind ?? ''] ?? 'gray'
 
   const logoUrl = useMemo(() => {
-    if (data.logo_url) return resolveIconPath(data.logo_url)
-    const selected = data.technology_connectors?.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && !!link.slug)
-    if (!selected?.slug) return undefined
-    return resolveIconPath(`/icons/${selected.slug}.png`)
+    return resolveElementIconUrl(data.logo_url, data.technology_connectors) ?? undefined
   }, [data.logo_url, data.technology_connectors])
 
   const primaryOwnerViewId = data.ownerViewIds[0] ?? data.commonAncestorViewId ?? null

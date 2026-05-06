@@ -55,12 +55,17 @@ func (p *goParser) appendFunction(node *gotreesitter.Node, lang *gotreesitter.La
 	if nameNode == nil {
 		return
 	}
+	parent := ""
+	if kind == "method" {
+		parent = goReceiverTypeName(node, lang, source)
+	}
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:        nodeText(nameNode, source),
 		Kind:        kind,
 		FilePath:    path,
 		Line:        int(nameNode.StartPoint().Row) + 1,
 		EndLine:     int(node.EndPoint().Row) + 1,
+		Parent:      parent,
 		Description: p.findComment(node, lang, source),
 	})
 }
@@ -189,4 +194,51 @@ func goCallName(node *gotreesitter.Node, lang *gotreesitter.Language, source []b
 		text = text[:index]
 	}
 	return strings.TrimSpace(text)
+}
+
+func goReceiverTypeName(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte) string {
+	receiver := childByFieldName(node, lang, "receiver")
+	if receiver == nil {
+		return ""
+	}
+	for _, child := range namedChildren(receiver) {
+		if nodeKind(child, lang) != "parameter_declaration" {
+			continue
+		}
+		if name := goTypeName(childByFieldName(child, lang, "type"), lang, source); name != "" {
+			return name
+		}
+	}
+	return goTypeName(receiver, lang, source)
+}
+
+func goTypeName(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte) string {
+	if node == nil {
+		return ""
+	}
+	switch nodeKind(node, lang) {
+	case "type_identifier", "identifier", "field_identifier":
+		return nodeText(node, source)
+	case "qualified_type", "selector_expression":
+		children := namedChildren(node)
+		for i := len(children) - 1; i >= 0; i-- {
+			if name := goTypeName(children[i], lang, source); name != "" {
+				return name
+			}
+		}
+	}
+	for _, field := range []string{"type", "name"} {
+		if name := goTypeName(childByFieldName(node, lang, field), lang, source); name != "" {
+			return name
+		}
+	}
+	for _, child := range namedChildren(node) {
+		if nodeKind(child, lang) == "type_arguments" {
+			continue
+		}
+		if name := goTypeName(child, lang, source); name != "" {
+			return name
+		}
+	}
+	return ""
 }

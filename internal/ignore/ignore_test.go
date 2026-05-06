@@ -1,6 +1,10 @@
 package ignore
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestShouldIgnorePath(t *testing.T) {
 	r := &Rules{Exclude: []string{"vendor/", "node_modules/", ".git/", "**/*.pb.go", "**/*_test.go"}}
@@ -57,5 +61,43 @@ func TestNilRules(t *testing.T) {
 	}
 	if r.ShouldIgnoreSymbol("foo") {
 		t.Error("nil rules should never ignore")
+	}
+}
+
+func TestLoadGitIgnore(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("*.log\nignored.go\n/generated/\n!important.log\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pkg", ".gitignore"), []byte("local.go\nnested/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rules, err := LoadGitIgnore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		path   string
+		expect bool
+	}{
+		{"ignored.go", true},
+		{"sub/ignored.go", true},
+		{"generated", true},
+		{"generated/file.go", true},
+		{"debug.log", true},
+		{"important.log", false},
+		{"pkg/local.go", true},
+		{"pkg/sub/local.go", true},
+		{"pkg/nested/file.go", true},
+		{"other/local.go", false},
+	}
+	for _, c := range cases {
+		if got := rules.ShouldIgnorePath(c.path); got != c.expect {
+			t.Errorf("ShouldIgnorePath(%q) = %v, want %v", c.path, got, c.expect)
+		}
 	}
 }

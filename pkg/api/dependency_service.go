@@ -33,7 +33,7 @@ func (s *DependencyService) ListDependencies(ctx context.Context, req *connect.R
 		return nil, err
 	}
 
-	elements, err := s.Store.ListElements(ctx, workspaceID, 0, 0, "")
+	elements, _, err := s.Store.ListElements(ctx, workspaceID, 0, 0, "")
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("list elements: %w", err))
 	}

@@ -2,23 +2,39 @@
 
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import type { BBox, DiagramGroupLayout, LayoutNode, ZUIViewState, HoveredItem } from './types'
-import { getExpandThresholds } from './renderer'
+import { getExpandThresholds, screenToWorldX, screenToWorldY, viewOriginX, viewOriginY } from './renderer'
 
-function constrainViewState(view: ZUIViewState, canvasW: number, canvasH: number, bbox: BBox): ZUIViewState {
-  const padding = 600 // pixels
-  const minX = padding - bbox.maxX * view.zoom
-  const maxX = canvasW - padding - bbox.minX * view.zoom
-  const minY = padding - bbox.maxY * view.zoom
-  const maxY = canvasH - padding - bbox.minY * view.zoom
+export function constrainViewState(view: ZUIViewState, canvasW: number, canvasH: number, bbox: BBox): ZUIViewState {
+  const padding = Math.min(600, canvasW * 0.45, canvasH * 0.45)
+  const normalized = normalizeViewState(view, canvasW, canvasH)
+  const halfVisibleX = Math.max(0, canvasW / 2 - padding) / normalized.zoom
+  const halfVisibleY = Math.max(0, canvasH / 2 - padding) / normalized.zoom
+  const minOriginX = bbox.minX - halfVisibleX
+  const maxOriginX = bbox.maxX + halfVisibleX
+  const minOriginY = bbox.minY - halfVisibleY
+  const maxOriginY = bbox.maxY + halfVisibleY
 
-  let { x, y } = view
-  if (maxX >= minX) x = Math.max(minX, Math.min(maxX, x))
-  else x = (minX + maxX) / 2
+  return {
+    ...normalized,
+    originX: maxOriginX >= minOriginX
+      ? Math.max(minOriginX, Math.min(maxOriginX, viewOriginX(normalized)))
+      : (minOriginX + maxOriginX) / 2,
+    originY: maxOriginY >= minOriginY
+      ? Math.max(minOriginY, Math.min(maxOriginY, viewOriginY(normalized)))
+      : (minOriginY + maxOriginY) / 2,
+  }
+}
 
-  if (maxY >= minY) y = Math.max(minY, Math.min(maxY, y))
-  else y = (minY + maxY) / 2
-
-  return { ...view, x, y }
+function normalizeViewState(view: ZUIViewState, canvasW: number, canvasH: number): ZUIViewState {
+  const zoom = Math.max(0.0001, view.zoom)
+  return {
+    ...view,
+    x: canvasW / 2,
+    y: canvasH / 2,
+    zoom,
+    originX: screenToWorldX(canvasW / 2, { ...view, zoom }),
+    originY: screenToWorldY(canvasH / 2, { ...view, zoom }),
+  }
 }
 
 interface DeepestNodeResult {
@@ -392,6 +408,12 @@ export function calculateMaxZoom(groups: DiagramGroupLayout[], canvasW: number):
 }
 
 const MIN_ZOOM = 0.4
+const ZUI_NATIVE_WHEEL_SELECTOR = '[data-zui-native-wheel="true"]'
+
+function shouldIgnoreCapturedWheel(e: WheelEvent): boolean {
+  const target = e.target
+  return target instanceof Element && target.closest(ZUI_NATIVE_WHEEL_SELECTOR) !== null
+}
 
 function clampZoom(z: number, prevZ: number, maxZ: number): number {
   if (z > prevZ) {
@@ -412,11 +434,16 @@ function zoomAround(
   maxZoom: number,
 ): ZUIViewState {
   const newZoom = clampZoom(view.zoom * factor, view.zoom, maxZoom)
-  const scale = newZoom / view.zoom
+  const worldX = screenToWorldX(focalX, view)
+  const worldY = screenToWorldY(focalY, view)
+  const originX = viewOriginX(view)
+  const originY = viewOriginY(view)
   return {
+    originX,
+    originY,
     zoom: newZoom,
-    x: focalX - (focalX - view.x) * scale,
-    y: focalY - (focalY - view.y) * scale,
+    x: focalX - (worldX - originX) * newZoom,
+    y: focalY - (worldY - originY) * newZoom,
   }
 }
 
@@ -590,6 +617,17 @@ export function useZUIInteraction(
     if (!el) return
 
     function onWheel(e: WheelEvent) {
+      if (shouldIgnoreCapturedWheel(e)) return
+
+      const rect = el!.getBoundingClientRect()
+      const isInsideCanvas =
+        e.clientX >= rect.left &&
+        e.clientX <= rect.right &&
+        e.clientY >= rect.top &&
+        e.clientY <= rect.bottom
+
+      if (!isInsideCanvas) return
+
       // Heuristic to distinguish between trackpad and physical mouse wheel:
       // 1. If ctrlKey is true, it's a pinch (trackpad) or Ctrl+Wheel. We always zoom.
       // 2. If deltaMode !== 0, it's a physical mouse wheel (DOM_DELTA_LINE/PAGE). We zoom.
@@ -619,7 +657,6 @@ export function useZUIInteraction(
       const isRealMouseWheel = e.deltaMode !== 0 || isNotchedWheel
 
       if (isPinch || isRealMouseWheel) {
-        const rect = el!.getBoundingClientRect()
         const focalX = e.clientX - rect.left
         const focalY = e.clientY - rect.top
 
@@ -628,8 +665,8 @@ export function useZUIInteraction(
         factor = Math.max(0.85, Math.min(1.15, factor))
 
         setViewState((prev) => {
-          const worldX = (focalX - prev.x) / prev.zoom
-          const worldY = (focalY - prev.y) / prev.zoom
+          const worldX = screenToWorldX(focalX, prev)
+          const worldY = screenToWorldY(focalY, prev)
           const thresholds = getExpandThresholds(rect.width)
           const deepest = findDeepestAt(worldX, worldY, groupsRef.current, prev, thresholds)
 
@@ -677,8 +714,8 @@ export function useZUIInteraction(
 
       // Hover detection
       const view = viewStateRef.current
-      const worldX = (screenX - view.x) / view.zoom
-      const worldY = (screenY - view.y) / view.zoom
+      const worldX = screenToWorldX(screenX, view)
+      const worldY = screenToWorldY(screenY, view)
       const thresholds = getExpandThresholds(rect.width)
 
       const deepest = findDeepestAt(worldX, worldY, groupsRef.current, view, thresholds)
@@ -731,8 +768,8 @@ export function useZUIInteraction(
       setHoveredItem(null, true) // Clear popover immediately on double-click zoom
 
       setViewState((prev) => {
-        const worldX = (focalX - prev.x) / prev.zoom
-        const worldY = (focalY - prev.y) / prev.zoom
+        const worldX = screenToWorldX(focalX, prev)
+        const worldY = screenToWorldY(focalY, prev)
         const thresholds = getExpandThresholds(rect.width)
         const deepest = findDeepestAt(worldX, worldY, groupsRef.current, prev, thresholds)
 
@@ -802,8 +839,8 @@ export function useZUIInteraction(
           if (isFinite(factor) && factor > 0) {
             setViewState((prev) => {
               const rect = el!.getBoundingClientRect()
-              const worldX = (mid.x - prev.x) / prev.zoom
-              const worldY = (mid.y - prev.y) / prev.zoom
+              const worldX = screenToWorldX(mid.x, prev)
+              const worldY = screenToWorldY(mid.y, prev)
               const thresholds = getExpandThresholds(rect.width)
               const deepest = findDeepestAt(worldX, worldY, groupsRef.current, prev, thresholds)
 
@@ -843,7 +880,7 @@ export function useZUIInteraction(
 
     el.style.cursor = 'grab'
 
-    el.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true })
     el.addEventListener('mousedown', onMouseDown)
     el.addEventListener('mouseleave', onMouseOut)
     el.addEventListener('mouseout', onMouseOut)
@@ -856,7 +893,7 @@ export function useZUIInteraction(
     el.addEventListener('touchcancel', onTouchEnd)
 
     return () => {
-      el.removeEventListener('wheel', onWheel)
+      window.removeEventListener('wheel', onWheel, { capture: true })
       el.removeEventListener('mousedown', onMouseDown)
       el.removeEventListener('mouseleave', onMouseOut)
       el.removeEventListener('mouseout', onMouseOut)

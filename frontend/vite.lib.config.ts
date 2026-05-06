@@ -60,8 +60,24 @@ const EXTERNAL_PACKAGES = new Set([
   'mermaid-ast',
 ])
 
+const localProtoGenDir = process.env.TLD_LOCAL_PROTO_GEN
+const preserveDistOnRebuild = process.env.TLD_PRESERVE_DIST === '1'
+
 export default defineConfig({
-  plugins: [react(), tsconfigPaths()] as Plugin[],
+  plugins: [
+    react(),
+    tsconfigPaths({
+      projects: [resolve(__dirname, 'tsconfig.json')],
+      ignoreConfigErrors: true,
+    }),
+  ] as Plugin[],
+  resolve: localProtoGenDir
+    ? {
+        alias: {
+          '@buf/tldiagramcom_diagram.bufbuild_es': resolve(__dirname, localProtoGenDir),
+        },
+      }
+    : undefined,
   build: {
     lib: {
       entry: resolve(__dirname, 'src/index.ts'),
@@ -83,7 +99,7 @@ export default defineConfig({
     },
     // Emit a single CSS file alongside the JS bundle
     cssCodeSplit: false,
-    // Keep output clean
-    emptyOutDir: true,
+    // For watch-mode local dev, keep the previous bundle in place until the new one is written.
+    emptyOutDir: !preserveDistOnRebuild,
   },
 })

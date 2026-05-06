@@ -73,8 +73,8 @@ function dedupeTechnologyLinks(links: TechnologyConnector[]): TechnologyConnecto
 
   // Sort links to process primary ones first, ensuring they are preserved during deduping
   const sortedLinks = [...links].sort((a, b) => {
-    const aPrimary = !!(a.is_primary_icon ?? (a as any).isPrimaryIcon)
-    const bPrimary = !!(b.is_primary_icon ?? (b as any).isPrimaryIcon)
+    const aPrimary = !!(a.is_primary_icon ?? a.isPrimaryIcon)
+    const bPrimary = !!(b.is_primary_icon ?? b.isPrimaryIcon)
     if (aPrimary && !bPrimary) return -1
     if (!aPrimary && bPrimary) return 1
     return 0
@@ -84,7 +84,7 @@ function dedupeTechnologyLinks(links: TechnologyConnector[]): TechnologyConnecto
     const label = link.label.trim()
     if (!label) continue
 
-    const isPrimary = !!(link.is_primary_icon ?? (link as any).isPrimaryIcon)
+    const isPrimary = !!(link.is_primary_icon ?? link.isPrimaryIcon)
 
     if (link.type === 'catalog' && link.slug) {
       const slug = link.slug.trim()
@@ -141,7 +141,7 @@ async function normalizeInitialTechnologyLinks(element: LibraryElement): Promise
           type: 'catalog',
           slug: link.slug,
           label: match?.name ?? link.label,
-          is_primary_icon: !!(link.is_primary_icon ?? (link as any).isPrimaryIcon),
+          is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
         })
       } else {
         const parts = splitTechnologyLabel(link.label)
@@ -218,6 +218,8 @@ export interface ElementPanelProps extends ElementPanelSlots {
   autoSave?: boolean
   onDelete?: (id: number) => void
   onPermanentDelete?: (id: number) => void
+  onShowContext?: (id: number) => Promise<void> | void
+  onHideContext?: (id: number) => Promise<void> | void
   orgId?: string
   links?: ViewConnector[]
   parentLinks?: ViewConnector[]
@@ -231,7 +233,7 @@ export interface ElementPanelProps extends ElementPanelSlots {
  * Location: Right side of the screen on desktop. Overlays screen on mobile.
  * Aliases: Element Properties, Element Details.
  */
-function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDelete, onPermanentDelete, orgId, links = [], parentLinks = [], hasBackdrop = true, availableTags = [], elementPanelAfterContentSlot }: ElementPanelProps) {
+function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDelete, onPermanentDelete, onShowContext, onHideContext, orgId, links = [], parentLinks = [], hasBackdrop = true, availableTags = [], elementPanelAfterContentSlot }: ElementPanelProps) {
   const { canEdit, viewId } = useViewEditorContext()
   const isEdit = !!element
   const isReadOnly = !canEdit
@@ -280,7 +282,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
 
       const linksFromElement = (element.technology_connectors ?? []).map(tl => ({
         ...tl,
-        is_primary_icon: !!(tl.is_primary_icon ?? (tl as any).isPrimaryIcon),
+        is_primary_icon: !!(tl.is_primary_icon ?? tl.isPrimaryIcon),
       }))
       const fallbackLinks: TechnologyConnector[] = linksFromElement.length > 0
         ? linksFromElement
@@ -333,14 +335,14 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
   }, [element, isOpen])
 
   const buildPayloadAndFingerprint = useCallback(async () => {
-    const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && link.slug)
+    const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && link.slug)
     const primarySlug = primaryLink?.slug
 
     const normalizedLinks = technologyLinks.map((link) => ({
       type: link.type,
       slug: link.type === 'catalog' ? link.slug : undefined,
       label: link.label,
-      is_primary_icon: !!(link.is_primary_icon ?? (link as any).isPrimaryIcon),
+      is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
     }))
 
     const normalizedType = type.trim().toLowerCase()
@@ -572,7 +574,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
     scheduleAutoSave()
   }
 
-  const selectedPrimarySlug = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && !!link.slug)?.slug ?? ''
+  const selectedPrimarySlug = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!link.slug)?.slug ?? ''
 
   const commitTypeFromQuery = () => {
     if (isReadOnly) return
@@ -595,7 +597,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
     if (isReadOnly || !name.trim()) return
     setLoading(true)
     try {
-      const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && link.slug)
+      const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && link.slug)
       const primaryMetadata = primaryLink?.slug
         ? (technologyMeta[primaryLink.slug] ?? await getTechnologyCatalogItemBySlug(primaryLink.slug))
         : null
@@ -604,7 +606,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
         type: link.type,
         slug: link.type === 'catalog' ? link.slug : undefined,
         label: link.label,
-        is_primary_icon: !!(link.is_primary_icon ?? (link as any).isPrimaryIcon),
+        is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
       }))
 
       const normalizedType = type.trim().toLowerCase()
@@ -862,7 +864,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
                     const meta = link.slug ? technologyMeta[link.slug] : undefined
                     const sourceUrl = meta?.websiteUrl || meta?.docsUrl
                     const isSelectable = link.type === 'catalog' && !!link.slug && !isReadOnly
-                    const isPrimaryIcon = link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && !!link.slug
+                    const isPrimaryIcon = link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!link.slug
                     return (
                       <WrapItem key={`${link.type}:${link.slug ?? link.label}`}>
                         <Popover trigger={isMobile ? 'click' : 'hover'} placement="top" closeOnBlur>
@@ -1033,6 +1035,21 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
             )}
 
             {elementPanelAfterContentSlot}
+
+            {element && (onShowContext || onHideContext) && element.file_path && (
+              <HStack borderTop="1px solid" borderColor="whiteAlpha.100" pt={2} spacing={2}>
+                {onShowContext && (
+                  <Button variant="subtle" size="sm" color="teal.200" _hover={{ bg: 'teal.900', color: 'teal.100' }} onClick={() => onShowContext(element.id)} flex={1}>
+                    Show Context
+                  </Button>
+                )}
+                {onHideContext && (
+                  <Button variant="subtle" size="sm" color="orange.200" _hover={{ bg: 'orange.900', color: 'orange.100' }} onClick={() => onHideContext(element.id)} flex={1}>
+                    Hide Neighbors
+                  </Button>
+                )}
+              </HStack>
+            )}
 
             {isEdit && canEdit && (
               <HStack borderTop="1px solid" borderColor="whiteAlpha.100" pt={2} spacing={2}>

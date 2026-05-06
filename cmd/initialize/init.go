@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mertcikla/tld/internal/git"
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -108,22 +109,18 @@ func NewInitCmd() *cobra.Command {
 			}
 
 			if _, err := os.Stat(cfgPath); err == nil {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Initialized workspace at %s (global config already exists at %s)\n", dir, cfgPath)
+				term.Successf(cmd.OutOrStdout(), "Workspace initialized at %s", term.Path(cmd.OutOrStdout(), dir))
+				term.Infof(cmd.OutOrStdout(), "Global config already exists at %s", term.Path(cmd.OutOrStdout(), cfgPath))
 			} else {
-				cfg := `# tld global configuration
-server_url: https://tldiagram.com
-api_key: ""        # or set TLD_API_KEY env var
-org_id: ""         # UUID of your organisation
-`
-				if err := os.WriteFile(cfgPath, []byte(cfg), 0600); err != nil {
-					return fmt.Errorf("write tld.yaml: %w", err)
+				if err := workspace.EnsureGlobalConfig(); err != nil {
+					return fmt.Errorf("ensure global config: %w", err)
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Initialized workspace at %s\n", dir)
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Global configuration file created: %s\n", cfgPath)
+				term.Successf(cmd.OutOrStdout(), "Workspace initialized at %s", term.Path(cmd.OutOrStdout(), dir))
+				term.Infof(cmd.OutOrStdout(), "Global config created at %s", term.Path(cmd.OutOrStdout(), cfgPath))
 			}
 
 			if !wizard {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Run `tld login` to authenticate with tldiagram.com")
+				term.Hint(cmd.OutOrStdout(), "Run 'tld login' to authenticate with tldiagram.com")
 			}
 			return nil
 		},
@@ -155,7 +152,7 @@ func runInitWizard(cmd *cobra.Command, dir string) error {
 	if remoteURL, err := git.DetectRemoteURL(parentDir); err == nil {
 		defaultRepoURL = remoteURL
 	} else {
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Warning: current folder is not a git repository. You can still initialize tld, but automatic source code linking will require manual configuration of repository URL and localDir in .tld.yaml.")
+		term.Warn(cmd.OutOrStdout(), "Current folder is not a git repository. Automatic source linking requires manual configuration of repository URL and localDir in .tld.yaml.")
 	}
 
 	for {
@@ -206,11 +203,12 @@ func runInitWizard(cmd *cobra.Command, dir string) error {
 		return fmt.Errorf("write .tld.yaml: %w", err)
 	}
 
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Next steps:")
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  1. tld login          - authenticate with tlDiagram.com")
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  2. tld analyze .      - extract symbols from your repo")
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  3. tld plan           - preview what will be created")
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  4. tld apply          - push to tlDiagram.com")
+	term.Separator(cmd.OutOrStdout())
+	term.Info(cmd.OutOrStdout(), "Next steps:")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "    1. tld login          - authenticate with tlDiagram.com")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "    2. tld analyze .      - extract symbols from your repo")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "    3. tld plan           - preview what will be created")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "    4. tld apply          - push to tlDiagram.com")
 	return nil
 }
 

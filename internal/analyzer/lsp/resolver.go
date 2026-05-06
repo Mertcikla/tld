@@ -1,4 +1,4 @@
-package analyze
+package lsp
 
 import (
 	"context"
@@ -8,41 +8,35 @@ import (
 	"path/filepath"
 
 	"github.com/mertcikla/tld/internal/analyzer"
-	analyzerlsp "github.com/mertcikla/tld/internal/analyzer/lsp"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
 
-type analyzeDefinitionLocation struct {
+type DefinitionLocation struct {
 	FilePath string
 	Line     int
 }
 
-type analyzeDefinitionResolver interface {
-	ResolveDefinitions(ctx context.Context, ref analyzer.Ref) ([]analyzeDefinitionLocation, error)
-	Close() error
-}
-
-type analyzeLSPResolver struct {
-	rootDir  string
-	sessions map[analyzer.Language]*analyzerlsp.Session
+type MultiLanguageResolver struct {
+	RootDir  string
+	sessions map[analyzer.Language]*Session
 	disabled map[analyzer.Language]struct{}
 	opened   map[string]struct{}
 	contents map[string]string
 }
 
-func newAnalyzeLSPResolver(rootDir string) *analyzeLSPResolver {
-	return &analyzeLSPResolver{
-		rootDir:  rootDir,
-		sessions: make(map[analyzer.Language]*analyzerlsp.Session),
+func NewMultiLanguageResolver(rootDir string) *MultiLanguageResolver {
+	return &MultiLanguageResolver{
+		RootDir:  rootDir,
+		sessions: make(map[analyzer.Language]*Session),
 		disabled: make(map[analyzer.Language]struct{}),
 		opened:   make(map[string]struct{}),
 		contents: make(map[string]string),
 	}
 }
 
-func (r *analyzeLSPResolver) ResolveDefinitions(ctx context.Context, ref analyzer.Ref) ([]analyzeDefinitionLocation, error) {
-	if r == nil || r.rootDir == "" || ref.FilePath == "" || ref.Line <= 0 {
+func (r *MultiLanguageResolver) ResolveDefinitions(ctx context.Context, ref analyzer.Ref) ([]DefinitionLocation, error) {
+	if r == nil || r.RootDir == "" || ref.FilePath == "" || ref.Line <= 0 {
 		return nil, nil
 	}
 	language, ok := analyzer.DetectLanguage(ref.FilePath)
@@ -72,13 +66,13 @@ func (r *analyzeLSPResolver) ResolveDefinitions(ctx context.Context, ref analyze
 	if err != nil {
 		return nil, err
 	}
-	resolved := make([]analyzeDefinitionLocation, 0, len(locations))
+	resolved := make([]DefinitionLocation, 0, len(locations))
 	for _, location := range locations {
 		filePath := filepath.Clean(location.URI.Filename())
 		if filePath == "" {
 			continue
 		}
-		resolved = append(resolved, analyzeDefinitionLocation{
+		resolved = append(resolved, DefinitionLocation{
 			FilePath: filePath,
 			Line:     int(location.Range.Start.Line) + 1,
 		})
@@ -86,7 +80,7 @@ func (r *analyzeLSPResolver) ResolveDefinitions(ctx context.Context, ref analyze
 	return resolved, nil
 }
 
-func (r *analyzeLSPResolver) Close() error {
+func (r *MultiLanguageResolver) Close() error {
 	if r == nil {
 		return nil
 	}
@@ -102,7 +96,7 @@ func (r *analyzeLSPResolver) Close() error {
 	return errors.Join(errs...)
 }
 
-func (r *analyzeLSPResolver) sessionForLanguage(ctx context.Context, language analyzer.Language) (*analyzerlsp.Session, bool, error) {
+func (r *MultiLanguageResolver) sessionForLanguage(ctx context.Context, language analyzer.Language) (*Session, bool, error) {
 	if r == nil {
 		return nil, false, nil
 	}
@@ -112,9 +106,9 @@ func (r *analyzeLSPResolver) sessionForLanguage(ctx context.Context, language an
 	if _, disabled := r.disabled[language]; disabled {
 		return nil, false, nil
 	}
-	session, err := analyzerlsp.StartSession(ctx, analyzerlsp.SessionConfig{
+	session, err := StartSession(ctx, SessionConfig{
 		Language: language,
-		RootDir:  r.rootDir,
+		RootDir:  r.RootDir,
 	})
 	if err != nil {
 		r.disabled[language] = struct{}{}
@@ -129,7 +123,7 @@ func (r *analyzeLSPResolver) sessionForLanguage(ctx context.Context, language an
 	return session, true, nil
 }
 
-func (r *analyzeLSPResolver) openDocument(ctx context.Context, session *analyzerlsp.Session, filePath string) error {
+func (r *MultiLanguageResolver) openDocument(ctx context.Context, session *Session, filePath string) error {
 	cleanPath := filepath.Clean(filePath)
 	if _, ok := r.opened[cleanPath]; ok {
 		return nil
@@ -148,44 +142,4 @@ func (r *analyzeLSPResolver) openDocument(ctx context.Context, session *analyzer
 	}
 	r.opened[cleanPath] = struct{}{}
 	return nil
-}
-
-func resolveAnalyzeTargetRef(ctx context.Context, resolver analyzeDefinitionResolver, ref analyzer.Ref, symbols []analyzer.Symbol, refBySymbol map[analyzeElementLookupKey]string, refsByName map[string][]string) string {
-	if resolver != nil {
-		locations, err := resolver.ResolveDefinitions(ctx, ref)
-		if err == nil {
-			for _, location := range locations {
-				symbol, ok := symbolByFileAndLine(location.FilePath, location.Line, symbols)
-				if !ok {
-					continue
-				}
-				if targetRef, ok := refBySymbol[analyzeSymbolLookupKey(symbol)]; ok {
-					return targetRef
-				}
-			}
-		}
-	}
-	candidates := refsByName[ref.Name]
-	if len(candidates) == 1 {
-		return candidates[0]
-	}
-	return ""
-}
-
-func symbolByFileAndLine(filePath string, line int, symbols []analyzer.Symbol) (analyzer.Symbol, bool) {
-	var bestSymbol analyzer.Symbol
-	found := false
-	cleanFilePath := filepath.Clean(filePath)
-	for _, symbol := range symbols {
-		if filepath.Clean(symbol.FilePath) != cleanFilePath {
-			continue
-		}
-		if symbol.Line <= line && (symbol.EndLine == 0 || symbol.EndLine >= line) {
-			if !found || symbol.Line > bestSymbol.Line {
-				bestSymbol = symbol
-				found = true
-			}
-		}
-	}
-	return bestSymbol, found
 }

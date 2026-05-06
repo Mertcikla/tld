@@ -10,15 +10,15 @@ import type {
   ExploreData,
   ViewConnector,
 } from '../../types'
-import { resolveIconPath } from '../../utils/url'
+import { resolveElementIconUrl } from '../../utils/elementIcon'
 
 // ── Constants ──────────────────────────────────────────────────────
 
-export const NODE_W = 200
-export const NODE_H = 100
+export const NODE_W = 180
+export const NODE_H = 85
 const GROUP_PAD = 80         // padding inside a diagram group box
 const GROUP_SPACING = 400    // horizontal gap between root diagrams
-const CHILD_PAD = 1         // padding inside a node when rendering children
+const CHILD_PAD = 4         // padding inside a node when rendering children
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -159,6 +159,7 @@ function buildNodes(
     const edgesOut = (views[String(diagramId)]?.connectors ?? [])
       .filter((e) => e.source_element_id === obj.element_id)
       .map((e) => ({
+        id: e.id,
         targetId: nodeId(diagramId, e.target_element_id),
         label: e.label ?? '',
         direction: e.direction ?? 'forward',
@@ -166,12 +167,6 @@ function buildNodes(
         targetHandle: e.target_handle ?? null,
         type: e.style || 'bezier',
       }))
-
-    const derivedPrimaryIconPath = (() => {
-      const selected = obj.technology_connectors?.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? (link as any).isPrimaryIcon) && !!link.slug)
-      if (!selected?.slug) return null
-      return resolveIconPath(`/icons/${selected.slug}.png`)
-    })()
 
     return {
       id: nodeId(diagramId, obj.element_id),
@@ -183,7 +178,7 @@ function buildNodes(
       worldH: NODE_H,
       label: obj.name,
       type: obj.kind ?? 'system',
-      logoUrl: obj.logo_url ? resolveIconPath(obj.logo_url) : derivedPrimaryIconPath,
+      logoUrl: resolveElementIconUrl(obj.logo_url, obj.technology_connectors),
       description: obj.description ?? null,
       technology: obj.technology ?? null,
       tags: obj.tags ?? [],
@@ -253,6 +248,7 @@ export function computeLayout(data: ExploreData): ZUILayout {
 
     // Edges within the same diagram (world-level, not children)
     const edges = (diagData.connectors ?? []).map((e) => ({
+      id: e.id,
       sourceId: nodeId(diag.id, e.source_element_id),
       targetId: nodeId(diag.id, e.target_element_id),
       label: e.label ?? '',

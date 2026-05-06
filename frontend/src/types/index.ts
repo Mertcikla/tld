@@ -3,6 +3,7 @@ export interface TechnologyConnector {
   slug?: string
   label: string
   is_primary_icon?: boolean
+  isPrimaryIcon?: boolean
 }
 
 export interface TechnologyCatalogItem {

@@ -86,6 +86,8 @@ import { removeConnectorGraphSnapshot, upsertConnectorGraphSnapshot, useWorkspac
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
 import { buildElementLibraryItems, useStore } from '../../store/useStore'
+import { useWorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
+import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../../components/WorkspacePanel'
 
 const nodeTypes = {
   elementNode: ElementNode,
@@ -125,6 +127,10 @@ function areTranslateExtentsEqual(
     left[0][1] === right[0][1] &&
     left[1][0] === right[1][0] &&
     left[1][1] === right[1][1]
+}
+
+function canonicalNodePairKey(leftId: string, rightId: string) {
+  return leftId <= rightId ? `${leftId}::${rightId}` : `${rightId}::${leftId}`
 }
 
 
@@ -204,6 +210,14 @@ function ViewEditorInner({
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
   const [selectedProxyConnectorDetails, setSelectedProxyConnectorDetails] = useState<ProxyConnectorDetails | null>(null)
+
+  const [prevViewId, setPrevViewId] = useState(viewId)
+  if (viewId !== prevViewId) {
+    setPrevViewId(viewId)
+    setSelectedElement(null)
+    setSelectedEdge(null)
+    setSelectedProxyConnectorDetails(null)
+  }
   const [previewElement, setPreviewElement] = useState<PlacedElement | null>(null)
   const [libraryOpen, setLibraryOpen] = useState(() => {
     if (typeof window === 'undefined') return false
@@ -226,7 +240,7 @@ function ViewEditorInner({
   const setStoreSnapToGrid = useStore((state) => state.setSnapToGrid)
   const upsertStoreConnector = useStore((state) => state.upsertConnector)
   const removeStoreConnector = useStore((state) => state.removeConnector)
-  const refreshElementsRef = useRef<() => Promise<void>>(async () => {})
+  const refreshElementsRef = useRef<() => Promise<void>>(async () => { })
   const setSnapToGrid = useCallback((snap: boolean) => {
     setStoreSnapToGrid(snap)
     if (typeof window !== 'undefined') localStorage.setItem('diag:snapToGrid', String(snap))
@@ -257,6 +271,7 @@ function ViewEditorInner({
   const [activeTags, setActiveTags] = useState<string[]>([])
   const activeTagsRef = useRef<string[]>([])
   activeTagsRef.current = activeTags
+  const { preview: versionPreview, followTarget: versionFollowTarget } = useWorkspaceVersionPreview()
   const [tagColors, setTagColors] = useState<Record<string, Tag>>({})
 
   useEffect(() => {
@@ -384,6 +399,8 @@ function ViewEditorInner({
     hoveredLayerTags,
     hoveredLayerColor,
     tagColors,
+    versionPreview,
+    versionFollowTarget,
     stableOnZoomIn: useCallback(async (id: number) => { await stableOnZoomInRef.current(id) }, []),
     stableOnZoomOut: useCallback(async (id: number) => { await stableOnZoomOutRef.current(id) }, []),
     stableOnNavigateToView: useCallback((id: number) => { stableOnNavigateToViewRef.current(id) }, []),
@@ -436,9 +453,42 @@ function ViewEditorInner({
     treeDataRef, rfNodesRef, rfEdgesRef, viewIdRef,
     refreshGrid, refreshElements,
     handleElementDeleted, handleElementPermanentlyDeleted, handleElementSaved,
-    setAllElements: _setAllElements,
   } = data
   refreshElementsRef.current = refreshElements
+
+  const resolveWatchRepositoryId = useCallback(async () => {
+    const status = await api.watch.status().catch(() => null)
+    if (status?.repository?.id) return status.repository.id
+    const repositories = await api.watch.repositories().catch(() => [])
+    return repositories[0]?.id ?? null
+  }, [])
+
+  const applyWatchContextAction = useCallback(async (action: 'show' | 'hide', resourceType: 'element' | 'view', resourceId: number) => {
+    const repositoryId = await resolveWatchRepositoryId()
+    if (!repositoryId) {
+      toast({ status: 'warning', title: 'No watch repository found' })
+      return
+    }
+    try {
+      const result = action === 'show'
+        ? await api.watch.showContext(repositoryId, { resource_type: resourceType, resource_id: resourceId })
+        : await api.watch.hideContext(repositoryId, { resource_type: resourceType, resource_id: resourceId })
+      await refreshGrid()
+      await refreshElements()
+      window.dispatchEvent(new CustomEvent(WATCH_REPRESENTATION_UPDATED_EVENT, {
+        detail: { type: 'representation.updated', repository_id: repositoryId, at: new Date().toISOString(), data: result.summary },
+      }))
+      toast({
+        status: 'success',
+        title: action === 'show' ? 'Context revealed' : 'Noise cleaned',
+        description: action === 'show'
+          ? `${result.owners_affected} watch owner${result.owners_affected === 1 ? '' : 's'} marked as context.`
+          : `${result.elements_removed + result.connectors_removed + result.views_removed} generated item${result.elements_removed + result.connectors_removed + result.views_removed === 1 ? '' : 's'} removed.`,
+      })
+    } catch (err) {
+      toast({ status: 'error', title: action === 'show' ? 'Failed to show context' : 'Failed to clean noise', description: String(err) })
+    }
+  }, [refreshElements, refreshGrid, resolveWatchRepositoryId, toast])
 
   const tagCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -510,10 +560,11 @@ function ViewEditorInner({
 
   const availableTags = useMemo(() => {
     const tags = new Set<string>()
+    viewElements.forEach((o) => o.tags?.forEach((t: string) => tags.add(t)))
     allElements.forEach((o) => o.tags?.forEach((t: string) => tags.add(t)))
     Object.keys(tagColors).forEach((t) => tags.add(t))
     return Array.from(tags).sort((a, b) => a.localeCompare(b))
-  }, [allElements, tagColors])
+  }, [allElements, tagColors, viewElements])
 
   const effectiveWorkspaceSnapshot = useMemo(() => {
     if (viewId == null) return workspaceGraphSnapshot
@@ -648,8 +699,9 @@ function ViewEditorInner({
     openProxyConnectorPanel: useCallback(() => openProxyConnectorPanelRef.current(), []),
     closeProxyConnectorPanel: useCallback(() => closeProxyConnectorPanelRef.current(), []),
     handleElementDeleted, handleElementPermanentlyDeleted,
-    handleConnectorDeleted: useCallback((edgeId: number) => {
-      if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
+    handleConnectorDeleted: useCallback((edgeId: number, ownerViewId?: number) => {
+      const vid = ownerViewId ?? viewId
+      if (vid != null) removeConnectorGraphSnapshot(vid, edgeId)
       removeStoreConnector(edgeId)
       void refreshElementsRef.current()
     }, [removeStoreConnector, viewId]),
@@ -680,7 +732,7 @@ function ViewEditorInner({
     })
   }, [])
 
-  const { contextNodes, contextConnectors } = useViewContextNeighbours({
+  const { contextNodes, contextConnectors, hiddenProxyCountsByPair, hiddenProxyDetailsByPair } = useViewContextNeighbours({
     snapshot: effectiveWorkspaceSnapshot,
     settings: crossBranchSettings,
     viewId,
@@ -698,6 +750,39 @@ function ViewEditorInner({
     expandedAncestorGroups,
     onToggleAncestorGroup: stableOnToggleAncestorGroup,
   })
+
+  const rfEdgesWithProxyBadges = useMemo(() => {
+    if (Object.keys(hiddenProxyCountsByPair).length === 0) return rfEdges
+
+    let changed = false
+    const next = rfEdges.map((edge) => {
+      const pairKey = canonicalNodePairKey(edge.source, edge.target)
+      const proxyBadgeCount = hiddenProxyCountsByPair[pairKey] ?? 0
+      const currentBadgeCount = (edge.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount ?? 0
+      const proxyBadgeDetails = hiddenProxyDetailsByPair[pairKey] ?? null
+      const currentBadgeDetails = (edge.data as { proxyBadgeDetails?: ProxyConnectorDetails | null } | undefined)?.proxyBadgeDetails ?? null
+      if (proxyBadgeCount === currentBadgeCount && proxyBadgeDetails === currentBadgeDetails) return edge
+      changed = true
+      return {
+        ...edge,
+        data: {
+          ...(edge.data ?? {}),
+          proxyBadgeCount: proxyBadgeCount > 0 ? proxyBadgeCount : undefined,
+          proxyBadgeDetails,
+          onOpenProxyBadge: (details: ProxyConnectorDetails) => {
+            setSelectedElement(null)
+            setSelectedEdge(null)
+            closeConnectorPanelRef.current()
+            closeElementPanelRef.current()
+            setSelectedProxyConnectorDetails(details)
+            openProxyConnectorPanelRef.current()
+          },
+        },
+      }
+    })
+
+    return changed ? next : rfEdges
+  }, [hiddenProxyCountsByPair, hiddenProxyDetailsByPair, rfEdges])
 
   // Keep context nodes in state so React Flow can store measured dimensions.
   // When computed positions change (e.g. main node drag), preserve the previously
@@ -735,10 +820,10 @@ function ViewEditorInner({
     }
 
     const allEdges = contextConnectors.length === 0
-      ? rfEdges
-      : rfEdges.length === 0
+      ? rfEdgesWithProxyBadges
+      : rfEdgesWithProxyBadges.length === 0
         ? contextConnectors
-        : [...contextConnectors, ...rfEdges]
+        : [...contextConnectors, ...rfEdgesWithProxyBadges]
 
     const selectedEdgeEndPoints = new Set<string>()
     let hasEdgeSel = false
@@ -773,14 +858,14 @@ function ViewEditorInner({
       cache.set(n, faded)
       return faded
     })
-  }, [liveContextNodes, rfNodes, contextConnectors, rfEdges])
+  }, [liveContextNodes, rfNodes, contextConnectors, rfEdgesWithProxyBadges])
 
   const flowEdges = useMemo(() => {
     const allEdges = contextConnectors.length === 0
-      ? rfEdges
-      : rfEdges.length === 0
+      ? rfEdgesWithProxyBadges
+      : rfEdgesWithProxyBadges.length === 0
         ? contextConnectors
-        : [...contextConnectors, ...rfEdges]
+        : [...contextConnectors, ...rfEdgesWithProxyBadges]
     const allNodes = liveContextNodes.length === 0
       ? rfNodes
       : rfNodes.length === 0
@@ -815,7 +900,7 @@ function ViewEditorInner({
       cache.set(e, faded)
       return faded
     })
-  }, [contextConnectors, rfEdges, liveContextNodes, rfNodes])
+  }, [contextConnectors, rfEdgesWithProxyBadges, liveContextNodes, rfNodes])
 
   // Route onNodesChange: context node changes (dimensions, selection) go to
   // liveContextNodes state; main node changes go to the canvas handler.
@@ -885,7 +970,7 @@ function ViewEditorInner({
       return
     }
 
-    const ok = safeFitView({ duration: 0 })
+    const ok = safeFitView({ duration: 0, padding: 400 })
     if (ok) needsFitView.current = false
     else setTimeout(() => { if (needsFitView.current) maybeFitView() }, 50)
   }, [applyDemoRevealViewport, clampedRevealProgress, safeFitView, rfNodesRef])
@@ -902,7 +987,15 @@ function ViewEditorInner({
     return () => observer.disconnect()
   }, [maybeFitView])
 
-  useEffect(() => { needsFitView.current = true }, [viewId])
+  useEffect(() => {
+    setSelectedElement(null)
+    setSelectedEdge(null)
+    setSelectedProxyConnectorDetails(null)
+    elementPanel.onClose()
+    connectorPanel.onClose()
+    proxyConnectorPanel.onClose()
+    needsFitView.current = true
+  }, [viewId])
 
   // ── Dynamic viewport bounds ────────────────────────────────────────────────
   useEffect(() => {
@@ -995,14 +1088,14 @@ function ViewEditorInner({
   useEffect(() => () => setHeader(null), [setHeader])
 
   // ── Share ──────────────────────────────────────────────────────────────────
-  const onShare = useCallback(() => {}, [])
+  const onShare = useCallback(() => { }, [])
 
   const handleExplorerHoverZoom = useCallback((elementId: number | null, type: 'in' | 'out' | null) => {
     setHoveredZoom(type && elementId ? { elementId, type } : null)
   }, [])
   const handleToggleExplorer = useCallback(() => setIsExplorerOpen((v) => !v), [])
   const handleCloseLibrary = useCallback(() => setLibraryOpen(false), [])
-  const handleCreateNewLibraryRef = useRef<() => void>(() => {})
+  const handleCreateNewLibraryRef = useRef<() => void>(() => { })
   const handleCreateNewLibrary = useCallback(() => handleCreateNewLibraryRef.current(), [])
   const handleFocusModeChange = useCallback((v: boolean) => setCrossBranchEnabled(!v), [setCrossBranchEnabled])
   const handleOpenExport = useCallback(() => exportModal.onOpen(), [exportModal])
@@ -1010,13 +1103,15 @@ function ViewEditorInner({
     upsertConnectorGraphSnapshot(updated)
     upsertStoreConnector(updated)
   }, [upsertStoreConnector])
-  const handleConnectorDeleted = useCallback((edgeId: number) => {
-    if (viewId != null) removeConnectorGraphSnapshot(viewId, edgeId)
+  const handleConnectorDeleted = useCallback((edgeId: number, ownerViewId?: number) => {
+    const vid = ownerViewId ?? viewId
+    if (vid != null) removeConnectorGraphSnapshot(vid, edgeId)
     removeStoreConnector(edgeId)
     void refreshElements()
   }, [refreshElements, removeStoreConnector, viewId])
-  const handleConnectorDeleteInPanel = useCallback((edgeId: number) => {
-    handleConnectorDeleted(edgeId)
+
+  const handleConnectorDeleteInPanel = useCallback((edgeId: number, ownerViewId?: number) => {
+    handleConnectorDeleted(edgeId, ownerViewId)
     setSelectedEdge(null)
   }, [handleConnectorDeleted, setSelectedEdge])
   const handleViewSave = useCallback((updated: ViewTreeNode) => setView(updated), [setView])
@@ -1114,10 +1209,10 @@ function ViewEditorInner({
   // Render states
   // ─────────────────────────────────────────────────────────────────────────────
   if (view === undefined) {
-    return <Flex h={{ base: '100vh', sm: 'calc(100vh - var(--editor-top-offset, 48px))' }} align="center" justify="center"><Spinner size="xl" /></Flex>
+    return <Flex h="100%" align="center" justify="center"><Spinner size="xl" /></Flex>
   }
   if (view === null) {
-    return <Flex h={{ base: '100vh', sm: 'calc(100vh - var(--editor-top-offset, 48px))' }} align="center" justify="center"><Text>View not found.</Text></Flex>
+    return <Flex h="100%" align="center" justify="center"><Text>View not found.</Text></Flex>
   }
 
   return (
@@ -1125,7 +1220,7 @@ function ViewEditorInner({
       viewId, canEdit, isOwner, isFreePlan, snapToGrid, setSnapToGrid,
       selectedElement, selectedConnector: selectedEdge
     }}>
-      <Box h={{ base: '100vh', sm: 'calc(100vh - var(--editor-top-offset, 48px))' }} display="flex" flexDir="column">
+      <Box h="100%" display="flex" flexDir="column">
         <Flex flex={1} overflow="hidden">
           <Box
             ref={containerRef}
@@ -1363,6 +1458,8 @@ function ViewEditorInner({
               extrasOpen={extrasOpen} setExtrasOpen={setExtrasOpen}
               focusMode={!crossBranchSettings.enabled}
               onFocusModeChange={handleFocusModeChange}
+              onShowViewContext={viewId != null ? () => { void applyWatchContextAction('show', 'view', viewId) } : undefined}
+              onHideViewContext={viewId != null ? () => { void applyWatchContextAction('hide', 'view', viewId) } : undefined}
               disableImportExport={disableImportExport}
               onImport={importModal.onOpen} onExport={handleOpenExport} onShare={onShare}
               allTags={availableTags}
@@ -1397,6 +1494,8 @@ function ViewEditorInner({
           isOpen={elementPanel.isOpen} onClose={elementPanel.onClose} element={selectedElement}
           onSave={handleElementSaved} autoSave
           onDelete={handleElementDeleted} onPermanentDelete={handleElementPermanentlyDeleted}
+          onShowContext={(id) => applyWatchContextAction('show', 'element', id)}
+          onHideContext={(id) => applyWatchContextAction('hide', 'element', id)}
           orgId={''}
           links={selectedElement ? (linksMap[selectedElement.id] || EMPTY_LINKS) : EMPTY_LINKS}
           parentLinks={selectedElement ? (parentLinksMap[selectedElement.id] || EMPTY_LINKS) : EMPTY_LINKS}
@@ -1413,13 +1512,20 @@ function ViewEditorInner({
           onSave={handleConnectorSave} autoSave
           onDelete={handleConnectorDeleteInPanel}
           hasBackdrop={isMobileLayout}
-              connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
-          />
+          connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
+        />
         <ProxyConnectorPanel
           isOpen={proxyConnectorPanel.isOpen}
           onClose={proxyConnectorPanel.onClose}
           details={selectedProxyConnectorDetails}
           hasBackdrop={isMobileLayout}
+          onEdit={(connector) => {
+            setSelectedEdge(connector)
+            connectorPanel.onOpen()
+          }}
+          onDelete={(edgeId, ownerViewId) => {
+            handleConnectorDeleteInPanel(edgeId, ownerViewId)
+          }}
         />
 
         <ViewPanel

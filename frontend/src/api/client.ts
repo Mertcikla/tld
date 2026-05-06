@@ -9,6 +9,7 @@ import type {
   LibraryElement,
   PlacedElement,
   Tag,
+  TechnologyConnector,
   View,
   ViewConnector,
   ViewLayer,
@@ -46,19 +47,150 @@ import {
 import {
   ImportService,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/import_service_pb'
+import {
+  WorkspaceVersionService,
+  type WorkspaceVersionInfo,
+} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_version_service_pb'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset } from '../config/runtime'
+
+async function responseError(res: Response, fallback: string): Promise<Error> {
+  const body = await res.json().catch(() => null) as { error?: string } | null
+  return new Error(body?.error || `${fallback}: ${res.statusText}`)
+}
 
 export interface DependenciesResponse {
   elements: DependencyElement[]
   connectors: DependencyConnector[]
+  totalCount?: number
 }
+
+export interface WatchRepository {
+  id: number
+  remote_url: string | null
+  repo_root: string
+  display_name: string
+  branch: string | null
+  head_commit: string | null
+  identity_status: string
+}
+
+export interface WatchLock {
+  id: number
+  repository_id: number
+  pid: number
+  started_at: string
+  heartbeat_at: string
+  status: 'active' | 'paused' | 'stopping' | 'stale' | 'released' | string
+}
+
+export interface WatchStatus {
+  active: boolean
+  repository?: WatchRepository
+  lock?: WatchLock
+  connected_clients?: number
+}
+
+export interface WatchRepresentationSummary {
+  repository_id: number
+  raw_graph_hash?: string
+  filter_settings_hash?: string
+  representation_hash?: string
+  last_status?: string
+  last_started_at?: string
+  last_finished_at?: string
+  elements_created: number
+  elements_updated: number
+  connectors_created: number
+  connectors_updated: number
+  views_created: number
+  diffs?: WatchDiff[]
+}
+
+export interface WatchContextActionResponse {
+  repository_id: number
+  action: 'show' | 'hide' | string
+  policies_created: number
+  policies_updated: number
+  policies_deactivated: number
+  owners_affected: number
+  elements_removed: number
+  connectors_removed: number
+  views_removed: number
+  representation: {
+    repository_id: number
+    representation_run_id: number
+    filter_run_id: number
+    raw_graph_hash: string
+    filter_settings_hash: string
+    representation_hash: string
+  }
+  summary: WatchRepresentationSummary
+}
+
+export interface WatchEvent {
+  type: string
+  repository_id?: number
+  message?: string
+  at: string
+  data?: unknown
+  phase?: string
+  watcher_mode?: string
+  languages?: string[]
+  changed_files?: number
+  warnings?: string[]
+}
+
+export interface WatchVersion {
+  id: number
+  repository_id: number
+  commit_hash: string
+  commit_message?: string
+  parent_commit_hash?: string
+  branch?: string
+  representation_hash: string
+  workspace_version_id?: number
+  created_at: string
+}
+
+export interface WatchDiff {
+  id: number
+  version_id: number
+  owner_type: string
+  owner_key: string
+  change_type: string
+  before_hash?: string
+  after_hash?: string
+  resource_type?: string
+  resource_id?: number
+  language?: string
+  summary?: string
+  added_lines?: number
+  removed_lines?: number
+}
+
+export interface WorkspaceVersion {
+  id: string
+  version_id: string
+  source: string
+  parent_version_id?: string
+  view_count: number
+  element_count: number
+  connector_count: number
+  description?: string
+  workspace_hash?: string
+  created_at: string
+}
+
+export type SourceEditor = 'zed' | 'vscode'
 
 // ─── RPC clients ─────────────────────────────────────────────────────────────
 
 const workspaceClient = createClient(WorkspaceService, transport)
 const dependencyClient = createClient(DependencyService, transport)
 const importClient = createClient(ImportService, transport)
+const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
+let dependencyConnectorsCache: Promise<DependencyConnector[]> | null = null
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -73,6 +205,49 @@ async function rpc<T>(call: () => Promise<T>): Promise<T> {
 
 function j<T>(schema: Parameters<typeof toJson>[0], msg: Parameters<typeof toJson>[1]): T {
   return toJson(schema, msg, { useProtoFieldName: true, emitDefaultValues: true }) as unknown as T
+}
+
+function timestampToISOString(value: WorkspaceVersionInfo['createdAt']): string {
+  if (!value) return ''
+  const seconds = typeof value.seconds === 'bigint' ? Number(value.seconds) : Number(value.seconds ?? 0)
+  const nanos = Number(value.nanos ?? 0)
+  return new Date(seconds * 1000 + Math.floor(nanos / 1_000_000)).toISOString()
+}
+
+function mapWorkspaceVersion(version: WorkspaceVersionInfo): WorkspaceVersion {
+  return {
+    id: version.id,
+    version_id: version.versionId,
+    source: version.source,
+    parent_version_id: version.parentVersionId,
+    view_count: version.viewCount,
+    element_count: version.elementCount,
+    connector_count: version.connectorCount,
+    description: version.description,
+    workspace_hash: version.workspaceHash,
+    created_at: timestampToISOString(version.createdAt),
+  }
+}
+
+async function fetchWorkspaceRaw(body: Record<string, unknown>) {
+  const res = await fetchApiAsset(apiUrl('/diag.v1.WorkspaceService/GetWorkspace'), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Connect-Protocol-Version': '1',
+    },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    throw new Error(`GetWorkspace failed: ${res.statusText}`)
+  }
+  return res.json() as Promise<{
+    views?: ProtoDiagram[]
+    total_count?: number
+    totalCount?: number
+    content?: Record<string, { placements?: Record<string, unknown>[]; connectors?: Record<string, unknown>[] }>
+    navigations?: Record<string, unknown>[]
+  }>
 }
 
 // ─── Proto → frontend type mappers ───────────────────────────────────────────
@@ -139,10 +314,10 @@ function protoElementToLibrary(e: Record<string, unknown>): LibraryElement {
     technology: (e.technology ?? null) as string | null,
     url: (e.url ?? null) as string | null,
     logo_url: (e.logo_url ?? e.logoUrl ?? null) as string | null,
-    technology_connectors: ((e.technology_connectors ?? e.technologyLinks ?? []) as any[]).map(tl => ({
-      type: tl.type,
+    technology_connectors: ((e.technology_connectors ?? e.technologyLinks ?? []) as Array<{ type?: string; slug?: string; label?: string; is_primary_icon?: boolean; isPrimaryIcon?: boolean }>).map(tl => ({
+      type: (tl.type ?? 'custom') as TechnologyConnector['type'],
       slug: tl.slug,
-      label: tl.label,
+      label: tl.label ?? '',
       is_primary_icon: !!(tl.is_primary_icon ?? tl.isPrimaryIcon),
     })),
     tags: (e.tags ?? []) as string[],
@@ -154,6 +329,26 @@ function protoElementToLibrary(e: Record<string, unknown>): LibraryElement {
     updated_at: String(e.updated_at ?? e.updatedAt ?? new Date().toISOString()),
     has_view: Boolean(e.has_view ?? e.hasView ?? false),
     view_label: (e.view_label ?? e.viewLabel ?? null) as string | null,
+  }
+}
+
+function libraryElementToDependency(element: LibraryElement): DependencyElement {
+  return {
+    id: String(element.id),
+    name: element.name,
+    type: element.kind,
+    description: element.description,
+    technology: element.technology,
+    url: element.url,
+    logo_url: element.logo_url,
+    technology_connectors: element.technology_connectors,
+    tags: element.tags,
+    repo: element.repo,
+    branch: element.branch,
+    language: element.language,
+    file_path: element.file_path,
+    created_at: element.created_at,
+    updated_at: element.updated_at,
   }
 }
 
@@ -170,10 +365,10 @@ function protoPlacedElement(p: Record<string, unknown>): PlacedElement {
     technology: (p.technology ?? null) as string | null,
     url: (p.url ?? null) as string | null,
     logo_url: (p.logo_url ?? p.logoUrl ?? null) as string | null,
-    technology_connectors: ((p.technology_connect_ors ?? p.technology_connectors ?? p.technologyLinks ?? []) as any[]).map(tl => ({
-      type: tl.type,
+    technology_connectors: ((p.technology_connect_ors ?? p.technology_connectors ?? p.technologyLinks ?? []) as Array<{ type?: string; slug?: string; label?: string; is_primary_icon?: boolean; isPrimaryIcon?: boolean }>).map(tl => ({
+      type: (tl.type ?? 'custom') as TechnologyConnector['type'],
       slug: tl.slug,
-      label: tl.label,
+      label: tl.label ?? '',
       is_primary_icon: !!(tl.is_primary_icon ?? tl.isPrimaryIcon),
     })),
     tags: (p.tags ?? []) as string[],
@@ -202,6 +397,25 @@ function protoConnector(e: Record<string, unknown>): Connector {
     target_handle: (e.target_handle ?? null) as string | null,
     created_at: String(e.created_at ?? new Date().toISOString()),
     updated_at: String(e.updated_at ?? new Date().toISOString()),
+  }
+}
+
+function protoDependencyConnector(e: Record<string, unknown>): DependencyConnector {
+  return {
+    id: String(e.id ?? 0),
+    view_id: String(e.view_id ?? e.viewId ?? 0),
+    source_element_id: String(e.source_element_id ?? e.sourceElementId ?? 0),
+    target_element_id: String(e.target_element_id ?? e.targetElementId ?? 0),
+    label: (e.label ?? null) as string | null,
+    description: (e.description ?? null) as string | null,
+    relationship_type: (e.relationship_type ?? e.relationshipType ?? e.relationship ?? null) as string | null,
+    direction: String(e.direction ?? 'forward'),
+    connector_type: String(e.connector_type ?? e.connectorType ?? e.style ?? 'solid'),
+    url: (e.url ?? null) as string | null,
+    source_handle: (e.source_handle ?? e.sourceHandle ?? null) as string | null,
+    target_handle: (e.target_handle ?? e.targetHandle ?? null) as string | null,
+    created_at: String(e.created_at ?? e.createdAt ?? ''),
+    updated_at: String(e.updated_at ?? e.updatedAt ?? ''),
   }
 }
 
@@ -434,6 +648,60 @@ export const api = {
           return (json.views ?? []).map(mapDiagram)
         }),
 
+      treeAround: async (
+        viewId: number,
+        opts: { ancestorLevels?: number; descendantLevels?: number } = {},
+      ): Promise<ViewTreeNode[]> => {
+        const ancestorLevels = opts.ancestorLevels ?? 2
+        const descendantLevels = opts.descendantLevels ?? 2
+        const current = await api.workspace.views.get(viewId)
+
+        const ancestors: ViewTreeNode[] = []
+        let cursor: ViewTreeNode = current
+        for (let depth = 0; depth < ancestorLevels && cursor.parent_view_id != null; depth += 1) {
+          const parent = await api.workspace.views.get(cursor.parent_view_id)
+          ancestors.unshift(parent)
+          cursor = parent
+        }
+
+        const withDescendants = async (node: ViewTreeNode, remainingDepth: number): Promise<ViewTreeNode> => {
+          const scoped: ViewTreeNode = { ...node, children: [] }
+          if (remainingDepth <= 0) return scoped
+          const children = await api.workspace.views.treeChildren(node.id)
+          scoped.children = await Promise.all(children.map((child) => withDescendants(child, remainingDepth - 1)))
+          return scoped
+        }
+
+        let scoped = await withDescendants(current, descendantLevels)
+        for (let index = ancestors.length - 1; index >= 0; index -= 1) {
+          scoped = { ...ancestors[index], children: [scoped] }
+        }
+        return [scoped]
+      },
+
+      gridData: (): Promise<{
+        views: ViewTreeNode[]
+        content: Record<number, { placements: PlacedElement[]; connectors: Connector[] }>
+      }> =>
+        rpc(async () => {
+          const json = await fetchWorkspaceRaw({
+            includeContent: true,
+            hasView: true,
+          })
+          return {
+            views: (json.views ?? []).map(mapDiagram),
+            content: Object.fromEntries(
+              Object.entries(json.content ?? {}).map(([key, value]) => [
+                Number(key),
+                {
+                  placements: (value.placements ?? []).map(protoPlacedElement),
+                  connectors: (value.connectors ?? []).map(protoConnector),
+                },
+              ])
+            ),
+          }
+        }),
+
       get: (id: number): Promise<ViewTreeNode> =>
         rpc(async () => {
           const res = await workspaceClient.getView({ viewId: id })
@@ -620,8 +888,36 @@ export const api = {
   },
 
   dependencies: {
-    list: (): Promise<DependenciesResponse> =>
+    list: (params?: { limit?: number; offset?: number; search?: string }): Promise<DependenciesResponse> =>
       rpc(async () => {
+        if (params) {
+          if (!dependencyConnectorsCache) {
+            dependencyConnectorsCache = workspaceClient.listConnectors({ viewId: 0 })
+              .then((res) => {
+                const connectorJson = j<{ connectors: Record<string, unknown>[] }>(ListConnectorsResponseSchema, res)
+                return (connectorJson.connectors ?? []).map(protoDependencyConnector)
+              })
+          }
+          const [elements, connectors] = await Promise.all([
+            workspaceClient.listElements({
+              limit: params.limit ?? 0,
+              offset: params.offset ?? 0,
+              search: params.search ?? '',
+            }).then((res) => {
+              const json = j<{ elements: Record<string, unknown>[] }>(ListElementsResponseSchema, res)
+              return {
+                elements: (json.elements ?? []).map(protoElementToLibrary),
+                totalCount: res.pagination ? Number(res.pagination.totalCount) : undefined,
+              }
+            }),
+            dependencyConnectorsCache,
+          ])
+          return {
+            elements: elements.elements.map(libraryElementToDependency),
+            connectors,
+            totalCount: elements.totalCount,
+          }
+        }
         const res = await dependencyClient.listDependencies({})
         return j<DependenciesResponse>(ListDependenciesResponseSchema, res)
       }),
@@ -665,8 +961,8 @@ export const api = {
         throw new Error(`Failed to load shared diagram: ${res.statusText}`)
       }
       const data = await res.json() as {
-        tree: any[]
-        views: Record<string, { elements: any[]; connectors: any[] }>
+        tree: ProtoDiagram[]
+        views: Record<string, { elements: Record<string, unknown>[]; connectors: Record<string, unknown>[] }>
         password_required?: boolean
       }
 
@@ -683,7 +979,7 @@ export const api = {
 
       // Ensure that the share root is treated as a root (no parent) so that computeLayout
       // picks it up even if it was nested in the original workspace.
-      const sharedRoot = tree.find(n => String(n.id) === String(data.views[token]?.elements?.[0]?.view_id ?? ''))
+      const _sharedRoot = tree.find(n => String(n.id) === String(data.views[token]?.elements?.[0]?.view_id ?? ''))
       // Backend actually returns the shareToken.ViewID as the root of the tree it builds.
       // We should find the node in 'tree' that has no parent *within the returned set*.
       // For shared explore, the backend typically returns a tree starting at the shared view.
@@ -695,9 +991,9 @@ export const api = {
         }
       })
       const navigations: ViewConnector[] = []
-      const elementToChildView = new Map<number, any>()
-      const allViews: any[] = []
-      const flatTree = (nodes: any[]) => {
+      const elementToChildView = new Map<number, ViewTreeNode>()
+      const allViews: ViewTreeNode[] = []
+      const flatTree = (nodes: ViewTreeNode[]) => {
         nodes.forEach(n => {
           allViews.push(n)
           if (n.owner_element_id) elementToChildView.set(n.owner_element_id, n)
@@ -706,8 +1002,8 @@ export const api = {
       }
       flatTree(tree)
 
-      Object.values(views).forEach((v: any) => {
-        v.placements.forEach((p: any) => {
+      Object.values(views).forEach((v) => {
+        v.placements.forEach((p) => {
           const childView = elementToChildView.get(p.element_id)
           if (childView) {
             navigations.push({
@@ -750,5 +1046,83 @@ export const api = {
           warnings: res.warnings,
         }
       }),
+  },
+
+  versions: {
+    list: (limit = 50): Promise<WorkspaceVersion[]> =>
+      rpc(async () => {
+        const res = await workspaceVersionClient.listVersions({ limit })
+        return (res.versions ?? []).map(mapWorkspaceVersion)
+      }),
+  },
+
+  watch: {
+    status: async (): Promise<WatchStatus> => {
+      const res = await fetch(apiUrl('/watch/status'))
+      if (!res.ok) throw new Error(`Failed to load watch status: ${res.statusText}`)
+      return res.json()
+    },
+    websocketUrl: (): string => {
+      const url = new URL(apiUrl('/watch/ws'), window.location.href)
+      url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+      return url.toString()
+    },
+    repositories: async (): Promise<WatchRepository[]> => {
+      const res = await fetch(apiUrl('/watch/repositories'))
+      if (!res.ok) throw new Error(`Failed to load watch repositories: ${res.statusText}`)
+      return res.json()
+    },
+    versions: async (repositoryId: number): Promise<WatchVersion[]> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/versions`))
+      if (!res.ok) throw new Error(`Failed to load watch versions: ${res.statusText}`)
+      return res.json()
+    },
+    diffs: async (versionId: number, filters?: { owner_type?: string; change_type?: string; resource_type?: string; language?: string }): Promise<WatchDiff[]> => {
+      const params = new URLSearchParams()
+      if (filters?.owner_type) params.set('owner_type', filters.owner_type)
+      if (filters?.change_type) params.set('change_type', filters.change_type)
+      if (filters?.resource_type) params.set('resource_type', filters.resource_type)
+      if (filters?.language) params.set('language', filters.language)
+      const suffix = params.toString() ? `?${params}` : ''
+      const res = await fetch(apiUrl(`/watch/versions/${versionId}/diffs${suffix}`))
+      if (!res.ok) throw new Error(`Failed to load watch diffs: ${res.statusText}`)
+      return res.json()
+    },
+    showContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/context/show`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      })
+      if (!res.ok) throw await responseError(res, 'Failed to show watch context')
+      return res.json()
+    },
+    hideContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/context/hide`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      })
+      if (!res.ok) throw await responseError(res, 'Failed to clean watch context')
+      return res.json()
+    },
+  },
+
+  editor: {
+    open: async (input: { editor: SourceEditor; repo?: string | null; file_path: string; line?: number | null }): Promise<void> => {
+      const res = await fetch(apiUrl('/editor/open'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          editor: input.editor,
+          repo: input.repo ?? '',
+          file_path: input.file_path,
+          line: input.line ?? 0,
+        }),
+      })
+      if (!res.ok) {
+        throw await responseError(res, 'Failed to open editor')
+      }
+    },
   },
 }

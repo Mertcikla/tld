@@ -43,6 +43,9 @@ export interface ViewGridNodeData {
   name: string
   level_label: string | null
   counts?: { nodes: number; edges: number }
+  kind?: 'view' | 'cluster'
+  collapsedCount?: number
+  dimmed?: boolean
   focused: boolean
   canEdit: boolean
   isEditing: boolean
@@ -72,6 +75,7 @@ export default function ViewGridNode({ data }: { data: ViewGridNodeData }) {
 
   const { isOpen: isMenuOpen, onOpen: onMenuOpen, onClose: onMenuClose } = useDisclosure()
   const [isTooltipOpen, setIsTooltipOpen] = useState(false)
+  const isCluster = data.kind === 'cluster'
 
   useEffect(() => {
     if (!isMenuOpen && !isTooltipOpen) return
@@ -114,6 +118,7 @@ export default function ViewGridNode({ data }: { data: ViewGridNodeData }) {
   }, [])
 
   useEffect(() => {
+    if (isCluster) return
     if (!hasRequested) return
 
     let active = true
@@ -141,13 +146,15 @@ export default function ViewGridNode({ data }: { data: ViewGridNodeData }) {
         URL.revokeObjectURL(url)
       }
     }
-  }, [hasRequested, data.id])
+  }, [hasRequested, data.id, isCluster])
 
   const borderColor = data.focused ? accent : 'rgba(255,255,255,0.14)'
 
   const boxShadow = data.focused
     ? `0 0 24px ${hexToRgba(accent, 0.4)}`
-    : '0 8px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)'
+    : isCluster
+      ? '0 14px 34px rgba(0,0,0,0.42), inset 0 1px 0 rgba(255,255,255,0.05)'
+      : '0 8px 24px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.05)'
 
   return (
     // Outer container: sizing + group context, overflow visible for the "New Child" hover button
@@ -160,7 +167,26 @@ export default function ViewGridNode({ data }: { data: ViewGridNodeData }) {
       h="150px"
       position="relative"
       userSelect="none"
+      opacity={data.dimmed ? 0.5 : 1}
       transition="opacity 0.3s cubic-bezier(0.16, 1, 0.3, 1)"
+      _before={isCluster ? {
+        content: '""',
+        position: 'absolute',
+        inset: '8px -9px -8px 9px',
+        borderRadius: '12px',
+        border: '1px solid rgba(255,255,255,0.08)',
+        bg: 'rgba(var(--bg-element-rgb), 0.55)',
+        boxShadow: '0 8px 20px rgba(0,0,0,0.28)',
+      } : undefined}
+      _after={isCluster ? {
+        content: '""',
+        position: 'absolute',
+        inset: '16px -18px -16px 18px',
+        borderRadius: '12px',
+        border: '1px solid rgba(255,255,255,0.06)',
+        bg: 'rgba(var(--bg-element-rgb), 0.35)',
+        boxShadow: '0 8px 20px rgba(0,0,0,0.2)',
+      } : undefined}
     >
       <Handle
         type="target"
@@ -212,9 +238,32 @@ export default function ViewGridNode({ data }: { data: ViewGridNodeData }) {
           overflow="hidden"
           borderRadius="8px 8px 0 0"
           flexShrink={0}
-          bg="var(--bg-card-solid)"
+          bg={isCluster ? 'rgba(var(--bg-element-rgb), 0.88)' : 'var(--bg-card-solid)'}
         >
-          {thumbnailUrl ? (
+          {isCluster ? (
+            <Flex
+              position="absolute"
+              inset={0}
+              p={3}
+              gap={1.5}
+              align="flex-start"
+              justify="flex-start"
+              wrap="wrap"
+              bg="radial-gradient(circle at 80% 18%, rgba(var(--accent-rgb), 0.16), transparent 42px), linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01))"
+            >
+              {Array.from({ length: Math.min(18, Math.max(6, data.collapsedCount ?? 6)) }).map((_, i) => (
+                <Box
+                  key={i}
+                  w={`${18 + (i % 4) * 6}px`}
+                  h="14px"
+                  borderRadius="5px"
+                  bg={i % 5 === 0 ? hexToRgba(accent, 0.2) : 'rgba(255,255,255,0.06)'}
+                  border="1px solid"
+                  borderColor={i % 5 === 0 ? hexToRgba(accent, 0.34) : 'rgba(255,255,255,0.07)'}
+                />
+              ))}
+            </Flex>
+          ) : thumbnailUrl ? (
             <Box
               as="img"
               src={thumbnailUrl}
@@ -294,7 +343,7 @@ export default function ViewGridNode({ data }: { data: ViewGridNodeData }) {
               </Text>
             )}
 
-            {!data.isEditing && (
+            {!data.isEditing && !isCluster && (
               <Flex align="center" gap={1} onClick={(e) => e.stopPropagation()} mt="-2px">
                 <Menu
                   isLazy
@@ -404,9 +453,11 @@ export default function ViewGridNode({ data }: { data: ViewGridNodeData }) {
               flexShrink={0}
               textShadow="0 1px 2px rgba(0,0,0,0.5)"
             >
-              {data.counts
-                ? `${data.counts.nodes}n · ${data.counts.edges}e`
-                : '-'}
+              {isCluster && data.collapsedCount
+                ? `${data.collapsedCount} views`
+                : data.counts
+                  ? `${data.counts.nodes}n · ${data.counts.edges}e`
+                  : '-'}
             </Text>
           </Flex>
         </Flex>

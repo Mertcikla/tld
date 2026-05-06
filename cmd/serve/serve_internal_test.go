@@ -23,26 +23,26 @@ func TestPrintServeInfoIncludesCoreFields(t *testing.T) {
 	})
 
 	got := out.String()
-	if !strings.Contains(got, "Mode:                foreground") {
+	if !strings.Contains(got, "Mode:") || !strings.Contains(got, "foreground") {
 		t.Fatalf("missing mode in output: %q", got)
 	}
-	if !strings.Contains(got, "Server status:       initialized new local data") {
+	if !strings.Contains(got, "Server status:") || !strings.Contains(got, "initialized new local data") {
 		t.Fatalf("missing initialized data status in output: %q", got)
 	}
-	if !strings.Contains(got, "Bind address:        127.0.0.1:8060") {
+	if !strings.Contains(got, "Bind address:") || !strings.Contains(got, "127.0.0.1:8060") {
 		t.Fatalf("missing bind address in output: %q", got)
 	}
-	if !strings.Contains(got, "DB:                  "+dbPath) {
+	if !strings.Contains(got, "DB:") || !strings.Contains(got, dbPath) {
 		t.Fatalf("missing database path in output: %q", got)
 	}
 	if strings.Contains(got, "Data path:") {
 		t.Fatalf("data path should not be printed anymore: %q", got)
 	}
-	if !strings.Contains(got, "\n\ntlDiagram available at:") {
-		t.Fatalf("webapp line should be preceded by a blank line: %q", got)
+	if !strings.Contains(got, "tlDiagram available at:") {
+		t.Fatalf("webapp line should be present: %q", got)
 	}
-	if !strings.Contains(got, "tlDiagram available at: http://127.0.0.1:8060\n\nRun 'tld stop'") {
-		t.Fatalf("webapp line should be followed by a blank line before stop hint: %q", got)
+	if !strings.Contains(got, "http://127.0.0.1:8060") {
+		t.Fatalf("webapp url should be present: %q", got)
 	}
 }
 
@@ -61,13 +61,13 @@ func TestPrintServeInfoIncludesExistingDataCounts(t *testing.T) {
 	})
 
 	got := out.String()
-	if !strings.Contains(got, "Mode:                background") {
+	if !strings.Contains(got, "Mode:") || !strings.Contains(got, "background") {
 		t.Fatalf("missing background mode in output: %q", got)
 	}
-	if !strings.Contains(got, "Server status:       using existing local data") {
+	if !strings.Contains(got, "Server status:") || !strings.Contains(got, "using existing local data") {
 		t.Fatalf("missing existing data status in output: %q", got)
 	}
-	if !strings.Contains(got, "Resource counts:     2 views, 7 elements, 3 connectors") {
+	if !strings.Contains(got, "Resource counts:") || !strings.Contains(got, "2 views, 7 elements, 3 connectors") {
 		t.Fatalf("missing resource counts in output: %q", got)
 	}
 	if !strings.Contains(got, "DB:") {
@@ -89,7 +89,7 @@ func TestPrintServeInfoShowsDBPathWhileInitializing(t *testing.T) {
 		DBPath:          dbPath,
 	})
 
-	if !strings.Contains(out.String(), "DB:                  "+dbPath) {
+	if !strings.Contains(out.String(), "DB:") || !strings.Contains(out.String(), dbPath) {
 		t.Fatalf("expected db path even when initializing, got %q", out.String())
 	}
 	if strings.Contains(out.String(), "DB size:") {

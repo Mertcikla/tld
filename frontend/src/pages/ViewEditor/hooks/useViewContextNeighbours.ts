@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { type Edge as RFEdge, type Node as RFNode } from 'reactflow'
-import type { PlacedElement } from '../../../types'
+import type { Connector, PlacedElement } from '../../../types'
 import type { CrossBranchContextSettings, ProxyConnectorDetails, WorkspaceGraphSnapshot } from '../../../crossBranch/types'
 import { resolveViewProxyGraph } from '../../../crossBranch/resolve'
 
@@ -69,6 +69,61 @@ function isAncestorContextNode(
     (snapshot.descendantsByViewId[ownedViewId]?.includes(descendant.placementViewId) ?? false)
 }
 
+function canonicalElementPairKey(leftId: number, rightId: number) {
+  return leftId <= rightId ? `${leftId}::${rightId}` : `${rightId}::${leftId}`
+}
+
+function canonicalNodePairKey(leftId: string, rightId: string) {
+  return leftId <= rightId ? `${leftId}::${rightId}` : `${rightId}::${leftId}`
+}
+
+function buildDirectConnectorPairSet(connectors: Connector[], visibleElementIds: Set<number>) {
+  const pairs = new Set<string>()
+  for (const connector of connectors) {
+    if (!visibleElementIds.has(connector.source_element_id) || !visibleElementIds.has(connector.target_element_id)) continue
+    pairs.add(canonicalElementPairKey(connector.source_element_id, connector.target_element_id))
+  }
+  return pairs
+}
+
+function mergeHiddenProxyDetails(
+  existing: ProxyConnectorDetails | undefined,
+  next: ProxyConnectorDetails,
+): ProxyConnectorDetails {
+  if (!existing) {
+    return {
+      ...next,
+      ownerViewIds: [...next.ownerViewIds],
+      ownerViewNames: [...next.ownerViewNames],
+      connectors: [...next.connectors],
+    }
+  }
+
+  const ownerViews = new Map<number, string>()
+  existing.ownerViewIds.forEach((ownerViewId, index) => {
+    ownerViews.set(ownerViewId, existing.ownerViewNames[index] ?? `View ${ownerViewId}`)
+  })
+  next.ownerViewIds.forEach((ownerViewId, index) => {
+    ownerViews.set(ownerViewId, next.ownerViewNames[index] ?? `View ${ownerViewId}`)
+  })
+
+  const connectors = [...existing.connectors, ...next.connectors]
+  const count = connectors.length
+
+  return {
+    key: existing.key,
+    label: count === 1 ? connectors[0]?.connector.label?.trim() || connectors[0]?.connector.relationship?.trim() || 'Cross-branch' : `${count} connectors`,
+    count,
+    sourceAnchorId: existing.sourceAnchorId,
+    targetAnchorId: existing.targetAnchorId,
+    sourceAnchorName: existing.sourceAnchorName,
+    targetAnchorName: existing.targetAnchorName,
+    ownerViewIds: Array.from(ownerViews.keys()),
+    ownerViewNames: Array.from(ownerViews.values()),
+    connectors,
+  }
+}
+
 export function useViewContextNeighbours({
   snapshot,
   settings,
@@ -82,18 +137,38 @@ export function useViewContextNeighbours({
 }: Props) {
   return useMemo(() => {
     if (!snapshot || viewId == null || !settings.enabled) {
-      return { contextNodes: [] as RFNode[], contextConnectors: [] as RFEdge[], proxyConnectorDetailsByKey: {} as Record<string, ProxyConnectorDetails> }
+      return {
+        contextNodes: [] as RFNode[],
+        contextConnectors: [] as RFEdge[],
+        proxyConnectorDetailsByKey: {} as Record<string, ProxyConnectorDetails>,
+        hiddenProxyCountsByPair: {} as Record<string, number>,
+        hiddenProxyDetailsByPair: {} as Record<string, ProxyConnectorDetails>,
+      }
     }
 
     const { proxyNodes, proxyConnectors, proxyConnectorDetailsByKey } = resolveViewProxyGraph(snapshot, viewId, viewElements, settings)
     if (proxyNodes.length === 0 && proxyConnectors.length === 0) {
-      return { contextNodes: [] as RFNode[], contextConnectors: [] as RFEdge[], proxyConnectorDetailsByKey }
+      return {
+        contextNodes: [] as RFNode[],
+        contextConnectors: [] as RFEdge[],
+        proxyConnectorDetailsByKey,
+        hiddenProxyCountsByPair: {} as Record<string, number>,
+        hiddenProxyDetailsByPair: {} as Record<string, ProxyConnectorDetails>,
+      }
     }
 
     const mainNodes = rfNodes.filter((node) => node.type === 'elementNode')
     if (mainNodes.length === 0) {
-      return { contextNodes: [] as RFNode[], contextConnectors: [] as RFEdge[], proxyConnectorDetailsByKey }
+      return {
+        contextNodes: [] as RFNode[],
+        contextConnectors: [] as RFEdge[],
+        proxyConnectorDetailsByKey,
+        hiddenProxyCountsByPair: {} as Record<string, number>,
+        hiddenProxyDetailsByPair: {} as Record<string, ProxyConnectorDetails>,
+      }
     }
+    const visibleElementIds = new Set(viewElements.map((element) => element.element_id))
+    const directConnectorPairs = buildDirectConnectorPairSet(snapshot.connectorsByViewId[viewId] ?? [], visibleElementIds)
 
     let minX = Infinity
     let minY = Infinity
@@ -460,6 +535,8 @@ export function useViewContextNeighbours({
       })
 
     const seenCollapsedPairs = new Set<string>()
+    const hiddenProxyCountsByPair: Record<string, number> = {}
+    const hiddenProxyDetailsByPair: Record<string, ProxyConnectorDetails> = {}
     const contextConnectors: RFEdge[] = proxyConnectors.flatMap((connector) => {
       let sourceId = connector.sourceAnchorId
       let targetId = connector.targetAnchorId
@@ -472,7 +549,20 @@ export function useViewContextNeighbours({
 
       if (sourceId === targetId) return []
 
-      const pairKey = `${sourceId}::${targetId}`
+      const pairKey = canonicalNodePairKey(sourceId, targetId)
+      if (directConnectorPairs.has(pairKey)) {
+        hiddenProxyCountsByPair[pairKey] = (hiddenProxyCountsByPair[pairKey] ?? 0) + connector.details.count
+        hiddenProxyDetailsByPair[pairKey] = mergeHiddenProxyDetails(
+          hiddenProxyDetailsByPair[pairKey],
+          {
+            ...connector.details,
+            key: `hidden:${pairKey}`,
+            sourceAnchorId: sourceId,
+            targetAnchorId: targetId,
+          },
+        )
+        return []
+      }
       if (seenCollapsedPairs.has(pairKey)) return []
       seenCollapsedPairs.add(pairKey)
 
@@ -496,6 +586,12 @@ export function useViewContextNeighbours({
       }]
     })
 
-    return { contextNodes: [ContextBoundaryElement, ...contextNodes], contextConnectors, proxyConnectorDetailsByKey }
+    return {
+      contextNodes: [ContextBoundaryElement, ...contextNodes],
+      contextConnectors,
+      proxyConnectorDetailsByKey,
+      hiddenProxyCountsByPair,
+      hiddenProxyDetailsByPair,
+    }
   }, [snapshot, settings, viewId, viewElements, rfNodes, stableOnNavigateToView, onSelectProxyDetails, expandedAncestorGroups, onToggleAncestorGroup])
 }

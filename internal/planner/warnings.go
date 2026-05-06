@@ -172,18 +172,10 @@ func AnalyzePlan(ws *workspace.Workspace) []WarningGroup {
 }
 
 func newWarningContext(ws *workspace.Workspace) *warningContext {
-	level := workspace.DefaultValidationLevel
-	allowLowInsight := false
-	var includeRules []string
-	var excludeRules []string
-	if ws.Config.Validation != nil {
-		if ws.Config.Validation.Level > 0 {
-			level = ws.Config.Validation.Level
-		}
-		allowLowInsight = ws.Config.Validation.AllowLowInsight
-		includeRules = ws.Config.Validation.IncludeRules
-		excludeRules = ws.Config.Validation.ExcludeRules
-	}
+	level := ws.Config.Validation.Level
+	allowLowInsight := ws.Config.Validation.AllowLowInsight
+	includeRules := ws.Config.Validation.IncludeRules
+	excludeRules := ws.Config.Validation.ExcludeRules
 
 	return &warningContext{
 		ws:              ws,
