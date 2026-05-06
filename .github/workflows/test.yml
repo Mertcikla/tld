@@ -14,6 +14,8 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-latest
+    env:
+      TLD_FIXTURES_REPOSITORY: ${{ vars.TLD_FIXTURES_REPOSITORY }}
     strategy:
       fail-fast: false
       matrix:
@@ -56,6 +58,14 @@ jobs:
             --junitfile results.xml \
             --format testdox \
             ./...
+
+      - name: Clone golden fixture corpus
+        if: ${{ env.TLD_FIXTURES_REPOSITORY != '' }}
+        run: git clone --depth 1 "$TLD_FIXTURES_REPOSITORY" tld-fixtures
+
+      - name: Run fixture conformance
+        if: ${{ env.TLD_FIXTURES_REPOSITORY != '' }}
+        run: go run ./cmd/tld dev conformance --fixtures ./tld-fixtures --mode warn
 
       - name: Publish Test Results
         uses: dorny/test-reporter@v1

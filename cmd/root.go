@@ -10,6 +10,7 @@ import (
 	"github.com/mertcikla/tld/cmd/check"
 	configcmd "github.com/mertcikla/tld/cmd/config"
 	"github.com/mertcikla/tld/cmd/connect"
+	devcmd "github.com/mertcikla/tld/cmd/dev"
 	"github.com/mertcikla/tld/cmd/diff"
 	"github.com/mertcikla/tld/cmd/export"
 	"github.com/mertcikla/tld/cmd/initialize"
@@ -155,6 +156,9 @@ and apply them atomically with 'tld apply'.`,
 	watchCmd := watchcmd.NewWatchCmd()
 	watchCmd.GroupID = secondaryGroup.ID
 
+	devCmd := devcmd.NewDevCmd()
+	devCmd.GroupID = secondaryGroup.ID
+
 	serveCmd := serve.NewServeCmd(nil)
 	serveCmd.GroupID = secondaryGroup.ID
 
@@ -184,6 +188,7 @@ and apply them atomically with 'tld apply'.`,
 		checkCmd,
 		configCmd,
 		watchCmd,
+		devCmd,
 		serveCmd,
 		mcpCmd,
 		stopCmd,

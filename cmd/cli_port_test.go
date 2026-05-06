@@ -45,6 +45,25 @@ func TestAddCmd_HelpIncludesRefFlag(t *testing.T) {
 	}
 }
 
+func TestDevCmdOwnsGoldenFixtureCommands(t *testing.T) {
+	stdout, _, err := cmd.RunCmd(t, ".", "dev", "--help")
+	if err != nil {
+		t.Fatalf("dev --help: %v", err)
+	}
+	if !strings.Contains(stdout, "fixture") || !strings.Contains(stdout, "conformance") {
+		t.Fatalf("dev help missing fixture commands:\n%s", stdout)
+	}
+
+	root := cmd.NewRootCmd()
+	found, remaining, err := root.Find([]string{"watch", "fixture"})
+	if err != nil {
+		t.Fatalf("find watch fixture: %v", err)
+	}
+	if found.Name() != "watch" || len(remaining) != 1 || remaining[0] != "fixture" {
+		t.Fatalf("watch fixture should resolve as a watch path argument, got command=%s remaining=%v", found.CommandPath(), remaining)
+	}
+}
+
 func TestAddCmd_RefOverridesGeneratedSlug(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
