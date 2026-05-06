@@ -100,6 +100,40 @@ func TestDefaultEnrichersHaveUniqueIDs(t *testing.T) {
 	}
 }
 
+func TestDefaultEnrichersIncludeExpandedCatalog(t *testing.T) {
+	enrichers := DefaultEnrichers()
+	if len(enrichers) < 180 || len(enrichers) > 230 {
+		t.Fatalf("expected roughly 200 default enrichers, got %d", len(enrichers))
+	}
+	want := []string{
+		"ts.opentelemetry",
+		"go.jwt",
+		"ts.bullmq",
+		"apispec.openapi",
+		"deployment.github_actions",
+		"secrets.code.aws_secrets_manager",
+		"workspace.nx",
+		"python.openai",
+		"go.mqtt",
+		"go.unix_socket",
+		"python.airflow",
+		"ts.ethers",
+		"os.uri_schemes",
+	}
+	seen := map[string]struct{}{}
+	for _, enricher := range enrichers {
+		seen[enricher.Metadata().ID] = struct{}{}
+	}
+	for _, id := range want {
+		if _, ok := seen[id]; !ok {
+			t.Fatalf("default catalog missing enricher %s", id)
+		}
+	}
+	if _, ok := seen["generic.architecture_glue"]; ok {
+		t.Fatalf("generic architecture glue should not be registered alongside categorized enrichers")
+	}
+}
+
 func TestDefaultRegistryEmitsDemoFacts(t *testing.T) {
 	tests := []struct {
 		name     string
