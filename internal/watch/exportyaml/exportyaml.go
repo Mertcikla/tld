@@ -22,37 +22,49 @@ type Result struct {
 }
 
 func Export(ctx context.Context, sqliteStore *store.SQLiteStore, watchStore *watchpkg.Store, base *workspace.Workspace, repositoryID int64) (*workspace.Workspace, Result, error) {
+	return ExportWithProgress(ctx, sqliteStore, watchStore, base, repositoryID, nil)
+}
+
+func ExportWithProgress(ctx context.Context, sqliteStore *store.SQLiteStore, watchStore *watchpkg.Store, base *workspace.Workspace, repositoryID int64, progress watchpkg.ProgressSink) (*workspace.Workspace, Result, error) {
 	if sqliteStore == nil || watchStore == nil {
 		return nil, Result{}, fmt.Errorf("export yaml requires sqlite and watch stores")
 	}
 	if base == nil {
 		return nil, Result{}, fmt.Errorf("export yaml requires a workspace")
 	}
+	progressStart(progress, "Exporting workspace YAML", 8)
+	defer progressFinish(progress)
 	mappings, err := watchStore.Materialization(ctx, repositoryID)
 	if err != nil {
 		return nil, Result{}, err
 	}
+	progressAdvance(progress, "Materialization loaded")
 	index := buildMappingIndex(mappings)
 	api := store.NewAPIAdapter(sqliteStore)
 	views, err := api.ListViews(ctx, uuid.Nil)
 	if err != nil {
 		return nil, Result{}, err
 	}
+	progressAdvance(progress, "Views loaded")
 	elements, _, err := api.ListElements(ctx, uuid.Nil, 0, 0, "")
 	if err != nil {
 		return nil, Result{}, err
 	}
+	progressAdvance(progress, "Elements loaded")
 	placements, err := api.ListAllPlacements(ctx, uuid.Nil)
 	if err != nil {
 		return nil, Result{}, err
 	}
+	progressAdvance(progress, "Placements loaded")
 	connectors, err := api.ListAllConnectors(ctx, uuid.Nil)
 	if err != nil {
 		return nil, Result{}, err
 	}
+	progressAdvance(progress, "Connectors loaded")
 
 	out := cloneWorkspace(base)
 	removeGenerated(out, index)
+	progressAdvance(progress, "Previous generated YAML removed")
 
 	elementRefByID := existingRefsByID(metaElements(base))
 	viewRefByID := existingRefsByID(metaViews(base))
@@ -91,6 +103,7 @@ func Export(ctx context.Context, sqliteStore *store.SQLiteStore, watchStore *wat
 		}
 		out.Meta.Elements[ref] = &workspace.ResourceMetadata{ID: workspace.ResourceID(elem.Id), UpdatedAt: timestampTime(elem.GetUpdatedAt())}
 	}
+	progressAdvance(progress, "Elements merged")
 
 	viewByID := viewsByID(views)
 	for _, mapping := range sortedMappings(mappings, "view") {
@@ -161,8 +174,27 @@ func Export(ctx context.Context, sqliteStore *store.SQLiteStore, watchStore *wat
 		out.Connectors[ref] = spec
 		out.Meta.Connectors[ref] = &workspace.ResourceMetadata{ID: workspace.ResourceID(conn.Id), UpdatedAt: timestampTime(conn.GetUpdatedAt())}
 	}
+	progressAdvance(progress, "Connectors merged")
 
 	return out, Result{ElementsWritten: len(index.elementIDs), ConnectorsWritten: len(index.connectorIDs), ViewsWritten: len(index.viewIDs)}, nil
+}
+
+func progressStart(progress watchpkg.ProgressSink, label string, total int) {
+	if progress != nil {
+		progress.Start(label, total)
+	}
+}
+
+func progressAdvance(progress watchpkg.ProgressSink, label string) {
+	if progress != nil {
+		progress.Advance(label)
+	}
+}
+
+func progressFinish(progress watchpkg.ProgressSink) {
+	if progress != nil {
+		progress.Finish()
+	}
 }
 
 type mappingIndex struct {

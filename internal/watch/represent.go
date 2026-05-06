@@ -45,24 +45,33 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	req.Thresholds = defaultThresholds(req.Thresholds)
 	req.Visibility = defaultVisibilityConfig(req.Visibility)
 	settingsHash := settingsHash(req)
+	progressStart(req.Progress, "Preparing representation graph", 8)
 	rawGraphHash, err := r.Store.RawGraphHash(ctx, repositoryID)
 	if err != nil {
+		progressFinish(req.Progress)
 		return RepresentResult{}, err
 	}
+	progressAdvance(req.Progress, "Raw graph hashed")
 	repo, err := r.Store.Repository(ctx, repositoryID)
 	if err != nil {
+		progressFinish(req.Progress)
 		return RepresentResult{}, err
 	}
+	progressAdvance(req.Progress, "Repository loaded")
 
 	provider, err := NewEmbeddingProvider(req.Embedding)
 	if err != nil {
+		progressFinish(req.Progress)
 		return RepresentResult{}, err
 	}
+	progressAdvance(req.Progress, "Embedding provider configured")
 	model := provider.ModelID()
 	modelID, err := r.Store.EnsureEmbeddingModel(ctx, EmbeddingConfig{Provider: model.Provider, Model: model.Model, Dimension: model.Dimension}, model.ConfigHash)
 	if err != nil {
+		progressFinish(req.Progress)
 		return RepresentResult{}, err
 	}
+	progressAdvance(req.Progress, "Embedding model registered")
 	modelIDPtr := &modelID
 	if model.Provider == "none" {
 		modelIDPtr = nil
@@ -70,21 +79,30 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 
 	identityKeys, err := r.Store.SymbolIdentityKeys(ctx, repositoryID)
 	if err != nil {
+		progressFinish(req.Progress)
 		return RepresentResult{}, err
 	}
+	progressAdvance(req.Progress, "Symbol identities loaded")
 	contextPolicies, err := r.Store.ActiveContextPolicySet(ctx, repositoryID)
 	if err != nil {
+		progressFinish(req.Progress)
 		return RepresentResult{}, err
 	}
+	progressAdvance(req.Progress, "Context policies loaded")
 	changedRaw, err := r.Store.ChangedRawResourcesSinceLatest(ctx, repositoryID)
 	if err != nil {
+		progressFinish(req.Progress)
 		return RepresentResult{}, err
 	}
+	progressAdvance(req.Progress, "Changed resources loaded")
 	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, nil, changedRaw.Symbols, contextPolicies, identityKeys)
 	if err != nil {
+		progressFinish(req.Progress)
 		return RepresentResult{}, err
 	}
 	filtered.ChangedFiles = changedRaw.Files
+	progressAdvance(req.Progress, "Architecture view filtered")
+	progressFinish(req.Progress)
 
 	result := RepresentResult{}
 	if model.Provider != "none" {
@@ -96,11 +114,15 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		result.EmbeddingCacheHits = stats.CacheHits
 		result.EmbeddingsCreated = stats.Created
 		if len(embeddingSymbols) == len(filtered.VisibleSymbols) {
+			progressStart(req.Progress, "Refreshing semantic filter", 1)
 			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, vectors, changedRaw.Symbols, contextPolicies, identityKeys)
 			if err != nil {
+				progressFinish(req.Progress)
 				return RepresentResult{}, err
 			}
 			filtered.ChangedFiles = changedRaw.Files
+			progressAdvance(req.Progress, "Semantic filter refreshed")
+			progressFinish(req.Progress)
 		}
 	}
 
@@ -128,24 +150,32 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		_ = r.Store.FinishRepresentationRun(context.Background(), runID, status, result, runErr)
 	}()
 
+	progressStart(req.Progress, "Materializing representation", 3)
 	ownerMatcher, err := codeowners.Load(repo.RepoRoot)
 	if err != nil {
+		progressFinish(req.Progress)
 		runErr = err
 		return result, err
 	}
+	progressAdvance(req.Progress, "Ownership metadata loaded")
 	applyToken := randomToken()
 	if err := r.Store.AcquireApplyLock(ctx, repositoryID, os.Getpid(), applyToken, LockHeartbeatTimeout); err != nil {
+		progressFinish(req.Progress)
 		runErr = err
 		return result, err
 	}
+	progressAdvance(req.Progress, "Apply lock acquired")
 	defer func() {
 		_ = r.Store.ReleaseApplyLock(context.Background(), repositoryID, applyToken)
 	}()
 	stats, err := r.materialize(ctx, repo, filtered, req.Thresholds, settingsHash, identityKeys, ownerMatcher)
 	if err != nil {
+		progressFinish(req.Progress)
 		runErr = err
 		return result, err
 	}
+	progressAdvance(req.Progress, "Resources materialized")
+	progressFinish(req.Progress)
 	result.ElementsCreated = stats.ElementsCreated
 	result.ElementsUpdated = stats.ElementsUpdated
 	result.ConnectorsCreated = stats.ConnectorsCreated
@@ -155,6 +185,127 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	result.ConnectorsPreserved = stats.ConnectorsPreserved
 	result.ViewsPreserved = stats.ViewsPreserved
 	result.DeletesPreserved = stats.DeletesPreserved
+	return result, nil
+}
+
+func (r *Representer) RepresentArchitecture(ctx context.Context, repo Repository, architecture architectureModel, thresholds Thresholds, progress ProgressSink) (RepresentResult, error) {
+	if r == nil || r.Store == nil {
+		return RepresentResult{}, fmt.Errorf("watch representer requires a store")
+	}
+	thresholds = defaultThresholds(thresholds)
+	rawGraphHash := stableHash(architecture)
+	settingsHash := stableHash(thresholds)
+	representationHash := stableHash([]any{rawGraphHash, settingsHash, "architecture"})
+	result := RepresentResult{
+		RepositoryID:       repo.ID,
+		RawGraphHash:       rawGraphHash,
+		SettingsHash:       settingsHash,
+		RepresentationHash: representationHash,
+	}
+	runID, err := r.Store.BeginRepresentationRun(ctx, repo.ID, rawGraphHash, settingsHash, nil, representationHash)
+	if err != nil {
+		return RepresentResult{}, err
+	}
+	result.RepresentationRun = runID
+	status := "completed"
+	var runErr error
+	defer func() {
+		if runErr != nil {
+			status = "failed"
+		}
+		_ = r.Store.FinishRepresentationRun(context.Background(), runID, status, result, runErr)
+	}()
+
+	progressStart(progress, "Materializing architecture view", 7)
+	applyToken := randomToken()
+	if err := r.Store.AcquireApplyLock(ctx, repo.ID, os.Getpid(), applyToken, LockHeartbeatTimeout); err != nil {
+		progressFinish(progress)
+		runErr = err
+		return result, err
+	}
+	progressAdvance(progress, "Apply lock acquired")
+	defer func() {
+		_ = r.Store.ReleaseApplyLock(context.Background(), repo.ID, applyToken)
+	}()
+
+	initialLayout, err := r.Store.RepositoryMaterializationCount(ctx, repo.ID)
+	if err != nil {
+		progressFinish(progress)
+		runErr = err
+		return result, err
+	}
+	progressAdvance(progress, "Existing materialization inspected")
+	m := &materializer{
+		store:         r.Store,
+		repo:          repo,
+		thresholds:    thresholds,
+		settingsHash:  settingsHash,
+		identityKeys:  map[string]string{},
+		tagPlan:       semanticTagPlan{approved: map[string]struct{}{}, byOwner: map[string][]string{}},
+		initialLayout: initialLayout == 0,
+		runMarker:     time.Now().UTC().Format(time.RFC3339Nano),
+		newPlacements: map[int64]map[int64]struct{}{},
+	}
+	rootViewID, err := m.workspaceRootViewID(ctx)
+	if err != nil {
+		progressFinish(progress)
+		runErr = err
+		return result, err
+	}
+	progressAdvance(progress, "Workspace root loaded")
+	repoElem, err := m.upsertElement(ctx, "repository", fmt.Sprintf("repository:%d", repo.ID), elementInput{
+		Name:       repo.DisplayName,
+		Kind:       "repository",
+		Technology: "Runtime",
+		Repo:       repoIdentity(repo),
+		Branch:     nullStringValue(repo.Branch),
+		Tags:       []string{"view:architecture"},
+	})
+	if err != nil {
+		progressFinish(progress)
+		runErr = err
+		return result, err
+	}
+	if err := m.upsertPlacement(ctx, rootViewID, repoElem, 0, 0); err != nil {
+		progressFinish(progress)
+		runErr = err
+		return result, err
+	}
+	repoView, err := m.upsertView(ctx, "repository", fmt.Sprintf("repository:%d", repo.ID), repoElem, repo.DisplayName, "Architecture")
+	if err != nil {
+		progressFinish(progress)
+		runErr = err
+		return result, err
+	}
+	progressAdvance(progress, "Repository view materialized")
+	if err := m.materializeArchitecture(ctx, architecture, repoView); err != nil {
+		progressFinish(progress)
+		runErr = err
+		return result, err
+	}
+	progressAdvance(progress, "Architecture resources materialized")
+	if err := m.pruneStaleResources(ctx); err != nil {
+		progressFinish(progress)
+		runErr = err
+		return result, err
+	}
+	progressAdvance(progress, "Stale generated resources pruned")
+	if err := m.layoutPlacements(ctx); err != nil {
+		progressFinish(progress)
+		runErr = err
+		return result, err
+	}
+	progressAdvance(progress, "Layout updated")
+	progressFinish(progress)
+	result.ElementsCreated = m.stats.ElementsCreated
+	result.ElementsUpdated = m.stats.ElementsUpdated
+	result.ConnectorsCreated = m.stats.ConnectorsCreated
+	result.ConnectorsUpdated = m.stats.ConnectorsUpdated
+	result.ViewsCreated = m.stats.ViewsCreated
+	result.ElementsPreserved = m.stats.ElementsPreserved
+	result.ConnectorsPreserved = m.stats.ConnectorsPreserved
+	result.ViewsPreserved = m.stats.ViewsPreserved
+	result.DeletesPreserved = m.stats.DeletesPreserved
 	return result, nil
 }
 
@@ -819,6 +970,20 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		return m.stats, err
 	}
 
+	architecture := inferArchitecture(repo.RepoRoot)
+	if len(architecture.Components) > 0 {
+		if err := m.materializeArchitecture(ctx, architecture, repoView); err != nil {
+			return m.stats, err
+		}
+		if err := m.pruneStaleResources(ctx); err != nil {
+			return m.stats, err
+		}
+		if err := m.layoutPlacements(ctx); err != nil {
+			return m.stats, err
+		}
+		return m.stats, nil
+	}
+
 	visibleFiles := filesForSymbols(filtered.VisibleSymbols)
 	for file := range filtered.VisibleFiles {
 		visibleFiles[file] = struct{}{}
@@ -996,6 +1161,83 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		return m.stats, err
 	}
 	return m.stats, nil
+}
+
+func (m *materializer) materializeArchitecture(ctx context.Context, architecture architectureModel, repoView int64) error {
+	componentElements := map[string]int64{}
+	for i, component := range sortedArchitectureComponents(architecture.Components) {
+		tags := appendUnique(component.Tags, "view:architecture")
+		elem, err := m.upsertElement(ctx, "architecture-component", component.Key, elementInput{
+			Name:        component.Name,
+			Kind:        component.Kind,
+			Description: firstNonEmpty(component.Description, architectureEvidenceDescription(component.Evidence, 0)),
+			Technology:  firstNonEmpty(component.Technology, "Runtime"),
+			Repo:        repoIdentity(m.repo),
+			Branch:      nullStringValue(m.repo.Branch),
+			FilePath:    component.FilePath,
+			Tags:        tags,
+		})
+		if err != nil {
+			return err
+		}
+		x, y := gridPosition(i)
+		if err := m.upsertPlacement(ctx, repoView, elem, x, y); err != nil {
+			return err
+		}
+		componentElements[component.Key] = elem
+	}
+
+	for _, connector := range sortedArchitectureConnectors(architecture.Connectors) {
+		sourceID := componentElements[connector.SourceKey]
+		targetID := componentElements[connector.TargetKey]
+		if sourceID == 0 || targetID == 0 {
+			continue
+		}
+		if err := m.upsertConnectorDetailed(ctx, "architecture-connector", connector.Key, repoView, sourceID, targetID, connector.Label, connector.Relationship, architectureEvidenceDescription(connector.Evidence, connector.Confidence)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sortedArchitectureComponents(values map[string]*architectureComponent) []*architectureComponent {
+	out := make([]*architectureComponent, 0, len(values))
+	for _, value := range values {
+		out = append(out, value)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Kind == out[j].Kind {
+			return out[i].Name < out[j].Name
+		}
+		return architectureKindRank(out[i].Kind) < architectureKindRank(out[j].Kind)
+	})
+	return out
+}
+
+func sortedArchitectureConnectors(values map[string]*architectureConnector) []*architectureConnector {
+	out := make([]*architectureConnector, 0, len(values))
+	for _, value := range values {
+		out = append(out, value)
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
+
+func architectureKindRank(kind string) int {
+	switch kind {
+	case "external":
+		return 0
+	case "service":
+		return 1
+	case "interface":
+		return 2
+	case "datastore":
+		return 3
+	case "queue":
+		return 4
+	default:
+		return 5
+	}
 }
 
 type materializer struct {
@@ -1701,7 +1943,7 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 				if symID := subjectID; symID != 0 && symbolElements[symID] != 0 && symbolViews[symID] == viewID {
 					ownerKey := factOwnerKey(fact) + ":subject"
 					label := firstNonEmpty(fact.Relationship, "declares")
-					if err := m.upsertConnectorWithHandles(ctx, "fact-reference", ownerKey, viewID, symbolElements[symID], elem, label, placement.SourceHandle, placement.TargetHandle); err != nil {
+					if err := m.upsertConnectorDetailed(ctx, "fact-reference", ownerKey, viewID, symbolElements[symID], elem, label, label, ""); err != nil {
 						return err
 					}
 				}
@@ -1901,15 +2143,6 @@ func factNodeDescription(fact Fact) string {
 	return strings.Join(parts, " - ")
 }
 
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
-		}
-	}
-	return ""
-}
-
 func (m *materializer) materializeConnectors(ctx context.Context, refs []Reference, symbols map[int64]Symbol, folderElements map[string]int64, fileElements map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, repoView int64) error {
 	filePairs := map[string]filePairReference{}
 	symbolConnectorCount := map[int64]int{}
@@ -2050,12 +2283,15 @@ func connectorGroupFolder(filePath string) string {
 }
 
 func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label string) error {
-	return m.upsertConnectorWithHandles(ctx, ownerType, ownerKey, viewID, sourceElementID, targetElementID, label, "", "")
+	return m.upsertConnectorDetailed(ctx, ownerType, ownerKey, viewID, sourceElementID, targetElementID, label, label, "")
 }
 
-func (m *materializer) upsertConnectorWithHandles(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label, sourceHandle, targetHandle string) error {
+func (m *materializer) upsertConnectorDetailed(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label, relationship, description string) error {
 	if sourceElementID == 0 || targetElementID == 0 || sourceElementID == targetElementID {
 		return nil
+	}
+	if strings.TrimSpace(relationship) == "" {
+		relationship = label
 	}
 	if state, ok, err := m.store.MappingState(ctx, m.repo.ID, ownerType, ownerKey, "connector"); err != nil {
 		return err
@@ -2070,8 +2306,8 @@ func (m *materializer) upsertConnectorWithHandles(ctx context.Context, ownerType
 		}
 		_, err = m.store.db.ExecContext(ctx, `
 			UPDATE connectors
-			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, relationship = ?, direction = 'forward', style = 'solid', source_handle = ?, target_handle = ?, updated_at = ?
-			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, label, nullString(sourceHandle), nullString(targetHandle), nowString(), state.ResourceID)
+			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, description = ?, relationship = ?, direction = 'forward', style = 'solid', updated_at = ?
+			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, nowString(), state.ResourceID)
 		if err != nil {
 			return err
 		}
@@ -2083,8 +2319,8 @@ func (m *materializer) upsertConnectorWithHandles(ctx context.Context, ownerType
 	}
 	now := nowString()
 	res, err := m.store.db.ExecContext(ctx, `
-		INSERT INTO connectors(view_id, source_element_id, target_element_id, label, relationship, direction, style, source_handle, target_handle, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'forward', 'solid', ?, ?, ?, ?)`, viewID, sourceElementID, targetElementID, label, label, nullString(sourceHandle), nullString(targetHandle), now, now)
+		INSERT INTO connectors(view_id, source_element_id, target_element_id, label, description, relationship, direction, style, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'forward', 'solid', ?, ?)`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, now, now)
 	if err != nil {
 		return err
 	}
