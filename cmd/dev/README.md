@@ -70,10 +70,16 @@ If taxonomy flags are omitted, output falls back to:
 
 ## `tld dev conformance`
 
-Discovers `fixture.json` files recursively, runs each fixture `repo/` through the watch pipeline with embeddings disabled, compares the generated snapshot to `golden/snapshot.json`, and prints a categorized report.
+Discovers `fixture.json` files recursively, runs each fixture `repo/` through the watch pipeline with embeddings disabled, compares the generated snapshot to `golden/snapshot.json`, and opens the interactive fixture reviewer when stdout is a terminal.
 
 ```sh
 tld dev conformance --fixtures ../tld-fixtures --mode warn
+```
+
+For CI or report-only usage, pass `--report` or pipe stdout:
+
+```sh
+tld dev conformance --fixtures ../tld-fixtures --mode warn --report
 ```
 
 Modes:
@@ -90,6 +96,15 @@ The report is grouped by:
 - type
 
 Each group shows pass/drift/error counts plus fact and element deltas. Fixture details include missing/extra/changed facts, elements, decisions, views, and connectors.
+
+The reviewer autosaves these manifest fields as you move:
+
+- `review_status`: `pending`, `reviewed`, or `skipped`
+- `accuracy`: `accurate`, `partially_accurate`, `inaccurate`, or `unsure`
+- `review_comments`
+- `reviewed_at`
+
+Use `j`/`k` to move, `r` to mark reviewed, `s` to skip, `1`-`4` to set accuracy, `/` to filter, `tab` to edit comments, and `o` to open the selected fixture’s golden snapshot in the local read-only frontend reviewer.
 
 CI uses the warn-only flow by cloning the external corpus and running:
 

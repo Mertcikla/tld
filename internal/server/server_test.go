@@ -187,6 +187,57 @@ func TestServerRoutesThumbnailAndStaticFallback(t *testing.T) {
 	}
 }
 
+func TestDevFixtureHandlersServeSnapshotAndRejectTraversal(t *testing.T) {
+	root := t.TempDir()
+	fixtureDir := filepath.Join(root, "go", "http", "nethttp", "basic_route")
+	if err := os.MkdirAll(filepath.Join(fixtureDir, "golden"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(fixtureDir, "repo"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fixtureDir, "fixture.json"), []byte(`{"schema_version":1,"name":"basic_route","status":"approved","repo_path":"repo","snapshot_path":"golden/snapshot.json"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fixtureDir, "golden", "snapshot.json"), []byte(`{"name":"basic_route","elements":[{"name":"API"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fixtureDir, "repo", "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sqliteStore, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sqliteStore.Legacy().Close() })
+	srv, err := New(sqliteStore, fstest.MapFS{"frontend/dist/index.html": {Data: []byte("<html>app</html>")}}, uuid.New(), Options{DevFixturesDir: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := srv.Routes()
+
+	rec := httptest.NewRecorder()
+	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/dev/fixtures/snapshot?fixture=go/http/nethttp/basic_route", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("snapshot status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"basic_route"`) || !strings.Contains(rec.Body.String(), `"elements"`) {
+		t.Fatalf("unexpected snapshot body: %s", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/dev/fixtures/snapshot?fixture=../outside", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("traversal status = %d body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	routes.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/dev/fixtures/source?fixture=go/http/nethttp/basic_route&path=../fixture.json", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("source traversal status = %d body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func insertWatchRepository(t *testing.T, db interface {
 	Exec(string, ...any) (sql.Result, error)
 }) int64 {

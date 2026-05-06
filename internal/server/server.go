@@ -26,7 +26,15 @@ type Server struct {
 	handler http.Handler
 }
 
-func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID) (*Server, error) {
+type Options struct {
+	DevFixturesDir string
+}
+
+func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, options ...Options) (*Server, error) {
+	var opts Options
+	if len(options) > 0 {
+		opts = options[0]
+	}
 	apiStore := store.NewAPIAdapter(sqliteStore)
 	watchStore := watch.NewStore(sqliteStore.DB())
 	lockHooks := watchLockHooks{store: watchStore}
@@ -38,6 +46,7 @@ func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID) (*
 	mux := http.NewServeMux()
 	watch.NewHandler(watchStore).Register(mux)
 	registerEditorHandlers(mux, watchStore)
+	registerDevFixtureHandlers(mux, opts.DevFixturesDir)
 
 	mux.HandleFunc("GET /api/ready", func(w http.ResponseWriter, r *http.Request) {
 		views, elements, connectors, err := apiStore.GetWorkspaceResourceCounts(r.Context(), workspaceID)

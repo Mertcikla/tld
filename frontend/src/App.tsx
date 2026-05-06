@@ -9,6 +9,7 @@ import Dependencies from './pages/Dependencies'
 import { SharedInfiniteZoom } from './pages/InfiniteZoom'
 import Settings from './pages/Settings'
 import AppearanceSettings from './pages/AppearanceSettings'
+import FixtureReview from './pages/FixtureReview'
 import { HeaderProvider, useHeader } from './components/HeaderContext'
 import TopMenuBar from './components/TopMenuBar'
 import WorkspacePanel from './components/WorkspacePanel'
@@ -115,6 +116,7 @@ export default function App() {
           {platform.getRoutes({ user: null })}
 
           <Route path="/explore/shared/:token" element={<Box h="100dvh" overflow="hidden"><HeaderProvider><WorkspaceVersionProvider><SharedInfiniteZoom /></WorkspaceVersionProvider></HeaderProvider></Box>} />
+          <Route path="/dev/fixtures/review" element={<FixtureReview />} />
           <Route
             element={
               <HeaderProvider>

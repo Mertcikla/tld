@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,8 +20,12 @@ import (
 )
 
 type conformanceOptions struct {
-	FixturesDir string
-	Mode        string
+	FixturesDir    string
+	Mode           string
+	Report         bool
+	StartAt        string
+	FilterStatus   string
+	FilterAccuracy string
 }
 
 type conformanceFixture struct {
@@ -88,6 +93,10 @@ compares the generated snapshot to the approved golden snapshot, and prints a ca
 	}
 	c.Flags().StringVar(&opts.FixturesDir, "fixtures", "", "root directory of the external fixture corpus")
 	c.Flags().StringVar(&opts.Mode, "mode", opts.Mode, "conformance mode: warn, strict, or threshold")
+	c.Flags().BoolVar(&opts.Report, "report", false, "print the text conformance report instead of launching the reviewer TUI")
+	c.Flags().StringVar(&opts.StartAt, "start-at", "", "fixture relpath to focus first in the reviewer TUI")
+	c.Flags().StringVar(&opts.FilterStatus, "filter-status", "", "reviewer filter for review_status")
+	c.Flags().StringVar(&opts.FilterAccuracy, "filter-accuracy", "", "reviewer filter for accuracy")
 	_ = c.MarkFlagRequired("fixtures")
 	return c
 }
@@ -108,7 +117,20 @@ func runConformance(cmd *cobra.Command, opts conformanceOptions) error {
 	for _, fixture := range fixtures {
 		results = append(results, runConformanceFixture(cmd.Context(), fixture))
 	}
-	printConformanceReport(cmd.OutOrStdout(), results)
+	if opts.Report || !isTerminalWriter(cmd.OutOrStdout()) {
+		printConformanceReport(cmd.OutOrStdout(), results)
+	} else {
+		if err := runFixtureReviewTUI(cmd.Context(), cmd.OutOrStdout(), fixtureReviewOptions{
+			FixturesDir:     opts.FixturesDir,
+			Results:         results,
+			StartAt:         opts.StartAt,
+			FilterStatus:    opts.FilterStatus,
+			FilterAccuracy:  opts.FilterAccuracy,
+			AllowOpenViewer: true,
+		}); err != nil {
+			return err
+		}
+	}
 	if mode == "warn" {
 		return nil
 	}
@@ -118,6 +140,18 @@ func runConformance(cmd *cobra.Command, opts conformanceOptions) error {
 		}
 	}
 	return nil
+}
+
+func isTerminalWriter(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func discoverConformanceFixtures(root string) ([]conformanceFixture, error) {

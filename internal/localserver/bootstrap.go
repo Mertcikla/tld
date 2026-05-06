@@ -32,8 +32,9 @@ type ResourceCounts struct {
 // ServeOptions overrides the address that Bootstrap listens on.
 // An empty field means "use the lower-priority source".
 type ServeOptions struct {
-	Host string
-	Port string
+	Host           string
+	Port           string
+	DevFixturesDir string
 }
 
 func envOrDefault(key, fallback string) string {
@@ -86,7 +87,7 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 		return nil, err
 	}
 
-	srv, err := server.New(sqliteStore, staticFS, localWorkspaceID)
+	srv, err := server.New(sqliteStore, staticFS, localWorkspaceID, server.Options{DevFixturesDir: o.DevFixturesDir})
 	if err != nil {
 		return nil, err
 	}

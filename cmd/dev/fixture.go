@@ -43,21 +43,29 @@ type fixtureOptions struct {
 	Domain           string
 	Framework        string
 	Type             string
+	ReviewStatus     string
+	Accuracy         string
+	ReviewComments   []string
+	ReviewedAt       *time.Time
 }
 
 type fixtureManifest struct {
-	SchemaVersion int       `json:"schema_version"`
-	Name          string    `json:"name"`
-	Status        string    `json:"status"`
-	Language      string    `json:"language,omitempty"`
-	Domain        string    `json:"domain,omitempty"`
-	Framework     string    `json:"framework,omitempty"`
-	Type          string    `json:"type,omitempty"`
-	Notes         []string  `json:"notes,omitempty"`
-	SourcePath    string    `json:"source_path,omitempty"`
-	RepoPath      string    `json:"repo_path,omitempty"`
-	SnapshotPath  string    `json:"snapshot_path"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	SchemaVersion  int        `json:"schema_version"`
+	Name           string     `json:"name"`
+	Status         string     `json:"status"`
+	Language       string     `json:"language,omitempty"`
+	Domain         string     `json:"domain,omitempty"`
+	Framework      string     `json:"framework,omitempty"`
+	Type           string     `json:"type,omitempty"`
+	Notes          []string   `json:"notes,omitempty"`
+	ReviewStatus   string     `json:"review_status,omitempty"`
+	Accuracy       string     `json:"accuracy,omitempty"`
+	ReviewComments []string   `json:"review_comments,omitempty"`
+	ReviewedAt     *time.Time `json:"reviewed_at,omitempty"`
+	SourcePath     string     `json:"source_path,omitempty"`
+	RepoPath       string     `json:"repo_path,omitempty"`
+	SnapshotPath   string     `json:"snapshot_path"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type fixtureSnapshot struct {
@@ -220,7 +228,10 @@ func runFixtureBuilder(cmd *cobra.Command, repoPath string, opts fixtureOptions)
 	} else if opts.Reject {
 		status = "rejected"
 	} else {
-		status, opts.Notes, err = promptFixtureReview(cmd.InOrStdin(), cmd.OutOrStdout(), opts.Notes)
+		status, opts, err = runFixtureCandidateReviewTUI(cmd.Context(), cmd.OutOrStdout(), snapshot, opts)
+		if err != nil && errors.Is(err, errFixtureReviewUnavailable) {
+			status, opts.Notes, err = promptFixtureReview(cmd.InOrStdin(), cmd.OutOrStdout(), opts.Notes)
+		}
 		if err != nil {
 			return err
 		}
@@ -701,18 +712,22 @@ func writeFixtureFiles(sourceRepo, name string, opts fixtureOptions, status stri
 		return err
 	}
 	manifest := fixtureManifest{
-		SchemaVersion: fixtureSchemaVersion,
-		Name:          name,
-		Status:        status,
-		Language:      taxonomyValue(opts.Language),
-		Domain:        taxonomyValue(opts.Domain),
-		Framework:     taxonomyValue(opts.Framework),
-		Type:          taxonomyValue(opts.Type),
-		Notes:         fixtureManifestNotes(filepath.Join(fixtureDir, "fixture.json"), opts.Notes),
-		SourcePath:    sourceRepo,
-		RepoPath:      "repo",
-		SnapshotPath:  filepath.ToSlash(filepath.Join("golden", "snapshot.json")),
-		UpdatedAt:     time.Now().UTC(),
+		SchemaVersion:  fixtureSchemaVersion,
+		Name:           name,
+		Status:         status,
+		Language:       taxonomyValue(opts.Language),
+		Domain:         taxonomyValue(opts.Domain),
+		Framework:      taxonomyValue(opts.Framework),
+		Type:           taxonomyValue(opts.Type),
+		Notes:          fixtureManifestNotes(filepath.Join(fixtureDir, "fixture.json"), opts.Notes),
+		ReviewStatus:   opts.ReviewStatus,
+		Accuracy:       opts.Accuracy,
+		ReviewComments: sortedReviewComments(opts.ReviewComments),
+		ReviewedAt:     opts.ReviewedAt,
+		SourcePath:     sourceRepo,
+		RepoPath:       "repo",
+		SnapshotPath:   filepath.ToSlash(filepath.Join("golden", "snapshot.json")),
+		UpdatedAt:      time.Now().UTC(),
 	}
 	if opts.NoCopy {
 		manifest.RepoPath = ""

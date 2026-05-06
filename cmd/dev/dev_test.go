@@ -2,12 +2,14 @@ package dev
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFixtureCommandApprovesSnapshotAndNotes(t *testing.T) {
@@ -214,6 +216,73 @@ func Main() {}
 		if !strings.Contains(text, expected) {
 			t.Fatalf("conformance output missing %q:\n%s", expected, text)
 		}
+	}
+}
+
+func TestFixtureReviewManifestRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := filepath.Join(dir, "fixture.json")
+	if err := writePrettyJSON(manifestPath, fixtureManifest{
+		SchemaVersion: fixtureSchemaVersion,
+		Name:          "basic_route",
+		Status:        "approved",
+		Language:      "go",
+		Domain:        "http",
+		Framework:     "nethttp",
+		Type:          "basic_route",
+		Notes:         []string{"original note"},
+		RepoPath:      "repo",
+		SnapshotPath:  "golden/snapshot.json",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reviewedAt := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
+	item := fixtureReviewItem{
+		Path: manifestPath,
+		Manifest: fixtureManifest{
+			ReviewStatus:   "reviewed",
+			Accuracy:       "accurate",
+			ReviewComments: []string{"route is represented correctly"},
+			ReviewedAt:     &reviewedAt,
+		},
+	}
+	if err := writeFixtureReviewManifest(item); err != nil {
+		t.Fatal(err)
+	}
+	var manifest fixtureManifest
+	if err := readJSONFile(manifestPath, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Status != "approved" || manifest.Language != "go" || len(manifest.Notes) != 1 {
+		t.Fatalf("lost existing manifest fields: %+v", manifest)
+	}
+	if manifest.ReviewStatus != "reviewed" || manifest.Accuracy != "accurate" || len(manifest.ReviewComments) != 1 || manifest.ReviewedAt == nil || !manifest.ReviewedAt.Equal(reviewedAt) {
+		t.Fatalf("review fields not persisted: %+v", manifest)
+	}
+}
+
+func TestFixtureReviewResumeAndProgress(t *testing.T) {
+	items := []fixtureReviewItem{
+		{RelPath: "go/http/a", Manifest: fixtureManifest{ReviewStatus: "reviewed"}, Result: conformanceResult{Status: "pass"}},
+		{RelPath: "go/http/b", Manifest: fixtureManifest{}, Result: conformanceResult{Status: "drift"}},
+		{RelPath: "go/http/c", Manifest: fixtureManifest{ReviewStatus: "skipped"}, Result: conformanceResult{Status: "error"}},
+	}
+	model := newFixtureReviewModel(context.Background(), "", items, "", "", "")
+	if model.selected != 1 {
+		t.Fatalf("selected = %d, want first pending fixture", model.selected)
+	}
+	total, done, skipped := model.reviewTotals()
+	if total != 3 || done != 1 || skipped != 1 {
+		t.Fatalf("totals = %d/%d/%d, want 3/1/1", total, done, skipped)
+	}
+	model = newFixtureReviewModel(context.Background(), "", items, "go/http/c", "", "")
+	if model.selected != 2 {
+		t.Fatalf("selected with start-at = %d, want 2", model.selected)
+	}
+	model = newFixtureReviewModel(context.Background(), "", items, "", "skipped", "")
+	visible := model.visibleIndexes()
+	if len(visible) != 1 || visible[0] != 2 {
+		t.Fatalf("filtered indexes = %+v, want only skipped fixture", visible)
 	}
 }
 
