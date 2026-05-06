@@ -20,10 +20,11 @@ import (
 	tldgit "github.com/mertcikla/tld/internal/git"
 	"github.com/mertcikla/tld/internal/ignore"
 	"github.com/mertcikla/tld/internal/watch/enrich"
+	"github.com/mertcikla/tld/internal/watch/enrich/defaults"
 )
 
 const (
-	enrichmentVersion         = "watch-enrich-v1"
+	enrichmentVersion         = "watch-enrich-v2"
 	enrichmentVersionEnricher = "watch.enrichment"
 	enrichmentVersionType     = "watch.enrichment.version"
 )
@@ -74,7 +75,7 @@ func NewScanner(store *Store) *Scanner {
 	return &Scanner{
 		Store:     store,
 		Analyzer:  analyzer.NewService(),
-		Enrichers: enrich.NewDefaultRegistry(),
+		Enrichers: defaults.NewRegistry(),
 		Rules:     &ignore.Rules{},
 	}
 }
@@ -95,7 +96,7 @@ func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, rel
 		s.Analyzer = analyzer.NewService()
 	}
 	if s.Enrichers == nil {
-		s.Enrichers = enrich.NewDefaultRegistry()
+		s.Enrichers = defaults.NewRegistry()
 	}
 	repoRoot := filepath.Clean(repo.RepoRoot)
 	gitignoreRules, err := ignore.LoadGitIgnore(repoRoot)
@@ -208,7 +209,7 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 		s.Analyzer = analyzer.NewService()
 	}
 	if s.Enrichers == nil {
-		s.Enrichers = enrich.NewDefaultRegistry()
+		s.Enrichers = defaults.NewRegistry()
 	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -504,7 +505,7 @@ func (s *Scanner) backfillFactsForCachedFile(ctx context.Context, workerAnalyzer
 
 func (s *Scanner) enrichFile(ctx context.Context, repositoryID, fileID int64, repoRoot, rel, absFile, language string, data []byte, extracted *analyzer.Result, repoSignals []enrich.ActivationSignal, result *scanFileResult) error {
 	if s.Enrichers == nil {
-		s.Enrichers = enrich.NewDefaultRegistry()
+		s.Enrichers = defaults.NewRegistry()
 	}
 	signals := append([]enrich.ActivationSignal{}, repoSignals...)
 	if extracted != nil {
@@ -541,8 +542,27 @@ func watchedFileLanguage(path string) (language string, parseable bool, ok bool)
 		return "go-mod", false, true
 	case "package.json", "package-lock.json":
 		return "json", false, true
+	case "requirements.txt", "requirements.in":
+		return "python-requirements", false, true
+	case "build.gradle", "settings.gradle":
+		return "gradle", false, true
+	case "cartservice.csproj":
+		return "xml", false, true
 	default:
-		return "", false, false
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".cs":
+			return "c-sharp", false, true
+		case ".yaml", ".yml":
+			return "yaml", false, true
+		case ".proto":
+			return "protobuf", false, true
+		case ".tf":
+			return "terraform", false, true
+		case ".csproj":
+			return "xml", false, true
+		default:
+			return "", false, false
+		}
 	}
 }
 

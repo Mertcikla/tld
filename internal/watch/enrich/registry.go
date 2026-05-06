@@ -19,19 +19,6 @@ func NewRegistry(enrichers ...Enricher) *Registry {
 	return r
 }
 
-func NewDefaultRegistry() *Registry {
-	return NewRegistry(
-		DependencyInventory(),
-		GoNetHTTP(),
-		GoChi(),
-		GoGin(),
-		TSExpress(),
-		TSNextJS(),
-		TSReactRouter(),
-		TSPrisma(),
-	)
-}
-
 func (r *Registry) Register(enricher Enricher) {
 	if r == nil || enricher == nil {
 		return

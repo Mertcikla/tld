@@ -970,7 +970,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		return m.stats, err
 	}
 
-	architecture := inferArchitecture(repo.RepoRoot)
+	architecture := mergeArchitectureModels(inferArchitecture(repo.RepoRoot), architectureFromFacts(facts))
 	if len(architecture.Components) > 0 {
 		if err := m.materializeArchitecture(ctx, architecture, repoView); err != nil {
 			return m.stats, err
@@ -2293,6 +2293,11 @@ func (m *materializer) upsertConnectorDetailed(ctx context.Context, ownerType, o
 	if strings.TrimSpace(relationship) == "" {
 		relationship = label
 	}
+	sourceHandle, targetHandle := "", ""
+	if ownerType == "fact-reference" {
+		sourceHandle = "right"
+		targetHandle = "left"
+	}
 	if state, ok, err := m.store.MappingState(ctx, m.repo.ID, ownerType, ownerKey, "connector"); err != nil {
 		return err
 	} else if ok && connectorExists(ctx, m.store.db, state.ResourceID) {
@@ -2306,8 +2311,8 @@ func (m *materializer) upsertConnectorDetailed(ctx context.Context, ownerType, o
 		}
 		_, err = m.store.db.ExecContext(ctx, `
 			UPDATE connectors
-			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, description = ?, relationship = ?, direction = 'forward', style = 'solid', updated_at = ?
-			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, nowString(), state.ResourceID)
+			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, description = ?, relationship = ?, direction = 'forward', style = 'solid', source_handle = ?, target_handle = ?, updated_at = ?
+			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, nullString(sourceHandle), nullString(targetHandle), nowString(), state.ResourceID)
 		if err != nil {
 			return err
 		}
@@ -2319,8 +2324,8 @@ func (m *materializer) upsertConnectorDetailed(ctx context.Context, ownerType, o
 	}
 	now := nowString()
 	res, err := m.store.db.ExecContext(ctx, `
-		INSERT INTO connectors(view_id, source_element_id, target_element_id, label, description, relationship, direction, style, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'forward', 'solid', ?, ?)`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, now, now)
+		INSERT INTO connectors(view_id, source_element_id, target_element_id, label, description, relationship, direction, style, source_handle, target_handle, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'forward', 'solid', ?, ?, ?, ?)`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, nullString(sourceHandle), nullString(targetHandle), now, now)
 	if err != nil {
 		return err
 	}

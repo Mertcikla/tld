@@ -19,6 +19,7 @@ import (
 	"github.com/mertcikla/tld/internal/analyzer"
 	tldgit "github.com/mertcikla/tld/internal/git"
 	"github.com/mertcikla/tld/internal/watch/enrich"
+	"github.com/mertcikla/tld/internal/watch/enrich/defaults"
 	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
 )
@@ -1193,7 +1194,7 @@ func GetUser() {}
 		t.Fatal(err)
 	}
 
-	scanner.Enrichers = enrich.NewDefaultRegistry()
+	scanner.Enrichers = defaults.NewRegistry()
 	second, err := scanner.Scan(context.Background(), repo)
 	if err != nil {
 		t.Fatal(err)
@@ -4120,6 +4121,41 @@ spec:
 	}
 	if len(progress.starts) == 0 || progress.advances == 0 {
 		t.Fatalf("expected architecture progress, starts=%v advances=%d", progress.starts, progress.advances)
+	}
+}
+
+func TestArchitectureFromFactsPromotesRuntimeAndGRPCGlue(t *testing.T) {
+	facts := []Fact{
+		{
+			FilePath:       "src/frontend/rpc.go",
+			Type:           "grpc.client",
+			Name:           "cartservice",
+			Relationship:   "calls",
+			Confidence:     0.9,
+			AttributesJSON: `{"service":"cartservice"}`,
+		},
+		{
+			FilePath:       "src/cartservice/src/Startup.cs",
+			Type:           "datastore.dependency",
+			Name:           "redis-cart",
+			Relationship:   "uses",
+			Confidence:     0.8,
+			AttributesJSON: `{"name":"redis-cart","technology":"Redis"}`,
+		},
+	}
+
+	model := architectureFromFacts(facts)
+	if model.Components[architectureKey("component", "frontend")] == nil {
+		t.Fatalf("expected frontend component, got %#v", model.Components)
+	}
+	if model.Components[architectureKey("component", "cartservice")] == nil {
+		t.Fatalf("expected cartservice component, got %#v", model.Components)
+	}
+	if model.Components[architectureKey("component", "redis-cart")] == nil {
+		t.Fatalf("expected redis-cart component, got %#v", model.Components)
+	}
+	if len(model.Connectors) < 2 {
+		t.Fatalf("expected grpc and datastore connectors, got %#v", model.Connectors)
 	}
 }
 
