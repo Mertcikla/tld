@@ -98,6 +98,43 @@ CREATE INDEX IF NOT EXISTS idx_watch_references_source_symbol_id
 CREATE INDEX IF NOT EXISTS idx_watch_references_target_symbol_id
   ON watch_references(target_symbol_id);
 
+CREATE TABLE IF NOT EXISTS watch_facts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repository_id INTEGER NOT NULL,
+  file_id INTEGER NOT NULL,
+  stable_key TEXT NOT NULL,
+  type TEXT NOT NULL,
+  enricher TEXT NOT NULL,
+  subject_kind TEXT NOT NULL,
+  subject_stable_key TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  start_line INTEGER NOT NULL DEFAULT 0,
+  end_line INTEGER NULL,
+  confidence REAL NOT NULL DEFAULT 1.0,
+  name TEXT NOT NULL DEFAULT '',
+  tags TEXT NOT NULL DEFAULT '[]',
+  attributes_json TEXT NOT NULL DEFAULT '{}',
+  fact_hash TEXT NOT NULL,
+  raw_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(repository_id, enricher, stable_key),
+  FOREIGN KEY (repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE,
+  FOREIGN KEY (file_id) REFERENCES watch_files(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_watch_facts_repository_id
+  ON watch_facts(repository_id);
+
+CREATE INDEX IF NOT EXISTS idx_watch_facts_file_id
+  ON watch_facts(file_id);
+
+CREATE INDEX IF NOT EXISTS idx_watch_facts_subject
+  ON watch_facts(repository_id, subject_kind, subject_stable_key);
+
+CREATE INDEX IF NOT EXISTS idx_watch_facts_type
+  ON watch_facts(repository_id, type);
+
 CREATE TABLE IF NOT EXISTS watch_scan_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   repository_id INTEGER NOT NULL,

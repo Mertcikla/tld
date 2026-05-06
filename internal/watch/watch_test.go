@@ -18,6 +18,7 @@ import (
 
 	"github.com/mertcikla/tld/internal/analyzer"
 	tldgit "github.com/mertcikla/tld/internal/git"
+	"github.com/mertcikla/tld/internal/watch/enrich"
 	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
 )
@@ -26,17 +27,84 @@ func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
 
-	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_context_policies", "watch_representation_runs", "watch_locks", "watch_apply_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
+	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_facts", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_context_policies", "watch_representation_runs", "watch_locks", "watch_apply_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
 			t.Fatalf("missing table %s: %v", table, err)
 		}
 	}
-	for _, index := range []string{"idx_watch_repositories_remote_url", "idx_watch_repositories_repo_root"} {
+	for _, index := range []string{"idx_watch_repositories_remote_url", "idx_watch_repositories_repo_root", "idx_watch_facts_subject"} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, index).Scan(&name); err != nil {
 			t.Fatalf("missing index %s: %v", index, err)
 		}
+	}
+}
+
+func TestReplaceFactsForFileIsIdempotentAndAffectsRawGraphHash(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	store := NewStore(db)
+	repo, err := store.EnsureRepository(context.Background(), RepositoryInput{RepoRoot: t.TempDir(), DisplayName: "repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, _, err := store.UpsertFile(context.Background(), repo.ID, "main.go", "go", "", "hash", 10, 1, "parsed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := Fact{
+		StableKey:        "http.route:main",
+		Type:             "http.route",
+		Enricher:         "go.nethttp",
+		SubjectKind:      "file",
+		SubjectStableKey: "file:main.go",
+		FilePath:         "main.go",
+		StartLine:        3,
+		Confidence:       1,
+		Name:             "GET /users",
+		Tags:             []string{"http:route", "framework:nethttp"},
+		AttributesJSON:   `{"path":"/users"}`,
+		FactHash:         "fact-hash-1",
+		RawJSON:          `{}`,
+	}
+	if err := store.ReplaceFactsForFile(context.Background(), repo.ID, file.ID, []Fact{first}); err != nil {
+		t.Fatal(err)
+	}
+	hash1, err := store.RawGraphHash(context.Background(), repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceFactsForFile(context.Background(), repo.ID, file.ID, []Fact{first}); err != nil {
+		t.Fatal(err)
+	}
+	hash2, err := store.RawGraphHash(context.Background(), repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash1 != hash2 {
+		t.Fatalf("idempotent fact replacement changed raw graph hash: %s != %s", hash1, hash2)
+	}
+	second := first
+	second.StableKey = "http.route:admin"
+	second.Name = "GET /admin"
+	second.FactHash = "fact-hash-2"
+	if err := store.ReplaceFactsForFile(context.Background(), repo.ID, file.ID, []Fact{second}); err != nil {
+		t.Fatal(err)
+	}
+	facts, err := store.FactsForRepository(context.Background(), repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 1 || facts[0].StableKey != second.StableKey {
+		t.Fatalf("expected stale fact replacement, got %+v", facts)
+	}
+	hash3, err := store.RawGraphHash(context.Background(), repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash3 == hash1 {
+		t.Fatalf("raw graph hash did not change after fact change: %s", hash3)
 	}
 }
 
@@ -120,6 +188,80 @@ func Main() {}
 	}
 	if result.Scan.FilesParsed == 0 || result.Representation.ElementsCreated == 0 {
 		t.Fatalf("expected parsed files and materialized elements: scan=%+v representation=%+v", result.Scan, result.Representation)
+	}
+}
+
+func TestScanAndRepresentSurfaceEnricherFactsAsTags(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "go.mod", `module example.com/enriched
+
+go 1.23
+
+require github.com/go-chi/chi/v5 v5.0.12
+`)
+	writeFile(t, repo, "main.go", `package main
+
+import "github.com/go-chi/chi/v5"
+
+func Routes(r chi.Router) {
+	r.Get("/users/{id}", GetUser)
+}
+
+func GetUser() {}
+`)
+	writeFile(t, repo, "package.json", `{
+  "dependencies": {
+    "next": "14.0.0",
+    "@prisma/client": "5.0.0"
+  }
+}`)
+	writeFile(t, repo, "src/app/users/[id]/page.tsx", `export default function Page() {
+  return null
+}`)
+	writeFile(t, repo, "db.ts", `import { PrismaClient } from "@prisma/client"
+
+const prisma = new PrismaClient()
+
+export async function Users() {
+  return prisma.user.findMany()
+}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := store.FactsForRepository(context.Background(), scanResult.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		factType string
+		tag      string
+	}{
+		{"dependency.module", "dependency:module"},
+		{"dependency.import", "dependency:import"},
+		{"http.route", "framework:chi"},
+		{"frontend.route", "framework:nextjs"},
+		{"orm.query", "orm:prisma"},
+	} {
+		if !factsContain(facts, want.factType, want.tag) {
+			t.Fatalf("missing fact %s/%s in %+v", want.factType, want.tag, facts)
+		}
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tag := range []string{"http:route", "framework:chi", "frontend:route", "framework:nextjs", "orm:prisma"} {
+		if count := countElementTag(t, db, tag); count == 0 {
+			t.Fatalf("expected representation to surface tag %q", tag)
+		}
+	}
+	if routes := elementKindCount(t, db, "route"); routes != 0 {
+		t.Fatalf("v1 should not materialize route nodes, found %d", routes)
 	}
 }
 
@@ -833,6 +975,98 @@ func TestScanRespectsGitIgnore(t *testing.T) {
 	}
 	if len(symbols) != 1 || symbols[0].Name != "Main" {
 		t.Fatalf("expected only Main symbol, got %+v", symbols)
+	}
+}
+
+func TestScanBackfillsFactsForCachedFiles(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "go.mod", `module example.com/enriched
+
+go 1.23
+
+require github.com/go-chi/chi/v5 v5.0.12
+`)
+	writeFile(t, repo, "main.go", `package main
+
+import "github.com/go-chi/chi/v5"
+
+func Routes(r chi.Router) {
+	r.Get("/users/{id}", GetUser)
+}
+
+func GetUser() {}
+`)
+
+	store := NewStore(db)
+	scanner := NewScanner(store)
+	scanner.Enrichers = enrich.NewRegistry()
+	first, err := scanner.Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.FilesSeen != 2 || first.FilesParsed != 1 {
+		t.Fatalf("expected initial scan to see go.mod and parse main.go, got %+v", first)
+	}
+	if _, err := db.Exec(`DELETE FROM watch_facts WHERE repository_id = ?`, first.RepositoryID); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner.Enrichers = enrich.NewDefaultRegistry()
+	second, err := scanner.Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.FilesSkipped != 2 || second.FilesParsed != 0 {
+		t.Fatalf("expected warm scan to skip while backfilling facts, got %+v", second)
+	}
+	facts, err := store.FactsForRepository(context.Background(), first.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !factsContain(facts, "http.route", "framework:chi") {
+		t.Fatalf("expected cached-file backfill to persist chi route fact, got %+v", facts)
+	}
+	version, err := store.FactVersionForFile(context.Background(), first.RepositoryID, facts[0].FileID, enrichmentVersionEnricher, enrichmentVersionStableKey(facts[0].FilePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version == "" {
+		t.Fatalf("expected cached-file backfill to persist enrichment version sentinel, got %+v", facts)
+	}
+}
+
+func TestScanIgnoresPackageJSONSignalsFromIgnoredPaths(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, ".gitignore", "ignored/\n")
+	writeFile(t, repo, "ignored/package.json", `{
+  "dependencies": {
+    "express": "4.18.0"
+  }
+}`)
+	writeFile(t, repo, "src/server.ts", `router.get("/api/users", listUsers)
+
+function listUsers() {
+  return []
+}
+`)
+
+	store := NewStore(db)
+	scanner := NewScanner(store)
+	scanner.Settings = Settings{Languages: []string{"typescript"}}
+	result, err := scanner.Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := store.FactsForRepository(context.Background(), result.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if factsContain(facts, "http.route", "framework:express") {
+		t.Fatalf("ignored package.json activated express enricher: %+v", facts)
 	}
 }
 
@@ -3546,6 +3780,15 @@ func elementTagsByName(t *testing.T, db *sql.DB, name string) []string {
 		t.Fatal(err)
 	}
 	return tags
+}
+
+func factsContain(facts []Fact, factType, tag string) bool {
+	for _, fact := range facts {
+		if fact.Type == factType && stringSliceContains(fact.Tags, tag) {
+			return true
+		}
+	}
+	return false
 }
 
 func stringSliceContains(values []string, needle string) bool {

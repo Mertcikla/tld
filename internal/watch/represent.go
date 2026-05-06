@@ -414,7 +414,7 @@ type semanticTagDefinitionInfo struct {
 	Description string
 }
 
-func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string, ownerMatcher *codeowners.Matcher) semanticTagPlan {
+func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string, ownerMatcher *codeowners.Matcher, facts []Fact) semanticTagPlan {
 	candidates := map[string][]string{}
 	add := func(ownerType, ownerKey string, tags ...string) {
 		key := semanticTagOwnerKey(ownerType, ownerKey)
@@ -455,12 +455,14 @@ func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thr
 		add("symbol", symbolOwnerKey(sym, identityKeys), tags...)
 	}
 
+	addFactSemanticTags(facts, filtered.VisibleSymbols, identityKeys, add)
+
 	counts := map[string]int{}
 	forced := map[string]struct{}{}
 	for _, tags := range candidates {
 		for _, tag := range tags {
 			counts[tag]++
-			if strings.HasPrefix(tag, "owner:") {
+			if strings.HasPrefix(tag, "owner:") || forceFactSemanticTag(tag) {
 				forced[tag] = struct{}{}
 			}
 		}
@@ -503,6 +505,59 @@ func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thr
 		byOwner[key] = limitSemanticTags(kept)
 	}
 	return semanticTagPlan{approved: approved, byOwner: byOwner}
+}
+
+func addFactSemanticTags(facts []Fact, symbols map[int64]Symbol, identityKeys map[string]string, add func(ownerType, ownerKey string, tags ...string)) {
+	symbolOwners := map[string]string{}
+	for _, sym := range symbols {
+		symbolOwners[sym.StableKey] = symbolOwnerKey(sym, identityKeys)
+	}
+	for _, fact := range facts {
+		tags := factSemanticTags(fact)
+		if len(tags) == 0 {
+			continue
+		}
+		if fact.SubjectKind == "symbol" {
+			if owner, ok := symbolOwners[fact.SubjectStableKey]; ok {
+				add("symbol", owner, tags...)
+				continue
+			}
+		}
+		if strings.TrimSpace(fact.FilePath) != "" {
+			add("file", "file:"+fact.FilePath, tags...)
+		}
+	}
+}
+
+func factSemanticTags(fact Fact) []string {
+	tags := append([]string{}, fact.Tags...)
+	switch fact.Type {
+	case "http.route":
+		tags = append(tags, "http:route")
+	case "frontend.route":
+		tags = append(tags, "frontend:route")
+	case "orm.query":
+		if !hasStringPrefix(tags, "orm:") {
+			tags = append(tags, "orm:query")
+		}
+	}
+	return uniqueSemanticTags(tags)
+}
+
+func forceFactSemanticTag(tag string) bool {
+	return strings.HasPrefix(tag, "framework:") ||
+		strings.HasPrefix(tag, "orm:") ||
+		tag == "http:route" ||
+		tag == "frontend:route"
+}
+
+func hasStringPrefix(values []string, prefix string) bool {
+	for _, value := range values {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func limitSemanticTags(tags []string) []string {
@@ -677,18 +732,22 @@ func semanticTagPriority(tag string) int {
 	switch {
 	case strings.HasPrefix(tag, "role:"):
 		return 0
-	case strings.HasPrefix(tag, "area:"):
+	case strings.HasPrefix(tag, "framework:"):
 		return 1
-	case strings.HasPrefix(tag, "kind:"):
+	case tag == "http:route" || tag == "frontend:route" || strings.HasPrefix(tag, "orm:"):
+		return 1
+	case strings.HasPrefix(tag, "area:"):
 		return 2
-	case strings.HasPrefix(tag, "graph:"):
+	case strings.HasPrefix(tag, "kind:"):
 		return 3
-	case strings.HasPrefix(tag, "lang:"):
+	case strings.HasPrefix(tag, "graph:"):
 		return 4
-	case strings.HasPrefix(tag, "owner:"):
+	case strings.HasPrefix(tag, "lang:"):
 		return 5
-	default:
+	case strings.HasPrefix(tag, "owner:"):
 		return 6
+	default:
+		return 7
 	}
 }
 
@@ -698,6 +757,14 @@ func semanticTagDefinition(tag string) semanticTagDefinitionInfo {
 		return semanticTagDefinitionInfo{Color: "#2563eb", Description: "Generated source area tag"}
 	case strings.HasPrefix(tag, "role:"):
 		return semanticTagDefinitionInfo{Color: "#7c3aed", Description: "Generated code role tag"}
+	case strings.HasPrefix(tag, "framework:"):
+		return semanticTagDefinitionInfo{Color: "#0891b2", Description: "Generated framework detection tag"}
+	case tag == "http:route":
+		return semanticTagDefinitionInfo{Color: "#dc2626", Description: "Generated HTTP route detection tag"}
+	case tag == "frontend:route":
+		return semanticTagDefinitionInfo{Color: "#16a34a", Description: "Generated frontend route detection tag"}
+	case strings.HasPrefix(tag, "orm:"):
+		return semanticTagDefinitionInfo{Color: "#9333ea", Description: "Generated ORM detection tag"}
 	case strings.HasPrefix(tag, "kind:"):
 		return semanticTagDefinitionInfo{Color: "#0f766e", Description: "Generated symbol kind tag"}
 	case strings.HasPrefix(tag, "graph:"):
@@ -716,7 +783,11 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	if err != nil {
 		return materializeStats{}, err
 	}
-	tagPlan := buildSemanticTagPlan(repo, filtered, thresholds, settingsHash, identityKeys, ownerMatcher)
+	facts, err := r.Store.FactsForRepository(ctx, repo.ID)
+	if err != nil {
+		return materializeStats{}, err
+	}
+	tagPlan := buildSemanticTagPlan(repo, filtered, thresholds, settingsHash, identityKeys, ownerMatcher, facts)
 	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys, contextPolicies: filtered.ContextPolicies, tagPlan: tagPlan, initialLayout: initialLayout == 0, runMarker: time.Now().UTC().Format(time.RFC3339Nano), newPlacements: map[int64]map[int64]struct{}{}}
 	if err := m.ensureTags(ctx); err != nil {
 		return m.stats, err

@@ -81,6 +81,28 @@ type Reference struct {
 	UpdatedAt      string `json:"updated_at"`
 }
 
+type Fact struct {
+	ID               int64    `json:"id"`
+	RepositoryID     int64    `json:"repository_id"`
+	FileID           int64    `json:"file_id"`
+	FilePath         string   `json:"file_path"`
+	StableKey        string   `json:"stable_key"`
+	Type             string   `json:"type"`
+	Enricher         string   `json:"enricher"`
+	SubjectKind      string   `json:"subject_kind"`
+	SubjectStableKey string   `json:"subject_stable_key"`
+	StartLine        int      `json:"start_line"`
+	EndLine          *int     `json:"end_line,omitempty"`
+	Confidence       float64  `json:"confidence"`
+	Name             string   `json:"name"`
+	Tags             []string `json:"tags"`
+	AttributesJSON   string   `json:"attributes_json"`
+	FactHash         string   `json:"fact_hash"`
+	RawJSON          string   `json:"raw_json"`
+	CreatedAt        string   `json:"created_at"`
+	UpdatedAt        string   `json:"updated_at"`
+}
+
 type Summary struct {
 	RepositoryID     int64  `json:"repository_id"`
 	Files            int    `json:"files"`

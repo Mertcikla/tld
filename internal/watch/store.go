@@ -678,6 +678,101 @@ func (s *Store) ReplaceReferencesForFiles(ctx context.Context, repositoryID int6
 	return nil
 }
 
+func (s *Store) ReplaceFactsForFile(ctx context.Context, repositoryID, fileID int64, facts []Fact) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM watch_facts WHERE repository_id = ? AND file_id = ?`, repositoryID, fileID); err != nil {
+		return err
+	}
+	for _, fact := range facts {
+		now := nowString()
+		tags, _ := json.Marshal(fact.Tags)
+		if fact.AttributesJSON == "" {
+			fact.AttributesJSON = "{}"
+		}
+		if fact.RawJSON == "" {
+			fact.RawJSON = "{}"
+		}
+		_, err := s.db.ExecContext(ctx, `
+			INSERT INTO watch_facts(repository_id, file_id, stable_key, type, enricher, subject_kind, subject_stable_key, file_path, start_line, end_line, confidence, name, tags, attributes_json, fact_hash, raw_json, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(repository_id, enricher, stable_key) DO UPDATE SET
+				file_id = excluded.file_id,
+				type = excluded.type,
+				subject_kind = excluded.subject_kind,
+				subject_stable_key = excluded.subject_stable_key,
+				file_path = excluded.file_path,
+				start_line = excluded.start_line,
+				end_line = excluded.end_line,
+				confidence = excluded.confidence,
+				name = excluded.name,
+				tags = excluded.tags,
+				attributes_json = excluded.attributes_json,
+				fact_hash = excluded.fact_hash,
+				raw_json = excluded.raw_json,
+				updated_at = excluded.updated_at`,
+			repositoryID, fileID, fact.StableKey, fact.Type, fact.Enricher, fact.SubjectKind, fact.SubjectStableKey, fact.FilePath, fact.StartLine, fact.EndLine, fact.Confidence, fact.Name, string(tags), fact.AttributesJSON, fact.FactHash, fact.RawJSON, now, now)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) FactVersionForFile(ctx context.Context, repositoryID, fileID int64, enricher, stableKey string) (string, error) {
+	var version string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT name
+		FROM watch_facts
+		WHERE repository_id = ? AND file_id = ? AND enricher = ? AND stable_key = ?
+		LIMIT 1`, repositoryID, fileID, enricher, stableKey).Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return version, nil
+}
+
+func (s *Store) FactsForRepository(ctx context.Context, repositoryID int64) ([]Fact, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, repository_id, file_id, file_path, stable_key, type, enricher, subject_kind, subject_stable_key, start_line, end_line, confidence, name, tags, attributes_json, fact_hash, raw_json, created_at, updated_at
+		FROM watch_facts
+		WHERE repository_id = ?
+		ORDER BY file_path, type, enricher, stable_key`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var facts []Fact
+	for rows.Next() {
+		fact, err := scanFact(rows)
+		if err != nil {
+			return nil, err
+		}
+		facts = append(facts, fact)
+	}
+	return facts, rows.Err()
+}
+
+type factScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanFact(row factScanner) (Fact, error) {
+	var fact Fact
+	var endLine sql.NullInt64
+	var rawTags string
+	if err := row.Scan(&fact.ID, &fact.RepositoryID, &fact.FileID, &fact.FilePath, &fact.StableKey, &fact.Type, &fact.Enricher, &fact.SubjectKind, &fact.SubjectStableKey, &fact.StartLine, &endLine, &fact.Confidence, &fact.Name, &rawTags, &fact.AttributesJSON, &fact.FactHash, &fact.RawJSON, &fact.CreatedAt, &fact.UpdatedAt); err != nil {
+		return Fact{}, err
+	}
+	if endLine.Valid {
+		value := int(endLine.Int64)
+		fact.EndLine = &value
+	}
+	_ = json.Unmarshal([]byte(rawTags), &fact.Tags)
+	return fact, nil
+}
+
 func (s *Store) SymbolsForRepository(ctx context.Context, repositoryID int64) ([]Symbol, error) {
 	return s.QuerySymbols(ctx, repositoryID, SymbolQuery{Limit: -1})
 }
@@ -1592,6 +1687,25 @@ func (s *Store) RawGraphHash(ctx context.Context, repositoryID int64) (string, e
 		_, _ = fmt.Fprintf(h, "r:%s:%s:%s:%s\n", sourceKey, targetKey, kind, evidenceHash)
 	}
 	if err := refRows.Err(); err != nil {
+		return "", err
+	}
+	factRows, err := s.db.QueryContext(ctx, `
+		SELECT enricher, stable_key, type, fact_hash
+		FROM watch_facts
+		WHERE repository_id = ?
+		ORDER BY enricher, stable_key, type`, repositoryID)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = factRows.Close() }()
+	for factRows.Next() {
+		var enricher, stableKey, factType, factHash string
+		if err := factRows.Scan(&enricher, &stableKey, &factType, &factHash); err != nil {
+			return "", err
+		}
+		_, _ = fmt.Fprintf(h, "f:%s:%s:%s:%s\n", enricher, stableKey, factType, factHash)
+	}
+	if err := factRows.Err(); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
