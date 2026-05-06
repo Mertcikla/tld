@@ -27,13 +27,13 @@ func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
 
-	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_facts", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_context_policies", "watch_representation_runs", "watch_locks", "watch_apply_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
+	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_facts", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_context_policies", "watch_context_expansions", "watch_representation_runs", "watch_locks", "watch_apply_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
 			t.Fatalf("missing table %s: %v", table, err)
 		}
 	}
-	for _, index := range []string{"idx_watch_repositories_remote_url", "idx_watch_repositories_repo_root", "idx_watch_facts_subject"} {
+	for _, index := range []string{"idx_watch_repositories_remote_url", "idx_watch_repositories_repo_root", "idx_watch_facts_subject", "idx_watch_facts_object", "idx_watch_filter_decisions_owner_key", "idx_watch_context_expansions_scope", "idx_watch_context_expansions_owner"} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, index).Scan(&name); err != nil {
 			t.Fatalf("missing index %s: %v", index, err)
@@ -54,19 +54,25 @@ func TestReplaceFactsForFileIsIdempotentAndAffectsRawGraphHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := Fact{
-		StableKey:        "http.route:main",
-		Type:             "http.route",
-		Enricher:         "go.nethttp",
-		SubjectKind:      "file",
-		SubjectStableKey: "file:main.go",
-		FilePath:         "main.go",
-		StartLine:        3,
-		Confidence:       1,
-		Name:             "GET /users",
-		Tags:             []string{"http:route", "framework:nethttp"},
-		AttributesJSON:   `{"path":"/users"}`,
-		FactHash:         "fact-hash-1",
-		RawJSON:          `{}`,
+		StableKey:           "http.route:main",
+		Type:                "http.route",
+		Enricher:            "go.nethttp",
+		SubjectKind:         "file",
+		SubjectStableKey:    "file:main.go",
+		ObjectKind:          "symbol",
+		ObjectStableKey:     "go:main.go:function:Main",
+		ObjectFilePath:      "main.go",
+		ObjectName:          "Main",
+		Relationship:        "declares",
+		FilePath:            "main.go",
+		StartLine:           3,
+		Confidence:          1,
+		Name:                "GET /users",
+		Tags:                []string{"http:route", "framework:nethttp"},
+		AttributesJSON:      `{"path":"/users"}`,
+		VisibilityHintsJSON: `{"high_signal":1}`,
+		FactHash:            "fact-hash-1",
+		RawJSON:             `{}`,
 	}
 	if err := store.ReplaceFactsForFile(context.Background(), repo.ID, file.ID, []Fact{first}); err != nil {
 		t.Fatal(err)
@@ -99,12 +105,37 @@ func TestReplaceFactsForFileIsIdempotentAndAffectsRawGraphHash(t *testing.T) {
 	if len(facts) != 1 || facts[0].StableKey != second.StableKey {
 		t.Fatalf("expected stale fact replacement, got %+v", facts)
 	}
+	if facts[0].ObjectKind != "symbol" || facts[0].ObjectStableKey != "go:main.go:function:Main" || facts[0].Relationship != "declares" || facts[0].VisibilityHintsJSON == "" {
+		t.Fatalf("expected fact object and visibility fields to round-trip, got %+v", facts[0])
+	}
 	hash3, err := store.RawGraphHash(context.Background(), repo.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hash3 == hash1 {
 		t.Fatalf("raw graph hash did not change after fact change: %s", hash3)
+	}
+}
+
+func TestVisibilityConfigPreservesExplicitConfigValues(t *testing.T) {
+	defaults := defaultVisibilityConfig(VisibilityConfig{})
+	if !defaults.CoreThresholdEnabled || defaults.Weights.HighSignalFact == 0 {
+		t.Fatalf("expected zero-value visibility config to receive defaults, got %+v", defaults)
+	}
+	cfg := defaultVisibilityConfig(VisibilityConfig{
+		CoreThresholdEnabled: false,
+		CoreThresholdSet:     true,
+		WeightsSet:           true,
+		Weights: VisibilityWeights{
+			HighSignalFact: 0,
+			UserHide:       0,
+		},
+	})
+	if cfg.CoreThresholdEnabled {
+		t.Fatalf("expected explicit disabled core threshold to be preserved, got %+v", cfg)
+	}
+	if cfg.Weights.HighSignalFact != 0 || cfg.Weights.UserHide != 0 {
+		t.Fatalf("expected explicit zero weights to be preserved, got %+v", cfg.Weights)
 	}
 }
 
@@ -139,23 +170,22 @@ func quietHelper() string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if show.PoliciesCreated == 0 || show.OwnersAffected == 0 {
-		t.Fatalf("expected show policies, got %+v", show)
+	if show.PoliciesCreated != 0 || show.TierBefore != 0 || show.TierAfter != 1 || show.OwnersAffected == 0 {
+		t.Fatalf("expected show to create a tier-1 expansion without durable policies, got %+v", show)
 	}
 	if !elementNameExists(t, db, "quietHelper") {
 		t.Fatal("quiet helper should be materialized after show context")
 	}
 	manualID := insertManualElement(t, db, "Manual note")
-	quietID := symbolElementID(t, db, "quietHelper")
-	hide, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "element", ResourceID: quietID}, req)
+	clean, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionClean, ContextResourceRequest{ResourceType: "element", ResourceID: fileElementID}, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hide.ElementsRemoved == 0 {
-		t.Fatalf("expected hide to remove a generated symbol, got %+v", hide)
+	if clean.TierBefore != 1 || clean.TierAfter != 0 || clean.ElementsRemoved == 0 {
+		t.Fatalf("expected clean to collapse the expansion and remove generated detail, got %+v", clean)
 	}
 	if elementNameExists(t, db, "quietHelper") {
-		t.Fatal("quiet helper should be pruned after hide context")
+		t.Fatal("quiet helper should be pruned after clean noise")
 	}
 	var manualName string
 	if err := db.QueryRow(`SELECT name FROM elements WHERE id = ?`, manualID).Scan(&manualName); err != nil {
@@ -260,8 +290,129 @@ export async function Users() {
 			t.Fatalf("expected representation to surface tag %q", tag)
 		}
 	}
-	if routes := elementKindCount(t, db, "route"); routes != 0 {
-		t.Fatalf("v1 should not materialize route nodes, found %d", routes)
+	if routes := elementKindCount(t, db, "route"); routes == 0 {
+		t.Fatal("expected high-signal route facts to materialize as generated route nodes")
+	}
+	if deps := countElementTag(t, db, "dependency:import"); deps == 0 {
+		t.Fatal("expected dependency/import facts to surface as tags")
+	}
+	if deps := elementKindCount(t, db, "dependency"); deps != 0 {
+		t.Fatalf("dependency/import facts should not materialize as one dependency node per import, found %d dependency nodes", deps)
+	}
+}
+
+func TestFactNodesUseSubjectAwarePlacementAndHandles(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Routes() {
+	GetUser()
+	CreateUser()
+}
+
+func GetUser() {}
+func CreateUser() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, ok, err := store.CachedFileByPath(context.Background(), scanResult.RepositoryID, "main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("missing cached main.go")
+	}
+	symbols, err := store.SymbolsForRepository(context.Background(), scanResult.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var routesStableKey string
+	for _, sym := range symbols {
+		if sym.Name == "Routes" {
+			routesStableKey = sym.StableKey
+			break
+		}
+	}
+	if routesStableKey == "" {
+		t.Fatal("missing Routes symbol")
+	}
+	facts := []Fact{
+		{
+			RepositoryID:        scanResult.RepositoryID,
+			FileID:              file.ID,
+			FilePath:            "main.go",
+			StableKey:           "test.route.users-id",
+			Type:                "http.route",
+			Enricher:            "test",
+			SubjectKind:         "symbol",
+			SubjectStableKey:    routesStableKey,
+			ObjectKind:          "http.route",
+			ObjectStableKey:     "http.route:/users/{id}",
+			ObjectName:          "/users/{id}",
+			Relationship:        "declares",
+			StartLine:           4,
+			Confidence:          1,
+			Name:                "/users/{id}",
+			Tags:                []string{"http:route"},
+			AttributesJSON:      `{"framework":"test"}`,
+			VisibilityHintsJSON: `{"high_signal":1}`,
+			RawJSON:             `{}`,
+		},
+		{
+			RepositoryID:        scanResult.RepositoryID,
+			FileID:              file.ID,
+			FilePath:            "main.go",
+			StableKey:           "test.route.users",
+			Type:                "http.route",
+			Enricher:            "test",
+			SubjectKind:         "symbol",
+			SubjectStableKey:    routesStableKey,
+			ObjectKind:          "http.route",
+			ObjectStableKey:     "http.route:/users",
+			ObjectName:          "/users",
+			Relationship:        "declares",
+			StartLine:           5,
+			Confidence:          1,
+			Name:                "/users",
+			Tags:                []string{"http:route"},
+			AttributesJSON:      `{"framework":"test"}`,
+			VisibilityHintsJSON: `{"high_signal":1}`,
+			RawJSON:             `{}`,
+		},
+	}
+	for i := range facts {
+		facts[i].FactHash = stableHash(facts[i])
+	}
+	if err := store.ReplaceFactsForFile(context.Background(), scanResult.RepositoryID, file.ID, facts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	routesPlacement := functionPlacement(t, db, "Routes")
+	userRoutePlacement := elementPlacementByName(t, db, "/users/{id}")
+	if routesPlacement.x == userRoutePlacement.x && routesPlacement.y == userRoutePlacement.y {
+		t.Fatalf("fact route overlaps subject placement: subject=%+v route=%+v", routesPlacement, userRoutePlacement)
+	}
+	var sourceHandle, targetHandle sql.NullString
+	if err := db.QueryRow(`
+		SELECT c.source_handle, c.target_handle
+		FROM connectors c
+		JOIN elements s ON s.id = c.source_element_id
+		JOIN elements target ON target.id = c.target_element_id
+		WHERE s.name = ? AND target.name = ?
+		ORDER BY c.id
+		LIMIT 1`, "Routes", "/users/{id}").Scan(&sourceHandle, &targetHandle); err != nil {
+		t.Fatalf("route fact connector: %v", err)
+	}
+	if !sourceHandle.Valid || sourceHandle.String == "" || !targetHandle.Valid || targetHandle.String == "" {
+		t.Fatalf("expected route fact connector to store handle sides, got source=%q target=%q", sourceHandle.String, targetHandle.String)
 	}
 }
 
@@ -298,6 +449,22 @@ func quietHelper() string {
 	}
 	if !elementNameExists(t, db, "quietHelper") {
 		t.Fatal("quiet helper should be materialized by HTTP show context")
+	}
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/watch/repositories/%d/context/clean", scanResult.RepositoryID), strings.NewReader(fmt.Sprintf(`{"resource_type":"element","resource_id":%d}`, fileElementID)))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clean context status = %d body %s", rec.Code, rec.Body.String())
+	}
+	var cleanResponse ContextActionResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &cleanResponse); err != nil {
+		t.Fatal(err)
+	}
+	if cleanResponse.TierBefore != 1 || cleanResponse.TierAfter != 0 {
+		t.Fatalf("expected HTTP clean to decrement context tier, got %+v", cleanResponse)
+	}
+	if elementNameExists(t, db, "quietHelper") {
+		t.Fatal("quiet helper should be collapsed by HTTP clean context")
 	}
 
 	manualID := insertManualElement(t, db, "Manual only")
@@ -355,8 +522,8 @@ func newPrivateContext() string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !filterDecisionHasReason(decisions, sym.ID, "user marked as context") {
-		t.Fatalf("expected new private symbol to be forced visible by context policy, got %+v", decisions)
+	if !filterDecisionHasReason(decisions, sym.ID, "selected context expansion tier 1") {
+		t.Fatalf("expected new private symbol to be forced visible by context expansion, got %+v", decisions)
 	}
 }
 
@@ -429,40 +596,53 @@ func quietHelper() string {
 	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
 		t.Fatal(err)
 	}
-	fileElementID := elementIDByName(t, db, "main.go")
-	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "element", ResourceID: fileElementID}, req); err != nil {
-		t.Fatal(err)
-	}
-	quietID := symbolElementID(t, db, "quietHelper")
-	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "element", ResourceID: quietID}, req); err != nil {
-		t.Fatal(err)
-	}
-	if activePolicyCount(t, db, scanResult.RepositoryID, contextActionHide, "symbol") == 0 {
-		t.Fatal("expected active hide policy after hiding shown symbol")
-	}
-	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "element", ResourceID: fileElementID}, req); err != nil {
-		t.Fatal(err)
-	}
-	if activePolicyCount(t, db, scanResult.RepositoryID, contextActionHide, "symbol") != 0 {
-		t.Fatal("show context should deactivate matching active hide policy")
-	}
-	if !elementNameExists(t, db, "quietHelper") {
-		t.Fatal("quiet helper should be restored after show overrides hide")
-	}
-
 	fileViewID := materializedResourceID(t, db, scanResult.RepositoryID, "file", "file:main.go", "view")
-	hide, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "view", ResourceID: fileViewID}, req)
+	show, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "view", ResourceID: fileViewID}, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hide.ElementsRemoved == 0 {
-		t.Fatalf("expected view cleanup to remove generated symbol noise, got %+v", hide)
+	if show.PoliciesCreated != 0 || show.TierAfter != 1 {
+		t.Fatalf("expected view show to create a tiered expansion without durable policies, got %+v", show)
+	}
+	if !elementNameExists(t, db, "quietHelper") {
+		t.Fatal("view show should reveal private generated detail")
+	}
+	clean, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionClean, ContextResourceRequest{ResourceType: "view", ResourceID: fileViewID}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clean.TierBefore != 1 || clean.TierAfter != 0 || clean.ElementsRemoved == 0 {
+		t.Fatalf("expected view clean to remove generated symbol noise one tier at a time, got %+v", clean)
 	}
 	if elementNameExists(t, db, "quietHelper") {
 		t.Fatal("view cleanup should remove private generated symbol noise")
 	}
 	if !elementNameExists(t, db, "Main") {
 		t.Fatal("view cleanup should preserve exported entrypoint")
+	}
+	if activePolicyCount(t, db, scanResult.RepositoryID, contextActionHide, "symbol") != 0 {
+		t.Fatal("clean noise should not create durable hide policies")
+	}
+
+	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "view", ResourceID: fileViewID}, req); err != nil {
+		t.Fatal(err)
+	}
+	quietID := symbolElementID(t, db, "quietHelper")
+	hide, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "element", ResourceID: quietID}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hide.PoliciesCreated == 0 || activePolicyCount(t, db, scanResult.RepositoryID, contextActionHide, "symbol") == 0 {
+		t.Fatalf("expected explicit hide to create a durable policy, got %+v", hide)
+	}
+	if !elementNameExists(t, db, "quietHelper") {
+		t.Fatal("active expansion should keep selected context visible even when durable hide is recorded")
+	}
+	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionClean, ContextResourceRequest{ResourceType: "view", ResourceID: fileViewID}, req); err != nil {
+		t.Fatal(err)
+	}
+	if elementNameExists(t, db, "quietHelper") {
+		t.Fatal("durable hide should apply once the forcing expansion is cleaned")
 	}
 }
 
@@ -3499,7 +3679,7 @@ func openTestDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "005_watch_materialization_dirty_state.sql"} {
+	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", migration))
 		if err != nil {
 			t.Fatal(err)
@@ -3682,7 +3862,7 @@ func symbolsByName(ctx context.Context, store *Store, repositoryID int64, name s
 
 func filterDecisionHasReason(decisions []FilterDecision, ownerID int64, reason string) bool {
 	for _, decision := range decisions {
-		if decision.OwnerType == "symbol" && decision.OwnerID == ownerID && decision.Reason == reason {
+		if decision.OwnerType == "symbol" && decision.OwnerID == ownerID && strings.Contains(decision.Reason, reason) {
 			return true
 		}
 	}
@@ -3857,6 +4037,22 @@ func functionPlacement(t *testing.T, db *sql.DB, name string) testPlacement {
 	var p testPlacement
 	if err := row.Scan(&p.placementID, &p.elementID, &p.x, &p.y); err != nil {
 		t.Fatalf("function placement %q: %v", name, err)
+	}
+	return p
+}
+
+func elementPlacementByName(t *testing.T, db *sql.DB, name string) testPlacement {
+	t.Helper()
+	row := db.QueryRow(`
+		SELECT p.id, p.element_id, p.position_x, p.position_y
+		FROM placements p
+		JOIN elements e ON e.id = p.element_id
+		WHERE e.name = ?
+		ORDER BY p.id
+		LIMIT 1`, name)
+	var p testPlacement
+	if err := row.Scan(&p.placementID, &p.elementID, &p.x, &p.y); err != nil {
+		t.Fatalf("element placement %q: %v", name, err)
 	}
 	return p
 }

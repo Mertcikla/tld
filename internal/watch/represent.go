@@ -43,6 +43,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	}
 	req.Embedding = normalizeEmbeddingConfig(req.Embedding)
 	req.Thresholds = defaultThresholds(req.Thresholds)
+	req.Visibility = defaultVisibilityConfig(req.Visibility)
 	settingsHash := settingsHash(req)
 	rawGraphHash, err := r.Store.RawGraphHash(ctx, repositoryID)
 	if err != nil {
@@ -79,7 +80,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	if err != nil {
 		return RepresentResult{}, err
 	}
-	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, nil, changedRaw.Symbols, contextPolicies, identityKeys)
+	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, nil, changedRaw.Symbols, contextPolicies, identityKeys)
 	if err != nil {
 		return RepresentResult{}, err
 	}
@@ -95,7 +96,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		result.EmbeddingCacheHits = stats.CacheHits
 		result.EmbeddingsCreated = stats.Created
 		if len(embeddingSymbols) == len(filtered.VisibleSymbols) {
-			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, vectors, changedRaw.Symbols, contextPolicies, identityKeys)
+			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, vectors, changedRaw.Symbols, contextPolicies, identityKeys)
 			if err != nil {
 				return RepresentResult{}, err
 			}
@@ -517,6 +518,7 @@ func addFactSemanticTags(facts []Fact, symbols map[int64]Symbol, identityKeys ma
 		if len(tags) == 0 {
 			continue
 		}
+		add("fact", factOwnerKey(fact), tags...)
 		if fact.SubjectKind == "symbol" {
 			if owner, ok := symbolOwners[fact.SubjectStableKey]; ok {
 				add("symbol", owner, tags...)
@@ -818,6 +820,9 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	}
 
 	visibleFiles := filesForSymbols(filtered.VisibleSymbols)
+	for file := range filtered.VisibleFiles {
+		visibleFiles[file] = struct{}{}
+	}
 	for file := range filtered.ChangedFiles {
 		visibleFiles[file] = struct{}{}
 	}
@@ -900,13 +905,15 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 
 	symbolElements := map[int64]int64{}
 	symbolViews := map[int64]int64{}
+	symbolPositions := map[int64]layoutPoint{}
+	occupied := map[int64]map[string]struct{}{}
 	detailedSymbols := len(filtered.VisibleSymbols) <= maxDetailedSymbolElements
 	for file, symbols := range symbolsByFile(filtered.VisibleSymbols) {
 		fileView := fileViews[file]
 		if fileView == 0 {
 			continue
 		}
-		chunks := chunkSymbols(symbols, thresholds.MaxElementsPerView)
+		chunks := chunkSymbols(symbols, effectiveMaxElementsPerView(thresholds, filtered.Visibility, filtered.ContextExpansions.fileTier(file)))
 		for chunkIndex, chunk := range chunks {
 			targetView := fileView
 			if len(chunks) > 1 {
@@ -938,6 +945,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 				if err := m.upsertPlacement(ctx, fileView, clusterElem, x, y); err != nil {
 					return m.stats, err
 				}
+				markOccupied(occupied, fileView, layoutPoint{X: x, Y: y})
 				targetView, err = m.upsertView(ctx, "cluster", clusterKey, clusterElem, cluster.Name, "Cluster")
 				if err != nil {
 					return m.stats, err
@@ -966,10 +974,16 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 				if err := m.upsertPlacement(ctx, targetView, elem, x, y); err != nil {
 					return m.stats, err
 				}
+				point := layoutPoint{X: x, Y: y}
+				markOccupied(occupied, targetView, point)
 				symbolElements[sym.ID] = elem
 				symbolViews[sym.ID] = targetView
+				symbolPositions[sym.ID] = point
 			}
 		}
+	}
+	if err := m.materializeFacts(ctx, filtered.VisibleFacts, filtered.VisibleSymbols, fileViews, symbolElements, symbolViews, symbolPositions, occupied, filtered); err != nil {
+		return m.stats, err
 	}
 
 	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, folderElements, fileElements, symbolElements, symbolViews, repoView); err != nil {
@@ -996,6 +1010,17 @@ type materializer struct {
 	runMarker       string
 	newPlacements   map[int64]map[int64]struct{}
 	stats           materializeStats
+}
+
+type layoutPoint struct {
+	X float64
+	Y float64
+}
+
+type factPlacement struct {
+	Point        layoutPoint
+	SourceHandle string
+	TargetHandle string
 }
 
 type elementInput struct {
@@ -1604,6 +1629,287 @@ type filePairReference struct {
 	Count int
 }
 
+func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbols map[int64]Symbol, fileViews map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, symbolPositions map[int64]layoutPoint, occupied map[int64]map[string]struct{}, filtered filterResult) error {
+	if len(facts) == 0 {
+		return nil
+	}
+	symbolIDByStable := map[string]int64{}
+	for id, sym := range symbols {
+		symbolIDByStable[sym.StableKey] = id
+	}
+	nodeFactsByFile := map[string][]Fact{}
+	summaryFactsByFile := map[string][]Fact{}
+	for _, fact := range facts {
+		if strings.TrimSpace(fact.FilePath) == "" || fileViews[fact.FilePath] == 0 {
+			continue
+		}
+		if highSignalFact(fact) {
+			nodeFactsByFile[fact.FilePath] = append(nodeFactsByFile[fact.FilePath], fact)
+		} else {
+			summaryFactsByFile[fact.FilePath] = append(summaryFactsByFile[fact.FilePath], fact)
+		}
+	}
+	fileSet := map[string]struct{}{}
+	for file := range nodeFactsByFile {
+		fileSet[file] = struct{}{}
+	}
+	for file := range summaryFactsByFile {
+		fileSet[file] = struct{}{}
+	}
+	for _, file := range sortedKeys(fileSet) {
+		items := nodeFactsByFile[file]
+		sort.SliceStable(items, func(i, j int) bool {
+			if items[i].Type == items[j].Type {
+				return factOwnerKey(items[i]) < factOwnerKey(items[j])
+			}
+			return items[i].Type < items[j].Type
+		})
+		limit := factNodeLimitForFile(m.thresholds, filtered.Visibility, filtered.ContextExpansions.fileTier(file))
+		if limit > len(items) {
+			limit = len(items)
+		}
+		subjectFactCounts := map[int64]int{}
+		for i, fact := range items[:limit] {
+			elem, err := m.upsertElement(ctx, "fact", factOwnerKey(fact), elementInput{
+				Name:        factNodeName(fact),
+				Kind:        factNodeKind(fact),
+				Description: factNodeDescription(fact),
+				Technology:  factTechnology(fact),
+				Repo:        repoIdentity(m.repo),
+				Branch:      nullStringValue(m.repo.Branch),
+				FilePath:    fact.FilePath,
+				Language:    languageForFile(fact.FilePath, symbols),
+				Tags:        m.tagPlan.tagsFor("fact", factOwnerKey(fact)),
+			})
+			if err != nil {
+				return err
+			}
+			viewID := fileViews[file]
+			var subjectID int64
+			if fact.SubjectKind == "symbol" {
+				subjectID = symbolIDByStable[fact.SubjectStableKey]
+			}
+			placement := nextFactPlacement(viewID, subjectID, subjectFactCounts[subjectID], symbolViews, symbolPositions, occupied, i)
+			if subjectID != 0 {
+				subjectFactCounts[subjectID]++
+			}
+			if err := m.upsertPlacement(ctx, viewID, elem, placement.Point.X, placement.Point.Y); err != nil {
+				return err
+			}
+			markOccupied(occupied, viewID, placement.Point)
+			if fact.SubjectKind == "symbol" {
+				if symID := subjectID; symID != 0 && symbolElements[symID] != 0 && symbolViews[symID] == viewID {
+					ownerKey := factOwnerKey(fact) + ":subject"
+					label := firstNonEmpty(fact.Relationship, "declares")
+					if err := m.upsertConnectorWithHandles(ctx, "fact-reference", ownerKey, viewID, symbolElements[symID], elem, label, placement.SourceHandle, placement.TargetHandle); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		summaryFacts := append([]Fact(nil), summaryFactsByFile[file]...)
+		if limit < len(items) {
+			summaryFacts = append(summaryFacts, items[limit:]...)
+		}
+		if len(summaryFacts) > 0 {
+			if err := m.materializeFactSummaries(ctx, file, fileViews[file], summaryFacts, occupied); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func factNodeLimitForFile(thresholds Thresholds, visibility VisibilityConfig, tier int) int {
+	limit := effectiveMaxElementsPerView(thresholds, visibility, tier) / 3
+	if limit < 3 {
+		return 3
+	}
+	return limit
+}
+
+func (m *materializer) materializeFactSummaries(ctx context.Context, file string, viewID int64, facts []Fact, occupied map[int64]map[string]struct{}) error {
+	byType := map[string][]Fact{}
+	for _, fact := range facts {
+		byType[fact.Type] = append(byType[fact.Type], fact)
+	}
+	i := 0
+	for _, factType := range sortedKeysFromFactSummaryGroups(byType) {
+		items := byType[factType]
+		keys := make([]string, 0, len(items))
+		for _, fact := range items {
+			keys = append(keys, factOwnerKey(fact))
+		}
+		sort.Strings(keys)
+		ownerKey := "fact-summary:" + file + ":" + factType + ":" + stableHash(keys)
+		elem, err := m.upsertElement(ctx, "fact-summary", ownerKey, elementInput{
+			Name:        fmt.Sprintf("%d %s", len(items), factSummaryLabel(factType, len(items))),
+			Kind:        "summary",
+			Description: fmt.Sprintf("%d omitted %s facts in %s", len(items), factType, file),
+			Technology:  "Runtime",
+			Repo:        repoIdentity(m.repo),
+			Branch:      nullStringValue(m.repo.Branch),
+			FilePath:    file,
+			Tags:        summaryTagsForFacts(items),
+		})
+		if err != nil {
+			return err
+		}
+		point := nextOpenGridPoint(viewID, occupied, 1000+i)
+		if err := m.upsertPlacement(ctx, viewID, elem, point.X, point.Y); err != nil {
+			return err
+		}
+		markOccupied(occupied, viewID, point)
+		i++
+	}
+	return nil
+}
+
+func nextFactPlacement(viewID, subjectID int64, subjectIndex int, symbolViews map[int64]int64, symbolPositions map[int64]layoutPoint, occupied map[int64]map[string]struct{}, fallbackIndex int) factPlacement {
+	if subjectID == 0 || symbolViews[subjectID] != viewID {
+		point := nextOpenGridPoint(viewID, occupied, fallbackIndex)
+		return factPlacement{Point: point, SourceHandle: "right", TargetHandle: "left"}
+	}
+	origin := symbolPositions[subjectID]
+	candidates := factPlacementCandidates(origin, subjectIndex)
+	for _, candidate := range candidates {
+		if !isOccupied(occupied, viewID, candidate.Point) {
+			return candidate
+		}
+	}
+	point := nextOpenGridPoint(viewID, occupied, fallbackIndex)
+	return factPlacement{Point: point, SourceHandle: "right", TargetHandle: "left"}
+}
+
+func factPlacementCandidates(origin layoutPoint, subjectIndex int) []factPlacement {
+	ring := subjectIndex/8 + 1
+	spread := float64((subjectIndex%3)-1) * 90
+	dx := float64(ring) * watchLayoutGapX
+	dy := float64(ring) * watchLayoutGapY
+	return []factPlacement{
+		{Point: layoutPoint{X: origin.X + dx, Y: origin.Y + spread}, SourceHandle: "right", TargetHandle: "left"},
+		{Point: layoutPoint{X: origin.X, Y: origin.Y + dy + spread}, SourceHandle: "bottom", TargetHandle: "top"},
+		{Point: layoutPoint{X: origin.X - dx, Y: origin.Y + spread}, SourceHandle: "left", TargetHandle: "right"},
+		{Point: layoutPoint{X: origin.X, Y: origin.Y - dy + spread}, SourceHandle: "top", TargetHandle: "bottom"},
+		{Point: layoutPoint{X: origin.X + dx, Y: origin.Y + dy}, SourceHandle: "right", TargetHandle: "left"},
+		{Point: layoutPoint{X: origin.X - dx, Y: origin.Y + dy}, SourceHandle: "left", TargetHandle: "right"},
+		{Point: layoutPoint{X: origin.X + dx, Y: origin.Y - dy}, SourceHandle: "right", TargetHandle: "left"},
+		{Point: layoutPoint{X: origin.X - dx, Y: origin.Y - dy}, SourceHandle: "left", TargetHandle: "right"},
+	}
+}
+
+func nextOpenGridPoint(viewID int64, occupied map[int64]map[string]struct{}, startIndex int) layoutPoint {
+	for i := startIndex; ; i++ {
+		x, y := gridPosition(i)
+		point := layoutPoint{X: x, Y: y}
+		if !isOccupied(occupied, viewID, point) {
+			return point
+		}
+	}
+}
+
+func markOccupied(occupied map[int64]map[string]struct{}, viewID int64, point layoutPoint) {
+	if occupied[viewID] == nil {
+		occupied[viewID] = map[string]struct{}{}
+	}
+	occupied[viewID][layoutPointKey(point)] = struct{}{}
+}
+
+func isOccupied(occupied map[int64]map[string]struct{}, viewID int64, point layoutPoint) bool {
+	if occupied[viewID] == nil {
+		return false
+	}
+	_, ok := occupied[viewID][layoutPointKey(point)]
+	return ok
+}
+
+func layoutPointKey(point layoutPoint) string {
+	return fmt.Sprintf("%.0f:%.0f", point.X, point.Y)
+}
+
+func sortedKeysFromFactSummaryGroups(groups map[string][]Fact) []string {
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func factSummaryLabel(factType string, count int) string {
+	label := factType
+	switch factType {
+	case "http.route", "frontend.route":
+		label = "routes"
+	case "orm.query":
+		label = "data access facts"
+	}
+	if count == 1 {
+		return strings.TrimSuffix(label, "s")
+	}
+	return label
+}
+
+func summaryTagsForFacts(facts []Fact) []string {
+	set := map[string]struct{}{"watch:summary": {}}
+	for _, fact := range facts {
+		for _, tag := range fact.Tags {
+			tag = strings.TrimSpace(tag)
+			if tag != "" {
+				set[tag] = struct{}{}
+			}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func factNodeName(fact Fact) string {
+	return firstNonEmpty(fact.Name, fact.ObjectName, fact.Type)
+}
+
+func factNodeKind(fact Fact) string {
+	switch fact.Type {
+	case "http.route", "frontend.route":
+		return "route"
+	case "orm.query":
+		return "data-access"
+	default:
+		return "fact"
+	}
+}
+
+func factTechnology(fact Fact) string {
+	attrs := map[string]string{}
+	_ = json.Unmarshal([]byte(fact.AttributesJSON), &attrs)
+	if framework := strings.TrimSpace(attrs["framework"]); framework != "" {
+		return framework
+	}
+	if orm := strings.TrimSpace(attrs["orm"]); orm != "" {
+		return orm
+	}
+	return "Runtime"
+}
+
+func factNodeDescription(fact Fact) string {
+	parts := []string{fact.Type}
+	if fact.Relationship != "" {
+		parts = append(parts, fact.Relationship)
+	}
+	if fact.FilePath != "" && fact.StartLine > 0 {
+		parts = append(parts, fmt.Sprintf("%s:%d", fact.FilePath, fact.StartLine))
+	}
+	return strings.Join(parts, " - ")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func (m *materializer) materializeConnectors(ctx context.Context, refs []Reference, symbols map[int64]Symbol, folderElements map[string]int64, fileElements map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, repoView int64) error {
 	filePairs := map[string]filePairReference{}
 	symbolConnectorCount := map[int64]int{}
@@ -1744,6 +2050,10 @@ func connectorGroupFolder(filePath string) string {
 }
 
 func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label string) error {
+	return m.upsertConnectorWithHandles(ctx, ownerType, ownerKey, viewID, sourceElementID, targetElementID, label, "", "")
+}
+
+func (m *materializer) upsertConnectorWithHandles(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label, sourceHandle, targetHandle string) error {
 	if sourceElementID == 0 || targetElementID == 0 || sourceElementID == targetElementID {
 		return nil
 	}
@@ -1760,8 +2070,8 @@ func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey 
 		}
 		_, err = m.store.db.ExecContext(ctx, `
 			UPDATE connectors
-			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, relationship = ?, direction = 'forward', style = 'solid', updated_at = ?
-			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, label, nowString(), state.ResourceID)
+			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, relationship = ?, direction = 'forward', style = 'solid', source_handle = ?, target_handle = ?, updated_at = ?
+			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, label, nullString(sourceHandle), nullString(targetHandle), nowString(), state.ResourceID)
 		if err != nil {
 			return err
 		}
@@ -1773,8 +2083,8 @@ func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey 
 	}
 	now := nowString()
 	res, err := m.store.db.ExecContext(ctx, `
-		INSERT INTO connectors(view_id, source_element_id, target_element_id, label, relationship, direction, style, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'forward', 'solid', ?, ?)`, viewID, sourceElementID, targetElementID, label, label, now, now)
+		INSERT INTO connectors(view_id, source_element_id, target_element_id, label, relationship, direction, style, source_handle, target_handle, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, 'forward', 'solid', ?, ?, ?, ?)`, viewID, sourceElementID, targetElementID, label, label, nullString(sourceHandle), nullString(targetHandle), now, now)
 	if err != nil {
 		return err
 	}
@@ -2080,6 +2390,24 @@ func representationHash(filtered filterResult, req RepresentRequest) string {
 	}
 	for _, sym := range sortedSymbols(filtered.VisibleSymbols) {
 		parts = append(parts, "s:"+sym.StableKey)
+	}
+	facts := append([]Fact(nil), filtered.VisibleFacts...)
+	sort.SliceStable(facts, func(i, j int) bool {
+		if facts[i].Enricher == facts[j].Enricher {
+			return facts[i].StableKey < facts[j].StableKey
+		}
+		return facts[i].Enricher < facts[j].Enricher
+	})
+	for _, fact := range facts {
+		parts = append(parts, "fact:"+fact.Enricher+":"+fact.StableKey+":"+fact.FactHash)
+	}
+	var expansionKeys []string
+	for key := range filtered.ContextExpansions.Tiers {
+		expansionKeys = append(expansionKeys, key)
+	}
+	sort.Strings(expansionKeys)
+	for _, key := range expansionKeys {
+		parts = append(parts, fmt.Sprintf("x:%s:%d", key, filtered.ContextExpansions.Tiers[key]))
 	}
 	refs := append([]Reference(nil), filtered.VisibleReferences...)
 	sort.Slice(refs, func(i, j int) bool {

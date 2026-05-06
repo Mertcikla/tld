@@ -58,7 +58,7 @@ func (r *Runner) RunOnce(ctx context.Context, opts OneShotOptions) (OneShotResul
 	if err != nil {
 		return OneShotResult{}, err
 	}
-	rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{Embedding: opts.Embedding, Thresholds: settings.Thresholds, Progress: opts.Progress})
+	rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{Embedding: opts.Embedding, Thresholds: settings.Thresholds, Visibility: settings.Visibility, Progress: opts.Progress})
 	if err != nil {
 		return OneShotResult{}, err
 	}

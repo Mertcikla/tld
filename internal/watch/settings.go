@@ -26,6 +26,7 @@ func DefaultSettings() Settings {
 		PollInterval: time.Second,
 		Debounce:     500 * time.Millisecond,
 		Thresholds:   defaultThresholds(Thresholds{}),
+		Visibility:   defaultVisibilityConfig(VisibilityConfig{}),
 	}
 }
 
@@ -51,7 +52,64 @@ func NormalizeSettings(settings Settings) Settings {
 		settings.Debounce = defaults.Debounce
 	}
 	settings.Thresholds = defaultThresholds(settings.Thresholds)
+	settings.Visibility = defaultVisibilityConfig(settings.Visibility)
 	return settings
+}
+
+func defaultVisibilityConfig(cfg VisibilityConfig) VisibilityConfig {
+	if !cfg.CoreThresholdSet && !cfg.CoreThresholdEnabled {
+		cfg.CoreThresholdEnabled = true
+	}
+	if cfg.CoreThreshold <= 0 {
+		cfg.CoreThreshold = 1
+	}
+	if cfg.TierMultiplier <= 0 {
+		cfg.TierMultiplier = 0.5
+	}
+	if cfg.MaxExpansionMultiplier <= 0 {
+		cfg.MaxExpansionMultiplier = 2
+	}
+	defaults := VisibilityWeights{
+		Changed:               100,
+		Selected:              100,
+		UserShow:              100,
+		UserHide:              -100,
+		HighSignalFact:        1.5,
+		RelationshipProximity: 1,
+		DependencyFact:        0.2,
+		UtilityNoise:          -0.8,
+		HighDegreeNoise:       -1.5,
+	}
+	if !cfg.WeightsSet {
+		if cfg.Weights.Changed == 0 {
+			cfg.Weights.Changed = defaults.Changed
+		}
+		if cfg.Weights.Selected == 0 {
+			cfg.Weights.Selected = defaults.Selected
+		}
+		if cfg.Weights.UserShow == 0 {
+			cfg.Weights.UserShow = defaults.UserShow
+		}
+		if cfg.Weights.UserHide == 0 {
+			cfg.Weights.UserHide = defaults.UserHide
+		}
+		if cfg.Weights.HighSignalFact == 0 {
+			cfg.Weights.HighSignalFact = defaults.HighSignalFact
+		}
+		if cfg.Weights.RelationshipProximity == 0 {
+			cfg.Weights.RelationshipProximity = defaults.RelationshipProximity
+		}
+		if cfg.Weights.DependencyFact == 0 {
+			cfg.Weights.DependencyFact = defaults.DependencyFact
+		}
+		if cfg.Weights.UtilityNoise == 0 {
+			cfg.Weights.UtilityNoise = defaults.UtilityNoise
+		}
+		if cfg.Weights.HighDegreeNoise == 0 {
+			cfg.Weights.HighDegreeNoise = defaults.HighDegreeNoise
+		}
+	}
+	return cfg
 }
 
 func normalizeLanguages(values []string) []string {

@@ -105,14 +105,19 @@ func TSNextJS() Enricher {
 				return nil
 			}
 			return emit.EmitFact(Fact{
-				Type:       "frontend.route",
-				StableKey:  fmt.Sprintf("frontend.route:nextjs:%s:%s", input.RelPath, route),
-				Subject:    fileSubject(input.RelPath),
-				Source:     SourceSpan{FilePath: input.RelPath, StartLine: 1, EndLine: 1},
-				Confidence: 0.95,
-				Name:       route,
-				Tags:       []string{"frontend:route", "framework:nextjs"},
-				Attributes: map[string]string{"framework": "nextjs", "path": route},
+				Type:         "frontend.route",
+				StableKey:    fmt.Sprintf("frontend.route:nextjs:%s:%s", input.RelPath, route),
+				Subject:      fileSubject(input.RelPath),
+				Object:       SubjectRef{Kind: "frontend.route", StableKey: "frontend.route:nextjs:" + route, FilePath: input.RelPath, Name: route},
+				Relationship: "declares",
+				Source:       SourceSpan{FilePath: input.RelPath, StartLine: 1, EndLine: 1},
+				Confidence:   0.95,
+				Name:         route,
+				Tags:         []string{"frontend:route", "framework:nextjs"},
+				Attributes:   map[string]string{"framework": "nextjs", "path": route},
+				VisibilityHints: map[string]float64{
+					"high_signal": 1,
+				},
 			})
 		},
 	}
@@ -199,14 +204,19 @@ func emitMatches(input FileInput, emit FactEmitter, patterns []*routePattern) er
 			subject := subjectForLine(input, line)
 			key := fmt.Sprintf("%s:%s:%s:%s:%d", factType, pattern.framework, input.RelPath, name, line)
 			if err := emit.EmitFact(Fact{
-				Type:       factType,
-				StableKey:  key,
-				Subject:    subject,
-				Source:     SourceSpan{FilePath: input.RelPath, StartLine: line, EndLine: line},
-				Confidence: 0.90,
-				Name:       name,
-				Tags:       tags,
-				Attributes: attrs,
+				Type:         factType,
+				StableKey:    key,
+				Subject:      subject,
+				Object:       SubjectRef{Kind: factType, StableKey: factType + ":" + pattern.framework + ":" + name, FilePath: input.RelPath, Name: name},
+				Relationship: "declares",
+				Source:       SourceSpan{FilePath: input.RelPath, StartLine: line, EndLine: line},
+				Confidence:   0.90,
+				Name:         name,
+				Tags:         tags,
+				Attributes:   attrs,
+				VisibilityHints: map[string]float64{
+					"high_signal": 1,
+				},
 			}); err != nil {
 				return err
 			}
@@ -265,14 +275,19 @@ func dependencyInventoryRun(ctx context.Context, input FileInput, emit FactEmitt
 			line = 1
 		}
 		if err := emit.EmitFact(Fact{
-			Type:       "dependency.import",
-			StableKey:  fmt.Sprintf("dependency.import:%s:%s:%d", input.RelPath, ref.TargetPath, line),
-			Subject:    fileSubject(input.RelPath),
-			Source:     SourceSpan{FilePath: input.RelPath, StartLine: line, StartColumn: ref.Column},
-			Confidence: 1,
-			Name:       ref.TargetPath,
-			Tags:       []string{"dependency:import"},
-			Attributes: map[string]string{"module": ref.TargetPath, "name": ref.Name},
+			Type:         "dependency.import",
+			StableKey:    fmt.Sprintf("dependency.import:%s:%s:%d", input.RelPath, ref.TargetPath, line),
+			Subject:      fileSubject(input.RelPath),
+			Object:       SubjectRef{Kind: "dependency.module", StableKey: "dependency.module:" + ref.TargetPath, Name: ref.TargetPath},
+			Relationship: "imports",
+			Source:       SourceSpan{FilePath: input.RelPath, StartLine: line, StartColumn: ref.Column},
+			Confidence:   1,
+			Name:         ref.TargetPath,
+			Tags:         []string{"dependency:import"},
+			Attributes:   map[string]string{"module": ref.TargetPath, "name": ref.Name},
+			VisibilityHints: map[string]float64{
+				"dependency": 1,
+			},
 		}); err != nil {
 			return err
 		}
@@ -333,14 +348,19 @@ func emitPackageJSONFacts(input FileInput, emit FactEmitter) error {
 
 func dependencyFact(relPath string, line int, name, ecosystem string) Fact {
 	return Fact{
-		Type:       "dependency.module",
-		StableKey:  fmt.Sprintf("dependency.module:%s:%s", relPath, name),
-		Subject:    fileSubject(relPath),
-		Source:     SourceSpan{FilePath: relPath, StartLine: line, EndLine: line},
-		Confidence: 1,
-		Name:       name,
-		Tags:       []string{"dependency:module"},
-		Attributes: map[string]string{"module": name, "ecosystem": ecosystem},
+		Type:         "dependency.module",
+		StableKey:    fmt.Sprintf("dependency.module:%s:%s", relPath, name),
+		Subject:      fileSubject(relPath),
+		Object:       SubjectRef{Kind: "dependency.module", StableKey: "dependency.module:" + name, Name: name},
+		Relationship: "declares_dependency",
+		Source:       SourceSpan{FilePath: relPath, StartLine: line, EndLine: line},
+		Confidence:   1,
+		Name:         name,
+		Tags:         []string{"dependency:module"},
+		Attributes:   map[string]string{"module": name, "ecosystem": ecosystem},
+		VisibilityHints: map[string]float64{
+			"dependency": 1,
+		},
 	}
 }
 

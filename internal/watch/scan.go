@@ -560,48 +560,67 @@ func watchFactsFromEnrich(repositoryID, fileID int64, relPath string, facts []en
 			endPtr = &endLine
 		}
 		attrs, _ := json.Marshal(fact.Attributes)
+		hints, _ := json.Marshal(fact.VisibilityHints)
 		raw, _ := json.Marshal(fact)
 		watchFact := Fact{
-			RepositoryID:     repositoryID,
-			FileID:           fileID,
-			FilePath:         filePath,
-			StableKey:        fact.StableKey,
-			Type:             fact.Type,
-			Enricher:         fact.Enricher,
-			SubjectKind:      subjectKind,
-			SubjectStableKey: subjectKey,
-			StartLine:        fact.Source.StartLine,
-			EndLine:          endPtr,
-			Confidence:       fact.Confidence,
-			Name:             fact.Name,
-			Tags:             append([]string{}, fact.Tags...),
-			AttributesJSON:   string(attrs),
-			RawJSON:          string(raw),
+			RepositoryID:        repositoryID,
+			FileID:              fileID,
+			FilePath:            filePath,
+			StableKey:           fact.StableKey,
+			Type:                fact.Type,
+			Enricher:            fact.Enricher,
+			SubjectKind:         subjectKind,
+			SubjectStableKey:    subjectKey,
+			ObjectKind:          strings.TrimSpace(fact.Object.Kind),
+			ObjectStableKey:     strings.TrimSpace(fact.Object.StableKey),
+			ObjectFilePath:      strings.TrimSpace(fact.Object.FilePath),
+			ObjectName:          strings.TrimSpace(fact.Object.Name),
+			Relationship:        strings.TrimSpace(fact.Relationship),
+			StartLine:           fact.Source.StartLine,
+			EndLine:             endPtr,
+			Confidence:          fact.Confidence,
+			Name:                fact.Name,
+			Tags:                append([]string{}, fact.Tags...),
+			AttributesJSON:      string(attrs),
+			VisibilityHintsJSON: string(hints),
+			RawJSON:             string(raw),
 		}
 		watchFact.FactHash = stableHash(struct {
-			Type       string            `json:"type"`
-			StableKey  string            `json:"stable_key"`
-			Enricher   string            `json:"enricher"`
-			Subject    string            `json:"subject"`
-			FilePath   string            `json:"file_path"`
-			StartLine  int               `json:"start_line"`
-			EndLine    *int              `json:"end_line,omitempty"`
-			Confidence float64           `json:"confidence"`
-			Name       string            `json:"name"`
-			Tags       []string          `json:"tags"`
-			Attributes map[string]string `json:"attributes"`
+			Type            string             `json:"type"`
+			StableKey       string             `json:"stable_key"`
+			Enricher        string             `json:"enricher"`
+			Subject         string             `json:"subject"`
+			ObjectKind      string             `json:"object_kind,omitempty"`
+			ObjectStableKey string             `json:"object_stable_key,omitempty"`
+			ObjectFilePath  string             `json:"object_file_path,omitempty"`
+			ObjectName      string             `json:"object_name,omitempty"`
+			Relationship    string             `json:"relationship,omitempty"`
+			FilePath        string             `json:"file_path"`
+			StartLine       int                `json:"start_line"`
+			EndLine         *int               `json:"end_line,omitempty"`
+			Confidence      float64            `json:"confidence"`
+			Name            string             `json:"name"`
+			Tags            []string           `json:"tags"`
+			Attributes      map[string]string  `json:"attributes"`
+			VisibilityHints map[string]float64 `json:"visibility_hints,omitempty"`
 		}{
-			Type:       watchFact.Type,
-			StableKey:  watchFact.StableKey,
-			Enricher:   watchFact.Enricher,
-			Subject:    watchFact.SubjectKind + ":" + watchFact.SubjectStableKey,
-			FilePath:   watchFact.FilePath,
-			StartLine:  watchFact.StartLine,
-			EndLine:    watchFact.EndLine,
-			Confidence: watchFact.Confidence,
-			Name:       watchFact.Name,
-			Tags:       watchFact.Tags,
-			Attributes: fact.Attributes,
+			Type:            watchFact.Type,
+			StableKey:       watchFact.StableKey,
+			Enricher:        watchFact.Enricher,
+			Subject:         watchFact.SubjectKind + ":" + watchFact.SubjectStableKey,
+			ObjectKind:      watchFact.ObjectKind,
+			ObjectStableKey: watchFact.ObjectStableKey,
+			ObjectFilePath:  watchFact.ObjectFilePath,
+			ObjectName:      watchFact.ObjectName,
+			Relationship:    watchFact.Relationship,
+			FilePath:        watchFact.FilePath,
+			StartLine:       watchFact.StartLine,
+			EndLine:         watchFact.EndLine,
+			Confidence:      watchFact.Confidence,
+			Name:            watchFact.Name,
+			Tags:            watchFact.Tags,
+			Attributes:      fact.Attributes,
+			VisibilityHints: fact.VisibilityHints,
 		})
 		out = append(out, watchFact)
 	}
@@ -614,19 +633,20 @@ func enrichmentVersionStableKey(relPath string) string {
 
 func enrichmentVersionFact(repositoryID, fileID int64, relPath string) Fact {
 	fact := Fact{
-		RepositoryID:     repositoryID,
-		FileID:           fileID,
-		FilePath:         relPath,
-		StableKey:        enrichmentVersionStableKey(relPath),
-		Type:             enrichmentVersionType,
-		Enricher:         enrichmentVersionEnricher,
-		SubjectKind:      "file",
-		SubjectStableKey: "file:" + relPath,
-		StartLine:        1,
-		Confidence:       1,
-		Name:             enrichmentVersion,
-		AttributesJSON:   `{"version":"` + enrichmentVersion + `"}`,
-		RawJSON:          `{"version":"` + enrichmentVersion + `"}`,
+		RepositoryID:        repositoryID,
+		FileID:              fileID,
+		FilePath:            relPath,
+		StableKey:           enrichmentVersionStableKey(relPath),
+		Type:                enrichmentVersionType,
+		Enricher:            enrichmentVersionEnricher,
+		SubjectKind:         "file",
+		SubjectStableKey:    "file:" + relPath,
+		StartLine:           1,
+		Confidence:          1,
+		Name:                enrichmentVersion,
+		AttributesJSON:      `{"version":"` + enrichmentVersion + `"}`,
+		VisibilityHintsJSON: `{}`,
+		RawJSON:             `{"version":"` + enrichmentVersion + `"}`,
 	}
 	fact.FactHash = stableHash(struct {
 		Type      string `json:"type"`

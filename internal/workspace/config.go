@@ -95,6 +95,26 @@ type WatchThresholdConfig struct {
 	MaxExpandedConnectorsPerGroup int `yaml:"max_expanded_connectors_per_group"`
 }
 
+type WatchVisibilityWeightsConfig struct {
+	Changed               float64 `yaml:"changed"`
+	Selected              float64 `yaml:"selected"`
+	UserShow              float64 `yaml:"user_show"`
+	UserHide              float64 `yaml:"user_hide"`
+	HighSignalFact        float64 `yaml:"high_signal_fact"`
+	RelationshipProximity float64 `yaml:"relationship_proximity"`
+	DependencyFact        float64 `yaml:"dependency_fact"`
+	UtilityNoise          float64 `yaml:"utility_noise"`
+	HighDegreeNoise       float64 `yaml:"high_degree_noise"`
+}
+
+type WatchVisibilityConfig struct {
+	CoreThresholdEnabled   bool                         `yaml:"core_threshold_enabled"`
+	CoreThreshold          float64                      `yaml:"core_threshold"`
+	TierMultiplier         float64                      `yaml:"tier_multiplier"`
+	MaxExpansionMultiplier float64                      `yaml:"max_expansion_multiplier"`
+	Weights                WatchVisibilityWeightsConfig `yaml:"weights"`
+}
+
 type WatchLayoutConfig struct {
 	LinkDistance    float64 `yaml:"link_distance"`
 	ChargeStrength  float64 `yaml:"charge_strength"`
@@ -103,13 +123,14 @@ type WatchLayoutConfig struct {
 }
 
 type WatchConfig struct {
-	Languages    []string             `yaml:"languages"`
-	Watcher      string               `yaml:"watcher"`
-	PollInterval string               `yaml:"poll_interval"`
-	Debounce     string               `yaml:"debounce"`
-	Thresholds   WatchThresholdConfig `yaml:"thresholds"`
-	Embedding    WatchEmbeddingConfig `yaml:"embedding"`
-	Layout       WatchLayoutConfig    `yaml:"layout"`
+	Languages    []string              `yaml:"languages"`
+	Watcher      string                `yaml:"watcher"`
+	PollInterval string                `yaml:"poll_interval"`
+	Debounce     string                `yaml:"debounce"`
+	Thresholds   WatchThresholdConfig  `yaml:"thresholds"`
+	Visibility   WatchVisibilityConfig `yaml:"visibility"`
+	Embedding    WatchEmbeddingConfig  `yaml:"embedding"`
+	Layout       WatchLayoutConfig     `yaml:"layout"`
 }
 
 type CompletionConfig struct {
@@ -140,6 +161,23 @@ func DefaultConfig() *Config {
 				MaxIncomingPerElement:         20,
 				MaxOutgoingPerElement:         20,
 				MaxExpandedConnectorsPerGroup: 24,
+			},
+			Visibility: WatchVisibilityConfig{
+				CoreThresholdEnabled:   true,
+				CoreThreshold:          1,
+				TierMultiplier:         0.5,
+				MaxExpansionMultiplier: 2,
+				Weights: WatchVisibilityWeightsConfig{
+					Changed:               100,
+					Selected:              100,
+					UserShow:              100,
+					UserHide:              -100,
+					HighSignalFact:        1.5,
+					RelationshipProximity: 1,
+					DependencyFact:        0.2,
+					UtilityNoise:          -0.8,
+					HighDegreeNoise:       -1.5,
+				},
 			},
 			Embedding: WatchEmbeddingConfig{
 				Provider:        "local-lexical",

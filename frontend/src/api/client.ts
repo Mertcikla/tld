@@ -109,11 +109,17 @@ export interface WatchRepresentationSummary {
 
 export interface WatchContextActionResponse {
   repository_id: number
-  action: 'show' | 'hide' | string
+  action: 'show' | 'hide' | 'clean' | string
   policies_created: number
   policies_updated: number
   policies_deactivated: number
   owners_affected: number
+  tier_before: number
+  tier_after: number
+  max_tier: number
+  elements_added: number
+  connectors_added: number
+  views_added: number
   elements_removed: number
   connectors_removed: number
   views_removed: number
@@ -1097,13 +1103,22 @@ export const api = {
       if (!res.ok) throw await responseError(res, 'Failed to show watch context')
       return res.json()
     },
+    cleanContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/context/clean`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      })
+      if (!res.ok) throw await responseError(res, 'Failed to clean watch context')
+      return res.json()
+    },
     hideContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
       const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/context/hide`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       })
-      if (!res.ok) throw await responseError(res, 'Failed to clean watch context')
+      if (!res.ok) throw await responseError(res, 'Failed to hide watch context')
       return res.json()
     },
   },

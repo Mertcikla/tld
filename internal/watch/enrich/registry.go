@@ -125,6 +125,10 @@ func (c *collector) EmitFact(fact Fact) error {
 	if fact.Attributes == nil {
 		fact.Attributes = map[string]string{}
 	}
+	fact.Relationship = strings.TrimSpace(fact.Relationship)
+	if fact.VisibilityHints == nil {
+		fact.VisibilityHints = map[string]float64{}
+	}
 	fact.Tags = normalizeTags(fact.Tags)
 	c.facts = append(c.facts, fact)
 	return nil

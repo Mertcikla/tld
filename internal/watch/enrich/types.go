@@ -47,15 +47,18 @@ type SubjectRef struct {
 }
 
 type Fact struct {
-	Type       string
-	StableKey  string
-	Enricher   string
-	Subject    SubjectRef
-	Source     SourceSpan
-	Confidence float64
-	Name       string
-	Tags       []string
-	Attributes map[string]string
+	Type            string
+	StableKey       string
+	Enricher        string
+	Subject         SubjectRef
+	Object          SubjectRef
+	Relationship    string
+	Source          SourceSpan
+	Confidence      float64
+	Name            string
+	Tags            []string
+	Attributes      map[string]string
+	VisibilityHints map[string]float64
 }
 
 type FactEmitter interface {

@@ -688,17 +688,25 @@ func (s *Store) ReplaceFactsForFile(ctx context.Context, repositoryID, fileID in
 		if fact.AttributesJSON == "" {
 			fact.AttributesJSON = "{}"
 		}
+		if fact.VisibilityHintsJSON == "" {
+			fact.VisibilityHintsJSON = "{}"
+		}
 		if fact.RawJSON == "" {
 			fact.RawJSON = "{}"
 		}
 		_, err := s.db.ExecContext(ctx, `
-			INSERT INTO watch_facts(repository_id, file_id, stable_key, type, enricher, subject_kind, subject_stable_key, file_path, start_line, end_line, confidence, name, tags, attributes_json, fact_hash, raw_json, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			INSERT INTO watch_facts(repository_id, file_id, stable_key, type, enricher, subject_kind, subject_stable_key, object_kind, object_stable_key, object_file_path, object_name, relationship, file_path, start_line, end_line, confidence, name, tags, attributes_json, visibility_hints_json, fact_hash, raw_json, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(repository_id, enricher, stable_key) DO UPDATE SET
 				file_id = excluded.file_id,
 				type = excluded.type,
 				subject_kind = excluded.subject_kind,
 				subject_stable_key = excluded.subject_stable_key,
+				object_kind = excluded.object_kind,
+				object_stable_key = excluded.object_stable_key,
+				object_file_path = excluded.object_file_path,
+				object_name = excluded.object_name,
+				relationship = excluded.relationship,
 				file_path = excluded.file_path,
 				start_line = excluded.start_line,
 				end_line = excluded.end_line,
@@ -706,10 +714,11 @@ func (s *Store) ReplaceFactsForFile(ctx context.Context, repositoryID, fileID in
 				name = excluded.name,
 				tags = excluded.tags,
 				attributes_json = excluded.attributes_json,
+				visibility_hints_json = excluded.visibility_hints_json,
 				fact_hash = excluded.fact_hash,
 				raw_json = excluded.raw_json,
 				updated_at = excluded.updated_at`,
-			repositoryID, fileID, fact.StableKey, fact.Type, fact.Enricher, fact.SubjectKind, fact.SubjectStableKey, fact.FilePath, fact.StartLine, fact.EndLine, fact.Confidence, fact.Name, string(tags), fact.AttributesJSON, fact.FactHash, fact.RawJSON, now, now)
+			repositoryID, fileID, fact.StableKey, fact.Type, fact.Enricher, fact.SubjectKind, fact.SubjectStableKey, fact.ObjectKind, fact.ObjectStableKey, fact.ObjectFilePath, fact.ObjectName, fact.Relationship, fact.FilePath, fact.StartLine, fact.EndLine, fact.Confidence, fact.Name, string(tags), fact.AttributesJSON, fact.VisibilityHintsJSON, fact.FactHash, fact.RawJSON, now, now)
 		if err != nil {
 			return err
 		}
@@ -735,7 +744,7 @@ func (s *Store) FactVersionForFile(ctx context.Context, repositoryID, fileID int
 
 func (s *Store) FactsForRepository(ctx context.Context, repositoryID int64) ([]Fact, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, repository_id, file_id, file_path, stable_key, type, enricher, subject_kind, subject_stable_key, start_line, end_line, confidence, name, tags, attributes_json, fact_hash, raw_json, created_at, updated_at
+		SELECT id, repository_id, file_id, file_path, stable_key, type, enricher, subject_kind, subject_stable_key, object_kind, object_stable_key, object_file_path, object_name, relationship, start_line, end_line, confidence, name, tags, attributes_json, visibility_hints_json, fact_hash, raw_json, created_at, updated_at
 		FROM watch_facts
 		WHERE repository_id = ?
 		ORDER BY file_path, type, enricher, stable_key`, repositoryID)
@@ -762,7 +771,7 @@ func scanFact(row factScanner) (Fact, error) {
 	var fact Fact
 	var endLine sql.NullInt64
 	var rawTags string
-	if err := row.Scan(&fact.ID, &fact.RepositoryID, &fact.FileID, &fact.FilePath, &fact.StableKey, &fact.Type, &fact.Enricher, &fact.SubjectKind, &fact.SubjectStableKey, &fact.StartLine, &endLine, &fact.Confidence, &fact.Name, &rawTags, &fact.AttributesJSON, &fact.FactHash, &fact.RawJSON, &fact.CreatedAt, &fact.UpdatedAt); err != nil {
+	if err := row.Scan(&fact.ID, &fact.RepositoryID, &fact.FileID, &fact.FilePath, &fact.StableKey, &fact.Type, &fact.Enricher, &fact.SubjectKind, &fact.SubjectStableKey, &fact.ObjectKind, &fact.ObjectStableKey, &fact.ObjectFilePath, &fact.ObjectName, &fact.Relationship, &fact.StartLine, &endLine, &fact.Confidence, &fact.Name, &rawTags, &fact.AttributesJSON, &fact.VisibilityHintsJSON, &fact.FactHash, &fact.RawJSON, &fact.CreatedAt, &fact.UpdatedAt); err != nil {
 		return Fact{}, err
 	}
 	if endLine.Valid {
@@ -1032,10 +1041,13 @@ func (s *Store) BeginFilterRun(ctx context.Context, repositoryID int64, settings
 	return res.LastInsertId()
 }
 
-func (s *Store) SaveFilterDecision(ctx context.Context, filterRunID int64, ownerType string, ownerID int64, decision, reason string, score *float64) error {
+func (s *Store) SaveFilterDecision(ctx context.Context, filterRunID int64, ownerType string, ownerID int64, ownerKey string, decision, reason string, score *float64, tier int, signalsJSON string) error {
+	if signalsJSON == "" {
+		signalsJSON = "[]"
+	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO watch_filter_decisions(filter_run_id, owner_type, owner_id, decision, reason, score)
-		VALUES (?, ?, ?, ?, ?, ?)`, filterRunID, ownerType, ownerID, decision, reason, score)
+		INSERT INTO watch_filter_decisions(filter_run_id, owner_type, owner_id, owner_key, decision, reason, score, tier, signals_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, filterRunID, ownerType, ownerID, ownerKey, decision, reason, score, tier, signalsJSON)
 	return err
 }
 
@@ -1576,7 +1588,7 @@ func (s *Store) FilterDecisions(ctx context.Context, repositoryID int64, q Filte
 		return []FilterDecision{}, nil
 	}
 	query := `
-		SELECT id, filter_run_id, owner_type, owner_id, decision, reason, score
+		SELECT id, filter_run_id, owner_type, owner_id, owner_key, decision, reason, score, tier, signals_json
 		FROM watch_filter_decisions
 		WHERE filter_run_id = ?`
 	args := []any{runID}
@@ -1603,7 +1615,7 @@ func (s *Store) FilterDecisions(ctx context.Context, repositoryID int64, q Filte
 	for rows.Next() {
 		var item FilterDecision
 		var score sql.NullFloat64
-		if err := rows.Scan(&item.ID, &item.FilterRunID, &item.OwnerType, &item.OwnerID, &item.Decision, &item.Reason, &score); err != nil {
+		if err := rows.Scan(&item.ID, &item.FilterRunID, &item.OwnerType, &item.OwnerID, &item.OwnerKey, &item.Decision, &item.Reason, &score, &item.Tier, &item.SignalsJSON); err != nil {
 			return nil, err
 		}
 		if score.Valid {

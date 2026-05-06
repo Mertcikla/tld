@@ -82,25 +82,31 @@ type Reference struct {
 }
 
 type Fact struct {
-	ID               int64    `json:"id"`
-	RepositoryID     int64    `json:"repository_id"`
-	FileID           int64    `json:"file_id"`
-	FilePath         string   `json:"file_path"`
-	StableKey        string   `json:"stable_key"`
-	Type             string   `json:"type"`
-	Enricher         string   `json:"enricher"`
-	SubjectKind      string   `json:"subject_kind"`
-	SubjectStableKey string   `json:"subject_stable_key"`
-	StartLine        int      `json:"start_line"`
-	EndLine          *int     `json:"end_line,omitempty"`
-	Confidence       float64  `json:"confidence"`
-	Name             string   `json:"name"`
-	Tags             []string `json:"tags"`
-	AttributesJSON   string   `json:"attributes_json"`
-	FactHash         string   `json:"fact_hash"`
-	RawJSON          string   `json:"raw_json"`
-	CreatedAt        string   `json:"created_at"`
-	UpdatedAt        string   `json:"updated_at"`
+	ID                  int64    `json:"id"`
+	RepositoryID        int64    `json:"repository_id"`
+	FileID              int64    `json:"file_id"`
+	FilePath            string   `json:"file_path"`
+	StableKey           string   `json:"stable_key"`
+	Type                string   `json:"type"`
+	Enricher            string   `json:"enricher"`
+	SubjectKind         string   `json:"subject_kind"`
+	SubjectStableKey    string   `json:"subject_stable_key"`
+	ObjectKind          string   `json:"object_kind,omitempty"`
+	ObjectStableKey     string   `json:"object_stable_key,omitempty"`
+	ObjectFilePath      string   `json:"object_file_path,omitempty"`
+	ObjectName          string   `json:"object_name,omitempty"`
+	Relationship        string   `json:"relationship,omitempty"`
+	StartLine           int      `json:"start_line"`
+	EndLine             *int     `json:"end_line,omitempty"`
+	Confidence          float64  `json:"confidence"`
+	Name                string   `json:"name"`
+	Tags                []string `json:"tags"`
+	AttributesJSON      string   `json:"attributes_json"`
+	VisibilityHintsJSON string   `json:"visibility_hints_json"`
+	FactHash            string   `json:"fact_hash"`
+	RawJSON             string   `json:"raw_json"`
+	CreatedAt           string   `json:"created_at"`
+	UpdatedAt           string   `json:"updated_at"`
 }
 
 type Summary struct {
@@ -141,18 +147,42 @@ type Thresholds struct {
 	MaxExpandedConnectorsPerGroup int `json:"max_expanded_connectors_per_group"`
 }
 
+type VisibilityWeights struct {
+	Changed               float64 `json:"changed" yaml:"changed"`
+	Selected              float64 `json:"selected" yaml:"selected"`
+	UserShow              float64 `json:"user_show" yaml:"user_show"`
+	UserHide              float64 `json:"user_hide" yaml:"user_hide"`
+	HighSignalFact        float64 `json:"high_signal_fact" yaml:"high_signal_fact"`
+	RelationshipProximity float64 `json:"relationship_proximity" yaml:"relationship_proximity"`
+	DependencyFact        float64 `json:"dependency_fact" yaml:"dependency_fact"`
+	UtilityNoise          float64 `json:"utility_noise" yaml:"utility_noise"`
+	HighDegreeNoise       float64 `json:"high_degree_noise" yaml:"high_degree_noise"`
+}
+
+type VisibilityConfig struct {
+	CoreThresholdEnabled   bool              `json:"core_threshold_enabled" yaml:"core_threshold_enabled"`
+	CoreThreshold          float64           `json:"core_threshold" yaml:"core_threshold"`
+	TierMultiplier         float64           `json:"tier_multiplier" yaml:"tier_multiplier"`
+	MaxExpansionMultiplier float64           `json:"max_expansion_multiplier" yaml:"max_expansion_multiplier"`
+	Weights                VisibilityWeights `json:"weights" yaml:"weights"`
+	CoreThresholdSet       bool              `json:"-" yaml:"-"`
+	WeightsSet             bool              `json:"-" yaml:"-"`
+}
+
 type Settings struct {
-	Languages    []string      `json:"languages"`
-	Watcher      string        `json:"watcher"`
-	PollInterval time.Duration `json:"poll_interval"`
-	Debounce     time.Duration `json:"debounce"`
-	Thresholds   Thresholds    `json:"thresholds"`
+	Languages    []string         `json:"languages"`
+	Watcher      string           `json:"watcher"`
+	PollInterval time.Duration    `json:"poll_interval"`
+	Debounce     time.Duration    `json:"debounce"`
+	Thresholds   Thresholds       `json:"thresholds"`
+	Visibility   VisibilityConfig `json:"visibility"`
 }
 
 type RepresentRequest struct {
-	Embedding  EmbeddingConfig `json:"embedding"`
-	Thresholds Thresholds      `json:"thresholds"`
-	Progress   ProgressSink    `json:"-"`
+	Embedding  EmbeddingConfig  `json:"embedding"`
+	Thresholds Thresholds       `json:"thresholds"`
+	Visibility VisibilityConfig `json:"visibility"`
+	Progress   ProgressSink     `json:"-"`
 }
 
 type RepresentResult struct {
@@ -206,9 +236,12 @@ type FilterDecision struct {
 	FilterRunID int64    `json:"filter_run_id"`
 	OwnerType   string   `json:"owner_type"`
 	OwnerID     int64    `json:"owner_id"`
+	OwnerKey    string   `json:"owner_key,omitempty"`
 	Decision    string   `json:"decision"`
 	Reason      string   `json:"reason"`
 	Score       *float64 `json:"score,omitempty"`
+	Tier        int      `json:"tier,omitempty"`
+	SignalsJSON string   `json:"signals_json,omitempty"`
 }
 
 type Cluster struct {
@@ -264,6 +297,12 @@ type ContextActionResult struct {
 	PoliciesUpdated     int                   `json:"policies_updated"`
 	PoliciesDeactivated int                   `json:"policies_deactivated"`
 	OwnersAffected      int                   `json:"owners_affected"`
+	TierBefore          int                   `json:"tier_before"`
+	TierAfter           int                   `json:"tier_after"`
+	MaxTier             int                   `json:"max_tier"`
+	ElementsAdded       int                   `json:"elements_added"`
+	ConnectorsAdded     int                   `json:"connectors_added"`
+	ViewsAdded          int                   `json:"views_added"`
 	ElementsRemoved     int                   `json:"elements_removed"`
 	ConnectorsRemoved   int                   `json:"connectors_removed"`
 	ViewsRemoved        int                   `json:"views_removed"`
