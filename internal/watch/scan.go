@@ -166,7 +166,10 @@ func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, rel
 	if len(parsedFileIDs) == 0 {
 		return result, nil
 	}
-	refs, warning, err := s.resolveReferences(ctx, repoRoot, repo.ID, parsedFiles)
+	progressFinish(progress)
+	progressStart(progress, "Resolving code references", len(parsedFiles))
+	refs, warning, err := s.resolveReferences(ctx, repoRoot, repo.ID, parsedFiles, progress)
+	progressFinish(progress)
 	if err != nil {
 		scanErr = err
 		return result, err
@@ -243,13 +246,14 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	}()
 
 	workers := runtime.NumCPU()
-	files, err := s.collectSourceFiles(repoRoot, workers, settings.Languages, effectiveRules)
+	progress := &synchronizedProgress{sink: s.Progress}
+	files, err := s.collectSourceFiles(repoRoot, workers, settings.Languages, effectiveRules, progress)
+	progressFinish(progress)
 	if err != nil {
 		scanErr = err
 		return result, err
 	}
 	result.FilesSeen = len(files)
-	progress := &synchronizedProgress{sink: s.Progress}
 	progressStart(progress, "Scanning source files", len(files))
 	defer progressFinish(progress)
 	seen := make(map[string]struct{}, len(files))
@@ -286,7 +290,10 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 		return result, nil
 	}
 
-	refs, warning, err := s.resolveReferences(ctx, repoRoot, repo.ID, parsedFiles)
+	progressFinish(progress)
+	progressStart(progress, "Resolving code references", len(parsedFiles))
+	refs, warning, err := s.resolveReferences(ctx, repoRoot, repo.ID, parsedFiles, progress)
+	progressFinish(progress)
 	if err != nil {
 		scanErr = err
 		return result, err
@@ -449,7 +456,7 @@ func watchedFileLanguage(path string) (language string, parseable bool, ok bool)
 	}
 }
 
-func (s *Scanner) collectSourceFiles(root string, workers int, languages []string, rules *ignore.Rules) ([]string, error) {
+func (s *Scanner) collectSourceFiles(root string, workers int, languages []string, rules *ignore.Rules, progress ProgressSink) ([]string, error) {
 	var files []string
 	if rules == nil {
 		rules = &ignore.Rules{}
@@ -464,6 +471,7 @@ func (s *Scanner) collectSourceFiles(root string, workers int, languages []strin
 	if workers > len(entries) && len(entries) > 0 {
 		workers = len(entries)
 	}
+	progressStart(progress, "Discovering source files", len(entries))
 	jobs := make(chan string)
 	results := make(chan []string, len(entries))
 	errs := make(chan error, 1)
@@ -474,6 +482,7 @@ func (s *Scanner) collectSourceFiles(root string, workers int, languages []strin
 			defer wg.Done()
 			for entryPath := range jobs {
 				found, err := s.collectSourceFilesUnder(root, entryPath, rules, languages)
+				progressAdvance(progress, filepath.ToSlash(mustRel(root, entryPath)))
 				if err != nil {
 					select {
 					case errs <- err:
@@ -616,7 +625,7 @@ func normalizeSymbolContent(body, name, qualified string) string {
 	return body
 }
 
-func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, repositoryID int64, files []parsedFile) ([]Reference, string, error) {
+func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, repositoryID int64, files []parsedFile, progress ProgressSink) ([]Reference, string, error) {
 	symbols, err := s.Store.SymbolsForRepository(ctx, repositoryID)
 	if err != nil {
 		return nil, "", err
@@ -638,6 +647,7 @@ func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, reposi
 
 	var refs []Reference
 	for _, file := range files {
+		progressAdvance(progress, file.File.Path)
 		for _, parsedRef := range file.Refs {
 			if parsedRef.Kind != "" && parsedRef.Kind != "call" {
 				continue

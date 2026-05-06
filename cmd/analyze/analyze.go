@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	assets "github.com/mertcikla/tld"
@@ -87,7 +88,7 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 			if err != nil {
 				return err
 			}
-			exported, exportResult, err := exportyaml.Export(cmd.Context(), sqliteStore, watchStore, ws, once.Scan.RepositoryID)
+			exported, exportResult, err := exportyaml.ExportWithProgress(cmd.Context(), sqliteStore, watchStore, ws, once.Scan.RepositoryID, progress)
 			if err != nil {
 				return fmt.Errorf("export yaml: %w", err)
 			}
@@ -224,6 +225,7 @@ func hasAnalyzeDrift(diffs []watchpkg.RepresentationDiff) bool {
 type analyzeWatchProgress struct {
 	out io.Writer
 	bar *progressbar.ProgressBar
+	mu  sync.Mutex
 }
 
 func newAnalyzeWatchProgress(out io.Writer) *analyzeWatchProgress {
@@ -231,8 +233,14 @@ func newAnalyzeWatchProgress(out io.Writer) *analyzeWatchProgress {
 }
 
 func (p *analyzeWatchProgress) Start(label string, total int) {
-	if p == nil || p.out == nil || total <= 0 {
+	if p == nil || p.out == nil || total <= 0 || !term.IsTerminal(p.out) {
 		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar != nil {
+		_ = p.bar.Finish()
+		p.bar = nil
 	}
 	p.bar = newAnalyzeProgressBar(p.out, total)
 	if p.bar != nil {
@@ -241,7 +249,12 @@ func (p *analyzeWatchProgress) Start(label string, total int) {
 }
 
 func (p *analyzeWatchProgress) Advance(label string) {
-	if p == nil || p.bar == nil {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar == nil {
 		return
 	}
 	if label != "" {
@@ -251,7 +264,12 @@ func (p *analyzeWatchProgress) Advance(label string) {
 }
 
 func (p *analyzeWatchProgress) Finish() {
-	if p == nil || p.bar == nil {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.bar == nil {
 		return
 	}
 	_ = p.bar.Finish()
@@ -271,6 +289,7 @@ func newAnalyzeProgressBar(out io.Writer, total int) *progressbar.ProgressBar {
 		progressbar.OptionSetWidth(12),
 		progressbar.OptionFullWidth(),
 		progressbar.OptionClearOnFinish(),
+		progressbar.OptionUseANSICodes(true),
 		progressbar.OptionThrottle(60*time.Millisecond),
 	)
 }

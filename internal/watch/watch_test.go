@@ -3656,6 +3656,34 @@ func (p *recordingProgress) Advance(string) {
 
 func (p *recordingProgress) Finish() {}
 
+func TestInferArchitectureSkipsMalformedRuntimeYAML(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "chart/templates/workload.yaml", "{{ if .Values.enabled }}\nkind: Deployment\n{{ end }}\n")
+	writeFile(t, dir, "runtime/topology.yaml", `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  template:
+    spec:
+      containers:
+        - name: api
+          image: example/api:latest
+          ports:
+            - containerPort: 8080
+`)
+
+	progress := &recordingProgress{}
+	model := inferArchitectureWithProgress(dir, progress)
+	if model.Components[architectureKey("component", "api")] == nil {
+		t.Fatalf("expected api deployment component, got %#v", model.Components)
+	}
+	if len(progress.starts) == 0 || progress.advances == 0 {
+		t.Fatalf("expected architecture progress, starts=%v advances=%d", progress.starts, progress.advances)
+	}
+}
+
 func initGitRepoNoCommit(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
