@@ -29,14 +29,19 @@ type VisibilityOverride struct {
 }
 
 type ProjectedViewContent struct {
-	Placements []app.PlacedElement
-	Connectors []app.Connector
+	Placements []app.PlacedElement `json:"placements"`
+	Connectors []app.Connector     `json:"connectors"`
+}
+
+type densitySignalKey struct {
+	resourceType string
+	resourceID   int64
 }
 
 type densitySignals struct {
-	filterScore            map[string]float64
-	filterTier             map[string]int
-	architectureConfidence map[string]float64
+	filterScore            map[densitySignalKey]float64
+	filterTier             map[densitySignalKey]int
+	architectureConfidence map[densitySignalKey]float64
 }
 
 func ValidateDensityLevel(level int) error {
@@ -189,80 +194,150 @@ func (s *SQLiteStore) ProjectedViewContent(ctx context.Context, viewID int64) (P
 	if len(placements) == 0 {
 		return ProjectedViewContent{Placements: placements, Connectors: connectors}, nil
 	}
+	caps := capsForDensity(level)
 	overrides, err := s.VisibilityOverrides(ctx, viewID)
 	if err != nil {
 		return ProjectedViewContent{}, err
 	}
-	signals, err := s.densitySignals(ctx)
-	if err != nil {
-		return ProjectedViewContent{}, err
+	signals := emptyDensitySignals()
+	if !caps.full {
+		signals, err = s.densitySignals(ctx, placements, connectors)
+		if err != nil {
+			return ProjectedViewContent{}, err
+		}
 	}
 	return projectViewContent(placements, connectors, overrides, level, signals), nil
 }
 
-func (s *SQLiteStore) densitySignals(ctx context.Context) (densitySignals, error) {
-	signals := densitySignals{
-		filterScore:            make(map[string]float64),
-		filterTier:             make(map[string]int),
-		architectureConfidence: make(map[string]float64),
+func emptyDensitySignals() densitySignals {
+	return densitySignals{
+		filterScore:            map[densitySignalKey]float64{},
+		filterTier:             map[densitySignalKey]int{},
+		architectureConfidence: map[densitySignalKey]float64{},
+	}
+}
+
+func (s *SQLiteStore) densitySignals(ctx context.Context, placements []app.PlacedElement, connectors []app.Connector) (densitySignals, error) {
+	signals := emptyDensitySignals()
+
+	elementIDs := make([]int64, 0, len(placements))
+	for _, placement := range placements {
+		elementIDs = append(elementIDs, placement.ElementID)
+	}
+	connectorIDs := make([]int64, 0, len(connectors))
+	for _, connector := range connectors {
+		connectorIDs = append(connectorIDs, connector.ID)
 	}
 
-	rows, err := s.DB().QueryContext(ctx, `
+	if err := s.loadFilterSignals(ctx, signals, "element", elementIDs); err != nil {
+		return densitySignals{}, err
+	}
+	if err := s.loadFilterSignals(ctx, signals, "connector", connectorIDs); err != nil {
+		return densitySignals{}, err
+	}
+	if err := s.loadArchitectureSignals(ctx, signals, "element", elementIDs); err != nil {
+		return densitySignals{}, err
+	}
+	if err := s.loadArchitectureSignals(ctx, signals, "connector", connectorIDs); err != nil {
+		return densitySignals{}, err
+	}
+
+	return signals, nil
+}
+
+func (s *SQLiteStore) loadFilterSignals(ctx context.Context, signals densitySignals, resourceType string, resourceIDs []int64) error {
+	return queryIDChunks(resourceIDs, 450, func(ids []int64) error {
+		query, args := idInQuery(`
 		SELECT wm.resource_type, wm.resource_id, MAX(wfd.score), MIN(wfd.tier)
 		FROM watch_materialization wm
 		JOIN watch_filter_decisions wfd
 		  ON wfd.owner_type = wm.owner_type
-		 AND (wfd.owner_key = wm.owner_key OR (wfd.owner_id IS NOT NULL AND CAST(wfd.owner_id AS TEXT) = wm.owner_key))
-		WHERE wm.resource_type IN ('element', 'connector')
-		GROUP BY wm.resource_type, wm.resource_id`)
-	if err != nil {
-		return densitySignals{}, err
-	}
-	for rows.Next() {
-		var resourceType string
-		var resourceID int64
-		var score sql.NullFloat64
-		var tier sql.NullInt64
-		if err := rows.Scan(&resourceType, &resourceID, &score, &tier); err != nil {
-			_ = rows.Close()
-			return densitySignals{}, err
+		 AND wfd.owner_key = wm.owner_key
+		WHERE wm.resource_type = ? AND wm.resource_id IN (%s)
+		GROUP BY wm.resource_type, wm.resource_id`, resourceType, ids)
+		rows, err := s.DB().QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
 		}
-		key := densitySignalKey(resourceType, resourceID)
-		if score.Valid {
-			signals.filterScore[key] = score.Float64
+		for rows.Next() {
+			var rowResourceType string
+			var resourceID int64
+			var score sql.NullFloat64
+			var tier sql.NullInt64
+			if err := rows.Scan(&rowResourceType, &resourceID, &score, &tier); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			key := densitySignalKey{resourceType: rowResourceType, resourceID: resourceID}
+			if score.Valid {
+				signals.filterScore[key] = score.Float64
+			}
+			if tier.Valid {
+				signals.filterTier[key] = int(tier.Int64)
+			}
 		}
-		if tier.Valid {
-			signals.filterTier[key] = int(tier.Int64)
+		if err := rows.Close(); err != nil {
+			return err
 		}
-	}
-	if err := rows.Close(); err != nil {
-		return densitySignals{}, err
-	}
-	if err := rows.Err(); err != nil {
-		return densitySignals{}, err
-	}
+		return rows.Err()
+	})
+}
 
-	rows, err = s.DB().QueryContext(ctx, `
+func (s *SQLiteStore) loadArchitectureSignals(ctx context.Context, signals densitySignals, resourceType string, resourceIDs []int64) error {
+	return queryIDChunks(resourceIDs, 450, func(ids []int64) error {
+		query, args := idInQuery(`
 		SELECT target_resource_type, target_resource_id, MAX(confidence)
 		FROM watch_architecture_links
-		WHERE target_resource_type IN ('element', 'connector') AND target_resource_id IS NOT NULL
-		GROUP BY target_resource_type, target_resource_id`)
-	if err != nil {
-		return densitySignals{}, err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var resourceType string
-		var resourceID int64
-		var confidence sql.NullFloat64
-		if err := rows.Scan(&resourceType, &resourceID, &confidence); err != nil {
-			return densitySignals{}, err
+		WHERE target_resource_type = ? AND target_resource_id IN (%s)
+		GROUP BY target_resource_type, target_resource_id`, resourceType, ids)
+		rows, err := s.DB().QueryContext(ctx, query, args...)
+		if err != nil {
+			return err
 		}
-		if confidence.Valid {
-			signals.architectureConfidence[densitySignalKey(resourceType, resourceID)] = confidence.Float64
+		for rows.Next() {
+			var rowResourceType string
+			var resourceID int64
+			var confidence sql.NullFloat64
+			if err := rows.Scan(&rowResourceType, &resourceID, &confidence); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if confidence.Valid {
+				signals.architectureConfidence[densitySignalKey{resourceType: rowResourceType, resourceID: resourceID}] = confidence.Float64
+			}
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		return rows.Err()
+	})
+}
+
+func queryIDChunks(ids []int64, size int, fn func([]int64) error) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	for start := 0; start < len(ids); start += size {
+		end := min(start+size, len(ids))
+		if err := fn(ids[start:end]); err != nil {
+			return err
 		}
 	}
-	return signals, rows.Err()
+	return nil
+}
+
+func idInQuery(template string, resourceType string, ids []int64) (string, []any) {
+	placeholders := make([]byte, 0, len(ids)*2-1)
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, resourceType)
+	for i, id := range ids {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+		args = append(args, id)
+	}
+	return fmt.Sprintf(template, string(placeholders)), args
 }
 
 type densityCaps struct {
@@ -406,7 +481,7 @@ func projectViewContent(placements []app.PlacedElement, connectors []app.Connect
 
 func baseElementScore(placement app.PlacedElement, degree int, signals densitySignals) float64 {
 	score := float64(degree) * 12
-	key := densitySignalKey("element", placement.ElementID)
+	key := densitySignalKey{resourceType: "element", resourceID: placement.ElementID}
 	score += signals.filterScore[key] * 30
 	if tier, ok := signals.filterTier[key]; ok {
 		score += float64(max(0, 10-tier)) * 5
@@ -429,7 +504,7 @@ func baseElementScore(placement app.PlacedElement, degree int, signals densitySi
 
 func baseConnectorScore(connector app.Connector, signals densitySignals) float64 {
 	score := 0.0
-	key := densitySignalKey("connector", connector.ID)
+	key := densitySignalKey{resourceType: "connector", resourceID: connector.ID}
 	score += signals.filterScore[key] * 30
 	if tier, ok := signals.filterTier[key]; ok {
 		score += float64(max(0, 10-tier)) * 5
@@ -445,10 +520,6 @@ func baseConnectorScore(connector app.Connector, signals densitySignals) float64
 		score += 3
 	}
 	return score - math.Log1p(float64(max(0, connector.ID)))*0.001
-}
-
-func densitySignalKey(resourceType string, resourceID int64) string {
-	return fmt.Sprintf("%s:%d", resourceType, resourceID)
 }
 
 func nowString() string {

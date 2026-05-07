@@ -623,18 +623,15 @@ export const api = {
         }),
 
       content: (id: number): Promise<{ placements: PlacedElement[]; connectors: Connector[] }> =>
-        rpc(async () => {
-          const [placementsRes, connectorsRes] = await Promise.all([
-            workspaceClient.listPlacements({ viewId: id }),
-            workspaceClient.listConnectors({ viewId: id }),
-          ])
-          const placementJson = j<{ placements: Record<string, unknown>[] }>(ListPlacementsResponseSchema, placementsRes)
-          const connectorJson = j<{ connectors: Record<string, unknown>[] }>(ListConnectorsResponseSchema, connectorsRes)
+        (async () => {
+          const res = await fetch(apiUrl(`/views/${id}/projected-content`))
+          if (!res.ok) throw new Error('Failed to load view content')
+          const json = await res.json() as { placements?: Record<string, unknown>[]; connectors?: Record<string, unknown>[] }
           return {
-            placements: (placementJson.placements ?? []).map(protoPlacedElement),
-            connectors: (connectorJson.connectors ?? []).map(protoConnector),
+            placements: (json.placements ?? []).map(protoPlacedElement),
+            connectors: (json.connectors ?? []).map(protoConnector),
           }
-        }),
+        })(),
 
       tree: (): Promise<ViewTreeNode[]> =>
         rpc(async () => {

@@ -21,6 +21,19 @@ type visibilityOverrideRequest struct {
 }
 
 func registerDensityHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) {
+	mux.HandleFunc("GET /api/views/{id}/projected-content", func(w http.ResponseWriter, r *http.Request) {
+		viewID, ok := parseViewID(w, r)
+		if !ok {
+			return
+		}
+		content, err := sqliteStore.ProjectedViewContent(r.Context(), viewID)
+		if err != nil {
+			writeDensityError(w, err)
+			return
+		}
+		writeJSON(w, content)
+	})
+
 	mux.HandleFunc("GET /api/views/{id}/density", func(w http.ResponseWriter, r *http.Request) {
 		viewID, ok := parseViewID(w, r)
 		if !ok {
