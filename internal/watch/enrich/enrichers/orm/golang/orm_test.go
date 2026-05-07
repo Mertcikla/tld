@@ -1,4 +1,4 @@
-package typescript
+package golang
 
 import (
 	"testing"
@@ -7,29 +7,15 @@ import (
 	"github.com/mertcikla/tld/internal/watch/enrich/enrichertest"
 )
 
-func TestPrismaEnricher(t *testing.T) {
-	enrichertest.Run(t, enrichertest.Case{
-		Name:     "prisma query requires activation and matches model operation",
-		Enricher: Prisma(),
-		Input: enrich.FileInput{
-			RelPath:  "db.ts",
-			Language: "typescript",
-			Source:   []byte(`await prisma.user.findMany()`),
-		},
-		Signals: []enrich.ActivationSignal{{Kind: enrich.SignalDependency, Value: "@prisma/client"}},
-		Want:    enrichertest.Fact{Type: "orm.query", Tag: "orm:prisma", Name: "user.findMany", Attribute: "operation", AttrValue: "findMany"},
-	})
-}
-
-func TestTypeScriptORMCatalogEnrichers(t *testing.T) {
+func TestGoORMEnrichers(t *testing.T) {
 	byID := enrichersByID()
 	for _, spec := range Specs() {
 		enrichertest.Run(t, enrichertest.Case{
 			Name:     spec.ID,
 			Enricher: byID[spec.ID],
 			Input: enrich.FileInput{
-				RelPath:  "db.ts",
-				Language: "typescript",
+				RelPath:  "db.go",
+				Language: "go",
 				Source:   []byte(spec.SourceTokens[0]),
 			},
 			Signals: []enrich.ActivationSignal{{Kind: enrich.SignalDependency, Value: spec.Triggers[0].Value}},

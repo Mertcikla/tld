@@ -53,3 +53,21 @@ func GoGin() Enricher {
 		{Re: regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\.Group\(\s*"([^"]+)"`), Framework: "gin"},
 	})
 }
+
+func GoEcho() Enricher {
+	return enrich.RouteRegexEnricher("go.echo", "Go Echo routes", "go", []ActivationSignal{
+		{Kind: SignalImport, Value: "github.com/labstack/echo"},
+		{Kind: SignalDependency, Value: "github.com/labstack/echo"},
+	}, []*RoutePattern{
+		{Re: regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\.(GET|POST|PUT|DELETE|PATCH)\(\s*"([^"]+)"`), Framework: "echo", MethodGroup: 1, PathGroup: 2},
+	})
+}
+
+func GoFiber() Enricher {
+	return enrich.RouteRegexEnricher("go.fiber", "Go Fiber routes", "go", []ActivationSignal{
+		{Kind: SignalImport, Value: "github.com/gofiber/fiber"},
+		{Kind: SignalDependency, Value: "github.com/gofiber/fiber"},
+	}, []*RoutePattern{
+		{Re: regexp.MustCompile(`\b[A-Za-z_][A-Za-z0-9_]*\.(Get|Post|Put|Delete|Patch)\(\s*"([^"]+)"`), Framework: "fiber", MethodGroup: 1, PathGroup: 2},
+	})
+}

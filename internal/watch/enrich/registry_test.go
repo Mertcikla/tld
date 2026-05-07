@@ -2,6 +2,8 @@ package enrich_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -27,6 +29,7 @@ var (
 	DefaultEnrichers   = defaults.DefaultEnrichers
 	GoChi              = goroutes.GoChi
 	ImportSignals      = enrich.ImportSignals
+	DiscoverSignals    = enrich.DiscoverRepositorySignalsFromFiles
 	NewDefaultRegistry = defaults.NewRegistry
 	NewRegistry        = enrich.NewRegistry
 )
@@ -102,10 +105,21 @@ func TestDefaultEnrichersHaveUniqueIDs(t *testing.T) {
 
 func TestDefaultEnrichersIncludeExpandedCatalog(t *testing.T) {
 	enrichers := DefaultEnrichers()
-	if len(enrichers) < 180 || len(enrichers) > 230 {
-		t.Fatalf("expected roughly 200 default enrichers, got %d", len(enrichers))
+	if len(enrichers) < 360 || len(enrichers) > 430 {
+		t.Fatalf("expected expanded default catalog, got %d", len(enrichers))
 	}
 	want := []string{
+		"ts.process_env",
+		"python.httpx",
+		"java.spring_web",
+		"rust.axum",
+		"cpp.drogon",
+		"python.sqlalchemy",
+		"rust.tonic",
+		"ts.kafkajs",
+		"go.aws_sdk_v2",
+		"java.opensearch",
+		"iac.terraform",
 		"ts.opentelemetry",
 		"go.jwt",
 		"ts.bullmq",
@@ -131,6 +145,34 @@ func TestDefaultEnrichersIncludeExpandedCatalog(t *testing.T) {
 	}
 	if _, ok := seen["generic.architecture_glue"]; ok {
 		t.Fatalf("generic architecture glue should not be registered alongside categorized enrichers")
+	}
+}
+
+func TestDiscoverRepositorySignalsFromExpandedManifests(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"requirements.txt": "fastapi==0.110.0\nhttpx>=0.27.0\n",
+		"pyproject.toml":   "[project]\ndependencies = [\"sqlalchemy>=2\"]\n[tool.poetry.dependencies]\ndjango = \"^5\"\n",
+		"Cargo.toml":       "[dependencies]\naxum = \"0.7\"\ntonic = \"0.11\"\n",
+		"pom.xml":          `<project><dependencies><dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-web</artifactId></dependency></dependencies></project>`,
+		"build.gradle":     `implementation "org.springframework.kafka:spring-kafka:3.1.0"`,
+		"CMakeLists.txt":   "find_package(Drogon REQUIRED)\n",
+		"conanfile.txt":    "requires = cpprestsdk/2.10.18\n",
+		"vcpkg.json":       `{"dependencies":[{"name":"boost-beast"}]}`,
+	}
+	var paths []string
+	for rel, data := range files {
+		path := filepath.Join(root, rel)
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, path)
+	}
+	signals := DiscoverSignals(root, paths)
+	for _, want := range []string{"fastapi", "httpx", "django", "axum", "tonic", "spring-boot-starter-web", "spring-kafka", "Drogon", "cpprestsdk", "boost-beast"} {
+		if !hasSignal(signals, want) {
+			t.Fatalf("missing dependency signal %q in %+v", want, signals)
+		}
 	}
 }
 
@@ -309,6 +351,15 @@ func hasFact(facts []Fact, factType, tag string) bool {
 func containsTag(tags []string, tag string) bool {
 	for _, item := range tags {
 		if item == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSignal(signals []ActivationSignal, value string) bool {
+	for _, signal := range signals {
+		if signal.Kind == SignalDependency && signal.Value == value {
 			return true
 		}
 	}

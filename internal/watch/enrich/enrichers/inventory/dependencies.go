@@ -32,7 +32,7 @@ func DependencyInventory() Enricher {
 		Metadata{ID: "dependency.inventory", Name: "Dependency and import inventory", Mode: ActivationAlways},
 		func(input FileInput) bool {
 			base := path.Base(input.RelPath)
-			return base == "go.mod" || base == "package.json" || input.Parsed != nil
+			return dependencyManifest(base) || input.Parsed != nil
 		},
 		dependencyInventoryRun,
 	)
@@ -45,6 +45,18 @@ func dependencyInventoryRun(ctx context.Context, input FileInput, emit FactEmitt
 		return emitGoModFacts(input, emit)
 	case "package.json":
 		return emitPackageJSONFacts(input, emit)
+	case "requirements.txt":
+		return emitLineDependencyFacts(input, emit, "python", requirementName)
+	case "pyproject.toml", "poetry.lock":
+		return emitLineDependencyFacts(input, emit, "python", tomlDependencyName)
+	case "Cargo.toml":
+		return emitLineDependencyFacts(input, emit, "cargo", cargoDependencyName)
+	case "pom.xml":
+		return emitPomFacts(input, emit)
+	case "build.gradle", "build.gradle.kts":
+		return emitLineDependencyFacts(input, emit, "gradle", gradleDependencyName)
+	case "CMakeLists.txt", "conanfile.txt", "conanfile.py", "vcpkg.json":
+		return emitLineDependencyFacts(input, emit, "cpp", cppDependencyName)
 	}
 	if input.Parsed == nil {
 		return nil
@@ -76,6 +88,15 @@ func dependencyInventoryRun(ctx context.Context, input FileInput, emit FactEmitt
 		}
 	}
 	return nil
+}
+
+func dependencyManifest(base string) bool {
+	switch base {
+	case "go.mod", "package.json", "requirements.txt", "pyproject.toml", "poetry.lock", "Cargo.toml", "pom.xml", "build.gradle", "build.gradle.kts", "CMakeLists.txt", "conanfile.txt", "conanfile.py", "vcpkg.json":
+		return true
+	default:
+		return false
+	}
 }
 
 func emitGoModFacts(input FileInput, emit FactEmitter) error {
@@ -127,6 +148,127 @@ func emitPackageJSONFacts(input FileInput, emit FactEmitter) error {
 		}
 	}
 	return nil
+}
+
+func emitLineDependencyFacts(input FileInput, emit FactEmitter, ecosystem string, parse func(string) string) error {
+	scanner := bufio.NewScanner(strings.NewReader(string(input.Source)))
+	line := 0
+	seen := map[string]struct{}{}
+	for scanner.Scan() {
+		line++
+		name := parse(scanner.Text())
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		if err := emit.EmitFact(dependencyFact(input.RelPath, line, name, ecosystem)); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
+}
+
+func emitPomFacts(input FileInput, emit FactEmitter) error {
+	source := string(input.Source)
+	re := regexp.MustCompile(`(?s)<dependency>.*?<groupId>\s*([^<\s]+)\s*</groupId>.*?<artifactId>\s*([^<\s]+)\s*</artifactId>.*?</dependency>`)
+	for _, indexes := range re.FindAllStringSubmatchIndex(source, -1) {
+		match := enrich.Submatches(source, indexes)
+		if len(match) != 3 {
+			continue
+		}
+		name := match[1] + ":" + match[2]
+		line := enrich.LineForOffset(source, indexes[0])
+		if err := emit.EmitFact(dependencyFact(input.RelPath, line, name, "maven")); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func requirementName(line string) string {
+	line = strings.TrimSpace(strings.Split(line, "#")[0])
+	if line == "" || strings.HasPrefix(line, "-") {
+		return ""
+	}
+	return dependencyPrefix(line, "=", "<", ">", "~", "!", "[", ";")
+}
+
+func tomlDependencyName(line string) string {
+	line = strings.TrimSpace(strings.Split(line, "#")[0])
+	if line == "" || strings.HasPrefix(line, "[") {
+		return ""
+	}
+	if strings.HasPrefix(line, "\"") || strings.HasPrefix(line, "'") {
+		trimmed := strings.Trim(line, " ,")
+		trimmed = strings.Trim(trimmed, `"'`)
+		if trimmed != "" && !strings.Contains(trimmed, "=") {
+			return requirementName(trimmed)
+		}
+	}
+	if idx := strings.Index(line, "="); idx > 0 {
+		name := strings.TrimSpace(line[:idx])
+		return strings.Trim(name, `"'`)
+	}
+	return ""
+}
+
+func cargoDependencyName(line string) string {
+	name := tomlDependencyName(line)
+	switch name {
+	case "package", "dependencies", "dev-dependencies", "build-dependencies", "workspace":
+		return ""
+	default:
+		return name
+	}
+}
+
+func gradleDependencyName(line string) string {
+	line = strings.TrimSpace(line)
+	for _, quote := range []string{"\"", "'"} {
+		start := strings.Index(line, quote)
+		if start < 0 {
+			continue
+		}
+		rest := line[start+1:]
+		end := strings.Index(rest, quote)
+		if end < 0 {
+			continue
+		}
+		value := rest[:end]
+		if strings.Count(value, ":") >= 1 {
+			return value
+		}
+	}
+	return ""
+}
+
+func cppDependencyName(line string) string {
+	line = strings.TrimSpace(strings.Split(line, "#")[0])
+	if line == "" {
+		return ""
+	}
+	for _, prefix := range []string{"find_package(", "target_link_libraries(", "requires =", "self.requires(", "\"name\":"} {
+		if idx := strings.Index(line, prefix); idx >= 0 {
+			value := strings.TrimSpace(line[idx+len(prefix):])
+			value = strings.Trim(value, ` "'),[]`)
+			return dependencyPrefix(value, " ", "/", ")", ",", "\"")
+		}
+	}
+	return ""
+}
+
+func dependencyPrefix(value string, stops ...string) string {
+	value = strings.TrimSpace(value)
+	end := len(value)
+	for _, stop := range stops {
+		if idx := strings.Index(value, stop); idx >= 0 && idx < end {
+			end = idx
+		}
+	}
+	return strings.TrimSpace(value[:end])
 }
 
 func dependencyFact(relPath string, line int, name, ecosystem string) Fact {

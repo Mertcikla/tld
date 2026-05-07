@@ -33,6 +33,18 @@ func DiscoverRepositorySignalsFromFiles(repoRoot string, files []string) []Activ
 			signals = append(signals, discoverGoModSignals(file)...)
 		case "package.json":
 			signals = append(signals, packageJSONSignals(file, rel)...)
+		case "requirements.txt":
+			signals = append(signals, lineDependencySignals(file, rel, requirementSignalName)...)
+		case "pyproject.toml", "poetry.lock":
+			signals = append(signals, lineDependencySignals(file, rel, tomlSignalName)...)
+		case "Cargo.toml":
+			signals = append(signals, lineDependencySignals(file, rel, cargoSignalName)...)
+		case "pom.xml":
+			signals = append(signals, pomSignals(file, rel)...)
+		case "build.gradle", "build.gradle.kts":
+			signals = append(signals, lineDependencySignals(file, rel, gradleSignalName)...)
+		case "CMakeLists.txt", "conanfile.txt", "conanfile.py", "vcpkg.json":
+			signals = append(signals, lineDependencySignals(file, rel, cppSignalName)...)
 		}
 	}
 	return uniqueSignals(signals)
@@ -124,6 +136,121 @@ func packageJSONSignals(path, rel string) []ActivationSignal {
 	add(pkg.PeerDependencies)
 	add(pkg.OptionalDependencies)
 	return signals
+}
+
+func lineDependencySignals(path, rel string, parse func(string) string) []ActivationSignal {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var signals []ActivationSignal
+	for _, line := range strings.Split(string(data), "\n") {
+		name := parse(line)
+		if name == "" {
+			continue
+		}
+		signals = append(signals, ActivationSignal{Kind: SignalDependency, Value: name, Source: rel})
+	}
+	return signals
+}
+
+func pomSignals(path, rel string) []ActivationSignal {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	re := regexp.MustCompile(`(?s)<dependency>.*?<groupId>\s*([^<\s]+)\s*</groupId>.*?<artifactId>\s*([^<\s]+)\s*</artifactId>.*?</dependency>`)
+	var signals []ActivationSignal
+	for _, match := range re.FindAllStringSubmatch(string(data), -1) {
+		if len(match) == 3 {
+			signals = append(signals, ActivationSignal{Kind: SignalDependency, Value: match[1] + ":" + match[2], Source: rel})
+			signals = append(signals, ActivationSignal{Kind: SignalDependency, Value: match[2], Source: rel})
+		}
+	}
+	return signals
+}
+
+func requirementSignalName(line string) string {
+	line = strings.TrimSpace(strings.Split(line, "#")[0])
+	if line == "" || strings.HasPrefix(line, "-") {
+		return ""
+	}
+	return signalPrefix(line, "=", "<", ">", "~", "!", "[", ";")
+}
+
+func tomlSignalName(line string) string {
+	line = strings.TrimSpace(strings.Split(line, "#")[0])
+	if line == "" || strings.HasPrefix(line, "[") {
+		return ""
+	}
+	if strings.HasPrefix(line, "\"") || strings.HasPrefix(line, "'") {
+		trimmed := strings.Trim(line, " ,")
+		trimmed = strings.Trim(trimmed, `"'`)
+		if trimmed != "" && !strings.Contains(trimmed, "=") {
+			return requirementSignalName(trimmed)
+		}
+	}
+	if idx := strings.Index(line, "="); idx > 0 {
+		return strings.Trim(strings.TrimSpace(line[:idx]), `"'`)
+	}
+	return ""
+}
+
+func cargoSignalName(line string) string {
+	name := tomlSignalName(line)
+	switch name {
+	case "package", "dependencies", "dev-dependencies", "build-dependencies", "workspace":
+		return ""
+	default:
+		return name
+	}
+}
+
+func gradleSignalName(line string) string {
+	line = strings.TrimSpace(line)
+	for _, quote := range []string{"\"", "'"} {
+		start := strings.Index(line, quote)
+		if start < 0 {
+			continue
+		}
+		rest := line[start+1:]
+		end := strings.Index(rest, quote)
+		if end < 0 {
+			continue
+		}
+		value := rest[:end]
+		if strings.Count(value, ":") >= 1 {
+			parts := strings.Split(value, ":")
+			return parts[len(parts)-2]
+		}
+	}
+	return ""
+}
+
+func cppSignalName(line string) string {
+	line = strings.TrimSpace(strings.Split(line, "#")[0])
+	if line == "" {
+		return ""
+	}
+	for _, prefix := range []string{"find_package(", "target_link_libraries(", "requires =", "self.requires(", "\"name\":"} {
+		if idx := strings.Index(line, prefix); idx >= 0 {
+			value := strings.TrimSpace(line[idx+len(prefix):])
+			value = strings.Trim(value, ` "'),[]`)
+			return signalPrefix(value, " ", "/", ")", ",", "\"")
+		}
+	}
+	return ""
+}
+
+func signalPrefix(value string, stops ...string) string {
+	value = strings.TrimSpace(value)
+	end := len(value)
+	for _, stop := range stops {
+		if idx := strings.Index(value, stop); idx >= 0 && idx < end {
+			end = idx
+		}
+	}
+	return strings.TrimSpace(value[:end])
 }
 
 func uniqueSignals(signals []ActivationSignal) []ActivationSignal {
