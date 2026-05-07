@@ -1836,6 +1836,69 @@ func sharedEndpoint() {}
 	}
 }
 
+func TestAddedRawSymbolIsForcedVisibleSinceLatestVersion(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {}
+`)
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "initial", "", "main", rep.RepresentationHash, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, repo, "internal/quiet.go", `package internal
+
+func quietAdded() string {
+	return "new"
+}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+
+	added, err := symbolsByName(context.Background(), store, scan.RepositoryID, "quietAdded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisions, err := store.FilterDecisions(context.Background(), scan.RepositoryID, FilterDecisionQuery{Decision: "visible"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filterDecisionHasReason(decisions, added.ID, "added since latest watch version") {
+		t.Fatalf("expected added private symbol to be forced visible, got decisions %+v", decisions)
+	}
+}
+
+func TestSourceChangeRepresentationChangedIsPerFile(t *testing.T) {
+	element := "element"
+	diffs := []RepresentationDiff{
+		{OwnerType: "repository", OwnerKey: "1", ChangeType: "updated"},
+		{OwnerType: "symbol", OwnerKey: "go:changed.go:function:Changed", ChangeType: "updated", ResourceType: &element},
+	}
+	if !sourceChangeRepresentationChanged(SourceFileChange{Path: "changed.go", ChangeType: "updated"}, diffs) {
+		t.Fatalf("expected changed.go to be attributed to its symbol diff")
+	}
+	if sourceChangeRepresentationChanged(SourceFileChange{Path: "unchanged.go", ChangeType: "updated"}, diffs) {
+		t.Fatalf("unchanged.go should not inherit another file's representation diff")
+	}
+}
+
 func TestWatchDiffsAttributeLineDiffsToSymbolRanges(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()

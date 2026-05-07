@@ -220,14 +220,10 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			rep := once.Representation
 			emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep, Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
 			tagResult, _ := r.Store.ApplyGitTags(ctx, repo.ID, nextGit)
-			representationChanged := rep.RepresentationHash != result.InitialRep.RepresentationHash ||
-				rep.ElementsCreated > 0 ||
-				rep.ElementsUpdated > 0 ||
-				rep.ConnectorsCreated > 0 ||
-				rep.ConnectorsUpdated > 0 ||
-				rep.ViewsCreated > 0 ||
-				tagResult.TagsAdded > 0 ||
-				tagResult.TagsRemoved > 0
+			diffs, diffErr := r.Store.BuildWatchDiffs(ctx, repo.ID, rep.RepresentationHash)
+			if diffErr != nil {
+				emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: diffErr.Error()})
+			}
 			for _, change := range sourceChanges {
 				emit(opts.Events, Event{
 					Type:         "source.changed",
@@ -240,7 +236,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 					Warnings:     eventWarnings,
 					Data: SourceFileChangeResult{
 						Change:                change,
-						RepresentationChanged: representationChanged,
+						RepresentationChanged: sourceChangeRepresentationChanged(change, diffs),
 						Representation:        rep,
 						GitTags:               tagResult,
 					},
@@ -267,6 +263,55 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			lastGitFingerprint = nextGitFingerprint
 		}
 	}
+}
+
+func sourceChangeRepresentationChanged(change SourceFileChange, diffs []RepresentationDiff) bool {
+	path := strings.TrimSpace(filepathToSlash(change.Path))
+	if path == "" {
+		return false
+	}
+	for _, diff := range diffs {
+		if diff.OwnerType == "repository" {
+			continue
+		}
+		for _, candidate := range representationDiffSourcePaths(diff) {
+			if candidate == path || strings.HasPrefix(candidate, path+"/") || strings.HasPrefix(path, candidate+"/") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func representationDiffSourcePaths(diff RepresentationDiff) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(value string) {
+		value = strings.TrimSpace(filepathToSlash(value))
+		value = strings.TrimPrefix(value, "file:")
+		value = strings.TrimPrefix(value, "folder:")
+		if value == "" || value == "." {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	switch diff.OwnerType {
+	case "file", "folder":
+		add(diff.OwnerKey)
+	case "symbol":
+		if path, ok := filePathFromStableKey(diff.OwnerKey); ok {
+			add(path)
+		}
+	default:
+		if strings.HasPrefix(diff.OwnerKey, "file:") || strings.HasPrefix(diff.OwnerKey, "folder:") {
+			add(diff.OwnerKey)
+		}
+	}
+	return out
 }
 
 func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, status GitStatus, representationHash string, baselineOnly bool) error {

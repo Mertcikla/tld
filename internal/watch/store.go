@@ -2401,7 +2401,7 @@ func (s *Store) ChangedRawResourcesSinceLatest(ctx context.Context, repositoryID
 			continue
 		}
 		prev, ok := previous[key]
-		if !ok || prev.Hash == next.Hash {
+		if ok && prev.Hash == next.Hash {
 			continue
 		}
 		switch next.ResourceType {
@@ -2409,8 +2409,23 @@ func (s *Store) ChangedRawResourcesSinceLatest(ctx context.Context, repositoryID
 			changed.Files[next.OwnerKey] = struct{}{}
 		case "symbol":
 			if next.ResourceID != nil {
-				changed.Symbols[*next.ResourceID] = "changed since latest watch version"
+				reason := "changed since latest watch version"
+				if !ok {
+					reason = "added since latest watch version"
+				}
+				changed.Symbols[*next.ResourceID] = reason
 			}
+		}
+	}
+	for key, prev := range previous {
+		if prev.OwnerType != prev.ResourceType {
+			continue
+		}
+		if prev.ResourceType != "file" {
+			continue
+		}
+		if _, ok := current[key]; !ok {
+			changed.Files[prev.OwnerKey] = struct{}{}
 		}
 	}
 	return changed, nil
