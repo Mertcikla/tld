@@ -168,6 +168,47 @@ func TestStoreLayersPersistTagsColorsAndUpdates(t *testing.T) {
 	if _, ok := tags["db"]; !ok {
 		t.Fatalf("tags = %+v, want db tag retained", tags)
 	}
+
+	updated, err = store.UpdateLayer(ctx, layer.ID, ViewLayer{Name: "Data", Tags: []string{"queue"}, Color: &color})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tags, err = store.Tags(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag, ok := tags["queue"]; !ok || tag.Color == "" {
+		t.Fatalf("tags = %+v, want queue tag with generated color after layer update", tags)
+	}
+	_ = updated
+}
+
+func TestStoreAutoTagColorsPreserveUserMetadata(t *testing.T) {
+	store := openAppStore(t)
+	ctx := context.Background()
+
+	description := "User chosen tag"
+	if err := store.UpdateTag(ctx, "runtime", "#123456", &description); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateElement(ctx, LibraryElement{Name: "API", Tags: []string{"runtime", "worker", "api"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	tags, err := store.Tags(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := tags["runtime"]
+	if runtime.Color != "#123456" || runtime.Description == nil || *runtime.Description != description {
+		t.Fatalf("runtime tag = %+v, want user metadata preserved", runtime)
+	}
+	if tags["worker"].Color == "" || tags["api"].Color == "" {
+		t.Fatalf("tags = %+v, want generated colors for new tags", tags)
+	}
+	if tags["worker"].Color == tags["api"].Color {
+		t.Fatalf("worker/api colors both %q, want unused colors preferred", tags["worker"].Color)
+	}
 }
 
 func openAppStore(t *testing.T) *Store {

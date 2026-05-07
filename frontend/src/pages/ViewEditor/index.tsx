@@ -319,6 +319,7 @@ function ViewEditorInner({
     const nextColor = color ?? tagColors[name]?.color ?? pickUnusedColor(Object.values(tagColors).map(t => t.color))
     const nextDescription = description ?? tagColors[name]?.description ?? null
 
+    await api.workspace.orgs.tagColors.update(name, nextColor, nextDescription)
     setTagColors((prev) => ({ ...prev, [name]: { name, color: nextColor, description: nextDescription } }))
   }, [tagColors])
 

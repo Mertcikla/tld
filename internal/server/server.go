@@ -31,6 +31,7 @@ func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID) (*
 	watchStore := watch.NewStore(sqliteStore.DB())
 	lockHooks := watchLockHooks{store: watchStore}
 	wsSvc := &api.WorkspaceService{Store: apiStore, Hooks: lockHooks}
+	orgSvc := &api.OrgService{Store: apiStore, Hooks: lockHooks}
 	depSvc := &api.DependencyService{Store: apiStore}
 	importSvc := &api.ImportService{Store: apiStore}
 	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: lockHooks}
@@ -80,6 +81,9 @@ func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID) (*
 
 	wsPath, wsHandler := diagv1connect.NewWorkspaceServiceHandler(wsSvc)
 	mux.Handle("/api"+wsPath, http.StripPrefix("/api", wsHandler))
+
+	orgPath, orgHandler := diagv1connect.NewOrgServiceHandler(orgSvc)
+	mux.Handle("/api"+orgPath, http.StripPrefix("/api", orgHandler))
 
 	depPath, depHandler := diagv1connect.NewDependencyServiceHandler(depSvc)
 	mux.Handle("/api"+depPath, http.StripPrefix("/api", depHandler))

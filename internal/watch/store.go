@@ -17,6 +17,7 @@ import (
 	"time"
 
 	tldgit "github.com/mertcikla/tld/internal/git"
+	"github.com/mertcikla/tld/internal/tagcolors"
 	"github.com/viant/sqlite-vec/vector"
 )
 
@@ -1955,22 +1956,7 @@ func (s *Store) ReleaseApplyLock(ctx context.Context, repositoryID int64, token 
 }
 
 func (s *Store) EnsureGitTags(ctx context.Context) error {
-	tags := map[string]string{
-		"git:staged":    "Git staged change",
-		"git:unstaged":  "Git unstaged change",
-		"git:untracked": "Git untracked file",
-		"watch:new":     "Introduced since the previous representation version",
-		"watch:updated": "Updated since the previous representation version",
-		"watch:deleted": "Backing symbol disappeared during watch",
-	}
-	for name, description := range tags {
-		if _, err := s.db.ExecContext(ctx, `
-			INSERT INTO tags(name, color, description) VALUES (?, '#0f766e', ?)
-			ON CONFLICT(name) DO UPDATE SET description = excluded.description`, name, description); err != nil {
-			return err
-		}
-	}
-	return nil
+	return tagcolors.Ensure(ctx, s.db, managedGitTags())
 }
 
 func (s *Store) ApplyGitTags(ctx context.Context, repositoryID int64, status GitStatus) (GitTagUpdateResult, error) {

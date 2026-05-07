@@ -2706,6 +2706,55 @@ func ExecuteCLI() {}
 	}
 }
 
+func TestRepresentDoesNotOverwriteUserTagMetadata(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "internal/watch/scan.go", `package watch
+
+func ScanRepository() {}
+
+func RepresentRepository() {}
+`)
+	writeFile(t, repo, "internal/watch/runner.go", `package watch
+
+func RunWatch() {}
+`)
+	writeFile(t, repo, "internal/server/http.go", `package server
+
+func ServeAPI() {}
+`)
+	writeFile(t, repo, "cmd/tld/main.go", `package main
+
+func ExecuteCLI() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+	if count := countElementTag(t, db, "role:watch"); count == 0 {
+		t.Fatal("expected role:watch tag to be generated")
+	}
+	userDescription := "User picked this color"
+	if _, err := db.Exec(`UPDATE tags SET color = ?, description = ? WHERE name = ?`, "#123456", userDescription, "role:watch"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+
+	color, description := tagMetadataByName(t, db, "role:watch")
+	if color != "#123456" || description == nil || *description != userDescription {
+		t.Fatalf("role:watch metadata = color:%q description:%v, want user metadata preserved", color, description)
+	}
+}
+
 func TestRepresentAssignsCodeownersTags(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -3961,6 +4010,19 @@ func elementTagsByName(t *testing.T, db *sql.DB, name string) []string {
 		t.Fatal(err)
 	}
 	return tags
+}
+
+func tagMetadataByName(t *testing.T, db *sql.DB, name string) (string, *string) {
+	t.Helper()
+	var color string
+	var description sql.NullString
+	if err := db.QueryRow(`SELECT color, description FROM tags WHERE name = ?`, name).Scan(&color, &description); err != nil {
+		t.Fatal(err)
+	}
+	if description.Valid {
+		return color, &description.String
+	}
+	return color, nil
 }
 
 func factsContain(facts []Fact, factType, tag string) bool {

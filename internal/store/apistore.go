@@ -426,6 +426,25 @@ func (a *APIAdapter) DeleteViewLayer(ctx context.Context, id int32) error {
 	return a.Store.legacy.DeleteLayer(ctx, int64(id))
 }
 
+func (a *APIAdapter) Tags(ctx context.Context, _ uuid.UUID) (map[string]*diagv1.Tag, error) {
+	tags, err := a.Store.Tags(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*diagv1.Tag, len(tags))
+	for name, tag := range tags {
+		out[name] = &diagv1.Tag{
+			Color:       tag.Color,
+			Description: tag.Description,
+		}
+	}
+	return out, nil
+}
+
+func (a *APIAdapter) UpdateTag(ctx context.Context, _ uuid.UUID, name, color string, description *string) error {
+	return a.Store.UpdateTag(ctx, name, color, description)
+}
+
 func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
 	if req.GetDryRun() {
 		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("dry_run is not supported by the local sqlite adapter"))

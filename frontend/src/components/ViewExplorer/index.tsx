@@ -43,7 +43,7 @@ interface Props {
   tagColors: Record<string, Tag>
   selectedElement?: LibraryElement | null
   onUpdateTags?: (elementId: number, tags: string[]) => Promise<void>
-  onCreateTag: (tag: string, color?: string) => Promise<void>
+  onCreateTag: (tag: string, color?: string, description?: string) => Promise<void>
   layers: ViewLayer[]
   onHoverLayer: (tags: string[] | null, color?: string | null) => void
   onCreateLayer: (name: string, tags: string[], color: string) => Promise<void>

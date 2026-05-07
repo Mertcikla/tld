@@ -16,6 +16,7 @@ import (
 
 	"github.com/mertcikla/tld/internal/codeowners"
 	"github.com/mertcikla/tld/internal/layout"
+	"github.com/mertcikla/tld/internal/tagcolors"
 )
 
 const (
@@ -561,11 +562,6 @@ type semanticTagPlan struct {
 	byOwner  map[string][]string
 }
 
-type semanticTagDefinitionInfo struct {
-	Color       string
-	Description string
-}
-
 func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string, ownerMatcher *codeowners.Matcher, facts []Fact) semanticTagPlan {
 	candidates := map[string][]string{}
 	add := func(ownerType, ownerKey string, tags ...string) {
@@ -901,33 +897,6 @@ func semanticTagPriority(tag string) int {
 		return 6
 	default:
 		return 7
-	}
-}
-
-func semanticTagDefinition(tag string) semanticTagDefinitionInfo {
-	switch {
-	case strings.HasPrefix(tag, "area:"):
-		return semanticTagDefinitionInfo{Color: "#2563eb", Description: "Generated source area tag"}
-	case strings.HasPrefix(tag, "role:"):
-		return semanticTagDefinitionInfo{Color: "#7c3aed", Description: "Generated code role tag"}
-	case strings.HasPrefix(tag, "framework:"):
-		return semanticTagDefinitionInfo{Color: "#0891b2", Description: "Generated framework detection tag"}
-	case tag == "http:route":
-		return semanticTagDefinitionInfo{Color: "#dc2626", Description: "Generated HTTP route detection tag"}
-	case tag == "frontend:route":
-		return semanticTagDefinitionInfo{Color: "#16a34a", Description: "Generated frontend route detection tag"}
-	case strings.HasPrefix(tag, "orm:"):
-		return semanticTagDefinitionInfo{Color: "#9333ea", Description: "Generated ORM detection tag"}
-	case strings.HasPrefix(tag, "kind:"):
-		return semanticTagDefinitionInfo{Color: "#0f766e", Description: "Generated symbol kind tag"}
-	case strings.HasPrefix(tag, "graph:"):
-		return semanticTagDefinitionInfo{Color: "#b45309", Description: "Generated graph-shape tag"}
-	case strings.HasPrefix(tag, "lang:"):
-		return semanticTagDefinitionInfo{Color: "#475569", Description: "Generated source language tag"}
-	case strings.HasPrefix(tag, "owner:"):
-		return semanticTagDefinitionInfo{Color: "#334155", Description: "Generated CODEOWNERS tag"}
-	default:
-		return semanticTagDefinitionInfo{Color: "#64748b", Description: "Generated watch tag"}
 	}
 }
 
@@ -1328,16 +1297,7 @@ type materializedTechnologyLink struct {
 }
 
 func (m *materializer) ensureTags(ctx context.Context) error {
-	for _, tag := range m.tagPlan.approvedTags() {
-		def := semanticTagDefinition(tag)
-		if _, err := m.store.db.ExecContext(ctx, `
-			INSERT INTO tags(name, color, description) VALUES (?, ?, ?)
-			ON CONFLICT(name) DO UPDATE SET color = excluded.color, description = excluded.description`,
-			tag, def.Color, def.Description); err != nil {
-			return err
-		}
-	}
-	return nil
+	return tagcolors.Ensure(ctx, m.store.db, m.tagPlan.approvedTags())
 }
 
 func (m *materializer) workspaceRootViewID(ctx context.Context) (int64, error) {

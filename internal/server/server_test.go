@@ -56,6 +56,30 @@ func TestServerReadyReportsResourceCounts(t *testing.T) {
 	}
 }
 
+func TestServerOrgTagColorsRoundTrip(t *testing.T) {
+	_, routes := newTestServer(t, uuid.MustParse("11111111-2222-3333-4444-555555555555"), nil)
+	server := httptest.NewServer(routes)
+	defer server.Close()
+
+	client := diagv1connect.NewOrgServiceClient(http.DefaultClient, server.URL+"/api")
+	description := "User managed color"
+	if _, err := client.UpdateTag(context.Background(), connect.NewRequest(&diagv1.UpdateTagRequest{
+		Tag:         "role:watch",
+		Color:       "#123456",
+		Description: &description,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.ListTagColors(context.Background(), connect.NewRequest(&diagv1.ListTagColorsRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tag := resp.Msg.GetTags()["role:watch"]
+	if tag == nil || tag.GetColor() != "#123456" || tag.Description == nil || tag.GetDescription() != description {
+		t.Fatalf("tag = %+v, want persisted color and description", tag)
+	}
+}
+
 func TestServerInjectsWorkspaceIDIntoConnectRPCResponses(t *testing.T) {
 	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 	sqliteStore, routes := newTestServer(t, workspaceID, nil)

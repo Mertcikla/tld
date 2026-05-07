@@ -51,6 +51,10 @@ import {
   WorkspaceVersionService,
   type WorkspaceVersionInfo,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_version_service_pb'
+import {
+  OrgService,
+  ListTagColorsResponseSchema,
+} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/org_service_pb'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset } from '../config/runtime'
 
@@ -196,6 +200,7 @@ const workspaceClient = createClient(WorkspaceService, transport)
 const dependencyClient = createClient(DependencyService, transport)
 const importClient = createClient(ImportService, transport)
 const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
+const orgClient = createClient(OrgService, transport)
 let dependencyConnectorsCache: Promise<DependencyConnector[]> | null = null
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -559,7 +564,20 @@ export const api = {
   workspace: {
     orgs: {
       tagColors: {
-        list: (): Promise<Tag[]> => Promise.resolve([]),
+        list: (): Promise<Record<string, Tag>> =>
+          rpc(async () => {
+            const res = await orgClient.listTagColors({})
+            const json = j<{ tags?: Record<string, { color?: string; description?: string | null }> }>(ListTagColorsResponseSchema, res)
+            const tags: Record<string, Tag> = {}
+            Object.entries(json.tags ?? {}).forEach(([name, tag]) => {
+              tags[name] = { name, color: tag.color ?? '#A0AEC0', description: tag.description ?? null }
+            })
+            return tags
+          }),
+        update: (name: string, color: string, description?: string | null): Promise<void> =>
+          rpc(async () => {
+            await orgClient.updateTag({ tag: name, color, description: description ?? undefined })
+          }),
       },
     },
 
