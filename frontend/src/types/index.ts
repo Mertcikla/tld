@@ -83,6 +83,15 @@ export interface PlacedElement {
   view_label: string | null
 }
 
+export interface VisibilityOverride {
+  view_id: number
+  resource_type: 'element' | 'connector'
+  resource_id: number
+  level_delta: number
+  created_at?: string
+  updated_at?: string
+}
+
 export interface NavigationConnector {
   id: number
   element_id: number | null

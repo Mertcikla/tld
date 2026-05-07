@@ -195,16 +195,19 @@ func (a *APIAdapter) UpdateElement(ctx context.Context, id int32, _ uuid.UUID, i
 }
 
 func (a *APIAdapter) DeleteElement(ctx context.Context, id int32, _ uuid.UUID) error {
+	if err := a.Store.DeleteResourceVisibilityOverrides(ctx, "element", int64(id)); err != nil {
+		return err
+	}
 	return a.Store.legacy.DeleteElement(ctx, int64(id))
 }
 
 func (a *APIAdapter) ListPlacements(ctx context.Context, viewID int32) ([]*diagv1.PlacedElement, error) {
-	placements, err := a.Store.legacy.Placements(ctx, int64(viewID))
+	content, err := a.Store.ProjectedViewContent(ctx, int64(viewID))
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*diagv1.PlacedElement, 0, len(placements))
-	for _, placement := range placements {
+	out := make([]*diagv1.PlacedElement, 0, len(content.Placements))
+	for _, placement := range content.Placements {
 		out = append(out, placedElementToProto(placement))
 	}
 	return out, nil
@@ -258,12 +261,12 @@ func (a *APIAdapter) RemovePlacement(ctx context.Context, viewID, elementID int3
 }
 
 func (a *APIAdapter) ListConnectors(ctx context.Context, viewID int32, _ uuid.UUID) ([]*diagv1.Connector, error) {
-	connectors, err := a.Store.legacy.Connectors(ctx, int64(viewID))
+	content, err := a.Store.ProjectedViewContent(ctx, int64(viewID))
 	if err != nil {
 		return nil, err
 	}
-	out := make([]*diagv1.Connector, 0, len(connectors))
-	for _, connector := range connectors {
+	out := make([]*diagv1.Connector, 0, len(content.Connectors))
+	for _, connector := range content.Connectors {
 		out = append(out, connectorToProto(connector))
 	}
 	return out, nil
@@ -331,6 +334,9 @@ func (a *APIAdapter) UpdateConnector(ctx context.Context, id int32, _ uuid.UUID,
 }
 
 func (a *APIAdapter) DeleteConnector(ctx context.Context, id int32, _ uuid.UUID) error {
+	if err := a.Store.DeleteResourceVisibilityOverrides(ctx, "connector", int64(id)); err != nil {
+		return err
+	}
 	return a.Store.legacy.DeleteConnector(ctx, int64(id))
 }
 

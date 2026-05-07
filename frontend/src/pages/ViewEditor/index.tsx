@@ -41,6 +41,7 @@ import type {
   LibraryElement as WorkspaceElement,
   Connector,
   ViewConnector,
+  VisibilityOverride,
   Tag,
 } from '../../types'
 import ElementNode from '../../components/ElementNode'
@@ -166,6 +167,8 @@ function ViewEditorInner({
 
   const setHeader = useSetHeader()
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
+  const [densityLevel, setDensityLevel] = useState(0)
+  const [visibilityOverrides, setVisibilityOverrides] = useState<VisibilityOverride[]>([])
 
   const elementPanel = useDisclosure()
   const connectorPanel = useDisclosure()
@@ -174,6 +177,24 @@ function ViewEditorInner({
   const exportModal = useDisclosure()
   const importModal = useDisclosure()
   const codePreview = useDisclosure()
+
+  useEffect(() => {
+    if (viewId == null) {
+      setDensityLevel(0)
+      setVisibilityOverrides([])
+      return
+    }
+    let cancelled = false
+    void Promise.all([
+      api.workspace.views.density.get(viewId).catch(() => 0),
+      api.workspace.views.visibilityOverrides.list(viewId).catch(() => []),
+    ]).then(([level, overrides]) => {
+      if (cancelled) return
+      setDensityLevel(level)
+      setVisibilityOverrides(overrides)
+    })
+    return () => { cancelled = true }
+  }, [viewId])
 
   // ── Stable disclosure refs ──────────────────────────────────────────────
   const openElementPanelRef = useRef(elementPanel.onOpen)
@@ -456,6 +477,41 @@ function ViewEditorInner({
     handleElementDeleted, handleElementPermanentlyDeleted, handleElementSaved,
   } = data
   refreshElementsRef.current = refreshElements
+
+  const overrideDeltaFor = useCallback((resourceType: VisibilityOverride['resource_type'], resourceId?: number | null) => {
+    if (resourceId == null) return 0
+    return visibilityOverrides.find((override) => override.resource_type === resourceType && override.resource_id === resourceId)?.level_delta ?? 0
+  }, [visibilityOverrides])
+
+  const reloadVisibilityOverrides = useCallback(async () => {
+    if (viewId == null) return
+    const overrides = await api.workspace.views.visibilityOverrides.list(viewId).catch(() => [])
+    setVisibilityOverrides(overrides)
+  }, [viewId])
+
+  const handleDensityLevelChange = useCallback(async (level: number) => {
+    if (viewId == null) return
+    setDensityLevel(level)
+    try {
+      await api.workspace.views.density.set(viewId, level)
+      await refreshElements()
+    } catch {
+      toast({ status: 'error', title: 'Density was not saved' })
+    }
+  }, [refreshElements, toast, viewId])
+
+  const handleVisibilityOverride = useCallback(async (resourceType: VisibilityOverride['resource_type'], resourceId: number, action: 'promote' | 'demote' | 'reset') => {
+    if (viewId == null) return
+    try {
+      if (action === 'promote') await api.workspace.views.visibilityOverrides.promote(viewId, resourceType, resourceId)
+      else if (action === 'demote') await api.workspace.views.visibilityOverrides.demote(viewId, resourceType, resourceId)
+      else await api.workspace.views.visibilityOverrides.reset(viewId, resourceType, resourceId)
+      await reloadVisibilityOverrides()
+      await refreshElements()
+    } catch {
+      toast({ status: 'error', title: 'Visibility override was not saved' })
+    }
+  }, [refreshElements, reloadVisibilityOverrides, toast, viewId])
 
   const resolveWatchRepositoryId = useCallback(async () => {
     const status = await api.watch.status().catch(() => null)
@@ -1463,8 +1519,8 @@ function ViewEditorInner({
               extrasOpen={extrasOpen} setExtrasOpen={setExtrasOpen}
               focusMode={!crossBranchSettings.enabled}
               onFocusModeChange={handleFocusModeChange}
-              onShowViewContext={viewId != null ? () => { void applyWatchContextAction('show', 'view', viewId) } : undefined}
-              onHideViewContext={viewId != null ? () => { void applyWatchContextAction('clean', 'view', viewId) } : undefined}
+              densityLevel={densityLevel}
+              onDensityLevelChange={handleDensityLevelChange}
               disableImportExport={disableImportExport}
               onImport={importModal.onOpen} onExport={handleOpenExport} onShare={onShare}
               allTags={availableTags}
@@ -1499,8 +1555,11 @@ function ViewEditorInner({
           isOpen={elementPanel.isOpen} onClose={elementPanel.onClose} element={selectedElement}
           onSave={handleElementSaved} autoSave
           onDelete={handleElementDeleted} onPermanentDelete={handleElementPermanentlyDeleted}
-          onShowContext={(id) => applyWatchContextAction('show', 'element', id)}
           onHideContext={(id) => applyWatchContextAction('hide', 'element', id)}
+          visibilityOverrideDelta={overrideDeltaFor('element', selectedElement?.id)}
+          onPromoteVisibility={(id) => handleVisibilityOverride('element', id, 'promote')}
+          onDemoteVisibility={(id) => handleVisibilityOverride('element', id, 'demote')}
+          onResetVisibility={(id) => handleVisibilityOverride('element', id, 'reset')}
           orgId={''}
           links={selectedElement ? (linksMap[selectedElement.id] || EMPTY_LINKS) : EMPTY_LINKS}
           parentLinks={selectedElement ? (parentLinksMap[selectedElement.id] || EMPTY_LINKS) : EMPTY_LINKS}
@@ -1516,6 +1575,10 @@ function ViewEditorInner({
           orgId={''}
           onSave={handleConnectorSave} autoSave
           onDelete={handleConnectorDeleteInPanel}
+          visibilityOverrideDelta={overrideDeltaFor('connector', selectedEdge?.id)}
+          onPromoteVisibility={(id) => handleVisibilityOverride('connector', id, 'promote')}
+          onDemoteVisibility={(id) => handleVisibilityOverride('connector', id, 'demote')}
+          onResetVisibility={(id) => handleVisibilityOverride('connector', id, 'reset')}
           hasBackdrop={isMobileLayout}
           connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
         />

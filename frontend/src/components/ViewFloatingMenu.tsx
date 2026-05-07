@@ -2,7 +2,7 @@ import React, { memo } from 'react'
 import type { ViewFloatingMenuSlots } from '../slots'
 
 import {
-  HStack, Tooltip, Button, Box, Text, Popover, PopoverTrigger, Portal, PopoverContent, PopoverBody, IconButton, useDisclosure
+  HStack, Tooltip, Button, Box, Text, Popover, PopoverTrigger, Portal, PopoverContent, PopoverBody, IconButton, Slider, SliderTrack, SliderFilledTrack, SliderThumb, useDisclosure
 } from '@chakra-ui/react'
 import { DownloadIcon } from '@chakra-ui/icons'
 import {
@@ -37,6 +37,8 @@ export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
   onFocusModeChange: (enabled: boolean) => void
   onShowViewContext?: () => void
   onHideViewContext?: () => void
+  densityLevel?: number
+  onDensityLevelChange?: (level: number) => void
 
   // Tag-related props
   allTags: string[]
@@ -75,8 +77,8 @@ function ViewFloatingMenu({
   onExport,
   focusMode,
   onFocusModeChange,
-  onShowViewContext,
-  onHideViewContext,
+  densityLevel = 0,
+  onDensityLevelChange,
   allTags,
   layers,
   tagColors,
@@ -94,6 +96,11 @@ function ViewFloatingMenu({
 }: ViewFloatingMenuProps) {
   const { canEdit } = useViewEditorContext()
   const { isOpen: isTagsOpen, onClose: onTagsClose, onToggle: onTagsToggle } = useDisclosure()
+  const [draftDensityLevel, setDraftDensityLevel] = React.useState(densityLevel)
+
+  React.useEffect(() => {
+    setDraftDensityLevel(densityLevel)
+  }, [densityLevel])
 
   return (
     <HStack
@@ -269,43 +276,52 @@ function ViewFloatingMenu({
         </>
       )}
 
-      {(onShowViewContext || onHideViewContext) && (
+      {onDensityLevelChange && (
         <>
           <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
-          {onShowViewContext && (
-            <Tooltip label="Show watch context for this view" placement="top" openDelay={200}>
-              <Button
-                variant="ghost"
-                h="28px"
-                px={2.5}
-                color="gray.300"
-                _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
-                onClick={onShowViewContext}
+          <Tooltip label={`Density ${draftDensityLevel}`} placement="top" openDelay={200}>
+            <Box
+              w="92px"
+              h="28px"
+              px={2.5}
+              display="flex"
+              alignItems="center"
+              bg="whiteAlpha.50"
+              rounded="md"
+            >
+              <Slider
+                aria-label="Density"
+                min={-2}
+                max={2}
+                step={1}
+                value={draftDensityLevel}
+                onChange={setDraftDensityLevel}
+                onChangeEnd={(value) => {
+                  setDraftDensityLevel(value)
+                  onDensityLevelChange(value)
+                }}
+                focusThumbOnChange={false}
               >
-                <HStack spacing={1.5}>
-                  <EyeSvg />
-                  <Text fontSize="11px" fontWeight="normal">Show Context</Text>
-                </HStack>
-              </Button>
-            </Tooltip>
-          )}
-          {onHideViewContext && (
-            <Tooltip label="Clean generated noise in this view" placement="top" openDelay={200}>
-              <Button
-                variant="ghost"
-                h="28px"
-                px={2.5}
-                color="gray.300"
-                _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
-                onClick={onHideViewContext}
-              >
-                <HStack spacing={1.5}>
-                  <EyeOffSvg />
-                  <Text fontSize="11px" fontWeight="normal">Clean Noise</Text>
-                </HStack>
-              </Button>
-            </Tooltip>
-          )}
+                <SliderTrack h="3px" bg="whiteAlpha.200">
+                  <SliderFilledTrack bg="var(--accent)" />
+                </SliderTrack>
+                {[-2, -1, 0, 1, 2].map((value) => (
+                  <Box
+                    key={value}
+                    position="absolute"
+                    left={`${((value + 2) / 4) * 100}%`}
+                    top="50%"
+                    transform="translate(-50%, -50%)"
+                    w="1px"
+                    h="9px"
+                    bg={draftDensityLevel >= value ? 'var(--accent)' : 'whiteAlpha.400'}
+                    pointerEvents="none"
+                  />
+                ))}
+                <SliderThumb boxSize="12px" bg="white" border="2px solid" borderColor="var(--accent)" />
+              </Slider>
+            </Box>
+          </Tooltip>
         </>
       )}
 

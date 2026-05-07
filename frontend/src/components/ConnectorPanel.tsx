@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState, useCallback } from 'react'
 import type { ConnectorPanelSlots } from '../slots'
 import {
+  Badge,
   Box,
   Button,
   Divider,
@@ -68,6 +69,10 @@ export interface ConnectorPanelProps extends ConnectorPanelSlots {
   onSave: (connector: Connector) => void
   autoSave?: boolean
   onDelete: (edgeId: number) => void
+  visibilityOverrideDelta?: number
+  onPromoteVisibility?: (id: number) => Promise<void> | void
+  onDemoteVisibility?: (id: number) => Promise<void> | void
+  onResetVisibility?: (id: number) => Promise<void> | void
   hasBackdrop?: boolean
 }
 
@@ -77,7 +82,7 @@ export interface ConnectorPanelProps extends ConnectorPanelSlots {
  * Location: Right side of the screen on desktop. Overlays screen on mobile.
  * Aliases: Connector Properties, Connector Details.
  */
-function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = false, onDelete, hasBackdrop = true, connectorPanelAfterContentSlot }: ConnectorPanelProps) {
+function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = false, onDelete, visibilityOverrideDelta = 0, onPromoteVisibility, onDemoteVisibility, onResetVisibility, hasBackdrop = true, connectorPanelAfterContentSlot }: ConnectorPanelProps) {
   const { canEdit, viewId } = useViewEditorContext()
   const isReadOnly = !canEdit
   const autoSaveEdit = autoSave && !!connector && !isReadOnly
@@ -349,6 +354,32 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 rows={4}
               />
             </FormControl>
+
+            {connector && (onPromoteVisibility || onDemoteVisibility || onResetVisibility) && (
+              <Box borderTop="1px solid" borderColor="whiteAlpha.100" pt={2}>
+                <HStack justify="space-between" mb={2}>
+                  <FormLabel fontSize="xs" fontWeight="bold" color="gray.400" mb={0}>DENSITY</FormLabel>
+                  {visibilityOverrideDelta !== 0 && (
+                    <Badge colorScheme={visibilityOverrideDelta > 0 ? 'teal' : 'orange'} variant="subtle">
+                      {visibilityOverrideDelta > 0 ? `+${visibilityOverrideDelta}` : visibilityOverrideDelta}
+                    </Badge>
+                  )}
+                </HStack>
+                <HStack spacing={2}>
+                  <Button variant="subtle" size="sm" color="teal.200" _hover={{ bg: 'teal.900', color: 'teal.100' }} onClick={() => onPromoteVisibility?.(connector.id)} flex={1} isDisabled={isReadOnly}>
+                    Promote
+                  </Button>
+                  <Button variant="subtle" size="sm" color="orange.200" _hover={{ bg: 'orange.900', color: 'orange.100' }} onClick={() => onDemoteVisibility?.(connector.id)} flex={1} isDisabled={isReadOnly}>
+                    Demote
+                  </Button>
+                  {visibilityOverrideDelta !== 0 && (
+                    <Button variant="ghost" size="sm" onClick={() => onResetVisibility?.(connector.id)} isDisabled={isReadOnly}>
+                      Reset
+                    </Button>
+                  )}
+                </HStack>
+              </Box>
+            )}
 
             {connectorPanelAfterContentSlot}
 

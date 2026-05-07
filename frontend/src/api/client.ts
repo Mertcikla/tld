@@ -15,6 +15,7 @@ import type {
   ViewLayer,
   ViewPlacement,
   ViewTreeNode,
+  VisibilityOverride,
 } from '../types'
 import {
   WorkspaceService,
@@ -761,6 +762,60 @@ export const api = {
 
       setLevel: (id: number, level: number): Promise<void> =>
         rpc(async () => { await workspaceClient.setViewLevel({ viewId: id, level }) }),
+
+      density: {
+        get: async (id: number): Promise<number> => {
+          const res = await fetch(apiUrl(`/views/${id}/density`))
+          if (!res.ok) throw new Error('Failed to load density')
+          const json = await res.json() as { density_level?: number }
+          return Number(json.density_level ?? 0)
+        },
+        set: async (id: number, densityLevel: number): Promise<number> => {
+          const res = await fetch(apiUrl(`/views/${id}/density`), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ density_level: densityLevel }),
+          })
+          if (!res.ok) throw new Error('Failed to save density')
+          const json = await res.json() as { density_level?: number }
+          return Number(json.density_level ?? densityLevel)
+        },
+      },
+
+      visibilityOverrides: {
+        list: async (id: number): Promise<VisibilityOverride[]> => {
+          const res = await fetch(apiUrl(`/views/${id}/visibility-overrides`))
+          if (!res.ok) throw new Error('Failed to load visibility overrides')
+          const json = await res.json() as { overrides?: VisibilityOverride[] }
+          return json.overrides ?? []
+        },
+        set: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number, levelDelta: number): Promise<VisibilityOverride> => {
+          const res = await fetch(apiUrl(`/views/${id}/visibility-overrides`), {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ resource_type: resourceType, resource_id: resourceId, level_delta: levelDelta }),
+          })
+          if (!res.ok) throw new Error('Failed to save visibility override')
+          const json = await res.json() as { override?: VisibilityOverride }
+          return json.override ?? { view_id: id, resource_type: resourceType, resource_id: resourceId, level_delta: levelDelta }
+        },
+        promote: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number): Promise<VisibilityOverride> => {
+          const res = await fetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}/promote`), { method: 'POST' })
+          if (!res.ok) throw new Error('Failed to promote visibility')
+          const json = await res.json() as { override?: VisibilityOverride }
+          return json.override ?? { view_id: id, resource_type: resourceType, resource_id: resourceId, level_delta: 1 }
+        },
+        demote: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number): Promise<VisibilityOverride> => {
+          const res = await fetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}/demote`), { method: 'POST' })
+          if (!res.ok) throw new Error('Failed to demote visibility')
+          const json = await res.json() as { override?: VisibilityOverride }
+          return json.override ?? { view_id: id, resource_type: resourceType, resource_id: resourceId, level_delta: -1 }
+        },
+        reset: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number): Promise<void> => {
+          const res = await fetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}`), { method: 'DELETE' })
+          if (!res.ok) throw new Error('Failed to reset visibility override')
+        },
+      },
 
       delete: (_orgId: string, id: number): Promise<void> =>
         rpc(async () => { await workspaceClient.deleteView({ orgId: '', viewId: id }) }),
