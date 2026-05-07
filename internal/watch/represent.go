@@ -970,18 +970,16 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		return m.stats, err
 	}
 
-	architecture := mergeArchitectureModels(inferArchitecture(repo.RepoRoot), architectureFromFacts(facts))
+	architectureView, structuralView, err := m.materializeRepositorySections(ctx, repoView, repoLanguage)
+	if err != nil {
+		return m.stats, err
+	}
+
+	architecture := pruneDisconnectedArchitecture(canonicalizeArchitecture(mergeArchitectureModels(inferArchitecture(repo.RepoRoot), architectureFromFacts(facts))))
 	if len(architecture.Components) > 0 {
-		if err := m.materializeArchitecture(ctx, architecture, repoView); err != nil {
+		if err := m.materializeArchitecture(ctx, architecture, architectureView); err != nil {
 			return m.stats, err
 		}
-		if err := m.pruneStaleResources(ctx); err != nil {
-			return m.stats, err
-		}
-		if err := m.layoutPlacements(ctx); err != nil {
-			return m.stats, err
-		}
-		return m.stats, nil
 	}
 
 	visibleFiles := filesForSymbols(filtered.VisibleSymbols)
@@ -995,7 +993,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	folderElements := map[string]int64{}
 	folderViews := map[string]int64{}
 	for _, folder := range folders {
-		parentView := repoView
+		parentView := structuralView
 		if parent := path.Dir(folder); parent != "." && parent != "/" {
 			if id, ok := folderViews[parent]; ok {
 				parentView = id
@@ -1037,7 +1035,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		if language := strings.TrimSpace(fileLanguages[file]); language != "" {
 			fileLanguage = language
 		}
-		parentView := repoView
+		parentView := structuralView
 		if dir := path.Dir(file); dir != "." {
 			if id, ok := folderViews[dir]; ok {
 				parentView = id
@@ -1151,7 +1149,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		return m.stats, err
 	}
 
-	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, folderElements, fileElements, symbolElements, symbolViews, repoView); err != nil {
+	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, folderElements, fileElements, symbolElements, symbolViews, structuralView); err != nil {
 		return m.stats, err
 	}
 	if err := m.pruneStaleResources(ctx); err != nil {
@@ -1193,11 +1191,56 @@ func (m *materializer) materializeArchitecture(ctx context.Context, architecture
 		if sourceID == 0 || targetID == 0 {
 			continue
 		}
-		if err := m.upsertConnectorDetailed(ctx, "architecture-connector", connector.Key, repoView, sourceID, targetID, connector.Label, connector.Relationship, architectureEvidenceDescription(connector.Evidence, connector.Confidence)); err != nil {
+		if err := m.upsertConnectorDetailedWithDirection(ctx, "architecture-connector", connector.Key, repoView, sourceID, targetID, connector.Label, connector.Relationship, connector.Direction, architectureEvidenceDescription(connector.Evidence, connector.Confidence)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (m *materializer) materializeRepositorySections(ctx context.Context, repoView int64, repoLanguage string) (int64, int64, error) {
+	architectureElem, err := m.upsertElement(ctx, "repository-section", fmt.Sprintf("repository-architecture:%d", m.repo.ID), elementInput{
+		Name:        "Architecture",
+		Kind:        "view",
+		Description: "Generated architecture view",
+		Technology:  technologyLabel(repoLanguage),
+		Repo:        repoIdentity(m.repo),
+		Branch:      nullStringValue(m.repo.Branch),
+		Language:    repoLanguage,
+		Tags:        []string{"view:architecture"},
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := m.upsertPlacement(ctx, repoView, architectureElem, 0, 0); err != nil {
+		return 0, 0, err
+	}
+	architectureView, err := m.upsertView(ctx, "repository-section", fmt.Sprintf("repository-architecture:%d", m.repo.ID), architectureElem, m.repo.DisplayName+" Architecture", "Architecture")
+	if err != nil {
+		return 0, 0, err
+	}
+
+	structuralElem, err := m.upsertElement(ctx, "repository-section", fmt.Sprintf("repository-structural:%d", m.repo.ID), elementInput{
+		Name:        "Structural",
+		Kind:        "view",
+		Description: "Generated structural code view",
+		Technology:  technologyLabel(repoLanguage),
+		Repo:        repoIdentity(m.repo),
+		Branch:      nullStringValue(m.repo.Branch),
+		Language:    repoLanguage,
+		Tags:        []string{"view:structural"},
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := m.upsertPlacement(ctx, repoView, structuralElem, 260, 0); err != nil {
+		return 0, 0, err
+	}
+	structuralView, err := m.upsertView(ctx, "repository-section", fmt.Sprintf("repository-structural:%d", m.repo.ID), structuralElem, m.repo.DisplayName+" Structural", "Structural")
+	if err != nil {
+		return 0, 0, err
+	}
+	return architectureView, structuralView, nil
 }
 
 func sortedArchitectureComponents(values map[string]*architectureComponent) []*architectureComponent {
@@ -1392,6 +1435,24 @@ func (m *materializer) upsertPlacement(ctx context.Context, viewID, elementID in
 	err := m.store.db.QueryRowContext(ctx, `SELECT id FROM placements WHERE view_id = ? AND element_id = ?`, viewID, elementID).Scan(&existingID)
 	if err == nil {
 		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	err = m.store.db.QueryRowContext(ctx, `
+		SELECT p.id
+		FROM placements p
+		JOIN watch_materialization wm
+		  ON wm.repository_id = ? AND wm.resource_type = 'element' AND wm.resource_id = p.element_id
+		WHERE p.element_id = ?
+		ORDER BY p.id
+		LIMIT 1`, m.repo.ID, elementID).Scan(&existingID)
+	if err == nil {
+		_, err = m.store.db.ExecContext(ctx, `UPDATE placements SET view_id = ?, position_x = ?, position_y = ?, updated_at = ? WHERE id = ?`, viewID, x, y, nowString(), existingID)
+		if err == nil {
+			m.markNewPlacement(viewID, elementID)
+		}
+		return err
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
@@ -2287,12 +2348,17 @@ func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey 
 }
 
 func (m *materializer) upsertConnectorDetailed(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label, relationship, description string) error {
+	return m.upsertConnectorDetailedWithDirection(ctx, ownerType, ownerKey, viewID, sourceElementID, targetElementID, label, relationship, "forward", description)
+}
+
+func (m *materializer) upsertConnectorDetailedWithDirection(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label, relationship, direction, description string) error {
 	if sourceElementID == 0 || targetElementID == 0 || sourceElementID == targetElementID {
 		return nil
 	}
 	if strings.TrimSpace(relationship) == "" {
 		relationship = label
 	}
+	direction = normalizedArchitectureConnectorDirection(direction)
 	sourceHandle, targetHandle := "", ""
 	if ownerType == "fact-reference" {
 		sourceHandle = "right"
@@ -2311,8 +2377,8 @@ func (m *materializer) upsertConnectorDetailed(ctx context.Context, ownerType, o
 		}
 		_, err = m.store.db.ExecContext(ctx, `
 			UPDATE connectors
-			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, description = ?, relationship = ?, direction = 'forward', style = 'solid', source_handle = ?, target_handle = ?, updated_at = ?
-			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, nullString(sourceHandle), nullString(targetHandle), nowString(), state.ResourceID)
+			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, description = ?, relationship = ?, direction = ?, style = 'solid', source_handle = ?, target_handle = ?, updated_at = ?
+			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, direction, nullString(sourceHandle), nullString(targetHandle), nowString(), state.ResourceID)
 		if err != nil {
 			return err
 		}
@@ -2325,7 +2391,7 @@ func (m *materializer) upsertConnectorDetailed(ctx context.Context, ownerType, o
 	now := nowString()
 	res, err := m.store.db.ExecContext(ctx, `
 		INSERT INTO connectors(view_id, source_element_id, target_element_id, label, description, relationship, direction, style, source_handle, target_handle, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'forward', 'solid', ?, ?, ?, ?)`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, nullString(sourceHandle), nullString(targetHandle), now, now)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'solid', ?, ?, ?, ?)`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, direction, nullString(sourceHandle), nullString(targetHandle), now, now)
 	if err != nil {
 		return err
 	}

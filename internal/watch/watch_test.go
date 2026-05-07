@@ -4159,6 +4159,209 @@ func TestArchitectureFromFactsPromotesRuntimeAndGRPCGlue(t *testing.T) {
 	}
 }
 
+func TestCanonicalizeArchitectureFoldsGenericDependencyIntoConcreteAlias(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	frontend := architectureKey("component", "frontend")
+	redisGeneric := architectureKey("datastore", "redis")
+	redisConcrete := architectureKey("component", "redis-cart")
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Technology: "Go"}
+	model.Components[redisGeneric] = &architectureComponent{Key: redisGeneric, Name: "redis", Kind: "datastore", Technology: "Redis", Tags: []string{"datastore:redis"}}
+	model.Components[redisConcrete] = &architectureComponent{Key: redisConcrete, Name: "redis-cart", Kind: "service", Technology: "Redis", Tags: []string{"runtime:kubernetes"}}
+	model.Connectors["generic"] = &architectureConnector{Key: "generic", SourceKey: frontend, TargetKey: redisGeneric, Label: "redis", Relationship: "runtime-dependency", Confidence: 0.72, Evidence: []architectureEvidence{{Kind: "datastore.dependency"}}}
+	model.Connectors["concrete"] = &architectureConnector{Key: "concrete", SourceKey: frontend, TargetKey: redisConcrete, Label: "redis", Relationship: "runtime-dependency", Confidence: 0.78, Evidence: []architectureEvidence{{Kind: "runtime-connection"}}}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[redisGeneric] != nil {
+		t.Fatalf("generic redis component should fold into concrete alias: %#v", got.Components)
+	}
+	if got.Components[redisConcrete] == nil {
+		t.Fatalf("concrete redis component should remain: %#v", got.Components)
+	}
+	if len(got.Connectors) != 1 {
+		t.Fatalf("duplicate redis connectors should merge, got %#v", got.Connectors)
+	}
+	for _, connector := range got.Connectors {
+		if connector.TargetKey != redisConcrete {
+			t.Fatalf("connector should target concrete redis alias, got %#v", connector)
+		}
+		if len(connector.Evidence) != 2 {
+			t.Fatalf("merged connector should preserve evidence, got %#v", connector.Evidence)
+		}
+	}
+}
+
+func TestCanonicalizeArchitectureMergesParallelConnectorsAfterAliasFold(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	loadgenerator := architectureKey("component", "loadgenerator")
+	frontend := architectureKey("component", "frontend")
+	frontendService := architectureKey("component", "frontendservice")
+	model.Components[loadgenerator] = &architectureComponent{Key: loadgenerator, Name: "loadgenerator", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Evidence: []architectureEvidence{{Kind: "grpc.server"}}}
+	model.Components[frontendService] = &architectureComponent{Key: frontendService, Name: "frontendservice", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Connectors["a"] = &architectureConnector{Key: "a", SourceKey: loadgenerator, TargetKey: frontend, Label: "grpc", Relationship: "runtime-dependency", Direction: "forward", Evidence: []architectureEvidence{{Kind: "grpc.client"}}}
+	model.Connectors["b"] = &architectureConnector{Key: "b", SourceKey: loadgenerator, TargetKey: frontendService, Label: "uses", Relationship: "runtime-dependency", Direction: "forward", Evidence: []architectureEvidence{{Kind: "runtime.connection"}}}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if len(got.Connectors) != 1 {
+		t.Fatalf("folded aliases should have one merged connector, got %#v", got.Connectors)
+	}
+	for _, connector := range got.Connectors {
+		if connector.Label != "" {
+			t.Fatalf("merged connector should use an empty label, got %#v", connector)
+		}
+		if connector.Direction != "forward" {
+			t.Fatalf("same-direction merged connector should stay forward, got %#v", connector)
+		}
+		if len(connector.Evidence) != 2 {
+			t.Fatalf("merged connector should preserve evidence, got %#v", connector.Evidence)
+		}
+	}
+}
+
+func TestCanonicalizeArchitectureMergesOppositeConnectorDirections(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	client := architectureKey("component", "client")
+	server := architectureKey("component", "server")
+	model.Components[client] = &architectureComponent{Key: client, Name: "client", Kind: "service"}
+	model.Components[server] = &architectureComponent{Key: server, Name: "server", Kind: "service"}
+	model.Connectors["a"] = &architectureConnector{Key: "a", SourceKey: client, TargetKey: server, Label: "grpc", Relationship: "runtime-dependency", Direction: "forward"}
+	model.Connectors["b"] = &architectureConnector{Key: "b", SourceKey: server, TargetKey: client, Label: "uses", Relationship: "runtime-dependency", Direction: "forward"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if len(got.Connectors) != 1 {
+		t.Fatalf("opposite connectors should merge, got %#v", got.Connectors)
+	}
+	for _, connector := range got.Connectors {
+		if connector.Label != "" {
+			t.Fatalf("merged connector should use an empty label, got %#v", connector)
+		}
+		if connector.Direction != "both" {
+			t.Fatalf("opposite directions should merge to both, got %#v", connector)
+		}
+	}
+}
+
+func TestCanonicalizeArchitectureDoesNotMergeDistinctConcreteDependencies(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	cart := architectureKey("component", "cartservice")
+	catalog := architectureKey("component", "productcatalogservice")
+	redisCart := architectureKey("component", "redis-cart")
+	redisData := architectureKey("component", "redis-data")
+	model.Components[cart] = &architectureComponent{Key: cart, Name: "cartservice", Kind: "service", Technology: "Go"}
+	model.Components[catalog] = &architectureComponent{Key: catalog, Name: "productcatalogservice", Kind: "service", Technology: "Go"}
+	model.Components[redisCart] = &architectureComponent{Key: redisCart, Name: "redis-cart", Kind: "service", Technology: "Redis"}
+	model.Components[redisData] = &architectureComponent{Key: redisData, Name: "redis-data", Kind: "service", Technology: "Redis"}
+	model.Connectors["cart"] = &architectureConnector{Key: "cart", SourceKey: cart, TargetKey: redisCart, Label: "redis", Relationship: "runtime-dependency"}
+	model.Connectors["catalog"] = &architectureConnector{Key: "catalog", SourceKey: catalog, TargetKey: redisData, Label: "redis", Relationship: "runtime-dependency"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[redisCart] == nil || got.Components[redisData] == nil {
+		t.Fatalf("distinct concrete redis dependencies should remain separate: %#v", got.Components)
+	}
+	if len(got.Connectors) != 2 {
+		t.Fatalf("expected separate concrete dependency connectors, got %#v", got.Connectors)
+	}
+}
+
+func TestCanonicalizeArchitectureFoldsServiceRoleNameVariants(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	frontend := architectureKey("component", "frontend")
+	payment := architectureKey("component", "payment")
+	paymentService := architectureKey("component", "paymentservice")
+	paymentContract := architectureKey("contract", "PaymentService")
+	paymentAPI := architectureKey("component", "paymentAPI")
+	paymentDB := architectureKey("component", "paymentDB")
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Technology: "Go", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[payment] = &architectureComponent{Key: payment, Name: "payment", Kind: "service", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "grpc.server"}}}
+	model.Components[paymentService] = &architectureComponent{Key: paymentService, Name: "paymentservice", Kind: "service", Technology: "Kubernetes", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[paymentContract] = &architectureComponent{Key: paymentContract, Name: "PaymentService", Kind: "interface", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "service-contract"}}}
+	model.Components[paymentAPI] = &architectureComponent{Key: paymentAPI, Name: "paymentAPI", Kind: "service", Technology: "OpenAPI", Evidence: []architectureEvidence{{Kind: "runtime-component"}}}
+	model.Components[paymentDB] = &architectureComponent{Key: paymentDB, Name: "paymentDB", Kind: "service", Technology: "PostgreSQL", Evidence: []architectureEvidence{{Kind: "runtime-component"}}}
+	model.Connectors["frontend-payment"] = &architectureConnector{Key: "frontend-payment", SourceKey: frontend, TargetKey: payment, Label: "grpc", Relationship: "runtime-dependency"}
+	model.Connectors["frontend-paymentservice"] = &architectureConnector{Key: "frontend-paymentservice", SourceKey: frontend, TargetKey: paymentService, Label: "grpc", Relationship: "runtime-dependency"}
+	model.Connectors["frontend-paymentapi"] = &architectureConnector{Key: "frontend-paymentapi", SourceKey: frontend, TargetKey: paymentAPI, Label: "http", Relationship: "runtime-dependency"}
+	model.Connectors["payment-paymentdb"] = &architectureConnector{Key: "payment-paymentdb", SourceKey: payment, TargetKey: paymentDB, Label: "uses", Relationship: "runtime-dependency"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[paymentService] == nil {
+		t.Fatalf("paymentservice should be canonical service alias, got %#v", got.Components)
+	}
+	for _, folded := range []string{payment, paymentContract, paymentAPI, paymentDB} {
+		if got.Components[folded] != nil {
+			t.Fatalf("%s should fold into paymentservice, got %#v", folded, got.Components)
+		}
+	}
+	for _, connector := range got.Connectors {
+		if connector.SourceKey != frontend && connector.TargetKey != paymentService {
+			t.Fatalf("connectors should be rewritten to paymentservice alias or pruned, got %#v", connector)
+		}
+	}
+}
+
+func TestCanonicalizeArchitectureDoesNotFoldEmbeddedServiceRootNames(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	frontend := architectureKey("component", "frontend")
+	payment := architectureKey("component", "paymentservice")
+	proxy := architectureKey("component", "shipping-payment-proxy")
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[payment] = &architectureComponent{Key: payment, Name: "paymentservice", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[proxy] = &architectureComponent{Key: proxy, Name: "shipping-payment-proxy", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Connectors["frontend-payment"] = &architectureConnector{Key: "frontend-payment", SourceKey: frontend, TargetKey: payment, Label: "grpc", Relationship: "runtime-dependency"}
+	model.Connectors["frontend-proxy"] = &architectureConnector{Key: "frontend-proxy", SourceKey: frontend, TargetKey: proxy, Label: "http", Relationship: "runtime-dependency"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[payment] == nil || got.Components[proxy] == nil {
+		t.Fatalf("embedded root names should not fold unrelated services, got %#v", got.Components)
+	}
+	if len(got.Connectors) != 2 {
+		t.Fatalf("expected separate connectors, got %#v", got.Connectors)
+	}
+}
+
+func TestCanonicalizeArchitectureFoldsMultiTokenCompactServiceVariants(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	frontend := architectureKey("component", "frontend")
+	productCatalog := architectureKey("component", "product-catalog")
+	productCatalogService := architectureKey("component", "productcatalogservice")
+	productCatalogContract := architectureKey("contract", "ProductCatalogService")
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[productCatalog] = &architectureComponent{Key: productCatalog, Name: "product-catalog", Kind: "service", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "grpc.server"}}}
+	model.Components[productCatalogService] = &architectureComponent{Key: productCatalogService, Name: "productcatalogservice", Kind: "service", Technology: "Kubernetes", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[productCatalogContract] = &architectureComponent{Key: productCatalogContract, Name: "ProductCatalogService", Kind: "interface", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "service-contract"}}}
+	model.Connectors["frontend-product"] = &architectureConnector{Key: "frontend-product", SourceKey: frontend, TargetKey: productCatalog, Label: "grpc", Relationship: "runtime-dependency"}
+	model.Connectors["frontend-productservice"] = &architectureConnector{Key: "frontend-productservice", SourceKey: frontend, TargetKey: productCatalogService, Label: "grpc", Relationship: "runtime-dependency"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[productCatalogService] == nil {
+		t.Fatalf("productcatalogservice should be canonical service alias, got %#v", got.Components)
+	}
+	if got.Components[productCatalog] != nil || got.Components[productCatalogContract] != nil {
+		t.Fatalf("product catalog variants should fold into productcatalogservice, got %#v", got.Components)
+	}
+}
+
+func TestCanonicalizeArchitectureFoldsShortServiceRootsWithRoleEvidence(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	frontend := architectureKey("component", "frontend")
+	ad := architectureKey("component", "ad")
+	adService := architectureKey("component", "adservice")
+	adContract := architectureKey("contract", "AdService")
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[ad] = &architectureComponent{Key: ad, Name: "ad", Kind: "service", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "grpc.server"}}}
+	model.Components[adService] = &architectureComponent{Key: adService, Name: "adservice", Kind: "service", Technology: "Kubernetes", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[adContract] = &architectureComponent{Key: adContract, Name: "AdService", Kind: "interface", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "service-contract"}}}
+	model.Connectors["frontend-ad"] = &architectureConnector{Key: "frontend-ad", SourceKey: frontend, TargetKey: ad, Label: "grpc", Relationship: "runtime-dependency"}
+	model.Connectors["frontend-adservice"] = &architectureConnector{Key: "frontend-adservice", SourceKey: frontend, TargetKey: adService, Label: "grpc", Relationship: "runtime-dependency"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[adService] == nil {
+		t.Fatalf("adservice should be canonical service alias, got %#v", got.Components)
+	}
+	if got.Components[ad] != nil || got.Components[adContract] != nil {
+		t.Fatalf("ad variants should fold into adservice, got %#v", got.Components)
+	}
+}
+
 func initGitRepoNoCommit(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

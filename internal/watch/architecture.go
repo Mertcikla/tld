@@ -40,6 +40,7 @@ type architectureConnector struct {
 	TargetKey    string
 	Label        string
 	Relationship string
+	Direction    string
 	Description  string
 	Confidence   float64
 	Evidence     []architectureEvidence
@@ -429,6 +430,7 @@ func (c *architectureCollector) addConnector(sourceKey, targetKey, label, relati
 		TargetKey:    targetKey,
 		Label:        label,
 		Relationship: relationship,
+		Direction:    "forward",
 		Confidence:   confidence,
 		Evidence:     []architectureEvidence{evidence},
 	}

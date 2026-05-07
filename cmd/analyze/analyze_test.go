@@ -108,15 +108,29 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if countKind(ws, "function") != 0 || countKind(ws, "file") != 0 || countKind(ws, "folder") != 0 {
-		t.Fatalf("architecture view should hide code/file noise: %+v", ws.Elements)
+	architectureRef := refByElementName(ws, "Architecture")
+	structuralRef := refByElementName(ws, "Structural")
+	repositoryRef := refByKind(ws, "repository")
+	if architectureRef == "" || structuralRef == "" || repositoryRef == "" {
+		t.Fatalf("missing repository sections: %+v", ws.Elements)
+	}
+	if !hasPlacementParent(ws, architectureRef, repositoryRef) || !hasPlacementParent(ws, structuralRef, repositoryRef) {
+		t.Fatalf("architecture and structural sections should be siblings under repository: %+v", ws.Elements)
 	}
 	for _, name := range []string{"alpha", "beta", "cache", "External traffic"} {
-		if refByElementName(ws, name) == "" {
+		ref := refByElementNameWithParent(ws, name, architectureRef)
+		if ref == "" {
 			t.Fatalf("missing architecture element %q in %+v", name, ws.Elements)
 		}
 	}
-	if !connectorByElementNames(ws, "alpha", "beta") || !connectorByElementNames(ws, "alpha", "cache") || !connectorByElementNames(ws, "External traffic", "alpha") {
+	deployRef := refByElementName(ws, "deploy")
+	if deployRef == "" || !hasPlacementParent(ws, deployRef, structuralRef) {
+		t.Fatalf("top-level structural folder should be under Structural, ref=%q elements=%+v", deployRef, ws.Elements)
+	}
+	if ref := refByElementName(ws, "topology.yaml"); ref == "" || !hasPlacementParent(ws, ref, deployRef) {
+		t.Fatalf("structural file should be under its folder view, ref=%q elements=%+v", ref, ws.Elements)
+	}
+	if !connectorByElementNamesInParent(ws, "alpha", "beta", architectureRef) || !connectorByElementNamesInParent(ws, "alpha", "cache", architectureRef) || !connectorByElementNamesInParent(ws, "External traffic", "alpha", architectureRef) {
 		t.Fatalf("missing expected architecture connectors: %+v", ws.Connectors)
 	}
 	for _, connector := range ws.Connectors {
@@ -160,8 +174,81 @@ services:
 	if !connectorByElementNames(ws, "worker", "api") {
 		t.Fatalf("expected env endpoint connector from worker to api, got %+v", ws.Connectors)
 	}
-	if countKind(ws, "function") != 0 {
-		t.Fatalf("architecture evidence should suppress symbol-level output, got %+v", ws.Elements)
+	architectureRef := refByElementName(ws, "Architecture")
+	structuralRef := refByElementName(ws, "Structural")
+	if architectureRef == "" || structuralRef == "" {
+		t.Fatalf("missing repository sections: %+v", ws.Elements)
+	}
+	for _, name := range []string{"worker", "api"} {
+		ref := refByElementNameWithParent(ws, name, architectureRef)
+		if ref == "" {
+			t.Fatalf("architecture element %q should be under Architecture, ref=%q placements=%+v", name, ref, ws.Elements[ref])
+		}
+	}
+	if ref := refByElementName(ws, "Main"); ref == "" {
+		t.Fatalf("structural symbol should still be materialized: %+v", ws.Elements)
+	} else if !hasPlacementParent(ws, ref, refByElementName(ws, "main.go")) {
+		t.Fatalf("symbol should remain nested under its file view: %+v", ws.Elements[ref].Placements)
+	}
+	if ref := refByElementName(ws, "main.go"); ref == "" || !hasPlacementParent(ws, ref, structuralRef) {
+		t.Fatalf("top-level structural file should be under Structural, ref=%q elements=%+v", ref, ws.Elements)
+	}
+}
+
+func TestAnalyzeCmd_PrunesDisconnectedArchitectureComponents(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	repoDir := filepath.Join(dir, "runtime-app")
+	cmd.InitGitRepo(t, repoDir, "main.go", "package main\nfunc Main() {}\n")
+	writeAnalyzeTestFile(t, repoDir, "deploy/topology.yaml", `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: connected
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        image: example/connected:latest
+        env:
+        - name: PEER
+          value: "target:9090"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: target
+spec:
+  ports:
+  - port: 9090
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: isolated
+spec:
+  ports:
+  - port: 9999
+`)
+
+	stdout, stderr, err := cmd.RunCmd(t, dir, "analyze", repoDir, "--data-dir", dataDir, "--embedding-provider", "none")
+	if err != nil {
+		t.Fatalf("analyze: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	architectureRef := refByElementName(ws, "Architecture")
+	for ref, element := range ws.Elements {
+		if element.Name == "isolated" && hasPlacementParent(ws, ref, architectureRef) {
+			t.Fatalf("disconnected architecture element should be pruned from Architecture: %+v", ws.Elements)
+		}
+	}
+	if !connectorByElementNamesInParent(ws, "connected", "target", architectureRef) {
+		t.Fatalf("expected connected architecture edge, got %+v", ws.Connectors)
 	}
 }
 
@@ -274,6 +361,51 @@ func refByElementName(ws *workspace.Workspace, name string) string {
 		}
 	}
 	return ""
+}
+
+func refByElementNameWithParent(ws *workspace.Workspace, name, parentRef string) string {
+	for ref, element := range ws.Elements {
+		if element.Name == name && hasPlacementParent(ws, ref, parentRef) {
+			return ref
+		}
+	}
+	return ""
+}
+
+func refByKind(ws *workspace.Workspace, kind string) string {
+	for ref, element := range ws.Elements {
+		if element.Kind == kind {
+			return ref
+		}
+	}
+	return ""
+}
+
+func hasPlacementParent(ws *workspace.Workspace, ref, parentRef string) bool {
+	element := ws.Elements[ref]
+	if element == nil {
+		return false
+	}
+	for _, placement := range element.Placements {
+		if placement.ParentRef == parentRef {
+			return true
+		}
+	}
+	return false
+}
+
+func connectorByElementNamesInParent(ws *workspace.Workspace, sourceName, targetName, parentRef string) bool {
+	sourceRef := refByElementNameWithParent(ws, sourceName, parentRef)
+	targetRef := refByElementNameWithParent(ws, targetName, parentRef)
+	if sourceRef == "" || targetRef == "" {
+		return false
+	}
+	for _, connector := range ws.Connectors {
+		if connector.Source == sourceRef && connector.Target == targetRef {
+			return true
+		}
+	}
+	return false
 }
 
 func connectorByElementNames(ws *workspace.Workspace, sourceName, targetName string) bool {

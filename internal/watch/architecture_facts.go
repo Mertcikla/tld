@@ -193,6 +193,7 @@ func addFactConnector(model architectureModel, source, target, label, relationsh
 		TargetKey:    targetKey,
 		Label:        label,
 		Relationship: relationship,
+		Direction:    "forward",
 		Confidence:   confidence,
 		Evidence:     []architectureEvidence{evidence},
 	}
