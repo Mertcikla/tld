@@ -40,6 +40,7 @@ type architectureConnector struct {
 	TargetKey    string
 	Label        string
 	Relationship string
+	Direction    string
 	Description  string
 	Confidence   float64
 	Evidence     []architectureEvidence
@@ -429,6 +430,7 @@ func (c *architectureCollector) addConnector(sourceKey, targetKey, label, relati
 		TargetKey:    targetKey,
 		Label:        label,
 		Relationship: relationship,
+		Direction:    "forward",
 		Confidence:   confidence,
 		Evidence:     []architectureEvidence{evidence},
 	}
@@ -436,7 +438,7 @@ func (c *architectureCollector) addConnector(sourceKey, targetKey, label, relati
 
 func shouldSkipArchitectureDir(name string) bool {
 	switch strings.ToLower(name) {
-	case ".git", "node_modules", "vendor", "dist", "build", "target", ".cache", ".terraform", "coverage":
+	case ".git", ".tld", "node_modules", "vendor", "dist", "build", "target", ".cache", ".terraform", "coverage":
 		return true
 	default:
 		return false

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	tldgit "github.com/mertcikla/tld/internal/git"
+	"github.com/mertcikla/tld/internal/tagcolors"
 	"github.com/viant/sqlite-vec/vector"
 )
 
@@ -678,6 +679,110 @@ func (s *Store) ReplaceReferencesForFiles(ctx context.Context, repositoryID int6
 	return nil
 }
 
+func (s *Store) ReplaceFactsForFile(ctx context.Context, repositoryID, fileID int64, facts []Fact) error {
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM watch_facts WHERE repository_id = ? AND file_id = ?`, repositoryID, fileID); err != nil {
+		return err
+	}
+	for _, fact := range facts {
+		now := nowString()
+		tags, _ := json.Marshal(fact.Tags)
+		if fact.AttributesJSON == "" {
+			fact.AttributesJSON = "{}"
+		}
+		if fact.VisibilityHintsJSON == "" {
+			fact.VisibilityHintsJSON = "{}"
+		}
+		if fact.RawJSON == "" {
+			fact.RawJSON = "{}"
+		}
+		_, err := s.db.ExecContext(ctx, `
+			INSERT INTO watch_facts(repository_id, file_id, stable_key, type, enricher, subject_kind, subject_stable_key, object_kind, object_stable_key, object_file_path, object_name, relationship, file_path, start_line, end_line, confidence, name, tags, attributes_json, visibility_hints_json, fact_hash, raw_json, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(repository_id, enricher, stable_key) DO UPDATE SET
+				file_id = excluded.file_id,
+				type = excluded.type,
+				subject_kind = excluded.subject_kind,
+				subject_stable_key = excluded.subject_stable_key,
+				object_kind = excluded.object_kind,
+				object_stable_key = excluded.object_stable_key,
+				object_file_path = excluded.object_file_path,
+				object_name = excluded.object_name,
+				relationship = excluded.relationship,
+				file_path = excluded.file_path,
+				start_line = excluded.start_line,
+				end_line = excluded.end_line,
+				confidence = excluded.confidence,
+				name = excluded.name,
+				tags = excluded.tags,
+				attributes_json = excluded.attributes_json,
+				visibility_hints_json = excluded.visibility_hints_json,
+				fact_hash = excluded.fact_hash,
+				raw_json = excluded.raw_json,
+				updated_at = excluded.updated_at`,
+			repositoryID, fileID, fact.StableKey, fact.Type, fact.Enricher, fact.SubjectKind, fact.SubjectStableKey, fact.ObjectKind, fact.ObjectStableKey, fact.ObjectFilePath, fact.ObjectName, fact.Relationship, fact.FilePath, fact.StartLine, fact.EndLine, fact.Confidence, fact.Name, string(tags), fact.AttributesJSON, fact.VisibilityHintsJSON, fact.FactHash, fact.RawJSON, now, now)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) FactVersionForFile(ctx context.Context, repositoryID, fileID int64, enricher, stableKey string) (string, error) {
+	var version string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT name
+		FROM watch_facts
+		WHERE repository_id = ? AND file_id = ? AND enricher = ? AND stable_key = ?
+		LIMIT 1`, repositoryID, fileID, enricher, stableKey).Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return version, nil
+}
+
+func (s *Store) FactsForRepository(ctx context.Context, repositoryID int64) ([]Fact, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, repository_id, file_id, file_path, stable_key, type, enricher, subject_kind, subject_stable_key, object_kind, object_stable_key, object_file_path, object_name, relationship, start_line, end_line, confidence, name, tags, attributes_json, visibility_hints_json, fact_hash, raw_json, created_at, updated_at
+		FROM watch_facts
+		WHERE repository_id = ?
+		ORDER BY file_path, type, enricher, stable_key`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var facts []Fact
+	for rows.Next() {
+		fact, err := scanFact(rows)
+		if err != nil {
+			return nil, err
+		}
+		facts = append(facts, fact)
+	}
+	return facts, rows.Err()
+}
+
+type factScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanFact(row factScanner) (Fact, error) {
+	var fact Fact
+	var endLine sql.NullInt64
+	var rawTags string
+	if err := row.Scan(&fact.ID, &fact.RepositoryID, &fact.FileID, &fact.FilePath, &fact.StableKey, &fact.Type, &fact.Enricher, &fact.SubjectKind, &fact.SubjectStableKey, &fact.ObjectKind, &fact.ObjectStableKey, &fact.ObjectFilePath, &fact.ObjectName, &fact.Relationship, &fact.StartLine, &endLine, &fact.Confidence, &fact.Name, &rawTags, &fact.AttributesJSON, &fact.VisibilityHintsJSON, &fact.FactHash, &fact.RawJSON, &fact.CreatedAt, &fact.UpdatedAt); err != nil {
+		return Fact{}, err
+	}
+	if endLine.Valid {
+		value := int(endLine.Int64)
+		fact.EndLine = &value
+	}
+	_ = json.Unmarshal([]byte(rawTags), &fact.Tags)
+	return fact, nil
+}
+
 func (s *Store) SymbolsForRepository(ctx context.Context, repositoryID int64) ([]Symbol, error) {
 	return s.QuerySymbols(ctx, repositoryID, SymbolQuery{Limit: -1})
 }
@@ -937,10 +1042,13 @@ func (s *Store) BeginFilterRun(ctx context.Context, repositoryID int64, settings
 	return res.LastInsertId()
 }
 
-func (s *Store) SaveFilterDecision(ctx context.Context, filterRunID int64, ownerType string, ownerID int64, decision, reason string, score *float64) error {
+func (s *Store) SaveFilterDecision(ctx context.Context, filterRunID int64, ownerType string, ownerID int64, ownerKey string, decision, reason string, score *float64, tier int, signalsJSON string) error {
+	if signalsJSON == "" {
+		signalsJSON = "[]"
+	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO watch_filter_decisions(filter_run_id, owner_type, owner_id, decision, reason, score)
-		VALUES (?, ?, ?, ?, ?, ?)`, filterRunID, ownerType, ownerID, decision, reason, score)
+		INSERT INTO watch_filter_decisions(filter_run_id, owner_type, owner_id, owner_key, decision, reason, score, tier, signals_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, filterRunID, ownerType, ownerID, ownerKey, decision, reason, score, tier, signalsJSON)
 	return err
 }
 
@@ -1257,6 +1365,155 @@ func (s *Store) Materialization(ctx context.Context, repositoryID int64) ([]Mate
 	return out, rows.Err()
 }
 
+func (s *Store) ReplaceArchitectureBindings(ctx context.Context, repositoryID int64, bindings []ArchitectureBinding) error {
+	if err := s.ensureArchitectureLinksTable(ctx); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM watch_architecture_links WHERE repository_id = ?`, repositoryID); err != nil {
+		return err
+	}
+	now := nowString()
+	for _, binding := range bindings {
+		evidence, _ := json.Marshal(binding.Evidence)
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO watch_architecture_links(
+				repository_id, component_key, target_repository_id, target_owner_type, target_owner_key,
+				target_resource_type, target_resource_id, role, confidence, evidence_json, created_at, updated_at
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			repositoryID,
+			binding.ComponentKey,
+			binding.TargetRepositoryID,
+			binding.TargetOwnerType,
+			binding.TargetOwnerKey,
+			binding.TargetResourceType,
+			binding.TargetResourceID,
+			binding.Role,
+			binding.Confidence,
+			string(evidence),
+			now,
+			now,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ArchitectureBindings(ctx context.Context, repositoryID int64) ([]ArchitectureBinding, error) {
+	if err := s.ensureArchitectureLinksTable(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, repository_id, component_key, target_repository_id, target_owner_type, target_owner_key,
+		       target_resource_type, target_resource_id, role, confidence, evidence_json, created_at, updated_at
+		FROM watch_architecture_links
+		WHERE repository_id = ?
+		ORDER BY component_key, role, confidence DESC, target_owner_type, target_owner_key`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ArchitectureBinding
+	for rows.Next() {
+		var item ArchitectureBinding
+		var evidenceJSON string
+		if err := rows.Scan(
+			&item.ID,
+			&item.RepositoryID,
+			&item.ComponentKey,
+			&item.TargetRepositoryID,
+			&item.TargetOwnerType,
+			&item.TargetOwnerKey,
+			&item.TargetResourceType,
+			&item.TargetResourceID,
+			&item.Role,
+			&item.Confidence,
+			&evidenceJSON,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(evidenceJSON), &item.Evidence)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ArchitectureBindingTargets(ctx context.Context) ([]ArchitectureBindingTarget, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT wm.repository_id, wm.owner_type, wm.owner_key, wm.resource_type, wm.resource_id,
+		       COALESCE(v.id, 0), e.name, COALESCE(e.kind, ''), COALESCE(e.file_path, ''),
+		       COALESCE(e.language, ''), COALESCE(e.tags, '[]')
+		FROM watch_materialization wm
+		JOIN elements e ON e.id = wm.resource_id
+		LEFT JOIN views v ON v.owner_element_id = e.id
+		WHERE wm.resource_type = 'element'
+		  AND wm.owner_type IN ('folder', 'file', 'symbol', 'cluster', 'fact', 'fact-summary')
+		ORDER BY wm.repository_id, wm.owner_type, wm.owner_key`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ArchitectureBindingTarget
+	for rows.Next() {
+		var item ArchitectureBindingTarget
+		var tagsJSON string
+		if err := rows.Scan(
+			&item.RepositoryID,
+			&item.OwnerType,
+			&item.OwnerKey,
+			&item.ResourceType,
+			&item.ResourceID,
+			&item.ViewID,
+			&item.Name,
+			&item.Kind,
+			&item.FilePath,
+			&item.Language,
+			&tagsJSON,
+		); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(tagsJSON), &item.Tags)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ensureArchitectureLinksTable(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS watch_architecture_links (
+		  id INTEGER PRIMARY KEY AUTOINCREMENT,
+		  repository_id INTEGER NOT NULL,
+		  component_key TEXT NOT NULL,
+		  target_repository_id INTEGER NOT NULL,
+		  target_owner_type TEXT NOT NULL,
+		  target_owner_key TEXT NOT NULL,
+		  target_resource_type TEXT NOT NULL,
+		  target_resource_id INTEGER NOT NULL,
+		  role TEXT NOT NULL,
+		  confidence REAL NOT NULL,
+		  evidence_json TEXT NOT NULL DEFAULT '[]',
+		  created_at TEXT NOT NULL,
+		  updated_at TEXT NOT NULL,
+		  UNIQUE(repository_id, component_key, target_repository_id, target_owner_type, target_owner_key, target_resource_type, role),
+		  FOREIGN KEY (repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE,
+		  FOREIGN KEY (target_repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_watch_architecture_links_repository_id
+		  ON watch_architecture_links(repository_id);
+		CREATE INDEX IF NOT EXISTS idx_watch_architecture_links_target
+		  ON watch_architecture_links(target_repository_id, target_owner_type, target_owner_key);
+	`)
+	return err
+}
+
 type watchMaterializationMapping struct {
 	ID              int64
 	OwnerType       string
@@ -1481,7 +1738,7 @@ func (s *Store) FilterDecisions(ctx context.Context, repositoryID int64, q Filte
 		return []FilterDecision{}, nil
 	}
 	query := `
-		SELECT id, filter_run_id, owner_type, owner_id, decision, reason, score
+		SELECT id, filter_run_id, owner_type, owner_id, owner_key, decision, reason, score, tier, signals_json
 		FROM watch_filter_decisions
 		WHERE filter_run_id = ?`
 	args := []any{runID}
@@ -1508,7 +1765,7 @@ func (s *Store) FilterDecisions(ctx context.Context, repositoryID int64, q Filte
 	for rows.Next() {
 		var item FilterDecision
 		var score sql.NullFloat64
-		if err := rows.Scan(&item.ID, &item.FilterRunID, &item.OwnerType, &item.OwnerID, &item.Decision, &item.Reason, &score); err != nil {
+		if err := rows.Scan(&item.ID, &item.FilterRunID, &item.OwnerType, &item.OwnerID, &item.OwnerKey, &item.Decision, &item.Reason, &score, &item.Tier, &item.SignalsJSON); err != nil {
 			return nil, err
 		}
 		if score.Valid {
@@ -1592,6 +1849,25 @@ func (s *Store) RawGraphHash(ctx context.Context, repositoryID int64) (string, e
 		_, _ = fmt.Fprintf(h, "r:%s:%s:%s:%s\n", sourceKey, targetKey, kind, evidenceHash)
 	}
 	if err := refRows.Err(); err != nil {
+		return "", err
+	}
+	factRows, err := s.db.QueryContext(ctx, `
+		SELECT enricher, stable_key, type, fact_hash
+		FROM watch_facts
+		WHERE repository_id = ?
+		ORDER BY enricher, stable_key, type`, repositoryID)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = factRows.Close() }()
+	for factRows.Next() {
+		var enricher, stableKey, factType, factHash string
+		if err := factRows.Scan(&enricher, &stableKey, &factType, &factHash); err != nil {
+			return "", err
+		}
+		_, _ = fmt.Fprintf(h, "f:%s:%s:%s:%s\n", enricher, stableKey, factType, factHash)
+	}
+	if err := factRows.Err(); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -1829,22 +2105,7 @@ func (s *Store) ReleaseApplyLock(ctx context.Context, repositoryID int64, token 
 }
 
 func (s *Store) EnsureGitTags(ctx context.Context) error {
-	tags := map[string]string{
-		"git:staged":    "Git staged change",
-		"git:unstaged":  "Git unstaged change",
-		"git:untracked": "Git untracked file",
-		"watch:new":     "Introduced since the previous representation version",
-		"watch:updated": "Updated since the previous representation version",
-		"watch:deleted": "Backing symbol disappeared during watch",
-	}
-	for name, description := range tags {
-		if _, err := s.db.ExecContext(ctx, `
-			INSERT INTO tags(name, color, description) VALUES (?, '#0f766e', ?)
-			ON CONFLICT(name) DO UPDATE SET description = excluded.description`, name, description); err != nil {
-			return err
-		}
-	}
-	return nil
+	return tagcolors.Ensure(ctx, s.db, managedGitTags())
 }
 
 func (s *Store) ApplyGitTags(ctx context.Context, repositoryID int64, status GitStatus) (GitTagUpdateResult, error) {

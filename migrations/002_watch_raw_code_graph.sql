@@ -98,6 +98,52 @@ CREATE INDEX IF NOT EXISTS idx_watch_references_source_symbol_id
 CREATE INDEX IF NOT EXISTS idx_watch_references_target_symbol_id
   ON watch_references(target_symbol_id);
 
+CREATE TABLE IF NOT EXISTS watch_facts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repository_id INTEGER NOT NULL,
+  file_id INTEGER NOT NULL,
+  stable_key TEXT NOT NULL,
+  type TEXT NOT NULL,
+  enricher TEXT NOT NULL,
+  subject_kind TEXT NOT NULL,
+  subject_stable_key TEXT NOT NULL,
+  object_kind TEXT NOT NULL DEFAULT '',
+  object_stable_key TEXT NOT NULL DEFAULT '',
+  object_file_path TEXT NOT NULL DEFAULT '',
+  object_name TEXT NOT NULL DEFAULT '',
+  relationship TEXT NOT NULL DEFAULT '',
+  file_path TEXT NOT NULL,
+  start_line INTEGER NOT NULL DEFAULT 0,
+  end_line INTEGER NULL,
+  confidence REAL NOT NULL DEFAULT 1.0,
+  name TEXT NOT NULL DEFAULT '',
+  tags TEXT NOT NULL DEFAULT '[]',
+  attributes_json TEXT NOT NULL DEFAULT '{}',
+  visibility_hints_json TEXT NOT NULL DEFAULT '{}',
+  fact_hash TEXT NOT NULL,
+  raw_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(repository_id, enricher, stable_key),
+  FOREIGN KEY (repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE,
+  FOREIGN KEY (file_id) REFERENCES watch_files(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_watch_facts_repository_id
+  ON watch_facts(repository_id);
+
+CREATE INDEX IF NOT EXISTS idx_watch_facts_file_id
+  ON watch_facts(file_id);
+
+CREATE INDEX IF NOT EXISTS idx_watch_facts_subject
+  ON watch_facts(repository_id, subject_kind, subject_stable_key);
+
+CREATE INDEX IF NOT EXISTS idx_watch_facts_object
+  ON watch_facts(repository_id, object_kind, object_stable_key);
+
+CREATE INDEX IF NOT EXISTS idx_watch_facts_type
+  ON watch_facts(repository_id, type);
+
 CREATE TABLE IF NOT EXISTS watch_scan_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   repository_id INTEGER NOT NULL,
@@ -162,9 +208,12 @@ CREATE TABLE IF NOT EXISTS watch_filter_decisions (
   filter_run_id INTEGER NOT NULL,
   owner_type TEXT NOT NULL,
   owner_id INTEGER NOT NULL,
+  owner_key TEXT NOT NULL DEFAULT '',
   decision TEXT NOT NULL,
   reason TEXT NOT NULL,
   score REAL NULL,
+  tier INTEGER NOT NULL DEFAULT 0,
+  signals_json TEXT NOT NULL DEFAULT '[]',
   FOREIGN KEY (filter_run_id) REFERENCES watch_filter_runs(id) ON DELETE CASCADE
 );
 
@@ -173,6 +222,9 @@ CREATE INDEX IF NOT EXISTS idx_watch_filter_decisions_filter_run_id
 
 CREATE INDEX IF NOT EXISTS idx_watch_filter_decisions_owner
   ON watch_filter_decisions(owner_type, owner_id);
+
+CREATE INDEX IF NOT EXISTS idx_watch_filter_decisions_owner_key
+  ON watch_filter_decisions(owner_type, owner_key);
 
 CREATE TABLE IF NOT EXISTS watch_clusters (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -211,12 +263,51 @@ CREATE TABLE IF NOT EXISTS watch_materialization (
   resource_id INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
+  last_watch_hash TEXT NULL,
+  dirty INTEGER NOT NULL DEFAULT 0,
+  dirty_detected_at TEXT NULL,
   UNIQUE(repository_id, owner_type, owner_key, resource_type),
   FOREIGN KEY (repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_watch_materialization_repository_id
   ON watch_materialization(repository_id);
+
+CREATE TABLE IF NOT EXISTS watch_architecture_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repository_id INTEGER NOT NULL,
+  component_key TEXT NOT NULL,
+  target_repository_id INTEGER NOT NULL,
+  target_owner_type TEXT NOT NULL,
+  target_owner_key TEXT NOT NULL,
+  target_resource_type TEXT NOT NULL,
+  target_resource_id INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(repository_id, component_key, target_repository_id, target_owner_type, target_owner_key, target_resource_type, role),
+  FOREIGN KEY (repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE,
+  FOREIGN KEY (target_repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_watch_architecture_links_repository_id
+  ON watch_architecture_links(repository_id);
+
+CREATE INDEX IF NOT EXISTS idx_watch_architecture_links_target
+  ON watch_architecture_links(target_repository_id, target_owner_type, target_owner_key);
+
+CREATE TABLE IF NOT EXISTS watch_apply_locks (
+  id INTEGER PRIMARY KEY,
+  repository_id INTEGER NOT NULL,
+  pid INTEGER NOT NULL,
+  token TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  heartbeat_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  FOREIGN KEY (repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS watch_context_policies (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -237,6 +328,29 @@ CREATE INDEX IF NOT EXISTS idx_watch_context_policies_repository_active
 
 CREATE INDEX IF NOT EXISTS idx_watch_context_policies_owner
   ON watch_context_policies(repository_id, owner_type, owner_key);
+
+CREATE TABLE IF NOT EXISTS watch_context_expansions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repository_id INTEGER NOT NULL,
+  scope_resource_type TEXT NOT NULL,
+  scope_resource_id INTEGER NOT NULL,
+  scope_owner_type TEXT NOT NULL,
+  scope_owner_key TEXT NOT NULL,
+  tier INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(repository_id, scope_resource_type, scope_resource_id, scope_owner_type, scope_owner_key),
+  FOREIGN KEY (repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_watch_context_expansions_repository
+  ON watch_context_expansions(repository_id);
+
+CREATE INDEX IF NOT EXISTS idx_watch_context_expansions_scope
+  ON watch_context_expansions(repository_id, scope_resource_type, scope_resource_id);
+
+CREATE INDEX IF NOT EXISTS idx_watch_context_expansions_owner
+  ON watch_context_expansions(repository_id, scope_owner_type, scope_owner_key);
 
 CREATE TABLE IF NOT EXISTS watch_representation_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

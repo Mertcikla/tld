@@ -19,11 +19,20 @@ import (
 	analyzerlsp "github.com/mertcikla/tld/internal/analyzer/lsp"
 	tldgit "github.com/mertcikla/tld/internal/git"
 	"github.com/mertcikla/tld/internal/ignore"
+	"github.com/mertcikla/tld/internal/watch/enrich"
+	"github.com/mertcikla/tld/internal/watch/enrich/defaults"
+)
+
+const (
+	enrichmentVersion         = "watch-enrich-v2"
+	enrichmentVersionEnricher = "watch.enrichment"
+	enrichmentVersionType     = "watch.enrichment.version"
 )
 
 type Scanner struct {
 	Store          *Store
 	Analyzer       analyzer.Service
+	Enrichers      *enrich.Registry
 	Rules          *ignore.Rules
 	EffectiveRules *ignore.Rules
 	Progress       ProgressSink
@@ -64,9 +73,10 @@ func (p *synchronizedProgress) Finish() {
 
 func NewScanner(store *Store) *Scanner {
 	return &Scanner{
-		Store:    store,
-		Analyzer: analyzer.NewService(),
-		Rules:    &ignore.Rules{},
+		Store:     store,
+		Analyzer:  analyzer.NewService(),
+		Enrichers: defaults.NewRegistry(),
+		Rules:     &ignore.Rules{},
 	}
 }
 
@@ -84,6 +94,9 @@ func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, rel
 	}
 	if s.Analyzer == nil {
 		s.Analyzer = analyzer.NewService()
+	}
+	if s.Enrichers == nil {
+		s.Enrichers = defaults.NewRegistry()
 	}
 	repoRoot := filepath.Clean(repo.RepoRoot)
 	gitignoreRules, err := ignore.LoadGitIgnore(repoRoot)
@@ -120,6 +133,7 @@ func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, rel
 		files = append(files, absFile)
 	}
 	sort.Strings(files)
+	repoSignals := enrich.DiscoverRepositorySignalsFromFiles(repoRoot, files)
 	result := ScanResult{RepositoryID: repo.ID, FilesSeen: len(files)}
 	mode := "focused"
 	if opts.Force {
@@ -145,7 +159,7 @@ func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, rel
 	progress := &synchronizedProgress{sink: s.Progress}
 	progressStart(progress, "Scanning context files", len(files))
 	defer progressFinish(progress)
-	fileResults, err := s.scanFiles(ctx, repo.ID, repoRoot, files, workers, progress, opts.Force, effectiveRules)
+	fileResults, err := s.scanFiles(ctx, repo.ID, repoRoot, files, workers, progress, opts.Force, effectiveRules, repoSignals)
 	if err != nil {
 		scanErr = err
 		return result, err
@@ -162,6 +176,7 @@ func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, rel
 			parsedFiles = append(parsedFiles, parsedFile{File: fileResult.File, Refs: fileResult.Refs})
 			parsedFileIDs = append(parsedFileIDs, fileResult.File.ID)
 		}
+		result.Warnings = append(result.Warnings, fileResult.Warnings...)
 	}
 	if len(parsedFileIDs) == 0 {
 		return result, nil
@@ -192,6 +207,9 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	}
 	if s.Analyzer == nil {
 		s.Analyzer = analyzer.NewService()
+	}
+	if s.Enrichers == nil {
+		s.Enrichers = defaults.NewRegistry()
 	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -253,6 +271,7 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 		scanErr = err
 		return result, err
 	}
+	repoSignals := enrich.DiscoverRepositorySignalsFromFiles(repoRoot, files)
 	result.FilesSeen = len(files)
 	progressStart(progress, "Scanning source files", len(files))
 	defer progressFinish(progress)
@@ -260,7 +279,7 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	var parsedFiles []parsedFile
 	var parsedFileIDs []int64
 
-	fileResults, err := s.scanFiles(ctx, repo.ID, repoRoot, files, workers, progress, opts.Force, effectiveRules)
+	fileResults, err := s.scanFiles(ctx, repo.ID, repoRoot, files, workers, progress, opts.Force, effectiveRules, repoSignals)
 	if err != nil {
 		scanErr = err
 		return result, err
@@ -276,6 +295,7 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 			parsedFiles = append(parsedFiles, parsedFile{File: fileResult.File, Refs: fileResult.Refs})
 			parsedFileIDs = append(parsedFileIDs, fileResult.File.ID)
 		}
+		result.Warnings = append(result.Warnings, fileResult.Warnings...)
 	}
 
 	if err := s.Store.DeleteMissingFiles(ctx, repo.ID, seen); err != nil {
@@ -322,9 +342,10 @@ type scanFileResult struct {
 	Parsed      bool
 	Skipped     bool
 	SymbolsSeen int
+	Warnings    []string
 }
 
-func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot string, files []string, workers int, progress ProgressSink, force bool, rules *ignore.Rules) ([]scanFileResult, error) {
+func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot string, files []string, workers int, progress ProgressSink, force bool, rules *ignore.Rules, repoSignals []enrich.ActivationSignal) ([]scanFileResult, error) {
 	if workers <= 0 {
 		workers = 1
 	}
@@ -341,7 +362,7 @@ func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot st
 			defer wg.Done()
 			workerAnalyzer := analyzer.NewService()
 			for absFile := range jobs {
-				fileResult, err := s.scanFile(ctx, workerAnalyzer, repositoryID, repoRoot, absFile, progress, force, rules)
+				fileResult, err := s.scanFile(ctx, workerAnalyzer, repositoryID, repoRoot, absFile, progress, force, rules, repoSignals)
 				if err != nil {
 					select {
 					case errs <- err:
@@ -379,7 +400,7 @@ func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot st
 	return out, nil
 }
 
-func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service, repositoryID int64, repoRoot, absFile string, progress ProgressSink, force bool, rules *ignore.Rules) (scanFileResult, error) {
+func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service, repositoryID int64, repoRoot, absFile string, progress ProgressSink, force bool, rules *ignore.Rules, repoSignals []enrich.ActivationSignal) (scanFileResult, error) {
 	rel, err := filepath.Rel(repoRoot, absFile)
 	if err != nil {
 		return scanFileResult{}, err
@@ -404,7 +425,12 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	if cached, ok, err := s.Store.CachedFileByPath(ctx, repositoryID, rel); err != nil {
 		return result, err
 	} else if !force && ok && cached.SizeBytes == info.Size() && cached.MtimeUnix == info.ModTime().UnixNano() && cached.WorktreeHash != "" && cached.ScanStatus != "error" {
-		if _, _, err := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, nullStringValue(cached.GitBlobHash), cached.WorktreeHash, info.Size(), info.ModTime().UnixNano(), "parsed", nil); err != nil {
+		file, _, err := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, nullStringValue(cached.GitBlobHash), cached.WorktreeHash, info.Size(), info.ModTime().UnixNano(), "parsed", nil)
+		if err != nil {
+			return result, err
+		}
+		result.File = file
+		if err := s.backfillFactsForCachedFile(ctx, workerAnalyzer, repositoryID, repoRoot, rel, absFile, languageName, parseable, rules, repoSignals, file, nil, &result); err != nil {
 			return result, err
 		}
 		result.Skipped = true
@@ -423,10 +449,16 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	}
 	result.File = file
 	if !force && skipped {
+		if err := s.backfillFactsForCachedFile(ctx, workerAnalyzer, repositoryID, repoRoot, rel, absFile, languageName, parseable, rules, repoSignals, file, data, &result); err != nil {
+			return result, err
+		}
 		result.Skipped = true
 		return result, nil
 	}
 	if !parseable {
+		if err := s.enrichFile(ctx, repositoryID, file.ID, repoRoot, rel, absFile, languageName, data, nil, repoSignals, &result); err != nil {
+			return result, err
+		}
 		return result, nil
 	}
 	extracted, err := workerAnalyzer.ExtractPath(ctx, absFile, rules, nil)
@@ -438,10 +470,67 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	if err := s.Store.ReplaceFileSymbols(ctx, repositoryID, file.ID, symbols); err != nil {
 		return result, err
 	}
+	if err := s.enrichFile(ctx, repositoryID, file.ID, repoRoot, rel, absFile, languageName, data, extracted, repoSignals, &result); err != nil {
+		return result, err
+	}
 	result.Parsed = true
 	result.SymbolsSeen = len(symbols)
 	result.Refs = extracted.Refs
 	return result, nil
+}
+
+func (s *Scanner) backfillFactsForCachedFile(ctx context.Context, workerAnalyzer analyzer.Service, repositoryID int64, repoRoot, rel, absFile, language string, parseable bool, rules *ignore.Rules, repoSignals []enrich.ActivationSignal, file File, data []byte, result *scanFileResult) error {
+	version, err := s.Store.FactVersionForFile(ctx, repositoryID, file.ID, enrichmentVersionEnricher, enrichmentVersionStableKey(rel))
+	if err != nil {
+		return err
+	}
+	if version == enrichmentVersion {
+		return nil
+	}
+	if data == nil {
+		data, err = os.ReadFile(absFile)
+		if err != nil {
+			return err
+		}
+	}
+	var extracted *analyzer.Result
+	if parseable {
+		extracted, err = workerAnalyzer.ExtractPath(ctx, absFile, rules, nil)
+		if err != nil {
+			return err
+		}
+	}
+	return s.enrichFile(ctx, repositoryID, file.ID, repoRoot, rel, absFile, language, data, extracted, repoSignals, result)
+}
+
+func (s *Scanner) enrichFile(ctx context.Context, repositoryID, fileID int64, repoRoot, rel, absFile, language string, data []byte, extracted *analyzer.Result, repoSignals []enrich.ActivationSignal, result *scanFileResult) error {
+	if s.Enrichers == nil {
+		s.Enrichers = defaults.NewRegistry()
+	}
+	signals := append([]enrich.ActivationSignal{}, repoSignals...)
+	if extracted != nil {
+		signals = append(signals, enrich.ImportSignals(extracted.Refs)...)
+	}
+	facts, warnings, err := s.Enrichers.EnrichFile(ctx, enrich.FileInput{
+		RepoRoot: repoRoot,
+		AbsPath:  absFile,
+		RelPath:  rel,
+		Language: language,
+		Source:   data,
+		Parsed:   extracted,
+		Signals:  signals,
+	})
+	if err != nil {
+		return err
+	}
+	for _, warning := range warnings {
+		if warning.Message != "" {
+			result.Warnings = append(result.Warnings, warning.Enricher+": "+warning.Message)
+		}
+	}
+	watchFacts := watchFactsFromEnrich(repositoryID, fileID, rel, facts)
+	watchFacts = append(watchFacts, enrichmentVersionFact(repositoryID, fileID, rel))
+	return s.Store.ReplaceFactsForFile(ctx, repositoryID, fileID, watchFacts)
 }
 
 func watchedFileLanguage(path string) (language string, parseable bool, ok bool) {
@@ -449,11 +538,155 @@ func watchedFileLanguage(path string) (language string, parseable bool, ok bool)
 		return string(language), true, true
 	}
 	switch strings.ToLower(filepath.Base(path)) {
+	case "go.mod":
+		return "go-mod", false, true
 	case "package.json", "package-lock.json":
 		return "json", false, true
+	case "requirements.txt", "requirements.in":
+		return "python-requirements", false, true
+	case "build.gradle", "settings.gradle":
+		return "gradle", false, true
+	case "cartservice.csproj":
+		return "xml", false, true
 	default:
-		return "", false, false
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".cs":
+			return "c-sharp", false, true
+		case ".yaml", ".yml":
+			return "yaml", false, true
+		case ".proto":
+			return "protobuf", false, true
+		case ".tf":
+			return "terraform", false, true
+		case ".csproj":
+			return "xml", false, true
+		default:
+			return "", false, false
+		}
 	}
+}
+
+func watchFactsFromEnrich(repositoryID, fileID int64, relPath string, facts []enrich.Fact) []Fact {
+	out := make([]Fact, 0, len(facts))
+	for _, fact := range facts {
+		filePath := strings.TrimSpace(fact.Source.FilePath)
+		if filePath == "" {
+			filePath = relPath
+		}
+		subjectKind := strings.TrimSpace(fact.Subject.Kind)
+		if subjectKind == "" {
+			subjectKind = "file"
+		}
+		subjectKey := strings.TrimSpace(fact.Subject.StableKey)
+		if subjectKey == "" {
+			subjectKey = "file:" + relPath
+		}
+		endLine := fact.Source.EndLine
+		var endPtr *int
+		if endLine > 0 {
+			endPtr = &endLine
+		}
+		attrs, _ := json.Marshal(fact.Attributes)
+		hints, _ := json.Marshal(fact.VisibilityHints)
+		raw, _ := json.Marshal(fact)
+		watchFact := Fact{
+			RepositoryID:        repositoryID,
+			FileID:              fileID,
+			FilePath:            filePath,
+			StableKey:           fact.StableKey,
+			Type:                fact.Type,
+			Enricher:            fact.Enricher,
+			SubjectKind:         subjectKind,
+			SubjectStableKey:    subjectKey,
+			ObjectKind:          strings.TrimSpace(fact.Object.Kind),
+			ObjectStableKey:     strings.TrimSpace(fact.Object.StableKey),
+			ObjectFilePath:      strings.TrimSpace(fact.Object.FilePath),
+			ObjectName:          strings.TrimSpace(fact.Object.Name),
+			Relationship:        strings.TrimSpace(fact.Relationship),
+			StartLine:           fact.Source.StartLine,
+			EndLine:             endPtr,
+			Confidence:          fact.Confidence,
+			Name:                fact.Name,
+			Tags:                append([]string{}, fact.Tags...),
+			AttributesJSON:      string(attrs),
+			VisibilityHintsJSON: string(hints),
+			RawJSON:             string(raw),
+		}
+		watchFact.FactHash = stableHash(struct {
+			Type            string             `json:"type"`
+			StableKey       string             `json:"stable_key"`
+			Enricher        string             `json:"enricher"`
+			Subject         string             `json:"subject"`
+			ObjectKind      string             `json:"object_kind,omitempty"`
+			ObjectStableKey string             `json:"object_stable_key,omitempty"`
+			ObjectFilePath  string             `json:"object_file_path,omitempty"`
+			ObjectName      string             `json:"object_name,omitempty"`
+			Relationship    string             `json:"relationship,omitempty"`
+			FilePath        string             `json:"file_path"`
+			StartLine       int                `json:"start_line"`
+			EndLine         *int               `json:"end_line,omitempty"`
+			Confidence      float64            `json:"confidence"`
+			Name            string             `json:"name"`
+			Tags            []string           `json:"tags"`
+			Attributes      map[string]string  `json:"attributes"`
+			VisibilityHints map[string]float64 `json:"visibility_hints,omitempty"`
+		}{
+			Type:            watchFact.Type,
+			StableKey:       watchFact.StableKey,
+			Enricher:        watchFact.Enricher,
+			Subject:         watchFact.SubjectKind + ":" + watchFact.SubjectStableKey,
+			ObjectKind:      watchFact.ObjectKind,
+			ObjectStableKey: watchFact.ObjectStableKey,
+			ObjectFilePath:  watchFact.ObjectFilePath,
+			ObjectName:      watchFact.ObjectName,
+			Relationship:    watchFact.Relationship,
+			FilePath:        watchFact.FilePath,
+			StartLine:       watchFact.StartLine,
+			EndLine:         watchFact.EndLine,
+			Confidence:      watchFact.Confidence,
+			Name:            watchFact.Name,
+			Tags:            watchFact.Tags,
+			Attributes:      fact.Attributes,
+			VisibilityHints: fact.VisibilityHints,
+		})
+		out = append(out, watchFact)
+	}
+	return out
+}
+
+func enrichmentVersionStableKey(relPath string) string {
+	return "watch.enrichment.version:" + relPath
+}
+
+func enrichmentVersionFact(repositoryID, fileID int64, relPath string) Fact {
+	fact := Fact{
+		RepositoryID:        repositoryID,
+		FileID:              fileID,
+		FilePath:            relPath,
+		StableKey:           enrichmentVersionStableKey(relPath),
+		Type:                enrichmentVersionType,
+		Enricher:            enrichmentVersionEnricher,
+		SubjectKind:         "file",
+		SubjectStableKey:    "file:" + relPath,
+		StartLine:           1,
+		Confidence:          1,
+		Name:                enrichmentVersion,
+		AttributesJSON:      `{"version":"` + enrichmentVersion + `"}`,
+		VisibilityHintsJSON: `{}`,
+		RawJSON:             `{"version":"` + enrichmentVersion + `"}`,
+	}
+	fact.FactHash = stableHash(struct {
+		Type      string `json:"type"`
+		StableKey string `json:"stable_key"`
+		Enricher  string `json:"enricher"`
+		Version   string `json:"version"`
+	}{
+		Type:      fact.Type,
+		StableKey: fact.StableKey,
+		Enricher:  fact.Enricher,
+		Version:   enrichmentVersion,
+	})
+	return fact
 }
 
 func (s *Scanner) collectSourceFiles(root string, workers int, languages []string, rules *ignore.Rules, progress ProgressSink) ([]string, error) {
@@ -802,7 +1035,7 @@ func isHiddenBuildOutput(name string) bool {
 	}
 	if strings.HasPrefix(name, ".") {
 		switch name {
-		case ".git", ".cache", ".next", ".turbo":
+		case ".git", ".cache", ".next", ".tld", ".turbo":
 			return true
 		}
 	}

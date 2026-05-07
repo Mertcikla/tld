@@ -207,6 +207,9 @@ func ValidateGlobalConfig(cfg *Config) ConfigValidationErrors {
 		key   string
 		value float64
 	}{
+		{"watch.visibility.core_threshold", cfg.Watch.Visibility.CoreThreshold},
+		{"watch.visibility.tier_multiplier", cfg.Watch.Visibility.TierMultiplier},
+		{"watch.visibility.max_expansion_multiplier", cfg.Watch.Visibility.MaxExpansionMultiplier},
 		{"watch.layout.link_distance", cfg.Watch.Layout.LinkDistance},
 		{"watch.layout.collide_radius", cfg.Watch.Layout.CollideRadius},
 		{"watch.layout.gravity_strength", cfg.Watch.Layout.GravityStrength},
@@ -310,6 +313,19 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "watch.thresholds.max_incoming_per_element", Description: "Incoming reference limit before collapsing context."},
 	{Key: "watch.thresholds.max_outgoing_per_element", Description: "Outgoing reference limit before collapsing context."},
 	{Key: "watch.thresholds.max_expanded_connectors_per_group", Description: "File-pair connector expansion limit before folder-level collapse."},
+	{Key: "watch.visibility.core_threshold_enabled", Description: "Enable score thresholding for watch visibility decisions."},
+	{Key: "watch.visibility.core_threshold", Description: "Minimum score for core watch visibility."},
+	{Key: "watch.visibility.tier_multiplier", Description: "Density multiplier added by each Show Context tier."},
+	{Key: "watch.visibility.max_expansion_multiplier", Description: "Maximum density multiplier allowed by Show Context."},
+	{Key: "watch.visibility.weights.changed", Description: "Visibility score weight for changed resources."},
+	{Key: "watch.visibility.weights.selected", Description: "Visibility score weight for selected context expansion resources."},
+	{Key: "watch.visibility.weights.user_show", Description: "Visibility score weight for durable show policies."},
+	{Key: "watch.visibility.weights.user_hide", Description: "Visibility score weight for durable hide policies."},
+	{Key: "watch.visibility.weights.high_signal_fact", Description: "Visibility score weight for high-signal facts."},
+	{Key: "watch.visibility.weights.relationship_proximity", Description: "Visibility score weight for graph/fact neighborhood proximity."},
+	{Key: "watch.visibility.weights.dependency_fact", Description: "Visibility score weight for dependency facts."},
+	{Key: "watch.visibility.weights.utility_noise", Description: "Visibility score penalty for utility-like noise."},
+	{Key: "watch.visibility.weights.high_degree_noise", Description: "Visibility score penalty for high-degree noise."},
 	{Key: "watch.embedding.provider", Env: []string{"TLD_EMBEDDING_PROVIDER"}, Description: "Embedding provider for watch identity and similarity."},
 	{Key: "watch.embedding.endpoint", Env: []string{"TLD_EMBEDDING_ENDPOINT"}, Description: "Embedding provider endpoint when the provider uses HTTP."},
 	{Key: "watch.embedding.model", Env: []string{"TLD_EMBEDDING_MODEL"}, Description: "Embedding model name."},
@@ -552,6 +568,84 @@ func setConfigValue(cfg *Config, key, value string) error {
 			return err
 		}
 		cfg.Watch.Thresholds.MaxExpandedConnectorsPerGroup = v
+	case "watch.visibility.core_threshold_enabled":
+		v, err := parseBool(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.CoreThresholdEnabled = v
+	case "watch.visibility.core_threshold":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.CoreThreshold = v
+	case "watch.visibility.tier_multiplier":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.TierMultiplier = v
+	case "watch.visibility.max_expansion_multiplier":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.MaxExpansionMultiplier = v
+	case "watch.visibility.weights.changed":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.Weights.Changed = v
+	case "watch.visibility.weights.selected":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.Weights.Selected = v
+	case "watch.visibility.weights.user_show":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.Weights.UserShow = v
+	case "watch.visibility.weights.user_hide":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.Weights.UserHide = v
+	case "watch.visibility.weights.high_signal_fact":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.Weights.HighSignalFact = v
+	case "watch.visibility.weights.relationship_proximity":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.Weights.RelationshipProximity = v
+	case "watch.visibility.weights.dependency_fact":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.Weights.DependencyFact = v
+	case "watch.visibility.weights.utility_noise":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.Weights.UtilityNoise = v
+	case "watch.visibility.weights.high_degree_noise":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Visibility.Weights.HighDegreeNoise = v
 	case "watch.embedding.provider":
 		cfg.Watch.Embedding.Provider = strings.TrimSpace(value)
 	case "watch.embedding.endpoint":
@@ -646,6 +740,32 @@ func getConfigValue(cfg *Config, key string) any {
 		return cfg.Watch.Thresholds.MaxOutgoingPerElement
 	case "watch.thresholds.max_expanded_connectors_per_group":
 		return cfg.Watch.Thresholds.MaxExpandedConnectorsPerGroup
+	case "watch.visibility.core_threshold_enabled":
+		return cfg.Watch.Visibility.CoreThresholdEnabled
+	case "watch.visibility.core_threshold":
+		return cfg.Watch.Visibility.CoreThreshold
+	case "watch.visibility.tier_multiplier":
+		return cfg.Watch.Visibility.TierMultiplier
+	case "watch.visibility.max_expansion_multiplier":
+		return cfg.Watch.Visibility.MaxExpansionMultiplier
+	case "watch.visibility.weights.changed":
+		return cfg.Watch.Visibility.Weights.Changed
+	case "watch.visibility.weights.selected":
+		return cfg.Watch.Visibility.Weights.Selected
+	case "watch.visibility.weights.user_show":
+		return cfg.Watch.Visibility.Weights.UserShow
+	case "watch.visibility.weights.user_hide":
+		return cfg.Watch.Visibility.Weights.UserHide
+	case "watch.visibility.weights.high_signal_fact":
+		return cfg.Watch.Visibility.Weights.HighSignalFact
+	case "watch.visibility.weights.relationship_proximity":
+		return cfg.Watch.Visibility.Weights.RelationshipProximity
+	case "watch.visibility.weights.dependency_fact":
+		return cfg.Watch.Visibility.Weights.DependencyFact
+	case "watch.visibility.weights.utility_noise":
+		return cfg.Watch.Visibility.Weights.UtilityNoise
+	case "watch.visibility.weights.high_degree_noise":
+		return cfg.Watch.Visibility.Weights.HighDegreeNoise
 	case "watch.embedding.provider":
 		return cfg.Watch.Embedding.Provider
 	case "watch.embedding.endpoint":
@@ -714,6 +834,26 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	appendUnknownEntries(thresholds, mappingValueNode(mappingValueNode(existing, "watch"), "thresholds"), setOf("max_elements_per_view", "max_connectors_per_view", "max_incoming_per_element", "max_outgoing_per_element", "max_expanded_connectors_per_group"))
 	addMap(watchNode, "thresholds", thresholds, "Limits used while materializing generated watch views.")
 
+	visibility := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addScalar(visibility, "core_threshold_enabled", cfg.Watch.Visibility.CoreThresholdEnabled, desc("watch.visibility.core_threshold_enabled"))
+	addScalar(visibility, "core_threshold", cfg.Watch.Visibility.CoreThreshold, desc("watch.visibility.core_threshold"))
+	addScalar(visibility, "tier_multiplier", cfg.Watch.Visibility.TierMultiplier, desc("watch.visibility.tier_multiplier"))
+	addScalar(visibility, "max_expansion_multiplier", cfg.Watch.Visibility.MaxExpansionMultiplier, desc("watch.visibility.max_expansion_multiplier"))
+	weights := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addScalar(weights, "changed", cfg.Watch.Visibility.Weights.Changed, desc("watch.visibility.weights.changed"))
+	addScalar(weights, "selected", cfg.Watch.Visibility.Weights.Selected, desc("watch.visibility.weights.selected"))
+	addScalar(weights, "user_show", cfg.Watch.Visibility.Weights.UserShow, desc("watch.visibility.weights.user_show"))
+	addScalar(weights, "user_hide", cfg.Watch.Visibility.Weights.UserHide, desc("watch.visibility.weights.user_hide"))
+	addScalar(weights, "high_signal_fact", cfg.Watch.Visibility.Weights.HighSignalFact, desc("watch.visibility.weights.high_signal_fact"))
+	addScalar(weights, "relationship_proximity", cfg.Watch.Visibility.Weights.RelationshipProximity, desc("watch.visibility.weights.relationship_proximity"))
+	addScalar(weights, "dependency_fact", cfg.Watch.Visibility.Weights.DependencyFact, desc("watch.visibility.weights.dependency_fact"))
+	addScalar(weights, "utility_noise", cfg.Watch.Visibility.Weights.UtilityNoise, desc("watch.visibility.weights.utility_noise"))
+	addScalar(weights, "high_degree_noise", cfg.Watch.Visibility.Weights.HighDegreeNoise, desc("watch.visibility.weights.high_degree_noise"))
+	appendUnknownEntries(weights, mappingValueNode(mappingValueNode(mappingValueNode(existing, "watch"), "visibility"), "weights"), setOf("changed", "selected", "user_show", "user_hide", "high_signal_fact", "relationship_proximity", "dependency_fact", "utility_noise", "high_degree_noise"))
+	addMap(visibility, "weights", weights, "Visibility scoring weights.")
+	appendUnknownEntries(visibility, mappingValueNode(mappingValueNode(existing, "watch"), "visibility"), setOf("core_threshold_enabled", "core_threshold", "tier_multiplier", "max_expansion_multiplier", "weights"))
+	addMap(watchNode, "visibility", visibility, "Scoring and density-tier settings for watch context.")
+
 	embedding := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	addScalar(embedding, "provider", cfg.Watch.Embedding.Provider, desc("watch.embedding.provider"))
 	addScalar(embedding, "endpoint", cfg.Watch.Embedding.Endpoint, desc("watch.embedding.endpoint"))
@@ -731,7 +871,7 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	appendUnknownEntries(layout, mappingValueNode(mappingValueNode(existing, "watch"), "layout"), setOf("link_distance", "charge_strength", "collide_radius", "gravity_strength"))
 	addMap(watchNode, "layout", layout, "Organic layout tuning for generated watch views.")
 
-	appendUnknownEntries(watchNode, mappingValueNode(existing, "watch"), setOf("languages", "watcher", "poll_interval", "debounce", "thresholds", "embedding", "layout"))
+	appendUnknownEntries(watchNode, mappingValueNode(existing, "watch"), setOf("languages", "watcher", "poll_interval", "debounce", "thresholds", "visibility", "embedding", "layout"))
 	addMap(mapping, "watch", watchNode, "Source watch/analyze pipeline settings.")
 
 	completion := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}

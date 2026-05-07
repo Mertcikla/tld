@@ -27,6 +27,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/watch/repositories/{id}/reassociate", h.reassociateRepository)
 	mux.HandleFunc("POST /api/watch/repositories/{id}/represent", h.representRepository)
 	mux.HandleFunc("POST /api/watch/repositories/{id}/context/show", h.showContext)
+	mux.HandleFunc("POST /api/watch/repositories/{id}/context/clean", h.cleanContext)
 	mux.HandleFunc("POST /api/watch/repositories/{id}/context/hide", h.hideContext)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/representation/summary", h.representationSummary)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/filter-decisions", h.filterDecisions)
@@ -42,6 +43,10 @@ func (h *Handler) showContext(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) hideContext(w http.ResponseWriter, r *http.Request) {
 	h.contextAction(w, r, contextActionHide)
+}
+
+func (h *Handler) cleanContext(w http.ResponseWriter, r *http.Request) {
+	h.contextAction(w, r, contextActionClean)
 }
 
 func (h *Handler) contextAction(w http.ResponseWriter, r *http.Request, action string) {

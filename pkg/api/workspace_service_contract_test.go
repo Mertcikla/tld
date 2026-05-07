@@ -363,6 +363,12 @@ func (s *contractStore) UpdateViewLayer(context.Context, int32, *string, []strin
 	return nil, nil
 }
 func (s *contractStore) DeleteViewLayer(context.Context, int32) error { return nil }
+func (s *contractStore) Tags(context.Context, uuid.UUID) (map[string]*diagv1.Tag, error) {
+	return nil, nil
+}
+func (s *contractStore) UpdateTag(context.Context, uuid.UUID, string, string, *string) error {
+	return nil
+}
 func (s *contractStore) ApplyPlan(context.Context, uuid.UUID, *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
 	return nil, nil
 }

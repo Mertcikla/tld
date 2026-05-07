@@ -16,6 +16,7 @@ import (
 
 	"github.com/mertcikla/tld/internal/codeowners"
 	"github.com/mertcikla/tld/internal/layout"
+	"github.com/mertcikla/tld/internal/tagcolors"
 )
 
 const (
@@ -43,6 +44,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	}
 	req.Embedding = normalizeEmbeddingConfig(req.Embedding)
 	req.Thresholds = defaultThresholds(req.Thresholds)
+	req.Visibility = defaultVisibilityConfig(req.Visibility)
 	settingsHash := settingsHash(req)
 	progressStart(req.Progress, "Preparing representation graph", 8)
 	rawGraphHash, err := r.Store.RawGraphHash(ctx, repositoryID)
@@ -94,7 +96,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		return RepresentResult{}, err
 	}
 	progressAdvance(req.Progress, "Changed resources loaded")
-	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, nil, changedRaw.Symbols, contextPolicies, identityKeys)
+	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, nil, changedRaw.Symbols, contextPolicies, identityKeys)
 	if err != nil {
 		progressFinish(req.Progress)
 		return RepresentResult{}, err
@@ -114,7 +116,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		result.EmbeddingsCreated = stats.Created
 		if len(embeddingSymbols) == len(filtered.VisibleSymbols) {
 			progressStart(req.Progress, "Refreshing semantic filter", 1)
-			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, rawGraphHash, settingsHash, vectors, changedRaw.Symbols, contextPolicies, identityKeys)
+			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, vectors, changedRaw.Symbols, contextPolicies, identityKeys)
 			if err != nil {
 				progressFinish(req.Progress)
 				return RepresentResult{}, err
@@ -277,7 +279,7 @@ func (r *Representer) RepresentArchitecture(ctx context.Context, repo Repository
 		return result, err
 	}
 	progressAdvance(progress, "Repository view materialized")
-	if err := m.materializeArchitecture(ctx, architecture, repoView); err != nil {
+	if err := m.materializeArchitecture(ctx, architecture, repoView, nil); err != nil {
 		progressFinish(progress)
 		runErr = err
 		return result, err
@@ -560,12 +562,7 @@ type semanticTagPlan struct {
 	byOwner  map[string][]string
 }
 
-type semanticTagDefinitionInfo struct {
-	Color       string
-	Description string
-}
-
-func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string, ownerMatcher *codeowners.Matcher) semanticTagPlan {
+func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thresholds, settingsHash string, identityKeys map[string]string, ownerMatcher *codeowners.Matcher, facts []Fact) semanticTagPlan {
 	candidates := map[string][]string{}
 	add := func(ownerType, ownerKey string, tags ...string) {
 		key := semanticTagOwnerKey(ownerType, ownerKey)
@@ -606,12 +603,14 @@ func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thr
 		add("symbol", symbolOwnerKey(sym, identityKeys), tags...)
 	}
 
+	addFactSemanticTags(facts, filtered.VisibleSymbols, identityKeys, add)
+
 	counts := map[string]int{}
 	forced := map[string]struct{}{}
 	for _, tags := range candidates {
 		for _, tag := range tags {
 			counts[tag]++
-			if strings.HasPrefix(tag, "owner:") {
+			if strings.HasPrefix(tag, "owner:") || forceFactSemanticTag(tag) {
 				forced[tag] = struct{}{}
 			}
 		}
@@ -654,6 +653,60 @@ func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thr
 		byOwner[key] = limitSemanticTags(kept)
 	}
 	return semanticTagPlan{approved: approved, byOwner: byOwner}
+}
+
+func addFactSemanticTags(facts []Fact, symbols map[int64]Symbol, identityKeys map[string]string, add func(ownerType, ownerKey string, tags ...string)) {
+	symbolOwners := map[string]string{}
+	for _, sym := range symbols {
+		symbolOwners[sym.StableKey] = symbolOwnerKey(sym, identityKeys)
+	}
+	for _, fact := range facts {
+		tags := factSemanticTags(fact)
+		if len(tags) == 0 {
+			continue
+		}
+		add("fact", factOwnerKey(fact), tags...)
+		if fact.SubjectKind == "symbol" {
+			if owner, ok := symbolOwners[fact.SubjectStableKey]; ok {
+				add("symbol", owner, tags...)
+				continue
+			}
+		}
+		if strings.TrimSpace(fact.FilePath) != "" {
+			add("file", "file:"+fact.FilePath, tags...)
+		}
+	}
+}
+
+func factSemanticTags(fact Fact) []string {
+	tags := append([]string{}, fact.Tags...)
+	switch fact.Type {
+	case "http.route":
+		tags = append(tags, "http:route")
+	case "frontend.route":
+		tags = append(tags, "frontend:route")
+	case "orm.query":
+		if !hasStringPrefix(tags, "orm:") {
+			tags = append(tags, "orm:query")
+		}
+	}
+	return uniqueSemanticTags(tags)
+}
+
+func forceFactSemanticTag(tag string) bool {
+	return strings.HasPrefix(tag, "framework:") ||
+		strings.HasPrefix(tag, "orm:") ||
+		tag == "http:route" ||
+		tag == "frontend:route"
+}
+
+func hasStringPrefix(values []string, prefix string) bool {
+	for _, value := range values {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func limitSemanticTags(tags []string) []string {
@@ -828,37 +881,22 @@ func semanticTagPriority(tag string) int {
 	switch {
 	case strings.HasPrefix(tag, "role:"):
 		return 0
-	case strings.HasPrefix(tag, "area:"):
+	case strings.HasPrefix(tag, "framework:"):
 		return 1
-	case strings.HasPrefix(tag, "kind:"):
-		return 2
-	case strings.HasPrefix(tag, "graph:"):
-		return 3
-	case strings.HasPrefix(tag, "lang:"):
-		return 4
-	case strings.HasPrefix(tag, "owner:"):
-		return 5
-	default:
-		return 6
-	}
-}
-
-func semanticTagDefinition(tag string) semanticTagDefinitionInfo {
-	switch {
+	case tag == "http:route" || tag == "frontend:route" || strings.HasPrefix(tag, "orm:"):
+		return 1
 	case strings.HasPrefix(tag, "area:"):
-		return semanticTagDefinitionInfo{Color: "#2563eb", Description: "Generated source area tag"}
-	case strings.HasPrefix(tag, "role:"):
-		return semanticTagDefinitionInfo{Color: "#7c3aed", Description: "Generated code role tag"}
+		return 2
 	case strings.HasPrefix(tag, "kind:"):
-		return semanticTagDefinitionInfo{Color: "#0f766e", Description: "Generated symbol kind tag"}
+		return 3
 	case strings.HasPrefix(tag, "graph:"):
-		return semanticTagDefinitionInfo{Color: "#b45309", Description: "Generated graph-shape tag"}
+		return 4
 	case strings.HasPrefix(tag, "lang:"):
-		return semanticTagDefinitionInfo{Color: "#475569", Description: "Generated source language tag"}
+		return 5
 	case strings.HasPrefix(tag, "owner:"):
-		return semanticTagDefinitionInfo{Color: "#334155", Description: "Generated CODEOWNERS tag"}
+		return 6
 	default:
-		return semanticTagDefinitionInfo{Color: "#64748b", Description: "Generated watch tag"}
+		return 7
 	}
 }
 
@@ -867,7 +905,11 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	if err != nil {
 		return materializeStats{}, err
 	}
-	tagPlan := buildSemanticTagPlan(repo, filtered, thresholds, settingsHash, identityKeys, ownerMatcher)
+	facts, err := r.Store.FactsForRepository(ctx, repo.ID)
+	if err != nil {
+		return materializeStats{}, err
+	}
+	tagPlan := buildSemanticTagPlan(repo, filtered, thresholds, settingsHash, identityKeys, ownerMatcher, facts)
 	m := &materializer{store: r.Store, repo: repo, thresholds: thresholds, settingsHash: settingsHash, identityKeys: identityKeys, contextPolicies: filtered.ContextPolicies, tagPlan: tagPlan, initialLayout: initialLayout == 0, runMarker: time.Now().UTC().Format(time.RFC3339Nano), newPlacements: map[int64]map[int64]struct{}{}}
 	if err := m.ensureTags(ctx); err != nil {
 		return m.stats, err
@@ -897,21 +939,17 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		return m.stats, err
 	}
 
-	architecture := inferArchitecture(repo.RepoRoot)
-	if len(architecture.Components) > 0 {
-		if err := m.materializeArchitecture(ctx, architecture, repoView); err != nil {
-			return m.stats, err
-		}
-		if err := m.pruneStaleResources(ctx); err != nil {
-			return m.stats, err
-		}
-		if err := m.layoutPlacements(ctx); err != nil {
-			return m.stats, err
-		}
-		return m.stats, nil
+	architectureView, structuralView, err := m.materializeRepositorySections(ctx, repoView, repoLanguage)
+	if err != nil {
+		return m.stats, err
 	}
 
+	architecture := pruneDisconnectedArchitecture(canonicalizeArchitecture(mergeArchitectureModels(inferArchitecture(repo.RepoRoot), architectureFromFacts(facts))))
+
 	visibleFiles := filesForSymbols(filtered.VisibleSymbols)
+	for file := range filtered.VisibleFiles {
+		visibleFiles[file] = struct{}{}
+	}
 	for file := range filtered.ChangedFiles {
 		visibleFiles[file] = struct{}{}
 	}
@@ -919,7 +957,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	folderElements := map[string]int64{}
 	folderViews := map[string]int64{}
 	for _, folder := range folders {
-		parentView := repoView
+		parentView := structuralView
 		if parent := path.Dir(folder); parent != "." && parent != "/" {
 			if id, ok := folderViews[parent]; ok {
 				parentView = id
@@ -961,7 +999,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		if language := strings.TrimSpace(fileLanguages[file]); language != "" {
 			fileLanguage = language
 		}
-		parentView := repoView
+		parentView := structuralView
 		if dir := path.Dir(file); dir != "." {
 			if id, ok := folderViews[dir]; ok {
 				parentView = id
@@ -994,13 +1032,15 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 
 	symbolElements := map[int64]int64{}
 	symbolViews := map[int64]int64{}
+	symbolPositions := map[int64]layoutPoint{}
+	occupied := map[int64]map[string]struct{}{}
 	detailedSymbols := len(filtered.VisibleSymbols) <= maxDetailedSymbolElements
 	for file, symbols := range symbolsByFile(filtered.VisibleSymbols) {
 		fileView := fileViews[file]
 		if fileView == 0 {
 			continue
 		}
-		chunks := chunkSymbols(symbols, thresholds.MaxElementsPerView)
+		chunks := chunkSymbols(symbols, effectiveMaxElementsPerView(thresholds, filtered.Visibility, filtered.ContextExpansions.fileTier(file)))
 		for chunkIndex, chunk := range chunks {
 			targetView := fileView
 			if len(chunks) > 1 {
@@ -1032,6 +1072,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 				if err := m.upsertPlacement(ctx, fileView, clusterElem, x, y); err != nil {
 					return m.stats, err
 				}
+				markOccupied(occupied, fileView, layoutPoint{X: x, Y: y})
 				targetView, err = m.upsertView(ctx, "cluster", clusterKey, clusterElem, cluster.Name, "Cluster")
 				if err != nil {
 					return m.stats, err
@@ -1060,13 +1101,34 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 				if err := m.upsertPlacement(ctx, targetView, elem, x, y); err != nil {
 					return m.stats, err
 				}
+				point := layoutPoint{X: x, Y: y}
+				markOccupied(occupied, targetView, point)
 				symbolElements[sym.ID] = elem
 				symbolViews[sym.ID] = targetView
+				symbolPositions[sym.ID] = point
 			}
 		}
 	}
+	if err := m.materializeFacts(ctx, filtered.VisibleFacts, filtered.VisibleSymbols, fileViews, symbolElements, symbolViews, symbolPositions, occupied, filtered); err != nil {
+		return m.stats, err
+	}
 
-	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, folderElements, fileElements, symbolElements, symbolViews, repoView); err != nil {
+	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, folderElements, fileElements, symbolElements, symbolViews, structuralView); err != nil {
+		return m.stats, err
+	}
+	if len(architecture.Components) > 0 {
+		targets, err := m.store.ArchitectureBindingTargets(ctx)
+		if err != nil {
+			return m.stats, err
+		}
+		bindings := resolveArchitectureBindings(repo, architecture, targets)
+		if err := m.store.ReplaceArchitectureBindings(ctx, repo.ID, bindings); err != nil {
+			return m.stats, err
+		}
+		if err := m.materializeArchitecture(ctx, architecture, architectureView, bindingsByArchitectureComponent(bindings)); err != nil {
+			return m.stats, err
+		}
+	} else if err := m.store.ReplaceArchitectureBindings(ctx, repo.ID, nil); err != nil {
 		return m.stats, err
 	}
 	if err := m.pruneStaleResources(ctx); err != nil {
@@ -1078,7 +1140,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	return m.stats, nil
 }
 
-func (m *materializer) materializeArchitecture(ctx context.Context, architecture architectureModel, repoView int64) error {
+func (m *materializer) materializeArchitecture(ctx context.Context, architecture architectureModel, repoView int64, bindings map[string][]ArchitectureBinding) error {
 	componentElements := map[string]int64{}
 	for i, component := range sortedArchitectureComponents(architecture.Components) {
 		tags := appendUnique(component.Tags, "view:architecture")
@@ -1100,6 +1162,17 @@ func (m *materializer) materializeArchitecture(ctx context.Context, architecture
 			return err
 		}
 		componentElements[component.Key] = elem
+		componentBindings := bindings[component.Key]
+		if len(componentBindings) == 0 {
+			continue
+		}
+		componentView, err := m.upsertView(ctx, "architecture-component", component.Key, elem, component.Name+" Sources", "Sources")
+		if err != nil {
+			return err
+		}
+		if err := m.materializeArchitectureBindingTargets(ctx, componentView, componentBindings); err != nil {
+			return err
+		}
 	}
 
 	for _, connector := range sortedArchitectureConnectors(architecture.Connectors) {
@@ -1108,11 +1181,96 @@ func (m *materializer) materializeArchitecture(ctx context.Context, architecture
 		if sourceID == 0 || targetID == 0 {
 			continue
 		}
-		if err := m.upsertConnectorDetailed(ctx, "architecture-connector", connector.Key, repoView, sourceID, targetID, connector.Label, connector.Relationship, architectureEvidenceDescription(connector.Evidence, connector.Confidence)); err != nil {
+		if err := m.upsertConnectorDetailedWithDirection(ctx, "architecture-connector", connector.Key, repoView, sourceID, targetID, connector.Label, connector.Relationship, connector.Direction, architectureEvidenceDescription(connector.Evidence, connector.Confidence)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func bindingsByArchitectureComponent(bindings []ArchitectureBinding) map[string][]ArchitectureBinding {
+	out := map[string][]ArchitectureBinding{}
+	for _, binding := range bindings {
+		out[binding.ComponentKey] = append(out[binding.ComponentKey], binding)
+	}
+	for key := range out {
+		sort.SliceStable(out[key], func(i, j int) bool {
+			if out[key][i].Role == out[key][j].Role {
+				if out[key][i].Confidence == out[key][j].Confidence {
+					return out[key][i].TargetOwnerKey < out[key][j].TargetOwnerKey
+				}
+				return out[key][i].Confidence > out[key][j].Confidence
+			}
+			return architectureBindingRoleRank(out[key][i].Role) < architectureBindingRoleRank(out[key][j].Role)
+		})
+	}
+	return out
+}
+
+func (m *materializer) materializeArchitectureBindingTargets(ctx context.Context, viewID int64, bindings []ArchitectureBinding) error {
+	targets := map[int64]struct{}{}
+	for _, binding := range bindings {
+		if binding.TargetResourceType == "element" && binding.TargetResourceID != 0 {
+			targets[binding.TargetResourceID] = struct{}{}
+		}
+	}
+	if err := m.replaceViewPlacements(ctx, viewID, targets); err != nil {
+		return err
+	}
+	i := 0
+	for _, elementID := range sortedInt64Set(targets) {
+		x, y := gridPosition(i)
+		if err := m.upsertAdditionalPlacement(ctx, viewID, elementID, x, y); err != nil {
+			return err
+		}
+		i++
+	}
+	return nil
+}
+
+func (m *materializer) materializeRepositorySections(ctx context.Context, repoView int64, repoLanguage string) (int64, int64, error) {
+	architectureElem, err := m.upsertElement(ctx, "repository-section", fmt.Sprintf("repository-architecture:%d", m.repo.ID), elementInput{
+		Name:        "Architecture",
+		Kind:        "view",
+		Description: "Generated architecture view",
+		Technology:  technologyLabel(repoLanguage),
+		Repo:        repoIdentity(m.repo),
+		Branch:      nullStringValue(m.repo.Branch),
+		Language:    repoLanguage,
+		Tags:        []string{"view:architecture"},
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := m.upsertPlacement(ctx, repoView, architectureElem, 0, 0); err != nil {
+		return 0, 0, err
+	}
+	architectureView, err := m.upsertView(ctx, "repository-section", fmt.Sprintf("repository-architecture:%d", m.repo.ID), architectureElem, m.repo.DisplayName+" Architecture", "Architecture")
+	if err != nil {
+		return 0, 0, err
+	}
+
+	structuralElem, err := m.upsertElement(ctx, "repository-section", fmt.Sprintf("repository-structural:%d", m.repo.ID), elementInput{
+		Name:        "Structural",
+		Kind:        "view",
+		Description: "Generated structural code view",
+		Technology:  technologyLabel(repoLanguage),
+		Repo:        repoIdentity(m.repo),
+		Branch:      nullStringValue(m.repo.Branch),
+		Language:    repoLanguage,
+		Tags:        []string{"view:structural"},
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	if err := m.upsertPlacement(ctx, repoView, structuralElem, 260, 0); err != nil {
+		return 0, 0, err
+	}
+	structuralView, err := m.upsertView(ctx, "repository-section", fmt.Sprintf("repository-structural:%d", m.repo.ID), structuralElem, m.repo.DisplayName+" Structural", "Structural")
+	if err != nil {
+		return 0, 0, err
+	}
+	return architectureView, structuralView, nil
 }
 
 func sortedArchitectureComponents(values map[string]*architectureComponent) []*architectureComponent {
@@ -1169,6 +1327,17 @@ type materializer struct {
 	stats           materializeStats
 }
 
+type layoutPoint struct {
+	X float64
+	Y float64
+}
+
+type factPlacement struct {
+	Point        layoutPoint
+	SourceHandle string
+	TargetHandle string
+}
+
 type elementInput struct {
 	Name        string
 	Kind        string
@@ -1189,16 +1358,7 @@ type materializedTechnologyLink struct {
 }
 
 func (m *materializer) ensureTags(ctx context.Context) error {
-	for _, tag := range m.tagPlan.approvedTags() {
-		def := semanticTagDefinition(tag)
-		if _, err := m.store.db.ExecContext(ctx, `
-			INSERT INTO tags(name, color, description) VALUES (?, ?, ?)
-			ON CONFLICT(name) DO UPDATE SET color = excluded.color, description = excluded.description`,
-			tag, def.Color, def.Description); err != nil {
-			return err
-		}
-	}
-	return nil
+	return tagcolors.Ensure(ctx, m.store.db, m.tagPlan.approvedTags())
 }
 
 func (m *materializer) workspaceRootViewID(ctx context.Context) (int64, error) {
@@ -1300,6 +1460,24 @@ func (m *materializer) upsertPlacement(ctx context.Context, viewID, elementID in
 	if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	err = m.store.db.QueryRowContext(ctx, `
+		SELECT p.id
+		FROM placements p
+		JOIN watch_materialization wm
+		  ON wm.repository_id = ? AND wm.resource_type = 'element' AND wm.resource_id = p.element_id
+		WHERE p.element_id = ?
+		ORDER BY p.id
+		LIMIT 1`, m.repo.ID, elementID).Scan(&existingID)
+	if err == nil {
+		_, err = m.store.db.ExecContext(ctx, `UPDATE placements SET view_id = ?, position_x = ?, position_y = ?, updated_at = ? WHERE id = ?`, viewID, x, y, nowString(), existingID)
+		if err == nil {
+			m.markNewPlacement(viewID, elementID)
+		}
+		return err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	now := nowString()
 	_, err = m.store.db.ExecContext(ctx, `
 		INSERT INTO placements(view_id, element_id, position_x, position_y, created_at, updated_at)
@@ -1309,6 +1487,53 @@ func (m *materializer) upsertPlacement(ctx context.Context, viewID, elementID in
 		m.markNewPlacement(viewID, elementID)
 	}
 	return err
+}
+
+func (m *materializer) upsertAdditionalPlacement(ctx context.Context, viewID, elementID int64, x, y float64) error {
+	var existingID int64
+	err := m.store.db.QueryRowContext(ctx, `SELECT id FROM placements WHERE view_id = ? AND element_id = ?`, viewID, elementID).Scan(&existingID)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	now := nowString()
+	_, err = m.store.db.ExecContext(ctx, `
+		INSERT INTO placements(view_id, element_id, position_x, position_y, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		viewID, elementID, x, y, now, now)
+	if err == nil {
+		m.markNewPlacement(viewID, elementID)
+	}
+	return err
+}
+
+func (m *materializer) replaceViewPlacements(ctx context.Context, viewID int64, keep map[int64]struct{}) error {
+	rows, err := m.store.db.QueryContext(ctx, `SELECT element_id FROM placements WHERE view_id = ? ORDER BY id`, viewID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	var stale []int64
+	for rows.Next() {
+		var elementID int64
+		if err := rows.Scan(&elementID); err != nil {
+			return err
+		}
+		if _, ok := keep[elementID]; !ok {
+			stale = append(stale, elementID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, elementID := range stale {
+		if _, err := m.store.db.ExecContext(ctx, `DELETE FROM placements WHERE view_id = ? AND element_id = ?`, viewID, elementID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *materializer) markNewPlacement(viewID, elementID int64) {
@@ -1775,6 +2000,278 @@ type filePairReference struct {
 	Count int
 }
 
+func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbols map[int64]Symbol, fileViews map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, symbolPositions map[int64]layoutPoint, occupied map[int64]map[string]struct{}, filtered filterResult) error {
+	if len(facts) == 0 {
+		return nil
+	}
+	symbolIDByStable := map[string]int64{}
+	for id, sym := range symbols {
+		symbolIDByStable[sym.StableKey] = id
+	}
+	nodeFactsByFile := map[string][]Fact{}
+	summaryFactsByFile := map[string][]Fact{}
+	for _, fact := range facts {
+		if strings.TrimSpace(fact.FilePath) == "" || fileViews[fact.FilePath] == 0 {
+			continue
+		}
+		if highSignalFact(fact) {
+			nodeFactsByFile[fact.FilePath] = append(nodeFactsByFile[fact.FilePath], fact)
+		} else {
+			summaryFactsByFile[fact.FilePath] = append(summaryFactsByFile[fact.FilePath], fact)
+		}
+	}
+	fileSet := map[string]struct{}{}
+	for file := range nodeFactsByFile {
+		fileSet[file] = struct{}{}
+	}
+	for file := range summaryFactsByFile {
+		fileSet[file] = struct{}{}
+	}
+	for _, file := range sortedKeys(fileSet) {
+		items := nodeFactsByFile[file]
+		sort.SliceStable(items, func(i, j int) bool {
+			if items[i].Type == items[j].Type {
+				return factOwnerKey(items[i]) < factOwnerKey(items[j])
+			}
+			return items[i].Type < items[j].Type
+		})
+		limit := factNodeLimitForFile(m.thresholds, filtered.Visibility, filtered.ContextExpansions.fileTier(file))
+		if limit > len(items) {
+			limit = len(items)
+		}
+		subjectFactCounts := map[int64]int{}
+		for i, fact := range items[:limit] {
+			elem, err := m.upsertElement(ctx, "fact", factOwnerKey(fact), elementInput{
+				Name:        factNodeName(fact),
+				Kind:        factNodeKind(fact),
+				Description: factNodeDescription(fact),
+				Technology:  factTechnology(fact),
+				Repo:        repoIdentity(m.repo),
+				Branch:      nullStringValue(m.repo.Branch),
+				FilePath:    fact.FilePath,
+				Language:    languageForFile(fact.FilePath, symbols),
+				Tags:        m.tagPlan.tagsFor("fact", factOwnerKey(fact)),
+			})
+			if err != nil {
+				return err
+			}
+			viewID := fileViews[file]
+			var subjectID int64
+			if fact.SubjectKind == "symbol" {
+				subjectID = symbolIDByStable[fact.SubjectStableKey]
+			}
+			placement := nextFactPlacement(viewID, subjectID, subjectFactCounts[subjectID], symbolViews, symbolPositions, occupied, i)
+			if subjectID != 0 {
+				subjectFactCounts[subjectID]++
+			}
+			if err := m.upsertPlacement(ctx, viewID, elem, placement.Point.X, placement.Point.Y); err != nil {
+				return err
+			}
+			markOccupied(occupied, viewID, placement.Point)
+			if fact.SubjectKind == "symbol" {
+				if symID := subjectID; symID != 0 && symbolElements[symID] != 0 && symbolViews[symID] == viewID {
+					ownerKey := factOwnerKey(fact) + ":subject"
+					label := firstNonEmpty(fact.Relationship, "declares")
+					if err := m.upsertConnectorDetailed(ctx, "fact-reference", ownerKey, viewID, symbolElements[symID], elem, label, label, ""); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		summaryFacts := append([]Fact(nil), summaryFactsByFile[file]...)
+		if limit < len(items) {
+			summaryFacts = append(summaryFacts, items[limit:]...)
+		}
+		if len(summaryFacts) > 0 {
+			if err := m.materializeFactSummaries(ctx, file, fileViews[file], summaryFacts, occupied); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func factNodeLimitForFile(thresholds Thresholds, visibility VisibilityConfig, tier int) int {
+	limit := effectiveMaxElementsPerView(thresholds, visibility, tier) / 3
+	if limit < 3 {
+		return 3
+	}
+	return limit
+}
+
+func (m *materializer) materializeFactSummaries(ctx context.Context, file string, viewID int64, facts []Fact, occupied map[int64]map[string]struct{}) error {
+	byType := map[string][]Fact{}
+	for _, fact := range facts {
+		byType[fact.Type] = append(byType[fact.Type], fact)
+	}
+	i := 0
+	for _, factType := range sortedKeysFromFactSummaryGroups(byType) {
+		items := byType[factType]
+		keys := make([]string, 0, len(items))
+		for _, fact := range items {
+			keys = append(keys, factOwnerKey(fact))
+		}
+		sort.Strings(keys)
+		ownerKey := "fact-summary:" + file + ":" + factType + ":" + stableHash(keys)
+		elem, err := m.upsertElement(ctx, "fact-summary", ownerKey, elementInput{
+			Name:        fmt.Sprintf("%d %s", len(items), factSummaryLabel(factType, len(items))),
+			Kind:        "summary",
+			Description: fmt.Sprintf("%d omitted %s facts in %s", len(items), factType, file),
+			Technology:  "Runtime",
+			Repo:        repoIdentity(m.repo),
+			Branch:      nullStringValue(m.repo.Branch),
+			FilePath:    file,
+			Tags:        summaryTagsForFacts(items),
+		})
+		if err != nil {
+			return err
+		}
+		point := nextOpenGridPoint(viewID, occupied, 1000+i)
+		if err := m.upsertPlacement(ctx, viewID, elem, point.X, point.Y); err != nil {
+			return err
+		}
+		markOccupied(occupied, viewID, point)
+		i++
+	}
+	return nil
+}
+
+func nextFactPlacement(viewID, subjectID int64, subjectIndex int, symbolViews map[int64]int64, symbolPositions map[int64]layoutPoint, occupied map[int64]map[string]struct{}, fallbackIndex int) factPlacement {
+	if subjectID == 0 || symbolViews[subjectID] != viewID {
+		point := nextOpenGridPoint(viewID, occupied, fallbackIndex)
+		return factPlacement{Point: point, SourceHandle: "right", TargetHandle: "left"}
+	}
+	origin := symbolPositions[subjectID]
+	candidates := factPlacementCandidates(origin, subjectIndex)
+	for _, candidate := range candidates {
+		if !isOccupied(occupied, viewID, candidate.Point) {
+			return candidate
+		}
+	}
+	point := nextOpenGridPoint(viewID, occupied, fallbackIndex)
+	return factPlacement{Point: point, SourceHandle: "right", TargetHandle: "left"}
+}
+
+func factPlacementCandidates(origin layoutPoint, subjectIndex int) []factPlacement {
+	ring := subjectIndex/8 + 1
+	spread := float64((subjectIndex%3)-1) * 90
+	dx := float64(ring) * watchLayoutGapX
+	dy := float64(ring) * watchLayoutGapY
+	return []factPlacement{
+		{Point: layoutPoint{X: origin.X + dx, Y: origin.Y + spread}, SourceHandle: "right", TargetHandle: "left"},
+		{Point: layoutPoint{X: origin.X, Y: origin.Y + dy + spread}, SourceHandle: "bottom", TargetHandle: "top"},
+		{Point: layoutPoint{X: origin.X - dx, Y: origin.Y + spread}, SourceHandle: "left", TargetHandle: "right"},
+		{Point: layoutPoint{X: origin.X, Y: origin.Y - dy + spread}, SourceHandle: "top", TargetHandle: "bottom"},
+		{Point: layoutPoint{X: origin.X + dx, Y: origin.Y + dy}, SourceHandle: "right", TargetHandle: "left"},
+		{Point: layoutPoint{X: origin.X - dx, Y: origin.Y + dy}, SourceHandle: "left", TargetHandle: "right"},
+		{Point: layoutPoint{X: origin.X + dx, Y: origin.Y - dy}, SourceHandle: "right", TargetHandle: "left"},
+		{Point: layoutPoint{X: origin.X - dx, Y: origin.Y - dy}, SourceHandle: "left", TargetHandle: "right"},
+	}
+}
+
+func nextOpenGridPoint(viewID int64, occupied map[int64]map[string]struct{}, startIndex int) layoutPoint {
+	for i := startIndex; ; i++ {
+		x, y := gridPosition(i)
+		point := layoutPoint{X: x, Y: y}
+		if !isOccupied(occupied, viewID, point) {
+			return point
+		}
+	}
+}
+
+func markOccupied(occupied map[int64]map[string]struct{}, viewID int64, point layoutPoint) {
+	if occupied[viewID] == nil {
+		occupied[viewID] = map[string]struct{}{}
+	}
+	occupied[viewID][layoutPointKey(point)] = struct{}{}
+}
+
+func isOccupied(occupied map[int64]map[string]struct{}, viewID int64, point layoutPoint) bool {
+	if occupied[viewID] == nil {
+		return false
+	}
+	_, ok := occupied[viewID][layoutPointKey(point)]
+	return ok
+}
+
+func layoutPointKey(point layoutPoint) string {
+	return fmt.Sprintf("%.0f:%.0f", point.X, point.Y)
+}
+
+func sortedKeysFromFactSummaryGroups(groups map[string][]Fact) []string {
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func factSummaryLabel(factType string, count int) string {
+	label := factType
+	switch factType {
+	case "http.route", "frontend.route":
+		label = "routes"
+	case "orm.query":
+		label = "data access facts"
+	}
+	if count == 1 {
+		return strings.TrimSuffix(label, "s")
+	}
+	return label
+}
+
+func summaryTagsForFacts(facts []Fact) []string {
+	set := map[string]struct{}{"watch:summary": {}}
+	for _, fact := range facts {
+		for _, tag := range fact.Tags {
+			tag = strings.TrimSpace(tag)
+			if tag != "" {
+				set[tag] = struct{}{}
+			}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func factNodeName(fact Fact) string {
+	return firstNonEmpty(fact.Name, fact.ObjectName, fact.Type)
+}
+
+func factNodeKind(fact Fact) string {
+	switch fact.Type {
+	case "http.route", "frontend.route":
+		return "route"
+	case "orm.query":
+		return "data-access"
+	default:
+		return "fact"
+	}
+}
+
+func factTechnology(fact Fact) string {
+	attrs := map[string]string{}
+	_ = json.Unmarshal([]byte(fact.AttributesJSON), &attrs)
+	if framework := strings.TrimSpace(attrs["framework"]); framework != "" {
+		return framework
+	}
+	if orm := strings.TrimSpace(attrs["orm"]); orm != "" {
+		return orm
+	}
+	return "Runtime"
+}
+
+func factNodeDescription(fact Fact) string {
+	parts := []string{fact.Type}
+	if fact.Relationship != "" {
+		parts = append(parts, fact.Relationship)
+	}
+	if fact.FilePath != "" && fact.StartLine > 0 {
+		parts = append(parts, fmt.Sprintf("%s:%d", fact.FilePath, fact.StartLine))
+	}
+	return strings.Join(parts, " - ")
+}
+
 func (m *materializer) materializeConnectors(ctx context.Context, refs []Reference, symbols map[int64]Symbol, folderElements map[string]int64, fileElements map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, repoView int64) error {
 	filePairs := map[string]filePairReference{}
 	symbolConnectorCount := map[int64]int{}
@@ -1919,11 +2416,21 @@ func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey 
 }
 
 func (m *materializer) upsertConnectorDetailed(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label, relationship, description string) error {
+	return m.upsertConnectorDetailedWithDirection(ctx, ownerType, ownerKey, viewID, sourceElementID, targetElementID, label, relationship, "forward", description)
+}
+
+func (m *materializer) upsertConnectorDetailedWithDirection(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label, relationship, direction, description string) error {
 	if sourceElementID == 0 || targetElementID == 0 || sourceElementID == targetElementID {
 		return nil
 	}
 	if strings.TrimSpace(relationship) == "" {
 		relationship = label
+	}
+	direction = normalizedArchitectureConnectorDirection(direction)
+	sourceHandle, targetHandle := "", ""
+	if ownerType == "fact-reference" {
+		sourceHandle = "right"
+		targetHandle = "left"
 	}
 	if state, ok, err := m.store.MappingState(ctx, m.repo.ID, ownerType, ownerKey, "connector"); err != nil {
 		return err
@@ -1938,8 +2445,8 @@ func (m *materializer) upsertConnectorDetailed(ctx context.Context, ownerType, o
 		}
 		_, err = m.store.db.ExecContext(ctx, `
 			UPDATE connectors
-			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, description = ?, relationship = ?, direction = 'forward', style = 'solid', updated_at = ?
-			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, nowString(), state.ResourceID)
+			SET view_id = ?, source_element_id = ?, target_element_id = ?, label = ?, description = ?, relationship = ?, direction = ?, style = 'solid', source_handle = ?, target_handle = ?, updated_at = ?
+			WHERE id = ?`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, direction, nullString(sourceHandle), nullString(targetHandle), nowString(), state.ResourceID)
 		if err != nil {
 			return err
 		}
@@ -1951,8 +2458,8 @@ func (m *materializer) upsertConnectorDetailed(ctx context.Context, ownerType, o
 	}
 	now := nowString()
 	res, err := m.store.db.ExecContext(ctx, `
-		INSERT INTO connectors(view_id, source_element_id, target_element_id, label, description, relationship, direction, style, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'forward', 'solid', ?, ?)`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, now, now)
+		INSERT INTO connectors(view_id, source_element_id, target_element_id, label, description, relationship, direction, style, source_handle, target_handle, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 'solid', ?, ?, ?, ?)`, viewID, sourceElementID, targetElementID, label, nullString(description), relationship, direction, nullString(sourceHandle), nullString(targetHandle), now, now)
 	if err != nil {
 		return err
 	}
@@ -2258,6 +2765,24 @@ func representationHash(filtered filterResult, req RepresentRequest) string {
 	}
 	for _, sym := range sortedSymbols(filtered.VisibleSymbols) {
 		parts = append(parts, "s:"+sym.StableKey)
+	}
+	facts := append([]Fact(nil), filtered.VisibleFacts...)
+	sort.SliceStable(facts, func(i, j int) bool {
+		if facts[i].Enricher == facts[j].Enricher {
+			return facts[i].StableKey < facts[j].StableKey
+		}
+		return facts[i].Enricher < facts[j].Enricher
+	})
+	for _, fact := range facts {
+		parts = append(parts, "fact:"+fact.Enricher+":"+fact.StableKey+":"+fact.FactHash)
+	}
+	var expansionKeys []string
+	for key := range filtered.ContextExpansions.Tiers {
+		expansionKeys = append(expansionKeys, key)
+	}
+	sort.Strings(expansionKeys)
+	for _, key := range expansionKeys {
+		parts = append(parts, fmt.Sprintf("x:%s:%d", key, filtered.ContextExpansions.Tiers[key]))
 	}
 	refs := append([]Reference(nil), filtered.VisibleReferences...)
 	sort.Slice(refs, func(i, j int) bool {

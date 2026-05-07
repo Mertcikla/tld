@@ -18,6 +18,8 @@ import (
 
 	"github.com/mertcikla/tld/internal/analyzer"
 	tldgit "github.com/mertcikla/tld/internal/git"
+	"github.com/mertcikla/tld/internal/watch/enrich"
+	"github.com/mertcikla/tld/internal/watch/enrich/defaults"
 	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
 )
@@ -26,17 +28,115 @@ func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
 
-	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_context_policies", "watch_representation_runs", "watch_locks", "watch_apply_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
+	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_facts", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_architecture_links", "watch_context_policies", "watch_context_expansions", "watch_representation_runs", "watch_locks", "watch_apply_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
 			t.Fatalf("missing table %s: %v", table, err)
 		}
 	}
-	for _, index := range []string{"idx_watch_repositories_remote_url", "idx_watch_repositories_repo_root"} {
+	for _, index := range []string{"idx_watch_repositories_remote_url", "idx_watch_repositories_repo_root", "idx_watch_facts_subject", "idx_watch_facts_object", "idx_watch_filter_decisions_owner_key", "idx_watch_context_expansions_scope", "idx_watch_context_expansions_owner"} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, index).Scan(&name); err != nil {
 			t.Fatalf("missing index %s: %v", index, err)
 		}
+	}
+}
+
+func TestReplaceFactsForFileIsIdempotentAndAffectsRawGraphHash(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	store := NewStore(db)
+	repo, err := store.EnsureRepository(context.Background(), RepositoryInput{RepoRoot: t.TempDir(), DisplayName: "repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, _, err := store.UpsertFile(context.Background(), repo.ID, "main.go", "go", "", "hash", 10, 1, "parsed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := Fact{
+		StableKey:           "http.route:main",
+		Type:                "http.route",
+		Enricher:            "go.nethttp",
+		SubjectKind:         "file",
+		SubjectStableKey:    "file:main.go",
+		ObjectKind:          "symbol",
+		ObjectStableKey:     "go:main.go:function:Main",
+		ObjectFilePath:      "main.go",
+		ObjectName:          "Main",
+		Relationship:        "declares",
+		FilePath:            "main.go",
+		StartLine:           3,
+		Confidence:          1,
+		Name:                "GET /users",
+		Tags:                []string{"http:route", "framework:nethttp"},
+		AttributesJSON:      `{"path":"/users"}`,
+		VisibilityHintsJSON: `{"high_signal":1}`,
+		FactHash:            "fact-hash-1",
+		RawJSON:             `{}`,
+	}
+	if err := store.ReplaceFactsForFile(context.Background(), repo.ID, file.ID, []Fact{first}); err != nil {
+		t.Fatal(err)
+	}
+	hash1, err := store.RawGraphHash(context.Background(), repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceFactsForFile(context.Background(), repo.ID, file.ID, []Fact{first}); err != nil {
+		t.Fatal(err)
+	}
+	hash2, err := store.RawGraphHash(context.Background(), repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash1 != hash2 {
+		t.Fatalf("idempotent fact replacement changed raw graph hash: %s != %s", hash1, hash2)
+	}
+	second := first
+	second.StableKey = "http.route:admin"
+	second.Name = "GET /admin"
+	second.FactHash = "fact-hash-2"
+	if err := store.ReplaceFactsForFile(context.Background(), repo.ID, file.ID, []Fact{second}); err != nil {
+		t.Fatal(err)
+	}
+	facts, err := store.FactsForRepository(context.Background(), repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts) != 1 || facts[0].StableKey != second.StableKey {
+		t.Fatalf("expected stale fact replacement, got %+v", facts)
+	}
+	if facts[0].ObjectKind != "symbol" || facts[0].ObjectStableKey != "go:main.go:function:Main" || facts[0].Relationship != "declares" || facts[0].VisibilityHintsJSON == "" {
+		t.Fatalf("expected fact object and visibility fields to round-trip, got %+v", facts[0])
+	}
+	hash3, err := store.RawGraphHash(context.Background(), repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash3 == hash1 {
+		t.Fatalf("raw graph hash did not change after fact change: %s", hash3)
+	}
+}
+
+func TestVisibilityConfigPreservesExplicitConfigValues(t *testing.T) {
+	defaults := defaultVisibilityConfig(VisibilityConfig{})
+	if !defaults.CoreThresholdEnabled || defaults.Weights.HighSignalFact == 0 {
+		t.Fatalf("expected zero-value visibility config to receive defaults, got %+v", defaults)
+	}
+	cfg := defaultVisibilityConfig(VisibilityConfig{
+		CoreThresholdEnabled: false,
+		CoreThresholdSet:     true,
+		WeightsSet:           true,
+		Weights: VisibilityWeights{
+			HighSignalFact: 0,
+			UserHide:       0,
+		},
+	})
+	if cfg.CoreThresholdEnabled {
+		t.Fatalf("expected explicit disabled core threshold to be preserved, got %+v", cfg)
+	}
+	if cfg.Weights.HighSignalFact != 0 || cfg.Weights.UserHide != 0 {
+		t.Fatalf("expected explicit zero weights to be preserved, got %+v", cfg.Weights)
 	}
 }
 
@@ -71,23 +171,22 @@ func quietHelper() string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if show.PoliciesCreated == 0 || show.OwnersAffected == 0 {
-		t.Fatalf("expected show policies, got %+v", show)
+	if show.PoliciesCreated != 0 || show.TierBefore != 0 || show.TierAfter != 1 || show.OwnersAffected == 0 {
+		t.Fatalf("expected show to create a tier-1 expansion without durable policies, got %+v", show)
 	}
 	if !elementNameExists(t, db, "quietHelper") {
 		t.Fatal("quiet helper should be materialized after show context")
 	}
 	manualID := insertManualElement(t, db, "Manual note")
-	quietID := symbolElementID(t, db, "quietHelper")
-	hide, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "element", ResourceID: quietID}, req)
+	clean, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionClean, ContextResourceRequest{ResourceType: "element", ResourceID: fileElementID}, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hide.ElementsRemoved == 0 {
-		t.Fatalf("expected hide to remove a generated symbol, got %+v", hide)
+	if clean.TierBefore != 1 || clean.TierAfter != 0 || clean.ElementsRemoved == 0 {
+		t.Fatalf("expected clean to collapse the expansion and remove generated detail, got %+v", clean)
 	}
 	if elementNameExists(t, db, "quietHelper") {
-		t.Fatal("quiet helper should be pruned after hide context")
+		t.Fatal("quiet helper should be pruned after clean noise")
 	}
 	var manualName string
 	if err := db.QueryRow(`SELECT name FROM elements WHERE id = ?`, manualID).Scan(&manualName); err != nil {
@@ -120,6 +219,201 @@ func Main() {}
 	}
 	if result.Scan.FilesParsed == 0 || result.Representation.ElementsCreated == 0 {
 		t.Fatalf("expected parsed files and materialized elements: scan=%+v representation=%+v", result.Scan, result.Representation)
+	}
+}
+
+func TestScanAndRepresentSurfaceEnricherFactsAsTags(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "go.mod", `module example.com/enriched
+
+go 1.23
+
+require github.com/go-chi/chi/v5 v5.0.12
+`)
+	writeFile(t, repo, "main.go", `package main
+
+import "github.com/go-chi/chi/v5"
+
+func Routes(r chi.Router) {
+	r.Get("/users/{id}", GetUser)
+}
+
+func GetUser() {}
+`)
+	writeFile(t, repo, "package.json", `{
+  "dependencies": {
+    "next": "14.0.0",
+    "@prisma/client": "5.0.0"
+  }
+}`)
+	writeFile(t, repo, "src/app/users/[id]/page.tsx", `export default function Page() {
+  return null
+}`)
+	writeFile(t, repo, "db.ts", `import { PrismaClient } from "@prisma/client"
+
+const prisma = new PrismaClient()
+
+export async function Users() {
+  return prisma.user.findMany()
+}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := store.FactsForRepository(context.Background(), scanResult.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		factType string
+		tag      string
+	}{
+		{"dependency.module", "dependency:module"},
+		{"dependency.import", "dependency:import"},
+		{"http.route", "framework:chi"},
+		{"frontend.route", "framework:nextjs"},
+		{"orm.query", "orm:prisma"},
+	} {
+		if !factsContain(facts, want.factType, want.tag) {
+			t.Fatalf("missing fact %s/%s in %+v", want.factType, want.tag, facts)
+		}
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tag := range []string{"http:route", "framework:chi", "frontend:route", "framework:nextjs", "orm:prisma"} {
+		if count := countElementTag(t, db, tag); count == 0 {
+			t.Fatalf("expected representation to surface tag %q", tag)
+		}
+	}
+	if routes := elementKindCount(t, db, "route"); routes == 0 {
+		t.Fatal("expected high-signal route facts to materialize as generated route nodes")
+	}
+	if deps := countElementTag(t, db, "dependency:import"); deps == 0 {
+		t.Fatal("expected dependency/import facts to surface as tags")
+	}
+	if deps := elementKindCount(t, db, "dependency"); deps != 0 {
+		t.Fatalf("dependency/import facts should not materialize as one dependency node per import, found %d dependency nodes", deps)
+	}
+}
+
+func TestFactNodesUseSubjectAwarePlacementAndHandles(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Routes() {
+	GetUser()
+	CreateUser()
+}
+
+func GetUser() {}
+func CreateUser() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, ok, err := store.CachedFileByPath(context.Background(), scanResult.RepositoryID, "main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("missing cached main.go")
+	}
+	symbols, err := store.SymbolsForRepository(context.Background(), scanResult.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var routesStableKey string
+	for _, sym := range symbols {
+		if sym.Name == "Routes" {
+			routesStableKey = sym.StableKey
+			break
+		}
+	}
+	if routesStableKey == "" {
+		t.Fatal("missing Routes symbol")
+	}
+	facts := []Fact{
+		{
+			RepositoryID:        scanResult.RepositoryID,
+			FileID:              file.ID,
+			FilePath:            "main.go",
+			StableKey:           "test.route.users-id",
+			Type:                "http.route",
+			Enricher:            "test",
+			SubjectKind:         "symbol",
+			SubjectStableKey:    routesStableKey,
+			ObjectKind:          "http.route",
+			ObjectStableKey:     "http.route:/users/{id}",
+			ObjectName:          "/users/{id}",
+			Relationship:        "declares",
+			StartLine:           4,
+			Confidence:          1,
+			Name:                "/users/{id}",
+			Tags:                []string{"http:route"},
+			AttributesJSON:      `{"framework":"test"}`,
+			VisibilityHintsJSON: `{"high_signal":1}`,
+			RawJSON:             `{}`,
+		},
+		{
+			RepositoryID:        scanResult.RepositoryID,
+			FileID:              file.ID,
+			FilePath:            "main.go",
+			StableKey:           "test.route.users",
+			Type:                "http.route",
+			Enricher:            "test",
+			SubjectKind:         "symbol",
+			SubjectStableKey:    routesStableKey,
+			ObjectKind:          "http.route",
+			ObjectStableKey:     "http.route:/users",
+			ObjectName:          "/users",
+			Relationship:        "declares",
+			StartLine:           5,
+			Confidence:          1,
+			Name:                "/users",
+			Tags:                []string{"http:route"},
+			AttributesJSON:      `{"framework":"test"}`,
+			VisibilityHintsJSON: `{"high_signal":1}`,
+			RawJSON:             `{}`,
+		},
+	}
+	for i := range facts {
+		facts[i].FactHash = stableHash(facts[i])
+	}
+	if err := store.ReplaceFactsForFile(context.Background(), scanResult.RepositoryID, file.ID, facts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	routesPlacement := functionPlacement(t, db, "Routes")
+	userRoutePlacement := elementPlacementByName(t, db, "/users/{id}")
+	if routesPlacement.x == userRoutePlacement.x && routesPlacement.y == userRoutePlacement.y {
+		t.Fatalf("fact route overlaps subject placement: subject=%+v route=%+v", routesPlacement, userRoutePlacement)
+	}
+	var sourceHandle, targetHandle sql.NullString
+	if err := db.QueryRow(`
+		SELECT c.source_handle, c.target_handle
+		FROM connectors c
+		JOIN elements s ON s.id = c.source_element_id
+		JOIN elements target ON target.id = c.target_element_id
+		WHERE s.name = ? AND target.name = ?
+		ORDER BY c.id
+		LIMIT 1`, "Routes", "/users/{id}").Scan(&sourceHandle, &targetHandle); err != nil {
+		t.Fatalf("route fact connector: %v", err)
+	}
+	if !sourceHandle.Valid || sourceHandle.String == "" || !targetHandle.Valid || targetHandle.String == "" {
+		t.Fatalf("expected route fact connector to store handle sides, got source=%q target=%q", sourceHandle.String, targetHandle.String)
 	}
 }
 
@@ -156,6 +450,22 @@ func quietHelper() string {
 	}
 	if !elementNameExists(t, db, "quietHelper") {
 		t.Fatal("quiet helper should be materialized by HTTP show context")
+	}
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/watch/repositories/%d/context/clean", scanResult.RepositoryID), strings.NewReader(fmt.Sprintf(`{"resource_type":"element","resource_id":%d}`, fileElementID)))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clean context status = %d body %s", rec.Code, rec.Body.String())
+	}
+	var cleanResponse ContextActionResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &cleanResponse); err != nil {
+		t.Fatal(err)
+	}
+	if cleanResponse.TierBefore != 1 || cleanResponse.TierAfter != 0 {
+		t.Fatalf("expected HTTP clean to decrement context tier, got %+v", cleanResponse)
+	}
+	if elementNameExists(t, db, "quietHelper") {
+		t.Fatal("quiet helper should be collapsed by HTTP clean context")
 	}
 
 	manualID := insertManualElement(t, db, "Manual only")
@@ -213,8 +523,8 @@ func newPrivateContext() string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !filterDecisionHasReason(decisions, sym.ID, "user marked as context") {
-		t.Fatalf("expected new private symbol to be forced visible by context policy, got %+v", decisions)
+	if !filterDecisionHasReason(decisions, sym.ID, "selected context expansion tier 1") {
+		t.Fatalf("expected new private symbol to be forced visible by context expansion, got %+v", decisions)
 	}
 }
 
@@ -287,40 +597,53 @@ func quietHelper() string {
 	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
 		t.Fatal(err)
 	}
-	fileElementID := elementIDByName(t, db, "main.go")
-	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "element", ResourceID: fileElementID}, req); err != nil {
-		t.Fatal(err)
-	}
-	quietID := symbolElementID(t, db, "quietHelper")
-	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "element", ResourceID: quietID}, req); err != nil {
-		t.Fatal(err)
-	}
-	if activePolicyCount(t, db, scanResult.RepositoryID, contextActionHide, "symbol") == 0 {
-		t.Fatal("expected active hide policy after hiding shown symbol")
-	}
-	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "element", ResourceID: fileElementID}, req); err != nil {
-		t.Fatal(err)
-	}
-	if activePolicyCount(t, db, scanResult.RepositoryID, contextActionHide, "symbol") != 0 {
-		t.Fatal("show context should deactivate matching active hide policy")
-	}
-	if !elementNameExists(t, db, "quietHelper") {
-		t.Fatal("quiet helper should be restored after show overrides hide")
-	}
-
 	fileViewID := materializedResourceID(t, db, scanResult.RepositoryID, "file", "file:main.go", "view")
-	hide, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "view", ResourceID: fileViewID}, req)
+	show, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "view", ResourceID: fileViewID}, req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hide.ElementsRemoved == 0 {
-		t.Fatalf("expected view cleanup to remove generated symbol noise, got %+v", hide)
+	if show.PoliciesCreated != 0 || show.TierAfter != 1 {
+		t.Fatalf("expected view show to create a tiered expansion without durable policies, got %+v", show)
+	}
+	if !elementNameExists(t, db, "quietHelper") {
+		t.Fatal("view show should reveal private generated detail")
+	}
+	clean, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionClean, ContextResourceRequest{ResourceType: "view", ResourceID: fileViewID}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clean.TierBefore != 1 || clean.TierAfter != 0 || clean.ElementsRemoved == 0 {
+		t.Fatalf("expected view clean to remove generated symbol noise one tier at a time, got %+v", clean)
 	}
 	if elementNameExists(t, db, "quietHelper") {
 		t.Fatal("view cleanup should remove private generated symbol noise")
 	}
 	if !elementNameExists(t, db, "Main") {
 		t.Fatal("view cleanup should preserve exported entrypoint")
+	}
+	if activePolicyCount(t, db, scanResult.RepositoryID, contextActionHide, "symbol") != 0 {
+		t.Fatal("clean noise should not create durable hide policies")
+	}
+
+	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "view", ResourceID: fileViewID}, req); err != nil {
+		t.Fatal(err)
+	}
+	quietID := symbolElementID(t, db, "quietHelper")
+	hide, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionHide, ContextResourceRequest{ResourceType: "element", ResourceID: quietID}, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hide.PoliciesCreated == 0 || activePolicyCount(t, db, scanResult.RepositoryID, contextActionHide, "symbol") == 0 {
+		t.Fatalf("expected explicit hide to create a durable policy, got %+v", hide)
+	}
+	if !elementNameExists(t, db, "quietHelper") {
+		t.Fatal("active expansion should keep selected context visible even when durable hide is recorded")
+	}
+	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionClean, ContextResourceRequest{ResourceType: "view", ResourceID: fileViewID}, req); err != nil {
+		t.Fatal(err)
+	}
+	if elementNameExists(t, db, "quietHelper") {
+		t.Fatal("durable hide should apply once the forcing expansion is cleaned")
 	}
 }
 
@@ -833,6 +1156,98 @@ func TestScanRespectsGitIgnore(t *testing.T) {
 	}
 	if len(symbols) != 1 || symbols[0].Name != "Main" {
 		t.Fatalf("expected only Main symbol, got %+v", symbols)
+	}
+}
+
+func TestScanBackfillsFactsForCachedFiles(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "go.mod", `module example.com/enriched
+
+go 1.23
+
+require github.com/go-chi/chi/v5 v5.0.12
+`)
+	writeFile(t, repo, "main.go", `package main
+
+import "github.com/go-chi/chi/v5"
+
+func Routes(r chi.Router) {
+	r.Get("/users/{id}", GetUser)
+}
+
+func GetUser() {}
+`)
+
+	store := NewStore(db)
+	scanner := NewScanner(store)
+	scanner.Enrichers = enrich.NewRegistry()
+	first, err := scanner.Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.FilesSeen != 2 || first.FilesParsed != 1 {
+		t.Fatalf("expected initial scan to see go.mod and parse main.go, got %+v", first)
+	}
+	if _, err := db.Exec(`DELETE FROM watch_facts WHERE repository_id = ?`, first.RepositoryID); err != nil {
+		t.Fatal(err)
+	}
+
+	scanner.Enrichers = defaults.NewRegistry()
+	second, err := scanner.Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.FilesSkipped != 2 || second.FilesParsed != 0 {
+		t.Fatalf("expected warm scan to skip while backfilling facts, got %+v", second)
+	}
+	facts, err := store.FactsForRepository(context.Background(), first.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !factsContain(facts, "http.route", "framework:chi") {
+		t.Fatalf("expected cached-file backfill to persist chi route fact, got %+v", facts)
+	}
+	version, err := store.FactVersionForFile(context.Background(), first.RepositoryID, facts[0].FileID, enrichmentVersionEnricher, enrichmentVersionStableKey(facts[0].FilePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version == "" {
+		t.Fatalf("expected cached-file backfill to persist enrichment version sentinel, got %+v", facts)
+	}
+}
+
+func TestScanIgnoresPackageJSONSignalsFromIgnoredPaths(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, ".gitignore", "ignored/\n")
+	writeFile(t, repo, "ignored/package.json", `{
+  "dependencies": {
+    "express": "4.18.0"
+  }
+}`)
+	writeFile(t, repo, "src/server.ts", `router.get("/api/users", listUsers)
+
+function listUsers() {
+  return []
+}
+`)
+
+	store := NewStore(db)
+	scanner := NewScanner(store)
+	scanner.Settings = Settings{Languages: []string{"typescript"}}
+	result, err := scanner.Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := store.FactsForRepository(context.Background(), result.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if factsContain(facts, "http.route", "framework:express") {
+		t.Fatalf("ignored package.json activated express enricher: %+v", facts)
 	}
 }
 
@@ -2291,6 +2706,55 @@ func ExecuteCLI() {}
 	}
 }
 
+func TestRepresentDoesNotOverwriteUserTagMetadata(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "internal/watch/scan.go", `package watch
+
+func ScanRepository() {}
+
+func RepresentRepository() {}
+`)
+	writeFile(t, repo, "internal/watch/runner.go", `package watch
+
+func RunWatch() {}
+`)
+	writeFile(t, repo, "internal/server/http.go", `package server
+
+func ServeAPI() {}
+`)
+	writeFile(t, repo, "cmd/tld/main.go", `package main
+
+func ExecuteCLI() {}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+	if count := countElementTag(t, db, "role:watch"); count == 0 {
+		t.Fatal("expected role:watch tag to be generated")
+	}
+	userDescription := "User picked this color"
+	if _, err := db.Exec(`UPDATE tags SET color = ?, description = ? WHERE name = ?`, "#123456", userDescription, "role:watch"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
+		t.Fatal(err)
+	}
+
+	color, description := tagMetadataByName(t, db, "role:watch")
+	if color != "#123456" || description == nil || *description != userDescription {
+		t.Fatalf("role:watch metadata = color:%q description:%v, want user metadata preserved", color, description)
+	}
+}
+
 func TestRepresentAssignsCodeownersTags(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -3265,7 +3729,7 @@ func openTestDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql", "005_watch_materialization_dirty_state.sql"} {
+	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", migration))
 		if err != nil {
 			t.Fatal(err)
@@ -3448,7 +3912,7 @@ func symbolsByName(ctx context.Context, store *Store, repositoryID int64, name s
 
 func filterDecisionHasReason(decisions []FilterDecision, ownerID int64, reason string) bool {
 	for _, decision := range decisions {
-		if decision.OwnerType == "symbol" && decision.OwnerID == ownerID && decision.Reason == reason {
+		if decision.OwnerType == "symbol" && decision.OwnerID == ownerID && strings.Contains(decision.Reason, reason) {
 			return true
 		}
 	}
@@ -3548,6 +4012,28 @@ func elementTagsByName(t *testing.T, db *sql.DB, name string) []string {
 	return tags
 }
 
+func tagMetadataByName(t *testing.T, db *sql.DB, name string) (string, *string) {
+	t.Helper()
+	var color string
+	var description sql.NullString
+	if err := db.QueryRow(`SELECT color, description FROM tags WHERE name = ?`, name).Scan(&color, &description); err != nil {
+		t.Fatal(err)
+	}
+	if description.Valid {
+		return color, &description.String
+	}
+	return color, nil
+}
+
+func factsContain(facts []Fact, factType, tag string) bool {
+	for _, fact := range facts {
+		if fact.Type == factType && stringSliceContains(fact.Tags, tag) {
+			return true
+		}
+	}
+	return false
+}
+
 func stringSliceContains(values []string, needle string) bool {
 	for _, value := range values {
 		if value == needle {
@@ -3618,6 +4104,22 @@ func functionPlacement(t *testing.T, db *sql.DB, name string) testPlacement {
 	return p
 }
 
+func elementPlacementByName(t *testing.T, db *sql.DB, name string) testPlacement {
+	t.Helper()
+	row := db.QueryRow(`
+		SELECT p.id, p.element_id, p.position_x, p.position_y
+		FROM placements p
+		JOIN elements e ON e.id = p.element_id
+		WHERE e.name = ?
+		ORDER BY p.id
+		LIMIT 1`, name)
+	var p testPlacement
+	if err := row.Scan(&p.placementID, &p.elementID, &p.x, &p.y); err != nil {
+		t.Fatalf("element placement %q: %v", name, err)
+	}
+	return p
+}
+
 type countingProvider struct {
 	calls      int
 	inputs     int
@@ -3681,6 +4183,384 @@ spec:
 	}
 	if len(progress.starts) == 0 || progress.advances == 0 {
 		t.Fatalf("expected architecture progress, starts=%v advances=%d", progress.starts, progress.advances)
+	}
+}
+
+func TestArchitectureFromFactsPromotesRuntimeAndGRPCGlue(t *testing.T) {
+	facts := []Fact{
+		{
+			FilePath:       "src/frontend/rpc.go",
+			Type:           "grpc.client",
+			Name:           "cartservice",
+			Relationship:   "calls",
+			Confidence:     0.9,
+			AttributesJSON: `{"service":"cartservice"}`,
+		},
+		{
+			FilePath:       "src/cartservice/src/Startup.cs",
+			Type:           "datastore.dependency",
+			Name:           "redis-cart",
+			Relationship:   "uses",
+			Confidence:     0.8,
+			AttributesJSON: `{"name":"redis-cart","technology":"Redis"}`,
+		},
+	}
+
+	model := architectureFromFacts(facts)
+	if model.Components[architectureKey("component", "frontend")] == nil {
+		t.Fatalf("expected frontend component, got %#v", model.Components)
+	}
+	if model.Components[architectureKey("component", "cartservice")] == nil {
+		t.Fatalf("expected cartservice component, got %#v", model.Components)
+	}
+	if model.Components[architectureKey("component", "redis-cart")] == nil {
+		t.Fatalf("expected redis-cart component, got %#v", model.Components)
+	}
+	if len(model.Connectors) < 2 {
+		t.Fatalf("expected grpc and datastore connectors, got %#v", model.Connectors)
+	}
+}
+
+func TestCanonicalizeArchitectureFoldsGenericDependencyIntoConcreteAlias(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	frontend := architectureKey("component", "frontend")
+	redisGeneric := architectureKey("datastore", "redis")
+	redisConcrete := architectureKey("component", "redis-cart")
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Technology: "Go"}
+	model.Components[redisGeneric] = &architectureComponent{Key: redisGeneric, Name: "redis", Kind: "datastore", Technology: "Redis", Tags: []string{"datastore:redis"}}
+	model.Components[redisConcrete] = &architectureComponent{Key: redisConcrete, Name: "redis-cart", Kind: "service", Technology: "Redis", Tags: []string{"runtime:kubernetes"}}
+	model.Connectors["generic"] = &architectureConnector{Key: "generic", SourceKey: frontend, TargetKey: redisGeneric, Label: "redis", Relationship: "runtime-dependency", Confidence: 0.72, Evidence: []architectureEvidence{{Kind: "datastore.dependency"}}}
+	model.Connectors["concrete"] = &architectureConnector{Key: "concrete", SourceKey: frontend, TargetKey: redisConcrete, Label: "redis", Relationship: "runtime-dependency", Confidence: 0.78, Evidence: []architectureEvidence{{Kind: "runtime-connection"}}}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[redisGeneric] != nil {
+		t.Fatalf("generic redis component should fold into concrete alias: %#v", got.Components)
+	}
+	if got.Components[redisConcrete] == nil {
+		t.Fatalf("concrete redis component should remain: %#v", got.Components)
+	}
+	if len(got.Connectors) != 1 {
+		t.Fatalf("duplicate redis connectors should merge, got %#v", got.Connectors)
+	}
+	for _, connector := range got.Connectors {
+		if connector.TargetKey != redisConcrete {
+			t.Fatalf("connector should target concrete redis alias, got %#v", connector)
+		}
+		if len(connector.Evidence) != 2 {
+			t.Fatalf("merged connector should preserve evidence, got %#v", connector.Evidence)
+		}
+	}
+}
+
+func TestCanonicalizeArchitectureMergesParallelConnectorsAfterAliasFold(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	loadgenerator := architectureKey("component", "loadgenerator")
+	frontend := architectureKey("component", "frontend")
+	frontendService := architectureKey("component", "frontendservice")
+	model.Components[loadgenerator] = &architectureComponent{Key: loadgenerator, Name: "loadgenerator", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Evidence: []architectureEvidence{{Kind: "grpc.server"}}}
+	model.Components[frontendService] = &architectureComponent{Key: frontendService, Name: "frontendservice", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Connectors["a"] = &architectureConnector{Key: "a", SourceKey: loadgenerator, TargetKey: frontend, Label: "grpc", Relationship: "runtime-dependency", Direction: "forward", Evidence: []architectureEvidence{{Kind: "grpc.client"}}}
+	model.Connectors["b"] = &architectureConnector{Key: "b", SourceKey: loadgenerator, TargetKey: frontendService, Label: "uses", Relationship: "runtime-dependency", Direction: "forward", Evidence: []architectureEvidence{{Kind: "runtime.connection"}}}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if len(got.Connectors) != 1 {
+		t.Fatalf("folded aliases should have one merged connector, got %#v", got.Connectors)
+	}
+	for _, connector := range got.Connectors {
+		if connector.Label != "" {
+			t.Fatalf("merged connector should use an empty label, got %#v", connector)
+		}
+		if connector.Direction != "forward" {
+			t.Fatalf("same-direction merged connector should stay forward, got %#v", connector)
+		}
+		if len(connector.Evidence) != 2 {
+			t.Fatalf("merged connector should preserve evidence, got %#v", connector.Evidence)
+		}
+	}
+}
+
+func TestCanonicalizeArchitectureMergesOppositeConnectorDirections(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	client := architectureKey("component", "client")
+	server := architectureKey("component", "server")
+	model.Components[client] = &architectureComponent{Key: client, Name: "client", Kind: "service"}
+	model.Components[server] = &architectureComponent{Key: server, Name: "server", Kind: "service"}
+	model.Connectors["a"] = &architectureConnector{Key: "a", SourceKey: client, TargetKey: server, Label: "grpc", Relationship: "runtime-dependency", Direction: "forward"}
+	model.Connectors["b"] = &architectureConnector{Key: "b", SourceKey: server, TargetKey: client, Label: "uses", Relationship: "runtime-dependency", Direction: "forward"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if len(got.Connectors) != 1 {
+		t.Fatalf("opposite connectors should merge, got %#v", got.Connectors)
+	}
+	for _, connector := range got.Connectors {
+		if connector.Label != "" {
+			t.Fatalf("merged connector should use an empty label, got %#v", connector)
+		}
+		if connector.Direction != "both" {
+			t.Fatalf("opposite directions should merge to both, got %#v", connector)
+		}
+	}
+}
+
+func TestCanonicalizeArchitectureDoesNotMergeDistinctConcreteDependencies(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	cart := architectureKey("component", "cartservice")
+	catalog := architectureKey("component", "productcatalogservice")
+	redisCart := architectureKey("component", "redis-cart")
+	redisData := architectureKey("component", "redis-data")
+	model.Components[cart] = &architectureComponent{Key: cart, Name: "cartservice", Kind: "service", Technology: "Go"}
+	model.Components[catalog] = &architectureComponent{Key: catalog, Name: "productcatalogservice", Kind: "service", Technology: "Go"}
+	model.Components[redisCart] = &architectureComponent{Key: redisCart, Name: "redis-cart", Kind: "service", Technology: "Redis"}
+	model.Components[redisData] = &architectureComponent{Key: redisData, Name: "redis-data", Kind: "service", Technology: "Redis"}
+	model.Connectors["cart"] = &architectureConnector{Key: "cart", SourceKey: cart, TargetKey: redisCart, Label: "redis", Relationship: "runtime-dependency"}
+	model.Connectors["catalog"] = &architectureConnector{Key: "catalog", SourceKey: catalog, TargetKey: redisData, Label: "redis", Relationship: "runtime-dependency"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[redisCart] == nil || got.Components[redisData] == nil {
+		t.Fatalf("distinct concrete redis dependencies should remain separate: %#v", got.Components)
+	}
+	if len(got.Connectors) != 2 {
+		t.Fatalf("expected separate concrete dependency connectors, got %#v", got.Connectors)
+	}
+}
+
+func TestCanonicalizeArchitectureFoldsServiceRoleNameVariants(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	frontend := architectureKey("component", "frontend")
+	payment := architectureKey("component", "payment")
+	paymentService := architectureKey("component", "paymentservice")
+	paymentContract := architectureKey("contract", "PaymentService")
+	paymentAPI := architectureKey("component", "paymentAPI")
+	paymentDB := architectureKey("component", "paymentDB")
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Technology: "Go", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[payment] = &architectureComponent{Key: payment, Name: "payment", Kind: "service", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "grpc.server"}}}
+	model.Components[paymentService] = &architectureComponent{Key: paymentService, Name: "paymentservice", Kind: "service", Technology: "Kubernetes", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[paymentContract] = &architectureComponent{Key: paymentContract, Name: "PaymentService", Kind: "interface", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "service-contract"}}}
+	model.Components[paymentAPI] = &architectureComponent{Key: paymentAPI, Name: "paymentAPI", Kind: "service", Technology: "OpenAPI", Evidence: []architectureEvidence{{Kind: "runtime-component"}}}
+	model.Components[paymentDB] = &architectureComponent{Key: paymentDB, Name: "paymentDB", Kind: "service", Technology: "PostgreSQL", Evidence: []architectureEvidence{{Kind: "runtime-component"}}}
+	model.Connectors["frontend-payment"] = &architectureConnector{Key: "frontend-payment", SourceKey: frontend, TargetKey: payment, Label: "grpc", Relationship: "runtime-dependency"}
+	model.Connectors["frontend-paymentservice"] = &architectureConnector{Key: "frontend-paymentservice", SourceKey: frontend, TargetKey: paymentService, Label: "grpc", Relationship: "runtime-dependency"}
+	model.Connectors["frontend-paymentapi"] = &architectureConnector{Key: "frontend-paymentapi", SourceKey: frontend, TargetKey: paymentAPI, Label: "http", Relationship: "runtime-dependency"}
+	model.Connectors["payment-paymentdb"] = &architectureConnector{Key: "payment-paymentdb", SourceKey: payment, TargetKey: paymentDB, Label: "uses", Relationship: "runtime-dependency"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[paymentService] == nil {
+		t.Fatalf("paymentservice should be canonical service alias, got %#v", got.Components)
+	}
+	for _, folded := range []string{payment, paymentContract, paymentAPI, paymentDB} {
+		if got.Components[folded] != nil {
+			t.Fatalf("%s should fold into paymentservice, got %#v", folded, got.Components)
+		}
+	}
+	for _, connector := range got.Connectors {
+		if connector.SourceKey != frontend && connector.TargetKey != paymentService {
+			t.Fatalf("connectors should be rewritten to paymentservice alias or pruned, got %#v", connector)
+		}
+	}
+}
+
+func TestCanonicalizeArchitectureDoesNotFoldEmbeddedServiceRootNames(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	frontend := architectureKey("component", "frontend")
+	payment := architectureKey("component", "paymentservice")
+	proxy := architectureKey("component", "shipping-payment-proxy")
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[payment] = &architectureComponent{Key: payment, Name: "paymentservice", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[proxy] = &architectureComponent{Key: proxy, Name: "shipping-payment-proxy", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Connectors["frontend-payment"] = &architectureConnector{Key: "frontend-payment", SourceKey: frontend, TargetKey: payment, Label: "grpc", Relationship: "runtime-dependency"}
+	model.Connectors["frontend-proxy"] = &architectureConnector{Key: "frontend-proxy", SourceKey: frontend, TargetKey: proxy, Label: "http", Relationship: "runtime-dependency"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[payment] == nil || got.Components[proxy] == nil {
+		t.Fatalf("embedded root names should not fold unrelated services, got %#v", got.Components)
+	}
+	if len(got.Connectors) != 2 {
+		t.Fatalf("expected separate connectors, got %#v", got.Connectors)
+	}
+}
+
+func TestCanonicalizeArchitectureFoldsMultiTokenCompactServiceVariants(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	frontend := architectureKey("component", "frontend")
+	productCatalog := architectureKey("component", "product-catalog")
+	productCatalogService := architectureKey("component", "productcatalogservice")
+	productCatalogContract := architectureKey("contract", "ProductCatalogService")
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[productCatalog] = &architectureComponent{Key: productCatalog, Name: "product-catalog", Kind: "service", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "grpc.server"}}}
+	model.Components[productCatalogService] = &architectureComponent{Key: productCatalogService, Name: "productcatalogservice", Kind: "service", Technology: "Kubernetes", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[productCatalogContract] = &architectureComponent{Key: productCatalogContract, Name: "ProductCatalogService", Kind: "interface", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "service-contract"}}}
+	model.Connectors["frontend-product"] = &architectureConnector{Key: "frontend-product", SourceKey: frontend, TargetKey: productCatalog, Label: "grpc", Relationship: "runtime-dependency"}
+	model.Connectors["frontend-productservice"] = &architectureConnector{Key: "frontend-productservice", SourceKey: frontend, TargetKey: productCatalogService, Label: "grpc", Relationship: "runtime-dependency"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[productCatalogService] == nil {
+		t.Fatalf("productcatalogservice should be canonical service alias, got %#v", got.Components)
+	}
+	if got.Components[productCatalog] != nil || got.Components[productCatalogContract] != nil {
+		t.Fatalf("product catalog variants should fold into productcatalogservice, got %#v", got.Components)
+	}
+}
+
+func TestCanonicalizeArchitectureFoldsShortServiceRootsWithRoleEvidence(t *testing.T) {
+	model := architectureModel{Components: map[string]*architectureComponent{}, Connectors: map[string]*architectureConnector{}}
+	frontend := architectureKey("component", "frontend")
+	ad := architectureKey("component", "ad")
+	adService := architectureKey("component", "adservice")
+	adContract := architectureKey("contract", "AdService")
+	model.Components[frontend] = &architectureComponent{Key: frontend, Name: "frontend", Kind: "service", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[ad] = &architectureComponent{Key: ad, Name: "ad", Kind: "service", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "grpc.server"}}}
+	model.Components[adService] = &architectureComponent{Key: adService, Name: "adservice", Kind: "service", Technology: "Kubernetes", Evidence: []architectureEvidence{{Kind: "deployable"}}}
+	model.Components[adContract] = &architectureComponent{Key: adContract, Name: "AdService", Kind: "interface", Technology: "gRPC", Evidence: []architectureEvidence{{Kind: "service-contract"}}}
+	model.Connectors["frontend-ad"] = &architectureConnector{Key: "frontend-ad", SourceKey: frontend, TargetKey: ad, Label: "grpc", Relationship: "runtime-dependency"}
+	model.Connectors["frontend-adservice"] = &architectureConnector{Key: "frontend-adservice", SourceKey: frontend, TargetKey: adService, Label: "grpc", Relationship: "runtime-dependency"}
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	if got.Components[adService] == nil {
+		t.Fatalf("adservice should be canonical service alias, got %#v", got.Components)
+	}
+	if got.Components[ad] != nil || got.Components[adContract] != nil {
+		t.Fatalf("ad variants should fold into adservice, got %#v", got.Components)
+	}
+}
+
+func TestCanonicalizeArchitectureFoldsShortGRPCClientTargetIntoDeployableService(t *testing.T) {
+	model := mergeArchitectureModels(
+		architectureFromFacts([]Fact{
+			{
+				FilePath:       "src/frontend/rpc.go",
+				Type:           "grpc.client",
+				Name:           "ad",
+				Relationship:   "calls",
+				Confidence:     0.9,
+				AttributesJSON: `{"service":"ad"}`,
+			},
+			{
+				FilePath:       "src/adservice/deploy.yaml",
+				Type:           "runtime.component",
+				Name:           "adservice",
+				Relationship:   "deploys",
+				Confidence:     0.9,
+				AttributesJSON: `{"name":"adservice","kind":"service","technology":"Kubernetes"}`,
+			},
+		}),
+	)
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	ad := architectureKey("component", "ad")
+	adService := architectureKey("component", "adservice")
+	if got.Components[adService] == nil {
+		t.Fatalf("adservice should remain canonical, got %#v", got.Components)
+	}
+	if got.Components[ad] != nil {
+		t.Fatalf("grpc client target ad should fold into adservice, got %#v", got.Components)
+	}
+	for _, connector := range got.Connectors {
+		if connector.TargetKey != adService {
+			t.Fatalf("connector should target folded adservice alias, got %#v", connector)
+		}
+	}
+}
+
+func TestResolveArchitectureBindingsUsesGenericSignals(t *testing.T) {
+	repo := Repository{ID: 1, DisplayName: "demo"}
+	tests := []struct {
+		name       string
+		component  *architectureComponent
+		targets    []ArchitectureBindingTarget
+		wantTarget string
+	}{
+		{
+			name: "service folder under services",
+			component: &architectureComponent{
+				Key:      architectureKey("component", "billingservice"),
+				Name:     "billingservice",
+				FilePath: "deploy/billing.yaml",
+				Evidence: []architectureEvidence{
+					{Kind: "deployable", Path: "deploy/billing.yaml", Note: "Deployment"},
+					{Kind: "grpc.server", Path: "services/billing/main.go", Note: "billing"},
+				},
+			},
+			targets:    []ArchitectureBindingTarget{architectureBindingTestTarget(1, "folder", "folder:services/billing", "billing", "folder", "services/billing")},
+			wantTarget: "folder:services/billing",
+		},
+		{
+			name: "service folder under apps",
+			component: &architectureComponent{
+				Key:      architectureKey("component", "checkout"),
+				Name:     "checkout",
+				FilePath: "ops/checkout.yaml",
+				Evidence: []architectureEvidence{
+					{Kind: "runtime-component", Path: "apps/checkout/server.go", Note: "checkout"},
+				},
+			},
+			targets:    []ArchitectureBindingTarget{architectureBindingTestTarget(1, "folder", "folder:apps/checkout", "checkout", "folder", "apps/checkout")},
+			wantTarget: "folder:apps/checkout",
+		},
+		{
+			name: "language package layout",
+			component: &architectureComponent{
+				Key:      architectureKey("component", "catalog"),
+				Name:     "catalog",
+				FilePath: "manifests/catalog.yaml",
+				Evidence: []architectureEvidence{
+					{Kind: "grpc.server", Path: "cmd/catalog/main.go", Note: "catalog"},
+				},
+			},
+			targets:    []ArchitectureBindingTarget{architectureBindingTestTarget(1, "file", "file:cmd/catalog/main.go", "main.go", "file", "cmd/catalog/main.go")},
+			wantTarget: "file:cmd/catalog/main.go",
+		},
+		{
+			name: "external stays unbound",
+			component: &architectureComponent{
+				Key:  architectureKey("external", "stripe"),
+				Name: "stripe",
+				Kind: "external",
+			},
+			targets:    []ArchitectureBindingTarget{architectureBindingTestTarget(1, "folder", "folder:payments", "payments", "folder", "payments")},
+			wantTarget: "",
+		},
+		{
+			name: "ambiguous exact names stay unbound",
+			component: &architectureComponent{
+				Key:  architectureKey("component", "payment"),
+				Name: "payment",
+				Kind: "service",
+			},
+			targets: []ArchitectureBindingTarget{
+				architectureBindingTestTarget(1, "folder", "folder:apps/payment", "payment", "folder", "apps/payment"),
+				architectureBindingTestTarget(1, "folder", "folder:services/payment", "payment", "folder", "services/payment"),
+			},
+			wantTarget: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := architectureModel{Components: map[string]*architectureComponent{tt.component.Key: tt.component}}
+			bindings := resolveArchitectureBindings(repo, model, tt.targets)
+			if tt.wantTarget == "" {
+				if len(bindings) != 0 {
+					t.Fatalf("expected no bindings, got %+v", bindings)
+				}
+				return
+			}
+			if len(bindings) == 0 || bindings[0].TargetOwnerKey != tt.wantTarget {
+				t.Fatalf("expected primary target %q, got %+v", tt.wantTarget, bindings)
+			}
+		})
+	}
+}
+
+func architectureBindingTestTarget(repoID int64, ownerType, ownerKey, name, kind, filePath string) ArchitectureBindingTarget {
+	return ArchitectureBindingTarget{
+		RepositoryID: repoID,
+		OwnerType:    ownerType,
+		OwnerKey:     ownerKey,
+		ResourceType: "element",
+		ResourceID:   int64(len(ownerKey)),
+		Name:         name,
+		Kind:         kind,
+		FilePath:     filePath,
 	}
 }
 

@@ -468,7 +468,7 @@ func newRepresentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{Embedding: embeddingCfg, Thresholds: watchSettings.Thresholds, Progress: progress})
+			result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{Embedding: embeddingCfg, Thresholds: watchSettings.Thresholds, Visibility: watchSettings.Visibility, Progress: progress})
 			if err != nil {
 				return err
 			}
@@ -698,6 +698,25 @@ func resolveWatchSettings(cfg *workspace.Config, languages []string, watcherMode
 			MaxIncomingPerElement:         cfg.Watch.Thresholds.MaxIncomingPerElement,
 			MaxOutgoingPerElement:         cfg.Watch.Thresholds.MaxOutgoingPerElement,
 			MaxExpandedConnectorsPerGroup: cfg.Watch.Thresholds.MaxExpandedConnectorsPerGroup,
+		}
+		settings.Visibility = watch.VisibilityConfig{
+			CoreThresholdEnabled:   cfg.Watch.Visibility.CoreThresholdEnabled,
+			CoreThreshold:          cfg.Watch.Visibility.CoreThreshold,
+			TierMultiplier:         cfg.Watch.Visibility.TierMultiplier,
+			MaxExpansionMultiplier: cfg.Watch.Visibility.MaxExpansionMultiplier,
+			CoreThresholdSet:       true,
+			WeightsSet:             true,
+			Weights: watch.VisibilityWeights{
+				Changed:               cfg.Watch.Visibility.Weights.Changed,
+				Selected:              cfg.Watch.Visibility.Weights.Selected,
+				UserShow:              cfg.Watch.Visibility.Weights.UserShow,
+				UserHide:              cfg.Watch.Visibility.Weights.UserHide,
+				HighSignalFact:        cfg.Watch.Visibility.Weights.HighSignalFact,
+				RelationshipProximity: cfg.Watch.Visibility.Weights.RelationshipProximity,
+				DependencyFact:        cfg.Watch.Visibility.Weights.DependencyFact,
+				UtilityNoise:          cfg.Watch.Visibility.Weights.UtilityNoise,
+				HighDegreeNoise:       cfg.Watch.Visibility.Weights.HighDegreeNoise,
+			},
 		}
 	}
 	if len(languages) > 0 {

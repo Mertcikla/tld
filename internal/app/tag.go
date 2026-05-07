@@ -3,13 +3,9 @@ package app
 import (
 	"context"
 	"strings"
-	"time"
-)
 
-var SWATCH_COLORS = []string{
-	"#F56565", "#ED8936", "#ECC94B", "#48BB78", "#38B2AC",
-	"#4299E1", "#667EEA", "#9F7AEA", "#ED64A6", "#A0AEC0",
-}
+	"github.com/mertcikla/tld/internal/tagcolors"
+)
 
 type Tag struct {
 	Name        string  `json:"name"`
@@ -97,6 +93,9 @@ func (s *Store) UpdateLayer(ctx context.Context, id int64, patch ViewLayer) (Vie
 	if patch.Tags == nil {
 		patch.Tags = current.Tags
 	}
+	if err := s.ensureTagColors(ctx, patch.Tags); err != nil {
+		return ViewLayer{}, err
+	}
 	if patch.Color == nil {
 		patch.Color = current.Color
 	}
@@ -138,55 +137,9 @@ func (s *Store) UpdateTag(ctx context.Context, name, color string, description *
 }
 
 func (s *Store) pickUnusedColor(ctx context.Context, usedColors []string) string {
-	used := make(map[string]bool)
-	for _, c := range usedColors {
-		used[strings.ToUpper(c)] = true
-	}
-
-	var pool []string
-	for _, c := range SWATCH_COLORS {
-		if !used[strings.ToUpper(c)] {
-			pool = append(pool, c)
-		}
-	}
-
-	source := pool
-	if len(source) == 0 {
-		source = SWATCH_COLORS
-	}
-
-	return source[time.Now().UnixNano()%int64(len(source))]
+	return tagcolors.PickUnusedColor(usedColors)
 }
 
 func (s *Store) ensureTagColors(ctx context.Context, tags []string) error {
-	if len(tags) == 0 {
-		return nil
-	}
-
-	existing, err := s.Tags(ctx)
-	if err != nil {
-		return err
-	}
-
-	var usedColors []string
-	for _, t := range existing {
-		usedColors = append(usedColors, t.Color)
-	}
-
-	for _, name := range tags {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		if _, ok := existing[name]; !ok {
-			color := s.pickUnusedColor(ctx, usedColors)
-			if err := s.UpdateTag(ctx, name, color, nil); err != nil {
-				return err
-			}
-			usedColors = append(usedColors, color)
-			// Refresh existing to avoid re-adding same tag if it appears twice in the list
-			existing[name] = Tag{Name: name, Color: color}
-		}
-	}
-	return nil
+	return tagcolors.Ensure(ctx, s.db, tags)
 }
