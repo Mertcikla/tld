@@ -45,15 +45,15 @@ func TestStoreElementsSearchPaginationAndViewMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	serviceKind := "service"
-	api, err := store.CreateElement(ctx, LibraryElement{Name: "API", Kind: &serviceKind, Description: strPtr("Public runtime API"), Tags: []string{"runtime"}})
+	api, err := store.CreateElement(ctx, LibraryElement{Name: "API", Kind: &serviceKind, Description: new("Public runtime API"), Tags: []string{"runtime"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := store.CreateElement(ctx, LibraryElement{Name: "Worker", Kind: &serviceKind, Description: strPtr("Background jobs"), Tags: []string{"runtime"}})
+	worker, err := store.CreateElement(ctx, LibraryElement{Name: "Worker", Kind: &serviceKind, Description: new("Background jobs"), Tags: []string{"runtime"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateView(ctx, "API detail", strPtr("Service"), &api.ID); err != nil {
+	if _, err := store.CreateView(ctx, "API detail", new("Service"), &api.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -256,8 +256,4 @@ func openAppStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	return store
-}
-
-func strPtr(value string) *string {
-	return &value
 }

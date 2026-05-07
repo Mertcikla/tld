@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -108,7 +109,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	result := RepresentResult{}
 	if model.Provider != "none" {
 		embeddingSymbols := embeddingCandidateSymbols(filtered.VisibleSymbols, maxEmbeddingSymbolsPerRun)
-		stats, vectors, err := r.cacheEmbeddings(ctx, modelID, provider, repo.RepoRoot, embeddingSymbols, identityKeys, req.Progress)
+		stats, vectors, err := r.cacheEmbeddings(ctx, modelID, provider, repo.RepoRoot, embeddingSymbols, identityKeys, req.Progress, time.Duration(req.Embedding.TimeoutSeconds)*time.Second)
 		if err != nil {
 			return RepresentResult{}, err
 		}
@@ -333,7 +334,7 @@ func progressFinish(progress ProgressSink) {
 	}
 }
 
-func (r *Representer) cacheEmbeddings(ctx context.Context, modelID int64, provider Provider, repoRoot string, symbols []Symbol, identityKeys map[string]string, progress ProgressSink) (embeddingCacheStats, map[int64]Vector, error) {
+func (r *Representer) cacheEmbeddings(ctx context.Context, modelID int64, provider Provider, repoRoot string, symbols []Symbol, identityKeys map[string]string, progress ProgressSink, timeout time.Duration) (embeddingCacheStats, map[int64]Vector, error) {
 	stats := embeddingCacheStats{}
 	vectorsBySymbol := map[int64]Vector{}
 	model := provider.ModelID()
@@ -363,15 +364,21 @@ func (r *Representer) cacheEmbeddings(ctx context.Context, modelID int64, provid
 		return stats, vectorsBySymbol, nil
 	}
 
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
 	vectors := make([]Vector, 0, len(inputs))
 	progressStart(progress, "Embedding symbols", len(inputs))
 	for start := 0; start < len(inputs); start += defaultEmbeddingBatchSize {
-		end := start + defaultEmbeddingBatchSize
-		if end > len(inputs) {
-			end = len(inputs)
+		if err := ctx.Err(); err != nil {
+			progressFinish(progress)
+			return stats, vectorsBySymbol, err
 		}
+		end := min(start+defaultEmbeddingBatchSize, len(inputs))
 		chunk := inputs[start:end]
-		chunkVectors, err := provider.Embed(ctx, chunk)
+		embedCtx, cancel := context.WithTimeout(ctx, timeout)
+		chunkVectors, err := provider.Embed(embedCtx, chunk)
+		cancel()
 		if err != nil {
 			progressFinish(progress)
 			return stats, vectorsBySymbol, err
@@ -722,10 +729,7 @@ func limitSemanticTags(tags []string) []string {
 		}
 		regular = append(regular, tag)
 	}
-	limit := maxSemanticTagsPerElement - len(forced)
-	if limit < 0 {
-		limit = 0
-	}
+	limit := max(maxSemanticTagsPerElement-len(forced), 0)
 	if len(regular) > limit {
 		regular = regular[:limit]
 	}
@@ -1917,7 +1921,7 @@ func occupiedWatchCells(placements []watchPlacementNode, ignored map[int64]struc
 func nearestFreeWatchCell(x, y float64, occupied map[string]struct{}) (float64, float64) {
 	baseCol := int(math.Round(x / watchLayoutGapX))
 	baseRow := int(math.Round(y / watchLayoutGapY))
-	for radius := 0; radius < 200; radius++ {
+	for radius := range 200 {
 		for col := baseCol - radius; col <= baseCol+radius; col++ {
 			for row := baseRow - radius; row <= baseRow+radius; row++ {
 				if watchAbsInt(col-baseCol) != radius && watchAbsInt(row-baseRow) != radius {
@@ -1983,7 +1987,7 @@ func sortedInt64Set(values map[int64]struct{}) []int64 {
 	for value := range values {
 		out = append(out, value)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 
@@ -2035,10 +2039,7 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 			}
 			return items[i].Type < items[j].Type
 		})
-		limit := factNodeLimitForFile(m.thresholds, filtered.Visibility, filtered.ContextExpansions.fileTier(file))
-		if limit > len(items) {
-			limit = len(items)
-		}
+		limit := min(factNodeLimitForFile(m.thresholds, filtered.Visibility, filtered.ContextExpansions.fileTier(file)), len(items))
 		subjectFactCounts := map[int64]int{}
 		for i, fact := range items[:limit] {
 			elem, err := m.upsertElement(ctx, "fact", factOwnerKey(fact), elementInput{
@@ -2405,8 +2406,8 @@ func connectorGroupFolder(filePath string) string {
 	if dir == "." || dir == "/" || dir == "" {
 		return ""
 	}
-	if idx := strings.Index(dir, "/"); idx >= 0 {
-		return dir[:idx]
+	if before, _, ok := strings.Cut(dir, "/"); ok {
+		return before
 	}
 	return dir
 }
@@ -2729,10 +2730,7 @@ func chunkSymbols(symbols []Symbol, size int) [][]Symbol {
 	}
 	var chunks [][]Symbol
 	for start := 0; start < len(symbols); start += size {
-		end := start + size
-		if end > len(symbols) {
-			end = len(symbols)
-		}
+		end := min(start+size, len(symbols))
 		chunks = append(chunks, symbols[start:end])
 	}
 	return chunks

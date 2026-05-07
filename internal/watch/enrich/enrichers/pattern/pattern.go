@@ -3,6 +3,7 @@ package pattern
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -60,9 +61,7 @@ func New(spec Spec) enrich.Enricher {
 				"technology": spec.Name,
 				"framework":  spec.ID,
 			}
-			for k, v := range spec.Attributes {
-				attrs[k] = v
-			}
+			maps.Copy(attrs, spec.Attributes)
 			tags := []string{"arch:glue", "category:" + tagValue(spec.Category), "technology:" + tagValue(spec.Name)}
 			tags = append(tags, spec.Tags...)
 			objectKind := spec.ObjectKind
@@ -126,8 +125,8 @@ func pathMatches(relPath string, tokens []string) bool {
 }
 
 func ignoredPath(relPath string) bool {
-	parts := strings.Split(filepath.ToSlash(relPath), "/")
-	for _, part := range parts {
+	parts := strings.SplitSeq(filepath.ToSlash(relPath), "/")
+	for part := range parts {
 		switch strings.ToLower(part) {
 		case ".git", "node_modules", "vendor", "dist", "build", "coverage", "generated", "gen":
 			return true

@@ -137,6 +137,7 @@ type EmbeddingConfig struct {
 	Model           string  `json:"model" yaml:"model"`
 	Dimension       int     `json:"dimension" yaml:"dimension"`
 	HealthThreshold float64 `json:"health_threshold,omitempty" yaml:"health_threshold"`
+	TimeoutSeconds  int     `json:"timeout_seconds,omitempty" yaml:"timeout_seconds"`
 }
 
 type Thresholds struct {

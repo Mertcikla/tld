@@ -68,7 +68,7 @@ func TestWorkspaceService_CreateConnectorDefaultsValidatesAndAudits(t *testing.T
 		ViewId:          3,
 		SourceElementId: 4,
 		TargetElementId: 5,
-		Label:           strPtr("uses"),
+		Label:           new("uses"),
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -108,11 +108,11 @@ func TestWorkspaceService_UpdateElementClearsLogoWhenNoPrimaryIcon(t *testing.T)
 			return &diagv1.Element{
 				Id:      42,
 				Name:    "API",
-				LogoUrl: strPtr("https://example.com/logo.svg"),
+				LogoUrl: new("https://example.com/logo.svg"),
 				TechnologyLinks: []*diagv1.TechnologyLink{{
 					Type:          "catalog",
 					Label:         "Go",
-					Slug:          strPtr("go"),
+					Slug:          new("go"),
 					IsPrimaryIcon: true,
 				}},
 			}, nil
@@ -133,9 +133,9 @@ func TestWorkspaceService_UpdateElementClearsLogoWhenNoPrimaryIcon(t *testing.T)
 		TechnologyLinks: []*diagv1.TechnologyLink{{
 			Type:  "catalog",
 			Label: "Kafka",
-			Slug:  strPtr("kafka"),
+			Slug:  new("kafka"),
 		}},
-		LogoUrl: strPtr("https://example.com/kafka.svg"),
+		LogoUrl: new("https://example.com/kafka.svg"),
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -152,13 +152,13 @@ func TestWorkspaceService_UpdateElementPreservesExistingTechnologyLinksWhenOmitt
 	existingLinks := []*diagv1.TechnologyLink{{
 		Type:          "catalog",
 		Label:         "Go",
-		Slug:          strPtr("go"),
+		Slug:          new("go"),
 		IsPrimaryIcon: true,
 	}}
 	var update ElementInput
 	store := &contractStore{
 		getElement: func(context.Context, int32, uuid.UUID) (*diagv1.Element, error) {
-			return &diagv1.Element{Id: 42, Name: "API", LogoUrl: strPtr("go.svg"), TechnologyLinks: existingLinks}, nil
+			return &diagv1.Element{Id: 42, Name: "API", LogoUrl: new("go.svg"), TechnologyLinks: existingLinks}, nil
 		},
 		updateElement: func(_ context.Context, id int32, _ uuid.UUID, input ElementInput) (*diagv1.Element, error) {
 			update = input
@@ -230,10 +230,6 @@ func TestWorkspaceService_CreateViewLayerValidatesViewAndName(t *testing.T) {
 			}
 		})
 	}
-}
-
-func strPtr(value string) *string {
-	return &value
 }
 
 type recordingHooks struct {

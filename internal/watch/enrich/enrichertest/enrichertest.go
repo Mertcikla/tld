@@ -2,6 +2,7 @@ package enrichertest
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -82,10 +83,5 @@ func hasFact(facts []enrich.Fact, want Fact) bool {
 }
 
 func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, want)
 }

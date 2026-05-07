@@ -271,6 +271,10 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 		scanErr = err
 		return result, err
 	}
+	if err := ctx.Err(); err != nil {
+		scanErr = err
+		return result, err
+	}
 	repoSignals := enrich.DiscoverRepositorySignalsFromFiles(repoRoot, files)
 	result.FilesSeen = len(files)
 	progressStart(progress, "Scanning source files", len(files))
@@ -298,6 +302,10 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 		result.Warnings = append(result.Warnings, fileResult.Warnings...)
 	}
 
+	if err := ctx.Err(); err != nil {
+		scanErr = err
+		return result, err
+	}
 	if err := s.Store.DeleteMissingFiles(ctx, repo.ID, seen); err != nil {
 		scanErr = err
 		return result, err
@@ -321,6 +329,10 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	result.Warning = warning
 	if warning != "" {
 		result.Warnings = append(result.Warnings, warning)
+	}
+	if err := ctx.Err(); err != nil {
+		scanErr = err
+		return result, err
 	}
 	if err := s.Store.ReplaceReferencesForFiles(ctx, repo.ID, parsedFileIDs, refs); err != nil {
 		scanErr = err
@@ -357,9 +369,7 @@ func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot st
 	errs := make(chan error, 1)
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			workerAnalyzer := analyzer.NewService()
 			for absFile := range jobs {
 				fileResult, err := s.scanFile(ctx, workerAnalyzer, repositoryID, repoRoot, absFile, progress, force, rules, repoSignals)
@@ -372,7 +382,7 @@ func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot st
 				}
 				results <- fileResult
 			}
-		}()
+		})
 	}
 	for _, file := range files {
 		select {
@@ -710,9 +720,7 @@ func (s *Scanner) collectSourceFiles(root string, workers int, languages []strin
 	errs := make(chan error, 1)
 	var wg sync.WaitGroup
 	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for entryPath := range jobs {
 				found, err := s.collectSourceFilesUnder(root, entryPath, rules, languages)
 				progressAdvance(progress, filepath.ToSlash(mustRel(root, entryPath)))
@@ -725,7 +733,7 @@ func (s *Scanner) collectSourceFiles(root string, workers int, languages []strin
 				}
 				results <- found
 			}
-		}()
+		})
 	}
 	for _, entry := range entries {
 		select {

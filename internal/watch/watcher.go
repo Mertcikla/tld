@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/mertcikla/tld/internal/analyzer"
 	"github.com/mertcikla/tld/internal/ignore"
 )
 
@@ -100,8 +99,8 @@ func sourceEventRelevant(root, eventPath string, allowed map[string]struct{}, ru
 	if rules != nil && rules.ShouldIgnorePath(rel) {
 		return false
 	}
-	language, ok := analyzer.DetectLanguage(eventPath)
-	return ok && languageAllowed(string(language), allowed)
+	language, _, ok := watchedFileLanguage(eventPath)
+	return ok && languageAllowed(language, allowed)
 }
 
 func filepathAbsStat(path string) (fs.FileInfo, error) {

@@ -67,7 +67,7 @@ func discoverGoModSignals(path string) []ActivationSignal {
 		return nil
 	}
 	var signals []ActivationSignal
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		match := goRequireLineRE.FindStringSubmatch(line)
 		if len(match) != 2 {
 			continue
@@ -144,7 +144,7 @@ func lineDependencySignals(path, rel string, parse func(string) string) []Activa
 		return nil
 	}
 	var signals []ActivationSignal
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		name := parse(line)
 		if name == "" {
 			continue
@@ -214,11 +214,11 @@ func gradleSignalName(line string) string {
 			continue
 		}
 		rest := line[start+1:]
-		end := strings.Index(rest, quote)
-		if end < 0 {
+		before, _, ok := strings.Cut(rest, quote)
+		if !ok {
 			continue
 		}
-		value := rest[:end]
+		value := before
 		if strings.Count(value, ":") >= 1 {
 			parts := strings.Split(value, ":")
 			return parts[len(parts)-2]
@@ -233,8 +233,8 @@ func cppSignalName(line string) string {
 		return ""
 	}
 	for _, prefix := range []string{"find_package(", "target_link_libraries(", "requires =", "self.requires(", "\"name\":"} {
-		if idx := strings.Index(line, prefix); idx >= 0 {
-			value := strings.TrimSpace(line[idx+len(prefix):])
+		if _, after, ok := strings.Cut(line, prefix); ok {
+			value := strings.TrimSpace(after)
 			value = strings.Trim(value, ` "'),[]`)
 			return signalPrefix(value, " ", "/", ")", ",", "\"")
 		}

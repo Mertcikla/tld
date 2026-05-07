@@ -24,10 +24,7 @@ func resolveArchitectureBindings(repo Repository, architecture architectureModel
 		if architectureTopTargetsAmbiguous(scored) {
 			continue
 		}
-		limit := maxArchitectureBindingTargets
-		if limit > len(scored) {
-			limit = len(scored)
-		}
+		limit := min(maxArchitectureBindingTargets, len(scored))
 		for i, candidate := range scored[:limit] {
 			role := "source"
 			if i == 0 {
@@ -213,7 +210,7 @@ func architectureTargetTokens(target ArchitectureBindingTarget) []string {
 			set[token] = struct{}{}
 		}
 	}
-	for _, part := range strings.Split(filepathToSlash(target.FilePath), "/") {
+	for part := range strings.SplitSeq(filepathToSlash(target.FilePath), "/") {
 		for _, token := range architectureNameTokens(part) {
 			set[token] = struct{}{}
 		}
@@ -264,7 +261,7 @@ func architectureAnyPathSegmentVariant(variants []string, value string) bool {
 			set[variant] = struct{}{}
 		}
 	}
-	for _, part := range strings.Split(filepathToSlash(value), "/") {
+	for part := range strings.SplitSeq(filepathToSlash(value), "/") {
 		tokens := architectureNameTokens(part)
 		joined := strings.Join(tokens, "-")
 		if _, ok := set[joined]; ok {
@@ -280,7 +277,7 @@ func architectureAnyPathSegmentVariant(variants []string, value string) bool {
 func architectureTokenOverlap(componentVariants []string, targetTokens []string) int {
 	set := map[string]struct{}{}
 	for _, variant := range componentVariants {
-		for _, token := range strings.Split(variant, "-") {
+		for token := range strings.SplitSeq(variant, "-") {
 			if token != "" && !architectureRoleToken(token) {
 				set[token] = struct{}{}
 			}

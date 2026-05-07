@@ -88,8 +88,8 @@ func nextRoutePath(relPath string) string {
 	}
 	trimmed := strings.TrimSuffix(rel, ext)
 	for _, prefix := range []string{"src/app/", "app/"} {
-		if strings.HasPrefix(trimmed, prefix) {
-			route := strings.TrimPrefix(trimmed, prefix)
+		if after, ok := strings.CutPrefix(trimmed, prefix); ok {
+			route := after
 			if !strings.HasSuffix(route, "/page") && !strings.HasSuffix(route, "/route") {
 				return ""
 			}
@@ -98,8 +98,8 @@ func nextRoutePath(relPath string) string {
 		}
 	}
 	for _, prefix := range []string{"src/pages/", "pages/"} {
-		if strings.HasPrefix(trimmed, prefix) {
-			route := strings.TrimPrefix(trimmed, prefix)
+		if after, ok := strings.CutPrefix(trimmed, prefix); ok {
+			route := after
 			return normalizeNextRoute(route)
 		}
 	}

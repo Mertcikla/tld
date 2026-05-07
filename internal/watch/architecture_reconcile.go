@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"slices"
 	"sort"
 	"strings"
 )
@@ -540,12 +541,7 @@ func architectureRoleToken(token string) bool {
 }
 
 func architectureHasRoleToken(tokens []string) bool {
-	for _, token := range tokens {
-		if architectureRoleToken(token) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(tokens, architectureRoleToken)
 }
 
 func knownArchitectureServiceRoots(model architectureModel) map[string]struct{} {

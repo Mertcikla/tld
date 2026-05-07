@@ -114,7 +114,7 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 			Mode:            "background",
 			InitializedData: initializedData,
 			Resources:       readyResources(ready),
-			PID:             intPtr(pid),
+			PID:             new(pid),
 			BindAddr:        addr,
 			Startup:         0,
 			DBPath:          localserver.DatabasePath(dataDir),
@@ -181,7 +181,7 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 		Mode:            "background",
 		InitializedData: initializedData,
 		Resources:       readyResources(ready),
-		PID:             intPtr(child.Process.Pid),
+		PID:             new(child.Process.Pid),
 		BindAddr:        addr,
 		Startup:         time.Since(started),
 		DBPath:          localserver.DatabasePath(dataDir),
@@ -274,8 +274,6 @@ func humanBytes(size int64) string {
 	}
 	return fmt.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
 }
-
-func intPtr(v int) *int { return &v }
 
 type readyInfo struct {
 	OK        bool `json:"ok"`

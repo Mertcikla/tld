@@ -112,6 +112,9 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 	if err != nil {
 		return filterResult{}, err
 	}
+	if err := ctx.Err(); err != nil {
+		return filterResult{}, err
+	}
 	incoming := map[int64]int{}
 	outgoing := map[int64]int{}
 	for _, ref := range refs {
@@ -228,6 +231,9 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 				delete(visible, sym.ID)
 			}
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return filterResult{}, err
 	}
 
 	runID, err := store.BeginFilterRun(ctx, repositoryID, settingsHash, rawGraphHash)

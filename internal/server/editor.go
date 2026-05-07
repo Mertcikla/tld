@@ -156,8 +156,8 @@ func matchRepository(repos []watch.Repository, value string) (watch.Repository, 
 func githubSlug(value string) string {
 	cleaned := strings.TrimSpace(value)
 	cleaned = strings.TrimSuffix(cleaned, ".git")
-	if strings.HasPrefix(cleaned, "git@github.com:") {
-		return strings.ToLower(strings.TrimPrefix(cleaned, "git@github.com:"))
+	if after, ok := strings.CutPrefix(cleaned, "git@github.com:"); ok {
+		return strings.ToLower(after)
 	}
 	cleaned = strings.TrimPrefix(cleaned, "https://")
 	cleaned = strings.TrimPrefix(cleaned, "http://")

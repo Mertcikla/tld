@@ -56,7 +56,7 @@ func (h *Handler) contextAction(w http.ResponseWriter, r *http.Request, action s
 	}
 	var body struct {
 		ContextResourceRequest
-		Represent RepresentRequest `json:"represent,omitempty"`
+		Represent RepresentRequest `json:"represent"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON")

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 
 	"github.com/mertcikla/tld/cmd/apply"
@@ -397,10 +398,8 @@ func inferView(ws *workspace.Workspace, from, to string) string {
 	fp := parents(fromEl)
 	tp := parents(toEl)
 	for _, f := range fp {
-		for _, t := range tp {
-			if f == t {
-				return f
-			}
+		if slices.Contains(tp, f) {
+			return f
 		}
 	}
 	return "root"

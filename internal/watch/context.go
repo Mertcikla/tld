@@ -193,10 +193,7 @@ func (s *Store) AdjustContextExpansion(ctx context.Context, repositoryID int64, 
 	if err != nil {
 		return contextExpansionAdjustment{}, err
 	}
-	after := before + delta
-	if after < 0 {
-		after = 0
-	}
+	after := max(before+delta, 0)
 	if maxTier >= 0 && after > maxTier {
 		after = maxTier
 	}

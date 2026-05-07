@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -349,12 +350,7 @@ func hasFact(facts []Fact, factType, tag string) bool {
 }
 
 func containsTag(tags []string, tag string) bool {
-	for _, item := range tags {
-		if item == tag {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tags, tag)
 }
 
 func hasSignal(signals []ActivationSignal, value string) bool {

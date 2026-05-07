@@ -91,7 +91,7 @@ func randomIndex(n int) int {
 
 func randomUnusedColor(used map[string]bool) string {
 	var b [3]byte
-	for i := 0; i < 32; i++ {
+	for range 32 {
 		if _, err := crand.Read(b[:]); err == nil {
 			color := fmt.Sprintf("#%02X%02X%02X", b[0], b[1], b[2])
 			if !used[color] {
@@ -105,7 +105,7 @@ func randomUnusedColor(used map[string]bool) string {
 func fallbackUnusedColor(used map[string]bool) string {
 	for i := 0; ; i++ {
 		h := fnv.New32a()
-		_, _ = h.Write([]byte(fmt.Sprintf("tld-tag-color-%d", i)))
+		_, _ = fmt.Fprintf(h, "tld-tag-color-%d", i)
 		sum := h.Sum32()
 		color := fmt.Sprintf("#%06X", sum&0xFFFFFF)
 		if !used[color] {

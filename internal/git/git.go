@@ -274,7 +274,7 @@ func ParseLineHunks(diff string) map[string][]LineHunk {
 		}
 		current = nil
 	}
-	for _, line := range strings.Split(diff, "\n") {
+	for line := range strings.SplitSeq(diff, "\n") {
 		switch {
 		case strings.HasPrefix(line, "diff --git "):
 			flush()

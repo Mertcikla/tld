@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -820,8 +821,10 @@ func (s *Store) QuerySymbols(ctx context.Context, repositoryID int64, q SymbolQu
 		if q.Limit == 0 {
 			q.Limit = 100
 		}
-		query += ` LIMIT ? OFFSET ?`
-		args = append(args, q.Limit, q.Offset)
+		if q.Limit > 0 {
+			query += ` LIMIT ? OFFSET ?`
+			args = append(args, q.Limit, q.Offset)
+		}
 	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -2558,9 +2561,7 @@ func initialSnapshotChangeType(snapshot watchResourceSnapshot, changes map[strin
 
 func cloneWatchResourceSnapshots(in map[string]watchResourceSnapshot) map[string]watchResourceSnapshot {
 	out := make(map[string]watchResourceSnapshot, len(in))
-	for key, value := range in {
-		out[key] = value
-	}
+	maps.Copy(out, in)
 	return out
 }
 
@@ -3122,11 +3123,11 @@ func sourceAnchorRange(filePath string) (int, int) {
 }
 
 func sourceAnchorFilePath(filePath string) string {
-	hash := strings.IndexByte(filePath, '#')
-	if hash < 0 {
+	before, _, ok := strings.Cut(filePath, "#")
+	if !ok {
 		return filepathToSlash(filePath)
 	}
-	return filepathToSlash(filePath[:hash])
+	return filepathToSlash(before)
 }
 
 func lineDelta(changeType string, lineCount int, previous *watchResourceSnapshot) (int, int) {

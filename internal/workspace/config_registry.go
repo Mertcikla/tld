@@ -942,7 +942,7 @@ func hasYAMLPath(root *yaml.Node, dotted string) bool {
 		return false
 	}
 	node := root.Content[0]
-	for _, part := range strings.Split(dotted, ".") {
+	for part := range strings.SplitSeq(dotted, ".") {
 		if node == nil || node.Kind != yaml.MappingNode {
 			return false
 		}

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1341,8 +1342,7 @@ func TestSourceWatcherFiltersRelevantEvents(t *testing.T) {
 		t.Fatal("non-source event should be ignored")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	watcher := newSourceWatcher(ctx, repo, Settings{Watcher: WatcherPoll}, nil)
 	if watcher.Mode != WatcherPoll || watcher.Events != nil {
 		t.Fatalf("poll watcher should not create fs event channel, got %+v", watcher)
@@ -2986,7 +2986,7 @@ func TestEmbeddingCacheAvoidsProviderCalls(t *testing.T) {
 	stats, _, err := representer.cacheEmbeddings(context.Background(), modelID, provider, "", []Symbol{
 		symbols[1],
 		symbols[2],
-	}, nil, nil)
+	}, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2999,7 +2999,7 @@ func TestEmbeddingCacheAvoidsProviderCalls(t *testing.T) {
 	stats, _, err = representer.cacheEmbeddings(context.Background(), modelID, provider, "", []Symbol{
 		symbols[1],
 		symbols[2],
-	}, nil, nil)
+	}, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3022,13 +3022,13 @@ func TestEmbeddingCacheChunksProviderCallsAndReportsProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	symbols := make([]Symbol, 0, defaultEmbeddingBatchSize*2+1)
-	for i := 0; i < defaultEmbeddingBatchSize*2+1; i++ {
+	for i := range defaultEmbeddingBatchSize*2 + 1 {
 		name := fmt.Sprintf("Symbol%d", i)
 		symbols = append(symbols, Symbol{ID: int64(i + 1), StableKey: "go:a.go:function:" + name, QualifiedName: name, Kind: "function", FilePath: "a.go"})
 	}
 	progress := &recordingProgress{}
 
-	stats, _, err := NewRepresenter(store).cacheEmbeddings(context.Background(), modelID, provider, "", symbols, nil, progress)
+	stats, _, err := NewRepresenter(store).cacheEmbeddings(context.Background(), modelID, provider, "", symbols, nil, progress, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3664,8 +3664,7 @@ func TestRunnerStopsCleanlyWhenOwnLockIsReleased(t *testing.T) {
 	repo := initGitRepoNoCommit(t)
 	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	events := make(chan Event, 32)
 	ready := make(chan RunnerResult, 1)
 	done := make(chan error, 1)
@@ -4098,12 +4097,7 @@ func factsContain(facts []Fact, factType, tag string) bool {
 }
 
 func stringSliceContains(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, needle)
 }
 
 func hasDiff(diffs []RepresentationDiff, resourceType, changeType string) bool {

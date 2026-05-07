@@ -3,6 +3,7 @@ package generic
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -63,9 +64,7 @@ func emitGenericFacts(input FileInput, emit FactEmitter) error {
 			"technology": det.Name,
 			"detector":   det.ID,
 		}
-		for k, v := range det.Attrs {
-			attrs[k] = v
-		}
+		maps.Copy(attrs, det.Attrs)
 		tags := append([]string{"arch:glue", "category:" + tagValue(det.Category), "technology:" + tagValue(det.Name)}, det.Tags...)
 		if err := emit.EmitFact(Fact{
 			Type:         det.FactType,
@@ -106,8 +105,8 @@ func detectorLine(relPath, source string, det detector) int {
 }
 
 func ignoredPath(relPath string) bool {
-	parts := strings.Split(filepath.ToSlash(relPath), "/")
-	for _, part := range parts {
+	parts := strings.SplitSeq(filepath.ToSlash(relPath), "/")
+	for part := range parts {
 		switch strings.ToLower(part) {
 		case ".git", "node_modules", "vendor", "dist", "build", "coverage", "generated", "gen":
 			return true

@@ -9,10 +9,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func strPtr(s string) *string {
-	return &s
-}
-
 func TestConvertExportResponsePreservesRefsAndInfersOwnedViews(t *testing.T) {
 	updated := timestamppb.New(time.Date(2026, 4, 25, 12, 0, 0, 0, time.UTC))
 	base := &workspace.Workspace{
@@ -30,11 +26,11 @@ func TestConvertExportResponsePreservesRefsAndInfersOwnedViews(t *testing.T) {
 	}
 	msg := &diagv1.ExportOrganizationResponse{
 		Elements: []*diagv1.Element{
-			{Id: 10, Name: "API Service", Kind: strPtr("container"), HasView: true, ViewLabel: strPtr("Runtime"), Technology: strPtr("Go"), UpdatedAt: updated},
-			{Id: 20, Name: "Database", Kind: strPtr("container"), UpdatedAt: updated},
+			{Id: 10, Name: "API Service", Kind: new("container"), HasView: true, ViewLabel: new("Runtime"), Technology: new("Go"), UpdatedAt: updated},
+			{Id: 20, Name: "Database", Kind: new("container"), UpdatedAt: updated},
 		},
 		Views: []*diagv1.View{
-			{Id: 100, Name: "API Service", LevelLabel: strPtr("Runtime"), UpdatedAt: updated},
+			{Id: 100, Name: "API Service", LevelLabel: new("Runtime"), UpdatedAt: updated},
 			{Id: 101, Name: "Landscape", UpdatedAt: updated},
 		},
 		Placements: []*diagv1.ElementPlacement{
@@ -42,7 +38,7 @@ func TestConvertExportResponsePreservesRefsAndInfersOwnedViews(t *testing.T) {
 			{ViewId: 999, ElementId: 10, PositionX: 1, PositionY: 2},
 		},
 		Connectors: []*diagv1.Connector{
-			{Id: 50, ViewId: 100, SourceElementId: 10, TargetElementId: 20, Label: strPtr("reads"), Relationship: strPtr("dependency"), Direction: "forward", UpdatedAt: updated},
+			{Id: 50, ViewId: 100, SourceElementId: 10, TargetElementId: 20, Label: new("reads"), Relationship: new("dependency"), Direction: "forward", UpdatedAt: updated},
 		},
 	}
 

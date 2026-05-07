@@ -163,7 +163,7 @@ func (r rule) matches(candidate string) bool {
 		return matchAnchored(pattern, candidate, dirPattern)
 	}
 	if !strings.Contains(pattern, "/") {
-		for _, part := range strings.Split(candidate, "/") {
+		for part := range strings.SplitSeq(candidate, "/") {
 			if matchSegment(pattern, part) {
 				return true
 			}

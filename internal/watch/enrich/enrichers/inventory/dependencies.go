@@ -233,11 +233,11 @@ func gradleDependencyName(line string) string {
 			continue
 		}
 		rest := line[start+1:]
-		end := strings.Index(rest, quote)
-		if end < 0 {
+		before, _, ok := strings.Cut(rest, quote)
+		if !ok {
 			continue
 		}
-		value := rest[:end]
+		value := before
 		if strings.Count(value, ":") >= 1 {
 			return value
 		}
@@ -251,8 +251,8 @@ func cppDependencyName(line string) string {
 		return ""
 	}
 	for _, prefix := range []string{"find_package(", "target_link_libraries(", "requires =", "self.requires(", "\"name\":"} {
-		if idx := strings.Index(line, prefix); idx >= 0 {
-			value := strings.TrimSpace(line[idx+len(prefix):])
+		if _, after, ok := strings.Cut(line, prefix); ok {
+			value := strings.TrimSpace(after)
 			value = strings.Trim(value, ` "'),[]`)
 			return dependencyPrefix(value, " ", "/", ")", ",", "\"")
 		}

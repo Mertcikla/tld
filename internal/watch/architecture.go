@@ -531,8 +531,8 @@ func endpointRefsFromEnv(values []any) []architectureEndpointRef {
 				refs = append(refs, architectureEndpointRef{Target: target, Protocol: protocolFromEndpointValue(value), Note: "environment endpoint value"})
 			}
 		case string:
-			if idx := strings.Index(v, "="); idx >= 0 {
-				if target := endpointHostCandidate(v[idx+1:]); target != "" {
+			if _, after, ok := strings.Cut(v, "="); ok {
+				if target := endpointHostCandidate(after); target != "" {
 					refs = append(refs, architectureEndpointRef{Target: target, Protocol: protocolFromEndpointValue(v), Note: "environment endpoint value"})
 				}
 			}

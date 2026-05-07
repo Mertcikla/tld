@@ -242,7 +242,7 @@ func charNGrams(token string, n int) []string {
 
 func structuralTokens(text string) []string {
 	tokens := []string{}
-	for _, line := range strings.Split(text, "\n") {
+	for line := range strings.SplitSeq(text, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
@@ -506,8 +506,8 @@ func openAIBaseURL(endpoint string) string {
 	if endpoint == "" {
 		endpoint = DefaultOpenAIEndpoint
 	}
-	if strings.HasSuffix(endpoint, "/embeddings") {
-		return strings.TrimSuffix(endpoint, "/embeddings")
+	if before, ok := strings.CutSuffix(endpoint, "/embeddings"); ok {
+		return before
 	}
 	return endpoint
 }
@@ -577,6 +577,9 @@ func normalizeEmbeddingConfig(cfg EmbeddingConfig) EmbeddingConfig {
 	}
 	if cfg.Provider == "local-deterministic-test" && cfg.Dimension <= 0 {
 		cfg.Dimension = 8
+	}
+	if cfg.TimeoutSeconds <= 0 {
+		cfg.TimeoutSeconds = 60
 	}
 	return cfg
 }
