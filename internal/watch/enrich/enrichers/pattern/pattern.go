@@ -96,12 +96,19 @@ func FromSpecs(specs []Spec) []enrich.Enricher {
 }
 
 func matchLine(input enrich.FileInput, spec Spec) int {
+	if len(spec.SourceTokens) > 0 {
+		return matchSourceTokens(input, spec.SourceTokens)
+	}
 	if pathMatches(input.RelPath, spec.PathTokens) {
 		return 1
 	}
+	return 0
+}
+
+func matchSourceTokens(input enrich.FileInput, tokens []string) int {
 	source := commentsRE.ReplaceAllString(string(input.Source), "")
 	lower := strings.ToLower(source)
-	for _, token := range spec.SourceTokens {
+	for _, token := range tokens {
 		token = strings.ToLower(strings.TrimSpace(token))
 		if token == "" {
 			continue

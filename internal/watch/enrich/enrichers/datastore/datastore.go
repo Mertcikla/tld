@@ -3,6 +3,7 @@ package datastore
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/mertcikla/tld/internal/watch/enrich"
@@ -22,6 +23,7 @@ var (
 	fileSubject    = enrich.FileSubject
 	lineForOffset  = enrich.LineForOffset
 	matchLanguages = enrich.MatchLanguages
+	tokenCleanupRE = regexp.MustCompile(`(?m)(^|[^:])//.*$|#.*$|/\*[\s\S]*?\*/|<!--[\s\S]*?-->`)
 )
 
 func DatastoreGlue() Enricher {
@@ -29,24 +31,30 @@ func DatastoreGlue() Enricher {
 		Metadata{ID: "datastore.glue", Name: "Datastore glue", Mode: ActivationAlways},
 		matchLanguages("go", "python", "javascript", "typescript", "c-sharp", "xml", "go-mod", "json", "python-requirements"),
 		func(ctx context.Context, input FileInput, emit FactEmitter) error {
-			lower := strings.ToLower(string(input.Source))
+			source := string(input.Source)
+			scannable := tokenCleanupRE.ReplaceAllString(source, "$1")
+			lower := strings.ToLower(scannable)
 			candidates := []struct {
 				needle string
 				name   string
 				tech   string
 			}{
-				{"redis", "redis", "Redis"},
-				{"spanner", "spanner", "Spanner"},
-				{"alloydb", "alloydb", "AlloyDB"},
-				{"postgres", "postgres", "PostgreSQL"},
-				{"secretmanager", "secretmanager", "Secret Manager"},
-				{"opentelemetry", "opentelemetry", "OpenTelemetry"},
+				{"redis://", "redis", "Redis"},
+				{"github.com/redis/go-redis", "redis", "Redis"},
+				{"spanner.googleapis.com", "spanner", "Spanner"},
+				{"alloydb.googleapis.com", "alloydb", "AlloyDB"},
+				{"postgres://", "postgres", "PostgreSQL"},
+				{"postgresql://", "postgres", "PostgreSQL"},
+				{"github.com/lib/pq", "postgres", "PostgreSQL"},
+				{"secretmanager.googleapis.com", "secretmanager", "Secret Manager"},
+				{"go.opentelemetry.io/otel", "opentelemetry", "OpenTelemetry"},
 			}
 			for _, candidate := range candidates {
 				if !strings.Contains(lower, candidate.needle) {
 					continue
 				}
-				line := lineForOffset(lower, strings.Index(lower, candidate.needle))
+				idx := strings.Index(lower, candidate.needle)
+				line := lineForOffset(scannable, idx)
 				if err := emit.EmitFact(Fact{
 					Type:            "datastore.dependency",
 					StableKey:       fmt.Sprintf("datastore.dependency:%s:%s", input.RelPath, candidate.name),

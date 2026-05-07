@@ -390,6 +390,7 @@ func newScanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer func() { _ = sqliteStore.DB().Close() }()
 			scanner := watch.NewScanner(watch.NewStore(sqliteStore.DB()))
 			scanner.Settings = watchSettings
 			scanner.Progress = newCLIProgress(cmd.ErrOrStderr())
@@ -460,6 +461,7 @@ func newRepresentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			defer func() { _ = sqliteStore.DB().Close() }()
 			watchStore := watch.NewStore(sqliteStore.DB())
 			scanner := watch.NewScanner(watchStore)
 			scanner.Settings = watchSettings

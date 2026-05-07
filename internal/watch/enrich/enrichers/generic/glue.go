@@ -29,7 +29,7 @@ type detector struct {
 	Attrs        map[string]string
 }
 
-var tokenCleanupRE = regexp.MustCompile(`(?m)//.*$|#.*$|/\*[\s\S]*?\*/|<!--[\s\S]*?-->`)
+var tokenCleanupRE = regexp.MustCompile(`(?m)(^|[^:])//.*$|#.*$|/\*[\s\S]*?\*/|<!--[\s\S]*?-->`)
 
 // ArchitectureGlue detects common framework/library entrypoints and integration
 // glue from imports, manifests, and configuration files.
@@ -47,7 +47,7 @@ func ArchitectureGlue() Enricher {
 
 func emitGenericFacts(input FileInput, emit FactEmitter) error {
 	source := string(input.Source)
-	scannable := tokenCleanupRE.ReplaceAllString(source, "")
+	scannable := tokenCleanupRE.ReplaceAllString(source, "$1")
 	seen := map[string]struct{}{}
 	for _, det := range detectors {
 		line := detectorLine(input.RelPath, scannable, det)
@@ -162,7 +162,7 @@ var detectors = []detector{
 	d("firebase-auth", "Firebase Auth", "auth", "auth.provider", "uses_identity_provider", "firebase/auth", "firebase_admin.auth", "firebaseauth"),
 	d("clerk", "Clerk", "auth", "auth.provider", "uses_identity_provider", "@clerk/", "clerk.com"),
 	d("nextauth", "NextAuth", "auth", "auth.provider", "uses_identity_provider", "next-auth"),
-	d("jwt", "JWT validation", "auth", "auth.issuer", "trusts_issuer", "github.com/golang-jwt/jwt", "jsonwebtoken", "jwt-cpp", "jwt.decode", "jwtvalidator"),
+	d("jwt", "JWT validation", "auth", "auth.issuer", "trusts_issuer", "github.com/golang-jwt/jwt", "jsonwebtoken", "jwt-cpp", "jwtvalidator"),
 	d("oidc", "OIDC", "auth", "auth.issuer", "trusts_issuer", "coreos/go-oidc", "openidconnect", "openid-client", "oidc"),
 	d("pyjwt", "PyJWT", "auth", "auth.issuer", "trusts_issuer", "pyjwt", "import jwt"),
 	d("authlib", "Authlib", "auth", "auth.provider", "uses_identity_provider", "authlib"),
@@ -186,8 +186,6 @@ var detectors = []detector{
 	d("quartz", "Quartz", "jobs", "job.schedule", "runs_on_schedule", "org.quartz"),
 	d("tokio-cron-scheduler", "tokio-cron-scheduler", "jobs", "job.schedule", "runs_on_schedule", "tokio_cron_scheduler"),
 	d("apalis", "apalis", "jobs", "job.queue", "consumes", "apalis"),
-	d("custom-scheduler", "Custom scheduler", "jobs", "job.schedule", "runs_on_schedule", "cron_expression", "schedule_every"),
-	d("queue-consumer", "Queue consumer", "jobs", "job.queue", "consumes", "consume_queue", "queue_consumer"),
 
 	// API specs / schema files.
 	{ID: "openapi", Name: "OpenAPI / Swagger", Category: "api-spec", FactType: "api.spec", Relationship: "documents", PathTokens: []string{"openapi", "swagger"}, Tokens: []string{"openapi:", "\"openapi\"", "swagger:"}, Tags: []string{"api-spec:openapi"}, Attrs: map[string]string{"format": "openapi"}},
@@ -250,11 +248,10 @@ var detectors = []detector{
 	d("can-bus", "CAN Bus", "iot", "hardware.bus_address", "communicates_via_i2c", "canbus", "socketcan"),
 
 	// Kernel, systems, and local IPC.
-	d("unix-socket", "Unix Domain Sockets", "ipc", "ipc.socket_path", "connects_to_socket", ".sock", "unix://", "AF_UNIX"),
+	d("unix-socket", "Unix Domain Sockets", "ipc", "ipc.socket_path", "connects_to_socket", "unix://", "AF_UNIX"),
 	d("dbus", "D-Bus", "ipc", "ipc.dbus_interface", "exposes_dbus_service", "dbus", "org.freedesktop"),
 	d("named-pipes", "Named Pipes", "ipc", "ipc.socket_path", "connects_to_socket", `\\.\pipe\`, "mkfifo"),
 	d("grpc-uds", "gRPC over UDS", "ipc", "ipc.socket_path", "connects_to_socket", "unix:", "grpc.WithContextDialer"),
-	d("dev-node", "/dev device nodes", "kernel", "kernel.device_node", "reads_device", "/dev/"),
 	d("sysfs", "sysfs / procfs", "kernel", "kernel.device_node", "reads_device", "/sys/", "/proc/"),
 	d("ebpf", "eBPF", "kernel", "kernel.device_node", "reads_device", "kprobe", "uprobe", "tracepoint", "libbpf", "bcc"),
 
@@ -273,6 +270,7 @@ var detectors = []detector{
 	d("hardhat", "Hardhat", "web3", "web3.chain_id", "connects_to_chain", "hardhat.config", "hardhat"),
 
 	// Desktop / mobile OS integration.
-	{ID: "uri-schemes", Name: "Custom URI schemes", Category: "os-integration", FactType: "os.uri_scheme", Relationship: "handles_deep_link", PathTokens: []string{"info.plist", "androidmanifest.xml", "electron"}, Tokens: []string{"CFBundleURLSchemes", "android.intent.action.VIEW", "protocol"}, Tags: []string{"os-integration:uri-schemes"}, Attrs: map[string]string{"platform": "desktop-mobile"}},
+	{ID: "uri-schemes", Name: "Custom URI schemes", Category: "os-integration", FactType: "os.uri_scheme", Relationship: "handles_deep_link", PathTokens: []string{"info.plist", "androidmanifest.xml", "electron"}, Tokens: []string{"CFBundleURLSchemes", "android.intent.action.VIEW"}, Tags: []string{"os-integration:uri-schemes"}, Attrs: map[string]string{"platform": "desktop-mobile"}},
 	{ID: "android-intents", Name: "Android Intents", Category: "os-integration", FactType: "os.intent", Relationship: "broadcasts_intent", PathTokens: []string{"androidmanifest.xml"}, Tokens: []string{"<intent-filter", "sendbroadcast", "android.intent.action"}, Tags: []string{"os-integration:android-intents"}, Attrs: map[string]string{"platform": "android"}},
 }
+

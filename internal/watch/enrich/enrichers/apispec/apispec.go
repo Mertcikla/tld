@@ -9,8 +9,8 @@ func All() []enrich.Enricher { return pattern.FromSpecs(Specs()) }
 
 func Specs() []pattern.Spec {
 	return []pattern.Spec{
-		spec("apispec.openapi", "OpenAPI / Swagger", "yaml", []string{"openapi.yaml", "swagger.yaml"}, []string{"openapi:"}, "api.spec", "documents"),
-		spec("apispec.asyncapi", "AsyncAPI", "yaml", []string{"asyncapi.yaml"}, []string{"asyncapi:"}, "api.spec", "documents"),
+		spec("apispec.openapi", "OpenAPI / Swagger", "yaml", []string{"openapi.yaml", "swagger.yaml"}, []string{"openapi: 3", "openapi: \"3\""}, "api.spec", "documents"),
+		spec("apispec.asyncapi", "AsyncAPI", "yaml", []string{"asyncapi.yaml"}, []string{"asyncapi: 2", "asyncapi: \"2\""}, "api.spec", "documents"),
 		spec("apispec.graphql_schema", "GraphQL schema", "graphql", []string{".graphql", ".gql"}, []string{"type Query"}, "api.schema", "declares"),
 		spec("apispec.protobuf", "Protocol Buffers", "protobuf", []string{".proto"}, []string{"service "}, "rpc.service", "exposes"),
 		spec("apispec.avro", "Avro", "json", []string{".avsc", ".avdl"}, []string{"\"type\":\"record\""}, "api.schema", "declares"),

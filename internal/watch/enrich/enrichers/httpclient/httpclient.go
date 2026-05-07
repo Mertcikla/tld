@@ -9,7 +9,7 @@ func All() []enrich.Enricher { return pattern.FromSpecs(Specs()) }
 
 func Specs() []pattern.Spec {
 	return []pattern.Spec{
-		native("ts.fetch", "TypeScript fetch", "typescript", "fetch(", "fetch"),
+		native("ts.fetch", "TypeScript fetch", "typescript", "window.fetch", "fetch"),
 		lib("ts.axios", "TypeScript Axios", "typescript", "axios", "axios."),
 		lib("ts.got", "TypeScript Got", "typescript", "got", "got("),
 		lib("ts.ky", "TypeScript Ky", "typescript", "ky", "ky."),

@@ -56,7 +56,7 @@ func emitRuntimeYAMLFacts(input FileInput, emit FactEmitter) error {
 	}
 	componentRE := regexp.MustCompile(`(?m)^\s*(?:kind:\s*(Deployment|StatefulSet|DaemonSet|Job|CronJob|Pod|Service)|name:\s*([A-Za-z0-9_.-]+)|image:\s*([^#\n]+)|value:\s*["']?([^"'\n]+)["']?)`)
 	lines := strings.Split(source, "\n")
-	var lastKind, lastName string
+	var lastKind, lastName, lastEnvVar string
 	for i, line := range lines {
 		match := componentRE.FindStringSubmatch(line)
 		if len(match) == 0 {
@@ -69,15 +69,19 @@ func emitRuntimeYAMLFacts(input FileInput, emit FactEmitter) error {
 			}
 			continue
 		}
-		if match[2] != "" && lastKind != "" && lastName == "" {
-			lastName = match[2]
-			if err := emitComponentFact(input, emit, lastName, "service", "Kubernetes", i+1, []string{"runtime:kubernetes", "arch:deployable"}, map[string]string{"runtime": "kubernetes", "kind": lastKind}); err != nil {
-				return err
+		if match[2] != "" {
+			if lastKind != "" && lastName == "" {
+				lastName = match[2]
+				if err := emitComponentFact(input, emit, lastName, "service", "Kubernetes", i+1, []string{"runtime:kubernetes", "arch:deployable"}, map[string]string{"runtime": "kubernetes", "kind": lastKind}); err != nil {
+					return err
+				}
+			} else {
+				lastEnvVar = match[2]
 			}
 			continue
 		}
 		if match[4] != "" && lastName != "" {
-			target := endpointName(match[4])
+			target := endpointName(match[4], lastEnvVar)
 			if target != "" && target != lastName {
 				if err := emitConnectorFact(input, emit, lastName, target, protocolFromValue(match[4]), "runtime-dependency", i+1, "runtime manifest env endpoint", 0.78); err != nil {
 					return err
@@ -156,7 +160,7 @@ func emitConnectorFact(input FileInput, emit FactEmitter, source, target, label,
 	})
 }
 
-func endpointName(value string) string {
+func endpointName(value, envName string) string {
 	value = strings.Trim(strings.TrimSpace(value), `"'`)
 	if value == "" || strings.Contains(value, "{{") {
 		return ""
@@ -168,7 +172,19 @@ func endpointName(value string) string {
 	if regexp.MustCompile(`^\d+$`).MatchString(value) {
 		return ""
 	}
-	if strings.Contains(value, "://") {
+
+	// Tighten: Require a protocol scheme OR a high-signal environment variable name.
+	hasScheme := strings.Contains(value, "://")
+	lowerEnv := strings.ToLower(envName)
+	highSignalName := strings.HasSuffix(lowerEnv, "_url") || strings.HasSuffix(lowerEnv, "_host") ||
+		strings.HasSuffix(lowerEnv, "_uri") || strings.HasSuffix(lowerEnv, "_endpoint") ||
+		strings.HasSuffix(lowerEnv, "_address") || strings.HasSuffix(lowerEnv, "_addr")
+
+	if !hasScheme && !highSignalName {
+		return ""
+	}
+
+	if hasScheme {
 		parts := strings.SplitN(value, "://", 2)
 		value = parts[1]
 	}
