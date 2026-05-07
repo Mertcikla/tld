@@ -647,7 +647,7 @@ func architectureComponentHasStrongServiceEvidence(component *architectureCompon
 	}
 	for _, ev := range component.Evidence {
 		switch ev.Kind {
-		case "deployable", "endpoint", "runtime-component", "source-service", "grpc.server", "grpc.contract", "service-contract":
+		case "deployable", "endpoint", "runtime-component", "source-service", "grpc.server", "grpc-client", "grpc.contract", "service-contract":
 			return true
 		}
 	}

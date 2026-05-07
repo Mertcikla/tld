@@ -4424,6 +4424,44 @@ func TestCanonicalizeArchitectureFoldsShortServiceRootsWithRoleEvidence(t *testi
 	}
 }
 
+func TestCanonicalizeArchitectureFoldsShortGRPCClientTargetIntoDeployableService(t *testing.T) {
+	model := mergeArchitectureModels(
+		architectureFromFacts([]Fact{
+			{
+				FilePath:       "src/frontend/rpc.go",
+				Type:           "grpc.client",
+				Name:           "ad",
+				Relationship:   "calls",
+				Confidence:     0.9,
+				AttributesJSON: `{"service":"ad"}`,
+			},
+			{
+				FilePath:       "src/adservice/deploy.yaml",
+				Type:           "runtime.component",
+				Name:           "adservice",
+				Relationship:   "deploys",
+				Confidence:     0.9,
+				AttributesJSON: `{"name":"adservice","kind":"service","technology":"Kubernetes"}`,
+			},
+		}),
+	)
+
+	got := pruneDisconnectedArchitecture(canonicalizeArchitecture(model))
+	ad := architectureKey("component", "ad")
+	adService := architectureKey("component", "adservice")
+	if got.Components[adService] == nil {
+		t.Fatalf("adservice should remain canonical, got %#v", got.Components)
+	}
+	if got.Components[ad] != nil {
+		t.Fatalf("grpc client target ad should fold into adservice, got %#v", got.Components)
+	}
+	for _, connector := range got.Connectors {
+		if connector.TargetKey != adService {
+			t.Fatalf("connector should target folded adservice alias, got %#v", connector)
+		}
+	}
+}
+
 func TestResolveArchitectureBindingsUsesGenericSignals(t *testing.T) {
 	repo := Repository{ID: 1, DisplayName: "demo"}
 	tests := []struct {
