@@ -1365,6 +1365,155 @@ func (s *Store) Materialization(ctx context.Context, repositoryID int64) ([]Mate
 	return out, rows.Err()
 }
 
+func (s *Store) ReplaceArchitectureBindings(ctx context.Context, repositoryID int64, bindings []ArchitectureBinding) error {
+	if err := s.ensureArchitectureLinksTable(ctx); err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM watch_architecture_links WHERE repository_id = ?`, repositoryID); err != nil {
+		return err
+	}
+	now := nowString()
+	for _, binding := range bindings {
+		evidence, _ := json.Marshal(binding.Evidence)
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO watch_architecture_links(
+				repository_id, component_key, target_repository_id, target_owner_type, target_owner_key,
+				target_resource_type, target_resource_id, role, confidence, evidence_json, created_at, updated_at
+			)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			repositoryID,
+			binding.ComponentKey,
+			binding.TargetRepositoryID,
+			binding.TargetOwnerType,
+			binding.TargetOwnerKey,
+			binding.TargetResourceType,
+			binding.TargetResourceID,
+			binding.Role,
+			binding.Confidence,
+			string(evidence),
+			now,
+			now,
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ArchitectureBindings(ctx context.Context, repositoryID int64) ([]ArchitectureBinding, error) {
+	if err := s.ensureArchitectureLinksTable(ctx); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, repository_id, component_key, target_repository_id, target_owner_type, target_owner_key,
+		       target_resource_type, target_resource_id, role, confidence, evidence_json, created_at, updated_at
+		FROM watch_architecture_links
+		WHERE repository_id = ?
+		ORDER BY component_key, role, confidence DESC, target_owner_type, target_owner_key`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ArchitectureBinding
+	for rows.Next() {
+		var item ArchitectureBinding
+		var evidenceJSON string
+		if err := rows.Scan(
+			&item.ID,
+			&item.RepositoryID,
+			&item.ComponentKey,
+			&item.TargetRepositoryID,
+			&item.TargetOwnerType,
+			&item.TargetOwnerKey,
+			&item.TargetResourceType,
+			&item.TargetResourceID,
+			&item.Role,
+			&item.Confidence,
+			&evidenceJSON,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(evidenceJSON), &item.Evidence)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ArchitectureBindingTargets(ctx context.Context) ([]ArchitectureBindingTarget, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT wm.repository_id, wm.owner_type, wm.owner_key, wm.resource_type, wm.resource_id,
+		       COALESCE(v.id, 0), e.name, COALESCE(e.kind, ''), COALESCE(e.file_path, ''),
+		       COALESCE(e.language, ''), COALESCE(e.tags, '[]')
+		FROM watch_materialization wm
+		JOIN elements e ON e.id = wm.resource_id
+		LEFT JOIN views v ON v.owner_element_id = e.id
+		WHERE wm.resource_type = 'element'
+		  AND wm.owner_type IN ('folder', 'file', 'symbol', 'cluster', 'fact', 'fact-summary')
+		ORDER BY wm.repository_id, wm.owner_type, wm.owner_key`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []ArchitectureBindingTarget
+	for rows.Next() {
+		var item ArchitectureBindingTarget
+		var tagsJSON string
+		if err := rows.Scan(
+			&item.RepositoryID,
+			&item.OwnerType,
+			&item.OwnerKey,
+			&item.ResourceType,
+			&item.ResourceID,
+			&item.ViewID,
+			&item.Name,
+			&item.Kind,
+			&item.FilePath,
+			&item.Language,
+			&tagsJSON,
+		); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(tagsJSON), &item.Tags)
+		out = append(out, item)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ensureArchitectureLinksTable(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS watch_architecture_links (
+		  id INTEGER PRIMARY KEY AUTOINCREMENT,
+		  repository_id INTEGER NOT NULL,
+		  component_key TEXT NOT NULL,
+		  target_repository_id INTEGER NOT NULL,
+		  target_owner_type TEXT NOT NULL,
+		  target_owner_key TEXT NOT NULL,
+		  target_resource_type TEXT NOT NULL,
+		  target_resource_id INTEGER NOT NULL,
+		  role TEXT NOT NULL,
+		  confidence REAL NOT NULL,
+		  evidence_json TEXT NOT NULL DEFAULT '[]',
+		  created_at TEXT NOT NULL,
+		  updated_at TEXT NOT NULL,
+		  UNIQUE(repository_id, component_key, target_repository_id, target_owner_type, target_owner_key, target_resource_type, role),
+		  FOREIGN KEY (repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE,
+		  FOREIGN KEY (target_repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_watch_architecture_links_repository_id
+		  ON watch_architecture_links(repository_id);
+		CREATE INDEX IF NOT EXISTS idx_watch_architecture_links_target
+		  ON watch_architecture_links(target_repository_id, target_owner_type, target_owner_key);
+	`)
+	return err
+}
+
 type watchMaterializationMapping struct {
 	ID              int64
 	OwnerType       string

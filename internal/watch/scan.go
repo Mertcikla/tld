@@ -1035,7 +1035,7 @@ func isHiddenBuildOutput(name string) bool {
 	}
 	if strings.HasPrefix(name, ".") {
 		switch name {
-		case ".git", ".cache", ".next", ".turbo":
+		case ".git", ".cache", ".next", ".tld", ".turbo":
 			return true
 		}
 	}

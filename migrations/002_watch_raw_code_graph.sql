@@ -273,6 +273,31 @@ CREATE TABLE IF NOT EXISTS watch_materialization (
 CREATE INDEX IF NOT EXISTS idx_watch_materialization_repository_id
   ON watch_materialization(repository_id);
 
+CREATE TABLE IF NOT EXISTS watch_architecture_links (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  repository_id INTEGER NOT NULL,
+  component_key TEXT NOT NULL,
+  target_repository_id INTEGER NOT NULL,
+  target_owner_type TEXT NOT NULL,
+  target_owner_key TEXT NOT NULL,
+  target_resource_type TEXT NOT NULL,
+  target_resource_id INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  confidence REAL NOT NULL,
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(repository_id, component_key, target_repository_id, target_owner_type, target_owner_key, target_resource_type, role),
+  FOREIGN KEY (repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE,
+  FOREIGN KEY (target_repository_id) REFERENCES watch_repositories(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_watch_architecture_links_repository_id
+  ON watch_architecture_links(repository_id);
+
+CREATE INDEX IF NOT EXISTS idx_watch_architecture_links_target
+  ON watch_architecture_links(target_repository_id, target_owner_type, target_owner_key);
+
 CREATE TABLE IF NOT EXISTS watch_apply_locks (
   id INTEGER PRIMARY KEY,
   repository_id INTEGER NOT NULL,

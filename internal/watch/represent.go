@@ -279,7 +279,7 @@ func (r *Representer) RepresentArchitecture(ctx context.Context, repo Repository
 		return result, err
 	}
 	progressAdvance(progress, "Repository view materialized")
-	if err := m.materializeArchitecture(ctx, architecture, repoView); err != nil {
+	if err := m.materializeArchitecture(ctx, architecture, repoView, nil); err != nil {
 		progressFinish(progress)
 		runErr = err
 		return result, err
@@ -945,11 +945,6 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	}
 
 	architecture := pruneDisconnectedArchitecture(canonicalizeArchitecture(mergeArchitectureModels(inferArchitecture(repo.RepoRoot), architectureFromFacts(facts))))
-	if len(architecture.Components) > 0 {
-		if err := m.materializeArchitecture(ctx, architecture, architectureView); err != nil {
-			return m.stats, err
-		}
-	}
 
 	visibleFiles := filesForSymbols(filtered.VisibleSymbols)
 	for file := range filtered.VisibleFiles {
@@ -1121,6 +1116,21 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, folderElements, fileElements, symbolElements, symbolViews, structuralView); err != nil {
 		return m.stats, err
 	}
+	if len(architecture.Components) > 0 {
+		targets, err := m.store.ArchitectureBindingTargets(ctx)
+		if err != nil {
+			return m.stats, err
+		}
+		bindings := resolveArchitectureBindings(repo, architecture, targets)
+		if err := m.store.ReplaceArchitectureBindings(ctx, repo.ID, bindings); err != nil {
+			return m.stats, err
+		}
+		if err := m.materializeArchitecture(ctx, architecture, architectureView, bindingsByArchitectureComponent(bindings)); err != nil {
+			return m.stats, err
+		}
+	} else if err := m.store.ReplaceArchitectureBindings(ctx, repo.ID, nil); err != nil {
+		return m.stats, err
+	}
 	if err := m.pruneStaleResources(ctx); err != nil {
 		return m.stats, err
 	}
@@ -1130,7 +1140,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	return m.stats, nil
 }
 
-func (m *materializer) materializeArchitecture(ctx context.Context, architecture architectureModel, repoView int64) error {
+func (m *materializer) materializeArchitecture(ctx context.Context, architecture architectureModel, repoView int64, bindings map[string][]ArchitectureBinding) error {
 	componentElements := map[string]int64{}
 	for i, component := range sortedArchitectureComponents(architecture.Components) {
 		tags := appendUnique(component.Tags, "view:architecture")
@@ -1152,6 +1162,17 @@ func (m *materializer) materializeArchitecture(ctx context.Context, architecture
 			return err
 		}
 		componentElements[component.Key] = elem
+		componentBindings := bindings[component.Key]
+		if len(componentBindings) == 0 {
+			continue
+		}
+		componentView, err := m.upsertView(ctx, "architecture-component", component.Key, elem, component.Name+" Sources", "Sources")
+		if err != nil {
+			return err
+		}
+		if err := m.materializeArchitectureBindingTargets(ctx, componentView, componentBindings); err != nil {
+			return err
+		}
 	}
 
 	for _, connector := range sortedArchitectureConnectors(architecture.Connectors) {
@@ -1163,6 +1184,46 @@ func (m *materializer) materializeArchitecture(ctx context.Context, architecture
 		if err := m.upsertConnectorDetailedWithDirection(ctx, "architecture-connector", connector.Key, repoView, sourceID, targetID, connector.Label, connector.Relationship, connector.Direction, architectureEvidenceDescription(connector.Evidence, connector.Confidence)); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func bindingsByArchitectureComponent(bindings []ArchitectureBinding) map[string][]ArchitectureBinding {
+	out := map[string][]ArchitectureBinding{}
+	for _, binding := range bindings {
+		out[binding.ComponentKey] = append(out[binding.ComponentKey], binding)
+	}
+	for key := range out {
+		sort.SliceStable(out[key], func(i, j int) bool {
+			if out[key][i].Role == out[key][j].Role {
+				if out[key][i].Confidence == out[key][j].Confidence {
+					return out[key][i].TargetOwnerKey < out[key][j].TargetOwnerKey
+				}
+				return out[key][i].Confidence > out[key][j].Confidence
+			}
+			return architectureBindingRoleRank(out[key][i].Role) < architectureBindingRoleRank(out[key][j].Role)
+		})
+	}
+	return out
+}
+
+func (m *materializer) materializeArchitectureBindingTargets(ctx context.Context, viewID int64, bindings []ArchitectureBinding) error {
+	targets := map[int64]struct{}{}
+	for _, binding := range bindings {
+		if binding.TargetResourceType == "element" && binding.TargetResourceID != 0 {
+			targets[binding.TargetResourceID] = struct{}{}
+		}
+	}
+	if err := m.replaceViewPlacements(ctx, viewID, targets); err != nil {
+		return err
+	}
+	i := 0
+	for _, elementID := range sortedInt64Set(targets) {
+		x, y := gridPosition(i)
+		if err := m.upsertAdditionalPlacement(ctx, viewID, elementID, x, y); err != nil {
+			return err
+		}
+		i++
 	}
 	return nil
 }
@@ -1426,6 +1487,53 @@ func (m *materializer) upsertPlacement(ctx context.Context, viewID, elementID in
 		m.markNewPlacement(viewID, elementID)
 	}
 	return err
+}
+
+func (m *materializer) upsertAdditionalPlacement(ctx context.Context, viewID, elementID int64, x, y float64) error {
+	var existingID int64
+	err := m.store.db.QueryRowContext(ctx, `SELECT id FROM placements WHERE view_id = ? AND element_id = ?`, viewID, elementID).Scan(&existingID)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	now := nowString()
+	_, err = m.store.db.ExecContext(ctx, `
+		INSERT INTO placements(view_id, element_id, position_x, position_y, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		viewID, elementID, x, y, now, now)
+	if err == nil {
+		m.markNewPlacement(viewID, elementID)
+	}
+	return err
+}
+
+func (m *materializer) replaceViewPlacements(ctx context.Context, viewID int64, keep map[int64]struct{}) error {
+	rows, err := m.store.db.QueryContext(ctx, `SELECT element_id FROM placements WHERE view_id = ? ORDER BY id`, viewID)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+	var stale []int64
+	for rows.Next() {
+		var elementID int64
+		if err := rows.Scan(&elementID); err != nil {
+			return err
+		}
+		if _, ok := keep[elementID]; !ok {
+			stale = append(stale, elementID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, elementID := range stale {
+		if _, err := m.store.db.ExecContext(ctx, `DELETE FROM placements WHERE view_id = ? AND element_id = ?`, viewID, elementID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *materializer) markNewPlacement(viewID, elementID int64) {

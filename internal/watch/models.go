@@ -272,6 +272,42 @@ type MaterializationMapping struct {
 	UpdatedAt       string  `json:"updated_at"`
 }
 
+type ArchitectureBinding struct {
+	ID                 int64                         `json:"id,omitempty"`
+	RepositoryID       int64                         `json:"repository_id"`
+	ComponentKey       string                        `json:"component_key"`
+	TargetRepositoryID int64                         `json:"target_repository_id"`
+	TargetOwnerType    string                        `json:"target_owner_type"`
+	TargetOwnerKey     string                        `json:"target_owner_key"`
+	TargetResourceType string                        `json:"target_resource_type"`
+	TargetResourceID   int64                         `json:"target_resource_id"`
+	Role               string                        `json:"role"`
+	Confidence         float64                       `json:"confidence"`
+	Evidence           []ArchitectureBindingEvidence `json:"evidence"`
+	CreatedAt          string                        `json:"created_at,omitempty"`
+	UpdatedAt          string                        `json:"updated_at,omitempty"`
+}
+
+type ArchitectureBindingEvidence struct {
+	Kind   string  `json:"kind"`
+	Detail string  `json:"detail"`
+	Score  float64 `json:"score"`
+}
+
+type ArchitectureBindingTarget struct {
+	RepositoryID int64    `json:"repository_id"`
+	OwnerType    string   `json:"owner_type"`
+	OwnerKey     string   `json:"owner_key"`
+	ResourceType string   `json:"resource_type"`
+	ResourceID   int64    `json:"resource_id"`
+	ViewID       int64    `json:"view_id,omitempty"`
+	Name         string   `json:"name"`
+	Kind         string   `json:"kind"`
+	FilePath     string   `json:"file_path,omitempty"`
+	Language     string   `json:"language,omitempty"`
+	Tags         []string `json:"tags,omitempty"`
+}
+
 type ContextPolicy struct {
 	ID           int64  `json:"id"`
 	RepositoryID int64  `json:"repository_id"`

@@ -28,7 +28,7 @@ func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
 
-	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_facts", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_context_policies", "watch_context_expansions", "watch_representation_runs", "watch_locks", "watch_apply_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
+	for _, table := range []string{"watch_repositories", "watch_files", "watch_symbols", "watch_references", "watch_facts", "watch_scan_runs", "watch_embedding_models", "watch_embeddings", "watch_filter_runs", "watch_filter_decisions", "watch_clusters", "watch_cluster_members", "watch_materialization", "watch_architecture_links", "watch_context_policies", "watch_context_expansions", "watch_representation_runs", "watch_locks", "watch_apply_locks", "watch_versions", "watch_representation_diffs", "watch_version_resources", "workspace_versions"} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
 			t.Fatalf("missing table %s: %v", table, err)
@@ -4421,6 +4421,108 @@ func TestCanonicalizeArchitectureFoldsShortServiceRootsWithRoleEvidence(t *testi
 	}
 	if got.Components[ad] != nil || got.Components[adContract] != nil {
 		t.Fatalf("ad variants should fold into adservice, got %#v", got.Components)
+	}
+}
+
+func TestResolveArchitectureBindingsUsesGenericSignals(t *testing.T) {
+	repo := Repository{ID: 1, DisplayName: "demo"}
+	tests := []struct {
+		name       string
+		component  *architectureComponent
+		targets    []ArchitectureBindingTarget
+		wantTarget string
+	}{
+		{
+			name: "service folder under services",
+			component: &architectureComponent{
+				Key:      architectureKey("component", "billingservice"),
+				Name:     "billingservice",
+				FilePath: "deploy/billing.yaml",
+				Evidence: []architectureEvidence{
+					{Kind: "deployable", Path: "deploy/billing.yaml", Note: "Deployment"},
+					{Kind: "grpc.server", Path: "services/billing/main.go", Note: "billing"},
+				},
+			},
+			targets:    []ArchitectureBindingTarget{architectureBindingTestTarget(1, "folder", "folder:services/billing", "billing", "folder", "services/billing")},
+			wantTarget: "folder:services/billing",
+		},
+		{
+			name: "service folder under apps",
+			component: &architectureComponent{
+				Key:      architectureKey("component", "checkout"),
+				Name:     "checkout",
+				FilePath: "ops/checkout.yaml",
+				Evidence: []architectureEvidence{
+					{Kind: "runtime-component", Path: "apps/checkout/server.go", Note: "checkout"},
+				},
+			},
+			targets:    []ArchitectureBindingTarget{architectureBindingTestTarget(1, "folder", "folder:apps/checkout", "checkout", "folder", "apps/checkout")},
+			wantTarget: "folder:apps/checkout",
+		},
+		{
+			name: "language package layout",
+			component: &architectureComponent{
+				Key:      architectureKey("component", "catalog"),
+				Name:     "catalog",
+				FilePath: "manifests/catalog.yaml",
+				Evidence: []architectureEvidence{
+					{Kind: "grpc.server", Path: "cmd/catalog/main.go", Note: "catalog"},
+				},
+			},
+			targets:    []ArchitectureBindingTarget{architectureBindingTestTarget(1, "file", "file:cmd/catalog/main.go", "main.go", "file", "cmd/catalog/main.go")},
+			wantTarget: "file:cmd/catalog/main.go",
+		},
+		{
+			name: "external stays unbound",
+			component: &architectureComponent{
+				Key:  architectureKey("external", "stripe"),
+				Name: "stripe",
+				Kind: "external",
+			},
+			targets:    []ArchitectureBindingTarget{architectureBindingTestTarget(1, "folder", "folder:payments", "payments", "folder", "payments")},
+			wantTarget: "",
+		},
+		{
+			name: "ambiguous exact names stay unbound",
+			component: &architectureComponent{
+				Key:  architectureKey("component", "payment"),
+				Name: "payment",
+				Kind: "service",
+			},
+			targets: []ArchitectureBindingTarget{
+				architectureBindingTestTarget(1, "folder", "folder:apps/payment", "payment", "folder", "apps/payment"),
+				architectureBindingTestTarget(1, "folder", "folder:services/payment", "payment", "folder", "services/payment"),
+			},
+			wantTarget: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := architectureModel{Components: map[string]*architectureComponent{tt.component.Key: tt.component}}
+			bindings := resolveArchitectureBindings(repo, model, tt.targets)
+			if tt.wantTarget == "" {
+				if len(bindings) != 0 {
+					t.Fatalf("expected no bindings, got %+v", bindings)
+				}
+				return
+			}
+			if len(bindings) == 0 || bindings[0].TargetOwnerKey != tt.wantTarget {
+				t.Fatalf("expected primary target %q, got %+v", tt.wantTarget, bindings)
+			}
+		})
+	}
+}
+
+func architectureBindingTestTarget(repoID int64, ownerType, ownerKey, name, kind, filePath string) ArchitectureBindingTarget {
+	return ArchitectureBindingTarget{
+		RepositoryID: repoID,
+		OwnerType:    ownerType,
+		OwnerKey:     ownerKey,
+		ResourceType: "element",
+		ResourceID:   int64(len(ownerKey)),
+		Name:         name,
+		Kind:         kind,
+		FilePath:     filePath,
 	}
 }
 

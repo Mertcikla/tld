@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mertcikla/tld/cmd"
@@ -31,6 +32,20 @@ func TestAnalyzeCmd_WatchPipelineWritesYAML(t *testing.T) {
 	for ref, element := range ws.Elements {
 		if element.Kind == "function" && len(element.Placements) == 0 {
 			t.Fatalf("symbol %q (%s) has no placement", element.Name, ref)
+		}
+	}
+
+	stdout, stderr, err = cmd.RunCmd(t, dir, "analyze", repoDir, "--data-dir", dataDir, "--embedding-provider", "none")
+	if err != nil {
+		t.Fatalf("second analyze: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	ws, err = workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, element := range ws.Elements {
+		if element.Kind == "file" && strings.HasPrefix(element.FilePath, ".tld/") {
+			t.Fatalf("generated workspace YAML should not be scanned as source: %+v", element)
 		}
 	}
 }
@@ -130,6 +145,11 @@ spec:
 	if ref := refByElementName(ws, "topology.yaml"); ref == "" || !hasPlacementParent(ws, ref, deployRef) {
 		t.Fatalf("structural file should be under its folder view, ref=%q elements=%+v", ref, ws.Elements)
 	}
+	alphaRef := refByElementNameWithParent(ws, "alpha", architectureRef)
+	topologyRef := refByElementName(ws, "topology.yaml")
+	if alphaRef == "" || topologyRef == "" || !ws.Elements[alphaRef].HasView || !hasPlacementParent(ws, topologyRef, alphaRef) {
+		t.Fatalf("bound architecture component should own a deep-dive view with structural targets: alpha=%q topology=%q %+v", alphaRef, topologyRef, ws.Elements)
+	}
 	if !connectorByElementNamesInParent(ws, "alpha", "beta", architectureRef) || !connectorByElementNamesInParent(ws, "alpha", "cache", architectureRef) || !connectorByElementNamesInParent(ws, "External traffic", "alpha", architectureRef) {
 		t.Fatalf("missing expected architecture connectors: %+v", ws.Connectors)
 	}
@@ -192,6 +212,64 @@ services:
 	}
 	if ref := refByElementName(ws, "main.go"); ref == "" || !hasPlacementParent(ws, ref, structuralRef) {
 		t.Fatalf("top-level structural file should be under Structural, ref=%q elements=%+v", ref, ws.Elements)
+	}
+}
+
+func TestAnalyzeCmd_CrossRepositoryArchitectureLinksReuseStructuralElements(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	sourceRepo := filepath.Join(dir, "source-repo")
+	cmd.InitGitRepo(t, sourceRepo, "modules/cart/main.go", "package main\nfunc ServeCart() {}\n")
+	runtimeRepo := filepath.Join(dir, "runtime-repo")
+	cmd.InitGitRepo(t, runtimeRepo, "deploy/cart.yaml", `
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cart
+spec:
+  template:
+    spec:
+      containers:
+      - name: app
+        image: example/cart
+        env:
+        - name: PEER
+          value: "cache:6379"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cache
+spec:
+  ports:
+  - port: 6379
+`)
+
+	stdout, stderr, err := cmd.RunCmd(t, dir, "analyze", sourceRepo, "--data-dir", dataDir, "--embedding-provider", "none")
+	if err != nil {
+		t.Fatalf("analyze source: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	stdout, stderr, err = cmd.RunCmd(t, dir, "analyze", runtimeRepo, "--data-dir", dataDir, "--embedding-provider", "none")
+	if err != nil {
+		t.Fatalf("analyze runtime: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeRef := refByElementName(ws, "runtime-repo")
+	architectureRef := refByElementNameWithParent(ws, "Architecture", runtimeRef)
+	cartArchRef := refByElementNameWithParent(ws, "cart", architectureRef)
+	cartFolderRef := refByKindAndFilePath(ws, "folder", "modules/cart")
+	if runtimeRef == "" || architectureRef == "" || cartArchRef == "" || cartFolderRef == "" {
+		t.Fatalf("missing cross-repo test elements: runtime=%q architecture=%q cartArch=%q cartFolder=%q elements=%+v", runtimeRef, architectureRef, cartArchRef, cartFolderRef, ws.Elements)
+	}
+	if !ws.Elements[cartArchRef].HasView || !hasPlacementParent(ws, cartFolderRef, cartArchRef) {
+		t.Fatalf("runtime architecture component should deep-link to source repo structural folder: arch=%+v folder=%+v", ws.Elements[cartArchRef], ws.Elements[cartFolderRef])
+	}
+	if placementCount(ws, cartFolderRef) < 2 {
+		t.Fatalf("source structural folder should remain in its original structural view and be reused in runtime deep-dive view: %+v", ws.Elements[cartFolderRef])
 	}
 }
 
@@ -381,6 +459,15 @@ func refByKind(ws *workspace.Workspace, kind string) string {
 	return ""
 }
 
+func refByKindAndFilePath(ws *workspace.Workspace, kind, filePath string) string {
+	for ref, element := range ws.Elements {
+		if element.Kind == kind && element.FilePath == filePath {
+			return ref
+		}
+	}
+	return ""
+}
+
 func hasPlacementParent(ws *workspace.Workspace, ref, parentRef string) bool {
 	element := ws.Elements[ref]
 	if element == nil {
@@ -392,6 +479,14 @@ func hasPlacementParent(ws *workspace.Workspace, ref, parentRef string) bool {
 		}
 	}
 	return false
+}
+
+func placementCount(ws *workspace.Workspace, ref string) int {
+	element := ws.Elements[ref]
+	if element == nil {
+		return 0
+	}
+	return len(element.Placements)
 }
 
 func connectorByElementNamesInParent(ws *workspace.Workspace, sourceName, targetName, parentRef string) bool {

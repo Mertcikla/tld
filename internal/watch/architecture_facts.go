@@ -220,18 +220,22 @@ func inferredComponentFromFact(fact Fact, attrs map[string]string) string {
 func componentFromPath(rel string) string {
 	rel = path.Clean(strings.ReplaceAll(rel, "\\", "/"))
 	parts := strings.Split(rel, "/")
-	for i, part := range parts {
-		if part == "src" && i+1 < len(parts) {
-			return parts[i+1]
-		}
-	}
-	if len(parts) >= 2 {
-		parent := parts[len(parts)-2]
-		if parent != "." && parent != "" {
-			return parent
+	for i := len(parts) - 2; i >= 0; i-- {
+		part := strings.TrimSpace(parts[i])
+		if part != "." && part != "" && !architecturePathLayoutToken(part) {
+			return part
 		}
 	}
 	return ""
+}
+
+func architecturePathLayoutToken(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "app", "apps", "cmd", "internal", "lib", "libs", "pkg", "packages", "service", "services", "source", "src":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeFactEndpoint(value string) string {
