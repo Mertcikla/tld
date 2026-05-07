@@ -2,9 +2,11 @@ package tagcolors
 
 import (
 	"context"
+	crand "crypto/rand"
 	"database/sql"
+	"fmt"
+	"hash/fnv"
 	"strings"
-	"time"
 )
 
 var SwatchColors = []string{
@@ -70,8 +72,44 @@ func PickUnusedColor(usedColors []string) string {
 
 	source := pool
 	if len(source) == 0 {
-		source = SwatchColors
+		return randomUnusedColor(used)
 	}
 
-	return source[time.Now().UnixNano()%int64(len(source))]
+	return source[randomIndex(len(source))]
+}
+
+func randomIndex(n int) int {
+	if n <= 1 {
+		return 0
+	}
+	var b [1]byte
+	if _, err := crand.Read(b[:]); err == nil {
+		return int(b[0]) % n
+	}
+	return 0
+}
+
+func randomUnusedColor(used map[string]bool) string {
+	var b [3]byte
+	for i := 0; i < 32; i++ {
+		if _, err := crand.Read(b[:]); err == nil {
+			color := fmt.Sprintf("#%02X%02X%02X", b[0], b[1], b[2])
+			if !used[color] {
+				return color
+			}
+		}
+	}
+	return fallbackUnusedColor(used)
+}
+
+func fallbackUnusedColor(used map[string]bool) string {
+	for i := 0; ; i++ {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(fmt.Sprintf("tld-tag-color-%d", i)))
+		sum := h.Sum32()
+		color := fmt.Sprintf("#%06X", sum&0xFFFFFF)
+		if !used[color] {
+			return color
+		}
+	}
 }
