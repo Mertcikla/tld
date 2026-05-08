@@ -17,6 +17,7 @@ func DiscoverRepositorySignals(repoRoot string) []ActivationSignal {
 	var signals []ActivationSignal
 	signals = append(signals, discoverGoModSignals(filepath.Join(repoRoot, "go.mod"))...)
 	signals = append(signals, discoverPackageJSONSignals(repoRoot)...)
+	signals = append(signals, discoverComposeSignals(repoRoot)...)
 	return uniqueSignals(signals)
 }
 
@@ -45,6 +46,9 @@ func DiscoverRepositorySignalsFromFiles(repoRoot string, files []string) []Activ
 			signals = append(signals, lineDependencySignals(file, rel, gradleSignalName)...)
 		case "CMakeLists.txt", "conanfile.txt", "conanfile.py", "vcpkg.json":
 			signals = append(signals, lineDependencySignals(file, rel, cppSignalName)...)
+		}
+		if isComposeFile(rel) {
+			signals = append(signals, ActivationSignal{Kind: SignalDependency, Value: "docker-compose", Source: rel})
 		}
 	}
 	return uniqueSignals(signals)
@@ -100,6 +104,40 @@ func discoverPackageJSONSignals(repoRoot string) []ActivationSignal {
 		return nil
 	})
 	return signals
+}
+
+func discoverComposeSignals(repoRoot string) []ActivationSignal {
+	var signals []ActivationSignal
+	_ = filepath.WalkDir(repoRoot, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if isSignalScanIgnoredDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, relErr := filepath.Rel(repoRoot, path)
+		if relErr != nil {
+			rel = path
+		}
+		if isComposeFile(filepath.ToSlash(rel)) {
+			signals = append(signals, ActivationSignal{Kind: SignalDependency, Value: "docker-compose", Source: rel})
+		}
+		return nil
+	})
+	return signals
+}
+
+func isComposeFile(rel string) bool {
+	base := strings.ToLower(filepath.Base(rel))
+	switch base {
+	case "docker-compose.yml", "docker-compose.yaml", "compose.yaml", "compose.yml":
+		return true
+	default:
+		return strings.HasPrefix(base, "docker-compose.") && (strings.HasSuffix(base, ".yml") || strings.HasSuffix(base, ".yaml"))
+	}
 }
 
 func isSignalScanIgnoredDir(name string) bool {

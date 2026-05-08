@@ -6,6 +6,7 @@ import (
 	"github.com/mertcikla/tld/internal/watch/enrich/enrichers/apispec"
 	"github.com/mertcikla/tld/internal/watch/enrich/enrichers/auth"
 	"github.com/mertcikla/tld/internal/watch/enrich/enrichers/cloud"
+	"github.com/mertcikla/tld/internal/watch/enrich/enrichers/compose"
 	"github.com/mertcikla/tld/internal/watch/enrich/enrichers/config"
 	"github.com/mertcikla/tld/internal/watch/enrich/enrichers/dataeng"
 	"github.com/mertcikla/tld/internal/watch/enrich/enrichers/datastore"
@@ -63,6 +64,7 @@ func DefaultEnrichers() []enrich.Enricher {
 		RPCEnrichers(),
 		RuntimeEnrichers(),
 		IaCEnrichers(),
+		ComposeEnrichers(),
 		CloudEnrichers(),
 		MessagingEnrichers(),
 		StorageEnrichers(),
@@ -242,6 +244,7 @@ func RuntimeEnrichers() []enrich.Enricher {
 }
 
 func IaCEnrichers() []enrich.Enricher       { return iac.All() }
+func ComposeEnrichers() []enrich.Enricher  { return compose.All() }
 func CloudEnrichers() []enrich.Enricher     { return cloud.All() }
 func MessagingEnrichers() []enrich.Enricher { return messaging.All() }
 func StorageEnrichers() []enrich.Enricher   { return storage.All() }

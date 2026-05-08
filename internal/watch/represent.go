@@ -2245,6 +2245,19 @@ func factNodeKind(fact Fact) string {
 		return "route"
 	case "orm.query":
 		return "data-access"
+	case "runtime.component":
+		attrs := map[string]string{}
+		_ = json.Unmarshal([]byte(fact.AttributesJSON), &attrs)
+		if kind := strings.TrimSpace(attrs["kind"]); kind != "" {
+			return kind
+		}
+		return "service"
+	case "runtime.connection":
+		return "connection"
+	case "storage.volume":
+		return "volume"
+	case "runtime.endpoint":
+		return "endpoint"
 	default:
 		return "fact"
 	}
@@ -2258,6 +2271,9 @@ func factTechnology(fact Fact) string {
 	}
 	if orm := strings.TrimSpace(attrs["orm"]); orm != "" {
 		return orm
+	}
+	if technology := strings.TrimSpace(attrs["technology"]); technology != "" {
+		return technology
 	}
 	return "Runtime"
 }
@@ -2610,6 +2626,9 @@ func languageForFile(file string, symbols map[int64]Symbol) string {
 		if language != "" {
 			counts[language]++
 		}
+	}
+	if len(counts) == 0 {
+		return ""
 	}
 	best := dominantLanguage(symbols)
 	bestCount := 0

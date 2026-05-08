@@ -177,10 +177,6 @@ func (c *architectureCollector) scanYAML(absPath, rel string) {
 func (c *architectureCollector) consumeYAMLDocument(doc map[string]any, rel string) {
 	kind := stringValue(doc["kind"])
 	apiVersion := stringValue(doc["apiVersion"])
-	if isDockerComposeDocument(doc) {
-		c.consumeDockerCompose(doc, rel)
-		return
-	}
 	switch strings.ToLower(kind) {
 	case "deployment", "statefulset", "daemonset", "replicaset", "job", "cronjob", "pod":
 		c.consumeKubernetesWorkload(kind, doc, rel)
@@ -276,28 +272,6 @@ func (c *architectureCollector) consumeExternalServiceEntry(doc map[string]any, 
 		key := architectureKey("external", host)
 		c.ensureComponent(key, host, "external", "Network", rel, architectureEvidence{Kind: "external-dependency", Path: rel, Note: "service entry"})
 		c.addEndpoint(host, architectureEndpoint{ComponentKey: key, Name: host, Hosts: []string{host}, FilePath: rel})
-	}
-}
-
-func (c *architectureCollector) consumeDockerCompose(doc map[string]any, rel string) {
-	services := mapValue(doc["services"])
-	for name, raw := range services {
-		spec := mapValue(raw)
-		key := architectureKey("component", name)
-		component := c.ensureComponent(key, name, "service", "Docker Compose", rel, architectureEvidence{Kind: "deployable", Path: rel, Note: "compose service"})
-		component.Tags = appendUnique(component.Tags, "arch:deployable", "runtime:compose")
-		if image := stringValue(spec["image"]); image != "" {
-			component.Technology = firstNonEmpty(imageTechnology(image), "Container")
-		}
-		c.addEndpoint(name, architectureEndpoint{ComponentKey: key, Name: name, Hosts: []string{name}, Ports: composePorts(spec["ports"]), FilePath: rel})
-		for _, dep := range composeDependsOn(spec["depends_on"]) {
-			c.addConnector(key, architectureKey("component", dep), "depends on", "runtime-dependency", 0.70, architectureEvidence{Kind: "compose", Path: rel, Note: "depends_on"})
-		}
-		for _, ref := range endpointRefsFromEnv(composeEnv(spec["environment"])) {
-			ref.SourceKey = key
-			ref.FilePath = rel
-			c.endpointRefs = append(c.endpointRefs, ref)
-		}
 	}
 }
 
@@ -459,19 +433,6 @@ func looksLikeRuntimeYAML(data []byte) bool {
 	return bytes.Contains(lower, []byte("kind:")) || bytes.Contains(lower, []byte("services:")) || bytes.Contains(lower, []byte("openapi:"))
 }
 
-func isDockerComposeDocument(doc map[string]any) bool {
-	services := mapValue(doc["services"])
-	if len(services) == 0 {
-		return false
-	}
-	for _, raw := range services {
-		if _, ok := raw.(map[string]any); ok {
-			return true
-		}
-	}
-	return false
-}
-
 func metadataName(doc map[string]any) string {
 	return stringValue(mapValue(doc["metadata"])["name"])
 }
@@ -601,55 +562,6 @@ func normalizeEndpointHost(value string) string {
 		return ""
 	}
 	return host
-}
-
-func composePorts(raw any) []int {
-	var out []int
-	for _, item := range sliceValue(raw) {
-		switch v := item.(type) {
-		case string:
-			parts := strings.Split(v, ":")
-			if port, err := strconv.Atoi(strings.TrimSpace(parts[len(parts)-1])); err == nil {
-				out = append(out, port)
-			}
-		case int:
-			out = append(out, v)
-		case map[string]any:
-			if port := intValue(v["target"]); port > 0 {
-				out = append(out, port)
-			}
-			if port := intValue(v["published"]); port > 0 {
-				out = append(out, port)
-			}
-		}
-	}
-	return uniqueInts(out)
-}
-
-func composeDependsOn(raw any) []string {
-	if m := mapValue(raw); len(m) > 0 {
-		return sortedKeys(m)
-	}
-	var out []string
-	for _, item := range sliceValue(raw) {
-		if value := stringValue(item); value != "" {
-			out = append(out, value)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func composeEnv(raw any) []any {
-	if m := mapValue(raw); len(m) > 0 {
-		out := make([]any, 0, len(m))
-		for key, value := range m {
-			out = append(out, key+"="+stringValue(value))
-		}
-		sort.Slice(out, func(i, j int) bool { return fmt.Sprint(out[i]) < fmt.Sprint(out[j]) })
-		return out
-	}
-	return sliceValue(raw)
 }
 
 func serviceNamesFromYAML(value any) []string {

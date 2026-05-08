@@ -75,7 +75,12 @@ func architectureFromFacts(facts []Fact) architectureModel {
 			kind := firstNonEmpty(attrs["kind"], "service")
 			technology := firstNonEmpty(attrs["technology"], "Runtime")
 			key := architectureKey(kindKey(kind), name)
-			component := ensureFactComponent(model, key, name, kind, technology, fact.FilePath, factEvidence(fact, "runtime-component"))
+			filePath := fact.FilePath
+			evidencePath := filePath
+			if isComposeComponent(attrs, fact.Tags) {
+				evidencePath = "compose/service:" + name
+			}
+			component := ensureFactComponent(model, key, name, kind, technology, filePath, architectureEvidence{Kind: "runtime-component", Path: evidencePath, Note: fact.Name})
 			component.Tags = appendUnique(component.Tags, fact.Tags...)
 		case "runtime.connection":
 			source := firstNonEmpty(attrs["source"], sourceByFile[fact.FilePath])
@@ -308,4 +313,13 @@ func labelForDependency(target string) string {
 		return "observes"
 	}
 	return "uses"
+}
+
+func isComposeComponent(attrs map[string]string, tags []string) bool {
+	for _, tag := range tags {
+		if tag == "runtime:compose" {
+			return true
+		}
+	}
+	return attrs["technology"] == "Docker Compose"
 }

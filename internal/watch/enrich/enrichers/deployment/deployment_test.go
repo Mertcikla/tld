@@ -14,13 +14,19 @@ func TestDeploymentEnrichers(t *testing.T) {
 		if len(spec.PathTokens) > 0 {
 			relPath = spec.PathTokens[0] + "pipeline.yml"
 		}
+		var source []byte
+		if len(spec.SourceTokens) > 0 {
+			source = []byte(spec.SourceTokens[0])
+		} else {
+			source = []byte("jobs:\n  build:\n    runs-on: ubuntu-latest\n")
+		}
 		enrichertest.Run(t, enrichertest.Case{
 			Name:     spec.ID,
 			Enricher: byID[spec.ID],
 			Input: enrich.FileInput{
 				RelPath:  relPath,
 				Language: "yaml",
-				Source:   []byte(spec.SourceTokens[0]),
+				Source:   source,
 			},
 			Want: enrichertest.Fact{Type: spec.FactType, Tag: "category:deployment", Name: spec.Name, Attribute: "technology", AttrValue: spec.Name},
 		})

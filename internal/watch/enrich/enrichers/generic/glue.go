@@ -229,7 +229,7 @@ var detectors = []detector{
 	d("pinecone", "Pinecone", "ai", "ai.vector_index", "queries_index", "pinecone"),
 	d("milvus", "Milvus", "ai", "ai.vector_index", "queries_index", "milvus"),
 	d("qdrant", "Qdrant", "ai", "ai.vector_index", "queries_index", "qdrant"),
-	d("chroma", "Chroma", "ai", "ai.vector_index", "queries_index", "chromadb", "chroma"),
+	d("chroma", "Chroma", "ai", "ai.vector_index", "queries_index", "chromadb", "chroma_client"),
 	d("weaviate", "Weaviate", "ai", "ai.vector_index", "queries_index", "weaviate"),
 	d("huggingface", "Hugging Face", "ai", "ai.model_id", "loads_model", "huggingface_hub", "transformers"),
 	d("mlflow", "MLflow", "ai", "ai.experiment_tracker", "tracks_metrics_to", "mlflow"),
@@ -242,9 +242,9 @@ var detectors = []detector{
 	// Embedded systems and IoT messaging.
 	d("mqtt", "MQTT", "iot", "iot.mqtt_topic", "publishes_to_device", "mqtt", "paho.mqtt", "mosquitto"),
 	d("coap", "CoAP", "iot", "iot.broker", "publishes_to_device", "coap"),
-	d("i2c", "I2C", "iot", "hardware.bus_address", "communicates_via_i2c", "i2c", "smbus"),
-	d("spi", "SPI", "iot", "hardware.bus_address", "communicates_via_i2c", "spi"),
-	d("uart", "UART", "iot", "hardware.pin", "communicates_via_i2c", "uart", "serialport"),
+	d("i2c", "I2C", "iot", "hardware.bus_address", "communicates_via_i2c", "i2c_init", "i2c_open", "i2c_transfer", "i2c_read", "i2c_write", "SMBus"),
+	d("spi", "SPI", "iot", "hardware.bus_address", "communicates_via_i2c", "spi_init", "spi_open", "spi_transfer", "spi_mode", "SPIDevice", "spidev"),
+	d("uart", "UART", "iot", "hardware.pin", "communicates_via_i2c", "uart_init", "uart_open", "uart_write", "uart_read", "uart_puts", "serialport"),
 	d("can-bus", "CAN Bus", "iot", "hardware.bus_address", "communicates_via_i2c", "canbus", "socketcan"),
 
 	// Kernel, systems, and local IPC.

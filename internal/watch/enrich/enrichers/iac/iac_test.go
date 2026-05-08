@@ -10,13 +10,27 @@ import (
 func TestIaCEnrichers(t *testing.T) {
 	byID := enrichersByID()
 	for _, spec := range Specs() {
+		relPath := "deploy/service.yaml"
+		language := "yaml"
+		if len(spec.Languages) > 0 {
+			language = spec.Languages[0]
+		}
+		if len(spec.PathTokens) > 0 {
+			relPath = spec.PathTokens[0]
+		}
+		var source []byte
+		if len(spec.SourceTokens) > 0 {
+			source = []byte(spec.SourceTokens[0])
+		} else {
+			source = []byte("kind: Service\n")
+		}
 		enrichertest.Run(t, enrichertest.Case{
 			Name:     spec.ID,
 			Enricher: byID[spec.ID],
 			Input: enrich.FileInput{
-				RelPath:  "deploy/service.yaml",
-				Language: spec.Languages[0],
-				Source:   []byte(spec.SourceTokens[0]),
+				RelPath:  relPath,
+				Language: language,
+				Source:   source,
 			},
 			Want: enrichertest.Fact{Type: spec.FactType, Tag: "category:iac", Name: spec.Name, Attribute: "technology", AttrValue: spec.Name},
 		})

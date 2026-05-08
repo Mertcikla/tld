@@ -11,12 +11,11 @@ func Specs() []pattern.Spec {
 	return []pattern.Spec{
 		spec("iac.kubernetes", "Kubernetes YAML", "yaml", []string{"kind: Deployment", "apiVersion: apps/v1", "kind: StatefulSet", "kind: DaemonSet"}, nil, "runtime.service", "deploys"),
 		spec("iac.helm", "Helm values", "yaml", []string{"helm.sh/chart", "{{ .Values", "{{ .Release"}, []string{"chart.yaml", "values.yaml"}, "runtime.service", "deploys"),
-		spec("iac.docker_compose", "Docker Compose", "yaml", []string{"version:", "docker-compose"}, []string{"docker-compose", "compose.yaml"}, "runtime.service", "deploys"),
 		spec("iac.terraform", "Terraform", "terraform", []string{"resource \"", "module \""}, []string{".tf"}, "cloud.resource", "provisions"),
 		spec("iac.pulumi", "Pulumi", "typescript", []string{"new aws.", "pulumi."}, []string{"pulumi.yaml", "pulumi.yml"}, "cloud.resource", "provisions"),
-		spec("iac.serverless", "Serverless Framework", "yaml", []string{"service:", "provider:", "functions:"}, []string{"serverless.yml", "serverless.yaml"}, "runtime.service", "deploys"),
+		spec("iac.serverless", "Serverless Framework", "yaml", nil, []string{"serverless.yml", "serverless.yaml"}, "runtime.service", "deploys"),
 		spec("iac.aws_cdk", "AWS CDK", "typescript", []string{"aws-cdk-lib", "new cdk.Stack"}, []string{"cdk.json"}, "cloud.resource", "provisions"),
-		spec("iac.github_actions_deploy", "GitHub Actions deployment configs", "yaml", []string{"jobs:", "runs-on:"}, []string{".github/workflows/"}, "deployment.workflow", "deploys"),
+		spec("iac.github_actions_deploy", "GitHub Actions deployment configs", "yaml", nil, []string{".github/workflows/"}, "deployment.workflow", "deploys"),
 	}
 }
 
