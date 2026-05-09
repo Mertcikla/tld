@@ -1189,7 +1189,7 @@ func (m *materializer) materializeRepositorySections(ctx context.Context, repoVi
 		Name:        "Architecture",
 		Kind:        "view",
 		Description: "Generated architecture view",
-		Technology:  technologyLabel(repoLanguage),
+		Technology:  "Architecture",
 		Repo:        repoIdentity(m.repo),
 		Branch:      nullStringValue(m.repo.Branch),
 		Language:    repoLanguage,
@@ -1210,7 +1210,7 @@ func (m *materializer) materializeRepositorySections(ctx context.Context, repoVi
 		Name:        "Structural",
 		Kind:        "view",
 		Description: "Generated structural code view",
-		Technology:  technologyLabel(repoLanguage),
+		Technology:  "Structural",
 		Repo:        repoIdentity(m.repo),
 		Branch:      nullStringValue(m.repo.Branch),
 		Language:    repoLanguage,
@@ -1337,7 +1337,7 @@ func (m *materializer) upsertElement(ctx context.Context, ownerType, ownerKey st
 			return state.ResourceID, m.saveMapping(ctx, ownerType, ownerKey, "element", state.ResourceID)
 		}
 		tags, _ := json.Marshal(input.Tags)
-		techLinks, _ := json.Marshal(technologyLinksForLanguage(input.Language))
+		techLinks, _ := json.Marshal(technologyLinksForElement(input.Technology, input.Language))
 		_, err = m.store.db.ExecContext(ctx, `
 			UPDATE elements
 			SET name = ?, kind = ?, description = ?, technology = ?, technology_connectors = ?, tags = ?, repo = ?, branch = ?, file_path = ?, language = ?, updated_at = ?
@@ -1355,7 +1355,7 @@ func (m *materializer) upsertElement(ctx context.Context, ownerType, ownerKey st
 	}
 	now := nowString()
 	tags, _ := json.Marshal(input.Tags)
-	techLinks, _ := json.Marshal(technologyLinksForLanguage(input.Language))
+	techLinks, _ := json.Marshal(technologyLinksForElement(input.Technology, input.Language))
 	res, err := m.store.db.ExecContext(ctx, `
 		INSERT INTO elements(name, kind, description, technology, technology_connectors, tags, repo, branch, file_path, language, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1661,6 +1661,7 @@ func applyDirectedWatchLevels(nodes []*layout.Node, connectors []watchLayoutConn
 	for _, n := range nodes {
 		nodesByLevel[level[n.ID]] = append(nodesByLevel[level[n.ID]], n)
 	}
+	nextCol := 0
 	for _, col := range sortedLayoutNodeLevels(nodesByLevel) {
 		group := nodesByLevel[col]
 		sort.Slice(group, func(i, j int) bool {
@@ -1670,14 +1671,10 @@ func applyDirectedWatchLevels(nodes []*layout.Node, connectors []watchLayoutConn
 			return group[i].Y < group[j].Y
 		})
 		for row, n := range group {
-			n.X = float64(col) * watchLayoutGapX
-			if row > 0 {
-				minY := group[row-1].Y + watchLayoutGapY
-				if n.Y < minY {
-					n.Y = minY
-				}
-			}
+			n.X = float64(nextCol+row/watchLayoutMaxRowsPerColumn) * watchLayoutGapX
+			n.Y = float64(row%watchLayoutMaxRowsPerColumn) * watchLayoutGapY
 		}
+		nextCol += max(1, (len(group)+watchLayoutMaxRowsPerColumn-1)/watchLayoutMaxRowsPerColumn)
 	}
 }
 
@@ -2615,6 +2612,32 @@ func technologyLinksForLanguage(language string) []materializedTechnologyLink {
 		Label:         label,
 		IsPrimaryIcon: true,
 	}}
+}
+
+func technologyLinksForElement(technology, language string) []materializedTechnologyLink {
+	if slug := technologyCatalogSlugForLabel(technology); slug != "" {
+		label := strings.TrimSpace(technology)
+		return []materializedTechnologyLink{{
+			Type:          "catalog",
+			Slug:          slug,
+			Label:         label,
+			IsPrimaryIcon: true,
+		}}
+	}
+	return technologyLinksForLanguage(language)
+}
+
+func technologyCatalogSlugForLabel(label string) string {
+	switch strings.ToLower(strings.TrimSpace(label)) {
+	case "architecture":
+		return "architecture"
+	case "structural":
+		return "structural"
+	case "container":
+		return "docker"
+	default:
+		return ""
+	}
 }
 
 func technologyCatalogSlug(language string) string {

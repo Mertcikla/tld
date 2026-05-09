@@ -52,7 +52,7 @@ func initializeCatalog() {
 	manualAliases := []string{
 		"go", "postgres", "node", "ts", "js", "tailwind", "tailwindcss",
 		"next.js", "k8s", "dockerfile", "python3", "cpp", "c#", "dotnet",
-		"aws", "gcp", "azure",
+		"aws", "gcp", "azure", "container",
 	}
 
 	for _, alias := range manualAliases {

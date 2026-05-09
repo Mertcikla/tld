@@ -955,6 +955,29 @@ func Main() {}
 		t.Fatalf("technology links for main.go = %+v, want %+v", links, want)
 	}
 
+	for _, tt := range []struct {
+		name string
+		slug string
+	}{
+		{name: "Architecture", slug: "architecture"},
+		{name: "Structural", slug: "structural"},
+	} {
+		t.Run(tt.name+" section icon", func(t *testing.T) {
+			var technology, raw string
+			if err := db.QueryRow(`SELECT technology, technology_connectors FROM elements WHERE name = ? AND kind = 'view'`, tt.name).Scan(&technology, &raw); err != nil {
+				t.Fatal(err)
+			}
+			var sectionLinks []materializedTechnologyLink
+			if err := json.Unmarshal([]byte(raw), &sectionLinks); err != nil {
+				t.Fatal(err)
+			}
+			want := materializedTechnologyLink{Type: "catalog", Slug: tt.slug, Label: tt.name, IsPrimaryIcon: true}
+			if technology != tt.name || len(sectionLinks) != 1 || sectionLinks[0] != want {
+				t.Fatalf("%s section technology=%q links=%+v, want technology=%q links=%+v", tt.name, technology, sectionLinks, tt.name, want)
+			}
+		})
+	}
+
 	var fileElementID int64
 	if err := db.QueryRow(`SELECT id FROM elements WHERE name = 'main.go'`).Scan(&fileElementID); err != nil {
 		t.Fatal(err)
@@ -1012,6 +1035,69 @@ func TestTechnologyLinksForLanguage(t *testing.T) {
 			got := technologyLinksForLanguage(tt.language)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("technologyLinksForLanguage(%q) = %+v, want %+v", tt.language, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTechnologyLinksForElementUsesSectionCatalogIcon(t *testing.T) {
+	tests := []struct {
+		name       string
+		technology string
+		language   string
+		want       []materializedTechnologyLink
+	}{
+		{
+			name:       "architecture",
+			technology: "Architecture",
+			language:   "go",
+			want: []materializedTechnologyLink{{
+				Type:          "catalog",
+				Slug:          "architecture",
+				Label:         "Architecture",
+				IsPrimaryIcon: true,
+			}},
+		},
+		{
+			name:       "structural",
+			technology: "Structural",
+			language:   "go",
+			want: []materializedTechnologyLink{{
+				Type:          "catalog",
+				Slug:          "structural",
+				Label:         "Structural",
+				IsPrimaryIcon: true,
+			}},
+		},
+		{
+			name:       "container maps to docker",
+			technology: "Container",
+			language:   "go",
+			want: []materializedTechnologyLink{{
+				Type:          "catalog",
+				Slug:          "docker",
+				Label:         "Container",
+				IsPrimaryIcon: true,
+			}},
+		},
+		{
+			name:       "falls back to language",
+			technology: "Go",
+			language:   "go",
+			want: []materializedTechnologyLink{{
+				Type:          "catalog",
+				Slug:          "golang",
+				Label:         "Go",
+				IsPrimaryIcon: true,
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := technologyLinksForElement(tt.technology, tt.language)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("technologyLinksForElement(%q, %q) = %+v, want %+v", tt.technology, tt.language, got, tt.want)
 			}
 		})
 	}
@@ -2594,6 +2680,28 @@ func C() {}
 	}
 	if b.x == c.x && b.y == c.y {
 		t.Fatalf("initial layout overlapped connected callees: B=%+v C=%+v", b, c)
+	}
+}
+
+func TestOrganicWatchLayoutCapsRowsPerColumnWithinDirectedLevels(t *testing.T) {
+	targets := map[int64]struct{}{}
+	for id := int64(1); id <= int64(watchLayoutMaxRowsPerColumn+5); id++ {
+		targets[id] = struct{}{}
+	}
+	positions := organicWatchLayout(targets, []watchLayoutConnector{{Source: 1, Target: int64(watchLayoutMaxRowsPerColumn + 5)}})
+
+	rowsByColumn := map[int]int{}
+	for _, position := range positions {
+		column := int(position.X / watchLayoutGapX)
+		rowsByColumn[column]++
+	}
+	for column, rows := range rowsByColumn {
+		if rows > watchLayoutMaxRowsPerColumn {
+			t.Fatalf("column %d has %d rows, want at most %d: %+v", column, rows, watchLayoutMaxRowsPerColumn, positions)
+		}
+	}
+	if positions[int64(watchLayoutMaxRowsPerColumn+5)].X <= positions[1].X {
+		t.Fatalf("directed target should remain to the right of source: source=%+v target=%+v", positions[1], positions[int64(watchLayoutMaxRowsPerColumn+5)])
 	}
 }
 

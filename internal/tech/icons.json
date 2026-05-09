@@ -14308,5 +14308,15 @@
     "name": "Project",
     "nameShort": "Project",
     "defaultSlug": "gcp-project"
+  },
+  {
+    "name": "Architecture",
+    "nameShort": "Architecture",
+    "defaultSlug": "architecture"
+  },
+  {
+    "name": "Structural",
+    "nameShort": "Structural",
+    "defaultSlug": "structural"
   }
 ]
