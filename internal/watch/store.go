@@ -2490,9 +2490,9 @@ func (s *Store) BuildWatchDiffs(ctx context.Context, repositoryID int64, represe
 	change := "initialized"
 	if found {
 		change = "updated"
-		repoSummary = "Representation updated"
+		repoSummary = "workspace updated"
 	} else if len(worktreeChanges) > 0 {
-		repoSummary = "Representation initialized from dirty worktree"
+		repoSummary = "Workspace initialized from dirty worktree"
 	}
 	diffs = append(diffs, RepresentationDiff{OwnerType: "repository", OwnerKey: repoKey, ChangeType: change, BeforeHash: stringPtrIf(found, latest.RepresentationHash), AfterHash: &representationHash, Summary: &repoSummary})
 	for key, next := range current {

@@ -49,11 +49,12 @@ func NewValidateCmd(wdir *string) *cobra.Command {
 			}
 			term.Success(cmd.OutOrStdout(), "Symbol verification passed")
 
-			if len(ws.Elements) > 0 || len(ws.Connectors) > 0 {
-				diagramCount := cmdutil.CountElementDiagrams(ws)
-				term.Successf(cmd.OutOrStdout(), "Workspace valid: %d elements, %d diagrams, %d connectors",
-					len(ws.Elements), diagramCount, len(ws.Connectors))
-			}
+		if len(ws.Elements) > 0 || len(ws.Connectors) > 0 {
+			diagramCount := cmdutil.CountElementDiagrams(ws)
+			term.Successf(cmd.OutOrStdout(), "Workspace valid: %d elements, %d diagrams, %d connectors",
+				len(ws.Elements), diagramCount, len(ws.Connectors))
+			term.Hint(cmd.OutOrStdout(), "Run 'tld plan' to see what would be applied.")
+		}
 
 			// Evaluate Architectural warnings
 			warnings := planner.AnalyzePlan(ws)

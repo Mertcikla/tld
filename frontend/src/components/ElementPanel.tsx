@@ -1060,13 +1060,13 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
               </Box>
             )}
 
-            
+
 
             {isEdit && canEdit && onMerge && (
               <Box borderTop="1px solid" borderColor="whiteAlpha.100" pt={2}>
                 <Button variant="subtle" size="sm" color="teal.200" _hover={{ bg: 'teal.900', color: 'teal.100' }}
                   onClick={() => onMerge(element.id)} w="full">
-                  Merge | Into...
+                  Merge
                 </Button>
               </Box>
             )}

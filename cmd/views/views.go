@@ -8,6 +8,7 @@ import (
 	"github.com/mertcikla/tld/internal/cmdutil"
 
 	"github.com/mertcikla/tld/internal/planner"
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -166,7 +167,8 @@ func summarizeViews(ws *workspace.Workspace) []viewSummaryRow {
 func renderViewsTable(w io.Writer, rows []viewSummaryRow) {
 	ownedViews, maxDepth := summarizeViewMetrics(rows)
 	_, _ = fmt.Fprintf(w, "Views: %d total (%d owned + root)\n", len(rows), ownedViews)
-	_, _ = fmt.Fprintf(w, "Max depth: %d\n\n", maxDepth)
+	_, _ = fmt.Fprintf(w, "Max depth: %d\n", maxDepth)
+	term.Separator(w)
 	_, _ = fmt.Fprintln(w, "| View | Owner | Depth | Elements | Child Views | Connectors | Path |")
 	_, _ = fmt.Fprintln(w, "|------|-------|-------|----------|-------------|------------|------|")
 	for _, row := range rows {

@@ -8,6 +8,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/mertcikla/tld/internal/client"
 	"github.com/mertcikla/tld/internal/cmdutil"
+	"github.com/mertcikla/tld/internal/term"
 	"github.com/mertcikla/tld/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -70,8 +71,8 @@ func NewExportCmd(wdir *string) *cobra.Command {
 				return fmt.Errorf("write lock file: %w", err)
 			}
 
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Exported %d elements, %d diagrams, %d connectors to %s\n",
-				len(newWS.Elements), cmdutil.CountElementDiagrams(newWS), len(newWS.Connectors), *wdir)
+		term.Successf(cmd.OutOrStdout(), "Exported %d elements, %d diagrams, %d connectors to %s",
+			len(newWS.Elements), cmdutil.CountElementDiagrams(newWS), len(newWS.Connectors), *wdir)
 
 			return nil
 		},

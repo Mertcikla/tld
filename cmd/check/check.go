@@ -29,9 +29,9 @@ func NewCheckCmd(wdir *string) *cobra.Command {
 			errs := ws.Validate()
 			if len(errs) > 0 {
 				allPassed = false
-				term.Fail(cmd.ErrOrStderr(), "Validation")
+				term.Fail(cmd.OutOrStdout(), "Validation")
 				for _, e := range errs {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "      - %s\n", e)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "      - %s\n", e)
 				}
 			} else {
 				term.Success(cmd.OutOrStdout(), "Validation")
@@ -41,9 +41,9 @@ func NewCheckCmd(wdir *string) *cobra.Command {
 			broken := cmdutil.CheckSymbols(cmd.Context(), ws, repoCtx, rules)
 			if len(broken) > 0 {
 				allPassed = false
-				term.Fail(cmd.ErrOrStderr(), "Symbol Verification")
+				term.Fail(cmd.OutOrStdout(), "Symbol Verification")
 				for _, msg := range broken {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "      - %s\n", msg)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "      - %s\n", msg)
 				}
 			} else {
 				term.Success(cmd.OutOrStdout(), "Symbol Verification")
@@ -56,15 +56,15 @@ func NewCheckCmd(wdir *string) *cobra.Command {
 					allPassed = false
 				}
 				if strict {
-					term.Fail(cmd.ErrOrStderr(), "Outdated Diagrams")
+					term.Fail(cmd.OutOrStdout(), "Outdated Diagrams")
 				} else {
-					term.Warn(cmd.ErrOrStderr(), "Outdated Diagrams")
+					term.Warn(cmd.OutOrStdout(), "Outdated Diagrams")
 				}
 				for _, msg := range outdated {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "      - %s\n", msg)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "      - %s\n", msg)
 				}
 				if strict {
-					term.Hint(cmd.ErrOrStderr(), "use `tld apply` to sync diagram metadata")
+					term.Hint(cmd.OutOrStdout(), "use `tld apply` to sync diagram metadata")
 				}
 			} else {
 				term.Success(cmd.OutOrStdout(), "Outdated Diagrams")

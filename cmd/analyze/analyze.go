@@ -11,6 +11,7 @@ import (
 	"time"
 
 	assets "github.com/mertcikla/tld"
+	"github.com/mertcikla/tld/cmd/version"
 	"github.com/mertcikla/tld/internal/localserver"
 	"github.com/mertcikla/tld/internal/store"
 	"github.com/mertcikla/tld/internal/term"
@@ -77,12 +78,17 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 			defer func() { _ = sqliteStore.DB().Close() }()
 			watchStore := watchpkg.NewStore(sqliteStore.DB())
 			progress := newAnalyzeWatchProgress(cmd.ErrOrStderr())
-			linePrefix := ""
-			if dryRun {
-				linePrefix = "[dry-run] "
-			}
 			if formatFlag(cmd) != "json" {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%sAnalyzing %s (watch pipeline)...\n", linePrefix, scanPath)
+				term.PrintLogo(cmd.OutOrStdout(), version.Version)
+				term.Label(cmd.OutOrStdout(), 20, "Path", scanPath)
+				term.Label(cmd.OutOrStdout(), 20, "Data directory", dataDir)
+				if embeddingCfg.Provider != "none" {
+					term.Label(cmd.OutOrStdout(), 20, "Embedding provider", embeddingCfg.Provider)
+					term.Label(cmd.OutOrStdout(), 20, "Embedding model", embeddingCfg.Model)
+				}
+				if dryRun {
+					term.Label(cmd.OutOrStdout(), 20, "Mode", "dry-run")
+				}
 			}
 			once, err := watchpkg.NewRunner(watchStore).RunOnce(cmd.Context(), watchpkg.OneShotOptions{Path: absPath, Rescan: rescan, Embedding: embeddingCfg, Settings: settings, DataDir: dataDir, Progress: progress})
 			if err != nil {
@@ -99,14 +105,15 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 					return err
 				}
 			} else {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s  OK  %d elements written to elements.yaml\n", linePrefix, exportResult.ElementsWritten)
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s  OK  %d connectors written to connectors.yaml\n", linePrefix, exportResult.ConnectorsWritten)
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s  OK  1 repository scanned\n", linePrefix)
-				_, _ = fmt.Fprintln(cmd.OutOrStdout())
+				term.Separator(cmd.OutOrStdout())
+				term.Successf(cmd.OutOrStdout(), "%d elements written to elements.yaml", exportResult.ElementsWritten)
+				term.Successf(cmd.OutOrStdout(), "%d connectors written to connectors.yaml", exportResult.ConnectorsWritten)
+				term.Successf(cmd.OutOrStdout(), "1 repository scanned")
+				term.Separator(cmd.OutOrStdout())
 			}
 			if dryRun {
 				if formatFlag(cmd) != "json" {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%sNo files written. Remove --dry-run to apply.\n", linePrefix)
+					term.Hint(cmd.OutOrStdout(), "No files written. Remove --dry-run to apply.")
 				}
 			} else if err := workspace.Save(exported); err != nil {
 				return fmt.Errorf("save workspace: %w", err)

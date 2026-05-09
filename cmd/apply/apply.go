@@ -78,10 +78,10 @@ func NewApplyCmd(wdir *string) *cobra.Command {
 				}
 			}
 			total := len(req.Elements) + diagramCount + len(req.Connectors)
-			if !cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Plan: %d elements, %d diagrams, %d connectors (%d total resources)\n",
-					len(req.Elements), diagramCount, len(req.Connectors), total)
-			}
+		if !cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
+			term.Label(cmd.OutOrStdout(), 20, "Plan", fmt.Sprintf("%d elements, %d diagrams, %d connectors (%d total resources)",
+				len(req.Elements), diagramCount, len(req.Connectors), total))
+		}
 
 			// Check for version conflicts if lock file exists
 			scanner := bufio.NewScanner(cmd.InOrStdin())

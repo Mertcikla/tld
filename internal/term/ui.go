@@ -103,6 +103,20 @@ func Hint(w io.Writer, hint string) {
 	_, _ = fmt.Fprintf(w, "  %s\n", Dim(w, hint))
 }
 
+// PrintLogo prints the tld ASCII logo and version line.
+func PrintLogo(w io.Writer, version string) {
+	logo := `
+   ░██    ░██ ░███████
+   ░██    ░██ ░██   ░██
+░████████ ░██ ░██    ░██
+   ░██    ░██ ░██    ░██
+   ░██    ░██ ░██   ░██
+    ░████ ░██ ░███████
+`
+	_, _ = fmt.Fprintln(w, logo)
+	Label(w, 20, "Version", version)
+}
+
 // Separator prints a blank line.
 func Separator(w io.Writer) {
 	_, _ = fmt.Fprintln(w)

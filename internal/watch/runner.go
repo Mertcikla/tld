@@ -202,10 +202,9 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			}
 			nextGit, _ := gitStatusSnapshot(repoRoot)
 			nextGitFingerprint := gitStatusFingerprint(nextGit)
-			nextSourceSnapshot := map[string]string{}
 			nextFingerprint := ""
 			if !limitedMode {
-				nextSourceSnapshot = sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
+				nextSourceSnapshot := sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
 				nextFingerprint = sourceFileFingerprint(nextSourceSnapshot)
 				if nextFingerprint == lastFingerprint && nextGit.HeadCommit == lastHead && nextGitFingerprint == lastGitFingerprint {
 					continue

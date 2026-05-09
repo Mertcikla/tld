@@ -14,6 +14,7 @@ import (
 	"time"
 
 	assets "github.com/mertcikla/tld"
+	"github.com/mertcikla/tld/cmd/version"
 	"github.com/mertcikla/tld/internal/cmdutil"
 	"github.com/mertcikla/tld/internal/localserver"
 	"github.com/mertcikla/tld/internal/store"
@@ -72,16 +73,22 @@ func NewWatchCmd() *cobra.Command {
 			}
 			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
 			watchSettings := resolveWatchSettings(cfg, languageFlags, watcherMode, pollInterval, debounce, maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup)
-			term.Infof(cmd.OutOrStdout(), "watch booting: data=%s embeddings=%s/%s", term.Path(cmd.OutOrStdout(), dataDir), embeddingCfg.Provider, embeddingCfg.Model)
+			term.PrintLogo(cmd.OutOrStdout(), version.Version)
+			term.Label(cmd.OutOrStdout(), 20, "Mode", "watch")
+			term.Label(cmd.OutOrStdout(), 20, "Data directory", term.Path(cmd.OutOrStdout(), dataDir))
+			hasEmbedding := embeddingCfg.Provider != "" && embeddingCfg.Provider != "none" && embeddingCfg.Provider != "local-lexical"
+			if hasEmbedding {
+				term.Label(cmd.OutOrStdout(), 20, "Embedding provider", embeddingCfg.Provider)
+				term.Label(cmd.OutOrStdout(), 20, "Embedding model", embeddingCfg.Model)
+			}
 			progress := newCLIProgress(cmd.ErrOrStderr())
-			if embeddingCfg.Provider != "none" {
-				term.Infof(cmd.OutOrStdout(), "embedding healthcheck: %s %s", embeddingCfg.Endpoint, embeddingCfg.Model)
+			if hasEmbedding {
 				checked, health, err := watch.CheckEmbeddingHealth(cmd.Context(), embeddingCfg)
 				if err != nil {
 					return fmt.Errorf("embedding healthcheck failed: %w", err)
 				}
 				embeddingCfg = checked
-				term.Successf(cmd.OutOrStdout(), "embedding healthcheck ok: dimension=%d similarity=%.3f", health.Dimension, health.Similarity)
+				term.Label(cmd.OutOrStdout(), 20, "Embedding health", fmt.Sprintf("dimension=%d similarity=%.3f", health.Dimension, health.Similarity))
 			}
 			serveCfg := workspace.ResolveServeOptions(cfg, host, port)
 			serveOpts := localserver.ServeOptions{Host: serveCfg.Host, Port: serveCfg.Port}
@@ -90,7 +97,6 @@ func NewWatchCmd() *cobra.Command {
 			var srv *http.Server
 			if !noServe {
 				if !serverReady(url) {
-					term.Infof(cmd.OutOrStdout(), "server booting: %s", url)
 					app, err := localserver.Bootstrap(dataDir, serveOpts)
 					if err != nil {
 						return err
@@ -103,7 +109,6 @@ func NewWatchCmd() *cobra.Command {
 					}()
 					url = "http://" + app.Addr
 				}
-				term.Successf(cmd.OutOrStdout(), "server ready: %s", term.URL(cmd.OutOrStdout(), url))
 				if openBrowser {
 					_ = cmdutil.OpenBrowser(url)
 				}
@@ -161,12 +166,12 @@ func NewWatchCmd() *cobra.Command {
 				return nil
 			}
 			repo := result.Repository
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\r\033[K\n")
 			term.Separator(cmd.OutOrStdout())
 			term.Label(cmd.OutOrStdout(), 20, "Watching", repo.RepoRoot)
 			term.Label(cmd.OutOrStdout(), 20, "Repository", repoIdentity(repo))
 			term.Label(cmd.OutOrStdout(), 20, "Branch", result.GitStatus.Branch)
 			term.Label(cmd.OutOrStdout(), 20, "HEAD", result.GitStatus.HeadCommit)
-			term.Label(cmd.OutOrStdout(), 20, "Mode", "watch")
 			term.Label(cmd.OutOrStdout(), 20, "tlDiagram available at", term.URL(cmd.OutOrStdout(), url))
 			term.Separator(cmd.OutOrStdout())
 			term.Hint(cmd.OutOrStdout(), "Press Ctrl-C to stop watching.")
@@ -208,33 +213,28 @@ func logWatchEvent(cmd *cobra.Command, event watch.Event, activity *watchActivit
 	out := cmd.OutOrStdout()
 	switch event.Type {
 	case "watch.started":
-		if activity != nil {
-			activity.Start("watching for changes")
-		}
-		_, _ = fmt.Fprintf(out, "%s started\n", term.Colorize(out, term.ColorGreen, "watch"))
 		return true
 	case "watch.stopped":
 		if activity != nil {
 			activity.Stop()
 		}
-		_, _ = fmt.Fprintf(out, "%s stopped\n", term.Colorize(out, term.ColorYellow, "watch"))
+		_, _ = fmt.Fprintf(out, "watch stopped\n")
 		return true
 	case "scan.started":
-		_, _ = fmt.Fprintf(out, "%s scanning source graph\n", term.Colorize(out, term.ColorBlue, "watch"))
+		_, _ = fmt.Fprintf(out, "\r\033[Kscanning source graph")
 		return true
 	case "scan.completed":
 		if scan, ok := event.Data.(watch.ScanResult); ok {
-			_, _ = fmt.Fprintf(out, "%s scan complete: %d files, %d parsed, %d skipped\n", term.Colorize(out, term.ColorGreen, "watch"), scan.FilesSeen, scan.FilesParsed, scan.FilesSkipped)
+			_, _ = fmt.Fprintf(out, "\r\033[Kscan complete: %d files, %d parsed, %d skipped", scan.FilesSeen, scan.FilesParsed, scan.FilesSkipped)
 			return true
 		}
 		return false
 	case "representation.started":
-		_, _ = fmt.Fprintf(out, "%s materializing representation\n", term.Colorize(out, term.ColorBlue, "watch"))
+		_, _ = fmt.Fprintf(out, "\r\033[Kmaterializing representation")
 		return true
 	case "representation.updated":
 		if rep, ok := event.Data.(watch.RepresentResult); ok {
-			_, _ = fmt.Fprintf(out, "%s representation updated: elements +%d/%d, connectors +%d/%d, embeddings +%d/%d cached\n",
-				term.Colorize(out, term.ColorGreen, "watch"),
+			_, _ = fmt.Fprintf(out, "\r\033[Krepresentation updated: elements +%d/%d, connectors +%d/%d, embeddings +%d/%d cached",
 				rep.ElementsCreated, rep.ElementsUpdated,
 				rep.ConnectorsCreated, rep.ConnectorsUpdated,
 				rep.EmbeddingsCreated, rep.EmbeddingCacheHits)
@@ -275,14 +275,12 @@ func logWatchEvent(cmd *cobra.Command, event watch.Event, activity *watchActivit
 			return true
 		}
 		if counter.IntervalChangesProcessed > 0 {
-			_, _ = fmt.Fprintf(out, "%s changes processed: %d total, %d in the last minute\n",
-				term.Colorize(out, term.ColorBlue, "watch"),
+			_, _ = fmt.Fprintf(out, "changes processed: %d total, %d in the last minute\n",
 				counter.TotalChangesProcessed,
 				counter.IntervalChangesProcessed,
 			)
 		} else {
-			_, _ = fmt.Fprintf(out, "%s changes processed: %d total\n",
-				term.Colorize(out, term.ColorBlue, "watch"),
+			_, _ = fmt.Fprintf(out, "changes processed: %d total\n",
 				counter.TotalChangesProcessed,
 			)
 		}
@@ -295,7 +293,7 @@ func logWatchEvent(cmd *cobra.Command, event watch.Event, activity *watchActivit
 		_, _ = fmt.Fprintf(out, "%s %s\n", term.Colorize(out, term.ColorRed, "watch.error:"), message)
 		return true
 	case "version.created":
-		_, _ = fmt.Fprintf(out, "%s version created\n", term.Colorize(out, term.ColorGreen, "watch"))
+		_, _ = fmt.Fprintf(out, "version created\n")
 		return true
 	default:
 		return false
