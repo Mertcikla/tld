@@ -658,24 +658,6 @@ func architectureSlug(value string) string {
 	return out
 }
 
-func architectureEvidenceDescription(evidence []architectureEvidence, confidence float64) string {
-	var parts []string
-	if confidence > 0 {
-		parts = append(parts, fmt.Sprintf("confidence %.2f", confidence))
-	}
-	for _, ev := range evidence {
-		note := ev.Kind
-		if ev.Note != "" {
-			note += ": " + ev.Note
-		}
-		if ev.Path != "" {
-			note += " (" + ev.Path + ")"
-		}
-		parts = append(parts, note)
-	}
-	return strings.Join(uniqueStrings(parts), "; ")
-}
-
 func mapValue(raw any) map[string]any {
 	if value, ok := raw.(map[string]any); ok {
 		return value

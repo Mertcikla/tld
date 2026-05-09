@@ -223,7 +223,7 @@ func Main() {}
 	}
 }
 
-func TestScanAndRepresentSurfaceEnricherFactsAsTags(t *testing.T) {
+func TestScanAndRepresentMaterializesEnricherFactsWithoutNoisyTags(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
 	repo := initGitRepoNoCommit(t)
@@ -288,15 +288,15 @@ export async function Users() {
 		t.Fatal(err)
 	}
 	for _, tag := range []string{"http:route", "framework:chi", "frontend:route", "framework:nextjs", "orm:prisma"} {
-		if count := countElementTag(t, db, tag); count == 0 {
-			t.Fatalf("expected representation to surface tag %q", tag)
+		if count := countElementTag(t, db, tag); count != 0 {
+			t.Fatalf("expected representation to omit noisy generated tag %q, found on %d elements", tag, count)
 		}
 	}
 	if routes := elementKindCount(t, db, "route"); routes == 0 {
 		t.Fatal("expected high-signal route facts to materialize as generated route nodes")
 	}
-	if deps := countElementTag(t, db, "dependency:import"); deps == 0 {
-		t.Fatal("expected dependency/import facts to surface as tags")
+	if deps := countElementTag(t, db, "dependency:import"); deps != 0 {
+		t.Fatalf("expected dependency/import facts not to surface as tags, found on %d elements", deps)
 	}
 	if deps := elementKindCount(t, db, "dependency"); deps != 0 {
 		t.Fatalf("dependency/import facts should not materialize as one dependency node per import, found %d dependency nodes", deps)
@@ -2756,15 +2756,27 @@ func ExecuteCLI() {}
 		}
 	}
 	for _, tag := range []string{"role:watch", "area:internal", "kind:function", "graph:entrypoint"} {
-		if count := countElementTag(t, db, tag); count < 2 {
-			t.Fatalf("expected useful tag %q on multiple elements, found %d", tag, count)
+		count := countElementTag(t, db, tag)
+		if strings.HasPrefix(tag, "role:") {
+			if count < 2 {
+				t.Fatalf("expected useful role tag %q on multiple elements, found %d", tag, count)
+			}
+			continue
+		}
+		if count != 0 {
+			t.Fatalf("expected non-role generated tag %q to be omitted, found on %d elements", tag, count)
 		}
 	}
 
 	tags := elementTagsByName(t, db, "ScanRepository")
-	for _, tag := range []string{"role:watch", "area:internal", "kind:function", "graph:entrypoint"} {
+	for _, tag := range []string{"role:watch"} {
 		if !stringSliceContains(tags, tag) {
 			t.Fatalf("expected ScanRepository to include %q, got %v", tag, tags)
+		}
+	}
+	for _, tag := range []string{"area:internal", "kind:function", "graph:entrypoint"} {
+		if stringSliceContains(tags, tag) {
+			t.Fatalf("expected ScanRepository to omit non-role generated tag %q, got %v", tag, tags)
 		}
 	}
 }
@@ -2846,8 +2858,8 @@ func Serve() {}
 
 	for _, name := range []string{"frontend", "app.go", "Render"} {
 		tags := elementTagsByName(t, db, name)
-		if !stringSliceContains(tags, "owner:@org/web-team") {
-			t.Fatalf("expected %s to include CODEOWNERS tag, got %v", name, tags)
+		if stringSliceContains(tags, "owner:@org/web-team") {
+			t.Fatalf("expected %s to omit non-role CODEOWNERS tag, got %v", name, tags)
 		}
 		if stringSliceContains(tags, "owner:@org/web-team:random(2)") {
 			t.Fatalf("expected %s extended assignment suffix to be stripped, got %v", name, tags)
@@ -2855,12 +2867,12 @@ func Serve() {}
 	}
 	backendTags := elementTagsByName(t, db, "Serve")
 	for _, tag := range []string{"owner:@backend", "owner:@org/backend"} {
-		if !stringSliceContains(backendTags, tag) {
-			t.Fatalf("expected backend symbol to include %q, got %v", tag, backendTags)
+		if stringSliceContains(backendTags, tag) {
+			t.Fatalf("expected backend symbol to omit non-role CODEOWNERS tag %q, got %v", tag, backendTags)
 		}
 	}
-	if count := countElementTag(t, db, "owner:@org/web-team"); count < 3 {
-		t.Fatalf("expected rare CODEOWNERS tag to bypass semantic coverage filtering, found on %d elements", count)
+	if count := countElementTag(t, db, "owner:@org/web-team"); count != 0 {
+		t.Fatalf("expected non-role CODEOWNERS tag to be omitted, found on %d elements", count)
 	}
 }
 

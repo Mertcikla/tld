@@ -97,7 +97,7 @@ func ExportWithProgress(ctx context.Context, sqliteStore *store.SQLiteStore, wat
 			Branch:      elem.GetBranch(),
 			Language:    elem.GetLanguage(),
 			FilePath:    elem.GetFilePath(),
-			Tags:        cloneStrings(elem.GetTags()),
+			Tags:        exportedAnalyzeTags(elem.GetTags()),
 			HasView:     false,
 			ViewLabel:   strings.TrimSpace(elem.GetViewLabel()),
 		}
@@ -349,6 +349,19 @@ func cloneStrings(values []string) []string {
 		return nil
 	}
 	return append([]string(nil), values...)
+}
+
+func exportedAnalyzeTags(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.HasPrefix(strings.TrimSpace(value), "role:") {
+			out = append(out, value)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func elementsByID(items []*diagv1.Element) map[int32]*diagv1.Element {

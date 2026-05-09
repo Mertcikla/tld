@@ -573,7 +573,7 @@ func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thr
 	candidates := map[string][]string{}
 	add := func(ownerType, ownerKey string, tags ...string) {
 		key := semanticTagOwnerKey(ownerType, ownerKey)
-		candidates[key] = uniqueSemanticTags(append(candidates[key], tags...))
+		candidates[key] = roleSemanticTags(uniqueSemanticTags(append(candidates[key], tags...)))
 	}
 
 	repoLanguage := dominantLanguage(filtered.VisibleSymbols)
@@ -698,6 +698,16 @@ func factSemanticTags(fact Fact) []string {
 		}
 	}
 	return uniqueSemanticTags(tags)
+}
+
+func roleSemanticTags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, "role:") {
+			out = append(out, tag)
+		}
+	}
+	return out
 }
 
 func forceFactSemanticTag(tag string) bool {
@@ -1144,7 +1154,7 @@ func (m *materializer) materializeArchitecture(ctx context.Context, architecture
 		elem, err := m.upsertElement(ctx, "architecture-component", component.Key, elementInput{
 			Name:        component.Name,
 			Kind:        component.Kind,
-			Description: firstNonEmpty(component.Description, architectureEvidenceDescription(component.Evidence, 0)),
+			Description: component.Description,
 			Technology:  firstNonEmpty(component.Technology, "Runtime"),
 			Repo:        repoIdentity(m.repo),
 			Branch:      nullStringValue(m.repo.Branch),
@@ -1167,7 +1177,7 @@ func (m *materializer) materializeArchitecture(ctx context.Context, architecture
 		if sourceID == 0 || targetID == 0 {
 			continue
 		}
-		if err := m.upsertConnectorDetailedWithDirection(ctx, "architecture-connector", connector.Key, repoView, sourceID, targetID, connector.Label, connector.Relationship, connector.Direction, architectureEvidenceDescription(connector.Evidence, connector.Confidence)); err != nil {
+		if err := m.upsertConnectorDetailedWithDirection(ctx, "architecture-connector", connector.Key, repoView, sourceID, targetID, connector.Label, connector.Relationship, connector.Direction, ""); err != nil {
 			return err
 		}
 	}
@@ -1447,10 +1457,11 @@ func (m *materializer) markNewPlacement(viewID, elementID int64) {
 }
 
 const (
-	watchLayoutNodeWidth  = 140.0
-	watchLayoutNodeHeight = 80.0
-	watchLayoutGapX       = 260.0
-	watchLayoutGapY       = 170.0
+	watchLayoutNodeWidth        = 140.0
+	watchLayoutNodeHeight       = 80.0
+	watchLayoutGapX             = 260.0
+	watchLayoutGapY             = 170.0
+	watchLayoutMaxRowsPerColumn = 6
 )
 
 type watchPlacementNode struct {
@@ -1639,6 +1650,11 @@ func applyDirectedWatchLevels(nodes []*layout.Node, connectors []watchLayoutConn
 		}
 	}
 	if maxLevel == 0 {
+		sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+		for i, n := range nodes {
+			n.X = float64(i/watchLayoutMaxRowsPerColumn) * watchLayoutGapX
+			n.Y = float64(i%watchLayoutMaxRowsPerColumn) * watchLayoutGapY
+		}
 		return
 	}
 	nodesByLevel := map[int][]*layout.Node{}
@@ -2119,11 +2135,11 @@ func factSummaryLabel(factType string, count int) string {
 }
 
 func summaryTagsForFacts(facts []Fact) []string {
-	set := map[string]struct{}{"watch:summary": {}}
+	set := map[string]struct{}{}
 	for _, fact := range facts {
 		for _, tag := range fact.Tags {
 			tag = strings.TrimSpace(tag)
-			if tag != "" {
+			if strings.HasPrefix(tag, "role:") {
 				set[tag] = struct{}{}
 			}
 		}

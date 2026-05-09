@@ -17,7 +17,7 @@ import {
   Tooltip,
   VStack,
 } from '@chakra-ui/react'
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, RepeatIcon, TimeIcon, ViewIcon, ViewOffIcon } from '@chakra-ui/icons'
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, ChevronUpIcon, CloseIcon, RepeatIcon, TimeIcon, ViewIcon, ViewOffIcon } from '@chakra-ui/icons'
 import {
   api,
   type WatchDiff,
@@ -272,7 +272,7 @@ export default function WorkspacePanel() {
   // ── Version state ─────────────────────────────────────────────────────────
   const { preview, setPreview, clearPreview, requestFollow } = useWorkspaceVersionPreview()
   const [versionsOpen, setVersionsOpen] = useState(false)
-  const [diffVisible, setDiffVisible] = useState(true)
+  const [diffVisible, setDiffVisible] = useState(false)
   const [repos, setRepos] = useState<WatchRepository[]>([])
   const [versions, setVersions] = useState<WatchVersion[]>([])
   const [workspaceVersions, setWorkspaceVersions] = useState<WorkspaceVersion[]>([])
@@ -630,12 +630,10 @@ export default function WorkspacePanel() {
               <Tooltip label={versionsOpen ? 'Collapse list' : 'Expand list'} placement="top">
                 <IconButton
                   aria-label="Toggle list"
-                  icon={<ChevronDownIcon boxSize={4} />}
+                  icon={versionsOpen ? <ChevronDownIcon boxSize={4} /> : <ChevronUpIcon boxSize={4} />}
                   size="sm"
                   variant="ghost"
                   color={versionsOpen ? 'var(--accent)' : 'whiteAlpha.700'}
-                  transform={versionsOpen ? 'rotate(180deg)' : 'rotate(0deg)'}
-                  transition="transform 0.2s, color 0.2s"
                   onClick={() => setVersionsOpen((v) => !v)}
                 />
               </Tooltip>
@@ -835,12 +833,10 @@ export default function WorkspacePanel() {
                 )}
                 <IconButton
                   aria-label={runtimeOpen ? 'Collapse runtime' : 'Expand runtime'}
-                  icon={<ChevronDownIcon boxSize={4} />}
+                  icon={runtimeOpen ? <ChevronDownIcon boxSize={4} /> : <ChevronUpIcon boxSize={4} />}
                   size="sm"
                   variant="ghost"
                   color="gray.400"
-                  transform={runtimeOpen ? 'rotate(180deg)' : 'rotate(0deg)'}
-                  transition="transform 0.2s, color 0.2s"
                   _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
                   onClick={() => setRuntimeOpen((v) => !v)}
                 />
