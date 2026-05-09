@@ -1164,15 +1164,6 @@ export const api = {
       if (!res.ok) throw new Error(`Failed to load watch diffs: ${res.statusText}`)
       return res.json()
     },
-    showContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
-      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/context/show`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
-      })
-      if (!res.ok) throw await responseError(res, 'Failed to show watch context')
-      return res.json()
-    },
     cleanContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
       const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/context/clean`), {
         method: 'POST',
@@ -1180,15 +1171,6 @@ export const api = {
         body: JSON.stringify(input),
       })
       if (!res.ok) throw await responseError(res, 'Failed to clean watch context')
-      return res.json()
-    },
-    hideContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
-      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/context/hide`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
-      })
-      if (!res.ok) throw await responseError(res, 'Failed to hide watch context')
       return res.json()
     },
   },

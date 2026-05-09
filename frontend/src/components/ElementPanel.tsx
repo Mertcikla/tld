@@ -218,8 +218,6 @@ export interface ElementPanelProps extends ElementPanelSlots {
   autoSave?: boolean
   onDelete?: (id: number) => void
   onPermanentDelete?: (id: number) => void
-  onShowContext?: (id: number) => Promise<void> | void
-  onHideContext?: (id: number) => Promise<void> | void
   visibilityOverrideDelta?: number
   onPromoteVisibility?: (id: number) => Promise<void> | void
   onDemoteVisibility?: (id: number) => Promise<void> | void
@@ -237,7 +235,7 @@ export interface ElementPanelProps extends ElementPanelSlots {
  * Location: Right side of the screen on desktop. Overlays screen on mobile.
  * Aliases: Element Properties, Element Details.
  */
-function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDelete, onPermanentDelete, onShowContext, onHideContext, visibilityOverrideDelta = 0, onPromoteVisibility, onDemoteVisibility, onResetVisibility, orgId, links = [], parentLinks = [], hasBackdrop = true, availableTags = [], elementPanelAfterContentSlot }: ElementPanelProps) {
+function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDelete, onPermanentDelete, visibilityOverrideDelta = 0, onPromoteVisibility, onDemoteVisibility, onResetVisibility, orgId, links = [], parentLinks = [], hasBackdrop = true, availableTags = [], elementPanelAfterContentSlot }: ElementPanelProps) {
   const { canEdit, viewId } = useViewEditorContext()
   const isEdit = !!element
   const isReadOnly = !canEdit
@@ -1066,20 +1064,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
               </Box>
             )}
 
-            {element && (onShowContext || onHideContext) && element.file_path && (
-              <HStack borderTop="1px solid" borderColor="whiteAlpha.100" pt={2} spacing={2}>
-                {onShowContext && (
-                  <Button variant="subtle" size="sm" color="teal.200" _hover={{ bg: 'teal.900', color: 'teal.100' }} onClick={() => onShowContext(element.id)} flex={1}>
-                    Show Context
-                  </Button>
-                )}
-                {onHideContext && (
-                  <Button variant="subtle" size="sm" color="orange.200" _hover={{ bg: 'orange.900', color: 'orange.100' }} onClick={() => onHideContext(element.id)} flex={1}>
-                    Hide Neighbors
-                  </Button>
-                )}
-              </HStack>
-            )}
+            
 
             {isEdit && canEdit && (
               <HStack borderTop="1px solid" borderColor="whiteAlpha.100" pt={2} spacing={2}>

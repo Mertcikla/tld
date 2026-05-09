@@ -25,8 +25,6 @@ interface ViewFloatingMenuProps {
   activeTags?: string[]
   setActiveTags?: (tags: string[]) => void
   availableTags?: string[]
-  onShowViewContext?: () => void
-  onHideViewContext?: () => void
 }
 
 function LayerIcon() {
@@ -79,8 +77,6 @@ export default function ViewFloatingMenu({
   activeTags = [],
   setActiveTags,
   availableTags = [],
-  onShowViewContext,
-  onHideViewContext,
 }: ViewFloatingMenuProps) {
   return (
     <HStack
@@ -121,32 +117,6 @@ export default function ViewFloatingMenu({
           </HStack>
         </Button>
       </Tooltip>
-
-      {(onShowViewContext || onHideViewContext) && (
-        <>
-          <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
-          {onShowViewContext && (
-            <Tooltip label="Show watch context for this view" placement="top" openDelay={200}>
-              <Button variant="ghost" h="28px" px={2.5} color="gray.300" _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }} onClick={onShowViewContext}>
-                <HStack spacing={1.5}>
-                  <EyeSvg />
-                  <Text fontSize="11px" fontWeight="normal">Show Context</Text>
-                </HStack>
-              </Button>
-            </Tooltip>
-          )}
-          {onHideViewContext && (
-            <Tooltip label="Clean generated noise in this view" placement="top" openDelay={200}>
-              <Button variant="ghost" h="28px" px={2.5} color="gray.300" _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }} onClick={onHideViewContext}>
-                <HStack spacing={1.5}>
-                  <EyeOffSvg />
-                  <Text fontSize="11px" fontWeight="normal">Clean Noise</Text>
-                </HStack>
-              </Button>
-            </Tooltip>
-          )}
-        </>
-      )}
 
       <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
 

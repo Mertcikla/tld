@@ -26,23 +26,13 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/watch/repositories/{id}/raw-graph/references", h.rawGraphReferences)
 	mux.HandleFunc("POST /api/watch/repositories/{id}/reassociate", h.reassociateRepository)
 	mux.HandleFunc("POST /api/watch/repositories/{id}/represent", h.representRepository)
-	mux.HandleFunc("POST /api/watch/repositories/{id}/context/show", h.showContext)
 	mux.HandleFunc("POST /api/watch/repositories/{id}/context/clean", h.cleanContext)
-	mux.HandleFunc("POST /api/watch/repositories/{id}/context/hide", h.hideContext)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/representation/summary", h.representationSummary)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/filter-decisions", h.filterDecisions)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/clusters", h.clusters)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/materialization", h.materialization)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/versions", h.versions)
 	mux.HandleFunc("GET /api/watch/versions/{id}/diffs", h.versionDiffs)
-}
-
-func (h *Handler) showContext(w http.ResponseWriter, r *http.Request) {
-	h.contextAction(w, r, contextActionShow)
-}
-
-func (h *Handler) hideContext(w http.ResponseWriter, r *http.Request) {
-	h.contextAction(w, r, contextActionHide)
 }
 
 func (h *Handler) cleanContext(w http.ResponseWriter, r *http.Request) {

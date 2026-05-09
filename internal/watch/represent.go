@@ -1923,8 +1923,13 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 	}
 	nodeFactsByFile := map[string][]Fact{}
 	summaryFactsByFile := map[string][]Fact{}
+	connectionFactsByFile := map[string][]Fact{}
 	for _, fact := range facts {
 		if strings.TrimSpace(fact.FilePath) == "" || fileViews[fact.FilePath] == 0 {
+			continue
+		}
+		if runtimeConnectionFact(fact) {
+			connectionFactsByFile[fact.FilePath] = append(connectionFactsByFile[fact.FilePath], fact)
 			continue
 		}
 		if highSignalFact(fact) {
@@ -1940,6 +1945,15 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 	for file := range summaryFactsByFile {
 		fileSet[file] = struct{}{}
 	}
+	for file := range connectionFactsByFile {
+		fileSet[file] = struct{}{}
+	}
+	componentFactsByFile := runtimeComponentFactsByFile(facts)
+	componentElementsByFile := map[string]map[string]int64{}
+	volumeFactsByFile := map[string][]Fact{}
+	volumeElementsByFile := map[string]map[string]int64{}
+	endpointFactsByFile := map[string][]Fact{}
+	endpointElementsByFile := map[string]map[string]int64{}
 	for _, file := range sortedKeys(fileSet) {
 		items := nodeFactsByFile[file]
 		sort.SliceStable(items, func(i, j int) bool {
@@ -1952,7 +1966,7 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 		subjectFactCounts := map[int64]int{}
 		for i, fact := range items[:limit] {
 			elem, err := m.upsertElement(ctx, "fact", factOwnerKey(fact), elementInput{
-				Name:        factNodeName(fact),
+				Name:        m.factNodeName(fact),
 				Kind:        factNodeKind(fact),
 				Description: factNodeDescription(fact),
 				Technology:  factTechnology(fact),
@@ -1964,6 +1978,30 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 			})
 			if err != nil {
 				return err
+			}
+			if runtimeComponentFact(fact) {
+				attrs := factAttributes(fact)
+				name := normalizeFactEndpoint(firstNonEmpty(attrs["name"], fact.Name, fact.ObjectName))
+				if name != "" {
+					if componentElementsByFile[file] == nil {
+						componentElementsByFile[file] = map[string]int64{}
+					}
+					componentElementsByFile[file][name] = elem
+				}
+			}
+			if storageVolumeFact(fact) {
+				volumeFactsByFile[file] = append(volumeFactsByFile[file], fact)
+				if volumeElementsByFile[file] == nil {
+					volumeElementsByFile[file] = map[string]int64{}
+				}
+				volumeElementsByFile[file][factOwnerKey(fact)] = elem
+			}
+			if runtimeEndpointFact(fact) {
+				endpointFactsByFile[file] = append(endpointFactsByFile[file], fact)
+				if endpointElementsByFile[file] == nil {
+					endpointElementsByFile[file] = map[string]int64{}
+				}
+				endpointElementsByFile[file][factOwnerKey(fact)] = elem
 			}
 			viewID := fileViews[file]
 			var subjectID int64
@@ -1998,7 +2036,211 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 			}
 		}
 	}
+	if err := m.materializeRuntimeFactConnectors(ctx, connectionFactsByFile, componentFactsByFile, componentElementsByFile, fileViews); err != nil {
+		return err
+	}
+	if err := m.materializeStorageVolumeConnectors(ctx, volumeFactsByFile, componentFactsByFile, componentElementsByFile, volumeElementsByFile, fileViews); err != nil {
+		return err
+	}
+	if err := m.materializeRuntimeEndpointConnectors(ctx, endpointFactsByFile, componentFactsByFile, componentElementsByFile, endpointElementsByFile, fileViews); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (m *materializer) materializeRuntimeFactConnectors(ctx context.Context, connectionFactsByFile map[string][]Fact, componentFactsByFile map[string]map[string]Fact, componentElementsByFile map[string]map[string]int64, fileViews map[string]int64) error {
+	for _, file := range sortedKeysFromRuntimeConnectionGroups(connectionFactsByFile) {
+		for _, fact := range connectionFactsByFile[file] {
+			attrs := factAttributes(fact)
+			source := normalizeFactEndpoint(firstNonEmpty(attrs["source"], componentSourceForFact(fact, attrs)))
+			target := normalizeFactEndpoint(firstNonEmpty(attrs["target"], fact.ObjectName))
+			if source == "" || target == "" || source == target {
+				continue
+			}
+			if componentElementsByFile[file] == nil {
+				componentElementsByFile[file] = map[string]int64{}
+			}
+			sourceID := componentElementsByFile[file][source]
+			targetID := componentElementsByFile[file][target]
+			if sourceID == 0 {
+				var err error
+				sourceID, err = m.ensureRuntimeConnectorEndpoint(ctx, componentFactsByFile[file][source], fileViews[file])
+				if err != nil {
+					return err
+				}
+				if sourceID != 0 {
+					componentElementsByFile[file][source] = sourceID
+				}
+			}
+			if targetID == 0 {
+				var err error
+				targetID, err = m.ensureRuntimeConnectorEndpoint(ctx, componentFactsByFile[file][target], fileViews[file])
+				if err != nil {
+					return err
+				}
+				if targetID != 0 {
+					componentElementsByFile[file][target] = targetID
+				}
+			}
+			if sourceID == 0 || targetID == 0 {
+				continue
+			}
+			label := firstNonEmpty(attrs["label"], fact.Relationship, "uses")
+			relationship := firstNonEmpty(fact.Relationship, "runtime-dependency")
+			if err := m.upsertConnectorDetailed(ctx, "fact-runtime-connection", factOwnerKey(fact), fileViews[file], sourceID, targetID, label, relationship, ""); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (m *materializer) materializeStorageVolumeConnectors(ctx context.Context, volumeFactsByFile map[string][]Fact, componentFactsByFile map[string]map[string]Fact, componentElementsByFile map[string]map[string]int64, volumeElementsByFile map[string]map[string]int64, fileViews map[string]int64) error {
+	for _, file := range sortedKeysFromFactGroups(volumeFactsByFile) {
+		for _, fact := range volumeFactsByFile[file] {
+			attrs := factAttributes(fact)
+			service := normalizeFactEndpoint(attrs["service"])
+			if service == "" {
+				continue
+			}
+			if componentElementsByFile[file] == nil {
+				componentElementsByFile[file] = map[string]int64{}
+			}
+			sourceID := componentElementsByFile[file][service]
+			if sourceID == 0 {
+				var err error
+				sourceID, err = m.ensureRuntimeConnectorEndpoint(ctx, componentFactsByFile[file][service], fileViews[file])
+				if err != nil {
+					return err
+				}
+				if sourceID != 0 {
+					componentElementsByFile[file][service] = sourceID
+				}
+			}
+			targetID := volumeElementsByFile[file][factOwnerKey(fact)]
+			if sourceID == 0 || targetID == 0 {
+				continue
+			}
+			description := ""
+			if target := strings.TrimSpace(attrs["target"]); target != "" {
+				description = "Mounted at " + target
+			}
+			if err := m.upsertConnectorDetailed(ctx, "fact-storage-volume", factOwnerKey(fact), fileViews[file], sourceID, targetID, "mounts", firstNonEmpty(fact.Relationship, "uses"), description); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (m *materializer) materializeRuntimeEndpointConnectors(ctx context.Context, endpointFactsByFile map[string][]Fact, componentFactsByFile map[string]map[string]Fact, componentElementsByFile map[string]map[string]int64, endpointElementsByFile map[string]map[string]int64, fileViews map[string]int64) error {
+	for _, file := range sortedKeysFromFactGroups(endpointFactsByFile) {
+		for _, fact := range endpointFactsByFile[file] {
+			attrs := factAttributes(fact)
+			service := normalizeFactEndpoint(attrs["service"])
+			if service == "" {
+				continue
+			}
+			if componentElementsByFile[file] == nil {
+				componentElementsByFile[file] = map[string]int64{}
+			}
+			sourceID := componentElementsByFile[file][service]
+			if sourceID == 0 {
+				var err error
+				sourceID, err = m.ensureRuntimeConnectorEndpoint(ctx, componentFactsByFile[file][service], fileViews[file])
+				if err != nil {
+					return err
+				}
+				if sourceID != 0 {
+					componentElementsByFile[file][service] = sourceID
+				}
+			}
+			targetID := endpointElementsByFile[file][factOwnerKey(fact)]
+			if sourceID == 0 || targetID == 0 {
+				continue
+			}
+			if err := m.upsertConnectorDetailed(ctx, "fact-runtime-endpoint", factOwnerKey(fact), fileViews[file], targetID, sourceID, endpointConnectorLabel(fact), firstNonEmpty(fact.Relationship, "exposes"), ""); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (m *materializer) ensureRuntimeConnectorEndpoint(ctx context.Context, fact Fact, viewID int64) (int64, error) {
+	if fact.StableKey == "" || viewID == 0 {
+		return 0, nil
+	}
+	state, ok, err := m.store.MappingState(ctx, m.repo.ID, "fact", factOwnerKey(fact), "element")
+	if err != nil {
+		return 0, err
+	}
+	if !ok || !elementExists(ctx, m.store.db, state.ResourceID) {
+		return 0, nil
+	}
+	if _, err := m.store.db.ExecContext(ctx, `
+		INSERT INTO placements(view_id, element_id, x, y, created_at, updated_at)
+		SELECT ?, ?, 0, 0, ?, ?
+		WHERE NOT EXISTS (SELECT 1 FROM placements WHERE view_id = ? AND element_id = ?)`,
+		viewID, state.ResourceID, nowString(), nowString(), viewID, state.ResourceID); err != nil {
+		return 0, err
+	}
+	return state.ResourceID, nil
+}
+
+func runtimeComponentFactsByFile(facts []Fact) map[string]map[string]Fact {
+	out := map[string]map[string]Fact{}
+	for _, fact := range facts {
+		if !runtimeComponentFact(fact) {
+			continue
+		}
+		attrs := factAttributes(fact)
+		name := normalizeFactEndpoint(firstNonEmpty(attrs["name"], fact.Name, fact.ObjectName))
+		if name == "" {
+			continue
+		}
+		if out[fact.FilePath] == nil {
+			out[fact.FilePath] = map[string]Fact{}
+		}
+		out[fact.FilePath][name] = fact
+	}
+	return out
+}
+
+func runtimeComponentFact(fact Fact) bool {
+	return fact.Type == "runtime.component"
+}
+
+func runtimeConnectionFact(fact Fact) bool {
+	return fact.Type == "runtime.connection"
+}
+
+func storageVolumeFact(fact Fact) bool {
+	return fact.Type == "storage.volume"
+}
+
+func runtimeEndpointFact(fact Fact) bool {
+	return fact.Type == "runtime.endpoint"
+}
+
+func componentSourceForFact(fact Fact, attrs map[string]string) string {
+	if source := strings.TrimSpace(attrs["source"]); source != "" {
+		return source
+	}
+	return inferredComponentFromFact(fact, attrs)
+}
+
+func sortedKeysFromRuntimeConnectionGroups(groups map[string][]Fact) []string {
+	return sortedKeysFromFactGroups(groups)
+}
+
+func sortedKeysFromFactGroups(groups map[string][]Fact) []string {
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func factNodeLimitForFile(thresholds Thresholds, visibility VisibilityConfig, tier int) int {
@@ -2144,8 +2386,51 @@ func summaryTagsForFacts(facts []Fact) []string {
 	return sortedKeys(set)
 }
 
-func factNodeName(fact Fact) string {
+func (m *materializer) factNodeName(fact Fact) string {
+	if storageVolumeFact(fact) {
+		return m.storageVolumeFactName(fact)
+	}
+	if runtimeEndpointFact(fact) {
+		return endpointFactName(fact)
+	}
 	return firstNonEmpty(fact.Name, fact.ObjectName, fact.Type)
+}
+
+func (m *materializer) storageVolumeFactName(fact Fact) string {
+	attrs := factAttributes(fact)
+	name := firstNonEmpty(attrs["source"], fact.ObjectName, fact.Name, fact.Type)
+	if strings.Contains(name, " -> ") {
+		_, name, _ = strings.Cut(name, " -> ")
+	}
+	return m.relativeFactPath(name)
+}
+
+func endpointFactName(fact Fact) string {
+	attrs := factAttributes(fact)
+	port := strings.TrimSpace(attrs["port"])
+	protocol := strings.TrimSpace(attrs["protocol"])
+	if protocol == "" {
+		protocol = "tcp"
+	}
+	if port != "" {
+		return port + "/" + protocol
+	}
+	name := firstNonEmpty(fact.ObjectName, fact.Name, fact.Type)
+	if strings.Contains(name, ":") {
+		name = name[strings.LastIndex(name, ":")+1:]
+	}
+	return strings.TrimSpace(name)
+}
+
+func endpointConnectorLabel(fact Fact) string {
+	attrs := factAttributes(fact)
+	if published := strings.TrimSpace(attrs["published"]); published != "" {
+		return ":" + published
+	}
+	if port := strings.TrimSpace(attrs["port"]); port != "" {
+		return ":" + port
+	}
+	return "exposes"
 }
 
 func factNodeKind(fact Fact) string {
@@ -2173,6 +2458,9 @@ func factNodeKind(fact Fact) string {
 }
 
 func factTechnology(fact Fact) string {
+	if storageVolumeFact(fact) {
+		return "Folder"
+	}
 	attrs := map[string]string{}
 	_ = json.Unmarshal([]byte(fact.AttributesJSON), &attrs)
 	if framework := strings.TrimSpace(attrs["framework"]); framework != "" {
@@ -2204,6 +2492,20 @@ func extractTechnologyFromTags(currentTechnology string, tags []string) (string,
 		return extracted, filtered
 	}
 	return currentTechnology, filtered
+}
+
+func (m *materializer) relativeFactPath(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return value
+	}
+	if strings.TrimSpace(m.repo.RepoRoot) == "" || !filepath.IsAbs(value) {
+		return filepath.ToSlash(value)
+	}
+	if rel, err := filepath.Rel(m.repo.RepoRoot, value); err == nil && rel != "." {
+		return filepath.ToSlash(rel)
+	}
+	return filepath.ToSlash(value)
 }
 
 func factNodeDescription(fact Fact) string {
@@ -2604,7 +2906,7 @@ func technologyLinksForLanguage(language string) []materializedTechnologyLink {
 		if label == "" {
 			return []materializedTechnologyLink{}
 		}
-		return []materializedTechnologyLink{{Type: "custom", Label: label}}
+		return []materializedTechnologyLink{{Type: "custom", Label: label, IsPrimaryIcon: true}}
 	}
 	return []materializedTechnologyLink{{
 		Type:          "catalog",
@@ -2623,6 +2925,9 @@ func technologyLinksForElement(technology, language string) []materializedTechno
 			Label:         label,
 			IsPrimaryIcon: true,
 		}}
+	}
+	if tech := strings.TrimSpace(technology); tech != "" {
+		return []materializedTechnologyLink{{Type: "custom", Label: tech, IsPrimaryIcon: true}}
 	}
 	return technologyLinksForLanguage(language)
 }

@@ -418,6 +418,91 @@ func CreateUser() {}
 	}
 }
 
+func TestComposeRuntimeConnectionsMaterializeAsConnectors(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "docker-compose.yaml", `services:
+  webapp:
+    image: nginx:latest
+    depends_on:
+      - redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./fonts:/usr/share/nginx/html/fonts
+  redis:
+    image: redis:7
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	if count := elementKindCount(t, db, "connection"); count != 0 {
+		t.Fatalf("runtime connections should not materialize as connection elements, found %d", count)
+	}
+	var connectorCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM connectors c
+		JOIN elements source ON source.id = c.source_element_id
+		JOIN elements target ON target.id = c.target_element_id
+		WHERE source.name = ? AND target.name = ? AND c.label = ?`, "webapp", "redis", "depends on").Scan(&connectorCount); err != nil {
+		t.Fatal(err)
+	}
+	if connectorCount == 0 {
+		t.Fatal("expected docker compose depends_on to materialize as a connector")
+	}
+	var volumeCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM elements WHERE kind = 'volume' AND name = ? AND technology = 'Folder'`, filepath.Base(repo)+"/").Scan(&volumeCount); err != nil {
+		t.Fatal(err)
+	}
+	if volumeCount == 0 {
+		t.Fatalf("expected root bind mount to use repo-relative folder name %q with Folder technology", filepath.Base(repo)+"/")
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM elements WHERE kind = 'volume' AND name = ? AND technology = 'Folder'`, "fonts").Scan(&volumeCount); err != nil {
+		t.Fatal(err)
+	}
+	if volumeCount == 0 {
+		t.Fatal("expected relative volume name without connector text and with Folder technology")
+	}
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM connectors c
+		JOIN elements source ON source.id = c.source_element_id
+		JOIN elements target ON target.id = c.target_element_id
+		WHERE source.name = ? AND target.name = ? AND c.label = ?`, "webapp", "fonts", "mounts").Scan(&connectorCount); err != nil {
+		t.Fatal(err)
+	}
+	if connectorCount == 0 {
+		t.Fatal("expected docker compose volume to materialize as a connector")
+	}
+	var endpointName string
+	if err := db.QueryRow(`SELECT name FROM elements WHERE kind = 'endpoint' LIMIT 1`).Scan(&endpointName); err != nil {
+		t.Fatal(err)
+	}
+	if endpointName != "8000/tcp" {
+		t.Fatalf("expected exposed endpoint name without service prefix, got %q", endpointName)
+	}
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM connectors c
+		JOIN elements source ON source.id = c.source_element_id
+		JOIN elements target ON target.id = c.target_element_id
+		WHERE source.name = ? AND target.name = ? AND c.label = ?`, "8000/tcp", "webapp", ":8000").Scan(&connectorCount); err != nil {
+		t.Fatal(err)
+	}
+	if connectorCount == 0 {
+		t.Fatal("expected docker compose endpoint to materialize as a connector")
+	}
+}
+
 func TestContextHTTPHandlers(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -440,20 +525,20 @@ func quietHelper() string {
 		t.Fatal(err)
 	}
 	fileElementID := elementIDByName(t, db, "main.go")
-	mux := http.NewServeMux()
-	NewHandler(store).Register(mux)
 
-	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/watch/repositories/%d/context/show", scanResult.RepositoryID), strings.NewReader(fmt.Sprintf(`{"resource_type":"element","resource_id":%d}`, fileElementID)))
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("show context status = %d body %s", rec.Code, rec.Body.String())
+	// Show context via store to materialize quietHelper.
+	if _, err := store.ApplyContextAction(context.Background(), scanResult.RepositoryID, contextActionShow, ContextResourceRequest{ResourceType: "element", ResourceID: fileElementID}, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
 	}
 	if !elementNameExists(t, db, "quietHelper") {
-		t.Fatal("quiet helper should be materialized by HTTP show context")
+		t.Fatal("quiet helper should be materialized by show context")
 	}
-	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/watch/repositories/%d/context/clean", scanResult.RepositoryID), strings.NewReader(fmt.Sprintf(`{"resource_type":"element","resource_id":%d}`, fileElementID)))
-	rec = httptest.NewRecorder()
+
+	// Test clean context via HTTP handler.
+	mux := http.NewServeMux()
+	NewHandler(store).Register(mux)
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/watch/repositories/%d/context/clean", scanResult.RepositoryID), strings.NewReader(fmt.Sprintf(`{"resource_type":"element","resource_id":%d}`, fileElementID)))
+	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("clean context status = %d body %s", rec.Code, rec.Body.String())
@@ -467,14 +552,6 @@ func quietHelper() string {
 	}
 	if elementNameExists(t, db, "quietHelper") {
 		t.Fatal("quiet helper should be collapsed by HTTP clean context")
-	}
-
-	manualID := insertManualElement(t, db, "Manual only")
-	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/watch/repositories/%d/context/hide", scanResult.RepositoryID), strings.NewReader(fmt.Sprintf(`{"resource_type":"element","resource_id":%d}`, manualID)))
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("manual-only hide status = %d, want 400", rec.Code)
 	}
 }
 

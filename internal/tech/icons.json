@@ -14318,5 +14318,10 @@
     "name": "Structural",
     "nameShort": "Structural",
     "defaultSlug": "structural"
+  },
+  {
+    "name": "Endpoint",
+    "nameShort": "Endpoint",
+    "defaultSlug": "endpoint"
   }
 ]

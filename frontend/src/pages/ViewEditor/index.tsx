@@ -520,18 +520,14 @@ function ViewEditorInner({
     return repositories[0]?.id ?? null
   }, [])
 
-  const applyWatchContextAction = useCallback(async (action: 'show' | 'hide' | 'clean', resourceType: 'element' | 'view', resourceId: number) => {
+  const applyWatchContextAction = useCallback(async (action: 'clean', resourceType: 'element' | 'view', resourceId: number) => {
     const repositoryId = await resolveWatchRepositoryId()
     if (!repositoryId) {
       toast({ status: 'warning', title: 'No watch repository found' })
       return
     }
     try {
-      const result = action === 'show'
-        ? await api.watch.showContext(repositoryId, { resource_type: resourceType, resource_id: resourceId })
-        : action === 'hide'
-          ? await api.watch.hideContext(repositoryId, { resource_type: resourceType, resource_id: resourceId })
-          : await api.watch.cleanContext(repositoryId, { resource_type: resourceType, resource_id: resourceId })
+      const result = await api.watch.cleanContext(repositoryId, { resource_type: resourceType, resource_id: resourceId })
       await refreshGrid()
       await refreshElements()
       window.dispatchEvent(new CustomEvent(WATCH_REPRESENTATION_UPDATED_EVENT, {
@@ -539,15 +535,11 @@ function ViewEditorInner({
       }))
       toast({
         status: 'success',
-        title: action === 'show' ? 'Context revealed' : 'Noise cleaned',
-        description: action === 'show'
-          ? `${result.elements_added + result.connectors_added + result.views_added} generated item${result.elements_added + result.connectors_added + result.views_added === 1 ? '' : 's'} added. Tier ${result.tier_after}/${result.max_tier}.`
-          : action === 'hide'
-            ? `${result.elements_removed + result.connectors_removed + result.views_removed} generated item${result.elements_removed + result.connectors_removed + result.views_removed === 1 ? '' : 's'} removed.`
-          : `${result.elements_removed + result.connectors_removed + result.views_removed} generated item${result.elements_removed + result.connectors_removed + result.views_removed === 1 ? '' : 's'} removed. Tier ${result.tier_after}/${result.max_tier}.`,
+        title: 'Noise cleaned',
+        description: `${result.elements_removed + result.connectors_removed + result.views_removed} generated item${result.elements_removed + result.connectors_removed + result.views_removed === 1 ? '' : 's'} removed. Tier ${result.tier_after}/${result.max_tier}.`,
       })
     } catch (err) {
-      toast({ status: 'error', title: action === 'show' ? 'Failed to show context' : 'Failed to clean noise', description: String(err) })
+      toast({ status: 'error', title: 'Failed to clean noise', description: String(err) })
     }
   }, [refreshElements, refreshGrid, resolveWatchRepositoryId, toast])
 
@@ -1555,7 +1547,6 @@ function ViewEditorInner({
           isOpen={elementPanel.isOpen} onClose={elementPanel.onClose} element={selectedElement}
           onSave={handleElementSaved} autoSave
           onDelete={handleElementDeleted} onPermanentDelete={handleElementPermanentlyDeleted}
-          onHideContext={(id) => applyWatchContextAction('hide', 'element', id)}
           visibilityOverrideDelta={overrideDeltaFor('element', selectedElement?.id)}
           onPromoteVisibility={(id) => handleVisibilityOverride('element', id, 'promote')}
           onDemoteVisibility={(id) => handleVisibilityOverride('element', id, 'demote')}

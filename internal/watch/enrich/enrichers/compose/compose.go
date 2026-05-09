@@ -3,6 +3,7 @@ package compose
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/compose-spec/compose-go/v2/loader"
@@ -200,8 +201,13 @@ func emitPortFact(input enrich.FileInput, emit enrich.FactEmitter, serviceName s
 		protocol = "tcp"
 	}
 	label := fmt.Sprintf("%d/%s", port.Target, protocol)
+	published := port.Published
 	if port.Published != "" {
 		label = port.Published + ":" + label
+	}
+	attrs := map[string]string{"service": serviceName, "port": fmt.Sprint(port.Target), "protocol": protocol}
+	if published != "" {
+		attrs["published"] = published
 	}
 	return emit.EmitFact(enrich.Fact{
 		Type:         "runtime.endpoint",
@@ -213,7 +219,7 @@ func emitPortFact(input enrich.FileInput, emit enrich.FactEmitter, serviceName s
 		Confidence:   0.80,
 		Name:         serviceName + ":" + label,
 		Tags:         []string{"arch:endpoint"},
-		Attributes:   map[string]string{"service": serviceName, "port": fmt.Sprint(port.Target), "protocol": protocol},
+		Attributes:   attrs,
 		VisibilityHints: map[string]float64{
 			"high_signal": 0.7,
 		},
@@ -225,21 +231,37 @@ func emitVolumeFact(input enrich.FileInput, emit enrich.FactEmitter, serviceName
 	if source == "" {
 		source = vol.Target
 	}
+	displaySource := composeDisplayVolumeSource(input.RepoRoot, source)
 	return emit.EmitFact(enrich.Fact{
 		Type:         "storage.volume",
 		StableKey:    fmt.Sprintf("storage.volume:%s:%s:%s:%d", input.RelPath, serviceName, source, line),
 		Subject:      enrich.FileSubject(input.RelPath),
-		Object:       enrich.SubjectRef{Kind: "storage.volume", StableKey: "storage.volume:" + source, Name: source},
+		Object:       enrich.SubjectRef{Kind: "storage.volume", StableKey: "storage.volume:" + source, Name: displaySource},
 		Relationship: "uses",
 		Source:       enrich.SourceSpan{FilePath: input.RelPath, StartLine: line, EndLine: line},
 		Confidence:   0.70,
-		Name:         serviceName + " -> " + source,
+		Name:         serviceName + " -> " + displaySource,
 		Tags:         []string{"storage:volume"},
-		Attributes:   map[string]string{"service": serviceName, "source": source, "target": vol.Target},
+		Attributes:   map[string]string{"service": serviceName, "source": displaySource, "target": vol.Target},
 		VisibilityHints: map[string]float64{
 			"high_signal": 0.5,
 		},
 	})
+}
+
+func composeDisplayVolumeSource(repoRoot, source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" || !filepath.IsAbs(source) || strings.TrimSpace(repoRoot) == "" {
+		return filepath.ToSlash(source)
+	}
+	rel, err := filepath.Rel(repoRoot, source)
+	if err == nil && rel == "." {
+		return filepath.ToSlash(filepath.Base(repoRoot)) + "/"
+	}
+	if err != nil || rel == "." {
+		return filepath.ToSlash(source)
+	}
+	return filepath.ToSlash(rel)
 }
 
 func envEndpointRefs(env types.MappingWithEquals, serviceNames []string) []string {

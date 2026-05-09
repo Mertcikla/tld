@@ -35,8 +35,6 @@ export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
   onShare?: () => void
   focusMode: boolean
   onFocusModeChange: (enabled: boolean) => void
-  onShowViewContext?: () => void
-  onHideViewContext?: () => void
   densityLevel?: number
   onDensityLevelChange?: (level: number) => void
 
