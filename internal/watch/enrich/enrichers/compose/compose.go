@@ -149,12 +149,12 @@ func emitServiceFact(input enrich.FileInput, emit enrich.FactEmitter, name, tech
 		Object:       enrich.SubjectRef{Kind: "runtime.component", StableKey: "runtime.component:" + name, FilePath: input.RelPath, Name: name},
 		Relationship: "declares",
 		Source:       enrich.SourceSpan{FilePath: input.RelPath, StartLine: line, EndLine: line},
-		Confidence:   0.85,
+		Confidence:   1.0,
 		Name:         name,
 		Tags:         tags,
 		Attributes:   attrs,
 		VisibilityHints: map[string]float64{
-			"high_signal": 0.85,
+			"high_signal": 1.0,
 		},
 	})
 }
