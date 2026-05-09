@@ -2461,6 +2461,9 @@ func factTechnology(fact Fact) string {
 	if storageVolumeFact(fact) {
 		return "Folder"
 	}
+	if runtimeEndpointFact(fact) {
+		return "Endpoint"
+	}
 	attrs := map[string]string{}
 	_ = json.Unmarshal([]byte(fact.AttributesJSON), &attrs)
 	if framework := strings.TrimSpace(attrs["framework"]); framework != "" {
@@ -2926,10 +2929,13 @@ func technologyLinksForElement(technology, language string) []materializedTechno
 			IsPrimaryIcon: true,
 		}}
 	}
+	if langLinks := technologyLinksForLanguage(language); len(langLinks) > 0 {
+		return langLinks
+	}
 	if tech := strings.TrimSpace(technology); tech != "" {
 		return []materializedTechnologyLink{{Type: "custom", Label: tech, IsPrimaryIcon: true}}
 	}
-	return technologyLinksForLanguage(language)
+	return nil
 }
 
 func technologyCatalogSlugForLabel(label string) string {

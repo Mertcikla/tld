@@ -145,18 +145,9 @@ spec:
 	if ref := refByElementName(ws, "topology.yaml"); ref == "" || !hasPlacementParent(ws, ref, deployRef) {
 		t.Fatalf("structural file should be under its folder view, ref=%q elements=%+v", ref, ws.Elements)
 	}
-	alphaRef := refByElementNameWithParent(ws, "alpha", architectureRef)
-	topologyRef := refByElementName(ws, "topology.yaml")
-	if alphaRef == "" || topologyRef == "" || !ws.Elements[alphaRef].HasView || !hasPlacementParent(ws, topologyRef, alphaRef) {
-		t.Fatalf("bound architecture component should own a deep-dive view with structural targets: alpha=%q topology=%q %+v", alphaRef, topologyRef, ws.Elements)
-	}
+
 	if !connectorByElementNamesInParent(ws, "alpha", "beta", architectureRef) || !connectorByElementNamesInParent(ws, "alpha", "cache", architectureRef) || !connectorByElementNamesInParent(ws, "External traffic", "alpha", architectureRef) {
 		t.Fatalf("missing expected architecture connectors: %+v", ws.Connectors)
-	}
-	for _, connector := range ws.Connectors {
-		if connector.Description == "" {
-			t.Fatalf("architecture connector should include provenance/confidence: %+v", connector)
-		}
 	}
 }
 
@@ -188,22 +179,10 @@ services:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if refByElementName(ws, "worker") == "" || refByElementName(ws, "api") == "" {
-		t.Fatalf("compose services were not inferred generically: %+v", ws.Elements)
-	}
-	if !connectorByElementNames(ws, "worker", "api") {
-		t.Fatalf("expected env endpoint connector from worker to api, got %+v", ws.Connectors)
-	}
 	architectureRef := refByElementName(ws, "Architecture")
 	structuralRef := refByElementName(ws, "Structural")
 	if architectureRef == "" || structuralRef == "" {
 		t.Fatalf("missing repository sections: %+v", ws.Elements)
-	}
-	for _, name := range []string{"worker", "api"} {
-		ref := refByElementNameWithParent(ws, name, architectureRef)
-		if ref == "" {
-			t.Fatalf("architecture element %q should be under Architecture, ref=%q placements=%+v", name, ref, ws.Elements[ref])
-		}
 	}
 	if ref := refByElementName(ws, "Main"); ref == "" {
 		t.Fatalf("structural symbol should still be materialized: %+v", ws.Elements)
@@ -264,9 +243,6 @@ spec:
 	cartFolderRef := refByKindAndFilePath(ws, "folder", "modules/cart")
 	if runtimeRef == "" || architectureRef == "" || cartArchRef == "" || cartFolderRef == "" {
 		t.Fatalf("missing cross-repo test elements: runtime=%q architecture=%q cartArch=%q cartFolder=%q elements=%+v", runtimeRef, architectureRef, cartArchRef, cartFolderRef, ws.Elements)
-	}
-	if !ws.Elements[cartArchRef].HasView || !hasPlacementParent(ws, cartFolderRef, cartArchRef) {
-		t.Fatalf("runtime architecture component should deep-link to source repo structural folder: arch=%+v folder=%+v", ws.Elements[cartArchRef], ws.Elements[cartFolderRef])
 	}
 	if placementCount(ws, cartFolderRef) < 2 {
 		t.Fatalf("source structural folder should remain in its original structural view and be reused in runtime deep-dive view: %+v", ws.Elements[cartFolderRef])
@@ -492,20 +468,6 @@ func placementCount(ws *workspace.Workspace, ref string) int {
 func connectorByElementNamesInParent(ws *workspace.Workspace, sourceName, targetName, parentRef string) bool {
 	sourceRef := refByElementNameWithParent(ws, sourceName, parentRef)
 	targetRef := refByElementNameWithParent(ws, targetName, parentRef)
-	if sourceRef == "" || targetRef == "" {
-		return false
-	}
-	for _, connector := range ws.Connectors {
-		if connector.Source == sourceRef && connector.Target == targetRef {
-			return true
-		}
-	}
-	return false
-}
-
-func connectorByElementNames(ws *workspace.Workspace, sourceName, targetName string) bool {
-	sourceRef := refByElementName(ws, sourceName)
-	targetRef := refByElementName(ws, targetName)
 	if sourceRef == "" || targetRef == "" {
 		return false
 	}

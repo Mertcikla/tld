@@ -483,12 +483,15 @@ func TestComposeRuntimeConnectionsMaterializeAsConnectors(t *testing.T) {
 	if connectorCount == 0 {
 		t.Fatal("expected docker compose volume to materialize as a connector")
 	}
-	var endpointName string
-	if err := db.QueryRow(`SELECT name FROM elements WHERE kind = 'endpoint' LIMIT 1`).Scan(&endpointName); err != nil {
+	var endpointName, endpointTechnology string
+	if err := db.QueryRow(`SELECT name, technology FROM elements WHERE kind = 'endpoint' LIMIT 1`).Scan(&endpointName, &endpointTechnology); err != nil {
 		t.Fatal(err)
 	}
 	if endpointName != "8000/tcp" {
 		t.Fatalf("expected exposed endpoint name without service prefix, got %q", endpointName)
+	}
+	if endpointTechnology != "Endpoint" {
+		t.Fatalf("expected endpoint technology, got %q", endpointTechnology)
 	}
 	if err := db.QueryRow(`
 		SELECT COUNT(*)
