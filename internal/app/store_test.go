@@ -12,6 +12,10 @@ import (
 	"github.com/mertcikla/tld/internal/tagcolors"
 )
 
+func strPtr(value string) *string {
+	return &value
+}
+
 func TestConfigureSQLiteDBEnablesBusyTimeoutAndWAL(t *testing.T) {
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "tld.db"))
 	if err != nil {
@@ -45,15 +49,15 @@ func TestStoreElementsSearchPaginationAndViewMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	serviceKind := "service"
-	api, err := store.CreateElement(ctx, LibraryElement{Name: "API", Kind: &serviceKind, Description: new("Public runtime API"), Tags: []string{"runtime"}})
+	api, err := store.CreateElement(ctx, LibraryElement{Name: "API", Kind: &serviceKind, Description: strPtr("Public runtime API"), Tags: []string{"runtime"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := store.CreateElement(ctx, LibraryElement{Name: "Worker", Kind: &serviceKind, Description: new("Background jobs"), Tags: []string{"runtime"}})
+	worker, err := store.CreateElement(ctx, LibraryElement{Name: "Worker", Kind: &serviceKind, Description: strPtr("Background jobs"), Tags: []string{"runtime"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateView(ctx, "API detail", new("Service"), &api.ID); err != nil {
+	if _, err := store.CreateView(ctx, "API detail", strPtr("Service"), &api.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -133,6 +137,181 @@ func TestStoreConnectorsPreserveHandlesAndPatchDefaults(t *testing.T) {
 	}
 	if updated.SourceHandle == nil || *updated.SourceHandle != "right" || updated.TargetHandle == nil || *updated.TargetHandle != "left" {
 		t.Fatalf("patched handles = %v/%v, want right/left", updated.SourceHandle, updated.TargetHandle)
+	}
+}
+
+func TestStoreUndoableElementUpdatesPreserveAndRestoreFields(t *testing.T) {
+	store := openAppStore(t)
+	ctx := context.Background()
+
+	kind := "service"
+	technology := "Go"
+	url := "https://example.com/api"
+	logo := "https://example.com/go.svg"
+	repo := "repo"
+	branch := "main"
+	filePath := "cmd/api/main.go"
+	language := "go"
+	original, err := store.CreateElement(ctx, LibraryElement{
+		Name:        "API",
+		Kind:        &kind,
+		Description: strPtr("original description"),
+		Technology:  &technology,
+		URL:         &url,
+		LogoURL:     &logo,
+		TechnologyConnectors: []TechnologyConnector{{
+			Type:          "catalog",
+			Slug:          "go",
+			Label:         "Go",
+			IsPrimaryIcon: true,
+		}},
+		Tags:     []string{"runtime", "public"},
+		Repo:     &repo,
+		Branch:   &branch,
+		FilePath: &filePath,
+		Language: &language,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	changedKind := "database"
+	changedTech := "PostgreSQL"
+	changedURL := "https://example.com/db"
+	changedLogo := "https://example.com/postgres.svg"
+	changed, err := store.UpdateElement(ctx, original.ID, LibraryElement{
+		Name:        "DB",
+		Kind:        &changedKind,
+		Description: strPtr("changed description"),
+		Technology:  &changedTech,
+		URL:         &changedURL,
+		LogoURL:     &changedLogo,
+		TechnologyConnectors: []TechnologyConnector{{
+			Type:          "catalog",
+			Slug:          "postgresql",
+			Label:         "PostgreSQL",
+			IsPrimaryIcon: true,
+		}},
+		Tags: []string{"data"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Repo == nil || *changed.Repo != repo || changed.FilePath == nil || *changed.FilePath != filePath {
+		t.Fatalf("partial update lost source metadata: %+v", changed)
+	}
+
+	restored, err := store.UpdateElement(ctx, original.ID, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Name != original.Name || restored.Kind == nil || *restored.Kind != kind || restored.Description == nil || *restored.Description != "original description" {
+		t.Fatalf("restored element basics = %+v, want original", restored)
+	}
+	if restored.LogoURL == nil || *restored.LogoURL != logo || len(restored.TechnologyConnectors) != 1 || restored.TechnologyConnectors[0].Slug != "go" {
+		t.Fatalf("restored technology = logo:%v links:%+v, want original", restored.LogoURL, restored.TechnologyConnectors)
+	}
+	if strings.Join(restored.Tags, ",") != "runtime,public" || restored.Repo == nil || *restored.Repo != repo || restored.Branch == nil || *restored.Branch != branch || restored.FilePath == nil || *restored.FilePath != filePath || restored.Language == nil || *restored.Language != language {
+		t.Fatalf("restored metadata = %+v, want original tags/source fields", restored)
+	}
+}
+
+func TestStoreUndoablePlacementRemoveAndRestorePreservesElement(t *testing.T) {
+	store := openAppStore(t)
+	ctx := context.Background()
+
+	element, err := store.CreateElement(ctx, LibraryElement{Name: "API", Tags: []string{"runtime"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AddPlacement(ctx, 1, element.ID, 10, 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdatePlacement(ctx, 1, element.ID, 30, 40); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeletePlacement(ctx, 1, element.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ElementByID(ctx, element.ID); err != nil {
+		t.Fatalf("element after placement removal: %v", err)
+	}
+	restored, err := store.AddPlacement(ctx, 1, element.ID, 30, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ViewID != 1 || restored.ElementID != element.ID || restored.PositionX != 30 || restored.PositionY != 40 {
+		t.Fatalf("restored placement = %+v, want view/element/position restored", restored)
+	}
+}
+
+func TestStoreUndoableConnectorDeleteRecreateAndRestoreFields(t *testing.T) {
+	store := openAppStore(t)
+	ctx := context.Background()
+
+	source, err := store.CreateElement(ctx, LibraryElement{Name: "API"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := store.CreateElement(ctx, LibraryElement{Name: "DB"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := store.CreateConnector(ctx, Connector{
+		ViewID:          1,
+		SourceElementID: source.ID,
+		TargetElementID: target.ID,
+		Label:           strPtr("reads"),
+		Description:     strPtr("primary query path"),
+		Relationship:    strPtr("SQL"),
+		Direction:       "both",
+		Style:           "smoothstep",
+		URL:             strPtr("https://example.com/runbook"),
+		SourceHandle:    strPtr("right"),
+		TargetHandle:    strPtr("left"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := store.UpdateConnector(ctx, original.ID, Connector{
+		Label:        strPtr("streams"),
+		SourceHandle: strPtr("bottom"),
+		TargetHandle: strPtr("top"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Description == nil || *updated.Description != "primary query path" || updated.Relationship == nil || *updated.Relationship != "SQL" || updated.Direction != "both" || updated.Style != "smoothstep" || updated.URL == nil || *updated.URL != "https://example.com/runbook" {
+		t.Fatalf("connector patch lost fields: %+v", updated)
+	}
+	restored, err := store.UpdateConnector(ctx, original.ID, original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Label == nil || *restored.Label != "reads" || restored.SourceHandle == nil || *restored.SourceHandle != "right" || restored.TargetHandle == nil || *restored.TargetHandle != "left" {
+		t.Fatalf("restored connector = %+v, want original label/handles", restored)
+	}
+	if err := store.DeleteConnector(ctx, restored.ID); err != nil {
+		t.Fatal(err)
+	}
+	recreated, err := store.CreateConnector(ctx, Connector{
+		ViewID:          restored.ViewID,
+		SourceElementID: restored.SourceElementID,
+		TargetElementID: restored.TargetElementID,
+		Label:           restored.Label,
+		Description:     restored.Description,
+		Relationship:    restored.Relationship,
+		Direction:       restored.Direction,
+		Style:           restored.Style,
+		URL:             restored.URL,
+		SourceHandle:    restored.SourceHandle,
+		TargetHandle:    restored.TargetHandle,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recreated.ID == restored.ID || recreated.ViewID != restored.ViewID || recreated.SourceElementID != restored.SourceElementID || recreated.TargetElementID != restored.TargetElementID || recreated.Label == nil || *recreated.Label != "reads" || recreated.Description == nil || *recreated.Description != "primary query path" || recreated.Relationship == nil || *recreated.Relationship != "SQL" || recreated.Direction != "both" || recreated.Style != "smoothstep" || recreated.URL == nil || *recreated.URL != "https://example.com/runbook" || recreated.SourceHandle == nil || *recreated.SourceHandle != "right" || recreated.TargetHandle == nil || *recreated.TargetHandle != "left" {
+		t.Fatalf("recreated connector = %+v, want equivalent payload with new id", recreated)
 	}
 }
 

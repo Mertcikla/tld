@@ -350,7 +350,8 @@ func (s *Store) ImportPlan(ctx context.Context, elements []PlanElement, connecto
 	if len(elements) > 0 && strings.TrimSpace(elements[0].Name) != "" {
 		viewName = strings.TrimSpace(elements[0].Name)
 	}
-	view, err := s.CreateView(ctx, viewName, new("Imported"), nil)
+	importedLabel := "Imported"
+	view, err := s.CreateView(ctx, viewName, &importedLabel, nil)
 	if err != nil {
 		return 0, err
 	}

@@ -17,6 +17,7 @@ import {
   TagsIcon,
 } from './Icons'
 import { KbdHint } from './PanelUI'
+import { RedoSvg, UndoSvg } from './ViewDrawMenu'
 import { useViewEditorContext } from '../pages/ViewEditor/context'
 import type { Tag, ViewLayer } from '../types'
 
@@ -37,6 +38,11 @@ export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
   onFocusModeChange: (enabled: boolean) => void
   densityLevel?: number
   onDensityLevelChange?: (level: number) => void
+  canUndo?: boolean
+  canRedo?: boolean
+  undoRedoDisabled?: boolean
+  onUndo?: () => void
+  onRedo?: () => void
 
   // Tag-related props
   allTags: string[]
@@ -77,6 +83,11 @@ function ViewFloatingMenu({
   onFocusModeChange,
   densityLevel = 0,
   onDensityLevelChange,
+  canUndo = false,
+  canRedo = false,
+  undoRedoDisabled = false,
+  onUndo,
+  onRedo,
   allTags,
   layers,
   tagColors,
@@ -139,6 +150,46 @@ function ViewFloatingMenu({
           </HStack>
         </Button>
       </Tooltip>
+
+      {(canUndo || canRedo) && (
+        <>
+          <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
+          {canUndo && (
+            <Tooltip label="Undo" placement="top" openDelay={200}>
+              <IconButton
+                aria-label="Undo"
+                icon={<UndoSvg />}
+                variant="ghost"
+                h="28px"
+                minW="28px"
+                px={0}
+                color="gray.300"
+                isDisabled={undoRedoDisabled}
+                _disabled={{ opacity: 0.35, cursor: 'not-allowed' }}
+                _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+                onClick={onUndo}
+              />
+            </Tooltip>
+          )}
+          {canRedo && (
+            <Tooltip label="Redo" placement="top" openDelay={200}>
+              <IconButton
+                aria-label="Redo"
+                icon={<RedoSvg />}
+                variant="ghost"
+                h="28px"
+                minW="28px"
+                px={0}
+                color="gray.300"
+                isDisabled={undoRedoDisabled}
+                _disabled={{ opacity: 0.35, cursor: 'not-allowed' }}
+                _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+                onClick={onRedo}
+              />
+            </Tooltip>
+          )}
+        </>
+      )}
 
       {!hideFocusView && (
         <>

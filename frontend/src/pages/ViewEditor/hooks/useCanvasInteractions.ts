@@ -193,6 +193,11 @@ interface CanvasInteractionOptions {
   handleElementDeleted: (id: number) => void
   handleElementPermanentlyDeleted: (id: number) => void
   handleConnectorDeleted: (id: number) => void
+  onPlacementMoved?: (before: PlacedElement, after: PlacedElement) => void
+  onPlacementRemoved?: (placement: PlacedElement) => void
+  onConnectorUpdated?: (before: Connector, after: Connector) => void
+  onConnectorDeleted?: (connector: Connector) => void
+  onUnsupportedMutation?: () => void
   handleUpdateTags: (elementId: number, tags: string[]) => Promise<void>
   drawingCanvasRef: React.MutableRefObject<DrawingCanvasHandle | null>
   snapToGrid?: boolean
@@ -271,6 +276,11 @@ export function useCanvasInteractions({
   handleElementDeleted,
   handleElementPermanentlyDeleted,
   handleConnectorDeleted,
+  onPlacementMoved,
+  onPlacementRemoved,
+  onConnectorUpdated,
+  onConnectorDeleted,
+  onUnsupportedMutation,
   handleUpdateTags,
   drawingCanvasRef,
   snapToGrid,
@@ -408,6 +418,7 @@ export function useCanvasInteractions({
     try {
       const obj = await api.elements.create({ name, kind: '' })
       await api.workspace.views.placements.add(viewId, obj.id, flowX - 100, flowY - 40)
+      onUnsupportedMutation?.()
       await refreshElements()
       const placed = viewElementsRef.current.find((element) => element.element_id === obj.id)
       if (placed) upsertPlacementGraphSnapshot(viewId, placed)
@@ -422,9 +433,10 @@ export function useCanvasInteractions({
         })
         const connector = connectorToConnector(newConnector)
         await finalizeConnectorCreate(connector)
+        onUnsupportedMutation?.()
       }
     } catch { /* intentionally empty */ }
-  }, [addingElementAt, canEdit, finalizeConnectorCreate, refreshElements, rfNodesRef, viewId, viewElementsRef])
+  }, [addingElementAt, canEdit, finalizeConnectorCreate, onUnsupportedMutation, refreshElements, rfNodesRef, viewId, viewElementsRef])
 
   const handleConfirmExistingElement = useCallback(async (obj: LibraryElement) => {
     if (!canEdit || viewId === null || !addingElementAt || addingElementAt.mode !== 'add') return
@@ -437,6 +449,7 @@ export function useCanvasInteractions({
     try {
       if (!existingElementIds.has(obj.id)) {
         await api.workspace.views.placements.add(viewId, obj.id, flowX - 100, flowY - 40)
+        onUnsupportedMutation?.()
         await refreshElements()
         const placed = viewElementsRef.current.find((element) => element.element_id === obj.id)
         if (placed) upsertPlacementGraphSnapshot(viewId, placed)
@@ -455,9 +468,10 @@ export function useCanvasInteractions({
         })
         const connector = connectorToConnector(newConnector)
         await finalizeConnectorCreate(connector)
+        onUnsupportedMutation?.()
       }
     } catch { /* intentionally empty */ }
-  }, [addingElementAt, canEdit, existingElementIds, finalizeConnectorCreate, refreshElements, rfNodesRef, viewId, viewElementsRef])
+  }, [addingElementAt, canEdit, existingElementIds, finalizeConnectorCreate, onUnsupportedMutation, refreshElements, rfNodesRef, viewId, viewElementsRef])
 
   const handleConfirmConnectExistingElement = useCallback(async (obj: LibraryElement) => {
     if (!canEdit || viewId === null || !addingElementAt || addingElementAt.mode !== 'connect') return
@@ -482,8 +496,9 @@ export function useCanvasInteractions({
       })
       const connector = connectorToConnector(newConnector)
       await finalizeConnectorCreate(connector)
+      onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
-  }, [addingElementAt, canEdit, finalizeConnectorCreate, rfNodesRef, viewId])
+  }, [addingElementAt, canEdit, finalizeConnectorCreate, onUnsupportedMutation, rfNodesRef, viewId])
 
   // ── Zoom-in / zoom-out stable callbacks ───────────────────────────────────
   const stableOnZoomIn = useCallback(async (elementId: number) => {
@@ -597,15 +612,17 @@ export function useCanvasInteractions({
 
   const stableOnRemoveElement = useCallback(async (elementId: number) => {
     if (!canEdit || viewId === null) return
+    const removedPlacement = viewElementsRef.current.find((element) => element.element_id === elementId) ?? null
     try {
       await api.workspace.views.placements.remove(viewId, elementId)
       removePlacementGraphSnapshot(viewId, elementId)
       removeElementPlacement(elementId)
+      if (removedPlacement) onPlacementRemoved?.(removedPlacement)
       handleElementDeleted(elementId)
       setInteractionSourceId(null)
       pendingConnectionSourceHandleRef.current = null
     } catch { /* intentionally empty */ }
-  }, [canEdit, viewId, removeElementPlacement, handleElementDeleted])
+  }, [canEdit, viewId, viewElementsRef, removeElementPlacement, onPlacementRemoved, handleElementDeleted])
 
   const connectClickModeToHandle = useCallback(async (targetElementId: number, targetHandle: string) => {
     if (!canEdit) return
@@ -636,8 +653,9 @@ export function useCanvasInteractions({
       })
       const connector = connectorToConnector(newConnector)
       await finalizeConnectorCreate(connector)
+      onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
-  }, [canEdit, finalizeConnectorCreate, interactionSourceIdRef, viewIdRef])
+  }, [canEdit, finalizeConnectorCreate, interactionSourceIdRef, onUnsupportedMutation, viewIdRef])
 
   const stableOnInteractionStart = useCallback((elementId: number, options?: InteractionStartOptions) => {
     if (!canEdit) return
@@ -726,15 +744,20 @@ export function useCanvasInteractions({
       return
     }
 
+    const beforePlacement = currentObj ? { ...currentObj, position_x: startPos?.x ?? currentObj.position_x, position_y: startPos?.y ?? currentObj.position_y } : null
+    const afterPlacement = currentObj ? { ...currentObj, position_x: node.position.x, position_y: node.position.y } : null
     updateElementPosition(elementId, node.position.x, node.position.y)
     clearTimeout(positionTimers.current[node.id])
     positionTimers.current[node.id] = setTimeout(() => {
       api.workspace.views.placements
         .updatePosition(viewId, elementId, node.position.x, node.position.y)
+        .then(() => {
+          if (beforePlacement && afterPlacement) onPlacementMoved?.(beforePlacement, afterPlacement)
+        })
         .catch(() => { /* intentionally empty */ })
     }, 400)
     delete dragStartPositionsRef.current[node.id]
-  }, [canEdit, updateElementPosition, viewId, viewElementsRef])
+  }, [canEdit, updateElementPosition, viewId, viewElementsRef, onPlacementMoved])
 
   // ── Connections ────────────────────────────────────────────────────────────
   const onConnect: OnConnect = useCallback(async (params: Connection) => {
@@ -754,8 +777,9 @@ export function useCanvasInteractions({
       })
       const connector = connectorToConnector(newConnector)
       await finalizeConnectorCreate(connector)
+      onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
-  }, [canEdit, finalizeConnectorCreate, viewId])
+  }, [canEdit, finalizeConnectorCreate, onUnsupportedMutation, viewId])
 
   const onConnectStart = useCallback((_: React.MouseEvent | React.TouchEvent, { nodeId }: OnConnectStartParams) => {
     if (!canEdit || isReconnectingRef.current) return
@@ -816,13 +840,14 @@ export function useCanvasInteractions({
       }).then((connector) => {
         const next = connectorToConnector(connector)
         void finalizeConnectorCreate(next)
+        onUnsupportedMutation?.()
       }).catch(() => { /* intentionally empty */ })
     } else {
       setPendingConnectionSource(sourceElementId)
       suppressNextPaneClickRef.current = true
       showAddingElementAt(clientX, clientY, true, 'connect', 'shiftKey' in event && event.shiftKey)
     }
-  }, [canEdit, finalizeConnectorCreate, showAddingElementAt, rfNodesRef, viewIdRef])
+  }, [canEdit, finalizeConnectorCreate, onUnsupportedMutation, showAddingElementAt, rfNodesRef, viewIdRef])
 
   // ── Reconnect ──────────────────────────────────────────────────────────────
   const performReconnect = useCallback(async (oldConnector: RFEdge, newConnection: Connection) => {
@@ -848,8 +873,9 @@ export function useCanvasInteractions({
       const connector = connectorToConnector(updated)
       upsertConnectorGraphSnapshot(connector)
       replaceConnector(connector)
+      if (existingData) onConnectorUpdated?.(existingData, connector)
     } catch { /* intentionally empty */ }
-  }, [canEdit, replaceConnector, viewId, setRfEdges])
+  }, [canEdit, replaceConnector, viewId, setRfEdges, onConnectorUpdated])
   const onReconnect = useCallback(async (oldConnector: RFEdge, newConnection: Connection) => {
     await performReconnect(oldConnector, newConnection)
   }, [performReconnect])
@@ -1263,7 +1289,11 @@ export function useCanvasInteractions({
         } else {
           const connectorId = getConnectorDeletionTarget(selectedConnector)
           if (connectorId === null) return
+          const deletedConnector = selectedConnector?.id === connectorId
+            ? selectedConnector
+            : connectors.find((connector) => connector.id === connectorId) ?? null
           api.workspace.connectors.delete('', connectorId).then(() => {
+            if (deletedConnector) onConnectorDeleted?.(deletedConnector)
             handleConnectorDeleted(connectorId)
             setSelectedEdge(null)
             closeConnectorPanel()
@@ -1374,7 +1404,7 @@ export function useCanvasInteractions({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [canEdit, refreshGrid, selectedElement, selectedConnector, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted,  closeElementPanel, closeConnectorPanel, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef])
+  }, [canEdit, refreshGrid, selectedElement, selectedConnector, connectors, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted, onConnectorDeleted, closeElementPanel, closeConnectorPanel, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef])
 
   // ── DnD handlers ──────────────────────────────────────────────────────────
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -1393,6 +1423,7 @@ export function useCanvasInteractions({
       const pos = screenToFlowPositionRef.current({ x: e.clientX, y: e.clientY })
       try {
         await api.workspace.views.placements.add(viewId, obj.id, pos.x - 100, pos.y - 40)
+        onUnsupportedMutation?.()
         await refreshElements()
         const placed = viewElementsRef.current.find((element) => element.element_id === obj.id)
         if (placed) upsertPlacementGraphSnapshot(viewId, placed)
@@ -1444,7 +1475,7 @@ export function useCanvasInteractions({
         }
       }
     }
-  }, [canEdit, viewId, existingElementIds, refreshElements, rfNodesRef, viewElementsRef, layers, handleUpdateTags])
+  }, [canEdit, viewId, existingElementIds, onUnsupportedMutation, refreshElements, rfNodesRef, viewElementsRef, layers, handleUpdateTags])
 
   const onWheelCapture = useCallback((e: React.WheelEvent) => {
     if (touchStateRef.current.touches.size === 2) return

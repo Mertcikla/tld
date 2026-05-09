@@ -11,6 +11,14 @@ import (
 	"github.com/google/uuid"
 )
 
+func ptrString(value string) *string {
+	return &value
+}
+
+func ptrInt32(value int32) *int32 {
+	return &value
+}
+
 func TestWorkspaceService_ListElementsReturnsPaginationAndChecksRead(t *testing.T) {
 	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 	store := &contractStore{
@@ -68,7 +76,7 @@ func TestWorkspaceService_CreateConnectorDefaultsValidatesAndAudits(t *testing.T
 		ViewId:          3,
 		SourceElementId: 4,
 		TargetElementId: 5,
-		Label:           new("uses"),
+		Label:           ptrString("uses"),
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -108,11 +116,11 @@ func TestWorkspaceService_UpdateElementClearsLogoWhenNoPrimaryIcon(t *testing.T)
 			return &diagv1.Element{
 				Id:      42,
 				Name:    "API",
-				LogoUrl: new("https://example.com/logo.svg"),
+				LogoUrl: ptrString("https://example.com/logo.svg"),
 				TechnologyLinks: []*diagv1.TechnologyLink{{
 					Type:          "catalog",
 					Label:         "Go",
-					Slug:          new("go"),
+					Slug:          ptrString("go"),
 					IsPrimaryIcon: true,
 				}},
 			}, nil
@@ -133,9 +141,9 @@ func TestWorkspaceService_UpdateElementClearsLogoWhenNoPrimaryIcon(t *testing.T)
 		TechnologyLinks: []*diagv1.TechnologyLink{{
 			Type:  "catalog",
 			Label: "Kafka",
-			Slug:  new("kafka"),
+			Slug:  ptrString("kafka"),
 		}},
-		LogoUrl: new("https://example.com/kafka.svg"),
+		LogoUrl: ptrString("https://example.com/kafka.svg"),
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -152,13 +160,13 @@ func TestWorkspaceService_UpdateElementPreservesExistingTechnologyLinksWhenOmitt
 	existingLinks := []*diagv1.TechnologyLink{{
 		Type:          "catalog",
 		Label:         "Go",
-		Slug:          new("go"),
+		Slug:          ptrString("go"),
 		IsPrimaryIcon: true,
 	}}
 	var update ElementInput
 	store := &contractStore{
 		getElement: func(context.Context, int32, uuid.UUID) (*diagv1.Element, error) {
-			return &diagv1.Element{Id: 42, Name: "API", LogoUrl: new("go.svg"), TechnologyLinks: existingLinks}, nil
+			return &diagv1.Element{Id: 42, Name: "API", LogoUrl: ptrString("go.svg"), TechnologyLinks: existingLinks}, nil
 		},
 		updateElement: func(_ context.Context, id int32, _ uuid.UUID, input ElementInput) (*diagv1.Element, error) {
 			update = input
@@ -179,6 +187,141 @@ func TestWorkspaceService_UpdateElementPreservesExistingTechnologyLinksWhenOmitt
 	}
 	if update.LogoURL != nil {
 		t.Fatalf("logo patch = %v, want nil so store preserves existing logo", update.LogoURL)
+	}
+}
+
+func TestWorkspaceService_UpdateViewPreservesExistingLabelWhenOmitted(t *testing.T) {
+	label := "Container"
+	store := &contractStore{
+		getView: func(context.Context, int32, uuid.UUID) (*diagv1.View, error) {
+			return &diagv1.View{Id: 9, Name: "Old", LevelLabel: &label}, nil
+		},
+		updateView: func(_ context.Context, id int32, _ uuid.UUID, name string, gotLabel *string) (*diagv1.View, error) {
+			if id != 9 || name != "New" {
+				t.Fatalf("view update = id:%d name:%q, want 9/New", id, name)
+			}
+			if gotLabel == nil || *gotLabel != label {
+				t.Fatalf("label = %v, want preserved %q", gotLabel, label)
+			}
+			return &diagv1.View{Id: id, Name: name, LevelLabel: gotLabel}, nil
+		},
+	}
+	service := &WorkspaceService{Store: store, Hooks: &recordingHooks{}}
+
+	resp, err := service.UpdateView(context.Background(), connect.NewRequest(&diagv1.UpdateViewRequest{
+		ViewId: 9,
+		Name:   "New",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetView().GetLevelLabel() != label {
+		t.Fatalf("response label = %q, want %q", resp.Msg.GetView().GetLevelLabel(), label)
+	}
+}
+
+func TestWorkspaceService_UpdateConnectorCanRestoreAllUndoableFields(t *testing.T) {
+	existing := &diagv1.Connector{
+		Id: 7, ViewId: 3, SourceElementId: 4, TargetElementId: 5,
+		Label: ptrString("changed"), Description: ptrString("changed description"),
+		Relationship: ptrString("HTTP"), Direction: "forward", Style: "bezier",
+		Url: ptrString("https://example.com/changed"), SourceHandle: ptrString("bottom"), TargetHandle: ptrString("top"),
+	}
+	store := &contractStore{
+		getConnector: func(context.Context, int32, uuid.UUID) (*diagv1.Connector, error) {
+			return existing, nil
+		},
+		updateConnector: func(_ context.Context, id int32, _ uuid.UUID, input ConnectorInput) (*diagv1.Connector, error) {
+			if id != 7 {
+				t.Fatalf("connector id = %d, want 7", id)
+			}
+			if input.ViewID != 3 || input.SourceID != 10 || input.TargetID != 11 {
+				t.Fatalf("ids = %+v, want view 3 source 10 target 11", input)
+			}
+			if input.Label == nil || *input.Label != "reads" || input.Description == nil || *input.Description != "original description" || input.Relationship == nil || *input.Relationship != "SQL" || input.Direction != "both" || input.Style != "smoothstep" || input.URL == nil || *input.URL != "https://example.com/original" || input.SourceHandle == nil || *input.SourceHandle != "right" || input.TargetHandle == nil || *input.TargetHandle != "left" {
+				t.Fatalf("connector restore input = %+v, want original fields", input)
+			}
+			return &diagv1.Connector{
+				Id: id, ViewId: input.ViewID, SourceElementId: input.SourceID, TargetElementId: input.TargetID,
+				Label: input.Label, Description: input.Description, Relationship: input.Relationship,
+				Direction: input.Direction, Style: input.Style, Url: input.URL,
+				SourceHandle: input.SourceHandle, TargetHandle: input.TargetHandle,
+			}, nil
+		},
+	}
+	service := &WorkspaceService{Store: store, Hooks: &recordingHooks{}}
+
+	resp, err := service.UpdateConnector(context.Background(), connect.NewRequest(&diagv1.UpdateConnectorRequest{
+		ConnectorId:     7,
+		SourceElementId: ptrInt32(10),
+		TargetElementId: ptrInt32(11),
+		Label:           ptrString("reads"),
+		Description:     ptrString("original description"),
+		Relationship:    ptrString("SQL"),
+		Direction:       "both",
+		Style:           "smoothstep",
+		Url:             ptrString("https://example.com/original"),
+		SourceHandle:    ptrString("right"),
+		TargetHandle:    ptrString("left"),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetConnector().GetSourceElementId() != 10 || resp.Msg.GetConnector().GetTargetElementId() != 11 || resp.Msg.GetConnector().GetSourceHandle() != "right" || resp.Msg.GetConnector().GetTargetHandle() != "left" {
+		t.Fatalf("connector response = %+v, want restored endpoints and handles", resp.Msg.GetConnector())
+	}
+}
+
+func TestWorkspaceService_CreateConnectorAcceptsDeleteUndoPayload(t *testing.T) {
+	store := &contractStore{
+		createConnector: func(_ context.Context, _ uuid.UUID, input ConnectorInput) (*diagv1.Connector, error) {
+			if input.ViewID != 3 || input.SourceID != 4 || input.TargetID != 5 || input.Label == nil || *input.Label != "reads" || input.Description == nil || *input.Description != "query path" || input.Relationship == nil || *input.Relationship != "SQL" || input.Direction != "both" || input.Style != "smoothstep" || input.URL == nil || *input.URL != "https://example.com/runbook" || input.SourceHandle == nil || *input.SourceHandle != "right" || input.TargetHandle == nil || *input.TargetHandle != "left" {
+				t.Fatalf("create connector input = %+v, want full undo payload", input)
+			}
+			return &diagv1.Connector{Id: 99, ViewId: input.ViewID, SourceElementId: input.SourceID, TargetElementId: input.TargetID, Label: input.Label, Description: input.Description, Relationship: input.Relationship, Direction: input.Direction, Style: input.Style, Url: input.URL, SourceHandle: input.SourceHandle, TargetHandle: input.TargetHandle}, nil
+		},
+	}
+	service := &WorkspaceService{Store: store, Hooks: &recordingHooks{}}
+
+	if _, err := service.CreateConnector(context.Background(), connect.NewRequest(&diagv1.CreateConnectorRequest{
+		ViewId: 3, SourceElementId: 4, TargetElementId: 5,
+		Label: ptrString("reads"), Description: ptrString("query path"), Relationship: ptrString("SQL"),
+		Direction: "both", Style: "smoothstep", Url: ptrString("https://example.com/runbook"),
+		SourceHandle: ptrString("right"), TargetHandle: ptrString("left"),
+	})); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkspaceService_PlacementDeleteCreateRestoresPosition(t *testing.T) {
+	store := &contractStore{
+		getView: func(context.Context, int32, uuid.UUID) (*diagv1.View, error) {
+			return &diagv1.View{Id: 3}, nil
+		},
+		removePlacement: func(_ context.Context, viewID, elementID int32) error {
+			if viewID != 3 || elementID != 4 {
+				t.Fatalf("remove placement = view:%d element:%d, want 3/4", viewID, elementID)
+			}
+			return nil
+		},
+		addPlacement: func(_ context.Context, viewID, elementID int32, x, y float64) (*diagv1.PlacedElement, error) {
+			if viewID != 3 || elementID != 4 || x != 120 || y != 80 {
+				t.Fatalf("add placement = view:%d element:%d pos:%f/%f, want 3/4/120/80", viewID, elementID, x, y)
+			}
+			return &diagv1.PlacedElement{Id: 77, ViewId: viewID, ElementId: elementID, PositionX: x, PositionY: y}, nil
+		},
+	}
+	service := &WorkspaceService{Store: store, Hooks: &recordingHooks{}}
+
+	if _, err := service.DeletePlacement(context.Background(), connect.NewRequest(&diagv1.DeletePlacementRequest{ViewId: 3, ElementId: 4})); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := service.CreatePlacement(context.Background(), connect.NewRequest(&diagv1.CreatePlacementRequest{ViewId: 3, ElementId: 4, PositionX: 120, PositionY: 80}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Msg.GetPlacement().GetPositionX() != 120 || resp.Msg.GetPlacement().GetPositionY() != 80 {
+		t.Fatalf("placement response = %+v, want restored position", resp.Msg.GetPlacement())
 	}
 }
 
@@ -256,7 +399,12 @@ type contractStore struct {
 	getElement      func(context.Context, int32, uuid.UUID) (*diagv1.Element, error)
 	updateElement   func(context.Context, int32, uuid.UUID, ElementInput) (*diagv1.Element, error)
 	getView         func(context.Context, int32, uuid.UUID) (*diagv1.View, error)
+	updateView      func(context.Context, int32, uuid.UUID, string, *string) (*diagv1.View, error)
+	addPlacement    func(context.Context, int32, int32, float64, float64) (*diagv1.PlacedElement, error)
+	removePlacement func(context.Context, int32, int32) error
 	createConnector func(context.Context, uuid.UUID, ConnectorInput) (*diagv1.Connector, error)
+	getConnector    func(context.Context, int32, uuid.UUID) (*diagv1.Connector, error)
+	updateConnector func(context.Context, int32, uuid.UUID, ConnectorInput) (*diagv1.Connector, error)
 }
 
 var _ Store = (*contractStore)(nil)
@@ -276,7 +424,10 @@ func (s *contractStore) GetView(ctx context.Context, id int32, workspaceID uuid.
 func (s *contractStore) CreateView(context.Context, uuid.UUID, *int32, string, *string, bool) (*diagv1.View, error) {
 	return nil, nil
 }
-func (s *contractStore) UpdateView(context.Context, int32, uuid.UUID, string, *string) (*diagv1.View, error) {
+func (s *contractStore) UpdateView(ctx context.Context, id int32, workspaceID uuid.UUID, name string, label *string) (*diagv1.View, error) {
+	if s.updateView != nil {
+		return s.updateView(ctx, id, workspaceID, name, label)
+	}
 	return nil, nil
 }
 func (s *contractStore) DeleteView(context.Context, int32, uuid.UUID) error { return nil }
@@ -311,20 +462,31 @@ func (s *contractStore) ListAllPlacements(context.Context, uuid.UUID) ([]*diagv1
 func (s *contractStore) ListElementPlacements(context.Context, int32, uuid.UUID) ([]*diagv1.ViewPlacementInfo, error) {
 	return nil, nil
 }
-func (s *contractStore) AddPlacement(context.Context, int32, int32, float64, float64) (*diagv1.PlacedElement, error) {
+func (s *contractStore) AddPlacement(ctx context.Context, viewID, elementID int32, x, y float64) (*diagv1.PlacedElement, error) {
+	if s.addPlacement != nil {
+		return s.addPlacement(ctx, viewID, elementID, x, y)
+	}
 	return nil, nil
 }
 func (s *contractStore) UpdatePlacementPosition(context.Context, int32, int32, float64, float64) error {
 	return nil
 }
-func (s *contractStore) RemovePlacement(context.Context, int32, int32) error { return nil }
+func (s *contractStore) RemovePlacement(ctx context.Context, viewID, elementID int32) error {
+	if s.removePlacement != nil {
+		return s.removePlacement(ctx, viewID, elementID)
+	}
+	return nil
+}
 func (s *contractStore) ListConnectors(context.Context, int32, uuid.UUID) ([]*diagv1.Connector, error) {
 	return nil, nil
 }
 func (s *contractStore) ListAllConnectors(context.Context, uuid.UUID) ([]*diagv1.Connector, error) {
 	return nil, nil
 }
-func (s *contractStore) GetConnector(context.Context, int32, uuid.UUID) (*diagv1.Connector, error) {
+func (s *contractStore) GetConnector(ctx context.Context, id int32, workspaceID uuid.UUID) (*diagv1.Connector, error) {
+	if s.getConnector != nil {
+		return s.getConnector(ctx, id, workspaceID)
+	}
 	return nil, nil
 }
 func (s *contractStore) CreateConnector(ctx context.Context, workspaceID uuid.UUID, input ConnectorInput) (*diagv1.Connector, error) {
@@ -333,7 +495,10 @@ func (s *contractStore) CreateConnector(ctx context.Context, workspaceID uuid.UU
 	}
 	return nil, nil
 }
-func (s *contractStore) UpdateConnector(context.Context, int32, uuid.UUID, ConnectorInput) (*diagv1.Connector, error) {
+func (s *contractStore) UpdateConnector(ctx context.Context, id int32, workspaceID uuid.UUID, input ConnectorInput) (*diagv1.Connector, error) {
+	if s.updateConnector != nil {
+		return s.updateConnector(ctx, id, workspaceID, input)
+	}
 	return nil, nil
 }
 func (s *contractStore) DeleteConnector(context.Context, int32, uuid.UUID) error { return nil }

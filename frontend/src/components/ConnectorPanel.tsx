@@ -177,9 +177,9 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
     })
   }
 
-  const handleClose = useCallback(() => {
+  const handleClose = useCallback(async () => {
     if (autoSaveEdit) {
-      void saveIfDirtyRef.current?.()
+      await saveIfDirtyRef.current?.()
     }
     onClose()
   }, [autoSaveEdit, onClose])

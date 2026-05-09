@@ -28,6 +28,7 @@ interface Props {
   view: ViewTreeNode | null
   canEdit?: boolean
   onSave: (updated: ViewTreeNode) => void
+  onUnsupportedMutation?: () => void
   hasBackdrop?: boolean
 }
 
@@ -37,7 +38,7 @@ interface Props {
  * Location: Right side of the screen on desktop. Overlays screen on mobile.
  * Aliases: View Properties, View Settings.
  */
-function ViewPanel({ isOpen, onClose, view, canEdit: canEditProp, onSave, hasBackdrop = true }: Props) {
+function ViewPanel({ isOpen, onClose, view, canEdit: canEditProp, onSave, onUnsupportedMutation, hasBackdrop = true }: Props) {
   const ctx = useContext(ViewEditorContext)
   const canEdit = canEditProp ?? ctx?.canEdit ?? true
   const isReadOnly = !canEdit
@@ -118,7 +119,7 @@ function ViewPanel({ isOpen, onClose, view, canEdit: canEditProp, onSave, hasBac
               rows={4}
             />
           </FormControl>
-          <LayoutSection view={view} canEdit={canEdit} />
+          <LayoutSection view={view} canEdit={canEdit} onUnsupportedMutation={onUnsupportedMutation} />
 
           {view && (
             <Box pt={2} borderTop="1px solid" borderColor="whiteAlpha.50">

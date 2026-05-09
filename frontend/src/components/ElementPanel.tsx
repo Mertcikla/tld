@@ -424,9 +424,9 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
     })
   }
 
-  const handleClose = useCallback(() => {
+  const handleClose = useCallback(async () => {
     if (autoSaveEdit) {
-      void saveIfDirtyRef.current?.()
+      await saveIfDirtyRef.current?.()
     }
     onClose()
   }, [autoSaveEdit, onClose])
@@ -1104,7 +1104,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
         onClose={confirmPermanentDelete.onClose}
         onConfirm={handlePermanentDelete}
         title="Delete Element"
-        body="Permanently delete this element? It will be removed from all views and cannot be recovered."
+        body="This permanently deletes the element from the library and cannot be reverted."
         confirmLabel="Delete Permanently"
       />
     </>

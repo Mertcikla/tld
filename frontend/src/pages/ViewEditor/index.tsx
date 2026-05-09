@@ -75,6 +75,7 @@ import { ViewEditorContext } from './context'
 import { useViewData } from './hooks/useViewData'
 import { useDrawingEngine } from './hooks/useDrawingEngine'
 import { applyNodeChangesWithStructuralSharing, useCanvasInteractions } from './hooks/useCanvasInteractions'
+import { useViewEditHistory } from './hooks/useViewEditHistory'
 import { connectorToConnector, findClosestHandles, sanitizeExportFilename, triggerDownload } from './utils'
 import { pickUnusedColor } from '../../components/ViewExplorer/utils'
 
@@ -103,6 +104,59 @@ const VIEW_EDITOR_PAN_MARGIN_RATIO = 0.25
 const VIEW_EDITOR_PAN_MARGIN_MIN = 180
 const VIEW_EDITOR_PAN_MARGIN_MAX = 720
 const SNAP_GRID: [number, number] = [30, 30]
+
+type ViewMetadataSnapshot = Pick<ViewTreeNode, 'id' | 'name' | 'level_label'>
+
+function elementUpdatePayload(element: WorkspaceElement) {
+  return {
+    name: element.name,
+    description: element.description ?? '',
+    kind: element.kind ?? '',
+    technology: element.technology ?? '',
+    url: element.url ?? '',
+    logo_url: element.logo_url ?? '',
+    technology_connectors: element.technology_connectors ?? [],
+    tags: element.tags ?? [],
+    repo: element.repo,
+    branch: element.branch,
+    file_path: element.file_path,
+    language: element.language,
+  }
+}
+
+function connectorUpdatePayload(connector: Connector) {
+  return {
+    source_element_id: connector.source_element_id,
+    target_element_id: connector.target_element_id,
+    label: connector.label ?? '',
+    description: connector.description ?? '',
+    relationship: connector.relationship ?? '',
+    direction: connector.direction,
+    style: connector.style === 'default' ? 'bezier' : connector.style,
+    url: connector.url ?? '',
+    source_handle: connector.source_handle,
+    target_handle: connector.target_handle,
+  }
+}
+
+function connectorSnapshotsEqual(left: Connector, right: Connector) {
+  return JSON.stringify(connectorUpdatePayload(left)) === JSON.stringify(connectorUpdatePayload(right))
+}
+
+function elementSnapshotsEqual(left: WorkspaceElement, right: WorkspaceElement) {
+  return JSON.stringify(elementUpdatePayload(left)) === JSON.stringify(elementUpdatePayload(right))
+}
+
+function placementSnapshotsEqual(left: PlacedElement, right: PlacedElement) {
+  return left.view_id === right.view_id &&
+    left.element_id === right.element_id &&
+    Math.abs(left.position_x - right.position_x) < 0.5 &&
+    Math.abs(left.position_y - right.position_y) < 0.5
+}
+
+function viewSnapshotsEqual(left: ViewMetadataSnapshot, right: ViewMetadataSnapshot) {
+  return left.id === right.id && left.name === right.name && (left.level_label ?? '') === (right.level_label ?? '')
+}
 
 function alphaColor(color: string, opacity: number): string {
   if (opacity >= 1) return color
@@ -161,6 +215,15 @@ function ViewEditorInner({
   navigateRef.current = navigate
 
   const toast = useToast()
+  const {
+    canUndo: canUndoViewEdit,
+    canRedo: canRedoViewEdit,
+    isApplyingHistory,
+    pushAction: pushEditAction,
+    clearHistory: clearEditHistory,
+    undo: undoViewEdit,
+    redo: redoViewEdit,
+  } = useViewEditHistory()
   const canEdit = true
   const isOwner = true
   const isFreePlan = false
@@ -327,11 +390,12 @@ function ViewEditorInner({
     if (viewId === null) return
     try {
       const layer = await api.workspace.views.layers.create(viewId, { name, tags, color })
+      clearEditHistory()
       setLayers(prev => [...prev, layer])
     } catch (e) {
       toast({ status: 'error', title: 'Failed to create layer', description: String(e) })
     }
-  }, [viewId, toast])
+  }, [clearEditHistory, viewId, toast])
 
   const handleCreateTag = useCallback(async (tag: string, color?: string, description?: string) => {
     const name = tag.trim()
@@ -341,28 +405,31 @@ function ViewEditorInner({
     const nextDescription = description ?? tagColors[name]?.description ?? null
 
     await api.workspace.orgs.tagColors.update(name, nextColor, nextDescription)
+    clearEditHistory()
     setTagColors((prev) => ({ ...prev, [name]: { name, color: nextColor, description: nextDescription } }))
-  }, [tagColors])
+  }, [clearEditHistory, tagColors])
 
   const handleUpdateLayer = useCallback(async (layer: import('../../types').ViewLayer) => {
     if (viewId === null) return
     try {
       const updated = await api.workspace.views.layers.update(viewId, layer.id, layer)
+      clearEditHistory()
       setLayers(prev => prev.map(l => l.id === updated.id ? updated : l))
     } catch (e) {
       toast({ status: 'error', title: 'Failed to update layer', description: String(e) })
     }
-  }, [viewId, toast])
+  }, [clearEditHistory, viewId, toast])
 
   const handleDeleteLayer = useCallback(async (layerId: number) => {
     if (viewId === null) return
     try {
       await api.workspace.views.layers.delete(viewId, layerId)
+      clearEditHistory()
       setLayers(prev => prev.filter(l => l.id !== layerId))
     } catch (e) {
       toast({ status: 'error', title: 'Failed to delete layer', description: String(e) })
     }
-  }, [viewId, toast])
+  }, [clearEditHistory, viewId, toast])
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const drawingCanvasRef = useRef<DrawingCanvasHandle | null>(null)
@@ -474,7 +541,7 @@ function ViewEditorInner({
     viewElementsRef, linksMapRef, parentLinksMapRef, incomingLinksRef,
     treeDataRef, rfNodesRef, rfEdgesRef, viewIdRef,
     refreshGrid, refreshElements,
-    handleElementDeleted, handleElementPermanentlyDeleted, handleElementSaved,
+    handleElementDeleted, handleElementPermanentlyDeleted, handleElementSaved: applyElementSaved,
   } = data
   refreshElementsRef.current = refreshElements
 
@@ -494,11 +561,12 @@ function ViewEditorInner({
     setDensityLevel(level)
     try {
       await api.workspace.views.density.set(viewId, level)
+      clearEditHistory()
       await refreshElements()
     } catch {
       toast({ status: 'error', title: 'Density was not saved' })
     }
-  }, [refreshElements, toast, viewId])
+  }, [clearEditHistory, refreshElements, toast, viewId])
 
   const handleVisibilityOverride = useCallback(async (resourceType: VisibilityOverride['resource_type'], resourceId: number, action: 'promote' | 'demote' | 'reset') => {
     if (viewId == null) return
@@ -506,12 +574,13 @@ function ViewEditorInner({
       if (action === 'promote') await api.workspace.views.visibilityOverrides.promote(viewId, resourceType, resourceId)
       else if (action === 'demote') await api.workspace.views.visibilityOverrides.demote(viewId, resourceType, resourceId)
       else await api.workspace.views.visibilityOverrides.reset(viewId, resourceType, resourceId)
+      clearEditHistory()
       await reloadVisibilityOverrides()
       await refreshElements()
     } catch {
       toast({ status: 'error', title: 'Visibility override was not saved' })
     }
-  }, [refreshElements, reloadVisibilityOverrides, toast, viewId])
+  }, [clearEditHistory, refreshElements, reloadVisibilityOverrides, toast, viewId])
 
   const resolveWatchRepositoryId = useCallback(async () => {
     const status = await api.watch.status().catch(() => null)
@@ -528,6 +597,7 @@ function ViewEditorInner({
     }
     try {
       const result = await api.watch.cleanContext(repositoryId, { resource_type: resourceType, resource_id: resourceId })
+      clearEditHistory()
       await refreshGrid()
       await refreshElements()
       window.dispatchEvent(new CustomEvent(WATCH_REPRESENTATION_UPDATED_EVENT, {
@@ -541,7 +611,7 @@ function ViewEditorInner({
     } catch (err) {
       toast({ status: 'error', title: 'Failed to clean noise', description: String(err) })
     }
-  }, [refreshElements, refreshGrid, resolveWatchRepositoryId, toast])
+  }, [clearEditHistory, refreshElements, refreshGrid, resolveWatchRepositoryId, toast])
 
   const tagCounts = useMemo(() => {
     const counts: Record<string, number> = {}
@@ -672,33 +742,213 @@ function ViewEditorInner({
 
   previewViewElementsRef.current = viewElements
 
+  const handleUnsupportedMutation = useCallback(() => {
+    clearEditHistory()
+  }, [clearEditHistory])
+
+  const pushViewEditAction = useCallback((before: ViewMetadataSnapshot, after: ViewMetadataSnapshot) => {
+    if (viewSnapshotsEqual(before, after)) return
+    pushEditAction({
+      undo: async () => {
+        const updated = await api.workspace.views.update(before.id, { name: before.name, label: before.level_label ?? '' })
+        if (view && view.id === updated.id) setView({ ...view, name: updated.name, level_label: updated.label })
+        await refreshGrid()
+      },
+      redo: async () => {
+        const updated = await api.workspace.views.update(after.id, { name: after.name, label: after.level_label ?? '' })
+        if (view && view.id === updated.id) setView({ ...view, name: updated.name, level_label: updated.label })
+        await refreshGrid()
+      },
+    })
+  }, [pushEditAction, refreshGrid, setView, view])
+
+  const pushElementEditAction = useCallback((before: WorkspaceElement, after: WorkspaceElement) => {
+    if (elementSnapshotsEqual(before, after)) return
+    pushEditAction({
+      undo: async () => {
+        const saved = await api.elements.update(before.id, elementUpdatePayload(before))
+        applyElementSaved(saved)
+        setSelectedElement((current) => current?.id === saved.id ? saved : current)
+        await refreshElements()
+      },
+      redo: async () => {
+        const saved = await api.elements.update(after.id, elementUpdatePayload(after))
+        applyElementSaved(saved)
+        setSelectedElement((current) => current?.id === saved.id ? saved : current)
+        await refreshElements()
+      },
+    })
+  }, [applyElementSaved, pushEditAction, refreshElements])
+
   const handleUpdateTags = useCallback(async (elementId: number, tags: string[]) => {
     if (!canEdit) return
     const obj = selectedElement?.id === elementId ? selectedElement : allElements.find(o => o.id === elementId)
     if (!obj) return
     try {
       const saved = await api.elements.update(elementId, {
-        name: obj.name,
-        description: obj.description ?? '',
-        kind: obj.kind ?? '',
-        technology: obj.technology ?? '',
-        url: obj.url ?? '',
-        logo_url: obj.logo_url ?? '',
-        technology_connectors: obj.technology_connectors ?? [],
+        ...elementUpdatePayload(obj),
         tags,
-        repo: obj.repo,
-        branch: obj.branch,
-        file_path: obj.file_path,
-        language: obj.language,
       })
-      handleElementSaved(saved)
+      applyElementSaved(saved)
+      pushElementEditAction(obj, saved)
       if (selectedElement?.id === elementId) {
         setSelectedElement(saved)
       }
     } catch (err) {
       console.error('Failed to update tags:', err)
     }
-  }, [canEdit, selectedElement, allElements, handleElementSaved, setSelectedElement])
+  }, [canEdit, selectedElement, allElements, applyElementSaved, pushElementEditAction, setSelectedElement])
+
+  const pushPlacementMoveAction = useCallback((before: PlacedElement, after: PlacedElement) => {
+    if (placementSnapshotsEqual(before, after)) return
+    pushEditAction({
+      undo: async () => {
+        await api.workspace.views.placements.updatePosition(before.view_id, before.element_id, before.position_x, before.position_y)
+        await refreshElements()
+      },
+      redo: async () => {
+        await api.workspace.views.placements.updatePosition(after.view_id, after.element_id, after.position_x, after.position_y)
+        await refreshElements()
+      },
+    })
+  }, [pushEditAction, refreshElements])
+
+  const pushPlacementRemoveAction = useCallback((placement: PlacedElement) => {
+    pushEditAction({
+      undo: async () => {
+        await api.workspace.views.placements.add(placement.view_id, placement.element_id, placement.position_x, placement.position_y)
+        await refreshElements()
+      },
+      redo: async () => {
+        await api.workspace.views.placements.remove(placement.view_id, placement.element_id)
+        await refreshElements()
+      },
+    })
+  }, [pushEditAction, refreshElements])
+
+  const pushConnectorEditAction = useCallback((before: Connector, after: Connector) => {
+    if (connectorSnapshotsEqual(before, after)) return
+    pushEditAction({
+      undo: async () => {
+        const updated = await api.workspace.connectors.update(before.view_id, before.id, connectorUpdatePayload(before))
+        const connector = connectorToConnector(updated)
+        upsertConnectorGraphSnapshot(connector)
+        upsertStoreConnector(connector)
+        setSelectedEdge((current) => current?.id === connector.id ? connector : current)
+        await refreshElements()
+      },
+      redo: async () => {
+        const updated = await api.workspace.connectors.update(after.view_id, after.id, connectorUpdatePayload(after))
+        const connector = connectorToConnector(updated)
+        upsertConnectorGraphSnapshot(connector)
+        upsertStoreConnector(connector)
+        setSelectedEdge((current) => current?.id === connector.id ? connector : current)
+        await refreshElements()
+      },
+    })
+  }, [pushEditAction, refreshElements, upsertStoreConnector])
+
+  const pushConnectorDeleteAction = useCallback((deleted: Connector) => {
+    let activeConnector = deleted
+    pushEditAction({
+      undo: async () => {
+        const created = await api.workspace.connectors.create(deleted.view_id, connectorUpdatePayload(deleted))
+        activeConnector = connectorToConnector(created)
+        upsertConnectorGraphSnapshot(activeConnector)
+        upsertStoreConnector(activeConnector)
+        await refreshElements()
+      },
+      redo: async () => {
+        await api.workspace.connectors.delete('', activeConnector.id)
+        removeConnectorGraphSnapshot(activeConnector.view_id, activeConnector.id)
+        removeStoreConnector(activeConnector.id)
+        setSelectedEdge((current) => current?.id === activeConnector.id ? null : current)
+        await refreshElements()
+      },
+    })
+  }, [pushEditAction, refreshElements, removeStoreConnector, upsertStoreConnector])
+
+  const elementEditSessionRef = useRef<{ before: WorkspaceElement; after: WorkspaceElement | null } | null>(null)
+  const finalizeElementEditSession = useCallback(() => {
+    const session = elementEditSessionRef.current
+    elementEditSessionRef.current = null
+    if (session?.after) pushElementEditAction(session.before, session.after)
+  }, [pushElementEditAction])
+
+  useEffect(() => {
+    if (!elementPanel.isOpen || !selectedElement) return
+    const session = elementEditSessionRef.current
+    if (!session || session.before.id !== selectedElement.id) {
+      if (session?.after) pushElementEditAction(session.before, session.after)
+      elementEditSessionRef.current = { before: selectedElement, after: null }
+    }
+  }, [elementPanel.isOpen, pushElementEditAction, selectedElement])
+
+  const handleElementPanelSave = useCallback((saved: WorkspaceElement) => {
+    const session = elementEditSessionRef.current
+    if (!session || session.before.id !== saved.id) {
+      elementEditSessionRef.current = { before: selectedElement?.id === saved.id ? selectedElement : saved, after: saved }
+    } else {
+      session.after = saved
+    }
+    applyElementSaved(saved)
+    setSelectedElement(saved)
+  }, [applyElementSaved, selectedElement])
+
+  const handleElementPanelClose = useCallback(() => {
+    finalizeElementEditSession()
+    elementPanel.onClose()
+  }, [elementPanel, finalizeElementEditSession])
+
+  const connectorEditSessionRef = useRef<{ before: Connector; after: Connector | null } | null>(null)
+  const finalizeConnectorEditSession = useCallback(() => {
+    const session = connectorEditSessionRef.current
+    connectorEditSessionRef.current = null
+    if (session?.after) pushConnectorEditAction(session.before, session.after)
+  }, [pushConnectorEditAction])
+
+  useEffect(() => {
+    if (!connectorPanel.isOpen || !selectedEdge) return
+    const session = connectorEditSessionRef.current
+    if (!session || session.before.id !== selectedEdge.id) {
+      if (session?.after) pushConnectorEditAction(session.before, session.after)
+      connectorEditSessionRef.current = { before: selectedEdge, after: null }
+    }
+  }, [connectorPanel.isOpen, pushConnectorEditAction, selectedEdge])
+
+  const handleConnectorPanelSave = useCallback((updated: Connector) => {
+    const connector = connectorToConnector(updated)
+    const session = connectorEditSessionRef.current
+    if (!session || session.before.id !== connector.id) {
+      connectorEditSessionRef.current = { before: selectedEdge?.id === connector.id ? selectedEdge : connector, after: connector }
+    } else {
+      session.after = connector
+    }
+    upsertConnectorGraphSnapshot(connector)
+    upsertStoreConnector(connector)
+    setSelectedEdge(connector)
+  }, [selectedEdge, upsertStoreConnector])
+
+  const handleConnectorPanelClose = useCallback(() => {
+    finalizeConnectorEditSession()
+    connectorPanel.onClose()
+  }, [connectorPanel, finalizeConnectorEditSession])
+
+  const handleUndoViewEdit = useCallback(async () => {
+    try {
+      await undoViewEdit()
+    } catch (err) {
+      toast({ status: 'error', title: 'Undo failed', description: err instanceof Error ? err.message : String(err) })
+    }
+  }, [undoViewEdit, toast])
+
+  const handleRedoViewEdit = useCallback(async () => {
+    try {
+      await redoViewEdit()
+    } catch (err) {
+      toast({ status: 'error', title: 'Redo failed', description: err instanceof Error ? err.message : String(err) })
+    }
+  }, [redoViewEdit, toast])
 
   // ── Canvas interactions ────────────────────────────────────────────────────
   const canvas = useCanvasInteractions({
@@ -737,6 +987,7 @@ function ViewEditorInner({
         const connector = connectorToConnector(newConnector)
         upsertConnectorGraphSnapshot(connector)
         upsertStoreConnector(connector)
+        handleUnsupportedMutation()
       } catch { /* intentionally empty */ }
     },
     existingElementIds, linksMapRef, parentLinksMapRef,
@@ -758,6 +1009,11 @@ function ViewEditorInner({
       removeStoreConnector(edgeId)
       void refreshElementsRef.current()
     }, [removeStoreConnector, viewId]),
+    onPlacementMoved: pushPlacementMoveAction,
+    onPlacementRemoved: pushPlacementRemoveAction,
+    onConnectorUpdated: pushConnectorEditAction,
+    onConnectorDeleted: pushConnectorDeleteAction,
+    onUnsupportedMutation: handleUnsupportedMutation,
     handleUpdateTags,
     drawingCanvasRef,
     snapToGrid,
@@ -1044,11 +1300,14 @@ function ViewEditorInner({
     setSelectedElement(null)
     setSelectedEdge(null)
     setSelectedProxyConnectorDetails(null)
-    elementPanel.onClose()
-    connectorPanel.onClose()
-    proxyConnectorPanel.onClose()
+    elementEditSessionRef.current = null
+    connectorEditSessionRef.current = null
+    clearEditHistory()
+    closeElementPanelRef.current()
+    closeConnectorPanelRef.current()
+    closeProxyConnectorPanelRef.current()
     needsFitView.current = true
-  }, [viewId])
+  }, [clearEditHistory, viewId])
 
   // ── Dynamic viewport bounds ────────────────────────────────────────────────
   useEffect(() => {
@@ -1152,10 +1411,6 @@ function ViewEditorInner({
   const handleCreateNewLibrary = useCallback(() => handleCreateNewLibraryRef.current(), [])
   const handleFocusModeChange = useCallback((v: boolean) => setCrossBranchEnabled(!v), [setCrossBranchEnabled])
   const handleOpenExport = useCallback(() => exportModal.onOpen(), [exportModal])
-  const handleConnectorSave = useCallback((updated: Connector) => {
-    upsertConnectorGraphSnapshot(updated)
-    upsertStoreConnector(updated)
-  }, [upsertStoreConnector])
   const handleConnectorDeleted = useCallback((edgeId: number, ownerViewId?: number) => {
     const vid = ownerViewId ?? viewId
     if (vid != null) removeConnectorGraphSnapshot(vid, edgeId)
@@ -1164,10 +1419,21 @@ function ViewEditorInner({
   }, [refreshElements, removeStoreConnector, viewId])
 
   const handleConnectorDeleteInPanel = useCallback((edgeId: number, ownerViewId?: number) => {
+    const deleted = selectedEdge?.id === edgeId ? selectedEdge : connectors.find((connector) => connector.id === edgeId) ?? null
+    connectorEditSessionRef.current = null
+    if (deleted) pushConnectorDeleteAction(deleted)
     handleConnectorDeleted(edgeId, ownerViewId)
     setSelectedEdge(null)
-  }, [handleConnectorDeleted, setSelectedEdge])
-  const handleViewSave = useCallback((updated: ViewTreeNode) => setView(updated), [setView])
+  }, [connectors, handleConnectorDeleted, pushConnectorDeleteAction, selectedEdge, setSelectedEdge])
+  const handleViewSave = useCallback((updated: ViewTreeNode) => {
+    if (view) {
+      pushViewEditAction(
+        { id: view.id, name: view.name, level_label: view.level_label },
+        { id: updated.id, name: updated.name, level_label: updated.level_label },
+      )
+    }
+    setView(updated)
+  }, [pushViewEditAction, setView, view])
 
   // ── Library helpers ────────────────────────────────────────────────────────
   // Assigned below; referenced by memoized callbacks (e.g. ElementLibrary onCreateNew).
@@ -1249,6 +1515,7 @@ function ViewEditorInner({
     setIsImporting(true)
     try {
       const res = await api.import.resources('', { elements: parsed.elements, connectors: parsed.connectors })
+      clearEditHistory()
       closeImportModalRef.current()
       toast({ status: 'success', title: 'Import complete', description: `Created ${parsed.elements.length} elements and ${parsed.connectors.length} connectors.`, duration: 5000, isClosable: true })
       if (res.view_id && res.view_id !== currentViewId) navigate(`/views/${res.view_id}`)
@@ -1256,7 +1523,7 @@ function ViewEditorInner({
     } catch (e) {
       toast({ status: 'error', title: 'Import failed', description: e instanceof Error ? e.message : 'Unknown error' })
     } finally { setIsImporting(false) }
-  }, [navigate, toast, viewIdRef])
+  }, [clearEditHistory, navigate, toast, viewIdRef])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Render states
@@ -1513,6 +1780,11 @@ function ViewEditorInner({
               onFocusModeChange={handleFocusModeChange}
               densityLevel={densityLevel}
               onDensityLevelChange={handleDensityLevelChange}
+              canUndo={canUndoViewEdit}
+              canRedo={canRedoViewEdit}
+              undoRedoDisabled={isApplyingHistory}
+              onUndo={handleUndoViewEdit}
+              onRedo={handleRedoViewEdit}
               disableImportExport={disableImportExport}
               onImport={importModal.onOpen} onExport={handleOpenExport} onShare={onShare}
               allTags={availableTags}
@@ -1544,9 +1816,14 @@ function ViewEditorInner({
         />
 
         <ElementPanel
-          isOpen={elementPanel.isOpen} onClose={elementPanel.onClose} element={selectedElement}
-          onSave={handleElementSaved} autoSave
-          onDelete={handleElementDeleted} onPermanentDelete={handleElementPermanentlyDeleted}
+          isOpen={elementPanel.isOpen} onClose={handleElementPanelClose} element={selectedElement}
+          onSave={handleElementPanelSave} autoSave
+          onDelete={(elementId) => {
+            elementEditSessionRef.current = null
+            const placement = viewElements.find((item) => item.element_id === elementId)
+            if (placement) pushPlacementRemoveAction(placement)
+            handleElementDeleted(elementId)
+          }} onPermanentDelete={handleElementPermanentlyDeleted}
           visibilityOverrideDelta={overrideDeltaFor('element', selectedElement?.id)}
           onPromoteVisibility={(id) => handleVisibilityOverride('element', id, 'promote')}
           onDemoteVisibility={(id) => handleVisibilityOverride('element', id, 'demote')}
@@ -1562,9 +1839,9 @@ function ViewEditorInner({
         <CodePreviewPanel isOpen={codePreview.isOpen} onClose={codePreview.onClose} element={previewElement} hasBackdrop={isMobileLayout} />
 
         <ConnectorPanel
-          isOpen={connectorPanel.isOpen} onClose={connectorPanel.onClose} connector={selectedEdge}
+          isOpen={connectorPanel.isOpen} onClose={handleConnectorPanelClose} connector={selectedEdge}
           orgId={''}
-          onSave={handleConnectorSave} autoSave
+          onSave={handleConnectorPanelSave} autoSave
           onDelete={handleConnectorDeleteInPanel}
           visibilityOverrideDelta={overrideDeltaFor('connector', selectedEdge?.id)}
           onPromoteVisibility={(id) => handleVisibilityOverride('connector', id, 'promote')}
@@ -1583,14 +1860,20 @@ function ViewEditorInner({
             connectorPanel.onOpen()
           }}
           onDelete={(edgeId, ownerViewId) => {
-            handleConnectorDeleteInPanel(edgeId, ownerViewId)
+            const deleted = selectedProxyConnectorDetails?.connectors.find((leaf) => leaf.connector.id === edgeId)?.connector
+              ?? connectors.find((connector) => connector.id === edgeId)
+              ?? null
+            void api.workspace.connectors.delete('', edgeId).then(() => {
+              if (deleted) pushConnectorDeleteAction(deleted)
+              handleConnectorDeleted(edgeId, ownerViewId)
+            }).catch(() => { /* intentionally empty */ })
           }}
         />
 
         <ViewPanel
           isOpen={viewDetails.isOpen} onClose={viewDetails.onClose}
           view={view as ViewTreeNode}
-          onSave={handleViewSave} hasBackdrop={isMobileLayout}
+          onSave={handleViewSave} onUnsupportedMutation={handleUnsupportedMutation} hasBackdrop={isMobileLayout}
         />
 
         <ExportModal

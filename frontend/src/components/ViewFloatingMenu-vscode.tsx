@@ -20,6 +20,11 @@ interface ViewFloatingMenuProps {
   onImport: () => void
   onExport: () => void
   onShare: () => void
+  canUndo?: boolean
+  canRedo?: boolean
+  undoRedoDisabled?: boolean
+  onUndo?: () => void
+  onRedo?: () => void
   isFreePlan: boolean
   canUpgrade?: boolean
   activeTags?: string[]

@@ -49,9 +49,10 @@ const ALGO_META: Record<Algorithm, { label: string }> = {
 interface Props {
   view: ViewTreeNode | null
   canEdit: boolean
+  onUnsupportedMutation?: () => void
 }
 
-export default function LayoutSection({ view, canEdit }: Props) {
+export default function LayoutSection({ view, canEdit, onUnsupportedMutation }: Props) {
   const [open, setOpen] = useState(false)
   const [algo, setAlgo] = useState<Algorithm>('dagre')
   const [running, setRunning] = useState(false)
@@ -73,6 +74,7 @@ export default function LayoutSection({ view, canEdit }: Props) {
 
   const handleCollisionRemoval = async () => {
     if (!canEdit || !view) return
+    onUnsupportedMutation?.()
     setCollisionRunning(true)
     try {
       const [objs, edgeList] = await Promise.all([
@@ -192,6 +194,7 @@ export default function LayoutSection({ view, canEdit }: Props) {
 
   const applyLayout = async () => {
     if (!view || !canEdit) return
+    onUnsupportedMutation?.()
     setRunning(true)
     try {
       const [objs, edgeList] = await Promise.all([
