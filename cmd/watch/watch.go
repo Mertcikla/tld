@@ -234,10 +234,19 @@ func logWatchEvent(cmd *cobra.Command, event watch.Event, activity *watchActivit
 		return true
 	case "representation.updated":
 		if rep, ok := event.Data.(watch.RepresentResult); ok {
-			_, _ = fmt.Fprintf(out, "\r\033[Krepresentation updated: elements +%d/%d, connectors +%d/%d, embeddings +%d/%d cached",
-				rep.ElementsCreated, rep.ElementsUpdated,
-				rep.ConnectorsCreated, rep.ConnectorsUpdated,
-				rep.EmbeddingsCreated, rep.EmbeddingCacheHits)
+			line := "Representation updated\n"
+			line += "  Elements:"
+			line += fmt.Sprintf(" %s", term.Colorize(out, term.ColorGreen, fmt.Sprintf("+%d \r\033[K", rep.ElementsCreated)))
+			line += fmt.Sprintf(" %s", term.Colorize(out, term.ColorYellow, fmt.Sprintf("~%d \r\033[K", rep.ElementsUpdated)))
+
+			line += "  Connectors:"
+			line += fmt.Sprintf(" %s", term.Colorize(out, term.ColorGreen, fmt.Sprintf("+%d \r\033[K", rep.ConnectorsCreated)))
+			line += fmt.Sprintf(" %s", term.Colorize(out, term.ColorYellow, fmt.Sprintf("~%d \r\033[K", rep.ConnectorsUpdated)))
+
+			line += "  Embeddings:"
+			line += fmt.Sprintf(" %s", term.Colorize(out, term.ColorGreen, fmt.Sprintf("+%d \r\033[K", rep.EmbeddingsCreated)))
+
+			_, _ = fmt.Fprintf(out, "\r\033[K%s\n", line)
 			return true
 		}
 		return false
@@ -301,15 +310,22 @@ func logWatchEvent(cmd *cobra.Command, event watch.Event, activity *watchActivit
 }
 
 func representationChangeSummary(rep watch.RepresentResult, tags watch.GitTagUpdateResult) string {
-	return fmt.Sprintf("elements +%d/%d, connectors +%d/%d, views +%d, tags +%d/-%d",
-		rep.ElementsCreated,
-		rep.ElementsUpdated,
-		rep.ConnectorsCreated,
-		rep.ConnectorsUpdated,
-		rep.ViewsCreated,
-		tags.TagsAdded,
-		tags.TagsRemoved,
-	)
+	out := new(strings.Builder)
+	plus := "\033[32m+\033[0m"
+	tilde := "\033[33m~\033[0m"
+	minus := "\033[31m-\033[0m"
+	fmt.Fprintf(out, "elements %s%d %s%d, connectors %s%d %s%d, views %s%d, tags %s%d%s%d",
+		plus, rep.ElementsCreated,
+		tilde, rep.ElementsUpdated,
+		plus, rep.ConnectorsCreated,
+		tilde, rep.ConnectorsUpdated,
+		plus, rep.ViewsCreated,
+		plus, tags.TagsAdded,
+		minus, tags.TagsRemoved)
+	if rep.DeletesPreserved > 0 {
+		fmt.Fprintf(out, ", cleaned %s%d", minus, rep.DeletesPreserved)
+	}
+	return out.String()
 }
 
 func repoIdentity(repo watch.Repository) string {
