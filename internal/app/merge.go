@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type MergeResolved struct {
@@ -52,6 +54,11 @@ func (s *Store) MergeElements(ctx context.Context, sourceID, survivorID int64, r
 		survivorID, sourceID,
 	); err != nil {
 		return MergeResult{}, fmt.Errorf("reassign target connectors: %w", err)
+	}
+
+	// Deduplicate connectors that became identical after reassignment.
+	if err := deduplicateConnectors(ctx, tx, sourceID, survivorID); err != nil {
+		return MergeResult{}, fmt.Errorf("deduplicate connectors: %w", err)
 	}
 
 	// For placements: update non-conflicting, delete conflicting (survivor position wins).
@@ -120,7 +127,7 @@ func (s *Store) MergeElements(ctx context.Context, sourceID, survivorID int64, r
 
 	// Clean up visibility overrides for the source element.
 	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM visibility_overrides WHERE resource_type = 'element' AND resource_id = ?`,
+		`DELETE FROM view_visibility_overrides WHERE resource_type = 'element' AND resource_id = ?`,
 		sourceID,
 	); err != nil {
 		return MergeResult{}, fmt.Errorf("cleanup source visibility overrides: %w", err)
@@ -214,6 +221,155 @@ func unionTechnologyConnectors(a, b []TechnologyConnector) []TechnologyConnector
 		out = out[:3]
 	}
 	return out
+}
+
+type duplicateGroup struct {
+	ViewID          int64
+	SourceElementID int64
+	TargetElementID int64
+	SurvivorID      int64
+}
+
+func deduplicateConnectors(ctx context.Context, tx interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}, sourceID, survivorID int64) error {
+	dupRows, err := tx.QueryContext(ctx, `
+		SELECT view_id, source_element_id, target_element_id, MIN(id)
+		FROM connectors
+		WHERE source_element_id = ? OR target_element_id = ?
+		GROUP BY view_id, source_element_id, target_element_id
+		HAVING COUNT(*) > 1`, survivorID, survivorID)
+	if err != nil {
+		return fmt.Errorf("query duplicate connectors: %w", err)
+	}
+	defer func() { _ = dupRows.Close() }()
+
+	var groups []duplicateGroup
+	for dupRows.Next() {
+		var g duplicateGroup
+		if err := dupRows.Scan(&g.ViewID, &g.SourceElementID, &g.TargetElementID, &g.SurvivorID); err != nil {
+			return fmt.Errorf("scan duplicate group: %w", err)
+		}
+		groups = append(groups, g)
+	}
+	if err := dupRows.Err(); err != nil {
+		return fmt.Errorf("iterate duplicate groups: %w", err)
+	}
+
+	for _, g := range groups {
+		if err := mergeConnectorsInGroup(ctx, tx, g); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func mergeConnectorsInGroup(ctx context.Context, tx interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}, g duplicateGroup) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, label, description, direction
+		FROM connectors
+		WHERE view_id = ? AND source_element_id = ? AND target_element_id = ?
+		ORDER BY id`, g.ViewID, g.SourceElementID, g.TargetElementID)
+	if err != nil {
+		return fmt.Errorf("query group connectors: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var labels []string
+	var descriptions []string
+	var directions []string
+	var deleteIDs []int64
+
+	for rows.Next() {
+		var id int64
+		var label, description sql.NullString
+		var direction string
+		if err := rows.Scan(&id, &label, &description, &direction); err != nil {
+			return fmt.Errorf("scan connector: %w", err)
+		}
+		if id != g.SurvivorID {
+			deleteIDs = append(deleteIDs, id)
+		}
+		if label.Valid && strings.TrimSpace(label.String) != "" {
+			labels = append(labels, strings.TrimSpace(label.String))
+		}
+		if description.Valid && strings.TrimSpace(description.String) != "" {
+			descriptions = append(descriptions, strings.TrimSpace(description.String))
+		}
+		directions = append(directions, direction)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate group connectors: %w", err)
+	}
+
+	// Merge labels: unique labels joined with " / ".
+	seenLabel := map[string]bool{}
+	var mergedLabels []string
+	for _, l := range labels {
+		if !seenLabel[l] {
+			seenLabel[l] = true
+			mergedLabels = append(mergedLabels, l)
+		}
+	}
+	var mergedLabel *string
+	if len(mergedLabels) > 0 {
+		s := strings.Join(mergedLabels, " / ")
+		mergedLabel = &s
+	}
+
+	// Merge descriptions: pick first non-empty.
+	var mergedDesc *string
+	for _, d := range descriptions {
+		s := d
+		mergedDesc = &s
+		break
+	}
+
+	// Merge directions: forward + backward = "both", same stays, "none" yields.
+	var hasForward, hasBackward bool
+	for _, d := range directions {
+		switch d {
+		case "forward":
+			hasForward = true
+		case "backward":
+			hasBackward = true
+		case "both":
+			hasForward = true
+			hasBackward = true
+		}
+	}
+	mergedDir := "none"
+	if hasForward && hasBackward {
+		mergedDir = "both"
+	} else if hasForward {
+		mergedDir = "forward"
+	} else if hasBackward {
+		mergedDir = "backward"
+	}
+
+	// Update the survivor connector.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE connectors SET label = ?, description = ?, direction = ?, updated_at = ?
+		WHERE id = ?`,
+		mergedLabel, mergedDesc, mergedDir, nowString(), g.SurvivorID,
+	); err != nil {
+		return fmt.Errorf("update survivor connector %d: %w", g.SurvivorID, err)
+	}
+
+	// Delete all other connectors in the group.
+	for _, deleteID := range deleteIDs {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM connectors WHERE id = ?`, deleteID,
+		); err != nil {
+			return fmt.Errorf("delete duplicate connector %d: %w", deleteID, err)
+		}
+	}
+
+	return nil
 }
 
 

@@ -1445,12 +1445,13 @@ function ViewEditorInner({
     if (!mergeSourceElement) return
     const result = await api.elements.merge(mergeSourceElement.id, survivorId, resolved)
     mergeElementsInto(mergeSourceElement.id, result.survivor)
+    await refreshElements()
     mergeDialog.onClose()
     setMergeSourceElement(null)
     if (selectedElement?.id === mergeSourceElement.id) {
       setSelectedElement(result.survivor)
     }
-  }, [mergeSourceElement, mergeElementsInto, mergeDialog, selectedElement])
+  }, [mergeSourceElement, mergeElementsInto, mergeDialog, selectedElement, refreshElements])
 
   const handleConnectorDeleteInPanel = useCallback((edgeId: number, ownerViewId?: number) => {
     const deleted = selectedEdge?.id === edgeId ? selectedEdge : connectors.find((connector) => connector.id === edgeId) ?? null
