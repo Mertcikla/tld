@@ -244,7 +244,7 @@ func RuntimeEnrichers() []enrich.Enricher {
 }
 
 func IaCEnrichers() []enrich.Enricher       { return iac.All() }
-func ComposeEnrichers() []enrich.Enricher  { return compose.All() }
+func ComposeEnrichers() []enrich.Enricher   { return compose.All() }
 func CloudEnrichers() []enrich.Enricher     { return cloud.All() }
 func MessagingEnrichers() []enrich.Enricher { return messaging.All() }
 func StorageEnrichers() []enrich.Enricher   { return storage.All() }

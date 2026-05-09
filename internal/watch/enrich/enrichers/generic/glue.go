@@ -273,4 +273,3 @@ var detectors = []detector{
 	{ID: "uri-schemes", Name: "Custom URI schemes", Category: "os-integration", FactType: "os.uri_scheme", Relationship: "handles_deep_link", PathTokens: []string{"info.plist", "androidmanifest.xml", "electron"}, Tokens: []string{"CFBundleURLSchemes", "android.intent.action.VIEW"}, Tags: []string{"os-integration:uri-schemes"}, Attrs: map[string]string{"platform": "desktop-mobile"}},
 	{ID: "android-intents", Name: "Android Intents", Category: "os-integration", FactType: "os.intent", Relationship: "broadcasts_intent", PathTokens: []string{"androidmanifest.xml"}, Tokens: []string{"<intent-filter", "sendbroadcast", "android.intent.action"}, Tags: []string{"os-integration:android-intents"}, Attrs: map[string]string{"platform": "android"}},
 }
-

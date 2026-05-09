@@ -330,5 +330,3 @@ func tagValue(value string) string {
 	}
 	return strings.Trim(value, "-")
 }
-
-
