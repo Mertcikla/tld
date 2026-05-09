@@ -348,6 +348,49 @@ func (s *Store) CachedFileByPath(ctx context.Context, repositoryID int64, path s
 	return s.fileByPath(ctx, repositoryID, path)
 }
 
+func (s *Store) CachedFilesByPath(ctx context.Context, repositoryID int64) (map[string]File, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, repository_id, path, language, git_blob_hash, worktree_hash, size_bytes, mtime_unix, scan_status, scan_error, created_at, updated_at
+		FROM watch_files
+		WHERE repository_id = ?`, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	files := make(map[string]File)
+	for rows.Next() {
+		var file File
+		if err := rows.Scan(&file.ID, &file.RepositoryID, &file.Path, &file.Language, &file.GitBlobHash, &file.WorktreeHash, &file.SizeBytes, &file.MtimeUnix, &file.ScanStatus, &file.ScanError, &file.CreatedAt, &file.UpdatedAt); err != nil {
+			return nil, err
+		}
+		files[file.Path] = file
+	}
+	return files, rows.Err()
+}
+
+func (s *Store) CurrentEnrichmentVersionPaths(ctx context.Context, repositoryID int64, version string) (map[string]struct{}, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT file_path
+		FROM watch_facts
+		WHERE repository_id = ?
+		  AND enricher = ?
+		  AND type = ?
+		  AND name = ?`, repositoryID, enrichmentVersionEnricher, enrichmentVersionType, version)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	paths := make(map[string]struct{})
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		paths[path] = struct{}{}
+	}
+	return paths, rows.Err()
+}
+
 type storedSymbolIdentity struct {
 	IdentityKey   string
 	StableKey     string

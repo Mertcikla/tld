@@ -2,6 +2,7 @@ package watch
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -219,6 +220,16 @@ func Main() {}
 	if strings.Contains(dryRunOut.String(), "Watching") {
 		t.Fatalf("dry-run should exit after printing JSON, got watch output:\n%s", dryRunOut.String())
 	}
+	dryRunLog, err := os.ReadFile(localserver.LogPath(dataDir))
+	if err != nil {
+		t.Fatalf("read dry-run watch log: %v", err)
+	}
+	if !strings.Contains(string(dryRunLog), "msg=watch.diff.started") || !strings.Contains(string(dryRunLog), "msg=watch.diff.completed") || !strings.Contains(string(dryRunLog), "msg=watch.scan.file") {
+		t.Fatalf("watch dry-run should log pipeline details:\n%s", string(dryRunLog))
+	}
+	if strings.Contains(dryRunOut.String(), "msg=watch.") {
+		t.Fatalf("dry-run JSON stdout should not contain log lines:\n%s", dryRunOut.String())
+	}
 
 	diffCmd := NewWatchCmd()
 	var diffOut bytes.Buffer
@@ -236,6 +247,49 @@ func Main() {}
 	}
 	if !sameDiffPayload(flattenGroupedDiffPayload(dryRunPayload.Diffs), diffPayload.Diffs) {
 		t.Fatalf("watch --dry-run diffs should match watch diff diffs\n dry-run: %+v\n diff: %+v", dryRunPayload.Diffs, diffPayload.Diffs)
+	}
+}
+
+func TestWatchCommandWritesRuntimeLogWithoutBanner(t *testing.T) {
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc Main() {}\n")
+	dataDir := t.TempDir()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	cmd := NewWatchCmd()
+	cmd.SetContext(ctx)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{repo, "--data-dir", dataDir, "--embedding-provider", "none", "--no-serve"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("watch command: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "░███████") || !strings.Contains(out.String(), "Watching:") {
+		t.Fatalf("watch stdout should contain CLI banner and ready output:\n%s", out.String())
+	}
+	logData, err := os.ReadFile(localserver.LogPath(dataDir))
+	if err != nil {
+		t.Fatalf("read watch log: %v", err)
+	}
+	logText := string(logData)
+	for _, want := range []string{
+		"msg=watch.command.started",
+		"msg=watch.server.skipped",
+		"msg=watch.runner.started",
+		"msg=watch.runner.ready",
+		"msg=watch.event",
+		"type=watch.started",
+		"msg=watch.runner.stopped",
+		"msg=watch.command.completed",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("watch log missing %q:\n%s", want, logText)
+		}
+	}
+	if strings.Contains(logText, "░███████") || strings.Contains(logText, "Version:") {
+		t.Fatalf("watch log should not contain startup banner/logo:\n%s", logText)
 	}
 }
 

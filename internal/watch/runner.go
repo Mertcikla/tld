@@ -29,6 +29,7 @@ type RunnerOptions struct {
 	Settings          Settings
 	DataDir           string
 	Progress          ProgressSink
+	Logger            EventLogger
 	Events            chan<- Event
 	Ready             chan<- RunnerResult
 }
@@ -63,6 +64,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 		r.Scanner = NewScanner(r.Store)
 	}
 	r.Scanner.Progress = opts.Progress
+	r.Scanner.Logger = opts.Logger
 	if r.Representer == nil {
 		r.Representer = NewRepresenter(r.Store)
 	}
@@ -82,21 +84,28 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	if opts.SummaryInterval <= 0 {
 		opts.SummaryInterval = time.Minute
 	}
+	started := time.Now()
+	logInfo(ctx, opts.Logger, "watch.runner.started", "path", opts.Path, "rescan", opts.Rescan, "watcher", settings.Watcher, "poll_interval", opts.PollInterval.String(), "debounce", opts.Debounce.String(), "languages", strings.Join(settings.Languages, ","))
 	absPath, err := filepath.Abs(opts.Path)
 	if err != nil {
+		logError(ctx, opts.Logger, "watch.runner.failed", err, "elapsed", logElapsed(started))
 		return RunnerResult{}, err
 	}
 	repoRoot, err := tldgit.RepoRoot(absPath)
 	if err != nil {
+		logError(ctx, opts.Logger, "watch.runner.failed", err, "elapsed", logElapsed(started), "abs_path", absPath)
 		return RunnerResult{}, fmt.Errorf("%s is not inside a git repository: %w", opts.Path, err)
 	}
+	logInfo(ctx, opts.Logger, "watch.runner.repository_resolved", "elapsed", logElapsed(started), "repo_root", repoRoot)
 
 	gitStatus, _ := gitStatusSnapshot(repoRoot)
 	emit(opts.Events, Event{Type: "scan.started", At: nowString(), Phase: "scan", WatcherMode: settings.Watcher, Languages: settings.Languages})
-	once, err := r.RunOnce(ctx, OneShotOptions{Path: repoRoot, Rescan: opts.Rescan, Embedding: opts.Embedding, Settings: settings, DataDir: opts.DataDir, Progress: opts.Progress})
+	once, err := r.RunOnce(ctx, OneShotOptions{Path: repoRoot, Rescan: opts.Rescan, Embedding: opts.Embedding, Settings: settings, DataDir: opts.DataDir, Progress: opts.Progress, Logger: opts.Logger})
 	if err != nil {
+		logError(ctx, opts.Logger, "watch.runner.initial_pipeline.failed", err, "repo_root", repoRoot)
 		return RunnerResult{}, err
 	}
+	logInfo(ctx, opts.Logger, "watch.runner.initial_pipeline.completed", "repository_id", once.Repository.ID, "scan_run_id", once.Scan.ScanRunID, "representation_run_id", once.Representation.RepresentationRun)
 	scan := once.Scan
 	emit(opts.Events, Event{Type: "scan.completed", RepositoryID: scan.RepositoryID, At: nowString(), Data: scan, Phase: "scan", WatcherMode: settings.Watcher, Languages: settings.Languages, Warnings: scan.Warnings})
 	emit(opts.Events, Event{Type: "representation.started", RepositoryID: scan.RepositoryID, At: nowString(), Phase: "represent", WatcherMode: settings.Watcher, Languages: settings.Languages, Warnings: scan.Warnings})
@@ -104,16 +113,21 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	token := randomToken()
 	lock, err := r.Store.AcquireLock(ctx, repo.ID, os.Getpid(), token, LockHeartbeatTimeout)
 	if err != nil {
+		logError(ctx, opts.Logger, "watch.lock.acquire.failed", err, "repository_id", repo.ID)
 		return RunnerResult{}, err
 	}
 	_ = lock
+	logInfo(ctx, opts.Logger, "watch.lock.enabled", "repository_id", repo.ID, "pid", os.Getpid())
 	sourceWatcher := newSourceWatcher(ctx, repoRoot, settings, r.Scanner.EffectiveRules)
 	watcherMode := sourceWatcher.Mode
 	warnings := append([]string{}, sourceWatcher.Warnings...)
+	logInfo(ctx, opts.Logger, "watch.source_watcher.started", "repository_id", repo.ID, "mode", watcherMode, "warnings", len(warnings))
 	emit(opts.Events, Event{Type: "watch.started", RepositoryID: repo.ID, At: nowString(), Data: repo.JSON(), Phase: "watch", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
 	emit(opts.Events, Event{Type: "lock.enabled", RepositoryID: repo.ID, At: nowString()})
 	defer func() {
 		_ = r.Store.ReleaseLock(context.Background(), repo.ID, token)
+		logInfo(context.Background(), opts.Logger, "watch.lock.disabled", "repository_id", repo.ID)
+		logInfo(context.Background(), opts.Logger, "watch.runner.stopped", "repository_id", repo.ID, "elapsed", logElapsed(started))
 		emit(opts.Events, Event{Type: "lock.disabled", RepositoryID: repo.ID, At: nowString()})
 		emit(opts.Events, Event{Type: "watch.stopped", RepositoryID: repo.ID, At: nowString()})
 	}()
@@ -129,7 +143,9 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	if opts.Ready != nil {
 		select {
 		case opts.Ready <- result:
+			logInfo(ctx, opts.Logger, "watch.runner.ready", "repository_id", repo.ID, "elapsed", logElapsed(started), "watcher_mode", watcherMode)
 		default:
+			logInfo(ctx, opts.Logger, "watch.runner.ready_skipped", "repository_id", repo.ID)
 		}
 	}
 	limitedMode := once.Scan.Mode == "limited"
@@ -153,8 +169,10 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	for {
 		select {
 		case <-ctx.Done():
+			logInfo(ctx, opts.Logger, "watch.runner.context_done", "repository_id", repo.ID, "error", ctx.Err())
 			return result, nil
 		case <-summary.C:
+			logInfo(ctx, opts.Logger, "watch.summary", "repository_id", repo.ID, "total_changes_processed", totalChangesProcessed, "interval_changes_processed", intervalChangesProcessed)
 			emit(opts.Events, Event{
 				Type:         "watch.changeCounter",
 				RepositoryID: repo.ID,
@@ -170,34 +188,43 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 		case <-heartbeat.C:
 			if _, err := r.Store.HeartbeatLock(ctx, repo.ID, token); err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
+					logInfo(ctx, opts.Logger, "watch.heartbeat.lock_missing", "repository_id", repo.ID)
 					return result, nil
 				}
+				logError(ctx, opts.Logger, "watch.heartbeat.failed", err, "repository_id", repo.ID)
 				return result, err
 			}
 			status, err := r.Store.LockStatus(ctx, repo.ID, token)
 			if errors.Is(err, sql.ErrNoRows) {
+				logInfo(ctx, opts.Logger, "watch.status.lock_missing", "repository_id", repo.ID)
 				return result, nil
 			}
 			if err == nil && status == "stopping" {
+				logInfo(ctx, opts.Logger, "watch.status.stopping", "repository_id", repo.ID)
 				return result, nil
 			}
 			if err == nil && status == "paused" {
+				logInfo(ctx, opts.Logger, "watch.status.paused", "repository_id", repo.ID)
 				emit(opts.Events, Event{Type: "watch.paused", RepositoryID: repo.ID, At: nowString()})
 			}
 			emit(opts.Events, Event{Type: "watch.heartbeat", RepositoryID: repo.ID, At: nowString(), Phase: "watch", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
 		case _, ok := <-sourceWatcher.Events:
 			if ok {
+				logInfo(ctx, opts.Logger, "watch.source_event.received", "repository_id", repo.ID)
 				poll.Reset(time.Millisecond)
 			}
 		case <-poll.C:
 			status, err := r.Store.LockStatus(ctx, repo.ID, token)
 			if errors.Is(err, sql.ErrNoRows) {
+				logInfo(ctx, opts.Logger, "watch.poll.lock_missing", "repository_id", repo.ID)
 				return result, nil
 			}
 			if err == nil && status == "paused" {
+				logInfo(ctx, opts.Logger, "watch.poll.skipped", "repository_id", repo.ID, "reason", "paused")
 				continue
 			}
 			if err == nil && status == "stopping" {
+				logInfo(ctx, opts.Logger, "watch.poll.stopping", "repository_id", repo.ID)
 				return result, nil
 			}
 			nextGit, _ := gitStatusSnapshot(repoRoot)
@@ -212,6 +239,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			} else if nextGit.HeadCommit == lastHead && nextGitFingerprint == lastGitFingerprint {
 				continue
 			}
+			logInfo(ctx, opts.Logger, "watch.change.detected", "repository_id", repo.ID, "limited_mode", limitedMode, "head", nextGit.HeadCommit, "source_fingerprint_changed", nextFingerprint != lastFingerprint, "git_fingerprint_changed", nextGitFingerprint != lastGitFingerprint)
 			time.Sleep(opts.Debounce)
 			stableSourceSnapshot := map[string]string{}
 			sourceChanged := false
@@ -228,12 +256,16 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			} else {
 				sourceChanges = diffSourceFileSnapshots(lastSourceSnapshot, stableSourceSnapshot)
 			}
+			pipelineStarted := time.Now()
+			logInfo(ctx, opts.Logger, "watch.change.pipeline.started", "repository_id", repo.ID, "source_changed", sourceChanged, "changed_files", len(sourceChanges), "head", nextGit.HeadCommit)
 			emit(opts.Events, Event{Type: "scan.started", RepositoryID: repo.ID, At: nowString(), Phase: "scan", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: warnings})
-			once, err := r.RunOnce(ctx, OneShotOptions{Path: repoRoot, Embedding: opts.Embedding, Settings: settings, DataDir: opts.DataDir, Progress: opts.Progress})
+			once, err := r.RunOnce(ctx, OneShotOptions{Path: repoRoot, Embedding: opts.Embedding, Settings: settings, DataDir: opts.DataDir, Progress: opts.Progress, Logger: opts.Logger})
 			if err != nil {
+				logError(ctx, opts.Logger, "watch.change.pipeline.failed", err, "elapsed", logElapsed(pipelineStarted), "repository_id", repo.ID)
 				emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: err.Error()})
 				continue
 			}
+			logInfo(ctx, opts.Logger, "watch.change.pipeline.completed", "elapsed", logElapsed(pipelineStarted), "repository_id", repo.ID, "scan_run_id", once.Scan.ScanRunID, "representation_run_id", once.Representation.RepresentationRun)
 			scan := once.Scan
 			eventWarnings := append(append([]string{}, warnings...), scan.Warnings...)
 			emit(opts.Events, Event{Type: "scan.completed", RepositoryID: repo.ID, At: nowString(), Data: scan, Phase: "scan", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
@@ -241,11 +273,14 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			rep := once.Representation
 			emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep, Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
 			tagResult, _ := r.Store.ApplyGitTags(ctx, repo.ID, nextGit)
+			logInfo(ctx, opts.Logger, "watch.git_tags.applied", "repository_id", repo.ID, "tags_added", tagResult.TagsAdded, "tags_removed", tagResult.TagsRemoved)
 			diffs, diffErr := r.Store.BuildWatchDiffs(ctx, repo.ID, rep.RepresentationHash)
 			if diffErr != nil {
+				logError(ctx, opts.Logger, "watch.diffs.failed", diffErr, "repository_id", repo.ID, "representation_hash", rep.RepresentationHash)
 				emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: diffErr.Error()})
 			}
 			for _, change := range sourceChanges {
+				logInfo(ctx, opts.Logger, "watch.source.changed", "repository_id", repo.ID, "path", change.Path, "change_type", change.ChangeType, "language", change.Language, "representation_changed", sourceChangeRepresentationChanged(change, diffs))
 				emit(opts.Events, Event{
 					Type:         "source.changed",
 					RepositoryID: repo.ID,
@@ -273,8 +308,10 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			emit(opts.Events, Event{Type: "git.statusChanged", RepositoryID: repo.ID, At: nowString(), Data: nextGit})
 			if nextGit.HeadCommit != "" && nextGit.HeadCommit != lastHead {
 				if err := r.createVersionForHead(ctx, repo.ID, nextGit, rep.RepresentationHash, !sourceChanged); err != nil {
+					logError(ctx, opts.Logger, "watch.version.create.failed", err, "repository_id", repo.ID, "head", nextGit.HeadCommit)
 					emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: err.Error()})
 				} else {
+					logInfo(ctx, opts.Logger, "watch.version.created", "repository_id", repo.ID, "head", nextGit.HeadCommit, "source_changed", sourceChanged)
 					emit(opts.Events, Event{Type: "version.created", RepositoryID: repo.ID, At: nowString(), Data: map[string]string{"commit_hash": nextGit.HeadCommit}})
 				}
 				lastHead = nextGit.HeadCommit

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mertcikla/tld/cmd"
+	"github.com/mertcikla/tld/internal/localserver"
 	"github.com/mertcikla/tld/internal/workspace"
 )
 
@@ -350,6 +351,44 @@ func TestAnalyzeCmd_DryRunDoesNotWriteYAML(t *testing.T) {
 	}
 }
 
+func TestAnalyzeCmd_WritesPipelineLogWithoutBanner(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	repoDir := filepath.Join(dir, "app")
+	cmd.InitGitRepo(t, repoDir, "service.go", "package main\nfunc Service() {}\n")
+
+	stdout, stderr, err := cmd.RunCmd(t, dir, "analyze", repoDir, "--data-dir", dataDir, "--embedding-provider", "none")
+	if err != nil {
+		t.Fatalf("analyze: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "░███████") || !strings.Contains(stdout, "Version:") {
+		t.Fatalf("text stdout should include startup banner/logo, got:\n%s", stdout)
+	}
+	logData, err := os.ReadFile(localserver.LogPath(dataDir))
+	if err != nil {
+		t.Fatalf("read analyze log: %v", err)
+	}
+	logText := string(logData)
+	for _, want := range []string{
+		"msg=analyze.started",
+		"msg=watch.scan.started",
+		"msg=watch.scan.file",
+		"path=service.go",
+		"msg=watch.representation.completed",
+		"msg=analyze.export.completed",
+		"msg=analyze.workspace_save.completed",
+		"msg=analyze.completed",
+	} {
+		if !strings.Contains(logText, want) {
+			t.Fatalf("log missing %q:\n%s", want, logText)
+		}
+	}
+	if strings.Contains(logText, "░███████") || strings.Contains(logText, "Version:") {
+		t.Fatalf("log should not contain startup banner/logo:\n%s", logText)
+	}
+}
+
 func TestAnalyzeCmd_RemovedFlagsFail(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
@@ -384,6 +423,35 @@ func TestAnalyzeCmd_JSONDryRunUsesWatchDiffShape(t *testing.T) {
 	}
 	if payload.Scan["repository_id"] == nil || payload.Representation["representation_hash"] == nil || payload.Export["elements_written"] == nil {
 		t.Fatalf("unexpected payload: %+v", payload)
+	}
+	logData, err := os.ReadFile(localserver.LogPath(dataDir))
+	if err != nil {
+		t.Fatalf("read analyze log: %v", err)
+	}
+	if !strings.Contains(string(logData), "msg=analyze.completed") {
+		t.Fatalf("json-mode analyze should still write logs:\n%s", string(logData))
+	}
+	if strings.Contains(stdout, "msg=analyze.") {
+		t.Fatalf("json stdout should not contain log lines:\n%s", stdout)
+	}
+}
+
+func TestAnalyzeCmd_LogsWatchPipelineError(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+
+	stdout, stderr, err := cmd.RunCmd(t, dir, "analyze", dir, "--data-dir", dataDir, "--embedding-provider", "none")
+	if err == nil {
+		t.Fatalf("expected analyze to fail for non-git path\nstdout: %s\nstderr: %s", stdout, stderr)
+	}
+	logData, readErr := os.ReadFile(localserver.LogPath(dataDir))
+	if readErr != nil {
+		t.Fatalf("read analyze log: %v", readErr)
+	}
+	logText := string(logData)
+	if !strings.Contains(logText, "msg=watch.prepare.failed") || !strings.Contains(logText, "msg=analyze.failed") {
+		t.Fatalf("log should contain failed phase and final failure:\n%s", logText)
 	}
 }
 

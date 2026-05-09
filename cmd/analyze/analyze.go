@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,7 @@ materializes the canonical SQLite code representation, and exports generated res
 to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			commandStarted := time.Now()
 			scanPath := args[0]
 			absPath, err := filepath.Abs(scanPath)
 			if err != nil {
@@ -62,20 +64,65 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 			if err := os.MkdirAll(dataDir, 0o755); err != nil {
 				return fmt.Errorf("create data dir: %w", err)
 			}
-			embeddingCfg := resolveAnalyzeEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
-			settings := resolveAnalyzeWatchSettings(cfg, languageFlags, maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup)
-			if embeddingCfg.Provider != "none" {
-				checked, _, err := watchpkg.CheckEmbeddingHealth(cmd.Context(), embeddingCfg)
-				if err != nil {
-					return fmt.Errorf("embedding healthcheck failed: %w", err)
-				}
-				embeddingCfg = checked
-			}
-			sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
+			logFile, logger, err := openAnalyzeLog(dataDir)
 			if err != nil {
 				return err
 			}
+			defer func() { _ = logFile.Close() }()
+			var finalErr error
+			fail := func(event string, err error, args ...any) error {
+				finalErr = err
+				fields := append([]any{"error", err}, args...)
+				logger.ErrorContext(cmd.Context(), event, fields...)
+				return err
+			}
+			defer func() {
+				if finalErr != nil {
+					logger.ErrorContext(cmd.Context(), "analyze.failed", "elapsed", time.Since(commandStarted).Round(time.Millisecond).String(), "error", finalErr)
+					return
+				}
+				logger.InfoContext(cmd.Context(), "analyze.completed", "elapsed", time.Since(commandStarted).Round(time.Millisecond).String())
+			}()
+			logger.InfoContext(cmd.Context(), "analyze.started",
+				"path", scanPath,
+				"abs_path", absPath,
+				"data_dir", dataDir,
+				"format", formatFlag(cmd),
+				"dry_run", dryRun,
+				"rescan", rescan,
+				"fail_on_drift", failOnDrift,
+				"languages", strings.Join(languageFlags, ","),
+			)
+			logger.InfoContext(cmd.Context(), "analyze.setup.completed", "elapsed", time.Since(commandStarted).Round(time.Millisecond).String(), "workspace", *wdir, "data_dir", dataDir)
+			embeddingCfg := resolveAnalyzeEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
+			settings := resolveAnalyzeWatchSettings(cfg, languageFlags, maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup)
+			logger.InfoContext(cmd.Context(), "analyze.settings.resolved",
+				"embedding_provider", embeddingCfg.Provider,
+				"embedding_model", embeddingCfg.Model,
+				"embedding_dimension", embeddingCfg.Dimension,
+				"watcher", settings.Watcher,
+				"languages", strings.Join(settings.Languages, ","),
+				"max_elements_per_view", settings.Thresholds.MaxElementsPerView,
+				"max_connectors_per_view", settings.Thresholds.MaxConnectorsPerView,
+			)
+			if embeddingCfg.Provider != "none" {
+				healthStarted := time.Now()
+				logger.InfoContext(cmd.Context(), "analyze.embedding_healthcheck.started", "provider", embeddingCfg.Provider, "model", embeddingCfg.Model)
+				checked, _, err := watchpkg.CheckEmbeddingHealth(cmd.Context(), embeddingCfg)
+				if err != nil {
+					return fail("analyze.embedding_healthcheck.failed", fmt.Errorf("embedding healthcheck failed: %w", err), "elapsed", time.Since(healthStarted).Round(time.Millisecond).String(), "provider", embeddingCfg.Provider, "model", embeddingCfg.Model)
+				}
+				embeddingCfg = checked
+				logger.InfoContext(cmd.Context(), "analyze.embedding_healthcheck.completed", "elapsed", time.Since(healthStarted).Round(time.Millisecond).String(), "provider", embeddingCfg.Provider, "model", embeddingCfg.Model, "dimension", embeddingCfg.Dimension)
+			}
+			storeStarted := time.Now()
+			logger.InfoContext(cmd.Context(), "analyze.store_open.started", "database", localserver.DatabasePath(dataDir))
+			sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
+			if err != nil {
+				return fail("analyze.store_open.failed", err, "elapsed", time.Since(storeStarted).Round(time.Millisecond).String())
+			}
 			defer func() { _ = sqliteStore.DB().Close() }()
+			logger.InfoContext(cmd.Context(), "analyze.store_open.completed", "elapsed", time.Since(storeStarted).Round(time.Millisecond).String())
 			watchStore := watchpkg.NewStore(sqliteStore.DB())
 			progress := newAnalyzeWatchProgress(cmd.ErrOrStderr())
 			if formatFlag(cmd) != "json" {
@@ -90,19 +137,22 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 					term.Label(cmd.OutOrStdout(), 20, "Mode", "dry-run")
 				}
 			}
-			once, err := watchpkg.NewRunner(watchStore).RunOnce(cmd.Context(), watchpkg.OneShotOptions{Path: absPath, Rescan: rescan, Embedding: embeddingCfg, Settings: settings, DataDir: dataDir, Progress: progress})
+			once, err := watchpkg.NewRunner(watchStore).RunOnce(cmd.Context(), watchpkg.OneShotOptions{Path: absPath, Rescan: rescan, Embedding: embeddingCfg, Settings: settings, DataDir: dataDir, Progress: progress, Logger: logger})
 			if err != nil {
-				return err
+				return fail("analyze.watch_pipeline.failed", err)
 			}
+			exportStarted := time.Now()
+			logger.InfoContext(cmd.Context(), "analyze.export.started", "repository_id", once.Scan.RepositoryID)
 			exported, exportResult, err := exportyaml.ExportWithProgress(cmd.Context(), sqliteStore, watchStore, ws, once.Scan.RepositoryID, progress)
 			if err != nil {
-				return fmt.Errorf("export yaml: %w", err)
+				return fail("analyze.export.failed", fmt.Errorf("export yaml: %w", err), "elapsed", time.Since(exportStarted).Round(time.Millisecond).String(), "repository_id", once.Scan.RepositoryID)
 			}
+			logger.InfoContext(cmd.Context(), "analyze.export.completed", "elapsed", time.Since(exportStarted).Round(time.Millisecond).String(), "repository_id", once.Scan.RepositoryID, "elements_written", exportResult.ElementsWritten, "connectors_written", exportResult.ConnectorsWritten, "views_written", exportResult.ViewsWritten)
 			changed := hasAnalyzeDrift(once.Diffs)
 			if formatFlag(cmd) == "json" {
 				payload := map[string]any{"changed": changed, "scan": once.Scan, "representation": once.Representation, "export": exportResult, "diffs": once.Diffs}
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(payload); err != nil {
-					return err
+					return fail("analyze.output.failed", err)
 				}
 			} else {
 				term.Separator(cmd.OutOrStdout())
@@ -112,14 +162,20 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 				term.Separator(cmd.OutOrStdout())
 			}
 			if dryRun {
+				logger.InfoContext(cmd.Context(), "analyze.workspace_save.skipped", "reason", "dry_run", "changed", changed)
 				if formatFlag(cmd) != "json" {
 					term.Hint(cmd.OutOrStdout(), "No files written. Remove --dry-run to apply.")
 				}
-			} else if err := workspace.Save(exported); err != nil {
-				return fmt.Errorf("save workspace: %w", err)
+			} else {
+				saveStarted := time.Now()
+				logger.InfoContext(cmd.Context(), "analyze.workspace_save.started", "changed", changed)
+				if err := workspace.Save(exported); err != nil {
+					return fail("analyze.workspace_save.failed", fmt.Errorf("save workspace: %w", err), "elapsed", time.Since(saveStarted).Round(time.Millisecond).String())
+				}
+				logger.InfoContext(cmd.Context(), "analyze.workspace_save.completed", "elapsed", time.Since(saveStarted).Round(time.Millisecond).String(), "changed", changed)
 			}
 			if failOnDrift && changed {
-				return fmt.Errorf("watch representation drift detected")
+				return fail("analyze.drift.failed", fmt.Errorf("watch representation drift detected"))
 			}
 			return nil
 		},
@@ -140,6 +196,16 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 	c.Flags().IntVar(&maxOutgoing, "max-outgoing-per-element", 0, "maximum outgoing references per element before collapsing")
 	c.Flags().IntVar(&maxExpandedGroup, "max-expanded-connectors-per-group", 0, "maximum file-pair connectors to expand before collapsing to a folder connector")
 	return c
+}
+
+func openAnalyzeLog(dataDir string) (*os.File, *slog.Logger, error) {
+	path := localserver.LogPath(dataDir)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open analyze log file: %w", err)
+	}
+	logger := slog.New(slog.NewTextHandler(file, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	return file, logger, nil
 }
 
 func resolveAnalyzeEmbeddingConfig(cfg *workspace.Config, provider, endpoint, model string, dimension int) watchpkg.EmbeddingConfig {

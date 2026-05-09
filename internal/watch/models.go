@@ -198,6 +198,7 @@ type RepresentRequest struct {
 	Thresholds Thresholds       `json:"thresholds"`
 	Visibility VisibilityConfig `json:"visibility"`
 	Progress   ProgressSink     `json:"-"`
+	Logger     EventLogger      `json:"-"`
 }
 
 type RepresentResult struct {

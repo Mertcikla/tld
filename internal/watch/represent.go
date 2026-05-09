@@ -48,16 +48,20 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	req.Thresholds = defaultThresholds(req.Thresholds)
 	req.Visibility = defaultVisibilityConfig(req.Visibility)
 	settingsHash := settingsHash(req)
+	prepareStarted := time.Now()
+	logInfo(ctx, req.Logger, "watch.representation.prepare.started", "repository_id", repositoryID)
 	progressStart(req.Progress, "Preparing representation graph", 8)
 	rawGraphHash, err := r.Store.RawGraphHash(ctx, repositoryID)
 	if err != nil {
 		progressFinish(req.Progress)
+		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
 		return RepresentResult{}, err
 	}
 	progressAdvance(req.Progress, "Raw graph hashed")
 	repo, err := r.Store.Repository(ctx, repositoryID)
 	if err != nil {
 		progressFinish(req.Progress)
+		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
 		return RepresentResult{}, err
 	}
 	progressAdvance(req.Progress, "Repository loaded")
@@ -65,6 +69,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	provider, err := NewEmbeddingProvider(req.Embedding)
 	if err != nil {
 		progressFinish(req.Progress)
+		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
 		return RepresentResult{}, err
 	}
 	progressAdvance(req.Progress, "Embedding provider configured")
@@ -72,6 +77,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	modelID, err := r.Store.EnsureEmbeddingModel(ctx, EmbeddingConfig{Provider: model.Provider, Model: model.Model, Dimension: model.Dimension}, model.ConfigHash)
 	if err != nil {
 		progressFinish(req.Progress)
+		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
 		return RepresentResult{}, err
 	}
 	progressAdvance(req.Progress, "Embedding model registered")
@@ -83,37 +89,46 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	identityKeys, err := r.Store.SymbolIdentityKeys(ctx, repositoryID)
 	if err != nil {
 		progressFinish(req.Progress)
+		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
 		return RepresentResult{}, err
 	}
 	progressAdvance(req.Progress, "Symbol identities loaded")
 	contextPolicies, err := r.Store.ActiveContextPolicySet(ctx, repositoryID)
 	if err != nil {
 		progressFinish(req.Progress)
+		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
 		return RepresentResult{}, err
 	}
 	progressAdvance(req.Progress, "Context policies loaded")
 	changedRaw, err := r.Store.ChangedRawResourcesSinceLatest(ctx, repositoryID)
 	if err != nil {
 		progressFinish(req.Progress)
+		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
 		return RepresentResult{}, err
 	}
 	progressAdvance(req.Progress, "Changed resources loaded")
 	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, nil, changedRaw.Symbols, contextPolicies, identityKeys)
 	if err != nil {
 		progressFinish(req.Progress)
+		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
 		return RepresentResult{}, err
 	}
 	filtered.ChangedFiles = changedRaw.Files
 	progressAdvance(req.Progress, "Architecture view filtered")
 	progressFinish(req.Progress)
+	logInfo(ctx, req.Logger, "watch.representation.prepare.completed", "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID, "raw_graph_hash", rawGraphHash, "provider", model.Provider, "model", model.Model, "visible_symbols", len(filtered.VisibleSymbols), "visible_references", len(filtered.VisibleReferences), "visible_files", len(filtered.VisibleFiles), "visible_facts", len(filtered.VisibleFacts), "changed_files", len(changedRaw.Files), "changed_symbols", len(changedRaw.Symbols))
 
 	result := RepresentResult{}
 	if model.Provider != "none" {
 		embeddingSymbols := embeddingCandidateSymbols(filtered.VisibleSymbols, maxEmbeddingSymbolsPerRun)
+		embeddingStarted := time.Now()
+		logInfo(ctx, req.Logger, "watch.representation.embeddings.started", "repository_id", repositoryID, "symbols", len(embeddingSymbols))
 		stats, vectors, err := r.cacheEmbeddings(ctx, modelID, provider, repo.RepoRoot, embeddingSymbols, identityKeys, req.Progress, time.Duration(req.Embedding.TimeoutSeconds)*time.Second)
 		if err != nil {
+			logError(ctx, req.Logger, "watch.representation.embeddings.failed", err, "elapsed", logElapsed(embeddingStarted), "repository_id", repositoryID)
 			return RepresentResult{}, err
 		}
+		logInfo(ctx, req.Logger, "watch.representation.embeddings.completed", "elapsed", logElapsed(embeddingStarted), "repository_id", repositoryID, "cache_hits", stats.CacheHits, "created", stats.Created)
 		result.EmbeddingCacheHits = stats.CacheHits
 		result.EmbeddingsCreated = stats.Created
 		if len(embeddingSymbols) == len(filtered.VisibleSymbols) {
@@ -121,6 +136,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, vectors, changedRaw.Symbols, contextPolicies, identityKeys)
 			if err != nil {
 				progressFinish(req.Progress)
+				logError(ctx, req.Logger, "watch.representation.semantic_filter.failed", err, "repository_id", repositoryID)
 				return RepresentResult{}, err
 			}
 			filtered.ChangedFiles = changedRaw.Files
@@ -141,6 +157,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	}
 	runID, err := r.Store.BeginRepresentationRun(ctx, repositoryID, rawGraphHash, settingsHash, modelIDPtr, representationHash)
 	if err != nil {
+		logError(ctx, req.Logger, "watch.representation.run_begin.failed", err, "repository_id", repositoryID)
 		return RepresentResult{}, err
 	}
 	result.RepresentationRun = runID
@@ -153,11 +170,14 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		_ = r.Store.FinishRepresentationRun(context.Background(), runID, status, result, runErr)
 	}()
 
+	materializeStarted := time.Now()
+	logInfo(ctx, req.Logger, "watch.representation.materialize.started", "repository_id", repositoryID, "representation_run_id", runID)
 	progressStart(req.Progress, "Materializing representation", 3)
 	ownerMatcher, err := codeowners.Load(repo.RepoRoot)
 	if err != nil {
 		progressFinish(req.Progress)
 		runErr = err
+		logError(ctx, req.Logger, "watch.representation.materialize.failed", err, "elapsed", logElapsed(materializeStarted), "repository_id", repositoryID)
 		return result, err
 	}
 	progressAdvance(req.Progress, "Ownership metadata loaded")
@@ -165,6 +185,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	if err := r.Store.AcquireApplyLock(ctx, repositoryID, os.Getpid(), applyToken, LockHeartbeatTimeout); err != nil {
 		progressFinish(req.Progress)
 		runErr = err
+		logError(ctx, req.Logger, "watch.representation.materialize.failed", err, "elapsed", logElapsed(materializeStarted), "repository_id", repositoryID)
 		return result, err
 	}
 	progressAdvance(req.Progress, "Apply lock acquired")
@@ -175,6 +196,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	if err != nil {
 		progressFinish(req.Progress)
 		runErr = err
+		logError(ctx, req.Logger, "watch.representation.materialize.failed", err, "elapsed", logElapsed(materializeStarted), "repository_id", repositoryID)
 		return result, err
 	}
 	progressAdvance(req.Progress, "Resources materialized")
@@ -188,6 +210,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	result.ConnectorsPreserved = stats.ConnectorsPreserved
 	result.ViewsPreserved = stats.ViewsPreserved
 	result.DeletesPreserved = stats.DeletesPreserved
+	logInfo(ctx, req.Logger, "watch.representation.materialize.completed", "elapsed", logElapsed(materializeStarted), "repository_id", repositoryID, "representation_run_id", runID, "elements_created", result.ElementsCreated, "elements_updated", result.ElementsUpdated, "connectors_created", result.ConnectorsCreated, "connectors_updated", result.ConnectorsUpdated, "views_created", result.ViewsCreated, "elements_preserved", result.ElementsPreserved, "connectors_preserved", result.ConnectorsPreserved, "views_preserved", result.ViewsPreserved, "deletes_preserved", result.DeletesPreserved)
 	return result, nil
 }
 

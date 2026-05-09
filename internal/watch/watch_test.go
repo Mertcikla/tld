@@ -3640,6 +3640,41 @@ func helper() {}
 	}
 }
 
+func TestWarmScanDoesNotRewriteCurrentCachedFiles(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func main() {}
+`)
+
+	store := NewStore(db)
+	first, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	const sentinelUpdatedAt = "2001-02-03T04:05:06Z"
+	if _, err := db.Exec(`UPDATE watch_files SET updated_at = ? WHERE repository_id = ? AND path = 'main.go'`, sentinelUpdatedAt, first.RepositoryID); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if second.FilesSeen != 1 || second.FilesParsed != 0 || second.FilesSkipped != 1 {
+		t.Fatalf("unexpected warm scan counts: %+v", second)
+	}
+	var updatedAt string
+	if err := db.QueryRow(`SELECT updated_at FROM watch_files WHERE repository_id = ? AND path = 'main.go'`, first.RepositoryID).Scan(&updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if updatedAt != sentinelUpdatedAt {
+		t.Fatalf("warm scan rewrote unchanged cached file: updated_at=%q", updatedAt)
+	}
+}
+
 func TestScanUsesRemoteURLIdentity(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()

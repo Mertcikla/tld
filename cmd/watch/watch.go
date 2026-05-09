@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -38,6 +39,7 @@ func NewWatchCmd() *cobra.Command {
 		Short: "Scan and materialize source repositories into the local workspace",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			commandStarted := time.Now()
 			path := "."
 			if len(args) > 0 {
 				path = args[0]
@@ -71,8 +73,43 @@ func NewWatchCmd() *cobra.Command {
 			if err := os.MkdirAll(dataDir, 0o755); err != nil {
 				return fmt.Errorf("create data dir: %w", err)
 			}
+			logFile, logger, err := openWatchLog(dataDir)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = logFile.Close() }()
+			var finalErr error
+			fail := func(event string, err error, args ...any) error {
+				finalErr = err
+				fields := append([]any{"error", err}, args...)
+				logger.ErrorContext(cmd.Context(), event, fields...)
+				return err
+			}
+			defer func() {
+				if finalErr != nil {
+					logger.ErrorContext(cmd.Context(), "watch.command.failed", "elapsed", time.Since(commandStarted).Round(time.Millisecond).String(), "error", finalErr)
+					return
+				}
+				logger.InfoContext(cmd.Context(), "watch.command.completed", "elapsed", time.Since(commandStarted).Round(time.Millisecond).String())
+			}()
 			embeddingCfg := resolveEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
 			watchSettings := resolveWatchSettings(cfg, languageFlags, watcherMode, pollInterval, debounce, maxElements, maxConnectors, maxIncoming, maxOutgoing, maxExpandedGroup)
+			logger.InfoContext(cmd.Context(), "watch.command.started",
+				"path", path,
+				"data_dir", dataDir,
+				"host", host,
+				"port", port,
+				"no_serve", noServe,
+				"open_browser", openBrowser,
+				"rescan", rescan,
+				"verbose", verbose,
+				"embedding_provider", embeddingCfg.Provider,
+				"embedding_model", embeddingCfg.Model,
+				"watcher", watchSettings.Watcher,
+				"poll_interval", watchSettings.PollInterval.String(),
+				"debounce", watchSettings.Debounce.String(),
+				"languages", strings.Join(watchSettings.Languages, ","),
+			)
 			term.PrintLogo(cmd.OutOrStdout(), version.Version)
 			term.Label(cmd.OutOrStdout(), 20, "Mode", "watch")
 			term.Label(cmd.OutOrStdout(), 20, "Data directory", term.Path(cmd.OutOrStdout(), dataDir))
@@ -83,11 +120,14 @@ func NewWatchCmd() *cobra.Command {
 			}
 			progress := newCLIProgress(cmd.ErrOrStderr())
 			if hasEmbedding {
+				healthStarted := time.Now()
+				logger.InfoContext(cmd.Context(), "watch.embedding_healthcheck.started", "provider", embeddingCfg.Provider, "model", embeddingCfg.Model)
 				checked, health, err := watch.CheckEmbeddingHealth(cmd.Context(), embeddingCfg)
 				if err != nil {
-					return fmt.Errorf("embedding healthcheck failed: %w", err)
+					return fail("watch.embedding_healthcheck.failed", fmt.Errorf("embedding healthcheck failed: %w", err), "elapsed", time.Since(healthStarted).Round(time.Millisecond).String(), "provider", embeddingCfg.Provider, "model", embeddingCfg.Model)
 				}
 				embeddingCfg = checked
+				logger.InfoContext(cmd.Context(), "watch.embedding_healthcheck.completed", "elapsed", time.Since(healthStarted).Round(time.Millisecond).String(), "provider", embeddingCfg.Provider, "model", embeddingCfg.Model, "dimension", health.Dimension, "similarity", health.Similarity)
 				term.Label(cmd.OutOrStdout(), 20, "Embedding health", fmt.Sprintf("dimension=%d similarity=%.3f", health.Dimension, health.Similarity))
 			}
 			serveCfg := workspace.ResolveServeOptions(cfg, host, port)
@@ -96,35 +136,51 @@ func NewWatchCmd() *cobra.Command {
 			url := "http://" + addr
 			var srv *http.Server
 			if !noServe {
+				serveStarted := time.Now()
+				logger.InfoContext(cmd.Context(), "watch.server.ensure.started", "url", url)
 				if !serverReady(url) {
+					logger.InfoContext(cmd.Context(), "watch.server.bootstrap.started", "data_dir", dataDir, "addr", addr)
 					app, err := localserver.Bootstrap(dataDir, serveOpts)
 					if err != nil {
-						return err
+						return fail("watch.server.bootstrap.failed", err, "elapsed", time.Since(serveStarted).Round(time.Millisecond).String())
 					}
 					srv = &http.Server{Addr: app.Addr, Handler: app.Handler}
 					go func() {
 						if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+							logger.ErrorContext(context.Background(), "watch.server.listen.failed", "error", err, "addr", app.Addr)
 							term.Failf(cmd.ErrOrStderr(), "server error: %v", err)
 						}
 					}()
 					url = "http://" + app.Addr
+					logger.InfoContext(cmd.Context(), "watch.server.bootstrap.completed", "elapsed", time.Since(serveStarted).Round(time.Millisecond).String(), "url", url)
+				} else {
+					logger.InfoContext(cmd.Context(), "watch.server.reused", "elapsed", time.Since(serveStarted).Round(time.Millisecond).String(), "url", url)
 				}
 				if openBrowser {
+					logger.InfoContext(cmd.Context(), "watch.browser.open.started", "url", url)
 					_ = cmdutil.OpenBrowser(url)
 				}
+			} else {
+				logger.InfoContext(cmd.Context(), "watch.server.skipped", "reason", "no_serve")
 			}
 			defer func() {
 				if srv != nil {
 					ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer cancel()
+					logger.InfoContext(context.Background(), "watch.server.shutdown.started", "addr", srv.Addr)
 					_ = srv.Shutdown(ctx)
+					logger.InfoContext(context.Background(), "watch.server.shutdown.completed", "addr", srv.Addr)
 				}
 			}()
 
+			storeStarted := time.Now()
+			logger.InfoContext(cmd.Context(), "watch.store_open.started", "database", localserver.DatabasePath(dataDir))
 			sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
 			if err != nil {
-				return err
+				return fail("watch.store_open.failed", err, "elapsed", time.Since(storeStarted).Round(time.Millisecond).String())
 			}
+			defer func() { _ = sqliteStore.DB().Close() }()
+			logger.InfoContext(cmd.Context(), "watch.store_open.completed", "elapsed", time.Since(storeStarted).Round(time.Millisecond).String())
 			watchStore := watch.NewStore(sqliteStore.DB())
 			ctx, stop := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
 			defer stop()
@@ -138,6 +194,7 @@ func NewWatchCmd() *cobra.Command {
 			}()
 			go func() {
 				for event := range events {
+					logWatchRuntimeEvent(cmd.Context(), logger, event)
 					if logWatchEvent(cmd, event, watchProgress) {
 						continue
 					}
@@ -152,7 +209,7 @@ func NewWatchCmd() *cobra.Command {
 			}()
 			errCh := make(chan error, 1)
 			go func() {
-				_, runErr := watch.NewRunner(watchStore).Run(ctx, watch.RunnerOptions{Path: path, Rescan: rescan, Verbose: verbose, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir, Progress: progress, Events: events, Ready: ready})
+				_, runErr := watch.NewRunner(watchStore).Run(ctx, watch.RunnerOptions{Path: path, Rescan: rescan, Verbose: verbose, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir, Progress: progress, Logger: logger, Events: events, Ready: ready})
 				errCh <- runErr
 				close(events)
 			}()
@@ -161,7 +218,7 @@ func NewWatchCmd() *cobra.Command {
 			case result = <-ready:
 			case err := <-errCh:
 				if err != nil {
-					return err
+					return fail("watch.runner.failed", err)
 				}
 				return nil
 			}
@@ -175,8 +232,9 @@ func NewWatchCmd() *cobra.Command {
 			term.Label(cmd.OutOrStdout(), 20, "tlDiagram available at", term.URL(cmd.OutOrStdout(), url))
 			term.Separator(cmd.OutOrStdout())
 			term.Hint(cmd.OutOrStdout(), "Press Ctrl-C to stop watching.")
+			logger.InfoContext(cmd.Context(), "watch.command.ready", "repository_id", repo.ID, "repo_root", repo.RepoRoot, "url", url)
 			if err := <-errCh; err != nil {
-				return err
+				return fail("watch.runner.failed", err)
 			}
 			return nil
 		},
@@ -326,6 +384,33 @@ func representationChangeSummary(rep watch.RepresentResult, tags watch.GitTagUpd
 		fmt.Fprintf(out, ", cleaned %s%d", minus, rep.DeletesPreserved)
 	}
 	return out.String()
+}
+
+func openWatchLog(dataDir string) (*os.File, *slog.Logger, error) {
+	path := localserver.LogPath(dataDir)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open watch log file: %w", err)
+	}
+	return file, slog.New(slog.NewTextHandler(file, &slog.HandlerOptions{Level: slog.LevelInfo})), nil
+}
+
+func logWatchRuntimeEvent(ctx context.Context, logger *slog.Logger, event watch.Event) {
+	if logger == nil {
+		return
+	}
+	fields := []any{
+		"type", event.Type,
+		"repository_id", event.RepositoryID,
+		"phase", event.Phase,
+		"watcher_mode", event.WatcherMode,
+		"changed_files", event.ChangedFiles,
+		"warnings", len(event.Warnings),
+	}
+	if event.Message != "" {
+		fields = append(fields, "message", event.Message)
+	}
+	logger.InfoContext(ctx, "watch.event", fields...)
 }
 
 func repoIdentity(repo watch.Repository) string {
@@ -601,6 +686,7 @@ type watchGroupedDiffPayload struct {
 }
 
 func runWatchDiff(cmd *cobra.Command, path string, opts watchDiffOptions) error {
+	started := time.Now()
 	cfg, err := workspace.LoadGlobalConfig()
 	if err != nil {
 		return err
@@ -612,32 +698,53 @@ func runWatchDiff(cmd *cobra.Command, path string, opts watchDiffOptions) error 
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
-	embeddingCfg := resolveEmbeddingConfig(cfg, opts.EmbeddingProvider, opts.EmbeddingEndpoint, opts.EmbeddingModel, opts.EmbeddingDimension)
-	watchSettings := resolveWatchSettings(cfg, opts.LanguageFlags, "", "", "", opts.MaxElements, opts.MaxConnectors, opts.MaxIncoming, opts.MaxOutgoing, opts.MaxExpandedGroup)
-	sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
+	logFile, logger, err := openWatchLog(dataDir)
 	if err != nil {
 		return err
+	}
+	defer func() { _ = logFile.Close() }()
+	var finalErr error
+	fail := func(event string, err error, args ...any) error {
+		finalErr = err
+		fields := append([]any{"error", err}, args...)
+		logger.ErrorContext(cmd.Context(), event, fields...)
+		return err
+	}
+	defer func() {
+		if finalErr != nil {
+			logger.ErrorContext(cmd.Context(), "watch.diff.failed", "elapsed", time.Since(started).Round(time.Millisecond).String(), "error", finalErr)
+			return
+		}
+		logger.InfoContext(cmd.Context(), "watch.diff.completed", "elapsed", time.Since(started).Round(time.Millisecond).String())
+	}()
+	embeddingCfg := resolveEmbeddingConfig(cfg, opts.EmbeddingProvider, opts.EmbeddingEndpoint, opts.EmbeddingModel, opts.EmbeddingDimension)
+	watchSettings := resolveWatchSettings(cfg, opts.LanguageFlags, "", "", "", opts.MaxElements, opts.MaxConnectors, opts.MaxIncoming, opts.MaxOutgoing, opts.MaxExpandedGroup)
+	logger.InfoContext(cmd.Context(), "watch.diff.started", "path", path, "data_dir", dataDir, "rescan", opts.Rescan, "fail_on_drift", opts.FailOnDrift, "group_diffs", opts.GroupDiffs, "embedding_provider", embeddingCfg.Provider, "embedding_model", embeddingCfg.Model, "languages", strings.Join(watchSettings.Languages, ","))
+	sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
+	if err != nil {
+		return fail("watch.diff.store_open.failed", err)
 	}
 	defer func() { _ = sqliteStore.DB().Close() }()
 	watchStore := watch.NewStore(sqliteStore.DB())
-	once, err := watch.NewRunner(watchStore).RunOnce(cmd.Context(), watch.OneShotOptions{Path: path, Rescan: opts.Rescan, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir})
+	once, err := watch.NewRunner(watchStore).RunOnce(cmd.Context(), watch.OneShotOptions{Path: path, Rescan: opts.Rescan, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir, Logger: logger})
 	if err != nil {
-		return err
+		return fail("watch.diff.pipeline.failed", err)
 	}
 	latest, found, err := watchStore.LatestWatchVersion(cmd.Context(), once.Scan.RepositoryID)
 	if err != nil {
-		return err
+		return fail("watch.diff.latest_version.failed", err, "repository_id", once.Scan.RepositoryID)
 	}
 	changed := found && latest.RepresentationHash != once.Representation.RepresentationHash || hasWatchDriftDiffs(once.Diffs)
+	logger.InfoContext(cmd.Context(), "watch.diff.payload", "repository_id", once.Scan.RepositoryID, "changed", changed, "diffs", len(once.Diffs), "latest_found", found)
 	var payload any = watchDiffPayload{Changed: changed, Scan: once.Scan, Representation: once.Representation, Diffs: once.Diffs}
 	if opts.GroupDiffs {
 		payload = watchGroupedDiffPayload{Changed: changed, Scan: once.Scan, Representation: once.Representation, Diffs: groupWatchDiffs(once.Diffs)}
 	}
 	if err := json.NewEncoder(cmd.OutOrStdout()).Encode(payload); err != nil {
-		return err
+		return fail("watch.diff.output.failed", err)
 	}
 	if opts.FailOnDrift && changed {
-		return fmt.Errorf("watch representation drift detected")
+		return fail("watch.diff.drift.failed", fmt.Errorf("watch representation drift detected"))
 	}
 	return nil
 }
