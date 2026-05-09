@@ -12,6 +12,10 @@ import {
   MenuButton,
   MenuList,
   MenuItem,
+  Popover,
+  PopoverBody,
+  PopoverContent,
+  PopoverTrigger,
   Portal,
   Text,
   Tooltip,
@@ -31,7 +35,6 @@ import {
 import { buildWorkspaceVersionPreview, useWorkspaceVersionPreview } from '../context/WorkspaceVersionContext'
 import {
   buildWatchDiffLocations,
-  formatTldStatLine,
   summarizeWatchDiffs,
   type WatchDiffLocation,
   type WatchDiffSummary,
@@ -104,13 +107,6 @@ function shortPath(path: string | undefined): string {
 function versionLabel(version: WatchVersion) {
   const subject = version.commit_message?.trim()
   return subject || `Version ${new Date(version.created_at).toLocaleTimeString()}`
-}
-
-function changeLabel(diffs: WatchDiff[]) {
-  const summary = summarizeWatchDiffs(diffs)
-  const total = summary.elements.added + summary.elements.updated + summary.elements.deleted + summary.elements.initialized +
-    summary.connectors.added + summary.connectors.updated + summary.connectors.deleted + summary.connectors.initialized
-  return total > 0 ? formatTldStatLine(summary) : 'No materialized changes'
 }
 
 function normalizeDiffs(value: WatchDiff[] | null | undefined): WatchDiff[] {
@@ -194,7 +190,7 @@ interface ThemedSelectProps<T extends string | number> {
 function ThemedSelect<T extends string | number>({ value, options, placeholder, onChange, isDisabled, flex }: ThemedSelectProps<T>) {
   const selected = options.find((o) => o.value === value)
   return (
-    <Menu placement="top-start" strategy="fixed">
+    <Menu placement="bottom-start" strategy="fixed">
       <MenuButton
         as={Button}
         rightIcon={<ChevronDownIcon />}
@@ -412,7 +408,6 @@ export default function WorkspacePanel() {
   }, [activeDiffLocationIndex, navigableDiffLocations, navigateToDiffLocation])
 
   const activeVersion = preview?.version ?? selectedVersion
-  const activeRepo = preview?.repository ?? selectedRepo
   const diffSummary = useMemo(() => summarizeWatchDiffs(diffs), [diffs])
   const totalFileChanges = diffSummary.files.added + diffSummary.files.updated + diffSummary.files.deleted + diffSummary.files.initialized
   const totalTldChanges = diffSummary.elements.added + diffSummary.elements.updated + diffSummary.elements.deleted + diffSummary.elements.initialized +
@@ -563,35 +558,96 @@ export default function WorkspacePanel() {
   const watchStatusLabel = !watchActive ? 'Stopped' : watchPaused ? 'Paused' : 'Live'
   const watchTitle = useMemo(() => shortPath(watchRepository?.repo_root), [watchRepository?.repo_root])
   const watchMode = [watcherMode || (watchConnected ? 'live' : 'connecting'), languages.length ? languages.join(', ') : ''].filter(Boolean).join(' · ')
+  const triggerLabel = watchActive ? `${watchStatusLabel}: ${watchTitle}` : 'Workspace versions'
 
   const showRuntimeSection = watchActive || watchLines.length > 0
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <Box
-      data-zui-native-wheel="true"
-      position="absolute"
-      left={{ base: 3, md: 4 }}
-      bottom={{ base: 'calc(var(--bottomnav-container-h) + 12px)', md: 4 }}
-      zIndex={1001}
-      pointerEvents="auto"
-      w={{ base: 'calc(100vw - 24px)', md: '420px' }}
-      maxW="420px"
-      sx={{
-        overscrollBehavior: 'contain',
-        WebkitOverflowScrolling: 'touch',
-        touchAction: 'pan-y',
-      }}
-    >
-      <Box
-        bg="rgba(var(--bg-main-rgb), 0.94)"
-        border="1px solid"
-        borderColor={preview ? 'rgba(var(--accent-rgb), 0.45)' : 'whiteAlpha.200'}
-        borderRadius="lg"
-        boxShadow="0 18px 48px rgba(0,0,0,0.45)"
-        backdropFilter="blur(18px)"
-        overflow="hidden"
-      >
+    <Popover placement="bottom-end" isLazy>
+      <Tooltip label={triggerLabel} placement="bottom" openDelay={400}>
+        <Box>
+          <PopoverTrigger>
+            {watchActive ? (
+              <Button
+                aria-label="Workspace watch panel"
+                size="sm"
+                h="34px"
+                minW={0}
+                px={2.5}
+                gap={2}
+                borderRadius="full"
+                bg="whiteAlpha.100"
+                color="whiteAlpha.900"
+                border="1px solid"
+                borderColor={watchStatusColor === 'green' ? 'green.400' : watchStatusColor === 'yellow' ? 'yellow.400' : 'orange.300'}
+                boxShadow={watchStatusColor === 'green' ? '0 0 18px rgba(72,187,120,0.28)' : '0 6px 18px rgba(0,0,0,0.32)'}
+                _hover={{ bg: 'whiteAlpha.200', transform: 'translateY(-1px)' }}
+                _active={{ transform: 'translateY(0)' }}
+              >
+                <Badge
+                  bg={watchStatusColor === 'green' ? 'green.900' : watchStatusColor === 'yellow' ? 'yellow.900' : 'orange.900'}
+                  color={watchStatusColor === 'green' ? 'green.200' : watchStatusColor === 'yellow' ? 'yellow.200' : 'orange.100'}
+                  borderRadius="full"
+                  textTransform="none"
+                  fontSize="10px"
+                  px={1.5}
+                  py={0.5}
+                  flexShrink={0}
+                >
+                  {watchStatusLabel}
+                </Badge>
+                <Text
+                  as="span"
+                  maxW={{ base: '96px', lg: '160px' }}
+                  fontSize="12px"
+                  fontWeight="600"
+                  color="gray.100"
+                  noOfLines={1}
+                >
+                  {watchTitle}
+                </Text>
+                <ChevronDownIcon boxSize={4} color="whiteAlpha.700" />
+              </Button>
+            ) : (
+              <IconButton
+                aria-label="Workspace versions"
+                icon={<TimeIcon boxSize={4} />}
+                size="sm"
+                borderRadius="full"
+                bg={preview ? 'rgba(var(--accent-rgb), 0.22)' : 'whiteAlpha.100'}
+                color={preview ? 'var(--accent)' : 'whiteAlpha.700'}
+                border="1px solid"
+                borderColor={preview ? 'rgba(var(--accent-rgb), 0.45)' : 'whiteAlpha.100'}
+                _hover={{ bg: 'whiteAlpha.200', color: 'white', transform: 'translateY(-1px)' }}
+              />
+            )}
+          </PopoverTrigger>
+        </Box>
+      </Tooltip>
+      <Portal>
+        <PopoverContent
+          data-zui-native-wheel="true"
+          w={{ base: 'calc(100vw - 24px)', md: watchActive ? '460px' : '420px' }}
+          maxW="calc(100vw - 24px)"
+          mt={2}
+          mr={{ base: 2, sm: 0 }}
+          bg="rgba(var(--bg-main-rgb), 0.96)"
+          border="1px solid"
+          borderColor={preview ? 'rgba(var(--accent-rgb), 0.45)' : 'whiteAlpha.200'}
+          borderRadius="lg"
+          boxShadow="0 18px 48px rgba(0,0,0,0.45)"
+          backdropFilter="blur(18px)"
+          overflow="hidden"
+          zIndex={2100}
+          _focus={{ boxShadow: '0 18px 48px rgba(0,0,0,0.45)' }}
+          sx={{
+            overscrollBehavior: 'contain',
+            WebkitOverflowScrolling: 'touch',
+            touchAction: 'pan-y',
+          }}
+        >
+          <PopoverBody p={0}>
         {/* ── Versions header ── */}
         <VStack align="stretch" spacing={3} px={4} py={4}>
           <HStack spacing={3} align="center">
@@ -874,7 +930,9 @@ export default function WorkspacePanel() {
             </Collapse>
           </Box>
         )}
-      </Box>
-    </Box>
+          </PopoverBody>
+        </PopoverContent>
+      </Portal>
+    </Popover>
   )
 }
