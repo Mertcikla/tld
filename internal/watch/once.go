@@ -14,6 +14,7 @@ type OneShotOptions struct {
 	Embedding EmbeddingConfig
 	Settings  Settings
 	Progress  ProgressSink
+	DataDir   string
 }
 
 type OneShotResult struct {
@@ -58,7 +59,7 @@ func (r *Runner) RunOnce(ctx context.Context, opts OneShotOptions) (OneShotResul
 	progressAdvance(opts.Progress, "Captured git status")
 	progressFinish(opts.Progress)
 
-	scan, err := r.Scanner.ScanWithOptions(ctx, repoRoot, ScanOptions{Force: opts.Rescan})
+	scan, err := r.Scanner.ScanWithOptions(ctx, repoRoot, ScanOptions{Force: opts.Rescan, DataDir: opts.DataDir})
 	if err != nil {
 		return OneShotResult{}, err
 	}

@@ -60,6 +60,53 @@ func TestDetectBranch(t *testing.T) {
 	}
 }
 
+func TestListTrackedFilesStopsAtLimit(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, map[string]string{
+		"a.go": "package main",
+		"b.go": "package main",
+		"c.go": "package main",
+	})
+
+	result, err := ListTrackedFiles(dir, 2)
+	if err != nil {
+		t.Fatalf("ListTrackedFiles: %v", err)
+	}
+	if !result.Capped {
+		t.Fatal("expected capped result")
+	}
+	if result.Total != 3 {
+		t.Fatalf("Total = %d, want 3", result.Total)
+	}
+	if got := len(result.Files); got != 2 {
+		t.Fatalf("len(Files) = %d, want 2", got)
+	}
+}
+
+func TestEnsureDetachedWorktreeCreatesReusableCheckout(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, map[string]string{"main.go": "package main\nfunc Main() {}\n"})
+	head, err := DetectHeadCommit(dir)
+	if err != nil {
+		t.Fatalf("DetectHeadCommit: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "baseline")
+
+	if err := EnsureDetachedWorktree(dir, head, target); err != nil {
+		t.Fatalf("EnsureDetachedWorktree: %v", err)
+	}
+	got, err := DetectHeadCommit(target)
+	if err != nil {
+		t.Fatalf("DetectHeadCommit(worktree): %v", err)
+	}
+	if got != head {
+		t.Fatalf("worktree HEAD = %s, want %s", got, head)
+	}
+	if err := EnsureDetachedWorktree(dir, head, target); err != nil {
+		t.Fatalf("EnsureDetachedWorktree reuse: %v", err)
+	}
+}
+
 func TestDetectRemoteURL(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir, map[string]string{"main.go": "package main"})

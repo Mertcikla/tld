@@ -270,6 +270,19 @@ func (s *Store) DeleteMissingFiles(ctx context.Context, repositoryID int64, seen
 	return nil
 }
 
+func (s *Store) DeleteFilesByPath(ctx context.Context, repositoryID int64, paths []string) error {
+	for _, path := range paths {
+		path = strings.TrimSpace(filepathToSlash(path))
+		if path == "" {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM watch_files WHERE repository_id = ? AND path = ?`, repositoryID, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Store) ReplaceFileSymbols(ctx context.Context, repositoryID, fileID int64, symbols []Symbol) error {
 	existingIdentities, err := s.replacementIdentityCandidates(ctx, repositoryID, fileID)
 	if err != nil {

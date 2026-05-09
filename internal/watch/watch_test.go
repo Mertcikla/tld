@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -4839,6 +4840,98 @@ func architectureBindingTestTarget(repoID int64, ownerType, ownerKey, name, kind
 		Kind:         kind,
 		FilePath:     filePath,
 	}
+}
+
+func TestPlanScanAutoChoosesLimitedAboveTrackedThreshold(t *testing.T) {
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "cmd/api/main.go", "package main\nfunc main() {}\n")
+	writeFile(t, repo, "deploy/k8s/service.yaml", "apiVersion: v1\nkind: Service\nmetadata:\n  name: api\n")
+	writeFile(t, repo, "internal/noise/helper.go", "package noise\nfunc Helper() {}\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	settings := DefaultSettings()
+	settings.Scale.MaxTrackedFiles = 1
+	settings.Scale.MaxLimitedFiles = 10
+	plan, err := planScan(repo, settings, nil)
+	if err != nil {
+		t.Fatalf("planScan: %v", err)
+	}
+	if !plan.Limited || plan.Mode != "limited" {
+		t.Fatalf("expected limited plan, got %+v", plan)
+	}
+	got := relTestFiles(t, repo, plan.Files)
+	want := []string{"cmd/api/main.go", "deploy/k8s/service.yaml"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("limited files = %+v, want %+v", got, want)
+	}
+	if plan.TrackedFiles != 3 {
+		t.Fatalf("TrackedFiles = %d, want 3", plan.TrackedFiles)
+	}
+}
+
+func TestPlanScanFullBelowTrackedThreshold(t *testing.T) {
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	settings := DefaultSettings()
+	settings.Scale.MaxTrackedFiles = 10
+	plan, err := planScan(repo, settings, nil)
+	if err != nil {
+		t.Fatalf("planScan: %v", err)
+	}
+	if plan.Limited || plan.Mode != "full" {
+		t.Fatalf("expected full plan, got %+v", plan)
+	}
+}
+
+func TestScannerLimitedModeCreatesBaselineWorktreeUnderDataDir(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc Main() {}\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	store := NewStore(db)
+	scanner := NewScanner(store)
+	settings := DefaultSettings()
+	settings.Scale.Strategy = ScanStrategyLimited
+	settings.Scale.MaxLimitedFiles = 5
+	scanner.Settings = settings
+	dataDir := t.TempDir()
+	result, err := scanner.ScanWithOptions(context.Background(), repo, ScanOptions{DataDir: dataDir})
+	if err != nil {
+		t.Fatalf("ScanWithOptions: %v", err)
+	}
+	if result.Mode != "limited" {
+		t.Fatalf("Mode = %q, want limited", result.Mode)
+	}
+	if result.BaselineWorktree == "" {
+		t.Fatal("expected baseline worktree")
+	}
+	if !strings.HasPrefix(result.BaselineWorktree, filepath.Join(dataDir, "watch-worktrees")) {
+		t.Fatalf("baseline worktree %q is outside data dir %q", result.BaselineWorktree, dataDir)
+	}
+	if _, err := os.Stat(filepath.Join(result.BaselineWorktree, "main.go")); err != nil {
+		t.Fatalf("baseline worktree missing main.go: %v", err)
+	}
+}
+
+func relTestFiles(t *testing.T, root string, files []string) []string {
+	t.Helper()
+	out := make([]string, 0, len(files))
+	for _, file := range files {
+		rel, err := filepath.Rel(root, file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, filepath.ToSlash(rel))
+	}
+	sort.Strings(out)
+	return out
 }
 
 func initGitRepoNoCommit(t *testing.T) string {

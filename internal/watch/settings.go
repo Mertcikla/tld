@@ -12,6 +12,14 @@ const (
 	WatcherAuto     = "auto"
 	WatcherFSNotify = "fsnotify"
 	WatcherPoll     = "poll"
+
+	ScanStrategyAuto    = "auto"
+	ScanStrategyFull    = "full"
+	ScanStrategyLimited = "limited"
+	ScanStrategyAbort   = "abort"
+
+	defaultMaxTrackedFiles = 20000
+	defaultMaxLimitedFiles = 2000
 )
 
 func DefaultSettings() Settings {
@@ -27,6 +35,11 @@ func DefaultSettings() Settings {
 		Debounce:     500 * time.Millisecond,
 		Thresholds:   defaultThresholds(Thresholds{}),
 		Visibility:   defaultVisibilityConfig(VisibilityConfig{}),
+		Scale: ScaleConfig{
+			Strategy:        ScanStrategyAuto,
+			MaxTrackedFiles: defaultMaxTrackedFiles,
+			MaxLimitedFiles: defaultMaxLimitedFiles,
+		},
 	}
 }
 
@@ -53,7 +66,28 @@ func NormalizeSettings(settings Settings) Settings {
 	}
 	settings.Thresholds = defaultThresholds(settings.Thresholds)
 	settings.Visibility = defaultVisibilityConfig(settings.Visibility)
+	settings.Scale = defaultScaleConfig(settings.Scale)
 	return settings
+}
+
+func defaultScaleConfig(cfg ScaleConfig) ScaleConfig {
+	switch strings.ToLower(strings.TrimSpace(cfg.Strategy)) {
+	case ScanStrategyFull:
+		cfg.Strategy = ScanStrategyFull
+	case ScanStrategyLimited:
+		cfg.Strategy = ScanStrategyLimited
+	case ScanStrategyAbort:
+		cfg.Strategy = ScanStrategyAbort
+	default:
+		cfg.Strategy = ScanStrategyAuto
+	}
+	if cfg.MaxTrackedFiles <= 0 {
+		cfg.MaxTrackedFiles = defaultMaxTrackedFiles
+	}
+	if cfg.MaxLimitedFiles <= 0 {
+		cfg.MaxLimitedFiles = defaultMaxLimitedFiles
+	}
+	return cfg
 }
 
 func defaultVisibilityConfig(cfg VisibilityConfig) VisibilityConfig {

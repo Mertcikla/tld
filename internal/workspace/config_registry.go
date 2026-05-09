@@ -186,6 +186,11 @@ func ValidateGlobalConfig(cfg *Config) ConfigValidationErrors {
 	default:
 		add("watch.watcher", "must be auto, fsnotify, or poll")
 	}
+	switch strings.ToLower(strings.TrimSpace(cfg.Watch.Scale.Strategy)) {
+	case "auto", "full", "limited", "abort":
+	default:
+		add("watch.scale.strategy", "must be auto, full, limited, or abort")
+	}
 	if len(normalizeConfigLanguages(cfg.Watch.Languages)) == 0 {
 		add("watch.languages", "must include at least one supported language")
 	}
@@ -198,6 +203,8 @@ func ValidateGlobalConfig(cfg *Config) ConfigValidationErrors {
 		{"watch.thresholds.max_incoming_per_element", cfg.Watch.Thresholds.MaxIncomingPerElement},
 		{"watch.thresholds.max_outgoing_per_element", cfg.Watch.Thresholds.MaxOutgoingPerElement},
 		{"watch.thresholds.max_expanded_connectors_per_group", cfg.Watch.Thresholds.MaxExpandedConnectorsPerGroup},
+		{"watch.scale.max_tracked_files", cfg.Watch.Scale.MaxTrackedFiles},
+		{"watch.scale.max_limited_files", cfg.Watch.Scale.MaxLimitedFiles},
 	} {
 		if item.value <= 0 {
 			add(item.key, "must be positive")
@@ -313,6 +320,9 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "watch.thresholds.max_incoming_per_element", Description: "Incoming reference limit before collapsing context."},
 	{Key: "watch.thresholds.max_outgoing_per_element", Description: "Outgoing reference limit before collapsing context."},
 	{Key: "watch.thresholds.max_expanded_connectors_per_group", Description: "File-pair connector expansion limit before folder-level collapse."},
+	{Key: "watch.scale.strategy", Env: []string{"TLD_WATCH_SCALE_STRATEGY"}, Description: "Huge-repo scan strategy: auto, full, limited, or abort."},
+	{Key: "watch.scale.max_tracked_files", Env: []string{"TLD_WATCH_SCALE_MAX_TRACKED_FILES"}, Description: "Tracked-file threshold before auto limited view."},
+	{Key: "watch.scale.max_limited_files", Env: []string{"TLD_WATCH_SCALE_MAX_LIMITED_FILES"}, Description: "Maximum high-signal files selected in limited view."},
 	{Key: "watch.visibility.core_threshold_enabled", Description: "Enable score thresholding for watch visibility decisions."},
 	{Key: "watch.visibility.core_threshold", Description: "Minimum score for core watch visibility."},
 	{Key: "watch.visibility.tier_multiplier", Description: "Density multiplier added by each Show Context tier."},
@@ -429,6 +439,9 @@ func applyEnvOverridesDetailed(cfg *Config, root *yaml.Node) ([]ConfigValue, err
 		{"watch.watcher", "TLD_WATCH_WATCHER"},
 		{"watch.poll_interval", "TLD_WATCH_POLL_INTERVAL"},
 		{"watch.debounce", "TLD_WATCH_DEBOUNCE"},
+		{"watch.scale.strategy", "TLD_WATCH_SCALE_STRATEGY"},
+		{"watch.scale.max_tracked_files", "TLD_WATCH_SCALE_MAX_TRACKED_FILES"},
+		{"watch.scale.max_limited_files", "TLD_WATCH_SCALE_MAX_LIMITED_FILES"},
 		{"watch.embedding.provider", "TLD_EMBEDDING_PROVIDER"},
 		{"watch.embedding.endpoint", "TLD_EMBEDDING_ENDPOINT"},
 		{"watch.embedding.model", "TLD_EMBEDDING_MODEL"},
@@ -538,6 +551,20 @@ func setConfigValue(cfg *Config, key, value string) error {
 		cfg.Watch.PollInterval = strings.TrimSpace(value)
 	case "watch.debounce":
 		cfg.Watch.Debounce = strings.TrimSpace(value)
+	case "watch.scale.strategy":
+		cfg.Watch.Scale.Strategy = strings.ToLower(strings.TrimSpace(value))
+	case "watch.scale.max_tracked_files":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Scale.MaxTrackedFiles = v
+	case "watch.scale.max_limited_files":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Scale.MaxLimitedFiles = v
 	case "watch.thresholds.max_elements_per_view":
 		v, err := parseInt(value)
 		if err != nil {
@@ -740,6 +767,12 @@ func getConfigValue(cfg *Config, key string) any {
 		return cfg.Watch.Thresholds.MaxOutgoingPerElement
 	case "watch.thresholds.max_expanded_connectors_per_group":
 		return cfg.Watch.Thresholds.MaxExpandedConnectorsPerGroup
+	case "watch.scale.strategy":
+		return cfg.Watch.Scale.Strategy
+	case "watch.scale.max_tracked_files":
+		return cfg.Watch.Scale.MaxTrackedFiles
+	case "watch.scale.max_limited_files":
+		return cfg.Watch.Scale.MaxLimitedFiles
 	case "watch.visibility.core_threshold_enabled":
 		return cfg.Watch.Visibility.CoreThresholdEnabled
 	case "watch.visibility.core_threshold":
@@ -834,6 +867,13 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	appendUnknownEntries(thresholds, mappingValueNode(mappingValueNode(existing, "watch"), "thresholds"), setOf("max_elements_per_view", "max_connectors_per_view", "max_incoming_per_element", "max_outgoing_per_element", "max_expanded_connectors_per_group"))
 	addMap(watchNode, "thresholds", thresholds, "Limits used while materializing generated watch views.")
 
+	scale := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addScalar(scale, "strategy", cfg.Watch.Scale.Strategy, desc("watch.scale.strategy"))
+	addScalar(scale, "max_tracked_files", cfg.Watch.Scale.MaxTrackedFiles, desc("watch.scale.max_tracked_files"))
+	addScalar(scale, "max_limited_files", cfg.Watch.Scale.MaxLimitedFiles, desc("watch.scale.max_limited_files"))
+	appendUnknownEntries(scale, mappingValueNode(mappingValueNode(existing, "watch"), "scale"), setOf("strategy", "max_tracked_files", "max_limited_files"))
+	addMap(watchNode, "scale", scale, "Huge-repo detection and limited-view settings.")
+
 	visibility := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	addScalar(visibility, "core_threshold_enabled", cfg.Watch.Visibility.CoreThresholdEnabled, desc("watch.visibility.core_threshold_enabled"))
 	addScalar(visibility, "core_threshold", cfg.Watch.Visibility.CoreThreshold, desc("watch.visibility.core_threshold"))
@@ -871,7 +911,7 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	appendUnknownEntries(layout, mappingValueNode(mappingValueNode(existing, "watch"), "layout"), setOf("link_distance", "charge_strength", "collide_radius", "gravity_strength"))
 	addMap(watchNode, "layout", layout, "Organic layout tuning for generated watch views.")
 
-	appendUnknownEntries(watchNode, mappingValueNode(existing, "watch"), setOf("languages", "watcher", "poll_interval", "debounce", "thresholds", "visibility", "embedding", "layout"))
+	appendUnknownEntries(watchNode, mappingValueNode(existing, "watch"), setOf("languages", "watcher", "poll_interval", "debounce", "thresholds", "scale", "visibility", "embedding", "layout"))
 	addMap(mapping, "watch", watchNode, "Source watch/analyze pipeline settings.")
 
 	completion := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}

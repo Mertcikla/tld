@@ -147,7 +147,7 @@ func NewWatchCmd() *cobra.Command {
 			}()
 			errCh := make(chan error, 1)
 			go func() {
-				_, runErr := watch.NewRunner(watchStore).Run(ctx, watch.RunnerOptions{Path: path, Rescan: rescan, Verbose: verbose, Embedding: embeddingCfg, Settings: watchSettings, Progress: progress, Events: events, Ready: ready})
+				_, runErr := watch.NewRunner(watchStore).Run(ctx, watch.RunnerOptions{Path: path, Rescan: rescan, Verbose: verbose, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir, Progress: progress, Events: events, Ready: ready})
 				errCh <- runErr
 				close(events)
 			}()
@@ -394,7 +394,7 @@ func newScanCmd() *cobra.Command {
 			scanner := watch.NewScanner(watch.NewStore(sqliteStore.DB()))
 			scanner.Settings = watchSettings
 			scanner.Progress = newCLIProgress(cmd.ErrOrStderr())
-			result, err := scanner.ScanWithOptions(cmd.Context(), path, watch.ScanOptions{Force: rescan})
+			result, err := scanner.ScanWithOptions(cmd.Context(), path, watch.ScanOptions{Force: rescan, DataDir: dataDir})
 			if err != nil {
 				return err
 			}
@@ -466,7 +466,7 @@ func newRepresentCmd() *cobra.Command {
 			scanner := watch.NewScanner(watchStore)
 			scanner.Settings = watchSettings
 			scanner.Progress = progress
-			scanResult, err := scanner.ScanWithOptions(cmd.Context(), path, watch.ScanOptions{Force: rescan})
+			scanResult, err := scanner.ScanWithOptions(cmd.Context(), path, watch.ScanOptions{Force: rescan, DataDir: dataDir})
 			if err != nil {
 				return err
 			}
@@ -606,7 +606,7 @@ func runWatchDiff(cmd *cobra.Command, path string, opts watchDiffOptions) error 
 	}
 	defer func() { _ = sqliteStore.DB().Close() }()
 	watchStore := watch.NewStore(sqliteStore.DB())
-	once, err := watch.NewRunner(watchStore).RunOnce(cmd.Context(), watch.OneShotOptions{Path: path, Rescan: opts.Rescan, Embedding: embeddingCfg, Settings: watchSettings})
+	once, err := watch.NewRunner(watchStore).RunOnce(cmd.Context(), watch.OneShotOptions{Path: path, Rescan: opts.Rescan, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir})
 	if err != nil {
 		return err
 	}
@@ -719,6 +719,11 @@ func resolveWatchSettings(cfg *workspace.Config, languages []string, watcherMode
 				UtilityNoise:          cfg.Watch.Visibility.Weights.UtilityNoise,
 				HighDegreeNoise:       cfg.Watch.Visibility.Weights.HighDegreeNoise,
 			},
+		}
+		settings.Scale = watch.ScaleConfig{
+			Strategy:        cfg.Watch.Scale.Strategy,
+			MaxTrackedFiles: cfg.Watch.Scale.MaxTrackedFiles,
+			MaxLimitedFiles: cfg.Watch.Scale.MaxLimitedFiles,
 		}
 	}
 	if len(languages) > 0 {

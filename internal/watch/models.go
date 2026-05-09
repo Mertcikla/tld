@@ -120,15 +120,22 @@ type Summary struct {
 }
 
 type ScanResult struct {
-	RepositoryID   int64    `json:"repository_id"`
-	ScanRunID      int64    `json:"scan_run_id"`
-	FilesSeen      int      `json:"files_seen"`
-	FilesParsed    int      `json:"files_parsed"`
-	FilesSkipped   int      `json:"files_skipped"`
-	SymbolsSeen    int      `json:"symbols_seen"`
-	ReferencesSeen int      `json:"references_seen"`
-	Warning        string   `json:"warning,omitempty"`
-	Warnings       []string `json:"warnings,omitempty"`
+	RepositoryID        int64    `json:"repository_id"`
+	ScanRunID           int64    `json:"scan_run_id"`
+	FilesSeen           int      `json:"files_seen"`
+	FilesParsed         int      `json:"files_parsed"`
+	FilesSkipped        int      `json:"files_skipped"`
+	SymbolsSeen         int      `json:"symbols_seen"`
+	ReferencesSeen      int      `json:"references_seen"`
+	Mode                string   `json:"mode,omitempty"`
+	Strategy            string   `json:"strategy,omitempty"`
+	StrategyReason      string   `json:"strategy_reason,omitempty"`
+	TrackedFiles        int      `json:"tracked_files,omitempty"`
+	SelectedFiles       int      `json:"selected_files,omitempty"`
+	SkippedTrackedFiles int      `json:"skipped_tracked_files,omitempty"`
+	BaselineWorktree    string   `json:"baseline_worktree,omitempty"`
+	Warning             string   `json:"warning,omitempty"`
+	Warnings            []string `json:"warnings,omitempty"`
 }
 
 type EmbeddingConfig struct {
@@ -177,6 +184,13 @@ type Settings struct {
 	Debounce     time.Duration    `json:"debounce"`
 	Thresholds   Thresholds       `json:"thresholds"`
 	Visibility   VisibilityConfig `json:"visibility"`
+	Scale        ScaleConfig      `json:"scale"`
+}
+
+type ScaleConfig struct {
+	Strategy        string `json:"strategy" yaml:"strategy"`
+	MaxTrackedFiles int    `json:"max_tracked_files" yaml:"max_tracked_files"`
+	MaxLimitedFiles int    `json:"max_limited_files" yaml:"max_limited_files"`
 }
 
 type RepresentRequest struct {

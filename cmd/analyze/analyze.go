@@ -84,7 +84,7 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 			if formatFlag(cmd) != "json" {
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%sAnalyzing %s (watch pipeline)...\n", linePrefix, scanPath)
 			}
-			once, err := watchpkg.NewRunner(watchStore).RunOnce(cmd.Context(), watchpkg.OneShotOptions{Path: absPath, Rescan: rescan, Embedding: embeddingCfg, Settings: settings, Progress: progress})
+			once, err := watchpkg.NewRunner(watchStore).RunOnce(cmd.Context(), watchpkg.OneShotOptions{Path: absPath, Rescan: rescan, Embedding: embeddingCfg, Settings: settings, DataDir: dataDir, Progress: progress})
 			if err != nil {
 				return err
 			}
@@ -193,6 +193,11 @@ func resolveAnalyzeWatchSettings(cfg *workspace.Config, languages []string, maxE
 				UtilityNoise:          cfg.Watch.Visibility.Weights.UtilityNoise,
 				HighDegreeNoise:       cfg.Watch.Visibility.Weights.HighDegreeNoise,
 			},
+		}
+		settings.Scale = watchpkg.ScaleConfig{
+			Strategy:        cfg.Watch.Scale.Strategy,
+			MaxTrackedFiles: cfg.Watch.Scale.MaxTrackedFiles,
+			MaxLimitedFiles: cfg.Watch.Scale.MaxLimitedFiles,
 		}
 	}
 	if len(languages) > 0 {

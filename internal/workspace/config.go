@@ -122,6 +122,12 @@ type WatchLayoutConfig struct {
 	GravityStrength float64 `yaml:"gravity_strength"`
 }
 
+type WatchScaleConfig struct {
+	Strategy        string `yaml:"strategy"`
+	MaxTrackedFiles int    `yaml:"max_tracked_files"`
+	MaxLimitedFiles int    `yaml:"max_limited_files"`
+}
+
 type WatchConfig struct {
 	Languages    []string              `yaml:"languages"`
 	Watcher      string                `yaml:"watcher"`
@@ -131,6 +137,7 @@ type WatchConfig struct {
 	Visibility   WatchVisibilityConfig `yaml:"visibility"`
 	Embedding    WatchEmbeddingConfig  `yaml:"embedding"`
 	Layout       WatchLayoutConfig     `yaml:"layout"`
+	Scale        WatchScaleConfig      `yaml:"scale"`
 }
 
 type CompletionConfig struct {
@@ -190,6 +197,11 @@ func DefaultConfig() *Config {
 				ChargeStrength:  -400,
 				CollideRadius:   180,
 				GravityStrength: 0.05,
+			},
+			Scale: WatchScaleConfig{
+				Strategy:        "auto",
+				MaxTrackedFiles: 15000,
+				MaxLimitedFiles: 2000,
 			},
 		},
 	}

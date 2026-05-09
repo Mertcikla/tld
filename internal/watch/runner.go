@@ -27,6 +27,7 @@ type RunnerOptions struct {
 	SummaryInterval   time.Duration
 	Embedding         EmbeddingConfig
 	Settings          Settings
+	DataDir           string
 	Progress          ProgressSink
 	Events            chan<- Event
 	Ready             chan<- RunnerResult
@@ -92,7 +93,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 
 	gitStatus, _ := gitStatusSnapshot(repoRoot)
 	emit(opts.Events, Event{Type: "scan.started", At: nowString(), Phase: "scan", WatcherMode: settings.Watcher, Languages: settings.Languages})
-	once, err := r.RunOnce(ctx, OneShotOptions{Path: repoRoot, Rescan: opts.Rescan, Embedding: opts.Embedding, Settings: settings, Progress: opts.Progress})
+	once, err := r.RunOnce(ctx, OneShotOptions{Path: repoRoot, Rescan: opts.Rescan, Embedding: opts.Embedding, Settings: settings, DataDir: opts.DataDir, Progress: opts.Progress})
 	if err != nil {
 		return RunnerResult{}, err
 	}
@@ -131,8 +132,13 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 		default:
 		}
 	}
-	lastSourceSnapshot := sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
-	lastFingerprint := sourceFileFingerprint(lastSourceSnapshot)
+	limitedMode := once.Scan.Mode == "limited"
+	lastSourceSnapshot := map[string]string{}
+	lastFingerprint := ""
+	if !limitedMode {
+		lastSourceSnapshot = sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
+		lastFingerprint = sourceFileFingerprint(lastSourceSnapshot)
+	}
 	lastHead := gitStatus.HeadCommit
 	lastGitFingerprint := gitStatusFingerprint(gitStatus)
 	heartbeat := time.NewTicker(opts.HeartbeatInterval)
@@ -194,21 +200,37 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			if err == nil && status == "stopping" {
 				return result, nil
 			}
-			nextSourceSnapshot := sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
-			nextFingerprint := sourceFileFingerprint(nextSourceSnapshot)
 			nextGit, _ := gitStatusSnapshot(repoRoot)
 			nextGitFingerprint := gitStatusFingerprint(nextGit)
-			if nextFingerprint == lastFingerprint && nextGit.HeadCommit == lastHead && nextGitFingerprint == lastGitFingerprint {
+			nextSourceSnapshot := map[string]string{}
+			nextFingerprint := ""
+			if !limitedMode {
+				nextSourceSnapshot = sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
+				nextFingerprint = sourceFileFingerprint(nextSourceSnapshot)
+				if nextFingerprint == lastFingerprint && nextGit.HeadCommit == lastHead && nextGitFingerprint == lastGitFingerprint {
+					continue
+				}
+			} else if nextGit.HeadCommit == lastHead && nextGitFingerprint == lastGitFingerprint {
 				continue
 			}
 			time.Sleep(opts.Debounce)
-			stableSourceSnapshot := sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
-			sourceChanged := sourceFileFingerprint(stableSourceSnapshot) != lastFingerprint
+			stableSourceSnapshot := map[string]string{}
+			sourceChanged := false
+			if !limitedMode {
+				stableSourceSnapshot = sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
+				sourceChanged = sourceFileFingerprint(stableSourceSnapshot) != lastFingerprint
+			}
 			nextGit, _ = gitStatusSnapshot(repoRoot)
 			nextGitFingerprint = gitStatusFingerprint(nextGit)
-			sourceChanges := diffSourceFileSnapshots(lastSourceSnapshot, stableSourceSnapshot)
+			var sourceChanges []SourceFileChange
+			if limitedMode {
+				sourceChanges = sourceChangesFromGit(repoRoot)
+				sourceChanged = len(sourceChanges) > 0
+			} else {
+				sourceChanges = diffSourceFileSnapshots(lastSourceSnapshot, stableSourceSnapshot)
+			}
 			emit(opts.Events, Event{Type: "scan.started", RepositoryID: repo.ID, At: nowString(), Phase: "scan", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: warnings})
-			once, err := r.RunOnce(ctx, OneShotOptions{Path: repoRoot, Embedding: opts.Embedding, Settings: settings, Progress: opts.Progress})
+			once, err := r.RunOnce(ctx, OneShotOptions{Path: repoRoot, Embedding: opts.Embedding, Settings: settings, DataDir: opts.DataDir, Progress: opts.Progress})
 			if err != nil {
 				emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: err.Error()})
 				continue
@@ -258,8 +280,11 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 				}
 				lastHead = nextGit.HeadCommit
 			}
-			lastSourceSnapshot = stableSourceSnapshot
-			lastFingerprint = sourceFileFingerprint(stableSourceSnapshot)
+			limitedMode = once.Scan.Mode == "limited"
+			if !limitedMode {
+				lastSourceSnapshot = stableSourceSnapshot
+				lastFingerprint = sourceFileFingerprint(stableSourceSnapshot)
+			}
 			lastGitFingerprint = nextGitFingerprint
 		}
 	}
@@ -470,6 +495,28 @@ func diffSourceFileSnapshots(before, after map[string]string) []SourceFileChange
 		return changes[i].Path < changes[j].Path
 	})
 	return changes
+}
+
+func sourceChangesFromGit(repoRoot string) []SourceFileChange {
+	changes, err := tldgit.WorktreeChangesAgainstHead(repoRoot)
+	if err != nil {
+		return nil
+	}
+	out := make([]SourceFileChange, 0, len(changes))
+	for path, change := range changes {
+		changeType := string(change)
+		if changeType == "" {
+			changeType = string(tldgit.WorktreeUpdated)
+		}
+		out = append(out, SourceFileChange{Path: path, ChangeType: changeType})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Path == out[j].Path {
+			return out[i].ChangeType < out[j].ChangeType
+		}
+		return out[i].Path < out[j].Path
+	})
+	return out
 }
 
 func sourceSnapshotLanguage(value string) string {

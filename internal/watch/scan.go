@@ -85,7 +85,8 @@ func (s *Scanner) Scan(ctx context.Context, path string) (ScanResult, error) {
 }
 
 type ScanOptions struct {
-	Force bool
+	Force   bool
+	DataDir string
 }
 
 func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, relFiles []string, opts ScanOptions) (ScanResult, error) {
@@ -244,10 +245,32 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 		return ScanResult{}, err
 	}
 	result := ScanResult{RepositoryID: repo.ID}
+	plan, err := planScan(repoRoot, settings, effectiveRules)
+	if err != nil {
+		return ScanResult{}, err
+	}
+	result.Mode = plan.Mode
+	result.Strategy = plan.Strategy
+	result.StrategyReason = plan.Reason
+	result.TrackedFiles = plan.TrackedFiles
+	result.SelectedFiles = plan.SelectedFiles
+	result.SkippedTrackedFiles = plan.SkippedTrackedFiles
+	result.Warnings = append(result.Warnings, plan.Warnings...)
+	if plan.Limited {
+		if warning := s.prepareLimitedBaselineWorktree(repoRoot, repo.ID, opts.DataDir, repo.HeadCommit.String, &result); warning != "" {
+			result.Warnings = append(result.Warnings, warning)
+		}
+	}
 
 	mode := "incremental"
+	if plan.Limited {
+		mode = "limited"
+	}
 	if opts.Force {
 		mode = "full"
+		if plan.Limited {
+			mode = "limited-force"
+		}
 	}
 	runID, err := s.Store.BeginScanRun(ctx, repo.ID, mode)
 	if err != nil {
@@ -265,11 +288,23 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 
 	workers := runtime.NumCPU()
 	progress := &synchronizedProgress{sink: s.Progress}
-	files, err := s.collectSourceFiles(repoRoot, workers, settings.Languages, effectiveRules, progress)
-	progressFinish(progress)
-	if err != nil {
-		scanErr = err
-		return result, err
+	var files []string
+	if plan.Limited {
+		files = append(files, plan.Files...)
+		changed, err := tldgit.WorktreeChangesAgainstHead(repoRoot)
+		if err != nil {
+			result.Warnings = append(result.Warnings, "limited view: git change detection failed: "+err.Error())
+		} else {
+			files = append(files, changedScanFiles(repoRoot, changed, settings, effectiveRules)...)
+		}
+		files = uniqueAbsFiles(files)
+	} else {
+		files, err = s.collectSourceFiles(repoRoot, workers, settings.Languages, effectiveRules, progress)
+		progressFinish(progress)
+		if err != nil {
+			scanErr = err
+			return result, err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		scanErr = err
@@ -277,6 +312,13 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	}
 	repoSignals := enrich.DiscoverRepositorySignalsFromFiles(repoRoot, files)
 	result.FilesSeen = len(files)
+	if plan.Limited {
+		result.SelectedFiles = len(files)
+		result.SkippedTrackedFiles = result.TrackedFiles - len(files)
+		if result.SkippedTrackedFiles < 0 {
+			result.SkippedTrackedFiles = 0
+		}
+	}
 	progressStart(progress, "Scanning source files", len(files))
 	defer progressFinish(progress)
 	seen := make(map[string]struct{}, len(files))
@@ -306,7 +348,12 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 		scanErr = err
 		return result, err
 	}
-	if err := s.Store.DeleteMissingFiles(ctx, repo.ID, seen); err != nil {
+	if !plan.Limited {
+		if err := s.Store.DeleteMissingFiles(ctx, repo.ID, seen); err != nil {
+			scanErr = err
+			return result, err
+		}
+	} else if err := s.deleteLimitedRemovedFiles(ctx, repoRoot, repo.ID); err != nil {
 		scanErr = err
 		return result, err
 	}
@@ -340,6 +387,81 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	}
 	result.ReferencesSeen = len(refs)
 	return result, nil
+}
+
+func changedScanFiles(repoRoot string, changes map[string]tldgit.WorktreeChange, settings Settings, rules *ignore.Rules) []string {
+	settings = NormalizeSettings(settings)
+	allowed := map[string]struct{}{}
+	for _, language := range settings.Languages {
+		allowed[language] = struct{}{}
+	}
+	var files []string
+	for rel, change := range changes {
+		if change == tldgit.WorktreeDeleted {
+			continue
+		}
+		rel = filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
+		if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") || filepath.IsAbs(rel) {
+			continue
+		}
+		if rules != nil && rules.ShouldIgnorePath(rel) {
+			continue
+		}
+		abs := filepath.Join(repoRoot, filepath.FromSlash(rel))
+		language, parseable, ok := watchedFileLanguage(abs)
+		if !ok || (parseable && !languageAllowed(language, allowed)) {
+			continue
+		}
+		files = append(files, abs)
+	}
+	sort.Strings(files)
+	return files
+}
+
+func uniqueAbsFiles(files []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(files))
+	for _, file := range files {
+		file = filepath.Clean(file)
+		if file == "" {
+			continue
+		}
+		if _, ok := seen[file]; ok {
+			continue
+		}
+		seen[file] = struct{}{}
+		out = append(out, file)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Scanner) prepareLimitedBaselineWorktree(repoRoot string, repositoryID int64, dataDir, head string, result *ScanResult) string {
+	if strings.TrimSpace(dataDir) == "" || strings.TrimSpace(head) == "" {
+		return ""
+	}
+	target := filepath.Join(dataDir, "watch-worktrees", fmt.Sprint(repositoryID), head)
+	if err := tldgit.EnsureDetachedWorktree(repoRoot, head, target); err != nil {
+		return "limited view: baseline worktree unavailable, using tree-sitter-only baseline fallback: " + err.Error()
+	}
+	if result != nil {
+		result.BaselineWorktree = target
+	}
+	return ""
+}
+
+func (s *Scanner) deleteLimitedRemovedFiles(ctx context.Context, repoRoot string, repositoryID int64) error {
+	changes, err := tldgit.WorktreeChangesAgainstHead(repoRoot)
+	if err != nil {
+		return nil
+	}
+	var deleted []string
+	for rel, change := range changes {
+		if change == tldgit.WorktreeDeleted {
+			deleted = append(deleted, rel)
+		}
+	}
+	return s.Store.DeleteFilesByPath(ctx, repositoryID, deleted)
 }
 
 type parsedFile struct {
