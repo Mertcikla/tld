@@ -86,13 +86,6 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		modelIDPtr = nil
 	}
 
-	identityKeys, err := r.Store.SymbolIdentityKeys(ctx, repositoryID)
-	if err != nil {
-		progressFinish(req.Progress)
-		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
-		return RepresentResult{}, err
-	}
-	progressAdvance(req.Progress, "Symbol identities loaded")
 	contextPolicies, err := r.Store.ActiveContextPolicySet(ctx, repositoryID)
 	if err != nil {
 		progressFinish(req.Progress)
@@ -100,6 +93,32 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		return RepresentResult{}, err
 	}
 	progressAdvance(req.Progress, "Context policies loaded")
+	contextExpansions, err := r.Store.ActiveContextExpansionSet(ctx, repositoryID)
+	if err != nil {
+		progressFinish(req.Progress)
+		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
+		return RepresentResult{}, err
+	}
+	reuseAllowed := req.AssumeNoRawChanges && len(contextPolicies.Show) == 0 && len(contextPolicies.Hide) == 0 && len(contextExpansions.Tiers) == 0
+	if reuseAllowed {
+		cached, reused, err := r.reuseRepresentation(ctx, repositoryID, rawGraphHash, settingsHash, modelIDPtr, prepareStarted, req)
+		if err != nil {
+			progressFinish(req.Progress)
+			logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
+			return RepresentResult{}, err
+		}
+		if reused {
+			progressFinish(req.Progress)
+			return cached, nil
+		}
+	}
+	identityKeys, err := r.Store.SymbolIdentityKeys(ctx, repositoryID)
+	if err != nil {
+		progressFinish(req.Progress)
+		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
+		return RepresentResult{}, err
+	}
+	progressAdvance(req.Progress, "Symbol identities loaded")
 	changedRaw, err := r.Store.ChangedRawResourcesSinceLatest(ctx, repositoryID)
 	if err != nil {
 		progressFinish(req.Progress)
@@ -107,6 +126,18 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		return RepresentResult{}, err
 	}
 	progressAdvance(req.Progress, "Changed resources loaded")
+	if len(changedRaw.Files) == 0 && len(changedRaw.Symbols) == 0 && len(contextPolicies.Show) == 0 && len(contextPolicies.Hide) == 0 && len(contextExpansions.Tiers) == 0 {
+		cached, reused, err := r.reuseRepresentation(ctx, repositoryID, rawGraphHash, settingsHash, modelIDPtr, prepareStarted, req)
+		if err != nil {
+			progressFinish(req.Progress)
+			logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
+			return RepresentResult{}, err
+		}
+		if reused {
+			progressFinish(req.Progress)
+			return cached, nil
+		}
+	}
 	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, nil, changedRaw.Symbols, contextPolicies, identityKeys)
 	if err != nil {
 		progressFinish(req.Progress)
@@ -212,6 +243,27 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	result.DeletesPreserved = stats.DeletesPreserved
 	logInfo(ctx, req.Logger, "watch.representation.materialize.completed", "elapsed", logElapsed(materializeStarted), "repository_id", repositoryID, "representation_run_id", runID, "elements_created", result.ElementsCreated, "elements_updated", result.ElementsUpdated, "connectors_created", result.ConnectorsCreated, "connectors_updated", result.ConnectorsUpdated, "views_created", result.ViewsCreated, "elements_preserved", result.ElementsPreserved, "connectors_preserved", result.ConnectorsPreserved, "views_preserved", result.ViewsPreserved, "deletes_preserved", result.DeletesPreserved)
 	return result, nil
+}
+
+func (r *Representer) reuseRepresentation(ctx context.Context, repositoryID int64, rawGraphHash, settingsHash string, modelID *int64, started time.Time, req RepresentRequest) (RepresentResult, bool, error) {
+	latest, found, err := r.Store.LatestWatchVersion(ctx, repositoryID)
+	if err != nil || !found {
+		return RepresentResult{}, false, err
+	}
+	cached, cachedFound, err := r.Store.LatestCompletedRepresentationRun(ctx, repositoryID, rawGraphHash, settingsHash, modelID)
+	if err != nil || !cachedFound {
+		return RepresentResult{}, false, err
+	}
+	if cached.RepresentationHash != latest.RepresentationHash {
+		return RepresentResult{}, false, nil
+	}
+	cached.ElementsCreated = 0
+	cached.ElementsUpdated = 0
+	cached.ConnectorsCreated = 0
+	cached.ConnectorsUpdated = 0
+	cached.ViewsCreated = 0
+	logInfo(ctx, req.Logger, "watch.representation.reused", "elapsed", logElapsed(started), "repository_id", repositoryID, "representation_run_id", cached.RepresentationRun, "raw_graph_hash", rawGraphHash, "representation_hash", cached.RepresentationHash, "assume_no_raw_changes", req.AssumeNoRawChanges)
+	return cached, true, nil
 }
 
 func (r *Representer) RepresentArchitecture(ctx context.Context, repo Repository, architecture architectureModel, thresholds Thresholds, progress ProgressSink) (RepresentResult, error) {

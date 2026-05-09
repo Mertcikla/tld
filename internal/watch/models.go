@@ -194,11 +194,12 @@ type ScaleConfig struct {
 }
 
 type RepresentRequest struct {
-	Embedding  EmbeddingConfig  `json:"embedding"`
-	Thresholds Thresholds       `json:"thresholds"`
-	Visibility VisibilityConfig `json:"visibility"`
-	Progress   ProgressSink     `json:"-"`
-	Logger     EventLogger      `json:"-"`
+	Embedding          EmbeddingConfig  `json:"embedding"`
+	Thresholds         Thresholds       `json:"thresholds"`
+	Visibility         VisibilityConfig `json:"visibility"`
+	AssumeNoRawChanges bool             `json:"-"`
+	Progress           ProgressSink     `json:"-"`
+	Logger             EventLogger      `json:"-"`
 }
 
 type RepresentResult struct {

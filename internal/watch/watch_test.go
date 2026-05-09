@@ -224,6 +224,58 @@ func Main() {}
 	}
 }
 
+func TestRunnerRunOnceReusesWarmRepresentationAndDiffs(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func Main() {
+	helper()
+}
+
+func helper() {}
+`)
+
+	store := NewStore(db)
+	runner := NewRunner(store)
+	opts := OneShotOptions{
+		Path:      repo,
+		Embedding: EmbeddingConfig{Provider: "none"},
+	}
+	first, err := runner.RunOnce(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Scan.FilesParsed == 0 || first.Representation.RepresentationRun == 0 || first.Representation.ElementsCreated == 0 {
+		t.Fatalf("expected cold run to parse and materialize: %+v", first)
+	}
+	if _, err := store.CreateWatchVersion(context.Background(), first.Repository.ID, "commit1", "first commit", "", "main", first.Representation.RepresentationHash, nil, first.Diffs); err != nil {
+		t.Fatal(err)
+	}
+	representationRunsBefore := countRows(t, db, `SELECT COUNT(*) FROM watch_representation_runs`)
+
+	second, err := runner.RunOnce(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Scan.FilesParsed != 0 || second.Scan.FilesSkipped == 0 {
+		t.Fatalf("expected warm run to skip parsed files: %+v", second.Scan)
+	}
+	if second.Representation.RepresentationRun != first.Representation.RepresentationRun {
+		t.Fatalf("expected warm run to reuse representation run %d, got %+v", first.Representation.RepresentationRun, second.Representation)
+	}
+	if second.Representation.ElementsCreated != 0 || second.Representation.ElementsUpdated != 0 || second.Representation.ConnectorsCreated != 0 || second.Representation.ConnectorsUpdated != 0 {
+		t.Fatalf("expected warm representation to skip materialization writes: %+v", second.Representation)
+	}
+	if len(second.Diffs) != 0 {
+		t.Fatalf("expected warm run to reuse existing diffs, got %+v", second.Diffs)
+	}
+	if got := countRows(t, db, `SELECT COUNT(*) FROM watch_representation_runs`); got != representationRunsBefore {
+		t.Fatalf("warm run created representation rows: before %d after %d", representationRunsBefore, got)
+	}
+}
+
 func TestScanAndRepresentMaterializesEnricherFactsWithoutNoisyTags(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -4985,6 +5037,15 @@ func runGit(t *testing.T, dir string, args ...string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v failed: %v\n%s", args, err, out)
 	}
+}
+
+func countRows(t *testing.T, db *sql.DB, query string, args ...any) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(query, args...).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
 }
 
 func writeFile(t *testing.T, root, name, content string) {

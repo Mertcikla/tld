@@ -82,12 +82,26 @@ func (r *Runner) RunOnce(ctx context.Context, opts OneShotOptions) (OneShotResul
 	}
 	representStarted := time.Now()
 	logInfo(ctx, opts.Logger, "watch.representation.started", "repository_id", repo.ID)
-	rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{Embedding: opts.Embedding, Thresholds: settings.Thresholds, Visibility: settings.Visibility, Progress: opts.Progress, Logger: opts.Logger})
+	rep, err := r.Representer.Represent(ctx, repo.ID, RepresentRequest{
+		Embedding:          opts.Embedding,
+		Thresholds:         settings.Thresholds,
+		Visibility:         settings.Visibility,
+		AssumeNoRawChanges: !opts.Rescan && scan.FilesSeen > 0 && scan.FilesParsed == 0,
+		Progress:           opts.Progress,
+		Logger:             opts.Logger,
+	})
 	if err != nil {
 		logError(ctx, opts.Logger, "watch.representation.failed", err, "elapsed", logElapsed(representStarted), "repository_id", repo.ID)
 		return OneShotResult{}, err
 	}
 	logInfo(ctx, opts.Logger, "watch.representation.completed", "elapsed", logElapsed(representStarted), "repository_id", repo.ID, "representation_run_id", rep.RepresentationRun, "filter_run_id", rep.FilterRunID, "elements_created", rep.ElementsCreated, "elements_updated", rep.ElementsUpdated, "connectors_created", rep.ConnectorsCreated, "connectors_updated", rep.ConnectorsUpdated, "views_created", rep.ViewsCreated, "embedding_cache_hits", rep.EmbeddingCacheHits, "embeddings_created", rep.EmbeddingsCreated)
+	if latest, found, err := r.Store.LatestWatchVersion(ctx, repo.ID); err != nil {
+		logError(ctx, opts.Logger, "watch.diffs.reuse_check.failed", err, "repository_id", repo.ID, "representation_hash", rep.RepresentationHash)
+		return OneShotResult{}, err
+	} else if found && latest.RepresentationHash == rep.RepresentationHash {
+		logInfo(ctx, opts.Logger, "watch.diffs.reused", "repository_id", repo.ID, "version_id", latest.ID, "representation_hash", rep.RepresentationHash)
+		return OneShotResult{Repository: repo, Scan: scan, Representation: rep, GitStatus: gitStatus, Diffs: []RepresentationDiff{}}, nil
+	}
 	diffStarted := time.Now()
 	logInfo(ctx, opts.Logger, "watch.diffs.started", "repository_id", repo.ID, "representation_hash", rep.RepresentationHash)
 	progressStart(opts.Progress, "Computing representation diffs", 1)

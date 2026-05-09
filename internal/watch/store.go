@@ -1199,6 +1199,43 @@ func (s *Store) FinishRepresentationRun(ctx context.Context, id int64, status st
 	return err
 }
 
+func (s *Store) LatestCompletedRepresentationRun(ctx context.Context, repositoryID int64, rawGraphHash, settingsHash string, embeddingModelID *int64) (RepresentResult, bool, error) {
+	query := `
+		SELECT id, raw_graph_hash, filter_settings_hash, representation_hash,
+		       elements_created, elements_updated, connectors_created, connectors_updated, views_created
+		FROM watch_representation_runs
+		WHERE repository_id = ? AND raw_graph_hash = ? AND filter_settings_hash = ? AND status = 'completed' AND embedding_model_id IS NULL
+		ORDER BY id DESC
+		LIMIT 1`
+	args := []any{repositoryID, rawGraphHash, settingsHash}
+	if embeddingModelID != nil {
+		query = `
+			SELECT id, raw_graph_hash, filter_settings_hash, representation_hash,
+			       elements_created, elements_updated, connectors_created, connectors_updated, views_created
+			FROM watch_representation_runs
+			WHERE repository_id = ? AND raw_graph_hash = ? AND filter_settings_hash = ? AND status = 'completed' AND embedding_model_id = ?
+			ORDER BY id DESC
+			LIMIT 1`
+		args = append(args, *embeddingModelID)
+	}
+	result := RepresentResult{RepositoryID: repositoryID}
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(
+		&result.RepresentationRun,
+		&result.RawGraphHash,
+		&result.SettingsHash,
+		&result.RepresentationHash,
+		&result.ElementsCreated,
+		&result.ElementsUpdated,
+		&result.ConnectorsCreated,
+		&result.ConnectorsUpdated,
+		&result.ViewsCreated,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RepresentResult{}, false, nil
+	}
+	return result, err == nil, err
+}
+
 func (s *Store) MappingResourceID(ctx context.Context, repositoryID int64, ownerType, ownerKey, resourceType string) (int64, bool, error) {
 	var id int64
 	err := s.db.QueryRowContext(ctx, `
