@@ -46,6 +46,7 @@ import type {
 } from '../../types'
 import ElementNode from '../../components/ElementNode'
 import ElementPanel from '../../components/ElementPanel'
+import MergeDialog from '../../components/MergeDialog'
 import CodePreviewPanel from '../../components/CodePreviewPanel'
 import ConnectorPanel from '../../components/ConnectorPanel'
 import ElementLibrary from '../../components/ElementLibrary'
@@ -87,7 +88,7 @@ import { useCrossBranchContextSettings } from '../../crossBranch/settings'
 import { removeConnectorGraphSnapshot, upsertConnectorGraphSnapshot, useWorkspaceGraphSnapshot } from '../../crossBranch/store'
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
-import { buildElementLibraryItems, useStore } from '../../store/useStore'
+import { buildElementLibraryItems, useStore, placedElementToLibraryElement } from '../../store/useStore'
 import { useWorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
 import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../../components/WorkspacePanel'
 
@@ -240,6 +241,8 @@ function ViewEditorInner({
   const exportModal = useDisclosure()
   const importModal = useDisclosure()
   const codePreview = useDisclosure()
+  const mergeDialog = useDisclosure()
+  const [mergeSourceElement, setMergeSourceElement] = useState<WorkspaceElement | null>(null)
 
   useEffect(() => {
     if (viewId == null) {
@@ -324,6 +327,7 @@ function ViewEditorInner({
   const setStoreSnapToGrid = useStore((state) => state.setSnapToGrid)
   const upsertStoreConnector = useStore((state) => state.upsertConnector)
   const removeStoreConnector = useStore((state) => state.removeConnector)
+  const mergeElementsInto = useStore((state) => state.mergeElementsInto)
   const refreshElementsRef = useRef<() => Promise<void>>(async () => { })
   const setSnapToGrid = useCallback((snap: boolean) => {
     setStoreSnapToGrid(snap)
@@ -1418,6 +1422,36 @@ function ViewEditorInner({
     void refreshElements()
   }, [refreshElements, removeStoreConnector, viewId])
 
+  const handleOpenMerge = useCallback((elementId: number) => {
+    const el = allElements.find((e) => e.id === elementId)
+      ?? (() => {
+        const placed = viewElements.find((e) => e.element_id === elementId)
+        return placed ? placedElementToLibraryElement(placed) : null
+      })()
+    if (el) {
+      setMergeSourceElement(el)
+      mergeDialog.onOpen()
+    }
+  }, [allElements, viewElements, mergeDialog])
+
+  const handleMerge = useCallback(async (survivorId: number, resolved: {
+    kind: string | null
+    description: string | null
+    repo: string | null
+    branch: string | null
+    file_path: string | null
+    language: string | null
+  }) => {
+    if (!mergeSourceElement) return
+    const result = await api.elements.merge(mergeSourceElement.id, survivorId, resolved)
+    mergeElementsInto(mergeSourceElement.id, result.survivor)
+    mergeDialog.onClose()
+    setMergeSourceElement(null)
+    if (selectedElement?.id === mergeSourceElement.id) {
+      setSelectedElement(result.survivor)
+    }
+  }, [mergeSourceElement, mergeElementsInto, mergeDialog, selectedElement])
+
   const handleConnectorDeleteInPanel = useCallback((edgeId: number, ownerViewId?: number) => {
     const deleted = selectedEdge?.id === edgeId ? selectedEdge : connectors.find((connector) => connector.id === edgeId) ?? null
     connectorEditSessionRef.current = null
@@ -1818,6 +1852,7 @@ function ViewEditorInner({
         <ElementPanel
           isOpen={elementPanel.isOpen} onClose={handleElementPanelClose} element={selectedElement}
           onSave={handleElementPanelSave} autoSave
+          onMerge={handleOpenMerge}
           onDelete={(elementId) => {
             elementEditSessionRef.current = null
             const placement = viewElements.find((item) => item.element_id === elementId)
@@ -1884,6 +1919,12 @@ function ViewEditorInner({
         <ImportModal
           isOpen={importModal.isOpen} onClose={importModal.onClose}
           onImport={handleImportView} isImporting={isImporting}
+        />
+        <MergeDialog
+          isOpen={mergeDialog.isOpen}
+          onClose={() => { mergeDialog.onClose(); setMergeSourceElement(null) }}
+          source={mergeSourceElement}
+          onMerge={handleMerge}
         />
         {!demoOptions?.disableOnboarding && <ViewEditorOnboarding hasElements={rfNodes.length > 0} />}
       </Box>

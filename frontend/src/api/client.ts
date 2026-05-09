@@ -554,6 +554,27 @@ export const api = {
     delete: (_orgId: string, id: number): Promise<void> =>
       rpc(async () => { await workspaceClient.deleteElement({ orgId: '', elementId: id }) }),
 
+    merge: (sourceId: number, survivorId: number, resolved: Partial<{
+      kind: string | null
+      description: string | null
+      repo: string | null
+      branch: string | null
+      file_path: string | null
+      language: string | null
+    }>): Promise<{ survivor: LibraryElement; deleted_id: number }> =>
+      rpc(async () => {
+        const res = await fetch(apiUrl('/elements/merge'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ source_id: sourceId, survivor_id: survivorId, resolved }),
+        })
+        if (!res.ok) {
+          throw await responseError(res, 'Merge failed')
+        }
+        const json = await res.json() as { survivor: Record<string, unknown>; deleted_id: number }
+        return { survivor: protoElementToLibrary(json.survivor), deleted_id: json.deleted_id }
+      }),
+
     placements: (id: number): Promise<ViewPlacement[]> =>
       rpc(async () => {
         const res = await workspaceClient.listElementPlacements({ elementId: id })

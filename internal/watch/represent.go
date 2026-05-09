@@ -18,6 +18,7 @@ import (
 	"github.com/mertcikla/tld/internal/codeowners"
 	"github.com/mertcikla/tld/internal/layout"
 	"github.com/mertcikla/tld/internal/tagcolors"
+	"github.com/mertcikla/tld/internal/tech"
 )
 
 const (
@@ -2909,7 +2910,7 @@ func technologyLinksForLanguage(language string) []materializedTechnologyLink {
 		if label == "" {
 			return []materializedTechnologyLink{}
 		}
-		return []materializedTechnologyLink{{Type: "custom", Label: label, IsPrimaryIcon: true}}
+		return []materializedTechnologyLink{{Type: "custom", Label: label}}
 	}
 	return []materializedTechnologyLink{{
 		Type:          "catalog",
@@ -2920,8 +2921,7 @@ func technologyLinksForLanguage(language string) []materializedTechnologyLink {
 }
 
 func technologyLinksForElement(technology, language string) []materializedTechnologyLink {
-	if slug := technologyCatalogSlugForLabel(technology); slug != "" {
-		label := strings.TrimSpace(technology)
+	if slug, label := technologyCatalogMatchForLabel(technology); slug != "" {
 		return []materializedTechnologyLink{{
 			Type:          "catalog",
 			Slug:          slug,
@@ -2933,21 +2933,25 @@ func technologyLinksForElement(technology, language string) []materializedTechno
 		return langLinks
 	}
 	if tech := strings.TrimSpace(technology); tech != "" {
-		return []materializedTechnologyLink{{Type: "custom", Label: tech, IsPrimaryIcon: true}}
+		return []materializedTechnologyLink{{Type: "custom", Label: tech}}
 	}
 	return nil
 }
 
-func technologyCatalogSlugForLabel(label string) string {
+func technologyCatalogMatchForLabel(label string) (string, string) {
 	switch strings.ToLower(strings.TrimSpace(label)) {
 	case "architecture":
-		return "architecture"
+		return "architecture", "Architecture"
 	case "structural":
-		return "structural"
+		return "structural", "Structural"
 	case "container":
-		return "docker"
+		return "docker", "Container"
 	default:
-		return ""
+		slug, name, ok := tech.LookupCatalog(label)
+		if !ok {
+			return "", ""
+		}
+		return slug, name
 	}
 }
 

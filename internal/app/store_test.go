@@ -61,7 +61,7 @@ func TestStoreElementsSearchPaginationAndViewMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	results, total, err := store.Elements(ctx, 1, 0, "runtime")
+	results, total, err := store.Elements(ctx, 1, 0, "api")
 	if err != nil {
 		t.Fatal(err)
 	}

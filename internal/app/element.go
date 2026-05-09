@@ -115,9 +115,9 @@ func (s *Store) Elements(ctx context.Context, limit, offset int, search string) 
 	where := ""
 	args := []any{}
 	if strings.TrimSpace(search) != "" {
-		where = ` WHERE LOWER(name) LIKE LOWER(?) OR LOWER(COALESCE(description, '')) LIKE LOWER(?)`
+		where = ` WHERE LOWER(name) LIKE LOWER(?)`
 		pattern := "%" + strings.TrimSpace(search) + "%"
-		args = append(args, pattern, pattern)
+		args = append(args, pattern)
 	}
 	var total int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM elements`+where, args...).Scan(&total); err != nil {

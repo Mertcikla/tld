@@ -1161,6 +1161,26 @@ func TestTechnologyLinksForElementUsesSectionCatalogIcon(t *testing.T) {
 			}},
 		},
 		{
+			name:       "catalog label from embedded icons",
+			technology: "flask",
+			language:   "",
+			want: []materializedTechnologyLink{{
+				Type:          "catalog",
+				Slug:          "flask",
+				Label:         "Flask",
+				IsPrimaryIcon: true,
+			}},
+		},
+		{
+			name:       "unknown technology stays custom without primary icon",
+			technology: "Internal SDK",
+			language:   "",
+			want: []materializedTechnologyLink{{
+				Type:  "custom",
+				Label: "Internal SDK",
+			}},
+		},
+		{
 			name:       "falls back to language",
 			technology: "Go",
 			language:   "go",

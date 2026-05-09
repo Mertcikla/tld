@@ -66,6 +66,7 @@ export type CanvasStoreState = ViewEditorUiState & {
   removeElementPlacement: (elementId: number) => void
   removeElementEverywhere: (elementId: number) => void
   mergeSavedElement: (saved: LibraryElement) => void
+  mergeElementsInto: (sourceId: number, survivor: LibraryElement) => void
   upsertConnector: (connector: Connector) => void
   replaceConnector: (connector: Connector) => void
   removeConnector: (connectorId: number) => void
@@ -254,6 +255,56 @@ export function removeConnectorFromList(connectors: Connector[], connectorId: nu
   return connectors.filter((connector) => connector.id !== connectorId)
 }
 
+export function reassignConnectorsToElement(connectors: Connector[], fromId: number, toId: number): Connector[] {
+  return connectors.map((c) => {
+    if (c.source_element_id === fromId && c.target_element_id === fromId) {
+      return { ...c, source_element_id: toId, target_element_id: toId }
+    }
+    if (c.source_element_id === fromId) {
+      return { ...c, source_element_id: toId }
+    }
+    if (c.target_element_id === fromId) {
+      return { ...c, target_element_id: toId }
+    }
+    return c
+  })
+}
+
+export function mergeElementReplacements(elements: PlacedElement[], sourceId: number, survivor: LibraryElement): PlacedElement[] {
+  const survivorId = survivor.id
+  const hasSurvivor = elements.some((el) => el.element_id === survivorId)
+  const sourcePlacement = elements.find((el) => el.element_id === sourceId)
+  if (hasSurvivor) {
+    return elements.filter((el) => el.element_id !== sourceId)
+  }
+  if (sourcePlacement) {
+    return elements.map((el) => {
+      if (el.element_id === sourceId) {
+        return {
+          ...el,
+          element_id: survivorId,
+          name: survivor.name,
+          kind: survivor.kind,
+          description: survivor.description,
+          technology: survivor.technology,
+          url: survivor.url,
+          logo_url: survivor.logo_url,
+          technology_connectors: survivor.technology_connectors,
+          tags: survivor.tags,
+          repo: survivor.repo,
+          branch: survivor.branch,
+          file_path: survivor.file_path,
+          language: survivor.language,
+          has_view: survivor.has_view,
+          view_label: survivor.view_label,
+        }
+      }
+      return el
+    })
+  }
+  return elements
+}
+
 export const useStore = create<CanvasStoreState>((set) => ({
   ...emptyViewEditorUiState,
   view: undefined,
@@ -304,6 +355,13 @@ export const useStore = create<CanvasStoreState>((set) => ({
   mergeSavedElement: (saved) => set((state) => ({
     viewElements: mergeSavedElementIntoPlacements(state.viewElements, saved),
     allElements: state.allElements.map((el) => (el.id === saved.id ? saved : el)),
+  })),
+  mergeElementsInto: (sourceId, survivor) => set((state) => ({
+    viewElements: mergeElementReplacements(state.viewElements, sourceId, survivor),
+    connectors: reassignConnectorsToElement(state.connectors, sourceId, survivor.id),
+    allElements: state.allElements
+      .filter((el) => el.id !== sourceId)
+      .map((el) => (el.id === survivor.id ? survivor : el)),
   })),
   upsertConnector: (connector) => set((state) => ({
     connectors: upsertConnectorInList(state.connectors, connector),

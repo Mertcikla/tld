@@ -14,6 +14,12 @@ describe('resolveElementIconUrl', () => {
     ])).toBe('/icons/golang.png')
   })
 
+  it('falls back to the first catalog link when the API omits primary icon metadata', () => {
+    expect(resolveElementIconUrl(null, [
+      { type: 'catalog', slug: 'javascript', label: 'JavaScript' },
+    ])).toBe('/icons/javascript.png')
+  })
+
   it('preserves explicit no-icon clears instead of falling back to technology', () => {
     expect(resolveElementIconUrl('', [
       { type: 'catalog', slug: 'golang', label: 'Go', is_primary_icon: true },

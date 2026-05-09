@@ -9,11 +9,12 @@ export function resolveElementIconUrl(
     return logoUrl === '' ? null : resolveIconPath(logoUrl)
   }
 
-  const selected = technologyConnectors?.find((link) => (
+  const catalogLinks = technologyConnectors?.filter((link) => link.type === 'catalog' && !!link.slug) ?? []
+  const selected = catalogLinks.find((link) => (
     link.type === 'catalog' &&
     !!(link.is_primary_icon ?? link.isPrimaryIcon) &&
     !!link.slug
-  ))
+  )) ?? catalogLinks[0]
   if (!selected?.slug) return null
   return resolveIconPath(`/icons/${selected.slug}.png`)
 }

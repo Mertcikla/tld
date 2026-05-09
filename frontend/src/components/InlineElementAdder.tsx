@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Box, Badge, HStack, Input, Text, VStack } from '@chakra-ui/react'
 import type { LibraryElement } from '../types'
 import { TYPE_COLORS } from '../types'
-import { api } from '../api/client'
+import { useElementSearch } from '../hooks/useElementSearch'
 
 interface Props {
   x: number
@@ -33,38 +33,15 @@ export default function InlineElementAdder({
   title,
   getSecondaryLabel,
 }: Props) {
-  const [query, setQuery] = useState('')
+  const { query, setQuery, remoteElements } = useElementSearch()
   const [activeIndex, setActiveIndex] = useState(0)
   const [busy, setBusy] = useState(false)
-  const [remoteElements, setRemoteElements] = useState<LibraryElement[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const t = setTimeout(() => inputRef.current?.focus(), 30)
     return () => clearTimeout(t)
   }, [])
-
-  useEffect(() => {
-    const trimmed = query.trim()
-    if (!trimmed) {
-      setRemoteElements([])
-      return
-    }
-    let cancelled = false
-    const timer = setTimeout(() => {
-      api.elements.list({ limit: 8, offset: 0, search: trimmed })
-        .then((items) => {
-          if (!cancelled) setRemoteElements(items)
-        })
-        .catch(() => {
-          if (!cancelled) setRemoteElements([])
-        })
-    }, 150)
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [query])
 
   const filtered = (() => {
     if (!query.trim()) return []

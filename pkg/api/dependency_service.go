@@ -82,10 +82,9 @@ func elementToDependencyProto(e *diagv1.Element) *diagv1.DependencyElement {
 		for _, tl := range e.GetTechnologyLinks() {
 			slug := tl.GetSlug()
 			links = append(links, &diagv1.DependencyTechnologyLink{
-				Type:          tl.GetType(),
-				Slug:          slug,
-				Label:         tl.GetLabel(),
-				IsPrimaryIcon: tl.GetIsPrimaryIcon(),
+				Type:  tl.GetType(),
+				Slug:  slug,
+				Label: tl.GetLabel(),
 			})
 		}
 		de.TechnologyLinks = links

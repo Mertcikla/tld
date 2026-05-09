@@ -158,10 +158,11 @@ async function normalizeInitialTechnologyLinks(element: LibraryElement): Promise
     }
   }
 
-  // If no catalog item is primary, try to match against element.logo_url or fallback to first catalog item
+  // If no catalog item is primary, try to match against element.logo_url. An
+  // explicit empty logo_url means the user deselected technology icons.
   const deduped = dedupeTechnologyLinks(normalized)
   const hasPrimary = deduped.some(l => l.type === 'catalog' && l.is_primary_icon)
-  if (!hasPrimary) {
+  if (!hasPrimary && element.logo_url !== '') {
     let bestMatchIndex = -1
     if (element.logo_url) {
       bestMatchIndex = deduped.findIndex(l => l.type === 'catalog' && l.slug && element.logo_url?.toLowerCase().includes(l.slug.toLowerCase()))
@@ -169,11 +170,6 @@ async function normalizeInitialTechnologyLinks(element: LibraryElement): Promise
 
     if (bestMatchIndex !== -1) {
       deduped[bestMatchIndex].is_primary_icon = true
-    } else {
-      const firstCatalog = deduped.find(l => l.type === 'catalog')
-      if (firstCatalog) {
-        firstCatalog.is_primary_icon = true
-      }
     }
   }
 
@@ -218,6 +214,7 @@ export interface ElementPanelProps extends ElementPanelSlots {
   autoSave?: boolean
   onDelete?: (id: number) => void
   onPermanentDelete?: (id: number) => void
+  onMerge?: (id: number) => void
   visibilityOverrideDelta?: number
   onPromoteVisibility?: (id: number) => Promise<void> | void
   onDemoteVisibility?: (id: number) => Promise<void> | void
@@ -235,7 +232,7 @@ export interface ElementPanelProps extends ElementPanelSlots {
  * Location: Right side of the screen on desktop. Overlays screen on mobile.
  * Aliases: Element Properties, Element Details.
  */
-function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDelete, onPermanentDelete, visibilityOverrideDelta = 0, onPromoteVisibility, onDemoteVisibility, onResetVisibility, orgId, links = [], parentLinks = [], hasBackdrop = true, availableTags = [], elementPanelAfterContentSlot }: ElementPanelProps) {
+function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDelete, onPermanentDelete, onMerge, visibilityOverrideDelta = 0, onPromoteVisibility, onDemoteVisibility, onResetVisibility, orgId, links = [], parentLinks = [], hasBackdrop = true, availableTags = [], elementPanelAfterContentSlot }: ElementPanelProps) {
   const { canEdit, viewId } = useViewEditorContext()
   const isEdit = !!element
   const isReadOnly = !canEdit
@@ -280,7 +277,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
       setTypeResults([])
       setUrl(element.url ?? '')
       setTags(element.tags ?? [])
-      setExplicitLogoClear(false)
+      setExplicitLogoClear(element.logo_url === '')
 
       const linksFromElement = (element.technology_connectors ?? []).map(tl => ({
         ...tl,
@@ -530,13 +527,12 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
         type: 'catalog',
         slug: item.defaultSlug,
         label: item.name,
-        is_primary_icon: !hasPrimaryCatalog,
+        is_primary_icon: !explicitLogoClear && !hasPrimaryCatalog,
       },
     ]))
     setTechnologyQuery('')
     setTechnologyResults([])
     setTechnologyMeta((prev) => ({ ...prev, [item.defaultSlug]: item }))
-    setExplicitLogoClear(false)
     scheduleAutoSave()
   }
 
@@ -1065,6 +1061,15 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
             )}
 
             
+
+            {isEdit && canEdit && onMerge && (
+              <Box borderTop="1px solid" borderColor="whiteAlpha.100" pt={2}>
+                <Button variant="subtle" size="sm" color="teal.200" _hover={{ bg: 'teal.900', color: 'teal.100' }}
+                  onClick={() => onMerge(element.id)} w="full">
+                  Merge | Into...
+                </Button>
+              </Box>
+            )}
 
             {isEdit && canEdit && (
               <HStack borderTop="1px solid" borderColor="whiteAlpha.100" pt={2} spacing={2}>

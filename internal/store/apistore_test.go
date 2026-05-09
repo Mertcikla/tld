@@ -3,11 +3,14 @@ package store
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld"
+	"github.com/mertcikla/tld/internal/app"
 	"github.com/mertcikla/tld/pkg/api"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func openAdapterTestStore(t *testing.T) *SQLiteStore {
@@ -18,6 +21,33 @@ func openAdapterTestStore(t *testing.T) *SQLiteStore {
 	}
 	t.Cleanup(func() { _ = sqliteStore.Legacy().Close() })
 	return sqliteStore
+}
+
+func TestElementToProtoOmitsPrimaryIconMetadata(t *testing.T) {
+	technology := "JavaScript"
+	element := elementToProto(app.LibraryElement{
+		ID:         1,
+		Name:       "Web",
+		Technology: &technology,
+		TechnologyConnectors: []app.TechnologyConnector{{
+			Type:          "catalog",
+			Slug:          "javascript",
+			Label:         "JavaScript",
+			IsPrimaryIcon: true,
+		}},
+	}, uuid.Nil)
+
+	data, err := protojson.Marshal(element)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if !strings.Contains(body, `"technology":"JavaScript"`) {
+		t.Fatalf("response body = %s, want technology field", body)
+	}
+	if strings.Contains(body, "isPrimaryIcon") {
+		t.Fatalf("response body = %s, want primary icon metadata omitted", body)
+	}
 }
 
 func TestGetWorkspaceResourceCountsUsesTableCounts(t *testing.T) {
