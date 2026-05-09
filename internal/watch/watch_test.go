@@ -1001,9 +1001,9 @@ func TestTechnologyLinksForLanguage(t *testing.T) {
 			}},
 		},
 		{
-			name:     "unknown source",
+			name:     "unknown returns empty",
 			language: "ruby",
-			want:     []materializedTechnologyLink{{Type: "custom", Label: "Source"}},
+			want:     []materializedTechnologyLink{},
 		},
 	}
 
