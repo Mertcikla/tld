@@ -556,21 +556,34 @@ func (s *Scanner) scanFiles(ctx context.Context, repositoryID int64, repoRoot st
 	for i := 0; i < workers; i++ {
 		wg.Go(func() {
 			workerAnalyzer := analyzer.NewService()
-			for absFile := range jobs {
-				fileResult, err := s.scanFile(ctx, workerAnalyzer, repositoryID, repoRoot, absFile, progress, force, rules, repoSignals, cache)
-				if err != nil {
-					select {
-					case errs <- err:
-					default:
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case absFile, ok := <-jobs:
+					if !ok {
+						return
 					}
-					continue
+					fileResult, err := s.scanFile(ctx, workerAnalyzer, repositoryID, repoRoot, absFile, progress, force, rules, repoSignals, cache)
+					if err != nil {
+						select {
+						case errs <- err:
+						default:
+						}
+						continue
+					}
+					results <- fileResult
 				}
-				results <- fileResult
 			}
 		})
 	}
 	for _, file := range files {
 		select {
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			close(results)
+			return nil, ctx.Err()
 		case jobs <- file:
 		case err := <-errs:
 			close(jobs)
