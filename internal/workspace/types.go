@@ -32,47 +32,50 @@ type Repository struct {
 // ViewPlacement is an element placement within another element's internal view.
 // Parent "root" means the synthetic workspace root.
 type ViewPlacement struct {
-	ParentRef string  `yaml:"parent"`
-	PositionX float64 `yaml:"position_x,omitempty"`
-	PositionY float64 `yaml:"position_y,omitempty"`
+	ParentRef       string  `yaml:"parent"`
+	PositionX       float64 `yaml:"position_x,omitempty"`
+	PositionY       float64 `yaml:"position_y,omitempty"`
+	VisibilityDelta int     `yaml:"visibility_delta,omitempty"`
 }
 
 // Element is the primary workspace resource.
 // It combines reusable identity with optional internal view metadata.
 type Element struct {
-	Name        string          `yaml:"name"`
-	Kind        string          `yaml:"kind"`
-	Owner       string          `yaml:"owner,omitempty"`
-	Description string          `yaml:"description,omitempty"`
-	Technology  string          `yaml:"technology,omitempty"`
-	URL         string          `yaml:"url,omitempty"`
-	LogoURL     string          `yaml:"logo_url,omitempty"`
-	Repo        string          `yaml:"repo,omitempty"`
-	Branch      string          `yaml:"branch,omitempty"`
-	Language    string          `yaml:"language,omitempty"`
-	FilePath    string          `yaml:"file_path,omitempty"`
-	Symbol      string          `yaml:"symbol,omitempty"` // Named code symbol within FilePath (e.g. "MyFunc")
-	Tags        []string        `yaml:"tags,omitempty"`
-	HasView     bool            `yaml:"has_view,omitempty"`
-	ViewLabel   string          `yaml:"view_label,omitempty"`
-	Placements  []ViewPlacement `yaml:"placements,omitempty"`
+	Name         string          `yaml:"name"`
+	Kind         string          `yaml:"kind"`
+	Owner        string          `yaml:"owner,omitempty"`
+	Description  string          `yaml:"description,omitempty"`
+	Technology   string          `yaml:"technology,omitempty"`
+	URL          string          `yaml:"url,omitempty"`
+	LogoURL      string          `yaml:"logo_url,omitempty"`
+	Repo         string          `yaml:"repo,omitempty"`
+	Branch       string          `yaml:"branch,omitempty"`
+	Language     string          `yaml:"language,omitempty"`
+	FilePath     string          `yaml:"file_path,omitempty"`
+	Symbol       string          `yaml:"symbol,omitempty"` // Named code symbol within FilePath (e.g. "MyFunc")
+	Tags         []string        `yaml:"tags,omitempty"`
+	HasView      bool            `yaml:"has_view,omitempty"`
+	ViewLabel    string          `yaml:"view_label,omitempty"`
+	DensityLevel int             `yaml:"density_level,omitempty"`
+	Placements   []ViewPlacement `yaml:"placements,omitempty"`
 }
 
 // Connector is one entry in connectors.yaml.
 type Connector struct {
-	View         string     `yaml:"view"`
-	Source       string     `yaml:"source"`
-	Target       string     `yaml:"target"`
-	Label        string     `yaml:"label,omitempty"`
-	Description  string     `yaml:"description,omitempty"`
-	Relationship string     `yaml:"relationship,omitempty"`
-	Direction    string     `yaml:"direction,omitempty"`
-	Style        string     `yaml:"style,omitempty"`
-	URL          string     `yaml:"url,omitempty"`
-	SourceHandle string     `yaml:"source_handle,omitempty"`
-	TargetHandle string     `yaml:"target_handle,omitempty"`
-	ID           ResourceID `yaml:"id,omitempty"`
-	UpdatedAt    time.Time  `yaml:"updated_at,omitempty"`
+	View            string     `yaml:"view"`
+	Source          string     `yaml:"source"`
+	Target          string     `yaml:"target"`
+	Label           string     `yaml:"label,omitempty"`
+	Description     string     `yaml:"description,omitempty"`
+	Relationship    string     `yaml:"relationship,omitempty"`
+	Direction       string     `yaml:"direction,omitempty"`
+	Style           string     `yaml:"style,omitempty"`
+	URL             string     `yaml:"url,omitempty"`
+	SourceHandle    string     `yaml:"source_handle,omitempty"`
+	TargetHandle    string     `yaml:"target_handle,omitempty"`
+	VisibilityDelta int        `yaml:"visibility_delta,omitempty"`
+	ID              ResourceID `yaml:"id,omitempty"`
+	UpdatedAt       time.Time  `yaml:"updated_at,omitempty"`
 }
 
 // ResourceID is an int32 that serializes to Hashids in YAML

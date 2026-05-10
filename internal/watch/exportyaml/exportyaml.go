@@ -32,7 +32,7 @@ func ExportWithProgress(ctx context.Context, sqliteStore *store.SQLiteStore, wat
 	if base == nil {
 		return nil, Result{}, fmt.Errorf("export yaml requires a workspace")
 	}
-	progressStart(progress, "Exporting workspace YAML", 8)
+	progressStart(progress, "Exporting workspace YAML", 9)
 	defer progressFinish(progress)
 	mappings, err := watchStore.Materialization(ctx, repositoryID)
 	if err != nil {
@@ -61,6 +61,18 @@ func ExportWithProgress(ctx context.Context, sqliteStore *store.SQLiteStore, wat
 		return nil, Result{}, err
 	}
 	progressAdvance(progress, "Connectors loaded")
+	storedDensity, overrides, err := sqliteStore.ExportDensityState(ctx)
+	if err != nil {
+		return nil, Result{}, err
+	}
+	computedDensity, err := watchpkg.ComputeViewDensityLevels(ctx, watchStore)
+	if err != nil {
+		return nil, Result{}, err
+	}
+	for viewID, level := range computedDensity {
+		storedDensity[viewID] = level
+	}
+	progressAdvance(progress, "Density loaded")
 
 	out := cloneWorkspace(base)
 	removeGenerated(out, index)
@@ -117,12 +129,14 @@ func ExportWithProgress(ctx context.Context, sqliteStore *store.SQLiteStore, wat
 		}
 		viewRefByID[int32(mapping.ResourceID)] = ownerRef
 		out.Elements[ownerRef].HasView = true
+		out.Elements[ownerRef].DensityLevel = storedDensity[int64(mapping.ResourceID)]
 		if out.Elements[ownerRef].ViewLabel == "" && strings.TrimSpace(view.GetLevelLabel()) != "" {
 			out.Elements[ownerRef].ViewLabel = strings.TrimSpace(view.GetLevelLabel())
 		}
 		out.Meta.Views[ownerRef] = &workspace.ResourceMetadata{ID: workspace.ResourceID(view.Id), UpdatedAt: timestampTime(view.GetUpdatedAt())}
 	}
 
+	elementOverrideDeltas := elementOverrideDeltas(overrides)
 	for _, placement := range placements {
 		elemRef := elementRefByID[placement.ElementId]
 		if elemRef == "" || out.Elements[elemRef] == nil {
@@ -133,13 +147,15 @@ func ExportWithProgress(ctx context.Context, sqliteStore *store.SQLiteStore, wat
 			parentRef = "root"
 		}
 		out.Elements[elemRef].Placements = append(out.Elements[elemRef].Placements, workspace.ViewPlacement{
-			ParentRef: parentRef,
-			PositionX: placement.PositionX,
-			PositionY: placement.PositionY,
+			ParentRef:       parentRef,
+			PositionX:       placement.PositionX,
+			PositionY:       placement.PositionY,
+			VisibilityDelta: elementOverrideDeltas[overrideKey{viewID: int64(placement.ViewId), resourceID: int64(placement.ElementId)}],
 		})
 	}
 
 	connectorByID := connectorsByID(connectors)
+	connectorOverrideDeltas := connectorOverrideDeltas(overrides)
 	for _, mapping := range sortedMappings(mappings, "connector") {
 		conn := connectorByID[int32(mapping.ResourceID)]
 		if conn == nil {
@@ -156,17 +172,18 @@ func ExportWithProgress(ctx context.Context, sqliteStore *store.SQLiteStore, wat
 		}
 		ref := connectorRefByID[int32(mapping.ResourceID)]
 		spec := &workspace.Connector{
-			View:         viewRef,
-			Source:       sourceRef,
-			Target:       targetRef,
-			Label:        conn.GetLabel(),
-			Description:  conn.GetDescription(),
-			Relationship: conn.GetRelationship(),
-			Direction:    conn.GetDirection(),
-			Style:        conn.GetStyle(),
-			URL:          conn.GetUrl(),
-			SourceHandle: conn.GetSourceHandle(),
-			TargetHandle: conn.GetTargetHandle(),
+			View:            viewRef,
+			Source:          sourceRef,
+			Target:          targetRef,
+			Label:           conn.GetLabel(),
+			Description:     conn.GetDescription(),
+			Relationship:    conn.GetRelationship(),
+			Direction:       conn.GetDirection(),
+			Style:           conn.GetStyle(),
+			URL:             conn.GetUrl(),
+			SourceHandle:    conn.GetSourceHandle(),
+			TargetHandle:    conn.GetTargetHandle(),
+			VisibilityDelta: connectorOverrideDeltas[overrideKey{viewID: int64(conn.ViewId), resourceID: int64(conn.Id)}],
 		}
 		if ref == "" || out.Connectors[ref] != nil {
 			ref = workspace.ConnectorKey(spec)
@@ -201,6 +218,31 @@ type mappingIndex struct {
 	elementIDs   map[int32]struct{}
 	viewIDs      map[int32]struct{}
 	connectorIDs map[int32]struct{}
+}
+
+type overrideKey struct {
+	viewID     int64
+	resourceID int64
+}
+
+func elementOverrideDeltas(overrides []store.VisibilityOverride) map[overrideKey]int {
+	out := map[overrideKey]int{}
+	for _, override := range overrides {
+		if override.ResourceType == "element" && override.LevelDelta != 0 {
+			out[overrideKey{viewID: override.ViewID, resourceID: override.ResourceID}] = override.LevelDelta
+		}
+	}
+	return out
+}
+
+func connectorOverrideDeltas(overrides []store.VisibilityOverride) map[overrideKey]int {
+	out := map[overrideKey]int{}
+	for _, override := range overrides {
+		if override.ResourceType == "connector" && override.LevelDelta != 0 {
+			out[overrideKey{viewID: override.ViewID, resourceID: override.ResourceID}] = override.LevelDelta
+		}
+	}
+	return out
 }
 
 func buildMappingIndex(mappings []watchpkg.MaterializationMapping) mappingIndex {

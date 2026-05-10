@@ -536,6 +536,11 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			if err != nil {
 				return nil, err
 			}
+			if planned.ViewDensityLevel != nil {
+				if err := a.Store.SetViewDensityLevel(ctx, int64(view.GetId()), int(planned.GetViewDensityLevel())); err != nil {
+					return nil, err
+				}
+			}
 			viewIDs[planned.GetRef()] = view.GetId()
 			resp.CreatedViews = append(resp.CreatedViews, &diagv1.ViewSummary{
 				Id:             view.GetId(),
@@ -569,6 +574,11 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			item, err := a.AddPlacement(ctx, viewID, elementID, placement.GetPositionX(), placement.GetPositionY())
 			if err != nil {
 				return nil, err
+			}
+			if placement.VisibilityDelta != nil {
+				if _, err := a.Store.SetVisibilityOverride(ctx, int64(viewID), "element", int64(elementID), int(placement.GetVisibilityDelta())); err != nil {
+					return nil, err
+				}
 			}
 			resp.CreatedPlacements = append(resp.CreatedPlacements, &diagv1.ElementPlacement{
 				Id:        item.GetId(),
@@ -620,6 +630,11 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 		}
 		if err != nil {
 			return nil, err
+		}
+		if planned.VisibilityDelta != nil {
+			if _, err := a.Store.SetVisibilityOverride(ctx, int64(viewID), "connector", int64(connector.GetId()), int(planned.GetVisibilityDelta())); err != nil {
+				return nil, err
+			}
 		}
 
 		resp.CreatedConnectors = append(resp.CreatedConnectors, connector)

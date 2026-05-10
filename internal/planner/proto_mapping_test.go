@@ -12,22 +12,24 @@ func TestProtoMapping_ElementFields(t *testing.T) {
 		Config: workspace.Config{WorkspaceID: "org-1"},
 		Elements: map[string]*workspace.Element{
 			"api": {
-				Name:        "API",
-				Kind:        "service",
-				Description: "desc",
-				Technology:  "Go",
-				URL:         "https://example.com",
-				LogoURL:     "https://example.com/logo.svg",
-				Repo:        "repo",
-				Branch:      "main",
-				Language:    "go",
-				FilePath:    "backend/main.go",
-				HasView:     true,
-				ViewLabel:   "Container",
+				Name:         "API",
+				Kind:         "service",
+				Description:  "desc",
+				Technology:   "Go",
+				URL:          "https://example.com",
+				LogoURL:      "https://example.com/logo.svg",
+				Repo:         "repo",
+				Branch:       "main",
+				Language:     "go",
+				FilePath:     "backend/main.go",
+				HasView:      true,
+				ViewLabel:    "Container",
+				DensityLevel: -1,
 				Placements: []workspace.ViewPlacement{{
-					ParentRef: "root",
-					PositionX: 42,
-					PositionY: 21,
+					ParentRef:       "root",
+					PositionX:       42,
+					PositionY:       21,
+					VisibilityDelta: 2,
 				}},
 			},
 		},
@@ -54,11 +56,17 @@ func TestProtoMapping_ElementFields(t *testing.T) {
 	if element.ViewLabel == nil || *element.ViewLabel != "Container" {
 		t.Fatalf("ViewLabel = %v", element.ViewLabel)
 	}
+	if element.ViewDensityLevel == nil || *element.ViewDensityLevel != -1 {
+		t.Fatalf("ViewDensityLevel = %v", element.ViewDensityLevel)
+	}
 	if len(element.Placements) != 1 {
 		t.Fatalf("Placements = %d", len(element.Placements))
 	}
 	if element.Placements[0].PositionX == nil || *element.Placements[0].PositionX != 42 {
 		t.Fatalf("PositionX = %v", element.Placements[0].PositionX)
+	}
+	if element.Placements[0].VisibilityDelta == nil || *element.Placements[0].VisibilityDelta != 2 {
+		t.Fatalf("VisibilityDelta = %v", element.Placements[0].VisibilityDelta)
 	}
 }
 
@@ -70,17 +78,18 @@ func TestProtoMapping_ConnectorFields(t *testing.T) {
 		},
 		Connectors: map[string]*workspace.Connector{
 			"a:b": {
-				View:         "root",
-				Source:       "a",
-				Target:       "b",
-				Label:        "reads",
-				Description:  "primary path",
-				Relationship: "sync",
-				Direction:    "forward",
-				Style:        "solid",
-				URL:          "https://example.com/flow",
-				SourceHandle: "right",
-				TargetHandle: "left",
+				View:            "root",
+				Source:          "a",
+				Target:          "b",
+				Label:           "reads",
+				Description:     "primary path",
+				Relationship:    "sync",
+				Direction:       "forward",
+				Style:           "solid",
+				URL:             "https://example.com/flow",
+				SourceHandle:    "right",
+				TargetHandle:    "left",
+				VisibilityDelta: -1,
 			},
 		},
 	}, false)
@@ -96,5 +105,8 @@ func TestProtoMapping_ConnectorFields(t *testing.T) {
 	}
 	if connector.Url == nil || *connector.Url != "https://example.com/flow" {
 		t.Fatalf("Url = %v", connector.Url)
+	}
+	if connector.VisibilityDelta == nil || *connector.VisibilityDelta != -1 {
+		t.Fatalf("VisibilityDelta = %v", connector.VisibilityDelta)
 	}
 }

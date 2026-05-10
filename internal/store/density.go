@@ -167,6 +167,49 @@ func (s *SQLiteStore) DeleteResourceVisibilityOverrides(ctx context.Context, res
 	return err
 }
 
+func (s *SQLiteStore) ExportDensityState(ctx context.Context) (map[int64]int, []VisibilityOverride, error) {
+	levels := map[int64]int{}
+	rows, err := s.DB().QueryContext(ctx, `SELECT id, density_level FROM views ORDER BY id`)
+	if err != nil {
+		return nil, nil, err
+	}
+	for rows.Next() {
+		var viewID int64
+		var level int
+		if err := rows.Scan(&viewID, &level); err != nil {
+			_ = rows.Close()
+			return nil, nil, err
+		}
+		if level != 0 {
+			levels[viewID] = level
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return nil, nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	overrideRows, err := s.DB().QueryContext(ctx, `
+		SELECT view_id, resource_type, resource_id, level_delta, created_at, updated_at
+		FROM view_visibility_overrides
+		ORDER BY view_id, resource_type, resource_id`)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = overrideRows.Close() }()
+	overrides := make([]VisibilityOverride, 0)
+	for overrideRows.Next() {
+		var item VisibilityOverride
+		if err := overrideRows.Scan(&item.ViewID, &item.ResourceType, &item.ResourceID, &item.LevelDelta, &item.CreatedAt, &item.UpdatedAt); err != nil {
+			return nil, nil, err
+		}
+		overrides = append(overrides, item)
+	}
+	return levels, overrides, overrideRows.Err()
+}
+
 func (s *SQLiteStore) visibilityOverride(ctx context.Context, viewID int64, resourceType string, resourceID int64) (VisibilityOverride, error) {
 	var item VisibilityOverride
 	err := s.DB().QueryRowContext(ctx, `
