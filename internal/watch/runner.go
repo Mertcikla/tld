@@ -199,11 +199,15 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 				logInfo(ctx, opts.Logger, "watch.status.lock_missing", "repository_id", repo.ID)
 				return result, nil
 			}
-			if err == nil && status == "stopping" {
+			if err != nil {
+				logError(ctx, opts.Logger, "watch.status.lock_status_failed", err, "repository_id", repo.ID)
+				return result, err
+			}
+			if status == "stopping" {
 				logInfo(ctx, opts.Logger, "watch.status.stopping", "repository_id", repo.ID)
 				return result, nil
 			}
-			if err == nil && status == "paused" {
+			if status == "paused" {
 				logInfo(ctx, opts.Logger, "watch.status.paused", "repository_id", repo.ID)
 				emit(opts.Events, Event{Type: "watch.paused", RepositoryID: repo.ID, At: nowString()})
 			}
@@ -214,16 +218,21 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 				poll.Reset(time.Millisecond)
 			}
 		case <-poll.C:
+			poll.Reset(opts.PollInterval)
 			status, err := r.Store.LockStatus(ctx, repo.ID, token)
 			if errors.Is(err, sql.ErrNoRows) {
 				logInfo(ctx, opts.Logger, "watch.poll.lock_missing", "repository_id", repo.ID)
 				return result, nil
 			}
-			if err == nil && status == "paused" {
+			if err != nil {
+				logError(ctx, opts.Logger, "watch.poll.lock_status_failed", err, "repository_id", repo.ID)
+				return result, err
+			}
+			if status == "paused" {
 				logInfo(ctx, opts.Logger, "watch.poll.skipped", "repository_id", repo.ID, "reason", "paused")
 				continue
 			}
-			if err == nil && status == "stopping" {
+			if status == "stopping" {
 				logInfo(ctx, opts.Logger, "watch.poll.stopping", "repository_id", repo.ID)
 				return result, nil
 			}

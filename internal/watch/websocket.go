@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const maxWebSocketMessageSize = 1 << 20
+
 var watchWebSocketClients atomic.Int64
 
 func WatchWebSocketClientCount() int {
@@ -273,6 +275,9 @@ func readWebSocketMessage(r io.Reader) ([]byte, error) {
 			return nil, err
 		}
 		length = int(binary.BigEndian.Uint64(ext[:]))
+	}
+	if length > maxWebSocketMessageSize {
+		return nil, errors.New("websocket message too large")
 	}
 	var mask [4]byte
 	if masked {
