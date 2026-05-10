@@ -104,6 +104,8 @@ func (h *Handler) watchWebSocket(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				select {
+				case <-ctx.Done():
+					return
 				case event = <-controlEvents:
 				default:
 					goto next
