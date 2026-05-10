@@ -39,6 +39,10 @@ type Scanner struct {
 	Progress       ProgressSink
 	Logger         EventLogger
 	Settings       Settings
+
+	resolver         *analyzerlsp.MultiLanguageResolver
+	resolverMu       sync.Mutex
+	resolverRepoRoot string
 }
 
 type synchronizedProgress struct {
@@ -1108,6 +1112,32 @@ func normalizeSymbolContent(body, name, qualified string) string {
 	return body
 }
 
+func (s *Scanner) Close() error {
+	s.resolverMu.Lock()
+	defer s.resolverMu.Unlock()
+	if s.resolver != nil {
+		err := s.resolver.Close()
+		s.resolver = nil
+		s.resolverRepoRoot = ""
+		return err
+	}
+	return nil
+}
+
+func (s *Scanner) getOrCreateResolver(repoRoot string) *analyzerlsp.MultiLanguageResolver {
+	s.resolverMu.Lock()
+	defer s.resolverMu.Unlock()
+	if s.resolver != nil && s.resolverRepoRoot != repoRoot {
+		_ = s.resolver.Close()
+		s.resolver = nil
+	}
+	if s.resolver == nil {
+		s.resolver = analyzerlsp.NewMultiLanguageResolver(repoRoot)
+		s.resolverRepoRoot = repoRoot
+	}
+	return s.resolver
+}
+
 func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, repositoryID int64, files []parsedFile, progress ProgressSink) ([]Reference, string, error) {
 	symbols, err := s.Store.SymbolsForRepository(ctx, repositoryID)
 	if err != nil {
@@ -1125,8 +1155,7 @@ func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, reposi
 		})
 	}
 
-	resolver := analyzerlsp.NewMultiLanguageResolver(repoRoot)
-	defer func() { _ = resolver.Close() }()
+	resolver := s.getOrCreateResolver(repoRoot)
 
 	var refs []Reference
 	for _, file := range files {

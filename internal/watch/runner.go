@@ -125,6 +125,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	emit(opts.Events, Event{Type: "watch.started", RepositoryID: repo.ID, At: nowString(), Data: repo.JSON(), Phase: "watch", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
 	emit(opts.Events, Event{Type: "lock.enabled", RepositoryID: repo.ID, At: nowString()})
 	defer func() {
+		_ = r.Scanner.Close()
 		_ = r.Store.ReleaseLock(context.Background(), repo.ID, token)
 		logInfo(context.Background(), opts.Logger, "watch.lock.disabled", "repository_id", repo.ID)
 		logInfo(context.Background(), opts.Logger, "watch.runner.stopped", "repository_id", repo.ID, "elapsed", logElapsed(started))
