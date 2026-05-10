@@ -9,9 +9,9 @@ import (
 )
 
 type mergeElementsRequest struct {
-	SourceID   int64              `json:"source_id"`
-	SurvivorID int64              `json:"survivor_id"`
-	Resolved   app.MergeResolved  `json:"resolved"`
+	SourceID   int64             `json:"source_id"`
+	SurvivorID int64             `json:"survivor_id"`
+	Resolved   app.MergeResolved `json:"resolved"`
 }
 
 func registerMergeHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) {

@@ -71,8 +71,8 @@ func NewExportCmd(wdir *string) *cobra.Command {
 				return fmt.Errorf("write lock file: %w", err)
 			}
 
-		term.Successf(cmd.OutOrStdout(), "Exported %d elements, %d diagrams, %d connectors to %s",
-			len(newWS.Elements), cmdutil.CountElementDiagrams(newWS), len(newWS.Connectors), *wdir)
+			term.Successf(cmd.OutOrStdout(), "Exported %d elements, %d diagrams, %d connectors to %s",
+				len(newWS.Elements), cmdutil.CountElementDiagrams(newWS), len(newWS.Connectors), *wdir)
 
 			return nil
 		},

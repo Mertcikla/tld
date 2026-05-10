@@ -371,5 +371,3 @@ func mergeConnectorsInGroup(ctx context.Context, tx interface {
 
 	return nil
 }
-
-
