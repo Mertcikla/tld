@@ -126,9 +126,9 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	emit(opts.Events, Event{Type: "lock.enabled", RepositoryID: repo.ID, At: nowString()})
 	defer func() {
 		_ = r.Scanner.Close()
-		_ = r.Store.ReleaseLock(context.Background(), repo.ID, token)
-		logInfo(context.Background(), opts.Logger, "watch.lock.disabled", "repository_id", repo.ID)
-		logInfo(context.Background(), opts.Logger, "watch.runner.stopped", "repository_id", repo.ID, "elapsed", logElapsed(started))
+		_ = r.Store.ReleaseLock(context.WithoutCancel(ctx), repo.ID, token)
+		logInfo(context.WithoutCancel(ctx), opts.Logger, "watch.lock.disabled", "repository_id", repo.ID)
+		logInfo(context.WithoutCancel(ctx), opts.Logger, "watch.runner.stopped", "repository_id", repo.ID, "elapsed", logElapsed(started))
 		emit(opts.Events, Event{Type: "lock.disabled", RepositoryID: repo.ID, At: nowString()})
 		emit(opts.Events, Event{Type: "watch.stopped", RepositoryID: repo.ID, At: nowString()})
 	}()
@@ -237,7 +237,11 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 				logInfo(ctx, opts.Logger, "watch.poll.stopping", "repository_id", repo.ID)
 				return result, nil
 			}
-			nextGit, _ := gitStatusSnapshot(repoRoot)
+			nextGit, err := gitStatusSnapshot(repoRoot)
+			if err != nil {
+				logError(ctx, opts.Logger, "watch.git_status_snapshot_failed", err, "repository_id", repo.ID)
+				continue
+			}
 			nextGitFingerprint := gitStatusFingerprint(nextGit)
 			nextFingerprint := ""
 			if !limitedMode {
@@ -257,7 +261,11 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 				stableSourceSnapshot = sourceFileSnapshot(repoRoot, settings, r.Scanner.Rules)
 				sourceChanged = sourceFileFingerprint(stableSourceSnapshot) != lastFingerprint
 			}
-			nextGit, _ = gitStatusSnapshot(repoRoot)
+			nextGit, err = gitStatusSnapshot(repoRoot)
+			if err != nil {
+				logError(ctx, opts.Logger, "watch.git_status_snapshot_failed", err, "repository_id", repo.ID)
+				continue
+			}
 			nextGitFingerprint = gitStatusFingerprint(nextGit)
 			var sourceChanges []SourceFileChange
 			if limitedMode {

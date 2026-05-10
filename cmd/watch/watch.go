@@ -1004,6 +1004,9 @@ func (p *cliProgress) Start(label string, total int) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.bar != nil {
+		_ = p.bar.Finish()
+	}
 	p.bar = progressbar.NewOptions(total,
 		progressbar.OptionSetWriter(p.out),
 		progressbar.OptionSetVisibility(true),

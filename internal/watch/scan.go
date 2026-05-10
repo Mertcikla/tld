@@ -28,6 +28,8 @@ const (
 	enrichmentVersion         = "watch-enrich-v2"
 	enrichmentVersionEnricher = "watch.enrichment"
 	enrichmentVersionType     = "watch.enrichment.version"
+
+	maxSourceFileBytes = 100 * 1024 * 1024 // 100 MB
 )
 
 type Scanner struct {
@@ -46,8 +48,9 @@ type Scanner struct {
 }
 
 type synchronizedProgress struct {
-	sink ProgressSink
-	mu   sync.Mutex
+	sink     ProgressSink
+	mu       sync.Mutex
+	finished bool
 }
 
 func (p *synchronizedProgress) Start(label string, total int) {
@@ -56,6 +59,7 @@ func (p *synchronizedProgress) Start(label string, total int) {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.finished = false
 	p.sink.Start(label, total)
 }
 
@@ -74,6 +78,10 @@ func (p *synchronizedProgress) Finish() {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.finished {
+		return
+	}
+	p.finished = true
 	p.sink.Finish()
 }
 
@@ -158,7 +166,7 @@ func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, rel
 		if scanErr != nil {
 			status = "failed"
 		}
-		_ = s.Store.FinishScanRun(context.Background(), runID, status, result, scanErr)
+		_ = s.Store.FinishScanRun(context.WithoutCancel(ctx), runID, status, result, scanErr)
 	}()
 	if len(files) == 0 {
 		return result, nil
@@ -194,7 +202,6 @@ func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, rel
 	if len(parsedFileIDs) == 0 {
 		return result, nil
 	}
-	progressFinish(progress)
 	resolveStarted := time.Now()
 	logInfo(ctx, s.Logger, "watch.scan.references.started", "repository_id", repo.ID, "files", len(parsedFiles))
 	progressStart(progress, "Resolving code references", len(parsedFiles))
@@ -299,7 +306,7 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 		if scanErr != nil {
 			status = "failed"
 		}
-		_ = s.Store.FinishScanRun(context.Background(), runID, status, result, scanErr)
+		_ = s.Store.FinishScanRun(context.WithoutCancel(ctx), runID, status, result, scanErr)
 	}()
 
 	workers := runtime.NumCPU()
@@ -388,7 +395,6 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 		return result, nil
 	}
 
-	progressFinish(progress)
 	resolveStarted := time.Now()
 	logInfo(ctx, s.Logger, "watch.scan.references.started", "repository_id", repo.ID, "files", len(parsedFiles))
 	progressStart(progress, "Resolving code references", len(parsedFiles))
@@ -649,6 +655,11 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 		}
 		result.Skipped = true
 		s.logScanFile(ctx, repositoryID, result, languageName, decision, nil)
+		return result, nil
+	}
+	if info.Size() > maxSourceFileBytes {
+		result.Skipped = true
+		s.logScanFile(ctx, repositoryID, result, languageName, "oversized", nil)
 		return result, nil
 	}
 	data, err := os.ReadFile(absFile)

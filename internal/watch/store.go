@@ -2008,21 +2008,26 @@ func (s *Store) markStaleLocks(ctx context.Context, cutoff string) error {
 		return err
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, pid
+		SELECT id, pid, token
 		FROM watch_locks
 		WHERE status IN ('active', 'paused', 'stopping')`)
 	if err != nil {
 		return err
 	}
-	var staleIDs []int64
+	type staleItem struct {
+		id    int64
+		token string
+	}
+	var staleItems []staleItem
 	for rows.Next() {
 		var id int64
 		var pid int
-		if err := rows.Scan(&id, &pid); err != nil {
+		var token string
+		if err := rows.Scan(&id, &pid, &token); err != nil {
 			return err
 		}
 		if !watchProcessIsRunning(pid) {
-			staleIDs = append(staleIDs, id)
+			staleItems = append(staleItems, staleItem{id: id, token: token})
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -2032,8 +2037,8 @@ func (s *Store) markStaleLocks(ctx context.Context, cutoff string) error {
 	if err := rows.Close(); err != nil {
 		return err
 	}
-	for _, id := range staleIDs {
-		if _, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stale' WHERE id = ? AND status IN ('active', 'paused', 'stopping')`, id); err != nil {
+	for _, si := range staleItems {
+		if _, err := s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stale' WHERE id = ? AND token = ? AND status IN ('active', 'paused', 'stopping')`, si.id, si.token); err != nil {
 			return err
 		}
 	}
