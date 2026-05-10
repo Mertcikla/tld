@@ -349,6 +349,13 @@ export function useCanvasInteractions({
     handleReconnectListenersRef.current = null
   }, [])
 
+  const clearConnectGhostListener = useCallback(() => {
+    const listener = connectGhostListenerRef.current
+    if (!listener) return
+    document.removeEventListener('mousemove', listener)
+    connectGhostListenerRef.current = null
+  }, [])
+
   const stopHandleReconnectDrag = useCallback(() => {
     clearHandleReconnectListeners()
     handleReconnectDragRef.current = null
@@ -783,6 +790,7 @@ export function useCanvasInteractions({
 
   const onConnectStart = useCallback((_: React.MouseEvent | React.TouchEvent, { nodeId }: OnConnectStartParams) => {
     if (!canEdit || isReconnectingRef.current) return
+    clearConnectGhostListener()
     connectingSourceRef.current = nodeId
     connectWasValidRef.current = false
     const handleTargets = collectHandleTargets(nodeId ?? undefined)
@@ -796,13 +804,10 @@ export function useCanvasInteractions({
     }
     connectGhostListenerRef.current = listener
     document.addEventListener('mousemove', listener)
-  }, [canEdit])
+  }, [canEdit, clearConnectGhostListener])
 
   const onConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
-    if (connectGhostListenerRef.current) {
-      document.removeEventListener('mousemove', connectGhostListenerRef.current)
-      connectGhostListenerRef.current = null
-    }
+    clearConnectGhostListener()
     setConnectGhostPos(null)
     if (!canEdit || isReconnectingRef.current) return
     const sourceId = connectingSourceRef.current
@@ -847,7 +852,7 @@ export function useCanvasInteractions({
       suppressNextPaneClickRef.current = true
       showAddingElementAt(clientX, clientY, true, 'connect', 'shiftKey' in event && event.shiftKey)
     }
-  }, [canEdit, finalizeConnectorCreate, onUnsupportedMutation, showAddingElementAt, rfNodesRef, viewIdRef])
+  }, [canEdit, clearConnectGhostListener, finalizeConnectorCreate, onUnsupportedMutation, showAddingElementAt, rfNodesRef, viewIdRef])
 
   // ── Reconnect ──────────────────────────────────────────────────────────────
   const performReconnect = useCallback(async (oldConnector: RFEdge, newConnection: Connection) => {
@@ -1046,8 +1051,9 @@ export function useCanvasInteractions({
   }, [interactionSourceId])
 
   useEffect(() => () => {
+    clearConnectGhostListener()
     stopHandleReconnectDrag()
-  }, [stopHandleReconnectDrag])
+  }, [clearConnectGhostListener, stopHandleReconnectDrag])
 
   // ── Connector interactions ─────────────────────────────────────────────────────
   const onEdgeContextMenu = useCallback((e: React.MouseEvent, rfConnector: RFEdge) => {
