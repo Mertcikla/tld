@@ -2077,7 +2077,7 @@ func (s *Store) ActiveLiveLock(ctx context.Context, staleAfter time.Duration) (L
 	}
 	heartbeat, err := time.Parse(time.RFC3339, lock.HeartbeatAt)
 	if err != nil || time.Since(heartbeat) > staleAfter || !watchProcessIsRunning(lock.PID) || lock.Status == "stale" || lock.Status == "released" {
-		_, _ = s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stale' WHERE id = ? AND status IN ('active', 'paused', 'stopping')`, lock.ID)
+		_, _ = s.db.ExecContext(ctx, `UPDATE watch_locks SET status = 'stale' WHERE id = ? AND token = ? AND status IN ('active', 'paused', 'stopping')`, lock.ID, lock.Token)
 		return lock, false, nil
 	}
 	return lock, true, nil
@@ -2181,11 +2181,11 @@ func (s *Store) ActiveApplyLock(ctx context.Context, staleAfter time.Duration) (
 	}
 	var id int64
 	var pid int
-	var heartbeatAt, status string
+	var token, heartbeatAt, status string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, pid, heartbeat_at, status
+		SELECT id, pid, token, heartbeat_at, status
 		FROM watch_apply_locks
-		WHERE id = 1 AND status = 'active'`).Scan(&id, &pid, &heartbeatAt, &status)
+		WHERE id = 1 AND status = 'active'`).Scan(&id, &pid, &token, &heartbeatAt, &status)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -2194,7 +2194,7 @@ func (s *Store) ActiveApplyLock(ctx context.Context, staleAfter time.Duration) (
 	}
 	heartbeat, err := time.Parse(time.RFC3339, heartbeatAt)
 	if err != nil || time.Since(heartbeat) > staleAfter || !watchProcessIsRunning(pid) || status != "active" {
-		_, _ = s.db.ExecContext(ctx, `UPDATE watch_apply_locks SET status = 'stale' WHERE id = ? AND status = 'active'`, id)
+		_, _ = s.db.ExecContext(ctx, `UPDATE watch_apply_locks SET status = 'stale' WHERE id = ? AND token = ? AND status = 'active'`, id, token)
 		return false, nil
 	}
 	return true, nil

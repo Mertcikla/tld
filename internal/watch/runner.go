@@ -137,7 +137,10 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep, Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
 	_, _ = r.Store.ApplyGitTags(ctx, repo.ID, gitStatus)
 	if gitStatus.HeadCommit != "" {
-		_ = r.createVersionForHead(ctx, repo.ID, gitStatus, rep.RepresentationHash, false)
+		if err := r.createVersionForHead(ctx, repo.ID, gitStatus, rep.RepresentationHash, false, opts.Logger); err != nil {
+			logError(ctx, opts.Logger, "watch.version.create.failed", err, "repository_id", repo.ID, "head", gitStatus.HeadCommit)
+			emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: err.Error()})
+		}
 	}
 
 	result := RunnerResult{Repository: repo, InitialScan: scan, InitialRep: rep, GitStatus: gitStatus, Token: token}
@@ -325,7 +328,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			result.InitialRep = rep
 			emit(opts.Events, Event{Type: "git.statusChanged", RepositoryID: repo.ID, At: nowString(), Data: nextGit})
 			if nextGit.HeadCommit != "" && nextGit.HeadCommit != lastHead {
-				if err := r.createVersionForHead(ctx, repo.ID, nextGit, rep.RepresentationHash, !sourceChanged); err != nil {
+				if err := r.createVersionForHead(ctx, repo.ID, nextGit, rep.RepresentationHash, !sourceChanged, opts.Logger); err != nil {
 					logError(ctx, opts.Logger, "watch.version.create.failed", err, "repository_id", repo.ID, "head", nextGit.HeadCommit)
 					emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: err.Error()})
 				} else {
@@ -393,7 +396,7 @@ func representationDiffSourcePaths(diff RepresentationDiff) []string {
 	return out
 }
 
-func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, status GitStatus, representationHash string, baselineOnly bool) error {
+func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, status GitStatus, representationHash string, baselineOnly bool, logger EventLogger) error {
 	if gitStatusClean(status) {
 		baselineOnly = true
 		if err := r.Store.PruneDeletedMaterializedResources(ctx, repositoryID); err != nil {
@@ -418,6 +421,9 @@ func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, s
 	workspaceVersionID, err := r.Store.CreateWorkspaceVersion(ctx, status.HeadCommit, "watch", nil, views, elements, connectors, &description, &representationHash)
 	if err != nil && !strings.Contains(err.Error(), "constraint failed") {
 		return err
+	}
+	if err != nil {
+		logInfo(ctx, logger, "watch.workspace_version.constraint_skipped", "repository_id", repositoryID, "head", status.HeadCommit)
 	}
 	var workspaceID *int64
 	if err == nil {

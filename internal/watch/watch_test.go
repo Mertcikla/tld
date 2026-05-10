@@ -2234,7 +2234,7 @@ func Main() {}
 		t.Fatal(err)
 	}
 	runner := &Runner{Store: store}
-	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false); err != nil {
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2264,7 +2264,7 @@ func Other() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, next.RepresentationHash, false); err != nil {
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, next.RepresentationHash, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	latest, found, err := store.LatestWatchVersion(context.Background(), scan.RepositoryID)
@@ -2311,7 +2311,7 @@ func Main() {}
 		t.Fatal(err)
 	}
 	runner := &Runner{Store: store}
-	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false); err != nil {
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	firstHead := status.HeadCommit
@@ -2356,7 +2356,7 @@ func Dirty() {}
 	if gitStatusClean(status) {
 		t.Fatalf("test setup should have a dirty worktree: %+v", status)
 	}
-	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, dirtyRep.RepresentationHash, false); err != nil {
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, dirtyRep.RepresentationHash, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2615,7 +2615,7 @@ func Main() {}
 		t.Fatal(err)
 	}
 	runner := &Runner{Store: store}
-	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false); err != nil {
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2638,7 +2638,7 @@ func Main() {}
 	if !gitStatusClean(status) {
 		t.Fatalf("test setup should have clean status after deletion commit: %+v", status)
 	}
-	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, next.RepresentationHash, false); err != nil {
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, next.RepresentationHash, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2696,7 +2696,7 @@ func Keep() {}
 		t.Fatal(err)
 	}
 	runner := &Runner{Store: store}
-	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false); err != nil {
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, rep.RepresentationHash, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2727,7 +2727,7 @@ func Added() {}
 	if _, err := store.ApplyGitTags(context.Background(), scan.RepositoryID, status); err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, next.RepresentationHash, false); err != nil {
+	if err := runner.createVersionForHead(context.Background(), scan.RepositoryID, status, next.RepresentationHash, false, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -3876,6 +3876,69 @@ func TestActiveLiveLockTreatsDeadProcessAsStale(t *testing.T) {
 	}
 	if status != "stale" {
 		t.Fatalf("expected stale lock, got %q", status)
+	}
+}
+
+func TestTokenGuardsAgainstTOCTOUStaleMark(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc main() {}\n")
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	originalProcessCheck := watchProcessIsRunning
+	t.Cleanup(func() { watchProcessIsRunning = originalProcessCheck })
+	watchProcessIsRunning = func(pid int) bool { return pid == os.Getpid() }
+
+	lock, err := store.AcquireLock(context.Background(), scanResult.RepositoryID, os.Getpid(), "token-A", LockHeartbeatTimeout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lock.Token != "token-A" {
+		t.Fatalf("expected token-A, got %q", lock.Token)
+	}
+
+	_, err = db.Exec("UPDATE watch_locks SET token = 'token-B' WHERE id = ?", lock.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := db.Exec(
+		`UPDATE watch_locks SET status = 'stale' WHERE id = ? AND token = ? AND status IN ('active', 'paused', 'stopping')`,
+		lock.ID, "token-A",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	affected, _ := res.RowsAffected()
+	if affected != 0 {
+		t.Fatalf("TOCTOU guard failed: stale UPDATE with old token affected %d rows (expected 0)", affected)
+	}
+
+	var status string
+	err = db.QueryRow("SELECT status FROM watch_locks WHERE id = ?", lock.ID).Scan(&status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != "active" {
+		t.Fatalf("expected active lock after mismatched token update, got %q", status)
+	}
+
+	res2, err := db.Exec(
+		`UPDATE watch_locks SET status = 'stale' WHERE id = ? AND token = ? AND status IN ('active', 'paused', 'stopping')`,
+		lock.ID, "token-B",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	affected2, _ := res2.RowsAffected()
+	if affected2 != 1 {
+		t.Fatalf("expected 1 row affected by correct-token stale update, got %d", affected2)
 	}
 }
 

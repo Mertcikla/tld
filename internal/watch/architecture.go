@@ -18,6 +18,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const maxArchitectureFileSize = 20 << 20
+
 type architectureModel struct {
 	Components map[string]*architectureComponent
 	Connectors map[string]*architectureConnector
@@ -153,11 +155,29 @@ func (c *architectureCollector) scanFile(absPath, rel string) {
 }
 
 func (c *architectureCollector) scanYAML(absPath, rel string) {
-	data, err := os.ReadFile(absPath)
-	if err != nil || !looksLikeRuntimeYAML(data) {
+	info, err := os.Stat(absPath)
+	if err != nil || info.Size() > maxArchitectureFileSize {
 		return
 	}
-	dec := yaml.NewDecoder(bytes.NewReader(data))
+	f, err := os.Open(absPath)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	var prefix [8192]byte
+	n, err := f.Read(prefix[:])
+	if err != nil && err != io.EOF {
+		return
+	}
+	if n == 0 || !looksLikeRuntimeYAML(prefix[:n]) {
+		return
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return
+	}
+
+	dec := yaml.NewDecoder(f)
 	for {
 		var doc map[string]any
 		err := dec.Decode(&doc)
@@ -276,13 +296,35 @@ func (c *architectureCollector) consumeExternalServiceEntry(doc map[string]any, 
 }
 
 func (c *architectureCollector) scanProto(absPath, rel string) {
-	data, err := os.ReadFile(absPath)
-	if err != nil || isGeneratedSource(rel, data) {
+	info, err := os.Stat(absPath)
+	if err != nil || info.Size() > maxArchitectureFileSize {
 		return
 	}
-	re := regexp.MustCompile(`(?m)^\s*service\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{`)
-	matches := re.FindAllStringSubmatch(string(data), -1)
-	for _, match := range matches {
+	f, err := os.Open(absPath)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	var prefix [4096]byte
+	n, err := f.Read(prefix[:])
+	if err != nil && err != io.EOF {
+		return
+	}
+	if n == 0 || isGeneratedSource(rel, prefix[:n]) {
+		return
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return
+	}
+
+	re := regexp.MustCompile(`^\s*service\s+([A-Za-z_][A-Za-z0-9_]*)\s*\{`)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		match := re.FindStringSubmatch(scanner.Text())
+		if len(match) != 2 {
+			continue
+		}
 		name := match[1]
 		key := architectureKey("contract", name)
 		component := c.ensureComponent(key, name, "interface", "gRPC", rel, architectureEvidence{Kind: "service-contract", Path: rel, Note: "protobuf service"})
@@ -292,8 +334,22 @@ func (c *architectureCollector) scanProto(absPath, rel string) {
 }
 
 func (c *architectureCollector) scanJSONSpec(absPath, rel string) {
-	data, err := os.ReadFile(absPath)
-	if err != nil || !bytes.Contains(data, []byte(`"openapi"`)) {
+	info, err := os.Stat(absPath)
+	if err != nil || info.Size() > maxArchitectureFileSize {
+		return
+	}
+	f, err := os.Open(absPath)
+	if err != nil {
+		return
+	}
+	defer func() { _ = f.Close() }()
+
+	var prefix [8192]byte
+	n, err := f.Read(prefix[:])
+	if err != nil && err != io.EOF {
+		return
+	}
+	if n == 0 || !bytes.Contains(prefix[:n], []byte(`"openapi"`)) {
 		return
 	}
 	name := strings.TrimSuffix(path.Base(rel), path.Ext(rel))

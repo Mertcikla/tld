@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1239,7 +1240,7 @@ func symbolAtLocation(repoRoot string, symbols []Symbol, location definitionLoca
 		if sym.FilePath != rel {
 			continue
 		}
-		end := sym.StartLine
+		end := math.MaxInt
 		if sym.EndLine != nil {
 			end = *sym.EndLine
 		}
@@ -1255,7 +1256,7 @@ func symbolAtLocation(repoRoot string, symbols []Symbol, location definitionLoca
 
 func enclosingSymbol(symbols []Symbol, line int) (Symbol, bool) {
 	for _, sym := range symbols {
-		end := sym.StartLine
+		end := math.MaxInt
 		if sym.EndLine != nil {
 			end = *sym.EndLine
 		}
