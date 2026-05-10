@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"math"
 	"os"
@@ -267,6 +268,11 @@ func (s *Store) DeleteMissingFiles(ctx context.Context, repositoryID int64, seen
 			return err
 		}
 	}
+	if len(ids) > 0 {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM watch_symbol_identities WHERE repository_id = ? AND current_stable_key NOT IN (SELECT stable_key FROM watch_symbols WHERE repository_id = ?)`, repositoryID, repositoryID); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -323,6 +329,7 @@ func (s *Store) ReplaceFileSymbols(ctx context.Context, repositoryID, fileID int
 	}
 	defer func() { _ = rows.Close() }()
 	var deleteIDs []int64
+	var deleteStableKeys []string
 	for rows.Next() {
 		var id int64
 		var stableKey string
@@ -331,6 +338,7 @@ func (s *Store) ReplaceFileSymbols(ctx context.Context, repositoryID, fileID int
 		}
 		if _, ok := keep[stableKey]; !ok {
 			deleteIDs = append(deleteIDs, id)
+			deleteStableKeys = append(deleteStableKeys, stableKey)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -338,6 +346,11 @@ func (s *Store) ReplaceFileSymbols(ctx context.Context, repositoryID, fileID int
 	}
 	for _, id := range deleteIDs {
 		if _, err := s.db.ExecContext(ctx, `DELETE FROM watch_symbols WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	for _, key := range deleteStableKeys {
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM watch_symbol_identities WHERE repository_id = ? AND current_stable_key = ?`, repositoryID, key); err != nil {
 			return err
 		}
 	}
@@ -519,9 +532,19 @@ func (s *Store) materializedOwnerFilePath(ctx context.Context, repositoryID int6
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return "", false, err
 		}
-		if path, ok := filePathFromStableKey(ownerKey); ok {
-			return path, true, nil
+		if err == nil {
+			slog.WarnContext(ctx, "symbol identity has empty file_path in database, falling back to stable key",
+				"repository_id", repositoryID,
+				"owner_key", ownerKey,
+				"db_file_path", path)
 		}
+		if extractedPath, ok := filePathFromStableKey(ownerKey); ok {
+			return extractedPath, true, nil
+		}
+		slog.WarnContext(ctx, "materialized owner file path not found: no DB entry and stable key contains no path",
+			"repository_id", repositoryID,
+			"owner_key", ownerKey,
+			"db_err", err)
 		return "", false, nil
 	default:
 		return "", false, nil
@@ -939,6 +962,131 @@ func (s *Store) QueryReferences(ctx context.Context, repositoryID int64, q Refer
 		out = append(out, ref)
 	}
 	return out, rows.Err()
+}
+
+const maxInClauseIDs = 500
+
+func buildParameterList(ids []int64) (string, []any) {
+	args := make([]any, len(ids))
+	placeholders := make([]string, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	return strings.Join(placeholders, ","), args
+}
+
+func scanReferences(rows *sql.Rows) ([]Reference, error) {
+	var out []Reference
+	for rows.Next() {
+		var ref Reference
+		if err := rows.Scan(&ref.ID, &ref.RepositoryID, &ref.SourceSymbolID, &ref.TargetSymbolID, &ref.SourceFileID, &ref.Kind, &ref.Line, &ref.Column, &ref.EvidenceHash, &ref.RawJSON, &ref.CreatedAt, &ref.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) queryReferencesWhere(ctx context.Context, repositoryID int64, whereClause string, whereArgs ...any) ([]Reference, error) {
+	query := "SELECT id, repository_id, source_symbol_id, target_symbol_id, source_file_id, kind, line, column, evidence_hash, raw_json, created_at, updated_at FROM watch_references WHERE repository_id = ? AND " + whereClause + " ORDER BY source_file_id, line, column"
+	args := append([]any{repositoryID}, whereArgs...)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	return scanReferences(rows)
+}
+
+// BuildDegreeMaps computes incoming and outgoing reference counts via SQL GROUP BY.
+func (s *Store) BuildDegreeMaps(ctx context.Context, repositoryID int64) (incoming, outgoing map[int64]int, err error) {
+	incoming = make(map[int64]int)
+	outgoing = make(map[int64]int)
+
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT source_symbol_id, COUNT(*) FROM watch_references WHERE repository_id = ? GROUP BY source_symbol_id",
+		repositoryID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		var cnt int
+		if err := rows.Scan(&id, &cnt); err != nil {
+			return nil, nil, err
+		}
+		outgoing[id] = cnt
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	rows2, err := s.db.QueryContext(ctx,
+		"SELECT target_symbol_id, COUNT(*) FROM watch_references WHERE repository_id = ? GROUP BY target_symbol_id",
+		repositoryID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() { _ = rows2.Close() }()
+	for rows2.Next() {
+		var id int64
+		var cnt int
+		if err := rows2.Scan(&id, &cnt); err != nil {
+			return nil, nil, err
+		}
+		incoming[id] = cnt
+	}
+	if err := rows2.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	return incoming, outgoing, nil
+}
+
+// QueryReferencesBySourceIDs returns references where source_symbol_id matches any of the given IDs.
+func (s *Store) QueryReferencesBySourceIDs(ctx context.Context, repositoryID int64, sourceIDs []int64) ([]Reference, error) {
+	if len(sourceIDs) == 0 {
+		return nil, nil
+	}
+	var allRefs []Reference
+	for i := 0; i < len(sourceIDs); i += maxInClauseIDs {
+		end := i + maxInClauseIDs
+		if end > len(sourceIDs) {
+			end = len(sourceIDs)
+		}
+		batch := sourceIDs[i:end]
+		placeholders, inArgs := buildParameterList(batch)
+		refs, err := s.queryReferencesWhere(ctx, repositoryID, "source_symbol_id IN ("+placeholders+")", inArgs...)
+		if err != nil {
+			return nil, err
+		}
+		allRefs = append(allRefs, refs...)
+	}
+	return allRefs, nil
+}
+
+// QueryReferencesByTargetIDs returns references where target_symbol_id matches any of the given IDs.
+func (s *Store) QueryReferencesByTargetIDs(ctx context.Context, repositoryID int64, targetIDs []int64) ([]Reference, error) {
+	if len(targetIDs) == 0 {
+		return nil, nil
+	}
+	var allRefs []Reference
+	for i := 0; i < len(targetIDs); i += maxInClauseIDs {
+		end := i + maxInClauseIDs
+		if end > len(targetIDs) {
+			end = len(targetIDs)
+		}
+		batch := targetIDs[i:end]
+		placeholders, inArgs := buildParameterList(batch)
+		refs, err := s.queryReferencesWhere(ctx, repositoryID, "target_symbol_id IN ("+placeholders+")", inArgs...)
+		if err != nil {
+			return nil, err
+		}
+		allRefs = append(allRefs, refs...)
+	}
+	return allRefs, nil
 }
 
 func (s *Store) Summary(ctx context.Context, repositoryID int64) (Summary, error) {

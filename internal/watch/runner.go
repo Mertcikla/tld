@@ -272,7 +272,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			nextGitFingerprint = gitStatusFingerprint(nextGit)
 			var sourceChanges []SourceFileChange
 			if limitedMode {
-				sourceChanges = sourceChangesFromGit(repoRoot)
+				sourceChanges = sourceChangesFromGit(repoRoot, opts.Logger)
 				sourceChanged = len(sourceChanges) > 0
 			} else {
 				sourceChanges = diffSourceFileSnapshots(lastSourceSnapshot, stableSourceSnapshot)
@@ -557,9 +557,10 @@ func diffSourceFileSnapshots(before, after map[string]string) []SourceFileChange
 	return changes
 }
 
-func sourceChangesFromGit(repoRoot string) []SourceFileChange {
+func sourceChangesFromGit(repoRoot string, logger EventLogger) []SourceFileChange {
 	changes, err := tldgit.WorktreeChangesAgainstHead(repoRoot)
 	if err != nil {
+		logError(context.TODO(), logger, "watch.git.changes.failed", err)
 		return nil
 	}
 	out := make([]SourceFileChange, 0, len(changes))

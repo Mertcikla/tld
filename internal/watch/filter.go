@@ -100,7 +100,7 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 	if err != nil {
 		return filterResult{}, err
 	}
-	refs, err := store.QueryReferences(ctx, repositoryID, ReferenceQuery{Limit: -1})
+	incoming, outgoing, err := store.BuildDegreeMaps(ctx, repositoryID)
 	if err != nil {
 		return filterResult{}, err
 	}
@@ -114,12 +114,6 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 	}
 	if err := ctx.Err(); err != nil {
 		return filterResult{}, err
-	}
-	incoming := map[int64]int{}
-	outgoing := map[int64]int{}
-	for _, ref := range refs {
-		outgoing[ref.SourceSymbolID]++
-		incoming[ref.TargetSymbolID]++
 	}
 
 	visible := map[int64]Symbol{}
@@ -181,13 +175,17 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 			visible[sym.ID] = sym
 		}
 	}
-	changed := true
-	for changed {
-		changed = false
+	var frontier []int64
+	for id := range visible {
+		frontier = append(frontier, id)
+	}
+	for len(frontier) > 0 {
+		refs, err := store.QueryReferencesBySourceIDs(ctx, repositoryID, frontier)
+		if err != nil {
+			return filterResult{}, err
+		}
+		nextFrontierSet := map[int64]struct{}{}
 		for _, ref := range refs {
-			if _, ok := visible[ref.SourceSymbolID]; !ok {
-				continue
-			}
 			if _, ok := visible[ref.TargetSymbolID]; ok {
 				continue
 			}
@@ -196,22 +194,40 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 				score.add("graph.proximity", visibilityCfg.Weights.RelationshipProximity, "referenced by visible symbol")
 				if score.Forced || !visibilityCfg.CoreThresholdEnabled || score.Score >= visibilityCfg.CoreThreshold {
 					visible[target.ID] = target
-					changed = true
+					nextFrontierSet[target.ID] = struct{}{}
 				}
 			}
 		}
+		if len(nextFrontierSet) == 0 {
+			break
+		}
+		frontier = make([]int64, 0, len(nextFrontierSet))
+		for id := range nextFrontierSet {
+			frontier = append(frontier, id)
+		}
 	}
-	for _, ref := range refs {
-		if _, ok := forcedVisibleSymbols[ref.SourceSymbolID]; ok {
+	if len(forcedVisibleSymbols) > 0 {
+		forcedIDs := make([]int64, 0, len(forcedVisibleSymbols))
+		for id := range forcedVisibleSymbols {
+			forcedIDs = append(forcedIDs, id)
+		}
+		changedTargetRefs, err := store.QueryReferencesBySourceIDs(ctx, repositoryID, forcedIDs)
+		if err != nil {
+			return filterResult{}, err
+		}
+		for _, ref := range changedTargetRefs {
 			if target, ok := symbolsByID[ref.TargetSymbolID]; ok {
 				score := scores[target.ID]
 				score.add("change.endpoint", visibilityCfg.Weights.Changed, "endpoint of changed symbol")
 				score.Forced = true
 				visible[target.ID] = target
 			}
-			continue
 		}
-		if _, ok := forcedVisibleSymbols[ref.TargetSymbolID]; ok {
+		changedSourceRefs, err := store.QueryReferencesByTargetIDs(ctx, repositoryID, forcedIDs)
+		if err != nil {
+			return filterResult{}, err
+		}
+		for _, ref := range changedSourceRefs {
 			if source, ok := symbolsByID[ref.SourceSymbolID]; ok {
 				score := scores[source.ID]
 				score.add("change.endpoint", visibilityCfg.Weights.Changed, "endpoint of changed symbol")
@@ -221,7 +237,20 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 		}
 	}
 	if len(embeddings) > 0 {
-		rescueRelatedSymbolsScored(symbols, refs, visible, scores, embeddings, visibilityCfg.Weights.RelationshipProximity)
+		visibleIDs := make([]int64, 0, len(visible))
+		for id := range visible {
+			visibleIDs = append(visibleIDs, id)
+		}
+		rescueRefs, err := store.QueryReferencesBySourceIDs(ctx, repositoryID, visibleIDs)
+		if err != nil {
+			return filterResult{}, err
+		}
+		rescueRefs2, err := store.QueryReferencesByTargetIDs(ctx, repositoryID, visibleIDs)
+		if err != nil {
+			return filterResult{}, err
+		}
+		rescueRefs = append(rescueRefs, rescueRefs2...)
+		rescueRelatedSymbolsScored(symbols, rescueRefs, visible, scores, embeddings, visibilityCfg.Weights.RelationshipProximity)
 	}
 	for _, sym := range symbols {
 		if _, ok := contextPolicies.hideSymbol(sym, identityKeys); ok {
@@ -259,30 +288,45 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 		}
 	}
 
+	const refBatchSize = 10000
 	var visibleRefs []Reference
 	hiddenRefs := 0
-	for _, ref := range refs {
-		_, sourceOK := visible[ref.SourceSymbolID]
-		_, targetOK := visible[ref.TargetSymbolID]
-		refOwnerKey := referenceOwnerKey(ref, symbolsByID, identityKeys)
-		if _, hidden := contextPolicies.Hide[ownerMapKey("reference", refOwnerKey)]; hidden {
-			hiddenRefs++
-			scoreValue := visibilityCfg.Weights.UserHide
-			if err := store.SaveFilterDecision(ctx, runID, "reference", ref.ID, refOwnerKey, "hidden", "user marked as noise", &scoreValue, 0, `[]`); err != nil {
-				return filterResult{}, err
+	refOffset := 0
+	for {
+		batch, err := store.QueryReferences(ctx, repositoryID, ReferenceQuery{Limit: refBatchSize, Offset: refOffset})
+		if err != nil {
+			return filterResult{}, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		for _, ref := range batch {
+			_, sourceOK := visible[ref.SourceSymbolID]
+			_, targetOK := visible[ref.TargetSymbolID]
+			refOwnerKey := referenceOwnerKey(ref, symbolsByID, identityKeys)
+			if _, hidden := contextPolicies.Hide[ownerMapKey("reference", refOwnerKey)]; hidden {
+				hiddenRefs++
+				scoreValue := visibilityCfg.Weights.UserHide
+				if err := store.SaveFilterDecision(ctx, runID, "reference", ref.ID, refOwnerKey, "hidden", "user marked as noise", &scoreValue, 0, `[]`); err != nil {
+					return filterResult{}, err
+				}
+			} else if sourceOK && targetOK {
+				visibleRefs = append(visibleRefs, ref)
+				scoreValue := 1.0
+				if err := store.SaveFilterDecision(ctx, runID, "reference", ref.ID, refOwnerKey, "visible", "connects visible symbols", &scoreValue, 0, `[]`); err != nil {
+					return filterResult{}, err
+				}
+			} else {
+				hiddenRefs++
+				scoreValue := 0.0
+				if err := store.SaveFilterDecision(ctx, runID, "reference", ref.ID, refOwnerKey, "hidden", "unresolved or hidden endpoint", &scoreValue, 0, `[]`); err != nil {
+					return filterResult{}, err
+				}
 			}
-		} else if sourceOK && targetOK {
-			visibleRefs = append(visibleRefs, ref)
-			scoreValue := 1.0
-			if err := store.SaveFilterDecision(ctx, runID, "reference", ref.ID, refOwnerKey, "visible", "connects visible symbols", &scoreValue, 0, `[]`); err != nil {
-				return filterResult{}, err
-			}
-		} else {
-			hiddenRefs++
-			scoreValue := 0.0
-			if err := store.SaveFilterDecision(ctx, runID, "reference", ref.ID, refOwnerKey, "hidden", "unresolved or hidden endpoint", &scoreValue, 0, `[]`); err != nil {
-				return filterResult{}, err
-			}
+		}
+		refOffset += refBatchSize
+		if len(batch) < refBatchSize {
+			break
 		}
 	}
 	visibleFiles := filesForSymbols(visible)

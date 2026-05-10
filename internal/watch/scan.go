@@ -487,6 +487,7 @@ func (s *Scanner) prepareLimitedBaselineWorktree(repoRoot string, repositoryID i
 func (s *Scanner) deleteLimitedRemovedFiles(ctx context.Context, repoRoot string, repositoryID int64) error {
 	changes, err := tldgit.WorktreeChangesAgainstHead(repoRoot)
 	if err != nil {
+		logError(ctx, s.Logger, "watch.scan.delete_removed.failed", err, "repository_id", repositoryID)
 		return nil
 	}
 	var deleted []string
