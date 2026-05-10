@@ -12,10 +12,6 @@ import (
 	"github.com/mertcikla/tld/internal/tagcolors"
 )
 
-func strPtr(value string) *string {
-	return &value
-}
-
 func TestConfigureSQLiteDBEnablesBusyTimeoutAndWAL(t *testing.T) {
 	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "tld.db"))
 	if err != nil {
@@ -49,15 +45,15 @@ func TestStoreElementsSearchPaginationAndViewMetadata(t *testing.T) {
 	ctx := context.Background()
 
 	serviceKind := "service"
-	api, err := store.CreateElement(ctx, LibraryElement{Name: "API", Kind: &serviceKind, Description: strPtr("Public runtime API"), Tags: []string{"runtime"}})
+	api, err := store.CreateElement(ctx, LibraryElement{Name: "API", Kind: &serviceKind, Description: new("Public runtime API"), Tags: []string{"runtime"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	worker, err := store.CreateElement(ctx, LibraryElement{Name: "Worker", Kind: &serviceKind, Description: strPtr("Background jobs"), Tags: []string{"runtime"}})
+	worker, err := store.CreateElement(ctx, LibraryElement{Name: "Worker", Kind: &serviceKind, Description: new("Background jobs"), Tags: []string{"runtime"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateView(ctx, "API detail", strPtr("Service"), &api.ID); err != nil {
+	if _, err := store.CreateView(ctx, "API detail", new("Service"), &api.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -155,7 +151,7 @@ func TestStoreUndoableElementUpdatesPreserveAndRestoreFields(t *testing.T) {
 	original, err := store.CreateElement(ctx, LibraryElement{
 		Name:        "API",
 		Kind:        &kind,
-		Description: strPtr("original description"),
+		Description: new("original description"),
 		Technology:  &technology,
 		URL:         &url,
 		LogoURL:     &logo,
@@ -182,7 +178,7 @@ func TestStoreUndoableElementUpdatesPreserveAndRestoreFields(t *testing.T) {
 	changed, err := store.UpdateElement(ctx, original.ID, LibraryElement{
 		Name:        "DB",
 		Kind:        &changedKind,
-		Description: strPtr("changed description"),
+		Description: new("changed description"),
 		Technology:  &changedTech,
 		URL:         &changedURL,
 		LogoURL:     &changedLogo,
@@ -261,22 +257,22 @@ func TestStoreUndoableConnectorDeleteRecreateAndRestoreFields(t *testing.T) {
 		ViewID:          1,
 		SourceElementID: source.ID,
 		TargetElementID: target.ID,
-		Label:           strPtr("reads"),
-		Description:     strPtr("primary query path"),
-		Relationship:    strPtr("SQL"),
+		Label:           new("reads"),
+		Description:     new("primary query path"),
+		Relationship:    new("SQL"),
 		Direction:       "both",
 		Style:           "smoothstep",
-		URL:             strPtr("https://example.com/runbook"),
-		SourceHandle:    strPtr("right"),
-		TargetHandle:    strPtr("left"),
+		URL:             new("https://example.com/runbook"),
+		SourceHandle:    new("right"),
+		TargetHandle:    new("left"),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	updated, err := store.UpdateConnector(ctx, original.ID, Connector{
-		Label:        strPtr("streams"),
-		SourceHandle: strPtr("bottom"),
-		TargetHandle: strPtr("top"),
+		Label:        new("streams"),
+		SourceHandle: new("bottom"),
+		TargetHandle: new("top"),
 	})
 	if err != nil {
 		t.Fatal(err)

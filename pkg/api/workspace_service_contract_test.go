@@ -11,14 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-func ptrString(value string) *string {
-	return &value
-}
-
-func ptrInt32(value int32) *int32 {
-	return &value
-}
-
 func TestWorkspaceService_ListElementsReturnsPaginationAndChecksRead(t *testing.T) {
 	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 	store := &contractStore{
@@ -76,7 +68,7 @@ func TestWorkspaceService_CreateConnectorDefaultsValidatesAndAudits(t *testing.T
 		ViewId:          3,
 		SourceElementId: 4,
 		TargetElementId: 5,
-		Label:           ptrString("uses"),
+		Label:           new("uses"),
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -116,11 +108,11 @@ func TestWorkspaceService_UpdateElementClearsLogoWhenNoPrimaryIcon(t *testing.T)
 			return &diagv1.Element{
 				Id:      42,
 				Name:    "API",
-				LogoUrl: ptrString("https://example.com/logo.svg"),
+				LogoUrl: new("https://example.com/logo.svg"),
 				TechnologyLinks: []*diagv1.TechnologyLink{{
 					Type:          "catalog",
 					Label:         "Go",
-					Slug:          ptrString("go"),
+					Slug:          new("go"),
 					IsPrimaryIcon: true,
 				}},
 			}, nil
@@ -141,9 +133,9 @@ func TestWorkspaceService_UpdateElementClearsLogoWhenNoPrimaryIcon(t *testing.T)
 		TechnologyLinks: []*diagv1.TechnologyLink{{
 			Type:  "catalog",
 			Label: "Kafka",
-			Slug:  ptrString("kafka"),
+			Slug:  new("kafka"),
 		}},
-		LogoUrl: ptrString("https://example.com/kafka.svg"),
+		LogoUrl: new("https://example.com/kafka.svg"),
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -160,13 +152,13 @@ func TestWorkspaceService_UpdateElementPreservesExistingTechnologyLinksWhenOmitt
 	existingLinks := []*diagv1.TechnologyLink{{
 		Type:          "catalog",
 		Label:         "Go",
-		Slug:          ptrString("go"),
+		Slug:          new("go"),
 		IsPrimaryIcon: true,
 	}}
 	var update ElementInput
 	store := &contractStore{
 		getElement: func(context.Context, int32, uuid.UUID) (*diagv1.Element, error) {
-			return &diagv1.Element{Id: 42, Name: "API", LogoUrl: ptrString("go.svg"), TechnologyLinks: existingLinks}, nil
+			return &diagv1.Element{Id: 42, Name: "API", LogoUrl: new("go.svg"), TechnologyLinks: existingLinks}, nil
 		},
 		updateElement: func(_ context.Context, id int32, _ uuid.UUID, input ElementInput) (*diagv1.Element, error) {
 			update = input
@@ -223,9 +215,9 @@ func TestWorkspaceService_UpdateViewPreservesExistingLabelWhenOmitted(t *testing
 func TestWorkspaceService_UpdateConnectorCanRestoreAllUndoableFields(t *testing.T) {
 	existing := &diagv1.Connector{
 		Id: 7, ViewId: 3, SourceElementId: 4, TargetElementId: 5,
-		Label: ptrString("changed"), Description: ptrString("changed description"),
-		Relationship: ptrString("HTTP"), Direction: "forward", Style: "bezier",
-		Url: ptrString("https://example.com/changed"), SourceHandle: ptrString("bottom"), TargetHandle: ptrString("top"),
+		Label: new("changed"), Description: new("changed description"),
+		Relationship: new("HTTP"), Direction: "forward", Style: "bezier",
+		Url: new("https://example.com/changed"), SourceHandle: new("bottom"), TargetHandle: new("top"),
 	}
 	store := &contractStore{
 		getConnector: func(context.Context, int32, uuid.UUID) (*diagv1.Connector, error) {
@@ -253,16 +245,16 @@ func TestWorkspaceService_UpdateConnectorCanRestoreAllUndoableFields(t *testing.
 
 	resp, err := service.UpdateConnector(context.Background(), connect.NewRequest(&diagv1.UpdateConnectorRequest{
 		ConnectorId:     7,
-		SourceElementId: ptrInt32(10),
-		TargetElementId: ptrInt32(11),
-		Label:           ptrString("reads"),
-		Description:     ptrString("original description"),
-		Relationship:    ptrString("SQL"),
+		SourceElementId: new(int32(10)),
+		TargetElementId: new(int32(11)),
+		Label:           new("reads"),
+		Description:     new("original description"),
+		Relationship:    new("SQL"),
 		Direction:       "both",
 		Style:           "smoothstep",
-		Url:             ptrString("https://example.com/original"),
-		SourceHandle:    ptrString("right"),
-		TargetHandle:    ptrString("left"),
+		Url:             new("https://example.com/original"),
+		SourceHandle:    new("right"),
+		TargetHandle:    new("left"),
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -285,9 +277,9 @@ func TestWorkspaceService_CreateConnectorAcceptsDeleteUndoPayload(t *testing.T) 
 
 	if _, err := service.CreateConnector(context.Background(), connect.NewRequest(&diagv1.CreateConnectorRequest{
 		ViewId: 3, SourceElementId: 4, TargetElementId: 5,
-		Label: ptrString("reads"), Description: ptrString("query path"), Relationship: ptrString("SQL"),
-		Direction: "both", Style: "smoothstep", Url: ptrString("https://example.com/runbook"),
-		SourceHandle: ptrString("right"), TargetHandle: ptrString("left"),
+		Label: new("reads"), Description: new("query path"), Relationship: new("SQL"),
+		Direction: "both", Style: "smoothstep", Url: new("https://example.com/runbook"),
+		SourceHandle: new("right"), TargetHandle: new("left"),
 	})); err != nil {
 		t.Fatal(err)
 	}

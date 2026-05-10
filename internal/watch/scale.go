@@ -56,10 +56,7 @@ func planScan(repoRoot string, settings Settings, rules *ignore.Rules) (scanPlan
 	plan.Limited = true
 	plan.Files = selectLimitedFiles(repoRoot, tracked.Files, settings, rules)
 	plan.SelectedFiles = len(plan.Files)
-	plan.SkippedTrackedFiles = tracked.Total - len(plan.Files)
-	if plan.SkippedTrackedFiles < 0 {
-		plan.SkippedTrackedFiles = 0
-	}
+	plan.SkippedTrackedFiles = max(tracked.Total-len(plan.Files), 0)
 	plan.Warnings = append(plan.Warnings, fmt.Sprintf("limited view: %s; selected %d high-signal files out of %d tracked files", plan.Reason, plan.SelectedFiles, plan.TrackedFiles))
 	return plan, nil
 }
@@ -105,10 +102,7 @@ func selectLimitedFiles(repoRoot string, tracked []string, settings Settings, ru
 		}
 		return candidates[i].path < candidates[j].path
 	})
-	limit := settings.Scale.MaxLimitedFiles
-	if limit > len(candidates) {
-		limit = len(candidates)
-	}
+	limit := min(settings.Scale.MaxLimitedFiles, len(candidates))
 	files := make([]string, 0, limit)
 	for _, candidate := range candidates[:limit] {
 		files = append(files, candidate.path)

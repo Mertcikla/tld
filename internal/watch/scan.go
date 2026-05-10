@@ -331,10 +331,7 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	result.FilesSeen = len(files)
 	if plan.Limited {
 		result.SelectedFiles = len(files)
-		result.SkippedTrackedFiles = result.TrackedFiles - len(files)
-		if result.SkippedTrackedFiles < 0 {
-			result.SkippedTrackedFiles = 0
-		}
+		result.SkippedTrackedFiles = max(result.TrackedFiles-len(files), 0)
 	}
 	cache, err := s.loadScanCache(ctx, repo.ID, opts.Force, progress)
 	if err != nil {

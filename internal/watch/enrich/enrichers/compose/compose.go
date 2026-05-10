@@ -131,8 +131,8 @@ func emitServiceFact(input enrich.FileInput, emit enrich.FactEmitter, name, tech
 		attrs["build_context"] = buildCtx
 	}
 	for k, v := range labels {
-		if strings.HasPrefix(k, "tld.") {
-			attrs[strings.TrimPrefix(k, "tld.")] = v
+		if after, ok := strings.CutPrefix(k, "tld."); ok {
+			attrs[after] = v
 		}
 	}
 	tags := []string{

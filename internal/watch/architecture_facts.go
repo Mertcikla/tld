@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -316,10 +317,8 @@ func labelForDependency(target string) string {
 }
 
 func isComposeComponent(attrs map[string]string, tags []string) bool {
-	for _, tag := range tags {
-		if tag == "runtime:compose" {
-			return true
-		}
+	if slices.Contains(tags, "runtime:compose") {
+		return true
 	}
 	return attrs["technology"] == "Docker Compose"
 }
