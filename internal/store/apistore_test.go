@@ -125,14 +125,14 @@ func TestListElementsMapsSearchPaginationAndViewMetadata(t *testing.T) {
 		INSERT INTO elements(id, name, kind, description, tags, technology_connectors, created_at, updated_at)
 		VALUES
 			(10, 'API', 'service', 'Public runtime API', '["runtime"]', '[]', 'now', '2026-01-02T00:00:00Z'),
-			(11, 'Worker', 'service', 'Background jobs', '["runtime"]', '[]', 'now', '2026-01-03T00:00:00Z');
+			(11, 'Worker', 'service', 'Background for API jobs', '["runtime"]', '[]', 'now', '2026-01-03T00:00:00Z');
 		INSERT INTO views(id, owner_element_id, name, description, level_label, level, created_at, updated_at)
 		VALUES (20, 10, 'API view', NULL, 'Service', 2, 'now', 'now');
 	`); err != nil {
 		t.Fatal(err)
 	}
 
-	items, total, err := NewAPIAdapter(sqliteStore).ListElements(context.Background(), uuid.Nil, 1, 0, "runtime")
+	items, total, err := NewAPIAdapter(sqliteStore).ListElements(context.Background(), uuid.Nil, 1, 0, "API")
 	if err != nil {
 		t.Fatal(err)
 	}
