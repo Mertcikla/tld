@@ -987,7 +987,7 @@ func (s *WorkspaceService) UpdateConnector(
 	}
 	style := m.GetStyle()
 	if style == "" {
-		style = existing.Style
+		style = normalizeStoredEdgeType(existing.Style)
 	}
 	if err := validateEdgeType(style); err != nil {
 		return nil, err

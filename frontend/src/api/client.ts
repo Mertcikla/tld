@@ -59,6 +59,12 @@ import {
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset } from '../config/runtime'
 
+const CONNECTOR_ROUTE_STYLES = new Set(['bezier', 'straight', 'step', 'smoothstep'])
+
+export function normalizeConnectorRouteStyle(style: unknown): string {
+  return typeof style === 'string' && CONNECTOR_ROUTE_STYLES.has(style) ? style : 'bezier'
+}
+
 async function responseError(res: Response, fallback: string): Promise<Error> {
   const body = await res.json().catch(() => null) as { error?: string } | null
   return new Error(body?.error || `${fallback}: ${res.statusText}`)
@@ -403,7 +409,7 @@ function protoConnector(e: Record<string, unknown>): Connector {
     description: (e.description ?? null) as string | null,
     relationship: (e.relationship ?? null) as string | null,
     direction: String(e.direction ?? 'forward'),
-    style: String(e.style ?? 'bezier'),
+    style: normalizeConnectorRouteStyle(e.style),
     url: (e.url ?? null) as string | null,
     source_handle: (e.source_handle ?? null) as string | null,
     target_handle: (e.target_handle ?? null) as string | null,
@@ -936,7 +942,7 @@ export const api = {
             description: data.description ?? undefined,
             relationship: data.relationship ?? undefined,
             direction: data.direction ?? undefined,
-            style: data.style ?? undefined,
+            style: normalizeConnectorRouteStyle(data.style),
             url: data.url ?? undefined,
             sourceHandle: data.source_handle ?? undefined,
             targetHandle: data.target_handle ?? undefined,
@@ -970,7 +976,7 @@ export const api = {
             description: data.description ?? undefined,
             relationship: data.relationship ?? undefined,
             direction: data.direction ?? undefined,
-            style: data.style ?? undefined,
+            style: data.style === undefined ? undefined : normalizeConnectorRouteStyle(data.style),
             url: data.url ?? undefined,
             sourceHandle: data.source_handle ?? undefined,
             targetHandle: data.target_handle ?? undefined,
