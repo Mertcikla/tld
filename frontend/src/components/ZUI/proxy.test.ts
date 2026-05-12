@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { collectVisibleNodeAnchors, getProxyBezierBadgeGeometry, type VisibleNodeAnchor } from './proxy'
+import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
 import type { LayoutNode } from './types'
 
 function node(id: string, elementId: number, children: LayoutNode[] = []): LayoutNode {
@@ -42,6 +43,34 @@ describe('collectVisibleNodeAnchors', () => {
     expect(anchors.visibleAnchors.get(3)?.renderAlpha).toBe(1)
     expect(anchors.visibleAnchors.get(2)?.renderAlpha).toBeGreaterThan(0)
     expect(anchors.visibleAnchors.get(1)?.renderAlpha).toBeGreaterThan(0)
+  })
+
+  it('keeps fully expanded ancestor fallback anchors eligible for connectors', () => {
+    const grandchild = node('grandchild', 3)
+    const child = node('child', 2, [grandchild])
+    const parent = node('parent', 1, [child])
+
+    const anchors = collectVisibleNodeAnchors(
+      [{ nodes: [parent] }],
+      { x: 0, y: 0, zoom: 5 },
+      1000,
+    )
+
+    expect(anchors.visibleAnchors.get(1)?.renderAlpha).toBeGreaterThanOrEqual(DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA)
+    expect(anchors.visibleAnchors.get(2)?.renderAlpha).toBeGreaterThanOrEqual(DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA)
+  })
+
+  it('keeps ancestor anchors eligible while the body fades into the dashed border', () => {
+    const child = node('child', 2)
+    const parent = node('parent', 1, [child])
+
+    const anchors = collectVisibleNodeAnchors(
+      [{ nodes: [parent] }],
+      { x: 0, y: 0, zoom: 3.7 },
+      1000,
+    )
+
+    expect(anchors.visibleAnchors.get(1)?.renderAlpha).toBeGreaterThanOrEqual(DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA)
   })
 })
 

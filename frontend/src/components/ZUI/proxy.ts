@@ -41,6 +41,10 @@ function transitionT(screenW: number, start: number, end: number): number {
   return clamp((screenW - start) / (end - start), 0, 1)
 }
 
+function zoomableNodeConnectorAlpha(inheritedAlpha: number, bodyAlpha: number): number {
+  return Math.max(bodyAlpha, Math.min(inheritedAlpha, DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA))
+}
+
 function visualRectForNode(
   absX: number,
   absY: number,
@@ -126,7 +130,7 @@ function collectVisibleAnchorForNode(
       worldW: visualRect.worldW,
       worldH: visualRect.worldH,
       pathDepth: node.pathElementIds.length,
-      renderAlpha: hasChildren ? parentAlpha : inheritedAlpha,
+      renderAlpha: hasChildren ? zoomableNodeConnectorAlpha(inheritedAlpha, parentAlpha) : inheritedAlpha,
     })
   }
 
@@ -161,7 +165,7 @@ function collectVisibleAnchorForNode(
       worldW: visualRect.worldW,
       worldH: visualRect.worldH,
       pathDepth: node.pathElementIds.length,
-      renderAlpha: Math.max(0.12, inheritedAlpha * 0.28),
+      renderAlpha: zoomableNodeConnectorAlpha(inheritedAlpha, inheritedAlpha * 0.28),
     })
   }
 
