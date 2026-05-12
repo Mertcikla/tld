@@ -46,6 +46,8 @@ import {
   type VisibleNodeAnchor,
 } from './proxy'
 
+const MAX_PROXY_HOVER_VIEW_LINKS = 5
+
 export interface ZUICanvasHandle {
   fitView(): void
   focusDiagram(viewId: number): boolean
@@ -1053,7 +1055,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
                     </VStack>
                     <Divider borderColor="whiteAlpha.200" />
                     <VStack align="stretch" spacing={2} width="full">
-                      {hoveredItem.data.details.ownerViewIds.map((ownerViewId, index) => (
+                      {hoveredItem.data.details.ownerViewIds.slice(0, MAX_PROXY_HOVER_VIEW_LINKS).map((ownerViewId, index) => (
                         <Button
                           key={`${ownerViewId}-${index}`}
                           as={RouterLink}
@@ -1069,6 +1071,11 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
                           {hoveredItem.data.details!.ownerViewNames[index] ?? `Open View ${ownerViewId}`}
                         </Button>
                       ))}
+                      {hoveredItem.data.details.ownerViewIds.length > MAX_PROXY_HOVER_VIEW_LINKS && (
+                        <Text fontSize="xs" color="gray.500" textAlign="center">
+                          +{hoveredItem.data.details.ownerViewIds.length - MAX_PROXY_HOVER_VIEW_LINKS} more view{hoveredItem.data.details.ownerViewIds.length - MAX_PROXY_HOVER_VIEW_LINKS === 1 ? '' : 's'}
+                        </Text>
+                      )}
                     </VStack>
                     <Divider borderColor="whiteAlpha.200" />
                     <HStack width="full" spacing={2}>
