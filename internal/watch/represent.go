@@ -2996,21 +2996,55 @@ func technologyLinksForLanguage(language string) []materializedTechnologyLink {
 }
 
 func technologyLinksForElement(technology, language string) []materializedTechnologyLink {
-	if slug, label := technologyCatalogMatchForLabel(technology); slug != "" {
-		return []materializedTechnologyLink{{
-			Type:          "catalog",
-			Slug:          slug,
-			Label:         label,
-			IsPrimaryIcon: true,
-		}}
+	links := technologyCatalogLinksForLabel(technology)
+	if len(links) > 0 {
+		return links
 	}
 	if langLinks := technologyLinksForLanguage(language); len(langLinks) > 0 {
 		return langLinks
 	}
-	if tech := strings.TrimSpace(technology); tech != "" {
-		return []materializedTechnologyLink{{Type: "custom", Label: tech}}
-	}
 	return nil
+}
+
+func technologyCatalogLinksForLabel(label string) []materializedTechnologyLink {
+	var links []materializedTechnologyLink
+	seen := map[string]struct{}{}
+	for _, part := range technologyLabelParts(label) {
+		slug, displayLabel := technologyCatalogMatchForLabel(part)
+		if slug == "" {
+			continue
+		}
+		if _, ok := seen[slug]; ok {
+			continue
+		}
+		seen[slug] = struct{}{}
+		links = append(links, materializedTechnologyLink{
+			Type:          "catalog",
+			Slug:          slug,
+			Label:         displayLabel,
+			IsPrimaryIcon: len(links) == 0,
+		})
+		if len(links) == 3 {
+			break
+		}
+	}
+	return links
+}
+
+func technologyLabelParts(label string) []string {
+	parts := strings.FieldsFunc(label, func(r rune) bool {
+		return r == ',' || r == '/' || r == ';' || r == '|'
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 && strings.TrimSpace(label) != "" {
+		return []string{strings.TrimSpace(label)}
+	}
+	return out
 }
 
 func technologyCatalogMatchForLabel(label string) (string, string) {
@@ -3022,7 +3056,7 @@ func technologyCatalogMatchForLabel(label string) (string, string) {
 	case "container":
 		return "docker", "Container"
 	default:
-		slug, name, ok := tech.LookupCatalog(label)
+		slug, name, ok := tech.LookupCatalogFuzzy(label)
 		if !ok {
 			return "", ""
 		}

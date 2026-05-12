@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"unicode"
 )
 
 //go:embed icons.json
@@ -42,6 +43,9 @@ func initializeCatalog() {
 		}
 		cache[key] = true
 		if item.DefaultSlug != "" {
+			if _, exists := slugCache[key]; exists {
+				return
+			}
 			slugCache[key] = item
 		}
 	}
@@ -121,4 +125,83 @@ func LookupCatalog(label string) (slug, name string, ok bool) {
 		displayName = strings.TrimSpace(label)
 	}
 	return item.DefaultSlug, displayName, true
+}
+
+// LookupCatalogFuzzy returns a known catalog technology for labels that are
+// commonly decorated with instance names, roles, or separators.
+func LookupCatalogFuzzy(label string) (slug, name string, ok bool) {
+	if slug, name, ok := LookupCatalog(label); ok {
+		return slug, name, true
+	}
+
+	catalogOnce.Do(initializeCatalog)
+	for _, part := range splitTechnologyParts(label) {
+		if slug, name, ok := LookupCatalog(part); ok {
+			return slug, name, true
+		}
+		for _, token := range technologyTokens(part) {
+			if len(token) < 3 || fuzzyTechnologyStopword(token) {
+				continue
+			}
+			if item, ok := catalogSlugCache[token]; ok && item.DefaultSlug != "" {
+				return item.DefaultSlug, catalogDisplayName(item, token), true
+			}
+		}
+	}
+
+	return "", "", false
+}
+
+func catalogDisplayName(item catalogItem, matched string) string {
+	if strings.EqualFold(strings.TrimSpace(matched), item.NameShort) && item.NameShort != "" {
+		return item.NameShort
+	}
+	if item.Name != "" {
+		return item.Name
+	}
+	return strings.TrimSpace(matched)
+}
+
+func splitTechnologyParts(value string) []string {
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '/' || r == ';' || r == '|'
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+func technologyTokens(value string) []string {
+	var b strings.Builder
+	var prev rune
+	for _, r := range value {
+		if unicode.IsUpper(r) && unicode.IsLower(prev) {
+			b.WriteByte(' ')
+		}
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(unicode.ToLower(r))
+		case r == '#':
+			b.WriteRune(r)
+		case r == '+':
+			b.WriteString("plus")
+		default:
+			b.WriteByte(' ')
+		}
+		prev = r
+	}
+	return strings.Fields(b.String())
+}
+
+func fuzzyTechnologyStopword(token string) bool {
+	switch token {
+	case "app", "api", "client", "server", "service", "worker", "job", "queue", "database", "db", "cache", "image", "images", "sdk":
+		return true
+	default:
+		return false
+	}
 }

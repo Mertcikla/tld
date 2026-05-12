@@ -1225,12 +1225,35 @@ func TestTechnologyLinksForElementUsesSectionCatalogIcon(t *testing.T) {
 			}},
 		},
 		{
-			name:       "unknown technology stays custom without primary icon",
+			name:       "unknown technology has no custom link",
 			technology: "Internal SDK",
 			language:   "",
+			want:       nil,
+		},
+		{
+			name:       "decorated technology resolves to catalog",
+			technology: "redis-cart",
+			language:   "",
 			want: []materializedTechnologyLink{{
-				Type:  "custom",
-				Label: "Internal SDK",
+				Type:          "catalog",
+				Slug:          "redis",
+				Label:         "Redis",
+				IsPrimaryIcon: true,
+			}},
+		},
+		{
+			name:       "multiple known technologies resolve to catalog links",
+			technology: "Go / PostgreSQL",
+			language:   "",
+			want: []materializedTechnologyLink{{
+				Type:          "catalog",
+				Slug:          "golang",
+				Label:         "Go",
+				IsPrimaryIcon: true,
+			}, {
+				Type:  "catalog",
+				Slug:  "postgresql",
+				Label: "PostgreSQL",
 			}},
 		},
 		{
