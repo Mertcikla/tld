@@ -193,12 +193,21 @@ function canonicalNodePairKey(leftId: string, rightId: string) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Props extends CoreUISlots {
+export interface ViewEditorPermissions {
+  canEdit?: boolean
+  isOwner?: boolean
+  isFreePlan?: boolean
+}
+
+interface Props extends CoreUISlots, ViewEditorPermissions {
   demoOptions?: ViewEditorDemoOptions
 }
 
 function ViewEditorInner({
   demoOptions,
+  canEdit = true,
+  isOwner = true,
+  isFreePlan = false,
   canvasOverlaySlot,
   toolbarSlot,
   shareSlot,
@@ -225,10 +234,6 @@ function ViewEditorInner({
     undo: undoViewEdit,
     redo: redoViewEdit,
   } = useViewEditHistory()
-  const canEdit = true
-  const isOwner = true
-  const isFreePlan = false
-
   const setHeader = useSetHeader()
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
   const [densityLevel, setDensityLevel] = useState(0)
