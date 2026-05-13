@@ -965,8 +965,9 @@ func elementToProto(element app.LibraryElement, workspaceID uuid.UUID) *diagv1.E
 	}
 	for _, link := range element.TechnologyConnectors {
 		item := &diagv1.TechnologyLink{
-			Type:  link.Type,
-			Label: link.Label,
+			Type:          link.Type,
+			Label:         link.Label,
+			IsPrimaryIcon: link.IsPrimaryIcon,
 		}
 		if link.Slug != "" {
 			slug := link.Slug
@@ -1014,8 +1015,9 @@ func placedElementToProto(item app.PlacedElement) *diagv1.PlacedElement {
 	}
 	for _, link := range item.TechnologyConnectors {
 		entry := &diagv1.TechnologyLink{
-			Type:  link.Type,
-			Label: link.Label,
+			Type:          link.Type,
+			Label:         link.Label,
+			IsPrimaryIcon: link.IsPrimaryIcon,
 		}
 		if link.Slug != "" {
 			slug := link.Slug

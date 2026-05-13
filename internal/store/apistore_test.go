@@ -23,7 +23,7 @@ func openAdapterTestStore(t *testing.T) *SQLiteStore {
 	return sqliteStore
 }
 
-func TestElementToProtoOmitsPrimaryIconMetadata(t *testing.T) {
+func TestElementToProtoPreservesPrimaryIconMetadata(t *testing.T) {
 	technology := "JavaScript"
 	element := elementToProto(app.LibraryElement{
 		ID:         1,
@@ -45,8 +45,32 @@ func TestElementToProtoOmitsPrimaryIconMetadata(t *testing.T) {
 	if !strings.Contains(body, `"technology":"JavaScript"`) {
 		t.Fatalf("response body = %s, want technology field", body)
 	}
-	if strings.Contains(body, "isPrimaryIcon") {
-		t.Fatalf("response body = %s, want primary icon metadata omitted", body)
+	if !strings.Contains(body, `"isPrimaryIcon":true`) {
+		t.Fatalf("response body = %s, want primary icon metadata", body)
+	}
+}
+
+func TestPlacedElementToProtoPreservesPrimaryIconMetadata(t *testing.T) {
+	placement := placedElementToProto(app.PlacedElement{
+		ID:        1,
+		ViewID:    1,
+		ElementID: 1,
+		Name:      "Web",
+		TechnologyConnectors: []app.TechnologyConnector{{
+			Type:          "catalog",
+			Slug:          "javascript",
+			Label:         "JavaScript",
+			IsPrimaryIcon: true,
+		}},
+	})
+
+	data, err := protojson.Marshal(placement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(data)
+	if !strings.Contains(body, `"isPrimaryIcon":true`) {
+		t.Fatalf("response body = %s, want primary icon metadata", body)
 	}
 }
 
