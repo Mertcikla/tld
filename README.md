@@ -1,6 +1,15 @@
-[![Logo](./frontend/logo/tld.svg)](https://tldiagram.com)
+<p align="center">
+  <a href="https://tldiagram.com">
+    <img src="./frontend/logo/tld.svg" alt="Logo" width="400">
+  </a>
+</p>
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/mertcikla/tld)](https://go.dev/) [![License](https://img.shields.io/github/license/mertcikla/tld)](./LICENSE) [![Build Status](https://img.shields.io/github/actions/workflow/status/mertcikla/tld/test.yml?branch=main)](https://github.com/mertcikla/tld/actions) [![Go Report Card](https://goreportcard.com/badge/github.com/mertcikla/tld)](https://goreportcard.com/report/github.com/mertcikla/tld)
+<p align="center">
+  <a href="https://go.dev/"><img src="https://img.shields.io/github/go-mod/go-version/mertcikla/tld" alt="Go Version"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/github/license/mertcikla/tld" alt="License"></a>
+  <a href="https://github.com/mertcikla/tld/actions"><img src="https://img.shields.io/github/actions/workflow/status/mertcikla/tld/test.yml?branch=main" alt="Build Status"></a>
+  <a href="https://goreportcard.com/report/github.com/mertcikla/tld"><img src="https://goreportcard.com/badge/github.com/mertcikla/tld" alt="Go Report Card"></a>
+</p>
 
 `tld` provides a complete software architecture management platform that bundles a high-performance Go backend with an interactive React frontend into a single, standalone binary. Includes a CLI to enable managing diagrams from the shell or in CI. 
 
@@ -88,46 +97,6 @@ Various configuration options are available in `~/.config/tldiagram/tld.yaml`
 
 ---
 
-- **Backend**: Go 1.26+ 
-  - *CLI*: Cobra
-  - *API*: Connect RPC (gRPC compatible)
-  - *Analysis*: Tree-sitter
-  - *Database*: Embedded SQLite (`modernc.org/sqlite`)
-- **Frontend**: React 18 & TypeScript
-  - *Visualization*: ReactFlow, ElkJS (auto-layout), D3-force
-  - *UI Components*: Chakra UI
-- **Build System**: GoReleaser (for cross-platform standalone binaries)
-
----
-
-## Development Setup
-
-If you want to contribute to `tld` or build it from source:
-
-  1. **Clone the Repo**:
-   ```bash
-   git clone https://github.com/Mertcikla/tld.git
-   cd tld
-   ```
-
-2. **Install Frontend Dependencies**:
-   ```bash
-   make frontend-deps
-   ```
-
-3. **Development Mode (Hot Reloading)**:
-   This starts the Vite dev server for the frontend and the Air reloader for the Go backend.
-   ```bash
-   make dev
-   ```
-
-4. **Production Build**:
-   ```bash
-   make build
-   ```
-
----
-
 ## Commands Reference 
 `tld --help`
 
@@ -190,10 +159,6 @@ Use "tld [command] --help" for more information about a command
 | `PORT` | Port for the web UI and API. | `8060` |
 | `TLD_API_KEY` | API key for cloud synchronization. | - |
 
----
+see `tld config list` for the full list of configuration options.
 
-## Troubleshooting
-
-- **"Server already running"**: Run `tld stop` to stop registered local `tld serve` and `tld watch` processes.
-- **UI not reflecting YAML changes**: Restart the server or ensure `tld serve` is running in the correct directory.
-- **Language support**: If a language isn't detected, ensure the parser is registered in `internal/analyzer`.
+`tld config path` shows the path to the current configuration file.
