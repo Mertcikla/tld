@@ -238,6 +238,7 @@ func SetupApplyWorkspace(t *testing.T, dir, serverURL string) {
 
 func SeedElementWorkspace(t *testing.T, dir string) {
 	t.Helper()
+	t.Setenv("TLD_DATA_DIR", t.TempDir())
 	oldTarget, hadTarget := os.LookupEnv("TLD_APPLY_TARGET")
 	if err := os.Setenv("TLD_APPLY_TARGET", "local"); err != nil {
 		t.Fatalf("set TLD_APPLY_TARGET: %v", err)
