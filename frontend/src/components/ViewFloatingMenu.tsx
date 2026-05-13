@@ -2,7 +2,7 @@ import React, { memo } from 'react'
 import type { ViewFloatingMenuSlots } from '../slots'
 
 import {
-  HStack, Tooltip, Button, Box, Text, Popover, PopoverTrigger, Portal, PopoverContent, PopoverBody, IconButton, Slider, SliderTrack, SliderFilledTrack, SliderThumb, useDisclosure
+  HStack, Tooltip, Button, Box, Text, Popover, PopoverTrigger, Portal, PopoverContent, PopoverBody, IconButton, Slider, SliderTrack, SliderFilledTrack, SliderThumb, Switch, VStack, useDisclosure
 } from '@chakra-ui/react'
 import { DownloadIcon } from '@chakra-ui/icons'
 import {
@@ -15,11 +15,20 @@ import {
   CollapseExtrasIcon as CollapseExtrasSvg,
   FocusIcon as FocusSvg,
   TagsIcon,
+  ChevronDownIcon,
 } from './Icons'
 import { KbdHint } from './PanelUI'
 import { RedoSvg, UndoSvg } from './ViewDrawMenu'
 import { useViewEditorContext } from '../pages/ViewEditor/context'
 import type { Tag, ViewLayer } from '../types'
+
+const DENSITY_STOPS = [
+  { value: -2, label: 'Quiet' },
+  { value: -1, label: 'Lean' },
+  { value: 0, label: 'Normal' },
+  { value: 1, label: 'Rich' },
+  { value: 2, label: 'Full' },
+] as const
 
 export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
   handleAddElementAtCenter: () => void
@@ -105,7 +114,11 @@ function ViewFloatingMenu({
 }: ViewFloatingMenuProps) {
   const { canEdit } = useViewEditorContext()
   const { isOpen: isTagsOpen, onClose: onTagsClose, onToggle: onTagsToggle } = useDisclosure()
+  const { isOpen: isFiltersOpen, onClose: onFiltersClose, onToggle: onFiltersToggle } = useDisclosure()
   const [draftDensityLevel, setDraftDensityLevel] = React.useState(densityLevel)
+  const activeDensityLabel = DENSITY_STOPS.find((stop) => stop.value === draftDensityLevel)?.label ?? 'Normal'
+  const showFilters = !hideFocusView || !!onDensityLevelChange
+  const hasActiveFilters = (!hideFocusView && focusMode) || (!!onDensityLevelChange && densityLevel !== 0)
 
   React.useEffect(() => {
     setDraftDensityLevel(densityLevel)
@@ -191,26 +204,152 @@ function ViewFloatingMenu({
         </>
       )}
 
-      {!hideFocusView && (
+      {showFilters && (
         <>
           <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
-          <Tooltip label={focusMode ? 'Show context' : 'Focus on this view'} placement="top" openDelay={200}>
-            <Button
-              variant="ghost"
-              h="28px"
-              px={2.5}
-              color={focusMode ? 'var(--accent)' : 'gray.300'}
-              bg={focusMode ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
-              _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
-              onClick={() => onFocusModeChange(!focusMode)}
-            >
-              <HStack spacing={1.5}>
-                <FocusSvg />
-                <Text fontSize="11px" fontWeight="normal">Focus View</Text>
-                <Box w="6px" h="6px" rounded="full" bg={focusMode ? 'var(--accent)' : 'gray.500'} />
-              </HStack>
-            </Button>
-          </Tooltip>
+          <Popover isOpen={isFiltersOpen} onClose={onFiltersClose} placement="top" isLazy closeOnBlur>
+            <PopoverTrigger>
+              <Button
+                variant="ghost"
+                h="28px"
+                px={2.5}
+                color={isFiltersOpen || hasActiveFilters ? 'var(--accent)' : 'gray.300'}
+                bg={hasActiveFilters ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
+                _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+                onClick={onFiltersToggle}
+                aria-label="Open filters"
+              >
+                <HStack spacing={1.5}>
+                  <FocusSvg />
+                  <Text fontSize="11px" fontWeight={hasActiveFilters ? 'semibold' : 'normal'}>Filters</Text>
+                  {hasActiveFilters && <Box w="6px" h="6px" rounded="full" bg="var(--accent)" />}
+                  <ChevronDownIcon size={10} strokeWidth={3.5} />
+                </HStack>
+              </Button>
+            </PopoverTrigger>
+            <Portal>
+              <PopoverContent
+                bg="linear-gradient(180deg, rgba(var(--bg-main-rgb), 0.98) 0%, rgba(var(--bg-main-rgb), 0.92) 100%)"
+                backdropFilter="blur(22px)"
+                borderColor="whiteAlpha.100"
+                boxShadow="0 18px 48px rgba(0,0,0,0.46), inset 0 1px 0 rgba(255,255,255,0.04)"
+                borderRadius="lg"
+                width="280px"
+                _focus={{ boxShadow: 'none' }}
+              >
+                <PopoverBody p={3}>
+                  <VStack align="stretch" spacing={3}>
+                    {!hideFocusView && (
+                      <HStack
+                        justify="space-between"
+                        spacing={3}
+                        px={2.5}
+                        py={2}
+                        rounded="md"
+                        bg={focusMode ? 'rgba(var(--accent-rgb), 0.10)' : 'whiteAlpha.50'}
+                        border="1px solid"
+                        borderColor={focusMode ? 'rgba(var(--accent-rgb), 0.22)' : 'whiteAlpha.100'}
+                      >
+                        <HStack spacing={2.5} minW={0}>
+                          <Box color={focusMode ? 'var(--accent)' : 'gray.400'} flexShrink={0}>
+                            <FocusSvg />
+                          </Box>
+                          <Box minW={0}>
+                            <Text fontSize="xs" fontWeight="semibold" color="whiteAlpha.900">Hide External</Text>
+                          </Box>
+                        </HStack>
+                        <Switch
+                          size="sm"
+                          isChecked={focusMode}
+                          onChange={(event) => onFocusModeChange(event.target.checked)}
+                          colorScheme="teal"
+                          flexShrink={0}
+                          aria-label="Toggle external view"
+                        />
+                      </HStack>
+                    )}
+
+                    {onDensityLevelChange && (
+                      <Box
+                        px={2.5}
+                        py={2.5}
+                        rounded="md"
+                        bg="whiteAlpha.50"
+                        border="1px solid"
+                        borderColor="whiteAlpha.100"
+                      >
+                        <HStack justify="space-between" mb={2.5}>
+                          <Box>
+                            <Text fontSize="xs" fontWeight="semibold" color="whiteAlpha.900">Density</Text>
+                            <Text fontSize="10px" color="whiteAlpha.600">Control how much detail is shown</Text>
+                          </Box>
+                          <Text
+                            fontSize="10px"
+                            fontWeight="bold"
+                            color="var(--accent)"
+                            bg="rgba(var(--accent-rgb), 0.10)"
+                            border="1px solid"
+                            borderColor="rgba(var(--accent-rgb), 0.18)"
+                            rounded="full"
+                            px={2}
+                            py={0.5}
+                          >
+                            {activeDensityLabel}
+                          </Text>
+                        </HStack>
+                        <Box px={1} pt={1} pb={0.5}>
+                          <Slider
+                            aria-label="Density"
+                            min={-2}
+                            max={2}
+                            step={1}
+                            value={draftDensityLevel}
+                            onChange={setDraftDensityLevel}
+                            onChangeEnd={(value) => {
+                              setDraftDensityLevel(value)
+                              onDensityLevelChange(value)
+                            }}
+                            focusThumbOnChange={false}
+                          >
+                            <SliderTrack h="4px" bg="whiteAlpha.200">
+                              <SliderFilledTrack bg="var(--accent)" />
+                            </SliderTrack>
+                            {DENSITY_STOPS.map((stop) => (
+                              <Box
+                                key={stop.value}
+                                position="absolute"
+                                left={`${((stop.value + 2) / 4) * 100}%`}
+                                top="50%"
+                                transform="translate(-50%, -50%)"
+                                w={stop.value === draftDensityLevel ? '6px' : '2px'}
+                                h={stop.value === draftDensityLevel ? '6px' : '10px'}
+                                rounded="full"
+                                bg={draftDensityLevel >= stop.value ? 'var(--accent)' : 'whiteAlpha.500'}
+                                pointerEvents="none"
+                              />
+                            ))}
+                            <SliderThumb boxSize="14px" bg="white" border="2px solid" borderColor="var(--accent)" />
+                          </Slider>
+                          <HStack justify="space-between" mt={2} px={0.5}>
+                            {DENSITY_STOPS.map((stop) => (
+                              <Text
+                                key={stop.value}
+                                fontSize="9px"
+                                fontWeight={stop.value === draftDensityLevel ? 'bold' : 'medium'}
+                                color={stop.value === draftDensityLevel ? 'whiteAlpha.900' : 'whiteAlpha.500'}
+                              >
+                                {stop.label}
+                              </Text>
+                            ))}
+                          </HStack>
+                        </Box>
+                      </Box>
+                    )}
+                  </VStack>
+                </PopoverBody>
+              </PopoverContent>
+            </Portal>
+          </Popover>
         </>
       )}
       <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
@@ -322,55 +461,6 @@ function ViewFloatingMenu({
             </Portal>
           </Popover>
           <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
-        </>
-      )}
-
-      {onDensityLevelChange && (
-        <>
-          <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
-          <Tooltip label={`Density ${draftDensityLevel}`} placement="top" openDelay={200}>
-            <Box
-              w="92px"
-              h="28px"
-              px={2.5}
-              display="flex"
-              alignItems="center"
-              bg="whiteAlpha.50"
-              rounded="md"
-            >
-              <Slider
-                aria-label="Density"
-                min={-2}
-                max={2}
-                step={1}
-                value={draftDensityLevel}
-                onChange={setDraftDensityLevel}
-                onChangeEnd={(value) => {
-                  setDraftDensityLevel(value)
-                  onDensityLevelChange(value)
-                }}
-                focusThumbOnChange={false}
-              >
-                <SliderTrack h="3px" bg="whiteAlpha.200">
-                  <SliderFilledTrack bg="var(--accent)" />
-                </SliderTrack>
-                {[-2, -1, 0, 1, 2].map((value) => (
-                  <Box
-                    key={value}
-                    position="absolute"
-                    left={`${((value + 2) / 4) * 100}%`}
-                    top="50%"
-                    transform="translate(-50%, -50%)"
-                    w="1px"
-                    h="9px"
-                    bg={draftDensityLevel >= value ? 'var(--accent)' : 'whiteAlpha.400'}
-                    pointerEvents="none"
-                  />
-                ))}
-                <SliderThumb boxSize="12px" bg="white" border="2px solid" borderColor="var(--accent)" />
-              </Slider>
-            </Box>
-          </Tooltip>
         </>
       )}
 

@@ -257,12 +257,12 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
             {noDiagrams ? 'No diagrams to explore yet' : 'Your diagrams are empty'}
           </Text>
           <Text color="gray.500" fontSize="sm" maxW="400px">
-            {noDiagrams 
-              ? 'Start by creating your first diagram in the workspace.' 
+            {noDiagrams
+              ? 'Start by creating your first diagram in the workspace.'
               : 'Add elements to your diagrams in the editor to see them rendered on this infinite canvas.'}
           </Text>
         </VStack>
-        
+
         {!sharedToken && (
           <Button size="sm" colorScheme="blue" onClick={() => navigate('/views')} borderRadius="full" px={6}>
             {noDiagrams ? 'Create First Diagram' : 'Go to Editor'}
@@ -349,7 +349,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
                 onEnabledChange={setCrossBranchEnabled}
                 onBudgetChange={setCrossBranchConnectorBudget}
                 onPriorityChange={setCrossBranchConnectorPriority}
-                label="Branches"
+                label="Filters"
               />
 
               {(allTags.length > 0 || layers.length > 0) && (
