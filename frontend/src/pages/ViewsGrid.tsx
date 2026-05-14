@@ -832,7 +832,7 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
           onStartRename: () => startEdit(n.id, n.name),
           onDetails: () => handleDetailsOpen(n.id),
           onDelete: () => { setDeleteTargetId(n.id); onDeleteOpen() },
-          onShare: onShare ? () => onShare(n.id) : () => {},
+          onShare: onShare ? () => onShare(n.id) : () => { },
           onEditNameChange: setEditName,
           onEditCommit: commitEdit,
           onEditCancel: cancelEdit,
@@ -1088,7 +1088,7 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
               <Text color="gray.600" fontSize="sm" mb={1}>No views yet.</Text>
               {canEdit && (
                 <>
-                  <Text color="gray.700" fontSize="xs" mb={4}>Click "New Diagram" to get started.</Text>
+                  <Text color="gray.700" fontSize="xs" mb={4}>Click "+ New" to get started.</Text>
 
                 </>
               )}
