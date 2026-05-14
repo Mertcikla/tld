@@ -13,6 +13,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/diff"
 	"github.com/mertcikla/tld/v2/cmd/export"
 	"github.com/mertcikla/tld/v2/cmd/initialize"
+	inspectcmd "github.com/mertcikla/tld/v2/cmd/inspect"
 	"github.com/mertcikla/tld/v2/cmd/login"
 	"github.com/mertcikla/tld/v2/cmd/mcp"
 	"github.com/mertcikla/tld/v2/cmd/plan"
@@ -141,6 +142,9 @@ and apply them atomically with 'tld apply'.`,
 	diffCmd := diff.NewDiffCmd(&wdir)
 	diffCmd.GroupID = secondaryGroup.ID
 
+	inspectCmd := inspectcmd.NewInspectCmd(&wdir, &outputFormat, &compactJSON)
+	inspectCmd.GroupID = secondaryGroup.ID
+
 	versionCmd := version.NewVersionCmd()
 	versionCmd.GroupID = secondaryGroup.ID
 
@@ -179,6 +183,7 @@ and apply them atomically with 'tld apply'.`,
 		statusCmd,
 		viewsCmd,
 		diffCmd,
+		inspectCmd,
 		addCmd,
 		connectCmd,
 		removeCmd,

@@ -72,6 +72,59 @@ func TestUpsertElement_CreatesAndMergesPlacements(t *testing.T) {
 	}
 }
 
+func TestUpsertElement_WritesExplicitFalseHasView(t *testing.T) {
+	dir := t.TempDir()
+	if err := workspace.UpsertElement(dir, "api", &workspace.Element{
+		Name:       "API",
+		Kind:       "service",
+		HasView:    false,
+		Placements: []workspace.ViewPlacement{{ParentRef: "root"}},
+	}); err != nil {
+		t.Fatalf("UpsertElement: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "has_view: false") {
+		t.Fatalf("elements.yaml should make missing child view explicit:\n%s", data)
+	}
+}
+
+func TestUpsertElement_MarksExistingParentAsHavingView(t *testing.T) {
+	dir := t.TempDir()
+	if err := workspace.UpsertElement(dir, "platform", &workspace.Element{
+		Name:       "Platform",
+		Kind:       "workspace",
+		Placements: []workspace.ViewPlacement{{ParentRef: "root"}},
+	}); err != nil {
+		t.Fatalf("parent UpsertElement: %v", err)
+	}
+	if err := workspace.UpsertElement(dir, "api", &workspace.Element{
+		Name:       "API",
+		Kind:       "service",
+		Placements: []workspace.ViewPlacement{{ParentRef: "platform"}},
+	}); err != nil {
+		t.Fatalf("child UpsertElement: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]workspace.Element
+	if err := yaml.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got["platform"].HasView {
+		t.Fatalf("parent should have a view after child placement, got %+v\n%s", got["platform"], data)
+	}
+	if got["api"].HasView {
+		t.Fatalf("child should not get its own view by default, got %+v\n%s", got["api"], data)
+	}
+}
+
 func TestUpsertElement_ErrorsOnKindMismatch(t *testing.T) {
 	dir := t.TempDir()
 	if err := workspace.UpsertElement(dir, "shared", &workspace.Element{Name: "Shared", Kind: "service"}); err != nil {

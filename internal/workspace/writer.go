@@ -178,6 +178,7 @@ func upsertYAMLNodeKey(path, ref string, spec any) error {
 			return fmt.Errorf("encode %s: %w", ref, err)
 		}
 		mapping.Content[i+1] = newValue
+		markPlacementParentsWithViews(mapping, spec)
 		return writeYAMLNode(path, root)
 	}
 
@@ -189,6 +190,7 @@ func upsertYAMLNodeKey(path, ref string, spec any) error {
 		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: ref},
 		newValue,
 	)
+	markPlacementParentsWithViews(mapping, spec)
 	return writeYAMLNode(path, root)
 }
 
@@ -341,6 +343,21 @@ func mergeExistingSpec(ref string, existingNode *yaml.Node, spec any) (any, erro
 		return mergeElementFields(ref, &existing, incoming)
 	default:
 		return spec, nil
+	}
+}
+
+func markPlacementParentsWithViews(mapping *yaml.Node, spec any) {
+	element, ok := spec.(*Element)
+	if !ok || mapping == nil || mapping.Kind != yaml.MappingNode {
+		return
+	}
+	for _, placement := range element.Placements {
+		if placement.ParentRef == "" || placement.ParentRef == "root" {
+			continue
+		}
+		if parentNode := mappingValueNode(mapping, placement.ParentRef); parentNode != nil {
+			_ = setMappingScalarField(parentNode, "has_view", "true")
+		}
 	}
 }
 
