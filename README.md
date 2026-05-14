@@ -17,6 +17,10 @@ Designed for local-first development and private self-hosting, `tld` allows team
 
 ---
 
+<p align="center">
+    <img src="./assets/tld-editor-ss.png" alt="editor-ss">
+</p>
+
 ## Key Features
 
 - **Full-Featured Web UI**: A React frontend designed, polished and optimized to handle complex architectures while attempting to intelligently show and hide details.
