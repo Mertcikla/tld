@@ -29,16 +29,25 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Short: "Add a connector between two elements",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateConnectorRefs(from, to, legacyView); err != nil {
+				return err
+			}
 			ws, err := workspace.Load(*wdir)
 			if err != nil {
 				return fmt.Errorf("load workspace: %w", err)
 			}
+			if err := validateConnectorEndpointsExist(ws, from, to); err != nil {
+				return err
+			}
 			view := legacyView
+			rootFallback := false
 			if view == "" {
-				view, err = inferConnectorView(ws, from, to)
+				view, rootFallback, err = inferConnectorView(ws, from, to)
 				if err != nil {
 					return err
 				}
+			} else if err := validateConnectorViewExists(ws, view); err != nil {
+				return err
 			}
 			spec := &workspace.Connector{
 				View:         view,
@@ -61,6 +70,10 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "connect", "connect", fmt.Sprintf("%s:%s", from, to))
 			}
 			term.Successf(cmd.OutOrStdout(), "ok")
+			term.Infof(cmd.OutOrStdout(), "connector view: %s", view)
+			if rootFallback {
+				term.Warn(cmd.OutOrStdout(), "No shared parent found; connector was placed in root. Use --view to choose a specific view.")
+			}
 			return nil
 		},
 	}
@@ -73,9 +86,8 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&direction, "direction", "forward", "forward|backward|both|none")
 	c.Flags().StringVar(&style, "style", "bezier", "bezier|straight|step|smoothstep")
 	c.Flags().StringVar(&url, "url", "", "external URL")
-	c.Flags().StringVar(&legacyView, "view", "", "deprecated")
+	c.Flags().StringVar(&legacyView, "view", "", "explicit view ref for the connector")
 	_ = c.Flags().MarkHidden("style")
-	_ = c.Flags().MarkHidden("view")
 	_ = c.MarkFlagRequired("from")
 	_ = c.MarkFlagRequired("to")
 
@@ -108,17 +120,58 @@ func elementParentRefs(element *workspace.Element) []string {
 	return refs
 }
 
-func inferConnectorView(ws *workspace.Workspace, from, to string) (string, error) {
+func validateConnectorRefs(from, to, view string) error {
+	if err := workspace.ValidateElementRef(from); err != nil {
+		return fmt.Errorf("invalid --from: %w", err)
+	}
+	if err := workspace.ValidateElementRef(to); err != nil {
+		return fmt.Errorf("invalid --to: %w", err)
+	}
+	if view != "" {
+		if err := workspace.ValidateParentRef(view); err != nil {
+			return fmt.Errorf("invalid --view: %w", err)
+		}
+	}
+	return nil
+}
+
+func validateConnectorViewExists(ws *workspace.Workspace, view string) error {
+	if view == workspace.RootRef {
+		return nil
+	}
 	if ws == nil {
-		return "", fmt.Errorf("workspace is required")
+		return fmt.Errorf("workspace is required")
+	}
+	if _, ok := ws.Elements[view]; !ok {
+		return fmt.Errorf("view ref %q not found", view)
+	}
+	return nil
+}
+
+func validateConnectorEndpointsExist(ws *workspace.Workspace, from, to string) error {
+	if ws == nil {
+		return fmt.Errorf("workspace is required")
+	}
+	if _, ok := ws.Elements[from]; !ok {
+		return fmt.Errorf("source element %q not found", from)
+	}
+	if _, ok := ws.Elements[to]; !ok {
+		return fmt.Errorf("target element %q not found", to)
+	}
+	return nil
+}
+
+func inferConnectorView(ws *workspace.Workspace, from, to string) (string, bool, error) {
+	if ws == nil {
+		return "", false, fmt.Errorf("workspace is required")
 	}
 	fromElement, ok := ws.Elements[from]
 	if !ok {
-		return "", fmt.Errorf("source element %q not found", from)
+		return "", false, fmt.Errorf("source element %q not found", from)
 	}
 	toElement, ok := ws.Elements[to]
 	if !ok {
-		return "", fmt.Errorf("target element %q not found", to)
+		return "", false, fmt.Errorf("target element %q not found", to)
 	}
 
 	fromParents := elementParentRefs(fromElement)
@@ -126,9 +179,9 @@ func inferConnectorView(ws *workspace.Workspace, from, to string) (string, error
 
 	for _, f := range fromParents {
 		if slices.Contains(toParents, f) {
-			return f, nil
+			return f, false, nil
 		}
 	}
 
-	return "root", nil
+	return workspace.RootRef, true, nil
 }

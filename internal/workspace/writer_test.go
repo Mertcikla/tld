@@ -29,6 +29,34 @@ func TestSlugify(t *testing.T) {
 	}
 }
 
+func TestValidateRef(t *testing.T) {
+	tests := []struct {
+		name      string
+		ref       string
+		allowRoot bool
+		wantErr   bool
+	}{
+		{name: "slug", ref: "api-service"},
+		{name: "dots and underscores", ref: "api.v1_service"},
+		{name: "empty", ref: "", wantErr: true},
+		{name: "uppercase", ref: "API", wantErr: true},
+		{name: "colon", ref: "api:db", wantErr: true},
+		{name: "root resource", ref: "root", wantErr: true},
+		{name: "root parent", ref: "root", allowRoot: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := workspace.ValidateRef(tt.ref, tt.allowRoot)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestUpsertElement_CreatesAndMergesPlacements(t *testing.T) {
 	dir := t.TempDir()
 	if err := workspace.UpsertElement(dir, "api", &workspace.Element{

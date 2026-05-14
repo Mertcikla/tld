@@ -19,14 +19,86 @@ type metadataSection struct {
 	persist bool
 }
 
+var elementScalarFields = map[string]bool{
+	"name":          true,
+	"kind":          true,
+	"owner":         true,
+	"description":   true,
+	"technology":    true,
+	"url":           true,
+	"logo_url":      true,
+	"repo":          true,
+	"branch":        true,
+	"language":      true,
+	"file_path":     true,
+	"symbol":        true,
+	"has_view":      true,
+	"view_label":    true,
+	"density_level": true,
+}
+
+var connectorScalarFields = map[string]bool{
+	"view":             true,
+	"source":           true,
+	"target":           true,
+	"label":            true,
+	"description":      true,
+	"relationship":     true,
+	"direction":        true,
+	"style":            true,
+	"url":              true,
+	"source_handle":    true,
+	"target_handle":    true,
+	"visibility_delta": true,
+}
+
+func ElementFieldNames() []string {
+	return append([]string{"ref"}, sortedBoolMapKeys(elementScalarFields)...)
+}
+
+func ConnectorFieldNames() []string {
+	return sortedBoolMapKeys(connectorScalarFields)
+}
+
+func sortedBoolMapKeys(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func validateConnectorSpecRefs(spec *Connector) error {
+	if spec == nil {
+		return fmt.Errorf("connector is required")
+	}
+	if err := ValidateParentRef(spec.View); err != nil {
+		return fmt.Errorf("invalid connector view: %w", err)
+	}
+	if err := ValidateElementRef(spec.Source); err != nil {
+		return fmt.Errorf("invalid connector source: %w", err)
+	}
+	if err := ValidateElementRef(spec.Target); err != nil {
+		return fmt.Errorf("invalid connector target: %w", err)
+	}
+	return nil
+}
+
 // WriteElement adds an element to elements.yaml. Errors if ref already exists.
 func WriteElement(dir, ref string, spec *Element) error {
+	if err := ValidateElementRef(ref); err != nil {
+		return err
+	}
 	path := filepath.Join(dir, "elements.yaml")
 	return updateYAMLMap(path, ref, spec)
 }
 
 // UpdateElement overwrites an element in elements.yaml.
 func UpdateElement(dir, ref string, spec *Element) error {
+	if err := ValidateElementRef(ref); err != nil {
+		return err
+	}
 	path := filepath.Join(dir, "elements.yaml")
 	existing := make(map[string]*Element)
 	if data, err := os.ReadFile(path); err == nil {
@@ -45,11 +117,24 @@ func UpdateElement(dir, ref string, spec *Element) error {
 
 // UpsertElement adds an element to elements.yaml or updates placements on an existing one.
 func UpsertElement(dir, ref string, spec *Element) error {
+	if err := ValidateElementRef(ref); err != nil {
+		return err
+	}
+	if spec != nil {
+		for _, placement := range spec.Placements {
+			if err := ValidateParentRef(placement.ParentRef); err != nil {
+				return err
+			}
+		}
+	}
 	return upsertYAMLNodeKey(filepath.Join(dir, "elements.yaml"), ref, spec)
 }
 
 // AppendConnector adds a connector to connectors.yaml.
 func AppendConnector(dir string, spec *Connector) error {
+	if err := validateConnectorSpecRefs(spec); err != nil {
+		return err
+	}
 	ws, err := Load(dir)
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -65,6 +150,11 @@ func AppendConnector(dir string, spec *Connector) error {
 func AppendConnectors(dir string, specs []*Connector) error {
 	if len(specs) == 0 {
 		return nil
+	}
+	for _, spec := range specs {
+		if err := validateConnectorSpecRefs(spec); err != nil {
+			return err
+		}
 	}
 	ws, err := Load(dir)
 	if err != nil {
@@ -572,6 +662,9 @@ func RenameElement(dir, oldRef, newRef string) error {
 	if oldRef == newRef {
 		return nil
 	}
+	if err := ValidateElementRef(newRef); err != nil {
+		return err
+	}
 
 	path := filepath.Join(dir, "elements.yaml")
 	root, mapping, err := loadYAMLMappingNode(path)
@@ -579,16 +672,24 @@ func RenameElement(dir, oldRef, newRef string) error {
 		return err
 	}
 
+	found := false
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
 		keyNode := mapping.Content[i]
 		valNode := mapping.Content[i+1]
 		if keyNode.Value == "_meta_elements" || keyNode.Value == "_meta_views" {
 			continue
 		}
+		if keyNode.Value == newRef {
+			return fmt.Errorf("element %q already exists", newRef)
+		}
 		if keyNode.Value == oldRef {
+			found = true
 			keyNode.Value = newRef
 		}
 		updatePlacementParentRefs(valNode, oldRef, newRef)
+	}
+	if !found {
+		return fmt.Errorf("element %q not found", oldRef)
 	}
 
 	for i := 0; i+1 < len(mapping.Content); i += 2 {
@@ -616,6 +717,9 @@ func RenameElement(dir, oldRef, newRef string) error {
 func UpdateElementField(dir, ref, field, value string) error {
 	if field == "ref" {
 		return RenameElement(dir, ref, value)
+	}
+	if !elementScalarFields[field] {
+		return fmt.Errorf("unknown element field %q; known fields: %s", field, strings.Join(ElementFieldNames(), ", "))
 	}
 
 	path := filepath.Join(dir, "elements.yaml")
@@ -740,14 +844,36 @@ func UpdateConnectorField(dir, ref, field, value string) error {
 	if !ok {
 		return fmt.Errorf("connector %q not found", ref)
 	}
+	if !connectorScalarFields[field] {
+		return fmt.Errorf("unknown connector field %q; known fields: %s", field, strings.Join(ConnectorFieldNames(), ", "))
+	}
 
-	changed := true
 	switch field {
 	case "view":
+		if err := ValidateParentRef(value); err != nil {
+			return err
+		}
+		if value != RootRef {
+			if _, ok := ws.Elements[value]; !ok {
+				return fmt.Errorf("view ref %q not found", value)
+			}
+		}
 		c.View = value
 	case "source":
+		if err := ValidateElementRef(value); err != nil {
+			return err
+		}
+		if _, ok := ws.Elements[value]; !ok {
+			return fmt.Errorf("source element %q not found", value)
+		}
 		c.Source = value
 	case "target":
+		if err := ValidateElementRef(value); err != nil {
+			return err
+		}
+		if _, ok := ws.Elements[value]; !ok {
+			return fmt.Errorf("target element %q not found", value)
+		}
 		c.Target = value
 	case "label":
 		c.Label = value
@@ -765,25 +891,23 @@ func UpdateConnectorField(dir, ref, field, value string) error {
 		c.SourceHandle = value
 	case "target_handle":
 		c.TargetHandle = value
-	default:
-		changed = false
 	}
 
-	if changed {
-		newKey := ConnectorKey(c)
-		if newKey != ref {
-			if ws.Meta != nil && ws.Meta.Connectors != nil {
-				if metadata, ok := ws.Meta.Connectors[ref]; ok {
-					ws.Meta.Connectors[newKey] = metadata
-					delete(ws.Meta.Connectors, ref)
-				}
-			}
-			delete(ws.Connectors, ref)
-			ws.Connectors[newKey] = c
+	newKey := ConnectorKey(c)
+	if newKey != ref {
+		if _, exists := ws.Connectors[newKey]; exists {
+			return fmt.Errorf("connector %q already exists", newKey)
 		}
-		return Save(ws)
+		if ws.Meta != nil && ws.Meta.Connectors != nil {
+			if metadata, ok := ws.Meta.Connectors[ref]; ok {
+				ws.Meta.Connectors[newKey] = metadata
+				delete(ws.Meta.Connectors, ref)
+			}
+		}
+		delete(ws.Connectors, ref)
+		ws.Connectors[newKey] = c
 	}
-	return nil
+	return Save(ws)
 }
 
 func updateScalarField(mapping *yaml.Node, fieldName, oldVal, newVal string) bool {

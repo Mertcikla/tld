@@ -103,6 +103,42 @@ _meta_connectors:
 	}
 }
 
+func TestRenameElement_MissingSourceFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(`platform:
+  name: Platform
+  kind: workspace
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := workspace.RenameElement(dir, "api", "api-core")
+	if err == nil {
+		t.Fatal("expected missing source error")
+	}
+	if !strings.Contains(err.Error(), `element "api" not found`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRenameElement_InvalidTargetFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(`platform:
+  name: Platform
+  kind: workspace
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := workspace.RenameElement(dir, "platform", "Bad Ref")
+	if err == nil {
+		t.Fatal("expected invalid target error")
+	}
+	if !strings.Contains(err.Error(), "invalid ref") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestRenameConnector(t *testing.T) {
 	dir := t.TempDir()
 	content := `system:api-handler:db:reads:

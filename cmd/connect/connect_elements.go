@@ -27,16 +27,24 @@ func NewConnectElementsCmd(wdir *string) *cobra.Command {
 		Short: "Add a connector between two elements; owner diagram is inferred from their shared parent",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateConnectorRefs(from, to, legacyView); err != nil {
+				return err
+			}
 			ws, err := workspace.Load(*wdir)
 			if err != nil {
 				return fmt.Errorf("load workspace: %w", err)
 			}
+			if err := validateConnectorEndpointsExist(ws, from, to); err != nil {
+				return err
+			}
 			view := legacyView
 			if view == "" {
-				view, err = inferConnectorView(ws, from, to)
+				view, _, err = inferConnectorView(ws, from, to)
 				if err != nil {
 					return err
 				}
+			} else if err := validateConnectorViewExists(ws, view); err != nil {
+				return err
 			}
 			spec := &workspace.Connector{
 				View:         view,

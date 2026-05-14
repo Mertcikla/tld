@@ -186,12 +186,12 @@ func ParentRefs(wdir *string) (out []string, dir cobra.ShellCompDirective) {
 
 // ElementFields is the static set of fields accepted by `update element`.
 func ElementFields() []string {
-	return []string{"name", "kind", "description", "technology", "url", "owner", "logo_url", "repo", "branch", "language", "file_path", "view_label"}
+	return workspace.ElementFieldNames()
 }
 
 // ConnectorFields is the static set of fields accepted by `update connector`.
 func ConnectorFields() []string {
-	return []string{"label", "description", "relationship", "direction", "url", "source_handle", "target_handle"}
+	return workspace.ConnectorFieldNames()
 }
 
 // ElementKinds are the built-in element kinds offered for --kind.

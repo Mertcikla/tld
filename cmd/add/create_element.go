@@ -34,9 +34,24 @@ func NewCreateElementCmd(wdir *string) *cobra.Command {
 			if r == "" {
 				r = workspace.Slugify(name)
 			}
+			if err := workspace.ValidateElementRef(r); err != nil {
+				return err
+			}
 			placementParent := parent
 			if placementParent == "" {
 				placementParent = "root"
+			}
+			if err := workspace.ValidateParentRef(placementParent); err != nil {
+				return err
+			}
+			if placementParent != workspace.RootRef {
+				ws, err := workspace.Load(*wdir)
+				if err != nil {
+					return fmt.Errorf("load workspace: %w", err)
+				}
+				if _, ok := ws.Elements[placementParent]; !ok {
+					return fmt.Errorf("parent ref %q not found", placementParent)
+				}
 			}
 			if diagramLabel == "" {
 				diagramLabel = legacyViewLabel

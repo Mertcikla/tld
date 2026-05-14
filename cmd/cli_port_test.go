@@ -70,6 +70,45 @@ func TestAddCmd_RefOverridesGeneratedSlug(t *testing.T) {
 	}
 }
 
+func TestAddCmd_InvalidRefFails(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+
+	_, _, err := cmd.RunCmd(t, dir, "add", "API", "--ref", "Bad:Ref")
+	if err == nil {
+		t.Fatal("expected invalid ref error")
+	}
+	if !strings.Contains(err.Error(), "invalid ref") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddCmd_EmptySlugFails(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+
+	_, _, err := cmd.RunCmd(t, dir, "add", "!!!")
+	if err == nil {
+		t.Fatal("expected empty slug error")
+	}
+	if !strings.Contains(err.Error(), "ref is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAddCmd_MissingParentFails(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+
+	_, _, err := cmd.RunCmd(t, dir, "add", "API", "--ref", "api", "--parent", "missing")
+	if err == nil {
+		t.Fatal("expected missing parent error")
+	}
+	if !strings.Contains(err.Error(), `parent ref "missing" not found`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestConnectCmd_HelpHidesStyleFlag(t *testing.T) {
 	stdout, _, err := cmd.RunCmd(t, ".", "connect", "--help")
 	if err != nil {
@@ -81,8 +120,8 @@ func TestConnectCmd_HelpHidesStyleFlag(t *testing.T) {
 	if strings.Contains(stdout, "--style") {
 		t.Fatalf("connect help should hide --style:\n%s", stdout)
 	}
-	if strings.Contains(stdout, "--view") {
-		t.Fatalf("connect help should hide legacy --view:\n%s", stdout)
+	if !strings.Contains(stdout, "--view") {
+		t.Fatalf("connect help should include --view:\n%s", stdout)
 	}
 }
 

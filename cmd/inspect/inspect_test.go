@@ -3,6 +3,8 @@ package inspect_test
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,7 +51,21 @@ func TestInspectElementShowsDerivedChildrenAndRelatedConnectors(t *testing.T) {
 func TestInspectAmbiguousRefRequiresType(t *testing.T) {
 	dir := t.TempDir()
 	setupInspectWorkspace(t, dir)
-	cmd.MustRunCmd(t, dir, "add", "Ambiguous", "--ref", "platform:api:db:reads", "--kind", "service")
+	path := filepath.Join(dir, "elements.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, []byte(`
+platform:api:db:reads:
+  name: Ambiguous
+  kind: service
+  placements:
+    - parent: root
+`)...)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	stdout, _, err := cmd.RunCmd(t, dir, "inspect", "platform:api:db:reads")
 	if err != nil {

@@ -56,9 +56,10 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 
 func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 	var (
-		view string
-		from string
-		to   string
+		view  string
+		from  string
+		to    string
+		label string
 	)
 
 	c := &cobra.Command{
@@ -66,7 +67,7 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Short: "Remove matching connector(s) from connectors.yaml",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			n, err := workspace.RemoveConnector(*wdir, view, from, to)
+			n, err := workspace.RemoveConnectorWithLabel(*wdir, view, from, to, label)
 			if err != nil {
 				if cmdutil.WantsJSON(*format) {
 					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
@@ -88,6 +89,7 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&view, "view", "", "view ref (required)")
 	c.Flags().StringVar(&from, "from", "", "source element ref (required)")
 	c.Flags().StringVar(&to, "to", "", "target element ref (required)")
+	c.Flags().StringVar(&label, "label", "", "connector label")
 	_ = c.MarkFlagRequired("view")
 	_ = c.MarkFlagRequired("from")
 	_ = c.MarkFlagRequired("to")

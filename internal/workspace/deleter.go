@@ -4,12 +4,27 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // RemoveElement removes an element from elements.yaml.
 func RemoveElement(dir, ref string) error {
+	if err := ValidateElementRef(ref); err != nil {
+		return err
+	}
+	ws, err := Load(dir)
+	if err != nil {
+		return err
+	}
+	if _, ok := ws.Elements[ref]; !ok {
+		return fmt.Errorf("element %q not found", ref)
+	}
+	if blockers := elementRemovalBlockers(ws, ref); len(blockers) > 0 {
+		return fmt.Errorf("element %q is still referenced:\n  - %s\nRemove or update these references first", ref, strings.Join(blockers, "\n  - "))
+	}
 	removed, err := filterYAMLMap(filepath.Join(dir, "elements.yaml"), func(k string, _ any) bool { return k != ref })
 	if err != nil {
 		return err
@@ -23,12 +38,55 @@ func RemoveElement(dir, ref string) error {
 	return DeleteCurrentViewMetadataEntries(dir, ref)
 }
 
+func elementRemovalBlockers(ws *Workspace, ref string) []string {
+	var blockers []string
+	for elementRef, element := range ws.Elements {
+		if element == nil {
+			continue
+		}
+		for index, placement := range element.Placements {
+			if placement.ParentRef == ref {
+				blockers = append(blockers, fmt.Sprintf("elements.yaml[%s].placements[%d].parent", elementRef, index))
+			}
+		}
+	}
+	for key, connector := range ws.Connectors {
+		if connector == nil {
+			continue
+		}
+		if connector.View == ref {
+			blockers = append(blockers, fmt.Sprintf("connectors.yaml[%s].view", key))
+		}
+		if connector.Source == ref {
+			blockers = append(blockers, fmt.Sprintf("connectors.yaml[%s].source", key))
+		}
+		if connector.Target == ref {
+			blockers = append(blockers, fmt.Sprintf("connectors.yaml[%s].target", key))
+		}
+	}
+	sort.Strings(blockers)
+	return blockers
+}
+
 // RemoveConnector removes connectors from connectors.yaml where view == view AND source == source AND target == target.
 func RemoveConnector(dir, view, source, target string) (int, error) {
+	return RemoveConnectorWithLabel(dir, view, source, target, "")
+}
+
+// RemoveConnectorWithLabel removes matching connectors. Without a label, an
+// ambiguous multi-match is refused so users do not delete more than intended.
+func RemoveConnectorWithLabel(dir, view, source, target, label string) (int, error) {
+	if err := ValidateParentRef(view); err != nil {
+		return 0, fmt.Errorf("invalid view ref: %w", err)
+	}
+	if err := ValidateElementRef(source); err != nil {
+		return 0, fmt.Errorf("invalid source ref: %w", err)
+	}
+	if err := ValidateElementRef(target); err != nil {
+		return 0, fmt.Errorf("invalid target ref: %w", err)
+	}
 	keep := func(m map[string]any) bool {
-		return strVal(m, "view") != view ||
-			strVal(m, "source") != source ||
-			strVal(m, "target") != target
+		return !connectorMatches(strVal(m, "view"), strVal(m, "source"), strVal(m, "target"), strVal(m, "label"), view, source, target, label)
 	}
 	path := filepath.Join(dir, "connectors.yaml")
 	data, err := os.ReadFile(path)
@@ -50,13 +108,20 @@ func RemoveConnector(dir, view, source, target string) (int, error) {
 		if err := root.Content[0].Decode(&connectors); err != nil {
 			return 0, fmt.Errorf("parse %s: %w", path, err)
 		}
-		kept := make([]*Connector, 0, len(connectors))
 		for _, connector := range connectors {
 			if connector == nil {
 				continue
 			}
-			if connector.View == view && connector.Source == source && connector.Target == target {
+			if connectorMatches(connector.View, connector.Source, connector.Target, connector.Label, view, source, target, label) {
 				removedKeys = append(removedKeys, ConnectorKey(connector))
+			}
+		}
+		if err := refuseAmbiguousConnectorRemoval(removedKeys, label); err != nil {
+			return 0, err
+		}
+		kept := make([]*Connector, 0, len(connectors))
+		for _, connector := range connectors {
+			if connector == nil || connectorMatches(connector.View, connector.Source, connector.Target, connector.Label, view, source, target, label) {
 				continue
 			}
 			kept = append(kept, connector)
@@ -78,8 +143,13 @@ func RemoveConnector(dir, view, source, target string) (int, error) {
 			}
 			if mapped, ok := value.(map[string]any); ok && !keep(mapped) {
 				removedKeys = append(removedKeys, key)
-				delete(items, key)
 			}
+		}
+		if err := refuseAmbiguousConnectorRemoval(removedKeys, label); err != nil {
+			return 0, err
+		}
+		for _, key := range removedKeys {
+			delete(items, key)
 		}
 		if len(removedKeys) == 0 {
 			return 0, nil
@@ -98,6 +168,21 @@ func RemoveConnector(dir, view, source, target string) (int, error) {
 		return 0, err
 	}
 	return len(removedKeys), nil
+}
+
+func connectorMatches(view, source, target, connectorLabel, wantView, wantSource, wantTarget, wantLabel string) bool {
+	if view != wantView || source != wantSource || target != wantTarget {
+		return false
+	}
+	return wantLabel == "" || connectorLabel == wantLabel
+}
+
+func refuseAmbiguousConnectorRemoval(keys []string, label string) error {
+	if label != "" || len(keys) <= 1 {
+		return nil
+	}
+	sort.Strings(keys)
+	return fmt.Errorf("multiple connectors match; specify --label. Matches:\n  - %s", strings.Join(keys, "\n  - "))
 }
 
 // filterYAMLMap reads path as map[string]any, keeps only items where keep(key, val)==true,
