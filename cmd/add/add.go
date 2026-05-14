@@ -58,7 +58,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				Description: description,
 				Technology:  technology,
 				URL:         url,
-				HasView:     true,
+				HasView:     false,
 				ViewLabel:   diagramLabel,
 				Placements: []workspace.ViewPlacement{{
 					ParentRef: placementParent,

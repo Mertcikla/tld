@@ -56,8 +56,6 @@ set -e
 2. Run only that new block
 3. Do a **batch checkpoint** before continuing to the next batch
 
-The script is the complete, replayable record of every diagram decision. Never run a tld command outside it.
-
 ---
 
 ## Batch checkpoint
@@ -155,26 +153,26 @@ Create `diagram.sh`, then append and run the root elements as the first batch. R
 
 ```bash
 # === Root elements ===
-tld add "Domain & Business Logic" --ref domain --diagram-label "System"
-tld add "Data & Persistence" --ref data --diagram-label "System"
-tld add "Interfaces & Integrations" --ref interfaces --diagram-label "System"
-tld add "Platform & Infrastructure" --ref deployment --diagram-label "System"
+tld add "Domain & Business Logic" --ref domain --diagram-label "System" && \
+    tld add "Data & Persistence" --ref data --diagram-label "System" && \
+    tld add "Interfaces & Integrations" --ref interfaces --diagram-label "System" && \
+    tld add "Platform & Infrastructure" --ref deployment --diagram-label "System"
 ```
 
 Append and run the next level as a second batch:
 
 ```bash
 # === Level 2: major subsystems ===
-tld add "Backend" --ref backend --parent domain
-tld add "Frontend" --ref frontend --parent interfaces
-tld add "Storage" --ref storage --parent data
+tld add "Backend" --ref backend --parent domain && \
+    tld add "Frontend" --ref frontend --parent interfaces && \
+    tld add "Storage" --ref storage --parent data
 ```
 
 **Batch checkpoint:** Are there connectors between root elements suggested by your inventory? Add them now:
 
 ```bash
-tld connect --from domain --to data --label "reads/writes"
-tld connect --from interfaces --to domain --label "calls"
+tld connect --from domain --to data --label "reads/writes" && \
+    tld connect --from interfaces --to domain --label "calls"
 ```
 
 ---
@@ -185,9 +183,9 @@ Work one view at a time. For each view (parent element), append its children as 
 
 ```bash
 # === Backend children ===
-tld add "REST API" --parent backend --technology "Go" --ref api
-tld add "Stripe API" --parent backend --technology "Stripe" --ref stripe
-tld add "Job Worker" --parent backend --technology "Go" --ref worker
+tld add "REST API" --parent backend --technology "Go" --ref api && \
+    tld add "Stripe API" --parent backend --technology "Stripe" --ref stripe && \
+    tld add "Job Worker" --parent backend --technology "Go" --ref worker
 ```
 
 **Batch checkpoint after elements:** Do any of these elements also belong in other views? Add those placements now.
@@ -198,9 +196,9 @@ Append and run connectors for the same view immediately after its elements. View
 
 ```bash
 # === Backend connectors ===
-tld connect --from api --to stripe --label "billing"
-tld connect --from api --to db --label "reads/writes"
-tld connect --from worker --to queue --label "consumes jobs"
+tld connect --from api --to stripe --label "billing" && \
+    tld connect --from api --to db --label "reads/writes" && \
+    tld connect --from worker --to queue --label "consumes jobs"
 ```
 
 Labels should describe *what* the interaction does "validates JWT", "publishes events" not just "calls".
@@ -270,9 +268,9 @@ No separate link command needed drilling into `api-internals` from the backend v
 Go back to the code don't guess. Apply the 10-element rule here too; cluster if needed.
 
 ```bash
-tld add "Auth Middleware" --parent api-internals --technology "Go" --ref auth-mw
-tld add "User Handler" --parent api-internals --technology "Go" --ref user-handler
-tld add "Database" --parent api-internals --technology "PostgreSQL" --ref db
+tld add "Auth Middleware" --parent api-internals --technology "Go" --ref auth-mw && \
+    tld add "User Handler" --parent api-internals --technology "Go" --ref user-handler && \
+    tld add "Database" --parent api-internals --technology "PostgreSQL" --ref dbb
 ```
 
 > If `db` already exists from a parent view, `tld add` with the same ref but a new `--parent` adds a new *placement* rather than a duplicate. Reused elements don't inherit connectors add them explicitly for this context.
@@ -280,8 +278,8 @@ tld add "Database" --parent api-internals --technology "PostgreSQL" --ref db
 ### 6c. Connect internal elements
 
 ```bash
-tld connect --from auth-mw --to user-handler --label "forwards request"
-tld connect --from user-handler --to db --label "SQL"
+tld connect --from auth-mw --to user-handler --label "forwards request" && \
+    tld connect --from user-handler --to db --label "SQL"
 ```
 
 Before moving to the next subsystem, check every element: at least one incoming connector, at least one outgoing connector, labels specific enough to tell a reader what the interaction does. Missing connectors = go back to the code.
