@@ -22,6 +22,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/serve"
 	"github.com/mertcikla/tld/v2/cmd/status"
 	"github.com/mertcikla/tld/v2/cmd/stop"
+	techcmd "github.com/mertcikla/tld/v2/cmd/tech"
 	"github.com/mertcikla/tld/v2/cmd/update"
 	"github.com/mertcikla/tld/v2/cmd/validate"
 	"github.com/mertcikla/tld/v2/cmd/version"
@@ -152,6 +153,9 @@ and apply them atomically with 'tld apply'.`,
 	configCmd := configcmd.NewConfigCmd()
 	configCmd.GroupID = secondaryGroup.ID
 
+	techCmd := techcmd.NewTechCmd()
+	techCmd.GroupID = secondaryGroup.ID
+
 	watchCmd := watchcmd.NewWatchCmd()
 	watchCmd.GroupID = secondaryGroup.ID
 
@@ -183,6 +187,7 @@ and apply them atomically with 'tld apply'.`,
 		analyzeCmd,
 		checkCmd,
 		configCmd,
+		techCmd,
 		watchCmd,
 		serveCmd,
 		mcpCmd,

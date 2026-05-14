@@ -4,6 +4,7 @@ package tech
 import (
 	_ "embed"
 	"encoding/json"
+	"sort"
 	"strings"
 	"sync"
 	"unicode"
@@ -19,9 +20,17 @@ type catalogItem struct {
 	DefaultSlug string `json:"defaultSlug"`
 }
 
+// CatalogEntry is a read-only public view of one embedded catalog item.
+type CatalogEntry struct {
+	Slug      string `json:"slug"`
+	Name      string `json:"name"`
+	NameShort string `json:"name_short,omitempty"`
+}
+
 var (
 	catalogCache     map[string]bool
 	catalogSlugCache map[string]catalogItem
+	catalogItems     []CatalogEntry
 	catalogOnce      sync.Once
 )
 
@@ -30,11 +39,13 @@ func initializeCatalog() {
 	err := json.Unmarshal(iconsJSON, &items)
 	if err != nil {
 		catalogCache = make(map[string]bool)
+		catalogItems = nil
 		return
 	}
 
 	cache := make(map[string]bool, len(items)*3)
 	slugCache := make(map[string]catalogItem, len(items)*3)
+	entries := make([]CatalogEntry, 0, len(items))
 
 	add := func(key string, item catalogItem) {
 		key = strings.ToLower(strings.TrimSpace(key))
@@ -56,6 +67,13 @@ func initializeCatalog() {
 			add(item.NameShort, item)
 		}
 		add(item.DefaultSlug, item)
+		if item.DefaultSlug != "" {
+			entries = append(entries, CatalogEntry{
+				Slug:      item.DefaultSlug,
+				Name:      item.Name,
+				NameShort: item.NameShort,
+			})
+		}
 	}
 
 	manualAliases := map[string]string{
@@ -76,6 +94,23 @@ func initializeCatalog() {
 
 	catalogCache = cache
 	catalogSlugCache = slugCache
+	sort.SliceStable(entries, func(i, j int) bool {
+		left := strings.ToLower(entries[i].Name)
+		right := strings.ToLower(entries[j].Name)
+		if left == right {
+			return entries[i].Slug < entries[j].Slug
+		}
+		return left < right
+	})
+	catalogItems = entries
+}
+
+// Catalog returns the embedded technology catalog sorted by display name.
+func Catalog() []CatalogEntry {
+	catalogOnce.Do(initializeCatalog)
+	out := make([]CatalogEntry, len(catalogItems))
+	copy(out, catalogItems)
+	return out
 }
 
 // scored holds a candidate match with its edit distance.

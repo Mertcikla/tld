@@ -1,10 +1,30 @@
 package tech
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateAcceptsContainerAsDockerAlias(t *testing.T) {
 	if missing := Validate("Container"); len(missing) != 0 {
 		t.Fatalf("Validate(%q) missing = %v, want none", "Container", missing)
+	}
+}
+
+func TestCatalogReturnsSortedCopy(t *testing.T) {
+	items := Catalog()
+	if len(items) == 0 {
+		t.Fatal("Catalog returned no items")
+	}
+	items[0].Slug = "mutated"
+	again := Catalog()
+	if again[0].Slug == "mutated" {
+		t.Fatal("Catalog returned mutable package state")
+	}
+	for i := 1; i < len(again); i++ {
+		if strings.ToLower(again[i-1].Name) > strings.ToLower(again[i].Name) {
+			t.Fatalf("Catalog is not sorted at %d: %q > %q", i, again[i-1].Name, again[i].Name)
+		}
 	}
 }
 
