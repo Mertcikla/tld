@@ -2449,8 +2449,8 @@ func Other() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(committedDiffs) != 0 {
-		t.Fatalf("expected committed baseline version to have no pending diffs, got %+v", committedDiffs)
+	if !hasDiff(committedDiffs, "element", "added") {
+		t.Fatalf("expected committed version to retain visual diffs, got %+v", committedDiffs)
 	}
 	if latest.CommitMessage != "add other" {
 		t.Fatalf("expected commit message to be stored, got %q", latest.CommitMessage)
@@ -2833,8 +2833,8 @@ func Main() {}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(diffs) != 0 {
-		t.Fatalf("expected clean baseline to store no pending diffs, got %+v", diffs)
+	if !hasDiff(diffs, "file", "deleted") || !hasDiff(diffs, "element", "deleted") {
+		t.Fatalf("expected clean deletion commit to retain deleted resource diffs, got %+v", diffs)
 	}
 }
 
@@ -3895,6 +3895,45 @@ func main() {}
 	}
 	if updatedAt != sentinelUpdatedAt {
 		t.Fatalf("warm scan rewrote unchanged cached file: updated_at=%q", updatedAt)
+	}
+}
+
+func TestWarmScanDetectsSameSizeSameMtimeContentChange(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+func main() {}
+`)
+
+	store := NewStore(db)
+	first, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("first scan: %v", err)
+	}
+	var originalMtime int64
+	if err := db.QueryRow(`SELECT mtime_unix FROM watch_files WHERE repository_id = ? AND path = 'main.go'`, first.RepositoryID).Scan(&originalMtime); err != nil {
+		t.Fatal(err)
+	}
+	mtime := time.Unix(0, originalMtime)
+	writeFile(t, repo, "main.go", `package main
+
+func alt_() {}
+`)
+	if err := os.Chtimes(filepath.Join(repo, "main.go"), mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("second scan: %v", err)
+	}
+	if second.FilesParsed != 1 || second.FilesSkipped != 0 {
+		t.Fatalf("same-size same-mtime content change should be parsed, got %+v", second)
+	}
+	if _, err := symbolsByName(context.Background(), store, first.RepositoryID, "alt_"); err != nil {
+		t.Fatal("same-size same-mtime content change was not materialized into the raw graph")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -20,8 +21,42 @@ const maxWebSocketMessageSize = 1 << 20
 
 var watchWebSocketClients atomic.Int64
 
+var watchEvents = struct {
+	sync.Mutex
+	nextID      int64
+	subscribers map[int64]chan Event
+}{
+	subscribers: map[int64]chan Event{},
+}
+
 func WatchWebSocketClientCount() int {
 	return int(watchWebSocketClients.Load())
+}
+
+func BroadcastWatchEvent(event Event) {
+	watchEvents.Lock()
+	defer watchEvents.Unlock()
+	for _, ch := range watchEvents.subscribers {
+		select {
+		case ch <- event:
+		default:
+		}
+	}
+}
+
+func SubscribeWatchEvents() (<-chan Event, func()) {
+	ch := make(chan Event, 32)
+	watchEvents.Lock()
+	watchEvents.nextID++
+	id := watchEvents.nextID
+	watchEvents.subscribers[id] = ch
+	watchEvents.Unlock()
+	return ch, func() {
+		watchEvents.Lock()
+		delete(watchEvents.subscribers, id)
+		close(ch)
+		watchEvents.Unlock()
+	}
 }
 
 func (h *Handler) watchWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -41,6 +76,8 @@ func (h *Handler) watchWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	controlEvents := make(chan Event, 4)
 	go h.watchWebSocketReads(ctx, rw, controlEvents, cancel)
+	runtimeEvents, unsubscribe := SubscribeWatchEvents()
+	defer unsubscribe()
 
 	if err := writeWebSocketJSON(rw, Event{Type: "watch.connected", At: nowString(), Data: map[string]int64{"clients": clients}}); err != nil {
 		return
@@ -111,6 +148,22 @@ func (h *Handler) watchWebSocket(w http.ResponseWriter, r *http.Request) {
 					goto next
 				}
 			}
+		case event := <-runtimeEvents:
+			for {
+				if err := writeWebSocketJSON(rw, event); err != nil {
+					return
+				}
+				if event.Type == "watch.stopped" {
+					return
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case event = <-runtimeEvents:
+				default:
+					goto next
+				}
+			}
 		case <-ticker.C:
 		}
 	next:
@@ -174,7 +227,7 @@ func (h *Handler) watchWebSocketReads(ctx context.Context, reader io.Reader, con
 			if body.RepositoryID > 0 && strings.TrimSpace(body.RemoteURL) != "" {
 				_, _ = h.Store.ReassociateRepository(ctx, body.RepositoryID, body.RemoteURL)
 			}
-		case "watch.status", "watch.rescan":
+		case "watch.status":
 		}
 	}
 }

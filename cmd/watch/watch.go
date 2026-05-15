@@ -204,6 +204,7 @@ func NewWatchCmd() *cobra.Command {
 			go func() {
 				for event := range events {
 					logWatchRuntimeEvent(cmd.Context(), logger, event)
+					watch.BroadcastWatchEvent(event)
 					if logWatchEvent(cmd, event, watchProgress) {
 						continue
 					}

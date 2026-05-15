@@ -665,20 +665,6 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 		s.logScanFile(ctx, repositoryID, result, languageName, "error", err)
 		return result, nil
 	}
-	if cached, ok := cache.cachedFile(rel); !force && ok && cached.SizeBytes == info.Size() && cached.MtimeUnix == info.ModTime().UnixNano() && cached.WorktreeHash != "" && cached.ScanStatus != "error" {
-		result.File = cached
-		decision := "skipped"
-		if !cache.hasCurrentEnrichment(rel) {
-			if err := s.backfillFactsForCachedFile(ctx, workerAnalyzer, repositoryID, repoRoot, rel, absFile, languageName, parseable, rules, repoSignals, cached, nil, &result); err != nil {
-				s.logScanFile(ctx, repositoryID, result, languageName, "error", err)
-				return result, err
-			}
-			decision = "skipped_backfilled"
-		}
-		result.Skipped = true
-		s.logScanFile(ctx, repositoryID, result, languageName, decision, nil)
-		return result, nil
-	}
 	if info.Size() > maxSourceFileBytes {
 		result.Skipped = true
 		s.logScanFile(ctx, repositoryID, result, languageName, "oversized", nil)
@@ -695,6 +681,20 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 		return result, upsertErr
 	}
 	worktreeHash := hashBytes(data)
+	if cached, ok := cache.cachedFile(rel); !force && ok && cached.WorktreeHash == worktreeHash && cached.ScanStatus != "error" {
+		result.File = cached
+		decision := "skipped"
+		if !cache.hasCurrentEnrichment(rel) {
+			if err := s.backfillFactsForCachedFile(ctx, workerAnalyzer, repositoryID, repoRoot, rel, absFile, languageName, parseable, rules, repoSignals, cached, data, &result); err != nil {
+				s.logScanFile(ctx, repositoryID, result, languageName, "error", err)
+				return result, err
+			}
+			decision = "skipped_backfilled"
+		}
+		result.Skipped = true
+		s.logScanFile(ctx, repositoryID, result, languageName, decision, nil)
+		return result, nil
+	}
 	blobHash := detectString(func() (string, error) { return tldgit.FileBlobHash(repoRoot, rel) })
 	file, skipped, err := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, blobHash, worktreeHash, info.Size(), info.ModTime().UnixNano(), "parsed", nil)
 	if err != nil {

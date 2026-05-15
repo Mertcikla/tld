@@ -400,11 +400,9 @@ func representationDiffSourcePaths(diff RepresentationDiff) []string {
 }
 
 func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, status GitStatus, representationHash string, baselineOnly bool, logger EventLogger) error {
+	var pruneDeleted bool
 	if gitStatusClean(status) {
-		baselineOnly = true
-		if err := r.Store.PruneDeletedMaterializedResources(ctx, repositoryID); err != nil {
-			return err
-		}
+		pruneDeleted = true
 	}
 	latest, found, err := r.Store.LatestWatchVersion(ctx, repositoryID)
 	if err != nil {
@@ -447,7 +445,13 @@ func (r *Runner) createVersionForHead(ctx context.Context, repositoryID int64, s
 		}
 	}
 	_, err = r.Store.CreateWatchVersion(ctx, repositoryID, status.HeadCommit, strings.TrimSpace(status.HeadMessage), parent, status.Branch, representationHash, workspaceID, diffs)
-	return err
+	if err != nil {
+		return err
+	}
+	if pruneDeleted {
+		return r.Store.PruneDeletedMaterializedResources(ctx, repositoryID)
+	}
+	return nil
 }
 
 func gitStatusSnapshot(repoRoot string) (GitStatus, error) {
@@ -514,10 +518,21 @@ func sourceFileSnapshot(repoRoot string, settings Settings, rules *ignore.Rules)
 		if err != nil {
 			return nil
 		}
-		files[rel] = language + ":" + info.ModTime().UTC().Format(time.RFC3339Nano) + ":" + fmt.Sprint(info.Size())
+		files[rel] = language + ":" + info.ModTime().UTC().Format(time.RFC3339Nano) + ":" + fmt.Sprint(info.Size()) + ":" + sourceSnapshotFileHash(path, info.Size())
 		return nil
 	})
 	return files
+}
+
+func sourceSnapshotFileHash(path string, size int64) string {
+	if size > maxSourceFileBytes {
+		return "oversized"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "error:" + err.Error()
+	}
+	return hashBytes(data)
 }
 
 func sourceFileFingerprint(files map[string]string) string {
