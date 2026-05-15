@@ -1,0 +1,11 @@
+diff --git a/internal/service/user.go b/internal/service/user.go
+index d94fb70..c2b8a23 100644
+--- a/internal/service/user.go
++++ b/internal/service/user.go
+@@ -9,5 +9,5 @@ func (s Service) CreateUser(name string) error {
+ 	if name == "" {
+ 		return nil
+ 	}
+-	return nil
++	return s.repo.Save(name)
+ }

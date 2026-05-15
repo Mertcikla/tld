@@ -1,0 +1,6 @@
+name: function-rename
+description: Rename a service function and update its caller.
+baseline: baseline
+patch: change.patch
+languages:
+  - go

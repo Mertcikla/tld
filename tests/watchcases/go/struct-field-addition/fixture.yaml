@@ -1,0 +1,6 @@
+name: struct-field-addition
+description: Add a field to a small domain struct.
+baseline: baseline
+patch: change.patch
+languages:
+  - go

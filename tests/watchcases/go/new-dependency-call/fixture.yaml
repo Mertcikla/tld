@@ -1,0 +1,6 @@
+name: new-dependency-call
+description: Add a repository call from an existing service function.
+baseline: baseline
+patch: change.patch
+languages:
+  - go

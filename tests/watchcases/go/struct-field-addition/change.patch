@@ -1,0 +1,17 @@
+diff --git a/internal/domain/user.go b/internal/domain/user.go
+--- a/internal/domain/user.go
++++ b/internal/domain/user.go
+@@ -1,10 +1,11 @@
+ package domain
+
+ type User struct {
+ 	ID   string
+ 	Name string
++	Email string
+ }
+ 
+-func NewUser(id, name string) User {
+-	return User{ID: id, Name: name}
++func NewUser(id, name, email string) User {
++	return User{ID: id, Name: name, Email: email}
+ }

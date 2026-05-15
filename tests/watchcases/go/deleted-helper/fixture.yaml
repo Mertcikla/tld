@@ -1,0 +1,6 @@
+name: deleted-helper
+description: Remove an unused helper function from a service file.
+baseline: baseline
+patch: change.patch
+languages:
+  - go

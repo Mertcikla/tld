@@ -29,6 +29,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/version"
 	"github.com/mertcikla/tld/v2/cmd/views"
 	watchcmd "github.com/mertcikla/tld/v2/cmd/watch"
+	watchcasecmd "github.com/mertcikla/tld/v2/cmd/watchcase"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/spf13/cobra"
 )
@@ -163,6 +164,9 @@ and apply them atomically with 'tld apply'.`,
 	watchCmd := watchcmd.NewWatchCmd()
 	watchCmd.GroupID = secondaryGroup.ID
 
+	watchcaseCmd := watchcasecmd.NewWatchcaseCmd()
+	watchcaseCmd.GroupID = secondaryGroup.ID
+
 	serveCmd := serve.NewServeCmd(nil)
 	serveCmd.GroupID = secondaryGroup.ID
 
@@ -194,6 +198,7 @@ and apply them atomically with 'tld apply'.`,
 		configCmd,
 		techCmd,
 		watchCmd,
+		watchcaseCmd,
 		serveCmd,
 		mcpCmd,
 		stopCmd,

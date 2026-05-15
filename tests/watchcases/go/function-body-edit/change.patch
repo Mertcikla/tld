@@ -1,0 +1,15 @@
+diff --git a/internal/service/user.go b/internal/service/user.go
+index 04b2ccb..b75d2c9 100644
+--- a/internal/service/user.go
++++ b/internal/service/user.go
+@@ -6,6 +6,9 @@ type User struct {
+ }
+ 
+ func CreateUser(name string) User {
+-	clean := strings.TrimSpace(name)
++	clean := strings.ToLower(strings.TrimSpace(name))
++	if clean == "" {
++		clean = "anonymous"
++	}
+ 	return User{Name: clean}
+ }

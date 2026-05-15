@@ -1,0 +1,26 @@
+diff --git a/internal/api/handler.go b/internal/api/handler.go
+--- a/internal/api/handler.go
++++ b/internal/api/handler.go
+@@ -1,7 +1,7 @@
+ package api
+ 
+ import "example.com/watchcase/rename/internal/service"
+ 
+ func HandleCreate(name string) service.User {
+-	return service.CreateUser(name)
++	return service.RegisterUser(name)
+ }
+diff --git a/internal/service/user.go b/internal/service/user.go
+--- a/internal/service/user.go
++++ b/internal/service/user.go
+@@ -1,8 +1,8 @@
+ package service
+ 
+ type User struct {
+ 	Name string
+ }
+ 
+-func CreateUser(name string) User {
++func RegisterUser(name string) User {
+ 	return User{Name: name}
+ }

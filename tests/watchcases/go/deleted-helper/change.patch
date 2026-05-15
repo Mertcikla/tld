@@ -1,0 +1,22 @@
+diff --git a/internal/service/user.go b/internal/service/user.go
+--- a/internal/service/user.go
++++ b/internal/service/user.go
+@@ -1,16 +1,12 @@
+ package service
+
+ type User struct {
+ 	Name string
+ }
+ 
+ func CreateUser(name string) User {
+-	return User{Name: normalizeName(name)}
+-}
+-
+-func normalizeName(name string) string {
+ 	if name == "" {
+-		return "anonymous"
++		name = "anonymous"
+ 	}
+-	return name
++	return User{Name: name}
+ }

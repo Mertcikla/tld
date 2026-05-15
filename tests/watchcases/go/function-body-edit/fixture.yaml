@@ -1,0 +1,6 @@
+name: function-body-edit
+description: Change implementation details inside one service function.
+baseline: baseline
+patch: change.patch
+languages:
+  - go
