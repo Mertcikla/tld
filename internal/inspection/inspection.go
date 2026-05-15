@@ -301,6 +301,12 @@ func yamlElementState(resourceType string, meta *workspace.ResourceMetadata) Sou
 
 func localState(ctx context.Context, ws *workspace.Workspace, opts Options) SourceState {
 	state := SourceState{Source: "local_db"}
+	metadata := elementMetadataForType(ws, opts.Type, opts.Ref)
+	if metadata == nil || metadata.ID == 0 {
+		state.Note = "no metadata id to match local DB resource"
+		return state
+	}
+
 	dbPath := localserver.DatabasePath(opts.DataDir)
 	if _, err := os.Stat(dbPath); err != nil {
 		if os.IsNotExist(err) {
@@ -317,11 +323,6 @@ func localState(ctx context.Context, ws *workspace.Workspace, opts Options) Sour
 	}
 	defer func() { _ = sqliteStore.Legacy().Close() }()
 	adapter := store.NewAPIAdapter(sqliteStore)
-	metadata := elementMetadataForType(ws, opts.Type, opts.Ref)
-	if metadata == nil || metadata.ID == 0 {
-		state.Note = "no metadata id to match local DB resource"
-		return state
-	}
 	state.ID = int32(metadata.ID)
 	switch opts.Type {
 	case TypeElement:

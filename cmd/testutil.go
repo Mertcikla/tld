@@ -45,6 +45,9 @@ func RunCmdWithStdin(t *testing.T, dir string, stdin io.Reader, args ...string) 
 	if os.Getenv("TLD_CONFIG_DIR") == "" {
 		t.Setenv("TLD_CONFIG_DIR", t.TempDir())
 	}
+	if os.Getenv("TLD_DATA_DIR") == "" {
+		t.Setenv("TLD_DATA_DIR", t.TempDir())
+	}
 
 	root := NewRootCmd()
 	outBuf, errBuf := &bytes.Buffer{}, &bytes.Buffer{}
