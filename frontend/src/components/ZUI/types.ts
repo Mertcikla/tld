@@ -139,6 +139,7 @@ export type HoveredItem =
   | {
     type: 'edge';
     data: {
+      id?: number;
       sourceId: string;
       targetId: string;
       label: string;

@@ -408,6 +408,13 @@ export default function WorkspacePanel() {
   }, [activeDiffLocationIndex, navigableDiffLocations, navigateToDiffLocation])
 
   const activeVersion = preview?.version ?? selectedVersion
+
+  const navigateToDiffMap = useCallback(() => {
+    const targetVersion = activeVersion ?? selectedVersion
+    if (!targetVersion) return
+    navigate(`/views?view=explore&diffVersion=${targetVersion.id}`)
+  }, [activeVersion, navigate, selectedVersion])
+
   const diffSummary = useMemo(() => summarizeWatchDiffs(diffs), [diffs])
   const totalFileChanges = diffSummary.files.added + diffSummary.files.updated + diffSummary.files.deleted + diffSummary.files.initialized
   const totalTldChanges = diffSummary.elements.added + diffSummary.elements.updated + diffSummary.elements.deleted + diffSummary.elements.initialized +
@@ -720,6 +727,24 @@ export default function WorkspacePanel() {
               </Text>
             </HStack>
             <HStack spacing={1} flexShrink={0}>
+              <Tooltip label="Open diff map" placement="top">
+                <Button
+                  size="sm"
+                  h="32px"
+                  px={3}
+                  variant="solid"
+                  bg="whiteAlpha.200"
+                  _hover={{ bg: 'whiteAlpha.300' }}
+                  _active={{ bg: 'whiteAlpha.400' }}
+                  leftIcon={<ViewIcon boxSize={3.5} />}
+                  fontSize="12px"
+                  fontWeight="600"
+                  isDisabled={!activeVersion}
+                  onClick={navigateToDiffMap}
+                >
+                  Diff map
+                </Button>
+              </Tooltip>
               <Tooltip label="Previous element" placement="top">
                 <IconButton
                   aria-label="Previous"

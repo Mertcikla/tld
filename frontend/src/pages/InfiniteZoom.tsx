@@ -3,6 +3,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   Box,
+  Badge,
   Button,
   Center,
   HStack,
@@ -30,6 +31,14 @@ import CrossBranchControls from '../components/CrossBranchControls'
 import { primeWorkspaceGraphSnapshot } from '../crossBranch/store'
 import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../components/WorkspacePanel'
 import { useWorkspaceVersionPreview } from '../context/WorkspaceVersionContext'
+import {
+  buildExploreDiffLens,
+  type ExploreDiffDetail,
+  type ExploreDiffLens,
+  type ExploreDiffTarget,
+} from '../utils/exploreDiffLens'
+import { getSourceEditor } from '../utils/sourceEditor'
+import { toast } from '../utils/toast'
 
 // ── Types ──────────────────────────────────────────────────────────
 interface Props {
@@ -71,8 +80,16 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
   } = useCrossBranchContextSettings(crossBranchSurface)
   const { preview: versionPreview, followTarget: versionFollowTarget } = useWorkspaceVersionPreview()
 
+  const diffVersionId = useMemo(() => {
+    if (sharedToken) return 0
+    const value = Number(new URLSearchParams(location.search).get('diffVersion') ?? 0)
+    return Number.isFinite(value) && value > 0 ? value : 0
+  }, [location.search, sharedToken])
   const cameraProfile = useMemo(() => new URLSearchParams(location.search).get('profile'), [location.search])
   const isDetailToOverviewProfile = sharedToken && cameraProfile === 'detail-to-overview'
+  const [diffLens, setDiffLens] = useState<ExploreDiffLens | null>(null)
+  const [diffLoading, setDiffLoading] = useState(false)
+  const [activeDiffTargetIndex, setActiveDiffTargetIndex] = useState(0)
 
   const initialCameraFrame = useMemo<ZUICameraFrame | undefined>(() => {
     return isDetailToOverviewProfile
@@ -248,6 +265,85 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
     return () => window.removeEventListener('message', handleMessage)
   }, [sharedToken])
 
+  useEffect(() => {
+    if (!data || !diffVersionId) {
+      setDiffLens(null)
+      setDiffLoading(false)
+      setActiveDiffTargetIndex(0)
+      return
+    }
+    let cancelled = false
+    setDiffLoading(true)
+    api.watch.diffs(diffVersionId)
+      .then((diffs) => {
+        if (cancelled) return
+        setDiffLens(buildExploreDiffLens(data, diffs, diffVersionId))
+        setActiveDiffTargetIndex(0)
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return
+        setDiffLens(null)
+        toast({
+          title: 'Could not load diff map',
+          description: error instanceof Error ? error.message : 'The selected watch diff could not be loaded.',
+          status: 'error',
+        })
+      })
+      .finally(() => {
+        if (!cancelled) setDiffLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [data, diffVersionId])
+
+  const activeDiffTarget = diffLens?.orderedTargets[activeDiffTargetIndex] ?? null
+
+  const focusDiffTarget = useCallback((target: ExploreDiffTarget | null | undefined) => {
+    if (!target?.viewId) return false
+    if (target.resourceType === 'element' && target.resourceId) {
+      return zuiRef.current?.focusElement(target.viewId, target.resourceId) ?? false
+    }
+    return zuiRef.current?.focusDiagram(target.viewId) ?? false
+  }, [])
+
+  useEffect(() => {
+    if (!canvasReady || !activeDiffTarget) return
+    const timer = window.setTimeout(() => {
+      focusDiffTarget(activeDiffTarget)
+    }, 80)
+    return () => window.clearTimeout(timer)
+  }, [activeDiffTarget, canvasReady, focusDiffTarget])
+
+  const navigateDiffTarget = useCallback((offset: number) => {
+    const count = diffLens?.orderedTargets.length ?? 0
+    if (count === 0) return
+    setActiveDiffTargetIndex((index) => (index + offset + count) % count)
+  }, [diffLens])
+
+  const exitDiffMode = useCallback(() => {
+    const params = new URLSearchParams(location.search)
+    params.set('view', 'explore')
+    params.delete('diffVersion')
+    params.delete('focus')
+    params.delete('element')
+    const suffix = params.toString()
+    navigate(`${location.pathname}${suffix ? `?${suffix}` : ''}`, { replace: true })
+  }, [location.pathname, location.search, navigate])
+
+  const openDiffSource = useCallback((detail: ExploreDiffDetail) => {
+    if (!detail.sourcePath) return
+    api.editor.open({
+      editor: getSourceEditor(),
+      file_path: detail.sourcePath,
+      line: detail.line ?? null,
+    }).catch((error: unknown) => {
+      toast({
+        title: 'Could not open source',
+        description: error instanceof Error ? error.message : 'The source editor command failed.',
+        status: 'error',
+      })
+    })
+  }, [])
+
   if (!loading && (!data || (data.tree ?? []).length === 0 || !hasPlacements)) {
     const noDiagrams = !data || (data.tree ?? []).length === 0
     return (
@@ -304,6 +400,7 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
             hiddenTags={hiddenTags}
             versionPreview={versionPreview}
             versionFollowTarget={versionFollowTarget}
+            diffLens={diffLens}
             crossBranchSettings={crossBranchSettings}
             hoverLocked={isTagsOpen}
           />
@@ -311,6 +408,119 @@ function InfiniteZoomInner({ sharedToken, shareSlot }: Props, ref?: React.Ref<In
           {/* Onboarding overlay */}
           {data && !sharedToken && <ExploreOnboarding hasLinkedNodes={!!(data.navigations?.length > 0)} />}
           <MiniZoomOnboarding isVisible={showMiniOnboarding} onClose={dismissMiniOnboarding} />
+
+          {diffVersionId > 0 && (
+            <Box
+              position="absolute"
+              top={4}
+              right={4}
+              zIndex={14}
+              className="glass"
+              borderRadius="lg"
+              px={3}
+              py={2.5}
+              w={{ base: 'calc(100vw - 32px)', md: '340px' }}
+              maxW="calc(100vw - 32px)"
+              pointerEvents="auto"
+              opacity={showContent ? 1 : 0}
+              transition="opacity 0.3s"
+            >
+              <VStack align="stretch" spacing={2}>
+                <HStack justify="space-between" spacing={3}>
+                  <HStack spacing={2} minW={0}>
+                    <Badge colorScheme="blue" variant="subtle">Diff map</Badge>
+                    <Text fontSize="xs" color="gray.400" fontFamily="mono" flexShrink={0}>
+                      +{diffLens?.totalAddedLines ?? 0} -{diffLens?.totalRemovedLines ?? 0}
+                    </Text>
+                  </HStack>
+                  <Button size="xs" variant="ghost" color="gray.300" onClick={exitDiffMode}>
+                    Exit
+                  </Button>
+                </HStack>
+                <Text fontSize="xs" color="gray.200" noOfLines={1} minH="18px">
+                  {diffLoading
+                    ? 'Loading changed resources...'
+                    : activeDiffTarget
+                      ? `${activeDiffTargetIndex + 1} of ${diffLens?.orderedTargets.length ?? 0}: ${activeDiffTarget.label}`
+                      : 'No placed changed resources'}
+                </Text>
+                <HStack spacing={2}>
+                  <Button
+                    size="xs"
+                    variant="solid"
+                    bg="whiteAlpha.200"
+                    _hover={{ bg: 'whiteAlpha.300' }}
+                    flex={1}
+                    isDisabled={!diffLens?.orderedTargets.length}
+                    onClick={() => navigateDiffTarget(-1)}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="solid"
+                    bg="whiteAlpha.200"
+                    _hover={{ bg: 'whiteAlpha.300' }}
+                    flex={1}
+                    isDisabled={!diffLens?.orderedTargets.length}
+                    onClick={() => navigateDiffTarget(1)}
+                  >
+                    Next
+                  </Button>
+                </HStack>
+              </VStack>
+            </Box>
+          )}
+
+          {diffLens && diffLens.unplacedTargets.length > 0 && (
+            <Box
+              position="absolute"
+              top={{ base: '150px', md: '132px' }}
+              right={4}
+              zIndex={13}
+              className="glass"
+              borderRadius="lg"
+              px={3}
+              py={3}
+              w={{ base: 'calc(100vw - 32px)', md: '340px' }}
+              maxH="260px"
+              overflowY="auto"
+              pointerEvents="auto"
+              data-zui-native-wheel="true"
+              sx={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
+            >
+              <VStack align="stretch" spacing={2}>
+                <Text fontSize="11px" color="gray.400" fontWeight="700" textTransform="uppercase">
+                  Deleted or unplaced
+                </Text>
+                {diffLens.unplacedTargets.slice(0, 8).map((target) => (
+                  <Box key={target.key} borderTop="1px solid" borderColor="whiteAlpha.100" pt={2}>
+                    <HStack spacing={2} align="start">
+                      <Badge colorScheme={target.changeType === 'deleted' ? 'red' : 'yellow'} variant="subtle" fontSize="9px">
+                        {target.changeType}
+                      </Badge>
+                      <Box minW={0} flex={1}>
+                        <Text fontSize="xs" color="gray.100" noOfLines={1}>{target.label}</Text>
+                        {target.sourcePath && (
+                          <Text fontSize="10px" color="gray.500" fontFamily="mono" noOfLines={1}>{target.sourcePath}</Text>
+                        )}
+                      </Box>
+                      {target.sourcePath && (
+                        <Button size="xs" variant="ghost" color="var(--accent)" onClick={() => openDiffSource(target)}>
+                          Open
+                        </Button>
+                      )}
+                    </HStack>
+                  </Box>
+                ))}
+                {diffLens.unplacedTargets.length > 8 && (
+                  <Text fontSize="xs" color="gray.500">
+                    +{diffLens.unplacedTargets.length - 8} more
+                  </Text>
+                )}
+              </VStack>
+            </Box>
+          )}
 
           {/* Bottom toolbar */}
           <Box

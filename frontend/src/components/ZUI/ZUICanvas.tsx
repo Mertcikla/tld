@@ -26,6 +26,7 @@ import {
 import { Link as RouterLink } from 'react-router-dom'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import type { ExploreData } from '../../types'
+import { api } from '../../api/client'
 import { computeLayout } from './layout'
 import { renderFrame, getExpandThresholds, getCameraRebase, rawCameraView, screenToWorldX, screenToWorldY, worldToScreenX, worldToScreenY, setOnImageLoadCallback, setHighlightedTags as setRendererHighlightedTags, setHiddenTags as setRendererHiddenTags, setHighlightColor as setRendererHighlightColor, setVersionDiff as setRendererVersionDiff } from './renderer'
 import { useZUIInteraction } from './useZUIInteraction'
@@ -35,6 +36,9 @@ import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
 import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
+import { diffResourceKey, type ExploreDiffDetail, type ExploreDiffLens } from '../../utils/exploreDiffLens'
+import { getSourceEditor } from '../../utils/sourceEditor'
+import { toast } from '../../utils/toast'
 import {
   buildProxyConnectorSpatialIndex,
   buildVisibleProxyConnectors,
@@ -71,6 +75,7 @@ interface Props {
   hiddenTags?: string[]
   versionPreview?: WorkspaceVersionPreview | null
   versionFollowTarget?: WorkspaceVersionFollowTarget | null
+  diffLens?: ExploreDiffLens | null
   crossBranchSettings: CrossBranchContextSettings
   hoverLocked?: boolean
 }
@@ -244,6 +249,60 @@ function fitWorldRect(
   }
 }
 
+function diffColorScheme(change: string | undefined): 'green' | 'red' | 'yellow' | 'blue' {
+  if (change === 'added') return 'green'
+  if (change === 'deleted') return 'red'
+  if (change === 'initialized') return 'blue'
+  return 'yellow'
+}
+
+function DiffDetailBlock({
+  detail,
+  onOpenSource,
+}: {
+  detail: ExploreDiffDetail | null
+  onOpenSource: (detail: ExploreDiffDetail) => void
+}) {
+  if (!detail) return null
+  const hasLines = detail.addedLines > 0 || detail.removedLines > 0
+  return (
+    <VStack align="stretch" spacing={2} mb={3}>
+      <HStack spacing={2} minW={0}>
+        <Badge colorScheme={diffColorScheme(detail.changeType)} variant="subtle" fontSize="2xs">
+          {detail.changeType}
+        </Badge>
+        {hasLines && (
+          <HStack spacing={1.5} fontSize="xs" fontFamily="mono">
+            {detail.addedLines > 0 && <Text color="green.300">+{detail.addedLines}</Text>}
+            {detail.removedLines > 0 && <Text color="red.300">-{detail.removedLines}</Text>}
+          </HStack>
+        )}
+      </HStack>
+      {detail.summary && (
+        <Text fontSize="xs" color="gray.200" noOfLines={3}>{detail.summary}</Text>
+      )}
+      {detail.sourcePath && (
+        <Text fontSize="11px" color="gray.500" fontFamily="mono" noOfLines={2}>{detail.sourcePath}</Text>
+      )}
+      {detail.sourcePath && (
+        <Button
+          size="xs"
+          variant="outline"
+          colorScheme="blue"
+          alignSelf="flex-start"
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpenSource(detail)
+          }}
+        >
+          Open Source
+        </Button>
+      )}
+      <Divider borderColor="whiteAlpha.200" />
+    </VStack>
+  )
+}
+
 function findFirstExpandableNode(groups: DiagramGroupLayout[]): PathItem | null {
   for (const group of groups) {
     const found = findFirstExpandableNodeInTree(group.nodes, 0, 0, 1, 0, 0)
@@ -292,7 +351,7 @@ function findFirstExpandableNodeInTree(
   return null
 }
 
-export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, initialCameraFrame, highlightedTags, highlightColor, hiddenTags, versionPreview, versionFollowTarget, crossBranchSettings, hoverLocked = false }, ref) {
+export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({ data, onReady, onZoom, onPan, initialCameraFrame, highlightedTags, highlightColor, hiddenTags, versionPreview, versionFollowTarget, diffLens, crossBranchSettings, hoverLocked = false }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const cameraTransitionRef = useRef<number | null>(null)
@@ -465,6 +524,34 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       hoveredScreenRect.sy + hoveredScreenRect.sh <= containerSize.h - 2
     )
   }, [hoveredScreenRect, containerSize])
+
+  const hoveredDiffDetail = useMemo(() => {
+    if (!hoveredItem || !diffLens) return null
+    if (hoveredItem.type === 'node') {
+      return diffLens.diffDetailsByResource.get(diffResourceKey('element', hoveredItem.data.elementId)) ?? null
+    }
+    if (hoveredItem.type === 'edge' && !hoveredItem.data.isProxy) {
+      return hoveredItem.data.id
+        ? diffLens.diffDetailsByResource.get(diffResourceKey('connector', hoveredItem.data.id)) ?? null
+        : null
+    }
+    return null
+  }, [diffLens, hoveredItem])
+
+  const handleOpenSource = useCallback((detail: ExploreDiffDetail) => {
+    if (!detail.sourcePath) return
+    api.editor.open({
+      editor: getSourceEditor(),
+      file_path: detail.sourcePath,
+      line: detail.line ?? null,
+    }).catch((error: unknown) => {
+      toast({
+        title: 'Could not open source',
+        description: error instanceof Error ? error.message : 'The source editor command failed.',
+        status: 'error',
+      })
+    })
+  }, [])
 
   // Debounce breadcrumb computation so getPathAt doesn't run on every scroll tick
   const [breadcrumbView, setBreadcrumbView] = useState(viewState)
@@ -820,6 +907,18 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   }, [hiddenTags])
 
   useEffect(() => {
+    if (diffLens) {
+      setRendererVersionDiff(
+        diffLens.elementChanges,
+        diffLens.connectorChanges,
+        diffLens.elementLineDeltas,
+        diffLens.contextElementIds,
+        diffLens.contextConnectorIds,
+        true,
+      )
+      needsRedrawRef.current = true
+      return
+    }
     const pulsedElementChanges = new Map<number, string>()
     const pulsedElementLineDeltas = new Map<number, { added: number; removed: number }>()
     if (versionFollowTarget?.resourceType === 'element' && versionFollowTarget.resourceId) {
@@ -832,7 +931,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       versionPreview?.elementLineDeltas ?? pulsedElementLineDeltas,
     )
     needsRedrawRef.current = true
-  }, [versionPreview, versionFollowTarget])
+  }, [diffLens, versionPreview, versionFollowTarget])
 
   useEffect(() => {
     if (!initialized || !versionFollowTarget?.viewId) return
@@ -979,6 +1078,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
                 </PopoverHeader>
                 <PopoverBody px={4} py={3}>
                   <VStack align="start" spacing={3}>
+                    <DiffDetailBlock detail={hoveredDiffDetail} onOpenSource={handleOpenSource} />
                     {hoveredItem.data.technology && (
                       <Box>
                         <Text color="gray.400" fontSize="xs" fontWeight="600" mb={0.5} letterSpacing="wider">TECHNOLOGY</Text>
@@ -1033,6 +1133,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
                 </PopoverHeader>
                 <PopoverBody px={4} py={3}>
                   <VStack align="start" spacing={3}>
+                    <DiffDetailBlock detail={hoveredDiffDetail} onOpenSource={handleOpenSource} />
                     <VStack align="start" spacing={1}>
                       <Text color="gray.400" fontSize="2xs" fontWeight="600" letterSpacing="wider">BETWEEN</Text>
                       <Text fontSize="xs" color="gray.200">

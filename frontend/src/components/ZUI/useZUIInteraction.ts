@@ -205,6 +205,7 @@ type IndexedEdge =
     sourceLabel: string
     targetLabel: string
     label: string
+    id: number
     diagramId: number
     sourceObjId: number
     targetObjId: number
@@ -410,6 +411,7 @@ function buildEdgeSpatialIndex(groups: DiagramGroupLayout[]): EdgeSpatialIndex {
         sourceLabel: source.label,
         targetLabel: target.label,
         label: edge.label || 'Connection',
+        id: edge.id,
         diagramId: group.diagramId,
         sourceObjId: source.elementId,
         targetObjId: target.elementId,
@@ -495,6 +497,7 @@ function findHoveredEdge(
       sourceId: bestEdge.sourceLabel,
       targetId: bestEdge.targetLabel,
       label: bestEdge.label,
+      id: bestEdge.id,
       diagramId: bestEdge.diagramId,
       sourceObjId: bestEdge.sourceObjId,
       targetObjId: bestEdge.targetObjId
