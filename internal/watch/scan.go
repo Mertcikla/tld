@@ -1115,7 +1115,7 @@ func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath, language stri
 			Kind:          sym.Kind,
 			StartLine:     sym.Line,
 			EndLine:       &endPtr,
-			SignatureHash: hashString(fmt.Sprintf("%s:%s:%d", sym.Kind, qualified, sym.Line)),
+			SignatureHash: hashString(fmt.Sprintf("%s:%s", sym.Kind, qualified)),
 			ContentHash:   hashString(normalizeSymbolContent(body, sym.Name, qualified)),
 			RawJSON:       string(raw),
 		})

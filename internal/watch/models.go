@@ -245,23 +245,24 @@ type RepresentRequest struct {
 }
 
 type RepresentResult struct {
-	RepositoryID        int64  `json:"repository_id"`
-	RepresentationRun   int64  `json:"representation_run_id"`
-	FilterRunID         int64  `json:"filter_run_id"`
-	RawGraphHash        string `json:"raw_graph_hash"`
-	SettingsHash        string `json:"settings_hash"`
-	RepresentationHash  string `json:"representation_hash"`
-	ElementsCreated     int    `json:"elements_created"`
-	ElementsUpdated     int    `json:"elements_updated"`
-	ConnectorsCreated   int    `json:"connectors_created"`
-	ConnectorsUpdated   int    `json:"connectors_updated"`
-	ViewsCreated        int    `json:"views_created"`
-	ElementsPreserved   int    `json:"elements_preserved"`
-	ConnectorsPreserved int    `json:"connectors_preserved"`
-	ViewsPreserved      int    `json:"views_preserved"`
-	DeletesPreserved    int    `json:"deletes_preserved"`
-	EmbeddingCacheHits  int    `json:"embedding_cache_hits"`
-	EmbeddingsCreated   int    `json:"embeddings_created"`
+	RepositoryID        int64                `json:"repository_id"`
+	RepresentationRun   int64                `json:"representation_run_id"`
+	FilterRunID         int64                `json:"filter_run_id"`
+	RawGraphHash        string               `json:"raw_graph_hash"`
+	SettingsHash        string               `json:"settings_hash"`
+	RepresentationHash  string               `json:"representation_hash"`
+	ElementsCreated     int                  `json:"elements_created"`
+	ElementsUpdated     int                  `json:"elements_updated"`
+	ConnectorsCreated   int                  `json:"connectors_created"`
+	ConnectorsUpdated   int                  `json:"connectors_updated"`
+	ViewsCreated        int                  `json:"views_created"`
+	ElementsPreserved   int                  `json:"elements_preserved"`
+	ConnectorsPreserved int                  `json:"connectors_preserved"`
+	ViewsPreserved      int                  `json:"views_preserved"`
+	DeletesPreserved    int                  `json:"deletes_preserved"`
+	EmbeddingCacheHits  int                  `json:"embedding_cache_hits"`
+	EmbeddingsCreated   int                  `json:"embeddings_created"`
+	Diffs               []RepresentationDiff `json:"diffs"`
 }
 
 type ProgressSink interface {

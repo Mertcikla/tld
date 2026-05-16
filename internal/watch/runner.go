@@ -144,6 +144,10 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	}()
 
 	rep := once.Representation
+	rep.Diffs = once.Diffs
+	if rep.Diffs == nil {
+		rep.Diffs = []RepresentationDiff{}
+	}
 	emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep, Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, Warnings: warnings})
 	_, _ = r.Store.ApplyGitTags(ctx, repo.ID, gitStatus)
 	if gitStatus.HeadCommit != "" {
@@ -415,10 +419,18 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 			emit(opts.Events, Event{Type: "lsp.status", RepositoryID: repo.ID, At: nowString(), Data: scan.LSP, Phase: "scan", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
 			emit(opts.Events, Event{Type: "representation.started", RepositoryID: repo.ID, At: nowString(), Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
 			rep := once.Representation
+			rep.Diffs = once.Diffs
+			if rep.Diffs == nil {
+				rep.Diffs = []RepresentationDiff{}
+			}
 			emit(opts.Events, Event{Type: "representation.updated", RepositoryID: repo.ID, At: nowString(), Data: rep, Phase: "represent", WatcherMode: watcherMode, Languages: settings.Languages, ChangedFiles: len(sourceChanges), Warnings: eventWarnings})
 			tagResult, _ := r.Store.ApplyGitTags(ctx, repo.ID, nextGit)
 			logInfo(ctx, opts.Logger, "watch.git_tags.applied", "repository_id", repo.ID, "tags_added", tagResult.TagsAdded, "tags_removed", tagResult.TagsRemoved)
-			diffs, diffErr := r.Store.BuildWatchDiffs(ctx, repo.ID, rep.RepresentationHash)
+			diffs := rep.Diffs
+			var diffErr error
+			if diffs == nil {
+				diffs, diffErr = r.Store.BuildWatchDiffs(ctx, repo.ID, rep.RepresentationHash)
+			}
 			if diffErr != nil {
 				logError(ctx, opts.Logger, "watch.diffs.failed", diffErr, "repository_id", repo.ID, "representation_hash", rep.RepresentationHash)
 				emit(opts.Events, Event{Type: "watch.error", RepositoryID: repo.ID, At: nowString(), Message: diffErr.Error()})

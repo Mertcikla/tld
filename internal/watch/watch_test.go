@@ -2459,6 +2459,72 @@ func Beta() string {
 	}
 }
 
+func TestWatchDiffsIgnoreSymbolsOnlyShiftedByEarlierChanges(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+type Item struct {
+	ID string
+}
+
+func NewItem(id string) Item {
+	return Item{ID: id}
+}
+
+func (i Item) Available() bool {
+	return i.ID != ""
+}
+`)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial item")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit1", "initial item", "", "main", rep.RepresentationHash, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	writeFile(t, repo, "main.go", `package main
+
+type Item struct {
+	ID       string
+	Category string
+}
+
+func NewItem(id, category string) Item {
+	return Item{ID: id, Category: category}
+}
+
+func (i Item) Available() bool {
+	return i.ID != ""
+}
+`)
+	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
+		t.Fatal(err)
+	}
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diffs, err := store.BuildWatchDiffs(context.Background(), scan.RepositoryID, next.RepresentationHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if available := findDiffByOwner(diffs, "symbol", "go:main.go:method:Item.Available", "symbol", "updated"); available != nil {
+		t.Fatalf("Available only moved after earlier edits and should not be a diff, got %+v in %+v", available, diffs)
+	}
+}
+
 func TestCreateVersionForHeadCanBaselineAlreadyRepresentedCommit(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -4441,6 +4507,75 @@ func TestRunnerEmitsChangeCounter(t *testing.T) {
 	}
 	cancel()
 	waitForRunnerDone(t, done, "change counter runner")
+}
+
+func TestRunnerRepresentationUpdatedClearsDiffsAfterDiscard(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	original := "package main\n\nfunc Value() string {\n\treturn \"old\"\n}\n"
+	changed := "package main\n\nfunc Value() string {\n\treturn \"new\"\n}\n"
+	writeFile(t, repo, "main.go", original)
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "initial")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := NewEventQueue()
+	ready := make(chan RunnerResult, 1)
+	done := make(chan error, 1)
+	store := NewStore(db)
+	go func() {
+		_, err := NewRunner(store).Run(ctx, RunnerOptions{
+			Path:              repo,
+			PollInterval:      10 * time.Millisecond,
+			HeartbeatInterval: 10 * time.Millisecond,
+			SummaryInterval:   time.Hour,
+			Embedding:         EmbeddingConfig{Provider: "none"},
+			Events:            events,
+			Ready:             ready,
+		})
+		done <- err
+		events.Close()
+	}()
+
+	result := waitForRunnerReady(t, ready, done, "discard diff runner")
+
+	writeFile(t, repo, "main.go", changed)
+	updated := waitForRunnerEvent(t, events.Out(), done, "changed representation", func(event Event) bool {
+		return event.Type == "representation.updated" && event.ChangedFiles > 0
+	})
+	updatedRep, ok := updated.Data.(RepresentResult)
+	if !ok {
+		t.Fatalf("unexpected representation payload: %#v", updated.Data)
+	}
+	if len(updatedRep.Diffs) == 0 {
+		t.Fatalf("expected changed representation event to include pending diffs: %+v", updatedRep)
+	}
+	waitForRunnerEvent(t, events.Out(), done, "changed pipeline completion", func(event Event) bool {
+		return event.Type == "git.statusChanged"
+	})
+
+	writeFile(t, repo, "main.go", original)
+	discarded := waitForRunnerEvent(t, events.Out(), done, "discarded representation", func(event Event) bool {
+		if event.Type != "representation.updated" || event.ChangedFiles == 0 {
+			return false
+		}
+		rep, ok := event.Data.(RepresentResult)
+		return ok && rep.RepresentationHash == result.InitialRep.RepresentationHash
+	})
+	discardedRep, ok := discarded.Data.(RepresentResult)
+	if !ok {
+		t.Fatalf("unexpected representation payload: %#v", discarded.Data)
+	}
+	if len(discardedRep.Diffs) != 0 {
+		t.Fatalf("expected discard representation event to include empty diffs, got %+v", discardedRep.Diffs)
+	}
+
+	if err := store.ReleaseLock(context.Background(), result.Repository.ID, result.Token); err != nil {
+		t.Fatal(err)
+	}
+	waitForRunnerDone(t, done, "discard diff runner")
 }
 
 func TestRunnerResolvesSubdirectoryToRepositoryRootBeforeReady(t *testing.T) {
