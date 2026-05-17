@@ -125,3 +125,64 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           coverage-file: frontend/report.json
           skip-step: all
+
+  keploy-tests:
+    name: Keploy API Replay Tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: ["1.26.1"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend assets
+        working-directory: frontend
+        run: npm run build:app
+
+      - name: Install Keploy
+        run: |
+          curl --silent --location "https://github.com/keploy/keploy/releases/latest/download/keploy_linux_amd64.tar.gz" | tar xz --overwrite -C /tmp
+          sudo mkdir -p /usr/local/bin
+          sudo mv /tmp/keploy /usr/local/bin/keploy
+
+      - name: Build Keploy test binary
+        run: go build -o /tmp/tld-keploy ./cmd/tld
+
+      - name: Run Keploy tests
+        env:
+          TLD_CONFIG_DIR: /tmp/tld-keploy-config-${{ github.run_id }}
+          TLD_DATA_DIR: /tmp/tld-keploy-data-${{ github.run_id }}
+        run: |
+          sudo -E keploy test \
+            --path "./tests" \
+            --delay 10 \
+            --skip-coverage \
+            --command "/tmp/tld-keploy serve --foreground --host 127.0.0.1 --port 8060 --data-dir ${TLD_DATA_DIR}"
+
+      - name: Upload Keploy reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: keploy-reports
+          path: tests/reports
+          if-no-files-found: ignore
