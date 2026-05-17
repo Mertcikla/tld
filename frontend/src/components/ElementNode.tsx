@@ -2,7 +2,6 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Handle, Position, useStore } from 'reactflow'
 import { Box, Flex, Text, Tooltip, HStack, Button, Divider, VStack } from '@chakra-ui/react'
 import { LinkIcon } from '@chakra-ui/icons'
-import { useAccentColor } from '../context/ThemeContext'
 
 import type { PlacedElement, ViewConnector, Tag } from '../types'
 import { ElementContainer } from './NodeContainer'
@@ -297,7 +296,6 @@ function getReconnectZoneStyle(position: Position, slot: number): React.CSSPrope
 
 function ElementNode({ data, selected }: Props) {
   const zoom = useStore(zoomSelector)
-  useAccentColor()
 
   const connectedHandleIds = useMemo(
     () => new Set(data.connectedHandleIds ?? []),

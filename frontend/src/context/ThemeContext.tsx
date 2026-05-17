@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ACCENT_DEFAULT, BACKGROUND_DEFAULT, ELEMENT_DEFAULT, hexToRgba } from '../constants/colors'
 import { api } from '../api/client'
 
@@ -43,11 +43,32 @@ interface ThemeContextValue {
   setElementColor: (value: string) => void
 }
 
-const ThemeContext = createContext<ThemeContextValue>({
+interface AccentColorContextValue {
+  accent: string
+  setAccent: (value: string) => void
+}
+
+interface BackgroundColorContextValue {
+  background: string
+  setBackground: (value: string) => void
+}
+
+interface ElementColorContextValue {
+  elementColor: string
+  setElementColor: (value: string) => void
+}
+
+const AccentColorContext = createContext<AccentColorContextValue>({
   accent: ACCENT_DEFAULT,
   setAccent: () => { },
+})
+
+const BackgroundColorContext = createContext<BackgroundColorContextValue>({
   background: BACKGROUND_DEFAULT,
   setBackground: () => { },
+})
+
+const ElementColorContext = createContext<ElementColorContextValue>({
   elementColor: ELEMENT_DEFAULT,
   setElementColor: () => { },
 })
@@ -113,39 +134,58 @@ export function ThemeProvider({
     }).catch(() => { })
   }, [isAuthenticated, storagePrefix]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  function setAccent(value: string) {
+  const setAccent = useCallback((value: string) => {
     localStorage.setItem(accentKey, value)
     setAccentState(value)
     if (!storagePrefix) {
       api.user.updatePreferences({ accent_color: value }).catch(() => { })
     }
-  }
+  }, [accentKey, storagePrefix])
 
-  function setBackground(value: string) {
+  const setBackground = useCallback((value: string) => {
     localStorage.setItem(bgKey, value)
     setBackgroundState(value)
     if (!storagePrefix) {
       api.user.updatePreferences({ background_color: value }).catch(() => { })
     }
-  }
+  }, [bgKey, storagePrefix])
 
-  function setElementColor(value: string) {
+  const setElementColor = useCallback((value: string) => {
     localStorage.setItem(elementKey, value)
     setElementColorState(value)
     if (!storagePrefix) {
       api.user.updatePreferences({ element_color: value }).catch(() => { })
     }
-  }
+  }, [elementKey, storagePrefix])
+
+  const accentValue = useMemo(() => ({ accent, setAccent }), [accent, setAccent])
+  const backgroundValue = useMemo(() => ({ background, setBackground }), [background, setBackground])
+  const elementColorValue = useMemo(() => ({ elementColor, setElementColor }), [elementColor, setElementColor])
 
   return (
-    <ThemeContext.Provider value={{ accent, setAccent, background, setBackground, elementColor, setElementColor }}>
-      {children}
-    </ThemeContext.Provider>
+    <AccentColorContext.Provider value={accentValue}>
+      <BackgroundColorContext.Provider value={backgroundValue}>
+        <ElementColorContext.Provider value={elementColorValue}>
+          {children}
+        </ElementColorContext.Provider>
+      </BackgroundColorContext.Provider>
+    </AccentColorContext.Provider>
   )
 }
 
 export function useTheme() {
-  return useContext(ThemeContext)
+  const { accent, setAccent } = useContext(AccentColorContext)
+  const { background, setBackground } = useContext(BackgroundColorContext)
+  const { elementColor, setElementColor } = useContext(ElementColorContext)
+
+  return useMemo<ThemeContextValue>(() => ({
+    accent,
+    setAccent,
+    background,
+    setBackground,
+    elementColor,
+    setElementColor,
+  }), [accent, setAccent, background, setBackground, elementColor, setElementColor])
 }
 
 /**
@@ -153,6 +193,5 @@ export function useTheme() {
  * @deprecated Use useTheme() instead
  */
 export function useAccentColor() {
-  const { accent, setAccent } = useTheme()
-  return { accent, setAccent }
+  return useContext(AccentColorContext)
 }

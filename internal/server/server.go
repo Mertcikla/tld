@@ -203,16 +203,55 @@ func serveStatic(static fs.FS, w http.ResponseWriter, r *http.Request) {
 		"frontend/dist/index.html",
 	}
 	for _, candidate := range tryPaths {
-		data, err := fs.ReadFile(static, candidate)
+		data, encoding, err := readStaticAsset(static, candidate, r.Header.Get("Accept-Encoding"))
 		if err != nil {
 			continue
 		}
 		w.Header().Set("Content-Type", contentType(candidate))
+		w.Header().Add("Vary", "Accept-Encoding")
+		if encoding != "" {
+			w.Header().Set("Content-Encoding", encoding)
+		}
 		_, _ = w.Write(data)
 		return
 	}
 
 	http.NotFound(w, r)
+}
+
+func readStaticAsset(static fs.FS, candidate, acceptEncoding string) ([]byte, string, error) {
+	if acceptsEncoding(acceptEncoding, "br") {
+		if data, err := fs.ReadFile(static, candidate+".br"); err == nil {
+			return data, "br", nil
+		}
+	}
+	if acceptsEncoding(acceptEncoding, "gzip") {
+		if data, err := fs.ReadFile(static, candidate+".gz"); err == nil {
+			return data, "gzip", nil
+		}
+	}
+	data, err := fs.ReadFile(static, candidate)
+	return data, "", err
+}
+
+func acceptsEncoding(header, encoding string) bool {
+	for _, part := range strings.Split(header, ",") {
+		token, params, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if !strings.EqualFold(token, encoding) {
+			continue
+		}
+		for _, param := range strings.Split(params, ";") {
+			key, value, ok := strings.Cut(strings.TrimSpace(param), "=")
+			if ok && strings.EqualFold(key, "q") {
+				quality, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+				if err == nil && quality <= 0 {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func contentType(file string) string {
