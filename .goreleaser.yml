@@ -23,7 +23,7 @@ builds:
     main: ./cmd/tld/main.go
     binary: tld
     ldflags:
-      - -s -w -X github.com/mertcikla/tld/cmd/version.Version={{.Version}}
+      - -s -w -X github.com/mertcikla/tld/v2/cmd/version.Version={{.Version}}
 
 archives:
   - formats:
