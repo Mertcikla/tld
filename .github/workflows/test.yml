@@ -174,7 +174,8 @@ jobs:
           TLD_DATA_DIR: /tmp/tld-keploy-data-${{ github.run_id }}
         run: |
           sudo -E keploy test \
-            --path "./tests" \
+            --path "." \
+            --test-sets "test-set-0" \
             --delay 10 \
             --skip-coverage \
             --command "/tmp/tld-keploy serve --foreground --host 127.0.0.1 --port 8060 --data-dir ${TLD_DATA_DIR}"
@@ -184,5 +185,5 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: keploy-reports
-          path: tests/reports
+          path: keploy/reports
           if-no-files-found: ignore
