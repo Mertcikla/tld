@@ -1,7 +1,5 @@
 import { memo } from 'react'
 import { Box, BoxProps, forwardRef } from '@chakra-ui/react'
-import { useAccentColor } from '../context/ThemeContext'
-import { hexToRgba } from '../constants/colors'
 
 export interface ElementContainerProps extends BoxProps {
   isSelected?: boolean
@@ -22,9 +20,9 @@ export const ElementContainer = memo(forwardRef<ElementContainerProps, 'div'>(({
   children,
   ...props
 }, ref) => {
-  const { accent } = useAccentColor()
-
-  const brandedBorder = hexToRgba('#a0aec0', 0.5)
+  const accent = 'var(--accent)'
+  const accentRgb = 'var(--accent-rgb)'
+  const brandedBorder = 'rgba(160, 174, 192, 0.5)'
 
   const borderColor = isSource
     ? accent
@@ -35,9 +33,9 @@ export const ElementContainer = memo(forwardRef<ElementContainerProps, 'div'>(({
         : brandedBorder
 
   // Shadows matching ZUICanvas / high-fidelity look
-  const selectionShadow      = `0 0 0 3px ${hexToRgba(accent, 0.35)}, 0 10px 36px rgba(0,0,0,0.55), 0 3px 10px rgba(0,0,0,0.4)`
-  const sourceShadow         = `0 0 0 3px ${hexToRgba(accent, 0.55)}, 0 0 24px ${hexToRgba(accent, 0.25)}`
-  const edgeHighlightShadow  = `0 0 0 2px ${hexToRgba(accent, 0.2)}, 0 8px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.35)`
+  const selectionShadow      = `0 0 0 3px rgba(${accentRgb}, 0.35), 0 10px 36px rgba(0,0,0,0.55), 0 3px 10px rgba(0,0,0,0.4)`
+  const sourceShadow         = `0 0 0 3px rgba(${accentRgb}, 0.55), 0 0 24px rgba(${accentRgb}, 0.25)`
+  const edgeHighlightShadow  = `0 0 0 2px rgba(${accentRgb}, 0.2), 0 8px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.35)`
   const restingShadow        = '0 8px 32px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.35)'
   const hoverShadow          = isSource ? sourceShadow : isSelected ? selectionShadow : '0 12px 40px rgba(0,0,0,0.6), 0 4px 12px rgba(0,0,0,0.4)'
 

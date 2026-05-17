@@ -272,6 +272,83 @@ func TestServerRoutesThumbnailAndStaticFallback(t *testing.T) {
 	}
 }
 
+func TestServerServesPrecompressedStaticAssets(t *testing.T) {
+	_, routes := newTestServer(t, uuid.New(), fstest.MapFS{
+		"frontend/dist/index.html":    {Data: []byte("<html>app</html>")},
+		"frontend/dist/index.html.gz": {Data: []byte("gzip-index")},
+		"frontend/dist/index.html.br": {Data: []byte("brotli-index")},
+		"frontend/dist/app.js":        {Data: []byte("console.log('app')")},
+		"frontend/dist/app.js.gz":     {Data: []byte("gzip-js")},
+		"frontend/dist/app.js.br":     {Data: []byte("brotli-js")},
+	})
+
+	tests := []struct {
+		name           string
+		path           string
+		acceptEncoding string
+		wantEncoding   string
+		wantBody       string
+	}{
+		{
+			name:           "brotli is preferred",
+			path:           "/app.js",
+			acceptEncoding: "gzip, br",
+			wantEncoding:   "br",
+			wantBody:       "brotli-js",
+		},
+		{
+			name:           "gzip is used when brotli is unavailable",
+			path:           "/app.js",
+			acceptEncoding: "gzip",
+			wantEncoding:   "gzip",
+			wantBody:       "gzip-js",
+		},
+		{
+			name:     "uncompressed file is used without accepted encoding",
+			path:     "/app.js",
+			wantBody: "console.log('app')",
+		},
+		{
+			name:           "spa fallback can use compressed index",
+			path:           "/views/123",
+			acceptEncoding: "br",
+			wantEncoding:   "br",
+			wantBody:       "brotli-index",
+		},
+		{
+			name:           "q zero disables encoding",
+			path:           "/app.js",
+			acceptEncoding: "br;q=0, gzip;q=0",
+			wantBody:       "console.log('app')",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			if tt.acceptEncoding != "" {
+				req.Header.Set("Accept-Encoding", tt.acceptEncoding)
+			}
+			rec := httptest.NewRecorder()
+			routes.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if got := rec.Header().Get("Content-Encoding"); got != tt.wantEncoding {
+				t.Fatalf("content encoding = %q, want %q", got, tt.wantEncoding)
+			}
+			if got := rec.Header().Get("Content-Type"); got != "application/javascript" && tt.path == "/app.js" {
+				t.Fatalf("content type = %q, want application/javascript", got)
+			}
+			if got := rec.Body.String(); got != tt.wantBody {
+				t.Fatalf("body = %q, want %q", got, tt.wantBody)
+			}
+			if !strings.Contains(rec.Header().Get("Vary"), "Accept-Encoding") {
+				t.Fatalf("vary = %q, want Accept-Encoding", rec.Header().Get("Vary"))
+			}
+		})
+	}
+}
+
 func insertWatchRepository(t *testing.T, db interface {
 	Exec(string, ...any) (sql.Result, error)
 }) int64 {

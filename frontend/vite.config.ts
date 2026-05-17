@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import viteCompression from "vite-plugin-compression";
 import tsconfigPaths from "vite-tsconfig-paths";
 import { readFileSync } from "node:fs";
 import { fileURLToPath, URL } from "node:url";
@@ -45,6 +46,16 @@ function iconsAliasPlugin() {
 export default defineConfig(async () => {
   const plugins: Plugin[] = [
     react(),
+    viteCompression({
+      algorithm: "gzip",
+      ext: ".gz",
+      deleteOriginFile: false,
+    }),
+    viteCompression({
+      algorithm: "brotliCompress",
+      ext: ".br",
+      deleteOriginFile: false,
+    }),
     tsconfigPaths({
       projects: [fileURLToPath(new URL("./tsconfig.json", import.meta.url))],
       ignoreConfigErrors: true,
