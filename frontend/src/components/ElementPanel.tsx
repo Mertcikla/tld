@@ -405,7 +405,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
       savingRef.current = false
       if (pendingSaveRef.current) {
         pendingSaveRef.current = false
-        void saveIfDirty()
+        void saveIfDirtyRef.current?.()
       }
     }
   }, [autoSaveEdit, element, name, buildPayloadAndFingerprint, onSave])
