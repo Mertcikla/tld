@@ -21,6 +21,7 @@ import (
 
 const LockHeartbeatTimeout = 30 * time.Second
 const maxInClauseIDs = 500
+const embeddingSimilarityTimeout = 2 * time.Second
 
 type Store struct {
 	db *sql.DB
@@ -174,7 +175,45 @@ func (s *Store) SimilarEmbeddings(ctx context.Context, modelID int64, query Vect
 	if err := s.EnsureEmbeddingVectorSchema(ctx); err != nil {
 		return nil, err
 	}
+	ids, err := s.similarEmbeddingsSQLiteVec(ctx, modelID, query, limit)
+	if err == nil {
+		return ids, nil
+	}
 	return s.similarEmbeddingsFallback(ctx, modelID, query, limit)
+}
+
+func (s *Store) similarEmbeddingsSQLiteVec(ctx context.Context, modelID int64, query Vector, limit int) ([]int64, error) {
+	encoded, err := vector.EncodeEmbedding(query)
+	if err != nil {
+		return nil, err
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, embeddingSimilarityTimeout)
+	defer cancel()
+	rows, err := s.db.QueryContext(queryCtx, `
+		SELECT id
+		FROM watch_embedding_vec
+		WHERE dataset_id = ? AND id MATCH ?
+		LIMIT ?`, embeddingDataset(modelID), encoded, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := make([]int64, 0, limit)
+	for rows.Next() {
+		var rawID string
+		if err := rows.Scan(&rawID); err != nil {
+			return nil, err
+		}
+		var id int64
+		if _, err := fmt.Sscan(rawID, &id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *Store) similarEmbeddingsFallback(ctx context.Context, modelID int64, query Vector, limit int) ([]int64, error) {
@@ -222,7 +261,40 @@ func (s *Store) EnsureEmbeddingVectorSchema(ctx context.Context) error {
 		)`); err != nil {
 		return err
 	}
+	dbPath, err := sqliteMainDBPath(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	createVirtualTable := `CREATE VIRTUAL TABLE IF NOT EXISTS watch_embedding_vec USING vec(id)`
+	if dbPath != "" {
+		createVirtualTable = fmt.Sprintf(`CREATE VIRTUAL TABLE IF NOT EXISTS watch_embedding_vec USING vec(id, dbpath='%s')`, strings.ReplaceAll(dbPath, "'", "''"))
+	}
+	if _, err := s.db.ExecContext(ctx, createVirtualTable); err != nil {
+		return err
+	}
 	return nil
+}
+
+func sqliteMainDBPath(ctx context.Context, db *sql.DB) (string, error) {
+	rows, err := db.QueryContext(ctx, `PRAGMA database_list`)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var seq int
+		var name, file string
+		if err := rows.Scan(&seq, &name, &file); err != nil {
+			return "", err
+		}
+		if name == "main" {
+			return file, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return "", nil
 }
 
 func (s *Store) MappingState(ctx context.Context, repositoryID int64, ownerType, ownerKey, resourceType string) (materializationState, bool, error) {

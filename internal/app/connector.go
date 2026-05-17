@@ -64,51 +64,32 @@ func (s *Store) ConnectorByID(ctx context.Context, id int64) (Connector, error) 
 }
 
 func (s *Store) UpdateConnector(ctx context.Context, id int64, patch Connector) (Connector, error) {
-	current, err := s.ConnectorByID(ctx, id)
-	if err != nil {
+	row := s.db.QueryRowContext(ctx, `
+		UPDATE connectors SET
+			view_id = CASE WHEN ? = 0 THEN view_id ELSE ? END,
+			source_element_id = CASE WHEN ? = 0 THEN source_element_id ELSE ? END,
+			target_element_id = CASE WHEN ? = 0 THEN target_element_id ELSE ? END,
+			label = COALESCE(?, label),
+			description = COALESCE(?, description),
+			relationship = COALESCE(?, relationship),
+			direction = COALESCE(NULLIF(?, ''), direction),
+			style = COALESCE(NULLIF(?, ''), style),
+			url = COALESCE(?, url),
+			source_handle = COALESCE(?, source_handle),
+			target_handle = COALESCE(?, target_handle),
+			updated_at = ?
+		WHERE id = ?
+		RETURNING id, view_id, source_element_id, target_element_id, label, description, relationship, direction, style, url, source_handle, target_handle, created_at, updated_at`,
+		patch.ViewID, patch.ViewID,
+		patch.SourceElementID, patch.SourceElementID,
+		patch.TargetElementID, patch.TargetElementID,
+		patch.Label, patch.Description, patch.Relationship, patch.Direction, patch.Style, patch.URL, patch.SourceHandle, patch.TargetHandle,
+		nowString(), id)
+	var item Connector
+	if err := row.Scan(&item.ID, &item.ViewID, &item.SourceElementID, &item.TargetElementID, &item.Label, &item.Description, &item.Relationship, &item.Direction, &item.Style, &item.URL, &item.SourceHandle, &item.TargetHandle, &item.CreatedAt, &item.UpdatedAt); err != nil {
 		return Connector{}, err
 	}
-	if patch.SourceElementID == 0 {
-		patch.SourceElementID = current.SourceElementID
-	}
-	if patch.TargetElementID == 0 {
-		patch.TargetElementID = current.TargetElementID
-	}
-	if patch.ViewID == 0 {
-		patch.ViewID = current.ViewID
-	}
-	if patch.Direction == "" {
-		patch.Direction = current.Direction
-	}
-	if patch.Style == "" {
-		patch.Style = current.Style
-	}
-	if patch.Label == nil {
-		patch.Label = current.Label
-	}
-	if patch.Description == nil {
-		patch.Description = current.Description
-	}
-	if patch.Relationship == nil {
-		patch.Relationship = current.Relationship
-	}
-	if patch.URL == nil {
-		patch.URL = current.URL
-	}
-	if patch.SourceHandle == nil {
-		patch.SourceHandle = current.SourceHandle
-	}
-	if patch.TargetHandle == nil {
-		patch.TargetHandle = current.TargetHandle
-	}
-	_, err = s.db.ExecContext(ctx, `
-		UPDATE connectors SET source_element_id = ?, target_element_id = ?, label = ?, description = ?, relationship = ?, direction = ?, style = ?, url = ?, source_handle = ?, target_handle = ?, updated_at = ?
-		WHERE id = ?`,
-		patch.SourceElementID, patch.TargetElementID, patch.Label, patch.Description, patch.Relationship, patch.Direction, patch.Style, patch.URL, patch.SourceHandle, patch.TargetHandle, nowString(), id)
-	if err != nil {
-		return Connector{}, err
-	}
-	return s.ConnectorByID(ctx, id)
+	return item, nil
 }
 
 func (s *Store) DeleteConnector(ctx context.Context, id int64) error {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,9 @@ func TestConfigureSQLiteDBEnablesBusyTimeoutAndWAL(t *testing.T) {
 	}
 	if strings.ToLower(journalMode) != "wal" {
 		t.Fatalf("journal_mode = %q, want wal", journalMode)
+	}
+	if maxOpen := db.Stats().MaxOpenConnections; maxOpen != 1 {
+		t.Fatalf("max open connections = %d, want 1 for shared SQLite locking", maxOpen)
 	}
 }
 
@@ -134,6 +138,10 @@ func TestStoreConnectorsPreserveHandlesAndPatchDefaults(t *testing.T) {
 	if updated.SourceHandle == nil || *updated.SourceHandle != "right" || updated.TargetHandle == nil || *updated.TargetHandle != "left" {
 		t.Fatalf("patched handles = %v/%v, want right/left", updated.SourceHandle, updated.TargetHandle)
 	}
+
+	if _, err := store.UpdateConnector(ctx, 999999, Connector{Label: &updatedLabel}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing connector update error = %v, want sql.ErrNoRows", err)
+	}
 }
 
 func TestStoreUndoableElementUpdatesPreserveAndRestoreFields(t *testing.T) {
@@ -196,6 +204,17 @@ func TestStoreUndoableElementUpdatesPreserveAndRestoreFields(t *testing.T) {
 	if changed.Repo == nil || *changed.Repo != repo || changed.FilePath == nil || *changed.FilePath != filePath {
 		t.Fatalf("partial update lost source metadata: %+v", changed)
 	}
+	if len(changed.TechnologyConnectors) != 1 || changed.TechnologyConnectors[0].Slug != "postgresql" || strings.Join(changed.Tags, ",") != "data" {
+		t.Fatalf("changed technology/tags = links:%+v tags:%+v, want postgres/data", changed.TechnologyConnectors, changed.Tags)
+	}
+
+	nameOnly, err := store.UpdateElement(ctx, original.ID, LibraryElement{Name: "Database"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nameOnly.Name != "Database" || nameOnly.Kind == nil || *nameOnly.Kind != changedKind || len(nameOnly.TechnologyConnectors) != 1 || nameOnly.TechnologyConnectors[0].Slug != "postgresql" || strings.Join(nameOnly.Tags, ",") != "data" {
+		t.Fatalf("name-only update = %+v, want previous nullable/list fields preserved", nameOnly)
+	}
 
 	restored, err := store.UpdateElement(ctx, original.ID, original)
 	if err != nil {
@@ -209,6 +228,10 @@ func TestStoreUndoableElementUpdatesPreserveAndRestoreFields(t *testing.T) {
 	}
 	if strings.Join(restored.Tags, ",") != "runtime,public" || restored.Repo == nil || *restored.Repo != repo || restored.Branch == nil || *restored.Branch != branch || restored.FilePath == nil || *restored.FilePath != filePath || restored.Language == nil || *restored.Language != language {
 		t.Fatalf("restored metadata = %+v, want original tags/source fields", restored)
+	}
+
+	if _, err := store.UpdateElement(ctx, 999999, LibraryElement{Name: "Missing"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing element update error = %v, want sql.ErrNoRows", err)
 	}
 }
 

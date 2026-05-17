@@ -39,11 +39,31 @@ func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 			t.Fatalf("missing table %s: %v", table, err)
 		}
 	}
-	for _, index := range []string{"idx_watch_repositories_remote_url", "idx_watch_repositories_repo_root", "idx_watch_facts_subject", "idx_watch_facts_object", "idx_watch_filter_decisions_owner_key", "idx_watch_context_expansions_scope", "idx_watch_context_expansions_owner"} {
+	for _, index := range []string{"idx_watch_repositories_remote_url", "idx_watch_repositories_repo_root", "idx_watch_facts_subject", "idx_watch_facts_object", "idx_watch_filter_decisions_owner_key", "idx_watch_context_expansions_scope", "idx_watch_context_expansions_owner", "idx_view_layers_view_id", "idx_connectors_view_id_id", "idx_connectors_source_element_id", "idx_connectors_target_element_id"} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`, index).Scan(&name); err != nil {
 			t.Fatalf("missing index %s: %v", index, err)
 		}
+	}
+	for _, tt := range []struct {
+		name  string
+		query string
+		index string
+	}{
+		{name: "view layers by view", query: `EXPLAIN QUERY PLAN SELECT id FROM view_layers WHERE view_id = ? ORDER BY id`, index: "idx_view_layers_view_id"},
+		{name: "connectors by source", query: `EXPLAIN QUERY PLAN SELECT id FROM connectors WHERE source_element_id = ? ORDER BY id`, index: "idx_connectors_source_element_id"},
+		{name: "connectors by target", query: `EXPLAIN QUERY PLAN SELECT id FROM connectors WHERE target_element_id = ? ORDER BY id`, index: "idx_connectors_target_element_id"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var id, parent, notused int
+			var detail string
+			if err := db.QueryRow(tt.query, 1).Scan(&id, &parent, &notused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(detail, tt.index) {
+				t.Fatalf("query plan detail = %q, want index %s", detail, tt.index)
+			}
+		})
 	}
 }
 
@@ -4056,19 +4076,51 @@ func TestSQLiteVecStoresAndQueriesEmbeddings(t *testing.T) {
 	if err := store.SaveEmbedding(context.Background(), modelID, "symbol", "b", "b", vectorBytes(Vector{0, 1, 0})); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.SaveEmbedding(context.Background(), modelID, "symbol", "c", "c", vectorBytes(Vector{0.8, 0.2, 0})); err != nil {
+		t.Fatal(err)
+	}
 	var shadowRows int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM _vec_watch_embedding_vec`).Scan(&shadowRows); err != nil {
 		t.Fatal(err)
 	}
-	if shadowRows != 2 {
+	if shadowRows != 3 {
 		t.Fatalf("expected sqlite-vec shadow rows, got %d", shadowRows)
+	}
+	ids, err := store.SimilarEmbeddings(context.Background(), modelID, Vector{1, 0, 0}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("expected two sqlite-vec matches, got %v", ids)
+	}
+	if ids[0] != 1 || ids[1] != 3 {
+		t.Fatalf("sqlite-vec ids = %v, want [1 3] ordered by similarity", ids)
+	}
+}
+
+func TestSimilarEmbeddingsFallbackAfterSQLiteVecFailure(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	store := NewStore(db)
+	modelID, err := store.EnsureEmbeddingModel(context.Background(), EmbeddingConfig{Provider: "local-deterministic-test", Model: "vec", Dimension: 3}, "vec")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveEmbedding(context.Background(), modelID, "symbol", "a", "a", vectorBytes(Vector{1, 0, 0})); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveEmbedding(context.Background(), modelID, "symbol", "b", "b", vectorBytes(Vector{0, 1, 0})); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE _vec_watch_embedding_vec SET embedding = ? WHERE dataset_id = ? AND id = '1'`, []byte("not-a-vector"), embeddingDataset(modelID)); err != nil {
+		t.Fatal(err)
 	}
 	ids, err := store.SimilarEmbeddings(context.Background(), modelID, Vector{1, 0, 0}, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ids) != 1 {
-		t.Fatalf("expected one sqlite-vec match, got %v", ids)
+	if len(ids) != 1 || ids[0] != 1 {
+		t.Fatalf("fallback ids = %v, want [1]", ids)
 	}
 }
 
@@ -4851,13 +4903,21 @@ func openTestDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
 		t.Fatal(err)
 	}
-	for _, migration := range []string{"001_init.sql", "002_watch_raw_code_graph.sql"} {
-		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", migration))
+	entries, err := os.ReadDir(filepath.Join("..", "..", "migrations"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, migration := range entries {
+		if migration.IsDir() || !strings.HasSuffix(migration.Name(), ".sql") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join("..", "..", "migrations", migration.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(string(data)); err != nil {
-			t.Fatalf("apply %s: %v", migration, err)
+			t.Fatalf("apply %s: %v", migration.Name(), err)
 		}
 	}
 	if _, err := db.Exec(`INSERT INTO views(owner_element_id, name, description, level_label, level, created_at, updated_at) VALUES (NULL, 'Workspace', 'Local offline workspace', 'Root', 1, 'now', 'now')`); err != nil {

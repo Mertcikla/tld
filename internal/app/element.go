@@ -254,57 +254,36 @@ func (s *Store) UpdateElement(ctx context.Context, id int64, input LibraryElemen
 			return LibraryElement{}, err
 		}
 	}
-	current, err := s.ElementByID(ctx, id)
-	if err != nil {
-		return LibraryElement{}, err
+	var technologyConnectors any
+	if input.TechnologyConnectors != nil {
+		technologyConnectors = jsonString(input.TechnologyConnectors, "[]")
 	}
-	if input.Name == "" {
-		input.Name = current.Name
+	var tags any
+	if input.Tags != nil {
+		tags = jsonString(input.Tags, "[]")
 	}
-	if input.Kind == nil {
-		input.Kind = current.Kind
-	}
-	if input.Description == nil {
-		input.Description = current.Description
-	}
-	if input.Technology == nil {
-		input.Technology = current.Technology
-	}
-	if input.URL == nil {
-		input.URL = current.URL
-	}
-	if input.LogoURL == nil {
-		input.LogoURL = current.LogoURL
-	}
-	if input.Repo == nil {
-		input.Repo = current.Repo
-	}
-	if input.Branch == nil {
-		input.Branch = current.Branch
-	}
-	if input.FilePath == nil {
-		input.FilePath = current.FilePath
-	}
-	if input.Language == nil {
-		input.Language = current.Language
-	}
-	if input.TechnologyConnectors == nil {
-		input.TechnologyConnectors = current.TechnologyConnectors
-	}
-	if input.Tags == nil {
-		input.Tags = current.Tags
-	}
-	_, err = s.db.ExecContext(ctx, `
-		UPDATE elements SET name = ?, kind = ?, description = ?, technology = ?, url = ?, logo_url = ?, technology_connectors = ?, tags = ?, repo = ?, branch = ?, file_path = ?, language = ?, updated_at = ?
-		WHERE id = ?`,
-		input.Name, input.Kind, input.Description, input.Technology, input.URL, input.LogoURL,
-		jsonString(input.TechnologyConnectors, "[]"), jsonString(input.Tags, "[]"),
+	row := s.db.QueryRowContext(ctx, `
+		UPDATE elements SET
+			name = COALESCE(NULLIF(?, ''), name),
+			kind = COALESCE(?, kind),
+			description = COALESCE(?, description),
+			technology = COALESCE(?, technology),
+			url = COALESCE(?, url),
+			logo_url = COALESCE(?, logo_url),
+			technology_connectors = COALESCE(?, technology_connectors),
+			tags = COALESCE(?, tags),
+			repo = COALESCE(?, repo),
+			branch = COALESCE(?, branch),
+			file_path = COALESCE(?, file_path),
+			language = COALESCE(?, language),
+			updated_at = ?
+		WHERE id = ?
+		RETURNING id, name, kind, description, technology, url, logo_url, technology_connectors, tags, repo, branch, file_path, language, created_at, updated_at`,
+		strings.TrimSpace(input.Name), input.Kind, input.Description, input.Technology, input.URL, input.LogoURL,
+		technologyConnectors, tags,
 		input.Repo, input.Branch, input.FilePath, input.Language, nowString(), id,
 	)
-	if err != nil {
-		return LibraryElement{}, err
-	}
-	return s.ElementByID(ctx, id)
+	return scanElement(row, true, s, ctx)
 }
 
 func (s *Store) DeleteElement(ctx context.Context, id int64) error {
