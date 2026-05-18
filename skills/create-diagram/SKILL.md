@@ -57,7 +57,7 @@ Technology labels must come from the embedded catalog when possible. Before usin
 tld tech suggest "<technology name>"
 ```
 
-Use a suggested catalog name such as `Go`, `React`, or `PostgreSQL`. If `tld add` warns that a technology is unknown, update the command to use a suggested catalog label or omit `--technology`.
+Use a suggested catalog name such as `Go`, `React`, or `PostgreSQL`. If `tld add` warns that a technology is unknown, update the command to use a suggested catalog label, omit `--technology`, or just ignore and continue to add it as a custom one if you are confident it is a good metadata to include.
 
 ## How tld thinks about architecture
 
