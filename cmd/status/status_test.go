@@ -2,199 +2,78 @@ package status_test
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mertcikla/tld/v2/cmd"
-
-	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
-	"github.com/mertcikla/tld/v2/internal/planner"
-	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/internal/localserver"
 )
 
-func TestStatusCmd_Clean(t *testing.T) {
-	dir := t.TempDir()
-	configDir := t.TempDir()
-	t.Setenv("TLD_CONFIG_DIR", configDir)
-	cmd.MustInitWorkspace(t, dir)
+func TestStatusCmdReportsNoRunningProcesses(t *testing.T) {
+	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
 
-	hash, err := workspace.CalculateWorkspaceHash(dir)
-	if err != nil {
-		t.Fatalf("CalculateWorkspaceHash: %v", err)
-	}
-	if err := workspace.WriteLockFile(dir, &workspace.LockFile{
-		Version:       "v1",
-		VersionID:     "version-1",
-		LastApply:     time.Now(),
-		AppliedBy:     "cli",
-		Resources:     &workspace.ResourceCounts{},
-		WorkspaceHash: hash,
-	}); err != nil {
-		t.Fatalf("WriteLockFile: %v", err)
-	}
-
-	stdout, stderr, err := cmd.RunCmd(t, dir, "status")
+	stdout, stderr, err := cmd.RunCmd(t, t.TempDir(), "status")
 	if err != nil {
 		t.Fatalf("status: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "IN SYNC") {
-		t.Fatalf("missing IN SYNC header:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "Local changes:") {
-		t.Fatalf("missing clean status detail:\n%s", stdout)
+	if !strings.Contains(stdout, "No tld processes running.") {
+		t.Fatalf("missing no-process output: %s", stdout)
 	}
 }
 
-func TestStatusCmd_Modified(t *testing.T) {
-	dir := t.TempDir()
-	configDir := t.TempDir()
-	t.Setenv("TLD_CONFIG_DIR", configDir)
-	cmd.MustInitWorkspace(t, dir)
-
-	if err := workspace.WriteLockFile(dir, &workspace.LockFile{
-		Version:       "v1",
-		VersionID:     "version-1",
-		LastApply:     time.Now(),
-		AppliedBy:     "cli",
-		Resources:     &workspace.ResourceCounts{},
-		WorkspaceHash: "sha256:stale",
-	}); err != nil {
-		t.Fatalf("WriteLockFile: %v", err)
+func TestStatusCmdReportsRegisteredProcesses(t *testing.T) {
+	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "tld.db"), []byte("db"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := localserver.SaveProcessRegistry(localserver.ProcessRegistry{Processes: []localserver.ProcessRecord{
+		{Kind: localserver.ProcessKindServer, PID: os.Getpid(), DataDir: dataDir, Addr: "127.0.0.1:1", StartedAt: "2026-05-18T00:00:00Z"},
+		{Kind: localserver.ProcessKindWatch, PID: os.Getpid(), DataDir: dataDir, RepoRoot: "/repo", RepositoryID: 42},
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
 	}
 
-	stdout, stderr, err := cmd.RunCmd(t, dir, "status")
+	stdout, stderr, err := cmd.RunCmd(t, t.TempDir(), "status")
 	if err != nil {
 		t.Fatalf("status: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "MODIFIED") {
-		t.Fatalf("missing MODIFIED header:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "Local changes:") {
-		t.Fatalf("missing modified detail:\n%s", stdout)
-	}
-}
-
-func TestStatusCmd_NoLockFile(t *testing.T) {
-	dir := t.TempDir()
-	configDir := t.TempDir()
-	t.Setenv("TLD_CONFIG_DIR", configDir)
-	cmd.MustInitWorkspace(t, dir)
-
-	stdout, stderr, err := cmd.RunCmd(t, dir, "status")
-	if err != nil {
-		t.Fatalf("status: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "No sync history found.") {
-		t.Fatalf("missing no-lock message:\n%s", stdout)
+	for _, want := range []string{"Server:", "Watch:", "PID:", "URL:", "Ready:", "no", "Repo:", "/repo", "Repository ID:", "42", "DB size:"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("status output missing %q:\n%s", want, stdout)
+		}
 	}
 }
 
-func TestStatusCmd_JSONOutput(t *testing.T) {
-	dir := t.TempDir()
-	configDir := t.TempDir()
-	t.Setenv("TLD_CONFIG_DIR", configDir)
-	cmd.MustInitWorkspace(t, dir)
-
-	hash, err := workspace.CalculateWorkspaceHash(dir)
-	if err != nil {
-		t.Fatalf("CalculateWorkspaceHash: %v", err)
-	}
-	if err := workspace.WriteLockFile(dir, &workspace.LockFile{
-		Version:       "v1",
-		VersionID:     "version-1",
-		LastApply:     time.Now(),
-		AppliedBy:     "cli",
-		Resources:     &workspace.ResourceCounts{},
-		WorkspaceHash: hash,
-	}); err != nil {
-		t.Fatalf("WriteLockFile: %v", err)
+func TestStatusCmdJSONOutput(t *testing.T) {
+	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
+	if err := localserver.SaveProcessRegistry(localserver.ProcessRegistry{Processes: []localserver.ProcessRecord{
+		{Kind: localserver.ProcessKindServer, PID: os.Getpid(), Addr: "127.0.0.1:1"},
+	}}); err != nil {
+		t.Fatalf("seed registry: %v", err)
 	}
 
-	stdout, stderr, err := cmd.RunCmd(t, dir, "status", "--format", "json")
+	stdout, stderr, err := cmd.RunCmd(t, t.TempDir(), "status", "--format", "json")
 	if err != nil {
 		t.Fatalf("status --format json: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-	var payload planner.JSONOutput
+	var payload struct {
+		Command   string `json:"command"`
+		Status    string `json:"status"`
+		Processes []struct {
+			Kind  string `json:"kind"`
+			Ready *bool  `json:"ready"`
+		} `json:"processes"`
+	}
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatalf("unmarshal json output: %v\nstdout=%s", err, stdout)
 	}
-	if payload.Command != "status" || payload.Status != "in_sync" {
+	if payload.Command != "status" || payload.Status != "running" || len(payload.Processes) != 1 {
 		t.Fatalf("unexpected payload: %+v", payload)
 	}
-}
-
-func TestStatusCmd_ConflictCount(t *testing.T) {
-	dir := t.TempDir()
-	configDir := t.TempDir()
-	t.Setenv("TLD_CONFIG_DIR", configDir)
-	cmd.MustInitWorkspace(t, dir)
-
-	if err := workspace.WriteMetadataSection(dir, "elements.yaml", "_meta_elements", map[string]*workspace.ResourceMetadata{
-		"api": {Conflict: true},
-		"db":  {Conflict: true},
-	}); err != nil {
-		t.Fatalf("WriteMetadataSection: %v", err)
-	}
-	if err := workspace.WriteLockFile(dir, &workspace.LockFile{VersionID: "version-1", LastApply: time.Now()}); err != nil {
-		t.Fatalf("WriteLockFile: %v", err)
-	}
-
-	stdout, stderr, err := cmd.RunCmd(t, dir, "status")
-	if err != nil {
-		t.Fatalf("status: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "Merge conflicts:") || !strings.Contains(stdout, "2") {
-		t.Fatalf("missing conflict count: %s", stdout)
-	}
-}
-
-func TestStatusCmd_CheckServer_InSync(t *testing.T) {
-	svc := &cmd.MockDiagramService{}
-	serverURL := cmd.NewMockServer(t, svc)
-	dir := t.TempDir()
-	cmd.SetupApplyWorkspace(t, dir, serverURL)
-	cmd.SeedElementWorkspace(t, dir)
-	hash, err := workspace.CalculateWorkspaceHash(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := workspace.WriteLockFile(dir, &workspace.LockFile{VersionID: "v1", WorkspaceHash: hash, LastApply: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
-
-	stdout, stderr, err := cmd.RunCmd(t, dir, "status", "--check-server")
-	if err != nil {
-		t.Fatalf("status --check-server: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "Server state:") || !strings.Contains(stdout, "In sync") {
-		t.Fatalf("missing in-sync server output: %s", stdout)
-	}
-}
-
-func TestStatusCmd_CheckServer_Drifted(t *testing.T) {
-	svc := &cmd.MockDiagramService{ApplyFunc: func(req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
-		resp := cmd.SuccessResponse(req)
-		resp.Drift = []*diagv1.PlanDriftItem{{ResourceType: "element", Ref: "api", Reason: "server changed"}}
-		return resp, nil
-	}}
-	serverURL := cmd.NewMockServer(t, svc)
-	dir := t.TempDir()
-	cmd.SetupApplyWorkspace(t, dir, serverURL)
-	cmd.SeedElementWorkspace(t, dir)
-	hash, err := workspace.CalculateWorkspaceHash(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := workspace.WriteLockFile(dir, &workspace.LockFile{VersionID: "v1", WorkspaceHash: hash, LastApply: time.Now()}); err != nil {
-		t.Fatal(err)
-	}
-
-	stdout, stderr, err := cmd.RunCmd(t, dir, "status", "--check-server")
-	if err != nil {
-		t.Fatalf("status --check-server: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-	}
-	if !strings.Contains(stdout, "1 drift items found") {
-		t.Fatalf("missing drift output: %s", stdout)
+	if payload.Processes[0].Kind != localserver.ProcessKindServer || payload.Processes[0].Ready == nil || *payload.Processes[0].Ready {
+		t.Fatalf("unexpected process payload: %+v", payload.Processes[0])
 	}
 }

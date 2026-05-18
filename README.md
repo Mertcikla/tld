@@ -112,8 +112,9 @@ Secondary actions:
   plan        Show what would be applied
   pull        Pull the current server state into local YAML files
   serve       Start the local tlDiagram web server
-  status      Show sync status between local YAML and the server
+  status      Show running local tlDiagram processes
   stop        Stop the local tlDiagram web server
+  sync        Inspect and reconcile workspace sync state
   validate    Validate the workspace YAML files
   version     Print the version number of tld
   views       Show derived view structure for the workspace
