@@ -23,6 +23,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/serve"
 	"github.com/mertcikla/tld/v2/cmd/status"
 	"github.com/mertcikla/tld/v2/cmd/stop"
+	synccmd "github.com/mertcikla/tld/v2/cmd/sync"
 	techcmd "github.com/mertcikla/tld/v2/cmd/tech"
 	"github.com/mertcikla/tld/v2/cmd/update"
 	"github.com/mertcikla/tld/v2/cmd/validate"
@@ -133,8 +134,11 @@ and apply them atomically with 'tld apply'.`,
 	pullCmd := pull.NewPullCmd(&wdir)
 	pullCmd.GroupID = secondaryGroup.ID
 
-	statusCmd := status.NewStatusCmd(&wdir)
+	statusCmd := status.NewStatusCmd()
 	statusCmd.GroupID = secondaryGroup.ID
+
+	syncCmd := synccmd.NewSyncCmd(&wdir)
+	syncCmd.GroupID = secondaryGroup.ID
 
 	viewsCmd := views.NewViewsCmd(&wdir)
 	viewsCmd.GroupID = secondaryGroup.ID
@@ -181,6 +185,7 @@ and apply them atomically with 'tld apply'.`,
 		exportCmd,
 		pullCmd,
 		statusCmd,
+		syncCmd,
 		viewsCmd,
 		diffCmd,
 		inspectCmd,

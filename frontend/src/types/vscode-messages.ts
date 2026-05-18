@@ -37,7 +37,7 @@ export interface WatchEventDetail {
   repository_id?: number
   message?: string
   at: string
-  data?: any
+  data?: unknown
 }
 
 // Sync status payload

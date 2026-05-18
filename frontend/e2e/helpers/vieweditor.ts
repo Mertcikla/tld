@@ -433,7 +433,6 @@ export async function mockWatchRuntime(page: Page, options: {
 } = {}) {
   const repositoryId = options.repositoryId ?? 1001
   const versionId = options.versionId ?? 2001
-  const viewId = options.viewId ?? 1
   const elementId = options.elementId ?? 1
   const elementName = options.elementName ?? 'Changed element'
   const active = options.active ?? true

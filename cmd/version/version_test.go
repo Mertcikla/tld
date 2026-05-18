@@ -22,3 +22,17 @@ func TestVersionCmdPrintsCurrentVersion(t *testing.T) {
 		t.Fatalf("stdout = %q, want current version", got)
 	}
 }
+
+func TestVersionUpdateCmdExists(t *testing.T) {
+	root := version.NewVersionCmd()
+	cmd, args, err := root.Find([]string{"update"})
+	if err != nil {
+		t.Fatalf("Find('update') error = %v", err)
+	}
+	if cmd.Name() != "update" {
+		t.Fatalf("cmd.Name() = %q, want 'update'", cmd.Name())
+	}
+	if len(args) != 0 {
+		t.Fatalf("len(args) = %d, want 0", len(args))
+	}
+}

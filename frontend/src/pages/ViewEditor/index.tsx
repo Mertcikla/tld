@@ -90,7 +90,6 @@ import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
 import { buildElementLibraryItems, useStore, placedElementToLibraryElement, resolveElementForUpdate } from '../../store/useStore'
 import { useWorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
-import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../../components/WorkspacePanel'
 
 const nodeTypes = {
   elementNode: ElementNode,
@@ -610,37 +609,6 @@ function ViewEditorInner({
       toast({ status: 'error', title: 'Visibility override was not saved' })
     }
   }, [clearEditHistory, refreshElements, reloadVisibilityOverrides, toast, viewId])
-
-  const resolveWatchRepositoryId = useCallback(async () => {
-    const status = await api.watch.status().catch(() => null)
-    if (status?.repository?.id) return status.repository.id
-    const repositories = await api.watch.repositories().catch(() => [])
-    return repositories[0]?.id ?? null
-  }, [])
-
-  const applyWatchContextAction = useCallback(async (action: 'clean', resourceType: 'element' | 'view', resourceId: number) => {
-    const repositoryId = await resolveWatchRepositoryId()
-    if (!repositoryId) {
-      toast({ status: 'warning', title: 'No watch repository found' })
-      return
-    }
-    try {
-      const result = await api.watch.cleanContext(repositoryId, { resource_type: resourceType, resource_id: resourceId })
-      clearEditHistory()
-      await refreshGrid()
-      await refreshElements()
-      window.dispatchEvent(new CustomEvent(WATCH_REPRESENTATION_UPDATED_EVENT, {
-        detail: { type: 'representation.updated', repository_id: repositoryId, at: new Date().toISOString(), data: result.summary },
-      }))
-      toast({
-        status: 'success',
-        title: 'Noise cleaned',
-        description: `${result.elements_removed + result.connectors_removed + result.views_removed} generated item${result.elements_removed + result.connectors_removed + result.views_removed === 1 ? '' : 's'} removed. Tier ${result.tier_after}/${result.max_tier}.`,
-      })
-    } catch (err) {
-      toast({ status: 'error', title: 'Failed to clean noise', description: String(err) })
-    }
-  }, [clearEditHistory, refreshElements, refreshGrid, resolveWatchRepositoryId, toast])
 
   const tagCounts = useMemo(() => {
     const counts: Record<string, number> = {}

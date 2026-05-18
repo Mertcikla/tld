@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { WatchDiff, WatchRepository, WatchVersion, WorkspaceVersion } from '../api/client'
 import { isWatchDiffChange, normalizeWatchChangeType } from '../utils/watchDiffSummary'

@@ -140,14 +140,6 @@ func printableKind(kind string) string {
 	}
 }
 
-func signalProcess(pid int, sig os.Signal) error {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("find process: %w", err)
-	}
-	return proc.Signal(sig)
-}
-
 func killProcess(pid int) error {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
