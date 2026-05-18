@@ -113,6 +113,16 @@ Run this check after every batch of `tld add` or `tld connect` commands:
 
 Append any missing connectors to `diagram.sh` and run them before moving on.
 
+## Reverting YAML changes
+
+Do not manually edit `elements.yaml` or `connectors.yaml` to undo diagram mistakes. Revert YAML changes through the CLI so workspace metadata stays consistent, then append the corrective commands to `diagram.sh`.
+
+- Remove an unwanted element with `tld remove element <ref>`.
+- Remove an unwanted connector with `tld remove connector --view <view-ref> --from <source-ref> --to <target-ref>`.
+- If more than one connector matches, include the exact label: `tld remove connector --view <view-ref> --from <source-ref> --to <target-ref> --label "<label>"`.
+
+Run the relevant `tld remove` command before re-adding the corrected element or connector.
+
 ---
 
 ## View density: the 10-element rule
