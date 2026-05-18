@@ -464,6 +464,7 @@ function ViewEditorInner({
   screenToFlowPositionRef.current = screenToFlowPosition
   const needsFitView = useRef(true)
   const rfReadyRef = useRef(false)
+  const fittedContextForViewRef = useRef<number | null>(null)
   const interactionSourceIdRef = useRef<number | null>(null)
 
   const nodeTypesMemo = useMemo(() => nodeTypes, [])
@@ -1297,9 +1298,17 @@ function ViewEditorInner({
 
   const maybeFitView = useCallback(() => {
     if (!rfReadyRef.current || !needsFitView.current) return
-    const nodes = rfNodesRef.current
-    if (nodes.length === 0) return
-    if (!nodesMatchCurrentView(nodes, viewElementsRef.current, viewIdRef.current)) return
+    const mainNodes = rfNodesRef.current
+    if (mainNodes.length === 0) return
+    if (!nodesMatchCurrentView(mainNodes, viewElementsRef.current, viewIdRef.current)) return
+
+    const contextFitNodes = crossBranchSettings.enabled
+      ? liveContextNodes.filter((node) => node.type === 'contextNeighborNode')
+      : []
+    const nodes = contextFitNodes.length > 0
+      ? [...mainNodes, ...contextFitNodes]
+      : mainNodes
+
     if (!nodes.every((n) => typeof n.width === 'number' && n.width > 0 && typeof n.height === 'number' && n.height > 0)) return
 
     if (clampedRevealProgress !== null) {
@@ -1309,18 +1318,46 @@ function ViewEditorInner({
       return
     }
 
-    const ok = safeFitView({ duration: 0, padding: VIEW_EDITOR_INITIAL_FIT_PADDING, minZoom: computedMinZoom, maxZoom: 4 })
-    if (ok) needsFitView.current = false
+    const ok = safeFitView({
+      nodes: nodes.map((node) => ({ id: node.id })),
+      duration: 0,
+      padding: VIEW_EDITOR_INITIAL_FIT_PADDING,
+      minZoom: computedMinZoom,
+      maxZoom: 4,
+    })
+    if (ok) {
+      if (contextFitNodes.length > 0) fittedContextForViewRef.current = viewIdRef.current
+      needsFitView.current = false
+    }
     else setTimeout(() => { if (needsFitView.current) maybeFitView() }, 50)
-  }, [applyDemoRevealViewport, clampedRevealProgress, computedMinZoom, safeFitView, rfNodesRef, viewElementsRef, viewIdRef])
+  }, [
+    applyDemoRevealViewport,
+    clampedRevealProgress,
+    computedMinZoom,
+    crossBranchSettings.enabled,
+    liveContextNodes,
+    safeFitView,
+    rfNodesRef,
+    viewElementsRef,
+    viewIdRef,
+  ])
 
   const onRFInit = useCallback(() => { rfReadyRef.current = true; maybeFitView() }, [maybeFitView])
 
   useEffect(() => {
     needsFitView.current = true
+    fittedContextForViewRef.current = null
   }, [viewId])
 
-  useEffect(() => { maybeFitView() }, [rfNodes, maybeFitView])
+  useEffect(() => { maybeFitView() }, [rfNodes, liveContextNodes, maybeFitView])
+
+  useEffect(() => {
+    if (!crossBranchSettings.enabled || viewId == null) return
+    if (fittedContextForViewRef.current === viewId) return
+    if (!liveContextNodes.some((node) => node.type === 'contextNeighborNode')) return
+    needsFitView.current = true
+    maybeFitView()
+  }, [crossBranchSettings.enabled, liveContextNodes, maybeFitView, viewId])
 
   useEffect(() => {
     const el = containerRef.current

@@ -199,9 +199,15 @@ export function removePlacementFromSnapshot(snapshot: WorkspaceGraphSnapshot | n
 export function overrideViewContentInSnapshot(snapshot: WorkspaceGraphSnapshot | null, viewId: number, placements: PlacedElement[], connectors: Connector[]): WorkspaceGraphSnapshot | null {
   if (!snapshot) return snapshot
   const next = deepCloneExploreData(snapshot.source)
+  const visibleElementIds = new Set(placements.map((placement) => placement.element_id))
+  const explicitConnectorIds = new Set(connectors.map((connector) => connector.id))
+  const preservedOffViewConnectors = (next.views[String(viewId)]?.connectors ?? []).filter((connector) => {
+    if (explicitConnectorIds.has(connector.id)) return false
+    return !visibleElementIds.has(connector.source_element_id) || !visibleElementIds.has(connector.target_element_id)
+  })
   next.views[String(viewId)] = {
     placements: [...placements],
-    connectors: [...connectors],
+    connectors: [...connectors, ...preservedOffViewConnectors],
   }
   return buildWorkspaceGraphSnapshot(next)
 }

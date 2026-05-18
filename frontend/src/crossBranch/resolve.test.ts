@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { buildWorkspaceGraphSnapshot } from './graph'
-import { resolveZUIProxyConnectors } from './resolve'
+import { buildWorkspaceGraphSnapshot, overrideViewContentInSnapshot, removeConnectorFromSnapshot } from './graph'
+import { resolveViewProxyGraph, resolveZUIProxyConnectors } from './resolve'
 import type { ResolveZUIProxyConnectorOptions, ZUIConnectorAnchorInfo } from './resolve'
 import type { Connector, ExploreData, PlacedElement, ViewTreeNode } from '../types'
 import type { CrossBranchContextSettings } from './types'
@@ -338,5 +338,34 @@ describe('resolveZUIProxyConnectors', () => {
       connectorBudget: 50,
       connectorPriority: 'external',
     })
+  })
+})
+
+describe('resolveViewProxyGraph', () => {
+  it('keeps current-view off-canvas neighbor connectors across editor content overlays', () => {
+    const data = baseData([
+      connector(1, 1, 1, 2, 'A-B'),
+      connector(2, 1, 3, 2, 'AA-B'),
+      connector(3, 1, 3, 1, 'AA-A'),
+    ])
+    const snapshot = buildWorkspaceGraphSnapshot(data)
+    const currentPlacements = data.views['1'].placements
+    const nativeEditorConnectors = [data.views['1'].connectors[0]]
+
+    const overlaid = overrideViewContentInSnapshot(snapshot, 1, currentPlacements, nativeEditorConnectors)
+
+    expect(overlaid?.connectorsByViewId[1].map((item) => item.id).sort((a, b) => a - b)).toEqual([1, 2, 3])
+
+    const resolved = resolveViewProxyGraph(overlaid, 1, currentPlacements, zuiSettings())
+    const neighbor = resolved.proxyNodes.find((node) => node.anchorElementId === 3)
+
+    expect(neighbor?.connectorCount).toBe(2)
+
+    const afterDelete = removeConnectorFromSnapshot(snapshot, 1, 2)
+    const afterDeleteOverlay = overrideViewContentInSnapshot(afterDelete, 1, currentPlacements, nativeEditorConnectors)
+    const afterDeleteResolved = resolveViewProxyGraph(afterDeleteOverlay, 1, currentPlacements, zuiSettings())
+    const remainingNeighbor = afterDeleteResolved.proxyNodes.find((node) => node.anchorElementId === 3)
+
+    expect(remainingNeighbor?.connectorCount).toBe(1)
   })
 })

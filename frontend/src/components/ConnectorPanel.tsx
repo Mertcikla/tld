@@ -71,7 +71,7 @@ export interface ConnectorPanelProps extends ConnectorPanelSlots {
   orgId: string
   onSave: (connector: Connector) => void
   autoSave?: boolean
-  onDelete: (edgeId: number) => void
+  onDelete: (edgeId: number, ownerViewId?: number) => void
   visibilityOverrideDelta?: number
   onPromoteVisibility?: (id: number) => Promise<void> | void
   onDemoteVisibility?: (id: number) => Promise<void> | void
@@ -245,7 +245,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
     if (isReadOnly || !connector) return
     try {
       await api.workspace.connectors.delete(orgId, connector.id)
-      onDelete(connector.id)
+      onDelete(connector.id, connector.view_id)
       confirmDelete.onClose()
       onClose()
     } catch {
