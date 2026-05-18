@@ -1,8 +1,9 @@
 <p align="center">
   <a href="https://tldiagram.com">
-    <img src="./frontend/logo/tld.svg" alt="Logo" width="400">
+    <img src="./frontend/logo/tld.svg" alt="Logo" width="200">
   </a>
 </p>
+
 
 <p align="center">
   <a href="https://go.dev/"><img src="https://img.shields.io/github/go-mod/go-version/mertcikla/tld" alt="Go Version"></a>
@@ -15,6 +16,7 @@
 <p align="center">
     <img src="./assets/tld-editor-ss.png" alt="editor-ss">
 </p>
+
 ---
 
 `tld` is an opinionated, flexible diagramming tool to help you visualize, understand, and maintain your software architecture. Inspired by C4 model, designed with multiple opt-in features to answer evolving needs of software teams. 
@@ -51,8 +53,6 @@ Windows
 powershell -ExecutionPolicy ByPass -c "irm https://tldiagram.com/install.ps1 | iex; tld serve --open"
 ```
 
----
-
 ## Deployment & Self-Hosting
 
 The `tld` binary is designed to be run as a persistent service in your infrastructure or as a local development tool.
@@ -67,7 +67,6 @@ Run `tld serve` in any directory to start a local instance that uses your curren
 ### Configuration
 Various configuration options are available in `~/.config/tldiagram/tld.yaml`
 
----
 
 ## The workflow
 
@@ -75,7 +74,6 @@ Various configuration options are available in `~/.config/tldiagram/tld.yaml`
 2. **Automate**: Run `tld analyze` to scan your repository. It will suggest new elements and connectors based on your actual source code.
 3. **Commit**: Save your changes. All UI edits are persisted to `elements.yaml` and `connectors.yaml`. Commit these to Git to version your architecture.
 
----
 
 ## Commands Reference 
 `tld --help`
@@ -120,7 +118,6 @@ Flags:
 Use "tld [command] --help" for more information about a command
 
 ```
----
 
 ## Workspace Structure
 
@@ -129,7 +126,7 @@ Use "tld [command] --help" for more information about a command
 - `connectors.yaml`: Connection and relationship definitions.
 - `.tld.lock`: Tracks sync state and versioning.
 
----
+
 
 ## Environment Variables
 
