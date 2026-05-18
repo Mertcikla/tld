@@ -42,6 +42,7 @@ spec:
   assertions:
     noise:
       header.Date: []
+      body.connected_clients: []
   created: 1779049478
   app_port: 8060
 curl: |
