@@ -8,15 +8,15 @@ spec:
     method: GET
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/views/1
+    url: http://127.0.0.1:8060/views/3
     header:
       Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
-      Cache-Control: max-age=0
+      Accept-Language: en-US,en;q=0.6
+      Cache-Control: no-cache
       Connection: keep-alive
       Host: 127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/1
+      Pragma: no-cache
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -28,14 +28,14 @@ spec:
       Upgrade-Insecure-Requests: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: ""
-    timestamp: 2026-05-17T23:30:37.567690156+03:00
+    timestamp: 2026-05-18T11:50:43.099572608+03:00
   resp:
     status_code: 200
     header:
       Content-Encoding: br
       Content-Length: "479"
       Content-Type: text/html; charset=utf-8
-      Date: Sun, 17 May 2026 20:30:37 GMT
+      Date: Mon, 18 May 2026 08:50:43 GMT
       Vary: Accept-Encoding
     body: |
       <!doctype html>
@@ -70,30 +70,30 @@ spec:
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:30:37.568071336+03:00
+    timestamp: 2026-05-18T11:50:43.10025573+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049837
+  created: 1779094243
   app_port: 8060
 curl: |
   curl --request GET \
-    --url http://127.0.0.1:8060/views/1 \
+    --url http://127.0.0.1:8060/views/3 \
+    --header 'Cache-Control: no-cache' \
+    --header 'Sec-Gpc: 1' \
+    --header 'Sec-Fetch-Dest: document' \
+    --header 'Pragma: no-cache' \
+    --header 'Sec-Fetch-Mode: navigate' \
+    --header 'Sec-Fetch-User: ?1' \
+    --header 'Upgrade-Insecure-Requests: 1' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
     --header 'Accept-Encoding: gzip, deflate, br, zstd' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Sec-Fetch-User: ?1' \
-    --header 'Sec-Fetch-Dest: document' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
     --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Cache-Control: max-age=0' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
     --header 'Connection: keep-alive' \
+    --header 'Sec-Fetch-Site: same-origin' \
     --header 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Upgrade-Insecure-Requests: 1' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
-    --header 'Sec-Fetch-Mode: navigate' \
+    --header 'Host: 127.0.0.1:8060' \

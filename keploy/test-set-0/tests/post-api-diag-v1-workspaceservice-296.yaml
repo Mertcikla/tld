@@ -12,10 +12,10 @@ spec:
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "60"
+      Content-Length: "59"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"viewId":1,"elementId":15,"positionX":126,"positionY":-209}'
-    timestamp: 2026-05-17T23:30:37.534565919+03:00
+    body: '{"viewId":1,"elementId":3,"positionX":-288,"positionY":130}'
+    timestamp: 2026-05-18T11:54:06.676798181+03:00
   resp:
     status_code: 200
     header:
@@ -42,37 +42,37 @@ spec:
       Content-Encoding: gzip
       Content-Length: "26"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:30:37 GMT
+      Date: Mon, 18 May 2026 08:54:06 GMT
       Vary: Origin
     body: '{}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:30:37.536016427+03:00
+    timestamp: 2026-05-18T11:54:06.6771662+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049837
+  created: 1779094446
   app_port: 8060
 curl: |-
   curl --request POST \
     --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/UpdatePlacementPosition \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Sec-Fetch-Dest: empty' \
     --header 'Connection: keep-alive' \
-    --header 'Accept: */*' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
+    --header 'Sec-Fetch-Dest: empty' \
     --header 'Sec-Fetch-Mode: cors' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Content-Type: application/json' \
     --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Accept: */*' \
+    --header 'Content-Type: application/json' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Host: 127.0.0.1:8060' \
     --header 'Connect-Protocol-Version: 1' \
-    --data "{\"viewId\":1,\"elementId\":15,\"positionX\":126,\"positionY\":-209}"
+    --header 'Referer: http://127.0.0.1:8060/views/1' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Sec-Gpc: 1' \
+    --data "{\"viewId\":1,\"elementId\":3,\"positionX\":-288,\"positionY\":130}"

@@ -8,18 +8,18 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateElement
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListElements
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "23"
+      Content-Length: "12"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/4
+      Referer: http://127.0.0.1:8060/views/3
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"name":"G2","kind":""}'
-    timestamp: 2026-05-17T23:26:07.532700074+03:00
+    body: '{"limit":20}'
+    timestamp: 2026-05-18T11:50:29.279713471+03:00
   resp:
     status_code: 200
     header:
@@ -40,41 +40,41 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "117"
+      Content-Length: "505"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:26:07 GMT
+      Date: Mon, 18 May 2026 08:50:29 GMT
       Vary: Origin
-    body: '{"element":{"id":12, "orgId":"11111111-1111-1111-1111-111111111111", "name":"G2", "createdAt":"2026-05-17T20:26:07Z", "updatedAt":"2026-05-17T20:26:07Z"}}'
+    body: '{"elements":[{"id":9, "orgId":"11111111-1111-1111-1111-111111111111", "name":"logging", "createdAt":"2026-05-18T08:49:46Z", "updatedAt":"2026-05-18T08:49:46Z"}, {"id":8, "orgId":"11111111-1111-1111-1111-111111111111", "name":"middleware", "createdAt":"2026-05-18T08:49:42Z", "updatedAt":"2026-05-18T08:49:42Z"}, {"id":7, "orgId":"11111111-1111-1111-1111-111111111111", "name":"comps", "createdAt":"2026-05-18T08:49:29Z", "updatedAt":"2026-05-18T08:49:29Z"}, {"id":6, "orgId":"11111111-1111-1111-1111-111111111111", "name":"reactflow", "createdAt":"2026-05-18T08:49:23Z", "updatedAt":"2026-05-18T08:49:23Z"}, {"id":5, "orgId":"11111111-1111-1111-1111-111111111111", "name":"tanstack", "createdAt":"2026-05-18T08:49:18Z", "updatedAt":"2026-05-18T08:49:18Z"}, {"id":3, "orgId":"11111111-1111-1111-1111-111111111111", "name":"DB", "kind":"database", "description":"", "technology":"PostgreSQL", "url":"", "logoUrl":"/icons/postgresql.png", "technologyLinks":[{"type":"catalog", "slug":"postgresql", "label":"PostgreSQL", "isPrimaryIcon":true}], "tags":["persistence"], "createdAt":"2026-05-18T08:48:17Z", "updatedAt":"2026-05-18T08:49:01Z"}, {"id":4, "orgId":"11111111-1111-1111-1111-111111111111", "name":"cache", "kind":"", "description":"", "technology":"Redis", "url":"", "logoUrl":"/icons/redis.png", "technologyLinks":[{"type":"catalog", "slug":"redis", "label":"Redis", "isPrimaryIcon":true}], "tags":["persistence"], "createdAt":"2026-05-18T08:48:42Z", "updatedAt":"2026-05-18T08:48:59Z"}, {"id":2, "orgId":"11111111-1111-1111-1111-111111111111", "name":"B", "kind":"backend", "description":"", "technology":"Python", "url":"", "logoUrl":"/icons/python.png", "technologyLinks":[{"type":"catalog", "slug":"python", "label":"Python", "isPrimaryIcon":true}], "createdAt":"2026-05-18T08:47:22Z", "updatedAt":"2026-05-18T08:48:12Z", "hasView":true}, {"id":1, "orgId":"11111111-1111-1111-1111-111111111111", "name":"A", "kind":"frontend", "description":"", "technology":"TypeScript", "url":"", "logoUrl":"/icons/typescript.png", "technologyLinks":[{"type":"catalog", "slug":"typescript", "label":"TypeScript", "isPrimaryIcon":true}], "createdAt":"2026-05-18T08:47:15Z", "updatedAt":"2026-05-18T08:48:09Z", "hasView":true}], "pagination":{"totalCount":9}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:26:07.533799376+03:00
+    timestamp: 2026-05-18T11:50:29.28087545+03:00
   objects: []
   assertions:
     noise:
-      body.element.createdAt: []
-      body.element.updatedAt: []
+      body.elements.createdAt: []
+      body.elements.updatedAt: []
       header.Date: []
-  created: 1779049567
+  created: 1779094229
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateElement \
-    --header 'Content-Type: application/json' \
-    --header 'Connect-Protocol-Version: 1' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Referer: http://127.0.0.1:8060/views/4' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Connection: keep-alive' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListElements \
+    --header 'Accept: */*' \
     --header 'Sec-Fetch-Dest: empty' \
     --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Sec-Fetch-Mode: cors' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
     --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Sec-Fetch-Mode: cors' \
-    --header 'Accept: */*' \
-    --data "{\"name\":\"G2\",\"kind\":\"\"}"
+    --header 'Connection: keep-alive' \
+    --header 'Sec-Gpc: 1' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Referer: http://127.0.0.1:8060/views/3' \
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Content-Type: application/json' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --data "{\"limit\":20}"

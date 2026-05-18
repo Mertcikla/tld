@@ -12,7 +12,7 @@ spec:
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connection: keep-alive
       Host: 127.0.0.1:8060
       Referer: http://127.0.0.1:8060/views/2
@@ -25,39 +25,39 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: ""
-    timestamp: 2026-05-17T23:23:50.340342422+03:00
+    timestamp: 2026-05-18T11:49:14.711056167+03:00
   resp:
     status_code: 200
     header:
       Content-Length: "32"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:23:50 GMT
+      Date: Mon, 18 May 2026 08:49:14 GMT
     body: |
       {"density_level":0,"view_id":2}
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:23:50.340806145+03:00
+    timestamp: 2026-05-18T11:49:14.711456752+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049430
+  created: 1779094154
   app_port: 8060
 curl: |
   curl --request GET \
     --url http://127.0.0.1:8060/api/views/2/density \
-    --header 'Connection: keep-alive' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Accept: */*' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Sec-Fetch-Mode: cors' \
     --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Fetch-Site: same-origin' \
     --header 'Sec-Gpc: 1' \
+    --header 'Connection: keep-alive' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
     --header 'Referer: http://127.0.0.1:8060/views/2' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Accept: */*' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \

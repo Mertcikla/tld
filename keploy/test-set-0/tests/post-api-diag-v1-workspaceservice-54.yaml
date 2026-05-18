@@ -8,14 +8,14 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateConnector
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListElements
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "137"
+      Content-Length: "19"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"viewId":2,"sourceElementId":7,"targetElementId":8,"direction":"forward","style":"bezier","sourceHandle":"right","targetHandle":"right"}'
-    timestamp: 2026-05-17T23:24:02.716257586+03:00
+    body: '{"search":"tansta"}'
+    timestamp: 2026-05-18T11:49:18.037258722+03:00
   resp:
     status_code: 200
     header:
@@ -40,41 +40,39 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "172"
+      Content-Length: "41"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:24:02 GMT
+      Date: Mon, 18 May 2026 08:49:18 GMT
       Vary: Origin
-    body: '{"connector":{"id":6, "viewId":2, "sourceElementId":7, "targetElementId":8, "direction":"forward", "style":"bezier", "sourceHandle":"right", "targetHandle":"right", "createdAt":"2026-05-17T20:24:02Z", "updatedAt":"2026-05-17T20:24:02Z"}}'
+    body: '{"pagination":{}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:24:02.717270355+03:00
+    timestamp: 2026-05-18T11:49:18.038237145+03:00
   objects: []
   assertions:
     noise:
-      body.connector.createdAt: []
-      body.connector.updatedAt: []
       header.Date: []
-  created: 1779049442
+  created: 1779094158
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateConnector \
-    --header 'Connection: keep-alive' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Content-Type: application/json' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Accept: */*' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListElements \
     --header 'Sec-Fetch-Mode: cors' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
     --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Host: 127.0.0.1:8060' \
+    --header 'Connection: keep-alive' \
     --header 'Connect-Protocol-Version: 1' \
-    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
     --header 'Sec-Fetch-Dest: empty' \
+    --header 'Sec-Gpc: 1' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Content-Type: application/json' \
     --header 'Referer: http://127.0.0.1:8060/views/2' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --data "{\"viewId\":2,\"sourceElementId\":7,\"targetElementId\":8,\"direction\":\"forward\",\"style\":\"bezier\",\"sourceHandle\":\"right\",\"targetHandle\":\"right\"}"
+    --header 'Accept: */*' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --data "{\"search\":\"tansta\"}"

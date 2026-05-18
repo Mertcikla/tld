@@ -8,11 +8,11 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListConnectors
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListViewLayers
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
       Content-Length: "12"
@@ -29,7 +29,7 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: '{"viewId":1}'
-    timestamp: 2026-05-17T23:30:37.480836662+03:00
+    timestamp: 2026-05-18T11:54:01.370377949+03:00
   resp:
     status_code: 200
     header:
@@ -40,41 +40,39 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "326"
+      Content-Length: "26"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:30:37 GMT
+      Date: Mon, 18 May 2026 08:54:01 GMT
       Vary: Origin
-    body: '{"connectors":[{"id":2, "viewId":1, "sourceElementId":3, "targetElementId":4, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-17T20:22:59Z", "updatedAt":"2026-05-17T20:22:59Z"}, {"id":3, "viewId":1, "sourceElementId":5, "targetElementId":4, "direction":"forward", "style":"bezier", "sourceHandle":"bottom", "targetHandle":"right", "createdAt":"2026-05-17T20:23:09Z", "updatedAt":"2026-05-17T20:23:09Z"}, {"id":4, "viewId":1, "sourceElementId":4, "targetElementId":6, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-17T20:23:49Z", "updatedAt":"2026-05-17T20:23:49Z"}, {"id":11, "viewId":1, "sourceElementId":15, "targetElementId":5, "label":"asd", "description":"asdasda", "relationship":"http", "direction":"none", "style":"step", "url":"https://registry.mertcikla.com", "sourceHandle":"right", "targetHandle":"left", "createdAt":"2026-05-17T20:29:59Z", "updatedAt":"2026-05-17T20:30:19Z"}]}'
+    body: '{}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:30:37.483750759+03:00
+    timestamp: 2026-05-18T11:54:01.371100976+03:00
   objects: []
   assertions:
     noise:
-      body.connectors.createdAt: []
-      body.connectors.updatedAt: []
       header.Date: []
-  created: 1779049837
+  created: 1779094441
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListConnectors \
-    --header 'Accept: */*' \
-    --header 'Connect-Protocol-Version: 1' \
-    --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Sec-Fetch-Mode: cors' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Content-Type: application/json' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Connection: keep-alive' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListViewLayers \
     --header 'Sec-Fetch-Site: same-origin' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Gpc: 1' \
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Referer: http://127.0.0.1:8060/views/1' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Accept: */*' \
+    --header 'Connection: keep-alive' \
+    --header 'Content-Type: application/json' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Host: 127.0.0.1:8060' \
     --data "{\"viewId\":1}"

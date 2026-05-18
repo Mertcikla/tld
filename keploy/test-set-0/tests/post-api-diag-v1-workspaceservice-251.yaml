@@ -8,14 +8,14 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreatePlacement
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/UpdateConnector
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "81"
+      Content-Length: "114"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"viewId":1,"elementId":15,"positionX":266.05728,"positionY":-294.32966399999987}'
-    timestamp: 2026-05-17T23:29:43.031640121+03:00
+    body: '{"connectorId":8,"label":"","description":"","relationship":"","direction":"backward","style":"straight","url":""}'
+    timestamp: 2026-05-18T11:53:13.971929513+03:00
   resp:
     status_code: 200
     header:
@@ -40,39 +40,41 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "112"
+      Content-Length: "178"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:29:43 GMT
+      Date: Mon, 18 May 2026 08:53:13 GMT
       Vary: Origin
-    body: '{"placement":{"id":30, "viewId":1, "elementId":15, "positionX":266.05728, "positionY":-294.32966399999987}}'
+    body: '{"connector":{"id":8, "viewId":3, "sourceElementId":8, "targetElementId":4, "direction":"backward", "style":"straight", "sourceHandle":"bottom", "targetHandle":"right", "createdAt":"2026-05-18T08:50:21Z", "updatedAt":"2026-05-18T08:53:13Z"}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:29:43.03341279+03:00
+    timestamp: 2026-05-18T11:53:13.973241526+03:00
   objects: []
   assertions:
     noise:
+      body.connector.createdAt: []
+      body.connector.updatedAt: []
       header.Date: []
-  created: 1779049783
+  created: 1779094393
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreatePlacement \
-    --header 'Accept: */*' \
-    --header 'Connect-Protocol-Version: 1' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/UpdateConnector \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
     --header 'Sec-Fetch-Mode: cors' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Content-Type: application/json' \
+    --header 'Sec-Fetch-Site: same-origin' \
     --header 'Connection: keep-alive' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
     --header 'Origin: http://127.0.0.1:8060' \
     --header 'Referer: http://127.0.0.1:8060/views/1' \
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Host: 127.0.0.1:8060' \
     --header 'Sec-Gpc: 1' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Accept: */*' \
     --header 'Sec-Fetch-Dest: empty' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Content-Type: application/json' \
-    --data "{\"viewId\":1,\"elementId\":15,\"positionX\":266.05728,\"positionY\":-294.32966399999987}"
+    --data "{\"connectorId\":8,\"label\":\"\",\"description\":\"\",\"relationship\":\"\",\"direction\":\"backward\",\"style\":\"straight\",\"url\":\"\"}"

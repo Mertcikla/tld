@@ -8,18 +8,18 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetWorkspace
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListElements
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "23"
+      Content-Length: "12"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views
+      Referer: http://127.0.0.1:8060/views/3
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"includeContent":true}'
-    timestamp: 2026-05-17T23:26:21.224040229+03:00
+    body: '{"limit":20}'
+    timestamp: 2026-05-18T11:50:41.355161112+03:00
   resp:
     status_code: 200
     header:
@@ -40,51 +40,41 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "1017"
+      Content-Length: "505"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:26:21 GMT
+      Date: Mon, 18 May 2026 08:50:41 GMT
       Vary: Origin
-    body: '{"views":[{"id":1, "orgId":"11111111-1111-1111-1111-111111111111", "name":"rpoot", "description":"Local offline workspace", "levelLabel":"Root", "createdAt":"2026-05-17T20:14:18Z", "updatedAt":"2026-05-17T20:24:59Z", "level":1, "children":[{"id":2, "orgId":"11111111-1111-1111-1111-111111111111", "name":"D", "parentViewId":1, "createdAt":"2026-05-17T20:23:50Z", "updatedAt":"2026-05-17T20:23:50Z", "level":2, "depth":1, "ownerElementId":6}, {"id":3, "orgId":"11111111-1111-1111-1111-111111111111", "name":"C", "parentViewId":1, "createdAt":"2026-05-17T20:25:20Z", "updatedAt":"2026-05-17T20:25:20Z", "level":2, "depth":1, "ownerElementId":5}, {"id":4, "orgId":"11111111-1111-1111-1111-111111111111", "name":"G", "parentViewId":1, "createdAt":"2026-05-17T20:25:57Z", "updatedAt":"2026-05-17T20:25:57Z", "level":2, "depth":1, "ownerElementId":10}]}], "totalCount":4, "content":{"1":{"placements":[{"id":5, "viewId":1, "elementId":3, "positionX":245, "positionY":-47, "name":"A"}, {"id":6, "viewId":1, "elementId":4, "positionX":276.05728, "positionY":-292.82966399999987, "name":"B"}, {"id":7, "viewId":1, "elementId":5, "positionX":579.52864, "positionY":-621.4148319999999, "name":"C", "description":"", "kind":"database", "technology":"Redis", "url":"", "logoUrl":"/icons/redis.png", "technologyLinks":[{"type":"catalog", "slug":"redis", "label":"Redis", "isPrimaryIcon":true}], "tags":["cache"]}, {"id":8, "viewId":1, "elementId":6, "positionX":344.18937457321545, "positionY":-824.3543660381713, "name":"D"}, {"id":15, "viewId":1, "elementId":10, "positionX":100, "positionY":100, "name":"G"}], "connectors":[{"id":2, "viewId":1, "sourceElementId":3, "targetElementId":4, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-17T20:22:59Z", "updatedAt":"2026-05-17T20:22:59Z"}, {"id":3, "viewId":1, "sourceElementId":5, "targetElementId":4, "direction":"forward", "style":"bezier", "sourceHandle":"bottom", "targetHandle":"right", "createdAt":"2026-05-17T20:23:09Z", "updatedAt":"2026-05-17T20:23:09Z"}, {"id":4, "viewId":1, "sourceElementId":4, "targetElementId":6, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-17T20:23:49Z", "updatedAt":"2026-05-17T20:23:49Z"}]}, "2":{"placements":[{"id":9, "viewId":2, "elementId":7, "positionX":329.18937457321545, "positionY":-717.3543660381713, "name":"D1"}, {"id":10, "viewId":2, "elementId":8, "positionX":327.4837745732154, "positionY":-944.0239660381714, "name":"D2"}], "connectors":[{"id":5, "viewId":2, "sourceElementId":8, "targetElementId":7, "direction":"forward", "style":"bezier", "sourceHandle":"bottom", "targetHandle":"top", "createdAt":"2026-05-17T20:23:59Z", "updatedAt":"2026-05-17T20:23:59Z"}, {"id":6, "viewId":2, "sourceElementId":7, "targetElementId":8, "direction":"forward", "style":"bezier", "sourceHandle":"right", "targetHandle":"right", "createdAt":"2026-05-17T20:24:02Z", "updatedAt":"2026-05-17T20:24:02Z"}, {"id":7, "viewId":2, "sourceElementId":7, "targetElementId":9, "direction":"forward", "style":"bezier", "sourceHandle":"bottom", "targetHandle":"top", "createdAt":"2026-05-17T20:24:10Z", "updatedAt":"2026-05-17T20:24:10Z"}]}, "3":{"placements":[{"id":13, "viewId":3, "elementId":7, "positionX":402.26432, "positionY":-448.588974779304, "name":"D1"}, {"id":14, "viewId":3, "elementId":3, "positionX":416.52544, "positionY":-707.008014779304, "name":"A"}], "connectors":[{"id":8, "viewId":3, "sourceElementId":7, "targetElementId":3, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-17T20:25:32Z", "updatedAt":"2026-05-17T20:25:32Z"}]}, "4":{"placements":[{"id":16, "viewId":4, "elementId":11, "positionX":676, "positionY":782, "name":"G1"}, {"id":17, "viewId":4, "elementId":12, "positionX":683.5, "positionY":607.5, "name":"G2"}], "connectors":[{"id":9, "viewId":4, "sourceElementId":11, "targetElementId":12, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-17T20:26:07Z", "updatedAt":"2026-05-17T20:26:07Z"}, {"id":10, "viewId":4, "sourceElementId":12, "targetElementId":4, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-17T20:26:15Z", "updatedAt":"2026-05-17T20:26:15Z"}]}}, "navigations":[{"elementId":5, "fromViewId":1, "toViewId":3, "toViewName":"C", "relationType":"child"}, {"elementId":6, "fromViewId":1, "toViewId":2, "toViewName":"D", "relationType":"child"}, {"elementId":10, "fromViewId":1, "toViewId":4, "toViewName":"G", "relationType":"child"}]}'
+    body: '{"elements":[{"id":9, "orgId":"11111111-1111-1111-1111-111111111111", "name":"logging", "createdAt":"2026-05-18T08:49:46Z", "updatedAt":"2026-05-18T08:49:46Z"}, {"id":8, "orgId":"11111111-1111-1111-1111-111111111111", "name":"middleware", "createdAt":"2026-05-18T08:49:42Z", "updatedAt":"2026-05-18T08:49:42Z"}, {"id":7, "orgId":"11111111-1111-1111-1111-111111111111", "name":"comps", "createdAt":"2026-05-18T08:49:29Z", "updatedAt":"2026-05-18T08:49:29Z"}, {"id":6, "orgId":"11111111-1111-1111-1111-111111111111", "name":"reactflow", "createdAt":"2026-05-18T08:49:23Z", "updatedAt":"2026-05-18T08:49:23Z"}, {"id":5, "orgId":"11111111-1111-1111-1111-111111111111", "name":"tanstack", "createdAt":"2026-05-18T08:49:18Z", "updatedAt":"2026-05-18T08:49:18Z"}, {"id":3, "orgId":"11111111-1111-1111-1111-111111111111", "name":"DB", "kind":"database", "description":"", "technology":"PostgreSQL", "url":"", "logoUrl":"/icons/postgresql.png", "technologyLinks":[{"type":"catalog", "slug":"postgresql", "label":"PostgreSQL", "isPrimaryIcon":true}], "tags":["persistence"], "createdAt":"2026-05-18T08:48:17Z", "updatedAt":"2026-05-18T08:49:01Z"}, {"id":4, "orgId":"11111111-1111-1111-1111-111111111111", "name":"cache", "kind":"", "description":"", "technology":"Redis", "url":"", "logoUrl":"/icons/redis.png", "technologyLinks":[{"type":"catalog", "slug":"redis", "label":"Redis", "isPrimaryIcon":true}], "tags":["persistence"], "createdAt":"2026-05-18T08:48:42Z", "updatedAt":"2026-05-18T08:48:59Z"}, {"id":2, "orgId":"11111111-1111-1111-1111-111111111111", "name":"B", "kind":"backend", "description":"", "technology":"Python", "url":"", "logoUrl":"/icons/python.png", "technologyLinks":[{"type":"catalog", "slug":"python", "label":"Python", "isPrimaryIcon":true}], "createdAt":"2026-05-18T08:47:22Z", "updatedAt":"2026-05-18T08:48:12Z", "hasView":true}, {"id":1, "orgId":"11111111-1111-1111-1111-111111111111", "name":"A", "kind":"frontend", "description":"", "technology":"TypeScript", "url":"", "logoUrl":"/icons/typescript.png", "technologyLinks":[{"type":"catalog", "slug":"typescript", "label":"TypeScript", "isPrimaryIcon":true}], "createdAt":"2026-05-18T08:47:15Z", "updatedAt":"2026-05-18T08:48:09Z", "hasView":true}], "pagination":{"totalCount":9}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:26:21.225237673+03:00
+    timestamp: 2026-05-18T11:50:41.356689295+03:00
   objects: []
   assertions:
     noise:
-      body.content.1.connectors.createdAt: []
-      body.content.1.connectors.updatedAt: []
-      body.content.2.connectors.createdAt: []
-      body.content.2.connectors.updatedAt: []
-      body.content.3.connectors.createdAt: []
-      body.content.3.connectors.updatedAt: []
-      body.content.4.connectors.createdAt: []
-      body.content.4.connectors.updatedAt: []
-      body.views.children.createdAt: []
-      body.views.children.updatedAt: []
-      body.views.createdAt: []
-      body.views.updatedAt: []
+      body.elements.createdAt: []
+      body.elements.updatedAt: []
       header.Date: []
-  created: 1779049581
+  created: 1779094241
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetWorkspace \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListElements \
+    --header 'Content-Type: application/json' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Connection: keep-alive' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Referer: http://127.0.0.1:8060/views/3' \
     --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Connect-Protocol-Version: 1' \
     --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
     --header 'Host: 127.0.0.1:8060' \
     --header 'Sec-Fetch-Dest: empty' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Content-Type: application/json' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
     --header 'Sec-Gpc: 1' \
-    --header 'Accept: */*' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
     --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Referer: http://127.0.0.1:8060/views' \
-    --header 'Connection: keep-alive' \
-    --header 'Connect-Protocol-Version: 1' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
     --header 'Sec-Fetch-Mode: cors' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --data "{\"includeContent\":true}"
+    --header 'Accept: */*' \
+    --data "{\"limit\":20}"

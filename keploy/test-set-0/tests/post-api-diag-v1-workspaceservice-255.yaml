@@ -8,14 +8,14 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreatePlacement
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetView
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "81"
+      Content-Length: "34"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"viewId":1,"elementId":22,"positionX":266.05728,"positionY":-336.72966399999984}'
-    timestamp: 2026-05-17T23:29:48.315303963+03:00
+    body: '{"viewId":1,"includeContent":true}'
+    timestamp: 2026-05-18T11:53:18.08828825+03:00
   resp:
     status_code: 200
     header:
@@ -40,39 +40,43 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "111"
+      Content-Length: "648"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:29:48 GMT
+      Date: Mon, 18 May 2026 08:53:18 GMT
       Vary: Origin
-    body: '{"placement":{"id":31, "viewId":1, "elementId":22, "positionX":266.05728, "positionY":-336.72966399999984}}'
+    body: '{"view":{"id":1, "orgId":"11111111-1111-1111-1111-111111111111", "name":"Workspace", "description":"Local offline workspace", "levelLabel":"Root", "createdAt":"2026-05-18T08:47:03Z", "updatedAt":"2026-05-18T08:47:03Z", "level":1}, "content":{"placements":[{"id":1, "viewId":1, "elementId":1, "positionX":68, "positionY":-264, "name":"A", "description":"", "kind":"frontend", "technology":"TypeScript", "url":"", "logoUrl":"/icons/typescript.png", "technologyLinks":[{"type":"catalog", "slug":"typescript", "label":"TypeScript", "isPrimaryIcon":true}], "hasView":true}, {"id":2, "viewId":1, "elementId":2, "positionX":88.70400000000004, "positionY":23.23999999999991, "name":"B", "description":"", "kind":"backend", "technology":"Python", "url":"", "logoUrl":"/icons/python.png", "technologyLinks":[{"type":"catalog", "slug":"python", "label":"Python", "isPrimaryIcon":true}], "hasView":true}, {"id":3, "viewId":1, "elementId":3, "positionX":104.77296000000001, "positionY":282.7323199999998, "name":"DB", "description":"", "kind":"database", "technology":"PostgreSQL", "url":"", "logoUrl":"/icons/postgresql.png", "technologyLinks":[{"type":"catalog", "slug":"postgresql", "label":"PostgreSQL", "isPrimaryIcon":true}], "tags":["persistence"]}, {"id":4, "viewId":1, "elementId":4, "positionX":427.63247999999993, "positionY":2.7963199999998665, "name":"cache", "description":"", "kind":"", "technology":"Redis", "url":"", "logoUrl":"/icons/redis.png", "technologyLinks":[{"type":"catalog", "slug":"redis", "label":"Redis", "isPrimaryIcon":true}], "tags":["persistence"], "hasView":true}], "connectors":[{"id":1, "viewId":1, "sourceElementId":1, "targetElementId":2, "direction":"forward", "style":"bezier", "sourceHandle":"bottom", "targetHandle":"top", "createdAt":"2026-05-18T08:47:28Z", "updatedAt":"2026-05-18T08:47:28Z"}, {"id":2, "viewId":1, "sourceElementId":2, "targetElementId":3, "direction":"forward", "style":"bezier", "sourceHandle":"bottom", "targetHandle":"top", "createdAt":"2026-05-18T08:48:17Z", "updatedAt":"2026-05-18T08:48:17Z"}, {"id":3, "viewId":1, "sourceElementId":2, "targetElementId":4, "direction":"forward", "style":"bezier", "sourceHandle":"right", "targetHandle":"left", "createdAt":"2026-05-18T08:48:47Z", "updatedAt":"2026-05-18T08:48:47Z"}]}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:29:48.317101333+03:00
+    timestamp: 2026-05-18T11:53:18.0894929+03:00
   objects: []
   assertions:
     noise:
+      body.content.connectors.createdAt: []
+      body.content.connectors.updatedAt: []
+      body.view.createdAt: []
+      body.view.updatedAt: []
       header.Date: []
-  created: 1779049788
+  created: 1779094398
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreatePlacement \
-    --header 'Connect-Protocol-Version: 1' \
-    --header 'Sec-Fetch-Mode: cors' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetView \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Content-Type: application/json' \
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Connection: keep-alive' \
     --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Content-Type: application/json' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Sec-Gpc: 1' \
+    --header 'Referer: http://127.0.0.1:8060/views/1' \
+    --header 'Sec-Fetch-Dest: empty' \
     --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
     --header 'Accept: */*' \
     --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Connection: keep-alive' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --data "{\"viewId\":1,\"elementId\":22,\"positionX\":266.05728,\"positionY\":-336.72966399999984}"
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --data "{\"viewId\":1,\"includeContent\":true}"

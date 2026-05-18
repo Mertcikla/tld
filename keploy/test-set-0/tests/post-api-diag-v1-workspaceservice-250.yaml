@@ -8,14 +8,14 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListElements
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/UpdateConnector
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "27"
+      Content-Length: "116"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"limit":20,"search":"qwe"}'
-    timestamp: 2026-05-17T23:29:41.340245629+03:00
+    body: '{"connectorId":8,"label":"","description":"","relationship":"","direction":"backward","style":"smoothstep","url":""}'
+    timestamp: 2026-05-18T11:53:13.499864627+03:00
   resp:
     status_code: 200
     header:
@@ -40,41 +40,41 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "146"
+      Content-Length: "180"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:29:41 GMT
+      Date: Mon, 18 May 2026 08:53:13 GMT
       Vary: Origin
-    body: '{"elements":[{"id":15, "orgId":"11111111-1111-1111-1111-111111111111", "name":"qwe", "createdAt":"2026-05-17T20:27:45Z", "updatedAt":"2026-05-17T20:27:45Z"}], "pagination":{"totalCount":1}}'
+    body: '{"connector":{"id":8, "viewId":3, "sourceElementId":8, "targetElementId":4, "direction":"backward", "style":"smoothstep", "sourceHandle":"bottom", "targetHandle":"right", "createdAt":"2026-05-18T08:50:21Z", "updatedAt":"2026-05-18T08:53:13Z"}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:29:41.341899665+03:00
+    timestamp: 2026-05-18T11:53:13.501468349+03:00
   objects: []
   assertions:
     noise:
-      body.elements.createdAt: []
-      body.elements.updatedAt: []
+      body.connector.createdAt: []
+      body.connector.updatedAt: []
       header.Date: []
-  created: 1779049781
+  created: 1779094393
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListElements \
-    --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/UpdateConnector \
     --header 'Sec-Fetch-Mode: cors' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
     --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Connect-Protocol-Version: 1' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Referer: http://127.0.0.1:8060/views/1' \
+    --header 'Connection: keep-alive' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Content-Type: application/json' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
     --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Connect-Protocol-Version: 1' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
     --header 'Accept: */*' \
-    --header 'Connection: keep-alive' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Content-Type: application/json' \
-    --data "{\"limit\":20,\"search\":\"qwe\"}"
+    --header 'Sec-Gpc: 1' \
+    --data "{\"connectorId\":8,\"label\":\"\",\"description\":\"\",\"relationship\":\"\",\"direction\":\"backward\",\"style\":\"smoothstep\",\"url\":\"\"}"

@@ -8,14 +8,14 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateElement
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreatePlacement
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "22"
+      Content-Length: "58"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"name":"A","kind":""}'
-    timestamp: 2026-05-17T23:22:52.864022527+03:00
+    body: '{"viewId":1,"elementId":1,"positionX":68,"positionY":-264}'
+    timestamp: 2026-05-18T11:47:15.249296454+03:00
   resp:
     status_code: 200
     header:
@@ -40,41 +40,39 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "115"
+      Content-Length: "83"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:22:52 GMT
+      Date: Mon, 18 May 2026 08:47:15 GMT
       Vary: Origin
-    body: '{"element":{"id":3, "orgId":"11111111-1111-1111-1111-111111111111", "name":"A", "createdAt":"2026-05-17T20:22:52Z", "updatedAt":"2026-05-17T20:22:52Z"}}'
+    body: '{"placement":{"id":1, "viewId":1, "elementId":1, "positionX":68, "positionY":-264}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:22:52.866999198+03:00
+    timestamp: 2026-05-18T11:47:15.250352646+03:00
   objects: []
   assertions:
     noise:
-      body.element.createdAt: []
-      body.element.updatedAt: []
       header.Date: []
-  created: 1779049372
+  created: 1779094035
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateElement \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreatePlacement \
     --header 'Referer: http://127.0.0.1:8060/views/1' \
-    --header 'Sec-Fetch-Mode: cors' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Content-Type: application/json' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
     --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Connect-Protocol-Version: 1' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
     --header 'Accept: */*' \
-    --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Host: 127.0.0.1:8060' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Content-Type: application/json' \
     --header 'Connection: keep-alive' \
-    --data "{\"name\":\"A\",\"kind\":\"\"}"
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Sec-Gpc: 1' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --data "{\"viewId\":1,\"elementId\":1,\"positionX\":68,\"positionY\":-264}"

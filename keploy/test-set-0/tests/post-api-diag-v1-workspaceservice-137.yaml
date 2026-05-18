@@ -8,18 +8,18 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateConnector
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetView
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "138"
+      Content-Length: "34"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/4
+      Referer: http://127.0.0.1:8060/views/3
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"viewId":4,"sourceElementId":11,"targetElementId":12,"direction":"forward","style":"bezier","sourceHandle":"top","targetHandle":"bottom"}'
-    timestamp: 2026-05-17T23:26:07.619469266+03:00
+    body: '{"viewId":3,"includeContent":true}'
+    timestamp: 2026-05-18T11:50:36.470232186+03:00
   resp:
     status_code: 200
     header:
@@ -40,41 +40,41 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "174"
+      Content-Length: "274"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:26:07 GMT
+      Date: Mon, 18 May 2026 08:50:36 GMT
       Vary: Origin
-    body: '{"connector":{"id":9, "viewId":4, "sourceElementId":11, "targetElementId":12, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-17T20:26:07Z", "updatedAt":"2026-05-17T20:26:07Z"}}'
+    body: '{"view":{"id":3, "orgId":"11111111-1111-1111-1111-111111111111", "name":"B", "parentViewId":1, "createdAt":"2026-05-18T08:49:39Z", "updatedAt":"2026-05-18T08:50:36Z", "level":2, "ownerElementId":2}, "content":{"placements":[{"id":8, "viewId":3, "elementId":8, "positionX":93.6140236647727, "positionY":-140.43852181818193, "name":"middleware"}, {"id":9, "viewId":3, "elementId":9, "positionX":-60.38140033522724, "positionY":-409.6103618181819, "name":"logging"}]}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:26:07.620433622+03:00
+    timestamp: 2026-05-18T11:50:36.472105968+03:00
   objects: []
   assertions:
     noise:
-      body.connector.createdAt: []
-      body.connector.updatedAt: []
+      body.view.createdAt: []
+      body.view.updatedAt: []
       header.Date: []
-  created: 1779049567
+  created: 1779094236
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateConnector \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Accept: */*' \
-    --header 'Referer: http://127.0.0.1:8060/views/4' \
-    --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Connection: keep-alive' \
-    --header 'Connect-Protocol-Version: 1' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetView \
+    --header 'Referer: http://127.0.0.1:8060/views/3' \
     --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Sec-Gpc: 1' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Connect-Protocol-Version: 1' \
     --header 'Sec-Fetch-Mode: cors' \
     --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Accept: */*' \
+    --header 'Sec-Fetch-Dest: empty' \
     --header 'Content-Type: application/json' \
-    --data "{\"viewId\":4,\"sourceElementId\":11,\"targetElementId\":12,\"direction\":\"forward\",\"style\":\"bezier\",\"sourceHandle\":\"top\",\"targetHandle\":\"bottom\"}"
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Connection: keep-alive' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --data "{\"viewId\":3,\"includeContent\":true}"

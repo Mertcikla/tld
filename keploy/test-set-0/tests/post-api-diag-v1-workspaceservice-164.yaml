@@ -8,18 +8,18 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreatePlacement
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetWorkspace
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "89"
+      Content-Length: "2"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/2
+      Referer: http://127.0.0.1:8060/views
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"viewId":2,"elementId":13,"positionX":256.5980113636363,"positionY":-1131.8364067372831}'
-    timestamp: 2026-05-17T23:27:18.851508378+03:00
+    body: '{}'
+    timestamp: 2026-05-18T11:51:05.515124281+03:00
   resp:
     status_code: 200
     header:
@@ -40,39 +40,43 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "121"
+      Content-Length: "264"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:27:18 GMT
+      Date: Mon, 18 May 2026 08:51:05 GMT
       Vary: Origin
-    body: '{"placement":{"id":19, "viewId":2, "elementId":13, "positionX":256.5980113636363, "positionY":-1131.8364067372831}}'
+    body: '{"views":[{"id":1, "orgId":"11111111-1111-1111-1111-111111111111", "name":"Workspace", "description":"Local offline workspace", "levelLabel":"Root", "createdAt":"2026-05-18T08:47:03Z", "updatedAt":"2026-05-18T08:47:03Z", "level":1, "children":[{"id":2, "orgId":"11111111-1111-1111-1111-111111111111", "name":"A", "parentViewId":1, "createdAt":"2026-05-18T08:49:14Z", "updatedAt":"2026-05-18T08:49:14Z", "level":2, "depth":1, "ownerElementId":1}, {"id":3, "orgId":"11111111-1111-1111-1111-111111111111", "name":"B", "parentViewId":1, "createdAt":"2026-05-18T08:49:39Z", "updatedAt":"2026-05-18T08:50:38Z", "level":2, "depth":1, "ownerElementId":2}]}], "totalCount":3}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:27:18.852433949+03:00
+    timestamp: 2026-05-18T11:51:05.516046651+03:00
   objects: []
   assertions:
     noise:
+      body.views.children.createdAt: []
+      body.views.children.updatedAt: []
+      body.views.createdAt: []
+      body.views.updatedAt: []
       header.Date: []
-  created: 1779049638
+  created: 1779094265
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreatePlacement \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetWorkspace \
     --header 'Sec-Fetch-Mode: cors' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Accept: */*' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Connect-Protocol-Version: 1' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Content-Type: application/json' \
-    --header 'Referer: http://127.0.0.1:8060/views/2' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
     --header 'Connection: keep-alive' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Origin: http://127.0.0.1:8060' \
     --header 'Sec-Gpc: 1' \
-    --data "{\"viewId\":2,\"elementId\":13,\"positionX\":256.5980113636363,\"positionY\":-1131.8364067372831}"
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Accept: */*' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Referer: http://127.0.0.1:8060/views' \
+    --header 'Content-Type: application/json' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --data "{}"

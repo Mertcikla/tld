@@ -12,7 +12,7 @@ spec:
     header:
       Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connection: keep-alive
       Host: 127.0.0.1:8060
       Referer: http://127.0.0.1:8060/views/1
@@ -25,38 +25,38 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: ""
-    timestamp: 2026-05-17T23:23:14.08229652+03:00
+    timestamp: 2026-05-18T11:47:42.861430957+03:00
   resp:
     status_code: 200
     header:
       Content-Type: image/png
-      Date: Sun, 17 May 2026 20:23:14 GMT
+      Date: Mon, 18 May 2026 08:47:42 GMT
       Vary: Accept-Encoding
     body: "�PNG\r\n\x1A\n\0\0\0\rIHDR\0\0\0�\0\0\0�\b\x03\0\0\0����\0\0\x01�PLTELiq�d��d��d��f��^��f��f��d��d��f��d��f��d��d��d��d��f��d��d��d��c��d��d��e��d��d��e��d��d��d��e��f��d��d��d��f��d��d��d��d��d��d��d��d��d��d��d��c��c��d��d��d��d��d��d��d��c��d��d��d��d��d��d��d��f��d��d��d��d��d��d��d��d��d��d��f��d��d��d��d��d��d��d��d��d��d��b��d��d��f��d��d��d��f��f��d��d��d��d��d��e��d��d��c��d��d��d��d��d��d��d��f��d��d��d��d��d��c��f��d��d��f��d��d��d��d��d��e��b��d��d��d��d��c��d��f��f��d��d��d��d��d��d��f��f��f��f��e��d��f��f��f��b��b��f��d�aP��\0\0\0�tRNS\0�\x02\x04\x02\x02���������\x1A��\n6ǣ`��4�\b��\U000EB8D7�2���^~\x12�\\\x14p��Z�X�<8��R�\x06��\x0E>�l\x06\a�.*hD�|z\x1C\"��j�\f���Fn\f�t�$ (��:���B�bT�\x0F&\x18��H��0�@�\x16r\f����Jw��e\x02LPd�\x02N��Փ���!\x1A��|�,�\x14�\x02\x06a�t�\0\0\0\tpHYs\0\0\v\x13\0\0\v\x13\x01\0��\x18\0\0\x0F.IDATx��[�[��\x12orL�9�\a\x14�A@@�C\x11\x04T\x10Q\x0E\x15\x04EPD\x14\x11<�>��vW�c=��}���}U�I&�\\L\x18������O'�I�����~U�\x12������T�(�[��J�<���Y�������ˊ\v�\x05�kKAqYb�l�7>��\x10��:.�\t�3d{��K%�4bh�f_p\x13���`]��p\x15P#�\x02�\t�Ơ\x05�\x7F��K![��\x02�1.f�+\0_l!����I\x02�dS�\eZ0����\x15�\0�<'y\x04�i�0q_��A�r\x04�J����\x1D@�\t���\r�\x05\x13\"\x0F2�+r��� \x01��'\e���W\a��v�{\0��\n�.#�H�:�0q�\x1FGdm3%�6�\x14{\e�#�W0:@n��\x1D\x11�b5/\"P$�x����Qꛞ�ȩC%\0\0�\x17\x06�2U\x12`��H>�!\f�:Nuf\x19\x1D��\x1E�M4��(\x0FFh��L\x18%�)��\x10y��W��V�6on;�����\x18n\x1DF\x16\x14�\x18\x1FY�Rg ���\r�\x01�h���|a\x1C\x1C���0��\x19[Y�����05�I�:��f�4��h��\rqC��sFC:\b\x18%��\x0F��\x01\x14th����s\x10:�-%Q�M\r��\x12�j\0n�X��]����\x02n�\x1D�\f\x10��ۭu�]��.\x18�� \x1D\x1Ao݂���.�����\\�\x1A�y�\x04�_GX�/��Q��H��:m�S��3��5�ܶ�i\x06��\x1A*A\r��x���+R�j��\a#\x04�-1*2�\x19F��62�\x1E@&k5\bm_��^xaG��\x02�s��d�+<�>\x18�uo�uX\x11R���Ķw�\x14U�<�E\x1E?��\x18X���m��\x06Z��!\x18�������Ly���\v�×)�\x1EvZ�J\x0E�4\x06���c`\t\x146\0m\x1Avٰ<MQ�\x1A3�8Mސ��k`���x�۝)�T\tZWhģ�\x19\x10��v�~\f���\x19A�r��\"oH��u\\>�)���JF��w9u�����Aw&3��*�#��)oH��1����6�Z\x0F�\t�A�\b��w�I�\x1F�P�=i��!\x05��W���\x14���j`���_5�2\rz%\x05\x03\0D�\x11�%���\x14�\x1F�9�·��\x1D��\x12˭��;FoH��!��<\x01sʘ7����v��%��\x03B�+{���,ޤ����\x13���\x14�\x1F�e)\r�]|�Q1�B���7Ŀ��;\a<\x14-Eސ�t\x1A�U�UR\0\x10\x0E��)>�JΡw�\x1FS\t@��E��e\"�)\0���5t�+A��P�C6�a�R\"\v\x11������$Tx�ǽ��\x06r\x04�\x03��T���У���\x0E���\x18�\x15�n�%@\x0F�۶��a��!\x01�\x16\x18ַ�����\x03B8d\r\x1D����8&�P�4��8�[?\x10��#\x01�� \0]�C\x1C����t��\x16l;d�;d����\x03�\x136��P�qC瓃�ҹW�j��m�*�o�e#\x14@\x10�N�H8d�\x13N(}w\r:=`pz�\0\x1F�U�m\ez\x1C�N���P��Q��0\t\"\v��Mv�NxX(}�\fW����^r0�#\x12���*\v�ڥ��\\�8\x1A�\x04u�D\x1FCӻR������}̖{��ޠ\x12Mv�������`\x11t[R�a\x12��\f�\"'�\x01��\x15m!2A�*b��a�\x1A�c�MYĊ:�m0U�\rt&�~�\x1E����%V���b\x18�Q�:��X�R:s�KN7�B\\��MH,�o\e��*�$@\eh\x12\x18b��)�q�A�'H�\x13\x06�m|\a�w�Z\x1D�����¥��$h�υ\x11��\x18���P��ĖU�9���.�\x18\f:y��\x162����\\\0\x04$l\\\x10��\x12J�;�sf\x1F\x7F}�vE�,��ɵ\x01{U$c�=*�Z�G!{2�t\r\aIV\x12�\x066�HƜ^*M������>�&Qq�\x17����O\x7F�ˌ7\tސ��|U\x10�t\ftX{����l�\x18�\fAݔo8�*۳ŨaИ�H\x16e��ؼ���J[&�\f\x0E�C��np��DK�j��J\n\x11�+-e�\x0F\x17�T5v�\x18�j�\x1FfFMgc�L��ۗ�\x143�Ϸ�㟥eC\x1D����4\x17�\x10��$��Ϊ���q�\x11��\r\te:1��(�D\x1A\x16�t~\x05x�L|�/y0\0\x18�k�֬��R($�L-�Fy�5\x02<\x18�5\x1E\x06(g[�w\0`a�\x06\x1C�\nԼh?K�Q��Et\x17��\0/­\x160I\x05Ӎ�\fԂQ\x03\x15\0Q�� i\b\"޺�3Í.\x7Fl\x19�%�\x0E�bh��r��܎ٞC�N�'<�ˡ�ٮ�c���o����\x13\b��\x17O7,��I(�j�(�<~�xj����t�(J�I�/�S��q�\e\x01�a�\x0E\x11��\x06�?_\x03�\t�\a,�\x7F�r�����@L*@GT@��l���\x1F��C�Dؠ\nc�o!�d�\x02(\x15���7\x1D+�M7�d�p$YD�;��y�\v�e�\x1F�C��k�X`����7\x0F����[3�w�X��ˬa�d�\x0F\x02��|�alF��\x06\x1CUZG/�M\x19F���\x17�����X?��u�����\x1A��S�\t��`��\x10-\x7F�C\x01C4\x04�5���\x19�r��\x18\x16�W�������\x12�6��ޱ�6��=����/I���\x02��\x0FR��̮,k\x7F\x10��^@���9�@�\x04\x16\no�m��G\x11iv���B�7b��B�F�\x13}�t�nG��Ðdf\\�w��:;\n(��\x1F�\x11���\x16��Z\fL��$ �vХN\e�}\0��ƛ�\x1D��殮枌Lb6���/\0\x06\x1A�?E\x16\x19����4��\fE��\\�\0\x02@-\\�\e&i�(�O�4ԋ��?!�\x18���\0�\x12\x10�\x1C��4͵��XN������\x02L�\x1F�\n\0kP\x01l��3f��c\\�����+fE�ht?3c)�+\x01l\aC�QCnSR�e�����\af,������t\nF\0\x12�c\x01��\x1F\0\x01���/\x02�\r`���~�Ӣxv��2^4����Q\x04'���\x1CJ�\x17�04�V�f�G��,PYU��T_\x0FdBν�\x1C(m[���_�p#¨��8+<�@�ѧ�\x0E�\n\x01\0�:��\x11�Dʍ�X�~��t�:]�|�DmAA�䅿N~h��\x043\x06\x12b\x15\x15Y<Z\x06C]��\x19�\x19�\x04\04v���\r���i��tL?t��Ǭ\x0F<Q\x12�\x1C�b�\x10(���@ك\0@\x02��\0\x10���\x13B�*�����?��\f^}F$\x1A����u+;\n�<��ѳC�_$�*\x1D�\x03 \f\x12�����l.vz�H?D&\x14\x0E\x19�\n��L��Ǹ5s��\x03;;�\v�_��\r�\t~\x05\x7F^[\x19�\\{r�V��\n��~x�:�/w\x1C�<\"���<�\x02��\r�Y\x1CPJ�\x1AnvM\x1D�x���0\x1A-���{l~����\x16+��\x0E��\x01\x04�x�F�*\t������rr\x7F�K�7?\00����y&\x04s)�|\0�\x14nTU��R�Ƀ���\x0E\0U\x10��R��,�0/\0�I�\x03g�\0J+^VTTt�9<���n\v���把K//��\x04p<���$J�\x05@!G�)%��]<�a���t�Y$�q��\x02\0���\a\0��w\x03(��w��7Q��du�B�E���sg��\x1E���\x14@%�Q\x02\x17�H �<\x12(��\x05�p�������LB\v���I��汾\x01��\n��m\0\0�At���c���+b��X��E��{ڑd��\0�����\b\x01@\x03�x�<���TI\x17�c@��j�C%�ؓ�I�k�K@K!��d���a+h\x04\n�\0$'�M��\x7F�Q�C\x0Ex%�÷\x04B�X\x12\0���l�Xt�-�\v9��YZ���\to{�\x04Py�\a\0�%\x03x������p\x16�,��2�(�7\x050�����u��7��)$p4��P���B��c\x0F��O1g��#���ti�\x04\x02>\x01���$\tĎ�c�Z\\/�v�r�\x05\eJ���<{�9�$\0\f�\t�\x1A�]�\x11&�%B�q�3��\x0E\x04%H�;<��\v\x01t�,\x01h\x05��]�S�~\0|M-\x02�8;�׻w\x7F�f\x17ۄ[�/?�ZOz|�O0RȯP\x1C��\x15�j�\x1F�C<t�`���8���<{+�B8&��Q+.\0�\x10@\x7F�\x1D\x04\x19���++\t��\b\02�\x022���\x12����\\R*��\r���Sl2�I��Ca�5\"�,��D����\x06�\0\x06\x19�G��ۋ\x1C�S��\e��i�YŶǴ�!lH��������z\x11\x14c��\x021��T\x10�C\0\0b�$\x1C$S�sqnC%�\f\x1C$�\x15����5W�\eΑ�\x19��J��Ҷ}��\x02�\x17=6+\x1E\x1E�\x1D��x�����#���+O�y���Ϸ����y�|\x11j8\x06v��s/���[G\x04���ZJ4��s0��1�Y��8\x15���\x14���b��b5�9�sse��<����J\x18���Zm��\x1D��\t\x0F\x03�%�#~�����z7B�_�;$'�\x03�RP�D�����]����1��4�oX\\��(P�⹮���}����\"KmKS��pF�'Ԙ�\x7F\x1A���ŎQ9\x13G��!\x1E\x16�P����g�S\x1F���.��\x1D:����\x1F�\x15):H�Fņ�Fx���\x13��\fޒӬc8P\x1F�/_�0Y��\n�������\x1A]��L\v�f��U����?|D�KӍV\x1F\n�\x156;w�\x7F_(�\x03��:��`l,/�C\x1Ca�m]\x13??#�\x03v�Ծ����<�o\x14���ez��\"ߙ���0��>\x1CJ���f\x16)�>�\a\x12����C{�|����Gg�V���ru�\x7F�a��7F�����K�\x0FH���y:<�\x0E|���y���պXa0\x1A{S��س�������W>B�e�,bU��!\n�(��\x03\x12lS�������9��_���\x03UÁ\\H8\x1A\x01\0\0\0\0IEND�B`�"
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:23:14.082918984+03:00
+    timestamp: 2026-05-18T11:47:42.863166897+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049394
+  created: 1779094062
   app_port: 8060
 curl: |
   curl --request GET \
     --url http://127.0.0.1:8060/icons/aws-amazon-redshift-ra3.png \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Sec-Fetch-Dest: image' \
-    --header 'Sec-Fetch-Mode: no-cors' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' \
     --header 'Host: 127.0.0.1:8060' \
+    --header 'Sec-Fetch-Mode: no-cors' \
+    --header 'Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' \
     --header 'Connection: keep-alive' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
     --header 'Sec-Gpc: 1' \
     --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Sec-Fetch-Dest: image' \
     --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Referer: http://127.0.0.1:8060/views/1' \

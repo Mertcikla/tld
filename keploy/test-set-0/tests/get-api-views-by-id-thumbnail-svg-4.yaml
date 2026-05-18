@@ -12,7 +12,7 @@ spec:
     header:
       Accept: image/svg+xml
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connection: keep-alive
       Host: 127.0.0.1:8060
       Referer: http://127.0.0.1:8060/views?view=hierarchy
@@ -25,39 +25,39 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: ""
-    timestamp: 2026-05-17T23:25:50.284517857+03:00
+    timestamp: 2026-05-18T11:51:23.115719196+03:00
   resp:
     status_code: 200
     header:
       Cache-Control: no-store
-      Content-Length: "701"
+      Content-Length: "898"
       Content-Type: image/svg+xml; charset=utf-8
-      Date: Sun, 17 May 2026 20:25:50 GMT
-    body: <svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180"><rect width="320" height="180" rx="12" fill="#0f172a"/><line x1="159.55" y1="30.13" x2="160.45" y2="149.87" stroke="#475569" stroke-width="2"/><line x1="160.45" y1="149.87" x2="159.55" y2="30.13" stroke="#475569" stroke-width="2"/><rect x="123.47" y="128.74" width="73.96" height="42.26" rx="10" fill="#1e293b" stroke="#64748b"/><text x="131.47" y="146.74" font-family="sans-serif" font-size="10" fill="#e2e8f0">D1</text><rect x="122.57" y="9.00" width="73.96" height="42.26" rx="10" fill="#1e293b" stroke="#64748b"/><text x="130.57" y="27.00" font-family="sans-serif" font-size="10" fill="#e2e8f0">D2</text></svg>
+      Date: Mon, 18 May 2026 08:51:23 GMT
+    body: <svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" viewBox="0 0 320 180"><rect width="320" height="180" rx="12" fill="#0f172a"/><line x1="87.07" y1="37.27" x2="104.76" y2="151.42" stroke="#475569" stroke-width="2"/><line x1="232.93" y1="28.58" x2="87.07" y2="37.27" stroke="#475569" stroke-width="2"/><rect x="52.80" y="17.69" width="68.54" height="39.17" rx="10" fill="#1e293b" stroke="#64748b"/><text x="60.80" y="35.69" font-family="sans-serif" font-size="10" fill="#e2e8f0">tanstack</text><rect x="70.49" y="131.83" width="68.54" height="39.17" rx="10" fill="#1e293b" stroke="#64748b"/><text x="78.49" y="149.83" font-family="sans-serif" font-size="10" fill="#e2e8f0">reactflow</text><rect x="198.66" y="9.00" width="68.54" height="39.17" rx="10" fill="#1e293b" stroke="#64748b"/><text x="206.66" y="27.00" font-family="sans-serif" font-size="10" fill="#e2e8f0">comps</text></svg>
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:25:50.285447063+03:00
+    timestamp: 2026-05-18T11:51:23.116515657+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049550
+  created: 1779094283
   app_port: 8060
 curl: |
   curl --request GET \
     --url http://127.0.0.1:8060/api/views/2/thumbnail.svg \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Sec-Fetch-Mode: cors' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Referer: http://127.0.0.1:8060/views?view=hierarchy' \
-    --header 'Connection: keep-alive' \
-    --header 'Host: 127.0.0.1:8060' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Accept: image/svg+xml' \
     --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Connection: keep-alive' \
+    --header 'Referer: http://127.0.0.1:8060/views?view=hierarchy' \
     --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Sec-Gpc: 1' \
     --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Accept: image/svg+xml' \

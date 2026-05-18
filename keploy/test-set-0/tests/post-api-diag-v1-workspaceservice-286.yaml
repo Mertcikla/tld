@@ -8,14 +8,14 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/UpdatePlacementPosition
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/UpdateConnector
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "89"
+      Content-Length: "142"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"viewId":1,"elementId":15,"positionX":529.4210687999998,"positionY":-120.54539519999992}'
-    timestamp: 2026-05-17T23:30:32.981570323+03:00
+    body: '{"connectorId":3,"sourceElementId":2,"targetElementId":4,"direction":"forward","style":"bezier","sourceHandle":"bottom","targetHandle":"left"}'
+    timestamp: 2026-05-18T11:54:01.185822269+03:00
   resp:
     status_code: 200
     header:
@@ -40,39 +40,41 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "26"
+      Content-Length: "178"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:30:32 GMT
+      Date: Mon, 18 May 2026 08:54:01 GMT
       Vary: Origin
-    body: '{}'
+    body: '{"connector":{"id":3, "viewId":1, "sourceElementId":2, "targetElementId":4, "direction":"forward", "style":"bezier", "sourceHandle":"bottom", "targetHandle":"left", "createdAt":"2026-05-18T08:48:47Z", "updatedAt":"2026-05-18T08:54:01Z"}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:30:32.982999691+03:00
+    timestamp: 2026-05-18T11:54:01.187500657+03:00
   objects: []
   assertions:
     noise:
+      body.connector.createdAt: []
+      body.connector.updatedAt: []
       header.Date: []
-  created: 1779049832
+  created: 1779094441
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/UpdatePlacementPosition \
-    --header 'Sec-Fetch-Mode: cors' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Content-Type: application/json' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Connection: keep-alive' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/UpdateConnector \
+    --header 'Connect-Protocol-Version: 1' \
     --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Sec-Fetch-Dest: empty' \
     --header 'Sec-Ch-Ua-Mobile: ?0' \
     --header 'Sec-Gpc: 1' \
     --header 'Referer: http://127.0.0.1:8060/views/1' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Accept: */*' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Sec-Fetch-Site: same-origin' \
     --header 'Host: 127.0.0.1:8060' \
-    --header 'Connect-Protocol-Version: 1' \
-    --data "{\"viewId\":1,\"elementId\":15,\"positionX\":529.4210687999998,\"positionY\":-120.54539519999992}"
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Content-Type: application/json' \
+    --header 'Accept: */*' \
+    --header 'Connection: keep-alive' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --data "{\"connectorId\":3,\"sourceElementId\":2,\"targetElementId\":4,\"direction\":\"forward\",\"style\":\"bezier\",\"sourceHandle\":\"bottom\",\"targetHandle\":\"left\"}"

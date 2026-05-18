@@ -8,14 +8,14 @@ spec:
     method: GET
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/views/1/density
+    url: http://127.0.0.1:8060/api/views/3/density
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connection: keep-alive
       Host: 127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/1
+      Referer: http://127.0.0.1:8060/views/3
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -25,39 +25,39 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: ""
-    timestamp: 2026-05-17T23:28:33.660988371+03:00
+    timestamp: 2026-05-18T11:51:24.382310357+03:00
   resp:
     status_code: 200
     header:
       Content-Length: "32"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:28:33 GMT
+      Date: Mon, 18 May 2026 08:51:24 GMT
     body: |
-      {"density_level":0,"view_id":1}
+      {"density_level":0,"view_id":3}
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:28:33.661530297+03:00
+    timestamp: 2026-05-18T11:51:24.382773094+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049713
+  created: 1779094284
   app_port: 8060
 curl: |
   curl --request GET \
-    --url http://127.0.0.1:8060/api/views/1/density \
-    --header 'Sec-Gpc: 1' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Accept: */*' \
+    --url http://127.0.0.1:8060/api/views/3/density \
+    --header 'Host: 127.0.0.1:8060' \
     --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
     --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Connection: keep-alive' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
     --header 'Sec-Fetch-Dest: empty' \
     --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Connection: keep-alive' \
+    --header 'Referer: http://127.0.0.1:8060/views/3' \
+    --header 'Accept: */*' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
     --header 'Sec-Fetch-Mode: cors' \
+    --header 'Sec-Gpc: 1' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \

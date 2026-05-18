@@ -12,10 +12,10 @@ spec:
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connection: keep-alive
       Host: 127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views?view=hierarchy
+      Referer: http://127.0.0.1:8060/views/3
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -25,40 +25,39 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: ""
-    timestamp: 2026-05-17T23:25:53.79808898+03:00
+    timestamp: 2026-05-18T11:50:28.880120678+03:00
   resp:
     status_code: 200
     header:
       Content-Length: "39"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:25:53 GMT
+      Date: Mon, 18 May 2026 08:50:28 GMT
     body: |
       {"active":false,"connected_clients":1}
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:25:53.7988614+03:00
+    timestamp: 2026-05-18T11:50:28.880599623+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-      body.connected_clients: []
-  created: 1779049553
+  created: 1779094228
   app_port: 8060
 curl: |
   curl --request GET \
     --url http://127.0.0.1:8060/api/watch/status \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Referer: http://127.0.0.1:8060/views/3' \
     --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Sec-Fetch-Site: same-origin' \
     --header 'Sec-Gpc: 1' \
-    --header 'Referer: http://127.0.0.1:8060/views?view=hierarchy' \
     --header 'Sec-Fetch-Mode: cors' \
     --header 'Accept: */*' \
     --header 'Connection: keep-alive' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
     --header 'Host: 127.0.0.1:8060' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \

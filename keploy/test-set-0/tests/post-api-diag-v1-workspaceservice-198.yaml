@@ -8,18 +8,18 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateElement
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetView
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "24"
+      Content-Length: "34"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/2
+      Referer: http://127.0.0.1:8060/views/4
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"name":"gfh","kind":""}'
-    timestamp: 2026-05-17T23:27:55.5001944+03:00
+    body: '{"viewId":4,"includeContent":true}'
+    timestamp: 2026-05-18T11:51:42.104704236+03:00
   resp:
     status_code: 200
     header:
@@ -40,41 +40,41 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "118"
+      Content-Length: "230"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:27:55 GMT
+      Date: Mon, 18 May 2026 08:51:42 GMT
       Vary: Origin
-    body: '{"element":{"id":19, "orgId":"11111111-1111-1111-1111-111111111111", "name":"gfh", "createdAt":"2026-05-17T20:27:55Z", "updatedAt":"2026-05-17T20:27:55Z"}}'
+    body: '{"view":{"id":4, "orgId":"11111111-1111-1111-1111-111111111111", "name":"middleware", "parentViewId":3, "createdAt":"2026-05-18T08:51:26Z", "updatedAt":"2026-05-18T08:51:26Z", "level":3, "ownerElementId":8}, "content":{"placements":[{"id":14, "viewId":4, "elementId":11, "positionX":137.97282163636362, "positionY":-332.606701534091, "name":"jwt"}]}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:27:55.501704197+03:00
+    timestamp: 2026-05-18T11:51:42.106270272+03:00
   objects: []
   assertions:
     noise:
-      body.element.createdAt: []
-      body.element.updatedAt: []
+      body.view.createdAt: []
+      body.view.updatedAt: []
       header.Date: []
-  created: 1779049675
+  created: 1779094302
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateElement \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Referer: http://127.0.0.1:8060/views/2' \
-    --header 'Connection: keep-alive' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetView \
+    --header 'Referer: http://127.0.0.1:8060/views/4' \
     --header 'Sec-Gpc: 1' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Content-Type: application/json' \
-    --header 'Accept: */*' \
-    --header 'Sec-Fetch-Mode: cors' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
     --header 'Host: 127.0.0.1:8060' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Connect-Protocol-Version: 1' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
+    --header 'Sec-Fetch-Dest: empty' \
     --header 'Origin: http://127.0.0.1:8060' \
-    --data "{\"name\":\"gfh\",\"kind\":\"\"}"
+    --header 'Accept: */*' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Content-Type: application/json' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Connection: keep-alive' \
+    --header 'Connect-Protocol-Version: 1' \
+    --data "{\"viewId\":4,\"includeContent\":true}"

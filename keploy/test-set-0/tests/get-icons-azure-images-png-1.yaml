@@ -12,7 +12,7 @@ spec:
     header:
       Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connection: keep-alive
       Host: 127.0.0.1:8060
       Referer: http://127.0.0.1:8060/views/1
@@ -25,38 +25,38 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: ""
-    timestamp: 2026-05-17T23:23:13.58479235+03:00
+    timestamp: 2026-05-18T11:47:41.98784072+03:00
   resp:
     status_code: 200
     header:
       Content-Type: image/png
-      Date: Sun, 17 May 2026 20:23:13 GMT
+      Date: Mon, 18 May 2026 08:47:41 GMT
       Vary: Accept-Encoding
     body: "�PNG\r\n\x1A\n\0\0\0\rIHDR\0\0\0�\0\0\0�\b\x03\0\0\0����\0\0\x02�PLTELiq\x13��\x14��\x1E{�\\��\x02y�\0x�\v��R��]��\x19v�\x01x�!S�\x0Fg�\x15��\x10\x7F�]��\\��A��!��0��Q��\x17r�\x13z�\x13v�#w�\f}�\e`�\x1Ca�!��6��\x16��\x13��\x15��\x10z�U��G��&��.��\x12|�\x10u�\x16��\x14��:��\eg�\x19n�\x17y�\x19o�\x1Ak�\x19n�\\��]��^��\\��^�����������^�����Z�����;��\t|�P��\x1E��\a{�\x05z�A��\x11��P��\x02y�\x05z�]��+��\x18��\e��X��\x1A��\x1D��\0x����\x19��U��[��\x15��W��4��!�ݜ��\x16��\v}�5��9��S��\r}�T��?��=��7��@��\x13��O��$��K��\"��8��,��\x0F~�1��D��F��/��3��(��M��I��%��&��L��\x15��\x0E~�H��0��\x14��)��\x14��\x15��E��������\eg�\x1C_�\x19n�\x1DZ�\x16�њ��O��\x16��\x16\x7F�_�����\x17}�\x18|ʘ��\x17z�U�����c��]��������\x18xǏ��\x19s�\x1Ap�\x01v�\x1Cb�\x18u�\x1DX�������\x1D]�\ed�\x1Aj�\ek����S��\0{ح��o�����L��������L��P��\x16��������������������������Y��������������t�����T�����������������/�����\x11}����[��E��I��'��������^�����j�����B��>��������5��~��v�����k��n�����������R�����)��9�����2��������C��U��]��������������������v��F��L�����G�����(w��\0\0\06tRNS\0t�\x02���\x04\x01�������������O\rb!�D7V���������~���,{�������Ǣhh(�\0\0\0\tpHYs\0\0\v\x13\0\0\v\x13\x01\0��\x18\0\0\f�IDATx���{\\S�\x1D�o�,��*�C�*�\x1Fվ�%!\x04L\x10�\x06�@B!\x0F\x04\x1F�\x10\x03$�\x16G%lvؒ�\x11���N�U��v�m#E@�\x03��\x03��W}��n����=�ޛ\0��� �?��\x03\x1F��9��7�s<(�{�'l�2��x\x15�F\x1D��i���=��1ᗏ�j!m�\v�H:6@��` \n�k�\b\x17�O���Dҥ��\0*\x10.�9E�Ǝ�p�}c* \ro�'\05���~ �\x1A�\x7F`i�\n�aY\x03\x1Fi�\x19HER\x19\x1FR�3�' \x15�T\x1D�y��(\v�\0��v�!j�j�+ \x15�v�J\x15�ѵ3\b\x03���U�Ƕ[2)\x13�G\0|wn\x13\x7F\x19�C����� �@�K\x1C�����T<SPװO\\\x13�/�f0\x02i��������\e��\x03\x05��P\x7F�15�U\0��*>�P���R�H��:]1ޢ��P״4@DҦ.q*�\0��J�s\x10@\x02̅\x01\t�c��\r��,��U��a3߳\x01���\0�)\\:�\x02 �Y�8����\"�\x13����㕁l�%~I���\x02KA \r!�\x04�\x0F�>��i\x04�MiMM�\aӚT�\a�P�\x0FV\0\b��P��4\x10�I�T����2\x12i2]�J�D�\0v����&\x16h��A�2N@��c\x05�\t\a�oP�?u�n�L�\b3S\x01\x15n#\x01\x15�U�\n�[U�hm��q����>��j\x158&��\x11���,\x15\b�c|\x04�\x05Ъ37^��cbbZ�W;�Y�\x06��r\x02�=+\x1D\x04t���&,��\\�\e��t���n:�D\x12\x13��\\k4�\x04\fө�E��۳tpG�\x1C#oe\x04*ӗ\x0F��l�8�n��1������\\�\er`:'�۳��@\x16�+����N^���ǃRK�\nH�y8�a6/�\x1Aj(+ ��YY  Gd�9��r\x7Fd�+[?s�Q�\x0FH\x10H���ac���X��#��\x19�g�9\x01yq�&,p$�o�\x12��n��}��\x03h)�;?�U�\x17�b\x05��# `F��9\x01���\\^^�w��|�/�����rP0�\x03�f\x04��L/\x10(���8�b\x02��#M�Z܃�s\n���}G��\x01��\x02�\x11\x10(G\x14�-g\x04N\x17���W�wD�y�;�??���\\k=\r}yc�s\x02yyLV\x10��Tz\x05�\bp���\x1Ff\x1E���I\x11��e\x04*q{6-P�ȳg1\x02�����g����/=���q�f/�'�\x15���,�K~BQ��\x12��\x13��\x01z\x1Fj;\x1E��\x1C�\x02-�+�v\x7FSR�\e\x04\tD!\x01�\x01\t�1��@����C[kۺ[�4N>�\x18'<t�s�L���������2\x02ո=�\x0E\x02�\b{a�6q\rܰv��W�`�.<��ઽ҉\x14 \eO~gs�\x17'�n|q�7ռA�KV��$5�Os����j\x10(��c�ѷl��\x14\x128\r\x02��z\x03�\x03l<\a\x06�\x03Ζ�뗎�ML|q��\x10��.��\0�cq�م \x10ϲ��ر��9�����@�!:���[2`'�\v�s��ޣ��\e�\x02�9� ����Ξ�X�$)��\x15����\\E\x1A�\x05��\x10��mc��Q�kB�����=H��1\x11\x04��a\nc�d�[�m�@\x0EG|aa|\x0E�\x15�\b��B}�\x15'�\x03(�����\r&�N��\x05�@\x12�, �B(�@4�P�-\x05z�I<�/�݋�#�\x1C�AA`�@b_C\x02�\x10킥������y��>N�\x05\x04�\\�\x12\x04b��\nD�K\x01���f���>+�R`�\x15�\x01\b,�\x04�\"�y��\x12��فN=.=\x12\x10\x1A3�\x16X&�U>\x02�\n���pfo��X@`��e �Z\x10\x03\x05�u`��>~��{{7�7\0�e��\t�\x1A�\x1A\x04V\t$���\v��aG�g���B\"]���\x04\x04ƌ\\�3��\x14�\x1A\x1F\x01H謹~Q\"i�Q�����~�\0\x02�\x04ƌ�\x04�\fAdfx\x05P����\x16ܼ�>���~���<�\x02k2\x05E��\0�5\x1C\x19���@FF\x01#�����;�-N'\x160\x18\\m.��@\v\x14\x10\x03��\x13���\\\x03\x02\x05\f�2\x1C6�#���\x03\v�O�u\x1Dv\0���\0Z�m_\\ڸ�ۊ�w\x10�d8\x1C�$s\v@`\x1DCAUA�G�z\v�\x11@\x02��m0�tz؅�\0���2�}p\x02/\x05$@\bR������1Y��\x03\x01\aC������t�:\b�p\x05`����\x02}!�\x15���\\�\x06f)����\x18$�VWW���Jܜ�\0\x01\e�aS��o\x15j>�r�xQ�\n�`����#\0�\r�5���R�oH\b!l\x0E=��\x11߲�\x1Esm �Dت��{�O�\x0E%\x0FX�u��Oz\x1F\x01vcB�$\b(m�AJ߂WCᖬʆ:�Ur\x02ʢ�=  \x16���\x1D�TV}���|� \x01��O�ݶ*�\x18J\x10H��^�(�M$P�P���\b(lU|({\x0F}�)��B�\a$�\x02�5\nN���3'lE�1�\x16\x10�\x7Fo�V)�\x03s�@�\bS�`\x05�E�X>�v;\a�Y0@��.�'\r\x1F�\x16\x11�2\x02L�9E?��2D��\x15�\x14��R�y��\x03\x03�2�/@_!k�n������7Do��\x11����\a攁@)��\n��Jy)+�j?����-��\0J�~��\x7F\x15�R\"\nV\07��\x05��1\x02�2\v��2���Sn�W�+��\eN��c���\x18�R�\n�q{�\x05\x04�\b��+`%b�ho\\�����\x111Տ����j�7\\�\n�ns� �GX9�$��\x0F\x16���g\x1E7S\x04�Z����M���`��\x15P0m=\b(\x10z�\r,p�hU�Co�&\x1D��i�\x02s5�� ��F���\x1F�׾�\x054����B]�\b��\x0FB��������\x02�\0�z��K���F*\x14�\0\x13J\x01\x02\x1A���B3\x14\nM��_��<8�\0}���U\x0F=N�H�\x02���\x11\x10HFh�e�@�\"yH R\x0F��͝pK�N=�Q�I\x160��\bh��� ��$q\x02\x1A�\0�5=IpJ6_�?��Ǌ��d��Q��@\x12nOS��\x16�6Z\x19��d� ���e�c���|#ߘ�\x164D�f\x05�Z4b�v<E%a�\x02�$�$\eM7/���\x15< I�\t���$\x100br�\x04\x01c��H\"�'�ǘD|X=h\x11�k \x17w�f\x04�\n�1�\x11�vKOv\x7FLq�\n\x12t\x14�c�-�x�\x11�@Ð@.&A�\x05�xu ��1\x19s�!��˃�B��{L�\x05�\x04Dn>-\0�^��s�m\\EB�T�u��߸\x04���\\�ϴ\x04N !;y\e�@� j�Ƕ\x04!���%\x1E��=��m��-\x13�3�\x16�g�\x14j\x13�� �(Z !?`��]�逹���|\x10X�I��G�P\x19���9\b�\r�|S\x05T 5����n���N�ׂ\0����Mg�\x04���g\aJ~��[�p��e�M�\x06\x01\x13ˢ��O�l\x1AȞM{^6\x05E\\ű�/\f歗o��e�L6��\"\x16Ӣ\x14ӿy�H�3-\n\x02S\\J\x1C\x0F��<���2y��\0���\x0FSP�!�����0\x12�\eC&ǁ���#n�b\x10xb\f\x19�\x04\b�[2v�[\x12AQ)��\v�{H\x04\x1Ah\\�̉\x145=%@���Ē@#�\\\b\x1Fk\r�pg@̛�c\x12�\x03�tgD(\x15\x12ħ����Ĥ�?YL�\n\r\f�����\x12p�`>\r\r\x02O\x13�\x12TE\x03\x17xz�\x05�Nb�\x04~Kb�\x04&��$p�h\t��0:\x02\x11� 1*\x02�ԃ�!\x11A������!\x10B=�O\x12\x0F��\x14Pԣ��������7SB\x1F����\e6<\x16:\x1A_ə��\x06\x12�L\x1A����6�\x172\x11#�\b`\r����QX�\x13g>w�s$\x1E\x1E�9\b�\"��Ǽ\x11�\tB�\0\x7F�\a�`$'!$���G�L�F�\0�;�\x0FC1\x1F����7�B��~h�O�;�����B��|vh\x1Ex��y\x13�}��6�<���\x7F��g�y����>3�O�ȍ�\x1D+\x7F���3~'�\a�g���\x11\x13o�\x01��3�\x04�\x05�דCr/�\n̘z\e�%�\x03{��\x18\0x�\x1DîA\b5婧�}*h�\x0Ewg\f���_�>X\x16��1���\x16�`\x18,X?�\x12�RS\x7F=<�\x0FO �Zx���0�\x13a��\x14�\x19�\x0E�\x10����\x01\x05C����sj\0\0\0\0IEND�B`�"
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:23:13.585431185+03:00
+    timestamp: 2026-05-18T11:47:41.990630249+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049393
+  created: 1779094061
   app_port: 8060
 curl: |
   curl --request GET \
     --url http://127.0.0.1:8060/icons/azure-images.png \
-    --header 'Accept-Language: en-US,en;q=0.5' \
     --header 'Host: 127.0.0.1:8060' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Sec-Gpc: 1' \
     --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Connection: keep-alive' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
     --header 'Sec-Fetch-Dest: image' \
+    --header 'Sec-Gpc: 1' \
     --header 'Sec-Fetch-Mode: no-cors' \
-    --header 'Sec-Fetch-Site: same-origin' \
     --header 'Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' \
+    --header 'Referer: http://127.0.0.1:8060/views/1' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Connection: keep-alive' \

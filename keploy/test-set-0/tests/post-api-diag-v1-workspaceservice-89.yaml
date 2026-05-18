@@ -8,18 +8,18 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListElements
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateElement
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "12"
+      Content-Length: "31"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/1
+      Referer: http://127.0.0.1:8060/views/3
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"limit":20}'
-    timestamp: 2026-05-17T23:25:15.337621168+03:00
+    body: '{"name":"middleware","kind":""}'
+    timestamp: 2026-05-18T11:49:42.972493185+03:00
   resp:
     status_code: 200
     header:
@@ -40,41 +40,41 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "356"
+      Content-Length: "124"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:25:15 GMT
+      Date: Mon, 18 May 2026 08:49:42 GMT
       Vary: Origin
-    body: '{"elements":[{"id":9, "orgId":"11111111-1111-1111-1111-111111111111", "name":"D3", "createdAt":"2026-05-17T20:24:07Z", "updatedAt":"2026-05-17T20:24:07Z"}, {"id":8, "orgId":"11111111-1111-1111-1111-111111111111", "name":"D2", "createdAt":"2026-05-17T20:23:57Z", "updatedAt":"2026-05-17T20:23:57Z"}, {"id":7, "orgId":"11111111-1111-1111-1111-111111111111", "name":"D1", "createdAt":"2026-05-17T20:23:53Z", "updatedAt":"2026-05-17T20:23:53Z"}, {"id":6, "orgId":"11111111-1111-1111-1111-111111111111", "name":"D", "createdAt":"2026-05-17T20:23:48Z", "updatedAt":"2026-05-17T20:23:48Z", "hasView":true}, {"id":5, "orgId":"11111111-1111-1111-1111-111111111111", "name":"C", "kind":"database", "description":"", "technology":"Redis", "url":"", "logoUrl":"/icons/redis.png", "technologyLinks":[{"type":"catalog", "slug":"redis", "label":"Redis", "isPrimaryIcon":true}], "tags":["cache"], "createdAt":"2026-05-17T20:23:04Z", "updatedAt":"2026-05-17T20:23:31Z"}, {"id":4, "orgId":"11111111-1111-1111-1111-111111111111", "name":"B", "createdAt":"2026-05-17T20:22:57Z", "updatedAt":"2026-05-17T20:22:57Z"}, {"id":3, "orgId":"11111111-1111-1111-1111-111111111111", "name":"A", "createdAt":"2026-05-17T20:22:52Z", "updatedAt":"2026-05-17T20:22:52Z"}], "pagination":{"totalCount":7}}'
+    body: '{"element":{"id":8, "orgId":"11111111-1111-1111-1111-111111111111", "name":"middleware", "createdAt":"2026-05-18T08:49:42Z", "updatedAt":"2026-05-18T08:49:42Z"}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:25:15.338764096+03:00
+    timestamp: 2026-05-18T11:49:42.974171516+03:00
   objects: []
   assertions:
     noise:
-      body.elements.createdAt: []
-      body.elements.updatedAt: []
+      body.element.createdAt: []
+      body.element.updatedAt: []
       header.Date: []
-  created: 1779049515
+  created: 1779094182
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListElements \
-    --header 'Sec-Fetch-Mode: cors' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Accept: */*' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Connection: keep-alive' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Connect-Protocol-Version: 1' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Content-Type: application/json' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateElement \
     --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --data "{\"limit\":20}"
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Connection: keep-alive' \
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --header 'Accept: */*' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Content-Type: application/json' \
+    --header 'Referer: http://127.0.0.1:8060/views/3' \
+    --header 'Sec-Gpc: 1' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --data "{\"name\":\"middleware\",\"kind\":\"\"}"

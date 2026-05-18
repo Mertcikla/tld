@@ -8,18 +8,18 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListViewLayers
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetView
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "12"
+      Content-Length: "34"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/4
+      Referer: http://127.0.0.1:8060/views/3
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"viewId":4}'
-    timestamp: 2026-05-17T23:25:57.962407307+03:00
+    body: '{"viewId":3,"includeContent":true}'
+    timestamp: 2026-05-18T11:50:21.03135274+03:00
   resp:
     status_code: 200
     header:
@@ -40,39 +40,43 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "26"
+      Content-Length: "575"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:25:57 GMT
+      Date: Mon, 18 May 2026 08:50:21 GMT
       Vary: Origin
-    body: '{}'
+    body: '{"view":{"id":3, "orgId":"11111111-1111-1111-1111-111111111111", "name":"B", "parentViewId":1, "createdAt":"2026-05-18T08:49:39Z", "updatedAt":"2026-05-18T08:49:39Z", "level":2, "ownerElementId":2}, "content":{"placements":[{"id":8, "viewId":3, "elementId":8, "positionX":93.6140236647727, "positionY":-140.43852181818193, "name":"middleware"}, {"id":9, "viewId":3, "elementId":9, "positionX":-60.38140033522724, "positionY":-409.6103618181819, "name":"logging"}, {"id":10, "viewId":3, "elementId":3, "positionX":93.31847166477272, "positionY":-669.9366658181816, "name":"DB", "description":"", "kind":"database", "technology":"PostgreSQL", "url":"", "logoUrl":"/icons/postgresql.png", "technologyLinks":[{"type":"catalog", "slug":"postgresql", "label":"PostgreSQL", "isPrimaryIcon":true}], "tags":["persistence"]}, {"id":12, "viewId":3, "elementId":4, "positionX":-138.09528833522717, "positionY":149.7676381818183, "name":"cache", "description":"", "kind":"", "technology":"Redis", "url":"", "logoUrl":"/icons/redis.png", "technologyLinks":[{"type":"catalog", "slug":"redis", "label":"Redis", "isPrimaryIcon":true}], "tags":["persistence"]}], "connectors":[{"id":6, "viewId":3, "sourceElementId":8, "targetElementId":3, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-18T08:49:52Z", "updatedAt":"2026-05-18T08:49:52Z"}]}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:25:57.96328917+03:00
+    timestamp: 2026-05-18T11:50:21.033505126+03:00
   objects: []
   assertions:
     noise:
+      body.content.connectors.createdAt: []
+      body.content.connectors.updatedAt: []
+      body.view.createdAt: []
+      body.view.updatedAt: []
       header.Date: []
-  created: 1779049557
+  created: 1779094221
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListViewLayers \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Referer: http://127.0.0.1:8060/views/4' \
-    --header 'Content-Type: application/json' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Sec-Fetch-Mode: cors' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetView \
     --header 'Accept: */*' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Connect-Protocol-Version: 1' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Sec-Gpc: 1' \
     --header 'Connection: keep-alive' \
-    --data "{\"viewId\":4}"
+    --header 'Content-Type: application/json' \
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Referer: http://127.0.0.1:8060/views/3' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --data "{\"viewId\":3,\"includeContent\":true}"

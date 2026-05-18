@@ -12,7 +12,7 @@ spec:
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
       Content-Length: "12"
@@ -29,7 +29,7 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: '{"limit":20}'
-    timestamp: 2026-05-17T23:22:43.261308866+03:00
+    timestamp: 2026-05-18T11:47:09.040007568+03:00
   resp:
     status_code: 200
     header:
@@ -42,37 +42,37 @@ spec:
       Content-Encoding: gzip
       Content-Length: "41"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:22:43 GMT
+      Date: Mon, 18 May 2026 08:47:09 GMT
       Vary: Origin
     body: '{"pagination":{}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:22:43.262316322+03:00
+    timestamp: 2026-05-18T11:47:09.041338616+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049363
+  created: 1779094029
   app_port: 8060
 curl: |-
   curl --request POST \
     --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListElements \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Content-Type: application/json' \
-    --header 'Host: 127.0.0.1:8060' \
     --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Connect-Protocol-Version: 1' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Sec-Fetch-Mode: cors' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Accept: */*' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Connection: keep-alive' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Content-Type: application/json' \
+    --header 'Sec-Gpc: 1' \
     --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
     --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Connection: keep-alive' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Accept: */*' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
     --header 'Referer: http://127.0.0.1:8060/views/1' \
     --data "{\"limit\":20}"

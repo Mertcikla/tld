@@ -12,10 +12,10 @@ spec:
     header:
       Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connection: keep-alive
       Host: 127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/1
+      Referer: http://127.0.0.1:8060/views/3
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -25,13 +25,13 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: ""
-    timestamp: 2026-05-17T23:22:42.903583113+03:00
+    timestamp: 2026-05-18T11:50:29.350100569+03:00
   resp:
     status_code: 200
     header:
       Content-Length: "1713"
       Content-Type: image/svg+xml
-      Date: Sun, 17 May 2026 20:22:42 GMT
+      Date: Mon, 18 May 2026 08:50:29 GMT
       Vary: Accept-Encoding
     body: |-
       <?xml version="1.0" encoding="utf-8"?>
@@ -72,27 +72,27 @@ spec:
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:22:42.903952458+03:00
+    timestamp: 2026-05-18T11:50:29.350436566+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049362
+  created: 1779094229
   app_port: 8060
 curl: |
   curl --request GET \
     --url http://127.0.0.1:8060/assets/favicon-BxkHfxCQ.svg \
-    --header 'Sec-Fetch-Dest: image' \
-    --header 'Sec-Fetch-Site: same-origin' \
     --header 'Sec-Gpc: 1' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
     --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
     --header 'Sec-Fetch-Mode: no-cors' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Host: 127.0.0.1:8060' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
     --header 'Connection: keep-alive' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Sec-Fetch-Dest: image' \
+    --header 'Accept: image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Referer: http://127.0.0.1:8060/views/3' \
+    --header 'Accept-Language: en-US,en;q=0.6' \

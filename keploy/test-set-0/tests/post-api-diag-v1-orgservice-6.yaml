@@ -12,14 +12,14 @@ spec:
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
       Content-Length: "2"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/4
+      Referer: http://127.0.0.1:8060/views/3
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -29,7 +29,7 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: '{}'
-    timestamp: 2026-05-17T23:25:57.959170022+03:00
+    timestamp: 2026-05-18T11:51:24.383527574+03:00
   resp:
     status_code: 200
     header:
@@ -40,39 +40,39 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "59"
+      Content-Length: "84"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:25:57 GMT
+      Date: Mon, 18 May 2026 08:51:24 GMT
       Vary: Origin
-    body: '{"tags":{"cache":{"color":"#A0AEC0"}}}'
+    body: '{"tags":{"persistence":{"color":"#ECC94B", "description":""}}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:25:57.96015809+03:00
+    timestamp: 2026-05-18T11:51:24.384639777+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049557
+  created: 1779094284
   app_port: 8060
 curl: |-
   curl --request POST \
     --url http://127.0.0.1:8060/api/diag.v1.OrgService/ListTagColors \
-    --header 'Sec-Fetch-Site: same-origin' \
     --header 'Sec-Gpc: 1' \
-    --header 'Connect-Protocol-Version: 1' \
-    --header 'Referer: http://127.0.0.1:8060/views/4' \
-    --header 'Connection: keep-alive' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Sec-Fetch-Mode: cors' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Accept: */*' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
     --header 'Content-Type: application/json' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Host: 127.0.0.1:8060' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Accept: */*' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
     --header 'Sec-Fetch-Dest: empty' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Connection: keep-alive' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Referer: http://127.0.0.1:8060/views/3' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
     --data "{}"

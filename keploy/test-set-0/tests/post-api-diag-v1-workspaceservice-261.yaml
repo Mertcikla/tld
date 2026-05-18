@@ -8,18 +8,18 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetView
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetWorkspace
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "34"
+      Content-Length: "2"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/1
+      Referer: http://127.0.0.1:8060/views/3
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"viewId":1,"includeContent":true}'
-    timestamp: 2026-05-17T23:29:59.345746195+03:00
+    body: '{}'
+    timestamp: 2026-05-18T11:53:40.966651674+03:00
   resp:
     status_code: 200
     header:
@@ -40,43 +40,45 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "703"
+      Content-Length: "324"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:29:59 GMT
+      Date: Mon, 18 May 2026 08:53:40 GMT
       Vary: Origin
-    body: '{"view":{"id":1, "orgId":"11111111-1111-1111-1111-111111111111", "name":"rpoot", "description":"Local offline workspace", "levelLabel":"Root", "createdAt":"2026-05-17T20:14:18Z", "updatedAt":"2026-05-17T20:24:59Z", "level":1}, "content":{"placements":[{"id":5, "viewId":1, "elementId":3, "positionX":245, "positionY":-47, "name":"A"}, {"id":6, "viewId":1, "elementId":4, "positionX":276.05728, "positionY":-292.82966399999987, "name":"B"}, {"id":7, "viewId":1, "elementId":5, "positionX":579.52864, "positionY":-621.4148319999999, "name":"C", "description":"", "kind":"database", "technology":"Redis", "url":"", "logoUrl":"/icons/redis.png", "technologyLinks":[{"type":"catalog", "slug":"redis", "label":"Redis", "isPrimaryIcon":true}], "tags":["cache"], "hasView":true}, {"id":8, "viewId":1, "elementId":6, "positionX":344.18937457321545, "positionY":-824.3543660381713, "name":"D", "hasView":true}, {"id":15, "viewId":1, "elementId":10, "positionX":100, "positionY":100, "name":"G", "hasView":true}, {"id":28, "viewId":1, "elementId":14, "positionX":604, "positionY":888, "name":"asd"}, {"id":29, "viewId":1, "elementId":13, "positionX":604, "positionY":888, "name":"bc"}, {"id":30, "viewId":1, "elementId":15, "positionX":266.05728, "positionY":-294.32966399999987, "name":"qwe"}, {"id":31, "viewId":1, "elementId":22, "positionX":76.14869760000002, "positionY":-693.2561535999998, "name":"bcvbc"}], "connectors":[{"id":2, "viewId":1, "sourceElementId":3, "targetElementId":4, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-17T20:22:59Z", "updatedAt":"2026-05-17T20:22:59Z"}, {"id":3, "viewId":1, "sourceElementId":5, "targetElementId":4, "direction":"forward", "style":"bezier", "sourceHandle":"bottom", "targetHandle":"right", "createdAt":"2026-05-17T20:23:09Z", "updatedAt":"2026-05-17T20:23:09Z"}, {"id":4, "viewId":1, "sourceElementId":4, "targetElementId":6, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-17T20:23:49Z", "updatedAt":"2026-05-17T20:23:49Z"}, {"id":11, "viewId":1, "sourceElementId":15, "targetElementId":5, "direction":"forward", "style":"bezier", "sourceHandle":"right", "targetHandle":"left", "createdAt":"2026-05-17T20:29:59Z", "updatedAt":"2026-05-17T20:29:59Z"}]}}'
+    body: '{"views":[{"id":1, "orgId":"11111111-1111-1111-1111-111111111111", "name":"Workspace", "description":"Local offline workspace", "levelLabel":"Root", "createdAt":"2026-05-18T08:47:03Z", "updatedAt":"2026-05-18T08:47:03Z", "level":1, "children":[{"id":2, "orgId":"11111111-1111-1111-1111-111111111111", "name":"A", "parentViewId":1, "createdAt":"2026-05-18T08:49:14Z", "updatedAt":"2026-05-18T08:49:14Z", "level":2, "depth":1, "ownerElementId":1}, {"id":3, "orgId":"11111111-1111-1111-1111-111111111111", "name":"B", "parentViewId":1, "createdAt":"2026-05-18T08:49:39Z", "updatedAt":"2026-05-18T08:50:38Z", "level":2, "children":[{"id":4, "orgId":"11111111-1111-1111-1111-111111111111", "name":"middleware", "parentViewId":3, "createdAt":"2026-05-18T08:51:26Z", "updatedAt":"2026-05-18T08:51:26Z", "level":3, "depth":2, "ownerElementId":8}], "depth":1, "ownerElementId":2}, {"id":5, "orgId":"11111111-1111-1111-1111-111111111111", "name":"cache", "parentViewId":1, "createdAt":"2026-05-18T08:52:02Z", "updatedAt":"2026-05-18T08:52:02Z", "level":2, "depth":1, "ownerElementId":4}]}], "totalCount":5}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:29:59.348563982+03:00
+    timestamp: 2026-05-18T11:53:40.96816163+03:00
   objects: []
   assertions:
     noise:
-      body.content.connectors.createdAt: []
-      body.content.connectors.updatedAt: []
-      body.view.createdAt: []
-      body.view.updatedAt: []
+      body.views.children.children.createdAt: []
+      body.views.children.children.updatedAt: []
+      body.views.children.createdAt: []
+      body.views.children.updatedAt: []
+      body.views.createdAt: []
+      body.views.updatedAt: []
       header.Date: []
-  created: 1779049799
+  created: 1779094420
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetView \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/GetWorkspace \
     --header 'Sec-Gpc: 1' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Connection: keep-alive' \
-    --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Connect-Protocol-Version: 1' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
     --header 'Host: 127.0.0.1:8060' \
     --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
     --header 'Sec-Fetch-Mode: cors' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Sec-Fetch-Dest: empty' \
     --header 'Content-Type: application/json' \
-    --header 'Accept: */*' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
     --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --data "{\"viewId\":1,\"includeContent\":true}"
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Accept: */*' \
+    --header 'Referer: http://127.0.0.1:8060/views/3' \
+    --header 'Connection: keep-alive' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --data "{}"

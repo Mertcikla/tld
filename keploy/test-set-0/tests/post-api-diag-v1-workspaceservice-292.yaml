@@ -8,14 +8,14 @@ spec:
     method: POST
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/UpdatePlacementPosition
+    url: http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListPlacements
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
-      Content-Length: "60"
+      Content-Length: "12"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"viewId":1,"elementId":6,"positionX":-165,"positionY":-674}'
-    timestamp: 2026-05-17T23:30:37.53383672+03:00
+    body: '{"viewId":1}'
+    timestamp: 2026-05-18T11:54:06.649978239+03:00
   resp:
     status_code: 200
     header:
@@ -40,39 +40,39 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "26"
+      Content-Length: "374"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:30:37 GMT
+      Date: Mon, 18 May 2026 08:54:06 GMT
       Vary: Origin
-    body: '{}'
+    body: '{"placements":[{"id":1, "viewId":1, "elementId":1, "positionX":138, "name":"A", "description":"", "kind":"frontend", "technology":"TypeScript", "url":"", "logoUrl":"/icons/typescript.png", "technologyLinks":[{"type":"catalog", "slug":"typescript", "label":"TypeScript", "isPrimaryIcon":true}], "hasView":true}, {"id":2, "viewId":1, "elementId":2, "positionX":138, "positionY":195, "name":"B", "description":"", "kind":"backend", "technology":"Python", "url":"", "logoUrl":"/icons/python.png", "technologyLinks":[{"type":"catalog", "slug":"python", "label":"Python", "isPrimaryIcon":true}], "hasView":true}, {"id":3, "viewId":1, "elementId":3, "positionY":390, "name":"DB", "description":"", "kind":"database", "technology":"PostgreSQL", "url":"", "logoUrl":"/icons/postgresql.png", "technologyLinks":[{"type":"catalog", "slug":"postgresql", "label":"PostgreSQL", "isPrimaryIcon":true}], "tags":["persistence"]}, {"id":4, "viewId":1, "elementId":4, "positionX":275, "positionY":390, "name":"cache", "description":"", "kind":"", "technology":"Redis", "url":"", "logoUrl":"/icons/redis.png", "technologyLinks":[{"type":"catalog", "slug":"redis", "label":"Redis", "isPrimaryIcon":true}], "tags":["persistence"], "hasView":true}]}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:30:37.535480333+03:00
+    timestamp: 2026-05-18T11:54:06.651635696+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049837
+  created: 1779094446
   app_port: 8060
 curl: |-
   curl --request POST \
-    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/UpdatePlacementPosition \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Sec-Fetch-Mode: cors' \
+    --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/ListPlacements \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
     --header 'Sec-Gpc: 1' \
+    --header 'Accept: */*' \
+    --header 'Sec-Fetch-Site: same-origin' \
     --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Connect-Protocol-Version: 1' \
+    --header 'Sec-Fetch-Mode: cors' \
     --header 'Content-Type: application/json' \
     --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
     --header 'Referer: http://127.0.0.1:8060/views/1' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
     --header 'Connection: keep-alive' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Accept: */*' \
-    --data "{\"viewId\":1,\"elementId\":6,\"positionX\":-165,\"positionY\":-674}"
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --data "{\"viewId\":1}"

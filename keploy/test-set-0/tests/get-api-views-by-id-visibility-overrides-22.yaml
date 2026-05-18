@@ -12,7 +12,7 @@ spec:
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connection: keep-alive
       Host: 127.0.0.1:8060
       Referer: http://127.0.0.1:8060/views/1
@@ -25,41 +25,41 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: ""
-    timestamp: 2026-05-17T23:30:24.98833402+03:00
+    timestamp: 2026-05-18T11:53:18.277328293+03:00
   resp:
     status_code: 200
     header:
-      Content-Length: "308"
+      Content-Length: "162"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:30:24 GMT
+      Date: Mon, 18 May 2026 08:53:18 GMT
     body: |
-      {"overrides":[{"view_id":1,"resource_type":"connector","resource_id":11,"level_delta":4,"created_at":"2026-05-17T20:30:22Z","updated_at":"2026-05-17T20:30:24Z"},{"view_id":1,"resource_type":"element","resource_id":22,"level_delta":2,"created_at":"2026-05-17T20:29:54Z","updated_at":"2026-05-17T20:29:56Z"}]}
+      {"overrides":[{"view_id":1,"resource_type":"connector","resource_id":8,"level_delta":2,"created_at":"2026-05-18T08:53:18Z","updated_at":"2026-05-18T08:53:18Z"}]}
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:30:24.988633038+03:00
+    timestamp: 2026-05-18T11:53:18.277673132+03:00
   objects: []
   assertions:
     noise:
       body.overrides.created_at: []
       body.overrides.updated_at: []
       header.Date: []
-  created: 1779049824
+  created: 1779094398
   app_port: 8060
 curl: |
   curl --request GET \
     --url http://127.0.0.1:8060/api/views/1/visibility-overrides \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Connection: keep-alive' \
-    --header 'Accept: */*' \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
     --header 'Sec-Fetch-Dest: empty' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Referer: http://127.0.0.1:8060/views/1' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Accept: */*' \
     --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
+    --header 'Sec-Gpc: 1' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
     --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
     --header 'Sec-Fetch-Mode: cors' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Connection: keep-alive' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \

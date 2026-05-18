@@ -12,11 +12,11 @@ spec:
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connection: keep-alive
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/1
+      Referer: http://127.0.0.1:8060/views/3
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -26,7 +26,7 @@ spec:
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: ""
-    timestamp: 2026-05-17T23:30:37.593368959+03:00
+    timestamp: 2026-05-18T11:50:41.169870968+03:00
   resp:
     status_code: 200
     header:
@@ -37,7 +37,7 @@ spec:
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: br
       Content-Type: application/javascript
-      Date: Sun, 17 May 2026 20:30:37 GMT
+      Date: Mon, 18 May 2026 08:50:41 GMT
       Vary: Origin,Accept-Encoding
     body: |
       import{r as ro,g as os,R as N,a as S,b as is}from"./ui-ZUlfg4_u.js";function it(t){if(typeof t=="string"||typeof t=="number")return""+t;let e="";if(Array.isArray(t))for(let n=0,r;n<t.length;n++)(r=it(t[n]))!==""&&(e+=(e&&" ")+r);else for(let n in t)t[n]&&(e+=(e&&" ")+n);return e}var hn={exports:{}},gn={},pn={exports:{}},mn={};/**
@@ -60,28 +60,28 @@ spec:
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:30:37.594283003+03:00
+    timestamp: 2026-05-18T11:50:41.170561091+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049837
+  created: 1779094241
   app_port: 8060
 curl: |
   curl --request GET \
     --url http://127.0.0.1:8060/assets/reactflow-DD2ZkHRN.js \
-    --header 'Accept-Language: en-US,en;q=0.5' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Origin: http://127.0.0.1:8060' \
     --header 'Sec-Fetch-Site: same-origin' \
     --header 'Sec-Gpc: 1' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Accept: */*' \
-    --header 'Sec-Fetch-Dest: script' \
-    --header 'Connection: keep-alive' \
-    --header 'Origin: http://127.0.0.1:8060' \
     --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
     --header 'Host: 127.0.0.1:8060' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Accept: */*' \
     --header 'Sec-Fetch-Mode: cors' \
+    --header 'Connection: keep-alive' \
+    --header 'Sec-Fetch-Dest: script' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Referer: http://127.0.0.1:8060/views/3' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \

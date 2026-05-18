@@ -8,11 +8,11 @@ spec:
     method: GET
     proto_major: 1
     proto_minor: 1
-    url: http://127.0.0.1:8060/views/1
+    url: http://127.0.0.1:8060/views/3
     header:
       Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Cache-Control: max-age=0
       Connection: keep-alive
       Host: 127.0.0.1:8060
@@ -27,14 +27,14 @@ spec:
       Upgrade-Insecure-Requests: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
     body: ""
-    timestamp: 2026-05-17T23:22:42.752705114+03:00
+    timestamp: 2026-05-18T11:50:28.994636157+03:00
   resp:
     status_code: 200
     header:
       Content-Encoding: br
       Content-Length: "479"
       Content-Type: text/html; charset=utf-8
-      Date: Sun, 17 May 2026 20:22:42 GMT
+      Date: Mon, 18 May 2026 08:50:28 GMT
       Vary: Accept-Encoding
     body: |
       <!doctype html>
@@ -69,29 +69,29 @@ spec:
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:22:42.753386805+03:00
+    timestamp: 2026-05-18T11:50:28.995192576+03:00
   objects: []
   assertions:
     noise:
       header.Date: []
-  created: 1779049362
+  created: 1779094228
   app_port: 8060
 curl: |
   curl --request GET \
-    --url http://127.0.0.1:8060/views/1 \
-    --header 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
+    --url http://127.0.0.1:8060/views/3 \
+    --header 'Upgrade-Insecure-Requests: 1' \
+    --header 'Sec-Fetch-Dest: document' \
     --header 'Sec-Gpc: 1' \
     --header 'Host: 127.0.0.1:8060' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Upgrade-Insecure-Requests: 1' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Cache-Control: max-age=0' \
-    --header 'Sec-Fetch-Mode: navigate' \
-    --header 'Sec-Fetch-Dest: document' \
-    --header 'Sec-Fetch-User: ?1' \
-    --header 'Connection: keep-alive' \
     --header 'Sec-Fetch-Site: same-origin' \
     --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Cache-Control: max-age=0' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Fetch-Mode: navigate' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Sec-Fetch-User: ?1' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Connection: keep-alive' \
+    --header 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8' \

@@ -12,14 +12,14 @@ spec:
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
       Content-Length: "24"
       Content-Type: application/json
       Host: 127.0.0.1:8060
       Origin: http://127.0.0.1:8060
-      Referer: http://127.0.0.1:8060/views/2
+      Referer: http://127.0.0.1:8060/views/4
       Sec-Ch-Ua: '"Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"'
       Sec-Ch-Ua-Mobile: ?0
       Sec-Ch-Ua-Platform: '"Linux"'
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"name":"cvb","kind":""}'
-    timestamp: 2026-05-17T23:27:50.896247923+03:00
+    body: '{"name":"jwt","kind":""}'
+    timestamp: 2026-05-18T11:51:29.819165454+03:00
   resp:
     status_code: 200
     header:
@@ -42,39 +42,39 @@ spec:
       Content-Encoding: gzip
       Content-Length: "118"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:27:50 GMT
+      Date: Mon, 18 May 2026 08:51:29 GMT
       Vary: Origin
-    body: '{"element":{"id":17, "orgId":"11111111-1111-1111-1111-111111111111", "name":"cvb", "createdAt":"2026-05-17T20:27:50Z", "updatedAt":"2026-05-17T20:27:50Z"}}'
+    body: '{"element":{"id":11, "orgId":"11111111-1111-1111-1111-111111111111", "name":"jwt", "createdAt":"2026-05-18T08:51:29Z", "updatedAt":"2026-05-18T08:51:29Z"}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:27:50.897832674+03:00
+    timestamp: 2026-05-18T11:51:29.820724413+03:00
   objects: []
   assertions:
     noise:
       body.element.createdAt: []
       body.element.updatedAt: []
       header.Date: []
-  created: 1779049670
+  created: 1779094289
   app_port: 8060
 curl: |-
   curl --request POST \
     --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateElement \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Connect-Protocol-Version: 1' \
     --header 'Sec-Fetch-Mode: cors' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Sec-Gpc: 1' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Referer: http://127.0.0.1:8060/views/2' \
-    --header 'Connection: keep-alive' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
     --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
+    --header 'Connection: keep-alive' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Gpc: 1' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Referer: http://127.0.0.1:8060/views/4' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --header 'Connect-Protocol-Version: 1' \
     --header 'Accept: */*' \
     --header 'Content-Type: application/json' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Host: 127.0.0.1:8060' \
-    --data "{\"name\":\"cvb\",\"kind\":\"\"}"
+    --data "{\"name\":\"jwt\",\"kind\":\"\"}"

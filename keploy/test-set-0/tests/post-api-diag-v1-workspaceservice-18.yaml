@@ -12,7 +12,7 @@ spec:
     header:
       Accept: '*/*'
       Accept-Encoding: gzip, deflate, br, zstd
-      Accept-Language: en-US,en;q=0.5
+      Accept-Language: en-US,en;q=0.6
       Connect-Protocol-Version: "1"
       Connection: keep-alive
       Content-Length: "136"
@@ -28,8 +28,8 @@ spec:
       Sec-Fetch-Site: same-origin
       Sec-Gpc: "1"
       User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36
-    body: '{"viewId":1,"sourceElementId":3,"targetElementId":4,"direction":"forward","style":"bezier","sourceHandle":"top","targetHandle":"bottom"}'
-    timestamp: 2026-05-17T23:22:59.988860751+03:00
+    body: '{"viewId":1,"sourceElementId":1,"targetElementId":2,"direction":"forward","style":"bezier","sourceHandle":"bottom","targetHandle":"top"}'
+    timestamp: 2026-05-18T11:47:28.127028448+03:00
   resp:
     status_code: 200
     header:
@@ -40,41 +40,41 @@ spec:
       Access-Control-Allow-Origin: http://127.0.0.1:8060
       Access-Control-Expose-Headers: Connect-Protocol-Version, Grpc-Status, Grpc-Message
       Content-Encoding: gzip
-      Content-Length: "173"
+      Content-Length: "168"
       Content-Type: application/json
-      Date: Sun, 17 May 2026 20:22:59 GMT
+      Date: Mon, 18 May 2026 08:47:28 GMT
       Vary: Origin
-    body: '{"connector":{"id":2, "viewId":1, "sourceElementId":3, "targetElementId":4, "direction":"forward", "style":"bezier", "sourceHandle":"top", "targetHandle":"bottom", "createdAt":"2026-05-17T20:22:59Z", "updatedAt":"2026-05-17T20:22:59Z"}}'
+    body: '{"connector":{"id":1, "viewId":1, "sourceElementId":1, "targetElementId":2, "direction":"forward", "style":"bezier", "sourceHandle":"bottom", "targetHandle":"top", "createdAt":"2026-05-18T08:47:28Z", "updatedAt":"2026-05-18T08:47:28Z"}}'
     status_message: OK
     proto_major: 0
     proto_minor: 0
-    timestamp: 2026-05-17T23:22:59.990284272+03:00
+    timestamp: 2026-05-18T11:47:28.129843641+03:00
   objects: []
   assertions:
     noise:
       body.connector.createdAt: []
       body.connector.updatedAt: []
       header.Date: []
-  created: 1779049379
+  created: 1779094048
   app_port: 8060
 curl: |-
   curl --request POST \
     --url http://127.0.0.1:8060/api/diag.v1.WorkspaceService/CreateConnector \
-    --header 'Host: 127.0.0.1:8060' \
-    --header 'Sec-Fetch-Mode: cors' \
-    --header 'Sec-Fetch-Site: same-origin' \
-    --header 'Sec-Ch-Ua-Platform: "Linux"' \
-    --header 'Connect-Protocol-Version: 1' \
-    --header 'Sec-Fetch-Dest: empty' \
-    --header 'Origin: http://127.0.0.1:8060' \
-    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
-    --header 'Sec-Ch-Ua-Mobile: ?0' \
-    --header 'Content-Type: application/json' \
-    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
-    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
-    --header 'Sec-Gpc: 1' \
     --header 'Accept: */*' \
-    --header 'Accept-Language: en-US,en;q=0.5' \
-    --header 'Referer: http://127.0.0.1:8060/views/1' \
+    --header 'Accept-Encoding: gzip, deflate, br, zstd' \
+    --header 'Content-Type: application/json' \
+    --header 'Sec-Ch-Ua-Mobile: ?0' \
+    --header 'Host: 127.0.0.1:8060' \
+    --header 'Origin: http://127.0.0.1:8060' \
+    --header 'Sec-Ch-Ua-Platform: "Linux"' \
+    --header 'Sec-Fetch-Mode: cors' \
+    --header 'Accept-Language: en-US,en;q=0.6' \
     --header 'Connection: keep-alive' \
-    --data "{\"viewId\":1,\"sourceElementId\":3,\"targetElementId\":4,\"direction\":\"forward\",\"style\":\"bezier\",\"sourceHandle\":\"top\",\"targetHandle\":\"bottom\"}"
+    --header 'Sec-Fetch-Dest: empty' \
+    --header 'Sec-Fetch-Site: same-origin' \
+    --header 'User-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36' \
+    --header 'Sec-Gpc: 1' \
+    --header 'Connect-Protocol-Version: 1' \
+    --header 'Referer: http://127.0.0.1:8060/views/1' \
+    --header 'Sec-Ch-Ua: "Not:A-Brand";v="99", "Brave";v="145", "Chromium";v="145"' \
+    --data "{\"viewId\":1,\"sourceElementId\":1,\"targetElementId\":2,\"direction\":\"forward\",\"style\":\"bezier\",\"sourceHandle\":\"bottom\",\"targetHandle\":\"top\"}"
