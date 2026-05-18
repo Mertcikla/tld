@@ -10,7 +10,7 @@ spec:
     proto_minor: 1
     url: http://127.0.0.1:8060/api/watch/status
     header:
-      Accept: '*/*'
+      Accept: "*/*"
       Accept-Encoding: gzip, deflate, br, zstd
       Accept-Language: en-US,en;q=0.6
       Connection: keep-alive
@@ -33,7 +33,7 @@ spec:
       Content-Type: application/json
       Date: Mon, 18 May 2026 08:50:58 GMT
     body: |
-      {"active":false,"connected_clients":1}
+      {"active":false,"connected_clients":0}
     status_message: OK
     proto_major: 0
     proto_minor: 0
