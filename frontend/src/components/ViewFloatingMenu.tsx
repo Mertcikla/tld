@@ -119,6 +119,10 @@ function ViewFloatingMenu({
   const activeDensityLabel = DENSITY_STOPS.find((stop) => stop.value === draftDensityLevel)?.label ?? 'Normal'
   const showFilters = !hideFocusView || !!onDensityLevelChange
   const hasActiveFilters = (!hideFocusView && focusMode) || (!!onDensityLevelChange && densityLevel !== 0)
+  const visibleTags = React.useMemo(
+    () => allTags.filter((tag) => (tagCounts[tag] ?? 0) > 0),
+    [allTags, tagCounts],
+  )
 
   React.useEffect(() => {
     setDraftDensityLevel(densityLevel)
@@ -356,7 +360,7 @@ function ViewFloatingMenu({
       )}
       <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
 
-      {(allTags.length > 0 || layers.length > 0) && (
+      {(visibleTags.length > 0 || layers.length > 0) && (
         <>
           <Popover
             isOpen={isTagsOpen}
@@ -427,7 +431,7 @@ function ViewFloatingMenu({
                     )
                   })}
 
-                  {allTags.map(tag => {
+                  {visibleTags.map(tag => {
                     const isHidden = hiddenTags.includes(tag)
                     return (
                       <HStack
