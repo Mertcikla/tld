@@ -3,6 +3,27 @@ name: create-diagram
 description: Create architecture diagrams from a codebase using the tld CLI. Use this skill whenever the user asks to diagram, or map their codebase or system architecture. Trigger on phrases like "create a diagram of the codebase", "create a system diagram", "diagram this repo", or any request to visually represent how a system's components fit together.
 allowed-tools: Bash(tld *), Write
 ---
+
+## When to Use
+
+Use this skill when the user wants:
+
+- A diagram, map, or visual architecture model of a codebase or system.
+- A tld diagram for a local repository, service, package, or multi-service app.
+- A component, module, class, endpoint, dependency, or data-flow map.
+- A navigable drill-down view of how parts of a system fit together.
+
+## When NOT to Use
+
+Do not use this skill for:
+
+- General code explanation when no diagram or visual architecture model is requested.
+- Editing existing application behavior, unless the edits are only to build the diagram.
+- Paid-only or wrapper-only features such as auth, billing, organization management,
+  collaboration, comments, or threads.
+- Non-code diagrams that do not benefit from tld's hierarchical workspace model.
+
+
 # Prerequisite: Install tld
 Check if tld is already installed first:
 ```bash
@@ -12,10 +33,13 @@ If not installed, run:
 ```bash
 curl -LsSf https://tldiagram.com/install.sh | sh && tld --version
 ```
-if the user is on Windows, run:
+
+If the user is on Windows, ask them to run:
+
 ```powershell
 powershell -ExecutionPolicy ByPass -c "irm https://tldiagram.com/install.ps1 | iex; tld --version"
 ```
+
 
 If you have any issues with installation, refer the user to https://github.com/Mertcikla/tld 
 
