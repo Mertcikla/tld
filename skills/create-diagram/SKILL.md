@@ -1,6 +1,6 @@
 ---
 name: create-diagram
-description: Create tld architecture diagrams from a local codebase or system description. Use when the user asks to diagram a repo, map system architecture, show component relationships, create drill-down views, or explain a system visually with tld.
+description: Create architecture diagrams from a local codebase or system description. Use when the user asks to diagram a repo, map system architecture, show component relationships, create drill-down views, or explain a system visually with tld.
 allowed-tools: Read, Glob, Grep, Write, Bash(tld *)
 ---
 
@@ -25,10 +25,10 @@ Build a tld workspace that helps someone understand a system by moving from broa
 
 tld models architecture as a hierarchy of **elements** and **connectors**.
 
-- An **element** can be a system, service, container, component, module, class, method, database, external system, or person.
-- A **view** is the canvas inside an element. Add children with `--parent <ref>` to create drill-downs. There is no separate "create view" command.
-- A **connector** describes a relationship between elements. The view is inferred from the elements' shared parent.
-- A **kind** is a broad role such as `system`, `container`, `component`, `database`, `external system`, or `person`.
+- An **element** is the node in the knowledge graph. It can represent a system, subsystem, service, module, class, database, external system, user, or any other entity relevant to the architecture.
+- A **view** is the canvas inside an element. Add children with `--parent <ref>` to create drill-downs. There is no separate "create view" command. View is used to group related elements, or to explain a subsystem in more detail.
+- A **connector** is the edges of the graph, describes a relationship between elements. The view is inferred from the elements' shared parent.
+- A **kind** is a broad role such as `system`, `container`, `component`, `database`, `external system`, or `person` omit if it doesn't fit any clear category. 
 - A **technology** is metadata. Prefer catalog names suggested by `tld tech suggest`.
 
 The goal is not to mirror folders. Build a navigable map of how control, data, ownership, and dependencies move through the system.
@@ -77,7 +77,7 @@ Use their answers to calibrate the rest of the work. If they don't know, suggest
 
 **Medium** ~10–30 views, 2–3 levels deep Modules and packages decomposed. Key classes identified and placed. Major data and logic flows wired. Inheritance shown where architecturally significant.
 
-**Detailed** ~50–200+ views, 4–6 levels deep. Every significant class and function has its own linked view. A reader should be able to navigate from the root view down to understanding a specific method's behavior without opening a file. Connected end-to-end from producers to consumers.
+**Detailed** ~50–200+ views, 4–6 levels deep. Every significant class and function has its own linked view. A reader should be able to navigate from the root view down to understanding a specific method's behavior without opening a file. Connected end-to-end from producers to consumers. 
 
 1. Inspect the codebase enough to identify entry points, major subsystems, storage, external systems, and runtime boundaries.
 2. Write a compact inventory before adding elements:
@@ -105,10 +105,12 @@ Subsystem inventory:
 
 6. Reuse shared elements in every relevant view and reconnect them, optionally with labels specific to that context.
 7. Run `tld validate`, read the output carefully, fix the model, and repeat until validation passes or only intentional exceptions remain.
+8. Run `tld plan` to see a summary of the workspace, if the resource counts do not match the initial goals set with the user, iterate. Use validation errors as a guide, look for overly-simplified views, or missing relationships.
+
 
 ## Modeling Guidance
 
-Keep each view readable. Aim for about 8-12 elements; split or cluster before a view becomes crowded. If a parent would contain many items, introduce a container element with a role-based name such as "Data Layer", "Event Pipeline", or "Authentication".
+Keep each view readable. Aim for about 8-12 elements; split or cluster before a view becomes crowded. If a parent would contain many items, introduce a new element with a role-based name such as "Data Layer", "Event Pipeline", or "Authentication".
 
 An isolated element is usually a modeling bug. Either connect it, move it to a better view, or remove it.
 
@@ -116,11 +118,16 @@ Depth should match the user's goal, before handoff, validate that the diagram me
 
 ## Handoff
 
-After validation, ask the user to run:
+Ask the user to run to apply pending changes: 
 
 ```bash
-tld plan 
 tld apply 
+```
+
+Then to view the diagram:
+
+```bash
+tld serve --open
 ```
 
 Use their feedback to if they want to add/remove some detail on sub-systems. Make adjustments to `diagram.sh`, run it, and validate again.
