@@ -127,7 +127,9 @@ function buildProxyEndpoint(
 
   const actualPlacement = elementDisplayPlacement(snapshot, elementId, chosenPlacement.viewId)
   const actualName = actualPlacement?.element.name ?? `Element ${elementId}`
-  const forceExplicitOffViewContext = ownerViewId === currentViewId && chosenPlacement.viewId !== currentViewId
+  const forceExplicitOffViewContext = ownerViewId === currentViewId &&
+    chosenPlacement.viewId !== currentViewId &&
+    snapshot.childViewIdByOwnerElementId[elementId] != null
 
   if (forceExplicitOffViewContext) {
     const contextPathElementIds = explicitOffViewContextPath(
@@ -383,7 +385,13 @@ export function resolveViewProxyGraph(
     const sourceAnchorId = displayNodeId(source)
     const targetAnchorId = displayNodeId(target)
     if (sourceAnchorId === targetAnchorId) continue
-    if (!source.externalToView && !target.externalToView && connector.view_id === currentViewId) continue
+    if (
+      !source.externalToView &&
+      !target.externalToView &&
+      connector.view_id === currentViewId &&
+      source.placementViewId === currentViewId &&
+      target.placementViewId === currentViewId
+    ) continue
 
     connectorLeaves.push({
       connector,

@@ -342,6 +342,30 @@ describe('resolveZUIProxyConnectors', () => {
 })
 
 describe('resolveViewProxyGraph', () => {
+  it('keeps current-view connectors to leaf descendants mergeable with visible owner pairs', () => {
+    const data = baseData([
+      connector(1, 1, 1, 2, 'A-B'),
+      connector(2, 1, 5, 2, 'Leaf-B'),
+    ])
+    data.views['2'].placements = [placedElement(2, 5, 'Leaf')]
+
+    const snapshot = buildWorkspaceGraphSnapshot(data)
+    const currentPlacements = data.views['1'].placements
+
+    const resolved = resolveViewProxyGraph(snapshot, 1, currentPlacements, zuiSettings())
+
+    expect(resolved.proxyNodes).toHaveLength(0)
+    expect(resolved.proxyConnectors).toHaveLength(1)
+    expect(resolved.proxyConnectors[0]).toMatchObject({
+      sourceAnchorId: '1',
+      targetAnchorId: '2',
+      label: 'Leaf-B',
+      count: 1,
+    })
+    expect(resolved.proxyConnectors[0]?.details.connectors[0]?.source.externalToView).toBe(false)
+    expect(resolved.proxyConnectors[0]?.details.connectors[0]?.source.anchorElementId).toBe(1)
+  })
+
   it('keeps current-view off-canvas neighbor connectors across editor content overlays', () => {
     const data = baseData([
       connector(1, 1, 1, 2, 'A-B'),

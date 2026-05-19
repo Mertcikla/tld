@@ -68,6 +68,7 @@ import ContextStraightConnector from '../../components/ContextStraightConnector'
 import ProxyConnectorEdge from '../../components/ProxyConnectorEdge'
 import ProxyConnectorPanel from '../../components/ProxyConnectorPanel'
 import { useViewContextNeighbours } from './hooks/useViewContextNeighbours'
+import { canonicalNodePairKey } from './pairKey'
 import type { ParsedImport } from '../../pkg/importer/mermaid'
 import { vscodeBridge } from '../../lib/vscodeBridge'
 import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
@@ -198,12 +199,6 @@ function areTranslateExtentsEqual(
     left[1][0] === right[1][0] &&
     left[1][1] === right[1][1]
 }
-
-function canonicalNodePairKey(leftId: string, rightId: string) {
-  return leftId <= rightId ? `${leftId}::${rightId}` : `${rightId}::${leftId}`
-}
-
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 

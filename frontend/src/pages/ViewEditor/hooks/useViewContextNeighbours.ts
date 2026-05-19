@@ -3,6 +3,7 @@ import { type Edge as RFEdge, type Node as RFNode } from 'reactflow'
 import type { Connector, PlacedElement } from '../../../types'
 import type { CrossBranchContextSettings, ProxyConnectorDetails, WorkspaceGraphSnapshot } from '../../../crossBranch/types'
 import { resolveViewProxyGraph } from '../../../crossBranch/resolve'
+import { canonicalNodePairKey } from '../pairKey'
 
 interface Props {
   snapshot: WorkspaceGraphSnapshot | null
@@ -70,10 +71,6 @@ function isAncestorContextNode(
 }
 
 function canonicalElementPairKey(leftId: number, rightId: number) {
-  return leftId <= rightId ? `${leftId}::${rightId}` : `${rightId}::${leftId}`
-}
-
-function canonicalNodePairKey(leftId: string, rightId: string) {
   return leftId <= rightId ? `${leftId}::${rightId}` : `${rightId}::${leftId}`
 }
 
