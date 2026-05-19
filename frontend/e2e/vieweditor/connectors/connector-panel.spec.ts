@@ -38,6 +38,23 @@ test('edits connector metadata, direction, and style from the connector panel', 
   })
 })
 
+test('clears a connector label and keeps it empty after reload', async ({ page }) => {
+  const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Connector Clear Label')
+  const connector = await createConnector(page, diagram.id, elements[0].id, elements[1].id, { label: 'initial' })
+  await page.reload()
+
+  await openConnectorPanelFromFirstEdge(page)
+  await page.getByTestId('connector-panel-label-input').fill('')
+  await page.getByTestId('connector-panel-label-input').blur()
+
+  await expectConnector(page, { id: connector.id, label: '' }, true, diagram.id)
+
+  await page.reload()
+  await openConnectorPanelFromFirstEdge(page)
+  await expect(page.getByTestId('connector-panel-label-input')).toHaveValue('')
+  await expect(page.getByText('initial')).toHaveCount(0)
+})
+
 test('deletes a connector from the connector panel', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Connector Delete')
   const connector = await createConnector(page, diagram.id, elements[0].id, elements[1].id, { label: 'remove-me' })

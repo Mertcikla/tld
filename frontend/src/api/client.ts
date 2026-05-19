@@ -22,6 +22,7 @@ import {
   CreateViewResponseSchema,
   UpdateViewResponseSchema,
   ListViewsResponseSchema,
+  GetViewResponseSchema,
   GetWorkspaceResponseSchema,
   ListElementsResponseSchema,
   GetElementResponseSchema,
@@ -276,45 +277,6 @@ function mapWorkspaceVersion(version: WorkspaceVersionInfo): WorkspaceVersion {
   }
 }
 
-async function fetchWorkspaceRaw(body: Record<string, unknown>) {
-  const res = await fetchApiAsset(apiUrl('/diag.v1.WorkspaceService/GetWorkspace'), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Connect-Protocol-Version': '1',
-    },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    throw new Error(`GetWorkspace failed: ${res.statusText}`)
-  }
-  return res.json() as Promise<{
-    views?: ProtoDiagram[]
-    total_count?: number
-    totalCount?: number
-    content?: Record<string, { placements?: Record<string, unknown>[]; connectors?: Record<string, unknown>[] }>
-    navigations?: Record<string, unknown>[]
-  }>
-}
-
-async function fetchViewRaw(body: Record<string, unknown>) {
-  const res = await fetchApiAsset(apiUrl('/diag.v1.WorkspaceService/GetView'), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Connect-Protocol-Version': '1',
-    },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) {
-    throw new Error(`GetView failed: ${res.statusText}`)
-  }
-  return res.json() as Promise<{
-    view?: ProtoDiagram
-    content?: { placements?: Record<string, unknown>[]; connectors?: Record<string, unknown>[] }
-  }>
-}
-
 // ─── Proto → frontend type mappers ───────────────────────────────────────────
 
 interface ProtoDiagram {
@@ -472,19 +434,19 @@ function protoPlacedElement(p: Record<string, unknown>): PlacedElement {
 function protoConnector(e: Record<string, unknown>): Connector {
   return {
     id: Number(e.id ?? 0),
-    view_id: Number(e.view_id ?? 0),
-    source_element_id: Number(e.source_element_id ?? 0),
-    target_element_id: Number(e.target_element_id ?? 0),
+    view_id: Number(e.view_id ?? e.viewId ?? 0),
+    source_element_id: Number(e.source_element_id ?? e.sourceElementId ?? 0),
+    target_element_id: Number(e.target_element_id ?? e.targetElementId ?? 0),
     label: (e.label ?? null) as string | null,
     description: (e.description ?? null) as string | null,
     relationship: (e.relationship ?? null) as string | null,
     direction: String(e.direction ?? 'forward'),
     style: normalizeConnectorRouteStyle(e.style),
     url: (e.url ?? null) as string | null,
-    source_handle: (e.source_handle ?? null) as string | null,
-    target_handle: (e.target_handle ?? null) as string | null,
-    created_at: String(e.created_at ?? new Date().toISOString()),
-    updated_at: String(e.updated_at ?? new Date().toISOString()),
+    source_handle: (e.source_handle ?? e.sourceHandle ?? null) as string | null,
+    target_handle: (e.target_handle ?? e.targetHandle ?? null) as string | null,
+    created_at: String(e.created_at ?? e.createdAt ?? new Date().toISOString()),
+    updated_at: String(e.updated_at ?? e.updatedAt ?? new Date().toISOString()),
   }
 }
 
@@ -721,7 +683,8 @@ export const api = {
 
       content: (id: number): Promise<{ view?: ViewTreeNode; placements: PlacedElement[]; connectors: Connector[] }> =>
         rpc(async () => {
-          const json = await fetchViewRaw({ viewId: id, includeContent: true })
+          const res = await workspaceClient.getView({ viewId: id, includeContent: true })
+          const json = j<{ view?: ProtoDiagram; content?: { placements?: Record<string, unknown>[]; connectors?: Record<string, unknown>[] } }>(GetViewResponseSchema, res)
           return {
             view: json.view ? mapDiagram(json.view) : undefined,
             placements: (json.content?.placements ?? []).map(protoPlacedElement),
@@ -781,10 +744,14 @@ export const api = {
         content: Record<number, { placements: PlacedElement[]; connectors: Connector[] }>
       }> =>
         rpc(async () => {
-          const json = await fetchWorkspaceRaw({
+          const res = await workspaceClient.getWorkspace({
             includeContent: true,
             hasView: true,
           })
+          const json = j<{
+            views?: ProtoDiagram[]
+            content?: Record<string, { placements?: Record<string, unknown>[]; connectors?: Record<string, unknown>[] }>
+          }>(GetWorkspaceResponseSchema, res)
           return {
             views: (json.views ?? []).map(mapDiagram),
             content: Object.fromEntries(
@@ -801,7 +768,8 @@ export const api = {
 
       get: (id: number): Promise<ViewTreeNode> =>
         rpc(async () => {
-          const json = await fetchViewRaw({ viewId: id })
+          const res = await workspaceClient.getView({ viewId: id })
+          const json = j<{ view?: ProtoDiagram }>(GetViewResponseSchema, res)
           if (!json.view) throw new Error('View not found')
           return mapDiagram(json.view)
         }),
