@@ -77,6 +77,9 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 			diagramIDToViewRef[d.Id] = ownerRef
 			element := newWS.Elements[ownerRef]
 			element.HasView = true
+			if name := strings.TrimSpace(d.Name); name != "" && !strings.EqualFold(name, strings.TrimSpace(element.Name)) {
+				element.ViewName = name
+			}
 			if label := exportedDiagramLabel(d, element.Name); element.ViewLabel == "" && label != "" {
 				element.ViewLabel = label
 			}
@@ -117,9 +120,10 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 			continue
 		}
 
+		fallbackKey := viewRef + ":" + srcRef + ":" + tgtRef + ":" + e.GetLabel()
 		key, ok := existingConnectorRefs[e.Id]
-		if !ok {
-			key = viewRef + ":" + srcRef + ":" + tgtRef + ":" + e.GetLabel()
+		if !ok || !connectorRefMatches(key, viewRef, srcRef, tgtRef, e.GetLabel()) {
+			key = fallbackKey
 		}
 
 		newWS.Connectors[key] = &workspace.Connector{
@@ -142,6 +146,17 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 	}
 
 	return newWS
+}
+
+func connectorRefMatches(ref, viewRef, srcRef, tgtRef, label string) bool {
+	parts := strings.Split(ref, ":")
+	if len(parts) < 4 {
+		return false
+	}
+	return parts[0] == viewRef &&
+		parts[1] == srcRef &&
+		parts[2] == tgtRef &&
+		strings.Join(parts[3:], ":") == label
 }
 
 func CountViews(ws *workspace.Workspace) int {
@@ -176,7 +191,22 @@ func buildDiagramOwnerIndex(msg *diagv1.ExportOrganizationResponse, elements map
 	owners := make(map[int32]string)
 	usedRefs := make(map[string]struct{})
 
+	for _, diagram := range msg.Views {
+		if diagram.OwnerElementId == nil {
+			continue
+		}
+		ownerRef, ok := objectIDToRef[*diagram.OwnerElementId]
+		if !ok {
+			continue
+		}
+		owners[diagram.Id] = ownerRef
+		usedRefs[ownerRef] = struct{}{}
+	}
+
 	for _, navigation := range msg.Navigations {
+		if _, ok := owners[navigation.ToViewId]; ok {
+			continue
+		}
 		ownerRef, ok := objectIDToRef[navigation.ElementId]
 		if !ok || navigation.ToViewId == 0 {
 			continue

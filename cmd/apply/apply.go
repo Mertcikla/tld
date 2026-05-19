@@ -132,7 +132,7 @@ func NewApplyCmd(wdir *string) *cobra.Command {
 					req = plan.Request
 				}
 			}
-			if runner.SupportsDryRun() && lockFile != nil && force {
+			if runner.SupportsDryRun() && lockFile != nil && force && !forceApply {
 				newPlan, retryCount, err := autoPullAndRebuild(cmd, ws, lockFile, plan, *wdir, recreateIDs)
 				if err != nil {
 					if commandWantsJSON(cmd) {
@@ -199,6 +199,9 @@ func NewApplyCmd(wdir *string) *cobra.Command {
 				}
 			}
 
+			if err := applyViewNames(cmd.Context(), runner, currentWS, plan, resp); err != nil {
+				return fmt.Errorf("apply view names: %w", err)
+			}
 			if err := updatePlanMetadataFromResponse(*wdir, meta, currentWS, plan, resp); err != nil {
 				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: failed to update metadata: %v\n", err)
 			}
@@ -244,6 +247,37 @@ func commandWantsJSON(cmd *cobra.Command) bool {
 func commandCompactJSON(cmd *cobra.Command) bool {
 	flag := cmd.Root().PersistentFlags().Lookup("compact")
 	return flag != nil && flag.Value.String() == "true"
+}
+
+type viewNameUpdater interface {
+	UpdateViewName(context.Context, int32, string) (*diagv1.View, error)
+}
+
+func applyViewNames(ctx context.Context, runner Runner, ws *workspace.Workspace, plan *planner.Plan, resp *diagv1.ApplyPlanResponse) error {
+	updater, ok := runner.(viewNameUpdater)
+	if !ok || len(plan.ViewNames) == 0 {
+		return nil
+	}
+	viewMetadata := canonicalizeMetadata(resp.GetViewMetadata(), elementRefRenames(resp))
+	for ref, name := range plan.ViewNames {
+		name = strings.TrimSpace(name)
+		if name == "" || ws.Elements[ref] == nil {
+			continue
+		}
+		meta := viewMetadata[ref]
+		if meta == nil || meta.GetId() == 0 {
+			continue
+		}
+		updated, err := updater.UpdateViewName(ctx, meta.GetId(), name)
+		if err != nil {
+			return fmt.Errorf("%s: %w", ref, err)
+		}
+		if updated != nil && updated.UpdatedAt != nil {
+			meta.UpdatedAt = updated.UpdatedAt
+			resp.ViewMetadata[ref] = meta
+		}
+	}
+	return nil
 }
 
 func serverHasDrift(ctx context.Context, ws *workspace.Workspace, plan *planner.Plan) (bool, error) {

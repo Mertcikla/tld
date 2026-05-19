@@ -21,6 +21,7 @@ type Plan struct {
 	Request      *diagv1.ApplyPlanRequest
 	DiagramOrder []string // sorted refs
 	Model        string
+	ViewNames    map[string]string
 }
 
 // Build resolves workspace refs into an ApplyPlanRequest, ordering diagrams
@@ -70,6 +71,7 @@ func buildFromElements(ws *workspace.Workspace, recreateIDs bool) (*Plan, error)
 		OrgId:  ws.Config.WorkspaceID,
 		DryRun: new(bool),
 	}
+	viewNames := make(map[string]string)
 
 	for _, ref := range elementRefs {
 		element := elements[ref]
@@ -119,6 +121,9 @@ func buildFromElements(ws *workspace.Workspace, recreateIDs bool) (*Plan, error)
 		}
 		if element.ViewLabel != "" {
 			planElement.ViewLabel = &element.ViewLabel
+		}
+		if element.ViewName != "" {
+			viewNames[ref] = element.ViewName
 		}
 		if element.DensityLevel != 0 {
 			level := int32(element.DensityLevel)
@@ -218,7 +223,7 @@ func buildFromElements(ws *workspace.Workspace, recreateIDs bool) (*Plan, error)
 		req.Connectors = append(req.Connectors, planConnector)
 	}
 
-	return &Plan{Request: req, Model: "workspace"}, nil
+	return &Plan{Request: req, Model: "workspace", ViewNames: viewNames}, nil
 }
 
 func technologyLinksForElement(technology, language string) []*diagv1.TechnologyLink {

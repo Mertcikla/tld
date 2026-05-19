@@ -51,6 +51,18 @@ func (r remoteRunner) ApplyWorkspacePlan(ctx context.Context, req *diagv1.ApplyP
 	return resp.Msg, nil
 }
 
+func (r remoteRunner) UpdateViewName(ctx context.Context, viewID int32, name string) (*diagv1.View, error) {
+	c := client.New(r.serverURL, r.apiKey, r.debug)
+	resp, err := c.UpdateView(ctx, connect.NewRequest(&diagv1.UpdateViewRequest{
+		ViewId: viewID,
+		Name:   name,
+	}))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg.GetView(), nil
+}
+
 func (r remoteRunner) SupportsDryRun() bool { return true }
 func (r remoteRunner) Name() string         { return TargetRemote }
 func (r remoteRunner) TargetLabel() string  { return client.NormalizeURL(r.serverURL) }
@@ -92,6 +104,20 @@ func (r localRunner) ApplyWorkspacePlan(ctx context.Context, req *diagv1.ApplyPl
 	}
 	committed = true
 	return resp, nil
+}
+
+func (r localRunner) UpdateViewName(ctx context.Context, viewID int32, name string) (*diagv1.View, error) {
+	sqliteStore, err := store.Open(r.dbPath, assets.FS)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = sqliteStore.Legacy().Close() }()
+	adapter := store.NewAPIAdapter(sqliteStore)
+	existing, err := adapter.GetView(ctx, viewID, uuid.Nil)
+	if err != nil {
+		return nil, err
+	}
+	return adapter.UpdateView(ctx, viewID, uuid.Nil, name, existing.LevelLabel)
 }
 
 func (r localRunner) SupportsDryRun() bool { return false }

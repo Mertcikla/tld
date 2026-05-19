@@ -337,6 +337,23 @@ func (a *APIAdapter) CreateConnector(ctx context.Context, _ uuid.UUID, input api
 	return connectorToProto(connector), nil
 }
 
+func (a *APIAdapter) createConnectorWithID(ctx context.Context, id int32, input api.ConnectorInput) (*diagv1.Connector, error) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := a.Store.legacy.DB().ExecContext(ctx, `
+		INSERT INTO connectors(id, view_id, source_element_id, target_element_id, label, description, relationship, direction, style, url, source_handle, target_handle, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, input.ViewID, input.SourceID, input.TargetID, input.Label, input.Description, input.Relationship,
+		input.Direction, input.Style, input.URL, input.SourceHandle, input.TargetHandle, now, now)
+	if err != nil {
+		return nil, err
+	}
+	connector, err := a.Store.legacy.ConnectorByID(ctx, int64(id))
+	if err != nil {
+		return nil, err
+	}
+	return connectorToProto(connector), nil
+}
+
 func (a *APIAdapter) UpdateConnector(ctx context.Context, id int32, _ uuid.UUID, input api.ConnectorInput) (*diagv1.Connector, error) {
 	connector, err := a.Store.legacy.UpdateConnector(ctx, int64(id), app.Connector{
 		ID:              int64(id),
@@ -671,7 +688,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 		if planned.GetId() != 0 {
 			connector, err = a.UpdateConnector(ctx, planned.GetId(), uuid.Nil, input)
 			if errors.Is(err, sql.ErrNoRows) {
-				connector, err = a.CreateConnector(ctx, uuid.Nil, input)
+				connector, err = a.createConnectorWithID(ctx, planned.GetId(), input)
 			}
 		} else {
 			connector, err = a.CreateConnector(ctx, uuid.Nil, input)

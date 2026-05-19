@@ -55,6 +55,7 @@ type Element struct {
 	Symbol       string          `yaml:"symbol,omitempty"` // Named code symbol within FilePath (e.g. "MyFunc")
 	Tags         []string        `yaml:"tags,omitempty"`
 	HasView      bool            `yaml:"has_view"`
+	ViewName     string          `yaml:"view_name,omitempty"`
 	ViewLabel    string          `yaml:"view_label,omitempty"`
 	DensityLevel int             `yaml:"density_level,omitempty"`
 	Placements   []ViewPlacement `yaml:"placements,omitempty"`

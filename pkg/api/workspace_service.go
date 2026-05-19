@@ -316,12 +316,33 @@ func (s *WorkspaceService) ExportWorkspace(
 		})
 	}
 
+	elementToChildView := make(map[int32]*diagv1.View, len(views))
+	for _, v := range views {
+		if v.OwnerElementId != nil {
+			elementToChildView[*v.OwnerElementId] = v
+		}
+	}
+	navigations := make([]*diagv1.ElementNavigation, 0)
+	for _, p := range placements {
+		childView, ok := elementToChildView[p.ElementId]
+		if !ok {
+			continue
+		}
+		navigations = append(navigations, &diagv1.ElementNavigation{
+			Id:         p.Id,
+			ElementId:  p.ElementId,
+			FromViewId: p.ViewId,
+			ToViewId:   childView.Id,
+		})
+	}
+
 	return connect.NewResponse(&diagv1.ExportOrganizationResponse{
-		Views:      views,
-		Elements:   elements,
-		Placements: exportPlacements,
-		Connectors: connectors,
-		Layers:     layers,
+		Views:       views,
+		Elements:    elements,
+		Navigations: navigations,
+		Placements:  exportPlacements,
+		Connectors:  connectors,
+		Layers:      layers,
 	}), nil
 }
 

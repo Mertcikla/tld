@@ -13,10 +13,16 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 
 	diagv1connect "buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/diag/v1/diagv1connect"
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
+	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/localserver"
+	localapi "github.com/mertcikla/tld/v2/internal/server"
+	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -211,6 +217,24 @@ func NewMockServer(t *testing.T, svc diagv1connect.WorkspaceServiceHandler) stri
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv.URL
+}
+
+func NewLocalAPIServer(t *testing.T, dataDir string) string {
+	t.Helper()
+	sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
+	if err != nil {
+		t.Fatalf("open local API database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqliteStore.Legacy().Close() })
+
+	static := fstest.MapFS{"frontend/dist/index.html": {Data: []byte("<html>app</html>")}}
+	srv, err := localapi.New(sqliteStore, static, uuid.MustParse("11111111-1111-1111-1111-111111111111"))
+	if err != nil {
+		t.Fatalf("create local API server: %v", err)
+	}
+	httpSrv := httptest.NewServer(srv.Routes())
+	t.Cleanup(httpSrv.Close)
+	return httpSrv.URL
 }
 
 const TestWorkspaceID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"

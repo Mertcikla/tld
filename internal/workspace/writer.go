@@ -33,6 +33,7 @@ var elementScalarFields = map[string]bool{
 	"file_path":     true,
 	"symbol":        true,
 	"has_view":      true,
+	"view_name":     true,
 	"view_label":    true,
 	"density_level": true,
 }

@@ -63,15 +63,16 @@ func TestConvertExportResponsePreservesRefsAndInfersOwnedViews(t *testing.T) {
 		t.Fatalf("placement should target inferred owner view: %#v", db.Placements[0])
 	}
 
-	connector := got.Connectors["old-connector-ref"]
+	connectorRef := "api-service:api-service:database:reads"
+	connector := got.Connectors[connectorRef]
 	if connector == nil {
-		t.Fatalf("existing connector ref was not preserved: %#v", got.Connectors)
+		t.Fatalf("connector was not imported under its current natural ref: %#v", got.Connectors)
 	}
 	if connector.View != "api-service" || connector.Source != "api-service" || connector.Target != "database" || connector.Label != "reads" {
 		t.Fatalf("connector refs were not converted through exported IDs: %#v", connector)
 	}
-	if got.Meta.Connectors["old-connector-ref"].ID != 50 {
-		t.Fatalf("connector metadata was not preserved: %#v", got.Meta.Connectors)
+	if got.Meta.Connectors[connectorRef].ID != 50 {
+		t.Fatalf("connector metadata was not re-keyed: %#v", got.Meta.Connectors)
 	}
 }
 
