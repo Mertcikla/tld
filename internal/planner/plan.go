@@ -272,15 +272,15 @@ func resolveRepositoryRootElement(ws *workspace.Workspace) (string, *workspace.E
 		if !ok || element == nil {
 			return "", nil, fmt.Errorf("repository %q root %q not found in elements", ws.ActiveRepo, repository.Root)
 		}
-		if element.Kind != "repository" {
-			return "", nil, fmt.Errorf("repository %q root %q must be kind repository, got %q", ws.ActiveRepo, repository.Root, element.Kind)
-		}
 		return repository.Root, nil, nil
 	}
 
 	candidates := repositoryRootCandidates(ws.Elements, ws.ActiveRepo)
 	switch len(candidates) {
 	case 0:
+		if hasRootLevelElement(ws.Elements, ws.ActiveRepo) {
+			return "", nil, nil
+		}
 		ref := uniqueRepositoryRootRef(ws.ActiveRepo, ws.Elements)
 		return ref, &workspace.Element{
 			Name:      ws.ActiveRepo,
@@ -295,7 +295,7 @@ func resolveRepositoryRootElement(ws *workspace.Workspace) (string, *workspace.E
 	case 1:
 		return candidates[0], nil, nil
 	default:
-		return "", nil, fmt.Errorf("repository %q has multiple root candidates %v; set repositories[%q].root explicitly", ws.ActiveRepo, candidates, ws.ActiveRepo)
+		return "", nil, nil
 	}
 }
 
@@ -311,22 +311,40 @@ func repositoryRootCandidates(elements map[string]*workspace.Element, repoName s
 		if element.Owner != "" && element.Owner != repoName {
 			continue
 		}
-		if len(element.Placements) > 0 {
-			rooted := false
-			for _, placement := range element.Placements {
-				if placement.ParentRef == "root" || placement.ParentRef == syntheticRootViewRef || placement.ParentRef == "" {
-					rooted = true
-					break
-				}
-			}
-			if !rooted {
-				continue
-			}
+		if !isRootLevelElement(element) {
+			continue
 		}
 		candidates = append(candidates, ref)
 	}
 	sort.Strings(candidates)
 	return candidates
+}
+
+func hasRootLevelElement(elements map[string]*workspace.Element, repoName string) bool {
+	for _, element := range elements {
+		if element == nil {
+			continue
+		}
+		if element.Owner != "" && element.Owner != repoName {
+			continue
+		}
+		if isRootLevelElement(element) {
+			return true
+		}
+	}
+	return false
+}
+
+func isRootLevelElement(element *workspace.Element) bool {
+	if len(element.Placements) == 0 {
+		return true
+	}
+	for _, placement := range element.Placements {
+		if placement.ParentRef == "" || placement.ParentRef == syntheticRootViewRef {
+			return true
+		}
+	}
+	return false
 }
 
 func uniqueRepositoryRootRef(repoName string, elements map[string]*workspace.Element) string {

@@ -262,3 +262,124 @@ func TestBuild_SynthesizesRepositoryRootWhenUnset(t *testing.T) {
 		t.Fatalf("root placements = %+v, want parent root", root.Placements)
 	}
 }
+
+func TestBuild_DoesNotSynthesizeRepositoryRootWhenCustomRootExists(t *testing.T) {
+	ws := &workspace.Workspace{
+		Config:     workspace.Config{WorkspaceID: "test-org-id"},
+		ActiveRepo: "frontend",
+		WorkspaceConfig: &workspace.WorkspaceConfig{
+			Repositories: map[string]workspace.Repository{
+				"frontend": {},
+			},
+		},
+		Elements: map[string]*workspace.Element{
+			"tld-system": {
+				Name:    "tld System",
+				Kind:    "system",
+				HasView: true,
+				Placements: []workspace.ViewPlacement{{
+					ParentRef: "root",
+				}},
+			},
+			"api": {
+				Name:       "API",
+				Kind:       "service",
+				Placements: []workspace.ViewPlacement{{ParentRef: "tld-system"}},
+			},
+		},
+	}
+
+	plan, err := planner.Build(ws, false)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(plan.Request.Elements) != 2 {
+		t.Fatalf("Elements = %d, want 2", len(plan.Request.Elements))
+	}
+	if got := planElementByRef(plan, "frontend"); got != nil {
+		t.Fatalf("unexpected synthesized repository root: %+v", got)
+	}
+	if got := planElementByRef(plan, "tld-system"); got == nil {
+		t.Fatal("custom root element missing from plan")
+	}
+}
+
+func TestBuild_AllowsConfiguredNonRepositoryRoot(t *testing.T) {
+	ws := &workspace.Workspace{
+		Config:     workspace.Config{WorkspaceID: "test-org-id"},
+		ActiveRepo: "frontend",
+		WorkspaceConfig: &workspace.WorkspaceConfig{
+			Repositories: map[string]workspace.Repository{
+				"frontend": {Root: "tld-system"},
+			},
+		},
+		Elements: map[string]*workspace.Element{
+			"tld-system": {
+				Name:    "tld System",
+				Kind:    "system",
+				HasView: true,
+				Placements: []workspace.ViewPlacement{{
+					ParentRef: "root",
+				}},
+			},
+		},
+	}
+
+	plan, err := planner.Build(ws, false)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(plan.Request.Elements) != 1 {
+		t.Fatalf("Elements = %d, want 1", len(plan.Request.Elements))
+	}
+	if got := planElementByRef(plan, "tld-system"); got == nil {
+		t.Fatal("configured root element missing from plan")
+	}
+}
+
+func TestBuild_MultipleRepositoryRootsDoNotBlockApply(t *testing.T) {
+	ws := &workspace.Workspace{
+		Config:     workspace.Config{WorkspaceID: "test-org-id"},
+		ActiveRepo: "frontend",
+		WorkspaceConfig: &workspace.WorkspaceConfig{
+			Repositories: map[string]workspace.Repository{
+				"frontend": {},
+			},
+		},
+		Elements: map[string]*workspace.Element{
+			"frontend": {
+				Name:       "Frontend",
+				Kind:       "repository",
+				Placements: []workspace.ViewPlacement{{ParentRef: "root"}},
+			},
+			"frontend-runtime": {
+				Name:       "Frontend Runtime",
+				Kind:       "repository",
+				Placements: []workspace.ViewPlacement{{ParentRef: "root"}},
+			},
+		},
+	}
+
+	plan, err := planner.Build(ws, false)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(plan.Request.Elements) != 2 {
+		t.Fatalf("Elements = %d, want 2", len(plan.Request.Elements))
+	}
+	if got := planElementByRef(plan, "frontend"); got == nil {
+		t.Fatal("first repository element missing from plan")
+	}
+	if got := planElementByRef(plan, "frontend-runtime"); got == nil {
+		t.Fatal("second repository element missing from plan")
+	}
+}
+
+func planElementByRef(plan *planner.Plan, ref string) *diagv1.PlanElement {
+	for _, element := range plan.Request.Elements {
+		if element.Ref == ref {
+			return element
+		}
+	}
+	return nil
+}
