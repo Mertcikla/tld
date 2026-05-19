@@ -76,6 +76,23 @@ function edgeStyleKey(edge: Edge<FloatingConnectorData>) {
   return `${edge.data?.dashed ? 'dashed' : 'solid'}:${edge.data?.color ?? ''}`
 }
 
+function isNodeVisible(
+  node: FlowNode,
+  transform: [number, number, number],
+  width: number,
+  height: number
+) {
+  if (!node.positionAbsolute) return false
+  const w = node.width ?? 260
+  const h = node.height ?? 150
+  const [tx, ty, zoom] = transform
+  const x1 = node.positionAbsolute.x * zoom + tx
+  const y1 = node.positionAbsolute.y * zoom + ty
+  const x2 = (node.positionAbsolute.x + w) * zoom + tx
+  const y2 = (node.positionAbsolute.y + h) * zoom + ty
+  return x2 >= 0 && x1 <= width && y2 >= 0 && y1 <= height
+}
+
 function FloatingConnector({
   id,
   source,
@@ -86,6 +103,10 @@ function FloatingConnector({
   const [hovered, setHovered] = useState(false)
   const edges = useStore((s) => s.edges as Edge<FloatingConnectorData>[])
   const nodeInternals = useStore((s) => s.nodeInternals)
+  const transform = useStore((s) => s.transform)
+  const viewportWidth = useStore((s) => s.width)
+  const viewportHeight = useStore((s) => s.height)
+
   const sourceNode = nodeInternals.get(source)
   const targetNode = nodeInternals.get(target)
 
@@ -108,12 +129,16 @@ function FloatingConnector({
       if (!edgeTargetNode?.positionAbsolute) return null
       const edgeRoute = getOrthogonalRoute(sourceNode, edgeTargetNode)
       if (edgeRoute.direction !== route.direction) return null
-      return { id: edge.id, target: edgeRoute.target }
+      return { id: edge.id, target: edgeRoute.target, node: edgeTargetNode }
     })
-    .filter((member): member is BundleMember => member !== null)
+    .filter((member): member is { id: string; target: Point; node: any } => member !== null)
     .sort((a, b) => a.target.x - b.target.x || a.target.y - b.target.y || a.id.localeCompare(b.id))
 
-  const isBundleRepresentative = members[0]?.id === id
+  const visibleMembers = members.filter((m) =>
+    isNodeVisible(m.node, transform, viewportWidth, viewportHeight)
+  )
+
+  const isBundleRepresentative = visibleMembers[0]?.id === id
   const isBundled = members.length > 1
   const busXs = isBundled
     ? [route.source.x, ...members.map((member) => member.target.x)]

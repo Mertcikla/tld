@@ -895,6 +895,8 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
         id: displayNode.id,
         type: 'diagramGrid',
         position: layoutPositions.get(displayNode.id) ?? { x: 0, y: 0 },
+        width: CELL_W,
+        height: CELL_H,
         data: {
           id: n.id,
           name: isCluster ? `${n.name} descendants` : n.name,

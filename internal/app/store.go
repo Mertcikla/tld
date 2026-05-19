@@ -521,7 +521,7 @@ func (s *Store) ThumbnailSVG(ctx context.Context, viewID int64) (string, error) 
 	}
 	scaleX := width / math.Max(1, maxX-minX)
 	scaleY := height / math.Max(1, maxY-minY)
-	scale := math.Min(scaleX, scaleY) * 0.9
+	scale := math.Min(scaleX, scaleY) * 0.85
 	offsetX := (width - (maxX-minX)*scale) / 2
 	offsetY := (height - (maxY-minY)*scale) / 2
 	point := func(x, y float64) (float64, float64) {
@@ -545,14 +545,20 @@ func (s *Store) ThumbnailSVG(ctx context.Context, viewID int64) (string, error) 
 		}
 		x1, y1 := point(src.PositionX+70, src.PositionY+40)
 		x2, y2 := point(dst.PositionX+70, dst.PositionY+40)
-		fmt.Fprintf(&b, `<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#475569" stroke-width="2"/>`, x1, y1, x2, y2)
+		strokeWidth := math.Max(1.0, 2.0*scale)
+		fmt.Fprintf(&b, `<line x1="%.2f" y1="%.2f" x2="%.2f" y2="%.2f" stroke="#475569" stroke-width="%.2f"/>`, x1, y1, x2, y2, strokeWidth)
 	}
 	for _, p := range placements {
 		x, y := point(p.PositionX, p.PositionY)
 		w := 140.0 * scale
 		h := 80.0 * scale
-		fmt.Fprintf(&b, `<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="10" fill="#1e293b" stroke="#64748b"/>`, x, y, w, h)
-		fmt.Fprintf(&b, `<text x="%.2f" y="%.2f" font-family="sans-serif" font-size="10" fill="#e2e8f0">`, x+8, y+18)
+		rx := 10.0 * scale
+		rectStrokeWidth := math.Max(0.5, 1.0*scale)
+		fontSize := 12.0 * scale
+		textX := x + 10.0 * scale
+		textY := y + 22.0 * scale
+		fmt.Fprintf(&b, `<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="#1e293b" stroke="#64748b" stroke-width="%.2f"/>`, x, y, w, h, rx, rectStrokeWidth)
+		fmt.Fprintf(&b, `<text x="%.2f" y="%.2f" font-family="sans-serif" font-size="%.2f" fill="#e2e8f0">`, textX, textY, fontSize)
 		b.WriteString(htmlEscape(trimTo(p.Name, 24)))
 		b.WriteString(`</text>`)
 	}

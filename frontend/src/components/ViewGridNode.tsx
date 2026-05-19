@@ -233,14 +233,17 @@ export default function ViewGridNode({ data }: { data: ViewGridNodeData }) {
             : data.canEdit ? 'scale(1.015) translateY(-1px)' : undefined,
         }}
       >
-        {/* Thumbnail area - Full height behind info area */}
+        {/* Thumbnail area - Upper part of the card above info area */}
         <Box
           position="absolute"
-          inset={0}
+          top={0}
+          left={0}
+          right={0}
+          bottom="64px"
           overflow="hidden"
           borderRadius="8px 8px 0 0"
           flexShrink={0}
-          bg={isCluster ? 'rgba(var(--bg-element-rgb), 0.88)' : 'var(--bg-card-solid)'}
+          bg={isCluster ? 'rgba(var(--bg-element-rgb), 0.88)' : '#0f172a'}
         >
           {isCluster ? (
             <Flex
@@ -274,7 +277,7 @@ export default function ViewGridNode({ data }: { data: ViewGridNodeData }) {
               objectFit="contain"
               display="block"
               p={2}
-              bg="var(--bg-card-solid)"
+              bg="#0f172a"
             />
           ) : (
             <Flex
