@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { Box } from '@chakra-ui/react'
+import { Box, FocusLock } from '@chakra-ui/react'
 import { type ReactNode, useRef, useEffect } from 'react'
 
 const EASE = [0.25, 0.46, 0.45, 0.94]
@@ -16,6 +16,8 @@ interface Props {
   hasBackdrop?: boolean
   zIndex?: number
   children: ReactNode
+  autoFocus?: boolean
+  noFocusLock?: boolean
   'data-testid'?: string
 }
 
@@ -31,6 +33,8 @@ export default function SlidingPanel({
   hasBackdrop = true,
   zIndex = 1000,
   children,
+  autoFocus = false,
+  noFocusLock = false,
   'data-testid': dataTestId,
 }: Props) {
   // Use width if it's a fixed value, otherwise default to a safe offscreen distance
@@ -105,7 +109,9 @@ export default function SlidingPanel({
               rounded="xl"
               shadow="panel"
             >
-              {children}
+              <FocusLock isDisabled={!isOpen || noFocusLock} autoFocus={autoFocus} restoreFocus>
+                {children}
+              </FocusLock>
             </Box>
           </motion.div>
         )}

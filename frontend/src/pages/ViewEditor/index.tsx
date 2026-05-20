@@ -21,6 +21,7 @@ import {
   CloseButton,
   Flex,
   IconButton,
+  Input,
   Spinner,
   Text,
   Tooltip,
@@ -57,6 +58,7 @@ import ViewPanel from '../../components/ViewPanel'
 import InlineElementAdder from '../../components/InlineElementAdder'
 import ExportModal, { type ExportOptions } from '../../components/ExportModal'
 import ImportModal from '../../components/ImportModal'
+import { KbdHint } from '../../components/PanelUI'
 import ViewEditorOnboarding from '../../components/ViewEditorOnboarding'
 import DrawingCanvas, { type DrawingCanvasHandle } from '../../components/DrawingCanvas'
 import ViewFloatingMenu from '../../components/ViewFloatingMenu'
@@ -92,13 +94,24 @@ import { pickUnusedColor } from '../../components/ViewExplorer/utils'
 import { EmptyCanvasState } from './components/EmptyCanvasState'
 import { EditorOverlays } from './components/EditorOverlays'
 import { ConnectorContextMenu, CanvasContextMenu } from './components/EditorMenus'
+import SelectionBulkBar from './components/SelectionBulkBar'
 import { overrideViewContentInSnapshot } from '../../crossBranch/graph'
 import { useCrossBranchContextSettings } from '../../crossBranch/settings'
-import { removeConnectorGraphSnapshot, upsertConnectorGraphSnapshot, useWorkspaceGraphSnapshot } from '../../crossBranch/store'
+import { removeConnectorGraphSnapshot, removePlacementGraphSnapshot, upsertConnectorGraphSnapshot, upsertPlacementGraphSnapshot, useWorkspaceGraphSnapshot } from '../../crossBranch/store'
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
 import { buildElementLibraryItems, useStore, placedElementToLibraryElement, resolveElementForUpdate } from '../../store/useStore'
 import { useWorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
+import {
+  elementSelectionRects,
+  planSelectionAlignment,
+  planSelectionDistribution,
+  selectedElementIds,
+  selectionBounds,
+  type SelectionAlign,
+  type SelectionDistribute,
+  type SelectionNodeUpdate,
+} from './selection'
 
 const nodeTypes = {
   elementNode: ElementNode,
@@ -538,7 +551,8 @@ function ViewEditorInner({
     drawingMode, setDrawingMode, drawingVisible, setDrawingVisible,
     drawingPaths, setDrawingPaths: _setDrawingPaths, drawingTool, setDrawingTool,
     drawingColor, setDrawingColor, drawingWidth, setDrawingWidth,
-    setTextEditorState, drawingHistoryRef, drawingRedoStackRef,
+    textEditorState, setTextEditorState, commitDrawingText,
+    drawingHistoryRef, drawingRedoStackRef,
     handleUndo, handleRedo, onPathComplete, onPathDelete, onPathUpdate,
   } = drawing
 
@@ -619,6 +633,32 @@ function ViewEditorInner({
   refreshElementsRef.current = refreshElements
 
   const { hasSignificantOverlaps, dismiss: dismissOverlapSuggestion } = useOverlapDetection(rfNodes, viewId)
+  const selectedCanvasElementIds = useMemo(() => selectedElementIds(rfNodes), [rfNodes])
+  const selectedCanvasElementIdKey = selectedCanvasElementIds.join(',')
+  const selectedCanvasElements = useMemo(() => {
+    const selectedIds = new Set(selectedCanvasElementIds)
+    return viewElements.filter((element) => selectedIds.has(element.element_id))
+  }, [selectedCanvasElementIds, viewElements])
+  const selectedCanvasTagCounts = useMemo(() => {
+    const counts: Record<string, number> = {}
+    selectedCanvasElements.forEach((element) => {
+      const tags = element.tags ?? []
+      tags.forEach((tag) => {
+        counts[tag] = (counts[tag] ?? 0) + 1
+      })
+    })
+    return counts
+  }, [selectedCanvasElements])
+
+  useEffect(() => {
+    if (selectedCanvasElementIds.length <= 1) return
+    setSelectedElement(null)
+    setSelectedEdge(null)
+    setSelectedProxyConnectorDetails(null)
+    elementPanel.onClose()
+    connectorPanel.onClose()
+    proxyConnectorPanel.onClose()
+  }, [connectorPanel, elementPanel, proxyConnectorPanel, selectedCanvasElementIdKey, selectedCanvasElementIds.length])
 
   const overrideDeltaFor = useCallback((resourceType: VisibilityOverride['resource_type'], resourceId?: number | null) => {
     if (resourceId == null) return 0
@@ -824,6 +864,28 @@ function ViewEditorInner({
     })
   }, [applyElementSaved, pushEditAction, refreshElements])
 
+  const pushElementEditBatchAction = useCallback((beforeBatch: WorkspaceElement[], afterBatch: WorkspaceElement[]) => {
+    const pairs = beforeBatch
+      .map((before, index) => ({ before, after: afterBatch[index] }))
+      .filter((pair): pair is { before: WorkspaceElement; after: WorkspaceElement } =>
+        !!pair.after && !elementSnapshotsEqual(pair.before, pair.after)
+      )
+    if (pairs.length === 0) return
+
+    pushEditAction({
+      undo: async () => {
+        const saved = await Promise.all(pairs.map(({ before }) => api.elements.update(before.id, elementUpdatePayload(before))))
+        saved.forEach(applyElementSaved)
+        await refreshElements()
+      },
+      redo: async () => {
+        const saved = await Promise.all(pairs.map(({ after }) => api.elements.update(after.id, elementUpdatePayload(after))))
+        saved.forEach(applyElementSaved)
+        await refreshElements()
+      },
+    })
+  }, [applyElementSaved, pushEditAction, refreshElements])
+
   const handleUpdateTags = useCallback(async (elementId: number, tags: string[]) => {
     if (!canEdit) return
     const obj = resolveElementForUpdate(elementId, selectedElement, allElements, viewElements)
@@ -857,6 +919,30 @@ function ViewEditorInner({
     })
   }, [pushEditAction, refreshElements])
 
+  const pushPlacementMoveBatchAction = useCallback((beforeBatch: PlacedElement[], afterBatch: PlacedElement[]) => {
+    const pairs = beforeBatch
+      .map((before, index) => ({ before, after: afterBatch[index] }))
+      .filter((pair): pair is { before: PlacedElement; after: PlacedElement } =>
+        !!pair.after && !placementSnapshotsEqual(pair.before, pair.after)
+      )
+    if (pairs.length === 0) return
+
+    pushEditAction({
+      undo: async () => {
+        await Promise.all(pairs.map(({ before }) =>
+          api.workspace.views.placements.updatePosition(before.view_id, before.element_id, before.position_x, before.position_y)
+        ))
+        await refreshElements()
+      },
+      redo: async () => {
+        await Promise.all(pairs.map(({ after }) =>
+          api.workspace.views.placements.updatePosition(after.view_id, after.element_id, after.position_x, after.position_y)
+        ))
+        await refreshElements()
+      },
+    })
+  }, [pushEditAction, refreshElements])
+
   const pushPlacementRemoveAction = useCallback((placement: PlacedElement) => {
     pushEditAction({
       undo: async () => {
@@ -869,6 +955,155 @@ function ViewEditorInner({
       },
     })
   }, [pushEditAction, refreshElements])
+
+  const pushPlacementRemoveBatchAction = useCallback((placements: PlacedElement[]) => {
+    if (placements.length === 0) return
+    pushEditAction({
+      undo: async () => {
+        await Promise.all(placements.map((placement) =>
+          api.workspace.views.placements.add(placement.view_id, placement.element_id, placement.position_x, placement.position_y)
+        ))
+        await refreshElements()
+      },
+      redo: async () => {
+        await Promise.all(placements.map((placement) =>
+          api.workspace.views.placements.remove(placement.view_id, placement.element_id)
+        ))
+        await refreshElements()
+      },
+    })
+  }, [pushEditAction, refreshElements])
+
+  const commitSelectionPlacementUpdates = useCallback(async (updates: SelectionNodeUpdate[]) => {
+    if (!canEdit || viewId === null || updates.length === 0) return
+    const updatesByElementId = new Map(updates.map((update) => [update.elementId, update]))
+    const updatesByNodeId = new Map(updates.map((update) => [update.id, update]))
+    const beforePlacements: PlacedElement[] = []
+    const afterPlacements: PlacedElement[] = []
+
+    viewElementsRef.current.forEach((placement) => {
+      const update = updatesByElementId.get(placement.element_id)
+      if (!update) return
+      const after = { ...placement, position_x: update.x, position_y: update.y }
+      if (placementSnapshotsEqual(placement, after)) return
+      beforePlacements.push({ ...placement })
+      afterPlacements.push(after)
+    })
+    if (afterPlacements.length === 0) return
+
+    setRfNodes((nodes) => nodes.map((node) => {
+      const update = updatesByNodeId.get(node.id)
+      return update ? { ...node, position: { x: update.x, y: update.y } } : node
+    }))
+    setViewElements((elements) => elements.map((element) => {
+      const update = updatesByElementId.get(element.element_id)
+      return update ? { ...element, position_x: update.x, position_y: update.y } : element
+    }))
+
+    try {
+      await Promise.all(afterPlacements.map((placement) =>
+        api.workspace.views.placements.updatePosition(placement.view_id, placement.element_id, placement.position_x, placement.position_y)
+      ))
+      afterPlacements.forEach((placement) => upsertPlacementGraphSnapshot(placement.view_id, placement))
+      pushPlacementMoveBatchAction(beforePlacements, afterPlacements)
+    } catch (err) {
+      toast({ status: 'error', title: 'Failed to update selection', description: String(err) })
+      await refreshElements()
+    }
+  }, [canEdit, pushPlacementMoveBatchAction, refreshElements, setRfNodes, setViewElements, toast, viewElementsRef, viewId])
+
+  const handleSelectionAlign = useCallback((align: SelectionAlign) => {
+    void commitSelectionPlacementUpdates(planSelectionAlignment(rfNodes, align))
+  }, [commitSelectionPlacementUpdates, rfNodes])
+
+  const handleSelectionDistribute = useCallback((direction: SelectionDistribute) => {
+    void commitSelectionPlacementUpdates(planSelectionDistribution(rfNodes, direction))
+  }, [commitSelectionPlacementUpdates, rfNodes])
+
+  const handleFitSelection = useCallback(() => {
+    const rects = elementSelectionRects(rfNodes)
+    const bounds = selectionBounds(rects)
+    if (!bounds) return
+    safeFitView({
+      nodes: rects.map((rect) => ({ id: rect.id })),
+      duration: 500,
+      padding: VIEW_EDITOR_FOCUS_FIT_PADDING,
+    })
+  }, [rfNodes, safeFitView])
+
+  const handleBulkRemoveFromView = useCallback(async () => {
+    if (!canEdit || selectedCanvasElements.length === 0) return
+    const placements = selectedCanvasElements.map((placement) => ({ ...placement }))
+    const selectedIds = new Set(placements.map((placement) => placement.element_id))
+
+    setViewElements((elements) => elements.filter((element) => !selectedIds.has(element.element_id)))
+    setRfNodes((nodes) => nodes.filter((node) => !selectedIds.has(Number(node.id))))
+    setSelectedElement(null)
+    setSelectedEdge(null)
+    elementPanel.onClose()
+    connectorPanel.onClose()
+
+    try {
+      await Promise.all(placements.map((placement) =>
+        api.workspace.views.placements.remove(placement.view_id, placement.element_id)
+      ))
+      placements.forEach((placement) => removePlacementGraphSnapshot(placement.view_id, placement.element_id))
+      pushPlacementRemoveBatchAction(placements)
+    } catch (err) {
+      toast({ status: 'error', title: 'Failed to remove selection', description: String(err) })
+      await refreshElements()
+    }
+  }, [canEdit, connectorPanel, elementPanel, pushPlacementRemoveBatchAction, refreshElements, selectedCanvasElements, setRfNodes, setViewElements, toast])
+
+  const handleBulkTagChange = useCallback(async (tag: string, mode: 'add' | 'remove') => {
+    if (!canEdit) return
+    const name = tag.trim()
+    if (!name) return
+    if (mode === 'add' && !tagColors[name]) await handleCreateTag(name)
+
+    const selectedIds = new Set(selectedCanvasElementIds)
+    const beforeElements = selectedCanvasElementIds
+      .map((elementId) => resolveElementForUpdate(elementId, selectedElement, allElements, viewElements))
+      .filter((element): element is WorkspaceElement => element !== null)
+    const afterElements = beforeElements
+      .filter((element) => selectedIds.has(element.id))
+      .map((element) => {
+        const tags = element.tags ?? []
+        const nextTags = mode === 'add'
+          ? Array.from(new Set([...tags, name]))
+          : tags.filter((existingTag) => existingTag !== name)
+        return { ...element, tags: nextTags }
+      })
+      .filter((element, index) => !elementSnapshotsEqual(beforeElements[index], element))
+
+    if (afterElements.length === 0) return
+    const beforeChanged = afterElements
+      .map((element) => beforeElements.find((before) => before.id === element.id))
+      .filter((element): element is WorkspaceElement => element !== undefined)
+
+    try {
+      const saved = await Promise.all(afterElements.map((element) =>
+        api.elements.update(element.id, elementUpdatePayload(element))
+      ))
+      saved.forEach(applyElementSaved)
+      pushElementEditBatchAction(beforeChanged, saved)
+    } catch (err) {
+      toast({ status: 'error', title: 'Failed to update tags', description: String(err) })
+      await refreshElements()
+    }
+  }, [
+    allElements,
+    applyElementSaved,
+    canEdit,
+    handleCreateTag,
+    pushElementEditBatchAction,
+    refreshElements,
+    selectedCanvasElementIds,
+    selectedElement,
+    tagColors,
+    toast,
+    viewElements,
+  ])
 
   const pushConnectorEditAction = useCallback((before: Connector, after: Connector) => {
     if (connectorSnapshotsEqual(before, after)) return
@@ -994,6 +1229,8 @@ function ViewEditorInner({
     }
   }, [redoViewEdit, toast])
 
+  const handleToggleExplorer = useCallback(() => setIsExplorerOpen((v) => !v), [])
+
   const interactionNodesRef = useRef<RFNode[]>([])
 
   // ── Canvas interactions ────────────────────────────────────────────────────
@@ -1057,13 +1294,21 @@ function ViewEditorInner({
       void refreshElementsRef.current()
     }, [removeStoreConnector, viewId]),
     onPlacementMoved: pushPlacementMoveAction,
+    onPlacementsMoved: pushPlacementMoveBatchAction,
     onPlacementRemoved: pushPlacementRemoveAction,
     onConnectorUpdated: pushConnectorEditAction,
     onConnectorDeleted: pushConnectorDeleteAction,
+    onSelectionRemoveFromView: handleBulkRemoveFromView,
     onUnsupportedMutation: handleUnsupportedMutation,
     handleUpdateTags,
     drawingCanvasRef,
     snapToGrid,
+    libraryOpen,
+    openLibrary: useCallback(() => setLibraryOpen(true), []),
+    toggleLibrary: useCallback(() => setLibraryOpen((v) => !v), []),
+    toggleExplorer: handleToggleExplorer,
+    onFitView: safeFitView,
+    setSnapToGrid,
   })
 
   // Wire stable placeholders to the real implementations from canvas hook
@@ -1560,7 +1805,6 @@ function ViewEditorInner({
   const handleExplorerHoverZoom = useCallback((elementId: number | null, type: 'in' | 'out' | null) => {
     setHoveredZoom(type && elementId ? { elementId, type } : null)
   }, [])
-  const handleToggleExplorer = useCallback(() => setIsExplorerOpen((v) => !v), [])
   const handleCloseLibrary = useCallback(() => setLibraryOpen(false), [])
   const handleCreateNewLibraryRef = useRef<() => void>(() => { })
   const handleCreateNewLibrary = useCallback(() => handleCreateNewLibraryRef.current(), [])
@@ -1742,42 +1986,60 @@ function ViewEditorInner({
           >
             {/* Library toggle */}
             {!isMobileLayout && (
-              <Tooltip label={libraryOpen ? 'Close element library' : 'Open element library'} placement="right" openDelay={300}>
-                <IconButton
-                  data-testid="vieweditor-toggle-library"
-                  aria-label={libraryOpen ? 'Close element library' : 'Open element library'}
-                  icon={libraryOpen ? <ChevronLeftIcon size={16} strokeWidth={3.5} /> : <ChevronRightIcon size={16} strokeWidth={3.5} />}
-                  size="md" position="absolute" top="50%"
-                  left={libraryOpen ? '328px' : 3}
-                  transition="left 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94), transform 0.15s ease"
-                  zIndex={1200} border='1px solid rgba(255, 255, 255, 0.08)'
-                  variant="clay" colorScheme="gray" bg="var(--bg-panel)"
-                  color={libraryOpen ? 'white' : 'gray.300'}
-                  _hover={{ bg: 'var(--bg-card-solid)', transform: 'translateY(-50%) scale(1.1)', color: 'white' }}
-                  onClick={() => setLibraryOpen((v) => !v)}
-                  transform="translateY(-50%)"
-                />
-              </Tooltip>
+              <VStack
+                position="absolute"
+                top="50%"
+                left={libraryOpen ? '328px' : 3}
+                transform="translateY(-50%)"
+                spacing={1}
+                zIndex={1200}
+                transition="left 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94)"
+              >
+                <Tooltip label={libraryOpen ? 'Close element library' : 'Open element library'} placement="right" openDelay={300}>
+                  <IconButton
+                    data-testid="vieweditor-toggle-library"
+                    aria-label={libraryOpen ? 'Close element library' : 'Open element library'}
+                    icon={libraryOpen ? <ChevronLeftIcon size={16} strokeWidth={3.5} /> : <LibraryIcon size={18} />}
+                    size="md"
+                    transition="transform 0.15s ease"
+                    border='1px solid rgba(255, 255, 255, 0.08)'
+                    variant="clay" colorScheme="gray" bg="var(--bg-panel)"
+                    color={libraryOpen ? 'white' : 'gray.300'}
+                    _hover={{ bg: 'var(--bg-card-solid)', transform: 'scale(1.1)', color: 'white' }}
+                    onClick={() => setLibraryOpen((v) => !v)}
+                  />
+                </Tooltip>
+                <KbdHint ml={0} opacity={0.6}>A</KbdHint>
+              </VStack>
             )}
 
             {/* Explorer toggle */}
             {!isMobileLayout && !elementPanel.isOpen && !connectorPanel.isOpen && !viewDetails.isOpen && (
-              <Tooltip label={isExplorerOpen ? 'Close view explorer' : 'Open view explorer'} placement="left" openDelay={300}>
-                <IconButton
-                  data-testid="vieweditor-toggle-explorer"
-                  aria-label={isExplorerOpen ? 'Close view explorer' : 'Open view explorer'}
-                  icon={isExplorerOpen ? <ChevronRightIcon size={16} strokeWidth={3.5} /> : <ChevronLeftIcon size={16} strokeWidth={3.5} />}
-                  size="md" position="absolute" top="50%"
-                  right={isExplorerOpen ? '328px' : 3}
-                  transition="right 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94), transform 0.15s ease"
-                  zIndex={5} border="1px solid rgba(255, 255, 255, 0.08)"
-                  variant="clay" colorScheme="gray" bg="var(--bg-panel)"
-                  color={isExplorerOpen ? 'white' : 'gray.300'}
-                  _hover={{ bg: 'var(--bg-card-solid)', transform: 'translateY(-50%) scale(1.1)', color: 'white' }}
-                  onClick={() => setIsExplorerOpen((v) => !v)}
-                  transform="translateY(-50%)"
-                />
-              </Tooltip>
+              <VStack
+                position="absolute"
+                top="50%"
+                right={isExplorerOpen ? '328px' : 3}
+                transform="translateY(-50%)"
+                spacing={1}
+                zIndex={5}
+                transition="right 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94)"
+              >
+                <Tooltip label={isExplorerOpen ? 'Close view explorer' : 'Open view explorer'} placement="left" openDelay={300}>
+                  <IconButton
+                    data-testid="vieweditor-toggle-explorer"
+                    aria-label={isExplorerOpen ? 'Close view explorer' : 'Open view explorer'}
+                    icon={isExplorerOpen ? <ChevronRightIcon size={16} strokeWidth={3.5} /> : <NavigationIcon size={18} />}
+                    size="md"
+                    transition="transform 0.15s ease"
+                    border="1px solid rgba(255, 255, 255, 0.08)"
+                    variant="clay" colorScheme="gray" bg="var(--bg-panel)"
+                    color={isExplorerOpen ? 'white' : 'gray.300'}
+                    _hover={{ bg: 'var(--bg-card-solid)', transform: 'scale(1.1)', color: 'white' }}
+                    onClick={() => setIsExplorerOpen((v) => !v)}
+                  />
+                </Tooltip>
+                <KbdHint ml={0} opacity={0.6}>D</KbdHint>
+              </VStack>
             )}
 
             {/* Mobile toggles */}
@@ -1835,7 +2097,8 @@ function ViewEditorInner({
                 deleteKeyCode={null}
                 onlyRenderVisibleElements
                 autoPanOnNodeDrag={false}
-                panOnDrag={!drawingMode}
+                selectionOnDrag={canEdit && !drawingMode}
+                panOnDrag={drawingMode ? false : canEdit ? [1, 2] : true}
                 panOnScroll={!isMobileLayout} panOnScrollSpeed={1.2} panOnScrollMode={PanOnScrollMode.Free}
                 zoomOnScroll={false} zoomOnPinch
               >
@@ -1873,6 +2136,7 @@ function ViewEditorInner({
               onUpdateTags={handleUpdateTags}
               onCreateTag={handleCreateTag}
               suppressed={elementPanel.isOpen || connectorPanel.isOpen || viewDetails.isOpen}
+              noFocusLock={!!addingElementAt || !!textEditorState}
             />
 
             <EditorOverlays
@@ -1892,8 +2156,34 @@ function ViewEditorInner({
               setDrawingMode={setDrawingMode}
             />
 
-            {/* Inline text editor ... */}
-            {/* ... */}
+            {textEditorState && (
+              <Box
+                position="absolute"
+                left={textEditorState.canvasX}
+                top={textEditorState.canvasY}
+                transform="translate(-50%, -50%)"
+                zIndex={2000}
+              >
+                <Input
+                  autoFocus
+                  variant="unstyled"
+                  bg="var(--bg-panel)"
+                  border="2px solid"
+                  borderColor="var(--accent)"
+                  rounded="md"
+                  px={2}
+                  py={1}
+                  color={drawingColor}
+                  fontSize={`${Math.max(14, drawingWidth * 5)}px`}
+                  fontWeight="bold"
+                  onBlur={(e: React.FocusEvent<HTMLInputElement>) => commitDrawingText(e.target.value, textEditorState)}
+                  onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
+                    if (e.key === 'Enter') commitDrawingText(e.currentTarget.value, textEditorState)
+                    if (e.key === 'Escape') setTextEditorState(null)
+                  }}
+                />
+              </Box>
+            )}
 
             <DrawingCanvas
               ref={drawingCanvasRef}
@@ -1992,6 +2282,19 @@ function ViewEditorInner({
 
             <EmptyCanvasState isMobile={isMobileLayout} hasNodes={rfNodes.length > 0} />
 
+            <SelectionBulkBar
+              count={drawingMode ? 0 : selectedCanvasElementIds.length}
+              availableTags={availableTags}
+              selectedTagCounts={selectedCanvasTagCounts}
+              tagColors={tagColors}
+              onAlign={handleSelectionAlign}
+              onDistribute={handleSelectionDistribute}
+              onFitSelection={handleFitSelection}
+              onAddTag={(tag) => { void handleBulkTagChange(tag, 'add') }}
+              onRemoveTag={(tag) => { void handleBulkTagChange(tag, 'remove') }}
+              onRemoveFromView={() => { void handleBulkRemoveFromView() }}
+            />
+
             <ViewFloatingMenu
               handleAddElementAtCenter={handleAddElementAtCenter}
               drawingMode={drawingMode} setDrawingMode={setDrawingMode}
@@ -2034,6 +2337,7 @@ function ViewEditorInner({
           onTapAdd={canEdit ? handleTapAdd : undefined}
           onFindElement={handleFindElement}
           onTouchDrop={canEdit ? handleTouchDrop : undefined}
+          noFocusLock={!!addingElementAt || !!textEditorState}
         />
 
         <ElementPanel
@@ -2055,6 +2359,7 @@ function ViewEditorInner({
           parentLinks={selectedElement ? (parentLinksMap[selectedElement.id] || EMPTY_LINKS) : EMPTY_LINKS}
           hasBackdrop={isMobileLayout}
           availableTags={availableTags}
+          noFocusLock={!!addingElementAt || !!textEditorState}
           elementPanelAfterContentSlot={elementPanelAfterContentSlot}
         />
 
@@ -2070,6 +2375,7 @@ function ViewEditorInner({
           onDemoteVisibility={(id) => handleVisibilityOverride('connector', id, 'demote')}
           onResetVisibility={(id) => handleVisibilityOverride('connector', id, 'reset')}
           hasBackdrop={isMobileLayout}
+          noFocusLock={!!addingElementAt || !!textEditorState}
           connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
         />
         <ProxyConnectorPanel

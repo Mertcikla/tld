@@ -223,6 +223,7 @@ export interface ElementPanelProps extends ElementPanelSlots {
   parentLinks?: ViewConnector[]
   hasBackdrop?: boolean
   availableTags?: string[]
+  noFocusLock?: boolean
 }
 
 /**
@@ -231,7 +232,27 @@ export interface ElementPanelProps extends ElementPanelSlots {
  * Location: Right side of the screen on desktop. Overlays screen on mobile.
  * Aliases: Element Properties, Element Details.
  */
-function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDelete, onPermanentDelete, onMerge, visibilityOverrideDelta = 0, onPromoteVisibility, onDemoteVisibility, onResetVisibility, orgId, links = [], parentLinks = [], hasBackdrop = true, availableTags = [], elementPanelAfterContentSlot }: ElementPanelProps) {
+function ElementPanel({
+  isOpen,
+  onClose,
+  element,
+  onSave,
+  autoSave = false,
+  onDelete,
+  onPermanentDelete,
+  onMerge,
+  visibilityOverrideDelta = 0,
+  onPromoteVisibility,
+  onDemoteVisibility,
+  onResetVisibility,
+  orgId,
+  links = [],
+  parentLinks = [],
+  hasBackdrop = true,
+  availableTags = [],
+  noFocusLock,
+  elementPanelAfterContentSlot,
+}: ElementPanelProps) {
   const { canEdit, viewId } = useViewEditorContext()
   const isEdit = !!element
   const isReadOnly = !canEdit
@@ -522,6 +543,46 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
     return () => clearTimeout(timer)
   }, [isOpen, technologyQuery])
 
+  const handleSave = useCallback(async () => {
+    if (isReadOnly || !name.trim()) return
+    setLoading(true)
+    try {
+      const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && link.slug)
+      const primaryMetadata = primaryLink?.slug
+        ? (technologyMeta[primaryLink.slug] ?? await getTechnologyCatalogItemBySlug(primaryLink.slug))
+        : null
+
+      const normalizedLinks = technologyLinks.map((link) => ({
+        type: link.type,
+        slug: link.type === 'catalog' ? link.slug : undefined,
+        label: link.label,
+        is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
+      }))
+
+      const normalizedType = type.trim().toLowerCase()
+
+      const payload = {
+        name,
+        description,
+        kind: normalizedType,
+        technology: technologyLinks.map((link) => link.label).join(', '),
+        url,
+        logo_url: explicitLogoClear ? '' : (primaryMetadata?.iconUrl ?? ''),
+        technology_connectors: normalizedLinks,
+        tags,
+      }
+      const saved = isEdit
+        ? await api.elements.update(element!.id, payload)
+        : await api.elements.create(payload)
+      onSave(saved)
+      handleClose()
+    } catch {
+      // intentionally empty
+    } finally {
+      setLoading(false)
+    }
+  }, [isReadOnly, name, technologyLinks, technologyMeta, type, explicitLogoClear, tags, isEdit, element, onSave, handleClose, description, url])
+
   useEffect(() => {
     if (!isOpen) return
     const handler = (e: KeyboardEvent) => {
@@ -529,6 +590,15 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
       const isInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target.isContentEditable
 
       if (e.key === 'Escape' && !isInput) handleClose()
+      
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        if (!autoSaveEdit) {
+          handleSave()
+        } else {
+          handleClose()
+        }
+      }
 
       if (e.key.toLowerCase() === 't' && !isInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault()
@@ -537,7 +607,7 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isOpen, handleClose])
+  }, [isOpen, handleClose, autoSaveEdit, handleSave])
 
   const addCatalogTechnology = (item: TechnologyCatalogItem) => {
     if (technologyLinks.length >= 3) return
@@ -615,48 +685,6 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
     requestAnimationFrame(() => typeInputRef.current?.focus())
   }
 
-  const handleSave = async () => {
-    if (isReadOnly || !name.trim()) return
-    setLoading(true)
-    try {
-      const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && link.slug)
-      const primaryMetadata = primaryLink?.slug
-        ? (technologyMeta[primaryLink.slug] ?? await getTechnologyCatalogItemBySlug(primaryLink.slug))
-        : null
-
-      const normalizedLinks = technologyLinks.map((link) => ({
-        type: link.type,
-        slug: link.type === 'catalog' ? link.slug : undefined,
-        label: link.label,
-        is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
-      }))
-
-      const normalizedType = type.trim().toLowerCase()
-
-      const payload = {
-        name,
-        description,
-        kind: normalizedType,
-        technology: technologyLinks.map((link) => link.label).join(', '),
-        url,
-        logo_url: explicitLogoClear ? '' : (primaryMetadata?.iconUrl ?? ''),
-        technology_connectors: normalizedLinks,
-        tags,
-        repo: element?.repo,
-        branch: element?.branch,
-        file_path: element?.file_path,
-        language: element?.language,
-      }
-      const saved = isEdit
-        ? await api.elements.update(element!.id, payload)
-        : await api.elements.create(payload)
-      onSave(saved)
-      onClose()
-    } catch { /* intentionally empty */ } finally {
-      setLoading(false)
-    }
-  }
-
   const handleDelete = async () => {
     if (isReadOnly || !element) return
     try {
@@ -682,7 +710,17 @@ function ElementPanel({ isOpen, onClose, element, onSave, autoSave = false, onDe
 
   return (
     <>
-      <SlidingPanel data-testid="element-panel" isOpen={isOpen} onClose={handleClose} panelKey="element" side={isMobile ? 'left' : 'right'} width="300px" hasBackdrop={hasBackdrop}>
+      <SlidingPanel
+        data-testid="element-panel"
+        isOpen={isOpen}
+        onClose={handleClose}
+        panelKey="element"
+        side={isMobile ? 'left' : 'right'}
+        width="300px"
+        hasBackdrop={hasBackdrop}
+        autoFocus={true}
+        noFocusLock={noFocusLock}
+      >
         <PanelHeader title={isEdit ? 'Edit Element' : 'New Element'} onClose={handleClose} />
 
         {/* Body */}

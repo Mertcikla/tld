@@ -239,29 +239,26 @@ export default function TopMenuBar({ children, hideMobileBar, rightSlot, mobileM
           {rightSlot}
           {userControlsSlot}
 
-          <Popover placement="bottom-end" isLazy>
-            <Tooltip label="Appearance" placement="bottom" openDelay={400}>
-              <Box>
-                <PopoverTrigger>
-                  <IconButton
-                    data-testid="topnav-appearance"
-                    aria-label="Appearance"
-                    icon={<SettingsIcon boxSize={4} />}
-                    size="sm"
-                    borderRadius="full"
-                    bg="whiteAlpha.100"
-                    color="whiteAlpha.700"
-                    border="1px solid"
-                    borderColor="whiteAlpha.100"
-                    _hover={{
-                      bg: "whiteAlpha.200",
-                      color: "white",
-                      transform: "translateY(-1px)",
-                    }}
-                  />
-                </PopoverTrigger>
-              </Box>
-            </Tooltip>
+          <Popover placement="bottom-end" isLazy closeOnBlur={false}>
+            <PopoverTrigger>
+              <IconButton
+                data-testid="topnav-appearance"
+                aria-label="Appearance"
+                icon={<SettingsIcon boxSize={4} />}
+                size="sm"
+                borderRadius="full"
+                bg="whiteAlpha.100"
+                color="whiteAlpha.700"
+                border="1px solid"
+                borderColor="whiteAlpha.100"
+                _hover={{
+                  bg: "whiteAlpha.200",
+                  color: "white",
+                  transform: "translateY(-1px)",
+                }}
+                onPointerDown={(e) => e.currentTarget.focus()}
+              />
+            </PopoverTrigger>
             <Portal>
               <PopoverContent
                 mr={{ base: 2, sm: 0 }}

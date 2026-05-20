@@ -2026,6 +2026,7 @@ func TestOrder(t *testing.T) {
 	factDiff := findDiffByOwner(diffs, "fact", factOwner, "element", "added")
 	if factDiff == nil {
 		t.Fatalf("expected changed import fact to be a standalone element diff, got %+v", diffs)
+		return
 	}
 	if factDiff.AddedLines != 1 || factDiff.RemovedLines != 0 {
 		t.Fatalf("expected changed import fact to carry a +1 line delta, got %+v", factDiff)
@@ -2034,6 +2035,7 @@ func TestOrder(t *testing.T) {
 	connectorDiff := findDiffByOwner(diffs, "fact-import-connector", connectorOwner, "connector", "added")
 	if connectorDiff == nil {
 		t.Fatalf("expected changed import to create a file-to-dependency connector diff, got %+v", diffs)
+		return
 	}
 	if connectorDiff.AddedLines != 1 || connectorDiff.RemovedLines != 0 {
 		t.Fatalf("expected import connector to carry a +1 line delta, got %+v", connectorDiff)

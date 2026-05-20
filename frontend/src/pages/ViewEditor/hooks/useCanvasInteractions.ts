@@ -211,14 +211,22 @@ interface CanvasInteractionOptions {
   handleElementPermanentlyDeleted: (id: number) => void
   handleConnectorDeleted: (id: number) => void
   onPlacementMoved?: (before: PlacedElement, after: PlacedElement) => void
+  onPlacementsMoved?: (before: PlacedElement[], after: PlacedElement[]) => void
   onPlacementRemoved?: (placement: PlacedElement) => void
   onConnectorUpdated?: (before: Connector, after: Connector) => void
   onConnectorDeleted?: (connector: Connector) => void
+  onSelectionRemoveFromView?: () => Promise<void>
   onUnsupportedMutation?: () => void
   handleUpdateTags: (elementId: number, tags: string[]) => Promise<void>
   drawingCanvasRef: React.MutableRefObject<DrawingCanvasHandle | null>
   snapToGrid?: boolean
   onMoveStateChange?: (isMoving: boolean) => void
+  libraryOpen?: boolean
+  openLibrary?: () => void
+  toggleLibrary?: () => void
+  toggleExplorer?: () => void
+  onFitView?: () => void
+  setSnapToGrid?: (snap: boolean) => void
 }
 
 type PickerState = {
@@ -295,14 +303,22 @@ export function useCanvasInteractions({
   handleElementPermanentlyDeleted,
   handleConnectorDeleted,
   onPlacementMoved,
+  onPlacementsMoved,
   onPlacementRemoved,
   onConnectorUpdated,
   onConnectorDeleted,
+  onSelectionRemoveFromView,
   onUnsupportedMutation,
   handleUpdateTags,
   drawingCanvasRef,
   snapToGrid,
   onMoveStateChange,
+  libraryOpen,
+  openLibrary,
+  toggleLibrary,
+  toggleExplorer,
+  onFitView,
+  setSnapToGrid: setGlobalSnapToGrid,
 }: CanvasInteractionOptions) {
   const { screenToFlowPosition, setViewport, getViewport, zoomIn, zoomOut } = useReactFlow()
   const updateElementPosition = useStore((state) => state.updateElementPosition)
@@ -731,14 +747,19 @@ export function useCanvasInteractions({
 
   // ── Node/connector changes ─────────────────────────────────────────────────────
   const onNodesChange = useCallback((changes: NodeChange[]) => {
+    const elementOnlySelectionChanges = changes.map((change) => {
+      if (change.type !== 'select') return change
+      const node = rfNodesRef.current.find((candidate) => candidate.id === change.id)
+      return node?.type === 'elementNode' ? change : { ...change, selected: false }
+    })
     if (!canEdit) {
-      const nonMutating = changes.filter((c) => c.type !== 'position')
+      const nonMutating = elementOnlySelectionChanges.filter((c) => c.type !== 'position')
       if (nonMutating.length === 0) return
       setRfNodes((nds) => applyNodeChangesWithStructuralSharing(nonMutating, nds))
       return
     }
-    setRfNodes((nds) => applyNodeChangesWithStructuralSharing(changes, nds))
-  }, [canEdit, setRfNodes])
+    setRfNodes((nds) => applyNodeChangesWithStructuralSharing(elementOnlySelectionChanges, nds))
+  }, [canEdit, rfNodesRef, setRfNodes])
 
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     setRfEdges((eds) => applyEdgeChanges(changes, eds))
@@ -746,10 +767,14 @@ export function useCanvasInteractions({
 
   const onNodeDragStart: NodeDragHandler = useCallback((_e, node) => {
     if (!canEdit || viewId === null) return
-    const elementId = parseNumericId(node.id)
-    if (elementId === null) return
-    dragStartPositionsRef.current[node.id] = { x: node.position.x, y: node.position.y }
-  }, [canEdit, viewId])
+    const selectedElementNodes = node.selected
+      ? rfNodesRef.current.filter((candidate) => candidate.selected && candidate.type === 'elementNode' && parseNumericId(candidate.id) !== null)
+      : [node]
+    selectedElementNodes.forEach((candidate) => {
+      const elementId = parseNumericId(candidate.id)
+      if (elementId !== null) dragStartPositionsRef.current[candidate.id] = { x: candidate.position.x, y: candidate.position.y }
+    })
+  }, [canEdit, rfNodesRef, viewId])
 
   const onNodeDrag: NodeDragHandler = useCallback(() => {
     // React Flow already updates rfNodes via onNodesChange while dragging.
@@ -761,31 +786,48 @@ export function useCanvasInteractions({
   const dragStartPositionsRef = useRef<Record<string, { x: number; y: number }>>({})
   const onNodeDragStop: NodeDragHandler = useCallback((_e, node) => {
     if (!canEdit || viewId === null) return
-    const elementId = parseNumericId(node.id)
-    if (elementId === null) return
+    const selectedElementNodes = node.selected
+      ? rfNodesRef.current.filter((candidate) => candidate.selected && candidate.type === 'elementNode' && parseNumericId(candidate.id) !== null)
+      : [node]
 
-    // Skip update if position hasn't changed (prevents redundant calls on simple clicks)
-    const currentObj = viewElementsRef.current.find((o) => o.element_id === elementId)
-    const startPos = dragStartPositionsRef.current[node.id] ?? (currentObj ? { x: currentObj.position_x, y: currentObj.position_y } : null)
-    if (startPos && Math.abs(startPos.x - node.position.x) < 2 && Math.abs(startPos.y - node.position.y) < 2) {
-      delete dragStartPositionsRef.current[node.id]
-      return
-    }
+    const beforePlacements: PlacedElement[] = []
+    const afterPlacements: PlacedElement[] = []
 
-    const beforePlacement = currentObj ? { ...currentObj, position_x: startPos?.x ?? currentObj.position_x, position_y: startPos?.y ?? currentObj.position_y } : null
-    const afterPlacement = currentObj ? { ...currentObj, position_x: node.position.x, position_y: node.position.y } : null
-    updateElementPosition(elementId, node.position.x, node.position.y)
-    clearTimeout(positionTimers.current[node.id])
-    positionTimers.current[node.id] = setTimeout(() => {
-      api.workspace.views.placements
-        .updatePosition(viewId, elementId, node.position.x, node.position.y)
+    selectedElementNodes.forEach((candidate) => {
+      const elementId = parseNumericId(candidate.id)
+      if (elementId === null) return
+
+      const currentObj = viewElementsRef.current.find((o) => o.element_id === elementId)
+      const startPos = dragStartPositionsRef.current[candidate.id] ?? (currentObj ? { x: currentObj.position_x, y: currentObj.position_y } : null)
+      delete dragStartPositionsRef.current[candidate.id]
+      if (!currentObj || !startPos) return
+      if (Math.abs(startPos.x - candidate.position.x) < 2 && Math.abs(startPos.y - candidate.position.y) < 2) return
+
+      beforePlacements.push({ ...currentObj, position_x: startPos.x, position_y: startPos.y })
+      afterPlacements.push({ ...currentObj, position_x: candidate.position.x, position_y: candidate.position.y })
+      updateElementPosition(elementId, candidate.position.x, candidate.position.y)
+    })
+
+    if (afterPlacements.length === 0) return
+
+    afterPlacements.forEach((placement) => {
+      clearTimeout(positionTimers.current[String(placement.element_id)])
+    })
+    const timerKey = node.id
+    positionTimers.current[timerKey] = setTimeout(() => {
+      Promise.all(afterPlacements.map((placement) =>
+        api.workspace.views.placements.updatePosition(viewId, placement.element_id, placement.position_x, placement.position_y)
+      ))
         .then(() => {
-          if (beforePlacement && afterPlacement) onPlacementMoved?.(beforePlacement, afterPlacement)
+          if (beforePlacements.length === 1 && afterPlacements.length === 1) {
+            onPlacementMoved?.(beforePlacements[0], afterPlacements[0])
+          } else {
+            onPlacementsMoved?.(beforePlacements, afterPlacements)
+          }
         })
         .catch(() => { /* intentionally empty */ })
     }, 400)
-    delete dragStartPositionsRef.current[node.id]
-  }, [canEdit, updateElementPosition, viewId, viewElementsRef, onPlacementMoved])
+  }, [canEdit, rfNodesRef, updateElementPosition, viewId, viewElementsRef, onPlacementMoved, onPlacementsMoved])
 
   // ── Connections ────────────────────────────────────────────────────────────
   const onConnect: OnConnect = useCallback(async (params: Connection) => {
@@ -1334,10 +1376,33 @@ export function useCanvasInteractions({
       const isInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' ||
         target?.tagName === 'SELECT' || target?.isContentEditable
       if (isInput) return
-      if (e.key === 'Escape') { setInteractionSourceId(null); return }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        if (selectedElement || selectedConnector) {
+          setSelectedElement(null)
+          setSelectedEdge(null)
+          closeElementPanel()
+          closeConnectorPanel()
+          closeProxyConnectorPanel()
+        }
+        reconnectPickingRef.current = null
+        pendingConnectionSourceRef.current = null
+        pendingConnectionSourceHandleRef.current = null
+        interactionSourceIdRef.current = null
+        clickConnectModeRef.current = null
+        setReconnectPicking(null)
+        setConnectorLongPressMenu(null)
+        setAddingElementAt(null)
+        setPendingConnectionSource(null)
+        setClickConnectMode(null)
+        setClickConnectCursorPos(null)
+        setConnectGhostPos(null)
+        setInteractionSourceId(null)
+        return
+      }
       const key = e.key.toLowerCase()
-      if (!['w', 'a', 's', 'd', 'c', 'e', 'backspace', 'delete', 'r'].includes(key)) return
-      if (e.ctrlKey || e.altKey || e.metaKey) return
+      if (!['w', 'a', 's', 'd', 'c', 'e', 'backspace', 'delete', 'r', 'f', 'g', '+', '=', '-', '/'].includes(key)) return
+      if (e.ctrlKey || e.altKey || (e.metaKey && key !== 'z')) return
       if (key === 'c' && e.shiftKey) return
 
       if (key === 'backspace' || key === 'delete' || key === 'r') {
@@ -1357,7 +1422,13 @@ export function useCanvasInteractions({
           }
         } else {
           const connectorId = getConnectorDeletionTarget(selectedConnector)
-          if (connectorId === null) return
+          if (connectorId === null) {
+            if (key !== 'r' && onSelectionRemoveFromView) {
+              const selectedElementNodes = rfNodesRef.current.filter((node) => node.selected && node.type === 'elementNode' && parseNumericId(node.id) !== null)
+              if (selectedElementNodes.length > 0) await onSelectionRemoveFromView()
+            }
+            return
+          }
           const deletedConnector = selectedConnector?.id === connectorId
             ? selectedConnector
             : connectors.find((connector) => connector.id === connectorId) ?? null
@@ -1395,12 +1466,65 @@ export function useCanvasInteractions({
           ? screenToFlowPositionRef.current({ x: cursor.clientX, y: cursor.clientY })
           : { x: node.position.x + (node.width ?? 180), y: node.position.y + (node.height ?? 80) / 2 }
         const { sourceHandle } = findClosestHandleToPoint(node, flowCursor.x, flowCursor.y)
-        setClickConnectMode({
+        const nextClickConnectMode = {
           sourceNodeId: node.id,
           sourceHandle: ensureVisualHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? sourceHandle,
-        })
+        }
+        clickConnectModeRef.current = nextClickConnectMode
+        interactionSourceIdRef.current = selectedElement.id
+        setClickConnectMode(nextClickConnectMode)
         setInteractionSourceId(selectedElement.id)
         if (cursor) setClickConnectCursorPos({ x: cursor.clientX, y: cursor.clientY })
+        return
+      }
+
+      if (key === 'f') {
+        e.preventDefault()
+        onFitView?.()
+        return
+      }
+
+      if (key === 'g') {
+        e.preventDefault()
+        setGlobalSnapToGrid?.(!snapToGrid)
+        return
+      }
+
+      if (key === '/') {
+        e.preventDefault()
+        // Toggle the library panel if it's not already open
+        if (!libraryOpen && openLibrary) {
+          openLibrary()
+        }
+        // Focus search in open panel (might need a tiny timeout to wait for panel to mount/open)
+        setTimeout(() => {
+          const searchInput = document.querySelector<HTMLInputElement>('.panel-search-input')
+          searchInput?.focus()
+        }, 10)
+        return
+      }
+
+      if (key === '+' || key === '=') {
+        e.preventDefault()
+        zoomIn()
+        return
+      }
+
+      if (key === '-') {
+        e.preventDefault()
+        zoomOut()
+        return
+      }
+
+      if (key === 'a') {
+        e.preventDefault()
+        toggleLibrary?.()
+        return
+      }
+
+      if (key === 'd') {
+        e.preventDefault()
+        toggleExplorer?.()
         return
       }
       const cid = viewIdRef.current
@@ -1462,18 +1586,12 @@ export function useCanvasInteractions({
           if (allParents.length > 0) nav(`/views/${allParents[0]}`)
         } else if (key === 's') {
           if (allChildren.length > 0) nav(`/views/${allChildren[0]}`)
-        } else {
-          if (allSiblings.length < 2) return
-          const idx = allSiblings.findIndex((n) => n.id === cid)
-          if (idx === -1) return
-          const next = key === 'd' ? (idx + 1) % allSiblings.length : (idx - 1 + allSiblings.length) % allSiblings.length
-          nav(`/views/${allSiblings[next].id}`)
         }
       }
     }
-    window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
-  }, [canEdit, refreshGrid, selectedElement, selectedConnector, connectors, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted, onConnectorDeleted, closeElementPanel, closeConnectorPanel, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef])
+    window.addEventListener('keydown', handler, { capture: true })
+    return () => window.removeEventListener('keydown', handler, { capture: true })
+  }, [canEdit, refreshGrid, selectedElement, selectedConnector, connectors, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted, onConnectorDeleted, onSelectionRemoveFromView, closeElementPanel, closeConnectorPanel, closeProxyConnectorPanel, clickConnectMode, setClickConnectMode, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef, interactionSourceIdRef, onFitView, setGlobalSnapToGrid, snapToGrid, libraryOpen, openLibrary, toggleLibrary, toggleExplorer, zoomIn, zoomOut])
 
   // ── DnD handlers ──────────────────────────────────────────────────────────
   const onDragOver = useCallback((e: React.DragEvent) => {

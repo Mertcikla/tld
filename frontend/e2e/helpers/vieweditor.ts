@@ -371,6 +371,13 @@ export async function createLayer(page: Page, viewId: number, data: { name: stri
   return json.layer as { id: number; viewId: number; name: string; tags: string[]; color: string }
 }
 
+export async function createTag(page: Page, name: string, color = '#A0AEC0', description = '') {
+  const response = await page.request.post('/api/diag.v1.OrgService/UpdateTag', {
+    data: { tag: name, color, description },
+  })
+  expect(response.ok()).toBeTruthy()
+}
+
 export async function openElementPanel(page: Page, name: string) {
   await nodeByName(page, name).click()
   await expect(page.getByTestId('element-panel')).toBeVisible()

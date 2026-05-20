@@ -49,6 +49,7 @@ interface Props {
   onCreateLayer: (name: string, tags: string[], color: string) => Promise<void>
   onUpdateLayer: (layer: ViewLayer) => Promise<void>
   onDeleteLayer: (id: number) => Promise<void>
+  noFocusLock?: boolean
 }
 
 function ViewExplorer({
@@ -73,6 +74,7 @@ function ViewExplorer({
   onCreateLayer,
   onUpdateLayer,
   onDeleteLayer,
+  noFocusLock,
 }: Props) {
   const { viewId } = useViewEditorContext()
   const [query, setQuery] = useState('')
@@ -200,10 +202,13 @@ function ViewExplorer({
         e.preventDefault(); setFocusedIdx((i) => Math.min(i + 1, filtered.length - 1)); break
       case 'ArrowUp':
         e.preventDefault(); setFocusedIdx((i) => Math.max(i - 1, 0)); break
-      case 'Enter':
-        if (focusedIdx >= 0 && filtered[focusedIdx]) { e.preventDefault(); handleNavigate(filtered[focusedIdx].id) }; break
+      case 'Enter': {
+        const targetIdx = focusedIdx >= 0 ? focusedIdx : 0
+        if (filtered[targetIdx]) { e.preventDefault(); handleNavigate(filtered[targetIdx].id) }
+        break
+      }
       case 'Escape':
-        e.preventDefault(); setActiveFilter(null); break
+        e.preventDefault(); (e.target as HTMLInputElement).blur(); setActiveFilter(null); break
     }
   }
 
@@ -246,6 +251,7 @@ function ViewExplorer({
       width="300px"
       zIndex={1000}
       hasBackdrop={isMobile}
+      noFocusLock={noFocusLock}
     >
       <VStack ref={containerRef} align="stretch" spacing={0} h="full" overflow="hidden">
         {/* Panel header */}
@@ -264,7 +270,7 @@ function ViewExplorer({
         />
         <Divider borderColor="whiteAlpha.100" />
 
-        <ViewSearch query={query} setQuery={setQuery} activeFilter={activeFilter} />
+        <ViewSearch query={query} setQuery={setQuery} activeFilter={activeFilter} onKeyDown={handleKeyDown} />
 
         <ViewTree
           filtered={filtered}

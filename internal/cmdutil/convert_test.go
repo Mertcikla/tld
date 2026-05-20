@@ -67,6 +67,7 @@ func TestConvertExportResponsePreservesRefsAndInfersOwnedViews(t *testing.T) {
 	connector := got.Connectors[connectorRef]
 	if connector == nil {
 		t.Fatalf("connector was not imported under its current natural ref: %#v", got.Connectors)
+		return
 	}
 	if connector.View != "api-service" || connector.Source != "api-service" || connector.Target != "database" || connector.Label != "reads" {
 		t.Fatalf("connector refs were not converted through exported IDs: %#v", connector)

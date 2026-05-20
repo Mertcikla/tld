@@ -572,69 +572,67 @@ export default function WorkspacePanel() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <Popover placement="bottom-end" isLazy>
-      <Tooltip label={triggerLabel} placement="bottom" openDelay={400}>
-        <Box>
-          <PopoverTrigger>
-            {watchActive ? (
-              <Button
-                data-testid="workspace-watch-trigger"
-                aria-label="Workspace watch panel"
-                size="sm"
-                h="34px"
-                minW={0}
-                px={2.5}
-                gap={2}
-                borderRadius="full"
-                bg="whiteAlpha.100"
-                color="whiteAlpha.900"
-                border="1px solid"
-                borderColor={watchStatusColor === 'green' ? 'green.400' : watchStatusColor === 'yellow' ? 'yellow.400' : 'orange.300'}
-                boxShadow={watchStatusColor === 'green' ? '0 0 18px rgba(72,187,120,0.28)' : '0 6px 18px rgba(0,0,0,0.32)'}
-                _hover={{ bg: 'whiteAlpha.200', transform: 'translateY(-1px)' }}
-                _active={{ transform: 'translateY(0)' }}
-              >
-                <Badge
-                  bg={watchStatusColor === 'green' ? 'green.900' : watchStatusColor === 'yellow' ? 'yellow.900' : 'orange.900'}
-                  color={watchStatusColor === 'green' ? 'green.200' : watchStatusColor === 'yellow' ? 'yellow.200' : 'orange.100'}
-                  borderRadius="full"
-                  textTransform="none"
-                  fontSize="10px"
-                  px={1.5}
-                  py={0.5}
-                  flexShrink={0}
-                >
-                  {watchStatusLabel}
-                </Badge>
-                <Text
-                  as="span"
-                  maxW={{ base: '96px', lg: '160px' }}
-                  fontSize="12px"
-                  fontWeight="600"
-                  color="gray.100"
-                  noOfLines={1}
-                >
-                  {watchTitle}
-                </Text>
-                <ChevronDownIcon boxSize={4} color="whiteAlpha.700" />
-              </Button>
-            ) : (
-              <IconButton
-                data-testid="workspace-versions-trigger"
-                aria-label="Workspace versions"
-                icon={<TimeIcon boxSize={4} />}
-                size="sm"
-                borderRadius="full"
-                bg={preview ? 'rgba(var(--accent-rgb), 0.22)' : 'whiteAlpha.100'}
-                color={preview ? 'var(--accent)' : 'whiteAlpha.700'}
-                border="1px solid"
-                borderColor={preview ? 'rgba(var(--accent-rgb), 0.45)' : 'whiteAlpha.100'}
-                _hover={{ bg: 'whiteAlpha.200', color: 'white', transform: 'translateY(-1px)' }}
-              />
-            )}
-          </PopoverTrigger>
-        </Box>
-      </Tooltip>
+    <Popover placement="bottom-end" isLazy closeOnBlur={false}>
+      <PopoverTrigger>
+        {watchActive ? (
+          <Button
+            data-testid="workspace-watch-trigger"
+            aria-label={triggerLabel}
+            size="sm"
+            h="34px"
+            minW={0}
+            px={2.5}
+            gap={2}
+            borderRadius="full"
+            bg="whiteAlpha.100"
+            color="whiteAlpha.900"
+            border="1px solid"
+            borderColor={watchStatusColor === 'green' ? 'green.400' : watchStatusColor === 'yellow' ? 'yellow.400' : 'orange.300'}
+            boxShadow={watchStatusColor === 'green' ? '0 0 18px rgba(72,187,120,0.28)' : '0 6px 18px rgba(0,0,0,0.32)'}
+            _hover={{ bg: 'whiteAlpha.200', transform: 'translateY(-1px)' }}
+            _active={{ transform: 'translateY(0)' }}
+            onPointerDown={(e) => e.currentTarget.focus()}
+          >
+            <Badge
+              bg={watchStatusColor === 'green' ? 'green.900' : watchStatusColor === 'yellow' ? 'yellow.900' : 'orange.900'}
+              color={watchStatusColor === 'green' ? 'green.200' : watchStatusColor === 'yellow' ? 'yellow.200' : 'orange.100'}
+              borderRadius="full"
+              textTransform="none"
+              fontSize="10px"
+              px={1.5}
+              py={0.5}
+              flexShrink={0}
+            >
+              {watchStatusLabel}
+            </Badge>
+            <Text
+              as="span"
+              maxW={{ base: '96px', lg: '160px' }}
+              fontSize="12px"
+              fontWeight="600"
+              color="gray.100"
+              noOfLines={1}
+            >
+              {watchTitle}
+            </Text>
+            <ChevronDownIcon boxSize={4} color="whiteAlpha.700" />
+          </Button>
+        ) : (
+          <IconButton
+            data-testid="workspace-versions-trigger"
+            aria-label="Workspace versions"
+            icon={<TimeIcon boxSize={4} />}
+            size="sm"
+            borderRadius="full"
+            bg={preview ? 'rgba(var(--accent-rgb), 0.22)' : 'whiteAlpha.100'}
+            color={preview ? 'var(--accent)' : 'whiteAlpha.700'}
+            border="1px solid"
+            borderColor={preview ? 'rgba(var(--accent-rgb), 0.45)' : 'whiteAlpha.100'}
+            _hover={{ bg: 'whiteAlpha.200', color: 'white', transform: 'translateY(-1px)' }}
+            onPointerDown={(e) => e.currentTarget.focus()}
+          />
+        )}
+      </PopoverTrigger>
       <Portal>
         <PopoverContent
           data-testid="workspace-panel"

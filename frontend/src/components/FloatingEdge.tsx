@@ -1,5 +1,5 @@
 import { memo, useState } from 'react'
-import { useStore, type Edge, type EdgeProps } from 'reactflow'
+import { useStore, type Edge, type EdgeProps, type Node as RFNode } from 'reactflow'
 
 export interface FloatingConnectorData {
   color: string
@@ -23,9 +23,10 @@ interface OrthogonalRoute {
   direction: RouteDirection
 }
 
-interface BundleMember {
+type BundleMember = {
   id: string
   target: Point
+  node: RFNode
 }
 
 const GRID_BUNDLE_OFFSET = 52
@@ -131,7 +132,7 @@ function FloatingConnector({
       if (edgeRoute.direction !== route.direction) return null
       return { id: edge.id, target: edgeRoute.target, node: edgeTargetNode }
     })
-    .filter((member): member is { id: string; target: Point; node: any } => member !== null)
+    .filter((member): member is BundleMember => member !== null)
     .sort((a, b) => a.target.x - b.target.x || a.target.y - b.target.y || a.id.localeCompare(b.id))
 
   const visibleMembers = members.filter((m) =>

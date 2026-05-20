@@ -56,7 +56,9 @@ test('Escape cancels keyboard connector creation', async ({ page }) => {
 
   await nodeByName(page, elements[0].name).click()
   await page.keyboard.press('e')
+  await expect(nodeByName(page, elements[0].name).getByText(/tap element to connect/)).toBeVisible()
   await page.keyboard.press('Escape')
+  await expect(nodeByName(page, elements[0].name).getByText(/tap element to connect/)).toHaveCount(0)
   await nodeByName(page, elements[1].name).click()
 
   await expect.poll(async () => (await listConnectors(page, diagram.id)).length).toBe(0)

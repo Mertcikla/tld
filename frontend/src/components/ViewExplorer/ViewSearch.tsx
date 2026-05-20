@@ -6,9 +6,10 @@ interface Props {
   query: string
   setQuery: (q: string) => void
   activeFilter: 'out' | 'in' | null
+  onKeyDown?: (e: React.KeyboardEvent) => void
 }
 
-export const ViewSearch: React.FC<Props> = ({ query, setQuery, activeFilter }) => {
+export const ViewSearch: React.FC<Props> = ({ query, setQuery, activeFilter, onKeyDown }) => {
   return (
     <Box className="panel-search-container">
       <InputGroup size="sm">
@@ -27,6 +28,7 @@ export const ViewSearch: React.FC<Props> = ({ query, setQuery, activeFilter }) =
           }
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={onKeyDown}
         />
       </InputGroup>
     </Box>

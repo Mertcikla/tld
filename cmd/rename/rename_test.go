@@ -34,6 +34,7 @@ func TestRenameCmdCascadesElementReferences(t *testing.T) {
 	connector := ws.Connectors["platform:service-api:db:reads"]
 	if connector == nil {
 		t.Fatalf("renamed connector key missing: %+v", ws.Connectors)
+		return
 	}
 	if connector.Source != "service-api" || connector.Target != "db" {
 		t.Fatalf("connector endpoints = %s -> %s, want service-api -> db", connector.Source, connector.Target)

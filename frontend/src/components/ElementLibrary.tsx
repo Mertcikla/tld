@@ -42,6 +42,7 @@ interface Props {
   onTapAdd?: (obj: LibraryElement) => void
   onFindElement?: (id: number) => void
   onTouchDrop?: (obj: LibraryElement, clientX: number, clientY: number) => void
+  noFocusLock?: boolean
 }
 
 function mergeUniqueElements(existing: LibraryElement[], incoming: LibraryElement[]) {
@@ -96,6 +97,7 @@ function ElementLibrary({
   onTapAdd,
   onFindElement,
   onTouchDrop,
+  noFocusLock,
 }: Props) {
   const { canEdit } = useViewEditorContext()
   const [elements, setElements] = useState<LibraryElement[]>([])
@@ -103,6 +105,7 @@ function ElementLibrary({
   const [loading, setLoading] = useState(false)
   const [hasMore, setHasMore] = useState(true)
   const [hideExisting, setHideExisting] = useState(false)
+  const [focusedIdx, setFocusedIdx] = useState(-1)
   const isMobile = useBreakpointValue({ base: true, md: false }) ?? false
 
   const isFetching = useRef(false)
@@ -145,6 +148,7 @@ function ElementLibrary({
     if (!isOpen) return
     const timer = setTimeout(() => {
       fetchElements(0, search, true)
+      setFocusedIdx(-1)
     }, 300)
     return () => clearTimeout(timer)
   }, [search, isOpen, fetchElements])
@@ -323,6 +327,57 @@ function ElementLibrary({
 
   const listContent = (
     <>
+      {/* Search */}
+      <Box className="panel-search-container">
+        <InputGroup size="sm">
+          <InputLeftElement pointerEvents="none">
+            <SearchIcon color="gray.500" />
+          </InputLeftElement>
+          <Input
+            data-testid="element-library-search"
+            className="panel-search-input"
+            placeholder="Search catalog…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (filtered.length === 0) return
+              if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                setFocusedIdx((prev) => Math.min(prev + 1, filtered.length - 1))
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                setFocusedIdx((prev) => Math.max(prev - 1, -1))
+              } else if (e.key === 'Enter') {
+                e.preventDefault()
+                const targetIdx = focusedIdx >= 0 ? focusedIdx : 0
+                const target = filtered[targetIdx]
+                if (target && !existingElementIds.has(target.id) && onTapAdd) {
+                  onTapAdd(target)
+                  if (isMobile) onClose()
+                } else if (target && existingElementIds.has(target.id) && onFindElement) {
+                  onFindElement(target.id)
+                  if (isMobile) onClose()
+                }
+              } else if (e.key === 'Escape') {
+                e.preventDefault()
+                ;(e.target as HTMLInputElement).blur()
+              }
+            }}
+          />
+        </InputGroup>
+        <Checkbox
+          data-testid="element-library-hide-existing"
+          size="sm"
+          mt={2}
+          ml={0.5}
+          colorScheme="blue"
+          isChecked={hideExisting}
+          onChange={(e) => setHideExisting(e.target.checked)}
+        >
+          <Text fontSize="11px" color="gray.400">Hide existing</Text>
+        </Checkbox>
+      </Box>
+
       {/* New Element */}
       {canEdit && (
         <>
@@ -347,33 +402,6 @@ function ElementLibrary({
           <Divider borderColor="whiteAlpha.100" />
         </>
       )}
-
-      {/* Search */}
-      <Box className="panel-search-container">
-        <InputGroup size="sm">
-          <InputLeftElement pointerEvents="none">
-            <SearchIcon color="gray.500" />
-          </InputLeftElement>
-          <Input
-            data-testid="element-library-search"
-            className="panel-search-input"
-            placeholder="Search catalog…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </InputGroup>
-        <Checkbox
-          data-testid="element-library-hide-existing"
-          size="sm"
-          mt={2}
-          ml={0.5}
-          colorScheme="blue"
-          isChecked={hideExisting}
-          onChange={(e) => setHideExisting(e.target.checked)}
-        >
-          <Text fontSize="11px" color="gray.400">Hide existing</Text>
-        </Checkbox>
-      </Box>
 
 
       {/* List */}
@@ -407,8 +435,9 @@ function ElementLibrary({
             <Box aria-hidden="true" h={`${virtualItems.topSpacerHeight}px`} flexShrink={0} />
           )}
 
-          {virtualItems.items.map((obj) => {
+          {virtualItems.items.map((obj, idx) => {
             const already = existingElementIds.has(obj.id)
+            const isFocused = virtualItems.topSpacerHeight / LIBRARY_ITEM_HEIGHT + idx === focusedIdx
             const color = TYPE_COLORS[obj.kind ?? ''] ?? 'gray'
             const hasLogo = !!obj.logo_url
 
@@ -434,9 +463,9 @@ function ElementLibrary({
                   mb={1.5}
                   display="flex"
                   alignItems="center"
-                  bg={already ? 'rgba(var(--accent-rgb), 0.06)' : 'whiteAlpha.50'}
+                  bg={already ? 'rgba(var(--accent-rgb), 0.06)' : isFocused ? 'whiteAlpha.200' : 'whiteAlpha.50'}
                   border="1px solid"
-                  borderColor={already ? 'rgba(var(--accent-rgb), 0.25)' : 'whiteAlpha.100'}
+                  borderColor={already ? 'rgba(var(--accent-rgb), 0.25)' : isFocused ? 'var(--accent)' : 'whiteAlpha.100'}
                   rounded="lg"
                   cursor={!canEdit ? 'default' : already ? 'pointer' : (isMobile ? 'pointer' : 'grab')}
                   position="relative"
@@ -544,7 +573,17 @@ function ElementLibrary({
   )
 
   return (
-    <SlidingPanel data-testid="element-library-panel" isOpen={isOpen} onClose={onClose} panelKey="elementlibrary" side="left" width="300px" hasBackdrop={false} zIndex={1000}>
+    <SlidingPanel
+      data-testid="element-library-panel"
+      isOpen={isOpen}
+      onClose={onClose}
+      panelKey="elementlibrary"
+      side="left"
+      width="300px"
+      hasBackdrop={false}
+      noFocusLock={noFocusLock}
+      zIndex={1000}
+    >
       <PanelHeader title="Element Library" onClose={onClose} hasCloseButton={isMobile} />
 
       <Box p={0} display="flex" flexDir="column" overflow="hidden" flex={1}>

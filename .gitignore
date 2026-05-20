@@ -13,3 +13,4 @@ diagram.sh
 frontend/test-results/
 frontend/playwright-report/
 .task/
+testdata/

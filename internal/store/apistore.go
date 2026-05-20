@@ -1260,7 +1260,7 @@ func technologyLinksFromProto(links []*diagv1.TechnologyLink) []app.TechnologyCo
 }
 
 func cloneTechLinks(links []*diagv1.TechnologyLink) []*diagv1.TechnologyLink {
-	if len(links) == 0 {
+	if links == nil {
 		return nil
 	}
 	out := make([]*diagv1.TechnologyLink, 0, len(links))
@@ -1283,7 +1283,7 @@ func cloneTechLinks(links []*diagv1.TechnologyLink) []*diagv1.TechnologyLink {
 }
 
 func cloneStrings(values []string) []string {
-	if len(values) == 0 {
+	if values == nil {
 		return nil
 	}
 	out := make([]string, len(values))

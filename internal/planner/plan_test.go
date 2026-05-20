@@ -127,6 +127,7 @@ func TestBuild_DerivesTechnologyLinksForCatalogIcons(t *testing.T) {
 	api := planElementByRef(plan, "api")
 	if api == nil {
 		t.Fatal("api element missing")
+		return
 	}
 	if len(api.TechnologyLinks) != 2 {
 		t.Fatalf("technology links = %+v, want two catalog links", api.TechnologyLinks)
@@ -171,6 +172,7 @@ func TestBuild_PromotesPlacementParentsToViews(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("cmd element missing")
+		return
 	}
 	if !cmd.HasView {
 		t.Fatal("expected placement parent to be promoted to a canonical view")
@@ -206,6 +208,7 @@ func TestBuild_ReusesMetadataIDs(t *testing.T) {
 	}
 	if api == nil {
 		t.Fatal("api element missing")
+		return
 	}
 	if api.Id == nil || *api.Id != 101 {
 		t.Fatalf("api id = %v", api.Id)

@@ -12,8 +12,7 @@ test.beforeEach(async ({ page }) => {
 async function openWorkspacePanel(page: import('@playwright/test').Page) {
   const trigger = page.getByTestId('workspace-watch-trigger').or(page.getByTestId('workspace-versions-trigger')).first()
   await expect(trigger).toBeVisible()
-  await trigger.focus()
-  await page.keyboard.press('Enter')
+  await trigger.click()
   await expect(page.getByTestId('workspace-panel')).toBeVisible()
 }
 

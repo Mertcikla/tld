@@ -101,6 +101,7 @@ func TestExportCmd_MapsOwnedViewsToElements(t *testing.T) {
 	api := ws.Elements["api-service"]
 	if api == nil {
 		t.Fatal("api-service element missing from exported workspace")
+		return
 	}
 	if !api.HasView || api.ViewLabel != "Container" {
 		t.Fatalf("api-service view metadata = %+v, want has_view true and label Container", api)
@@ -112,6 +113,7 @@ func TestExportCmd_MapsOwnedViewsToElements(t *testing.T) {
 	worker := ws.Elements["worker"]
 	if worker == nil {
 		t.Fatal("worker element missing from exported workspace")
+		return
 	}
 	if len(worker.Placements) != 1 || worker.Placements[0].ParentRef != "api-service" {
 		t.Fatalf("worker placements = %+v, want parent api-service", worker.Placements)

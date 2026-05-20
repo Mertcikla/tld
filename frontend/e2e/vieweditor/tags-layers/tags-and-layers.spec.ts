@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import {
   createAndLoadDiagramWithNodes,
+  createTag,
   createLayer,
   getElement,
   listLayers,
@@ -14,13 +15,12 @@ test.beforeEach(async ({ page }) => {
   await prepareStorage(page)
 })
 
-test('creates a tag in the explorer and applies it to an element from the panel', async ({ page }) => {
+test('shows a tag in the explorer and applies it to an element from the panel', async ({ page }) => {
   const { elements } = await createAndLoadDiagramWithNodes(page, 1, 'Tag Toggle')
   const tag = uniqueName('qa-tag')
 
-  await page.getByTestId('tag-manager-add-tag').click()
-  await page.getByTestId('tag-manager-new-tag-name').fill(tag)
-  await page.getByTestId('tag-manager-new-tag-submit').click()
+  await createTag(page, tag)
+  await page.reload()
   const otherTags = page.getByRole('button', { name: /Other tags/ })
   await expect(otherTags).toBeVisible()
   await otherTags.click()
