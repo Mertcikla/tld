@@ -1,6 +1,7 @@
 package analyze_test
 
 import (
+	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,7 +10,9 @@ import (
 
 	"github.com/mertcikla/tld/v2/cmd"
 	"github.com/mertcikla/tld/v2/internal/localserver"
+	"github.com/mertcikla/tld/v2/internal/semantic/semanticpb"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func TestAnalyzeCmd_WatchPipelineWritesYAML(t *testing.T) {
@@ -437,6 +440,72 @@ func TestAnalyzeCmd_JSONDryRunUsesWatchDiffShape(t *testing.T) {
 	}
 	if strings.Contains(stdout, "msg=analyze.") {
 		t.Fatalf("json stdout should not contain log lines:\n%s", stdout)
+	}
+}
+
+func TestAnalyzeCmd_SemanticOutputWritesProtoJSONL(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	repoDir := filepath.Join(dir, "semantic-app")
+	cmd.InitGitRepo(t, repoDir, "main.go", `package main
+
+import "os"
+
+// Handles order checkout.
+func Handle() {
+	_ = os.Getenv("DB_HOST")
+	Charge()
+}
+
+func Charge() {}
+`)
+	output := filepath.Join(dir, "semantic.jsonl")
+
+	stdout, stderr, err := cmd.RunCmd(t, dir, "--format", "json", "analyze", repoDir, "--dry-run", "--data-dir", dataDir, "--embedding-provider", "none", "--semantic-output", output)
+	if err != nil {
+		t.Fatalf("analyze semantic output: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	var payload struct {
+		SemanticExport struct {
+			Output         string `json:"output"`
+			RecordsWritten int    `json:"records_written"`
+		} `json:"semantic_export"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("decode json: %v\n%s", err, stdout)
+	}
+	if payload.SemanticExport.Output != output || payload.SemanticExport.RecordsWritten == 0 {
+		t.Fatalf("semantic export payload = %+v", payload.SemanticExport)
+	}
+	file, err := os.Open(output)
+	if err != nil {
+		t.Fatalf("open semantic output: %v", err)
+	}
+	defer func() { _ = file.Close() }()
+	scanner := bufio.NewScanner(file)
+	var found bool
+	for scanner.Scan() {
+		var record semanticpb.SymbolContext
+		if err := protojson.Unmarshal(scanner.Bytes(), &record); err != nil {
+			t.Fatalf("decode semantic jsonl: %v\n%s", err, scanner.Text())
+		}
+		if record.GetSymbolName() != "Handle" {
+			continue
+		}
+		found = true
+		if record.GetRawSignature() == "" || record.GetNaturalLanguageDocs() == "" {
+			t.Fatalf("missing semantic text fields: %+v", &record)
+		}
+		if got := strings.Join(record.GetSystemContext().GetExternalBindings(), ","); !strings.Contains(got, "EnvKey: DB_HOST") {
+			t.Fatalf("missing env binding in %+v", record.GetSystemContext())
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan semantic output: %v", err)
+	}
+	if !found {
+		t.Fatalf("Handle semantic record not found in %s", output)
 	}
 }
 

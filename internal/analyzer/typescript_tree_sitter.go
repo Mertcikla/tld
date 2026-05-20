@@ -83,13 +83,14 @@ func appendTSClass(node *gotreesitter.Node, lang *gotreesitter.Language, source 
 	}
 	name := nodeText(nameNode, source)
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:        name,
-		Kind:        "class",
-		FilePath:    path,
-		Line:        int(nameNode.StartPoint().Row) + 1,
-		EndLine:     int(node.EndPoint().Row) + 1,
-		Parent:      parent,
-		Description: findTSComment(node, lang, source),
+		Name:         name,
+		Kind:         "class",
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		Description:  findTSComment(node, lang, source),
+		RawSignature: declarationSignature(node, source),
 	})
 	return name
 }
@@ -101,13 +102,14 @@ func appendTSInterface(node *gotreesitter.Node, lang *gotreesitter.Language, sou
 	}
 	name := nodeText(nameNode, source)
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:        name,
-		Kind:        "interface",
-		FilePath:    path,
-		Line:        int(nameNode.StartPoint().Row) + 1,
-		EndLine:     int(node.EndPoint().Row) + 1,
-		Parent:      parent,
-		Description: findTSComment(node, lang, source),
+		Name:         name,
+		Kind:         "interface",
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		Description:  findTSComment(node, lang, source),
+		RawSignature: declarationSignature(node, source),
 	})
 	return name
 }
@@ -119,12 +121,13 @@ func appendTSEnum(node *gotreesitter.Node, lang *gotreesitter.Language, source [
 	}
 	name := nodeText(nameNode, source)
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     name,
-		Kind:     "enum",
-		FilePath: path,
-		Line:     int(nameNode.StartPoint().Row) + 1,
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   parent,
+		Name:         name,
+		Kind:         "enum",
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		RawSignature: declarationSignature(node, source),
 	})
 	return name
 }
@@ -135,12 +138,13 @@ func appendTSTypeAlias(node *gotreesitter.Node, lang *gotreesitter.Language, sou
 		return
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     nodeText(nameNode, source),
-		Kind:     "type",
-		FilePath: path,
-		Line:     int(nameNode.StartPoint().Row) + 1,
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   parent,
+		Name:         nodeText(nameNode, source),
+		Kind:         "type",
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		RawSignature: declarationSignature(node, source),
 	})
 }
 
@@ -150,13 +154,14 @@ func appendTSFunction(node *gotreesitter.Node, lang *gotreesitter.Language, sour
 		return
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:        nodeText(nameNode, source),
-		Kind:        "function",
-		FilePath:    path,
-		Line:        int(nameNode.StartPoint().Row) + 1,
-		EndLine:     int(node.EndPoint().Row) + 1,
-		Parent:      parent,
-		Description: findTSComment(node, lang, source),
+		Name:         nodeText(nameNode, source),
+		Kind:         "function",
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		Description:  findTSComment(node, lang, source),
+		RawSignature: declarationSignature(node, source),
 	})
 }
 
@@ -171,12 +176,13 @@ func appendTSMethod(node *gotreesitter.Node, lang *gotreesitter.Language, source
 		kind = "constructor"
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     name,
-		Kind:     kind,
-		FilePath: path,
-		Line:     int(nameNode.StartPoint().Row) + 1,
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   parent,
+		Name:         name,
+		Kind:         kind,
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		RawSignature: declarationSignature(node, source),
 	})
 }
 
@@ -201,12 +207,13 @@ func appendTSVariableDecl(node *gotreesitter.Node, lang *gotreesitter.Language, 
 			continue
 		}
 		result.Symbols = append(result.Symbols, Symbol{
-			Name:     tsIdentifierName(nameNode, source),
-			Kind:     kind,
-			FilePath: path,
-			Line:     int(nameNode.StartPoint().Row) + 1,
-			EndLine:  int(valueNode.EndPoint().Row) + 1,
-			Parent:   parent,
+			Name:         tsIdentifierName(nameNode, source),
+			Kind:         kind,
+			FilePath:     path,
+			Line:         int(nameNode.StartPoint().Row) + 1,
+			EndLine:      int(valueNode.EndPoint().Row) + 1,
+			Parent:       parent,
+			RawSignature: declarationSignature(child, source),
 		})
 	}
 }
@@ -370,7 +377,7 @@ func tsCallName(node *gotreesitter.Node, lang *gotreesitter.Language, source []b
 	if i := strings.Index(text, "("); i >= 0 {
 		text = text[:i]
 	}
-	return strings.TrimSpace(text)
+	return cleanComment(text)
 }
 
 // tsIdentifierName extracts the identifier text from a name node.
@@ -402,7 +409,7 @@ func findTSComment(node *gotreesitter.Node, lang *gotreesitter.Language, source 
 	}
 	prev := prevNamedSibling(node)
 	if prev == nil || nodeKind(prev, lang) != "comment" {
-		return ""
+		return leadingLineComment(source, int(node.StartPoint().Row)+1)
 	}
 	// Must be immediately above (no blank lines between).
 	if node.StartPoint().Row-prev.EndPoint().Row > 1 {
@@ -413,5 +420,5 @@ func findTSComment(node *gotreesitter.Node, lang *gotreesitter.Language, source 
 	text = strings.TrimPrefix(text, "/*")
 	text = strings.TrimSuffix(text, "*/")
 	text = strings.TrimPrefix(text, "//")
-	return strings.TrimSpace(text)
+	return firstText(cleanComment(text), leadingLineComment(source, int(node.StartPoint().Row)+1))
 }

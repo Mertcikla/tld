@@ -24,6 +24,31 @@ func TestStorageEnrichers(t *testing.T) {
 	}
 }
 
+func TestConcreteBindingsExtractStorageNames(t *testing.T) {
+	enrichertest.Run(t,
+		enrichertest.Case{
+			Name:     "go collection",
+			Enricher: ConcreteBindings(),
+			Input: enrich.FileInput{
+				RelPath:  "repo.go",
+				Language: "go",
+				Source:   []byte(`collection := db.Collection("orders")`),
+			},
+			Want: enrichertest.Fact{Type: "storage.collection", Name: "orders", Attribute: "name", AttrValue: "orders"},
+		},
+		enrichertest.Case{
+			Name:     "python bucket",
+			Enricher: ConcreteBindings(),
+			Input: enrich.FileInput{
+				RelPath:  "upload.py",
+				Language: "python",
+				Source:   []byte(`s3.put_object(Bucket="raw-events", Key=key)`),
+			},
+			Want: enrichertest.Fact{Type: "storage.bucket", Name: "raw-events", Attribute: "name", AttrValue: "raw-events"},
+		},
+	)
+}
+
 func enrichersByID() map[string]enrich.Enricher {
 	out := map[string]enrich.Enricher{}
 	for _, enricher := range All() {

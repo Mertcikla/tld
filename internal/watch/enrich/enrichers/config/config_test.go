@@ -27,6 +27,31 @@ func TestConfigEnrichers(t *testing.T) {
 	}
 }
 
+func TestConcreteBindingsExtractKeys(t *testing.T) {
+	enrichertest.Run(t,
+		enrichertest.Case{
+			Name:     "go getenv",
+			Enricher: ConcreteBindings(),
+			Input: enrich.FileInput{
+				RelPath:  "config.go",
+				Language: "go",
+				Source:   []byte(`package main; func load() { _ = os.Getenv("DB_HOST") }`),
+			},
+			Want: enrichertest.Fact{Type: "config.env", Name: "DB_HOST", Attribute: "key", AttrValue: "DB_HOST"},
+		},
+		enrichertest.Case{
+			Name:     "typescript local storage",
+			Enricher: ConcreteBindings(),
+			Input: enrich.FileInput{
+				RelPath:  "session.ts",
+				Language: "typescript",
+				Source:   []byte(`localStorage.getItem("checkout_session")`),
+			},
+			Want: enrichertest.Fact{Type: "config.env", Name: "checkout_session", Attribute: "binding_kind", AttrValue: "browser_storage"},
+		},
+	)
+}
+
 func enrichersByID() map[string]enrich.Enricher {
 	out := map[string]enrich.Enricher{}
 	for _, enricher := range All() {

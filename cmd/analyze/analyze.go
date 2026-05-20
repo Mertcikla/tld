@@ -17,6 +17,7 @@ import (
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/cmd/version"
 	"github.com/mertcikla/tld/v2/internal/localserver"
+	"github.com/mertcikla/tld/v2/internal/semantic"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
 	watchpkg "github.com/mertcikla/tld/v2/internal/watch"
@@ -29,6 +30,7 @@ import (
 func NewAnalyzeCmd(wdir *string) *cobra.Command {
 	var dryRun bool
 	var dataDirFlag string
+	var semanticOutput string
 	var embeddingProvider, embeddingEndpoint, embeddingModel string
 	var embeddingDimension int
 	var languageFlags []string
@@ -95,6 +97,7 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 				"rescan", rescan,
 				"fail_on_drift", failOnDrift,
 				"languages", strings.Join(languageFlags, ","),
+				"semantic_output", semanticOutput,
 			)
 			logger.InfoContext(cmd.Context(), "analyze.setup.completed", "elapsed", time.Since(commandStarted).Round(time.Millisecond).String(), "workspace", *wdir, "data_dir", dataDir)
 			embeddingCfg := resolveAnalyzeEmbeddingConfig(cfg, embeddingProvider, embeddingEndpoint, embeddingModel, embeddingDimension)
@@ -148,6 +151,17 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 			if err != nil {
 				return fail("analyze.watch_pipeline.failed", err)
 			}
+			var semanticResult *semantic.ExportResult
+			if strings.TrimSpace(semanticOutput) != "" {
+				semanticStarted := time.Now()
+				logger.InfoContext(cmd.Context(), "analyze.semantic_export.started", "repository_id", once.Scan.RepositoryID, "output", semanticOutput)
+				result, err := semantic.ExportJSONL(cmd.Context(), watchStore, once.Scan.RepositoryID, semanticOutput)
+				if err != nil {
+					return fail("analyze.semantic_export.failed", fmt.Errorf("export semantic jsonl: %w", err), "elapsed", time.Since(semanticStarted).Round(time.Millisecond).String(), "repository_id", once.Scan.RepositoryID)
+				}
+				semanticResult = &result
+				logger.InfoContext(cmd.Context(), "analyze.semantic_export.completed", "elapsed", time.Since(semanticStarted).Round(time.Millisecond).String(), "repository_id", once.Scan.RepositoryID, "records_written", result.RecordsWritten, "output", semanticOutput)
+			}
 			exportStarted := time.Now()
 			logger.InfoContext(cmd.Context(), "analyze.export.started", "repository_id", once.Scan.RepositoryID)
 			exported, exportResult, err := exportyaml.ExportWithProgress(cmd.Context(), sqliteStore, watchStore, ws, once.Scan.RepositoryID, progress)
@@ -158,6 +172,9 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 			changed := hasAnalyzeDrift(once.Diffs)
 			if formatFlag(cmd) == "json" {
 				payload := map[string]any{"changed": changed, "scan": once.Scan, "lsp": once.Scan.LSP, "representation": once.Representation, "export": exportResult, "diffs": once.Diffs}
+				if semanticResult != nil {
+					payload["semantic_export"] = map[string]any{"output": semanticOutput, "records_written": semanticResult.RecordsWritten}
+				}
 				if err := json.NewEncoder(cmd.OutOrStdout()).Encode(payload); err != nil {
 					return fail("analyze.output.failed", err)
 				}
@@ -166,6 +183,9 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 				term.Successf(cmd.OutOrStdout(), "%d elements written to elements.yaml", exportResult.ElementsWritten)
 				term.Successf(cmd.OutOrStdout(), "%d connectors written to connectors.yaml", exportResult.ConnectorsWritten)
 				term.Successf(cmd.OutOrStdout(), "1 repository scanned")
+				if semanticResult != nil {
+					term.Successf(cmd.OutOrStdout(), "%d semantic records written to %s", semanticResult.RecordsWritten, semanticOutput)
+				}
 				term.Separator(cmd.OutOrStdout())
 			}
 			if dryRun {
@@ -190,6 +210,7 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "scan, materialize, and print drift without modifying workspace YAML")
 	c.Flags().StringVar(&dataDirFlag, "data-dir", "", "directory for the local app database")
+	c.Flags().StringVar(&semanticOutput, "semantic-output", "", "write protobuf JSONL SymbolContext records to this path")
 	c.Flags().BoolVar(&rescan, "rescan", false, "force reparsing files even if cached")
 	c.Flags().BoolVar(&failOnDrift, "fail-on-drift", false, "exit nonzero when representation drift is detected")
 	c.Flags().StringSliceVar(&languageFlags, "language", nil, "source language to scan (repeatable)")

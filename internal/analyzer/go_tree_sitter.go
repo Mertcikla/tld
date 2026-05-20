@@ -60,13 +60,14 @@ func (p *goParser) appendFunction(node *gotreesitter.Node, lang *gotreesitter.La
 		parent = goReceiverTypeName(node, lang, source)
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:        nodeText(nameNode, source),
-		Kind:        kind,
-		FilePath:    path,
-		Line:        int(nameNode.StartPoint().Row) + 1,
-		EndLine:     int(node.EndPoint().Row) + 1,
-		Parent:      parent,
-		Description: p.findComment(node, lang, source),
+		Name:         nodeText(nameNode, source),
+		Kind:         kind,
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		Description:  p.findComment(node, lang, source),
+		RawSignature: declarationSignature(node, source),
 	})
 }
 
@@ -86,12 +87,13 @@ func (p *goParser) appendTypeSpec(node *gotreesitter.Node, lang *gotreesitter.La
 		}
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:        nodeText(nameNode, source),
-		Kind:        kind,
-		FilePath:    path,
-		Line:        int(nameNode.StartPoint().Row) + 1,
-		EndLine:     int(node.EndPoint().Row) + 1,
-		Description: p.findComment(node, lang, source),
+		Name:         nodeText(nameNode, source),
+		Kind:         kind,
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Description:  p.findComment(node, lang, source),
+		RawSignature: declarationSignature(node, source),
 	})
 }
 
@@ -101,11 +103,12 @@ func (p *goParser) appendTypeAlias(node *gotreesitter.Node, lang *gotreesitter.L
 		return
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     nodeText(nameNode, source),
-		Kind:     "type",
-		FilePath: path,
-		Line:     int(nameNode.StartPoint().Row) + 1,
-		EndLine:  int(node.EndPoint().Row) + 1,
+		Name:         nodeText(nameNode, source),
+		Kind:         "type",
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		RawSignature: declarationSignature(node, source),
 	})
 }
 
@@ -162,7 +165,7 @@ func (p *goParser) findComment(node *gotreesitter.Node, lang *gotreesitter.Langu
 	text = strings.TrimPrefix(text, "//")
 	text = strings.TrimPrefix(text, "/*")
 	text = strings.TrimSuffix(text, "*/")
-	return strings.TrimSpace(text)
+	return cleanComment(text)
 }
 
 func goCallName(node *gotreesitter.Node, lang *gotreesitter.Language, source []byte) string {

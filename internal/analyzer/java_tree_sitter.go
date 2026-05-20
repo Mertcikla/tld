@@ -60,12 +60,14 @@ func (p *javaParser) appendType(node *gotreesitter.Node, lang *gotreesitter.Lang
 	}
 	name := nodeText(nameNode, source)
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     name,
-		Kind:     kind,
-		FilePath: path,
-		Line:     int(nameNode.StartPoint().Row) + 1,
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   parent,
+		Name:         name,
+		Kind:         kind,
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		Description:  firstText(leadingComment(node, lang, source), leadingLineComment(source, int(nameNode.StartPoint().Row)+1)),
+		RawSignature: declarationSignature(node, source),
 	})
 	return name
 }
@@ -76,12 +78,14 @@ func (p *javaParser) appendMethod(node *gotreesitter.Node, lang *gotreesitter.La
 		return
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     nodeText(nameNode, source),
-		Kind:     kind,
-		FilePath: path,
-		Line:     int(nameNode.StartPoint().Row) + 1,
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   parent,
+		Name:         nodeText(nameNode, source),
+		Kind:         kind,
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		Description:  firstText(leadingComment(node, lang, source), leadingLineComment(source, int(nameNode.StartPoint().Row)+1)),
+		RawSignature: declarationSignature(node, source),
 	})
 }
 

@@ -63,12 +63,14 @@ func (p *cppParser) appendType(node *gotreesitter.Node, lang *gotreesitter.Langu
 		return parent
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     name,
-		Kind:     kind,
-		FilePath: path,
-		Line:     int(nameNode.StartPoint().Row) + 1,
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   parent,
+		Name:         name,
+		Kind:         kind,
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		Description:  leadingLineComment(source, int(nameNode.StartPoint().Row)+1),
+		RawSignature: declarationSignature(node, source),
 	})
 	return name
 }
@@ -81,12 +83,14 @@ func (p *cppParser) appendFunction(node *gotreesitter.Node, lang *gotreesitter.L
 	}
 	owner = cppResolveOwner(owner, parent)
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     name,
-		Kind:     cppFunctionKind(name, owner),
-		FilePath: path,
-		Line:     cppNodeLine(declarator, node),
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   owner,
+		Name:         name,
+		Kind:         cppFunctionKind(name, owner),
+		FilePath:     path,
+		Line:         cppNodeLine(declarator, node),
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       owner,
+		Description:  leadingLineComment(source, cppNodeLine(declarator, node)),
+		RawSignature: declarationSignature(node, source),
 	})
 }
 
@@ -101,12 +105,14 @@ func (p *cppParser) appendMemberDeclaration(node *gotreesitter.Node, lang *gotre
 	}
 	owner = cppResolveOwner(owner, parent)
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     name,
-		Kind:     cppFunctionKind(name, owner),
-		FilePath: path,
-		Line:     cppNodeLine(declarator, node),
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   owner,
+		Name:         name,
+		Kind:         cppFunctionKind(name, owner),
+		FilePath:     path,
+		Line:         cppNodeLine(declarator, node),
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       owner,
+		Description:  leadingLineComment(source, cppNodeLine(declarator, node)),
+		RawSignature: declarationSignature(node, source),
 	})
 }
 
@@ -297,12 +303,14 @@ func (p *cppParser) appendTopLevelFunctionDeclarations(source []byte, path strin
 								continue
 							}
 							result.Symbols = append(result.Symbols, Symbol{
-								Name:     name,
-								Kind:     kind,
-								FilePath: path,
-								Line:     declLine,
-								EndLine:  lineNum,
-								Parent:   owner,
+								Name:         name,
+								Kind:         kind,
+								FilePath:     path,
+								Line:         declLine,
+								EndLine:      lineNum,
+								Parent:       owner,
+								Description:  leadingLineComment(source, declLine),
+								RawSignature: stripSignatureBoilerplate(declStr),
 							})
 							seen[key] = struct{}{}
 						}

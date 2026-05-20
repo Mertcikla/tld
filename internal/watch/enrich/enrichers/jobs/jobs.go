@@ -5,7 +5,9 @@ import (
 	"github.com/mertcikla/tld/v2/internal/watch/enrich/enrichers/pattern"
 )
 
-func All() []enrich.Enricher { return pattern.FromSpecs(Specs()) }
+func All() []enrich.Enricher {
+	return append(pattern.FromSpecs(Specs()), ConcreteBindings())
+}
 
 func Specs() []pattern.Spec {
 	return []pattern.Spec{

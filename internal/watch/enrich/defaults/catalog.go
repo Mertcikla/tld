@@ -167,6 +167,7 @@ func FrontendEnrichers() []enrich.Enricher {
 	return []enrich.Enricher{
 		frontendts.NextJS(),
 		frontendts.ReactRouter(),
+		frontendts.BrowserTriggers(),
 	}
 }
 

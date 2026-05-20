@@ -2,14 +2,15 @@ package analyzer
 
 // Symbol is a named declaration found in a source file.
 type Symbol struct {
-	Name        string `json:"name"`
-	Kind        string `json:"kind"`
-	FilePath    string `json:"file_path,omitempty"`
-	Line        int    `json:"line"`
-	EndLine     int    `json:"end_line,omitempty"`
-	Parent      string `json:"parent,omitempty"`
-	Technology  string `json:"technology,omitempty"`
-	Description string `json:"description,omitempty"`
+	Name         string `json:"name"`
+	Kind         string `json:"kind"`
+	FilePath     string `json:"file_path,omitempty"`
+	Line         int    `json:"line"`
+	EndLine      int    `json:"end_line,omitempty"`
+	Parent       string `json:"parent,omitempty"`
+	Technology   string `json:"technology,omitempty"`
+	Description  string `json:"description,omitempty"`
+	RawSignature string `json:"raw_signature,omitempty"`
 }
 
 // Ref is a call-site reference to a named symbol found within a source file.

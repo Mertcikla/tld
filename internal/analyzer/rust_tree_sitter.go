@@ -102,12 +102,14 @@ func (p *rustParser) appendFunction(node *gotreesitter.Node, lang *gotreesitter.
 	}
 
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     name,
-		Kind:     kind,
-		FilePath: path,
-		Line:     int(nameNode.StartPoint().Row) + 1,
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   parent,
+		Name:         name,
+		Kind:         kind,
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		Description:  leadingLineComment(source, int(nameNode.StartPoint().Row)+1),
+		RawSignature: declarationSignature(node, source),
 	})
 	return name
 }
@@ -130,12 +132,14 @@ func (p *rustParser) appendSymbol(node *gotreesitter.Node, lang *gotreesitter.La
 
 	name := nodeText(nameNode, source)
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     name,
-		Kind:     kind,
-		FilePath: path,
-		Line:     int(nameNode.StartPoint().Row) + 1,
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   parent,
+		Name:         name,
+		Kind:         kind,
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		Description:  leadingLineComment(source, int(nameNode.StartPoint().Row)+1),
+		RawSignature: declarationSignature(node, source),
 	})
 	return name
 }

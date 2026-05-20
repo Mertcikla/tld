@@ -56,12 +56,14 @@ func (p *pythonParser) appendClass(node *gotreesitter.Node, lang *gotreesitter.L
 	}
 	name := nodeText(nameNode, source)
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     name,
-		Kind:     "class",
-		FilePath: path,
-		Line:     int(nameNode.StartPoint().Row) + 1,
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   parent,
+		Name:         name,
+		Kind:         "class",
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		Description:  pythonDocstring(node, source),
+		RawSignature: declarationSignature(node, source),
 	})
 	return name
 }
@@ -80,12 +82,14 @@ func (p *pythonParser) appendFunction(node *gotreesitter.Node, lang *gotreesitte
 		}
 	}
 	result.Symbols = append(result.Symbols, Symbol{
-		Name:     name,
-		Kind:     kind,
-		FilePath: path,
-		Line:     int(nameNode.StartPoint().Row) + 1,
-		EndLine:  int(node.EndPoint().Row) + 1,
-		Parent:   parent,
+		Name:         name,
+		Kind:         kind,
+		FilePath:     path,
+		Line:         int(nameNode.StartPoint().Row) + 1,
+		EndLine:      int(node.EndPoint().Row) + 1,
+		Parent:       parent,
+		Description:  pythonDocstring(node, source),
+		RawSignature: declarationSignature(node, source),
 	})
 	return name
 }

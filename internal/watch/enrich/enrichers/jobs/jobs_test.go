@@ -24,6 +24,31 @@ func TestJobEnrichers(t *testing.T) {
 	}
 }
 
+func TestConcreteBindingsExtractSchedules(t *testing.T) {
+	enrichertest.Run(t,
+		enrichertest.Case{
+			Name:     "typescript cron",
+			Enricher: ConcreteBindings(),
+			Input: enrich.FileInput{
+				RelPath:  "jobs.ts",
+				Language: "typescript",
+				Source:   []byte(`cron.schedule("0 0 * * *", runDaily)`),
+			},
+			Want: enrichertest.Fact{Type: "job.schedule", Name: "0 0 * * *", Attribute: "schedule", AttrValue: "0 0 * * *"},
+		},
+		enrichertest.Case{
+			Name:     "java scheduled",
+			Enricher: ConcreteBindings(),
+			Input: enrich.FileInput{
+				RelPath:  "Job.java",
+				Language: "java",
+				Source:   []byte(`@Scheduled(cron = "0 0 * * * *") void run() {}`),
+			},
+			Want: enrichertest.Fact{Type: "job.schedule", Name: "0 0 * * * *", Attribute: "schedule", AttrValue: "0 0 * * * *"},
+		},
+	)
+}
+
 func enrichersByID() map[string]enrich.Enricher {
 	out := map[string]enrich.Enricher{}
 	for _, enricher := range All() {

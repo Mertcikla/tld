@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package semantic_embedding;
+
+option go_package = "github.com/mertcikla/tld/v2/internal/semantic/semanticpb";
+
+enum EntityType {
+  ENTITY_TYPE_UNSPECIFIED = 0;
+  ENTITY_TYPE_SERVICE = 1;
+  ENTITY_TYPE_FUNCTION = 2;
+  ENTITY_TYPE_CLASS = 3;
+  ENTITY_TYPE_MODULE = 4;
+  ENTITY_TYPE_DATABASE = 5;
+  ENTITY_TYPE_QUEUE = 6;
+  ENTITY_TYPE_INFRASTRUCTURE = 7;
+  ENTITY_TYPE_PIPELINE = 8;
+  ENTITY_TYPE_UI_COMPONENT = 9;
+}
+
+message Property {
+  string name = 1;
+  string value = 2;
+  string kind = 3;
+}
+
+message Relationship {
+  string target_urn = 1;
+  string relationship_type = 2;
+  string description = 3;
+}
+
+message SystemContext {
+  repeated string execution_boundaries = 1;
+  repeated string triggers = 2;
+  repeated string external_bindings = 3;
+  map<string, string> custom_attributes = 4;
+}
+
+message SymbolContext {
+  string urn = 1;
+  string symbol_name = 2;
+  EntityType entity_type = 3;
+  string source_language = 4;
+  string domain_boundary = 5;
+  string raw_signature = 6;
+  string natural_language_docs = 7;
+  repeated Property properties = 8;
+  repeated Relationship relationships = 9;
+  SystemContext system_context = 10;
+}
