@@ -555,8 +555,8 @@ func (s *Store) ThumbnailSVG(ctx context.Context, viewID int64) (string, error) 
 		rx := 10.0 * scale
 		rectStrokeWidth := math.Max(0.5, 1.0*scale)
 		fontSize := 12.0 * scale
-		textX := x + 10.0 * scale
-		textY := y + 22.0 * scale
+		textX := x + 10.0*scale
+		textY := y + 22.0*scale
 		fmt.Fprintf(&b, `<rect x="%.2f" y="%.2f" width="%.2f" height="%.2f" rx="%.2f" fill="#1e293b" stroke="#64748b" stroke-width="%.2f"/>`, x, y, w, h, rx, rectStrokeWidth)
 		fmt.Fprintf(&b, `<text x="%.2f" y="%.2f" font-family="sans-serif" font-size="%.2f" fill="#e2e8f0">`, textX, textY, fontSize)
 		b.WriteString(htmlEscape(trimTo(p.Name, 24)))
