@@ -39,9 +39,11 @@ export interface DrawingCanvasHandle {
 function trySetPointerCapture(canvas: HTMLCanvasElement, pointerId: number) {
   try {
     canvas.setPointerCapture(pointerId)
-  } catch {
+  } catch (e) {
     // Firefox rejects capture for synthetic or otherwise non-active pointer ids.
     // The event data is still usable, so drawing can continue without capture.
+    if (e instanceof DOMException && e.name === 'InvalidPointerId') return
+    throw e
   }
 }
 
