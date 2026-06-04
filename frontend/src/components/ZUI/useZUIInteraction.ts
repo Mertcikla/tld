@@ -5,6 +5,7 @@ import type { BBox, DiagramGroupLayout, LayoutNode, ZUIViewState, HoveredItem } 
 import { getExpandThresholds, screenToWorldX, screenToWorldY, viewOriginX, viewOriginY, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { hitTestZUIRenderedNode, warmZUIHitTestIndexes } from './hitTest'
 import { buildEdgeSpatialIndex, findHoveredEdge, type EdgeSpatialIndex } from './edgeHover'
+import { isMouseWheelGesture, isNotchedWheelGesture, wheelZoomFactor } from '../../utils/wheel'
 
 export function constrainViewState(view: ZUIViewState, canvasW: number, canvasH: number, bbox: BBox): ZUIViewState {
   const padding = Math.min(600, canvasW * 0.45, canvasH * 0.45)
@@ -402,7 +403,7 @@ export function useZUIInteraction(
       const isPinch = e.ctrlKey
 
       // We don't have isRecentMultiTouch yet, but we can check if it looks like a mouse wheel
-      const isMouseWheel = e.deltaMode !== 0 || (e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 20)
+      const isMouseWheel = isMouseWheelGesture(e)
 
       // On mobile, Safari synthesizes wheel events for pinches.
       // If it's not a pinch or a real mouse wheel, we ignore it to allow native gestures or prevent conflicts.
@@ -420,16 +421,14 @@ export function useZUIInteraction(
       const isRecentMultiTouch = Date.now() - lastPanTimeRef.current < 1000
 
       // Re-evaluate isMouseWheel with trackpad suppression for desktop
-      const isNotchedWheel = !isRecentMultiTouch && e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 20
+      const isNotchedWheel = !isRecentMultiTouch && isNotchedWheelGesture(e)
       const isRealMouseWheel = e.deltaMode !== 0 || isNotchedWheel
 
       if (isPinch || isRealMouseWheel) {
         const focalX = e.clientX - rect.left
         const focalY = e.clientY - rect.top
 
-        // Use standard factors for zoom
-        let factor = 1 - e.deltaY * (isRealMouseWheel ? 0.002 : 0.01)
-        factor = Math.max(0.85, Math.min(1.15, factor))
+        const factor = wheelZoomFactor(e, isRealMouseWheel)
 
         scheduleViewState((prev) => {
           return zoomAround(prev, focalX, focalY, factor, maxZoomRef.current)
