@@ -67,6 +67,17 @@ export async function reactFlowPaneBox(page: Page) {
   return box
 }
 
+export async function pasteTextOnCanvas(page: Page, text: string) {
+  await page.getByTestId('vieweditor-canvas').click()
+  await page.evaluate((pasteText) => {
+    const data = new DataTransfer()
+    data.setData('text/plain', pasteText)
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', { value: data })
+    window.dispatchEvent(event)
+  }, text)
+}
+
 export async function addNodeWithToolbar(page: Page, name = uniqueName('Toolbar Node')) {
   return addNodeWithKeyboard(page, name)
 }

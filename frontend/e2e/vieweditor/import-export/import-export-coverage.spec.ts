@@ -31,18 +31,27 @@ test('exported Mermaid download contains node names and edge syntax', async ({ p
   expect(content).toMatch(/node_\d+ -- "exports-to" --> node_\d+/)
 })
 
-test('canvas context menu copies Mermaid directly', async ({ page, context }) => {
+test('canvas context menu copies Mermaid directly', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Context Export Content')
   await createConnector(page, diagram.id, elements[0].id, elements[1].id)
   await page.reload()
-  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: new URL(page.url()).origin })
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (window as typeof window & { __tldCopiedText?: string }).__tldCopiedText = text
+        },
+      },
+    })
+  })
 
   const box = await reactFlowPaneBox(page)
   await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.15, { button: 'right' })
 
   await page.getByTestId('vieweditor-canvas-context-copy-mermaid').click()
   await expect(page.getByText('Copied Mermaid').first()).toBeVisible()
-  const content = await page.evaluate(() => navigator.clipboard.readText())
+  const content = await page.evaluate(() => (window as typeof window & { __tldCopiedText?: string }).__tldCopiedText ?? '')
   expect(content).toContain('flowchart LR')
   expect(content).toContain(elements[0].name)
   expect(content).toContain(elements[1].name)

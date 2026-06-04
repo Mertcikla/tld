@@ -8,16 +8,12 @@ import {
   listElements,
   listPlacements,
   nodeByName,
+  pasteTextOnCanvas,
   uniqueName,
 } from '../helpers/vieweditor'
 
 async function pasteMermaid(page: Parameters<typeof currentViewId>[0], source: string) {
-  await page.getByTestId('vieweditor-canvas').click()
-  await page.evaluate((text) => {
-    const data = new DataTransfer()
-    data.setData('text/plain', text)
-    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
-  }, source)
+  await pasteTextOnCanvas(page, source)
 }
 
 function placementX(placement: Awaited<ReturnType<typeof listPlacements>>[number]) {
