@@ -39,6 +39,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import ViewGridNode, { type ViewGridNodeData } from '../components/ViewGridNode'
 import { useAccentColor } from '../context/ThemeContext'
 import { hexToRgba } from '../constants/colors'
+import { isMouseWheelGesture } from '../utils/wheel'
 
 // ── Tree helpers ──────────────────────────────────────────────────────────────
 
@@ -513,8 +514,7 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
       const isRecentMultiTouch = Date.now() - touchStateRef.current.lastMultiTouchWheelTime < 1000
 
       // Only zoom on notched wheel (mouse), not trackpad
-      const isNotchedWheel = !e.ctrlKey && e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 20
-      const isMouseWheel = e.deltaMode !== 0 || isNotchedWheel
+      const isMouseWheel = isMouseWheelGesture(e)
 
       if (isMouseWheel && !isRecentMultiTouch) {
         e.preventDefault()

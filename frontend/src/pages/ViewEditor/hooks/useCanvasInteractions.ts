@@ -35,6 +35,7 @@ import {
   getLogicalHandleId,
 } from '../../../utils/edgeDistribution'
 import { useStore } from '../../../store/useStore'
+import { isMouseWheelGesture } from '../../../utils/wheel'
 
 const SNAP_RADIUS = 75
 const CONNECTOR_DRAG_UPDATE_INTERVAL_MS = 25
@@ -2002,9 +2003,9 @@ export function useCanvasInteractions({
     if (touchStateRef.current.touches.size === 2) return
     if (e.deltaX !== 0) touchStateRef.current.lastMultiTouchWheelTime = Date.now()
     const isRecentMultiTouch = Date.now() - touchStateRef.current.lastMultiTouchWheelTime < 1000
-    const isNotchedWheel = !e.ctrlKey && e.deltaX === 0 && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 20
-    const isMouseWheel = e.deltaMode !== 0 || isNotchedWheel
+    const isMouseWheel = isMouseWheelGesture(e)
     if (isMouseWheel && !isRecentMultiTouch) {
+      e.preventDefault()
       e.stopPropagation()
       if (e.deltaY > 0) zoomOut()
       else zoomIn()
