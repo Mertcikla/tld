@@ -140,7 +140,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: '24.14.1'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -188,7 +188,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: '24.14.1'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -209,6 +209,12 @@ jobs:
           PLAYWRIGHT_JSON_OUTPUT_NAME: report.json
         run: npx playwright merge-reports --reporter=html,json ./all-blob-reports
 
+      - name: Verify merged Playwright report
+        working-directory: frontend
+        run: |
+          test -s report.json
+          test -f playwright-report/index.html
+
       - name: Upload Playwright report
         id: playwright-report
         if: ${{ !cancelled() }}
@@ -217,6 +223,7 @@ jobs:
           name: playwright-report
           path: frontend/playwright-report/
           retention-days: 30
+          if-no-files-found: error
 
       - name: Publish Playwright results
         if: ${{ github.event_name == 'pull_request' && !cancelled() && hashFiles('frontend/report.json') != '' }}
