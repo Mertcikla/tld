@@ -9,12 +9,13 @@ export interface TechnologyConnector {
 export interface TechnologyCatalogItem {
   iconUrl: string
   name: string
-  provider: string
-  docsUrl: string
-  description: string
-  websiteUrl: string
+  provider?: string
+  docsUrl?: string
+  description?: string
+  websiteUrl?: string
   nameShort: string
   defaultSlug: string
+  aliases?: string[]
 }
 
 export interface Tag {

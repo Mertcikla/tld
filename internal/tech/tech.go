@@ -2,59 +2,90 @@
 package tech
 
 import (
-	_ "embed"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"unicode"
+
+	buildassets "github.com/mertcikla/tld/v2/build-assets"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
-//go:embed icons.json
-var iconsJSON []byte
-
-// catalogItem represents an entry in the embedded icons.json.
+// catalogItem represents an entry in the frontend icons.json catalog.
 type catalogItem struct {
-	Name        string `json:"name"`
-	NameShort   string `json:"nameShort"`
-	DefaultSlug string `json:"defaultSlug"`
+	IconURL     string   `json:"iconUrl"`
+	Name        string   `json:"name"`
+	Provider    string   `json:"provider,omitempty"`
+	DocsURL     string   `json:"docsUrl,omitempty"`
+	Description string   `json:"description,omitempty"`
+	WebsiteURL  string   `json:"websiteUrl,omitempty"`
+	NameShort   string   `json:"nameShort"`
+	DefaultSlug string   `json:"defaultSlug"`
+	Aliases     []string `json:"aliases,omitempty"`
+	custom      bool
 }
 
-// CatalogEntry is a read-only public view of one embedded catalog item.
+// CatalogEntry is a read-only public view of one catalog item.
 type CatalogEntry struct {
 	Slug      string `json:"slug"`
 	Name      string `json:"name"`
 	NameShort string `json:"name_short,omitempty"`
+	IconURL   string `json:"icon_url,omitempty"`
 }
 
 var (
 	catalogCache     map[string]bool
 	catalogSlugCache map[string]catalogItem
 	catalogItems     []CatalogEntry
+	catalogRawItems  []catalogItem
 	catalogOnce      sync.Once
 )
 
+var manualAliases = map[string]string{
+	"go":                              "go",
+	"golang":                          "go",
+	"postgres":                        "postgresql",
+	"node":                            "nodejs",
+	"ts":                              "typescript",
+	"js":                              "javascript",
+	"tailwind":                        "tailwindcss",
+	"tailwind-css":                    "tailwindcss",
+	"tailwindcss":                     "tailwindcss",
+	"next.js":                         "nextjs",
+	"k8s":                             "kubernetes",
+	"dockerfile":                      "docker",
+	"python3":                         "python",
+	"cpp":                             "cplusplus",
+	"c-plusplus":                      "cplusplus",
+	"c#":                              "csharp",
+	"dotnet":                          "dot-net",
+	".net":                            "dot-net",
+	"net":                             "dot-net",
+	"json-javascript-object-notation": "json",
+	"gcp":                             "googlecloud",
+	"google-cloud-platform":           "googlecloud",
+	"container":                       "docker",
+}
+
 func initializeCatalog() {
-	var items []catalogItem
-	err := json.Unmarshal(iconsJSON, &items)
-	if err != nil {
-		catalogCache = make(map[string]bool)
-		catalogItems = nil
-		return
-	}
+	items := loadCatalogItems()
 
 	cache := make(map[string]bool, len(items)*3)
 	slugCache := make(map[string]catalogItem, len(items)*3)
 	entries := make([]CatalogEntry, 0, len(items))
+	aliases := make([]catalogAlias, 0)
 
-	add := func(key string, item catalogItem) {
-		key = strings.ToLower(strings.TrimSpace(key))
+	add := func(key string, item catalogItem, replace bool) {
+		key = normalizeCatalogKey(key)
 		if key == "" {
 			return
 		}
 		cache[key] = true
 		if item.DefaultSlug != "" {
-			if _, exists := slugCache[key]; exists {
+			if _, exists := slugCache[key]; exists && !replace {
 				return
 			}
 			slugCache[key] = item
@@ -62,38 +93,39 @@ func initializeCatalog() {
 	}
 
 	for _, item := range items {
-		add(item.Name, item)
+		add(item.Name, item, false)
 		if item.NameShort != "" {
-			add(item.NameShort, item)
+			add(item.NameShort, item, false)
 		}
-		add(item.DefaultSlug, item)
+		add(item.DefaultSlug, item, false)
+		for _, alias := range item.Aliases {
+			aliases = append(aliases, catalogAlias{key: alias, item: item})
+		}
 		if item.DefaultSlug != "" {
 			entries = append(entries, CatalogEntry{
 				Slug:      item.DefaultSlug,
 				Name:      item.Name,
 				NameShort: item.NameShort,
+				IconURL:   item.IconURL,
 			})
 		}
 	}
 
-	manualAliases := map[string]string{
-		"go": "golang", "postgres": "postgresql", "node": "nodejs", "ts": "typescript", "js": "javascript",
-		"tailwind": "tailwind-css", "tailwindcss": "tailwind-css", "next.js": "nextjs",
-		"k8s": "kubernetes", "dockerfile": "docker", "python3": "python", "cpp": "cplusplus",
-		"c#": "csharp", "dotnet": "dotnet", "aws": "aws", "gcp": "gcp", "azure": "azure",
-		"container": "docker",
+	for alias, slug := range manualAliases {
+		item, ok := slugCache[normalizeCatalogKey(slug)]
+		if !ok || item.DefaultSlug == "" {
+			continue
+		}
+		add(alias, item, false)
 	}
 
-	for alias, slug := range manualAliases {
-		item, ok := slugCache[strings.ToLower(slug)]
-		if !ok {
-			item = catalogItem{Name: alias, NameShort: alias, DefaultSlug: slug}
-		}
-		add(alias, item)
+	for _, alias := range aliases {
+		add(alias.key, alias.item, alias.item.custom)
 	}
 
 	catalogCache = cache
 	catalogSlugCache = slugCache
+	catalogRawItems = stripCatalogSource(items)
 	sort.SliceStable(entries, func(i, j int) bool {
 		left := strings.ToLower(entries[i].Name)
 		right := strings.ToLower(entries[j].Name)
@@ -105,12 +137,171 @@ func initializeCatalog() {
 	catalogItems = entries
 }
 
-// Catalog returns the embedded technology catalog sorted by display name.
+type catalogAlias struct {
+	key  string
+	item catalogItem
+}
+
+func loadCatalogItems() []catalogItem {
+	builtinBody, err := buildassets.IconCatalogJSON()
+	if err != nil {
+		return loadCustomCatalogItems()
+	}
+	builtin, err := decodeCatalogJSON(builtinBody, false)
+	if err != nil {
+		return loadCustomCatalogItems()
+	}
+	return mergeCatalogs(builtin, loadCustomCatalogItems())
+}
+
+func loadCustomCatalogItems() []catalogItem {
+	configDir, err := workspace.ConfigDir()
+	if err != nil {
+		return nil
+	}
+	body, err := os.ReadFile(filepath.Join(configDir, "icons", "icons.json"))
+	if err != nil {
+		return nil
+	}
+	items, err := decodeCatalogJSON(body, true)
+	if err != nil {
+		return nil
+	}
+	return items
+}
+
+func decodeCatalogJSON(body []byte, custom bool) ([]catalogItem, error) {
+	var items []catalogItem
+	if err := json.Unmarshal(body, &items); err != nil {
+		return nil, err
+	}
+
+	out := make([]catalogItem, 0, len(items))
+	for _, item := range items {
+		normalized, ok := normalizeCatalogItem(item, custom)
+		if ok {
+			out = append(out, normalized)
+		}
+	}
+	return out, nil
+}
+
+func mergeCatalogs(builtin, custom []catalogItem) []catalogItem {
+	out := make([]catalogItem, 0, len(builtin)+len(custom))
+	bySlug := make(map[string]int, len(builtin)+len(custom))
+
+	add := func(item catalogItem) {
+		slug := normalizeCatalogKey(item.DefaultSlug)
+		if slug == "" {
+			return
+		}
+		if idx, ok := bySlug[slug]; ok {
+			out[idx] = item
+			return
+		}
+		bySlug[slug] = len(out)
+		out = append(out, item)
+	}
+
+	for _, item := range builtin {
+		add(item)
+	}
+	for _, item := range custom {
+		add(item)
+	}
+	return out
+}
+
+func normalizeCatalogItem(item catalogItem, custom bool) (catalogItem, bool) {
+	item.DefaultSlug = normalizeCatalogKey(item.DefaultSlug)
+	if item.DefaultSlug == "" {
+		return catalogItem{}, false
+	}
+	item.IconURL = strings.TrimSpace(item.IconURL)
+	if item.IconURL == "" {
+		item.IconURL = "/icons/" + item.DefaultSlug + ".svg"
+	}
+	item.Name = strings.TrimSpace(item.Name)
+	if item.Name == "" {
+		item.Name = item.DefaultSlug
+	}
+	item.NameShort = strings.TrimSpace(item.NameShort)
+	item.Provider = strings.TrimSpace(item.Provider)
+	item.DocsURL = strings.TrimSpace(item.DocsURL)
+	item.Description = strings.TrimSpace(item.Description)
+	item.WebsiteURL = strings.TrimSpace(item.WebsiteURL)
+	item.Aliases = normalizeAliases(item.Aliases)
+	item.custom = custom
+	return item, true
+}
+
+func normalizeAliases(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		key := normalizeCatalogKey(trimmed)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeCatalogKey(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func stripCatalogSource(items []catalogItem) []catalogItem {
+	out := make([]catalogItem, len(items))
+	copy(out, items)
+	for i := range out {
+		out[i].custom = false
+	}
+	return out
+}
+
+// Catalog returns the technology catalog sorted by display name.
 func Catalog() []CatalogEntry {
 	catalogOnce.Do(initializeCatalog)
 	out := make([]CatalogEntry, len(catalogItems))
 	copy(out, catalogItems)
 	return out
+}
+
+// CatalogJSON returns the merged frontend catalog JSON.
+func CatalogJSON() ([]byte, error) {
+	catalogOnce.Do(initializeCatalog)
+	out := stripCatalogSource(catalogRawItems)
+	body, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(body, '\n'), nil
+}
+
+// IconURLForSlug returns the SVG icon URL for a catalog slug or a supported
+// legacy slug alias.
+func IconURLForSlug(slug string) (string, bool) {
+	catalogOnce.Do(initializeCatalog)
+
+	normalized := normalizeCatalogKey(slug)
+	item, ok := catalogSlugCache[normalized]
+	if !ok || item.DefaultSlug == "" {
+		return "", false
+	}
+	if item.IconURL != "" {
+		return item.IconURL, true
+	}
+	return "/icons/" + item.DefaultSlug + ".svg", true
 }
 
 // scored holds a candidate match with its edit distance.
@@ -124,7 +315,7 @@ type scored struct {
 func SuggestSimilar(label string, maxResults int) []string {
 	catalogOnce.Do(initializeCatalog)
 
-	normalized := strings.ToLower(strings.TrimSpace(label))
+	normalized := normalizeCatalogKey(label)
 	if normalized == "" {
 		return nil
 	}
@@ -242,8 +433,7 @@ func Validate(techStr string) (missing []string) {
 			continue
 		}
 
-		lower := strings.ToLower(p)
-		if !catalogCache[lower] {
+		if !catalogCache[normalizeCatalogKey(p)] {
 			missing = append(missing, p)
 		}
 	}
@@ -256,7 +446,7 @@ func Validate(techStr string) (missing []string) {
 func LookupCatalog(label string) (slug, name string, ok bool) {
 	catalogOnce.Do(initializeCatalog)
 
-	normalized := strings.ToLower(strings.TrimSpace(label))
+	normalized := normalizeCatalogKey(label)
 	item, ok := catalogSlugCache[normalized]
 	if !ok || item.DefaultSlug == "" {
 		return "", "", false

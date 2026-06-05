@@ -1292,19 +1292,18 @@ func Main() {}
 	if err := json.Unmarshal([]byte(raw), &links); err != nil {
 		t.Fatal(err)
 	}
-	want := materializedTechnologyLink{Type: "catalog", Slug: "golang", Label: "Go", IsPrimaryIcon: true}
+	want := materializedTechnologyLink{Type: "catalog", Slug: "go", Label: "Go", IsPrimaryIcon: true}
 	if len(links) != 1 || links[0] != want {
 		t.Fatalf("technology links for main.go = %+v, want %+v", links, want)
 	}
 
 	for _, tt := range []struct {
 		name string
-		slug string
 	}{
-		{name: "Architecture", slug: "architecture"},
-		{name: "Structural", slug: "structural"},
+		{name: "Architecture"},
+		{name: "Structural"},
 	} {
-		t.Run(tt.name+" section icon", func(t *testing.T) {
+		t.Run(tt.name+" section has no retired catalog icon", func(t *testing.T) {
 			var technology, raw string
 			if err := db.QueryRow(`SELECT technology, technology_connectors FROM elements WHERE name = ? AND kind = 'view'`, tt.name).Scan(&technology, &raw); err != nil {
 				t.Fatal(err)
@@ -1313,9 +1312,8 @@ func Main() {}
 			if err := json.Unmarshal([]byte(raw), &sectionLinks); err != nil {
 				t.Fatal(err)
 			}
-			want := materializedTechnologyLink{Type: "catalog", Slug: tt.slug, Label: tt.name, IsPrimaryIcon: true}
-			if technology != tt.name || len(sectionLinks) != 1 || sectionLinks[0] != want {
-				t.Fatalf("%s section technology=%q links=%+v, want technology=%q links=%+v", tt.name, technology, sectionLinks, tt.name, want)
+			if technology != tt.name || len(sectionLinks) != 0 {
+				t.Fatalf("%s section technology=%q links=%+v, want technology=%q and no links", tt.name, technology, sectionLinks, tt.name)
 			}
 		})
 	}
@@ -1350,7 +1348,7 @@ func TestTechnologyLinksForLanguage(t *testing.T) {
 			language: "go",
 			want: []materializedTechnologyLink{{
 				Type:          "catalog",
-				Slug:          "golang",
+				Slug:          "go",
 				Label:         "Go",
 				IsPrimaryIcon: true,
 			}},
@@ -1382,7 +1380,7 @@ func TestTechnologyLinksForLanguage(t *testing.T) {
 	}
 }
 
-func TestTechnologyLinksForElementUsesSectionCatalogIcon(t *testing.T) {
+func TestTechnologyLinksForElementUsesDeviconCatalogIcons(t *testing.T) {
 	tests := []struct {
 		name       string
 		technology string
@@ -1393,23 +1391,13 @@ func TestTechnologyLinksForElementUsesSectionCatalogIcon(t *testing.T) {
 			name:       "architecture",
 			technology: "Architecture",
 			language:   "go",
-			want: []materializedTechnologyLink{{
-				Type:          "catalog",
-				Slug:          "architecture",
-				Label:         "Architecture",
-				IsPrimaryIcon: true,
-			}},
+			want:       nil,
 		},
 		{
 			name:       "structural",
 			technology: "Structural",
 			language:   "go",
-			want: []materializedTechnologyLink{{
-				Type:          "catalog",
-				Slug:          "structural",
-				Label:         "Structural",
-				IsPrimaryIcon: true,
-			}},
+			want:       nil,
 		},
 		{
 			name:       "container maps to docker",
@@ -1456,7 +1444,7 @@ func TestTechnologyLinksForElementUsesSectionCatalogIcon(t *testing.T) {
 			language:   "",
 			want: []materializedTechnologyLink{{
 				Type:          "catalog",
-				Slug:          "golang",
+				Slug:          "go",
 				Label:         "Go",
 				IsPrimaryIcon: true,
 			}, {
@@ -1471,7 +1459,7 @@ func TestTechnologyLinksForElementUsesSectionCatalogIcon(t *testing.T) {
 			language:   "go",
 			want: []materializedTechnologyLink{{
 				Type:          "catalog",
-				Slug:          "golang",
+				Slug:          "go",
 				Label:         "Go",
 				IsPrimaryIcon: true,
 			}},

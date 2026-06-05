@@ -8,16 +8,20 @@ describe('resolveElementIconUrl', () => {
     ])).toBe('/custom.svg')
   })
 
+  it('normalizes explicit legacy png catalog icon urls', () => {
+    expect(resolveElementIconUrl('/icons/golang.png', [])).toBe('/icons/go.svg')
+  })
+
   it('derives the selected catalog technology icon when logo_url is missing', () => {
     expect(resolveElementIconUrl(null, [
       { type: 'catalog', slug: 'golang', label: 'Go', is_primary_icon: true },
-    ])).toBe('/icons/golang.png')
+    ])).toBe('/icons/go.svg')
   })
 
   it('falls back to the first catalog link when the API omits primary icon metadata', () => {
     expect(resolveElementIconUrl(null, [
       { type: 'catalog', slug: 'javascript', label: 'JavaScript' },
-    ])).toBe('/icons/javascript.png')
+    ])).toBe('/icons/javascript.svg')
   })
 
   it('preserves explicit no-icon clears instead of falling back to technology', () => {

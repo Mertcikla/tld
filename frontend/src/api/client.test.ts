@@ -76,7 +76,12 @@ describe('technology icon normalization', () => {
       { type: 'catalog', slug: 'golang', label: 'Go', isPrimaryIcon: true },
     ])
 
-    expect(normalizeLogoUrl(undefined, links)).toBe('/icons/golang.png')
+    expect(normalizeLogoUrl(undefined, links)).toBe('/icons/go.svg')
+  })
+
+  it('normalizes explicit legacy png catalog icon urls', () => {
+    expect(normalizeLogoUrl('/icons/golang.png', [])).toBe('/icons/go.svg')
+    expect(normalizeLogoUrl('/icons/javascript.png', [])).toBe('/icons/javascript.svg')
   })
 
   it('preserves explicit no-icon logo clears', () => {

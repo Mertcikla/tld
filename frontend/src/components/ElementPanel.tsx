@@ -42,6 +42,7 @@ import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
 import GitSourceLinker from './GitSourceLinker'
 import { getTechnologyCatalogIndex, getTechnologyCatalogItemBySlug, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
+import { canonicalTechnologySlug } from '../utils/technologyIcon'
 import { ZoomInIcon, ZoomOutIcon } from './Icons'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
@@ -61,7 +62,7 @@ function findCatalogItemByLabel(index: Awaited<ReturnType<typeof getTechnologyCa
   const normalized = normalizeTechnologyLabel(label)
   if (!normalized) return null
 
-  const bySlugMatch = index.bySlug.get(label.trim())
+  const bySlugMatch = index.bySlug.get(canonicalTechnologySlug(label))
   if (bySlugMatch) return bySlugMatch
 
   return index.items.find((item) => (
@@ -93,8 +94,9 @@ function dedupeTechnologyLinks(links: TechnologyConnector[]): TechnologyConnecto
     const isPrimary = !!(link.is_primary_icon ?? link.isPrimaryIcon)
 
     if (link.type === 'catalog' && link.slug) {
-      const slug = link.slug.trim()
-      const key = slug.toLowerCase()
+      const slug = canonicalTechnologySlug(link.slug)
+      if (!slug) continue
+      const key = slug
       if (seenCatalog.has(key)) continue
       seenCatalog.add(key)
       result.push({
@@ -142,13 +144,17 @@ async function normalizeInitialTechnologyLinks(element: LibraryElement): Promise
   if (rawLinks.length > 0) {
     for (const link of rawLinks) {
       if (link.type === 'catalog') {
-        const match = link.slug ? index.bySlug.get(link.slug) : null
-        normalized.push({
-          type: 'catalog',
-          slug: link.slug,
-          label: match?.name ?? link.label,
-          is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
-        })
+        const match = link.slug ? index.bySlug.get(canonicalTechnologySlug(link.slug)) : null
+        if (match) {
+          normalized.push({
+            type: 'catalog',
+            slug: match.defaultSlug,
+            label: match.name,
+            is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
+          })
+        } else if (link.label.trim()) {
+          normalized.push({ type: 'custom', label: link.label.trim(), is_primary_icon: false })
+        }
       } else {
         const parts = splitTechnologyLabel(link.label)
         if (parts.length > 1) {
@@ -583,8 +589,11 @@ function ElementPanel({
       setTechnologyMeta((prev) => {
         const next = { ...prev }
         for (const slug of slugs) {
-          const item = index.bySlug.get(slug)
-          if (item) next[slug] = item
+          const item = index.bySlug.get(canonicalTechnologySlug(slug))
+          if (item) {
+            next[slug] = item
+            next[item.defaultSlug] = item
+          }
         }
         return next
       })
@@ -630,7 +639,7 @@ function ElementPanel({
 
       const normalizedLinks = technologyLinks.map((link) => ({
         type: link.type,
-        slug: link.type === 'catalog' ? link.slug : undefined,
+        slug: link.type === 'catalog' ? canonicalTechnologySlug(link.slug) : undefined,
         label: link.label,
         is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
       }))

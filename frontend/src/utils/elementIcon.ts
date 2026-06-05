@@ -1,4 +1,5 @@
 import type { TechnologyConnector } from '../types'
+import { catalogIconUrlForSlug, normalizeCatalogIconPath } from './technologyIcon'
 import { resolveIconPath } from './url'
 
 export function resolveElementIconUrl(
@@ -6,7 +7,7 @@ export function resolveElementIconUrl(
   technologyConnectors: TechnologyConnector[] | null | undefined,
 ): string | null {
   if (logoUrl != null) {
-    return logoUrl === '' ? null : resolveIconPath(logoUrl)
+    return logoUrl === '' ? null : resolveIconPath(normalizeCatalogIconPath(logoUrl))
   }
 
   const catalogLinks = technologyConnectors?.filter((link) => link.type === 'catalog' && !!link.slug) ?? []
@@ -16,5 +17,6 @@ export function resolveElementIconUrl(
     !!link.slug
   )) ?? catalogLinks[0]
   if (!selected?.slug) return null
-  return resolveIconPath(`/icons/${selected.slug}.png`)
+  const iconUrl = catalogIconUrlForSlug(selected.slug)
+  return iconUrl ? resolveIconPath(iconUrl) : null
 }

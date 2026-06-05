@@ -3875,6 +3875,9 @@ func technologyLinksForElement(technology, language string) []materializedTechno
 	if len(links) > 0 {
 		return links
 	}
+	if strings.TrimSpace(technology) != "" {
+		return nil
+	}
 	if langLinks := technologyLinksForLanguage(language); len(langLinks) > 0 {
 		return langLinks
 	}
@@ -3924,10 +3927,6 @@ func technologyLabelParts(label string) []string {
 
 func technologyCatalogMatchForLabel(label string) (string, string) {
 	switch strings.ToLower(strings.TrimSpace(label)) {
-	case "architecture":
-		return "architecture", "Architecture"
-	case "structural":
-		return "structural", "Structural"
 	case "container":
 		return "docker", "Container"
 	default:
@@ -3942,7 +3941,7 @@ func technologyCatalogMatchForLabel(label string) (string, string) {
 func technologyCatalogSlug(language string) string {
 	switch language {
 	case "go":
-		return "golang"
+		return "go"
 	case "typescript":
 		return "typescript"
 	case "javascript":
@@ -3952,11 +3951,11 @@ func technologyCatalogSlug(language string) string {
 	case "java":
 		return "java"
 	case "cpp":
-		return "c-plusplus"
+		return "cplusplus"
 	case "c":
 		return "c"
 	case "json":
-		return "json-javascript-object-notation"
+		return "json"
 	default:
 		return ""
 	}

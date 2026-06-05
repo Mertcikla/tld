@@ -1,4 +1,5 @@
 import type { TechnologyConnector } from '../types'
+import { catalogIconUrlForSlug, normalizeCatalogIconPath } from '../utils/technologyIcon'
 
 const CONNECTOR_ROUTE_STYLES = new Set(['bezier', 'straight', 'step', 'smoothstep'])
 
@@ -27,11 +28,13 @@ export function normalizeLogoUrl(
   logoUrl: unknown,
   technologyConnectors: TechnologyConnector[],
 ): string | null {
-  if (logoUrl != null) return logoUrl as string
+  if (logoUrl != null) {
+    return typeof logoUrl === 'string' ? normalizeCatalogIconPath(logoUrl) : logoUrl as string
+  }
   const primary = technologyConnectors.find((link) => (
     link.type === 'catalog' &&
     !!link.slug &&
     !!(link.is_primary_icon ?? link.isPrimaryIcon)
   )) ?? technologyConnectors.find((link) => link.type === 'catalog' && !!link.slug)
-  return primary?.slug ? `/icons/${primary.slug}.png` : null
+  return catalogIconUrlForSlug(primary?.slug)
 }

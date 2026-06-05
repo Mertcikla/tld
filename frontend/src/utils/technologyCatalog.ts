@@ -1,5 +1,6 @@
 import type { TechnologyCatalogItem } from '../types'
 import { isNativeApp } from '../config/runtime'
+import { LEGACY_CATALOG_SLUG_ALIASES, canonicalTechnologySlug } from './technologyIcon'
 import { trimTrailingSlash } from './url'
 
 interface SearchableCatalogItem {
@@ -77,11 +78,12 @@ function createHaystack(item: TechnologyCatalogItem): string {
     item.nameShort,
     item.provider,
     item.defaultSlug,
+    ...(item.aliases ?? []),
   ].filter(Boolean).join(' '))
 }
 
 async function loadCatalogItems(): Promise<TechnologyCatalogItem[]> {
-  const response = await fetch(resolveWithBase('icons.json'), { cache: 'force-cache' })
+  const response = await fetch(resolveWithBase('icons.json'), { cache: 'no-store' })
   if (!response.ok) {
     throw new Error('Failed to load technology catalog')
   }
@@ -97,9 +99,22 @@ export async function getTechnologyCatalogIndex(): Promise<TechnologyCatalogInde
       const bySlug = new Map<string, TechnologyCatalogItem>()
       const searchable: SearchableCatalogItem[] = []
 
+      const catalogAliases: Array<[string, TechnologyCatalogItem]> = []
       for (const item of items) {
         bySlug.set(item.defaultSlug, item)
+        bySlug.set(canonicalTechnologySlug(item.defaultSlug), item)
+        for (const alias of item.aliases ?? []) {
+          catalogAliases.push([alias, item])
+        }
         searchable.push({ item, haystack: createHaystack(item) })
+      }
+      for (const [alias, canonicalSlug] of Object.entries(LEGACY_CATALOG_SLUG_ALIASES)) {
+        const item = bySlug.get(canonicalSlug)
+        if (item) bySlug.set(alias, item)
+      }
+      for (const [alias, item] of catalogAliases) {
+        const cleanAlias = canonicalTechnologySlug(alias)
+        if (cleanAlias) bySlug.set(cleanAlias, item)
       }
 
       return { items, searchable, bySlug }
@@ -142,7 +157,7 @@ export async function searchTechnologyCatalog(query: string, maxResults = 12): P
 }
 
 export async function getTechnologyCatalogItemBySlug(slug: string): Promise<TechnologyCatalogItem | null> {
-  const cleanSlug = slug.trim()
+  const cleanSlug = canonicalTechnologySlug(slug)
   if (!cleanSlug) return null
   const index = await getTechnologyCatalogIndex()
   return index.bySlug.get(cleanSlug) ?? null

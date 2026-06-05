@@ -133,7 +133,7 @@ func TestBuild_DerivesTechnologyLinksForCatalogIcons(t *testing.T) {
 		t.Fatalf("technology links = %+v, want two catalog links", api.TechnologyLinks)
 	}
 	first := api.TechnologyLinks[0]
-	if first.GetType() != "catalog" || first.GetSlug() != "golang" || first.GetLabel() != "Go" || !first.GetIsPrimaryIcon() {
+	if first.GetType() != "catalog" || first.GetSlug() != "go" || first.GetLabel() != "Go" || !first.GetIsPrimaryIcon() {
 		t.Fatalf("first technology link = %+v, want primary Go catalog icon", first)
 	}
 	second := api.TechnologyLinks[1]

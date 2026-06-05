@@ -302,7 +302,7 @@ describe('ZUI focus targets', () => {
 
     const layout = computeLayout(data)
 
-    expect(layout.groups[0]?.nodes[0]?.logoUrl).toBe('/icons/golang.png')
+    expect(layout.groups[0]?.nodes[0]?.logoUrl).toBe('/icons/go.svg')
   })
 
   it('rebases a high-zoom camera to a small centered render transform', () => {
