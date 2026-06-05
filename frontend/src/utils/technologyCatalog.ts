@@ -1,6 +1,5 @@
 import type { TechnologyCatalogItem } from '../types'
 import { isNativeApp } from '../config/runtime'
-import { LEGACY_CATALOG_SLUG_ALIASES, canonicalTechnologySlug } from './technologyIcon'
 import { trimTrailingSlash } from './url'
 
 interface SearchableCatalogItem {
@@ -72,6 +71,10 @@ function normalizeText(value: string): string {
   return value.toLowerCase().trim()
 }
 
+function normalizeCatalogSlug(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase()
+}
+
 function createHaystack(item: TechnologyCatalogItem): string {
   return normalizeText([
     item.name,
@@ -102,18 +105,14 @@ export async function getTechnologyCatalogIndex(): Promise<TechnologyCatalogInde
       const catalogAliases: Array<[string, TechnologyCatalogItem]> = []
       for (const item of items) {
         bySlug.set(item.defaultSlug, item)
-        bySlug.set(canonicalTechnologySlug(item.defaultSlug), item)
+        bySlug.set(normalizeCatalogSlug(item.defaultSlug), item)
         for (const alias of item.aliases ?? []) {
           catalogAliases.push([alias, item])
         }
         searchable.push({ item, haystack: createHaystack(item) })
       }
-      for (const [alias, canonicalSlug] of Object.entries(LEGACY_CATALOG_SLUG_ALIASES)) {
-        const item = bySlug.get(canonicalSlug)
-        if (item) bySlug.set(alias, item)
-      }
       for (const [alias, item] of catalogAliases) {
-        const cleanAlias = canonicalTechnologySlug(alias)
+        const cleanAlias = normalizeCatalogSlug(alias)
         if (cleanAlias) bySlug.set(cleanAlias, item)
       }
 
@@ -157,7 +156,7 @@ export async function searchTechnologyCatalog(query: string, maxResults = 12): P
 }
 
 export async function getTechnologyCatalogItemBySlug(slug: string): Promise<TechnologyCatalogItem | null> {
-  const cleanSlug = canonicalTechnologySlug(slug)
+  const cleanSlug = normalizeCatalogSlug(slug)
   if (!cleanSlug) return null
   const index = await getTechnologyCatalogIndex()
   return index.bySlug.get(cleanSlug) ?? null

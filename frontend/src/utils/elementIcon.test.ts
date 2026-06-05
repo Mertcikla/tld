@@ -4,17 +4,17 @@ import { resolveElementIconUrl } from './elementIcon'
 describe('resolveElementIconUrl', () => {
   it('uses an explicit logo url before derived technology icons', () => {
     expect(resolveElementIconUrl('/custom.svg', [
-      { type: 'catalog', slug: 'golang', label: 'Go', is_primary_icon: true },
+      { type: 'catalog', slug: 'go', label: 'Go', is_primary_icon: true },
     ])).toBe('/custom.svg')
   })
 
-  it('normalizes explicit legacy png catalog icon urls', () => {
-    expect(resolveElementIconUrl('/icons/golang.png', [])).toBe('/icons/go.svg')
+  it('normalizes explicit png catalog icon urls without alias remapping', () => {
+    expect(resolveElementIconUrl('/icons/golang.png', [])).toBe('/icons/golang.svg')
   })
 
   it('derives the selected catalog technology icon when logo_url is missing', () => {
     expect(resolveElementIconUrl(null, [
-      { type: 'catalog', slug: 'golang', label: 'Go', is_primary_icon: true },
+      { type: 'catalog', slug: 'go', label: 'Go', is_primary_icon: true },
     ])).toBe('/icons/go.svg')
   })
 
@@ -26,7 +26,7 @@ describe('resolveElementIconUrl', () => {
 
   it('preserves explicit no-icon clears instead of falling back to technology', () => {
     expect(resolveElementIconUrl('', [
-      { type: 'catalog', slug: 'golang', label: 'Go', is_primary_icon: true },
+      { type: 'catalog', slug: 'go', label: 'Go', is_primary_icon: true },
     ])).toBeNull()
   })
 

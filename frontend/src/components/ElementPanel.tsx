@@ -68,7 +68,8 @@ function findCatalogItemByLabel(index: Awaited<ReturnType<typeof getTechnologyCa
   return index.items.find((item) => (
     normalizeTechnologyLabel(item.name) === normalized ||
     normalizeTechnologyLabel(item.nameShort) === normalized ||
-    normalizeTechnologyLabel(item.defaultSlug) === normalized
+    normalizeTechnologyLabel(item.defaultSlug) === normalized ||
+    (item.aliases ?? []).some((alias) => normalizeTechnologyLabel(alias) === normalized)
   )) ?? null
 }
 

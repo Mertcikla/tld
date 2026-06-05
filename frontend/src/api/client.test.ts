@@ -73,20 +73,20 @@ describe('element bypass noise gate normalization', () => {
 describe('technology icon normalization', () => {
   it('derives a logo url from primary catalog technology links when logo_url is absent', () => {
     const links = normalizeTechnologyConnectors([
-      { type: 'catalog', slug: 'golang', label: 'Go', isPrimaryIcon: true },
+      { type: 'catalog', slug: 'go', label: 'Go', isPrimaryIcon: true },
     ])
 
     expect(normalizeLogoUrl(undefined, links)).toBe('/icons/go.svg')
   })
 
-  it('normalizes explicit legacy png catalog icon urls', () => {
-    expect(normalizeLogoUrl('/icons/golang.png', [])).toBe('/icons/go.svg')
+  it('normalizes explicit png catalog icon urls without alias remapping', () => {
+    expect(normalizeLogoUrl('/icons/golang.png', [])).toBe('/icons/golang.svg')
     expect(normalizeLogoUrl('/icons/javascript.png', [])).toBe('/icons/javascript.svg')
   })
 
   it('preserves explicit no-icon logo clears', () => {
     const links = normalizeTechnologyConnectors([
-      { type: 'catalog', slug: 'golang', label: 'Go', isPrimaryIcon: true },
+      { type: 'catalog', slug: 'go', label: 'Go', isPrimaryIcon: true },
     ])
 
     expect(normalizeLogoUrl('', links)).toBe('')

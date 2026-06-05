@@ -44,32 +44,6 @@ var (
 	catalogOnce      sync.Once
 )
 
-var manualAliases = map[string]string{
-	"go":                              "go",
-	"golang":                          "go",
-	"postgres":                        "postgresql",
-	"node":                            "nodejs",
-	"ts":                              "typescript",
-	"js":                              "javascript",
-	"tailwind":                        "tailwindcss",
-	"tailwind-css":                    "tailwindcss",
-	"tailwindcss":                     "tailwindcss",
-	"next.js":                         "nextjs",
-	"k8s":                             "kubernetes",
-	"dockerfile":                      "docker",
-	"python3":                         "python",
-	"cpp":                             "cplusplus",
-	"c-plusplus":                      "cplusplus",
-	"c#":                              "csharp",
-	"dotnet":                          "dot-net",
-	".net":                            "dot-net",
-	"net":                             "dot-net",
-	"json-javascript-object-notation": "json",
-	"gcp":                             "googlecloud",
-	"google-cloud-platform":           "googlecloud",
-	"container":                       "docker",
-}
-
 func initializeCatalog() {
 	items := loadCatalogItems()
 
@@ -109,14 +83,6 @@ func initializeCatalog() {
 				IconURL:   item.IconURL,
 			})
 		}
-	}
-
-	for alias, slug := range manualAliases {
-		item, ok := slugCache[normalizeCatalogKey(slug)]
-		if !ok || item.DefaultSlug == "" {
-			continue
-		}
-		add(alias, item, false)
 	}
 
 	for _, alias := range aliases {
@@ -196,6 +162,7 @@ func mergeCatalogs(builtin, custom []catalogItem) []catalogItem {
 			return
 		}
 		if idx, ok := bySlug[slug]; ok {
+			item.Aliases = mergeAliases(out[idx].Aliases, item.Aliases)
 			out[idx] = item
 			return
 		}
@@ -210,6 +177,10 @@ func mergeCatalogs(builtin, custom []catalogItem) []catalogItem {
 		add(item)
 	}
 	return out
+}
+
+func mergeAliases(left, right []string) []string {
+	return normalizeAliases(append(append([]string{}, left...), right...))
 }
 
 func normalizeCatalogItem(item catalogItem, custom bool) (catalogItem, bool) {

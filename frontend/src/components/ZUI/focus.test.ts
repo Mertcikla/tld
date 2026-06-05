@@ -293,7 +293,7 @@ describe('ZUI focus targets', () => {
         1: {
           placements: [{
             ...placed(1, 1, 0, 0),
-            technology_connectors: [{ type: 'catalog', slug: 'golang', label: 'Go', is_primary_icon: true }],
+            technology_connectors: [{ type: 'catalog', slug: 'go', label: 'Go', is_primary_icon: true }],
           }],
           connectors: [],
         },

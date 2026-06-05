@@ -46,7 +46,7 @@ describe('technology catalog', () => {
     expect(fetch).toHaveBeenCalledWith('/icons.json', { cache: 'no-store' })
   })
 
-  it('lets catalog aliases override legacy slug aliases', async () => {
+  it('uses catalog aliases instead of hardcoded slug aliases', async () => {
     const go: TechnologyCatalogItem = {
       iconUrl: '/icons/go.svg',
       name: 'Go',
