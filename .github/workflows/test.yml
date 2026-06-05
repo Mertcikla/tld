@@ -157,6 +157,8 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium-firefox
+          restore-keys: |
+            ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium
 
       - name: Install Playwright system dependencies
         working-directory: frontend
@@ -165,13 +167,33 @@ jobs:
 
       - name: Install Playwright browsers
         working-directory: frontend
-        timeout-minutes: 25
+        timeout-minutes: 35
         env:
           PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: 120000
           DEBUG: pw:install
         run: |
           set -euo pipefail
-          npx playwright install chromium firefox
+
+          install_browser() {
+            local browser="$1"
+            for attempt in 1 2 3; do
+              echo "Installing Playwright ${browser} (attempt ${attempt}/3)"
+              if timeout 8m npx playwright install "${browser}"; then
+                return 0
+              fi
+              status=$?
+              echo "Playwright ${browser} install attempt ${attempt} failed with status ${status}"
+              case "${browser}" in
+                chromium) rm -rf ~/.cache/ms-playwright/chromium-* ~/.cache/ms-playwright/chrome-* ;;
+                firefox) rm -rf ~/.cache/ms-playwright/firefox-* ;;
+              esac
+              sleep $((attempt * 5))
+            done
+            return 1
+          }
+
+          install_browser chromium
+          install_browser firefox
           npx playwright --version
           du -sh ~/.cache/ms-playwright || true
 
