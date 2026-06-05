@@ -36,8 +36,8 @@ func TestOpenSQLiteAppliesLocalMigrations(t *testing.T) {
 	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM bun_migrations`).Scan(&count); err != nil {
 		t.Fatalf("query bun migrations table: %v", err)
 	}
-	if count != 7 {
-		t.Fatalf("bun_migrations count = %d, want 7", count)
+	if count != 8 {
+		t.Fatalf("bun_migrations count = %d, want 8", count)
 	}
 }
 
@@ -59,8 +59,8 @@ func TestOpenSQLiteBootstrapsLegacyMigrationState(t *testing.T) {
 	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM bun_migrations`).Scan(&count); err != nil {
 		t.Fatalf("query bun migrations table: %v", err)
 	}
-	if count != 7 {
-		t.Fatalf("bun_migrations count = %d, want 7", count)
+	if count != 8 {
+		t.Fatalf("bun_migrations count = %d, want 8", count)
 	}
 }
 

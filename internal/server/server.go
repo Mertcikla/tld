@@ -53,6 +53,9 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	depSvc := &api.DependencyService{Store: apiStore}
 	importSvc := &api.ImportService{Store: apiStore}
 	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: lockHooks}
+	collabHub := api.NewCollaborationHub()
+	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: lockHooks, Hub: collabHub}
+	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: lockHooks, Hub: collabHub}
 
 	mux := http.NewServeMux()
 	watch.NewHandler(watchStore).Register(mux)
@@ -101,6 +104,8 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 		_, _ = w.Write([]byte(svg))
 	})
 
+	mux.HandleFunc("GET /api/views/{id}/ws", collabRealtime.WS)
+
 	wsPath, wsHandler := diagv1connect.NewWorkspaceServiceHandler(wsSvc)
 	mux.Handle("/api"+wsPath, http.StripPrefix("/api", wsHandler))
 
@@ -116,12 +121,17 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	versionPath, versionHandler := diagv1connect.NewWorkspaceVersionServiceHandler(versionSvc)
 	mux.Handle("/api"+versionPath, http.StripPrefix("/api", versionHandler))
 
+	collabPath, collabHandler := diagv1connect.NewCollaborationServiceHandler(collabSvc)
+	mux.Handle("/api"+collabPath, http.StripPrefix("/api", collabHandler))
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		serveStatic(static, w, r)
 	})
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mux.ServeHTTP(w, r.WithContext(api.WithWorkspaceID(r.Context(), workspaceID)))
+		ctx := api.WithWorkspaceID(r.Context(), workspaceID)
+		ctx = api.WithCollaborationRequestInfo(ctx, api.CollaborationRequestInfo{RemoteAddr: r.RemoteAddr})
+		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
 
 	return &Server{handler: localCORSMiddleware(handler, opts)}, nil
