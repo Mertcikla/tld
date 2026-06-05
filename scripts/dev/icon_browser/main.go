@@ -397,7 +397,7 @@ func (s *iconBrowserServer) stateLocked() (stateResponse, error) {
 		fileSet[file.URL] = true
 	}
 	seenCatalogFiles := make(map[string]bool, len(catalog))
-	var missing []string
+	missing := []string{}
 	for _, item := range catalog {
 		iconURL := item.IconURL
 		if iconURL == "" {
@@ -408,7 +408,7 @@ func (s *iconBrowserServer) stateLocked() (stateResponse, error) {
 			missing = append(missing, item.DefaultSlug)
 		}
 	}
-	var orphans []string
+	orphans := []string{}
 	for _, file := range files {
 		if !seenCatalogFiles[file.URL] {
 			orphans = append(orphans, file.Path)

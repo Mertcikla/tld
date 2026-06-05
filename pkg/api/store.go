@@ -41,21 +41,21 @@ func WithWorkspaceID(ctx context.Context, id uuid.UUID) context.Context {
 
 // ElementInput holds mutable fields for element create/update.
 type ElementInput struct {
-	Name        string
-	Description *string
-	Kind        *string
-	Technology  *string
-	URL         *string
-	LogoURL     *string
-	TechLinks   []*diagv1.TechnologyLink
-	Tags        []string
-	Repo        *string
-	Branch      *string
-	Language    *string
-	FilePath    *string
+	Name            string
+	Description     *string
+	Kind            *string
+	Technology      *string
+	URL             *string
+	LogoURL         *string
+	TechLinks       []*diagv1.TechnologyLink
+	Tags            []string
+	Repo            *string
+	Branch          *string
+	Language        *string
+	FilePath        *string
 	BypassNoiseGate *bool
-	HasView     bool
-	ViewLabel   *string
+	HasView         bool
+	ViewLabel       *string
 }
 
 // ConnectorInput holds mutable fields for connector create/update.
