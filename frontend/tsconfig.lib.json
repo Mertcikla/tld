@@ -14,6 +14,13 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@buf/tldiagramcom_diagram.bufbuild_es/*": [
+        "src/gen/*",
+        "node_modules/@buf/tldiagramcom_diagram.bufbuild_es/*"
+      ]
+    },
     "ignoreDeprecations": "5.0",
     "rootDir": "src",
     "declaration": true,

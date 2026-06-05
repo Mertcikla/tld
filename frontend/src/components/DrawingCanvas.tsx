@@ -33,7 +33,7 @@ export interface DrawingCanvasHandle {
 }
 
 /**
- * A premium free-drawing overlay with smooth ink-like strokes, hit detection for move/erase,
+ * Free-drawing overlay with smooth ink-like strokes, hit detection for move/erase,
  * and a broad eraser brush.
  */
 function trySetPointerCapture(canvas: HTMLCanvasElement, pointerId: number) {

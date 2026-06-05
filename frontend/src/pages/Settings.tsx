@@ -7,6 +7,7 @@ import { isWailsApp, tldVersion } from '../config/runtime'
 
 
 const DEFAULT_NAV_ITEMS = [
+  { label: 'Collaboration', path: '/settings/profile' },
   { label: 'Appearance', path: '/settings/appearance' },
   { label: 'Experimental', path: '/settings/experimental' },
 ]

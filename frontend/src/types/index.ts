@@ -129,6 +129,46 @@ export interface Connector {
   updated_at: string
 }
 
+export interface ViewComment {
+  id: number
+  org_id: string
+  view_id: number
+  diagram_id: number
+  thread_id: number
+  author_id: string
+  author_username: string
+  body: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ViewThread {
+  id: number
+  org_id: string
+  view_id: number
+  diagram_id: number
+  element_id: number | null
+  connector_id: number | null
+  created_by: string
+  created_by_username: string
+  status: 'open' | 'resolved'
+  created_at: string
+  resolved_at: string | null
+  comments: ViewComment[]
+}
+
+export interface ThreadResolveEvent {
+  thread_id: number
+  resolved: boolean
+}
+
+export interface ElementReactionSummary {
+  element_id: number
+  emoji: string
+  count: number
+  reacted_by_me: boolean
+}
+
 export interface ViewTreeNode {
   id: number
   owner_element_id?: number | null

@@ -300,6 +300,7 @@ interface CanvasInteractionOptions {
   onPlacementsMoved?: (before: PlacedElement[], after: PlacedElement[]) => void
   onElementPositionPreview?: (elementId: number, x: number, y: number) => void
   onPlacementRemoved?: (placement: PlacedElement) => void
+  onConnectorSaved?: (connector: Connector) => void
   onConnectorUpdated?: (before: Connector, after: Connector) => void
   onConnectorDeleted?: (connector: Connector) => void
   onSelectionRemoveFromView?: () => Promise<void>
@@ -460,6 +461,7 @@ export function useCanvasInteractions({
   onPlacementsMoved,
   onElementPositionPreview,
   onPlacementRemoved,
+  onConnectorSaved,
   onConnectorUpdated,
   onConnectorDeleted,
   onSelectionRemoveFromView,
@@ -602,8 +604,9 @@ export function useCanvasInteractions({
   const finalizeConnectorCreate = useCallback(async (connector: Connector) => {
     upsertConnectorGraphSnapshot(connector)
     upsertConnector(connector)
+    onConnectorSaved?.(connector)
     await refreshElements()
-  }, [refreshElements, upsertConnector])
+  }, [onConnectorSaved, refreshElements, upsertConnector])
 
   // ── Ref-forwarded callbacks ────────────────────────────────────────────────
   const openConnectorPanelRef = useRef(openConnectorPanel)
@@ -1250,9 +1253,10 @@ export function useCanvasInteractions({
       const connector = connectorToConnector(updated)
       upsertConnectorGraphSnapshot(connector)
       replaceConnector(connector)
+      onConnectorSaved?.(connector)
       if (existingData) onConnectorUpdated?.(existingData, connector)
     } catch { /* intentionally empty */ }
-  }, [canEdit, replaceConnector, viewId, setRfEdges, onConnectorUpdated])
+  }, [canEdit, replaceConnector, viewId, setRfEdges, onConnectorSaved, onConnectorUpdated])
   const onReconnect = useCallback(async (oldConnector: RFEdge, newConnection: Connection) => {
     await performReconnect(oldConnector, newConnection)
   }, [performReconnect])

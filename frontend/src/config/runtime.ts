@@ -55,5 +55,5 @@ export function apiUrl(path: string): string {
 }
 
 export function fetchApiAsset(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  return fetch(input, init)
+  return fetch(input, { ...init, credentials: init?.credentials ?? 'include' })
 }

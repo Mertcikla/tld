@@ -1,17 +1,19 @@
 import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate, Outlet, useSearchParams } from 'react-router-dom'
-import { Box, Spinner, Center } from '@chakra-ui/react'
+import { Box, HStack, Spinner, Center } from '@chakra-ui/react'
 import { api } from './api/client'
 import ViewEditor from './pages/ViewEditor'
 import ViewsPage from './pages/Views'
 import Inventory from './pages/Inventory'
 import { SharedInfiniteZoom } from './pages/InfiniteZoom'
 import Settings from './pages/Settings'
+import ProfileSettings from './pages/ProfileSettings'
 import AppearanceSettings from './pages/AppearanceSettings'
 import ExperimentalSettings from './pages/ExperimentalSettings'
 import UpdateSettings from './pages/UpdateSettings'
 import { HeaderProvider, useHeader } from './components/HeaderContext'
 import TopMenuBar from './components/TopMenuBar'
+import TopMenuBarCollaboration, { type CollaborationProps } from './components/TopMenuBarCollaboration'
 import WorkspacePanel from './components/WorkspacePanel'
 import { ExperimentalProvider, useExperimental } from './context/ExperimentalContext'
 import { WorkspaceVersionProvider } from './context/WorkspaceVersionContext'
@@ -26,8 +28,17 @@ function AppLayout() {
   const header = useHeader()
   const node = header && typeof header === 'object' && 'node' in header ? (header as { node: React.ReactNode }).node : header
   const hideMobileBar = header && typeof header === 'object' && 'hideMobileBar' in header ? !!(header as { hideMobileBar?: boolean }).hideMobileBar : false
+  const collaboration = header && typeof header === 'object' && 'collaboration' in header ? (header as { collaboration?: CollaborationProps }).collaboration : undefined
   const hideTopBar = typeof window !== 'undefined' && !!window.__TLD_VSCODE__
   const { experimental } = useExperimental()
+  const rightSlot = collaboration || experimental.watchEnabled
+    ? (
+      <HStack spacing={2}>
+        {collaboration && <TopMenuBarCollaboration collaboration={collaboration} />}
+        {experimental.watchEnabled && <WorkspacePanel />}
+      </HStack>
+    )
+    : undefined
 
   return (
     <Box
@@ -44,7 +55,7 @@ function AppLayout() {
     >
       {!hideTopBar && (
         <>
-          <TopMenuBar hideMobileBar={hideMobileBar} rightSlot={experimental.watchEnabled ? <WorkspacePanel /> : undefined}>
+          <TopMenuBar hideMobileBar={hideMobileBar} rightSlot={rightSlot}>
             {node}
           </TopMenuBar>
           <Box
@@ -115,8 +126,9 @@ export default function App() {
               <Route path="dependencies" element={<DependenciesRedirect />} />
               <Route path="explore" element={<Navigate to="/views" replace />} />
               <Route path="settings" element={<Settings />}>
-                <Route index element={<Navigate to="appearance" replace />} />
+                <Route index element={<Navigate to="profile" replace />} />
                 {platform.getSettingsRoutes({ user: null })}
+                <Route path="profile" element={<ProfileSettings />} />
                 <Route path="appearance" element={<AppearanceSettings />} />
                 <Route path="experimental" element={<ExperimentalSettings />} />
                 <Route path="updates" element={isWailsApp ? <UpdateSettings /> : <Navigate to="/settings/appearance" replace />} />
