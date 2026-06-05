@@ -27,6 +27,10 @@ export default defineConfig({
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
     },
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] },
+    },
   ],
   webServer: {
     command: `${binary} serve --foreground --host 127.0.0.1 --port ${port} --data-dir ${dataDir}`,
