@@ -116,6 +116,11 @@ jobs:
     name: Playwright E2E Tests
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      # Keep this tag in sync with frontend/package-lock.json @playwright/test.
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
+      options: --user 1001
     strategy:
       fail-fast: false
       matrix:
@@ -147,56 +152,6 @@ jobs:
         working-directory: frontend
         run: npm run build:app
 
-      - name: Resolve Playwright version
-        id: playwright-version
-        working-directory: frontend
-        run: node -e "console.log('version=' + require('@playwright/test/package.json').version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium-firefox
-          restore-keys: |
-            ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium
-
-      - name: Install Playwright system dependencies
-        working-directory: frontend
-        timeout-minutes: 10
-        run: npx playwright install-deps chromium firefox
-
-      - name: Install Playwright browsers
-        working-directory: frontend
-        timeout-minutes: 35
-        env:
-          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: 120000
-          DEBUG: pw:install
-        run: |
-          set -euo pipefail
-
-          install_browser() {
-            local browser="$1"
-            for attempt in 1 2 3; do
-              echo "Installing Playwright ${browser} (attempt ${attempt}/3)"
-              if timeout 8m npx playwright install "${browser}"; then
-                return 0
-              fi
-              status=$?
-              echo "Playwright ${browser} install attempt ${attempt} failed with status ${status}"
-              case "${browser}" in
-                chromium) rm -rf ~/.cache/ms-playwright/chromium-* ~/.cache/ms-playwright/chrome-* ;;
-                firefox) rm -rf ~/.cache/ms-playwright/firefox-* ;;
-              esac
-              sleep $((attempt * 5))
-            done
-            return 1
-          }
-
-          install_browser chromium
-          install_browser firefox
-          npx playwright --version
-          du -sh ~/.cache/ms-playwright || true
-
       - name: Build E2E binary
         run: go build -o /tmp/tld-e2e ./cmd/tld
 
@@ -206,13 +161,12 @@ jobs:
           TLD_E2E_BINARY: /tmp/tld-e2e
           TLD_E2E_PORT: 1806${{ matrix.shard }}
           TLD_E2E_DATA_DIR: /tmp/tld-playwright-${{ github.run_id }}-${{ matrix.shard }}
-          PLAYWRIGHT_JSON_OUTPUT_NAME: report-${{ matrix.shard }}.json
-        run: npx playwright test -c playwright.config.ts --shard=${{ matrix.shard }}/4 --reporter=json,line
+        run: npx playwright test -c playwright.config.ts --shard=${{ matrix.shard }}/4
 
       - name: Publish Playwright report
-        if: ${{ github.event_name == 'pull_request' && !cancelled() && hashFiles(format('frontend/report-{0}.json', matrix.shard)) != '' }}
-        uses: sidharthv96/playwright-report-action@v2.0-rc.5
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          coverage-file: frontend/report-${{ matrix.shard }}.json
-          skip-step: all
+          name: playwright-report-${{ matrix.shard }}
+          path: frontend/playwright-report/
+          retention-days: 30
