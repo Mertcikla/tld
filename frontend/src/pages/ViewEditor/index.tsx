@@ -50,6 +50,7 @@ import type {
   ViewThread,
   VisibilityOverride,
   Tag,
+  TechnologyConnector,
 } from '../../types'
 import ElementNode from '../../components/ElementNode'
 import ElementPanel from '../../components/ElementPanel'
@@ -495,8 +496,55 @@ function mermaidConnectorHandles(direction: MermaidDirection) {
   return { source_handle: 'right', target_handle: 'left' }
 }
 
+function finitePlanNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function mermaidImportMetadataPosition(element: ParsedImport['elements'][number]) {
+  const placement = element.placements?.[0]
+  const x = finitePlanNumber(placement?.positionX)
+  const y = finitePlanNumber(placement?.positionY)
+  return x === null || y === null ? null : { x, y }
+}
+
+function mermaidImportTechnologyConnectors(element: ParsedImport['elements'][number]): TechnologyConnector[] {
+  return (element.technologyLinks ?? [])
+    .filter((link) => link.label.trim())
+    .map((link): TechnologyConnector => ({
+      type: link.type === 'catalog' ? 'catalog' : 'custom',
+      slug: link.slug || undefined,
+      label: link.label,
+      is_primary_icon: link.isPrimaryIcon,
+    }))
+}
+
 function layoutMermaidImport(parsed: ParsedImport, center: { x: number; y: number }) {
   const refs = parsed.elements.map((element) => element.ref).filter(Boolean)
+  const metadataPositions = new Map<string, { x: number; y: number }>()
+  parsed.elements.forEach((element) => {
+    const position = mermaidImportMetadataPosition(element)
+    if (position) metadataPositions.set(element.ref, position)
+  })
+  if (metadataPositions.size > 0) {
+    const values = Array.from(metadataPositions.values())
+    const left = Math.min(...values.map((position) => position.x))
+    const right = Math.max(...values.map((position) => position.x))
+    const top = Math.min(...values.map((position) => position.y))
+    const bottom = Math.max(...values.map((position) => position.y))
+    const metadataCenter = {
+      x: left + (right - left) / 2,
+      y: top + (bottom - top) / 2,
+    }
+    const positions = new Map<string, { x: number; y: number }>()
+    metadataPositions.forEach((position, ref) => {
+      positions.set(ref, {
+        x: center.x + position.x - metadataCenter.x,
+        y: center.y + position.y - metadataCenter.y,
+      })
+    })
+    return positions
+  }
+
   const refSet = new Set(refs)
   const outgoing = new Map<string, string[]>()
   const indegree = new Map<string, number>()
@@ -3557,8 +3605,22 @@ function ViewEditorInner({
           description: element.description ?? '',
           technology: element.technology ?? '',
           url: element.url ?? '',
+          logo_url: element.logoUrl ?? undefined,
+          technology_connectors: mermaidImportTechnologyConnectors(element),
           tags: element.tags ?? [],
+          repo: element.repo ?? undefined,
+          branch: element.branch ?? undefined,
+          file_path: element.filePath ?? undefined,
+          language: element.language ?? undefined,
+          bypass_noise_gate: element.bypassNoiseGate ?? false,
         })
+        if (element.hasView) {
+          await api.workspace.views.create({
+            name: element.name || created.name,
+            label: element.viewLabel ?? undefined,
+            parent_view_id: created.id,
+          })
+        }
         createdByRef.set(element.ref, created)
       }
 
@@ -3578,8 +3640,11 @@ function ViewEditorInner({
           source_element_id: source.id,
           target_element_id: target.id,
           label: connector.label ?? '',
+          description: connector.description ?? '',
+          relationship: connector.relationship ?? '',
           direction: connector.direction ?? 'forward',
           style: connector.style ?? 'bezier',
+          url: connector.url ?? '',
           source_handle: connector.sourceHandle ?? handles.source_handle,
           target_handle: connector.targetHandle ?? handles.target_handle,
         })

@@ -1,6 +1,6 @@
 import { C4, Flowchart, isC4Diagram, isFlowchartDiagram, parseAsync, parseC4, parseFlowchart } from 'mermaid-ast'
-import type { PlanConnector, PlanElement } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
-import type { Connector, PlacedElement } from '../../types'
+import type { PlanConnector, PlanElement, TechnologyLink } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
+import type { Connector, PlacedElement, TechnologyConnector } from '../../types'
 
 export type MermaidDirection = 'TB' | 'TD' | 'BT' | 'RL' | 'LR'
 
@@ -34,9 +34,329 @@ function asString(value: unknown, fallback = '') {
   return typeof value === 'string' && value.trim() ? value : fallback
 }
 
+function asTrimmedString(value: string | null | undefined) {
+  const trimmed = value?.trim()
+  return trimmed || ''
+}
+
 function mapEntries(value: unknown): Array<[string, Record<string, unknown>]> {
   if (!(value instanceof Map)) return []
   return Array.from(value.entries()).map(([key, item]) => [String(key), asRecord(item)])
+}
+
+interface TldElementMetadata {
+  x?: number
+  y?: number
+  kind?: string
+  description?: string
+  technology?: string
+  url?: string
+  logoUrl?: string
+  tags?: string[]
+  technologyLinks?: TechnologyLink[]
+  repo?: string
+  branch?: string
+  filePath?: string
+  language?: string
+  bypassNoiseGate?: boolean
+  hasView?: boolean
+  viewLabel?: string
+}
+
+interface TldConnectorMetadata {
+  subject: string
+  description?: string
+  relationship?: string
+  direction?: string
+  style?: string
+  url?: string
+  sourceHandle?: string
+  targetHandle?: string
+}
+
+interface TldMetadata {
+  elements: Map<string, TldElementMetadata>
+  connectorsBySubject: Map<string, TldConnectorMetadata[]>
+}
+
+function splitEscaped(value: string, separator: string) {
+  const parts: string[] = []
+  let current = ''
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+    if (char === '\\' && index + 1 < value.length) {
+      current += char + value[index + 1]
+      index += 1
+      continue
+    }
+    if (char === separator) {
+      parts.push(current)
+      current = ''
+      continue
+    }
+    current += char
+  }
+  parts.push(current)
+  return parts
+}
+
+function escapeMetadataValue(value: string) {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r')
+    .replace(/\t/g, '\\t')
+    .replace(/ /g, '\\s')
+    .replace(/=/g, '\\=')
+    .replace(/,/g, '\\,')
+    .replace(/\|/g, '\\|')
+    .replace(/:/g, '\\:')
+}
+
+function unescapeMetadataValue(value: string) {
+  let out = ''
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+    if (char !== '\\') {
+      out += char
+      continue
+    }
+    index += 1
+    if (index >= value.length) return null
+    switch (value[index]) {
+      case '\\':
+      case '=':
+      case ',':
+      case '|':
+      case ':':
+        out += value[index]
+        break
+      case 'n':
+        out += '\n'
+        break
+      case 'r':
+        out += '\r'
+        break
+      case 't':
+        out += '\t'
+        break
+      case 's':
+        out += ' '
+        break
+      default:
+        return null
+    }
+  }
+  return out
+}
+
+function encodeStringList(values: string[]) {
+  return values.map(escapeMetadataValue).join(',')
+}
+
+function decodeStringList(value: string) {
+  if (!value) return []
+  const out: string[] = []
+  for (const raw of splitEscaped(value, ',')) {
+    const item = unescapeMetadataValue(raw)
+    if (item === null) return null
+    out.push(item)
+  }
+  return out
+}
+
+function technologyLinkIsPrimary(link: TechnologyConnector) {
+  return Boolean(link.is_primary_icon ?? link.isPrimaryIcon)
+}
+
+function encodeTechnologyLinks(values: TechnologyConnector[]) {
+  return values.map((link) => [
+    link.type,
+    link.slug ?? '',
+    link.label,
+    technologyLinkIsPrimary(link) ? '1' : '0',
+  ].map(escapeMetadataValue).join(':')).join('|')
+}
+
+function decodeTechnologyLinks(value: string): TechnologyLink[] | null {
+  if (!value) return []
+  const links: TechnologyLink[] = []
+  for (const rawLink of splitEscaped(value, '|')) {
+    const fields = splitEscaped(rawLink, ':')
+    if (fields.length < 3 || fields.length > 4) return null
+    const [rawType, rawSlug, rawLabel, rawPrimary = '0'] = fields
+    const type = unescapeMetadataValue(rawType)
+    const slug = unescapeMetadataValue(rawSlug)
+    const label = unescapeMetadataValue(rawLabel)
+    const primary = unescapeMetadataValue(rawPrimary)
+    if ((type !== 'catalog' && type !== 'custom') || slug === null || label === null || primary === null) return null
+    if (!label.trim()) return null
+    links.push({
+      type,
+      slug: slug || undefined,
+      label,
+      isPrimaryIcon: primary === '1' || primary === 'true',
+    } as TechnologyLink)
+  }
+  return links
+}
+
+function compactNumber(value: number) {
+  return Number.isInteger(value) ? String(value) : String(Math.round(value * 1000) / 1000)
+}
+
+function finiteNumber(value: unknown) {
+  const number = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function decodeNumber(value: string) {
+  const raw = unescapeMetadataValue(value)
+  if (raw === null) return null
+  return finiteNumber(raw)
+}
+
+function decodeBoolean(value: string) {
+  const raw = unescapeMetadataValue(value)
+  if (raw === null) return null
+  if (raw === '1' || raw === 'true') return true
+  if (raw === '0' || raw === 'false') return false
+  return null
+}
+
+function parseMetadataPairs(tokens: string[]) {
+  const pairs = new Map<string, string>()
+  for (const token of tokens) {
+    const equals = token.indexOf('=')
+    if (equals <= 0) continue
+    pairs.set(token.slice(0, equals), token.slice(equals + 1))
+  }
+  return pairs
+}
+
+function parseElementMetadata(pairs: Map<string, string>): TldElementMetadata {
+  const metadata: TldElementMetadata = {}
+  const stringKeys: Array<[string, keyof TldElementMetadata]> = [
+    ['kind', 'kind'],
+    ['desc', 'description'],
+    ['tech', 'technology'],
+    ['url', 'url'],
+    ['logo', 'logoUrl'],
+    ['repo', 'repo'],
+    ['branch', 'branch'],
+    ['file', 'filePath'],
+    ['lang', 'language'],
+    ['viewLabel', 'viewLabel'],
+  ]
+
+  for (const [key, field] of stringKeys) {
+    const value = pairs.get(key)
+    if (value === undefined) continue
+    const decoded = unescapeMetadataValue(value)
+    if (decoded) metadata[field] = decoded as never
+  }
+
+  const x = pairs.get('x')
+  const y = pairs.get('y')
+  if (x !== undefined) {
+    const decoded = decodeNumber(x)
+    if (decoded !== null) metadata.x = decoded
+  }
+  if (y !== undefined) {
+    const decoded = decodeNumber(y)
+    if (decoded !== null) metadata.y = decoded
+  }
+
+  const tags = pairs.get('tags')
+  if (tags !== undefined) {
+    const decoded = decodeStringList(tags)
+    if (decoded && decoded.length > 0) metadata.tags = decoded
+  }
+
+  const technologyLinks = pairs.get('techLinks')
+  if (technologyLinks !== undefined) {
+    const decoded = decodeTechnologyLinks(technologyLinks)
+    if (decoded && decoded.length > 0) metadata.technologyLinks = decoded
+  }
+
+  const bypass = pairs.get('bypass')
+  if (bypass !== undefined) {
+    const decoded = decodeBoolean(bypass)
+    if (decoded !== null) metadata.bypassNoiseGate = decoded
+  }
+
+  const hasView = pairs.get('hasView')
+  if (hasView !== undefined) {
+    const decoded = decodeBoolean(hasView)
+    if (decoded !== null) metadata.hasView = decoded
+  }
+
+  return metadata
+}
+
+function parseConnectorMetadata(subject: string, pairs: Map<string, string>): TldConnectorMetadata {
+  const metadata: TldConnectorMetadata = { subject }
+  const stringKeys: Array<[string, keyof Omit<TldConnectorMetadata, 'subject'>]> = [
+    ['desc', 'description'],
+    ['rel', 'relationship'],
+    ['dir', 'direction'],
+    ['style', 'style'],
+    ['url', 'url'],
+    ['sourceHandle', 'sourceHandle'],
+    ['targetHandle', 'targetHandle'],
+  ]
+
+  for (const [key, field] of stringKeys) {
+    const value = pairs.get(key)
+    if (value === undefined) continue
+    const decoded = unescapeMetadataValue(value)
+    if (decoded) metadata[field] = decoded
+  }
+
+  return metadata
+}
+
+function parseTldMetadata(source: string): TldMetadata | null {
+  const lines = source.split(/\r?\n/)
+  const metadata: TldMetadata = {
+    elements: new Map(),
+    connectorsBySubject: new Map(),
+  }
+  let markerSeen = false
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('%%')) continue
+    const body = trimmed.slice(2).trim()
+    if (/^tld\/v1(?:\s|$)/.test(body)) {
+      markerSeen = true
+      continue
+    }
+    if (!markerSeen) continue
+
+    const tokens = body.split(/\s+/).filter(Boolean)
+    if (tokens.length < 2) continue
+    const [kind, subject, ...pairTokens] = tokens
+    const pairs = parseMetadataPairs(pairTokens)
+    if (kind === 'element') {
+      metadata.elements.set(subject, parseElementMetadata(pairs))
+    } else if (kind === 'connector') {
+      const item = parseConnectorMetadata(subject, pairs)
+      const queue = metadata.connectorsBySubject.get(subject) ?? []
+      queue.push(item)
+      metadata.connectorsBySubject.set(subject, queue)
+    }
+  }
+
+  return markerSeen ? metadata : null
+}
+
+function stripMermaidCommentLines(source: string) {
+  return source
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith('%%'))
+    .join('\n')
+    .trim()
 }
 
 function sanitizeLabel(value: string) {
@@ -80,7 +400,10 @@ function toMermaidDirection(value: unknown): MermaidDirection {
 }
 
 function isSupportedMermaidStart(code: string) {
-  return /^(?:---|flowchart|graph|sequenceDiagram|classDiagram|erDiagram|stateDiagram(?:-v2)?|requirementDiagram|sankey-beta|pie|gitGraph|quadrantChart|mindmap|journey|gantt|timeline|xychart-beta|architecture-beta|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)\b/i.test(code.trim())
+  const lines = code.trim().split(/\r?\n/)
+  const start = firstMermaidBodyLineIndex(lines)
+  if (start < 0) return false
+  return /^(?:flowchart|graph|sequenceDiagram|classDiagram|erDiagram|stateDiagram(?:-v2)?|requirementDiagram|sankey-beta|pie|gitGraph|quadrantChart|mindmap|journey|gantt|timeline|xychart-beta|architecture-beta|C4Context|C4Container|C4Component|C4Dynamic|C4Deployment)\b/i.test(lines[start].trim())
 }
 
 function firstMermaidBodyLineIndex(lines: string[]) {
@@ -142,18 +465,21 @@ export async function tryParseMermaidAsync(text: string): Promise<ParsedImport |
 export function parseMermaid(code: string): ParsedImport {
   const source = extractMermaidCode(code) ?? code.trim()
   const result = createParsedImport(source)
+  const metadata = parseTldMetadata(source)
+  const parseSource = stripMermaidCommentLines(source)
 
   try {
-    if (isArchitectureBetaDiagram(source)) {
-      convertArchitectureBetaSource(result, source)
-    } else if (isFlowchartDiagram(source)) {
-      const ast = parseFlowchart(source)
+    if (isArchitectureBetaDiagram(parseSource)) {
+      convertArchitectureBetaSource(result, parseSource)
+    } else if (isFlowchartDiagram(parseSource)) {
+      const ast = parseFlowchart(parseSource)
       convertFlowchartAst(result, ast)
-    } else if (isC4Diagram(source)) {
-      convertC4Ast(result, parseC4(source))
+    } else if (isC4Diagram(parseSource)) {
+      convertC4Ast(result, parseC4(parseSource))
     } else {
       result.warnings.push('Unsupported diagram type')
     }
+    applyTldMetadata(result, metadata)
   } catch (err) {
     result.warnings.push(err instanceof Error ? err.message : 'Failed to parse Mermaid diagram')
   }
@@ -164,19 +490,66 @@ export function parseMermaid(code: string): ParsedImport {
 export async function parseMermaidAsync(code: string): Promise<ParsedImport> {
   const source = extractMermaidCode(code) ?? code.trim()
   const result = createParsedImport(source)
+  const metadata = parseTldMetadata(source)
+  const parseSource = stripMermaidCommentLines(source)
 
   try {
-    if (isArchitectureBetaDiagram(source)) {
-      convertArchitectureBetaSource(result, source)
+    if (isArchitectureBetaDiagram(parseSource)) {
+      convertArchitectureBetaSource(result, parseSource)
     } else {
-      const ast = await parseAsync(source)
+      const ast = await parseAsync(parseSource)
       convertMermaidAst(result, asRecord(ast))
     }
+    applyTldMetadata(result, metadata)
   } catch (err) {
     result.warnings.push(err instanceof Error ? err.message : 'Failed to parse Mermaid diagram')
   }
 
   return result
+}
+
+function applyTldMetadata(result: ParsedImport, metadata: TldMetadata | null) {
+  if (!metadata) return
+
+  for (const element of result.elements) {
+    const item = metadata.elements.get(element.ref)
+    if (!item) continue
+    if (item.kind) element.kind = item.kind
+    if (item.description) element.description = item.description
+    if (item.technology) element.technology = item.technology
+    if (item.url) element.url = item.url
+    if (item.logoUrl) element.logoUrl = item.logoUrl
+    if (item.tags) element.tags = item.tags
+    if (item.technologyLinks) element.technologyLinks = item.technologyLinks
+    if (item.repo) element.repo = item.repo
+    if (item.branch) element.branch = item.branch
+    if (item.filePath) element.filePath = item.filePath
+    if (item.language) element.language = item.language
+    if (item.bypassNoiseGate !== undefined) element.bypassNoiseGate = item.bypassNoiseGate
+    if (item.hasView !== undefined) element.hasView = item.hasView
+    if (item.viewLabel) element.viewLabel = item.viewLabel
+    if (item.x !== undefined && item.y !== undefined) {
+      const placement = element.placements?.[0] ?? { parentRef: 'root' }
+      placement.parentRef = placement.parentRef || 'root'
+      placement.positionX = item.x
+      placement.positionY = item.y
+      element.placements = [placement]
+    }
+  }
+
+  for (const connector of result.connectors) {
+    const subject = `${connector.sourceElementRef}->${connector.targetElementRef}`
+    const queue = metadata.connectorsBySubject.get(subject)
+    const item = queue?.shift()
+    if (!item) continue
+    if (item.description) connector.description = item.description
+    if (item.relationship) connector.relationship = item.relationship
+    if (item.direction) connector.direction = item.direction
+    if (item.style) connector.style = item.style
+    if (item.url) connector.url = item.url
+    if (item.sourceHandle) connector.sourceHandle = item.sourceHandle
+    if (item.targetHandle) connector.targetHandle = item.targetHandle
+  }
 }
 
 function architectureKind(icon: string, nodeType: 'group' | 'service' | 'junction') {
@@ -625,6 +998,64 @@ function sanitizeMermaidId(value: string) {
   return /^[A-Za-z_]/.test(sanitized) ? sanitized : `node_${sanitized}`
 }
 
+type MetadataEntry = [key: string, encodedValue: string]
+
+function metadataComment(kind: 'element' | 'connector', subject: string, entries: MetadataEntry[]) {
+  const pairs = entries.map(([key, value]) => `${key}=${value}`).join(' ')
+  return pairs ? `%% ${kind} ${subject} ${pairs}` : `%% ${kind} ${subject}`
+}
+
+function stringEntry(key: string, value: string | null | undefined): MetadataEntry | null {
+  const trimmed = asTrimmedString(value)
+  return trimmed ? [key, escapeMetadataValue(trimmed)] : null
+}
+
+function pushStringEntry(entries: MetadataEntry[], key: string, value: string | null | undefined) {
+  const entry = stringEntry(key, value)
+  if (entry) entries.push(entry)
+}
+
+function elementMetadataEntries(element: PlacedElement): MetadataEntry[] {
+  const entries: MetadataEntry[] = [
+    ['x', compactNumber(finiteNumber(element.position_x) ?? 0)],
+    ['y', compactNumber(finiteNumber(element.position_y) ?? 0)],
+  ]
+  const kind = asTrimmedString(element.kind)
+  if (kind && kind !== 'system') entries.push(['kind', escapeMetadataValue(kind)])
+  pushStringEntry(entries, 'desc', element.description)
+  pushStringEntry(entries, 'tech', element.technology)
+  pushStringEntry(entries, 'url', element.url)
+  pushStringEntry(entries, 'logo', element.logo_url)
+  const tags = (element.tags ?? []).filter((tag) => tag.trim())
+  if (tags.length > 0) entries.push(['tags', encodeStringList(tags)])
+  const technologyLinks = (element.technology_connectors ?? []).filter((link) => link.label.trim())
+  if (technologyLinks.length > 0) entries.push(['techLinks', encodeTechnologyLinks(technologyLinks)])
+  pushStringEntry(entries, 'repo', element.repo)
+  pushStringEntry(entries, 'branch', element.branch)
+  pushStringEntry(entries, 'file', element.file_path)
+  pushStringEntry(entries, 'lang', element.language)
+  if (element.bypass_noise_gate) entries.push(['bypass', '1'])
+  if (element.has_view) entries.push(['hasView', '1'])
+  pushStringEntry(entries, 'viewLabel', element.view_label)
+  return entries
+}
+
+function connectorMetadataEntries(connector: Connector): MetadataEntry[] {
+  const entries: MetadataEntry[] = []
+  pushStringEntry(entries, 'desc', connector.description)
+  pushStringEntry(entries, 'rel', connector.relationship)
+  const direction = asTrimmedString(connector.direction)
+  if (direction && direction !== 'forward') entries.push(['dir', escapeMetadataValue(direction)])
+  const style = asTrimmedString(connector.style)
+  if (style && style !== 'bezier') entries.push(['style', escapeMetadataValue(style)])
+  pushStringEntry(entries, 'url', connector.url)
+  const sourceHandle = asTrimmedString(connector.source_handle)
+  if (sourceHandle && sourceHandle !== 'right') entries.push(['sourceHandle', escapeMetadataValue(sourceHandle)])
+  const targetHandle = asTrimmedString(connector.target_handle)
+  if (targetHandle && targetHandle !== 'left') entries.push(['targetHandle', escapeMetadataValue(targetHandle)])
+  return entries
+}
+
 export function serializeViewToMermaid(viewElements: PlacedElement[], connectors: Connector[]) {
   const elementIds = new Set(viewElements.map((element) => element.element_id))
   const sortedElements = [...viewElements].sort((a, b) => a.element_id - b.element_id)
@@ -632,9 +1063,11 @@ export function serializeViewToMermaid(viewElements: PlacedElement[], connectors
     .filter((connector) => elementIds.has(connector.source_element_id) && elementIds.has(connector.target_element_id))
     .sort((a, b) => a.id - b.id)
 
-  const lines = ['flowchart LR']
+  const lines = ['flowchart LR', '%% tld/v1']
   for (const element of sortedElements) {
-    lines.push(`  ${sanitizeMermaidId(`node_${element.element_id}`)}["${escapeMermaidLabel(element.name)}"]`)
+    const nodeId = sanitizeMermaidId(`node_${element.element_id}`)
+    lines.push(`  ${nodeId}["${escapeMermaidLabel(element.name)}"]`)
+    lines.push(metadataComment('element', nodeId, elementMetadataEntries(element)))
   }
   if (sortedElements.length > 0 && sortedConnectors.length > 0) lines.push('')
   for (const connector of sortedConnectors) {
@@ -644,6 +1077,7 @@ export function serializeViewToMermaid(viewElements: PlacedElement[], connectors
     lines.push(label
       ? `  ${sourceId} -- "${escapeMermaidLabel(label)}" --> ${targetId}`
       : `  ${sourceId} --> ${targetId}`)
+    lines.push(metadataComment('connector', `${sourceId}->${targetId}`, connectorMetadataEntries(connector)))
   }
 
   return `${lines.join('\n')}\n`
