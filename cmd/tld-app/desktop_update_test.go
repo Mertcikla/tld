@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -64,6 +65,64 @@ func TestDesktopReleaseWorkflowPublishesUpdaterAssets(t *testing.T) {
 				t.Fatalf("%s still references old desktop asset name %s", workflowPath, asset)
 			}
 		})
+	}
+}
+
+func TestWailsReleaseWorkflowUsesProductVersionHelper(t *testing.T) {
+	workflowPath := filepath.Join("..", "..", ".github", "workflows", "wails-release.yml")
+	data, err := os.ReadFile(workflowPath)
+	if err != nil {
+		t.Fatalf("read workflow: %v", err)
+	}
+	workflow := string(data)
+
+	call := `bash scripts/ci/wails-product-version.sh "$RELEASE_TAG"`
+	if got := strings.Count(workflow, call); got != 2 {
+		t.Fatalf("workflow should call %s once per desktop release job; found %d", call, got)
+	}
+}
+
+func TestWailsProductVersionScriptNormalizesPrereleaseTags(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not available")
+	}
+
+	script := filepath.Join("..", "..", "scripts", "ci", "wails-product-version.sh")
+	tests := []struct {
+		tag  string
+		want string
+	}{
+		{tag: "v2.3.0", want: "2.3.0"},
+		{tag: "v2.3.0-beta.1", want: "2.3.0"},
+		{tag: "v2.3.0+build.7", want: "2.3.0"},
+		{tag: "v2.3.0-beta.1+build.7", want: "2.3.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tag, func(t *testing.T) {
+			cmd := exec.Command(bash, script, tt.tag)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s failed: %v\n%s", script, err, out)
+			}
+			if got := strings.TrimSpace(string(out)); got != tt.want {
+				t.Fatalf("%s returned %q, want %q", script, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWailsProductVersionScriptRejectsInvalidNumericVersion(t *testing.T) {
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("bash is not available")
+	}
+
+	script := filepath.Join("..", "..", "scripts", "ci", "wails-product-version.sh")
+	cmd := exec.Command(bash, script, "v2.3.0.1")
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Fatalf("%s accepted invalid Wails productVersion tag: %s", script, out)
 	}
 }
 

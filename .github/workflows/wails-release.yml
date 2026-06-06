@@ -60,8 +60,9 @@ jobs:
       - name: Update Version in wails.json
         run: |
           VERSION=${RELEASE_TAG#v}
-          echo "Updating wails.json version to $VERSION"
-          jq --arg ver "$VERSION" '.info.productVersion = $ver' cmd/tld-app/wails.json > tmp.json && mv tmp.json cmd/tld-app/wails.json
+          WAILS_PRODUCT_VERSION=$(bash scripts/ci/wails-product-version.sh "$RELEASE_TAG")
+          echo "Updating wails.json productVersion to $WAILS_PRODUCT_VERSION (app version $VERSION)"
+          jq --arg ver "$WAILS_PRODUCT_VERSION" '.info.productVersion = $ver' cmd/tld-app/wails.json > tmp.json && mv tmp.json cmd/tld-app/wails.json
 
       - name: Install Frontend Dependencies
         run: cd frontend && npm ci
@@ -114,8 +115,8 @@ jobs:
           # Extract Team ID dynamically from the identity string
           TEAM_ID=$(echo "$IDENTITY_NAME" | grep -oE '\([A-Z0-9]{10}\)' | tr -d '()')
           echo "Extracted Team ID: $TEAM_ID"
-          echo "TEAM_ID=$TEAM_ID" >> $GITHUB_ENV
-          echo "IDENTITY_NAME=$IDENTITY_NAME" >> $GITHUB_ENV
+          echo "TEAM_ID=$TEAM_ID" >> "$GITHUB_ENV"
+          echo "IDENTITY_NAME=$IDENTITY_NAME" >> "$GITHUB_ENV"
 
       - name: Notarize macOS Apps
         timeout-minutes: 70
@@ -267,8 +268,9 @@ jobs:
         shell: bash
         run: |
           VERSION=${RELEASE_TAG#v}
-          echo "Updating wails.json version to $VERSION"
-          jq --arg ver "$VERSION" '.info.productVersion = $ver' cmd/tld-app/wails.json > tmp.json && mv tmp.json cmd/tld-app/wails.json
+          WAILS_PRODUCT_VERSION=$(bash scripts/ci/wails-product-version.sh "$RELEASE_TAG")
+          echo "Updating wails.json productVersion to $WAILS_PRODUCT_VERSION (app version $VERSION)"
+          jq --arg ver "$WAILS_PRODUCT_VERSION" '.info.productVersion = $ver' cmd/tld-app/wails.json > tmp.json && mv tmp.json cmd/tld-app/wails.json
 
       - name: Install Frontend Dependencies
         shell: bash
