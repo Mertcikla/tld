@@ -188,7 +188,11 @@ export function connectViewRealtime(viewId: number, handlers: ViewRealtimeHandle
           if (typeof payload.element_id === 'number') handlers.onViewElementRemove(payload.element_id)
           break
         case 'element_update':
-          if (payload.element) handlers.onElementUpdate(payload.element as LibraryElement)
+          if (payload.element) {
+            handlers.onElementUpdate(payload.element as LibraryElement)
+          } else {
+            handlers.onViewStateChange?.(payload as RealtimeViewStateEvent)
+          }
           break
         case 'thread_upsert':
           if (payload.thread) handlers.onThreadUpsert(payload.thread as RealtimeViewThread)

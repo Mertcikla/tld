@@ -48,14 +48,15 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	}
 	apiStore := store.NewAPIAdapter(sqliteStore, dataDirs...)
 	lockHooks := watchLockHooks{store: watchStore}
-	wsSvc := &api.WorkspaceService{Store: apiStore, Hooks: lockHooks}
-	orgSvc := &api.OrgService{Store: apiStore, Hooks: lockHooks}
+	collabHub := api.NewCollaborationHub()
+	collabHooks := collaborationHooks{base: lockHooks, store: apiStore, hub: collabHub}
+	wsSvc := &api.WorkspaceService{Store: apiStore, Hooks: collabHooks}
+	orgSvc := &api.OrgService{Store: apiStore, Hooks: collabHooks}
 	depSvc := &api.DependencyService{Store: apiStore}
 	importSvc := &api.ImportService{Store: apiStore}
-	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: lockHooks}
-	collabHub := api.NewCollaborationHub()
-	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: lockHooks, Hub: collabHub}
-	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: lockHooks, Hub: collabHub}
+	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: collabHooks}
+	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
+	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 
 	mux := http.NewServeMux()
 	watch.NewHandler(watchStore).Register(mux)

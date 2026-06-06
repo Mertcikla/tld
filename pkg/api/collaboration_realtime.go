@@ -272,17 +272,38 @@ func (h *CollaborationHub) maybeDeleteRoom(room *realtimeRoom) {
 }
 
 func (h *CollaborationHub) BroadcastViewEvent(viewID int32, payload any) {
+	h.broadcastViewEvent(uuid.Nil, viewID, payload)
+}
+
+func (h *CollaborationHub) BroadcastWorkspaceViewEvent(workspaceID uuid.UUID, viewID int32, payload any) {
+	h.broadcastViewEvent(workspaceID, viewID, payload)
+}
+
+func (h *CollaborationHub) RefreshViewState(ctx context.Context, store Store, workspaceID uuid.UUID, viewID int32) {
+	if h == nil || store == nil {
+		return
+	}
+	for _, room := range h.roomsForView(workspaceID, viewID) {
+		room.syncFromStore(ctx, store)
+	}
+}
+
+func (h *CollaborationHub) broadcastViewEvent(workspaceID uuid.UUID, viewID int32, payload any) {
+	for _, room := range h.roomsForView(workspaceID, viewID) {
+		room.broadcast(payload, nil)
+	}
+}
+
+func (h *CollaborationHub) roomsForView(workspaceID uuid.UUID, viewID int32) []*realtimeRoom {
 	h.mu.Lock()
 	rooms := make([]*realtimeRoom, 0, len(h.rooms))
 	for _, room := range h.rooms {
-		if room.viewID == viewID {
+		if room.viewID == viewID && (workspaceID == uuid.Nil || room.workspaceID == workspaceID) {
 			rooms = append(rooms, room)
 		}
 	}
 	h.mu.Unlock()
-	for _, room := range rooms {
-		room.broadcast(payload, nil)
-	}
+	return rooms
 }
 
 type CollaborationRealtimeHandler struct {
@@ -405,29 +426,7 @@ func (r *realtimeRoom) seedFromStore(ctx context.Context, store Store) {
 		return
 	}
 	r.mu.Unlock()
-	if placements, err := store.ListPlacements(ctx, r.viewID); err == nil {
-		r.mu.Lock()
-		for _, placement := range placements {
-			r.crdtElements[placement.GetElementId()] = realtimeCRDTElementState{
-				ElementID: placement.GetElementId(),
-				X:         placement.GetPositionX(),
-				Y:         placement.GetPositionY(),
-				Clock:     0,
-			}
-		}
-		r.mu.Unlock()
-	}
-	if connectors, err := store.ListConnectors(ctx, r.viewID, r.workspaceID); err == nil {
-		r.mu.Lock()
-		for _, connector := range connectors {
-			r.crdtConnectors[connector.GetId()] = realtimeCRDTConnectorState{
-				Connector:   realtimeConnectorFromProto(connector),
-				ConnectorID: connector.GetId(),
-				Deleted:     false,
-			}
-		}
-		r.mu.Unlock()
-	}
+	r.syncFromStore(ctx, store)
 	if drawings, err := store.ListDrawings(ctx, r.workspaceID, r.viewID); err == nil {
 		r.mu.Lock()
 		for _, drawing := range drawings {
@@ -438,6 +437,40 @@ func (r *realtimeRoom) seedFromStore(ctx context.Context, store Store) {
 	r.mu.Lock()
 	r.seeded = true
 	r.mu.Unlock()
+}
+
+func (r *realtimeRoom) syncFromStore(ctx context.Context, store Store) {
+	if store == nil {
+		return
+	}
+	placements, placementsErr := store.ListPlacements(ctx, r.viewID)
+	connectors, connectorsErr := store.ListConnectors(ctx, r.viewID, r.workspaceID)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if placementsErr == nil {
+		nextElements := make(map[int32]realtimeCRDTElementState, len(placements))
+		for _, placement := range placements {
+			current := r.crdtElements[placement.GetElementId()]
+			current.ElementID = placement.GetElementId()
+			current.X = placement.GetPositionX()
+			current.Y = placement.GetPositionY()
+			nextElements[current.ElementID] = current
+		}
+		r.crdtElements = nextElements
+	}
+	if connectorsErr == nil {
+		nextConnectors := make(map[int32]realtimeCRDTConnectorState, len(connectors))
+		for _, connector := range connectors {
+			current := r.crdtConnectors[connector.GetId()]
+			current.Connector = realtimeConnectorFromProto(connector)
+			current.ConnectorID = connector.GetId()
+			current.Deleted = false
+			nextConnectors[current.ConnectorID] = current
+		}
+		r.crdtConnectors = nextConnectors
+	}
+	r.seeded = true
 }
 
 func realtimeConnectorFromProto(connector *diagv1.Connector) *realtimeConnector {
