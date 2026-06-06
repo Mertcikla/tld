@@ -4,14 +4,23 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing v* tag to publish release assets to
+        required: true
+        type: string
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.inputs.release_tag || github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: write
   id-token: write
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
 
 jobs:
   verify-binaries:
@@ -24,6 +33,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -52,7 +63,7 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           mkdir -p dist-smoke
-          version="${GITHUB_REF_NAME#v}"
+          version="${RELEASE_TAG#v}"
           output="dist-smoke/tld"
           if [[ "${RUNNER_OS}" == "Windows" ]]; then
             output="dist-smoke/tld.exe"
@@ -77,6 +88,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.inputs.release_tag || github.ref }}
           fetch-depth: 0
 
       - name: Set up Go
@@ -100,13 +112,14 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
+          GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Commit version bump
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
-          commit_message: "chore: bump version to ${{ github.ref_name }} [skip ci]"
+          commit_message: "chore: bump version to ${{ env.RELEASE_TAG }} [skip ci]"
           branch: main
           file_pattern: 'frontend/package.json frontend/package-lock.json cmd/version/version.go go.mod go.sum'
 
@@ -116,7 +129,7 @@ jobs:
         run: |
           npm run build
           NPM_TAG=latest
-          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+          if [[ "${RELEASE_TAG}" == *-* ]]; then
             NPM_TAG=beta
           fi
           npm publish --access public --tag "$NPM_TAG"
