@@ -79,8 +79,8 @@ describe('technology icon normalization', () => {
     expect(normalizeLogoUrl(undefined, links)).toBe('/icons/go.svg')
   })
 
-  it('normalizes explicit png catalog icon urls without alias remapping', () => {
-    expect(normalizeLogoUrl('/icons/golang.png', [])).toBe('/icons/golang.svg')
+  it('normalizes explicit png catalog icon urls with alias remapping', () => {
+    expect(normalizeLogoUrl('/icons/golang.png', [])).toBe('/icons/go.svg')
     expect(normalizeLogoUrl('/icons/javascript.png', [])).toBe('/icons/javascript.svg')
   })
 

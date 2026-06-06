@@ -8,8 +8,8 @@ describe('resolveElementIconUrl', () => {
     ])).toBe('/custom.svg')
   })
 
-  it('normalizes explicit png catalog icon urls without alias remapping', () => {
-    expect(resolveElementIconUrl('/icons/golang.png', [])).toBe('/icons/golang.svg')
+  it('normalizes explicit png catalog icon urls with alias remapping', () => {
+    expect(resolveElementIconUrl('/icons/golang.png', [])).toBe('/icons/go.svg')
   })
 
   it('derives the selected catalog technology icon when logo_url is missing', () => {

@@ -1,5 +1,25 @@
+const LEGACY_SLUG_MAP: Record<string, string> = {
+  golang: 'go',
+  'c-plusplus': 'cplusplus',
+  'json-javascript-object-notation': 'json',
+  'tailwind-css': 'tailwindcss',
+  tailwind: 'tailwindcss',
+  postgres: 'postgresql',
+  node: 'nodejs',
+  ts: 'typescript',
+  js: 'javascript',
+  'next.js': 'nextjs',
+  k8s: 'kubernetes',
+  dockerfile: 'docker',
+  python3: 'python',
+  cpp: 'cplusplus',
+  'c#': 'csharp',
+  container: 'docker',
+}
+
 export function canonicalTechnologySlug(slug: string | null | undefined): string {
-  return (slug ?? '').trim().toLowerCase()
+  const clean = (slug ?? '').trim().toLowerCase()
+  return LEGACY_SLUG_MAP[clean] ?? clean
 }
 
 export function catalogIconUrlForSlug(slug: string | null | undefined): string | null {

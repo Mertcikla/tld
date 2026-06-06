@@ -113,7 +113,9 @@ export async function getTechnologyCatalogIndex(): Promise<TechnologyCatalogInde
       }
       for (const [alias, item] of catalogAliases) {
         const cleanAlias = normalizeCatalogSlug(alias)
-        if (cleanAlias) bySlug.set(cleanAlias, item)
+        if (cleanAlias && !bySlug.has(cleanAlias)) {
+          bySlug.set(cleanAlias, item)
+        }
       }
 
       return { items, searchable, bySlug }
