@@ -1,20 +1,18 @@
 package assets
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
-	_ "embed"
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
-)
 
-//go:embed build-assets/icons.tar.gz
-var iconsArchive []byte
+	buildassets "github.com/mertcikla/tld/v2/build-assets"
+	"github.com/mertcikla/tld/v2/internal/tech"
+	"github.com/mertcikla/tld/v2/internal/workspace"
+)
 
 var (
 	iconsFSOnce sync.Once
@@ -32,8 +30,8 @@ func StaticFS() (fs.FS, error) {
 			return
 		}
 		iconsFS = overlayFS{
-			primary:   FS,
-			secondary: os.DirFS(root),
+			primary:   os.DirFS(root),
+			secondary: FS,
 		}
 	})
 
@@ -49,7 +47,7 @@ func ExtractIcons(dstBase string) error {
 	if err := os.Remove(filepath.Join(dstBase, "icons.json")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return unpackIcons(bytes.NewReader(iconsArchive), dstBase)
+	return buildassets.UnpackIcons(dstBase)
 }
 
 func materializeIconsTree() (string, error) {
@@ -58,7 +56,21 @@ func materializeIconsTree() (string, error) {
 		return "", err
 	}
 
-	if err := unpackIcons(bytes.NewReader(iconsArchive), filepath.Join(root, "frontend", "dist")); err != nil {
+	dist := filepath.Join(root, "frontend", "dist")
+	if err := buildassets.UnpackIcons(dist); err != nil {
+		_ = os.RemoveAll(root)
+		return "", err
+	}
+	if err := copyCustomIcons(dist); err != nil {
+		_ = os.RemoveAll(root)
+		return "", err
+	}
+	catalogJSON, err := tech.CatalogJSON()
+	if err != nil {
+		_ = os.RemoveAll(root)
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(dist, "icons.json"), catalogJSON, 0o644); err != nil {
 		_ = os.RemoveAll(root)
 		return "", err
 	}
@@ -66,64 +78,61 @@ func materializeIconsTree() (string, error) {
 	return root, nil
 }
 
-func unpackIcons(r io.Reader, dstBase string) error {
-	if err := os.MkdirAll(dstBase, 0o755); err != nil {
-		return err
-	}
-
-	gzr, err := gzip.NewReader(r)
+func copyCustomIcons(dstBase string) error {
+	configDir, err := workspace.ConfigDir()
 	if err != nil {
-		return err
+		return nil
 	}
-	defer func() { _ = gzr.Close() }()
-
-	tr := tar.NewReader(gzr)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
+	customIconsDir := filepath.Join(configDir, "icons", "icons")
+	entries, err := os.ReadDir(customIconsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
 			return nil
 		}
+		return err
+	}
+	dstIconsDir := filepath.Join(dstBase, "icons")
+	if err := os.MkdirAll(dstIconsDir, 0o755); err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".svg") {
+			continue
+		}
+		info, err := entry.Info()
 		if err != nil {
 			return err
 		}
-
-		cleanName := filepath.Clean(hdr.Name)
-		if cleanName == "." || cleanName == ".." || filepath.IsAbs(cleanName) || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) {
+		if !info.Mode().IsRegular() {
 			continue
 		}
-
-		target := filepath.Join(dstBase, cleanName)
-		switch hdr.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, os.FileMode(hdr.Mode)); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				return err
-			}
-			if err := writeFile(target, tr, os.FileMode(hdr.Mode)); err != nil {
-				return err
-			}
-		default:
-			// Skip non-regular files.
-			continue
+		src := filepath.Join(customIconsDir, entry.Name())
+		dst := filepath.Join(dstIconsDir, entry.Name())
+		if err := copyFile(dst, src, info.Mode().Perm()); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
-func writeFile(path string, r io.Reader, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
+func copyFile(dst, src string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode)
 	if err != nil {
 		return err
 	}
 
-	if _, err := io.Copy(f, r); err != nil {
-		_ = f.Close()
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
 		return err
 	}
 
-	return f.Close()
+	return out.Close()
 }
 
 type overlayFS struct {
@@ -132,8 +141,20 @@ type overlayFS struct {
 }
 
 func (o overlayFS) Open(name string) (fs.File, error) {
-	if f, err := o.primary.Open(name); err == nil {
+	f, err := o.primary.Open(name)
+	if err == nil {
 		return f, nil
 	}
+	if isIconOverlayPath(name) {
+		return nil, err
+	}
 	return o.secondary.Open(name)
+}
+
+func isIconOverlayPath(name string) bool {
+	cleanName := path.Clean(name)
+	return cleanName == "frontend/dist/icons.json" ||
+		cleanName == "frontend/dist/icons.json.br" ||
+		cleanName == "frontend/dist/icons.json.gz" ||
+		strings.HasPrefix(cleanName, "frontend/dist/icons/")
 }

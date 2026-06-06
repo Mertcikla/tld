@@ -236,6 +236,9 @@ func technologyLinksForElement(technology, language string) []*diagv1.Technology
 	if len(links) > 0 {
 		return links
 	}
+	if strings.TrimSpace(technology) != "" {
+		return nil
+	}
 	return technologyLinksForLanguage(language)
 }
 
@@ -268,7 +271,7 @@ func technologyLinksForLabel(label string) []*diagv1.TechnologyLink {
 func technologyLinksForLanguage(language string) []*diagv1.TechnologyLink {
 	switch strings.ToLower(strings.TrimSpace(language)) {
 	case "go":
-		return []*diagv1.TechnologyLink{catalogTechnologyLink("golang", "Go", true)}
+		return []*diagv1.TechnologyLink{catalogTechnologyLink("go", "Go", true)}
 	case "typescript":
 		return []*diagv1.TechnologyLink{catalogTechnologyLink("typescript", "TypeScript", true)}
 	case "javascript":
@@ -278,11 +281,11 @@ func technologyLinksForLanguage(language string) []*diagv1.TechnologyLink {
 	case "java":
 		return []*diagv1.TechnologyLink{catalogTechnologyLink("java", "Java", true)}
 	case "cpp":
-		return []*diagv1.TechnologyLink{catalogTechnologyLink("c-plusplus", "C++", true)}
+		return []*diagv1.TechnologyLink{catalogTechnologyLink("cplusplus", "C++", true)}
 	case "c":
 		return []*diagv1.TechnologyLink{catalogTechnologyLink("c", "C", true)}
 	case "json":
-		return []*diagv1.TechnologyLink{catalogTechnologyLink("json-javascript-object-notation", "JSON", true)}
+		return []*diagv1.TechnologyLink{catalogTechnologyLink("json", "JSON", true)}
 	default:
 		return nil
 	}
@@ -306,10 +309,6 @@ func technologyLabelParts(label string) []string {
 
 func technologyCatalogMatch(label string) (string, string) {
 	switch strings.ToLower(strings.TrimSpace(label)) {
-	case "architecture":
-		return "architecture", "Architecture"
-	case "structural":
-		return "structural", "Structural"
 	case "container":
 		return "docker", "Container"
 	default:

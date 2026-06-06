@@ -13,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/layout"
+	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
 	"github.com/mertcikla/tld/v2/pkg/app"
@@ -1219,7 +1220,10 @@ func derivedTechnologyLogoURL(links []app.TechnologyConnector) *string {
 		if link.Type != "catalog" || link.Slug == "" {
 			continue
 		}
-		path := "/icons/" + link.Slug + ".png"
+		path, ok := tech.IconURLForSlug(link.Slug)
+		if !ok {
+			continue
+		}
 		if link.IsPrimaryIcon {
 			return &path
 		}

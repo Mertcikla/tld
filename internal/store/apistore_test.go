@@ -52,7 +52,7 @@ func TestElementToProtoPreservesPrimaryIconMetadata(t *testing.T) {
 	if !strings.Contains(body, `"isPrimaryIcon":true`) {
 		t.Fatalf("response body = %s, want primary icon metadata", body)
 	}
-	if element.GetLogoUrl() != "/icons/javascript.png" {
+	if element.GetLogoUrl() != "/icons/javascript.svg" {
 		t.Fatalf("logo url = %q, want derived primary technology icon", element.GetLogoUrl())
 	}
 }
@@ -79,8 +79,42 @@ func TestPlacedElementToProtoPreservesPrimaryIconMetadata(t *testing.T) {
 	if !strings.Contains(body, `"isPrimaryIcon":true`) {
 		t.Fatalf("response body = %s, want primary icon metadata", body)
 	}
-	if placement.GetLogoUrl() != "/icons/javascript.png" {
+	if placement.GetLogoUrl() != "/icons/javascript.svg" {
 		t.Fatalf("logo url = %q, want derived primary technology icon", placement.GetLogoUrl())
+	}
+}
+
+func TestElementToProtoResolvesLegacyCatalogIconSlug(t *testing.T) {
+	element := elementToProto(app.LibraryElement{
+		ID:   1,
+		Name: "API",
+		TechnologyConnectors: []app.TechnologyConnector{{
+			Type:          "catalog",
+			Slug:          "golang",
+			Label:         "Go",
+			IsPrimaryIcon: true,
+		}},
+	}, uuid.Nil)
+
+	if element.GetLogoUrl() != "/icons/go.svg" {
+		t.Fatalf("logo url = %q, want legacy slug resolved to devicon SVG", element.GetLogoUrl())
+	}
+}
+
+func TestElementToProtoDoesNotInventRemovedCatalogIcon(t *testing.T) {
+	element := elementToProto(app.LibraryElement{
+		ID:   1,
+		Name: "Cloud",
+		TechnologyConnectors: []app.TechnologyConnector{{
+			Type:          "catalog",
+			Slug:          "aws-amazon-ec2-instances",
+			Label:         "EC2 Instances",
+			IsPrimaryIcon: true,
+		}},
+	}, uuid.Nil)
+
+	if element.LogoUrl != nil {
+		t.Fatalf("logo url = %q, want no derived icon for removed catalog slug", element.GetLogoUrl())
 	}
 }
 

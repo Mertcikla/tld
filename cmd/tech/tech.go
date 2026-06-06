@@ -24,14 +24,14 @@ type catalogPage struct {
 	Prev   string              `json:"prev,omitempty"`
 }
 
-// NewTechCmd creates commands for inspecting the embedded technology catalog.
+// NewTechCmd creates commands for inspecting the technology catalog.
 func NewTechCmd() *cobra.Command {
 	var limit int
 	var offset int
 
 	cmd := &cobra.Command{
 		Use:   "tech",
-		Short: "Inspect the embedded technology catalog",
+		Short: "Inspect the technology catalog",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if limit <= 0 {
@@ -111,9 +111,9 @@ func buildCatalogPage(items []tech.CatalogEntry, limit, offset int) catalogPage 
 
 func renderCatalogPage(cmd *cobra.Command, page catalogPage) {
 	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "SLUG\tNAME\tSHORT")
+	_, _ = fmt.Fprintln(w, "SLUG\tNAME\tSHORT\tICON")
 	for _, item := range page.Items {
-		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", item.Slug, item.Name, item.NameShort)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", item.Slug, item.Name, item.NameShort, item.IconURL)
 	}
 	_ = w.Flush()
 

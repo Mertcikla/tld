@@ -17,20 +17,15 @@ import (
 )
 
 type catalogItem struct {
-	IconURL     string `json:"iconUrl,omitempty"`
-	Name        string `json:"name"`
-	Provider    string `json:"provider,omitempty"`
-	DocsURL     string `json:"docsUrl,omitempty"`
-	Description string `json:"description,omitempty"`
-	WebsiteURL  string `json:"websiteUrl,omitempty"`
-	NameShort   string `json:"nameShort"`
-	DefaultSlug string `json:"defaultSlug"`
-}
-
-type validationCatalogItem struct {
-	Name        string `json:"name"`
-	NameShort   string `json:"nameShort"`
-	DefaultSlug string `json:"defaultSlug"`
+	IconURL     string   `json:"iconUrl"`
+	Name        string   `json:"name"`
+	Provider    string   `json:"provider,omitempty"`
+	DocsURL     string   `json:"docsUrl,omitempty"`
+	Description string   `json:"description,omitempty"`
+	WebsiteURL  string   `json:"websiteUrl,omitempty"`
+	NameShort   string   `json:"nameShort"`
+	DefaultSlug string   `json:"defaultSlug"`
+	Aliases     []string `json:"aliases,omitempty"`
 }
 
 type archiveEntry struct {
@@ -54,13 +49,8 @@ func run() error {
 		name        = flag.String("name", "", "technology name")
 		nameShort   = flag.String("short", "", "short display name; defaults to -name")
 		slug        = flag.String("slug", "", "icon/catalog slug; defaults to a slugified -name")
-		iconPath    = flag.String("icon", "", "path to a PNG icon")
-		provider    = flag.String("provider", "", "optional provider, for example aws, azure, gcp")
-		docsURL     = flag.String("docs-url", "", "optional documentation URL")
-		websiteURL  = flag.String("website-url", "", "optional website URL")
-		description = flag.String("description", "", "optional catalog description")
+		iconPath    = flag.String("icon", "", "path to an SVG icon")
 		archivePath = flag.String("archive", filepath.Join("build-assets", "icons.tar.gz"), "path to icons tar.gz")
-		techCatalog = flag.String("tech-catalog", filepath.Join("internal", "tech", "icons.json"), "path to backend validation catalog")
 		replace     = flag.Bool("replace", false, "replace an existing catalog/icon entry with the same slug")
 	)
 	flag.Parse()
@@ -87,8 +77,8 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if !isPNG(iconBody) {
-		return fmt.Errorf("%s is not a PNG; catalog icons must be PNG files", *iconPath)
+	if !isSVG(*iconPath, iconBody) {
+		return fmt.Errorf("%s is not an SVG; catalog icons must be SVG files", *iconPath)
 	}
 
 	entries, err := readArchive(*archivePath)
@@ -106,12 +96,8 @@ func run() error {
 		short = itemName
 	}
 	item := catalogItem{
-		IconURL:     "/icons/" + itemSlug + ".png",
+		IconURL:     "/icons/" + itemSlug + ".svg",
 		Name:        itemName,
-		Provider:    strings.TrimSpace(*provider),
-		DocsURL:     strings.TrimSpace(*docsURL),
-		Description: strings.TrimSpace(*description),
-		WebsiteURL:  strings.TrimSpace(*websiteURL),
 		NameShort:   short,
 		DefaultSlug: itemSlug,
 	}
@@ -126,14 +112,11 @@ func run() error {
 		return err
 	}
 
-	iconName := "icons/" + itemSlug + ".png"
+	iconName := "icons/" + itemSlug + ".svg"
 	updatedEntries := upsertArchiveEntry(entries, archiveEntry{name: iconName, body: iconBody, mode: 0o644, typeflag: tar.TypeReg}, *replace)
 	updatedEntries = upsertArchiveEntry(updatedEntries, archiveEntry{name: "icons.json", body: catalogJSON, mode: 0o644, typeflag: tar.TypeReg}, true)
 
 	if err := writeArchive(*archivePath, updatedEntries); err != nil {
-		return err
-	}
-	if err := writeValidationCatalog(*techCatalog, updatedCatalog); err != nil {
 		return err
 	}
 
@@ -147,16 +130,12 @@ func slugify(value string) string {
 	return strings.Trim(slug, "-")
 }
 
-func isPNG(body []byte) bool {
-	return len(body) >= 8 &&
-		body[0] == 0x89 &&
-		body[1] == 'P' &&
-		body[2] == 'N' &&
-		body[3] == 'G' &&
-		body[4] == '\r' &&
-		body[5] == '\n' &&
-		body[6] == 0x1a &&
-		body[7] == '\n'
+func isSVG(path string, body []byte) bool {
+	if !strings.EqualFold(filepath.Ext(path), ".svg") {
+		return false
+	}
+	content := strings.TrimSpace(string(body))
+	return strings.HasPrefix(content, "<svg") || strings.HasPrefix(content, "<?xml")
 }
 
 func readArchive(path string) ([]archiveEntry, error) {
@@ -298,22 +277,6 @@ func writeArchive(path string, entries []archiveEntry) error {
 		return err
 	}
 	return os.Rename(tmp, path)
-}
-
-func writeValidationCatalog(path string, items []catalogItem) error {
-	validationItems := make([]validationCatalogItem, 0, len(items))
-	for _, item := range items {
-		validationItems = append(validationItems, validationCatalogItem{
-			Name:        item.Name,
-			NameShort:   item.NameShort,
-			DefaultSlug: item.DefaultSlug,
-		})
-	}
-	body, err := marshalJSON(validationItems)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, body, 0o644)
 }
 
 func marshalJSON(v any) ([]byte, error) {
