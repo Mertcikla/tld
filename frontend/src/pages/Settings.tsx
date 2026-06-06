@@ -20,6 +20,9 @@ export interface SettingsProps {
   extraNavItems?: Array<{ label: string; path: string }>
 }
 
+// This route-backed page is retained for future and host-route compatibility.
+// Active product settings should live in the compact top-navigation pane in
+// TopMenuBar; this page is not an actively used surface today.
 export default function Settings({ extraNavItems = [] }: SettingsProps) {
   const navItems = [...extraNavItems, ...DEFAULT_NAV_ITEMS, ...(isWailsApp ? DESKTOP_NAV_ITEMS : [])]
   const navigate = useNavigate()

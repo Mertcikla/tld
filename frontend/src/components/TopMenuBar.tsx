@@ -164,6 +164,9 @@ export default function TopMenuBar({
           mt={2}
           w={{ base: "calc(100vw - 24px)", sm: "360px" }}
           maxW="360px"
+          maxH="calc(var(--app-viewport-height) - 96px)"
+          display="flex"
+          flexDirection="column"
           bg="rgba(var(--bg-main-rgb), 0.95)"
           backdropFilter="blur(18px)"
           borderColor="whiteAlpha.200"
@@ -181,7 +184,7 @@ export default function TopMenuBar({
           }}
         >
           <PopoverArrow bg="rgba(var(--bg-main-rgb), 0.95)" />
-          <PopoverBody p={4} pb={7}>
+          <PopoverBody p={4} pb={7} overflowY="auto" flex={1} minH={0}>
             <Flex direction="column" gap={5}>
               <AppearanceSettings compact />
               <ExperimentalSettings compact />
