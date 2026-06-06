@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
@@ -187,11 +188,13 @@ type realtimeClient struct {
 	ctx        context.Context
 	conn       *websocket.Conn
 	send       chan []byte
+	writeDone  chan struct{}
+	stopWriter sync.Once
 	room       *realtimeRoom
 	clientID   string
 	userID     string
 	username   string
-	lastActive time.Time
+	lastActive atomic.Int64
 }
 
 type realtimeRoomViewer struct {
@@ -354,15 +357,16 @@ func (h *CollaborationRealtimeHandler) WS(w http.ResponseWriter, r *http.Request
 		return
 	}
 	client := &realtimeClient{
-		ctx:        context.WithoutCancel(r.Context()),
-		conn:       conn,
-		send:       make(chan []byte, 256),
-		room:       room,
-		clientID:   identity.ClientID,
-		userID:     identity.UserID,
-		username:   identity.Username,
-		lastActive: time.Now(),
+		ctx:       context.WithoutCancel(r.Context()),
+		conn:      conn,
+		send:      make(chan []byte, 256),
+		writeDone: make(chan struct{}),
+		room:      room,
+		clientID:  identity.ClientID,
+		userID:    identity.UserID,
+		username:  identity.Username,
 	}
+	client.markActive(time.Now())
 	firstSession, viewer := room.addClient(client)
 	if payload, err := json.Marshal(room.snapshot(client.userID, client.username)); err == nil {
 		client.send <- payload
@@ -372,6 +376,7 @@ func (h *CollaborationRealtimeHandler) WS(w http.ResponseWriter, r *http.Request
 	}
 	go h.writePump(client)
 	h.readPump(client)
+	client.stopWritePump()
 	left, userID := room.removeClient(client)
 	if left {
 		room.broadcast(&realtimePresenceLeave{Type: "presence_leave", UserID: userID}, client)
@@ -579,6 +584,26 @@ func (r *realtimeRoom) removeClient(client *realtimeClient) (bool, string) {
 	delete(r.selections, client.userID)
 	delete(r.viewports, client.userID)
 	return true, client.userID
+}
+
+func (c *realtimeClient) markActive(at time.Time) {
+	c.lastActive.Store(at.UnixNano())
+}
+
+func (c *realtimeClient) idleFor(now time.Time) time.Duration {
+	lastActive := c.lastActive.Load()
+	if lastActive == 0 {
+		return 0
+	}
+	return now.Sub(time.Unix(0, lastActive))
+}
+
+func (c *realtimeClient) stopWritePump() {
+	c.stopWriter.Do(func() {
+		if c.writeDone != nil {
+			close(c.writeDone)
+		}
+	})
 }
 
 func (r *realtimeRoom) snapshot(selfUserID string, selfUsername string) *realtimePresenceSnapshot {
@@ -790,7 +815,7 @@ func (h *CollaborationRealtimeHandler) readPump(client *realtimeClient) {
 		if err != nil {
 			break
 		}
-		client.lastActive = time.Now()
+		client.markActive(time.Now())
 		var envelope realtimeEnvelope
 		if err := json.Unmarshal(payload, &envelope); err != nil {
 			continue
@@ -931,6 +956,8 @@ func (h *CollaborationRealtimeHandler) writePump(client *realtimeClient) {
 	}()
 	for {
 		select {
+		case <-client.writeDone:
+			return
 		case payload, ok := <-client.send:
 			_ = client.conn.SetWriteDeadline(time.Now().Add(realtimeWriteWait))
 			if !ok {
@@ -946,7 +973,7 @@ func (h *CollaborationRealtimeHandler) writePump(client *realtimeClient) {
 				return
 			}
 		case <-idleTicker.C:
-			if time.Since(client.lastActive) >= realtimeIdleTimeout {
+			if client.idleFor(time.Now()) >= realtimeIdleTimeout {
 				msg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "idle timeout")
 				_ = client.conn.WriteMessage(websocket.CloseMessage, msg)
 				return
