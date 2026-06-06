@@ -21,7 +21,7 @@ import { useTheme } from '../context/ThemeContext'
 import { useSourceEditor } from '../utils/sourceEditor'
 import { ChevronDownIcon } from '../components/Icons'
 
-const COMPACT_FIELD_W = '50%'
+const COMPACT_FIELD_W = 'min(160px, calc((100vw - 56px) / 2))'
 
 function CompactUsernameSetting() {
   const toast = useToast()
