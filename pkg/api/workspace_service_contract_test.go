@@ -766,6 +766,36 @@ func (s *contractStore) UpdateTag(context.Context, uuid.UUID, string, string, *s
 	return nil
 }
 func (s *contractStore) DeleteTag(context.Context, uuid.UUID, string) error { return nil }
+func (s *contractStore) ListViewThreads(context.Context, uuid.UUID, int32, *int32, *int32) ([]*diagv1.ThreadInfo, error) {
+	return nil, nil
+}
+func (s *contractStore) CreateViewThread(context.Context, uuid.UUID, int32, *int32, *int32, string, string) (*diagv1.ThreadInfo, error) {
+	return nil, nil
+}
+func (s *contractStore) GetViewThread(context.Context, uuid.UUID, int32, int32) (*diagv1.ThreadInfo, error) {
+	return nil, nil
+}
+func (s *contractStore) SetViewThreadResolved(context.Context, uuid.UUID, int32, int32, bool) error {
+	return nil
+}
+func (s *contractStore) CreateViewComment(context.Context, uuid.UUID, int32, int32, string, string, string) (*diagv1.CommentInfo, error) {
+	return nil, nil
+}
+func (s *contractStore) ListViewElementReactions(context.Context, uuid.UUID, int32, string) ([]*diagv1.NodeReactionSummary, error) {
+	return nil, nil
+}
+func (s *contractStore) ToggleElementReaction(context.Context, uuid.UUID, int32, int32, string, string) (bool, error) {
+	return false, nil
+}
+func (s *contractStore) ListDrawings(context.Context, uuid.UUID, int32) ([]RealtimeDrawingInput, error) {
+	return nil, nil
+}
+func (s *contractStore) UpsertDrawing(context.Context, uuid.UUID, int32, RealtimeDrawingInput) error {
+	return nil
+}
+func (s *contractStore) DeleteDrawing(context.Context, uuid.UUID, int32, string) error {
+	return nil
+}
 func (s *contractStore) ApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
 	if s.applyPlan != nil {
 		return s.applyPlan(ctx, workspaceID, req)

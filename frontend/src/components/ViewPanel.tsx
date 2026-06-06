@@ -22,7 +22,7 @@ import {
   WrapItem,
 } from '@chakra-ui/react'
 import { api } from '../api/client'
-import type { ViewTreeNode, LibraryElement, ViewMarkdownDocument } from '../types'
+import type { Connector, ViewTreeNode, LibraryElement, ViewMarkdownDocument } from '../types'
 import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
 import LayoutSection from './LayoutSection'
@@ -41,6 +41,7 @@ interface Props {
   canEdit?: boolean
   onSave: (updated: ViewTreeNode) => void
   onUnsupportedMutation?: () => void
+  onConnectorSaved?: (connector: Connector) => void
   hasBackdrop?: boolean
   availableTags?: string[]
   isInline?: boolean
@@ -65,6 +66,7 @@ function ViewPanel({
   canEdit: canEditProp,
   onSave,
   onUnsupportedMutation,
+  onConnectorSaved,
   hasBackdrop = true,
   availableTags = [],
   isInline = false,
@@ -269,7 +271,7 @@ function ViewPanel({
               ))}
             </Wrap>
           </FormControl>
-          <LayoutSection view={view} canEdit={canEdit} onUnsupportedMutation={onUnsupportedMutation} />
+          <LayoutSection view={view} canEdit={canEdit} onUnsupportedMutation={onUnsupportedMutation} onConnectorSaved={onConnectorSaved} />
 
           {(canEdit || !!markdown) && (
             <>

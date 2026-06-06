@@ -9,8 +9,10 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -20,6 +22,7 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 	assets "github.com/mertcikla/tld/v2"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/watch"
@@ -279,6 +282,95 @@ func TestServerInjectsWorkspaceIDIntoConnectRPCResponses(t *testing.T) {
 	if got := resp.Msg.GetElements()[0].GetOrgId(); got != workspaceID.String() {
 		t.Fatalf("org id = %q, want %s", got, workspaceID)
 	}
+}
+
+func TestServerBroadcastsWorkspaceWritesToCollaborationView(t *testing.T) {
+	_, routes := newTestServer(t, uuid.New(), nil)
+	srv := httptest.NewServer(routes)
+	t.Cleanup(srv.Close)
+
+	client := diagv1connect.NewWorkspaceServiceClient(srv.Client(), srv.URL+"/api")
+	view, err := client.CreateView(context.Background(), connect.NewRequest(&diagv1.CreateViewRequest{Name: "Collaboration Test"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	viewID := view.Msg.GetView().GetId()
+
+	conn := dialCollaborationWebSocket(t, srv.URL, int(viewID), "alice")
+	t.Cleanup(func() { _ = conn.Close() })
+	readRealtimeFrameType(t, conn, "presence_snapshot")
+
+	first, err := client.CreateElement(context.Background(), connect.NewRequest(&diagv1.CreateElementRequest{Name: "Collab API"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreatePlacement(context.Background(), connect.NewRequest(&diagv1.CreatePlacementRequest{
+		ViewId:    viewID,
+		ElementId: first.Msg.GetElement().GetId(),
+		PositionX: 120,
+		PositionY: 140,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	readRealtimeFrameType(t, conn, "placement_create")
+
+	if _, err := client.UpdateElement(context.Background(), connect.NewRequest(&diagv1.UpdateElementRequest{
+		ElementId: first.Msg.GetElement().GetId(),
+		Name:      "Collab API Renamed",
+	})); err != nil {
+		t.Fatal(err)
+	}
+	readRealtimeFrameType(t, conn, "element_update")
+
+	second, err := client.CreateElement(context.Background(), connect.NewRequest(&diagv1.CreateElementRequest{Name: "Collab DB"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CreatePlacement(context.Background(), connect.NewRequest(&diagv1.CreatePlacementRequest{
+		ViewId:    viewID,
+		ElementId: second.Msg.GetElement().GetId(),
+		PositionX: 360,
+		PositionY: 140,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	readRealtimeFrameType(t, conn, "placement_create")
+
+	initialLabel := "initial"
+	createdConnector, err := client.CreateConnector(context.Background(), connect.NewRequest(&diagv1.CreateConnectorRequest{
+		ViewId:          viewID,
+		SourceElementId: first.Msg.GetElement().GetId(),
+		TargetElementId: second.Msg.GetElement().GetId(),
+		Label:           &initialLabel,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	readRealtimeFrameType(t, conn, "connector_create")
+
+	updatedLabel := "updated"
+	if _, err := client.UpdateConnector(context.Background(), connect.NewRequest(&diagv1.UpdateConnectorRequest{
+		ConnectorId: createdConnector.Msg.GetConnector().GetId(),
+		Label:       &updatedLabel,
+	})); err != nil {
+		t.Fatal(err)
+	}
+	readRealtimeFrameType(t, conn, "connector_update")
+
+	if _, err := client.DeleteConnector(context.Background(), connect.NewRequest(&diagv1.DeleteConnectorRequest{
+		ConnectorId: createdConnector.Msg.GetConnector().GetId(),
+	})); err != nil {
+		t.Fatal(err)
+	}
+	readRealtimeFrameType(t, conn, "connector_delete")
+
+	if _, err := client.DeletePlacement(context.Background(), connect.NewRequest(&diagv1.DeletePlacementRequest{
+		ViewId:    viewID,
+		ElementId: first.Msg.GetElement().GetId(),
+	})); err != nil {
+		t.Fatal(err)
+	}
+	readRealtimeFrameType(t, conn, "placement_delete")
 }
 
 func TestWatchSessionLeaseDoesNotBlockWorkspaceWrites(t *testing.T) {
@@ -1056,6 +1148,40 @@ func newTestServerWithOptions(t *testing.T, workspaceID uuid.UUID, static fs.FS,
 		t.Fatal(err)
 	}
 	return sqliteStore, srv.Routes()
+}
+
+func dialCollaborationWebSocket(t *testing.T, serverURL string, viewID int, userID string) *websocket.Conn {
+	t.Helper()
+	query := url.Values{}
+	query.Set("client_id", userID+"-client")
+	query.Set("user_id", userID)
+	query.Set("username", userID)
+	wsURL := "ws" + strings.TrimPrefix(serverURL, "http") + "/api/views/" + strconv.Itoa(viewID) + "/ws?" + query.Encode()
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial collaboration websocket: %v", err)
+	}
+	return conn
+}
+
+func readRealtimeFrameType(t *testing.T, conn *websocket.Conn, want string) map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if err := conn.SetReadDeadline(deadline); err != nil {
+			t.Fatal(err)
+		}
+		var frame map[string]any
+		if err := conn.ReadJSON(&frame); err != nil {
+			t.Fatalf("read realtime frame %q: %v", want, err)
+		}
+		if frame["type"] == want {
+			return frame
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for realtime frame %q", want)
+		}
+	}
 }
 
 type populateRerankerFixture struct {

@@ -539,6 +539,342 @@ func (a *APIAdapter) DeleteTag(ctx context.Context, _ uuid.UUID, name string) er
 	return a.Store.DeleteTag(ctx, name)
 }
 
+func collaborationWorkspaceKey(workspaceID uuid.UUID) string {
+	if workspaceID == uuid.Nil {
+		return "local"
+	}
+	return workspaceID.String()
+}
+
+func nowRFC3339() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
+func parseStoredTime(value string) *timestamppb.Timestamp {
+	if value == "" {
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return timestamppb.New(time.Now().UTC())
+	}
+	return timestamppb.New(parsed)
+}
+
+func (a *APIAdapter) ListViewThreads(ctx context.Context, workspaceID uuid.UUID, viewID int32, elementID, connectorID *int32) ([]*diagv1.ThreadInfo, error) {
+	where := `workspace_id = ? AND view_id = ? AND element_id = ?`
+	targetID := any(elementID)
+	if connectorID != nil {
+		where = `workspace_id = ? AND view_id = ? AND connector_id = ?`
+		targetID = connectorID
+	}
+	var rows []struct {
+		ID                int32   `bun:"id"`
+		WorkspaceID       string  `bun:"workspace_id"`
+		ViewID            int32   `bun:"view_id"`
+		ElementID         *int32  `bun:"element_id"`
+		ConnectorID       *int32  `bun:"connector_id"`
+		CreatedBy         string  `bun:"created_by"`
+		CreatedByUsername string  `bun:"created_by_username"`
+		Status            string  `bun:"status"`
+		CreatedAt         string  `bun:"created_at"`
+		ResolvedAt        *string `bun:"resolved_at"`
+	}
+	err := a.Store.legacy.BunDB().NewRaw(
+		`SELECT t.id, t.workspace_id, t.view_id, t.element_id, t.connector_id, t.created_by,
+		        COALESCE(NULLIF(t.created_by_username, ''), t.created_by) AS created_by_username,
+		        t.status, t.created_at, t.resolved_at
+		 FROM view_threads t
+		 WHERE `+where+`
+		 ORDER BY t.created_at ASC`,
+		collaborationWorkspaceKey(workspaceID), viewID, targetID,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, err
+	}
+	threads := make([]*diagv1.ThreadInfo, 0, len(rows))
+	for _, row := range rows {
+		thread := threadRowToProto(row.ID, row.WorkspaceID, row.ViewID, row.ElementID, row.ConnectorID, row.CreatedBy, row.CreatedByUsername, row.Status, row.CreatedAt, row.ResolvedAt)
+		comments, err := a.listViewComments(ctx, workspaceID, viewID, row.ID)
+		if err != nil {
+			return nil, err
+		}
+		thread.Comments = comments
+		threads = append(threads, thread)
+	}
+	return threads, nil
+}
+
+func (a *APIAdapter) CreateViewThread(ctx context.Context, workspaceID uuid.UUID, viewID int32, elementID, connectorID *int32, createdBy, createdByUsername string) (*diagv1.ThreadInfo, error) {
+	now := nowRFC3339()
+	var row struct {
+		ID int32 `bun:"id"`
+	}
+	err := a.Store.legacy.BunDB().NewRaw(
+		`INSERT INTO view_threads (workspace_id, view_id, element_id, connector_id, created_by, created_by_username, status, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, 'open', ?)
+		 RETURNING id`,
+		collaborationWorkspaceKey(workspaceID), viewID, elementID, connectorID, createdBy, createdByUsername, now,
+	).Scan(ctx, &row)
+	if err != nil {
+		return nil, err
+	}
+	return a.GetViewThread(ctx, workspaceID, viewID, row.ID)
+}
+
+func (a *APIAdapter) GetViewThread(ctx context.Context, workspaceID uuid.UUID, viewID, threadID int32) (*diagv1.ThreadInfo, error) {
+	var row struct {
+		ID                int32   `bun:"id"`
+		WorkspaceID       string  `bun:"workspace_id"`
+		ViewID            int32   `bun:"view_id"`
+		ElementID         *int32  `bun:"element_id"`
+		ConnectorID       *int32  `bun:"connector_id"`
+		CreatedBy         string  `bun:"created_by"`
+		CreatedByUsername string  `bun:"created_by_username"`
+		Status            string  `bun:"status"`
+		CreatedAt         string  `bun:"created_at"`
+		ResolvedAt        *string `bun:"resolved_at"`
+	}
+	err := a.Store.legacy.BunDB().NewRaw(
+		`SELECT t.id, t.workspace_id, t.view_id, t.element_id, t.connector_id, t.created_by,
+		        COALESCE(NULLIF(t.created_by_username, ''), t.created_by) AS created_by_username,
+		        t.status, t.created_at, t.resolved_at
+		 FROM view_threads t
+		 WHERE t.workspace_id = ? AND t.view_id = ? AND t.id = ?`,
+		collaborationWorkspaceKey(workspaceID), viewID, threadID,
+	).Scan(ctx, &row)
+	if err != nil {
+		return nil, err
+	}
+	thread := threadRowToProto(row.ID, row.WorkspaceID, row.ViewID, row.ElementID, row.ConnectorID, row.CreatedBy, row.CreatedByUsername, row.Status, row.CreatedAt, row.ResolvedAt)
+	comments, err := a.listViewComments(ctx, workspaceID, viewID, threadID)
+	if err != nil {
+		return nil, err
+	}
+	thread.Comments = comments
+	return thread, nil
+}
+
+func (a *APIAdapter) SetViewThreadResolved(ctx context.Context, workspaceID uuid.UUID, viewID, threadID int32, resolved bool) error {
+	status := "open"
+	var resolvedAt *string
+	if resolved {
+		status = "resolved"
+		now := nowRFC3339()
+		resolvedAt = &now
+	}
+	_, err := a.Store.legacy.BunDB().NewRaw(
+		`UPDATE view_threads
+		 SET status = ?, resolved_at = ?
+		 WHERE workspace_id = ? AND view_id = ? AND id = ?`,
+		status, resolvedAt, collaborationWorkspaceKey(workspaceID), viewID, threadID,
+	).Exec(ctx)
+	return err
+}
+
+func (a *APIAdapter) CreateViewComment(ctx context.Context, workspaceID uuid.UUID, viewID, threadID int32, authorID, authorUsername, body string) (*diagv1.CommentInfo, error) {
+	now := nowRFC3339()
+	var row struct {
+		ID int32 `bun:"id"`
+	}
+	err := a.Store.legacy.BunDB().NewRaw(
+		`INSERT INTO view_comments (workspace_id, view_id, thread_id, author_id, author_username, body, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 RETURNING id`,
+		collaborationWorkspaceKey(workspaceID), viewID, threadID, authorID, authorUsername, body, now, now,
+	).Scan(ctx, &row)
+	if err != nil {
+		return nil, err
+	}
+	comments, err := a.listViewComments(ctx, workspaceID, viewID, threadID)
+	if err != nil {
+		return nil, err
+	}
+	for _, comment := range comments {
+		if comment.Id == row.ID {
+			return comment, nil
+		}
+	}
+	return nil, sql.ErrNoRows
+}
+
+func (a *APIAdapter) listViewComments(ctx context.Context, workspaceID uuid.UUID, viewID, threadID int32) ([]*diagv1.CommentInfo, error) {
+	var rows []struct {
+		ID             int32  `bun:"id"`
+		WorkspaceID    string `bun:"workspace_id"`
+		ViewID         int32  `bun:"view_id"`
+		ThreadID       int32  `bun:"thread_id"`
+		AuthorID       string `bun:"author_id"`
+		AuthorUsername string `bun:"author_username"`
+		Body           string `bun:"body"`
+		CreatedAt      string `bun:"created_at"`
+		UpdatedAt      string `bun:"updated_at"`
+	}
+	err := a.Store.legacy.BunDB().NewRaw(
+		`SELECT c.id, c.workspace_id, c.view_id, c.thread_id, c.author_id,
+		        COALESCE(NULLIF(c.author_username, ''), c.author_id) AS author_username,
+		        c.body, c.created_at, c.updated_at
+		 FROM view_comments c
+		 WHERE c.workspace_id = ? AND c.view_id = ? AND c.thread_id = ?
+		 ORDER BY c.created_at ASC`,
+		collaborationWorkspaceKey(workspaceID), viewID, threadID,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*diagv1.CommentInfo, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, &diagv1.CommentInfo{
+			Id:             row.ID,
+			OrgId:          row.WorkspaceID,
+			ViewId:         row.ViewID,
+			ThreadId:       row.ThreadID,
+			AuthorId:       row.AuthorID,
+			AuthorUsername: row.AuthorUsername,
+			Body:           row.Body,
+			CreatedAt:      parseStoredTime(row.CreatedAt),
+			UpdatedAt:      parseStoredTime(row.UpdatedAt),
+		})
+	}
+	return out, nil
+}
+
+func threadRowToProto(id int32, workspaceID string, viewID int32, elementID, connectorID *int32, createdBy, createdByUsername, status, createdAt string, resolvedAt *string) *diagv1.ThreadInfo {
+	thread := &diagv1.ThreadInfo{
+		Id:                id,
+		OrgId:             workspaceID,
+		ViewId:            viewID,
+		ElementId:         elementID,
+		ConnectorId:       connectorID,
+		CreatedBy:         createdBy,
+		CreatedByUsername: createdByUsername,
+		Status:            status,
+		CreatedAt:         parseStoredTime(createdAt),
+		Comments:          []*diagv1.CommentInfo{},
+	}
+	if resolvedAt != nil {
+		thread.ResolvedAt = parseStoredTime(*resolvedAt)
+	}
+	return thread
+}
+
+func (a *APIAdapter) ListViewElementReactions(ctx context.Context, workspaceID uuid.UUID, viewID int32, userID string) ([]*diagv1.NodeReactionSummary, error) {
+	var rows []struct {
+		ElementID   int32  `bun:"element_id"`
+		Emoji       string `bun:"emoji"`
+		Count       int32  `bun:"reaction_count"`
+		ReactedByMe int32  `bun:"reacted_by_me"`
+	}
+	err := a.Store.legacy.BunDB().NewRaw(
+		`SELECT element_id, emoji, COUNT(*) AS reaction_count,
+		        MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS reacted_by_me
+		 FROM element_reactions
+		 WHERE workspace_id = ? AND view_id = ?
+		 GROUP BY element_id, emoji
+		 ORDER BY element_id ASC, emoji ASC`,
+		userID, collaborationWorkspaceKey(workspaceID), viewID,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*diagv1.NodeReactionSummary, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, &diagv1.NodeReactionSummary{
+			ElementId:   row.ElementID,
+			Emoji:       row.Emoji,
+			Count:       row.Count,
+			ReactedByMe: row.ReactedByMe > 0,
+		})
+	}
+	return out, nil
+}
+
+func (a *APIAdapter) ToggleElementReaction(ctx context.Context, workspaceID uuid.UUID, viewID, elementID int32, userID, emoji string) (bool, error) {
+	result, err := a.Store.legacy.BunDB().NewRaw(
+		`DELETE FROM element_reactions
+		 WHERE workspace_id = ? AND view_id = ? AND element_id = ? AND user_id = ? AND emoji = ?`,
+		collaborationWorkspaceKey(workspaceID), viewID, elementID, userID, emoji,
+	).Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	affected, _ := result.RowsAffected()
+	if affected > 0 {
+		return false, nil
+	}
+	now := nowRFC3339()
+	_, err = a.Store.legacy.BunDB().NewRaw(
+		`INSERT INTO element_reactions (workspace_id, view_id, element_id, user_id, emoji, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		collaborationWorkspaceKey(workspaceID), viewID, elementID, userID, emoji, now,
+	).Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (a *APIAdapter) ListDrawings(ctx context.Context, workspaceID uuid.UUID, viewID int32) ([]api.RealtimeDrawingInput, error) {
+	var rows []struct {
+		PathID   string  `bun:"path_id"`
+		UserID   string  `bun:"user_id"`
+		Points   string  `bun:"points"`
+		Color    string  `bun:"color"`
+		Width    float64 `bun:"width"`
+		Text     string  `bun:"text"`
+		FontSize float64 `bun:"font_size"`
+	}
+	err := a.Store.legacy.BunDB().NewRaw(
+		`SELECT path_id, user_id, points, color, width, text, font_size
+		 FROM drawings
+		 WHERE workspace_id = ? AND view_id = ?
+		 ORDER BY created_at ASC`,
+		collaborationWorkspaceKey(workspaceID), viewID,
+	).Scan(ctx, &rows)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]api.RealtimeDrawingInput, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, api.RealtimeDrawingInput{
+			PathID:   row.PathID,
+			UserID:   row.UserID,
+			Points:   json.RawMessage(row.Points),
+			Color:    row.Color,
+			Width:    row.Width,
+			Text:     row.Text,
+			FontSize: row.FontSize,
+		})
+	}
+	return out, nil
+}
+
+func (a *APIAdapter) UpsertDrawing(ctx context.Context, workspaceID uuid.UUID, viewID int32, input api.RealtimeDrawingInput) error {
+	now := nowRFC3339()
+	_, err := a.Store.legacy.BunDB().NewRaw(
+		`INSERT INTO drawings (workspace_id, view_id, user_id, path_id, points, color, width, text, font_size, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (workspace_id, view_id, path_id) DO UPDATE SET
+		   user_id = excluded.user_id,
+		   points = excluded.points,
+		   color = excluded.color,
+		   width = excluded.width,
+		   text = excluded.text,
+		   font_size = excluded.font_size,
+		   updated_at = excluded.updated_at`,
+		collaborationWorkspaceKey(workspaceID), viewID, input.UserID, input.PathID, string(input.Points), input.Color, input.Width, input.Text, input.FontSize, now, now,
+	).Exec(ctx)
+	return err
+}
+
+func (a *APIAdapter) DeleteDrawing(ctx context.Context, workspaceID uuid.UUID, viewID int32, pathID string) error {
+	_, err := a.Store.legacy.BunDB().NewRaw(
+		`DELETE FROM drawings WHERE workspace_id = ? AND view_id = ? AND path_id = ?`,
+		collaborationWorkspaceKey(workspaceID), viewID, pathID,
+	).Exec(ctx)
+	return err
+}
+
 func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
 	if req.GetDryRun() {
 		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("dry_run is not supported by the local sqlite adapter"))

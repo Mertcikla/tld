@@ -42,17 +42,23 @@ import type {
   PlacedElement,
   LibraryElement as WorkspaceElement,
   Connector,
+  ElementReactionSummary,
+  ThreadResolveEvent,
   ViewMarkdownDocument,
+  ViewComment,
   ViewConnector,
+  ViewThread,
   VisibilityOverride,
   Tag,
 } from '../../types'
 import ElementNode from '../../components/ElementNode'
 import ElementPanel from '../../components/ElementPanel'
+import ElementPanelCollaboration from '../../components/ElementPanelCollaboration'
 import MergeDialog from '../../components/MergeDialog'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import CodePreviewPanel from '../../components/CodePreviewPanel'
 import ConnectorPanel from '../../components/ConnectorPanel'
+import ConnectorPanelCollaboration from '../../components/ConnectorPanelCollaboration'
 import ElementLibrary from '../../components/ElementLibrary'
 import ViewExplorer from '../../components/ViewExplorer'
 import ViewMarkdownPanel from '../../components/ViewMarkdownPanel'
@@ -623,6 +629,10 @@ function ViewEditorInner({
     collaborators: [],
     followUserId: null,
   })
+  const [liveThreadUpsert, setLiveThreadUpsert] = useState<ViewThread | null>(null)
+  const [liveThreadResolve, setLiveThreadResolve] = useState<ThreadResolveEvent | null>(null)
+  const [liveCommentCreate, setLiveCommentCreate] = useState<ViewComment | null>(null)
+  const [liveReactions, setLiveReactions] = useState<ElementReactionSummary[] | undefined>(undefined)
   const handleCollaborationAvatarClick = useCallback((userId: string) => {
     setCollaboration((prev) => ({
       ...prev,
@@ -1047,8 +1057,10 @@ function ViewEditorInner({
       })
       snapshot.crdt_connectors.forEach((state) => {
         if (state.deleted) {
+          if (viewId !== null) removeConnectorGraphSnapshot(viewId, state.connector_id)
           removeStoreConnector(state.connector_id)
         } else if (state.connector) {
+          upsertConnectorGraphSnapshot(state.connector)
           upsertStoreConnector(state.connector)
         }
       })
@@ -1109,10 +1121,14 @@ function ViewEditorInner({
     },
     onCRDTConnectorUpsert: (state) => {
       if (state.actor_user_id && state.actor_user_id === realtimeSelfUserIdRef.current) return
-      if (state.connector) upsertStoreConnector(state.connector)
+      if (state.connector) {
+        upsertConnectorGraphSnapshot(state.connector)
+        upsertStoreConnector(state.connector)
+      }
     },
     onCRDTConnectorDelete: (state) => {
       if (state.actor_user_id && state.actor_user_id === realtimeSelfUserIdRef.current) return
+      if (viewId !== null) removeConnectorGraphSnapshot(viewId, state.connector_id)
       removeStoreConnector(state.connector_id)
     },
     onViewElementAdd: (element) => {
@@ -1128,10 +1144,18 @@ function ViewEditorInner({
     onElementUpdate: (element) => {
       applyElementSaved(element)
     },
-    onThreadUpsert: () => { },
-    onThreadResolve: () => { },
-    onCommentCreate: () => { },
-    onReactionsSnapshot: () => { },
+    onThreadUpsert: (thread) => {
+      setLiveThreadUpsert(thread as ViewThread)
+    },
+    onThreadResolve: (event) => {
+      setLiveThreadResolve(event)
+    },
+    onCommentCreate: (comment) => {
+      setLiveCommentCreate(comment as ViewComment)
+    },
+    onReactionsSnapshot: (items) => {
+      setLiveReactions(items as ElementReactionSummary[])
+    },
     onViewStateChange: scheduleRemoteViewRefresh,
     onClose: () => { },
     onRoomFull: () => {
@@ -1149,6 +1173,7 @@ function ViewEditorInner({
     toast,
     updateStoreElementPosition,
     upsertStoreConnector,
+    viewId,
   ])
 
   useEffect(() => {
@@ -1157,15 +1182,19 @@ function ViewEditorInner({
     realtimeSelfUserIdRef.current = null
     setRemoteCursors([])
     setCollaboration({ viewers: [], collaborators: [], followUserId: null })
+    setLiveThreadUpsert(null)
+    setLiveThreadResolve(null)
+    setLiveCommentCreate(null)
+    setLiveReactions(undefined)
 
-    if (viewId === null || isFreePlan || !platform.connectRealtime) return
+    if (viewId === null || !platform.connectRealtime) return
     realtimeRef.current = platform.connectRealtime(viewId, realtimeHandlers)
 
     return () => {
       realtimeRef.current?.disconnect()
       realtimeRef.current = null
     }
-  }, [isFreePlan, platform, realtimeHandlers, viewId])
+  }, [platform, realtimeHandlers, viewId])
 
   useEffect(() => {
     if (applyingRemoteVisibilityRef.current) return
@@ -1203,6 +1232,16 @@ function ViewEditorInner({
   const handleRealtimeElementPositionPreview = useCallback((elementId: number, x: number, y: number) => {
     realtimeClockRef.current += 1
     realtimeRef.current?.sendCRDTElementPosition(elementId, x, y, realtimeClockRef.current)
+  }, [])
+
+  const publishRealtimeConnectorUpsert = useCallback((connector: Connector) => {
+    realtimeClockRef.current += 1
+    realtimeRef.current?.sendCRDTConnectorUpsert(connector, realtimeClockRef.current)
+  }, [])
+
+  const publishRealtimeConnectorDelete = useCallback((connectorId: number) => {
+    realtimeClockRef.current += 1
+    realtimeRef.current?.sendCRDTConnectorDelete(connectorId, realtimeClockRef.current)
   }, [])
 
   const [viewMarkdown, setViewMarkdown] = useState<ViewMarkdownDocument | null>(null)
@@ -2228,6 +2267,7 @@ function ViewEditorInner({
         const connector = connectorToConnector(updated)
         upsertConnectorGraphSnapshot(connector)
         upsertStoreConnector(connector)
+        publishRealtimeConnectorUpsert(connector)
         setSelectedEdge((current) => current?.id === connector.id ? connector : current)
         await refreshElements()
       },
@@ -2236,11 +2276,12 @@ function ViewEditorInner({
         const connector = connectorToConnector(updated)
         upsertConnectorGraphSnapshot(connector)
         upsertStoreConnector(connector)
+        publishRealtimeConnectorUpsert(connector)
         setSelectedEdge((current) => current?.id === connector.id ? connector : current)
         await refreshElements()
       },
     })
-  }, [pushEditAction, refreshElements, upsertStoreConnector])
+  }, [publishRealtimeConnectorUpsert, pushEditAction, refreshElements, upsertStoreConnector])
 
   const pushConnectorDeleteAction = useCallback((deleted: Connector) => {
     let activeConnector = deleted
@@ -2250,17 +2291,19 @@ function ViewEditorInner({
         activeConnector = connectorToConnector(created)
         upsertConnectorGraphSnapshot(activeConnector)
         upsertStoreConnector(activeConnector)
+        publishRealtimeConnectorUpsert(activeConnector)
         await refreshElements()
       },
       redo: async () => {
         await api.workspace.connectors.delete('', activeConnector.id)
         removeConnectorGraphSnapshot(activeConnector.view_id, activeConnector.id)
         removeStoreConnector(activeConnector.id)
+        publishRealtimeConnectorDelete(activeConnector.id)
         setSelectedEdge((current) => current?.id === activeConnector.id ? null : current)
         await refreshElements()
       },
     })
-  }, [pushEditAction, refreshElements, removeStoreConnector, upsertStoreConnector])
+  }, [publishRealtimeConnectorDelete, publishRealtimeConnectorUpsert, pushEditAction, refreshElements, removeStoreConnector, upsertStoreConnector])
 
   const elementEditSessionRef = useRef<{ before: WorkspaceElement; after: WorkspaceElement | null } | null>(null)
   const finalizeElementEditSession = useCallback(() => {
@@ -2320,8 +2363,9 @@ function ViewEditorInner({
     }
     upsertConnectorGraphSnapshot(connector)
     upsertStoreConnector(connector)
+    publishRealtimeConnectorUpsert(connector)
     setSelectedEdge(connector)
-  }, [selectedEdge, upsertStoreConnector])
+  }, [publishRealtimeConnectorUpsert, selectedEdge, upsertStoreConnector])
 
   const handleConnectorPanelClose = useCallback(() => {
     finalizeConnectorEditSession()
@@ -2398,6 +2442,7 @@ function ViewEditorInner({
           const connector = connectorToConnector(newConnector)
           upsertConnectorGraphSnapshot(connector)
           upsertStoreConnector(connector)
+          publishRealtimeConnectorUpsert(connector)
         }
         handleUnsupportedMutation()
       } catch { /* intentionally empty */ }
@@ -2419,12 +2464,14 @@ function ViewEditorInner({
       const vid = ownerViewId ?? viewId
       if (vid != null) removeConnectorGraphSnapshot(vid, edgeId)
       removeStoreConnector(edgeId)
+      publishRealtimeConnectorDelete(edgeId)
       void refreshElementsRef.current()
-    }, [removeStoreConnector, viewId]),
+    }, [publishRealtimeConnectorDelete, removeStoreConnector, viewId]),
     onPlacementMoved: pushPlacementMoveAction,
     onPlacementsMoved: pushPlacementMoveBatchAction,
     onElementPositionPreview: handleRealtimeElementPositionPreview,
     onPlacementRemoved: pushPlacementRemoveAction,
+    onConnectorSaved: publishRealtimeConnectorUpsert,
     onConnectorUpdated: pushConnectorEditAction,
     onConnectorDeleted: pushConnectorDeleteAction,
     onSelectionRemoveFromView: handleBulkRemoveFromView,
@@ -3165,8 +3212,9 @@ function ViewEditorInner({
     const vid = ownerViewId ?? viewId
     if (vid != null) removeConnectorGraphSnapshot(vid, edgeId)
     removeStoreConnector(edgeId)
+    publishRealtimeConnectorDelete(edgeId)
     void refreshElements()
-  }, [refreshElements, removeStoreConnector, viewId])
+  }, [publishRealtimeConnectorDelete, refreshElements, removeStoreConnector, viewId])
 
   const handleOpenMerge = useCallback((elementId: number) => {
     const el = allElements.find((e) => e.id === elementId)
@@ -3366,7 +3414,7 @@ function ViewEditorInner({
       await Promise.all(placementPlan.map((placement) =>
         api.workspace.views.placements.add(targetViewId, placement.elementId, placement.x, placement.y)
       ))
-      await Promise.all(connectorPlan.map((connector) =>
+      const createdConnectors = await Promise.all(connectorPlan.map((connector) =>
         api.workspace.connectors.create(targetViewId, {
           source_element_id: connector.sourceElementId,
           target_element_id: connector.targetElementId,
@@ -3381,6 +3429,7 @@ function ViewEditorInner({
           tags: connector.tags,
         })
       ))
+      createdConnectors.map(connectorToConnector).forEach(publishRealtimeConnectorUpsert)
 
       await refreshElements()
       pendingPasteSelectionRef.current = {
@@ -3399,7 +3448,7 @@ function ViewEditorInner({
       isPasteImportingRef.current = false
       setIsClipboardPasting(false)
     }
-  }, [canEdit, refreshElements, toast])
+  }, [canEdit, publishRealtimeConnectorUpsert, refreshElements, toast])
 
   const handleCopyCutViewSelection = useCallback((event: ClipboardEvent) => {
     if (isEditableKeyboardTarget(event.target) || !isCanvasKeyboardTarget(event.target) || drawingMode || textEditorState || pendingElement) return
@@ -3521,10 +3570,10 @@ function ViewEditorInner({
       }))
 
       const handles = mermaidConnectorHandles(parsed.direction)
-      await Promise.all(parsed.connectors.map((connector) => {
+      const createdConnectors = await Promise.all(parsed.connectors.map((connector) => {
         const source = createdByRef.get(connector.sourceElementRef)
         const target = createdByRef.get(connector.targetElementRef)
-        if (!source || !target) return Promise.resolve()
+        if (!source || !target) return Promise.resolve(null)
         return api.workspace.connectors.create(currentViewId, {
           source_element_id: source.id,
           target_element_id: target.id,
@@ -3535,6 +3584,10 @@ function ViewEditorInner({
           target_handle: connector.targetHandle ?? handles.target_handle,
         })
       }))
+      createdConnectors
+        .filter((connector): connector is Connector => connector !== null)
+        .map(connectorToConnector)
+        .forEach(publishRealtimeConnectorUpsert)
 
       clearEditHistory()
       await refreshElements()
@@ -3562,6 +3615,7 @@ function ViewEditorInner({
     getClipboardPasteCenter,
     pasteViewSelectionPayload,
     pendingElement,
+    publishRealtimeConnectorUpsert,
     refreshElements,
     textEditorState,
     toast,
@@ -3617,6 +3671,24 @@ function ViewEditorInner({
   if (view === null) {
     return <Flex h="100%" align="center" justify="center"><Text>View not found.</Text></Flex>
   }
+
+  const resolvedElementPanelAfterContentSlot = elementPanelAfterContentSlot ?? (
+    <ElementPanelCollaboration
+      element={selectedElement}
+      liveThreadUpsert={liveThreadUpsert}
+      liveThreadResolve={liveThreadResolve}
+      liveCommentCreate={liveCommentCreate}
+      liveReactions={liveReactions}
+    />
+  )
+  const resolvedConnectorPanelAfterContentSlot = connectorPanelAfterContentSlot ?? (
+    <ConnectorPanelCollaboration
+      connector={selectedEdge}
+      liveThreadUpsert={liveThreadUpsert}
+      liveThreadResolve={liveThreadResolve}
+      liveCommentCreate={liveCommentCreate}
+    />
+  )
 
   return (
     <ViewEditorContext.Provider value={{
@@ -3868,8 +3940,7 @@ function ViewEditorInner({
                 if (!viewId) return
                 try {
                   await api.workspace.connectors.delete('', edgeId)
-                  removeConnectorGraphSnapshot(viewId, edgeId)
-                  removeStoreConnector(edgeId)
+                  handleConnectorDeleted(edgeId, viewId)
                 } catch { /* intentionally empty */ }
               }}
             />
@@ -4080,7 +4151,7 @@ function ViewEditorInner({
           hasBackdrop={isMobileLayout}
           availableTags={availableTags}
           noFocusLock={!!pendingElement || !!textEditorState}
-          elementPanelAfterContentSlot={elementPanelAfterContentSlot}
+          elementPanelAfterContentSlot={resolvedElementPanelAfterContentSlot}
         />
 
         <CodePreviewPanel isOpen={codePreview.isOpen} onClose={codePreview.onClose} element={previewElement} hasBackdrop={isMobileLayout} />
@@ -4096,7 +4167,7 @@ function ViewEditorInner({
           onResetVisibility={(id) => handleVisibilityOverride('connector', id, 'reset')}
           hasBackdrop={isMobileLayout}
           noFocusLock={!!pendingElement || !!textEditorState}
-          connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
+          connectorPanelAfterContentSlot={resolvedConnectorPanelAfterContentSlot}
         />
         <ProxyConnectorPanel
           isOpen={proxyConnectorPanel.isOpen}
@@ -4124,6 +4195,7 @@ function ViewEditorInner({
           view={view as ViewTreeNode}
           onSave={handleViewSave}
           onUnsupportedMutation={handleUnsupportedMutation}
+          onConnectorSaved={publishRealtimeConnectorUpsert}
           hasBackdrop={isMobileLayout}
           markdown={viewMarkdown}
           markdownLoading={isMarkdownLoading}

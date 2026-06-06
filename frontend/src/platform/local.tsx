@@ -1,4 +1,5 @@
 import { Navigate, Route } from 'react-router-dom'
+import { connectViewRealtime } from '../api/realtime'
 import type { PlatformFeatures } from './types'
 
 export const platform: PlatformFeatures = {
@@ -12,4 +13,5 @@ export const platform: PlatformFeatures = {
     <Route key="api-keys" path="api-keys" element={<Navigate to="/settings/appearance" replace />} />,
   ],
   AuthLayout: () => null,
+  connectRealtime: connectViewRealtime,
 }

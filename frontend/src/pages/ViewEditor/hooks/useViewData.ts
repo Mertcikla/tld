@@ -245,27 +245,31 @@ export function useViewData({
     }
   }, [queryClient, viewId])
 
+  const fetchViewEditorContent = useCallback(async (targetViewId: number) => {
+    const [content, tree] = await Promise.all([
+      api.workspace.views.content(targetViewId),
+      api.workspace.views.treeAround(targetViewId, { ancestorLevels: 2, descendantLevels: 2 }),
+    ])
+    const viewElements = content.placements || []
+    const connectors = content.connectors || []
+    const view = content.view ?? findViewInTree(tree, targetViewId)
+    if (!view) throw new Error('View not found')
+    return {
+      view,
+      viewElements,
+      connectors,
+      treeData: tree,
+      ...buildViewContentLinks(tree, targetViewId, viewElements),
+    }
+  }, [])
+
   // ── Fetch view content ──────────────────────────────────────────────────
   const viewContentQuery = useQuery({
     queryKey: ['workspace', 'views', viewId, 'editor-content'],
     enabled: viewId !== null,
     queryFn: async () => {
       if (viewId === null) throw new Error('Missing view id')
-      const [content, tree] = await Promise.all([
-        api.workspace.views.content(viewId),
-        api.workspace.views.treeAround(viewId, { ancestorLevels: 2, descendantLevels: 2 }),
-      ])
-      const viewElements = content.placements || []
-      const connectors = content.connectors || []
-      const view = content.view ?? findViewInTree(tree, viewId)
-      if (!view) throw new Error('View not found')
-      return {
-        view,
-        viewElements,
-        connectors,
-        treeData: tree,
-        ...buildViewContentLinks(tree, viewId, viewElements),
-      }
+      return fetchViewEditorContent(viewId)
     },
   })
 
@@ -290,19 +294,12 @@ export function useViewData({
   const refreshElements = useCallback(async () => {
     if (viewId === null) return
     const fresh = await queryClient.fetchQuery({
-      queryKey: ['workspace', 'views', viewId, 'content'],
-      queryFn: () => api.workspace.views.content(viewId),
+      queryKey: ['workspace', 'views', viewId, 'editor-content'],
+      queryFn: () => fetchViewEditorContent(viewId),
       staleTime: 0,
     }).catch(() => null)
-    if (fresh) {
-      setViewElements(fresh.placements)
-      setConnectors(fresh.connectors)
-      const links = buildViewContentLinks(treeDataRef.current, viewId, fresh.placements)
-      setLinksMap(links.linksMap)
-      setParentLinksMap(links.parentLinksMap)
-      useStore.getState().setIncomingLinks(links.incomingLinks)
-    }
-  }, [queryClient, setConnectors, setLinksMap, setParentLinksMap, setViewElements, viewId])
+    if (fresh) hydrateViewContent(fresh)
+  }, [fetchViewEditorContent, hydrateViewContent, queryClient, viewId])
 
   // ── Element mutation helpers ───────────────────────────────────────────────
   const handleElementDeleted = useCallback((deletedId: number) => {

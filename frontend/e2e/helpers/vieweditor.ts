@@ -1,4 +1,4 @@
-import { expect, type APIResponse, type Locator, type Page } from '@playwright/test'
+import { expect, type APIResponse, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test'
 
 const e2eOrgId = '11111111-1111-1111-1111-111111111111'
 
@@ -9,6 +9,56 @@ export const onboardingStorage = {
   viewGrid: 'viewgrid_tutorial_v2_core',
   shown: 'onboarding_shown',
   sharedZoom: 'shared_zoom_onboarding_dismissed',
+}
+
+export type CollaborationIdentity = {
+  client_id: string
+  user_id: string
+  username: string
+}
+
+export type RealtimeFrame = {
+  type?: string
+  [key: string]: unknown
+}
+
+export type CollaborationSession = {
+  context: BrowserContext
+  page: Page
+  identity: CollaborationIdentity
+  receivedFrames: RealtimeFrame[]
+  sentFrames: RealtimeFrame[]
+}
+
+export type CollaborationPair = {
+  alice: CollaborationSession
+  bob: CollaborationSession
+  close: () => Promise<void>
+}
+
+export async function disableAnimations(page: Page) {
+  await page.addInitScript(() => {
+    const styleText = `
+      *, *::before, *::after {
+        animation-delay: 0s !important;
+        animation-duration: 0.001s !important;
+        scroll-behavior: auto !important;
+        transition-delay: 0s !important;
+        transition-duration: 0s !important;
+      }
+    `
+    const install = () => {
+      const style = document.createElement('style')
+      style.dataset.tldE2e = 'disable-animations'
+      style.textContent = styleText
+      document.head.appendChild(style)
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', install, { once: true })
+    } else {
+      install()
+    }
+  })
 }
 
 export async function prepareStorage(page: Page) {
@@ -26,8 +76,124 @@ export async function prepareStorage(page: Page) {
   }, onboardingStorage)
 }
 
+export async function prepareE2EPage(page: Page, identity?: CollaborationIdentity) {
+  await disableAnimations(page)
+  await prepareStorage(page)
+  if (identity) {
+    await page.addInitScript((storedIdentity) => {
+      localStorage.setItem('tld.collaboration.identity.v1', JSON.stringify(storedIdentity))
+    }, identity)
+  }
+}
+
 export function uniqueName(prefix: string) {
   return `${prefix} ${Date.now()} ${Math.random().toString(36).slice(2, 8)}`
+}
+
+function parseRealtimeFrame(payload: unknown): RealtimeFrame {
+  const text = typeof payload === 'string' ? payload : String(payload)
+  try {
+    const parsed = JSON.parse(text) as unknown
+    return parsed && typeof parsed === 'object'
+      ? parsed as RealtimeFrame
+      : { raw: text }
+  } catch {
+    return { raw: text }
+  }
+}
+
+function frameUserIds(frame: RealtimeFrame): Set<string> {
+  const users = new Set<string>()
+  if (frame.type === 'presence_join') {
+    const viewer = frame.viewer as { user_id?: unknown } | undefined
+    if (typeof viewer?.user_id === 'string') users.add(viewer.user_id)
+  }
+  for (const key of ['viewers', 'collaborators']) {
+    const items = frame[key]
+    if (!Array.isArray(items)) continue
+    for (const item of items) {
+      const userId = (item as { user_id?: unknown } | undefined)?.user_id
+      if (typeof userId === 'string') users.add(userId)
+    }
+  }
+  return users
+}
+
+function sawRealtimeUser(session: CollaborationSession, userId: string) {
+  return session.receivedFrames.some((frame) => frameUserIds(frame).has(userId))
+}
+
+export async function waitForRealtimeFrame(session: CollaborationSession, type: string) {
+  await expect.poll(() => session.receivedFrames.some((frame) => frame.type === type)).toBe(true)
+}
+
+export async function createCollaborationSession(browser: Browser, viewId: number, identity: CollaborationIdentity, baseURL?: string) {
+  const context = await browser.newContext({
+    baseURL,
+    viewport: { width: 1440, height: 1000 },
+  })
+  const page = await context.newPage()
+  await prepareE2EPage(page, identity)
+
+  const session: CollaborationSession = {
+    context,
+    page,
+    identity,
+    receivedFrames: [],
+    sentFrames: [],
+  }
+  let sawViewSocket = false
+
+  page.on('websocket', (socket) => {
+    if (!socket.url().includes(`/api/views/${viewId}/ws`)) return
+    sawViewSocket = true
+    socket.on('framereceived', (frame) => {
+      session.receivedFrames.push(parseRealtimeFrame(frame.payload))
+    })
+    socket.on('framesent', (frame) => {
+      session.sentFrames.push(parseRealtimeFrame(frame.payload))
+    })
+  })
+
+  await gotoView(page, viewId)
+  await expect.poll(() => sawViewSocket).toBe(true)
+  await waitForRealtimeFrame(session, 'presence_snapshot')
+  return session
+}
+
+export async function closeCollaborationSessions(...sessions: CollaborationSession[]) {
+  await Promise.all(sessions.map((session) => session.context.close().catch(() => {})))
+}
+
+export async function createCollaborationPair(browser: Browser, viewId: number, baseURL?: string, prefix = uniqueName('Collab User')): Promise<CollaborationPair> {
+  const sessions: CollaborationSession[] = []
+  try {
+    const alice = await createCollaborationSession(browser, viewId, {
+      client_id: `${prefix}-alice-client`.replace(/\s+/g, '-').toLowerCase(),
+      user_id: `${prefix}-alice`.replace(/\s+/g, '-').toLowerCase(),
+      username: `${prefix} Alice`,
+    }, baseURL)
+    sessions.push(alice)
+
+    const bob = await createCollaborationSession(browser, viewId, {
+      client_id: `${prefix}-bob-client`.replace(/\s+/g, '-').toLowerCase(),
+      user_id: `${prefix}-bob`.replace(/\s+/g, '-').toLowerCase(),
+      username: `${prefix} Bob`,
+    }, baseURL)
+    sessions.push(bob)
+
+    await expect.poll(() => sawRealtimeUser(alice, bob.identity.user_id)).toBe(true)
+    await expect.poll(() => sawRealtimeUser(bob, alice.identity.user_id)).toBe(true)
+
+    return {
+      alice,
+      bob,
+      close: () => closeCollaborationSessions(alice, bob),
+    }
+  } catch (error) {
+    await closeCollaborationSessions(...sessions)
+    throw error
+  }
 }
 
 export async function createDiagram(page: Page, name = uniqueName('E2E Diagram')) {
@@ -136,6 +302,25 @@ export async function removeSelectedNodeWithBackspace(page: Page, name: string) 
   await nodeByName(page, name).click()
   await page.keyboard.press('Backspace')
   await expect(nodeByName(page, name)).toHaveCount(0)
+}
+
+export async function dragNodeByName(page: Page, name: string, deltaX: number, deltaY: number) {
+  const node = nodeByName(page, name)
+  const box = await node.boundingBox()
+  if (!box) throw new Error(`Node "${name}" is not visible`)
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  await page.mouse.move(center.x, center.y)
+  await page.mouse.down()
+  await page.mouse.move(center.x + deltaX, center.y + deltaY, { steps: 12 })
+  await page.mouse.up()
+}
+
+export async function createConnectorWithKeyboard(page: Page, sourceName: string, targetName: string) {
+  await nodeByName(page, sourceName).click()
+  await page.keyboard.press('e')
+  await expect(nodeByName(page, sourceName).getByText(/tap element to connect/i)).toBeVisible()
+  await nodeByName(page, targetName).click()
+  await expect(page.locator('.react-flow__edge').first()).toBeAttached()
 }
 
 export async function listPlacements(page: Page, viewId = currentViewId(page)) {
@@ -474,7 +659,7 @@ export async function openElementPanel(page: Page, name: string) {
 
 export async function openConnectorPanelFromFirstEdge(page: Page) {
   const edge = page.locator('.react-flow__edge').first()
-  await expect(edge).toBeVisible()
+  await expect(edge).toBeAttached()
   await edge.click({ force: true })
   await edge.click({ force: true })
   await expect(page.getByTestId('connector-panel')).toBeVisible()

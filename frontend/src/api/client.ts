@@ -5,16 +5,20 @@ import type {
   DependencyConnector,
   DependencyElement,
   ElementPlacement,
+  ElementReactionSummary,
   ExploreData,
   LibraryElement,
   NoiseGateInitialization,
   PlacedElement,
   Tag,
+  ThreadResolveEvent,
   View,
+  ViewComment,
   ViewConnector,
   ViewMarkdownDocument,
   ViewLayer,
   ViewPlacement,
+  ViewThread,
   ViewTreeNode,
   VisibilityOverride,
 } from '../types'
@@ -57,6 +61,13 @@ import {
   OrgService,
   ListTagColorsResponseSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/org_service_pb'
+import {
+  CollaborationService,
+  ListThreadsResponseSchema,
+  CreateThreadResponseSchema,
+  AddCommentResponseSchema,
+  ListReactionsResponseSchema,
+} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/collaboration_service_pb'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset, isWailsApp } from '../config/runtime'
 import {
@@ -247,6 +258,7 @@ const dependencyClient = createClient(DependencyService, transport)
 const importClient = createClient(ImportService, transport)
 const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
 const orgClient = createClient(OrgService, transport)
+const collaborationClient = createClient(CollaborationService, transport)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -263,7 +275,7 @@ export function j<T>(schema: Parameters<typeof toJson>[0], msg: Parameters<typeo
   return toJson(schema, msg, { useProtoFieldName: true, emitDefaultValues: true }) as unknown as T
 }
 
-function timestampToISOString(value: WorkspaceVersionInfo['createdAt']): string {
+function timestampToISOString(value?: WorkspaceVersionInfo['createdAt'] | null): string {
   if (!value) return ''
   const seconds = typeof value.seconds === 'bigint' ? Number(value.seconds) : Number(value.seconds ?? 0)
   const nanos = Number(value.nanos ?? 0)
@@ -282,6 +294,51 @@ function mapWorkspaceVersion(version: WorkspaceVersionInfo): WorkspaceVersion {
     description: version.description,
     workspace_hash: version.workspaceHash,
     created_at: timestampToISOString(version.createdAt),
+  }
+}
+
+function mapViewComment(raw: Record<string, unknown>): ViewComment {
+  const viewId = Number(raw.view_id ?? 0)
+  return {
+    id: Number(raw.id ?? 0),
+    org_id: String(raw.org_id ?? ''),
+    view_id: viewId,
+    diagram_id: viewId,
+    thread_id: Number(raw.thread_id ?? 0),
+    author_id: String(raw.author_id ?? ''),
+    author_username: String(raw.author_username ?? ''),
+    body: String(raw.body ?? ''),
+    created_at: String(raw.created_at ?? ''),
+    updated_at: String(raw.updated_at ?? ''),
+  }
+}
+
+function mapViewThread(raw: Record<string, unknown>): ViewThread {
+  const viewId = Number(raw.view_id ?? 0)
+  return {
+    id: Number(raw.id ?? 0),
+    org_id: String(raw.org_id ?? ''),
+    view_id: viewId,
+    diagram_id: viewId,
+    element_id: raw.element_id != null ? Number(raw.element_id) : null,
+    connector_id: raw.connector_id != null ? Number(raw.connector_id) : null,
+    created_by: String(raw.created_by ?? ''),
+    created_by_username: String(raw.created_by_username ?? ''),
+    status: raw.status === 'resolved' ? 'resolved' : 'open',
+    created_at: String(raw.created_at ?? ''),
+    resolved_at: raw.resolved_at ? String(raw.resolved_at) : null,
+    comments: Array.isArray(raw.comments)
+      ? raw.comments.map((item) => mapViewComment((item ?? {}) as Record<string, unknown>))
+      : [],
+  }
+}
+
+function mapReactionSummary(raw: Record<string, unknown>): ElementReactionSummary {
+  return {
+    element_id: Number(raw.element_id ?? 0),
+    emoji: String(raw.emoji ?? ''),
+    count: Number(raw.count ?? 0),
+    reacted_by_me: Boolean(raw.reacted_by_me ?? false),
   }
 }
 
@@ -913,6 +970,58 @@ export const api = {
           if (!json?.view) throw new Error('View markdown unlink returned no updated view response')
           return mapDiagram(json.view)
         },
+      },
+
+      threads: {
+        listForElement: (viewId: number, elementId: number): Promise<ViewThread[]> =>
+          rpc(async () => {
+            const res = await collaborationClient.listThreads({ viewId, elementId })
+            const json = j<{ threads?: Record<string, unknown>[] }>(ListThreadsResponseSchema, res)
+            return (json.threads ?? []).map(mapViewThread)
+          }),
+        listForConnector: (viewId: number, connectorId: number): Promise<ViewThread[]> =>
+          rpc(async () => {
+            const res = await collaborationClient.listThreads({ viewId, connectorId })
+            const json = j<{ threads?: Record<string, unknown>[] }>(ListThreadsResponseSchema, res)
+            return (json.threads ?? []).map(mapViewThread)
+          }),
+        createForElement: (viewId: number, elementId: number, body: string): Promise<ViewThread> =>
+          rpc(async () => {
+            const res = await collaborationClient.createThread({ viewId, elementId, body })
+            const json = j<{ thread?: Record<string, unknown> }>(CreateThreadResponseSchema, res)
+            return mapViewThread(json.thread ?? {})
+          }),
+        createForConnector: (viewId: number, connectorId: number, body: string): Promise<ViewThread> =>
+          rpc(async () => {
+            const res = await collaborationClient.createThread({ viewId, connectorId, body })
+            const json = j<{ thread?: Record<string, unknown> }>(CreateThreadResponseSchema, res)
+            return mapViewThread(json.thread ?? {})
+          }),
+        addComment: (viewId: number, threadId: number, body: string): Promise<ViewComment> =>
+          rpc(async () => {
+            const res = await collaborationClient.addComment({ viewId, threadId, body })
+            const json = j<{ comment?: Record<string, unknown> }>(AddCommentResponseSchema, res)
+            return mapViewComment(json.comment ?? {})
+          }),
+        resolve: (viewId: number, threadId: number, resolved: boolean): Promise<ThreadResolveEvent> =>
+          rpc(async () => {
+            await collaborationClient.resolveThread({ viewId, threadId, resolved })
+            return { thread_id: threadId, resolved }
+          }),
+      },
+
+      reactions: {
+        list: (viewId: number): Promise<ElementReactionSummary[]> =>
+          rpc(async () => {
+            const res = await collaborationClient.listReactions({ viewId })
+            const json = j<{ reactions?: Record<string, unknown>[] }>(ListReactionsResponseSchema, res)
+            return (json.reactions ?? []).map(mapReactionSummary)
+          }),
+        toggleForElement: (viewId: number, elementId: number, emoji: string): Promise<{ active: boolean }> =>
+          rpc(async () => {
+            const res = await collaborationClient.toggleReaction({ viewId, elementId, emoji })
+            return { active: res.active }
+          }),
       },
 
       rename: (id: number, name: string): Promise<View> =>
