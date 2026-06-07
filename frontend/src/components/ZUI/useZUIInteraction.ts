@@ -125,6 +125,10 @@ export function calculateMaxZoom(groups: DiagramGroupLayout[], canvasW: number, 
 const MIN_ZOOM = 0.4
 const ZUI_NATIVE_WHEEL_SELECTOR = '[data-zui-native-wheel="true"]'
 
+export function isZUIPanMouseButton(button: number): boolean {
+  return button === 0 || button === 1
+}
+
 function shouldIgnoreCapturedWheel(e: WheelEvent): boolean {
   const target = e.target
   return target instanceof Element && target.closest(ZUI_NATIVE_WHEEL_SELECTOR) !== null
@@ -442,7 +446,8 @@ export function useZUIInteraction(
     }
 
     function onMouseDown(e: MouseEvent) {
-      if (e.button !== 0) return
+      if (!isZUIPanMouseButton(e.button)) return
+      e.preventDefault()
       dragging.current = true
       lastMouse.current.x = e.clientX
       lastMouse.current.y = e.clientY
@@ -526,6 +531,10 @@ export function useZUIInteraction(
         return zoomAround(prev, focalX, focalY, 2, maxZoomRef.current)
       })
       onZoomRef.current?.()
+    }
+
+    function onAuxClick(e: MouseEvent) {
+      if (e.button === 1) e.preventDefault()
     }
 
     // ── Touch pan + pinch ──────────────────────────────────────────
@@ -619,6 +628,7 @@ export function useZUIInteraction(
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
     el.addEventListener('dblclick', onDblClick)
+    el.addEventListener('auxclick', onAuxClick)
     el.addEventListener('touchstart', onTouchStart, { passive: false })
     el.addEventListener('touchmove', onTouchMove, { passive: false })
     el.addEventListener('touchend', onTouchEnd)
@@ -632,6 +642,7 @@ export function useZUIInteraction(
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
       el.removeEventListener('dblclick', onDblClick)
+      el.removeEventListener('auxclick', onAuxClick)
       el.removeEventListener('touchstart', onTouchStart)
       el.removeEventListener('touchmove', onTouchMove)
       el.removeEventListener('touchend', onTouchEnd)

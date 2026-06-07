@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { getExpandThresholds } from './layoutEngine'
 import { hitTestZUIRenderedNode } from './hitTest'
-import { zoomAround } from './useZUIInteraction'
+import { isZUIPanMouseButton, zoomAround } from './useZUIInteraction'
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 
 const thresholds = getExpandThresholds(1000)
@@ -119,5 +119,13 @@ describe('ZUI gesture zoom', () => {
     expect(overParent.zoom).toBe(maxZoom)
     expect(overLeaf.zoom).toBe(maxZoom)
     expect(overEmpty.zoom).toBe(maxZoom)
+  })
+})
+
+describe('ZUI mouse pan buttons', () => {
+  it('allows primary and middle mouse drags to pan', () => {
+    expect(isZUIPanMouseButton(0)).toBe(true)
+    expect(isZUIPanMouseButton(1)).toBe(true)
+    expect(isZUIPanMouseButton(2)).toBe(false)
   })
 })
