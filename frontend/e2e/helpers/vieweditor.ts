@@ -69,8 +69,6 @@ export async function prepareStorage(page: Page) {
     localStorage.setItem(keys.viewGrid, '1')
     localStorage.setItem(keys.shown, '1')
     localStorage.setItem(keys.sharedZoom, 'true')
-    localStorage.setItem('diag:libraryOpen', 'true')
-    localStorage.setItem('diag:explorerOpen', 'true')
     localStorage.setItem('diag:snapToGrid', 'false')
     localStorage.setItem('tld:experimental', JSON.stringify({ watchEnabled: true }))
   }, onboardingStorage)
@@ -233,6 +231,237 @@ export async function reactFlowPaneBox(page: Page) {
   return box
 }
 
+export async function locatorCenter(locator: Locator) {
+  const box = await locator.boundingBox()
+  if (!box) throw new Error('Locator is not visible')
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+}
+
+export async function nodeCenter(page: Page, name: string) {
+  return locatorCenter(nodeByName(page, name))
+}
+
+export async function isMobileLayout(page: Page) {
+  return page.evaluate(() => window.matchMedia('(max-width: 767px)').matches || navigator.maxTouchPoints > 0)
+}
+
+async function closePanelIfVisible(panel: Locator) {
+  if (!await isPanelUsablyVisible(panel)) return
+  const closeButton = panel.getByRole('button', { name: 'Close' }).first()
+  if (await closeButton.isVisible({ timeout: 500 }).catch(() => false)) {
+    await closeButton.click({ force: true })
+  } else {
+    await panel.page().keyboard.press('Escape')
+  }
+  await expect(panel).toBeHidden({ timeout: 1500 }).catch(async () => {
+    await panel.page().keyboard.press('Escape')
+    await expect(panel).toBeHidden({ timeout: 1500 }).catch(() => {})
+  })
+}
+
+async function isPanelUsablyVisible(panel: Locator) {
+  if (!await panel.isVisible().catch(() => false)) return false
+  const box = await panel.boundingBox().catch(() => null)
+  if (!box || box.width <= 0 || box.height <= 0) return false
+  const viewport = panel.page().viewportSize()
+  if (!viewport) return true
+  return box.x < viewport.width && box.x + box.width > 0 && box.y < viewport.height && box.y + box.height > 0
+}
+
+export async function openElementLibrary(page: Page) {
+  const panel = page.getByTestId('element-library-panel')
+  if (await isPanelUsablyVisible(panel)) return panel
+
+  await closePanelIfVisible(page.getByTestId('view-explorer-panel'))
+
+  const desktopToggle = page.getByTestId('vieweditor-toggle-library')
+  if (await desktopToggle.isVisible().catch(() => false)) {
+    await desktopToggle.click()
+  } else {
+    await page.getByRole('button', { name: 'Open element library' }).click()
+  }
+  await expect(panel).toBeVisible()
+  return panel
+}
+
+export async function openViewExplorer(page: Page) {
+  const panel = page.getByTestId('view-explorer-panel')
+  if (await isPanelUsablyVisible(panel)) return panel
+
+  await closePanelIfVisible(page.getByTestId('element-library-panel'))
+
+  const desktopToggle = page.getByTestId('vieweditor-toggle-explorer')
+  if (await desktopToggle.isVisible().catch(() => false)) {
+    await desktopToggle.click()
+  } else {
+    await page.getByRole('button', { name: 'Open view navigation' }).click()
+  }
+  await expect(panel).toBeVisible()
+  return panel
+}
+
+export async function reactFlowViewport(page: Page) {
+  return page.locator('.react-flow__viewport').evaluate((viewport) => {
+    const transform = getComputedStyle(viewport).transform
+    if (!transform || transform === 'none') return { x: 0, y: 0, zoom: 1 }
+    const matrix = new DOMMatrixReadOnly(transform)
+    return { x: matrix.m41, y: matrix.m42, zoom: matrix.a }
+  })
+}
+
+export async function dispatchWheelOnLocator(
+  locator: Locator,
+  options: {
+    clientX?: number
+    clientY?: number
+    deltaX?: number
+    deltaY?: number
+    deltaMode?: number
+    ctrlKey?: boolean
+  },
+) {
+  const box = await locator.boundingBox()
+  if (!box) throw new Error('Wheel target is not visible')
+  await locator.dispatchEvent('wheel', {
+    bubbles: true,
+    cancelable: true,
+    clientX: options.clientX ?? box.x + box.width / 2,
+    clientY: options.clientY ?? box.y + box.height / 2,
+    deltaX: options.deltaX ?? 0,
+    deltaY: options.deltaY ?? 0,
+    deltaMode: options.deltaMode ?? 0,
+    ctrlKey: options.ctrlKey ?? false,
+  })
+}
+
+export async function dispatchPointerEventOnLocator(
+  locator: Locator,
+  type: 'pointerdown' | 'pointermove' | 'pointerup' | 'pointercancel',
+  options: {
+    clientX: number
+    clientY: number
+    pointerId?: number
+    pointerType?: 'mouse' | 'touch' | 'pen'
+    pressure?: number
+    button?: number
+    buttons?: number
+  },
+) {
+  await locator.dispatchEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX: options.clientX,
+    clientY: options.clientY,
+    pointerId: options.pointerId ?? 1,
+    pointerType: options.pointerType ?? 'touch',
+    pressure: options.pressure ?? (type === 'pointerup' || type === 'pointercancel' ? 0 : 0.5),
+    button: options.button ?? 0,
+    buttons: options.buttons ?? (type === 'pointerup' || type === 'pointercancel' ? 0 : 1),
+  })
+}
+
+export async function longPressLocator(
+  locator: Locator,
+  options: {
+    clientX?: number
+    clientY?: number
+    durationMs?: number
+    pointerType?: 'touch' | 'pen'
+  } = {},
+) {
+  const point = options.clientX !== undefined && options.clientY !== undefined
+    ? { x: options.clientX, y: options.clientY }
+    : await locatorCenter(locator)
+  await dispatchPointerEventOnLocator(locator, 'pointerdown', {
+    clientX: point.x,
+    clientY: point.y,
+    pointerType: options.pointerType ?? 'touch',
+  })
+  await locator.evaluate((_, durationMs) => new Promise((resolve) => {
+    window.setTimeout(resolve, durationMs)
+  }), options.durationMs ?? 650)
+  await dispatchPointerEventOnLocator(locator, 'pointerup', {
+    clientX: point.x,
+    clientY: point.y,
+    pointerType: options.pointerType ?? 'touch',
+    buttons: 0,
+  })
+}
+
+export async function dispatchTouchEventOnLocator(
+  locator: Locator,
+  type: 'touchstart' | 'touchmove' | 'touchend' | 'touchcancel',
+  touches: Array<{ identifier: number; clientX: number; clientY: number }>,
+  changedTouches = touches,
+) {
+  await locator.evaluate((element, payload) => {
+    const makeTouch = (point: { identifier: number; clientX: number; clientY: number }) => {
+      if (typeof Touch === 'function') {
+        try {
+          return new Touch({
+            identifier: point.identifier,
+            target: element,
+            clientX: point.clientX,
+            clientY: point.clientY,
+            screenX: point.clientX,
+            screenY: point.clientY,
+            pageX: point.clientX,
+            pageY: point.clientY,
+          })
+        } catch {
+          // WebKit exposes Touch but rejects construction in Playwright's harness.
+        }
+      }
+      return {
+        identifier: point.identifier,
+        target: element,
+        clientX: point.clientX,
+        clientY: point.clientY,
+        screenX: point.clientX,
+        screenY: point.clientY,
+        pageX: point.clientX,
+        pageY: point.clientY,
+      } as Touch
+    }
+    const active = payload.touches.map(makeTouch)
+    const changed = payload.changedTouches.map(makeTouch)
+    let event: Event
+    if (typeof TouchEvent === 'function') {
+      try {
+        event = new TouchEvent(payload.type, {
+          bubbles: true,
+          cancelable: true,
+          touches: active,
+          targetTouches: active,
+          changedTouches: changed,
+        })
+      } catch {
+        event = new Event(payload.type, { bubbles: true, cancelable: true })
+        Object.defineProperty(event, 'touches', { value: active })
+        Object.defineProperty(event, 'targetTouches', { value: active })
+        Object.defineProperty(event, 'changedTouches', { value: changed })
+      }
+    } else {
+      event = new Event(payload.type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'touches', { value: active })
+      Object.defineProperty(event, 'targetTouches', { value: active })
+      Object.defineProperty(event, 'changedTouches', { value: changed })
+    }
+    element.dispatchEvent(event)
+  }, { type, touches, changedTouches })
+}
+
+export async function dragWithMouse(page: Page, from: { x: number; y: number }, to: { x: number; y: number }, steps = 12) {
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps })
+  await page.mouse.up()
+}
+
+export function handleLocator(page: Page, elementId: number, handleId: string) {
+  return page.locator(`.react-flow__node[data-id="${elementId}"] .react-flow__handle[data-handleid="${handleId}"]`)
+}
+
 export async function pasteTextOnCanvas(page: Page, text: string) {
   await page.getByTestId('vieweditor-canvas').click()
   await page.evaluate((pasteText) => {
@@ -309,6 +538,41 @@ export async function dragNodeByName(page: Page, name: string, deltaX: number, d
   const box = await node.boundingBox()
   if (!box) throw new Error(`Node "${name}" is not visible`)
   const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  if (await isMobileLayout(page)) {
+    await node.dispatchEvent('pointerdown', {
+      bubbles: true,
+      cancelable: true,
+      clientX: center.x,
+      clientY: center.y,
+      pointerId: 77,
+      pointerType: 'touch',
+      button: 0,
+      buttons: 1,
+    })
+    await page.evaluate((payload) => {
+      document.dispatchEvent(new PointerEvent('pointermove', {
+        bubbles: true,
+        cancelable: true,
+        clientX: payload.x,
+        clientY: payload.y,
+        pointerId: 77,
+        pointerType: 'touch',
+        button: 0,
+        buttons: 1,
+      }))
+      document.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true,
+        cancelable: true,
+        clientX: payload.x,
+        clientY: payload.y,
+        pointerId: 77,
+        pointerType: 'touch',
+        button: 0,
+        buttons: 0,
+      }))
+    }, { x: center.x + deltaX, y: center.y + deltaY })
+    return
+  }
   await page.mouse.move(center.x, center.y)
   await page.mouse.down()
   await page.mouse.move(center.x + deltaX, center.y + deltaY, { steps: 12 })
@@ -666,7 +930,7 @@ export async function openConnectorPanelFromFirstEdge(page: Page) {
 }
 
 export async function addExistingFromLibrary(page: Page, name: string) {
-  await expect(page.getByTestId('element-library-panel')).toBeVisible()
+  await openElementLibrary(page)
   await page.getByTestId('element-library-search').fill(name)
   const item = libraryItemByName(page, name)
   await expect(item).toBeVisible()

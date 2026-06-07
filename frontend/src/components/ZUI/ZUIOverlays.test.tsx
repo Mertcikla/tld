@@ -93,7 +93,7 @@ describe('ZUIHoverPopover hover lock', () => {
   it('releases the lock when the popover closes without a mouseleave', () => {
     const onHoverLock = vi.fn()
     const renderer = create(renderPopover(true, onHoverLock))
-    const content = renderer.root.findByProps({ 'data-testid': 'zui-popover-content' })
+    const content = renderer.root.findByProps({ 'data-testid': 'zui-hover-popover' })
 
     act(() => {
       content.props.onMouseEnter()

@@ -267,6 +267,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
   return (
     <SlidingPanel
+      data-testid="code-preview-panel"
       isOpen={isOpen}
       onClose={onClose}
       panelKey="code-preview"

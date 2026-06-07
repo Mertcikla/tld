@@ -838,6 +838,10 @@ function ElementNode({ data, selected }: Props) {
               {data.onStartHandleReconnect && reconnectCandidateByHandle.has(handleId) && (
                 <Box
                   position="absolute"
+                  data-testid="vieweditor-node-reconnect-zone"
+                  data-edge-id={reconnectCandidateByHandle.get(handleId)?.edgeId}
+                  data-endpoint={reconnectCandidateByHandle.get(handleId)?.endpoint}
+                  data-handle-id={handleId}
                   className="element-node-reconnect-zone"
                   style={getReconnectZoneStyle(position, slot)}
                   pointerEvents="auto"
@@ -1064,6 +1068,7 @@ function ElementNode({ data, selected }: Props) {
             >
               <Box
                 as="button"
+                data-testid="vieweditor-node-source-link"
                 display="flex"
                 alignItems="center"
                 justifyContent="center"

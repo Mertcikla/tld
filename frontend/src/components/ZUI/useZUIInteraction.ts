@@ -1,7 +1,7 @@
 // src/components/ZUI/useZUIInteraction.ts
 
 import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
-import type { BBox, DiagramGroupLayout, LayoutNode, ZUIViewState, HoveredItem } from './types'
+import type { BBox, DiagramGroupLayout, LayoutNode, ZUITestInteraction, ZUIViewState, HoveredItem } from './types'
 import { getExpandThresholds, screenToWorldX, screenToWorldY, viewOriginX, viewOriginY, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { hitTestZUIRenderedNode, warmZUIHitTestIndexes } from './hitTest'
 import { buildEdgeSpatialIndex, findHoveredEdge, type EdgeSpatialIndex } from './edgeHover'
@@ -124,6 +124,14 @@ export function calculateMaxZoom(groups: DiagramGroupLayout[], canvasW: number, 
 
 const MIN_ZOOM = 0.4
 const ZUI_NATIVE_WHEEL_SELECTOR = '[data-zui-native-wheel="true"]'
+
+function recordZuiTestInteraction(interaction: ZUITestInteraction) {
+  if (typeof window === 'undefined' || !window.location.href.includes('debugZuiTest')) return
+  const testState = window.__TLD_ZUI_TEST_STATE__
+  if (testState) {
+    testState.lastInteraction = interaction
+  }
+}
 
 function shouldIgnoreCapturedWheel(e: WheelEvent): boolean {
   const target = e.target
@@ -385,7 +393,18 @@ export function useZUIInteraction(
     if (!el) return
 
     function onWheel(e: WheelEvent) {
-      if (shouldIgnoreCapturedWheel(e)) return
+      if (e.defaultPrevented) return
+      if (shouldIgnoreCapturedWheel(e)) {
+        recordZuiTestInteraction({
+          type: 'wheel',
+          mode: 'native-wheel-overlay',
+          deltaX: e.deltaX,
+          deltaY: e.deltaY,
+          deltaMode: e.deltaMode,
+          ctrlKey: e.ctrlKey,
+        })
+        return
+      }
 
       const rect = el!.getBoundingClientRect()
       const isInsideCanvas =
@@ -425,6 +444,14 @@ export function useZUIInteraction(
       const isRealMouseWheel = e.deltaMode !== 0 || isNotchedWheel
 
       if (isPinch || isRealMouseWheel) {
+        recordZuiTestInteraction({
+          type: 'wheel',
+          mode: isPinch ? 'ctrl-wheel-pinch' : 'wheel-zoom',
+          deltaX: e.deltaX,
+          deltaY: e.deltaY,
+          deltaMode: e.deltaMode,
+          ctrlKey: e.ctrlKey,
+        })
         const focalX = e.clientX - rect.left
         const focalY = e.clientY - rect.top
 
@@ -436,6 +463,14 @@ export function useZUIInteraction(
         onZoomRef.current?.()
       } else if (!isMobile) {
         // Trackpad panning - disabled on mobile to avoid interference with pinch-to-zoom
+        recordZuiTestInteraction({
+          type: 'wheel',
+          mode: 'trackpad-pan',
+          deltaX: e.deltaX,
+          deltaY: e.deltaY,
+          deltaMode: e.deltaMode,
+          ctrlKey: e.ctrlKey,
+        })
         scheduleViewState((prev) => ({ ...prev, x: prev.x - e.deltaX, y: prev.y - e.deltaY }))
         onPanRef.current?.()
       }
@@ -460,6 +495,7 @@ export function useZUIInteraction(
         const dy = e.clientY - lastMouse.current.y
         lastMouse.current.x = e.clientX
         lastMouse.current.y = e.clientY
+        recordZuiTestInteraction({ type: 'mouse', mode: 'drag-pan' })
         scheduleViewState((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }))
         onPanRef.current?.()
         return
@@ -525,6 +561,7 @@ export function useZUIInteraction(
       setViewState((prev) => {
         return zoomAround(prev, focalX, focalY, 2, maxZoomRef.current)
       })
+      recordZuiTestInteraction({ type: 'dblclick', mode: 'double-click-zoom' })
       onZoomRef.current?.()
     }
 
@@ -570,6 +607,7 @@ export function useZUIInteraction(
         const dy = e.touches[0].clientY - lastMouse.current.y
         lastMouse.current.x = e.touches[0].clientX
         lastMouse.current.y = e.touches[0].clientY
+        recordZuiTestInteraction({ type: 'touch', mode: 'one-finger-pan' })
         scheduleViewState((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }))
         onPanRef.current?.()
       } else if (e.touches.length >= 2) {
@@ -581,6 +619,7 @@ export function useZUIInteraction(
           const dy = mid.y - lastPinchMid.current.y
 
           if (isFinite(factor) && factor > 0) {
+            recordZuiTestInteraction({ type: 'touch', mode: 'two-finger-pinch' })
             scheduleViewState((prev) => {
               const zoomed = zoomAround(prev, mid.x, mid.y, factor, maxZoomRef.current)
               return { ...zoomed, x: zoomed.x + dx, y: zoomed.y + dy }
@@ -613,6 +652,7 @@ export function useZUIInteraction(
     el.style.cursor = 'grab'
 
     window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    el.addEventListener('wheel', onWheel, { passive: false })
     el.addEventListener('mousedown', onMouseDown)
     el.addEventListener('mouseleave', onMouseOut)
     el.addEventListener('mouseout', onMouseOut)
@@ -626,6 +666,7 @@ export function useZUIInteraction(
 
     return () => {
       window.removeEventListener('wheel', onWheel, { capture: true })
+      el.removeEventListener('wheel', onWheel)
       el.removeEventListener('mousedown', onMouseDown)
       el.removeEventListener('mouseleave', onMouseOut)
       el.removeEventListener('mouseout', onMouseOut)

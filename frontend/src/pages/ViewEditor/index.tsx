@@ -3899,6 +3899,7 @@ function ViewEditorInner({
                 zIndex={2000}
               >
                 <Input
+                  data-testid="drawing-text-input"
                   autoFocus
                   variant="unstyled"
                   bg="var(--bg-panel)"

@@ -31,6 +31,30 @@ export default defineConfig({
       name: 'firefox',
       use: { ...devices['Desktop Firefox'] },
     },
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] },
+    },
+    {
+      name: 'mobile-safari',
+      use: { ...devices['iPhone 14'] },
+    },
+    {
+      name: 'mobile-chrome',
+      use: { ...devices['Pixel 7'] },
+    },
+    {
+      name: 'tablet-touch',
+      use: { ...devices['iPad Pro 11'] },
+    },
+    {
+      name: 'desktop-touch-chromium',
+      use: {
+        ...devices['Desktop Chrome'],
+        hasTouch: true,
+        viewport: { width: 1366, height: 900 },
+      },
+    },
   ],
   webServer: {
     command: `${binary} serve --foreground --host 127.0.0.1 --port ${port} --data-dir ${dataDir}`,
