@@ -3,14 +3,18 @@ import type { Node as RFNode, NodeChange } from 'reactflow'
 import type { Connector } from '../../../types'
 import {
   PENDING_ELEMENT_NODE_ID,
+  accelerateViewEditorPinchZoomFactor,
   applyPendingElementNodeChanges,
   getDraggedElementNodes,
   getConnectorDeletionTarget,
   pendingElementPositionFromFlowPoint,
   resolveConnectorDropTarget,
   shouldDisplayConnectorDragPlaceholder,
+  shouldZoomViewEditorWheel,
+  zoomViewportAroundClientPoint,
   type PendingElementState,
 } from './useCanvasInteractions'
+import type { WheelDeltaLike } from '../../../utils/wheel'
 
 const connector = (id: number): Connector => ({
   id,
@@ -54,6 +58,16 @@ class FakeElement {
 
 function node(id: string, options: Partial<RFNode> = {}): RFNode {
   return { id, type: 'elementNode', position: { x: 0, y: 0 }, data: {}, ...options } as RFNode
+}
+
+function wheel(overrides: Partial<WheelDeltaLike>): WheelDeltaLike {
+  return {
+    deltaX: 0,
+    deltaY: 0,
+    deltaMode: 0,
+    ctrlKey: false,
+    ...overrides,
+  }
 }
 
 function installPointHitTest(elements: FakeElement[]) {
@@ -195,6 +209,64 @@ describe('connector drag placeholder visibility', () => {
     expect(shouldDisplayConnectorDragPlaceholder({ nodeId: '12', isHandle: false })).toBe(false)
     expect(shouldDisplayConnectorDragPlaceholder({ nodeId: '12', isHandle: true })).toBe(false)
     expect(shouldDisplayConnectorDragPlaceholder({ isHandle: true })).toBe(false)
+  })
+})
+
+describe('viewport zoom helpers', () => {
+  it('zooms vertical smooth wheel input before React Flow can pan it', () => {
+    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 6 }), false)).toBe(true)
+    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 20.5 }), false)).toBe(true)
+  })
+
+  it('keeps two-axis wheel gestures available for canvas panning', () => {
+    expect(shouldZoomViewEditorWheel(wheel({ deltaX: 8, deltaY: 20 }), false)).toBe(false)
+    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 6 }), true)).toBe(false)
+  })
+
+  it('lets React Flow handle ctrl-wheel pinch gestures such as Firefox trackpad pinch', () => {
+    expect(shouldZoomViewEditorWheel(wheel({ ctrlKey: true, deltaY: 6 }), false)).toBe(false)
+    expect(shouldZoomViewEditorWheel(wheel({ ctrlKey: true, deltaY: 1, deltaMode: 1 }), false)).toBe(false)
+  })
+
+  it('doubles incremental pinch zoom distance from neutral', () => {
+    expect(accelerateViewEditorPinchZoomFactor(1)).toBe(1)
+    expect(accelerateViewEditorPinchZoomFactor(1.04)).toBeCloseTo(1.08)
+    expect(accelerateViewEditorPinchZoomFactor(0.96)).toBeCloseTo(0.92)
+  })
+
+  it('keeps the flow point under the client point fixed while zooming', () => {
+    const viewport = { x: 80, y: 40, zoom: 2 }
+    const rect = { left: 10, top: 20 }
+    const point = { clientX: 310, clientY: 220 }
+    const beforeFlow = {
+      x: (point.clientX - rect.left - viewport.x) / viewport.zoom,
+      y: (point.clientY - rect.top - viewport.y) / viewport.zoom,
+    }
+
+    const next = zoomViewportAroundClientPoint(viewport, rect, point, 1.5, 0.1, 4)
+    const afterFlow = {
+      x: (point.clientX - rect.left - next.x) / next.zoom,
+      y: (point.clientY - rect.top - next.y) / next.zoom,
+    }
+
+    expect(next.zoom).toBe(3)
+    expect(afterFlow.x).toBeCloseTo(beforeFlow.x)
+    expect(afterFlow.y).toBeCloseTo(beforeFlow.y)
+  })
+
+  it('clamps zoom while preserving the anchored client point', () => {
+    const next = zoomViewportAroundClientPoint(
+      { x: 0, y: 0, zoom: 3 },
+      { left: 0, top: 0 },
+      { clientX: 300, clientY: 150 },
+      2,
+      0.5,
+      4,
+    )
+
+    expect(next.zoom).toBe(4)
+    expect((300 - next.x) / next.zoom).toBeCloseTo(100)
+    expect((150 - next.y) / next.zoom).toBeCloseTo(50)
   })
 })
 

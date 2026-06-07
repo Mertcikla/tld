@@ -1,10 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import { getExpandThresholds } from './layoutEngine'
 import { hitTestZUIRenderedNode } from './hitTest'
-import { zoomAround } from './useZUIInteraction'
+import { isZUIPanMouseButton, shouldZoomZUIWheel, zoomAround } from './useZUIInteraction'
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
+import type { WheelDeltaLike } from '../../utils/wheel'
 
 const thresholds = getExpandThresholds(1000)
+
+function wheel(overrides: Partial<WheelDeltaLike>): WheelDeltaLike {
+  return {
+    deltaX: 0,
+    deltaY: 0,
+    deltaMode: 0,
+    ctrlKey: false,
+    ...overrides,
+  }
+}
 
 function node(
   id: string,
@@ -119,5 +130,25 @@ describe('ZUI gesture zoom', () => {
     expect(overParent.zoom).toBe(maxZoom)
     expect(overLeaf.zoom).toBe(maxZoom)
     expect(overEmpty.zoom).toBe(maxZoom)
+  })
+})
+
+describe('ZUI mouse pan buttons', () => {
+  it('allows primary and middle mouse drags to pan', () => {
+    expect(isZUIPanMouseButton(0)).toBe(true)
+    expect(isZUIPanMouseButton(1)).toBe(true)
+    expect(isZUIPanMouseButton(2)).toBe(false)
+  })
+})
+
+describe('ZUI wheel gestures', () => {
+  it('zooms vertical smooth wheel input around the pointer instead of panning vertically', () => {
+    expect(shouldZoomZUIWheel(wheel({ deltaY: 6 }), false)).toBe(true)
+    expect(shouldZoomZUIWheel(wheel({ deltaY: 20.5 }), false)).toBe(true)
+  })
+
+  it('keeps two-axis trackpad wheel gestures available for panning', () => {
+    expect(shouldZoomZUIWheel(wheel({ deltaX: 8, deltaY: 20 }), false)).toBe(false)
+    expect(shouldZoomZUIWheel(wheel({ deltaY: 6 }), true)).toBe(false)
   })
 })

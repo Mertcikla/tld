@@ -33,10 +33,6 @@ if (typeof window !== "undefined") {
     },
     { passive: false },
   )
-
-  const preventGesture = (e: Event) => e.preventDefault()
-  document.addEventListener("gesturestart", preventGesture, { passive: false })
-  document.addEventListener("gesturechange", preventGesture, { passive: false })
 }
 
 createRoot(document.getElementById("root")!).render(

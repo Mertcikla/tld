@@ -5,7 +5,8 @@ import type { BBox, DiagramGroupLayout, LayoutNode, ZUIViewState, HoveredItem } 
 import { getExpandThresholds, screenToWorldX, screenToWorldY, viewOriginX, viewOriginY, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { hitTestZUIRenderedNode, warmZUIHitTestIndexes } from './hitTest'
 import { buildEdgeSpatialIndex, findHoveredEdge, type EdgeSpatialIndex } from './edgeHover'
-import { isMouseWheelGesture, isNotchedWheelGesture, wheelZoomFactor } from '../../utils/wheel'
+import { isNotchedWheelGesture, wheelZoomFactor, type WheelDeltaLike } from '../../utils/wheel'
+import { safariGestureClientPoint, safariGestureFactor, type SafariGestureEventLike } from '../../utils/safariGesture'
 
 export function constrainViewState(view: ZUIViewState, canvasW: number, canvasH: number, bbox: BBox): ZUIViewState {
   const padding = Math.min(600, canvasW * 0.45, canvasH * 0.45)
@@ -124,6 +125,21 @@ export function calculateMaxZoom(groups: DiagramGroupLayout[], canvasW: number, 
 
 const MIN_ZOOM = 0.4
 const ZUI_NATIVE_WHEEL_SELECTOR = '[data-zui-native-wheel="true"]'
+
+export function isZUIPanMouseButton(button: number): boolean {
+  return button === 0 || button === 1
+}
+
+export function shouldZoomZUIWheel(event: WheelDeltaLike, isRecentMultiTouch: boolean): boolean {
+  if (event.ctrlKey) return true
+  if (event.deltaMode !== 0) return true
+  if (isRecentMultiTouch) return false
+  return event.deltaX === 0 && event.deltaY !== 0
+}
+
+function shouldUseMouseWheelZoomRate(event: WheelDeltaLike, isRecentMultiTouch: boolean): boolean {
+  return event.deltaMode !== 0 || (!isRecentMultiTouch && isNotchedWheelGesture(event))
+}
 
 function shouldIgnoreCapturedWheel(e: WheelEvent): boolean {
   const target = e.target
@@ -350,8 +366,10 @@ export function useZUIInteraction(
 
   const dragging = useRef(false)
   const lastMouse = useRef({ x: 0, y: 0 })
+  const lastPointerClient = useRef<{ x: number; y: number } | null>(null)
   const lastPinchDist = useRef<number | null>(null)
   const lastPinchMid = useRef({ x: 0, y: 0 })
+  const lastSafariGestureScale = useRef<number | null>(null)
 
   const fitView = useCallback(
     (
@@ -399,19 +417,8 @@ export function useZUIInteraction(
       // Heuristic to distinguish between trackpad and physical mouse wheel:
       // 1. If ctrlKey is true, it's a pinch (trackpad) or Ctrl+Wheel. We always zoom.
       // 2. If deltaMode !== 0, it's a physical mouse wheel (DOM_DELTA_LINE/PAGE). We zoom.
-      // 3. Only zoom on notched mouse wheel, not trackpad pan gestures.
-      const isPinch = e.ctrlKey
-
-      // We don't have isRecentMultiTouch yet, but we can check if it looks like a mouse wheel
-      const isMouseWheel = isMouseWheelGesture(e)
-
-      // On mobile, Safari synthesizes wheel events for pinches.
-      // If it's not a pinch or a real mouse wheel, we ignore it to allow native gestures or prevent conflicts.
-      if (isMobile && !isPinch && !isMouseWheel) return
-
-      e.preventDefault()
-      setHoveredItem(null, true) // Clear popover immediately on zoom/pan
-
+      // 3. Vertical wheel deltas zoom even when the device reports smooth pixel deltas.
+      // 4. Two-axis trackpad gestures pan.
       // Track multi-touch wheel events (deltaX !== 0 indicates two-finger contact on trackpad)
       if (e.deltaX !== 0) {
         lastPanTimeRef.current = Date.now()
@@ -419,15 +426,20 @@ export function useZUIInteraction(
 
       // If we just finished a multi-touch gesture, suppress zoom for ~1000ms (trackpad momentum can last longer)
       const isRecentMultiTouch = Date.now() - lastPanTimeRef.current < 1000
+      const shouldZoom = shouldZoomZUIWheel(e, isRecentMultiTouch)
 
-      // Re-evaluate isMouseWheel with trackpad suppression for desktop
-      const isNotchedWheel = !isRecentMultiTouch && isNotchedWheelGesture(e)
-      const isRealMouseWheel = e.deltaMode !== 0 || isNotchedWheel
+      // On mobile, Safari synthesizes wheel events for pinches.
+      // If it's not zoom input, ignore it to avoid conflicts with native gestures.
+      if (isMobile && !shouldZoom) return
 
-      if (isPinch || isRealMouseWheel) {
+      e.preventDefault()
+      setHoveredItem(null, true) // Clear popover immediately on zoom/pan
+
+      if (shouldZoom) {
         const focalX = e.clientX - rect.left
         const focalY = e.clientY - rect.top
 
+        const isRealMouseWheel = shouldUseMouseWheelZoomRate(e, isRecentMultiTouch)
         const factor = wheelZoomFactor(e, isRealMouseWheel)
 
         scheduleViewState((prev) => {
@@ -442,10 +454,12 @@ export function useZUIInteraction(
     }
 
     function onMouseDown(e: MouseEvent) {
-      if (e.button !== 0) return
+      if (!isZUIPanMouseButton(e.button)) return
+      e.preventDefault()
       dragging.current = true
       lastMouse.current.x = e.clientX
       lastMouse.current.y = e.clientY
+      lastPointerClient.current = { x: e.clientX, y: e.clientY }
       el!.style.cursor = 'grabbing'
       setHoveredItem(null, true) // Hide popover immediately while dragging
     }
@@ -454,6 +468,7 @@ export function useZUIInteraction(
       const rect = el!.getBoundingClientRect()
       const screenX = e.clientX - rect.left
       const screenY = e.clientY - rect.top
+      lastPointerClient.current = { x: e.clientX, y: e.clientY }
 
       if (dragging.current) {
         const dx = e.clientX - lastMouse.current.x
@@ -528,6 +543,48 @@ export function useZUIInteraction(
       onZoomRef.current?.()
     }
 
+    function onAuxClick(e: MouseEvent) {
+      if (e.button === 1) e.preventDefault()
+    }
+
+    function safariGestureFallbackPoint(): { clientX: number; clientY: number } {
+      const rect = el!.getBoundingClientRect()
+      const lastPointer = lastPointerClient.current
+      return lastPointer
+        ? { clientX: lastPointer.x, clientY: lastPointer.y }
+        : { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }
+    }
+
+    function onGestureStart(e: Event) {
+      e.preventDefault()
+      const gestureEvent = e as SafariGestureEventLike
+      const gesture = safariGestureFactor(gestureEvent, null)
+      lastSafariGestureScale.current = gesture?.scale ?? 1
+      setHoveredItem(null, true)
+    }
+
+    function onGestureChange(e: Event) {
+      e.preventDefault()
+      const gestureEvent = e as SafariGestureEventLike
+      const gesture = safariGestureFactor(gestureEvent, lastSafariGestureScale.current)
+      if (!gesture) return
+      lastSafariGestureScale.current = gesture.scale
+
+      const rect = el!.getBoundingClientRect()
+      const point = safariGestureClientPoint(gestureEvent, safariGestureFallbackPoint())
+      const focalX = point.clientX - rect.left
+      const focalY = point.clientY - rect.top
+
+      scheduleViewState((prev) => {
+        return zoomAround(prev, focalX, focalY, gesture.factor, maxZoomRef.current)
+      })
+      onZoomRef.current?.()
+    }
+
+    function onGestureEnd() {
+      lastSafariGestureScale.current = null
+    }
+
     // ── Touch pan + pinch ──────────────────────────────────────────
     function pinchDist(touches: TouchList): number {
       if (touches.length < 2) return 0
@@ -553,6 +610,7 @@ export function useZUIInteraction(
         dragging.current = true
         lastMouse.current.x = e.touches[0].clientX
         lastMouse.current.y = e.touches[0].clientY
+        lastPointerClient.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
         lastPinchDist.current = null
       } else if (e.touches.length >= 2) {
         dragging.current = false
@@ -570,6 +628,7 @@ export function useZUIInteraction(
         const dy = e.touches[0].clientY - lastMouse.current.y
         lastMouse.current.x = e.touches[0].clientX
         lastMouse.current.y = e.touches[0].clientY
+        lastPointerClient.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
         scheduleViewState((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }))
         onPanRef.current?.()
       } else if (e.touches.length >= 2) {
@@ -601,6 +660,7 @@ export function useZUIInteraction(
         dragging.current = true
         lastMouse.current.x = e.touches[0].clientX
         lastMouse.current.y = e.touches[0].clientY
+        lastPointerClient.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }
         lastPinchDist.current = null
       } else {
         // Still have multiple fingers, reset baseline to avoid jumps
@@ -619,6 +679,10 @@ export function useZUIInteraction(
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', onMouseUp)
     el.addEventListener('dblclick', onDblClick)
+    el.addEventListener('auxclick', onAuxClick)
+    el.addEventListener('gesturestart', onGestureStart, { passive: false })
+    el.addEventListener('gesturechange', onGestureChange, { passive: false })
+    el.addEventListener('gestureend', onGestureEnd)
     el.addEventListener('touchstart', onTouchStart, { passive: false })
     el.addEventListener('touchmove', onTouchMove, { passive: false })
     el.addEventListener('touchend', onTouchEnd)
@@ -632,6 +696,10 @@ export function useZUIInteraction(
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', onMouseUp)
       el.removeEventListener('dblclick', onDblClick)
+      el.removeEventListener('auxclick', onAuxClick)
+      el.removeEventListener('gesturestart', onGestureStart)
+      el.removeEventListener('gesturechange', onGestureChange)
+      el.removeEventListener('gestureend', onGestureEnd)
       el.removeEventListener('touchstart', onTouchStart)
       el.removeEventListener('touchmove', onTouchMove)
       el.removeEventListener('touchend', onTouchEnd)
