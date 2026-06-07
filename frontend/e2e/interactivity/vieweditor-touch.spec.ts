@@ -79,6 +79,24 @@ async function clickLibraryAction(page: Page, name: string, actionTestId: 'eleme
   })
 }
 
+async function fillLibrarySearch(page: Page, value: string) {
+  let lastError: unknown
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const panel = await openElementLibrary(page)
+    const search = panel.getByTestId('element-library-search')
+    try {
+      await expect(search).toBeVisible({ timeout: 1000 })
+      await search.fill(value, { timeout: 1000 })
+      await expect(search).toHaveValue(value, { timeout: 1000 })
+      return
+    } catch (error) {
+      lastError = error
+      await page.waitForTimeout(100)
+    }
+  }
+  throw lastError
+}
+
 test('long-presses canvas and nodes, then taps through click-connect mode', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Touch Long Press')
   await closeViewEditorPanels(page)
@@ -117,7 +135,7 @@ test('drags mobile library items horizontally, cancels vertical scroll gestures,
   if (await hideExisting.isChecked().catch(() => false)) {
     await hideExisting.uncheck({ force: true })
   }
-  await page.getByTestId('element-library-search').fill(horizontal.name)
+  await fillLibrarySearch(page, horizontal.name)
   const paneBox = await reactFlowPaneBox(page)
   await touchDragLibraryItem(page, horizontal.name, { x: 80, y: 4 }, {
     x: paneBox.x + paneBox.width * 0.58,
@@ -128,14 +146,14 @@ test('drags mobile library items horizontally, cancels vertical scroll gestures,
 
   await reloadView(page)
   await openElementLibrary(page)
-  await page.getByTestId('element-library-search').fill(vertical.name)
+  await fillLibrarySearch(page, vertical.name)
   await touchDragLibraryItem(page, vertical.name, { x: 4, y: 90 }, {
     x: paneBox.x + paneBox.width * 0.6,
     y: paneBox.y + paneBox.height * 0.55,
   })
   await expectPlacement(page, vertical.name, false, currentViewId(page))
 
-  await page.getByTestId('element-library-search').fill(addable.name)
+  await fillLibrarySearch(page, addable.name)
   await clickLibraryAction(page, addable.name, 'element-library-add')
   await expectPlacement(page, addable.name, true, currentViewId(page))
   await expect(nodeByName(page, addable.name)).toBeVisible()
@@ -144,7 +162,7 @@ test('drags mobile library items horizontally, cancels vertical scroll gestures,
   if (await hideExisting.isChecked().catch(() => false)) {
     await hideExisting.uncheck({ force: true })
   }
-  await page.getByTestId('element-library-search').fill(horizontal.name)
+  await fillLibrarySearch(page, horizontal.name)
   if (await libraryItemByName(page, horizontal.name).count() === 0) {
     await expect(nodeByName(page, horizontal.name)).toBeVisible()
     return

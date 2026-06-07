@@ -578,41 +578,6 @@ export async function dragNodeByName(page: Page, name: string, deltaX: number, d
   const box = await node.boundingBox()
   if (!box) throw new Error(`Node "${name}" is not visible`)
   const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
-  if (await isMobileLayout(page)) {
-    await node.dispatchEvent('pointerdown', {
-      bubbles: true,
-      cancelable: true,
-      clientX: center.x,
-      clientY: center.y,
-      pointerId: 77,
-      pointerType: 'touch',
-      button: 0,
-      buttons: 1,
-    })
-    await page.evaluate((payload) => {
-      document.dispatchEvent(new PointerEvent('pointermove', {
-        bubbles: true,
-        cancelable: true,
-        clientX: payload.x,
-        clientY: payload.y,
-        pointerId: 77,
-        pointerType: 'touch',
-        button: 0,
-        buttons: 1,
-      }))
-      document.dispatchEvent(new PointerEvent('pointerup', {
-        bubbles: true,
-        cancelable: true,
-        clientX: payload.x,
-        clientY: payload.y,
-        pointerId: 77,
-        pointerType: 'touch',
-        button: 0,
-        buttons: 0,
-      }))
-    }, { x: center.x + deltaX, y: center.y + deltaY })
-    return
-  }
   await page.mouse.move(center.x, center.y)
   await page.mouse.down()
   await page.mouse.move(center.x + deltaX, center.y + deltaY, { steps: 12 })

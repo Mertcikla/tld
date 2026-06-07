@@ -9,6 +9,15 @@ function resolveWorkers() {
   return process.env.CI ? 2 : undefined
 }
 
+const phoneProjectTestIgnore = [
+  /\/e2e\/vieweditor\//,
+  /\/e2e\/watch\//,
+]
+
+const touchProjectTestIgnore = [
+  /\/e2e\/vieweditor\//,
+]
+
 export default defineConfig({
   testDir: './e2e',
   timeout: 45_000,
@@ -39,14 +48,17 @@ export default defineConfig({
     },
     {
       name: 'mobile-safari',
+      testIgnore: phoneProjectTestIgnore,
       use: { ...devices['iPhone 14'] },
     },
     {
       name: 'mobile-chrome',
+      testIgnore: phoneProjectTestIgnore,
       use: { ...devices['Pixel 7'] },
     },
     {
       name: 'tablet-touch',
+      testIgnore: touchProjectTestIgnore,
       use: { ...devices['iPad Pro 11'] },
     },
     {

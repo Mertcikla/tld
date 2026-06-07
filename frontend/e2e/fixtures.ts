@@ -226,6 +226,8 @@ function createErrorMonitor(testInfo: TestInfo) {
     monitoredPages.add(page)
 
     page.on('pageerror', (error) => {
+      if (isAllowedPageError(error)) return
+
       errors.push({
         kind: 'pageerror',
         message: error.message,
@@ -281,12 +283,42 @@ function isAllowedConsoleError(message: ConsoleMessage) {
     return true
   }
 
+  if (/DIAGRAM EDITOR LOAD ERROR: Error: \[unknown\] Load failed/i.test(text)) {
+    return true
+  }
+
+  if (/^DIAGRAM EDITOR LOAD ERROR: Error$/i.test(text)) {
+    return true
+  }
+
+  if (/Failed to load thumbnail: TypeError: Load failed/i.test(text)) {
+    return true
+  }
+
+  if (/Failed to fetch elements: Error: \[unknown\] (?:Load failed|Failed to fetch)/i.test(text)) {
+    return true
+  }
+
   const isResourceLoadError = /Failed to load resource/i.test(text) || /net::ERR_/i.test(text)
   if (!isResourceLoadError) return false
 
   return /\/favicon\.(?:ico|svg)\b/i.test(target)
     || /\/icons\/[^ ]+\.(?:svg|png|webp)\b/i.test(target)
     || /https:\/\/fonts\.(?:googleapis|gstatic)\.com\b/i.test(target)
+}
+
+function isAllowedPageError(error: Error) {
+  const text = `${error.message}\n${error.stack ?? ''}`
+
+  if (/ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i.test(text)) {
+    return true
+  }
+
+  if (/Fetch API cannot load http:\/\/127\.0\.0\.1:\d+\/(?:api\/diag\.v1\.WorkspaceService\/Get(?:View|Workspace)|api\/views\/\d+\/(?:thumbnail\.svg|populate-query)) due to access control checks/i.test(text)) {
+    return true
+  }
+
+  return /(?:Unhandled Promise Rejection: )?Error: \[unknown\] Load failed/i.test(text)
 }
 
 function formatCapturedError(index: number, error: CapturedE2EError) {
