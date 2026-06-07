@@ -43,11 +43,15 @@ import { isMouseWheelGesture } from '../utils/wheel'
 
 // ── Tree helpers ──────────────────────────────────────────────────────────────
 
+function viewChildren(node: ViewTreeNode): ViewTreeNode[] {
+  return node.children ?? []
+}
+
 function flattenTree(roots: ViewTreeNode[]): ViewTreeNode[] {
   const result: ViewTreeNode[] = []
   const traverse = (node: ViewTreeNode) => {
     result.push(node)
-    node.children.forEach(traverse)
+    viewChildren(node).forEach(traverse)
   }
   roots.forEach(traverse)
   return result
@@ -57,7 +61,7 @@ function filterTreeForGrid(nodes: ViewTreeNode[], allowedIds: Set<number> | null
   if (!allowedIds) return nodes
 
   const visit = (node: ViewTreeNode): ViewTreeNode | null => {
-    const children = node.children
+    const children = viewChildren(node)
       .map(visit)
       .filter((child): child is ViewTreeNode => child !== null)
     const include = allowedIds.has(node.id) || (node.parent_view_id === null && children.length > 0)
@@ -172,7 +176,7 @@ function computeDisplayLayout(roots: GridDisplayNode[]): Map<string, { x: number
 }
 
 function countDescendantViews(node: ViewTreeNode): number {
-  return node.children.reduce((sum, child) => sum + 1 + countDescendantViews(child), 0)
+  return viewChildren(node).reduce((sum, child) => sum + 1 + countDescendantViews(child), 0)
 }
 
 function flattenDisplayTree(roots: GridDisplayNode[]): GridDisplayNode[] {
@@ -196,7 +200,7 @@ function sumContentCounts(
     const counts = countsByView[node.id]
     nodesCount += counts?.nodes ?? 0
     edgesCount += counts?.edges ?? 0
-    node.children.forEach(visit)
+    viewChildren(node).forEach(visit)
   }
 
   nodes.forEach(visit)
@@ -212,7 +216,7 @@ function buildDisplayTree(roots: ViewTreeNode[], focusedId: number | null): Grid
       view: node,
       parentId,
       depth: node.depth,
-      children: node.children.map((child) => convert(child, String(node.id))),
+      children: viewChildren(node).map((child) => convert(child, String(node.id))),
     })
     return roots.map((root) => convert(root, null))
   }
@@ -243,23 +247,23 @@ function buildDisplayTree(roots: ViewTreeNode[], focusedId: number | null): Grid
       emphasis.add(node.id)
     })
 
-    focusedNode.children.forEach((child) => {
+    viewChildren(focusedNode).forEach((child) => {
       visible.add(child.id)
       emphasis.add(child.id)
     })
 
-    parent?.children.forEach((child) => visible.add(child.id))
+    if (parent) viewChildren(parent).forEach((child) => visible.add(child.id))
   }
 
   const makeNode = (node: ViewTreeNode, parentId: string | null): GridDisplayNode | null => {
     if (!visible.has(node.id)) return null
 
     const displayId = String(node.id)
-    const visibleChildren = node.children
+    const visibleChildren = viewChildren(node)
       .map((child) => makeNode(child, displayId))
       .filter((child): child is GridDisplayNode => child !== null)
 
-    const hiddenChildren = node.children.filter((child) => !visible.has(child.id))
+    const hiddenChildren = viewChildren(node).filter((child) => !visible.has(child.id))
     const hiddenCount = hiddenChildren.reduce((sum, child) => sum + 1 + countDescendantViews(child), 0)
     const cluster: GridDisplayNode[] = hiddenCount > 0 ? [{
       id: `${node.id}:cluster`,
@@ -800,7 +804,7 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
       const n = displayNode.view
       const isCluster = displayNode.kind === 'cluster'
       const hiddenChildren = isCluster
-        ? n.children.filter((child) => !displayFlat.some((visibleNode) => visibleNode.kind === 'view' && visibleNode.view.id === child.id))
+        ? viewChildren(n).filter((child) => !displayFlat.some((visibleNode) => visibleNode.kind === 'view' && visibleNode.view.id === child.id))
         : []
 
       return {

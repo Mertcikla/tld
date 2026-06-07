@@ -2130,7 +2130,7 @@ export function useCanvasInteractions({
     const target = gestureTargetRef?.current ?? containerRef.current
     if (!target) return
 
-    e.preventDefault()
+    if (e.cancelable) e.preventDefault()
     e.stopPropagation()
 
     const rect = target.getBoundingClientRect()

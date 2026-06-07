@@ -122,15 +122,15 @@ test('pans with middle mouse and separates physical wheel zoom from trackpad pan
   const pane = page.locator('.react-flow__pane')
 
   const start = await reactFlowViewport(page)
-  await dispatchWheelOnLocator(canvas, { deltaY: -120, deltaMode: 1 })
+  await dispatchWheelOnLocator(canvas, { deltaY: -120, deltaMode: 1, cancelable: false })
   await expect.poll(async () => (await reactFlowViewport(page)).zoom).toBeGreaterThan(start.zoom + 0.02)
 
   const afterWheel = await reactFlowViewport(page)
-  await dispatchWheelOnLocator(canvas, { deltaY: -80, deltaMode: 1, ctrlKey: true })
+  await dispatchWheelOnLocator(canvas, { deltaY: -80, deltaMode: 1, ctrlKey: true, cancelable: false })
   await expect.poll(async () => Math.abs((await reactFlowViewport(page)).zoom - afterWheel.zoom)).toBeLessThan(0.03)
 
   const afterCtrlWheel = await reactFlowViewport(page)
-  await dispatchWheelOnLocator(pane, { deltaX: 72, deltaY: 18, deltaMode: 0 })
+  await dispatchWheelOnLocator(pane, { deltaX: 72, deltaY: 18, deltaMode: 0, cancelable: false })
   const isMobileLayout = await page.evaluate(() => window.matchMedia('(max-width: 767px)').matches)
   if (isMobileLayout) {
     const next = await reactFlowViewport(page)
@@ -196,6 +196,21 @@ test('opens canvas and connector context menus without leaking right-clicks into
 })
 
 test('opens source links in code preview without selecting the node', async ({ page }) => {
+  await page.route('https://api.github.com/repos/diag', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ private: false }),
+    })
+  })
+  await page.route('https://raw.githubusercontent.com/diag/refs/heads/main/frontend/src/App.tsx', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain',
+      body: 'export function App() { return null }\n',
+    })
+  })
+
   const root = await createApiView(page, uniqueName('Pointer Zoom Root'))
   const codeElement = await createPlacedElement(page, root.id, {
     name: uniqueName('Pointer Code Link'),

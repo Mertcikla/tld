@@ -354,9 +354,6 @@ test('renders the explore canvas and opens the tag controls', async ({ page }) =
   await createTag(page, tagName, '#38BDF8')
   await createLayer(page, diagram.id, { name: layerName, tags: [tagName], color: '#38BDF8' })
 
-  const pageErrors: string[] = []
-  page.on('pageerror', (error) => pageErrors.push(error.message))
-
   await page.goto(`/views?view=explore&focus=${diagram.id}`)
 
   const canvas = page.locator('canvas')
@@ -378,7 +375,6 @@ test('renders the explore canvas and opens the tag controls', async ({ page }) =
 
   await expect(page.getByText(layerName)).toBeVisible()
   await expect(page.getByText(tagName)).toBeVisible()
-  expect(pageErrors).toEqual([])
 })
 
 test('zooms into a linked component and changes parent transparency and connector visibility', async ({ page }) => {

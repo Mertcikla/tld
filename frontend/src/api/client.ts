@@ -361,6 +361,7 @@ export interface ProtoDiagram {
   tags?: string[]
   parent_view_id?: number | null
   parentViewId?: number | null
+  markdown?: ProtoViewMarkdownDocument | null
   children?: ProtoDiagram[]
 }
 
@@ -398,6 +399,7 @@ export function mapDiagram(d: ProtoDiagram): ViewTreeNode {
     parent_view_id: d.parentViewId != null || d.parent_view_id != null
       ? Number(d.parentViewId ?? d.parent_view_id)
       : null,
+    markdown: mapViewMarkdown(d.markdown),
     children: (d.children ?? []).map(mapDiagram),
   }
 }
@@ -1324,7 +1326,12 @@ export const api = {
           }
         }
         const res = await dependencyClient.listDependencies({})
-        return j<DependenciesResponse>(ListDependenciesResponseSchema, res)
+        const json = j<Partial<DependenciesResponse> & { total_count?: number }>(ListDependenciesResponseSchema, res)
+        return {
+          elements: json.elements ?? [],
+          connectors: json.connectors ?? [],
+          totalCount: json.totalCount ?? json.total_count,
+        }
       }),
   },
 

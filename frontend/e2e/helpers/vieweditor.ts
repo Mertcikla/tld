@@ -325,13 +325,14 @@ export async function dispatchWheelOnLocator(
     deltaY?: number
     deltaMode?: number
     ctrlKey?: boolean
+    cancelable?: boolean
   },
 ) {
   const box = await locator.boundingBox()
   if (!box) throw new Error('Wheel target is not visible')
   await locator.dispatchEvent('wheel', {
     bubbles: true,
-    cancelable: true,
+    cancelable: options.cancelable ?? true,
     clientX: options.clientX ?? box.x + box.width / 2,
     clientY: options.clientY ?? box.y + box.height / 2,
     deltaX: options.deltaX ?? 0,
