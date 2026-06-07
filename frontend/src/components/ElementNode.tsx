@@ -673,6 +673,7 @@ function ElementNode({ data, selected }: Props) {
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (isPending) return
+    if (e.pointerType !== 'touch' && e.button !== 0) return
     if ((e.target as Element).closest('.react-flow__handle')) return
     pointerStart.current = { x: e.clientX, y: e.clientY }
     longPressActivated.current = false

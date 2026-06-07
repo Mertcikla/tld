@@ -173,6 +173,7 @@ const VIEW_EDITOR_EMPTY_EXTENT_RATIO = 0.75
 const VIEW_EDITOR_PAN_MARGIN_RATIO = 0.25
 const VIEW_EDITOR_PAN_MARGIN_MIN = 180
 const VIEW_EDITOR_PAN_MARGIN_MAX = 720
+const VIEW_EDITOR_MAX_ZOOM = 4
 const VIEW_EDITOR_MARKDOWN_DEFAULT_WIDTH = 540
 const VIEW_EDITOR_MARKDOWN_MIN_WIDTH = 360
 const VIEW_EDITOR_MARKDOWN_MIN_WIDTH_MOBILE = 280
@@ -866,6 +867,7 @@ function ViewEditorInner({
   }, [clearEditHistory, viewId, toast])
 
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const viewEditorCanvasRef = useRef<HTMLDivElement | null>(null)
   const drawingCanvasRef = useRef<DrawingCanvasHandle | null>(null)
 
   const { safeFitView } = useSafeFitView(containerRef)
@@ -876,6 +878,7 @@ function ViewEditorInner({
   const rfReadyRef = useRef(false)
   const fittedContextForViewRef = useRef<number | null>(null)
   const [initialViewportReady, setInitialViewportReady] = useState(false)
+  const [computedMinZoom, setComputedMinZoom] = useState(VIEW_EDITOR_MIN_ZOOM_FLOOR)
   const [interactionSourceId, setInteractionSourceId] = useState<number | null>(null)
   const [clickConnectMode, setClickConnectMode] = useState<ClickConnectModeState | null>(null)
   const [clickConnectCursorPos, setClickConnectCursorPos] = useState<ClickConnectCursorPosition | null>(null)
@@ -2407,6 +2410,7 @@ function ViewEditorInner({
     treeDataRef,
     navigateRef,
     containerRef,
+    gestureTargetRef: viewEditorCanvasRef,
     interactionSourceIdRef,
     multiConnectionSourceIdsRef,
     hoveredZoomRef, hoverPanLockedUntilRef,
@@ -2479,6 +2483,8 @@ function ViewEditorInner({
     handleUpdateTags,
     drawingCanvasRef,
     snapToGrid,
+    minZoom: computedMinZoom,
+    maxZoom: VIEW_EDITOR_MAX_ZOOM,
     libraryOpen,
     openLibrary: useCallback(() => setLibraryOpen(true), []),
     toggleLibrary: useCallback(() => setLibraryOpen((v) => !v), []),
@@ -2944,7 +2950,6 @@ function ViewEditorInner({
   // ── FitView ────────────────────────────────────────────────────────────────
   const fitViewRef = useRef(safeFitView)
   fitViewRef.current = safeFitView
-  const [computedMinZoom, setComputedMinZoom] = useState(VIEW_EDITOR_MIN_ZOOM_FLOOR)
   const [computedTranslateExtent, setComputedTranslateExtent] = useState<[[number, number], [number, number]] | undefined>(undefined)
   const {
     clampedRevealProgress,
@@ -3790,6 +3795,7 @@ function ViewEditorInner({
             )}
 
             <Box
+              ref={viewEditorCanvasRef}
               data-testid="vieweditor-canvas"
               position="relative"
               w="full"
@@ -3821,7 +3827,7 @@ function ViewEditorInner({
                 onPaneContextMenu={onPaneContextMenu} onPaneClick={onPaneClick}
                 onPaneMouseMove={handleRealtimePaneMouseMove}
                 onMoveStart={onMoveStart} onMove={handleRealtimeMove} onMoveEnd={onMoveEnd}
-                translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={4}
+                translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={VIEW_EDITOR_MAX_ZOOM}
                 onReconnect={onReconnect} onReconnectStart={onReconnectStart} onReconnectEnd={onReconnectEnd}
                 connectionLineStyle={CONNECTOR_DRAG_CONNECTION_LINE_STYLE}
                 nodeTypes={nodeTypesMemo} edgeTypes={edgeTypesMemo}

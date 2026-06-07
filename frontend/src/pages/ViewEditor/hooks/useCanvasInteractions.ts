@@ -35,13 +35,19 @@ import {
   getLogicalHandleId,
 } from '../../../utils/edgeDistribution'
 import { useStore } from '../../../store/useStore'
-import { isMouseWheelGesture } from '../../../utils/wheel'
+import { isNotchedWheelGesture, wheelZoomFactor, type WheelDeltaLike } from '../../../utils/wheel'
+import { safariGestureClientPoint, safariGestureFactor, type SafariGestureEventLike } from '../../../utils/safariGesture'
 
 const SNAP_RADIUS = 75
 const CONNECTOR_DRAG_UPDATE_INTERVAL_MS = 25
 export const PENDING_ELEMENT_NODE_ID = 'pending-element'
 const PENDING_ELEMENT_OFFSET_X = 100
 const PENDING_ELEMENT_OFFSET_Y = 40
+const VIEW_EDITOR_PINCH_ZOOM_MULTIPLIER = 2
+
+type CanvasViewport = { x: number; y: number; zoom: number }
+type ViewportRect = Pick<DOMRectReadOnly, 'left' | 'top'>
+type ClientPoint = { clientX: number; clientY: number }
 
 type HandleTarget = {
   nodeId?: string
@@ -119,6 +125,51 @@ export function shouldDisplayConnectorDragPlaceholder(target: ConnectorDragTarge
   if (!target) return true
   if (target.isHandle) return false
   return !target.nodeId || target.nodeId === PENDING_ELEMENT_NODE_ID
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
+}
+
+export function accelerateViewEditorPinchZoomFactor(factor: number): number {
+  if (!Number.isFinite(factor) || factor <= 0) return factor
+  return Math.max(0.0001, 1 + (factor - 1) * VIEW_EDITOR_PINCH_ZOOM_MULTIPLIER)
+}
+
+export function shouldZoomViewEditorWheel(event: WheelDeltaLike, isRecentMultiTouch: boolean): boolean {
+  // Firefox trackpad pinch arrives as ctrl+wheel and React Flow's zoomOnPinch
+  // handles it more reliably than our wheel capture path.
+  if (event.ctrlKey) return false
+  if (event.deltaMode !== 0) return true
+  if (isRecentMultiTouch) return false
+  return event.deltaX === 0 && event.deltaY !== 0
+}
+
+function shouldUseMouseWheelZoomRate(event: WheelDeltaLike, isRecentMultiTouch: boolean): boolean {
+  return event.deltaMode !== 0 || (!isRecentMultiTouch && isNotchedWheelGesture(event))
+}
+
+export function zoomViewportAroundClientPoint(
+  viewport: CanvasViewport,
+  rect: ViewportRect,
+  point: ClientPoint,
+  factor: number,
+  minZoom: number,
+  maxZoom: number,
+): CanvasViewport {
+  if (!Number.isFinite(factor) || factor <= 0) return viewport
+
+  const nextZoom = clamp(viewport.zoom * factor, minZoom, maxZoom)
+  const localX = point.clientX - rect.left
+  const localY = point.clientY - rect.top
+  const flowX = (localX - viewport.x) / viewport.zoom
+  const flowY = (localY - viewport.y) / viewport.zoom
+
+  return {
+    x: localX - flowX * nextZoom,
+    y: localY - flowY * nextZoom,
+    zoom: nextZoom,
+  }
 }
 
 function getConnectorDragTargetAtPoint(clientX: number, clientY: number): ConnectorDragTarget | null {
@@ -251,7 +302,7 @@ interface CanvasInteractionOptions {
   setClickConnectMode: React.Dispatch<React.SetStateAction<ClickConnectModeState | null>>
   clickConnectCursorPos: ClickConnectCursorPosition | null
   setClickConnectCursorPos: React.Dispatch<React.SetStateAction<ClickConnectCursorPosition | null>>
-  
+
   drawingMode: boolean
   isMobileLayout: boolean
   rfNodesRef: React.MutableRefObject<RFNode[]>
@@ -263,6 +314,7 @@ interface CanvasInteractionOptions {
   treeDataRef: React.MutableRefObject<ViewTreeNode[]>
   navigateRef: React.MutableRefObject<(path: string) => void>
   containerRef: React.MutableRefObject<HTMLDivElement | null>
+  gestureTargetRef?: React.MutableRefObject<HTMLElement | null>
   interactionSourceIdRef: React.MutableRefObject<number | null>
   multiConnectionSourceIdsRef: React.MutableRefObject<number[] | null>
   hoveredZoomRef: React.MutableRefObject<{ elementId: number | null; type: 'in' | 'out' | null } | null>
@@ -308,6 +360,8 @@ interface CanvasInteractionOptions {
   handleUpdateTags: (elementId: number, tags: string[]) => Promise<void>
   drawingCanvasRef: React.MutableRefObject<DrawingCanvasHandle | null>
   snapToGrid?: boolean
+  minZoom?: number
+  maxZoom?: number
   onMoveStateChange?: (isMoving: boolean) => void
   libraryOpen?: boolean
   openLibrary?: () => void
@@ -412,7 +466,7 @@ export function useCanvasInteractions({
   setClickConnectMode,
   clickConnectCursorPos,
   setClickConnectCursorPos,
-  
+
   drawingMode: _drawingMode,
   isMobileLayout: _isMobileLayout,
   rfNodesRef,
@@ -424,6 +478,7 @@ export function useCanvasInteractions({
   treeDataRef,
   navigateRef,
   containerRef,
+  gestureTargetRef,
   interactionSourceIdRef,
   multiConnectionSourceIdsRef,
   hoveredZoomRef,
@@ -469,6 +524,8 @@ export function useCanvasInteractions({
   handleUpdateTags,
   drawingCanvasRef,
   snapToGrid,
+  minZoom = 0.01,
+  maxZoom = 4,
   onMoveStateChange,
   libraryOpen,
   openLibrary,
@@ -564,6 +621,7 @@ export function useCanvasInteractions({
     isPinching: boolean
     lastMultiTouchWheelTime: number
   }>({ touches: new Map(), initialDistance: 0, isPinching: false, lastMultiTouchWheelTime: 0 })
+  const safariGestureScaleRef = useRef<number | null>(null)
 
   const hoverPanTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -1646,6 +1704,66 @@ export function useCanvasInteractions({
     if (longPressCanvasRef.current) { clearTimeout(longPressCanvasRef.current.timer); longPressCanvasRef.current = null }
   }, [])
 
+  useEffect(() => {
+    const target = gestureTargetRef?.current ?? containerRef.current
+    if (!target) return
+
+    const fallbackGesturePoint = (): ClientPoint => {
+      const rect = target.getBoundingClientRect()
+      return lastMousePosRef.current ?? {
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      }
+    }
+
+    const onGestureStart = (event: Event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const gestureEvent = event as SafariGestureEventLike
+      const gesture = safariGestureFactor(gestureEvent, null)
+      safariGestureScaleRef.current = gesture?.scale ?? 1
+      setCanvasMenu(null)
+      setConnectorLongPressMenu(null)
+      onMoveStateChange?.(true)
+    }
+
+    const onGestureChange = (event: Event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const gestureEvent = event as SafariGestureEventLike
+      const gesture = safariGestureFactor(gestureEvent, safariGestureScaleRef.current)
+      if (!gesture) return
+      safariGestureScaleRef.current = gesture.scale
+
+      const rect = target.getBoundingClientRect()
+      const point = safariGestureClientPoint(gestureEvent, fallbackGesturePoint())
+      const nextViewport = zoomViewportAroundClientPoint(
+        getViewport(),
+        rect,
+        point,
+        accelerateViewEditorPinchZoomFactor(gesture.factor),
+        minZoom,
+        maxZoom,
+      )
+      setViewport(nextViewport)
+      drawingCanvasRef.current?.notifyViewportChange(nextViewport)
+    }
+
+    const onGestureEnd = () => {
+      safariGestureScaleRef.current = null
+      onMoveStateChange?.(false)
+    }
+
+    target.addEventListener('gesturestart', onGestureStart, { passive: false })
+    target.addEventListener('gesturechange', onGestureChange, { passive: false })
+    target.addEventListener('gestureend', onGestureEnd)
+    return () => {
+      target.removeEventListener('gesturestart', onGestureStart)
+      target.removeEventListener('gesturechange', onGestureChange)
+      target.removeEventListener('gestureend', onGestureEnd)
+    }
+  }, [containerRef, drawingCanvasRef, gestureTargetRef, getViewport, maxZoom, minZoom, onMoveStateChange, setViewport])
+
   // ── Hover pan ─────────────────────────────────────────────────────────────
   useEffect(() => {
     if (hoverPanTimeoutRef.current) { clearTimeout(hoverPanTimeoutRef.current); hoverPanTimeoutRef.current = null }
@@ -2007,14 +2125,26 @@ export function useCanvasInteractions({
     if (touchStateRef.current.touches.size === 2) return
     if (e.deltaX !== 0) touchStateRef.current.lastMultiTouchWheelTime = Date.now()
     const isRecentMultiTouch = Date.now() - touchStateRef.current.lastMultiTouchWheelTime < 1000
-    const isMouseWheel = isMouseWheelGesture(e)
-    if (isMouseWheel && !isRecentMultiTouch) {
-      e.preventDefault()
-      e.stopPropagation()
-      if (e.deltaY > 0) zoomOut()
-      else zoomIn()
-    }
-  }, [zoomIn, zoomOut])
+    if (!shouldZoomViewEditorWheel(e, isRecentMultiTouch)) return
+
+    const target = gestureTargetRef?.current ?? containerRef.current
+    if (!target) return
+
+    e.preventDefault()
+    e.stopPropagation()
+
+    const rect = target.getBoundingClientRect()
+    const nextViewport = zoomViewportAroundClientPoint(
+      getViewport(),
+      rect,
+      { clientX: e.clientX, clientY: e.clientY },
+      wheelZoomFactor(e, shouldUseMouseWheelZoomRate(e, isRecentMultiTouch)),
+      minZoom,
+      maxZoom,
+    )
+    setViewport(nextViewport)
+    drawingCanvasRef.current?.notifyViewportChange(nextViewport)
+  }, [containerRef, drawingCanvasRef, gestureTargetRef, getViewport, maxZoom, minZoom, setViewport])
 
   return {
     // State
