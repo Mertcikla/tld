@@ -1,6 +1,7 @@
 import { expect, test } from '../fixtures'
 import type { Page } from '@playwright/test'
 import {
+  closeViewEditorPanels,
   createAndLoadDiagramWithNodes,
   createElement,
   currentViewId,
@@ -80,6 +81,7 @@ async function clickLibraryAction(page: Page, name: string, actionTestId: 'eleme
 
 test('long-presses canvas and nodes, then taps through click-connect mode', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Touch Long Press')
+  await closeViewEditorPanels(page)
   const paneBox = await reactFlowPaneBox(page)
   await longPressLocator(page.getByTestId('vieweditor-canvas'), {
     clientX: paneBox.x + paneBox.width * 0.55,
@@ -104,6 +106,7 @@ test('long-presses canvas and nodes, then taps through click-connect mode', asyn
 
 test('drags mobile library items horizontally, cancels vertical scroll gestures, and taps add/find actions', async ({ page }) => {
   await createAndLoadDiagramWithNodes(page, 0, 'Touch Library')
+  await closeViewEditorPanels(page)
   const horizontal = await createElement(page, { name: uniqueName('Touch Horizontal Drop'), kind: 'service' })
   const vertical = await createElement(page, { name: uniqueName('Touch Vertical Cancel'), kind: 'database' })
   const addable = await createElement(page, { name: uniqueName('Touch Tap Add'), kind: 'api' })

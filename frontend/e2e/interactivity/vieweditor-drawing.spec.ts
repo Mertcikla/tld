@@ -1,6 +1,7 @@
 import { expect, test } from '../fixtures'
 import type { Locator, Page } from '@playwright/test'
 import {
+  closeViewEditorPanels,
   createAndLoadDiagramWithNodes,
   reactFlowViewport,
   reloadView,
@@ -67,6 +68,7 @@ async function dispatchPenPointer(canvas: Locator, type: 'pointerdown' | 'pointe
 
 test('erases an existing drawing path', async ({ page }) => {
   await createAndLoadDiagramWithNodes(page, 0, 'Drawing Eraser')
+  await closeViewEditorPanels(page)
   await page.getByTestId('vieweditor-toolbar-draw').click()
   const { canvas, box } = await drawingCanvasBox(page)
   const from = canvasPoint(box, 0.55, 0.36)
@@ -81,6 +83,7 @@ test('erases an existing drawing path', async ({ page }) => {
 
 test('selects and moves drawings, persists them, and blocks underlying canvas selection or pan', async ({ page }) => {
   await createAndLoadDiagramWithNodes(page, 2, 'Drawing Select Move')
+  await closeViewEditorPanels(page)
   await page.getByTestId('vieweditor-toolbar-draw').click()
   const { canvas, box } = await drawingCanvasBox(page)
   const from = canvasPoint(box, 0.38, 0.36)
@@ -106,6 +109,7 @@ test('selects and moves drawings, persists them, and blocks underlying canvas se
 
 test('commits text with Enter and cancels text placement with Escape', async ({ page }) => {
   await createAndLoadDiagramWithNodes(page, 0, 'Drawing Text')
+  await closeViewEditorPanels(page)
   await page.getByTestId('vieweditor-toolbar-draw').click()
   const { canvas, box } = await drawingCanvasBox(page)
   await clickDrawingControl(page, 'draw-menu-text-t')
@@ -127,6 +131,7 @@ test('commits text with Enter and cancels text placement with Escape', async ({ 
 
 test('records pen pressure from coalesced stylus pointer events', async ({ page }) => {
   await createAndLoadDiagramWithNodes(page, 0, 'Drawing Coalesced Pen')
+  await closeViewEditorPanels(page)
   await page.getByTestId('vieweditor-toolbar-draw').click()
   const { canvas, box } = await drawingCanvasBox(page)
   const start = canvasPoint(box, 0.34, 0.58)

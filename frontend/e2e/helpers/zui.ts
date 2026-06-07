@@ -5,6 +5,7 @@ import {
   createPlacedElement,
   createLayer,
   createTag,
+  dispatchSafariGestureOnLocator,
   dispatchTouchEventOnLocator,
   uniqueName,
 } from './vieweditor'
@@ -14,12 +15,17 @@ export type CanvasRect = CanvasPoint & { width: number; height: number }
 export type ZUIViewState = { x: number; y: number; zoom: number; originX?: number; originY?: number }
 export type ZUITestNodeRect = CanvasRect & { elementId: number; diagramId: number }
 export type ZUITestInteraction = {
-  type: 'wheel' | 'mouse' | 'touch' | 'dblclick'
+  type: 'wheel' | 'mouse' | 'touch' | 'dblclick' | 'gesture'
   mode: string
   deltaX?: number
   deltaY?: number
   deltaMode?: number
   ctrlKey?: boolean
+  button?: number
+  scale?: number
+  factor?: number
+  zoomBefore?: number
+  zoomAfter?: number
 }
 
 declare global {
@@ -290,38 +296,45 @@ export async function dispatchZuiWheel(page: Page, point: CanvasPoint, options: 
   }, { point, options })
 }
 
-export async function dispatchZuiMousePan(page: Page, from: CanvasPoint, to: CanvasPoint) {
+export async function dispatchZuiMousePan(
+  page: Page,
+  from: CanvasPoint,
+  to: CanvasPoint,
+  options: { button?: 'left' | 'middle' | 'right' } = {},
+) {
+  const button = options.button === 'middle' ? 1 : options.button === 'right' ? 2 : 0
+  const buttons = options.button === 'middle' ? 4 : options.button === 'right' ? 2 : 1
   const canvas = page.locator('canvas')
-  await canvas.evaluate((element, point) => {
+  await canvas.evaluate((element, payload) => {
     element.dispatchEvent(new MouseEvent('mousedown', {
       bubbles: true,
       cancelable: true,
-      clientX: point.x,
-      clientY: point.y,
-      button: 0,
-      buttons: 1,
+      clientX: payload.point.x,
+      clientY: payload.point.y,
+      button: payload.button,
+      buttons: payload.buttons,
     }))
-  }, from)
-  await page.evaluate((point) => {
+  }, { point: from, button, buttons })
+  await page.evaluate((payload) => {
     window.dispatchEvent(new MouseEvent('mousemove', {
       bubbles: true,
       cancelable: true,
-      clientX: point.x,
-      clientY: point.y,
-      button: 0,
-      buttons: 1,
+      clientX: payload.point.x,
+      clientY: payload.point.y,
+      button: payload.button,
+      buttons: payload.buttons,
     }))
-  }, to)
-  await page.evaluate((point) => {
+  }, { point: to, button, buttons })
+  await page.evaluate((payload) => {
     window.dispatchEvent(new MouseEvent('mouseup', {
       bubbles: true,
       cancelable: true,
-      clientX: point.x,
-      clientY: point.y,
-      button: 0,
+      clientX: payload.point.x,
+      clientY: payload.point.y,
+      button: payload.button,
       buttons: 0,
     }))
-  }, to)
+  }, { point: to, button })
 }
 
 export async function dispatchZuiDoubleClick(page: Page, point: CanvasPoint) {
@@ -350,4 +363,13 @@ export async function dispatchZuiPinch(page: Page, center: CanvasPoint, startDis
   await dispatchTouchEventOnLocator(canvas, 'touchstart', start)
   await dispatchTouchEventOnLocator(canvas, 'touchmove', moved, moved)
   await dispatchTouchEventOnLocator(canvas, 'touchend', [], moved)
+}
+
+export async function dispatchZuiSafariGesture(page: Page, center: CanvasPoint, startScale = 1, changeScale = 1.35) {
+  await dispatchSafariGestureOnLocator(page.locator('canvas'), {
+    clientX: center.x,
+    clientY: center.y,
+    startScale,
+    changeScale,
+  })
 }

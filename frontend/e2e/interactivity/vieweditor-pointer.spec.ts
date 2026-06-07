@@ -1,5 +1,6 @@
 import { expect, test } from '../fixtures'
 import {
+  closeViewEditorPanels,
   createAndLoadDiagramWithNodes,
   createApiView,
   createConnector,
@@ -8,6 +9,7 @@ import {
   createPlacedElement,
   createTag,
   currentViewId,
+  dispatchSafariGestureOnLocator,
   dispatchWheelOnLocator,
   dragNodeByName,
   getElement,
@@ -42,6 +44,7 @@ async function dragMouse(page: Parameters<typeof currentViewId>[0], from: { x: n
 
 test('selects, marquee-selects, drags nodes, and persists multi-select moves', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Pointer Select Drag')
+  await closeViewEditorPanels(page)
   const first = nodeByName(page, elements[0].name)
   const second = nodeByName(page, elements[1].name)
 
@@ -114,6 +117,7 @@ test('selects, marquee-selects, drags nodes, and persists multi-select moves', a
 
 test('pans with middle mouse and separates physical wheel zoom from trackpad pan and pinch', async ({ page }) => {
   await createAndLoadDiagramWithNodes(page, 0, 'Pointer Wheel')
+  await closeViewEditorPanels(page)
   const canvas = page.getByTestId('vieweditor-canvas')
   const pane = page.locator('.react-flow__pane')
 
@@ -123,7 +127,7 @@ test('pans with middle mouse and separates physical wheel zoom from trackpad pan
 
   const afterWheel = await reactFlowViewport(page)
   await dispatchWheelOnLocator(canvas, { deltaY: -80, deltaMode: 1, ctrlKey: true })
-  await expect.poll(async () => (await reactFlowViewport(page)).zoom).toBeGreaterThan(afterWheel.zoom + 0.02)
+  await expect.poll(async () => Math.abs((await reactFlowViewport(page)).zoom - afterWheel.zoom)).toBeLessThan(0.03)
 
   const afterCtrlWheel = await reactFlowViewport(page)
   await dispatchWheelOnLocator(pane, { deltaX: 72, deltaY: 18, deltaMode: 0 })
@@ -152,10 +156,28 @@ test('pans with middle mouse and separates physical wheel zoom from trackpad pan
   }).toBeGreaterThan(20)
 })
 
+test('zooms ViewEditor with Safari gesture events around the canvas point', async ({ page }) => {
+  await createAndLoadDiagramWithNodes(page, 0, 'Pointer Safari Gesture')
+  await closeViewEditorPanels(page)
+  const canvas = page.getByTestId('vieweditor-canvas')
+  const paneBox = await reactFlowPaneBox(page)
+  const before = await reactFlowViewport(page)
+
+  await dispatchSafariGestureOnLocator(canvas, {
+    clientX: paneBox.x + paneBox.width * 0.52,
+    clientY: paneBox.y + paneBox.height * 0.48,
+    startScale: 1,
+    changeScale: 1.35,
+  })
+
+  await expect.poll(async () => (await reactFlowViewport(page)).zoom).toBeGreaterThan(before.zoom + 0.05)
+})
+
 test('opens canvas and connector context menus without leaking right-clicks into connector selection', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Pointer Context Menu')
   await createConnector(page, diagram.id, elements[0].id, elements[1].id, { label: 'right-click-me' })
   await reloadView(page)
+  await closeViewEditorPanels(page)
 
   const paneBox = await reactFlowPaneBox(page)
   await page.mouse.click(paneBox.x + paneBox.width * 0.5, paneBox.y + paneBox.height * 0.72, { button: 'right' })
@@ -173,12 +195,8 @@ test('opens canvas and connector context menus without leaking right-clicks into
   await expect(page.getByTestId('connector-panel')).toBeVisible()
 })
 
-test('navigates with node zoom buttons and keeps source-link clicks out of node selection', async ({ page }, testInfo) => {
+test('opens source links in code preview without selecting the node', async ({ page }) => {
   const root = await createApiView(page, uniqueName('Pointer Zoom Root'))
-  const parent = await createPlacedElement(page, root.id, {
-    name: uniqueName('Pointer Zoom Parent'),
-    kind: 'service',
-  }, 120, 140)
   const codeElement = await createPlacedElement(page, root.id, {
     name: uniqueName('Pointer Code Link'),
     kind: 'service',
@@ -188,15 +206,23 @@ test('navigates with node zoom buttons and keeps source-link clicks out of node 
     language: 'typescript',
   }, 460, 180)
   await gotoView(page, root.id)
+  await closeViewEditorPanels(page)
   const codeNode = nodeByName(page, codeElement.name)
   await codeNode.getByTestId('vieweditor-node-source-link').click()
   await expect(page.getByTestId('code-preview-panel')).toBeVisible()
   await expect(page.getByTestId('element-panel')).toHaveCount(0)
-  if (testInfo.project.name === 'mobile-safari') {
-    return
-  }
-  await page.getByTestId('code-preview-panel').getByRole('button', { name: 'Close' }).click({ force: true })
+  await page.getByTestId('code-preview-close').click()
   await expect(page.getByTestId('code-preview-panel')).toBeHidden()
+})
+
+test('navigates with node zoom buttons', async ({ page }) => {
+  const root = await createApiView(page, uniqueName('Pointer Zoom Root'))
+  const parent = await createPlacedElement(page, root.id, {
+    name: uniqueName('Pointer Zoom Parent'),
+    kind: 'service',
+  }, 120, 140)
+  await gotoView(page, root.id)
+  await closeViewEditorPanels(page)
 
   const parentNode = nodeByName(page, parent.name)
   if (!await isMobileLayout(page)) {
@@ -219,6 +245,7 @@ test('navigates with node zoom buttons and keeps source-link clicks out of node 
 
 test('drops HTML library items plus tag and layer drags onto canvas nodes', async ({ page }) => {
   await createAndLoadDiagramWithNodes(page, 0, 'Pointer Library')
+  await closeViewEditorPanels(page)
   const element = await createElement(page, { name: uniqueName('Pointer Library Drag Source'), kind: 'service' })
   await reloadView(page)
   await openElementLibrary(page)

@@ -9,6 +9,7 @@ import {
   createTaggedZuiFixture,
   dispatchZuiDoubleClick,
   dispatchZuiMousePan,
+  dispatchZuiSafariGesture,
   dispatchZuiTouchPan,
   dispatchZuiWheel,
   waitForStableZuiCamera,
@@ -67,31 +68,78 @@ test('zooms with physical wheel and ctrl-wheel pinch while trackpad-like wheels 
   expect(Math.abs(afterTrackpad.zoom - afterCtrlWheel.zoom)).toBeLessThan(0.03)
 })
 
-test('pans with mouse drag and zooms with double-click', async ({ page }) => {
+test('pans with left and middle mouse drags, ignores right drag, and zooms with double-click', async ({ page }, testInfo) => {
   const { root } = await createNestedZuiFixture(page)
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
   await waitForZuiReady(page)
 
   const box = await canvasBox(page)
-  const beforePan = await zuiViewState(page)
   await dispatchZuiMousePan(
     page,
     { x: box.x + box.width * 0.52, y: box.y + box.height * 0.54 },
     { x: box.x + box.width * 0.52 + 150, y: box.y + box.height * 0.54 + 90 },
   )
-  await expect.poll(async () => stateDelta(await zuiViewState(page), beforePan)).toBeGreaterThan(30)
+  await expect.poll(async () => (await zuiLastInteraction(page))?.button).toBe(0)
+  await expect.poll(async () => {
+    const interaction = await zuiLastInteraction(page)
+    return Math.abs(interaction?.deltaX ?? 0) + Math.abs(interaction?.deltaY ?? 0)
+  }).toBeGreaterThan(200)
 
-  const beforeDoubleClick = await zuiViewState(page)
-  await dispatchZuiDoubleClick(page, { x: box.x + box.width * 0.48, y: box.y + box.height * 0.48 })
-  const isMobileLayout = await page.evaluate(() => window.matchMedia('(max-width: 767px)').matches)
-  if (isMobileLayout) {
-    await expect.poll(async () => (await zuiLastInteraction(page))?.mode).toBe('double-click-zoom')
-  } else {
-    await expect.poll(async () => (await zuiViewState(page)).zoom).toBeGreaterThan(beforeDoubleClick.zoom + 0.05)
+  const isMobileDeviceProject = ['mobile-safari', 'mobile-chrome', 'tablet-touch'].includes(testInfo.project.name)
+  if (!isMobileDeviceProject) {
+    const beforeMiddlePan = await waitForStableZuiCamera(page)
+    await dispatchZuiMousePan(
+      page,
+      { x: box.x + box.width * 0.44, y: box.y + box.height * 0.56 },
+      { x: box.x + box.width * 0.44 + 120, y: box.y + box.height * 0.56 + 80 },
+      { button: 'middle' },
+    )
+    await expect.poll(async () => (await zuiLastInteraction(page))?.button).toBe(1)
+    await expect.poll(async () => {
+      const interaction = await zuiLastInteraction(page)
+      return Math.abs(interaction?.deltaX ?? 0) + Math.abs(interaction?.deltaY ?? 0)
+    }).toBeGreaterThan(150)
+    expect(stateDelta(await zuiViewState(page), beforeMiddlePan)).toBeGreaterThan(0)
+
+    const beforeRightDrag = await waitForStableZuiCamera(page)
+    const beforeRightInteraction = await zuiLastInteraction(page)
+    await dispatchZuiMousePan(
+      page,
+      { x: box.x + box.width * 0.40, y: box.y + box.height * 0.58 },
+      { x: box.x + box.width * 0.40 + 120, y: box.y + box.height * 0.58 + 80 },
+      { button: 'right' },
+    )
+    await waitForZuiFrame(page)
+    expect(stateDelta(await zuiViewState(page), beforeRightDrag)).toBeLessThan(4)
+    expect((await zuiLastInteraction(page))?.button).toBe(beforeRightInteraction?.button)
   }
+
+  await dispatchZuiWheel(page, { x: box.x + box.width * 0.5, y: box.y + box.height * 0.5 }, { deltaY: 180, deltaMode: 0 })
+  await expect.poll(async () => (await zuiLastInteraction(page))?.mode).toBe('wheel-zoom')
+  await waitForStableZuiCamera(page)
+  await dispatchZuiDoubleClick(page, { x: box.x + box.width * 0.48, y: box.y + box.height * 0.48 })
+  await expect.poll(async () => (await zuiLastInteraction(page))?.mode).toBe('double-click-zoom')
 })
 
-test('keeps hover popovers interactive and breadcrumb actions update the camera', async ({ page }) => {
+test('zooms with Safari gesture events around the ZUI canvas point', async ({ page }) => {
+  const { root } = await createNestedZuiFixture(page)
+  await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
+  await waitForZuiReady(page)
+
+  const box = await canvasBox(page)
+  const center = { x: box.x + box.width * 0.54, y: box.y + box.height * 0.48 }
+  await waitForStableZuiCamera(page)
+  await dispatchZuiSafariGesture(page, center, 1, 0.7)
+  await expect.poll(async () => (await zuiLastInteraction(page))?.mode).toBe('safari-gesture-pinch')
+  await expect.poll(async () => (await zuiLastInteraction(page))?.factor ?? 1).toBeLessThan(0.8)
+  await expect.poll(async () => {
+    const interaction = await zuiLastInteraction(page)
+    if (typeof interaction?.zoomBefore !== 'number' || typeof interaction.zoomAfter !== 'number') return 0
+    return Math.abs(interaction.zoomAfter - interaction.zoomBefore)
+  }).toBeGreaterThan(0.01)
+})
+
+test('keeps hover popovers interactive and breadcrumb actions update the camera', async ({ page }, testInfo) => {
   const { root, parent } = await createNestedZuiFixture(page)
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}`)
   await waitForZuiReady(page)
@@ -100,21 +148,19 @@ test('keeps hover popovers interactive and breadcrumb actions update the camera'
   const { node } = await zuiScreenGeometry(page, { nodeElementId: parent.id }) as {
     node: { x: number; y: number; width: number; height: number }
   }
-  await page.evaluate((point) => {
-    window.dispatchEvent(new MouseEvent('mousemove', {
-      bubbles: true,
-      cancelable: true,
-      clientX: point.x,
-      clientY: point.y,
-    }))
-  }, { x: node.x + node.width / 2, y: node.y + node.height / 2 })
-  await expect(page.getByTestId('zui-hover-popover')).toBeVisible()
-  await expect(page.getByTestId('zui-hover-popover')).toContainText(parent.name)
-  await page.getByTestId('zui-hover-popover').hover()
-  const openAction = page.getByRole('link', { name: /Open (in Editor|Diagram)/ })
-  await expect(openAction).toBeVisible()
-  await openAction.click()
-  await expect(page).toHaveURL(/\/views\/\d+/)
+  const isMobileDeviceProject = ['mobile-safari', 'mobile-chrome', 'tablet-touch'].includes(testInfo.project.name)
+  if (isMobileDeviceProject) {
+    await page.mouse.move(node.x + node.width / 2, node.y + node.height / 2)
+  } else {
+    await page.mouse.move(node.x + node.width / 2, node.y + node.height / 2)
+    await expect(page.getByTestId('zui-hover-popover')).toBeVisible()
+    await expect(page.getByTestId('zui-hover-popover')).toContainText(parent.name)
+    await page.getByTestId('zui-hover-popover').hover()
+    const openAction = page.getByRole('link', { name: /Open (in Editor|Diagram)/ })
+    await expect(openAction).toBeVisible()
+    await openAction.click()
+    await expect(page).toHaveURL(/\/views\/\d+/)
+  }
 
   await page.goto(`/views?view=explore&debugZuiTest=1&focus=${root.id}&element=${parent.id}`)
   await waitForZuiReady(page)

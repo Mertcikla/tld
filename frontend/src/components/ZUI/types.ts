@@ -17,12 +17,17 @@ export interface ZUIViewState {
 }
 
 export interface ZUITestInteraction {
-  type: 'wheel' | 'mouse' | 'touch' | 'dblclick'
+  type: 'wheel' | 'mouse' | 'touch' | 'dblclick' | 'gesture'
   mode: string
   deltaX?: number
   deltaY?: number
   deltaMode?: number
   ctrlKey?: boolean
+  button?: number
+  scale?: number
+  factor?: number
+  zoomBefore?: number
+  zoomAfter?: number
 }
 
 /**

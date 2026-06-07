@@ -373,6 +373,7 @@ export function useZUIInteraction(
   }, [])
 
   const dragging = useRef(false)
+  const dragButton = useRef<number | null>(null)
   const lastMouse = useRef({ x: 0, y: 0 })
   const lastPointerClient = useRef<{ x: number; y: number } | null>(null)
   const lastPinchDist = useRef<number | null>(null)
@@ -492,6 +493,7 @@ export function useZUIInteraction(
       if (!isZUIPanMouseButton(e.button)) return
       e.preventDefault()
       dragging.current = true
+      dragButton.current = e.button
       lastMouse.current.x = e.clientX
       lastMouse.current.y = e.clientY
       lastPointerClient.current = { x: e.clientX, y: e.clientY }
@@ -510,7 +512,13 @@ export function useZUIInteraction(
         const dy = e.clientY - lastMouse.current.y
         lastMouse.current.x = e.clientX
         lastMouse.current.y = e.clientY
-        recordZuiTestInteraction({ type: 'mouse', mode: 'drag-pan' })
+        recordZuiTestInteraction({
+          type: 'mouse',
+          mode: 'drag-pan',
+          button: dragButton.current ?? e.button,
+          deltaX: dx,
+          deltaY: dy,
+        })
         scheduleViewState((prev) => ({ ...prev, x: prev.x + dx, y: prev.y + dy }))
         onPanRef.current?.()
         return
@@ -560,6 +568,7 @@ export function useZUIInteraction(
 
     function onMouseUp() {
       dragging.current = false
+      dragButton.current = null
       if (el) el.style.cursor = 'grab'
     }
 
@@ -613,7 +622,16 @@ export function useZUIInteraction(
       const focalY = point.clientY - rect.top
 
       scheduleViewState((prev) => {
-        return zoomAround(prev, focalX, focalY, gesture.factor, maxZoomRef.current)
+        const next = zoomAround(prev, focalX, focalY, gesture.factor, maxZoomRef.current)
+        recordZuiTestInteraction({
+          type: 'gesture',
+          mode: 'safari-gesture-pinch',
+          scale: gesture.scale,
+          factor: gesture.factor,
+          zoomBefore: prev.zoom,
+          zoomAfter: next.zoom,
+        })
+        return next
       })
       onZoomRef.current?.()
     }

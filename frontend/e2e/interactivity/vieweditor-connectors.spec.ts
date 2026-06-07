@@ -1,5 +1,6 @@
 import { expect, test } from '../fixtures'
 import {
+  closeViewEditorPanels,
   confirmInlineNewElement,
   createAndLoadDiagramWithNodes,
   createConnector,
@@ -79,6 +80,7 @@ async function openEdgeContextMenu(page: Parameters<typeof handleLocator>[0]) {
 
 test('starts, cancels, and creates click-connect flows from handles', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Connector Click Handles')
+  await closeViewEditorPanels(page)
   const sourceHandle = handleLocator(page, elements[0].id, 'right-2')
   const targetHandle = handleLocator(page, elements[1].id, 'left-2')
 
@@ -98,6 +100,7 @@ test('starts, cancels, and creates click-connect flows from handles', async ({ p
 
 test('drags handles to target handles, node bodies, empty pending elements, and Shift-forced connect mode', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 4, 'Connector Drag Matrix')
+  await closeViewEditorPanels(page)
 
   await dragLocatorToPoint(page, handleLocator(page, elements[0].id, 'right-2'), await locatorCenter(handleLocator(page, elements[1].id, 'left-2')))
   await expectConnector(page, {
@@ -123,6 +126,7 @@ test('drags handles to target handles, node bodies, empty pending elements, and 
   await expect.poll(async () => (await listConnectors(page, diagram.id)).length).toBeGreaterThanOrEqual(3)
 
   const shiftFixture = await createAndLoadDiagramWithNodes(page, 1, 'Connector Shift Empty')
+  await closeViewEditorPanels(page)
   const shiftPaneBox = await reactFlowPaneBox(page)
   await page.keyboard.down('Shift')
   await dragLocatorToPoint(page, handleLocator(page, shiftFixture.elements[0].id, 'right-2'), {
@@ -138,6 +142,7 @@ test('moves connector source and target through the connector context menu', asy
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 3, 'Connector Context Rewire')
   const connector = await createConnector(page, diagram.id, elements[0].id, elements[1].id, { label: 'context-rewire' })
   await reloadView(page)
+  await closeViewEditorPanels(page)
 
   await openEdgeContextMenu(page)
   await page.getByTestId('connector-context-move-target').click()
@@ -150,6 +155,7 @@ test('moves connector source and target through the connector context menu', asy
   }, true, diagram.id)
 
   await reloadView(page)
+  await closeViewEditorPanels(page)
   await openEdgeContextMenu(page)
   const moveSource = page.getByTestId('connector-context-move-source')
   if (!await moveSource.isVisible({ timeout: 1500 }).catch(() => false)) {
@@ -169,6 +175,7 @@ test('drags reconnect zones to a nearby handle and a nearby node body', async ({
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 4, 'Connector Reconnect Zones')
   const connector = await createConnector(page, diagram.id, elements[0].id, elements[1].id, { label: 'zone-reconnect' })
   await reloadView(page)
+  await closeViewEditorPanels(page)
 
   const edge = page.locator('.react-flow__edge').first()
   await edge.click({ force: true })
@@ -182,6 +189,7 @@ test('drags reconnect zones to a nearby handle and a nearby node body', async ({
   }, true, diagram.id)
 
   await reloadView(page)
+  await closeViewEditorPanels(page)
   await page.locator('.react-flow__edge').first().click({ force: true })
   const movedTargetZone = page.locator(`[data-testid="vieweditor-node-reconnect-zone"][data-edge-id="${connector.id}"][data-endpoint="target"]`).first()
   await expect(movedTargetZone).toBeVisible()

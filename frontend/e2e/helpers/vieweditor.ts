@@ -70,6 +70,8 @@ export async function prepareStorage(page: Page) {
     localStorage.setItem(keys.shown, '1')
     localStorage.setItem(keys.sharedZoom, 'true')
     localStorage.setItem('diag:snapToGrid', 'false')
+    localStorage.setItem('diag:libraryOpen', 'false')
+    localStorage.setItem('diag:explorerOpen', 'false')
     localStorage.setItem('tld:experimental', JSON.stringify({ watchEnabled: true }))
   }, onboardingStorage)
 }
@@ -247,15 +249,15 @@ export async function isMobileLayout(page: Page) {
 
 async function closePanelIfVisible(panel: Locator) {
   if (!await isPanelUsablyVisible(panel)) return
-  const closeButton = panel.getByRole('button', { name: 'Close' }).first()
+  const closeButton = panel.getByTestId('panel-close').or(panel.getByRole('button', { name: 'Close' })).first()
   if (await closeButton.isVisible({ timeout: 500 }).catch(() => false)) {
     await closeButton.click({ force: true })
   } else {
     await panel.page().keyboard.press('Escape')
   }
-  await expect(panel).toBeHidden({ timeout: 1500 }).catch(async () => {
+  await expect.poll(async () => !await isPanelUsablyVisible(panel), { timeout: 1500 }).toBe(true).catch(async () => {
     await panel.page().keyboard.press('Escape')
-    await expect(panel).toBeHidden({ timeout: 1500 }).catch(() => {})
+    await expect.poll(async () => !await isPanelUsablyVisible(panel), { timeout: 1500 }).toBe(true).catch(() => {})
   })
 }
 
@@ -280,7 +282,7 @@ export async function openElementLibrary(page: Page) {
   } else {
     await page.getByRole('button', { name: 'Open element library' }).click()
   }
-  await expect(panel).toBeVisible()
+  await expect.poll(async () => await isPanelUsablyVisible(panel)).toBe(true)
   return panel
 }
 
@@ -296,8 +298,13 @@ export async function openViewExplorer(page: Page) {
   } else {
     await page.getByRole('button', { name: 'Open view navigation' }).click()
   }
-  await expect(panel).toBeVisible()
+  await expect.poll(async () => await isPanelUsablyVisible(panel)).toBe(true)
   return panel
+}
+
+export async function closeViewEditorPanels(page: Page) {
+  await closePanelIfVisible(page.getByTestId('element-library-panel'))
+  await closePanelIfVisible(page.getByTestId('view-explorer-panel'))
 }
 
 export async function reactFlowViewport(page: Page) {
@@ -331,6 +338,38 @@ export async function dispatchWheelOnLocator(
     deltaY: options.deltaY ?? 0,
     deltaMode: options.deltaMode ?? 0,
     ctrlKey: options.ctrlKey ?? false,
+  })
+}
+
+export async function dispatchSafariGestureOnLocator(
+  locator: Locator,
+  options: {
+    clientX?: number
+    clientY?: number
+    startScale?: number
+    changeScale?: number
+  } = {},
+) {
+  const box = await locator.boundingBox()
+  if (!box) throw new Error('Gesture target is not visible')
+  const clientX = options.clientX ?? box.x + box.width / 2
+  const clientY = options.clientY ?? box.y + box.height / 2
+  await locator.evaluate((element, payload) => {
+    const dispatch = (type: 'gesturestart' | 'gesturechange' | 'gestureend', scale: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'scale', { value: scale })
+      Object.defineProperty(event, 'clientX', { value: payload.clientX })
+      Object.defineProperty(event, 'clientY', { value: payload.clientY })
+      element.dispatchEvent(event)
+    }
+    dispatch('gesturestart', payload.startScale)
+    dispatch('gesturechange', payload.changeScale)
+    dispatch('gestureend', payload.changeScale)
+  }, {
+    clientX,
+    clientY,
+    startScale: options.startScale ?? 1,
+    changeScale: options.changeScale ?? 1.3,
   })
 }
 
