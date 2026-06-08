@@ -6,6 +6,9 @@
   </a>
 </p>
 
+<p align="center">
+<img width="900" height="900" alt="explore" src="https://github.com/user-attachments/assets/4a85bdda-b51f-4c4f-946f-30ba5dacd26a" />
+</p>
 
 
 `tld` is an opinionated, flexible diagramming tool with rich featureset to help you visualize, understand, and maintain your software architecture. Inspired by C4 model, designed with multiple opt-in features to answer evolving needs of software teams. 
@@ -16,10 +19,6 @@
   <a href="https://github.com/mertcikla/tld/actions"><img src="https://img.shields.io/github/actions/workflow/status/mertcikla/tld/test.yml?branch=main" alt="Build Status"></a>
   <a href="https://goreportcard.com/report/github.com/mertcikla/tld"><img src="https://goreportcard.com/badge/github.com/mertcikla/tld" alt="Go Report Card"></a>
   <a href="https://deepwiki.com/Mertcikla/tld"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
-</p>
-
-<p align="center">
-<img width="1280" height="882" alt="editor" src="https://github.com/user-attachments/assets/4ee283b0-ee45-4a04-86e4-f477c26e9977" />
 </p>
 
 
@@ -46,7 +45,9 @@ Here are some examples that were generated using the agent skill.
 - **Diagrams as Code**: (Experimental) A git/terraform like workflow (`plan`/`apply`) to manage architectural evolution alongside your source code.
 - **Automated Codebase Analysis**: (Experimental) Built-in tree-sitter integration to automatically discover architecture components in Go, Java, Python, C++, and TypeScript (more soon™ (hopefully)).
 
-<p align="center"><img width="1280" height="720" alt="explore" src="https://github.com/user-attachments/assets/0b194071-d411-449a-87bd-2d4883e9c354" />
+<p align="center">
+<img width="1280" height="882" alt="editor" src="https://github.com/user-attachments/assets/4ee283b0-ee45-4a04-86e4-f477c26e9977" />
+</p>
 
 
 </p>
