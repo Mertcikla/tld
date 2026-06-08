@@ -11,7 +11,7 @@ import { toast } from '../../utils/toast'
 import { computeLayout } from './layout'
 import { getCameraRebase, screenToWorldX, screenToWorldY, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { useZUIInteraction } from './useZUIInteraction'
-import type { DiagramGroupLayout, HoveredItem, ZUIViewState } from './types'
+import type { DiagramGroupLayout, HoveredItem, ZUITestInteraction, ZUIViewState } from './types'
 import { getPathAt } from './camera'
 import { useZUICamera } from './useZUICamera'
 import { useZUIProxyConnectors } from './useZUIProxyConnectors'
@@ -23,6 +23,7 @@ declare global {
     __TLD_ZUI_TEST_STATE__?: {
       viewState: ZUIViewState
       groups: DiagramGroupLayout[]
+      lastInteraction?: ZUITestInteraction
     }
   }
 }
@@ -190,6 +191,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     window.__TLD_ZUI_TEST_STATE__ = {
       viewState,
       groups: layout.groups,
+      lastInteraction: window.__TLD_ZUI_TEST_STATE__?.lastInteraction,
     }
   }
 
@@ -198,6 +200,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     window.__TLD_ZUI_TEST_STATE__ = {
       viewState,
       groups: layout.groups,
+      lastInteraction: window.__TLD_ZUI_TEST_STATE__?.lastInteraction,
     }
   }, [debugStateReady, debugTestState, layout.groups, viewState])
 

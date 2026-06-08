@@ -1314,6 +1314,16 @@ function ViewEditorInner({
     }
   }, [getClampedMarkdownPaneWidth, isMarkdownResizing])
 
+  const resetViewMarkdown = useCallback(() => {
+    markdownRequestSeqRef.current += 1
+    setViewMarkdown(null)
+    setViewMarkdownContent('')
+    setLoadedViewMarkdownContent('')
+    setViewMarkdownSyncToken((prev) => prev + 1)
+    setIsMarkdownOpen(false)
+    setIsMarkdownLoading(false)
+  }, [])
+
   const loadViewMarkdown = useCallback(async (targetViewId: number, options: { silent?: boolean } = {}) => {
     const requestSeq = ++markdownRequestSeqRef.current
     setIsMarkdownLoading(true)
@@ -1321,11 +1331,7 @@ function ViewEditorInner({
       const result = await api.workspace.views.markdown.get(targetViewId)
       if (markdownRequestSeqRef.current !== requestSeq) return null
       if (!result) {
-        setViewMarkdown(null)
-        setViewMarkdownContent('')
-        setLoadedViewMarkdownContent('')
-        setViewMarkdownSyncToken((prev) => prev + 1)
-        setIsMarkdownOpen(false)
+        resetViewMarkdown()
         return null
       }
       setViewMarkdown(result.markdown)
@@ -1335,10 +1341,7 @@ function ViewEditorInner({
       return result
     } catch (error) {
       if (markdownRequestSeqRef.current !== requestSeq) return null
-      setViewMarkdown(null)
-      setViewMarkdownContent('')
-      setLoadedViewMarkdownContent('')
-      setViewMarkdownSyncToken((prev) => prev + 1)
+      resetViewMarkdown()
       if (!options.silent) {
         toast({
           status: 'error',
@@ -1350,21 +1353,17 @@ function ViewEditorInner({
     } finally {
       if (markdownRequestSeqRef.current === requestSeq) setIsMarkdownLoading(false)
     }
-  }, [toast])
+  }, [resetViewMarkdown, toast])
+
+  const loadedViewMarkdownPath = view && view.id === viewId ? view.markdown?.path ?? null : undefined
 
   useEffect(() => {
-    if (viewId === null) {
-      markdownRequestSeqRef.current += 1
-      setViewMarkdown(null)
-      setViewMarkdownContent('')
-      setLoadedViewMarkdownContent('')
-      setViewMarkdownSyncToken((prev) => prev + 1)
-      setIsMarkdownOpen(false)
-      setIsMarkdownLoading(false)
+    if (viewId === null || !loadedViewMarkdownPath) {
+      resetViewMarkdown()
       return
     }
     void loadViewMarkdown(viewId, { silent: true })
-  }, [loadViewMarkdown, viewId])
+  }, [loadedViewMarkdownPath, loadViewMarkdown, resetViewMarkdown, viewId])
 
   const markdownDirty = viewMarkdownContent !== loadedViewMarkdownContent
   const markdownBusy = isMarkdownLoading || isMarkdownMutating || isMarkdownSaving
@@ -1394,10 +1393,11 @@ function ViewEditorInner({
     if (!canEdit || viewId === null) return null
     setIsMarkdownMutating(true)
     try {
-      await api.workspace.views.markdown.create(viewId, {
+      const updatedView = await api.workspace.views.markdown.create(viewId, {
         fileName: options.fileName,
         initialContent: options.initialContent ?? initialViewMarkdown(view?.name),
       })
+      setView(updatedView)
       const loadedMarkdown = await loadViewMarkdown(viewId)
       if (options.openEditor !== false) setIsMarkdownOpen(true)
       return loadedMarkdown
@@ -1411,7 +1411,7 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownMutating(false)
     }
-  }, [canEdit, loadViewMarkdown, toast, view?.name, viewId])
+  }, [canEdit, loadViewMarkdown, setView, toast, view?.name, viewId])
 
   const handleToggleMarkdown = useCallback(() => {
     if (window.__TLD_VSCODE__) {
@@ -1449,7 +1449,8 @@ function ViewEditorInner({
     if (!canEdit || viewId === null) return
     setIsMarkdownMutating(true)
     try {
-      await api.workspace.views.markdown.link(viewId, path)
+      const updatedView = await api.workspace.views.markdown.link(viewId, path)
+      setView(updatedView)
       await loadViewMarkdown(viewId)
       setIsMarkdownOpen(true)
       toast({ status: 'success', title: 'Markdown linked' })
@@ -1462,15 +1463,15 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownMutating(false)
     }
-  }, [canEdit, loadViewMarkdown, toast, viewId])
+  }, [canEdit, loadViewMarkdown, setView, toast, viewId])
 
   const handleUnlinkMarkdown = useCallback(async ({ deleteManagedFile }: { deleteManagedFile: boolean } = { deleteManagedFile: false }) => {
     if (!canEdit || viewId === null) return
     setIsMarkdownMutating(true)
     try {
-      await api.workspace.views.markdown.unlink(viewId, deleteManagedFile)
-      await loadViewMarkdown(viewId, { silent: true })
-      setIsMarkdownOpen(false)
+      const updatedView = await api.workspace.views.markdown.unlink(viewId, deleteManagedFile)
+      setView(updatedView)
+      resetViewMarkdown()
       toast({ status: 'success', title: 'Markdown unlinked' })
     } catch (error) {
       toast({
@@ -1481,7 +1482,7 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownMutating(false)
     }
-  }, [canEdit, loadViewMarkdown, toast, viewId])
+  }, [canEdit, resetViewMarkdown, setView, toast, viewId])
 
   const handleSaveMarkdown = useCallback(async (markdown: string) => {
     if (viewId === null || !viewMarkdown) return
@@ -3905,6 +3906,7 @@ function ViewEditorInner({
                 zIndex={2000}
               >
                 <Input
+                  data-testid="drawing-text-input"
                   autoFocus
                   variant="unstyled"
                   bg="var(--bg-panel)"

@@ -79,7 +79,7 @@ export interface SceneGraph {
 }
 
 function wrapNode(node: LayoutNode): SceneNode {
-  const children = node.children.map((child) => wrapNode(child))
+  const children = (node.children ?? []).map((child) => wrapNode(child))
   return {
     layout: node,
     children,

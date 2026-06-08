@@ -20,6 +20,15 @@ function connectorCards(page: Page) {
   return page.locator('[data-testid="inventory-connector-card"], [data-testid="dependencies-neighbour-card"]')
 }
 
+async function expectConnectorGraphCards(page: Page, graph: Awaited<ReturnType<typeof createConnectorGraph>>) {
+  await expect(selectedCard(page)).toContainText(graph.center.name.slice(0, 28))
+  await expect(neighbourCard(page, graph.incoming.name)).toBeVisible()
+  await expect(neighbourCard(page, graph.outgoing.name)).toBeVisible()
+  await expect(neighbourCard(page, graph.both.name)).toBeVisible()
+  await expect(neighbourCard(page, graph.undirected.name)).toBeVisible()
+  await expect(connectorCards(page)).toHaveCount(4)
+}
+
 function selectedCard(page: Page) {
   return page.getByTestId('inventory-selected-card')
 }
@@ -37,13 +46,11 @@ test('search empty state can be cleared in inventory', async ({ page }) => {
 test('lists elements, totals, and connector counts from the workspace', async ({ page }) => {
   const graph = await createConnectorGraph(page, 'Connector Totals')
 
-  await page.goto('/inventory')
   await page.goto(`/inventory?object=element:${graph.center.id}`)
 
   await expect(page.getByTestId('inventory-row').filter({ hasText: graph.center.name }).first()).toBeVisible()
   await expect(page.getByText(graph.center.name, { exact: false }).first()).toBeVisible()
-  await expect(selectedCard(page)).toContainText(graph.center.name.slice(0, 28))
-  await expect(connectorCards(page)).toHaveCount(4)
+  await expectConnectorGraphCards(page, graph)
 })
 
 test('query param selects an element and renders its connector graph', async ({ page }) => {
@@ -54,8 +61,7 @@ test('query param selects an element and renders its connector graph', async ({ 
 
   await expect(page).toHaveURL(new RegExp(`/inventory\\?object=element:${graph.center.id}`))
   await expect(page.getByText(graph.center.name, { exact: false }).first()).toBeVisible()
-  await expect(selectedCard(page)).toContainText(graph.center.name.slice(0, 28))
-  await expect(connectorCards(page)).toHaveCount(4)
+  await expectConnectorGraphCards(page, graph)
 })
 
 test('connector graph groups incoming outgoing bidirectional and undirected connectors', async ({ page }) => {

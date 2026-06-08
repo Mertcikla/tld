@@ -22,6 +22,10 @@ async function expandFilterSection(page: Page, title: string) {
   await page.getByTestId(`inventory-filter-section-${title.toLowerCase()}`).getByText(title, { exact: true }).click()
 }
 
+function isTouchDeviceProject(projectName: string) {
+  return ['mobile-safari', 'mobile-chrome', 'tablet-touch'].includes(projectName)
+}
+
 async function seedInventory(page: Page) {
   const prefix = uniqueName('Inventory Filter')
   const tag = `inv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
@@ -95,7 +99,9 @@ test('global search matches element metadata and connector context', async ({ pa
   await expect(rowByKey(page, `view:${data.diagram.id}`)).toBeVisible()
 })
 
-test('type tag kind and quality filters compose and reset URL state', async ({ page }) => {
+test('type tag kind and quality filters compose and reset URL state', async ({ page }, testInfo) => {
+  test.skip(isTouchDeviceProject(testInfo.project.name), 'filter sidebar is not rendered in touch device inventory layouts')
+
   const data = await seedInventory(page)
 
   await page.goto(`/inventory?page=2&object=element:${data.api.id}`)
@@ -128,7 +134,9 @@ test('type tag kind and quality filters compose and reset URL state', async ({ p
   await expect.poll(() => new URL(page.url()).searchParams.toString()).toBe('')
 })
 
-test('object type tab keeps search scoped and records type in the URL', async ({ page }) => {
+test('object type tab keeps search scoped and records type in the URL', async ({ page }, testInfo) => {
+  test.skip(isTouchDeviceProject(testInfo.project.name), 'filter sidebar tabs are not rendered in touch device inventory layouts')
+
   const data = await seedInventory(page)
 
   await page.goto('/inventory')

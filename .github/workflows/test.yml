@@ -125,6 +125,7 @@ jobs:
       fail-fast: false
       matrix:
         go-version: ["1.26.1"]
+        project: [chromium, firefox, webkit, mobile-safari, mobile-chrome, tablet-touch, desktop-touch-chromium]
         shard: [1, 2, 3, 4]
 
     steps:
@@ -160,14 +161,14 @@ jobs:
         env:
           TLD_E2E_BINARY: /tmp/tld-e2e
           TLD_E2E_PORT: 1806${{ matrix.shard }}
-          TLD_E2E_DATA_DIR: /tmp/tld-playwright-${{ github.run_id }}-${{ matrix.shard }}
-        run: npx playwright test -c playwright.config.ts --shard=${{ matrix.shard }}/4 --reporter=github,blob
+          TLD_E2E_DATA_DIR: /tmp/tld-playwright-${{ github.run_id }}-${{ matrix.project }}-${{ matrix.shard }}
+        run: npx playwright test -c playwright.config.ts --project=${{ matrix.project }} --shard=${{ matrix.shard }}/4 --reporter=github,blob
 
       - name: Upload Playwright blob report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v5
         with:
-          name: playwright-blob-report-${{ matrix.shard }}
+          name: playwright-blob-report-${{ matrix.project }}-${{ matrix.shard }}
           path: frontend/blob-report/
           retention-days: 30
 
