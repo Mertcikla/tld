@@ -38,6 +38,13 @@ export interface ScreenRect {
   bottom: number
 }
 
+export interface EdgeLabelDrawRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 const frameLabelRects: ScreenRect[] = []
 
 function getClampedFontSize(baseWorldSize: number, minScreenSize: number, maxScreenSize: number, zoom: number): number {
@@ -287,6 +294,15 @@ export function pickEdgeLabelPosition(
   }
   occupiedLabelRects.push(fallbackRect)
   return { x: midX, y: midY }
+}
+
+export function edgeLabelDrawRectFromCenter(center: { x: number; y: number }, width: number, height: number): EdgeLabelDrawRect {
+  return {
+    x: center.x - width / 2,
+    y: center.y - height / 2,
+    width,
+    height,
+  }
 }
 
 function pickNavigationHintPosition(
@@ -1247,7 +1263,7 @@ function drawEdges(
         const labelW = textW + padX * 2
         const labelH = worldFontSize * 1.2 + padY * 2
 
-        const labelPos = pickEdgeLabelPosition(
+        const labelCenter = pickEdgeLabelPosition(
           ctx.getTransform(),
           midX, midY,
           labelW, labelH,
@@ -1255,16 +1271,17 @@ function drawEdges(
           tH.y - sH.y,
           occupiedLabelRects,
         )
+        const labelRect = edgeLabelDrawRectFromCenter(labelCenter, labelW, labelH)
 
         ctx.fillStyle = labelBg
         ctx.globalAlpha = Math.min(edgeAlpha, connectorAlpha(edgeAlpha * 1.1))
         ctx.beginPath()
-        ctx.roundRect(labelPos.x, labelPos.y, labelW, labelH, 4 / zoom)
+        ctx.roundRect(labelRect.x, labelRect.y, labelRect.width, labelRect.height, 4 / zoom)
         ctx.fill()
 
         ctx.globalAlpha = edgeAlpha
         ctx.fillStyle = '#cbd5e0'
-        ctx.fillText(edge.label, labelPos.x + labelW / 2, labelPos.y + labelH / 2)
+        ctx.fillText(edge.label, labelCenter.x, labelCenter.y)
       }
 
       ctx.restore()
