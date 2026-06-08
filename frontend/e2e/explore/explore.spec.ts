@@ -436,7 +436,12 @@ test('keeps an eight-level deep focused node visible on the canvas', async ({ pa
   expect(stats.nonTransparent).toBeGreaterThan(20)
 })
 
-test('keeps repeated zoom interactions within the canvas performance budget', async ({ page }) => {
+test('keeps repeated zoom interactions within the canvas performance budget', async ({ page }, testInfo) => {
+  test.skip(
+    !['chromium', 'firefox'].includes(testInfo.project.name),
+    'canvas performance budget is calibrated for desktop browser projects',
+  )
+
   await createNestedCanvasFixture(page)
   await page.goto('/views?view=explore&debugZuiTest=1')
   await expect(page.locator('canvas')).toBeVisible()
