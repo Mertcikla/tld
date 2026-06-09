@@ -6,6 +6,7 @@ import {
   accelerateViewEditorPinchZoomFactor,
   applyPendingElementNodeChanges,
   getDraggedElementNodes,
+  getDraggedSelectionElementNodes,
   getConnectorDeletionTarget,
   pendingElementPositionFromFlowPoint,
   resolveConnectorDropTarget,
@@ -184,6 +185,22 @@ describe('dragged element node resolution', () => {
     ])
   })
 
+  it('includes selected fallback nodes when React Flow drag payload only contains the primary node', () => {
+    const primary = node('1', { selected: true, position: { x: 40, y: 20 } })
+    const latestSelection = [
+      node('1', { selected: true, position: { x: 35, y: 15 } }),
+      node('2', { selected: true, position: { x: 140, y: 20 } }),
+    ]
+
+    expect(getDraggedElementNodes(primary, [primary], latestSelection).map((dragged) => ({
+      id: dragged.id,
+      position: dragged.position,
+    }))).toEqual([
+      { id: '1', position: { x: 40, y: 20 } },
+      { id: '2', position: { x: 140, y: 20 } },
+    ])
+  })
+
   it('falls back to selected element refs when React Flow gives no drag payload', () => {
     const primary = node('1', { selected: true })
     const fallbackNodes = [
@@ -193,6 +210,27 @@ describe('dragged element node resolution', () => {
     ]
 
     expect(getDraggedElementNodes(primary, [], fallbackNodes).map((dragged) => dragged.id)).toEqual(['1', '2'])
+  })
+
+  it('resolves selected nodes for React Flow selection drags', () => {
+    const latestSelection = [
+      node('1', { selected: true, position: { x: 0, y: 0 } }),
+      node('2', { selected: true, position: { x: 100, y: 0 } }),
+      node('ctx:3', { selected: true, type: 'contextNode' }),
+      node('4', { selected: false, position: { x: 300, y: 0 } }),
+    ]
+    const draggedNodes = [
+      node('1', { selected: true, position: { x: 30, y: 25 } }),
+      node('2', { selected: true, position: { x: 130, y: 25 } }),
+    ]
+
+    expect(getDraggedSelectionElementNodes(draggedNodes, latestSelection).map((dragged) => ({
+      id: dragged.id,
+      position: dragged.position,
+    }))).toEqual([
+      { id: '1', position: { x: 30, y: 25 } },
+      { id: '2', position: { x: 130, y: 25 } },
+    ])
   })
 })
 
