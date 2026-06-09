@@ -2912,6 +2912,7 @@ function ViewEditorInner({
     showAddingElementAt,
     cancelPendingElement,
     onEdgesChange, onNodeDragStart, onNodeDrag, onNodeDragStop,
+    onSelectionDragStart, onSelectionDrag, onSelectionDragStop,
     onConnect, onConnectStart, onConnectEnd,
     onReconnect, onReconnectStart, onReconnectEnd,
     onEdgeClick, onEdgeContextMenu, onPaneClick, onPaneContextMenu, onPaneMouseMove,
@@ -3824,6 +3825,7 @@ function ViewEditorInner({
                 onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
                 onConnect={onConnect} onConnectStart={onConnectStart} onConnectEnd={onConnectEnd}
                 onNodeDragStart={onNodeDragStart} onNodeDrag={onNodeDrag} onNodeDragStop={onNodeDragStop}
+                onSelectionDragStart={onSelectionDragStart} onSelectionDrag={onSelectionDrag} onSelectionDragStop={onSelectionDragStop}
                 onEdgeClick={onEdgeClick} onEdgeContextMenu={onEdgeContextMenu}
                 onPaneContextMenu={onPaneContextMenu} onPaneClick={onPaneClick}
                 onPaneMouseMove={handleRealtimePaneMouseMove}
