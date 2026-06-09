@@ -12,6 +12,7 @@ import {
   type NodeDragHandler,
   type OnConnect,
   type OnConnectStartParams,
+  type SelectionDragHandler,
   useReactFlow,
 } from 'reactflow'
 import { api } from '../../../api/client'
@@ -417,18 +418,37 @@ export function applyPendingElementNodeChanges(
 }
 
 export function getDraggedElementNodes(primaryNode: RFNode, draggedNodes: RFNode[], fallbackNodes: RFNode[]) {
-  const sourceNodes = draggedNodes.length > 0
-    ? draggedNodes
-    : primaryNode.selected
-      ? fallbackNodes.filter((candidate) => candidate.selected)
-      : [primaryNode]
+  if (primaryNode.selected) {
+    const selectedNodes = getDraggedSelectionElementNodes(draggedNodes, fallbackNodes)
+    if (selectedNodes.length > 0) return selectedNodes
+  }
 
   const result = new Map<string, RFNode>()
-  sourceNodes.forEach((candidate) => {
+  const addElementNode = (candidate: RFNode) => {
     if (candidate.type !== 'elementNode') return
     if (parseNumericId(candidate.id) === null) return
     result.set(candidate.id, candidate)
-  })
+  }
+
+  draggedNodes.forEach(addElementNode)
+  if (result.size === 0) addElementNode(primaryNode)
+
+  return Array.from(result.values())
+}
+
+export function getDraggedSelectionElementNodes(draggedNodes: RFNode[], fallbackNodes: RFNode[]) {
+  const result = new Map<string, RFNode>()
+  const addElementNode = (candidate: RFNode) => {
+    if (candidate.type !== 'elementNode') return
+    if (parseNumericId(candidate.id) === null) return
+    result.set(candidate.id, candidate)
+  }
+
+  fallbackNodes
+    .filter((candidate) => candidate.selected)
+    .forEach(addElementNode)
+  draggedNodes.forEach(addElementNode)
+
   return Array.from(result.values())
 }
 
@@ -1076,37 +1096,35 @@ export function useCanvasInteractions({
     setRfEdges((eds) => applyEdgeChanges(changes, eds))
   }, [setRfEdges])
 
-  const onNodeDragStart: NodeDragHandler = useCallback((_e, node, nodes) => {
+  const positionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  const dragStartPositionsRef = useRef<Record<string, { x: number; y: number }>>({})
+
+  const recordDragStartPositions = useCallback((draggedElementNodes: RFNode[]) => {
     if (!canEdit || viewId === null) return
-    const selectedElementNodes = getDraggedElementNodes(node, nodes, rfNodesRef.current)
-    selectedElementNodes.forEach((candidate) => {
+    draggedElementNodes.forEach((candidate) => {
       const elementId = parseNumericId(candidate.id)
       if (elementId !== null) dragStartPositionsRef.current[candidate.id] = { x: candidate.position.x, y: candidate.position.y }
     })
-  }, [canEdit, rfNodesRef, viewId])
+  }, [canEdit, viewId])
 
-  const onNodeDrag: NodeDragHandler = useCallback((_e, node, nodes) => {
+  const previewDraggedElementPositions = useCallback((draggedElementNodes: RFNode[]) => {
     // React Flow already updates rfNodes via onNodesChange while dragging.
     // Mirroring into viewElements here forces every derived edge/node to rebuild
     // on each pointer frame, so persist to app state only on drag stop.
     if (!canEdit || !onElementPositionPreview) return
-    const selectedElementNodes = getDraggedElementNodes(node, nodes, rfNodesRef.current)
-    selectedElementNodes.forEach((candidate) => {
+    draggedElementNodes.forEach((candidate) => {
       const elementId = parseNumericId(candidate.id)
       if (elementId !== null) onElementPositionPreview(elementId, candidate.position.x, candidate.position.y)
     })
-  }, [canEdit, onElementPositionPreview, rfNodesRef])
+  }, [canEdit, onElementPositionPreview])
 
-  const positionTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
-  const dragStartPositionsRef = useRef<Record<string, { x: number; y: number }>>({})
-  const onNodeDragStop: NodeDragHandler = useCallback((_e, node, nodes) => {
+  const commitDraggedElementPositions = useCallback((timerKey: string, draggedElementNodes: RFNode[]) => {
     if (!canEdit || viewId === null) return
-    const selectedElementNodes = getDraggedElementNodes(node, nodes, rfNodesRef.current)
 
     const beforePlacements: PlacedElement[] = []
     const afterPlacements: PlacedElement[] = []
 
-    selectedElementNodes.forEach((candidate) => {
+    draggedElementNodes.forEach((candidate) => {
       const elementId = parseNumericId(candidate.id)
       if (elementId === null) return
 
@@ -1126,8 +1144,8 @@ export function useCanvasInteractions({
     afterPlacements.forEach((placement) => {
       clearTimeout(positionTimers.current[String(placement.element_id)])
     })
-    const timerKey = node.id
-    positionTimers.current[timerKey] = setTimeout(() => {
+    clearTimeout(positionTimers.current[timerKey])
+    const timer = setTimeout(() => {
       Promise.all(afterPlacements.map((placement) =>
         api.workspace.views.placements.updatePosition(viewId, placement.element_id, placement.position_x, placement.position_y)
       ))
@@ -1140,7 +1158,36 @@ export function useCanvasInteractions({
         })
         .catch(() => { /* intentionally empty */ })
     }, 400)
-  }, [canEdit, rfNodesRef, updateElementPosition, viewId, viewElementsRef, onPlacementMoved, onPlacementsMoved])
+    positionTimers.current[timerKey] = timer
+    afterPlacements.forEach((placement) => {
+      positionTimers.current[String(placement.element_id)] = timer
+    })
+  }, [canEdit, updateElementPosition, viewId, viewElementsRef, onPlacementMoved, onPlacementsMoved])
+
+  const onNodeDragStart: NodeDragHandler = useCallback((_e, node, nodes) => {
+    recordDragStartPositions(getDraggedElementNodes(node, nodes, rfNodesRef.current))
+  }, [recordDragStartPositions, rfNodesRef])
+
+  const onNodeDrag: NodeDragHandler = useCallback((_e, node, nodes) => {
+    previewDraggedElementPositions(getDraggedElementNodes(node, nodes, rfNodesRef.current))
+  }, [previewDraggedElementPositions, rfNodesRef])
+
+  const onNodeDragStop: NodeDragHandler = useCallback((_e, node, nodes) => {
+    commitDraggedElementPositions(node.id, getDraggedElementNodes(node, nodes, rfNodesRef.current))
+  }, [commitDraggedElementPositions, rfNodesRef])
+
+  const onSelectionDragStart: SelectionDragHandler = useCallback((_e, nodes) => {
+    recordDragStartPositions(getDraggedSelectionElementNodes(nodes, rfNodesRef.current))
+  }, [recordDragStartPositions, rfNodesRef])
+
+  const onSelectionDrag: SelectionDragHandler = useCallback((_e, nodes) => {
+    previewDraggedElementPositions(getDraggedSelectionElementNodes(nodes, rfNodesRef.current))
+  }, [previewDraggedElementPositions, rfNodesRef])
+
+  const onSelectionDragStop: SelectionDragHandler = useCallback((_e, nodes) => {
+    const draggedElementNodes = getDraggedSelectionElementNodes(nodes, rfNodesRef.current)
+    commitDraggedElementPositions(`selection:${draggedElementNodes.map((candidate) => candidate.id).join(':')}`, draggedElementNodes)
+  }, [commitDraggedElementPositions, rfNodesRef])
 
   // ── Connections ────────────────────────────────────────────────────────────
   const onConnect: OnConnect = useCallback(async (params: Connection) => {
@@ -2183,6 +2230,9 @@ export function useCanvasInteractions({
     onNodeDragStart,
     onNodeDrag,
     onNodeDragStop,
+    onSelectionDragStart,
+    onSelectionDrag,
+    onSelectionDragStop,
     onConnect,
     onConnectStart,
     onConnectEnd,
