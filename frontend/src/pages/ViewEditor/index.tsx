@@ -64,6 +64,8 @@ import ViewExplorer from '../../components/ViewExplorer'
 import ViewMarkdownPanel from '../../components/ViewMarkdownPanel'
 import ViewPanel from '../../components/ViewPanel'
 import { useSetHeader } from '../../components/HeaderContext'
+import { useTouchOnlyCanvasInput } from '../../hooks/useCanvasInputMode'
+import { shouldEnableCanvasWheelPan } from '../../utils/canvasInputMode'
 import { usePlatform } from '../../platform/context'
 import type {
   RealtimeCursor,
@@ -641,6 +643,8 @@ function ViewEditorInner({
     }))
   }, [])
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
+  const touchOnlyCanvasInput = useTouchOnlyCanvasInput()
+  const enableCanvasWheelPan = shouldEnableCanvasWheelPan({ isMobileLayout, touchOnlyInput: touchOnlyCanvasInput })
   const [densityLevel, setDensityLevel] = useState(0)
   const [visibilityOverrides, setVisibilityOverrides] = useState<VisibilityOverride[]>([])
   const [noiseGateBusy, setNoiseGateBusy] = useState(false)
@@ -3843,7 +3847,7 @@ function ViewEditorInner({
                 autoPanOnNodeDrag={false}
                 selectionOnDrag={canEdit && !drawingMode}
                 panOnDrag={drawingMode ? false : canEdit ? [1, 2] : true}
-                panOnScroll={!isMobileLayout} panOnScrollSpeed={1.2} panOnScrollMode={PanOnScrollMode.Free}
+                panOnScroll={enableCanvasWheelPan} panOnScrollSpeed={1.2} panOnScrollMode={PanOnScrollMode.Free}
                 zoomOnScroll={false} zoomOnPinch
               >
                 <SafeBackground variant={BackgroundVariant.Dots} gap={16} color="#2D3748" size={1} />

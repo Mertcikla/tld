@@ -1,5 +1,7 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useBreakpointValue } from '@chakra-ui/react'
+import { useTouchOnlyCanvasInput } from '../../hooks/useCanvasInputMode'
+import { shouldEnableCanvasWheelPan } from '../../utils/canvasInputMode'
 import type { ExploreData } from '../../types'
 import { api } from '../../api/client'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
@@ -77,6 +79,8 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 })
   const [debugStateReady, setDebugStateReady] = useState(false)
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
+  const touchOnlyCanvasInput = useTouchOnlyCanvasInput()
+  const suppressWheelPan = !shouldEnableCanvasWheelPan({ isMobileLayout, touchOnlyInput: touchOnlyCanvasInput })
   const debugViewport = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiCamera'), [])
   const debugTestState = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiTest'), [])
 
@@ -96,7 +100,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     layout.bbox,
     onZoom,
     onPan,
-    isMobileLayout,
+    suppressWheelPan,
     resolveHoveredProxyItem,
     hiddenTags,
     containerSize.w,
