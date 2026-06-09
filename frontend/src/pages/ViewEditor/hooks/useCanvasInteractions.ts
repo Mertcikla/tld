@@ -452,6 +452,16 @@ export function getDraggedSelectionElementNodes(draggedNodes: RFNode[], fallback
   return Array.from(result.values())
 }
 
+export function getPlacementPositionTimerKeys(timerKey: string, elementIds: number[]) {
+  if (elementIds.length > 1) {
+    return [`batch:${[...elementIds].sort((left, right) => left - right).join(':')}`]
+  }
+  if (elementIds.length === 1) {
+    return Array.from(new Set([timerKey, String(elementIds[0])]))
+  }
+  return [timerKey]
+}
+
 type HandleReconnectDragState = {
   edgeId: string
   endpoint: 'source' | 'target'
@@ -1141,10 +1151,11 @@ export function useCanvasInteractions({
 
     if (afterPlacements.length === 0) return
 
-    afterPlacements.forEach((placement) => {
-      clearTimeout(positionTimers.current[String(placement.element_id)])
+    const timerKeys = getPlacementPositionTimerKeys(timerKey, afterPlacements.map((placement) => placement.element_id))
+    timerKeys.forEach((key) => {
+      clearTimeout(positionTimers.current[key])
+      delete positionTimers.current[key]
     })
-    clearTimeout(positionTimers.current[timerKey])
     const timer = setTimeout(() => {
       Promise.all(afterPlacements.map((placement) =>
         api.workspace.views.placements.updatePosition(viewId, placement.element_id, placement.position_x, placement.position_y)
@@ -1157,10 +1168,14 @@ export function useCanvasInteractions({
           }
         })
         .catch(() => { /* intentionally empty */ })
+        .finally(() => {
+          timerKeys.forEach((key) => {
+            if (positionTimers.current[key] === timer) delete positionTimers.current[key]
+          })
+        })
     }, 400)
-    positionTimers.current[timerKey] = timer
-    afterPlacements.forEach((placement) => {
-      positionTimers.current[String(placement.element_id)] = timer
+    timerKeys.forEach((key) => {
+      positionTimers.current[key] = timer
     })
   }, [canEdit, updateElementPosition, viewId, viewElementsRef, onPlacementMoved, onPlacementsMoved])
 

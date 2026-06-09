@@ -8,6 +8,7 @@ import {
   getDraggedElementNodes,
   getDraggedSelectionElementNodes,
   getConnectorDeletionTarget,
+  getPlacementPositionTimerKeys,
   pendingElementPositionFromFlowPoint,
   resolveConnectorDropTarget,
   shouldDisplayConnectorDragPlaceholder,
@@ -231,6 +232,19 @@ describe('dragged element node resolution', () => {
       { id: '1', position: { x: 30, y: 25 } },
       { id: '2', position: { x: 130, y: 25 } },
     ])
+  })
+})
+
+describe('placement position debounce timer keys', () => {
+  it('keys single placement moves by the element so follow-up nudges debounce', () => {
+    expect(getPlacementPositionTimerKeys('1', [1])).toEqual(['1'])
+    expect(getPlacementPositionTimerKeys('selection:1', [1])).toEqual(['selection:1', '1'])
+  })
+
+  it('keys multi-placement moves by the whole batch instead of each element', () => {
+    expect(getPlacementPositionTimerKeys('1', [1, 2])).toEqual(['batch:1:2'])
+    expect(getPlacementPositionTimerKeys('2', [2, 1])).toEqual(['batch:1:2'])
+    expect(getPlacementPositionTimerKeys('selection:1:2', [1, 2])).toEqual(['batch:1:2'])
   })
 })
 
