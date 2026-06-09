@@ -212,7 +212,7 @@ export function useZUIInteraction(
   bbox?: BBox,
   onZoom?: () => void,
   onPan?: () => void,
-  isMobile: boolean = false,
+  suppressWheelPan: boolean = false,
   resolveHoveredProxyItem?: (worldX: number, worldY: number, view: ZUIViewState, canvasW: number) => HoveredItem | null,
   hiddenTags: string[] = [],
   canvasWidth: number = 0,
@@ -448,9 +448,9 @@ export function useZUIInteraction(
       const isRecentMultiTouch = Date.now() - lastPanTimeRef.current < 1000
       const shouldZoom = shouldZoomZUIWheel(e, isRecentMultiTouch)
 
-      // On mobile, Safari synthesizes wheel events for pinches.
+      // On touch-only mobile layouts, Safari synthesizes wheel events for pinches.
       // If it's not zoom input, ignore it to avoid conflicts with native gestures.
-      if (isMobile && !shouldZoom) return
+      if (suppressWheelPan && !shouldZoom) return
 
       e.preventDefault()
       setHoveredItem(null, true) // Clear popover immediately on zoom/pan
@@ -474,8 +474,8 @@ export function useZUIInteraction(
           return zoomAround(prev, focalX, focalY, factor, maxZoomRef.current)
         })
         onZoomRef.current?.()
-      } else if (!isMobile) {
-        // Trackpad panning - disabled on mobile to avoid interference with pinch-to-zoom
+      } else if (!suppressWheelPan) {
+        // Trackpad panning - disabled only when mobile touch gestures own panning.
         recordZuiTestInteraction({
           type: 'wheel',
           mode: 'trackpad-pan',
@@ -764,7 +764,7 @@ export function useZUIInteraction(
       el.removeEventListener('touchend', onTouchEnd)
       el.removeEventListener('touchcancel', onTouchEnd)
     }
-  }, [canvasRef, scheduleViewState, setViewState, setHoveredItem, isHoverLocked, isMobile, resolveHoveredProxyItem]) // groupsRef handles groups updates without re-binding!
+  }, [canvasRef, scheduleViewState, setViewState, setHoveredItem, isHoverLocked, suppressWheelPan, resolveHoveredProxyItem]) // groupsRef handles groups updates without re-binding!
 
   return { viewState, viewStateRef, setViewState, fitView, maxZoom: dynamicMaxZoom, hoveredItem, setHoveredItem, setHoverLocked }
 }

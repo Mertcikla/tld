@@ -90,6 +90,43 @@ export interface ConnectorPanelProps extends ConnectorPanelSlots {
   actions?: ReactNode
 }
 
+type ConnectorDraft = {
+  label: string
+  description: string
+  relationship: string
+  direction: string
+  style: string
+  url: string
+  tags: string[]
+}
+
+const makeEmptyConnectorDraft = (): ConnectorDraft => ({
+  label: '',
+  description: '',
+  relationship: '',
+  direction: 'forward',
+  style: 'bezier',
+  url: '',
+  tags: [],
+})
+
+const cloneConnectorDraft = (draft: ConnectorDraft): ConnectorDraft => ({
+  ...draft,
+  tags: [...draft.tags],
+})
+
+const connectorDraftFingerprint = (draft: ConnectorDraft) => JSON.stringify(cloneConnectorDraft(draft))
+
+const draftFromConnector = (connector: Connector): ConnectorDraft => ({
+  label: connector.label ?? '',
+  description: connector.description ?? '',
+  relationship: connector.relationship ?? '',
+  direction: connector.direction === 'bidirectional' ? 'both' : (connector.direction ?? 'forward'),
+  style: connector.style === 'default' ? 'bezier' : (connector.style ?? 'bezier'),
+  url: connector.url ?? '',
+  tags: connector.tags ?? [],
+})
+
 /**
  * Name: Edit Connector Panel
  * Role: Opens when clicked on a connector and displays its fields, allowing for editing. Same as Edit Element Panel but for connectors.
@@ -115,6 +152,27 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
   const savingRef = useRef(false)
   const pendingSaveRef = useRef(false)
   const initializedConnectorIdRef = useRef<number | null>(null)
+  const draftRef = useRef<ConnectorDraft>(makeEmptyConnectorDraft())
+
+  const applyDraft = useCallback((draft: ConnectorDraft) => {
+    const nextDraft = cloneConnectorDraft(draft)
+    draftRef.current = nextDraft
+    setLabel(nextDraft.label)
+    setDescription(nextDraft.description)
+    setRelType(nextDraft.relationship)
+    setDirection(nextDraft.direction)
+    setConnectorType(nextDraft.style)
+    setUrl(nextDraft.url)
+    setTags(nextDraft.tags)
+  }, [])
+
+  const patchDraft = useCallback((patch: Partial<ConnectorDraft>) => {
+    const nextDraft = { ...draftRef.current, ...patch }
+    if (patch.tags) {
+      nextDraft.tags = [...patch.tags]
+    }
+    draftRef.current = nextDraft
+  }, [])
 
   useEffect(() => {
     if (!isOpen) {
@@ -125,44 +183,20 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
     if (connector) {
       if (initializedConnectorIdRef.current === connector.id) return
       initializedConnectorIdRef.current = connector.id
-      setLabel(connector.label ?? '')
-      setDescription(connector.description ?? '')
-      setRelType(connector.relationship ?? '')
-      const dir = connector.direction === 'bidirectional' ? 'both' : (connector.direction ?? 'forward')
-      setDirection(dir)
-      const type = connector.style === 'default' ? 'bezier' : (connector.style ?? 'bezier')
-      setConnectorType(type)
-      setUrl(connector.url ?? '')
-      setTags(connector.tags ?? [])
-
-      lastSavedFingerprintRef.current = JSON.stringify({
-        label: connector.label ?? '',
-        description: connector.description ?? '',
-        relationship: connector.relationship ?? '',
-        direction: dir,
-        style: type,
-        url: connector.url ?? '',
-        tags: connector.tags ?? [],
-      })
+      const draft = draftFromConnector(connector)
+      applyDraft(draft)
+      lastSavedFingerprintRef.current = connectorDraftFingerprint(draft)
     } else {
       initializedConnectorIdRef.current = null
       lastSavedFingerprintRef.current = ''
-      setTags([])
+      applyDraft(makeEmptyConnectorDraft())
     }
-  }, [connector, isOpen])
+  }, [applyDraft, connector, isOpen])
 
   const buildPayloadAndFingerprint = useCallback(async () => {
-    const payload = {
-      label,
-      description,
-      relationship: relType,
-      direction,
-      style: connectorType,
-      url,
-      tags,
-    }
-    return { payload, fingerprint: JSON.stringify(payload) }
-  }, [label, description, relType, direction, connectorType, url, tags])
+    const payload = cloneConnectorDraft(draftRef.current)
+    return { payload, fingerprint: connectorDraftFingerprint(payload) }
+  }, [])
 
   const saveIfDirty = useCallback(async () => {
     if (!autoSaveEdit || !connector) return
@@ -294,7 +328,11 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 name="label"
                 size="sm"
                 value={label}
-                onChange={(e) => setLabel(e.target.value)}
+                onChange={(e) => {
+                  const nextLabel = e.target.value
+                  patchDraft({ label: nextLabel })
+                  setLabel(nextLabel)
+                }}
                 onBlur={scheduleAutoSave}
                 placeholder="uses, calls, sends to…"
               />
@@ -305,7 +343,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 <IconRadioBox
                   data-testid="connector-panel-direction-forward"
                   isSelected={direction === 'forward'}
-                  onClick={() => { setDirection('forward'); scheduleAutoSave() }}
+                  onClick={() => { patchDraft({ direction: 'forward' }); setDirection('forward'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
                   title="Forward"
                 >
@@ -314,7 +352,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 <IconRadioBox
                   data-testid="connector-panel-direction-backward"
                   isSelected={direction === 'backward'}
-                  onClick={() => { setDirection('backward'); scheduleAutoSave() }}
+                  onClick={() => { patchDraft({ direction: 'backward' }); setDirection('backward'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
                   title="Backward"
                 >
@@ -323,7 +361,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 <IconRadioBox
                   data-testid="connector-panel-direction-both"
                   isSelected={direction === 'both'}
-                  onClick={() => { setDirection('both'); scheduleAutoSave() }}
+                  onClick={() => { patchDraft({ direction: 'both' }); setDirection('both'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
                   title="Bidirectional"
                 >
@@ -332,7 +370,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 <IconRadioBox
                   data-testid="connector-panel-direction-none"
                   isSelected={direction === 'none'}
-                  onClick={() => { setDirection('none'); scheduleAutoSave() }}
+                  onClick={() => { patchDraft({ direction: 'none' }); setDirection('none'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
                   title="None"
                 >
@@ -346,7 +384,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 <IconRadioBox
                   data-testid="connector-panel-style-smoothstep"
                   isSelected={connectorType === 'smoothstep'}
-                  onClick={() => { setConnectorType('smoothstep'); scheduleAutoSave() }}
+                  onClick={() => { patchDraft({ style: 'smoothstep' }); setConnectorType('smoothstep'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
                   title="Smooth Step"
                 >
@@ -355,7 +393,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 <IconRadioBox
                   data-testid="connector-panel-style-bezier"
                   isSelected={connectorType === 'bezier'}
-                  onClick={() => { setConnectorType('bezier'); scheduleAutoSave() }}
+                  onClick={() => { patchDraft({ style: 'bezier' }); setConnectorType('bezier'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
                   title="Bezier"
                 >
@@ -364,7 +402,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 <IconRadioBox
                   data-testid="connector-panel-style-straight"
                   isSelected={connectorType === 'straight'}
-                  onClick={() => { setConnectorType('straight'); scheduleAutoSave() }}
+                  onClick={() => { patchDraft({ style: 'straight' }); setConnectorType('straight'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
                   title="Straight"
                 >
@@ -373,7 +411,7 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 <IconRadioBox
                   data-testid="connector-panel-style-step"
                   isSelected={connectorType === 'step'}
-                  onClick={() => { setConnectorType('step'); scheduleAutoSave() }}
+                  onClick={() => { patchDraft({ style: 'step' }); setConnectorType('step'); scheduleAutoSave() }}
                   isDisabled={isReadOnly}
                   title="Step"
                 >
@@ -388,7 +426,11 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 name="relationship"
                 size="sm"
                 value={relType}
-                onChange={(e) => setRelType(e.target.value)}
+                onChange={(e) => {
+                  const nextRelationship = e.target.value
+                  patchDraft({ relationship: nextRelationship })
+                  setRelType(nextRelationship)
+                }}
                 onBlur={scheduleAutoSave}
                 placeholder="HTTP, gRPC, async…"
               />
@@ -400,7 +442,11 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 name="url"
                 size="sm"
                 value={url}
-                onChange={(e) => setUrl(e.target.value)}
+                onChange={(e) => {
+                  const nextUrl = e.target.value
+                  patchDraft({ url: nextUrl })
+                  setUrl(nextUrl)
+                }}
                 onBlur={scheduleAutoSave}
                 placeholder="https://docs.example.com/…"
               />
@@ -412,7 +458,11 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 name="description"
                 size="sm"
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={(e) => {
+                  const nextDescription = e.target.value
+                  patchDraft({ description: nextDescription })
+                  setDescription(nextDescription)
+                }}
                 onBlur={scheduleAutoSave}
                 placeholder="Describe the relationship…"
                 rows={4}
@@ -424,8 +474,10 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                 currentTags={tags}
                 availableTags={availableTags}
                 onAddTag={(tag) => {
-                  if (!tags.includes(tag)) {
-                    setTags((prev) => [...prev, tag])
+                  if (!draftRef.current.tags.includes(tag)) {
+                    const nextTags = [...draftRef.current.tags, tag]
+                    patchDraft({ tags: nextTags })
+                    setTags(nextTags)
                     scheduleAutoSave()
                   }
                 }}
@@ -438,7 +490,9 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
                       <TagLabel color="white">{tag}</TagLabel>
                       {!isReadOnly && (
                         <TagCloseButton data-testid="connector-panel-tag-remove" onClick={() => {
-                          setTags((prev) => prev.filter((item) => item !== tag))
+                          const nextTags = draftRef.current.tags.filter((item) => item !== tag)
+                          patchDraft({ tags: nextTags })
+                          setTags(nextTags)
                           scheduleAutoSave()
                         }} />
                       )}
