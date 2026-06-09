@@ -321,9 +321,11 @@ function collapseEndpointToAncestor(
     return endpoint
   }
 
-  const collapseAncestorElementId = [...(endpoint.contextPathElementIds ?? [])]
+  const collapsePath = endpoint.contextPathElementIds ?? []
+  const collapseAncestorElementId = collapsePath
+    .slice(0, Math.max(0, collapsePath.length - 1))
     .reverse()
-    .find((elementId) => (collapseCounts.get(elementId) ?? 0) >= 2)
+    .find((elementId) => (collapseCounts.get(elementId) ?? 0) >= 1)
 
   if (collapseAncestorElementId == null) {
     return endpoint
