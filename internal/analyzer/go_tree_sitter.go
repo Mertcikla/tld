@@ -62,6 +62,7 @@ func (p *goParser) appendFunction(node *gotreesitter.Node, lang *gotreesitter.La
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:        nodeText(nameNode, source),
 		Kind:        kind,
+		NodeType:    nodeKind(node, lang),
 		FilePath:    path,
 		Line:        int(nameNode.StartPoint().Row) + 1,
 		EndLine:     int(node.EndPoint().Row) + 1,
@@ -88,6 +89,7 @@ func (p *goParser) appendTypeSpec(node *gotreesitter.Node, lang *gotreesitter.La
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:        nodeText(nameNode, source),
 		Kind:        kind,
+		NodeType:    nodeKind(node, lang),
 		FilePath:    path,
 		Line:        int(nameNode.StartPoint().Row) + 1,
 		EndLine:     int(node.EndPoint().Row) + 1,
@@ -103,6 +105,7 @@ func (p *goParser) appendTypeAlias(node *gotreesitter.Node, lang *gotreesitter.L
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     nodeText(nameNode, source),
 		Kind:     "type",
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     int(nameNode.StartPoint().Row) + 1,
 		EndLine:  int(node.EndPoint().Row) + 1,

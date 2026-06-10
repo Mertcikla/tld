@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -1602,15 +1603,14 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 			for i, sym := range chunk {
 				language := languageFromStableKey(sym.StableKey)
 				elem, err := m.upsertElement(ctx, "symbol", symbolOwnerKey(sym, m.identityKeys), elementInput{
-					Name:        symbolDisplayNames[sym.ID],
-					Kind:        sym.Kind,
-					Description: fmt.Sprintf("%s:%d", sym.FilePath, sym.StartLine),
-					Technology:  technologyLabel(language),
-					Repo:        repoIdentity(repo),
-					Branch:      nullStringValue(repo.Branch),
-					FilePath:    sym.FilePath,
-					Language:    language,
-					Tags:        tagPlan.tagsFor("symbol", symbolOwnerKey(sym, m.identityKeys)),
+					Name:       symbolDisplayNames[sym.ID],
+					Kind:       sym.Kind,
+					Technology: technologyLabel(language),
+					Repo:       repoIdentity(repo),
+					Branch:     nullStringValue(repo.Branch),
+					FilePath:   symbolSourceLink(sym),
+					Language:   language,
+					Tags:       tagPlan.tagsFor("symbol", symbolOwnerKey(sym, m.identityKeys)),
 				})
 				if err != nil {
 					return m.stats, err
@@ -2222,7 +2222,7 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 				Technology:  factTechnology(fact),
 				Repo:        repoIdentity(m.repo),
 				Branch:      nullStringValue(m.repo.Branch),
-				FilePath:    fact.FilePath,
+				FilePath:    factSourceLink(fact),
 				Language:    m.languageForFile(fact.FilePath),
 				Tags:        m.tagPlan.tagsFor("fact", factOwnerKey(fact)),
 			})
@@ -2283,7 +2283,7 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 				Technology:  factTechnology(fact),
 				Repo:        repoIdentity(m.repo),
 				Branch:      nullStringValue(m.repo.Branch),
-				FilePath:    fact.FilePath,
+				FilePath:    factSourceLink(fact),
 				Language:    m.languageForFile(fact.FilePath),
 				Tags:        m.tagPlan.tagsFor("fact", factOwnerKey(fact)),
 			})
@@ -2571,7 +2571,7 @@ func (m *materializer) materializeRuntimeComponents(ctx context.Context, facts [
 			Technology:  factTechnology(primary),
 			Repo:        repoIdentity(m.repo),
 			Branch:      nullStringValue(m.repo.Branch),
-			FilePath:    primary.FilePath,
+			FilePath:    factSourceLink(primary),
 			Language:    m.languageForFile(primary.FilePath),
 			Tags:        m.tagPlan.tagsFor("runtime-component", ownerKey),
 		})
@@ -3291,13 +3291,44 @@ func (m *materializer) relativeFactPath(value string) string {
 	return filepath.ToSlash(value)
 }
 
+func symbolSourceLink(sym Symbol) string {
+	filePath := strings.TrimSpace(filepathToSlash(sym.FilePath))
+	if filePath == "" {
+		return ""
+	}
+	nodeType := strings.TrimSpace(sym.NodeType)
+	if nodeType == "" {
+		return sourceLineLink(filePath, sym.StartLine)
+	}
+	name := strings.TrimSpace(sym.QualifiedName)
+	if name == "" {
+		name = strings.TrimSpace(sym.Name)
+	}
+	if name == "" {
+		return sourceLineLink(filePath, sym.StartLine)
+	}
+	return filePath + "#" + nodeType + ":" + url.PathEscape(name)
+}
+
+func factSourceLink(fact Fact) string {
+	return sourceLineLink(filepathToSlash(fact.FilePath), fact.StartLine)
+}
+
+func sourceLineLink(filePath string, line int) string {
+	filePath = strings.TrimSpace(filepathToSlash(filePath))
+	if filePath == "" {
+		return ""
+	}
+	if line <= 0 {
+		return filePath
+	}
+	return fmt.Sprintf("%s#L%d", filePath, line)
+}
+
 func factNodeDescription(fact Fact) string {
 	parts := []string{fact.Type}
 	if fact.Relationship != "" {
 		parts = append(parts, fact.Relationship)
-	}
-	if fact.FilePath != "" && fact.StartLine > 0 {
-		parts = append(parts, fmt.Sprintf("%s:%d", fact.FilePath, fact.StartLine))
 	}
 	return strings.Join(parts, " - ")
 }

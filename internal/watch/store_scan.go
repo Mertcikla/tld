@@ -992,6 +992,7 @@ func (s *Store) querySymbolsWhere(ctx context.Context, repositoryID int64, where
 			value := int(endLine.Int64)
 			sym.EndLine = &value
 		}
+		hydrateSymbolNodeType(&sym)
 		out = append(out, sym)
 	}
 	return out, rows.Err()
@@ -1081,9 +1082,23 @@ func (s *Store) QuerySymbols(ctx context.Context, repositoryID int64, q SymbolQu
 			value := int(endLine.Int64)
 			sym.EndLine = &value
 		}
+		hydrateSymbolNodeType(&sym)
 		out = append(out, sym)
 	}
 	return out, rows.Err()
+}
+
+func hydrateSymbolNodeType(sym *Symbol) {
+	if sym == nil || strings.TrimSpace(sym.NodeType) != "" || strings.TrimSpace(sym.RawJSON) == "" {
+		return
+	}
+	var raw struct {
+		NodeType string `json:"node_type"`
+	}
+	if err := json.Unmarshal([]byte(sym.RawJSON), &raw); err != nil {
+		return
+	}
+	sym.NodeType = strings.TrimSpace(raw.NodeType)
 }
 
 func (s *Store) QueryReferences(ctx context.Context, repositoryID int64, q ReferenceQuery) ([]Reference, error) {

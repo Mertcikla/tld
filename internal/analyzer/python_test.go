@@ -60,6 +60,8 @@ def helper():
 			t.Errorf("Symbol not found or mismatch: %+v", expected)
 		}
 	}
+	assertSymbolNodeType(t, result, "Service", "class", "", "class_definition")
+	assertSymbolNodeType(t, result, "helper", "function", "", "function_definition")
 
 	// Verify Refs
 	expectedRefs := []Ref{

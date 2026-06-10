@@ -111,3 +111,21 @@ void overload(double x);
 		t.Errorf("overload count = %d, want 2", counts["overload"])
 	}
 }
+
+func TestCPPParser_NodeTypes(t *testing.T) {
+	parser := &cppParser{}
+	source := `
+class Service {
+public:
+  void Start();
+};
+
+void Service::Start() {}
+`
+	result, err := parser.ParseFile(context.Background(), "service.cpp", []byte(source))
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+	assertSymbolNodeType(t, result, "Service", "class", "", "class_specifier")
+	assertSymbolNodeType(t, result, "Start", "method", "Service", "function_definition")
+}

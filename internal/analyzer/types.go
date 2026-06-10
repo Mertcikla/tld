@@ -4,6 +4,7 @@ package analyzer
 type Symbol struct {
 	Name        string `json:"name"`
 	Kind        string `json:"kind"`
+	NodeType    string `json:"node_type,omitempty"`
 	FilePath    string `json:"file_path,omitempty"`
 	Line        int    `json:"line"`
 	EndLine     int    `json:"end_line,omitempty"`
