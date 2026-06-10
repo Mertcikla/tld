@@ -239,7 +239,7 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
                 )}
                 <Divider mb={4} />
                 <Text color="gray.500">
-                  This will create the resources listed above in your current workspace.
+                  This will import the resources listed above into your current workspace.
                 </Text>
               </Box>
             )}

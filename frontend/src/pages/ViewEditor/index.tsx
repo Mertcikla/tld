@@ -50,7 +50,6 @@ import type {
   ViewThread,
   VisibilityOverride,
   Tag,
-  TechnologyConnector,
 } from '../../types'
 import ElementNode from '../../components/ElementNode'
 import ElementPanel from '../../components/ElementPanel'
@@ -95,10 +94,11 @@ import {
 } from './hooks/useViewContextNeighbours'
 import { canonicalNodePairKey } from './pairKey'
 import type { ParsedImport } from '../../pkg/importer/mermaid'
-import { extractMermaidCode, parseMermaidAsync, type MermaidDirection } from '../../pkg/importer/mermaid'
+import { extractMermaidCode, parseMermaidAsync } from '../../pkg/importer/mermaid'
 import { MermaidExporter } from '../../pkg/exporter/mermaid'
 import { vscodeBridge } from '../../lib/vscodeBridge'
 import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
+import { importMermaidIntoView, mermaidLocalImportDescription } from './mermaidImport'
 
 import { ViewEditorContext } from './context'
 import { useViewData } from './hooks/useViewData'
@@ -488,120 +488,6 @@ function fadeMarker(marker: string | RFEdgeMarker | undefined, opacity: number) 
     ...marker,
     color: alphaColor(marker.color ?? 'var(--accent)', opacity),
   }
-}
-
-function mermaidConnectorHandles(direction: MermaidDirection) {
-  if (direction === 'RL') return { source_handle: 'left', target_handle: 'right' }
-  if (direction === 'TB' || direction === 'TD') return { source_handle: 'bottom', target_handle: 'top' }
-  if (direction === 'BT') return { source_handle: 'top', target_handle: 'bottom' }
-  return { source_handle: 'right', target_handle: 'left' }
-}
-
-function finitePlanNumber(value: unknown) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
-function mermaidImportMetadataPosition(element: ParsedImport['elements'][number]) {
-  const placement = element.placements?.[0]
-  const x = finitePlanNumber(placement?.positionX)
-  const y = finitePlanNumber(placement?.positionY)
-  return x === null || y === null ? null : { x, y }
-}
-
-function mermaidImportTechnologyConnectors(element: ParsedImport['elements'][number]): TechnologyConnector[] {
-  return (element.technologyLinks ?? [])
-    .filter((link) => link.label.trim())
-    .map((link): TechnologyConnector => ({
-      type: link.type === 'catalog' ? 'catalog' : 'custom',
-      slug: link.slug || undefined,
-      label: link.label,
-      is_primary_icon: link.isPrimaryIcon,
-    }))
-}
-
-function layoutMermaidImport(parsed: ParsedImport, center: { x: number; y: number }) {
-  const refs = parsed.elements.map((element) => element.ref).filter(Boolean)
-  const metadataPositions = new Map<string, { x: number; y: number }>()
-  parsed.elements.forEach((element) => {
-    const position = mermaidImportMetadataPosition(element)
-    if (position) metadataPositions.set(element.ref, position)
-  })
-  if (metadataPositions.size > 0) {
-    const values = Array.from(metadataPositions.values())
-    const left = Math.min(...values.map((position) => position.x))
-    const right = Math.max(...values.map((position) => position.x))
-    const top = Math.min(...values.map((position) => position.y))
-    const bottom = Math.max(...values.map((position) => position.y))
-    const metadataCenter = {
-      x: left + (right - left) / 2,
-      y: top + (bottom - top) / 2,
-    }
-    const positions = new Map<string, { x: number; y: number }>()
-    metadataPositions.forEach((position, ref) => {
-      positions.set(ref, {
-        x: center.x + position.x - metadataCenter.x,
-        y: center.y + position.y - metadataCenter.y,
-      })
-    })
-    return positions
-  }
-
-  const refSet = new Set(refs)
-  const outgoing = new Map<string, string[]>()
-  const indegree = new Map<string, number>()
-  const rank = new Map<string, number>()
-  refs.forEach((ref) => {
-    outgoing.set(ref, [])
-    indegree.set(ref, 0)
-    rank.set(ref, 0)
-  })
-
-  parsed.connectors.forEach((connector) => {
-    const source = connector.sourceElementRef
-    const target = connector.targetElementRef
-    if (!refSet.has(source) || !refSet.has(target)) return
-    outgoing.get(source)?.push(target)
-    indegree.set(target, (indegree.get(target) ?? 0) + 1)
-  })
-
-  const queue = refs.filter((ref) => (indegree.get(ref) ?? 0) === 0)
-  let cursor = 0
-  while (cursor < queue.length) {
-    const ref = queue[cursor++]
-    for (const target of outgoing.get(ref) ?? []) {
-      rank.set(target, Math.max(rank.get(target) ?? 0, (rank.get(ref) ?? 0) + 1))
-      const nextIndegree = (indegree.get(target) ?? 0) - 1
-      indegree.set(target, nextIndegree)
-      if (nextIndegree === 0) queue.push(target)
-    }
-  }
-
-  const groups = new Map<number, string[]>()
-  refs.forEach((ref, index) => {
-    const refRank = cursor === refs.length ? (rank.get(ref) ?? 0) : Math.floor(index / 4)
-    const group = groups.get(refRank) ?? []
-    group.push(ref)
-    groups.set(refRank, group)
-  })
-
-  const horizontal = parsed.direction === 'LR' || parsed.direction === 'RL'
-  const reverse = parsed.direction === 'RL' || parsed.direction === 'BT'
-  const rankSpacing = 280
-  const itemSpacing = 150
-  const rankCount = groups.size || 1
-  const positions = new Map<string, { x: number; y: number }>()
-
-  Array.from(groups.entries()).sort(([a], [b]) => a - b).forEach(([groupRank, group]) => {
-    const rankOffset = (groupRank - (rankCount - 1) / 2) * rankSpacing * (reverse ? -1 : 1)
-    group.forEach((ref, index) => {
-      const itemOffset = (index - (group.length - 1) / 2) * itemSpacing
-      positions.set(ref, horizontal
-        ? { x: center.x + rankOffset, y: center.y + itemOffset }
-        : { x: center.x + itemOffset, y: center.y + rankOffset })
-    })
-  })
-
-  return positions
 }
 
 function areTranslateExtentsEqual(
@@ -3424,6 +3310,29 @@ function ViewEditorInner({
     return screenToFlowPositionRef.current(screenPoint)
   }, [lastMousePosRef])
 
+  const getCanvasCenter = useCallback(() => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    return rect
+      ? screenToFlowPositionRef.current({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+      : { x: 0, y: 0 }
+  }, [])
+
+  const importMermaidIntoCurrentView = useCallback(async (
+    parsed: ParsedImport,
+    currentViewId: number,
+    center: { x: number; y: number },
+  ) => {
+    return importMermaidIntoView({
+      parsed,
+      currentViewId,
+      center,
+      allElements,
+      viewElements: viewElementsRef.current,
+      connectors,
+      onConnectorCreated: (connector) => publishRealtimeConnectorUpsert(connectorToConnector(connector)),
+    })
+  }, [allElements, connectors, publishRealtimeConnectorUpsert, viewElementsRef])
+
   const pasteViewSelectionPayload = useCallback(async (
     payload: ViewSelectionClipboardPayload,
     targetViewId: number,
@@ -3595,79 +3504,17 @@ function ViewEditorInner({
         return
       }
 
-      const rect = containerRef.current?.getBoundingClientRect()
-      const center = rect
-        ? screenToFlowPositionRef.current({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
-        : { x: 0, y: 0 }
-      const positions = layoutMermaidImport(parsed, center)
-      const createdByRef = new Map<string, WorkspaceElement>()
-
-      for (const element of parsed.elements) {
-        const created = await api.elements.create({
-          name: element.name,
-          kind: element.kind ?? 'system',
-          description: element.description ?? '',
-          technology: element.technology ?? '',
-          url: element.url ?? '',
-          logo_url: element.logoUrl ?? undefined,
-          technology_connectors: mermaidImportTechnologyConnectors(element),
-          tags: element.tags ?? [],
-          repo: element.repo ?? undefined,
-          branch: element.branch ?? undefined,
-          file_path: element.filePath ?? undefined,
-          language: element.language ?? undefined,
-          bypass_noise_gate: element.bypassNoiseGate ?? false,
-        })
-        if (element.hasView) {
-          await api.workspace.views.create({
-            name: element.name || created.name,
-            label: element.viewLabel ?? undefined,
-            parent_view_id: created.id,
-          })
-        }
-        createdByRef.set(element.ref, created)
-      }
-
-      await Promise.all(parsed.elements.map((element) => {
-        const created = createdByRef.get(element.ref)
-        if (!created) return Promise.resolve()
-        const position = positions.get(element.ref) ?? center
-        return api.workspace.views.placements.add(currentViewId, created.id, position.x, position.y)
-      }))
-
-      const handles = mermaidConnectorHandles(parsed.direction)
-      const createdConnectors = await Promise.all(parsed.connectors.map((connector) => {
-        const source = createdByRef.get(connector.sourceElementRef)
-        const target = createdByRef.get(connector.targetElementRef)
-        if (!source || !target) return Promise.resolve(null)
-        return api.workspace.connectors.create(currentViewId, {
-          source_element_id: source.id,
-          target_element_id: target.id,
-          label: connector.label ?? '',
-          description: connector.description ?? '',
-          relationship: connector.relationship ?? '',
-          direction: connector.direction ?? 'forward',
-          style: connector.style ?? 'bezier',
-          url: connector.url ?? '',
-          source_handle: connector.sourceHandle ?? handles.source_handle,
-          target_handle: connector.targetHandle ?? handles.target_handle,
-        })
-      }))
-      createdConnectors
-        .filter((connector): connector is Connector => connector !== null)
-        .map(connectorToConnector)
-        .forEach(publishRealtimeConnectorUpsert)
-
+      const summary = await importMermaidIntoCurrentView(parsed, currentViewId, getCanvasCenter())
       clearEditHistory()
       await refreshElements()
       pendingPasteSelectionRef.current = {
         viewId: currentViewId,
-        elementIds: new Set(Array.from(createdByRef.values(), (element) => element.id)),
+        elementIds: summary.importedElementIds,
       }
       toast({
         status: 'success',
         title: 'Mermaid imported',
-        description: `Created ${parsed.elements.length} elements and ${parsed.connectors.length} connectors.`,
+        description: mermaidLocalImportDescription(summary),
         duration: 5000,
         isClosable: true,
       })
@@ -3681,10 +3528,11 @@ function ViewEditorInner({
     canEdit,
     clearEditHistory,
     duplicatePasteConfirm,
+    getCanvasCenter,
     getClipboardPasteCenter,
+    importMermaidIntoCurrentView,
     pasteViewSelectionPayload,
     pendingElement,
-    publishRealtimeConnectorUpsert,
     refreshElements,
     textEditorState,
     toast,
@@ -3720,6 +3568,25 @@ function ViewEditorInner({
     if (!currentViewId) return
     setIsImporting(true)
     try {
+      if (extractMermaidCode(parsed.source)) {
+        const summary = await importMermaidIntoCurrentView(parsed, currentViewId, getCanvasCenter())
+        clearEditHistory()
+        await refreshElements()
+        pendingPasteSelectionRef.current = {
+          viewId: currentViewId,
+          elementIds: summary.importedElementIds,
+        }
+        closeImportModalRef.current()
+        toast({
+          status: 'success',
+          title: 'Import complete',
+          description: mermaidLocalImportDescription(summary),
+          duration: 5000,
+          isClosable: true,
+        })
+        return
+      }
+
       const res = await api.import.resources('', { elements: parsed.elements, connectors: parsed.connectors })
       clearEditHistory()
       closeImportModalRef.current()
@@ -3729,7 +3596,7 @@ function ViewEditorInner({
     } catch (e) {
       toast({ status: 'error', title: 'Import failed', description: e instanceof Error ? e.message : 'Unknown error' })
     } finally { setIsImporting(false) }
-  }, [clearEditHistory, navigate, toast, viewIdRef])
+  }, [clearEditHistory, getCanvasCenter, importMermaidIntoCurrentView, navigate, refreshElements, toast, viewIdRef])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Render states
