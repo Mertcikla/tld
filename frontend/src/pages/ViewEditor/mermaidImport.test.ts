@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ParsedImport } from '../../pkg/importer/mermaid'
-import type { Connector, LibraryElement as WorkspaceElement, PlacedElement } from '../../types'
+import type { Connector, LibraryElement as WorkspaceElement, PlacedElement, View } from '../../types'
 import { importMermaidIntoView, mermaidLocalImportDescription, type MermaidImportClient } from './mermaidImport'
 
 function workspaceElement(id: number, name: string): WorkspaceElement {
@@ -71,6 +71,19 @@ function connector(id: number, sourceElementId: number, targetElementId: number,
   }
 }
 
+function view(id: number): View {
+  return {
+    id,
+    owner_element_id: null,
+    name: `View ${id}`,
+    label: null,
+    tags: [],
+    is_root: false,
+    created_at: '2024-01-01T00:00:00Z',
+    updated_at: '2024-01-01T00:00:00Z',
+  }
+}
+
 describe('Mermaid view import', () => {
   it('resolves exported node refs and matching connectors before creating missing resources', async () => {
     const existing = workspaceElement(57, 'Auth')
@@ -82,16 +95,24 @@ describe('Mermaid view import', () => {
       throw new Error('not found')
     })
     const createElement = vi.fn(async () => created)
+    const deleteElement = vi.fn()
     const createView = vi.fn()
+    const deleteView = vi.fn()
     const addPlacement = vi.fn()
+    const removePlacement = vi.fn()
     const createConnector = vi.fn(async () => createdConnector)
+    const deleteConnector = vi.fn()
     const onConnectorCreated = vi.fn()
     const client: MermaidImportClient = {
       getElement,
       createElement,
+      deleteElement,
       createView,
+      deleteView,
       addPlacement,
+      removePlacement,
       createConnector,
+      deleteConnector,
     }
 
     const parsed = {
@@ -140,5 +161,94 @@ describe('Mermaid view import', () => {
     })
     expect(Array.from(summary.importedElementIds).sort((a, b) => a - b)).toEqual([57, 99])
     expect(mermaidLocalImportDescription(summary)).toBe('Resolved 1 element and 1 connector. Created 1 element and 1 connector.')
+    expect(deleteElement).not.toHaveBeenCalled()
+    expect(deleteView).not.toHaveBeenCalled()
+    expect(removePlacement).not.toHaveBeenCalled()
+    expect(deleteConnector).not.toHaveBeenCalled()
+  })
+
+  it('rolls back created resources when a later import step fails', async () => {
+    const events: string[] = []
+    const createdElements = [workspaceElement(90, 'API'), workspaceElement(91, 'DB')]
+
+    const client: MermaidImportClient = {
+      getElement: vi.fn(async () => {
+        throw new Error('not found')
+      }),
+      createElement: vi.fn(async () => {
+        const next = createdElements.shift()
+        if (!next) throw new Error('unexpected create')
+        events.push(`createElement:${next.id}`)
+        return next
+      }),
+      deleteElement: vi.fn(async (id) => {
+        events.push(`deleteElement:${id}`)
+      }),
+      createView: vi.fn(async () => {
+        events.push('createView:501')
+        return view(501)
+      }),
+      deleteView: vi.fn(async (viewId) => {
+        events.push(`deleteView:${viewId}`)
+      }),
+      addPlacement: vi.fn(async (_viewId, elementId) => {
+        events.push(`addPlacement:${elementId}`)
+        return {
+          id: elementId + 1000,
+          view_id: 10,
+          element_id: elementId,
+          position_x: 0,
+          position_y: 0,
+        }
+      }),
+      removePlacement: vi.fn(async (_viewId, elementId) => {
+        events.push(`removePlacement:${elementId}`)
+      }),
+      createConnector: vi.fn(async () => {
+        events.push('createConnector:fail')
+        throw new Error('connector failed')
+      }),
+      deleteConnector: vi.fn(async (connectorId) => {
+        events.push(`deleteConnector:${connectorId}`)
+      }),
+    }
+
+    const parsed = {
+      direction: 'LR',
+      warnings: [],
+      source: 'flowchart LR',
+      elements: [
+        { ref: 'api', name: 'API', kind: 'service', hasView: true, placements: [{ parentRef: 'root' }] },
+        { ref: 'db', name: 'DB', kind: 'database', placements: [{ parentRef: 'root' }] },
+      ],
+      connectors: [
+        { ref: 'api:db:0', viewRef: 'root', sourceElementRef: 'api', targetElementRef: 'db', label: 'uses' },
+      ],
+    } as unknown as ParsedImport
+
+    await expect(importMermaidIntoView({
+      parsed,
+      currentViewId: 10,
+      center: { x: 0, y: 0 },
+      allElements: [],
+      viewElements: [],
+      connectors: [],
+      client,
+    })).rejects.toThrow('connector failed')
+
+    expect(events).toEqual([
+      'createElement:90',
+      'createView:501',
+      'createElement:91',
+      'addPlacement:90',
+      'addPlacement:91',
+      'createConnector:fail',
+      'removePlacement:91',
+      'removePlacement:90',
+      'deleteElement:91',
+      'deleteView:501',
+      'deleteElement:90',
+    ])
+    expect(client.deleteConnector).not.toHaveBeenCalled()
   })
 })

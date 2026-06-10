@@ -14,9 +14,13 @@ type CreateConnectorPayload = Parameters<typeof api.workspace.connectors.create>
 export interface MermaidImportClient {
   getElement(id: number): ReturnType<typeof api.elements.get>
   createElement(data: CreateElementPayload): ReturnType<typeof api.elements.create>
+  deleteElement(id: number): Promise<void>
   createView(data: CreateViewPayload): ReturnType<typeof api.workspace.views.create>
+  deleteView(viewId: number): Promise<void>
   addPlacement(viewId: number, elementId: number, x: number, y: number): ReturnType<typeof api.workspace.views.placements.add>
+  removePlacement(viewId: number, elementId: number): Promise<void>
   createConnector(viewId: number, data: CreateConnectorPayload): ReturnType<typeof api.workspace.connectors.create>
+  deleteConnector(connectorId: number): Promise<void>
 }
 
 export interface MermaidLocalImportSummary {
@@ -222,9 +226,27 @@ export function layoutMermaidImport(parsed: ParsedImport, center: { x: number; y
 const defaultMermaidImportClient: MermaidImportClient = {
   getElement: (id) => api.elements.get(id),
   createElement: (data) => api.elements.create(data),
+  deleteElement: (id) => api.elements.delete('', id),
   createView: (data) => api.workspace.views.create(data),
+  deleteView: (viewId) => api.workspace.views.delete('', viewId),
   addPlacement: (viewId, elementId, x, y) => api.workspace.views.placements.add(viewId, elementId, x, y),
+  removePlacement: (viewId, elementId) => api.workspace.views.placements.remove(viewId, elementId),
   createConnector: (viewId, data) => api.workspace.connectors.create(viewId, data),
+  deleteConnector: (connectorId) => api.workspace.connectors.delete('', connectorId),
+}
+
+type MermaidImportRollbackAction = () => Promise<void>
+
+async function rollbackMermaidImport(actions: MermaidImportRollbackAction[]) {
+  const failures: unknown[] = []
+  for (let index = actions.length - 1; index >= 0; index -= 1) {
+    try {
+      await actions[index]()
+    } catch (error) {
+      failures.push(error)
+    }
+  }
+  return failures
 }
 
 async function resolveExistingMermaidElement(
@@ -260,87 +282,107 @@ export async function importMermaidIntoView({
   const positions = layoutMermaidImport(parsed, center)
   const existingElementsById = new Map(allElements.map((element) => [element.id, element]))
   const elementsByRef = new Map<string, WorkspaceElement>()
+  const rollbackActions: MermaidImportRollbackAction[] = []
   let resolvedElementCount = 0
   let createdElementCount = 0
 
-  for (const element of parsed.elements) {
-    const existingElement = await resolveExistingMermaidElement(element.ref, existingElementsById, client)
-    if (existingElement) {
-      elementsByRef.set(element.ref, existingElement)
-      resolvedElementCount += 1
-      continue
-    }
+  try {
+    for (const element of parsed.elements) {
+      const existingElement = await resolveExistingMermaidElement(element.ref, existingElementsById, client)
+      if (existingElement) {
+        elementsByRef.set(element.ref, existingElement)
+        resolvedElementCount += 1
+        continue
+      }
 
-    const created = await client.createElement({
-      name: element.name,
-      kind: element.kind ?? 'system',
-      description: element.description ?? '',
-      technology: element.technology ?? '',
-      url: element.url ?? '',
-      logo_url: element.logoUrl ?? undefined,
-      technology_connectors: mermaidImportTechnologyConnectors(element),
-      tags: element.tags ?? [],
-      repo: element.repo ?? undefined,
-      branch: element.branch ?? undefined,
-      file_path: element.filePath ?? undefined,
-      language: element.language ?? undefined,
-      bypass_noise_gate: element.bypassNoiseGate ?? false,
-    })
-    if (element.hasView) {
-      await client.createView({
-        name: element.name || created.name,
-        label: element.viewLabel ?? undefined,
-        parent_view_id: created.id,
+      const created = await client.createElement({
+        name: element.name,
+        kind: element.kind ?? 'system',
+        description: element.description ?? '',
+        technology: element.technology ?? '',
+        url: element.url ?? '',
+        logo_url: element.logoUrl ?? undefined,
+        technology_connectors: mermaidImportTechnologyConnectors(element),
+        tags: element.tags ?? [],
+        repo: element.repo ?? undefined,
+        branch: element.branch ?? undefined,
+        file_path: element.filePath ?? undefined,
+        language: element.language ?? undefined,
+        bypass_noise_gate: element.bypassNoiseGate ?? false,
       })
-    }
-    elementsByRef.set(element.ref, created)
-    createdElementCount += 1
-  }
-
-  const placedElementIds = new Set(viewElements.map((element) => element.element_id))
-  await Promise.all(parsed.elements.map((element) => {
-    const resolved = elementsByRef.get(element.ref)
-    if (!resolved || placedElementIds.has(resolved.id)) return Promise.resolve()
-    placedElementIds.add(resolved.id)
-    const position = positions.get(element.ref) ?? center
-    return client.addPlacement(currentViewId, resolved.id, position.x, position.y)
-  }))
-
-  const handles = mermaidConnectorHandles(parsed.direction)
-  const existingConnectorKeys = new Set(connectors.map((connector) => mermaidExistingConnectorKey(connector, handles)))
-  let resolvedConnectorCount = 0
-  const createdConnectors = await Promise.all(parsed.connectors.map((connector) => {
-    const source = elementsByRef.get(connector.sourceElementRef)
-    const target = elementsByRef.get(connector.targetElementRef)
-    if (!source || !target) return Promise.resolve(null)
-
-    const connectorKey = mermaidParsedConnectorKey(connector, source.id, target.id, handles)
-    if (existingConnectorKeys.has(connectorKey)) {
-      resolvedConnectorCount += 1
-      return Promise.resolve(null)
+      rollbackActions.push(() => client.deleteElement(created.id))
+      if (element.hasView) {
+        const createdView = await client.createView({
+          name: element.name || created.name,
+          label: element.viewLabel ?? undefined,
+          parent_view_id: created.id,
+        })
+        rollbackActions.push(() => client.deleteView(createdView.id))
+      }
+      elementsByRef.set(element.ref, created)
+      createdElementCount += 1
     }
 
-    return client.createConnector(currentViewId, {
-      source_element_id: source.id,
-      target_element_id: target.id,
-      label: connector.label ?? '',
-      description: connector.description ?? '',
-      relationship: connector.relationship ?? '',
-      direction: connector.direction ?? 'forward',
-      style: connector.style ?? 'bezier',
-      url: connector.url ?? '',
-      source_handle: connector.sourceHandle ?? handles.source_handle,
-      target_handle: connector.targetHandle ?? handles.target_handle,
+    const placedElementIds = new Set(viewElements.map((element) => element.element_id))
+    for (const element of parsed.elements) {
+      const resolved = elementsByRef.get(element.ref)
+      if (!resolved || placedElementIds.has(resolved.id)) continue
+      placedElementIds.add(resolved.id)
+      const position = positions.get(element.ref) ?? center
+      await client.addPlacement(currentViewId, resolved.id, position.x, position.y)
+      rollbackActions.push(() => client.removePlacement(currentViewId, resolved.id))
+    }
+
+    const handles = mermaidConnectorHandles(parsed.direction)
+    const existingConnectorKeys = new Set(connectors.map((connector) => mermaidExistingConnectorKey(connector, handles)))
+    let resolvedConnectorCount = 0
+    const materializedConnectors: Connector[] = []
+    for (const connector of parsed.connectors) {
+      const source = elementsByRef.get(connector.sourceElementRef)
+      const target = elementsByRef.get(connector.targetElementRef)
+      if (!source || !target) continue
+
+      const connectorKey = mermaidParsedConnectorKey(connector, source.id, target.id, handles)
+      if (existingConnectorKeys.has(connectorKey)) {
+        resolvedConnectorCount += 1
+        continue
+      }
+
+      const createdConnector = await client.createConnector(currentViewId, {
+        source_element_id: source.id,
+        target_element_id: target.id,
+        label: connector.label ?? '',
+        description: connector.description ?? '',
+        relationship: connector.relationship ?? '',
+        direction: connector.direction ?? 'forward',
+        style: connector.style ?? 'bezier',
+        url: connector.url ?? '',
+        source_handle: connector.sourceHandle ?? handles.source_handle,
+        target_handle: connector.targetHandle ?? handles.target_handle,
+      })
+      rollbackActions.push(() => client.deleteConnector(createdConnector.id))
+      materializedConnectors.push(createdConnector)
+    }
+    const summary = {
+      resolvedElementCount,
+      createdElementCount,
+      resolvedConnectorCount,
+      createdConnectorCount: materializedConnectors.length,
+      importedElementIds: new Set(Array.from(elementsByRef.values(), (element) => element.id)),
+    }
+    materializedConnectors.forEach((connector) => {
+      try {
+        onConnectorCreated?.(connector)
+      } catch {
+        /* Local notification failure should not roll back the persisted import. */
+      }
     })
-  }))
-  const materializedConnectors = createdConnectors.filter((connector): connector is Connector => connector !== null)
-  materializedConnectors.forEach((connector) => onConnectorCreated?.(connector))
-
-  return {
-    resolvedElementCount,
-    createdElementCount,
-    resolvedConnectorCount,
-    createdConnectorCount: materializedConnectors.length,
-    importedElementIds: new Set(Array.from(elementsByRef.values(), (element) => element.id)),
+    return summary
+  } catch (error) {
+    const rollbackFailures = await rollbackMermaidImport(rollbackActions)
+    if (rollbackFailures.length > 0) {
+      throw new Error(`${error instanceof Error ? error.message : String(error)} Rollback also failed for ${countLabel(rollbackFailures.length, 'operation')}.`)
+    }
+    throw error
   }
 }

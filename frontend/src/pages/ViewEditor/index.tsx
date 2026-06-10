@@ -94,7 +94,7 @@ import {
 } from './hooks/useViewContextNeighbours'
 import { canonicalNodePairKey } from './pairKey'
 import type { ParsedImport } from '../../pkg/importer/mermaid'
-import { extractMermaidCode, parseMermaidAsync } from '../../pkg/importer/mermaid'
+import { extractMermaidCode, parseMermaidAsync, parsedMermaidImportError } from '../../pkg/importer/mermaid'
 import { MermaidExporter } from '../../pkg/exporter/mermaid'
 import { vscodeBridge } from '../../lib/vscodeBridge'
 import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
@@ -3333,6 +3333,46 @@ function ViewEditorInner({
     })
   }, [allElements, connectors, publishRealtimeConnectorUpsert, viewElementsRef])
 
+  const runMermaidImport = useCallback(async (
+    parsed: ParsedImport,
+    currentViewId: number,
+    center: { x: number; y: number },
+    options: {
+      successTitle: string
+      failureTitle: string
+      onSuccess?: () => void
+    },
+  ) => {
+    const parseError = parsedMermaidImportError(parsed)
+    if (parseError) {
+      toast({ status: 'error', title: options.failureTitle, description: parseError })
+      return false
+    }
+
+    try {
+      const summary = await importMermaidIntoCurrentView(parsed, currentViewId, center)
+      clearEditHistory()
+      await refreshElements()
+      pendingPasteSelectionRef.current = {
+        viewId: currentViewId,
+        elementIds: summary.importedElementIds,
+      }
+      options.onSuccess?.()
+      toast({
+        status: 'success',
+        title: options.successTitle,
+        description: mermaidLocalImportDescription(summary),
+        duration: 5000,
+        isClosable: true,
+      })
+      return true
+    } catch (err) {
+      await refreshElements()
+      toast({ status: 'error', title: options.failureTitle, description: err instanceof Error ? err.message : String(err) })
+      return false
+    }
+  }, [clearEditHistory, importMermaidIntoCurrentView, refreshElements, toast])
+
   const pasteViewSelectionPayload = useCallback(async (
     payload: ViewSelectionClipboardPayload,
     targetViewId: number,
@@ -3499,41 +3539,21 @@ function ViewEditorInner({
     isPasteImportingRef.current = true
     try {
       const parsed = await parseMermaidAsync(mermaidCode)
-      if (parsed.warnings.length > 0 || (parsed.elements.length === 0 && parsed.connectors.length === 0)) {
-        toast({ status: 'error', title: 'Mermaid import failed', description: parsed.warnings[0] ?? 'No compatible diagram content found.' })
-        return
-      }
-
-      const summary = await importMermaidIntoCurrentView(parsed, currentViewId, getCanvasCenter())
-      clearEditHistory()
-      await refreshElements()
-      pendingPasteSelectionRef.current = {
-        viewId: currentViewId,
-        elementIds: summary.importedElementIds,
-      }
-      toast({
-        status: 'success',
-        title: 'Mermaid imported',
-        description: mermaidLocalImportDescription(summary),
-        duration: 5000,
-        isClosable: true,
+      await runMermaidImport(parsed, currentViewId, getCanvasCenter(), {
+        successTitle: 'Mermaid imported',
+        failureTitle: 'Mermaid import failed',
       })
-    } catch (err) {
-      await refreshElements()
-      toast({ status: 'error', title: 'Mermaid import failed', description: err instanceof Error ? err.message : String(err) })
     } finally {
       isPasteImportingRef.current = false
     }
   }, [
     canEdit,
-    clearEditHistory,
     duplicatePasteConfirm,
     getCanvasCenter,
     getClipboardPasteCenter,
-    importMermaidIntoCurrentView,
     pasteViewSelectionPayload,
     pendingElement,
-    refreshElements,
+    runMermaidImport,
     textEditorState,
     toast,
     viewElementsRef,
@@ -3569,20 +3589,10 @@ function ViewEditorInner({
     setIsImporting(true)
     try {
       if (extractMermaidCode(parsed.source)) {
-        const summary = await importMermaidIntoCurrentView(parsed, currentViewId, getCanvasCenter())
-        clearEditHistory()
-        await refreshElements()
-        pendingPasteSelectionRef.current = {
-          viewId: currentViewId,
-          elementIds: summary.importedElementIds,
-        }
-        closeImportModalRef.current()
-        toast({
-          status: 'success',
-          title: 'Import complete',
-          description: mermaidLocalImportDescription(summary),
-          duration: 5000,
-          isClosable: true,
+        await runMermaidImport(parsed, currentViewId, getCanvasCenter(), {
+          successTitle: 'Import complete',
+          failureTitle: 'Import failed',
+          onSuccess: () => closeImportModalRef.current(),
         })
         return
       }
@@ -3596,7 +3606,7 @@ function ViewEditorInner({
     } catch (e) {
       toast({ status: 'error', title: 'Import failed', description: e instanceof Error ? e.message : 'Unknown error' })
     } finally { setIsImporting(false) }
-  }, [clearEditHistory, getCanvasCenter, importMermaidIntoCurrentView, navigate, refreshElements, toast, viewIdRef])
+  }, [clearEditHistory, getCanvasCenter, navigate, runMermaidImport, toast, viewIdRef])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Render states

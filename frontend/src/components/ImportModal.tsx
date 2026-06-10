@@ -22,7 +22,7 @@ import {
   TabPanels,
   TabPanel,
 } from '@chakra-ui/react'
-import { parseMermaidAsync, ParsedImport } from '../pkg/importer/mermaid'
+import { parseMermaidAsync, parsedMermaidImportError, ParsedImport } from '../pkg/importer/mermaid'
 import { api } from '../api/client'
 import type { PlanConnector, PlanElement } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
 import { isWailsApp } from '../config/runtime'
@@ -127,8 +127,9 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
       setIsParsing(true)
       try {
         const result = await parseMermaidAsync(code)
-        if (result.warnings.length > 0 && result.elements.length === 0 && result.connectors.length === 0) {
-          setParseError(result.warnings[0] ?? 'Unsupported diagram type')
+        const error = parsedMermaidImportError(result)
+        if (error) {
+          setParseError(error)
           return
         }
         setParsed(result)

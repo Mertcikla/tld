@@ -14,6 +14,12 @@ export interface ParsedImport {
   source: string
 }
 
+export function parsedMermaidImportError(parsed: ParsedImport) {
+  if (parsed.warnings.length > 0) return parsed.warnings[0] ?? 'Failed to parse Mermaid diagram'
+  if (parsed.elements.length === 0 && parsed.connectors.length === 0) return 'No compatible diagram content found.'
+  return null
+}
+
 function toPlanConnector(connector: Record<string, unknown>): PlanConnector {
   return connector as unknown as PlanConnector
 }
@@ -132,16 +138,14 @@ export function tryParseMermaid(text: string): ParsedImport | null {
   const code = extractMermaidCode(text)
   if (!code) return null
   const parsed = parseMermaid(code)
-  if (parsed.warnings.length > 0 || (parsed.elements.length === 0 && parsed.connectors.length === 0)) return null
-  return parsed
+  return parsedMermaidImportError(parsed) ? null : parsed
 }
 
 export async function tryParseMermaidAsync(text: string): Promise<ParsedImport | null> {
   const code = extractMermaidCode(text)
   if (!code) return null
   const parsed = await parseMermaidAsync(code)
-  if (parsed.warnings.length > 0 || (parsed.elements.length === 0 && parsed.connectors.length === 0)) return null
-  return parsed
+  return parsedMermaidImportError(parsed) ? null : parsed
 }
 
 export function parseMermaid(code: string): ParsedImport {
