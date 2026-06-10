@@ -23,17 +23,42 @@ type ConnectorNavTarget = {
   viewName: string
 }
 
-function connectorDirectionArrow(direction: string) {
+function ConnectorArrowIcon({ direction }: { direction: string }) {
+  const strokeColor = 'var(--accent)'
   switch (direction) {
     case 'backward':
-      return '<-'
+      return (
+        <svg width="32" height="12" viewBox="0 0 32 12" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+          <line x1="8" y1="6" x2="28" y2="6" stroke={strokeColor} strokeWidth="2" />
+          <polygon points="9,2.5 2.5,6 9,9.5" fill={strokeColor} />
+          <circle cx="28" cy="6" r="2.5" fill={strokeColor} />
+        </svg>
+      )
     case 'both':
-      return '<->'
+      return (
+        <svg width="32" height="12" viewBox="0 0 32 12" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+          <line x1="8" y1="6" x2="24" y2="6" stroke={strokeColor} strokeWidth="2" />
+          <polygon points="9,2.5 2.5,6 9,9.5" fill={strokeColor} />
+          <polygon points="23,2.5 29.5,6 23,9.5" fill={strokeColor} />
+        </svg>
+      )
     case 'none':
-      return '--'
+      return (
+        <svg width="32" height="12" viewBox="0 0 32 12" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+          <line x1="4" y1="6" x2="28" y2="6" stroke={strokeColor} strokeWidth="2" />
+          <circle cx="4" cy="6" r="2.5" fill={strokeColor} />
+          <circle cx="28" cy="6" r="2.5" fill={strokeColor} />
+        </svg>
+      )
     case 'forward':
     default:
-      return '->'
+      return (
+        <svg width="32" height="12" viewBox="0 0 32 12" fill="none" style={{ display: 'inline-block', verticalAlign: 'middle' }}>
+          <line x1="4" y1="6" x2="24" y2="6" stroke={strokeColor} strokeWidth="2" />
+          <circle cx="4" cy="6" r="2.5" fill={strokeColor} />
+          <polygon points="23,2.5 29.5,6 23,9.5" fill={strokeColor} />
+        </svg>
+      )
   }
 }
 
@@ -130,17 +155,13 @@ export default function ProxyConnectorPanel({
                   isTruncated
                   flex={1}
                   minWidth={0}
+                  textAlign="right"
                 >
                   {details.sourceAnchorName}
                 </Text>
-                <Text
-                  color="whiteAlpha.400"
-                  fontSize="xs"
-                  fontFamily="mono"
-                  flexShrink={0}
-                >
-                  {connectorDirectionArrow(summarizedDirection(details))}
-                </Text>
+                <Flex align="center" justify="center" flexShrink={0} px={1}>
+                  <ConnectorArrowIcon direction={summarizedDirection(details)} />
+                </Flex>
                 <Text
                   color="white"
                   fontSize="sm"
@@ -198,17 +219,13 @@ export default function ProxyConnectorPanel({
                               isTruncated
                               minWidth={0}
                               flex={1}
+                              textAlign="right"
                             >
                               {truncate(leaf.source.actualElementName)}
                             </Text>
-                            <Text
-                              color="whiteAlpha.400"
-                              fontSize="xs"
-                              fontFamily="mono"
-                              flexShrink={0}
-                            >
-                              {connectorDirectionArrow(leaf.connector.direction)}
-                            </Text>
+                            <Flex align="center" justify="center" flexShrink={0} px={1}>
+                              <ConnectorArrowIcon direction={leaf.connector.direction} />
+                            </Flex>
                             <Text
                               color="white"
                               fontSize="xs"
