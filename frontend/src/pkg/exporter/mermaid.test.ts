@@ -21,8 +21,9 @@ describe('MermaidExporter', () => {
     expect(code).toContain('node_2["Worker \\"A\\""]')
     expect(code).toContain('node_2 -- "writes to" --> node_3')
     expect(code.match(/%% tld\/v1/g)).toHaveLength(1)
-    expect(code).toContain('%% element node_2 x=0 y=0 kind=service')
-    expect(code).toContain('%% connector node_2->node_3')
+    expect(code).toContain('%% tld-element x=0 y=0 kind=service')
+    expect(code).not.toContain('%% tld-element node_2')
+    expect(code).not.toContain('%% tld-connector')
     expect(code).not.toContain('label=')
     expect(code).not.toContain('dir=forward')
     expect(code).not.toContain('style=bezier')
@@ -51,11 +52,12 @@ describe('MermaidExporter', () => {
     expect(lines[1]).toBe('%% tld/v1')
     expect(lines.filter((line) => line.includes('tld/v1'))).toHaveLength(1)
     expect(lines[2]).toBe('  node_2["Worker"]')
-    expect(lines[3]).toBe('%% element node_2 x=10 y=20 kind=service')
+    expect(lines[3]).toBe('%% tld-element x=10 y=20 kind=service')
     expect(lines[4]).toBe('  node_3["Database"]')
-    expect(lines[5]).toBe('%% element node_3 x=30 y=40 kind=database')
+    expect(lines[5]).toBe('%% tld-element x=30 y=40 kind=database')
     expect(lines[7]).toBe('  node_2 -- "writes to" --> node_3')
-    expect(lines[8]).toBe('%% connector node_2->node_3 rel=stores dir=both style=straight sourceHandle=top targetHandle=bottom')
+    expect(lines[8]).toBe('%% tld-connector rel=stores dir=both style=straight sourceHandle=top targetHandle=bottom')
+    expect(lines[8]).not.toContain('node_2->node_3')
   })
 
   it('can export Mermaid without TLD metadata comments', () => {
@@ -142,9 +144,11 @@ describe('MermaidExporter', () => {
     } satisfies MermaidWorkspaceView
 
     const code = new MermaidExporter(view).toMermaid()
-    const metadataLines = code.split('\n').filter((line) => line.startsWith('%% element') || line.startsWith('%% connector'))
+    const metadataLines = code.split('\n').filter((line) => line.startsWith('%% tld-element') || line.startsWith('%% tld-connector'))
     expect(metadataLines.join('\n')).not.toContain('name=')
     expect(metadataLines.join('\n')).not.toContain('label=')
+    expect(metadataLines.join('\n')).not.toContain('node_2 x=')
+    expect(metadataLines.join('\n')).not.toContain('node_2->node_3')
 
     const parsed = parseMermaid(code)
     const worker = parsed.elements.find((element) => element.ref === 'node_2')
@@ -194,7 +198,11 @@ describe('MermaidExporter', () => {
       ],
     } satisfies MermaidWorkspaceView
 
-    const parsed = parseMermaid(new MermaidExporter(view).toMermaid())
+    const code = new MermaidExporter(view).toMermaid()
+    expect(code).toContain('%% tld-connector rel=writes dir=both style=straight')
+    expect(code).not.toContain('node_2->node_3 rel=writes')
+
+    const parsed = parseMermaid(code)
 
     expect(parsed.warnings).toHaveLength(0)
     expect(parsed.connectors).toHaveLength(2)

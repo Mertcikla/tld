@@ -327,11 +327,11 @@ E--No-->C
 %% tld/v1
   A[Start]
 %% ordinary Mermaid comment
-%% element missing kind=database
-%% element A x=not-a-number y=2 unknown=value
+%% tld-element missing kind=database
+%% tld-element A x=not-a-number y=2 unknown=value
   A --> B[End]
-%% connector A->B rel=bad\\q
-%% connector missing->B rel=unused`
+%% tld-connector A->B rel=bad\\q
+%% tld-connector missing->B rel=unused`
 
     const parsed = parseMermaid(code)
 

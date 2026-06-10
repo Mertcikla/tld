@@ -20,7 +20,6 @@ interface TldElementMetadata {
 }
 
 interface TldConnectorMetadata {
-  subject: string
   description?: string
   relationship?: string
   direction?: string
@@ -32,7 +31,7 @@ interface TldConnectorMetadata {
 
 interface TldMetadata {
   elements: Map<string, TldElementMetadata>
-  connectorsBySubject: Map<string, TldConnectorMetadata[]>
+  connectors: TldConnectorMetadata[]
 }
 
 interface MetadataImportResult {
@@ -263,9 +262,9 @@ function parseElementMetadata(pairs: Map<string, string>): TldElementMetadata {
   return metadata
 }
 
-function parseConnectorMetadata(subject: string, pairs: Map<string, string>): TldConnectorMetadata {
-  const metadata: TldConnectorMetadata = { subject }
-  const stringKeys: Array<[string, keyof Omit<TldConnectorMetadata, 'subject'>]> = [
+function parseConnectorMetadata(pairs: Map<string, string>): TldConnectorMetadata {
+  const metadata: TldConnectorMetadata = {}
+  const stringKeys: Array<[string, keyof TldConnectorMetadata]> = [
     ['desc', 'description'],
     ['rel', 'relationship'],
     ['dir', 'direction'],
@@ -285,35 +284,70 @@ function parseConnectorMetadata(subject: string, pairs: Map<string, string>): Tl
   return metadata
 }
 
+function mergeConnectorMetadata(
+  base: TldConnectorMetadata | undefined,
+  override: TldConnectorMetadata | undefined,
+): TldConnectorMetadata | undefined {
+  if (!base) return override
+  if (!override) return base
+  return { ...base, ...override }
+}
+
+function isExportedFlowchartConnectorLine(line: string) {
+  return /^[A-Za-z_][A-Za-z0-9_]*\s+(?:--\s+"(?:\\.|[^"\\])*"\s+-->|-->)\s+[A-Za-z_][A-Za-z0-9_]*$/.test(line)
+}
+
+function exportedFlowchartElementRef(line: string) {
+  return line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*\["(?:\\.|[^"\\])*"\]$/)?.[1] ?? null
+}
+
 export function parseTldMetadata(source: string): TldMetadata | null {
   const lines = source.split(/\r?\n/)
   const metadata: TldMetadata = {
     elements: new Map(),
-    connectorsBySubject: new Map(),
+    connectors: [],
   }
   let markerSeen = false
+  let lastElementRef: string | null = null
+  let lastConnectorIndex = -1
 
   for (const line of lines) {
     const trimmed = line.trim()
-    if (!trimmed.startsWith('%%')) continue
+    if (!trimmed.startsWith('%%')) {
+      if (markerSeen) {
+        lastElementRef = exportedFlowchartElementRef(trimmed)
+        if (isExportedFlowchartConnectorLine(trimmed)) {
+          metadata.connectors.push({})
+          lastConnectorIndex = metadata.connectors.length - 1
+          lastElementRef = null
+        }
+      }
+      continue
+    }
     const body = trimmed.slice(2).trim()
     if (/^tld\/v1(?:\s|$)/.test(body)) {
       markerSeen = true
+      lastElementRef = null
+      lastConnectorIndex = -1
       continue
     }
     if (!markerSeen) continue
 
     const tokens = body.split(/\s+/).filter(Boolean)
     if (tokens.length < 2) continue
-    const [kind, subject, ...pairTokens] = tokens
-    const pairs = parseMetadataPairs(pairTokens)
-    if (kind === 'element') {
-      metadata.elements.set(subject, parseElementMetadata(pairs))
-    } else if (kind === 'connector') {
-      const item = parseConnectorMetadata(subject, pairs)
-      const queue = metadata.connectorsBySubject.get(subject) ?? []
-      queue.push(item)
-      metadata.connectorsBySubject.set(subject, queue)
+    const [kind, firstToken, ...restTokens] = tokens
+    if (kind === 'tld-element') {
+      if (!lastElementRef || !firstToken.includes('=')) continue
+      const pairs = parseMetadataPairs([firstToken, ...restTokens])
+      metadata.elements.set(lastElementRef, parseElementMetadata(pairs))
+    } else if (kind === 'tld-connector') {
+      if (!firstToken.includes('=')) continue
+      const item = parseConnectorMetadata(parseMetadataPairs([firstToken, ...restTokens]))
+      if (lastConnectorIndex >= 0) {
+        metadata.connectors[lastConnectorIndex] = mergeConnectorMetadata(metadata.connectors[lastConnectorIndex], item) ?? {}
+      } else {
+        metadata.connectors.push(item)
+      }
     }
   }
 
@@ -357,11 +391,9 @@ export function applyTldMetadata(result: MetadataImportResult, metadata: TldMeta
     }
   }
 
-  for (const connector of result.connectors) {
-    const subject = `${connector.sourceElementRef}->${connector.targetElementRef}`
-    const queue = metadata.connectorsBySubject.get(subject)
-    const item = queue?.shift()
-    if (!item) continue
+  result.connectors.forEach((connector, index) => {
+    const item = metadata.connectors[index]
+    if (!item) return
     if (item.description) connector.description = item.description
     if (item.relationship) connector.relationship = item.relationship
     if (item.direction) connector.direction = item.direction
@@ -369,5 +401,5 @@ export function applyTldMetadata(result: MetadataImportResult, metadata: TldMeta
     if (item.url) connector.url = item.url
     if (item.sourceHandle) connector.sourceHandle = item.sourceHandle
     if (item.targetHandle) connector.targetHandle = item.targetHandle
-  }
+  })
 }

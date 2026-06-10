@@ -32,9 +32,11 @@ function sanitizeMermaidId(value: string) {
   return /^[A-Za-z_]/.test(sanitized) ? sanitized : `node_${sanitized}`
 }
 
-function metadataComment(kind: 'element' | 'connector', subject: string, entries: MetadataEntry[]) {
-  const pairs = entries.map(([key, value]) => `${key}=${value}`).join(' ')
-  return pairs ? `%% ${kind} ${subject} ${pairs}` : `%% ${kind} ${subject}`
+function metadataComment(kind: 'tld-element' | 'tld-connector', subject: string | null, entries: MetadataEntry[]) {
+  const parts = [`%% ${kind}`]
+  if (subject) parts.push(subject)
+  parts.push(...entries.map(([key, value]) => `${key}=${value}`))
+  return parts.join(' ')
 }
 
 function stringEntry(key: string, value: string | null | undefined): MetadataEntry | null {
@@ -106,7 +108,7 @@ export class MermaidExporter {
     for (const element of sortedElements) {
       const nodeId = sanitizeMermaidId(`node_${element.element_id}`)
       lines.push(`  ${nodeId}["${escapeMermaidLabel(element.name)}"]`)
-      if (includeTldMetadata) lines.push(metadataComment('element', nodeId, elementMetadataEntries(element)))
+      if (includeTldMetadata) lines.push(metadataComment('tld-element', null, elementMetadataEntries(element)))
     }
     if (sortedElements.length > 0 && sortedConnectors.length > 0) lines.push('')
     for (const connector of sortedConnectors) {
@@ -116,7 +118,8 @@ export class MermaidExporter {
       lines.push(label
         ? `  ${sourceId} -- "${escapeMermaidLabel(label)}" --> ${targetId}`
         : `  ${sourceId} --> ${targetId}`)
-      if (includeTldMetadata) lines.push(metadataComment('connector', `${sourceId}->${targetId}`, connectorMetadataEntries(connector)))
+      const metadataEntries = connectorMetadataEntries(connector)
+      if (includeTldMetadata && metadataEntries.length > 0) lines.push(metadataComment('tld-connector', null, metadataEntries))
     }
 
     return `${lines.join('\n')}\n`
