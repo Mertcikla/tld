@@ -12,6 +12,7 @@ type CreateViewPayload = Parameters<typeof api.workspace.views.create>[0]
 type CreateConnectorPayload = Parameters<typeof api.workspace.connectors.create>[1]
 
 export interface MermaidImportClient {
+  getElement(id: number): ReturnType<typeof api.elements.get>
   createElement(data: CreateElementPayload): ReturnType<typeof api.elements.create>
   createView(data: CreateViewPayload): ReturnType<typeof api.workspace.views.create>
   addPlacement(viewId: number, elementId: number, x: number, y: number): ReturnType<typeof api.workspace.views.placements.add>
@@ -219,10 +220,31 @@ export function layoutMermaidImport(parsed: ParsedImport, center: { x: number; y
 }
 
 const defaultMermaidImportClient: MermaidImportClient = {
+  getElement: (id) => api.elements.get(id),
   createElement: (data) => api.elements.create(data),
   createView: (data) => api.workspace.views.create(data),
   addPlacement: (viewId, elementId, x, y) => api.workspace.views.placements.add(viewId, elementId, x, y),
   createConnector: (viewId, data) => api.workspace.connectors.create(viewId, data),
+}
+
+async function resolveExistingMermaidElement(
+  ref: string,
+  existingElementsById: Map<number, WorkspaceElement>,
+  client: MermaidImportClient,
+) {
+  const existingElementId = mermaidRefElementId(ref)
+  if (existingElementId === null) return null
+
+  const cached = existingElementsById.get(existingElementId)
+  if (cached) return cached
+
+  try {
+    const fetched = await client.getElement(existingElementId)
+    existingElementsById.set(fetched.id, fetched)
+    return fetched
+  } catch {
+    return null
+  }
 }
 
 export async function importMermaidIntoView({
@@ -242,8 +264,7 @@ export async function importMermaidIntoView({
   let createdElementCount = 0
 
   for (const element of parsed.elements) {
-    const existingElementId = mermaidRefElementId(element.ref)
-    const existingElement = existingElementId === null ? undefined : existingElementsById.get(existingElementId)
+    const existingElement = await resolveExistingMermaidElement(element.ref, existingElementsById, client)
     if (existingElement) {
       elementsByRef.set(element.ref, existingElement)
       resolvedElementCount += 1

@@ -77,12 +77,17 @@ describe('Mermaid view import', () => {
     const created = workspaceElement(99, 'API')
     const createdConnector = connector(200, 99, 57, 'calls')
 
+    const getElement = vi.fn(async (id: number) => {
+      if (id === existing.id) return existing
+      throw new Error('not found')
+    })
     const createElement = vi.fn(async () => created)
     const createView = vi.fn()
     const addPlacement = vi.fn()
     const createConnector = vi.fn(async () => createdConnector)
     const onConnectorCreated = vi.fn()
     const client: MermaidImportClient = {
+      getElement,
       createElement,
       createView,
       addPlacement,
@@ -107,13 +112,15 @@ describe('Mermaid view import', () => {
       parsed,
       currentViewId: 10,
       center: { x: 0, y: 0 },
-      allElements: [existing],
+      allElements: [],
       viewElements: [placement(57)],
       connectors: [connector(100, 57, 99, 'uses')],
       onConnectorCreated,
       client,
     })
 
+    expect(getElement).toHaveBeenCalledWith(57)
+    expect(getElement).toHaveBeenCalledWith(8)
     expect(createElement).toHaveBeenCalledTimes(1)
     expect(createElement).toHaveBeenCalledWith(expect.objectContaining({ name: 'API' }))
     expect(addPlacement).toHaveBeenCalledTimes(1)

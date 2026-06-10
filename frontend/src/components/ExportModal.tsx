@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import {
   Button,
   Checkbox,
@@ -15,7 +15,6 @@ import {
   ModalOverlay,
   Radio,
   RadioGroup,
-  Text,
   VStack,
 } from '@chakra-ui/react'
 
@@ -62,7 +61,6 @@ function ExportModal({
     setIncludeTldMetadata(true)
   }, [isOpen, defaultFilename])
 
-  const extension = useMemo(() => (format === 'svg' ? '.svg' : format === 'png' ? '.png' : '.mermaid'), [format])
 
   const handleSubmit = async () => {
     await onExport({
@@ -128,9 +126,6 @@ function ExportModal({
                 placeholder="diagram-export"
                 size="sm"
               />
-              <Text mt={1.5} fontSize="xs" color="gray.400">
-                File extension will be added automatically ({extension})
-              </Text>
             </FormControl>
           </VStack>
         </ModalBody>
