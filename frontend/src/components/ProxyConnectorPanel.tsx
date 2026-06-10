@@ -1,4 +1,4 @@
-import { Box, Button, Grid, HStack, Text, VStack, Divider, Flex, IconButton } from '@chakra-ui/react'
+import { Box, Button, Grid, HStack, Text, VStack, Divider, Flex, IconButton, Tooltip } from '@chakra-ui/react'
 import type { ReactNode, SVGProps } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { ProxyConnectorDetails, ProxyConnectorLeaf, ProxyEndpoint, WorkspaceGraphSnapshot } from '../crossBranch/types'
@@ -7,7 +7,6 @@ import PanelHeader from './PanelHeader'
 import { NavigationIcon, TrashIcon, DrawIcon } from './Icons'
 import { useViewEditorContext } from '../pages/ViewEditor/context'
 import type { Connector } from '../types'
-import { truncate } from '../utils/string'
 
 interface Props {
   isOpen: boolean
@@ -81,18 +80,20 @@ function ConnectorEndpointText({
   size?: 'xs' | 'sm'
 }) {
   return (
-    <Text
-      color="white"
-      fontSize={size}
-      fontWeight="semibold"
-      letterSpacing="0"
-      lineHeight="1.2"
-      isTruncated
-      minWidth={0}
-      textAlign={align}
-    >
-      {children}
-    </Text>
+    <Tooltip label={children} placement="top" openDelay={300} hasArrow>
+      <Text
+        color="white"
+        fontSize={size}
+        fontWeight="semibold"
+        letterSpacing="0"
+        lineHeight="1.2"
+        isTruncated
+        minWidth={0}
+        textAlign={align}
+      >
+        {children}
+      </Text>
+    </Tooltip>
   )
 }
 
@@ -158,30 +159,34 @@ function SummaryConnectorIdentity({
       w="full"
       minW={0}
     >
-      <Text
-        color="white"
-        fontSize="lg"
-        fontWeight="700"
-        lineHeight="1.15"
-        isTruncated
-        minW={0}
-        textAlign="right"
-      >
-        {source}
-      </Text>
+      <Tooltip label={source} placement="top" openDelay={300} hasArrow>
+        <Text
+          color="white"
+          fontSize="lg"
+          fontWeight="700"
+          lineHeight="1.15"
+          isTruncated
+          minW={0}
+          textAlign="right"
+        >
+          {source}
+        </Text>
+      </Tooltip>
       <Flex align="center" justify="center" w="56px" flexShrink={0}>
         <SummaryConnectorLine />
       </Flex>
-      <Text
-        color="white"
-        fontSize="lg"
-        fontWeight="700"
-        lineHeight="1.15"
-        isTruncated
-        minW={0}
-      >
-        {target}
-      </Text>
+      <Tooltip label={target} placement="top" openDelay={300} hasArrow>
+        <Text
+          color="white"
+          fontSize="lg"
+          fontWeight="700"
+          lineHeight="1.15"
+          isTruncated
+          minW={0}
+        >
+          {target}
+        </Text>
+      </Tooltip>
     </Grid>
   )
 }
@@ -306,8 +311,8 @@ export default function ProxyConnectorPanel({
                       <VStack align="stretch" spacing={2} w="full" minW={0}>
                         {/* Connector identity row */}
                         <ConnectorIdentityGrid
-                          source={truncate(leaf.source.actualElementName)}
-                          target={truncate(leaf.target.actualElementName)}
+                          source={leaf.source.actualElementName}
+                          target={leaf.target.actualElementName}
                           direction={leaf.connector.direction}
                           actions={canEdit ? (
                             <>
