@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react'
 import {
   Button,
+  Checkbox,
   FormControl,
   FormLabel,
   HStack,
@@ -24,6 +25,7 @@ export interface ExportOptions {
   format: ExportFormat
   scale: 1 | 2 | 3
   filename: string
+  includeTldMetadata?: boolean
 }
 
 interface Props {
@@ -50,12 +52,14 @@ function ExportModal({
   const [format, setFormat] = useState<ExportFormat>('svg')
   const [scale, setScale] = useState<1 | 2 | 3>(2)
   const [filename, setFilename] = useState(defaultFilename)
+  const [includeTldMetadata, setIncludeTldMetadata] = useState(true)
 
   useEffect(() => {
     if (!isOpen) return
     setFilename(defaultFilename)
     setFormat('svg')
     setScale(2)
+    setIncludeTldMetadata(true)
   }, [isOpen, defaultFilename])
 
   const extension = useMemo(() => (format === 'svg' ? '.svg' : format === 'png' ? '.png' : '.mermaid'), [format])
@@ -65,6 +69,7 @@ function ExportModal({
       format,
       scale,
       filename: sanitizeFilename(filename),
+      includeTldMetadata,
     })
   }
 
@@ -97,6 +102,19 @@ function ExportModal({
                     <Radio value="3">3x</Radio>
                   </HStack>
                 </RadioGroup>
+              </FormControl>
+            )}
+
+            {format === 'mermaid' && (
+              <FormControl id="export-mermaid-metadata">
+                <Checkbox
+                  data-testid="export-mermaid-metadata-checkbox"
+                  isChecked={includeTldMetadata}
+                  onChange={(event) => setIncludeTldMetadata(event.target.checked)}
+                  size="sm"
+                >
+                  TLD metadata
+                </Checkbox>
               </FormControl>
             )}
 

@@ -3388,7 +3388,10 @@ function ViewEditorInner({
     try {
       setIsExporting(true)
       if (options.format === 'mermaid') {
-        const code = new MermaidExporter({ placements: viewElements, connectors }).toMermaid()
+        const code = new MermaidExporter(
+          { placements: viewElements, connectors },
+          { includeTldMetadata: options.includeTldMetadata ?? true },
+        ).toMermaid()
         const result = await triggerBlobDownload(new Blob([code], { type: 'text/plain;charset=utf-8' }), downloadName, options.format)
         if (result.canceled) return
       } else if (options.format === 'svg') {

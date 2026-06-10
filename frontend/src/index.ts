@@ -209,7 +209,7 @@ export { vscodeBridge } from './lib/vscodeBridge'
 export { parseMermaid as parseMermaidToElements, parseMermaidAsync as parseMermaidToElementsAsync, type ParsedImport } from './pkg/importer/mermaid'
 
 // ─── Exporter ────────────────────────────────────────────────────────────────
-export { MermaidExporter, serializeViewToMermaid, type MermaidWorkspaceView } from './pkg/exporter/mermaid'
+export { MermaidExporter, serializeViewToMermaid, type MermaidExportOptions, type MermaidWorkspaceView } from './pkg/exporter/mermaid'
 
 // ─── VS Code Messages ────────────────────────────────────────────────────────
 export * from './types/vscode-messages'

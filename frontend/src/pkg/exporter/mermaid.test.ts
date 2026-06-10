@@ -58,6 +58,37 @@ describe('MermaidExporter', () => {
     expect(lines[8]).toBe('%% connector node_2->node_3 rel=stores dir=both style=straight sourceHandle=top targetHandle=bottom')
   })
 
+  it('can export Mermaid without TLD metadata comments', () => {
+    const view = {
+      placements: [
+        { element_id: 2, name: 'Worker', view_id: 1, id: 1, position_x: 10, position_y: 20, kind: 'service', description: 'private notes', technology: null, url: null, logo_url: null, technology_connectors: [], tags: ['internal'], has_view: false, view_label: null },
+        { element_id: 3, name: 'Database', view_id: 1, id: 2, position_x: 30, position_y: 40, kind: 'database', description: null, technology: null, url: null, logo_url: null, technology_connectors: [], tags: [], has_view: false, view_label: null },
+      ],
+      connectors: [
+        { id: 9, view_id: 1, source_element_id: 2, target_element_id: 3, label: 'writes to', description: 'private edge notes', relationship: 'stores', direction: 'both', style: 'straight', url: null, source_handle: 'top', target_handle: 'bottom', tags: [], created_at: '', updated_at: '' },
+      ],
+    } satisfies MermaidWorkspaceView
+
+    const code = new MermaidExporter(view, { includeTldMetadata: false }).toMermaid()
+
+    expect(code).toBe(`flowchart LR
+  node_2["Worker"]
+  node_3["Database"]
+
+  node_2 -- "writes to" --> node_3
+`)
+    expect(code).not.toContain('%%')
+    expect(code).not.toContain('private')
+    expect(code).not.toContain('kind=')
+
+    const parsed = parseMermaid(code)
+    expect(parsed.warnings).toHaveLength(0)
+    expect(parsed.elements.find((element) => element.ref === 'node_2')?.kind).toBe('system')
+    expect(parsed.elements.find((element) => element.ref === 'node_2')?.placements[0]?.positionX).toBeUndefined()
+    expect(parsed.connectors[0]?.label).toBe('writes to')
+    expect(parsed.connectors[0]?.relationship).toBeUndefined()
+  })
+
   it('round-trips escaped TLD metadata without storing names or edge labels in comments', () => {
     const description = 'Line 1\nLine 2, equals= pipe| colon: slash\\ space'
     const view = {

@@ -2,7 +2,7 @@ import { C4, Flowchart, isC4Diagram, isFlowchartDiagram, parseAsync, parseC4, pa
 import type { PlanConnector, PlanElement } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
 import { applyTldMetadata, parseTldMetadata, stripMermaidCommentLines } from '../mermaid/metadata'
 
-export { MermaidExporter, serializeViewToMermaid, type MermaidWorkspaceView } from '../exporter/mermaid'
+export { MermaidExporter, serializeViewToMermaid, type MermaidExportOptions, type MermaidWorkspaceView } from '../exporter/mermaid'
 
 export type MermaidDirection = 'TB' | 'TD' | 'BT' | 'RL' | 'LR'
 

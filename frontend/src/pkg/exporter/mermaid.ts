@@ -12,6 +12,10 @@ export interface MermaidWorkspaceView {
   connectors: readonly Connector[]
 }
 
+export interface MermaidExportOptions {
+  includeTldMetadata?: boolean
+}
+
 type MetadataEntry = [key: string, encodedValue: string]
 
 function asTrimmedString(value: string | null | undefined) {
@@ -85,20 +89,24 @@ function connectorMetadataEntries(connector: Connector): MetadataEntry[] {
 }
 
 export class MermaidExporter {
-  constructor(private readonly view: MermaidWorkspaceView) {}
+  constructor(
+    private readonly view: MermaidWorkspaceView,
+    private readonly options: MermaidExportOptions = {},
+  ) {}
 
   toMermaid() {
+    const includeTldMetadata = this.options.includeTldMetadata ?? true
     const elementIds = new Set(this.view.placements.map((element) => element.element_id))
     const sortedElements = [...this.view.placements].sort((a, b) => a.element_id - b.element_id)
     const sortedConnectors = this.view.connectors
       .filter((connector) => elementIds.has(connector.source_element_id) && elementIds.has(connector.target_element_id))
       .sort((a, b) => a.id - b.id)
 
-    const lines = ['flowchart LR', '%% tld/v1']
+    const lines = includeTldMetadata ? ['flowchart LR', '%% tld/v1'] : ['flowchart LR']
     for (const element of sortedElements) {
       const nodeId = sanitizeMermaidId(`node_${element.element_id}`)
       lines.push(`  ${nodeId}["${escapeMermaidLabel(element.name)}"]`)
-      lines.push(metadataComment('element', nodeId, elementMetadataEntries(element)))
+      if (includeTldMetadata) lines.push(metadataComment('element', nodeId, elementMetadataEntries(element)))
     }
     if (sortedElements.length > 0 && sortedConnectors.length > 0) lines.push('')
     for (const connector of sortedConnectors) {
@@ -108,13 +116,17 @@ export class MermaidExporter {
       lines.push(label
         ? `  ${sourceId} -- "${escapeMermaidLabel(label)}" --> ${targetId}`
         : `  ${sourceId} --> ${targetId}`)
-      lines.push(metadataComment('connector', `${sourceId}->${targetId}`, connectorMetadataEntries(connector)))
+      if (includeTldMetadata) lines.push(metadataComment('connector', `${sourceId}->${targetId}`, connectorMetadataEntries(connector)))
     }
 
     return `${lines.join('\n')}\n`
   }
 }
 
-export function serializeViewToMermaid(viewElements: readonly PlacedElement[], connectors: readonly Connector[]) {
-  return new MermaidExporter({ placements: viewElements, connectors }).toMermaid()
+export function serializeViewToMermaid(
+  viewElements: readonly PlacedElement[],
+  connectors: readonly Connector[],
+  options?: MermaidExportOptions,
+) {
+  return new MermaidExporter({ placements: viewElements, connectors }, options).toMermaid()
 }
