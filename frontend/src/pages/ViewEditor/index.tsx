@@ -95,7 +95,8 @@ import {
 } from './hooks/useViewContextNeighbours'
 import { canonicalNodePairKey } from './pairKey'
 import type { ParsedImport } from '../../pkg/importer/mermaid'
-import { extractMermaidCode, parseMermaidAsync, serializeViewToMermaid, type MermaidDirection } from '../../pkg/importer/mermaid'
+import { extractMermaidCode, parseMermaidAsync, type MermaidDirection } from '../../pkg/importer/mermaid'
+import { MermaidExporter } from '../../pkg/exporter/mermaid'
 import { vscodeBridge } from '../../lib/vscodeBridge'
 import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
 
@@ -3354,7 +3355,7 @@ function ViewEditorInner({
 
   // ── Export / Import ────────────────────────────────────────────────────────
   const handleCopyMermaidDirect = useCallback(async () => {
-    const code = serializeViewToMermaid(viewElements, connectors)
+    const code = new MermaidExporter({ placements: viewElements, connectors }).toMermaid()
     setCanvasMenu(null)
     try {
       await copyTextToClipboard(code)
@@ -3365,7 +3366,7 @@ function ViewEditorInner({
   }, [connectors, setCanvasMenu, toast, viewElements])
 
   const handleBulkCopyMermaid = useCallback(async () => {
-    const code = serializeViewToMermaid(selectedCanvasElements, connectors)
+    const code = new MermaidExporter({ placements: selectedCanvasElements, connectors }).toMermaid()
     try {
       await copyTextToClipboard(code)
       toast({ status: 'success', title: 'Copied Mermaid', description: 'Mermaid source copied to clipboard.' })
@@ -3387,7 +3388,7 @@ function ViewEditorInner({
     try {
       setIsExporting(true)
       if (options.format === 'mermaid') {
-        const code = serializeViewToMermaid(viewElements, connectors)
+        const code = new MermaidExporter({ placements: viewElements, connectors }).toMermaid()
         const result = await triggerBlobDownload(new Blob([code], { type: 'text/plain;charset=utf-8' }), downloadName, options.format)
         if (result.canceled) return
       } else if (options.format === 'svg') {
