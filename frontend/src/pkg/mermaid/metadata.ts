@@ -74,7 +74,6 @@ export function escapeTldMetadataValue(value: string) {
     .replace(/\n/g, '\\n')
     .replace(/\r/g, '\\r')
     .replace(/\t/g, '\\t')
-    .replace(/ /g, '\\s')
     .replace(/=/g, '\\=')
     .replace(/,/g, '\\,')
     .replace(/\|/g, '\\|')
@@ -107,9 +106,6 @@ function unescapeTldMetadataValue(value: string) {
         break
       case 't':
         out += '\t'
-        break
-      case 's':
-        out += ' '
         break
       default:
         return null
@@ -192,12 +188,17 @@ function decodeTldBoolean(value: string) {
   return null
 }
 
-function parseMetadataPairs(tokens: string[]) {
+function parseMetadataPairs(text: string) {
   const pairs = new Map<string, string>()
-  for (const token of tokens) {
-    const equals = token.indexOf('=')
-    if (equals <= 0) continue
-    pairs.set(token.slice(0, equals), token.slice(equals + 1))
+  const matches = Array.from(text.matchAll(/(^|\s+)([A-Za-z][A-Za-z0-9_]*)=/g))
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index]
+    const key = match[2]
+    const keyStart = match.index + match[1].length
+    const valueStart = keyStart + key.length + 1
+    const nextMatch = matches[index + 1]
+    const valueEnd = nextMatch?.index ?? text.length
+    pairs.set(key, text.slice(valueStart, valueEnd))
   }
   return pairs
 }
@@ -333,16 +334,16 @@ export function parseTldMetadata(source: string): TldMetadata | null {
     }
     if (!markerSeen) continue
 
-    const tokens = body.split(/\s+/).filter(Boolean)
-    if (tokens.length < 2) continue
-    const [kind, firstToken, ...restTokens] = tokens
+    const metadataLine = body.match(/^(tld-element|tld-connector)(?:\s+(.*))?$/)
+    if (!metadataLine) continue
+    const [, kind, metadataText = ''] = metadataLine
+    const pairs = parseMetadataPairs(metadataText)
+    if (pairs.size === 0) continue
     if (kind === 'tld-element') {
-      if (!lastElementRef || !firstToken.includes('=')) continue
-      const pairs = parseMetadataPairs([firstToken, ...restTokens])
+      if (!lastElementRef) continue
       metadata.elements.set(lastElementRef, parseElementMetadata(pairs))
     } else if (kind === 'tld-connector') {
-      if (!firstToken.includes('=')) continue
-      const item = parseConnectorMetadata(parseMetadataPairs([firstToken, ...restTokens]))
+      const item = parseConnectorMetadata(pairs)
       if (lastConnectorIndex >= 0) {
         metadata.connectors[lastConnectorIndex] = mergeConnectorMetadata(metadata.connectors[lastConnectorIndex], item) ?? {}
       } else {
