@@ -24,7 +24,11 @@ function asTrimmedString(value: string | null | undefined) {
 }
 
 function escapeMermaidLabel(value: string) {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, ' ')
+  return value
+    .replace(/\r?\n/g, ' ')
+    .replace(/&/g, '&amp;')
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '&quot;')
 }
 
 function sanitizeMermaidId(value: string) {

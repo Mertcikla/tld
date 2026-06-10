@@ -22,7 +22,14 @@ import {
   TabPanels,
   TabPanel,
 } from '@chakra-ui/react'
-import { parseMermaidAsync, parsedMermaidImportError, ParsedImport } from '../pkg/importer/mermaid'
+import {
+  extractMermaidCode,
+  mermaidImportSourceLimitError,
+  parseMermaidAsync,
+  parsedMermaidImportError,
+  parsedMermaidImportLimitError,
+  type ParsedImport,
+} from '../pkg/importer/mermaid'
 import { api } from '../api/client'
 import type { PlanConnector, PlanElement } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
 import { isWailsApp } from '../config/runtime'
@@ -34,6 +41,7 @@ interface Props {
   onClose: () => void
   isImporting?: boolean
   onImport: (parsed: ParsedImport) => Promise<void> | void
+  getImportWarnings?: (parsed: ParsedImport) => Promise<string[]> | string[]
 }
 
 type Format = 'mermaid' | 'structurizr'
@@ -49,26 +57,30 @@ const STRUCTURIZR_PLACEHOLDER = `workspace {
   }
 }`
 
-function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
+function ImportModal({ isOpen, onClose, isImporting, onImport, getImportWarnings }: Props) {
   const [code, setCode] = useState('')
   const [format, setFormat] = useState<Format>('mermaid')
   const [step, setStep] = useState<'input' | 'summary'>('input')
   const [parsed, setParsed] = useState<ParsedImport | null>(null)
+  const [importWarnings, setImportWarnings] = useState<string[]>([])
   const [parseError, setParseError] = useState<string | null>(null)
   const [isParsing, setIsParsing] = useState(false)
   const [isOpeningFile, setIsOpeningFile] = useState(false)
+  const summaryWarnings = parsed ? [...parsed.warnings, ...importWarnings] : []
 
   useEffect(() => {
     if (!isOpen) return
     setCode('')
     setStep('input')
     setParsed(null)
+    setImportWarnings([])
     setParseError(null)
   }, [isOpen])
 
   const handleTabChange = (index: number) => {
     setFormat(index === 0 ? 'mermaid' : 'structurizr')
     setCode('')
+    setImportWarnings([])
     setParseError(null)
   }
 
@@ -83,6 +95,7 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
     setCode(content)
     setStep('input')
     setParsed(null)
+    setImportWarnings([])
     setParseError(null)
   }, [])
 
@@ -122,8 +135,15 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
   const handleNext = async () => {
     if (!code.trim()) return
     setParseError(null)
+    setImportWarnings([])
 
     if (format === 'mermaid') {
+      const mermaidSource = extractMermaidCode(code) ?? code.trim()
+      const sourceLimitError = mermaidImportSourceLimitError(mermaidSource)
+      if (sourceLimitError) {
+        setParseError(sourceLimitError)
+        return
+      }
       setIsParsing(true)
       try {
         const result = await parseMermaidAsync(code)
@@ -132,6 +152,12 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
           setParseError(error)
           return
         }
+        const limitError = parsedMermaidImportLimitError(result)
+        if (limitError) {
+          setParseError(limitError)
+          return
+        }
+        setImportWarnings(getImportWarnings ? await getImportWarnings(result) : [])
         setParsed(result)
         setStep('summary')
       } finally {
@@ -151,6 +177,7 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
         direction: 'LR',
         source: code,
       }
+      setImportWarnings(getImportWarnings ? await getImportWarnings(result) : [])
       setParsed(result)
       setStep('summary')
     } catch (e: unknown) {
@@ -230,10 +257,10 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
                   <Text>• Elements: {parsed?.elements.length}</Text>
                   <Text>• Connectors: {parsed?.connectors.length}</Text>
                 </VStack>
-                {parsed?.warnings && parsed.warnings.length > 0 && (
+                {summaryWarnings.length > 0 && (
                   <Box p={3} bg="orange.50" color="orange.800" borderRadius="md" mb={4}>
                     <Text fontWeight="bold" fontSize="xs">Warnings:</Text>
-                    {parsed.warnings.map((w, i) => (
+                    {summaryWarnings.map((w, i) => (
                       <Text key={i} fontSize="xs">• {w}</Text>
                     ))}
                   </Box>

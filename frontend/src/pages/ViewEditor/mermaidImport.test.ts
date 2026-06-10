@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ParsedImport } from '../../pkg/importer/mermaid'
 import type { Connector, LibraryElement as WorkspaceElement, PlacedElement, View } from '../../types'
-import { importMermaidIntoView, mermaidLocalImportDescription, type MermaidImportClient } from './mermaidImport'
+import {
+  importMermaidIntoView,
+  layoutMermaidImport,
+  mermaidImportReviewWarnings,
+  mermaidLocalImportDescription,
+  type MermaidImportClient,
+} from './mermaidImport'
 
 function workspaceElement(id: number, name: string): WorkspaceElement {
   return {
@@ -85,6 +91,50 @@ function view(id: number): View {
 }
 
 describe('Mermaid view import', () => {
+  it('warns when node ids resolve to existing elements with different names', () => {
+    const parsed = {
+      direction: 'LR',
+      warnings: [],
+      source: 'flowchart LR',
+      elements: [
+        { ref: 'node_57', name: 'Imported Auth', kind: 'service', placements: [{ parentRef: 'root' }] },
+        { ref: 'api', name: 'API', kind: 'service', placements: [{ parentRef: 'root' }] },
+      ],
+      connectors: [],
+    } as unknown as ParsedImport
+
+    const warnings = mermaidImportReviewWarnings(parsed, [workspaceElement(57, 'Existing Auth')])
+
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('node_57')
+    expect(warnings[0]).toContain('Imported Auth')
+    expect(warnings[0]).toContain('Existing Auth')
+    expect(mermaidImportReviewWarnings(parsed, [workspaceElement(57, 'Imported Auth')])).toHaveLength(0)
+  })
+
+  it('lays out nodes without metadata away from positioned metadata nodes', () => {
+    const parsed = {
+      direction: 'LR',
+      warnings: [],
+      source: 'flowchart LR',
+      elements: [
+        { ref: 'node_1', name: 'Placed', kind: 'service', placements: [{ parentRef: 'root', positionX: 0, positionY: 0 }] },
+        { ref: 'node_2', name: 'Missing A', kind: 'service', placements: [{ parentRef: 'root' }] },
+        { ref: 'node_3', name: 'Missing B', kind: 'service', placements: [{ parentRef: 'root' }] },
+      ],
+      connectors: [
+        { ref: 'a', viewRef: 'root', sourceElementRef: 'node_2', targetElementRef: 'node_3', label: '' },
+      ],
+    } as unknown as ParsedImport
+
+    const positions = layoutMermaidImport(parsed, { x: 1000, y: 1000 })
+
+    expect(positions.get('node_1')).toEqual({ x: 1000, y: 1000 })
+    expect(positions.get('node_2')).not.toEqual({ x: 1000, y: 1000 })
+    expect(positions.get('node_3')).not.toEqual({ x: 1000, y: 1000 })
+    expect(positions.get('node_2')).not.toEqual(positions.get('node_3'))
+  })
+
   it('resolves exported node refs and matching connectors before creating missing resources', async () => {
     const existing = workspaceElement(57, 'Auth')
     const created = workspaceElement(99, 'API')
@@ -250,5 +300,47 @@ describe('Mermaid view import', () => {
       'deleteElement:90',
     ])
     expect(client.deleteConnector).not.toHaveBeenCalled()
+  })
+
+  it('does not create duplicate connectors from duplicate Mermaid edge lines in one import', async () => {
+    const createdConnector = connector(200, 1, 2, 'uses')
+    const client: MermaidImportClient = {
+      getElement: vi.fn(),
+      createElement: vi.fn(),
+      deleteElement: vi.fn(),
+      createView: vi.fn(),
+      deleteView: vi.fn(),
+      addPlacement: vi.fn(),
+      removePlacement: vi.fn(),
+      createConnector: vi.fn(async () => createdConnector),
+      deleteConnector: vi.fn(),
+    }
+    const parsed = {
+      direction: 'LR',
+      warnings: [],
+      source: 'flowchart LR',
+      elements: [
+        { ref: 'node_1', name: 'API', kind: 'service', placements: [{ parentRef: 'root' }] },
+        { ref: 'node_2', name: 'DB', kind: 'database', placements: [{ parentRef: 'root' }] },
+      ],
+      connectors: [
+        { ref: 'a', viewRef: 'root', sourceElementRef: 'node_1', targetElementRef: 'node_2', label: 'uses' },
+        { ref: 'b', viewRef: 'root', sourceElementRef: 'node_1', targetElementRef: 'node_2', label: 'uses' },
+      ],
+    } as unknown as ParsedImport
+
+    const summary = await importMermaidIntoView({
+      parsed,
+      currentViewId: 10,
+      center: { x: 0, y: 0 },
+      allElements: [workspaceElement(1, 'API'), workspaceElement(2, 'DB')],
+      viewElements: [],
+      connectors: [],
+      client,
+    })
+
+    expect(client.createConnector).toHaveBeenCalledTimes(1)
+    expect(summary.createdConnectorCount).toBe(1)
+    expect(summary.resolvedConnectorCount).toBe(1)
   })
 })

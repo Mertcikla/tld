@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest'
-import { extractMermaidCode, parseMermaid, parseMermaidAsync, tryParseMermaid } from './mermaid'
+import {
+  MERMAID_IMPORT_LIMITS,
+  extractMermaidCode,
+  mermaidImportSourceLimitError,
+  parseMermaid,
+  parseMermaidAsync,
+  parsedMermaidImportLimitError,
+  tryParseMermaid,
+} from './mermaid'
 
 const compatibleMermaidFixtures = [
   {
@@ -316,6 +324,31 @@ E--No-->C
     const code = 'graph TD\n  A["<b>Bold</b> text"]'
     const result = parseMermaid(code)
     expect(result.elements[0]?.name).toBe('Bold text')
+  })
+
+  it('decodes Mermaid-safe quote and ampersand entities in labels', () => {
+    const code = `flowchart LR
+  A["Worker &quot;A&quot; &amp; friends"]
+  A -- "writes &quot;to&quot; &amp; reads" --> B["Database"]`
+
+    const result = parseMermaid(code)
+
+    expect(result.warnings).toHaveLength(0)
+    expect(result.elements.find((element) => element.ref === 'A')?.name).toBe('Worker "A" & friends')
+    expect(result.connectors[0]?.label).toBe('writes "to" & reads')
+  })
+
+  it('reports Mermaid import source and parsed size limits', () => {
+    expect(mermaidImportSourceLimitError('flowchart LR\n  A --> B')).toBeNull()
+    expect(mermaidImportSourceLimitError('x'.repeat(MERMAID_IMPORT_LIMITS.maxSourceBytes + 1))).toContain('Limit is 250 KiB')
+    expect(parsedMermaidImportLimitError({
+      elements: Array.from({ length: MERMAID_IMPORT_LIMITS.maxElements + 1 }, (_, index) => ({ ref: `n${index}`, name: `Node ${index}` })),
+      connectors: [],
+    })).toBe(`Mermaid import has ${MERMAID_IMPORT_LIMITS.maxElements + 1} elements. Limit is ${MERMAID_IMPORT_LIMITS.maxElements}.`)
+    expect(parsedMermaidImportLimitError({
+      elements: [],
+      connectors: Array.from({ length: MERMAID_IMPORT_LIMITS.maxConnectors + 1 }, (_, index) => ({ ref: `c${index}`, sourceElementRef: 'a', targetElementRef: 'b' })),
+    })).toBe(`Mermaid import has ${MERMAID_IMPORT_LIMITS.maxConnectors + 1} connectors. Limit is ${MERMAID_IMPORT_LIMITS.maxConnectors}.`)
   })
 
   it('returns null for non-Mermaid clipboard text', () => {

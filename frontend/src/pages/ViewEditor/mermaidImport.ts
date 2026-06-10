@@ -51,7 +51,7 @@ function mermaidConnectorHandles(direction: MermaidDirection) {
 
 type MermaidConnectorHandles = ReturnType<typeof mermaidConnectorHandles>
 
-function mermaidRefElementId(ref: string) {
+export function mermaidRefElementId(ref: string) {
   const match = /^node_(\d+)$/.exec(ref)
   if (!match) return null
   const id = Number(match[1])
@@ -138,33 +138,26 @@ function mermaidImportTechnologyConnectors(element: ParsedImport['elements'][num
     }))
 }
 
-export function layoutMermaidImport(parsed: ParsedImport, center: { x: number; y: number }) {
-  const refs = parsed.elements.map((element) => element.ref).filter(Boolean)
-  const metadataPositions = new Map<string, { x: number; y: number }>()
-  parsed.elements.forEach((element) => {
-    const position = mermaidImportMetadataPosition(element)
-    if (position) metadataPositions.set(element.ref, position)
-  })
-  if (metadataPositions.size > 0) {
-    const values = Array.from(metadataPositions.values())
-    const left = Math.min(...values.map((position) => position.x))
-    const right = Math.max(...values.map((position) => position.x))
-    const top = Math.min(...values.map((position) => position.y))
-    const bottom = Math.max(...values.map((position) => position.y))
-    const metadataCenter = {
-      x: left + (right - left) / 2,
-      y: top + (bottom - top) / 2,
-    }
-    const positions = new Map<string, { x: number; y: number }>()
-    metadataPositions.forEach((position, ref) => {
-      positions.set(ref, {
-        x: center.x + position.x - metadataCenter.x,
-        y: center.y + position.y - metadataCenter.y,
-      })
-    })
-    return positions
+export function mermaidImportReviewWarnings(parsed: ParsedImport, allElements: readonly WorkspaceElement[]) {
+  const existingById = new Map(allElements.map((element) => [element.id, element]))
+  const mismatches: string[] = []
+  for (const element of parsed.elements) {
+    const existingId = mermaidRefElementId(element.ref)
+    if (existingId === null) continue
+    const existing = existingById.get(existingId)
+    if (!existing) continue
+    const importedName = element.name?.trim() ?? ''
+    const existingName = existing.name?.trim() ?? ''
+    if (!importedName || !existingName || importedName === existingName) continue
+    mismatches.push(`${element.ref}: "${importedName}" will reuse "${existingName}"`)
   }
+  if (mismatches.length === 0) return []
+  const samples = mismatches.slice(0, 3)
+  const suffix = mismatches.length > samples.length ? `, and ${mismatches.length - samples.length} more` : ''
+  return [`${countLabel(mismatches.length, 'Mermaid node')} will reuse existing workspace elements with different names: ${samples.join('; ')}${suffix}.`]
+}
 
+function layoutMermaidRefs(parsed: ParsedImport, refs: string[], center: { x: number; y: number }) {
   const refSet = new Set(refs)
   const outgoing = new Map<string, string[]>()
   const indegree = new Map<string, number>()
@@ -218,6 +211,52 @@ export function layoutMermaidImport(parsed: ParsedImport, center: { x: number; y
         ? { x: center.x + rankOffset, y: center.y + itemOffset }
         : { x: center.x + itemOffset, y: center.y + rankOffset })
     })
+  })
+
+  return positions
+}
+
+export function layoutMermaidImport(parsed: ParsedImport, center: { x: number; y: number }) {
+  const refs = parsed.elements.map((element) => element.ref).filter(Boolean)
+  const metadataPositions = new Map<string, { x: number; y: number }>()
+  parsed.elements.forEach((element) => {
+    const position = mermaidImportMetadataPosition(element)
+    if (position) metadataPositions.set(element.ref, position)
+  })
+  if (metadataPositions.size === 0) return layoutMermaidRefs(parsed, refs, center)
+
+  const values = Array.from(metadataPositions.values())
+  const left = Math.min(...values.map((position) => position.x))
+  const right = Math.max(...values.map((position) => position.x))
+  const top = Math.min(...values.map((position) => position.y))
+  const bottom = Math.max(...values.map((position) => position.y))
+  const metadataCenter = {
+    x: left + (right - left) / 2,
+    y: top + (bottom - top) / 2,
+  }
+  const positions = new Map<string, { x: number; y: number }>()
+  metadataPositions.forEach((position, ref) => {
+    positions.set(ref, {
+      x: center.x + position.x - metadataCenter.x,
+      y: center.y + position.y - metadataCenter.y,
+    })
+  })
+
+  const missingRefs = refs.filter((ref) => !metadataPositions.has(ref))
+  if (missingRefs.length === 0) return positions
+
+  const horizontal = parsed.direction === 'LR' || parsed.direction === 'RL'
+  const reverse = parsed.direction === 'RL' || parsed.direction === 'BT'
+  const metadataWidth = right - left
+  const metadataHeight = bottom - top
+  const offset = horizontal
+    ? Math.max(360, metadataWidth / 2 + 320)
+    : Math.max(240, metadataHeight / 2 + 220)
+  const fallbackCenter = horizontal
+    ? { x: center.x + offset * (reverse ? -1 : 1), y: center.y }
+    : { x: center.x, y: center.y + offset * (reverse ? -1 : 1) }
+  layoutMermaidRefs(parsed, missingRefs, fallbackCenter).forEach((position, ref) => {
+    positions.set(ref, position)
   })
 
   return positions
@@ -345,6 +384,7 @@ export async function importMermaidIntoView({
       const connectorKey = mermaidParsedConnectorKey(connector, source.id, target.id, handles)
       if (existingConnectorKeys.has(connectorKey)) {
         resolvedConnectorCount += 1
+        existingConnectorKeys.add(connectorKey)
         continue
       }
 
@@ -362,6 +402,7 @@ export async function importMermaidIntoView({
       })
       rollbackActions.push(() => client.deleteConnector(createdConnector.id))
       materializedConnectors.push(createdConnector)
+      existingConnectorKeys.add(connectorKey)
     }
     const summary = {
       resolvedElementCount,

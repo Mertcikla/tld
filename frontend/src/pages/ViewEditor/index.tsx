@@ -94,11 +94,17 @@ import {
 } from './hooks/useViewContextNeighbours'
 import { canonicalNodePairKey } from './pairKey'
 import type { ParsedImport } from '../../pkg/importer/mermaid'
-import { extractMermaidCode, parseMermaidAsync, parsedMermaidImportError } from '../../pkg/importer/mermaid'
+import {
+  extractMermaidCode,
+  mermaidImportSourceLimitError,
+  parseMermaidAsync,
+  parsedMermaidImportError,
+  parsedMermaidImportLimitError,
+} from '../../pkg/importer/mermaid'
 import { MermaidExporter } from '../../pkg/exporter/mermaid'
 import { vscodeBridge } from '../../lib/vscodeBridge'
 import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
-import { importMermaidIntoView, mermaidLocalImportDescription } from './mermaidImport'
+import { importMermaidIntoView, mermaidImportReviewWarnings, mermaidLocalImportDescription } from './mermaidImport'
 
 import { ViewEditorContext } from './context'
 import { useViewData } from './hooks/useViewData'
@@ -3333,6 +3339,10 @@ function ViewEditorInner({
     })
   }, [allElements, connectors, publishRealtimeConnectorUpsert, viewElementsRef])
 
+  const getMermaidImportWarnings = useCallback((parsed: ParsedImport) => (
+    extractMermaidCode(parsed.source) ? mermaidImportReviewWarnings(parsed, allElements) : []
+  ), [allElements])
+
   const runMermaidImport = useCallback(async (
     parsed: ParsedImport,
     currentViewId: number,
@@ -3346,6 +3356,11 @@ function ViewEditorInner({
     const parseError = parsedMermaidImportError(parsed)
     if (parseError) {
       toast({ status: 'error', title: options.failureTitle, description: parseError })
+      return false
+    }
+    const limitError = parsedMermaidImportLimitError(parsed)
+    if (limitError) {
+      toast({ status: 'error', title: options.failureTitle, description: limitError })
       return false
     }
 
@@ -3536,6 +3551,11 @@ function ViewEditorInner({
     if (!currentViewId) return
 
     event.preventDefault()
+    const sourceLimitError = mermaidImportSourceLimitError(mermaidCode)
+    if (sourceLimitError) {
+      toast({ status: 'error', title: 'Mermaid import failed', description: sourceLimitError })
+      return
+    }
     isPasteImportingRef.current = true
     try {
       const parsed = await parseMermaidAsync(mermaidCode)
@@ -4158,6 +4178,7 @@ function ViewEditorInner({
         <ImportModal
           isOpen={importModal.isOpen} onClose={importModal.onClose}
           onImport={handleImportView} isImporting={isImporting}
+          getImportWarnings={getMermaidImportWarnings}
         />
         <ConfirmDialog
           isOpen={duplicatePasteConfirm.isOpen}

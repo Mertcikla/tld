@@ -51,6 +51,28 @@ func TestRenderCmd_MermaidToFile(t *testing.T) {
 	}
 }
 
+func TestRenderCmd_MermaidEscapesQuotesAndFlattensNewlines(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "add", "API \"Gateway\"\nLine", "--ref", "api", "--kind", "service")
+	cmd.MustRunCmd(t, dir, "add", "DB", "--ref", "db", "--kind", "database")
+	cmd.MustRunCmd(t, dir, "connect", "--from", "api", "--to", "db", "--label", "reads \"from\"\nprimary")
+
+	stdout, _, err := cmd.RunCmd(t, dir, "render", "root")
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(stdout, `API &quot;Gateway&quot; Line`) {
+		t.Fatalf("expected escaped flattened element label, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, `reads &quot;from&quot; primary`) {
+		t.Fatalf("expected escaped flattened connector label, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, `\"`) {
+		t.Fatalf("expected quote entities instead of backslash-escaped quotes, got:\n%s", stdout)
+	}
+}
+
 func TestRenderCmd_MissingViewFails(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)

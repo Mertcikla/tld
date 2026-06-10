@@ -14,9 +14,39 @@ export interface ParsedImport {
   source: string
 }
 
+export const MERMAID_IMPORT_LIMITS = {
+  maxSourceBytes: 250 * 1024,
+  maxElements: 250,
+  maxConnectors: 500,
+} as const
+
 export function parsedMermaidImportError(parsed: ParsedImport) {
   if (parsed.warnings.length > 0) return parsed.warnings[0] ?? 'Failed to parse Mermaid diagram'
   if (parsed.elements.length === 0 && parsed.connectors.length === 0) return 'No compatible diagram content found.'
+  return null
+}
+
+function mermaidSourceByteLength(value: string) {
+  return new TextEncoder().encode(value).length
+}
+
+function formatKiB(bytes: number) {
+  return `${Math.ceil(bytes / 1024)} KiB`
+}
+
+export function mermaidImportSourceLimitError(source: string) {
+  const sourceBytes = mermaidSourceByteLength(source)
+  if (sourceBytes <= MERMAID_IMPORT_LIMITS.maxSourceBytes) return null
+  return `Mermaid source is too large (${formatKiB(sourceBytes)}). Limit is ${formatKiB(MERMAID_IMPORT_LIMITS.maxSourceBytes)}.`
+}
+
+export function parsedMermaidImportLimitError(parsed: Pick<ParsedImport, 'elements' | 'connectors'>) {
+  if (parsed.elements.length > MERMAID_IMPORT_LIMITS.maxElements) {
+    return `Mermaid import has ${parsed.elements.length} elements. Limit is ${MERMAID_IMPORT_LIMITS.maxElements}.`
+  }
+  if (parsed.connectors.length > MERMAID_IMPORT_LIMITS.maxConnectors) {
+    return `Mermaid import has ${parsed.connectors.length} connectors. Limit is ${MERMAID_IMPORT_LIMITS.maxConnectors}.`
+  }
   return null
 }
 
@@ -47,8 +77,16 @@ function mapEntries(value: unknown): Array<[string, Record<string, unknown>]> {
   return Array.from(value.entries()).map(([key, item]) => [String(key), asRecord(item)])
 }
 
+function decodeMermaidLabelEntities(value: string) {
+  return value.replace(/&quot;/g, '"').replace(/&amp;/g, '&')
+}
+
 function sanitizeLabel(value: string) {
-  return value.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+  return decodeMermaidLabelEntities(value)
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function addElement(result: ParsedImport, ref: string, name = ref, kind = 'system', description?: string, technology?: string) {
