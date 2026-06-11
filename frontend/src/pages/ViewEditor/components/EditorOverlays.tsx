@@ -5,11 +5,14 @@ import {
   DEFAULT_TARGET_HANDLE_SIDE,
   getHandleFlowPosition,
   getLogicalHandleId,
+  getOppositeHandleSide,
 } from '../../../utils/edgeDistribution'
+import { buildViewConnectorPath, positionForHandleSide, type ConnectorRouteStyle } from '../../../utils/connectorRoute'
 
 interface EditorOverlaysProps {
   clickConnectMode: { sourceNodeId: string; sourceHandle: string; targetHandle?: string } | null
   clickConnectCursorPos: { x: number; y: number } | null
+  connectorRouteStyle: ConnectorRouteStyle
   handleReconnectDrag: {
     endpoint: 'source' | 'target'
     fixedNodeId: string
@@ -23,6 +26,7 @@ interface EditorOverlaysProps {
 export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
   clickConnectMode,
   clickConnectCursorPos,
+  connectorRouteStyle,
   handleReconnectDrag,
   rfNodes,
 }) => {
@@ -49,27 +53,23 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
         const sx = fx * viewportState.zoom + viewportState.x + rfX
         const sy = fy * viewportState.zoom + viewportState.y + rfY
         const tx = clickConnectCursorPos.x; const ty = clickConnectCursorPos.y
-        const dx = Math.abs(tx - sx); const dy = Math.abs(ty - sy)
-        const CURVATURE = 0.5
-        const isHSrc = sourceSide === 'left' || sourceSide === 'right'
-        const srcMinStem = (isHSrc ? w * 0.5 : h * 0.5) * viewportState.zoom
-        let c1x = sx, c1y = sy
-        if (sourceSide === 'left') c1x = sx - Math.max(dx * CURVATURE, srcMinStem)
-        else if (sourceSide === 'right') c1x = sx + Math.max(dx * CURVATURE, srcMinStem)
-        else if (sourceSide === 'top') c1y = sy - Math.max(dy * CURVATURE, srcMinStem)
-        else c1y = sy + Math.max(dy * CURVATURE, srcMinStem)
-        let c2x = tx, c2y = ty
-        if (clickConnectMode.targetHandle) {
-          const targetSide = getLogicalHandleId(clickConnectMode.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
-          const tgtMinStem = (targetSide === 'left' || targetSide === 'right') ? 90 * viewportState.zoom : 40 * viewportState.zoom
-          if (targetSide === 'left') c2x = tx - Math.max(dx * CURVATURE, tgtMinStem)
-          else if (targetSide === 'right') c2x = tx + Math.max(dx * CURVATURE, tgtMinStem)
-          else if (targetSide === 'top') c2y = ty - Math.max(dy * CURVATURE, tgtMinStem)
-          else c2y = ty + Math.max(dy * CURVATURE, tgtMinStem)
-        }
+        const targetSide = getLogicalHandleId(clickConnectMode.targetHandle, null) ?? getOppositeHandleSide(sourceSide)
+        const { path } = buildViewConnectorPath({
+          routeStyle: connectorRouteStyle,
+          sourceX: sx,
+          sourceY: sy,
+          targetX: tx,
+          targetY: ty,
+          sourcePosition: positionForHandleSide(sourceSide),
+          targetPosition: positionForHandleSide(targetSide),
+          sourceWidth: w * viewportState.zoom,
+          sourceHeight: h * viewportState.zoom,
+          targetWidth: 180 * viewportState.zoom,
+          targetHeight: 80 * viewportState.zoom,
+        })
         return (
           <svg key="click-connect-connector" style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 9997 }}>
-            <path d={`M${sx},${sy} C${c1x},${c1y} ${c2x},${c2y} ${tx},${ty}`}
+            <path d={path}
               className="react-flow__connector-path" stroke="var(--theme-blue)" strokeWidth="2" fill="none" opacity="0.8" />
           </svg>
         )

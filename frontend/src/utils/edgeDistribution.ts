@@ -10,6 +10,19 @@ export type LogicalHandleSide = 'top' | 'bottom' | 'left' | 'right'
 export const DEFAULT_SOURCE_HANDLE_SIDE: LogicalHandleSide = 'right'
 export const DEFAULT_TARGET_HANDLE_SIDE: LogicalHandleSide = 'left'
 
+export function getOppositeHandleSide(side: LogicalHandleSide): LogicalHandleSide {
+  switch (side) {
+    case 'top':
+      return 'bottom'
+    case 'bottom':
+      return 'top'
+    case 'left':
+      return 'right'
+    case 'right':
+      return 'left'
+  }
+}
+
 function clampSlot(slot: number) {
   return Math.max(0, Math.min(HANDLE_SLOT_COUNT - 1, slot))
 }

@@ -1,29 +1,30 @@
 import { memo, useCallback } from 'react'
-import { BaseEdge, EdgeLabelRenderer, Position, useStore, type EdgeProps } from 'reactflow'
+import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps } from 'reactflow'
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
 import type { ProxyConnectorDetails } from '../crossBranch/types'
+import { buildViewConnectorPath, routeStyleFromValue } from '../utils/connectorRoute'
 
-const CURVATURE = 0.5
+export function ViewConnectorConnectionLine({
+  connectionLineStyle,
+  connectionLineType,
+  fromX,
+  fromY,
+  toX,
+  toY,
+  fromPosition,
+  toPosition,
+}: ConnectionLineComponentProps) {
+  const { path } = buildViewConnectorPath({
+    routeStyle: routeStyleFromValue(connectionLineType),
+    sourceX: fromX,
+    sourceY: fromY,
+    targetX: toX,
+    targetY: toY,
+    sourcePosition: fromPosition,
+    targetPosition: toPosition,
+  })
 
-/**
- * Returns the bezier control point for one end of an connector.
- * The stem extends in the handle's exit direction by at least `minStem`
- * world-units, preventing the curve from turning sharply when dx/dy is small.
- */
-function controlPoint(
-  x: number, y: number,
-  tx: number, ty: number,
-  pos: Position,
-  minStem: number,
-): [number, number] {
-  const dx = Math.abs(tx - x)
-  const dy = Math.abs(ty - y)
-  switch (pos) {
-    case Position.Left:   return [x - Math.max(dx * CURVATURE, minStem), y]
-    case Position.Right:  return [x + Math.max(dx * CURVATURE, minStem), y]
-    case Position.Top:    return [x, y - Math.max(dy * CURVATURE, minStem)]
-    case Position.Bottom: return [x, y + Math.max(dy * CURVATURE, minStem)]
-  }
+  return <path fill="none" d={path} style={connectionLineStyle} />
 }
 
 function ViewBezierConnector({
@@ -33,6 +34,7 @@ function ViewBezierConnector({
   style, label, labelStyle, labelBgStyle, labelShowBg: _labelShowBg, labelBgPadding, labelBgBorderRadius,
   markerStart, markerEnd,
   selected,
+  data,
 }: EdgeProps) {
   const sourceNode = useStore((s) => s.nodeInternals.get(source))
   const targetNode = useStore((s) => s.nodeInternals.get(target))
@@ -48,27 +50,37 @@ function ViewBezierConnector({
   const tgtW = targetNode?.width ?? 200
   const tgtH = targetNode?.height ?? 100
 
-  const srcMinStem = (sourcePosition === Position.Left || sourcePosition === Position.Right)
-    ? srcW * 0.5 : srcH * 0.5
-  const tgtMinStem = (targetPosition === Position.Left || targetPosition === Position.Right)
-    ? tgtW * 0.5 : tgtH * 0.5
-
-  const [cp1x, cp1y] = controlPoint(finalSourceX, finalSourceY, finalTargetX, finalTargetY, sourcePosition, srcMinStem)
-  // Target control point: extend from target back toward source
-  const [cp2x, cp2y] = controlPoint(finalTargetX, finalTargetY, finalSourceX, finalSourceY, targetPosition, tgtMinStem)
-
-  const path = `M ${finalSourceX},${finalSourceY} C ${cp1x},${cp1y} ${cp2x},${cp2y} ${finalTargetX},${finalTargetY}`
+  const routeStyle = routeStyleFromValue((data as { style?: unknown } | undefined)?.style)
+  const { path, labelX, labelY } = buildViewConnectorPath({
+    routeStyle,
+    sourceX: finalSourceX,
+    sourceY: finalSourceY,
+    targetX: finalTargetX,
+    targetY: finalTargetY,
+    sourcePosition,
+    targetPosition,
+    sourceWidth: srcW,
+    sourceHeight: srcH,
+    targetWidth: tgtW,
+    targetHeight: tgtH,
+  })
 
   const INTERACTION_PADDING = 24
-  const lenSource = Math.hypot(cp1x - finalSourceX, cp1y - finalSourceY)
-  const lenTarget = Math.hypot(cp2x - finalTargetX, cp2y - finalTargetY)
-
-  const ix1 = lenSource > INTERACTION_PADDING ? finalSourceX + (cp1x - finalSourceX) * (INTERACTION_PADDING / lenSource) : finalSourceX
-  const iy1 = lenSource > INTERACTION_PADDING ? finalSourceY + (cp1y - finalSourceY) * (INTERACTION_PADDING / lenSource) : finalSourceY
-  const ix2 = lenTarget > INTERACTION_PADDING ? finalTargetX + (cp2x - finalTargetX) * (INTERACTION_PADDING / lenTarget) : finalTargetX
-  const iy2 = lenTarget > INTERACTION_PADDING ? finalTargetY + (cp2y - finalTargetY) * (INTERACTION_PADDING / lenTarget) : finalTargetY
-
-  const interactionPath = `M ${ix1},${iy1} C ${cp1x},${cp1y} ${cp2x},${cp2y} ${ix2},${iy2}`
+  const interactionPath = routeStyle === 'bezier'
+    ? buildViewConnectorPath({
+      routeStyle,
+      sourceX: finalSourceX,
+      sourceY: finalSourceY,
+      targetX: finalTargetX,
+      targetY: finalTargetY,
+      sourcePosition,
+      targetPosition,
+      sourceWidth: Math.max(srcW - INTERACTION_PADDING * 2, 0),
+      sourceHeight: Math.max(srcH - INTERACTION_PADDING * 2, 0),
+      targetWidth: Math.max(tgtW - INTERACTION_PADDING * 2, 0),
+      targetHeight: Math.max(tgtH - INTERACTION_PADDING * 2, 0),
+    }).path
+    : path
 
   const fontSize = Number(labelStyle?.fontSize ?? 11)
   const fontWeight = 500
@@ -107,10 +119,6 @@ function ViewBezierConnector({
     (versionBadgeText ? badgeSize : 0) +
     (versionBadgeText && proxyBadgeText ? badgeGap : 0) +
     (proxyBadgeText ? badgeSize : 0)
-
-  // Cubic bezier midpoint at t=0.5
-  const labelX = 0.125 * finalSourceX + 0.375 * cp1x + 0.375 * cp2x + 0.125 * finalTargetX
-  const labelY = 0.125 * finalSourceY + 0.375 * cp1y + 0.375 * cp2y + 0.125 * finalTargetY
 
   const labelLayout = useEdgeLabelLayout({
     id,
