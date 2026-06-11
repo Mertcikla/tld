@@ -164,12 +164,19 @@ async function stopServer(child: ChildProcess) {
 
   child.kill('SIGTERM')
   const exited = waitForExit(child)
-  const timeout = delay(serverShutdownTimeout).then(async () => {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+  const timeout = new Promise<void>((resolveTimeout) => {
+    timeoutId = setTimeout(() => resolveTimeout(), serverShutdownTimeout)
+  }).then(async () => {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
     await exited
   })
 
-  await Promise.race([exited, timeout])
+  try {
+    await Promise.race([exited, timeout])
+  } finally {
+    if (timeoutId !== null) clearTimeout(timeoutId)
+  }
 }
 
 function waitForExit(child: ChildProcess) {
