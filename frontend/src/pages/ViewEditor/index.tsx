@@ -735,6 +735,14 @@ function ViewEditorInner({
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
   const [selectedProxyConnectorDetails, setSelectedProxyConnectorDetails] = useState<ProxyConnectorDetails | null>(null)
+  const [suppressedSelectedConnectorHandleHighlightId, setSuppressedSelectedConnectorHandleHighlightId] = useState<number | null>(null)
+  const suppressSelectedConnectorHandleHighlight = selectedEdge !== null && suppressedSelectedConnectorHandleHighlightId === selectedEdge.id
+
+  useEffect(() => {
+    if (suppressedSelectedConnectorHandleHighlightId !== null && selectedEdge?.id !== suppressedSelectedConnectorHandleHighlightId) {
+      setSuppressedSelectedConnectorHandleHighlightId(null)
+    }
+  }, [selectedEdge?.id, suppressedSelectedConnectorHandleHighlightId])
 
   const [prevViewId, setPrevViewId] = useState(viewId)
   if (viewId !== prevViewId) {
@@ -943,6 +951,7 @@ function ViewEditorInner({
     clickConnectMode,
     isConnectorCreatePreviewActive,
     selectedConnector: selectedEdge,
+    suppressSelectedConnectorHandleHighlight,
     activeTags,
     hiddenLayerTags,
     hoveredLayerTags,
@@ -2498,6 +2507,12 @@ function ViewEditorInner({
     onPlacementRemoved: pushPlacementRemoveAction,
     onConnectorSaved: publishRealtimeConnectorUpsert,
     onConnectorUpdated: pushConnectorEditAction,
+    onConnectorReconnected: useCallback((connector: Connector) => {
+      setSuppressedSelectedConnectorHandleHighlightId(connector.id)
+    }, []),
+    onConnectorSelected: useCallback(() => {
+      setSuppressedSelectedConnectorHandleHighlightId(null)
+    }, []),
     onConnectorDeleted: pushConnectorDeleteAction,
     onSelectionRemoveFromView: handleBulkRemoveFromView,
     onUnsupportedMutation: handleUnsupportedMutation,
@@ -2575,11 +2590,15 @@ function ViewEditorInner({
     if (Object.keys(hiddenProxyCountsByPair).length === 0) return rfEdges
 
     let changed = false
+    const badgePairs = new Set<string>()
     const next = rfEdges.map((edge) => {
       const pairKey = canonicalNodePairKey(edge.source, edge.target)
-      const proxyBadgeCount = hiddenProxyCountsByPair[pairKey] ?? 0
+      const rawProxyBadgeCount = hiddenProxyCountsByPair[pairKey] ?? 0
+      const showProxyBadge = rawProxyBadgeCount > 0 && !badgePairs.has(pairKey)
+      if (rawProxyBadgeCount > 0) badgePairs.add(pairKey)
+      const proxyBadgeCount = showProxyBadge ? rawProxyBadgeCount : 0
       const currentBadgeCount = (edge.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount ?? 0
-      const proxyBadgeDetails = hiddenProxyDetailsByPair[pairKey] ?? null
+      const proxyBadgeDetails = showProxyBadge ? (hiddenProxyDetailsByPair[pairKey] ?? null) : null
       const currentBadgeDetails = (edge.data as { proxyBadgeDetails?: ProxyConnectorDetails | null } | undefined)?.proxyBadgeDetails ?? null
       if (proxyBadgeCount === currentBadgeCount && proxyBadgeDetails === currentBadgeDetails) return edge
       changed = true

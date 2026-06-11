@@ -4,16 +4,12 @@ import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayou
 import type { ProxyConnectorDetails } from '../crossBranch/types'
 import { buildViewConnectorPath, handleSideForPosition, positionForHandleSide, routeStyleFromValue } from '../utils/connectorRoute'
 import {
-  CONNECTOR_SNAP_RADIUS,
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
   getCenterVisualHandleId,
   getHandleFlowPosition,
   getLogicalHandleId,
 } from '../utils/edgeDistribution'
-import { findClosestHandles } from '../pages/ViewEditor/utils'
-
-const PENDING_ELEMENT_PREVIEW_NODE_ID = 'pending-element'
 
 function getNodeFlowOrigin(node: RFNode) {
   return ((node as { positionAbsolute?: { x: number; y: number } }).positionAbsolute ?? node.position)
@@ -31,44 +27,19 @@ export function ViewConnectorConnectionLine({
   fromPosition,
   toPosition,
 }: ConnectionLineComponentProps) {
-  const targetNode = useStore((s) => {
-    let nearest: RFNode | null = null
-    let nearestDistance = Infinity
-
-    for (const node of s.nodeInternals.values()) {
-      if (fromNode?.id && node.id === fromNode.id) continue
-      if (node.id === PENDING_ELEMENT_PREVIEW_NODE_ID) continue
-      if (node.type && node.type !== 'elementNode') continue
-
-      const width = node.width ?? 180
-      const height = node.height ?? 80
-      const origin = getNodeFlowOrigin(node)
-      const centerX = origin.x + width / 2
-      const centerY = origin.y + height / 2
-      const distance = Math.hypot(toX - centerX, toY - centerY)
-      const isInsideNode = toX >= origin.x && toX <= origin.x + width && toY >= origin.y && toY <= origin.y + height
-      if ((isInsideNode || distance < CONNECTOR_SNAP_RADIUS) && distance < nearestDistance) {
-        nearest = node
-        nearestDistance = distance
-      }
-    }
-
-    return nearest
-  })
-
   const sourceFallbackSide = handleSideForPosition(fromPosition, DEFAULT_SOURCE_HANDLE_SIDE)
   const sourceSide = getLogicalHandleId(fromHandle?.id, sourceFallbackSide) ?? sourceFallbackSide
   const sourceHandle = getCenterVisualHandleId(fromHandle?.id ?? sourceSide, sourceSide) ?? sourceSide
   let finalFromX = fromX
   let finalFromY = fromY
-  let finalToX = toX
-  let finalToY = toY
+  const finalToX = toX
+  const finalToY = toY
   let finalSourceSide = sourceSide
-  let finalTargetSide = handleSideForPosition(toPosition, DEFAULT_TARGET_HANDLE_SIDE)
+  const finalTargetSide = handleSideForPosition(toPosition, DEFAULT_TARGET_HANDLE_SIDE)
   let sourceWidth = 200
   let sourceHeight = 100
-  let targetWidth = 200
-  let targetHeight = 100
+  const targetWidth = 200
+  const targetHeight = 100
 
   if (fromNode) {
     sourceWidth = fromNode.width ?? sourceWidth
@@ -78,19 +49,6 @@ export function ViewConnectorConnectionLine({
     finalFromX = sourcePoint.x
     finalFromY = sourcePoint.y
     finalSourceSide = sourcePoint.side
-  }
-
-  if (fromNode && targetNode) {
-    targetWidth = targetNode.width ?? targetWidth
-    targetHeight = targetNode.height ?? targetHeight
-    const closestHandles = findClosestHandles(fromNode, targetNode)
-    const targetSide = getLogicalHandleId(closestHandles.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
-    const targetHandle = getCenterVisualHandleId(closestHandles.targetHandle, targetSide) ?? targetSide
-    const targetOrigin = getNodeFlowOrigin(targetNode)
-    const targetPoint = getHandleFlowPosition(targetOrigin.x, targetOrigin.y, targetWidth, targetHeight, targetHandle, targetSide)
-    finalToX = targetPoint.x
-    finalToY = targetPoint.y
-    finalTargetSide = targetPoint.side
   }
 
   const { path } = buildViewConnectorPath({

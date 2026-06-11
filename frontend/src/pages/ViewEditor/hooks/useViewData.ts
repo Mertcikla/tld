@@ -26,6 +26,7 @@ interface ViewDataOptions {
   clickConnectMode: { sourceNodeId: string; sourceHandle: string; targetHandle?: string } | null
   isConnectorCreatePreviewActive?: boolean
   selectedConnector: Connector | null
+  suppressSelectedConnectorHandleHighlight?: boolean
   activeTags: string[]
   hiddenLayerTags: string[]
   hoveredLayerTags: string[] | null
@@ -168,6 +169,7 @@ export function useViewData({
   clickConnectMode,
   isConnectorCreatePreviewActive = false,
   selectedConnector,
+  suppressSelectedConnectorHandleHighlight = false,
   activeTags,
   hiddenLayerTags,
   hoveredLayerTags,
@@ -393,8 +395,10 @@ export function useViewData({
       targetDraft.reconnect.push({ handleId: layout.targetHandle, edgeId, endpoint: 'target', selected: isSelected })
 
       if (isSelected) {
-        sourceDraft.selected.add(layout.sourceHandle)
-        targetDraft.selected.add(layout.targetHandle)
+        if (!suppressSelectedConnectorHandleHighlight) {
+          sourceDraft.selected.add(layout.sourceHandle)
+          targetDraft.selected.add(layout.targetHandle)
+        }
         sourceDraft.highlighted = true
         targetDraft.highlighted = true
       }
@@ -432,7 +436,7 @@ export function useViewData({
     }
     connectionMetaCacheRef.current = next
     return next
-  }, [connectorLayouts, selectedEdgeId])
+  }, [connectorLayouts, selectedEdgeId, suppressSelectedConnectorHandleHighlight])
 
   // ── Derive RF nodes ────────────────────────────────────────────────────────
   useEffect(() => {
