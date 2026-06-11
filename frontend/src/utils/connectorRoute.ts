@@ -5,7 +5,7 @@ const CURVATURE = 0.5
 
 export type ConnectorRouteStyle = 'bezier' | 'straight' | 'step' | 'smoothstep'
 
-type RoutePoint = { x: number; y: number }
+
 
 export function routeStyleFromValue(value: unknown): ConnectorRouteStyle {
   return value === 'straight' || value === 'step' || value === 'smoothstep' ? value : 'bezier'
@@ -57,7 +57,9 @@ function controlPoint(
   }
 }
 
-function edgePathFromPoints(points: RoutePoint[], borderRadius = 0) {
+export type RoutePoint = { x: number; y: number }
+
+export function edgePathFromPoints(points: RoutePoint[], borderRadius = 0) {
   if (points.length === 0) return ''
   const commands = [`M ${points[0].x},${points[0].y}`]
 
@@ -88,32 +90,199 @@ function edgePathFromPoints(points: RoutePoint[], borderRadius = 0) {
   return commands.join(' ')
 }
 
-function stepRoutePoints(
+export function stepRoutePoints(
   sourceX: number,
   sourceY: number,
   targetX: number,
   targetY: number,
   sourcePosition: Position,
   targetPosition: Position,
+  _sourceWidth = 200,
+  sourceHeight = 100,
+  _targetWidth = 200,
+  targetHeight = 100,
 ) {
-  const midX = (sourceX + targetX) / 2
-  const midY = (sourceY + targetY) / 2
   const sourceOrth = sourcePosition === Position.Left || sourcePosition === Position.Right ? 'h' : 'v'
   const targetOrth = targetPosition === Position.Left || targetPosition === Position.Right ? 'h' : 'v'
-  const points: RoutePoint[] = [{ x: sourceX, y: sourceY }]
+
+  const sourceOffset = (sourceHeight ?? 100) / 2
+  const targetOffset = (targetHeight ?? 100) / 2
+
+  let points: RoutePoint[] = []
 
   if (sourceOrth === 'h' && targetOrth === 'h') {
-    points.push({ x: midX, y: sourceY }, { x: midX, y: targetY })
+    if (sourcePosition === Position.Right && targetPosition === Position.Right) {
+      const maxX = Math.max(sourceX, targetX)
+      points = [
+        { x: sourceX, y: sourceY },
+        { x: maxX + sourceOffset, y: sourceY },
+        { x: maxX + sourceOffset, y: targetY },
+        { x: targetX, y: targetY }
+      ]
+    } else if (sourcePosition === Position.Left && targetPosition === Position.Left) {
+      const minX = Math.min(sourceX, targetX)
+      points = [
+        { x: sourceX, y: sourceY },
+        { x: minX - sourceOffset, y: sourceY },
+        { x: minX - sourceOffset, y: targetY },
+        { x: targetX, y: targetY }
+      ]
+    } else if (sourcePosition === Position.Right && targetPosition === Position.Left) {
+      if (sourceX + 16 < targetX) {
+        const midX = (sourceX + targetX) / 2
+        points = [
+          { x: sourceX, y: sourceY },
+          { x: midX, y: sourceY },
+          { x: midX, y: targetY },
+          { x: targetX, y: targetY }
+        ]
+      } else {
+        const midY = (sourceY + targetY) / 2
+        points = [
+          { x: sourceX, y: sourceY },
+          { x: sourceX + sourceOffset, y: sourceY },
+          { x: sourceX + sourceOffset, y: midY },
+          { x: targetX - targetOffset, y: midY },
+          { x: targetX - targetOffset, y: targetY },
+          { x: targetX, y: targetY }
+        ]
+      }
+    } else if (sourcePosition === Position.Left && targetPosition === Position.Right) {
+      if (targetX + 16 < sourceX) {
+        const midX = (sourceX + targetX) / 2
+        points = [
+          { x: sourceX, y: sourceY },
+          { x: midX, y: sourceY },
+          { x: midX, y: targetY },
+          { x: targetX, y: targetY }
+        ]
+      } else {
+        const midY = (sourceY + targetY) / 2
+        points = [
+          { x: sourceX, y: sourceY },
+          { x: sourceX - sourceOffset, y: sourceY },
+          { x: sourceX - sourceOffset, y: midY },
+          { x: targetX + targetOffset, y: midY },
+          { x: targetX + targetOffset, y: targetY },
+          { x: targetX, y: targetY }
+        ]
+      }
+    }
   } else if (sourceOrth === 'v' && targetOrth === 'v') {
-    points.push({ x: sourceX, y: midY }, { x: targetX, y: midY })
+    if (sourcePosition === Position.Bottom && targetPosition === Position.Bottom) {
+      const maxY = Math.max(sourceY, targetY)
+      points = [
+        { x: sourceX, y: sourceY },
+        { x: sourceX, y: maxY + sourceOffset },
+        { x: targetX, y: maxY + sourceOffset },
+        { x: targetX, y: targetY }
+      ]
+    } else if (sourcePosition === Position.Top && targetPosition === Position.Top) {
+      const minY = Math.min(sourceY, targetY)
+      points = [
+        { x: sourceX, y: sourceY },
+        { x: sourceX, y: minY - sourceOffset },
+        { x: targetX, y: minY - sourceOffset },
+        { x: targetX, y: targetY }
+      ]
+    } else if (sourcePosition === Position.Bottom && targetPosition === Position.Top) {
+      if (sourceY + 16 < targetY) {
+        const midY = (sourceY + targetY) / 2
+        points = [
+          { x: sourceX, y: sourceY },
+          { x: sourceX, y: midY },
+          { x: targetX, y: midY },
+          { x: targetX, y: targetY }
+        ]
+      } else {
+        const midX = (sourceX + targetX) / 2
+        points = [
+          { x: sourceX, y: sourceY },
+          { x: sourceX, y: sourceY + sourceOffset },
+          { x: midX, y: sourceY + sourceOffset },
+          { x: midX, y: targetY - targetOffset },
+          { x: targetX, y: targetY - targetOffset },
+          { x: targetX, y: targetY }
+        ]
+      }
+    } else if (sourcePosition === Position.Top && targetPosition === Position.Bottom) {
+      if (targetY + 16 < sourceY) {
+        const midY = (sourceY + targetY) / 2
+        points = [
+          { x: sourceX, y: sourceY },
+          { x: sourceX, y: midY },
+          { x: targetX, y: midY },
+          { x: targetX, y: targetY }
+        ]
+      } else {
+        const midX = (sourceX + targetX) / 2
+        points = [
+          { x: sourceX, y: sourceY },
+          { x: sourceX, y: sourceY - sourceOffset },
+          { x: midX, y: sourceY - sourceOffset },
+          { x: midX, y: targetY + targetOffset },
+          { x: targetX, y: targetY + targetOffset },
+          { x: targetX, y: targetY }
+        ]
+      }
+    }
   } else if (sourceOrth === 'h' && targetOrth === 'v') {
-    points.push({ x: targetX, y: sourceY })
+    const exitX = sourcePosition === Position.Left ? sourceX - sourceOffset : sourceX + sourceOffset
+    const entryY = targetPosition === Position.Top ? targetY - targetOffset : targetY + targetOffset
+    const isCorrectSide = (sourcePosition === Position.Right && targetX >= sourceX) ||
+                          (sourcePosition === Position.Left && targetX <= sourceX)
+
+    if (isCorrectSide && Math.abs(sourceX - targetX) >= 16) {
+      points = [
+        { x: sourceX, y: sourceY },
+        { x: targetX, y: sourceY },
+        { x: targetX, y: targetY }
+      ]
+    } else {
+      points = [
+        { x: sourceX, y: sourceY },
+        { x: exitX, y: sourceY },
+        { x: exitX, y: entryY },
+        { x: targetX, y: entryY },
+        { x: targetX, y: targetY }
+      ]
+    }
   } else {
-    points.push({ x: sourceX, y: targetY })
+    const exitY = sourcePosition === Position.Top ? sourceY - sourceOffset : sourceY + sourceOffset
+    const entryX = targetPosition === Position.Left ? targetX - targetOffset : targetX + targetOffset
+    const isCorrectSide = (targetPosition === Position.Right && sourceX >= targetX) ||
+                          (targetPosition === Position.Left && sourceX <= targetX)
+
+    if (isCorrectSide && Math.abs(sourceY - targetY) >= 16) {
+      points = [
+        { x: sourceX, y: sourceY },
+        { x: sourceX, y: targetY },
+        { x: targetX, y: targetY }
+      ]
+    } else {
+      points = [
+        { x: sourceX, y: sourceY },
+        { x: sourceX, y: exitY },
+        { x: entryX, y: exitY },
+        { x: entryX, y: targetY },
+        { x: targetX, y: targetY }
+      ]
+    }
   }
 
-  points.push({ x: targetX, y: targetY })
-  return points
+  const result: RoutePoint[] = []
+  for (const p of points) {
+    if (result.length === 0) {
+      result.push(p)
+    } else {
+      const prev = result[result.length - 1]
+      if (Math.abs(prev.x - p.x) > 0.01 || Math.abs(prev.y - p.y) > 0.01) {
+        result.push(p)
+      }
+    }
+  }
+
+  return result
 }
 
 export function buildViewConnectorPath(args: {
@@ -152,20 +321,40 @@ export function buildViewConnectorPath(args: {
   }
 
   if (routeStyle === 'step' || routeStyle === 'smoothstep') {
-    const points = stepRoutePoints(sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition)
+    const points = stepRoutePoints(
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+      sourcePosition,
+      targetPosition,
+      sourceWidth,
+      sourceHeight,
+      targetWidth,
+      targetHeight,
+    )
     let labelX = (sourceX + targetX) / 2
     let labelY = (sourceY + targetY) / 2
 
-    if (points.length === 4) {
-      labelX = (points[1].x + points[2].x) / 2
-      labelY = (points[1].y + points[2].y) / 2
-    } else if (points.length === 3) {
-      const d1 = Math.abs(points[1].x - points[0].x) + Math.abs(points[1].y - points[0].y)
-      const d2 = Math.abs(points[2].x - points[1].x) + Math.abs(points[2].y - points[1].y)
-      const first = d1 > d2 ? points[0] : points[1]
-      const second = d1 > d2 ? points[1] : points[2]
-      labelX = (first.x + second.x) / 2
-      labelY = (first.y + second.y) / 2
+    if (points.length > 1) {
+      let maxLen = -1
+      let bestIdx = 0
+      const startIdx = points.length >= 4 ? 1 : 0
+      const endIdx = points.length >= 4 ? points.length - 2 : points.length - 1
+
+      for (let i = startIdx; i < endIdx; i++) {
+        const p1 = points[i]
+        const p2 = points[i + 1]
+        const len = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+        if (len > maxLen) {
+          maxLen = len
+          bestIdx = i
+        }
+      }
+      const p1 = points[bestIdx]
+      const p2 = points[bestIdx + 1]
+      labelX = (p1.x + p2.x) / 2
+      labelY = (p1.y + p2.y) / 2
     }
 
     return {
