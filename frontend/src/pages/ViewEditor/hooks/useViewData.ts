@@ -24,6 +24,7 @@ interface ViewDataOptions {
   viewId: number | null
   interactionSourceId: number | null
   clickConnectMode: { sourceNodeId: string; sourceHandle: string; targetHandle?: string } | null
+  isConnectorCreatePreviewActive?: boolean
   selectedConnector: Connector | null
   activeTags: string[]
   hiddenLayerTags: string[]
@@ -165,6 +166,7 @@ export function useViewData({
   viewId,
   interactionSourceId,
   clickConnectMode,
+  isConnectorCreatePreviewActive = false,
   selectedConnector,
   activeTags,
   hiddenLayerTags,
@@ -441,6 +443,7 @@ export function useViewData({
       const activeSet = activeTags.length > 0 ? new Set(activeTags) : null
       const hoveredSet = hoveredLayerTags !== null ? new Set(hoveredLayerTags) : null
       const isClickConnectMode = clickConnectMode !== null
+      const isCreateConnectMode = isConnectorCreatePreviewActive || isClickConnectMode || interactionSourceId !== null
       const versionElementChanges = versionPreview?.elementChanges
       const versionElementLineDeltas = versionPreview?.elementLineDeltas
       const versionActive = !!versionPreview
@@ -504,6 +507,7 @@ export function useViewData({
           existing.data.parentViewId === parentViewId &&
           existing.data.interactionSourceId === interactionSourceId &&
           existing.data.isClickConnectMode === isClickConnectMode &&
+          existing.data.isCreateConnectMode === isCreateConnectMode &&
           existing.data.tagColors === tagColors &&
           existing.data.layerHighlightColor === layerHighlightColor &&
           existing.data.forceShowTagPopup === isLayerHighlighted &&
@@ -546,6 +550,7 @@ export function useViewData({
             isZoomHovered,
             interactionSourceId,
             isClickConnectMode,
+            isCreateConnectMode,
             tagColors,
             layerHighlightColor,
             forceShowTagPopup: isLayerHighlighted,
@@ -561,7 +566,7 @@ export function useViewData({
     })
   }, [
     viewElements, linksMap, parentLinksMap, viewParentLinks, parentViewId,
-    interactionSourceId, clickConnectMode,
+    interactionSourceId, clickConnectMode, isConnectorCreatePreviewActive,
     stableOnZoomIn, stableOnZoomOut, stableOnNavigateToView, stableOnSelect,
     stableOnInteractionStart, stableOnConnectTo, stableOnStartHandleReconnect, stableOnRemoveElement, stableOnHoverZoom,
     stableOnOpenCodePreview, hoveredZoomRef, activeTags, hiddenLayerTags, hoveredLayerTags, hoveredLayerColor, tagColors,

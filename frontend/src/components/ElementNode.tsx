@@ -160,6 +160,7 @@ interface NodeData extends PlacedElement {
   interactionSourceId: number | null
   onOpenCodePreview?: (elementId: number) => void
   isClickConnectMode?: boolean
+  isCreateConnectMode?: boolean
   tagColors: Record<string, Tag>
   layerHighlightColor?: string
   forceShowTagPopup?: boolean
@@ -736,6 +737,7 @@ function ElementNode({ data, selected }: Props) {
 
   const isSource = data.interactionSourceId === data.element_id
   const isTarget = !!data.interactionSourceId && !isSource
+  const isCreateConnectMode = !!data.isCreateConnectMode
 
   const bodyCursor = isPending ? 'grab' : isSource ? 'crosshair' : isTarget ? 'cell' : 'pointer'
   const versionColor = data.versionChangeType === 'added'
@@ -789,8 +791,11 @@ function ElementNode({ data, selected }: Props) {
         HANDLE_SLOTS.map((slot) => {
           const handleId = getVisualHandleId(side, slot)
           const isFallbackSlot = slot === HANDLE_SLOT_CENTER_INDEX && !activeSides.has(side)
+          const isPreviewHiddenSlot = isCreateConnectMode && slot !== HANDLE_SLOT_CENTER_INDEX
           const className = [
             'element-node-handle',
+            slot === HANDLE_SLOT_CENTER_INDEX ? 'handle-center-slot' : 'handle-visual-slot',
+            isPreviewHiddenSlot ? 'handle-hidden-during-create' : '',
             connectedHandleIds.has(handleId) ? 'handle-active-slot' : '',
             isFallbackSlot ? 'handle-fallback-slot' : '',
             connectedHandleIds.has(handleId) ? 'handle-connected' : '',
@@ -804,7 +809,7 @@ function ElementNode({ data, selected }: Props) {
                 position={position}
                 id={handleId}
                 className={className}
-                isConnectable={!isPending}
+                isConnectable={!isPending && !isPreviewHiddenSlot}
                 onPointerDown={(e: React.PointerEvent) => {
                   if (isPending) return
                   if (data.interactionSourceId === data.element_id) {
@@ -833,7 +838,7 @@ function ElementNode({ data, selected }: Props) {
                 style={{
                   ...getVisualHandleStyle(position, slot),
                   background: isPending ? 'rgba(var(--accent-rgb), 0.45)' : 'var(--accent)',
-                  pointerEvents: isPending ? 'none' : undefined,
+                  pointerEvents: isPending || isPreviewHiddenSlot ? 'none' : undefined,
                 }}
               />
               {data.onStartHandleReconnect && reconnectCandidateByHandle.has(handleId) && (
@@ -1373,6 +1378,7 @@ function arePropsEqual(prev: Props, next: Props) {
     p.file_path === n.file_path &&
     p.language === n.language &&
     p.isClickConnectMode === n.isClickConnectMode &&
+    p.isCreateConnectMode === n.isCreateConnectMode &&
     p.tagColors === n.tagColors &&
     p.layerHighlightColor === n.layerHighlightColor &&
     p.forceShowTagPopup === n.forceShowTagPopup &&

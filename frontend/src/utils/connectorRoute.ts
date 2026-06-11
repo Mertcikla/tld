@@ -24,6 +24,21 @@ export function positionForHandleSide(side: LogicalHandleSide) {
   }
 }
 
+export function handleSideForPosition(position: Position, fallback: LogicalHandleSide): LogicalHandleSide {
+  switch (position) {
+    case Position.Top:
+      return 'top'
+    case Position.Bottom:
+      return 'bottom'
+    case Position.Left:
+      return 'left'
+    case Position.Right:
+      return 'right'
+    default:
+      return fallback
+  }
+}
+
 function controlPoint(
   x: number,
   y: number,

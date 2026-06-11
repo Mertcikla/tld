@@ -326,3 +326,23 @@ body {
     opacity: 1;
     pointer-events: all;
 }
+
+.react-flow:has(.react-flow__connection) .react-flow__handle.element-node-handle.handle-visual-slot {
+    opacity: 0;
+    pointer-events: none;
+}
+
+[data-connector-preview-active="true"] .react-flow__handle.element-node-handle.handle-center-slot {
+    opacity: 1;
+    pointer-events: all;
+}
+
+[data-connector-preview-active="true"] .react-flow__handle.element-node-handle.handle-visual-slot {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.react-flow__handle.element-node-handle.handle-hidden-during-create {
+    opacity: 0;
+    pointer-events: none;
+}

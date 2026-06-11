@@ -115,7 +115,7 @@ import { useViewEditHistory } from './hooks/useViewEditHistory'
 import { useOverlapDetection } from './hooks/useOverlapDetection'
 import { removeCollisions } from '../../utils/layout'
 import { connectorToConnector, findClosestHandles, sanitizeExportFilename, triggerBlobDownload, triggerDownload } from './utils'
-import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, ensureVisualHandleId, getLogicalHandleId, getOppositeHandleSide } from '../../utils/edgeDistribution'
+import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, getCenterVisualHandleId, getLogicalHandleId, getOppositeHandleSide } from '../../utils/edgeDistribution'
 import { pickUnusedColor } from '../../components/ViewExplorer/utils'
 
 import { EmptyCanvasState } from './components/EmptyCanvasState'
@@ -894,6 +894,7 @@ function ViewEditorInner({
   const [interactionSourceId, setInteractionSourceId] = useState<number | null>(null)
   const [clickConnectMode, setClickConnectMode] = useState<ClickConnectModeState | null>(null)
   const [clickConnectCursorPos, setClickConnectCursorPos] = useState<ClickConnectCursorPosition | null>(null)
+  const [isConnectorCreatePreviewActive, setConnectorCreatePreviewActive] = useState(false)
   const interactionSourceIdRef = useRef<number | null>(null)
   const multiConnectionSourceIdsRef = useRef<number[] | null>(null)
   const [deletedLibraryElementIds, setDeletedLibraryElementIds] = useState<number[]>([])
@@ -940,6 +941,7 @@ function ViewEditorInner({
     viewId,
     interactionSourceId,
     clickConnectMode,
+    isConnectorCreatePreviewActive,
     selectedConnector: selectedEdge,
     activeTags,
     hiddenLayerTags,
@@ -2420,6 +2422,7 @@ function ViewEditorInner({
     setClickConnectMode,
     clickConnectCursorPos,
     setClickConnectCursorPos,
+    onConnectorCreatePreviewActiveChange: setConnectorCreatePreviewActive,
     drawingMode, isMobileLayout,
     rfNodesRef, interactionNodesRef, rfEdgesRef, viewElementsRef, viewIdRef,
     incomingLinksRef,
@@ -2793,8 +2796,8 @@ function ViewEditorInner({
           id: `pending-element-edge-${sourceId}`,
           source: String(sourceId),
           target: pending.id,
-          sourceHandle: ensureVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
-          targetHandle: ensureVisualHandleId(previewTargetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
+          sourceHandle: getCenterVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
+          targetHandle: getCenterVisualHandleId(previewTargetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
           type: previewConnectorStyle === 'bezier' ? 'default' : previewConnectorStyle,
           label: '',
           data: {
@@ -3823,6 +3826,7 @@ function ViewEditorInner({
             <Box
               ref={viewEditorCanvasRef}
               data-testid="vieweditor-canvas"
+              data-connector-preview-active={isConnectorCreatePreviewActive || !!canvas.handleReconnectDrag || !!clickConnectMode || interactionSourceId !== null ? 'true' : undefined}
               position="relative"
               w="full"
               h="full"

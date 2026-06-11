@@ -4,6 +4,7 @@ import { Position } from 'reactflow'
 export const HANDLE_SLOT_COUNT = 5
 export const HANDLE_SLOT_GAP = 12
 export const HANDLE_SLOT_CENTER_INDEX = Math.floor(HANDLE_SLOT_COUNT / 2)
+export const CONNECTOR_SNAP_RADIUS = 75
 
 export type LogicalHandleSide = 'top' | 'bottom' | 'left' | 'right'
 
@@ -53,6 +54,14 @@ export function getVisualHandleSlotFromId(handleId: string | null | undefined) {
 
 export function getVisualHandleId(side: LogicalHandleSide, slot: number) {
   return `${side}-${clampSlot(slot)}`
+}
+
+export function getCenterVisualHandleId(
+  handleId: string | null | undefined,
+  fallback: LogicalHandleSide,
+) {
+  const side = getLogicalHandleId(handleId, fallback)
+  return side ? getVisualHandleId(side, HANDLE_SLOT_CENTER_INDEX) : null
 }
 
 export function getVisualHandleIdForGroup(side: LogicalHandleSide, groupIndex: number, groupCount: number) {
