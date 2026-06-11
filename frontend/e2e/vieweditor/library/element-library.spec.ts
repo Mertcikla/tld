@@ -18,8 +18,9 @@ test('searches the library and adds an existing catalog element to the canvas', 
 
   await openElementLibrary(page)
   await page.getByTestId('element-library-search').fill(element.name)
-  await expect(libraryItemByName(page, element.name)).toBeVisible()
-  await libraryItemByName(page, element.name).getByTestId('element-library-add').click()
+  const item = page.locator(`[data-testid="element-library-item"][data-element-id="${element.id}"]`)
+  await expect(item).toBeVisible()
+  await item.getByTestId('element-library-add').click()
 
   await expect(nodeByName(page, element.name)).toBeVisible()
   await expectPlacement(page, element.name, true, diagram.id)

@@ -80,6 +80,7 @@ test('view details panel updates name and level label', async ({ page }) => {
   await expect(nameInput).toHaveValue(nextName)
   await labelInput.fill('System Context')
   await expect(labelInput).toHaveValue('System Context')
+  await labelInput.evaluate((input) => (input as HTMLInputElement).blur())
 
   const save = panel.getByTestId('view-panel-save')
   await expect(save).toBeEnabled()
