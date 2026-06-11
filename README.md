@@ -50,8 +50,6 @@ Here are some examples that were generated using the agent skill.
 </p>
 
 
-</p>
-
 ## Quick Start
 
 macOS and Linux
