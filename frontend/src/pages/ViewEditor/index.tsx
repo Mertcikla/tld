@@ -3143,6 +3143,41 @@ function ViewEditorInner({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [drawingMode, handleUndo, handleRedo, setDrawingTool])
 
+  // ── Keyboard shortcuts for view edits ─────────────────────────────────────
+  useEffect(() => {
+    if (drawingMode) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || isEditableKeyboardTarget(e.target) || !isCanvasKeyboardTarget(e.target)) return
+
+      const key = e.key.toLowerCase()
+      const isModifierShortcut = e.metaKey || e.ctrlKey
+      const isRedoShortcut = isModifierShortcut && !e.altKey && (
+        (key === 'z' && e.shiftKey) ||
+        (key === 'y' && !e.metaKey)
+      )
+      const isUndoShortcut = isModifierShortcut && !e.altKey && key === 'z' && !e.shiftKey
+
+      if (isRedoShortcut && canRedoViewEdit) {
+        e.preventDefault()
+        void handleRedoViewEdit()
+        return
+      }
+
+      if (isUndoShortcut && canUndoViewEdit) {
+        e.preventDefault()
+        void handleUndoViewEdit()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [
+    canRedoViewEdit,
+    canUndoViewEdit,
+    drawingMode,
+    handleRedoViewEdit,
+    handleUndoViewEdit,
+  ])
+
   // ── V shortcut to open View Details ────────────────────────────────────────
   useEffect(() => {
     if (drawingMode) return
