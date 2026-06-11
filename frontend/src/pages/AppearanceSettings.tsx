@@ -19,9 +19,16 @@ import { getCollaborationIdentity, saveCollaborationIdentity } from '../api/coll
 import { ACCENT_OPTIONS, BACKGROUND_OPTIONS, ELEMENT_OPTIONS } from '../constants/colors'
 import { useTheme } from '../context/ThemeContext'
 import { useSourceEditor } from '../utils/sourceEditor'
+import { CONNECTOR_STYLE_OPTIONS, useConnectorStyle } from '../context/ConnectorStyleContext'
 import { ChevronDownIcon } from '../components/Icons'
 
 const COMPACT_FIELD_W = 'min(160px, calc((100vw - 56px) / 2))'
+const CONNECTOR_STYLE_LABELS: Record<string, string> = {
+  bezier: 'Bezier',
+  straight: 'Straight',
+  step: 'Step',
+  smoothstep: 'Smoothstep',
+}
 
 function CompactUsernameSetting() {
   const toast = useToast()
@@ -76,8 +83,10 @@ function CompactUsernameSetting() {
 export default function AppearanceSettings({ compact = false }: { compact?: boolean }) {
   const { accent, setAccent, background, setBackground, elementColor, setElementColor } = useTheme()
   const { editor, setEditor } = useSourceEditor()
+  const { defaultConnectorStyle, setDefaultConnectorStyle } = useConnectorStyle()
   const swatchSize = compact ? '21px' : '32px'
   const sectionGap = compact ? 5 : 8
+  const selectedConnectorStyleLabel = defaultConnectorStyle === null ? 'Default (Bezier)' : CONNECTOR_STYLE_LABELS[defaultConnectorStyle] ?? 'Bezier'
 
   return (
     <VStack align="start" spacing={sectionGap} maxW={compact ? '320px' : '480px'} w="full">
@@ -226,6 +235,45 @@ export default function AppearanceSettings({ compact = false }: { compact?: bool
             <MenuItem onClick={() => setEditor('vscode')} fontWeight={editor === 'vscode' ? 'bold' : 'normal'}>
               VS Code
             </MenuItem>
+          </MenuList>
+        </Menu>
+      </Box>
+
+      <Box w="full">
+        <FormLabel mb={3} fontSize={compact ? 'xs' : 'sm'} textTransform="uppercase" letterSpacing="0.12em" color="gray.400">
+          Connector style
+        </FormLabel>
+        <Menu>
+          <MenuButton
+            as={Button}
+            size="sm"
+            variant="clay"
+            rightIcon={<ChevronDownIcon size={12} strokeWidth={4} />}
+            w={compact ? COMPACT_FIELD_W : undefined}
+            maxW={compact ? 'full' : undefined}
+            minW={compact ? undefined : '180px'}
+            justifyContent="space-between"
+            textAlign="left"
+            bg="whiteAlpha.100"
+            color="gray.100"
+            _hover={{ bg: 'whiteAlpha.200' }}
+            _active={{ bg: 'whiteAlpha.300' }}
+          >
+            {selectedConnectorStyleLabel}
+          </MenuButton>
+          <MenuList w={compact ? COMPACT_FIELD_W : undefined} minW={compact ? COMPACT_FIELD_W : undefined}>
+            <MenuItem onClick={() => setDefaultConnectorStyle(null)} fontWeight={defaultConnectorStyle === null ? 'bold' : 'normal'}>
+              Default (Bezier)
+            </MenuItem>
+            {CONNECTOR_STYLE_OPTIONS.filter((option) => option !== 'bezier').map((option) => (
+              <MenuItem
+                key={option}
+                onClick={() => setDefaultConnectorStyle(option)}
+                fontWeight={defaultConnectorStyle === option ? 'bold' : 'normal'}
+              >
+                {CONNECTOR_STYLE_LABELS[option]}
+              </MenuItem>
+            ))}
           </MenuList>
         </Menu>
       </Box>

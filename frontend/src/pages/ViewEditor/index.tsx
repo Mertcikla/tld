@@ -103,6 +103,7 @@ import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
 import { ViewEditorContext } from './context'
 import { useViewData } from './hooks/useViewData'
 import { useDrawingEngine } from './hooks/useDrawingEngine'
+import { connectorStyleForCreate, connectorStyleForPreview, useConnectorStyle } from '../../context/ConnectorStyleContext'
 import {
   PENDING_ELEMENT_NODE_ID,
   applyNodeChangesWithStructuralSharing,
@@ -2399,6 +2400,9 @@ function ViewEditorInner({
   const handleToggleExplorer = useCallback(() => setIsExplorerOpen((v) => !v), [])
 
   const interactionNodesRef = useRef<RFNode[]>([])
+  const { defaultConnectorStyle } = useConnectorStyle()
+  const createConnectorStyle = connectorStyleForCreate(defaultConnectorStyle)
+  const previewConnectorStyle = connectorStyleForPreview(defaultConnectorStyle)
 
   // ── Canvas interactions ────────────────────────────────────────────────────
   const canvas = useCanvasInteractions({
@@ -2447,6 +2451,7 @@ function ViewEditorInner({
           const newConnector = await api.workspace.connectors.create(cid, {
             source_element_id: nextSourceId, target_element_id: targetElementId,
             source_handle: finalSourceHandle, target_handle: finalTargetHandle, direction: 'forward',
+            style: createConnectorStyle,
           })
           const connector = connectorToConnector(newConnector)
           upsertConnectorGraphSnapshot(connector)
@@ -2456,6 +2461,7 @@ function ViewEditorInner({
         handleUnsupportedMutation()
       } catch { /* intentionally empty */ }
     },
+    defaultConnectorStyle,
     existingElementIds, linksMapRef, parentLinksMapRef,
     openElementPanel: useCallback(() => openElementPanelRef.current(), []),
     closeElementPanel: useCallback(() => closeElementPanelRef.current(), []),
@@ -2789,7 +2795,7 @@ function ViewEditorInner({
             description: null,
             relationship: null,
             direction: 'forward',
-            style: 'bezier',
+            style: previewConnectorStyle,
             url: null,
             source_handle: pending.sourceHandle ?? handles.sourceHandle,
             target_handle: handles.targetHandle,
@@ -2810,7 +2816,7 @@ function ViewEditorInner({
           zIndex: 1500,
         }
       })
-  }, [canvas.pendingElement, pendingElementNode, rfNodes, viewId])
+  }, [canvas.pendingElement, pendingElementNode, previewConnectorStyle, rfNodes, viewId])
 
   const flowEdges = useMemo(() => {
     const baseEdges = contextConnectors.length === 0
