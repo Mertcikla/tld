@@ -1382,7 +1382,14 @@ function arePropsEqual(prev: Props, next: Props) {
     p.tagColors === n.tagColors &&
     p.layerHighlightColor === n.layerHighlightColor &&
     p.forceShowTagPopup === n.forceShowTagPopup &&
-    p.isMultiSelected === n.isMultiSelected
+    p.isMultiSelected === n.isMultiSelected &&
+    p.connectedHandleIds === n.connectedHandleIds &&
+    p.selectedHandleIds === n.selectedHandleIds &&
+    p.reconnectCandidates === n.reconnectCandidates &&
+    p.isConnectorHighlighted === n.isConnectorHighlighted &&
+    p.versionChangeType === n.versionChangeType &&
+    p.versionLineDelta === n.versionLineDelta &&
+    p.parentViewId === n.parentViewId
   )
 }
 

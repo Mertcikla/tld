@@ -543,7 +543,7 @@ export function useViewData({
             parentViewId,
             onZoomIn: stableOnZoomIn,
             onZoomOut: stableOnZoomOut,
-            onNavigateToView: stableOnNavigateToView,
+            onNavigateToDiagram: stableOnNavigateToView,
             onSelect: stableOnSelect,
             onOpenCodePreview: stableOnOpenCodePreview,
             onInteractionStart: stableOnInteractionStart,
