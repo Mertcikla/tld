@@ -6,6 +6,7 @@ import { useSafeFitView } from '../../hooks/useSafeFitView'
 import { SafeBackground } from '../../components/SafeBackground'
 import ReactFlow, {
   BackgroundVariant,
+  ConnectionLineType,
   ConnectionMode,
   MarkerType,
   PanOnScrollMode,
@@ -103,6 +104,7 @@ import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
 import { ViewEditorContext } from './context'
 import { useViewData } from './hooks/useViewData'
 import { useDrawingEngine } from './hooks/useDrawingEngine'
+import { connectorStyleForCreate, connectorStyleForPreview, useConnectorStyle } from '../../context/ConnectorStyleContext'
 import {
   PENDING_ELEMENT_NODE_ID,
   applyNodeChangesWithStructuralSharing,
@@ -225,6 +227,19 @@ function cursorColorForUser(userId: string) {
     hash = (hash * 31 + userId.charCodeAt(i)) >>> 0
   }
   return REMOTE_CURSOR_COLORS[hash % REMOTE_CURSOR_COLORS.length]
+}
+
+function connectorStyleToConnectionLineType(style: string) {
+  switch (style) {
+    case 'straight':
+      return ConnectionLineType.Straight
+    case 'step':
+      return ConnectionLineType.Step
+    case 'smoothstep':
+      return ConnectionLineType.SmoothStep
+    default:
+      return ConnectionLineType.Bezier
+  }
 }
 
 function isRenderableCursor(cursor: RealtimeCursor, selfUserId: string | null): cursor is RealtimeCursor {
@@ -2399,6 +2414,10 @@ function ViewEditorInner({
   const handleToggleExplorer = useCallback(() => setIsExplorerOpen((v) => !v), [])
 
   const interactionNodesRef = useRef<RFNode[]>([])
+  const { defaultConnectorStyle } = useConnectorStyle()
+  const createConnectorStyle = connectorStyleForCreate(defaultConnectorStyle)
+  const previewConnectorStyle = connectorStyleForPreview(defaultConnectorStyle)
+  const connectionLineType = connectorStyleToConnectionLineType(previewConnectorStyle)
 
   // ── Canvas interactions ────────────────────────────────────────────────────
   const canvas = useCanvasInteractions({
@@ -2447,6 +2466,7 @@ function ViewEditorInner({
           const newConnector = await api.workspace.connectors.create(cid, {
             source_element_id: nextSourceId, target_element_id: targetElementId,
             source_handle: finalSourceHandle, target_handle: finalTargetHandle, direction: 'forward',
+            style: createConnectorStyle,
           })
           const connector = connectorToConnector(newConnector)
           upsertConnectorGraphSnapshot(connector)
@@ -2456,6 +2476,7 @@ function ViewEditorInner({
         handleUnsupportedMutation()
       } catch { /* intentionally empty */ }
     },
+    defaultConnectorStyle,
     existingElementIds, linksMapRef, parentLinksMapRef,
     openElementPanel: useCallback(() => openElementPanelRef.current(), []),
     closeElementPanel: useCallback(() => closeElementPanelRef.current(), []),
@@ -2778,7 +2799,7 @@ function ViewEditorInner({
           target: pending.id,
           sourceHandle: ensureVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
           targetHandle: ensureVisualHandleId(handles.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
-          type: 'default',
+          type: previewConnectorStyle === 'bezier' ? 'default' : previewConnectorStyle,
           label: '',
           data: {
             id: -sourceId,
@@ -2789,7 +2810,7 @@ function ViewEditorInner({
             description: null,
             relationship: null,
             direction: 'forward',
-            style: 'bezier',
+            style: previewConnectorStyle,
             url: null,
             source_handle: pending.sourceHandle ?? handles.sourceHandle,
             target_handle: handles.targetHandle,
@@ -2810,7 +2831,7 @@ function ViewEditorInner({
           zIndex: 1500,
         }
       })
-  }, [canvas.pendingElement, pendingElementNode, rfNodes, viewId])
+  }, [canvas.pendingElement, pendingElementNode, previewConnectorStyle, rfNodes, viewId])
 
   const flowEdges = useMemo(() => {
     const baseEdges = contextConnectors.length === 0
@@ -3872,6 +3893,7 @@ function ViewEditorInner({
                 translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={VIEW_EDITOR_MAX_ZOOM}
                 onReconnect={onReconnect} onReconnectStart={onReconnectStart} onReconnectEnd={onReconnectEnd}
                 connectionLineStyle={CONNECTOR_DRAG_CONNECTION_LINE_STYLE}
+                connectionLineType={connectionLineType}
                 nodeTypes={nodeTypesMemo} edgeTypes={edgeTypesMemo}
                 nodesDraggable={canEdit} connectionMode={ConnectionMode.Loose} connectionRadius={25}
                 edgesUpdatable={canEdit} reconnectRadius={0}

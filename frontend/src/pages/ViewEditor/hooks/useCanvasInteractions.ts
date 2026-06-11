@@ -26,6 +26,7 @@ import type {
   IncomingViewConnector,
 } from '../../../types'
 import { parseNumericId } from '../../../utils/ids'
+import { connectorStyleForCreate, type ConnectorRouteStyle } from '../../../context/ConnectorStyleContext'
 import { connectorToConnector, findClosestHandles, findClosestHandleToPoint } from '../utils'
 import { removePlacementGraphSnapshot, upsertConnectorGraphSnapshot, upsertPlacementGraphSnapshot } from '../../../crossBranch/store'
 import {
@@ -371,6 +372,7 @@ interface CanvasInteractionOptions {
   toggleMarkdown?: () => void
   onFitView?: () => void
   setSnapToGrid?: (snap: boolean) => void
+  defaultConnectorStyle?: ConnectorRouteStyle | null
 }
 
 export type PendingElementState = {
@@ -554,6 +556,7 @@ export function useCanvasInteractions({
   handleUpdateTags,
   drawingCanvasRef,
   snapToGrid,
+  defaultConnectorStyle = null,
   minZoom = 0.01,
   maxZoom = 4,
   onMoveStateChange,
@@ -696,6 +699,8 @@ export function useCanvasInteractions({
     await refreshElements()
   }, [onConnectorSaved, refreshElements, upsertConnector])
 
+  const createConnectorStyle = connectorStyleForCreate(defaultConnectorStyle)
+
   // ── Ref-forwarded callbacks ────────────────────────────────────────────────
   const openConnectorPanelRef = useRef(openConnectorPanel)
   openConnectorPanelRef.current = openConnectorPanel
@@ -820,13 +825,14 @@ export function useCanvasInteractions({
         const newConnector = await api.workspace.connectors.create(viewId, {
           source_element_id: nextSourceId, target_element_id: obj.id,
           source_handle: activePendingElement.sourceHandle ?? sourceHandle, target_handle: targetHandle, direction: 'forward',
+          style: createConnectorStyle,
         })
         const connector = connectorToConnector(newConnector)
         await finalizeConnectorCreate(connector)
       }
       onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
-  }, [canEdit, clearPendingConnectionRefs, finalizeConnectorCreate, onUnsupportedMutation, pendingElement, refreshElements, rfNodesRef, viewId, viewElementsRef])
+  }, [canEdit, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, onUnsupportedMutation, pendingElement, refreshElements, rfNodesRef, viewId, viewElementsRef])
 
   const handleConfirmExistingElement = useCallback(async (obj: LibraryElement) => {
     if (!canEdit || viewId === null || !pendingElement) return
@@ -856,13 +862,14 @@ export function useCanvasInteractions({
         const newConnector = await api.workspace.connectors.create(viewId, {
           source_element_id: nextSourceId, target_element_id: obj.id,
           source_handle: activePendingElement.sourceHandle ?? sourceHandle, target_handle: targetHandle, direction: 'forward',
+          style: createConnectorStyle,
         })
         const connector = connectorToConnector(newConnector)
         await finalizeConnectorCreate(connector)
       }
       if (!existingElementIds.has(obj.id) || sourceIds.length > 0) onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
-  }, [canEdit, clearPendingConnectionRefs, existingElementIds, finalizeConnectorCreate, onUnsupportedMutation, pendingElement, refreshElements, rfNodesRef, viewId, viewElementsRef])
+  }, [canEdit, clearPendingConnectionRefs, createConnectorStyle, existingElementIds, finalizeConnectorCreate, onUnsupportedMutation, pendingElement, refreshElements, rfNodesRef, viewId, viewElementsRef])
 
   // ── Zoom-in / zoom-out stable callbacks ───────────────────────────────────
   const stableOnZoomIn = useCallback(async (elementId: number) => {
@@ -1013,6 +1020,7 @@ export function useCanvasInteractions({
           target_element_id: targetElementId,
           source_handle: sourceHandle,
           target_handle: logicalTargetHandle,
+          style: createConnectorStyle,
           direction: 'forward',
         })
         const connector = connectorToConnector(newConnector)
@@ -1020,7 +1028,7 @@ export function useCanvasInteractions({
       }
       onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
-  }, [activeConnectionSourceIds, canEdit, clearPendingConnectionRefs, finalizeConnectorCreate, interactionSourceIdRef, onUnsupportedMutation, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef])
+  }, [activeConnectionSourceIds, canEdit, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, interactionSourceIdRef, onUnsupportedMutation, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef])
 
   const stableOnInteractionStart = useCallback((elementId: number, options?: InteractionStartOptions) => {
     if (!canEdit) return
@@ -1226,14 +1234,14 @@ export function useCanvasInteractions({
       const newConnector = await api.workspace.connectors.create(viewId, {
         source_element_id: sourceId, target_element_id: targetId,
         source_handle: sourceHandle, target_handle: targetHandle,
-        direction: 'forward', style: 'bezier',
+        direction: 'forward', style: createConnectorStyle,
       })
       const connector = connectorToConnector(newConnector)
       await finalizeConnectorCreate(connector)
       onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
     clearPendingConnectionRefs()
-  }, [canEdit, clearConnectorDragPreview, clearPendingConnectionRefs, finalizeConnectorCreate, getInteractionNodes, onUnsupportedMutation, viewId])
+  }, [canEdit, clearConnectorDragPreview, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, getInteractionNodes, onUnsupportedMutation, viewId])
 
   const onConnectStart = useCallback((event: React.MouseEvent | React.TouchEvent, { nodeId, handleId }: OnConnectStartParams) => {
     if (!canEdit || isReconnectingRef.current) return
@@ -1336,6 +1344,7 @@ export function useCanvasInteractions({
       api.workspace.connectors.create(cid, {
         source_element_id: sourceElementId, target_element_id: targetElementId,
         source_handle: sourceHandle, target_handle: targetHandle, direction: 'forward',
+        style: createConnectorStyle,
       }).then((connector) => {
         const next = connectorToConnector(connector)
         void finalizeConnectorCreate(next)
@@ -1347,7 +1356,7 @@ export function useCanvasInteractions({
       suppressNextPaneClickRef.current = true
       showAddingElementAt(clientX, clientY, true, 'connect', 'shiftKey' in event && event.shiftKey)
     }
-  }, [canEdit, clearConnectorDragPreview, clearPendingConnectionRefs, finalizeConnectorCreate, getInteractionNodes, onUnsupportedMutation, showAddingElementAt, viewIdRef])
+  }, [canEdit, clearConnectorDragPreview, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, getInteractionNodes, onUnsupportedMutation, showAddingElementAt, viewIdRef])
 
   // ── Reconnect ──────────────────────────────────────────────────────────────
   const performReconnect = useCallback(async (oldConnector: RFEdge, newConnection: Connection) => {
