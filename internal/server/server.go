@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/watch"
+	"github.com/mertcikla/tld/v2/internal/workspacesource"
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
 
@@ -28,6 +29,7 @@ type Server struct {
 
 type Options struct {
 	DataDir        string
+	WorkspaceDir   string
 	PublicURL      string
 	AllowedOrigins []string
 }
@@ -54,7 +56,12 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	orgSvc := &api.OrgService{Store: apiStore, Hooks: collabHooks}
 	depSvc := &api.DependencyService{Store: apiStore}
 	importSvc := &api.ImportService{Store: apiStore}
-	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: collabHooks}
+	versionSvc := &workspaceVersionService{
+		WorkspaceVersionService: &api.WorkspaceVersionService{Store: apiStore, Hooks: collabHooks},
+		store:                   apiStore,
+		workspaceID:             workspaceID,
+		base:                    workspacesource.Options{WorkspaceDir: opts.WorkspaceDir, WorkspaceID: workspaceID},
+	}
 	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 
