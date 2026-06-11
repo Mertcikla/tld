@@ -6,6 +6,7 @@ import { useSafeFitView } from '../../hooks/useSafeFitView'
 import { SafeBackground } from '../../components/SafeBackground'
 import ReactFlow, {
   BackgroundVariant,
+  ConnectionLineType,
   ConnectionMode,
   MarkerType,
   PanOnScrollMode,
@@ -226,6 +227,19 @@ function cursorColorForUser(userId: string) {
     hash = (hash * 31 + userId.charCodeAt(i)) >>> 0
   }
   return REMOTE_CURSOR_COLORS[hash % REMOTE_CURSOR_COLORS.length]
+}
+
+function connectorStyleToConnectionLineType(style: string) {
+  switch (style) {
+    case 'straight':
+      return ConnectionLineType.Straight
+    case 'step':
+      return ConnectionLineType.Step
+    case 'smoothstep':
+      return ConnectionLineType.SmoothStep
+    default:
+      return ConnectionLineType.Bezier
+  }
 }
 
 function isRenderableCursor(cursor: RealtimeCursor, selfUserId: string | null): cursor is RealtimeCursor {
@@ -2403,6 +2417,7 @@ function ViewEditorInner({
   const { defaultConnectorStyle } = useConnectorStyle()
   const createConnectorStyle = connectorStyleForCreate(defaultConnectorStyle)
   const previewConnectorStyle = connectorStyleForPreview(defaultConnectorStyle)
+  const connectionLineType = connectorStyleToConnectionLineType(previewConnectorStyle)
 
   // ── Canvas interactions ────────────────────────────────────────────────────
   const canvas = useCanvasInteractions({
@@ -2784,7 +2799,7 @@ function ViewEditorInner({
           target: pending.id,
           sourceHandle: ensureVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
           targetHandle: ensureVisualHandleId(handles.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
-          type: 'default',
+          type: previewConnectorStyle === 'bezier' ? 'default' : previewConnectorStyle,
           label: '',
           data: {
             id: -sourceId,
@@ -3843,6 +3858,7 @@ function ViewEditorInner({
                 translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={VIEW_EDITOR_MAX_ZOOM}
                 onReconnect={onReconnect} onReconnectStart={onReconnectStart} onReconnectEnd={onReconnectEnd}
                 connectionLineStyle={CONNECTOR_DRAG_CONNECTION_LINE_STYLE}
+                connectionLineType={connectionLineType}
                 nodeTypes={nodeTypesMemo} edgeTypes={edgeTypesMemo}
                 nodesDraggable={canEdit} connectionMode={ConnectionMode.Loose} connectionRadius={25}
                 edgesUpdatable={canEdit} reconnectRadius={0}
