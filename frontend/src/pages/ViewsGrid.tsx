@@ -40,6 +40,7 @@ import ViewGridNode, { type ViewGridNodeData } from '../components/ViewGridNode'
 import { useAccentColor } from '../context/ThemeContext'
 import { hexToRgba } from '../constants/colors'
 import { isMouseWheelGesture } from '../utils/wheel'
+import { safariGestureClientPoint, safariGestureFactor, type SafariGestureEventLike } from '../utils/safariGesture'
 
 // ── Tree helpers ──────────────────────────────────────────────────────────────
 
@@ -82,6 +83,44 @@ const GAP_H = 80
 const GAP_V = 120
 const COMPACT_WORKSPACE_THRESHOLD = 32
 const LAYOUT_TRANSITION = 'transform 560ms cubic-bezier(0.16, 1, 0.3, 1), opacity 260ms ease, filter 260ms ease'
+const VIEWS_GRID_MAX_ZOOM = 2
+const VIEWS_GRID_PINCH_ZOOM_MULTIPLIER = 2
+
+type CanvasViewport = { x: number; y: number; zoom: number }
+type ViewportRect = Pick<DOMRectReadOnly, 'left' | 'top'>
+type ClientPoint = { clientX: number; clientY: number }
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value))
+}
+
+function accelerateViewsGridPinchZoomFactor(factor: number): number {
+  if (!Number.isFinite(factor) || factor <= 0) return factor
+  return Math.max(0.0001, 1 + (factor - 1) * VIEWS_GRID_PINCH_ZOOM_MULTIPLIER)
+}
+
+function zoomViewportAroundClientPoint(
+  viewport: CanvasViewport,
+  rect: ViewportRect,
+  point: ClientPoint,
+  factor: number,
+  minZoom: number,
+  maxZoom: number,
+): CanvasViewport {
+  if (!Number.isFinite(factor) || factor <= 0) return viewport
+
+  const nextZoom = clamp(viewport.zoom * factor, minZoom, maxZoom)
+  const localX = point.clientX - rect.left
+  const localY = point.clientY - rect.top
+  const flowX = (localX - viewport.x) / viewport.zoom
+  const flowY = (localY - viewport.y) / viewport.zoom
+
+  return {
+    x: localX - flowX * nextZoom,
+    y: localY - flowY * nextZoom,
+    zoom: nextZoom,
+  }
+}
 
 interface GridDisplayNode {
   id: string
@@ -495,41 +534,14 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
   const { accent } = useAccentColor()
   const canEdit = true
 
-  const { setCenter, getViewport, zoomIn, zoomOut } = useReactFlow()
+  const { setCenter, getViewport, setViewport, zoomIn, zoomOut } = useReactFlow()
   const rfContainerRef = useRef<HTMLDivElement>(null)
 
   // ── Trackpad gesture detection: suppress zoom during two-finger pan ────────
   const touchStateRef = useRef<{ lastMultiTouchWheelTime: number }>({
     lastMultiTouchWheelTime: 0,
   })
-
-  // Native capture-phase wheel listener so we intercept before ReactFlow's
-  // internal handlers. passive:false lets us call preventDefault().
-  useEffect(() => {
-    const el = rfContainerRef.current
-    if (!el) return
-    function onWheel(e: WheelEvent) {
-      // Track multi-touch wheel events (deltaX !== 0 indicates two-finger contact)
-      if (e.deltaX !== 0) {
-        touchStateRef.current.lastMultiTouchWheelTime = Date.now()
-      }
-
-      // If we just finished a multi-touch gesture, suppress zoom for ~1000ms (trackpad momentum can last longer)
-      const isRecentMultiTouch = Date.now() - touchStateRef.current.lastMultiTouchWheelTime < 1000
-
-      // Only zoom on notched wheel (mouse), not trackpad
-      const isMouseWheel = isMouseWheelGesture(e)
-
-      if (isMouseWheel && !isRecentMultiTouch) {
-        e.preventDefault()
-        e.stopPropagation()
-        if (e.deltaY > 0) zoomOut()
-        else zoomIn()
-      }
-    }
-    el.addEventListener('wheel', onWheel, { passive: false, capture: true })
-    return () => el.removeEventListener('wheel', onWheel, { capture: true })
-  }, [zoomIn, zoomOut])
+  const safariGestureScaleRef = useRef<number | null>(null)
 
   // ── Derived tree structures ─────────────────────────────────────────────────
   const [gridViewIds, setGridViewIds] = useState<Set<number> | null>(null)
@@ -778,6 +790,83 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
       [maxX + panMarginX, maxY + panMarginY],
     ]
   }, [layoutPositions])
+
+  // Native capture-phase listeners intercept before ReactFlow's handlers.
+  // passive:false lets us call preventDefault() for Safari page zoom.
+  useEffect(() => {
+    const el = rfContainerRef.current
+    if (!el) return
+
+    const fallbackGesturePoint = (): ClientPoint => {
+      const rect = el.getBoundingClientRect()
+      return {
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      }
+    }
+
+    function onWheel(e: WheelEvent) {
+      // Track multi-touch wheel events (deltaX !== 0 indicates two-finger contact)
+      if (e.deltaX !== 0) {
+        touchStateRef.current.lastMultiTouchWheelTime = Date.now()
+      }
+
+      // If we just finished a multi-touch gesture, suppress zoom for ~1000ms (trackpad momentum can last longer)
+      const isRecentMultiTouch = Date.now() - touchStateRef.current.lastMultiTouchWheelTime < 1000
+
+      // Only zoom on notched wheel (mouse), not trackpad
+      const isMouseWheel = isMouseWheelGesture(e)
+
+      if (isMouseWheel && !isRecentMultiTouch) {
+        e.preventDefault()
+        e.stopPropagation()
+        if (e.deltaY > 0) zoomOut()
+        else zoomIn()
+      }
+    }
+
+    const onGestureStart = (event: Event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const gesture = safariGestureFactor(event as SafariGestureEventLike, null)
+      safariGestureScaleRef.current = gesture?.scale ?? 1
+    }
+
+    const onGestureChange = (event: Event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const gestureEvent = event as SafariGestureEventLike
+      const gesture = safariGestureFactor(gestureEvent, safariGestureScaleRef.current)
+      if (!gesture) return
+      safariGestureScaleRef.current = gesture.scale
+
+      const nextViewport = zoomViewportAroundClientPoint(
+        getViewport(),
+        el.getBoundingClientRect(),
+        safariGestureClientPoint(gestureEvent, fallbackGesturePoint()),
+        accelerateViewsGridPinchZoomFactor(gesture.factor),
+        computedMinZoom,
+        VIEWS_GRID_MAX_ZOOM,
+      )
+      setViewport(nextViewport)
+    }
+
+    const onGestureEnd = () => {
+      safariGestureScaleRef.current = null
+    }
+
+    el.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    el.addEventListener('gesturestart', onGestureStart, { passive: false, capture: true })
+    el.addEventListener('gesturechange', onGestureChange, { passive: false, capture: true })
+    el.addEventListener('gestureend', onGestureEnd, { capture: true })
+    return () => {
+      el.removeEventListener('wheel', onWheel, { capture: true })
+      el.removeEventListener('gesturestart', onGestureStart, { capture: true })
+      el.removeEventListener('gesturechange', onGestureChange, { capture: true })
+      el.removeEventListener('gestureend', onGestureEnd, { capture: true })
+    }
+  }, [computedMinZoom, getViewport, setViewport, zoomIn, zoomOut])
+
   const maxDepth = useMemo(
     () => flatTree.reduce((max, n) => Math.max(max, n.depth), 0),
     [flatTree]
@@ -1057,7 +1146,7 @@ function ViewGridInner({ onShare, treeData, loading, focusedId, onFocusChange, s
             zoomOnScroll={false}
             zoomOnPinch
             minZoom={computedMinZoom}
-            maxZoom={2}
+            maxZoom={VIEWS_GRID_MAX_ZOOM}
             translateExtent={computedTranslateExtent}
             nodesDraggable={false}
             nodesConnectable={false}
