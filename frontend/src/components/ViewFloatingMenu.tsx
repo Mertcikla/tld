@@ -181,7 +181,7 @@ function ViewFloatingMenu({
         {(canUndo || canRedo) && (
           <>
             {canUndo && (
-              <Tooltip label="Undo" placement="top" openDelay={200}>
+              <Tooltip label="Undo (Cmd/Ctrl+Z)" placement="top" openDelay={200}>
                 <IconButton
                   aria-label="Undo"
                   icon={<UndoSvg size={16} />}
@@ -202,7 +202,7 @@ function ViewFloatingMenu({
             )}
 
             {canRedo && (
-              <Tooltip label="Redo" placement="top" openDelay={200}>
+              <Tooltip label="Redo (Cmd/Ctrl+Shift+Z)" placement="top" openDelay={200}>
                 <IconButton
                   aria-label="Redo"
                   icon={<RedoSvg size={16} />}
