@@ -1,6 +1,7 @@
 import type { PlanConnector, PlanElement, TechnologyLink } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
 
 interface TldElementMetadata {
+  ref?: string
   x?: number
   y?: number
   kind?: string
@@ -20,6 +21,10 @@ interface TldElementMetadata {
 }
 
 interface TldConnectorMetadata {
+  ref?: string
+  sourceRef?: string
+  targetRef?: string
+  label?: string
   description?: string
   relationship?: string
   direction?: string
@@ -206,6 +211,7 @@ function parseMetadataPairs(text: string) {
 function parseElementMetadata(pairs: Map<string, string>): TldElementMetadata {
   const metadata: TldElementMetadata = {}
   const stringKeys: Array<[string, keyof TldElementMetadata]> = [
+    ['ref', 'ref'],
     ['kind', 'kind'],
     ['desc', 'description'],
     ['tech', 'technology'],
@@ -266,6 +272,10 @@ function parseElementMetadata(pairs: Map<string, string>): TldElementMetadata {
 function parseConnectorMetadata(pairs: Map<string, string>): TldConnectorMetadata {
   const metadata: TldConnectorMetadata = {}
   const stringKeys: Array<[string, keyof TldConnectorMetadata]> = [
+    ['ref', 'ref'],
+    ['source', 'sourceRef'],
+    ['target', 'targetRef'],
+    ['label', 'label'],
     ['desc', 'description'],
     ['rel', 'relationship'],
     ['dir', 'direction'],
@@ -366,9 +376,14 @@ export function stripMermaidCommentLines(source: string) {
 export function applyTldMetadata(result: MetadataImportResult, metadata: TldMetadata | null) {
   if (!metadata) return
 
+  const explicitRefs = new Map<string, string>()
   for (const element of result.elements) {
     const item = metadata.elements.get(element.ref)
     if (!item) continue
+    if (item.ref && item.ref !== element.ref) {
+      explicitRefs.set(element.ref, item.ref)
+      element.ref = item.ref
+    }
     if (item.kind) element.kind = item.kind
     if (item.description) element.description = item.description
     if (item.technology) element.technology = item.technology
@@ -392,9 +407,21 @@ export function applyTldMetadata(result: MetadataImportResult, metadata: TldMeta
     }
   }
 
+  if (explicitRefs.size > 0) {
+    for (const connector of result.connectors) {
+      connector.sourceElementRef = explicitRefs.get(connector.sourceElementRef) ?? connector.sourceElementRef
+      connector.targetElementRef = explicitRefs.get(connector.targetElementRef) ?? connector.targetElementRef
+      connector.viewRef = explicitRefs.get(connector.viewRef) ?? connector.viewRef
+    }
+  }
+
   result.connectors.forEach((connector, index) => {
     const item = metadata.connectors[index]
     if (!item) return
+    if (item.ref) connector.ref = item.ref
+    if (item.sourceRef) connector.sourceElementRef = item.sourceRef
+    if (item.targetRef) connector.targetElementRef = item.targetRef
+    if (item.label) connector.label = item.label
     if (item.description) connector.description = item.description
     if (item.relationship) connector.relationship = item.relationship
     if (item.direction) connector.direction = item.direction

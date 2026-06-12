@@ -53,8 +53,9 @@ function pushStringEntry(entries: MetadataEntry[], key: string, value: string | 
   if (entry) entries.push(entry)
 }
 
-function elementMetadataEntries(element: PlacedElement): MetadataEntry[] {
+function elementMetadataEntries(element: PlacedElement, ref: string): MetadataEntry[] {
   const entries: MetadataEntry[] = [
+    ['ref', escapeTldMetadataValue(ref)],
     ['x', compactTldNumber(finiteTldNumber(element.position_x) ?? 0)],
     ['y', compactTldNumber(finiteTldNumber(element.position_y) ?? 0)],
   ]
@@ -78,8 +79,13 @@ function elementMetadataEntries(element: PlacedElement): MetadataEntry[] {
   return entries
 }
 
-function connectorMetadataEntries(connector: Connector): MetadataEntry[] {
-  const entries: MetadataEntry[] = []
+function connectorMetadataEntries(connector: Connector, ref: string, sourceRef: string, targetRef: string): MetadataEntry[] {
+  const entries: MetadataEntry[] = [
+    ['ref', escapeTldMetadataValue(ref)],
+    ['source', escapeTldMetadataValue(sourceRef)],
+    ['target', escapeTldMetadataValue(targetRef)],
+  ]
+  pushStringEntry(entries, 'label', connector.label)
   pushStringEntry(entries, 'desc', connector.description)
   pushStringEntry(entries, 'rel', connector.relationship)
   const direction = asTrimmedString(connector.direction)
@@ -112,7 +118,7 @@ export class MermaidExporter {
     for (const element of sortedElements) {
       const nodeId = sanitizeMermaidId(`node_${element.element_id}`)
       lines.push(`  ${nodeId}["${escapeMermaidLabel(element.name)}"]`)
-      if (includeTldMetadata) lines.push(metadataComment('tld-element', null, elementMetadataEntries(element)))
+      if (includeTldMetadata) lines.push(metadataComment('tld-element', null, elementMetadataEntries(element, `node_${element.element_id}`)))
     }
     if (sortedElements.length > 0 && sortedConnectors.length > 0) lines.push('')
     for (const connector of sortedConnectors) {
@@ -122,8 +128,13 @@ export class MermaidExporter {
       lines.push(label
         ? `  ${sourceId} -- "${escapeMermaidLabel(label)}" --> ${targetId}`
         : `  ${sourceId} --> ${targetId}`)
-      const metadataEntries = connectorMetadataEntries(connector)
-      if (includeTldMetadata && metadataEntries.length > 0) lines.push(metadataComment('tld-connector', null, metadataEntries))
+      const metadataEntries = connectorMetadataEntries(
+        connector,
+        String(connector.id),
+        `node_${connector.source_element_id}`,
+        `node_${connector.target_element_id}`,
+      )
+      if (includeTldMetadata) lines.push(metadataComment('tld-connector', null, metadataEntries))
     }
 
     return `${lines.join('\n')}\n`

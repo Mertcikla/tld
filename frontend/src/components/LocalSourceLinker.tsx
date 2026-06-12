@@ -17,6 +17,7 @@ import {
 } from '@chakra-ui/react'
 import { CheckIcon, SearchIcon } from '@chakra-ui/icons'
 import { vscodeBridge } from '../lib/vscodeBridge'
+import { formatSymbolSourceLink, parseSourceLink } from '../utils/sourceLinks'
 import type { WorkspaceSymbol, ExtensionToWebviewMessage } from '../types/vscode-messages'
 import type { LibraryElement } from '../types'
 
@@ -31,25 +32,7 @@ function randomId() {
 }
 
 function buildSymbolAnchor(sym: Pick<WorkspaceSymbol, 'filePath' | 'name' | 'kind'>): string {
-  return `${sym.filePath}#${JSON.stringify({ name: sym.name, type: sym.kind.toLowerCase() })}`
-}
-
-function parseSourceAnchor(link: string): { name?: string; type?: string; startLine?: number } {
-  const hashIdx = link.indexOf('#')
-  if (hashIdx < 0) {
-    return {}
-  }
-
-  try {
-    const parsed = JSON.parse(link.slice(hashIdx + 1))
-    return {
-      name: typeof parsed.name === 'string' ? parsed.name : undefined,
-      type: typeof parsed.type === 'string' ? parsed.type : undefined,
-      startLine: typeof parsed.startLine === 'number' ? parsed.startLine : undefined,
-    }
-  } catch {
-    return {}
-  }
+  return formatSymbolSourceLink(sym.filePath, sym.kind, sym.name)
 }
 
 export default function LocalSourceLinker({ element, isReadOnly, onUpdate }: Props) {
@@ -85,8 +68,7 @@ export default function LocalSourceLinker({ element, isReadOnly, onUpdate }: Pro
   // Pre-populate from existing file_path
   useEffect(() => {
     if (!element.file_path) return
-    const hashIdx = element.file_path.indexOf('#')
-    const fp = hashIdx >= 0 ? element.file_path.slice(0, hashIdx) : element.file_path
+    const { basePath: fp } = parseSourceLink(element.file_path)
     if (fp) {
       setSelectedFile(fp)
       setFileQuery(fp)
@@ -158,10 +140,8 @@ export default function LocalSourceLinker({ element, isReadOnly, onUpdate }: Pro
   const hasLink = !!currentLink
 
   if (isReadOnly && hasLink) {
-    const hashIdx = currentLink.indexOf('#')
-    const filePart = hashIdx >= 0 ? currentLink.slice(0, hashIdx) : currentLink
-    const anchor = parseSourceAnchor(currentLink)
-    const symbolName = anchor.name ?? ''
+    const { basePath: filePart, anchor } = parseSourceLink(currentLink)
+    const symbolName = anchor.kind === 'symbol' ? anchor.symbolName : ''
     return (
       <Box>
         <HStack spacing={1} mb={1}>
@@ -178,15 +158,13 @@ export default function LocalSourceLinker({ element, isReadOnly, onUpdate }: Pro
           h="auto"
           onClick={() => {
             if (!element.file_path) return
-            const hashIdx2 = element.file_path.indexOf('#')
-            const fp = hashIdx2 >= 0 ? element.file_path.slice(0, hashIdx2) : element.file_path
-            const parsedAnchor = parseSourceAnchor(element.file_path)
+            const { basePath: fp, anchor: parsedAnchor } = parseSourceLink(element.file_path)
             vscodeBridge.postMessage({
               type: 'open-file',
               filePath: fp,
-              startLine: parsedAnchor.startLine,
-              symbolName: parsedAnchor.name,
-              symbolKind: parsedAnchor.type,
+              startLine: parsedAnchor.kind === 'line' ? parsedAnchor.startLine : undefined,
+              symbolName: parsedAnchor.kind === 'symbol' ? parsedAnchor.symbolName : undefined,
+              symbolKind: parsedAnchor.kind === 'symbol' ? parsedAnchor.nodeType : undefined,
             })
           }}
         >
@@ -304,15 +282,13 @@ export default function LocalSourceLinker({ element, isReadOnly, onUpdate }: Pro
             px={0}
             h="auto"
             onClick={() => {
-              const hashIdx2 = currentLink.indexOf('#')
-              const fp = hashIdx2 >= 0 ? currentLink.slice(0, hashIdx2) : currentLink
-              const parsedAnchor = parseSourceAnchor(currentLink)
+              const { basePath: fp, anchor: parsedAnchor } = parseSourceLink(currentLink)
               vscodeBridge.postMessage({
                 type: 'open-file',
                 filePath: fp,
-                startLine: parsedAnchor.startLine,
-                symbolName: parsedAnchor.name,
-                symbolKind: parsedAnchor.type,
+                startLine: parsedAnchor.kind === 'line' ? parsedAnchor.startLine : undefined,
+                symbolName: parsedAnchor.kind === 'symbol' ? parsedAnchor.symbolName : undefined,
+                symbolKind: parsedAnchor.kind === 'symbol' ? parsedAnchor.nodeType : undefined,
               })
             }}
           >

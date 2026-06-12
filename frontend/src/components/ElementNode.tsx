@@ -10,6 +10,7 @@ import { resolveElementIconUrl } from '../utils/elementIcon'
 import { ZoomInIcon, ZoomOutIcon, TrashIcon as TrashSvg, DrawIcon as EditSvg } from './Icons'
 import { vscodeBridge } from '../lib/vscodeBridge'
 import { openExternalUrl } from '../lib/desktop'
+import { parseSourceLink, sourceAnchorLabel } from '../utils/sourceLinks'
 import type { ExtensionToWebviewMessage } from '../types/vscode-messages'
 import { useElementSearch } from '../hooks/useElementSearch'
 import ElementCreateSearchResults from './ElementCreateSearchResults'
@@ -37,17 +38,10 @@ function VscodeCodePreview({
   const [isOpen, setIsOpen] = useState(false)
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const [relPath, anchorStr] = filePath.split('#')
-  const anchor = useMemo(() => {
-    try {
-      return anchorStr ? JSON.parse(decodeURIComponent(anchorStr)) : null
-    } catch {
-      return null
-    }
-  }, [anchorStr])
-  const startLine = typeof anchor?.startLine === 'number' ? anchor.startLine : undefined
-  const symbolName = typeof anchor?.name === 'string' ? anchor.name : fallbackSymbolName
-  const symbolKind = typeof anchor?.type === 'string' ? anchor.type : fallbackSymbolKind ?? undefined
+  const { basePath: relPath, anchor } = useMemo(() => parseSourceLink(filePath), [filePath])
+  const startLine = anchor.kind === 'line' ? anchor.startLine : undefined
+  const symbolName = anchor.kind === 'symbol' ? anchor.symbolName : fallbackSymbolName
+  const symbolKind = anchor.kind === 'symbol' ? anchor.nodeType : fallbackSymbolKind ?? undefined
 
   useEffect(() => {
     if (!isOpen) return
@@ -1056,7 +1050,7 @@ function ElementNode({ data, selected }: Props) {
             <Tooltip
               label={
                 data.repo
-                  ? `View source: ${data.file_path?.includes('#') ? (() => { try { return JSON.parse(data.file_path.split('#')[1]).name } catch { return 'Link' } })() : 'Link'}${data.url ? ' / URL' : ''}`
+                  ? `View source: ${sourceAnchorLabel(parseSourceLink(data.file_path).anchor) || 'Link'}${data.url ? ' / URL' : ''}`
                   : 'Open Link'
               }
               placement="top"

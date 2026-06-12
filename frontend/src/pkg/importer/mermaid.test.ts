@@ -338,6 +338,30 @@ E--No-->C
     expect(result.connectors[0]?.label).toBe('writes "to" & reads')
   })
 
+  it('uses explicit TLD refs instead of Mermaid node aliases', () => {
+    const code = `flowchart LR
+%% tld/v1 view ref=platform parent=root name=Platform owner=platform
+  A["API"]
+%% tld-element ref=api kind=service x=120 y=80
+  B["Database"]
+%% tld-element ref=db kind=database x=320 y=80
+  A -- "reads" --> B
+%% tld-connector ref=9 source=api target=db label=reads rel=query`
+
+    const result = parseMermaid(code)
+
+    expect(result.warnings).toHaveLength(0)
+    expect(result.elements.map((element) => element.ref)).toEqual(['api', 'db'])
+    expect(result.elements[0]?.placements[0]).toMatchObject({ parentRef: 'root', positionX: 120, positionY: 80 })
+    expect(result.connectors[0]).toMatchObject({
+      ref: '9',
+      sourceElementRef: 'api',
+      targetElementRef: 'db',
+      label: 'reads',
+      relationship: 'query',
+    })
+  })
+
   it('reports Mermaid import source and parsed size limits', () => {
     expect(mermaidImportSourceLimitError('flowchart LR\n  A --> B')).toBeNull()
     expect(mermaidImportSourceLimitError('x'.repeat(MERMAID_IMPORT_LIMITS.maxSourceBytes + 1))).toContain('Limit is 250 KiB')

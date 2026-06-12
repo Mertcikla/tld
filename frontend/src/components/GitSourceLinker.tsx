@@ -37,6 +37,7 @@ import { getParser, extractSymbols, detectLanguage, type SupportedLanguage, type
 import { githubCache } from '../utils/githubCache'
 import { parseRepoSlug } from '../utils/url'
 import { githubRequest } from '../utils/githubApi'
+import { formatLineSourceLink, formatSymbolSourceLink, parseSourceLink } from '../utils/sourceLinks'
 import { openExternalUrl } from '../lib/desktop'
 import type { LibraryElement } from '../types'
 
@@ -46,23 +47,22 @@ interface Props {
   onUpdate: (updates: Partial<LibraryElement>) => void
 }
 
+type SelectedSourceSymbol = Pick<ParsedSymbol, 'name' | 'type' | 'qualifiedName'>
+
 const SUPPORTED_LANGUAGES: SupportedLanguage[] = ['javascript', 'typescript', 'python', 'java', 'cpp', 'go', 'rust']
 
 function parseExistingLink(element: LibraryElement) {
-  const fp = element.file_path || ''
-  const hashIdx = fp.indexOf('#')
-  const basePath = hashIdx >= 0 ? fp.slice(0, hashIdx) : fp
-  const anchorStr = hashIdx >= 0 ? fp.slice(hashIdx + 1) : ''
+  const { basePath, anchor } = parseSourceLink(element.file_path || '')
   let symbolName = ''
+  let nodeType = ''
   let pickedLine: number | null = null
-  if (anchorStr) {
-    try {
-      const p = JSON.parse(anchorStr)
-      if (p.name) symbolName = p.name
-      if (p.startLine) pickedLine = p.startLine
-    } catch { /* intentionally empty */ }
+  if (anchor.kind === 'symbol') {
+    symbolName = anchor.symbolName
+    nodeType = anchor.nodeType
+  } else if (anchor.kind === 'line') {
+    pickedLine = anchor.startLine
   }
-  return { basePath, symbolName, pickedLine }
+  return { basePath, symbolName, nodeType, pickedLine }
 }
 
 const STEP_LABELS = ['Repo', 'Branch', 'File', 'Symbol']
@@ -320,7 +320,7 @@ function PreviewCard({
 }
 
 export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props) {
-  const { basePath: initBasePath, symbolName: initSymbolName, pickedLine: initPickedLine } = parseExistingLink(element)
+  const { basePath: initBasePath, symbolName: initSymbolName, nodeType: initNodeType, pickedLine: initPickedLine } = parseExistingLink(element)
 
   const hasExistingLink = !!(element.repo && element.file_path)
   const [mode, setMode] = useState<'summary' | 'edit'>(hasExistingLink ? 'summary' : 'edit')
@@ -353,8 +353,8 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
 
   // Step 4: symbols
   const [symbols, setSymbols] = useState<ParsedSymbol[]>([])
-  const [selectedSymbol, setSelectedSymbol] = useState<{ name: string; type: string } | null>(
-    initSymbolName ? { name: initSymbolName, type: '' } : null
+  const [selectedSymbol, setSelectedSymbol] = useState<SelectedSourceSymbol | null>(
+    initSymbolName ? { name: initSymbolName, qualifiedName: initSymbolName, type: initNodeType } : null
   )
   const [symbolLoading, setSymbolLoading] = useState(false)
 
@@ -376,14 +376,14 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
     if (mode === 'summary' || (element.repo !== repo && element.file_path !== filePath)) {
       setMode(hasLink ? 'summary' : 'edit')
       if (hasLink) {
-        const { basePath, symbolName, pickedLine: pl } = parseExistingLink(element)
+        const { basePath, symbolName, nodeType, pickedLine: pl } = parseExistingLink(element)
         setStep(1)
         setRepo(element.repo || '')
         setBranch(element.branch || '')
         setFilePath(basePath)
         setFileSearch(basePath)
         setLanguage(element.language || '')
-        setSelectedSymbol(symbolName ? { name: symbolName, type: '' } : null)
+        setSelectedSymbol(symbolName ? { name: symbolName, qualifiedName: symbolName, type: nodeType } : null)
         setPickedLine(pl)
         setBranches([])
         setFileTree([])
@@ -417,7 +417,9 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
 
   // Find full symbol data (with line numbers) for the currently selected symbol
   const selectedSymbolData = selectedSymbol
-    ? symbols.find(s => s.name === selectedSymbol.name && s.type === selectedSymbol.type) ?? null
+    ? symbols.find(s => (s.qualifiedName === selectedSymbol.qualifiedName || s.name === selectedSymbol.name) && s.type === selectedSymbol.type)
+      ?? symbols.find(s => s.qualifiedName === selectedSymbol.qualifiedName || s.name === selectedSymbol.name)
+      ?? null
     : null
 
   async function fetchBranches(repoSlug: string) {
@@ -581,10 +583,11 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
 
   function buildFilePath(): string {
     if (isSupported && selectedSymbol) {
-      return `${filePath}#${JSON.stringify({ name: selectedSymbol.name, type: selectedSymbol.type })}`
+      const sourceSymbol = selectedSymbolData ?? selectedSymbol
+      return formatSymbolSourceLink(filePath, sourceSymbol.type, sourceSymbol.qualifiedName || sourceSymbol.name)
     }
     if (!isSupported && pickedLine) {
-      return `${filePath}#${JSON.stringify({ startLine: pickedLine, endLine: pickedLine })}`
+      return formatLineSourceLink(filePath, pickedLine)
     }
     return filePath
   }
@@ -1003,12 +1006,14 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                             rounded="lg" border="1px solid" borderColor="whiteAlpha.100"
                             className="custom-scrollbar">
                             {symbols.map((s, i) => {
-                              const isSelected = selectedSymbol?.name === s.name && selectedSymbol?.type === s.type
+                              const isSelected = !!selectedSymbol
+                                && (!selectedSymbol.type || selectedSymbol.type === s.type)
+                                && (selectedSymbol.qualifiedName === s.qualifiedName || selectedSymbol.name === s.name)
                               return (
                                 <Box key={i} px={3} py={1.5} cursor="pointer"
                                   bg={isSelected ? 'blue.900' : undefined}
                                   _hover={{ bg: isSelected ? 'blue.900' : 'whiteAlpha.80' }}
-                                  onClick={() => setSelectedSymbol(isSelected ? null : { name: s.name, type: s.type })}>
+                                  onClick={() => setSelectedSymbol(isSelected ? null : { name: s.name, type: s.type, qualifiedName: s.qualifiedName })}>
                                   <Text fontSize="xs" fontWeight="600" color="white">{s.name}</Text>
                                   <Text fontSize="10px" color="gray.500">{s.type.replace(/_/g, ' ')} · L{s.startLine}</Text>
                                 </Box>

@@ -21,10 +21,9 @@ describe('MermaidExporter', () => {
     expect(code).toContain('node_2["Worker &quot;A&quot;"]')
     expect(code).toContain('node_2 -- "writes to" --> node_3')
     expect(code.match(/%% tld\/v1/g)).toHaveLength(1)
-    expect(code).toContain('%% tld-element x=0 y=0 kind=service')
+    expect(code).toContain('%% tld-element ref=node_2 x=0 y=0 kind=service')
     expect(code).not.toContain('%% tld-element node_2')
-    expect(code).not.toContain('%% tld-connector')
-    expect(code).not.toContain('label=')
+    expect(code).toContain('%% tld-connector ref=9 source=node_2 target=node_3 label=writes to')
     expect(code).not.toContain('dir=forward')
     expect(code).not.toContain('style=bezier')
 
@@ -76,11 +75,11 @@ describe('MermaidExporter', () => {
     expect(lines[1]).toBe('%% tld/v1')
     expect(lines.filter((line) => line.includes('tld/v1'))).toHaveLength(1)
     expect(lines[2]).toBe('  node_2["Worker"]')
-    expect(lines[3]).toBe('%% tld-element x=10 y=20 kind=service')
+    expect(lines[3]).toBe('%% tld-element ref=node_2 x=10 y=20 kind=service')
     expect(lines[4]).toBe('  node_3["Database"]')
-    expect(lines[5]).toBe('%% tld-element x=30 y=40 kind=database')
+    expect(lines[5]).toBe('%% tld-element ref=node_3 x=30 y=40 kind=database')
     expect(lines[7]).toBe('  node_2 -- "writes to" --> node_3')
-    expect(lines[8]).toBe('%% tld-connector rel=stores dir=both style=straight sourceHandle=top targetHandle=bottom')
+    expect(lines[8]).toBe('%% tld-connector ref=9 source=node_2 target=node_3 label=writes to rel=stores dir=both style=straight sourceHandle=top targetHandle=bottom')
     expect(lines[8]).not.toContain('node_2->node_3')
   })
 
@@ -115,7 +114,7 @@ describe('MermaidExporter', () => {
     expect(parsed.connectors[0]?.relationship).toBeUndefined()
   })
 
-  it('round-trips escaped TLD metadata without storing names or edge labels in comments', () => {
+  it('round-trips escaped explicit TLD metadata refs and connector labels', () => {
     const description = 'Line 1\nLine 2, equals= pipe| colon: slash\\ space'
     const view = {
       placements: [
@@ -174,10 +173,10 @@ describe('MermaidExporter', () => {
     expect(metadataText).toContain('tags=alpha beta,x\\=y,comma\\,item')
     expect(metadataText).toContain('repo=repo with space')
     expect(metadataText).toContain('viewLabel=Service View')
+    expect(metadataText).toContain('ref=node_2')
+    expect(metadataText).toContain('ref=9 source=node_2 target=node_3 label=writes to')
     expect(metadataText).toContain('rel=runtime dependency')
     expect(metadataText).not.toContain('name=')
-    expect(metadataText).not.toContain('label=')
-    expect(metadataText).not.toContain('node_2 x=')
     expect(metadataText).not.toContain('node_2->node_3')
 
     const parsed = parseMermaid(code)
@@ -229,7 +228,7 @@ describe('MermaidExporter', () => {
     } satisfies MermaidWorkspaceView
 
     const code = new MermaidExporter(view).toMermaid()
-    expect(code).toContain('%% tld-connector rel=writes dir=both style=straight')
+    expect(code).toContain('%% tld-connector ref=9 source=node_2 target=node_3 label=rich edge rel=writes dir=both style=straight')
     expect(code).not.toContain('node_2->node_3 rel=writes')
 
     const parsed = parseMermaid(code)
