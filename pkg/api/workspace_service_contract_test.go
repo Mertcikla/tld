@@ -580,9 +580,9 @@ type contractStore struct {
 	getElement              func(context.Context, int32, uuid.UUID) (*diagv1.Element, error)
 	createView              func(context.Context, uuid.UUID, *int32, string, *string, bool) (*diagv1.View, error)
 	getViewMarkdown         func(context.Context, int32, uuid.UUID) (*diagv1.ViewMarkdownDocument, string, error)
-	createViewMarkdown      func(context.Context, int32, uuid.UUID, *string, *string) (*diagv1.View, error)
+	createViewMarkdown      func(context.Context, int32, uuid.UUID, *string, *string, string, *string) (*diagv1.View, error)
 	linkViewMarkdown        func(context.Context, int32, uuid.UUID, string) (*diagv1.View, error)
-	saveViewMarkdown        func(context.Context, int32, uuid.UUID, string) (*diagv1.ViewMarkdownDocument, error)
+	saveViewMarkdown        func(context.Context, int32, uuid.UUID, string, *string, bool) (*diagv1.ViewMarkdownDocument, error)
 	unlinkViewMarkdown      func(context.Context, int32, uuid.UUID, bool) (*diagv1.View, error)
 	updateElement           func(context.Context, int32, uuid.UUID, ElementInput) (*diagv1.Element, error)
 	getView                 func(context.Context, int32, uuid.UUID) (*diagv1.View, error)
@@ -632,9 +632,9 @@ func (s *contractStore) CreateView(ctx context.Context, workspaceID uuid.UUID, o
 	}
 	return nil, nil
 }
-func (s *contractStore) CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string) (*diagv1.View, error) {
+func (s *contractStore) CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string, targetKind string, path *string) (*diagv1.View, error) {
 	if s.createViewMarkdown != nil {
-		return s.createViewMarkdown(ctx, viewID, workspaceID, fileName, initialContent)
+		return s.createViewMarkdown(ctx, viewID, workspaceID, fileName, initialContent, targetKind, path)
 	}
 	return nil, nil
 }
@@ -650,9 +650,9 @@ func (s *contractStore) UpdateView(ctx context.Context, id int32, workspaceID uu
 	}
 	return nil, nil
 }
-func (s *contractStore) SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string) (*diagv1.ViewMarkdownDocument, error) {
+func (s *contractStore) SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string, expectedFileVersion *string, force bool) (*diagv1.ViewMarkdownDocument, error) {
 	if s.saveViewMarkdown != nil {
-		return s.saveViewMarkdown(ctx, viewID, workspaceID, content)
+		return s.saveViewMarkdown(ctx, viewID, workspaceID, content, expectedFileVersion, force)
 	}
 	return nil, nil
 }

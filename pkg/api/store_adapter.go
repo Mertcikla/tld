@@ -840,28 +840,37 @@ func (a *APIStore) GetViewMarkdown(ctx context.Context, viewID int32, workspaceI
 		return nil, "", err
 	}
 	return &diagv1.ViewMarkdownDocument{
-		Path:      doc.Path,
-		IsManaged: doc.IsManaged,
-		UpdatedAt: ts(doc.UpdatedAt),
+		Path:       doc.Path,
+		IsManaged:  doc.IsManaged,
+		UpdatedAt:  ts(doc.UpdatedAt),
+		SourceKind: doc.SourceKind,
+		Exists:     true,
+		Writable:   true,
+		CanEdit:    true,
+		GitState:   "unknown",
 	}, "", nil
 }
 
-func (a *APIStore) CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string) (*diagv1.View, error) {
-	path := defaultViewMarkdownPath(viewID, fileName)
-	if err := a.Store.UpsertViewMarkdown(ctx, int64(viewID), path, true, time.Now().UTC().Format(time.RFC3339)); err != nil {
+func (a *APIStore) CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string, targetKind string, path *string) (*diagv1.View, error) {
+	storedPath := defaultViewMarkdownPath(viewID, fileName)
+	sourceKind := targetKind
+	if sourceKind == "" {
+		sourceKind = "PRIVATE_APP"
+	}
+	if err := a.Store.UpsertViewMarkdown(ctx, int64(viewID), storedPath, true, time.Now().UTC().Format(time.RFC3339), sourceKind); err != nil {
 		return nil, err
 	}
 	return a.GetView(ctx, viewID, workspaceID)
 }
 
 func (a *APIStore) LinkViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, path string) (*diagv1.View, error) {
-	if err := a.Store.UpsertViewMarkdown(ctx, int64(viewID), path, false, time.Now().UTC().Format(time.RFC3339)); err != nil {
+	if err := a.Store.UpsertViewMarkdown(ctx, int64(viewID), path, false, time.Now().UTC().Format(time.RFC3339), "ATTACHED"); err != nil {
 		return nil, err
 	}
 	return a.GetView(ctx, viewID, workspaceID)
 }
 
-func (a *APIStore) SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string) (*diagv1.ViewMarkdownDocument, error) {
+func (a *APIStore) SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string, expectedFileVersion *string, force bool) (*diagv1.ViewMarkdownDocument, error) {
 	return nil, ErrUnimplemented
 }
 
@@ -1145,9 +1154,14 @@ func viewNodeToProto(node app.ViewTreeNode, workspaceID uuid.UUID) *diagv1.View 
 	}
 	if node.Markdown != nil {
 		p.Markdown = &diagv1.ViewMarkdownDocument{
-			Path:      node.Markdown.Path,
-			IsManaged: node.Markdown.IsManaged,
-			UpdatedAt: ts(node.Markdown.UpdatedAt),
+			Path:       node.Markdown.Path,
+			IsManaged:  node.Markdown.IsManaged,
+			UpdatedAt:  ts(node.Markdown.UpdatedAt),
+			SourceKind: node.Markdown.SourceKind,
+			Exists:     true,
+			Writable:   true,
+			CanEdit:    true,
+			GitState:   "unknown",
 		}
 	}
 	return p

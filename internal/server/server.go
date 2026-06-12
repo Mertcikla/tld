@@ -44,8 +44,11 @@ func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, da
 func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, opts Options) (*Server, error) {
 	watchStore := watch.NewStoreWithBun(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
 	dataDirs := []string{}
-	if opts.DataDir != "" {
+	if opts.DataDir != "" || opts.WorkspaceDir != "" {
 		dataDirs = append(dataDirs, opts.DataDir)
+		if opts.WorkspaceDir != "" {
+			dataDirs = append(dataDirs, opts.WorkspaceDir)
+		}
 	}
 	apiStore := store.NewAPIAdapter(sqliteStore, dataDirs...)
 	lockHooks := watchLockHooks{store: watchStore}

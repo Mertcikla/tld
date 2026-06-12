@@ -185,5 +185,8 @@ func storeErr(op string, err error) error {
 	if errors.Is(err, ErrUnimplemented) {
 		return connect.NewError(connect.CodeUnimplemented, err)
 	}
+	if errors.Is(err, ErrMarkdownFileChanged) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
 	return connect.NewError(connect.CodeInternal, fmt.Errorf("%s: %w", op, err))
 }

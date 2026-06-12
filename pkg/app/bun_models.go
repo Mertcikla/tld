@@ -183,12 +183,13 @@ func (m *viewModel) BeforeDelete(ctx context.Context, query *bun.DeleteQuery) er
 type viewMarkdownModel struct {
 	bun.BaseModel `bun:"table:view_markdown_documents"`
 
-	ViewID    int64      `bun:"view_id,pk"`
-	OrgID     *uuid.UUID `bun:"org_id,nullzero"`
-	Path      string     `bun:"path"`
-	IsManaged bool       `bun:"is_managed"`
-	CreatedAt string     `bun:"created_at"`
-	UpdatedAt string     `bun:"updated_at"`
+	ViewID     int64      `bun:"view_id,pk"`
+	OrgID      *uuid.UUID `bun:"org_id,nullzero"`
+	Path       string     `bun:"path"`
+	IsManaged  bool       `bun:"is_managed"`
+	SourceKind string     `bun:"source_kind"`
+	CreatedAt  string     `bun:"created_at"`
+	UpdatedAt  string     `bun:"updated_at"`
 }
 
 func (m *viewMarkdownModel) BeforeAppendModel(ctx context.Context, query bun.Query) error {

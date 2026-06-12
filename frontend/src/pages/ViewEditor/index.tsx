@@ -1423,26 +1423,6 @@ function ViewEditorInner({
     }
   }, [canEdit, loadViewMarkdown, toast, viewId])
 
-  const handleMoveMarkdown = useCallback(async (targetKind: string, path?: string) => {
-    if (!canEdit || viewId === null) return
-    setIsMarkdownMutating(true)
-    try {
-      await api.workspace.views.markdown.move(viewId, targetKind, path)
-      await loadViewMarkdown(viewId)
-      setMarkdownSaveConflict(false)
-      setIsMarkdownOpen(true)
-      toast({ status: 'success', title: 'Markdown location updated' })
-    } catch (error) {
-      toast({
-        status: 'error',
-        title: 'Failed to move markdown',
-        description: error instanceof Error ? error.message : String(error),
-      })
-    } finally {
-      setIsMarkdownMutating(false)
-    }
-  }, [canEdit, loadViewMarkdown, toast, viewId])
-
   const handleUnlinkMarkdown = useCallback(async ({ deleteManagedFile }: { deleteManagedFile: boolean } = { deleteManagedFile: false }) => {
     if (!canEdit || viewId === null) return
     setIsMarkdownMutating(true)
@@ -4127,7 +4107,6 @@ function ViewEditorInner({
                   onForceSave={handleForceSaveMarkdown}
                   onCreateMarkdown={handleCreateMarkdownFromPanel}
                   onAttachMarkdown={handleLinkMarkdown}
-                  onMoveMarkdown={handleMoveMarkdown}
                   onUnlinkMarkdown={handleUnlinkMarkdown}
                   onPickMarkdownFile={handlePickMarkdownFile}
                   onSaveAs={handleSaveMarkdownAs}

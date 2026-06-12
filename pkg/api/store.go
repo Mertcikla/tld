@@ -20,6 +20,9 @@ import (
 // particular implementation (e.g. versioning in the offline tld app).
 var ErrUnimplemented = errors.New("not implemented")
 
+// ErrMarkdownFileChanged is returned when a save includes a stale file token.
+var ErrMarkdownFileChanged = errors.New("markdown file changed on disk")
+
 type contextKey string
 
 const ctxKeyWorkspaceID contextKey = "api_org_id"
@@ -105,9 +108,9 @@ type Store interface {
 	GetViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID) (*diagv1.ViewMarkdownDocument, string, error)
 	CreateView(ctx context.Context, workspaceID uuid.UUID, ownerElementID *int32, name string, label *string, isRoot bool) (*diagv1.View, error)
 	UpdateView(ctx context.Context, id int32, workspaceID uuid.UUID, name string, description *string, label *string, tags []string) (*diagv1.View, error)
-	CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string) (*diagv1.View, error)
+	CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string, targetKind string, path *string) (*diagv1.View, error)
 	LinkViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, path string) (*diagv1.View, error)
-	SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string) (*diagv1.ViewMarkdownDocument, error)
+	SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string, expectedFileVersion *string, force bool) (*diagv1.ViewMarkdownDocument, error)
 	UnlinkViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, deleteManagedFile bool) (*diagv1.View, error)
 	DeleteView(ctx context.Context, id int32, workspaceID uuid.UUID) error
 

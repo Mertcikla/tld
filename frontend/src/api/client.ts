@@ -1072,16 +1072,6 @@ export const api = {
           return markdown
         },
 
-        move: async (id: number, targetKind: string, path?: string): Promise<ViewTreeNode> => {
-          const json = await connectJsonRpc<{ view?: ProtoDiagram }>('MoveViewMarkdown', {
-            viewId: id,
-            targetKind,
-            path: path ?? undefined,
-          })
-          if (!json?.view) throw new Error('View markdown move returned no updated view response')
-          return mapDiagram(json.view)
-        },
-
         unlink: async (id: number, deleteManagedFile = false): Promise<ViewTreeNode> => {
           const json = await connectJsonRpc<{ view?: ProtoDiagram }>('UnlinkViewMarkdown', {
             viewId: id,

@@ -59,7 +59,20 @@ func (s *WorkspaceService) CreateViewMarkdown(
 			return nil, invalidArg("file_name", "must not contain path separators")
 		}
 	}
-	v, err := s.Store.CreateViewMarkdown(ctx, viewID, workspaceID, req.Msg.FileName, req.Msg.InitialContent)
+	targetKind := normalizeViewMarkdownTargetKind(req.Msg.GetTargetKind())
+	if !isWritableViewMarkdownTargetKind(targetKind) {
+		return nil, invalidArg("target_kind", "must be PRIVATE_WORKSPACE, PRIVATE_APP, or REPO")
+	}
+	if req.Msg.Path != nil {
+		path := strings.TrimSpace(req.Msg.GetPath())
+		if path == "" {
+			return nil, invalidArg("path", "must not be empty when provided")
+		}
+		if !isMarkdownPath(path) {
+			return nil, invalidArg("path", "must point to a markdown file")
+		}
+	}
+	v, err := s.Store.CreateViewMarkdown(ctx, viewID, workspaceID, req.Msg.FileName, req.Msg.InitialContent, targetKind, req.Msg.Path)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, os.ErrNotExist) {
 			return nil, connect.NewError(connect.CodeNotFound, errors.New("view not found"))
@@ -114,7 +127,7 @@ func (s *WorkspaceService) SaveViewMarkdown(
 	if err != nil {
 		return nil, err
 	}
-	markdown, err := s.Store.SaveViewMarkdown(ctx, viewID, workspaceID, req.Msg.GetContent())
+	markdown, err := s.Store.SaveViewMarkdown(ctx, viewID, workspaceID, req.Msg.GetContent(), req.Msg.ExpectedFileVersion, req.Msg.GetForce())
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, os.ErrNotExist) {
 			return nil, connect.NewError(connect.CodeNotFound, errors.New("view markdown not found"))
@@ -153,4 +166,19 @@ func (s *WorkspaceService) UnlinkViewMarkdown(
 func isMarkdownPath(path string) bool {
 	lower := strings.ToLower(strings.TrimSpace(path))
 	return strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".markdown") || strings.HasSuffix(lower, ".mdx")
+}
+
+func normalizeViewMarkdownTargetKind(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "", "PRIVATE":
+		return "PRIVATE_WORKSPACE"
+	case "PRIVATE_WORKSPACE", "PRIVATE_APP", "REPO", "ATTACHED", "LEGACY":
+		return strings.ToUpper(strings.TrimSpace(value))
+	default:
+		return strings.ToUpper(strings.TrimSpace(value))
+	}
+}
+
+func isWritableViewMarkdownTargetKind(value string) bool {
+	return value == "PRIVATE_WORKSPACE" || value == "PRIVATE_APP" || value == "REPO"
 }

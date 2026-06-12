@@ -191,7 +191,6 @@ interface Props {
   onForceSave?: (markdown: string) => Promise<void> | void
   onCreateMarkdown?: (targetKind: string, path?: string) => Promise<void> | void
   onAttachMarkdown?: (path: string) => Promise<void> | void
-  onMoveMarkdown?: (targetKind: string, path?: string) => Promise<void> | void
   onUnlinkMarkdown?: (options?: { deleteManagedFile: boolean }) => Promise<void> | void
   onPickMarkdownFile?: () => Promise<string | null>
   onSaveAs?: (markdown: string) => Promise<void> | void
@@ -218,7 +217,6 @@ function ViewMarkdownPanel({
   onForceSave,
   onCreateMarkdown,
   onAttachMarkdown,
-  onMoveMarkdown,
   onUnlinkMarkdown,
   onPickMarkdownFile,
   onSaveAs,
@@ -234,14 +232,12 @@ function ViewMarkdownPanel({
   const suggestedRepoPath = useMemo(() => defaultRepoMarkdownPath(viewName), [viewName])
   const [repoPath, setRepoPath] = useState(suggestedRepoPath)
   const [attachPath, setAttachPath] = useState('')
-  const [moveRepoPath, setMoveRepoPath] = useState(suggestedRepoPath)
   const canEditDocument = canEdit && !!markdown?.can_edit
   const showNativeAttachPicker = isWailsApp && !!onPickMarkdownFile
   const showAttachPathInput = !showNativeAttachPicker
 
   useEffect(() => {
     setRepoPath(suggestedRepoPath)
-    setMoveRepoPath(suggestedRepoPath)
   }, [suggestedRepoPath])
 
   const currentEditorMarkdown = useCallback(() => editorRef.current?.getMarkdown() ?? latestContentRef.current, [])
@@ -490,8 +486,6 @@ function ViewMarkdownPanel({
             {onOpenInEditor && (
               <MenuItem bg="transparent" onClick={onOpenInEditor} isDisabled={!markdown}>Open in editor</MenuItem>
             )}
-            <MenuItem data-testid="view-markdown-move-private" bg="transparent" onClick={() => { void onMoveMarkdown?.('PRIVATE_WORKSPACE') }} isDisabled={!canEdit || !markdown || isLoading}>Move/copy to private</MenuItem>
-            <MenuItem data-testid="view-markdown-move-repo" bg="transparent" onClick={() => { void onMoveMarkdown?.('REPO', moveRepoPath || suggestedRepoPath) }} isDisabled={!canEdit || !markdown || isLoading}>Move/copy to repo</MenuItem>
             <MenuItem data-testid="view-markdown-detach" bg="transparent" color="red.200" onClick={() => { void onUnlinkMarkdown?.({ deleteManagedFile: false }) }} isDisabled={!canEdit || !markdown || isLoading}>Detach from view</MenuItem>
             <MenuItem bg="transparent" onClick={onClose}>Close</MenuItem>
           </MenuList>

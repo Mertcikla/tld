@@ -33,14 +33,18 @@ var _ api.Store = (*APIAdapter)(nil)
 // APIAdapter exposes the local SQLite-backed store through the shared
 // ConnectRPC-oriented api.Store contract.
 type APIAdapter struct {
-	Store   *SQLiteStore
-	DataDir string
+	Store        *SQLiteStore
+	DataDir      string
+	WorkspaceDir string
 }
 
-func NewAPIAdapter(store *SQLiteStore, dataDir ...string) *APIAdapter {
+func NewAPIAdapter(store *SQLiteStore, paths ...string) *APIAdapter {
 	adapter := &APIAdapter{Store: store}
-	if len(dataDir) > 0 {
-		adapter.DataDir = dataDir[0]
+	if len(paths) > 0 {
+		adapter.DataDir = paths[0]
+	}
+	if len(paths) > 1 {
+		adapter.WorkspaceDir = paths[1]
 	}
 	return adapter
 }
