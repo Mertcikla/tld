@@ -503,19 +503,49 @@ export async function getViewMarkdown(page: Page, viewId: number) {
   if (response.status() === 404) return null
   expect(response.ok()).toBeTruthy()
   const json = await response.json()
-  return json as { markdown?: { path?: string; isManaged?: boolean; is_managed?: boolean; updatedAt?: string; updated_at?: string }; content?: string }
+  return json as {
+    markdown?: {
+      path?: string
+      isManaged?: boolean
+      is_managed?: boolean
+      updatedAt?: string
+      updated_at?: string
+      sourceKind?: string
+      source_kind?: string
+      exists?: boolean
+      writable?: boolean
+      canEdit?: boolean
+      can_edit?: boolean
+      gitState?: string
+      git_state?: string
+      repoRelativePath?: string
+      repo_relative_path?: string
+      linkedViewCount?: number
+      linked_view_count?: number
+      fileVersion?: string
+      file_version?: string
+    }
+    content?: string
+  }
 }
 
-export async function createViewMarkdown(page: Page, viewId: number, fileName: string, initialContent = '') {
+export async function createViewMarkdown(page: Page, viewId: number, fileName: string, initialContent = '', targetKind?: string, path?: string) {
   const response = await page.request.post('/api/diag.v1.WorkspaceService/CreateViewMarkdown', {
-    data: { viewId, fileName, initialContent },
+    data: { viewId, fileName, initialContent, targetKind, path },
   })
   expect(response.ok()).toBeTruthy()
 }
 
-export async function saveViewMarkdown(page: Page, viewId: number, content: string) {
+export async function linkViewMarkdown(page: Page, viewId: number, path: string) {
+  const response = await page.request.post('/api/diag.v1.WorkspaceService/LinkViewMarkdown', {
+    data: { viewId, path },
+  })
+  expect(response.ok()).toBeTruthy()
+}
+
+export async function saveViewMarkdown(page: Page, viewId: number, content: string, force = false) {
   const response = await page.request.post('/api/diag.v1.WorkspaceService/SaveViewMarkdown', {
-    data: { viewId, content },
+    data: { viewId, content, force },
   })
   expect(response.ok()).toBeTruthy()
 }

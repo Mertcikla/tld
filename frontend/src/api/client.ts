@@ -450,6 +450,20 @@ interface ProtoViewMarkdownDocument {
   is_managed?: boolean
   updatedAt?: string
   updated_at?: string
+  sourceKind?: string
+  source_kind?: string
+  exists?: boolean
+  writable?: boolean
+  canEdit?: boolean
+  can_edit?: boolean
+  gitState?: string
+  git_state?: string
+  repoRelativePath?: string
+  repo_relative_path?: string
+  linkedViewCount?: number
+  linked_view_count?: number
+  fileVersion?: string
+  file_version?: string
 }
 
 export function mapViewMarkdown(doc: ProtoViewMarkdownDocument | null | undefined): ViewMarkdownDocument | null {
@@ -458,6 +472,14 @@ export function mapViewMarkdown(doc: ProtoViewMarkdownDocument | null | undefine
     path: String(doc.path),
     is_managed: Boolean(doc.isManaged ?? doc.is_managed),
     updated_at: String(doc.updatedAt ?? doc.updated_at ?? ''),
+    source_kind: String(doc.sourceKind ?? doc.source_kind ?? ''),
+    exists: Boolean(doc.exists ?? true),
+    writable: Boolean(doc.writable ?? true),
+    can_edit: Boolean(doc.canEdit ?? doc.can_edit ?? true),
+    git_state: String(doc.gitState ?? doc.git_state ?? 'unknown'),
+    repo_relative_path: doc.repoRelativePath ?? doc.repo_relative_path,
+    linked_view_count: Number(doc.linkedViewCount ?? doc.linked_view_count ?? 0),
+    file_version: String(doc.fileVersion ?? doc.file_version ?? ''),
   }
 }
 
@@ -1012,12 +1034,14 @@ export const api = {
 
         create: async (
           id: number,
-          data: { fileName?: string; initialContent?: string } = {},
+          data: { fileName?: string; initialContent?: string; targetKind?: string; path?: string } = {},
         ): Promise<ViewTreeNode> => {
           const json = await connectJsonRpc<{ view?: ProtoDiagram }>('CreateViewMarkdown', {
             viewId: id,
             fileName: data.fileName ?? undefined,
             initialContent: data.initialContent ?? undefined,
+            targetKind: data.targetKind ?? undefined,
+            path: data.path ?? undefined,
           })
           if (!json?.view) throw new Error('View markdown was created without an updated view response')
           return mapDiagram(json.view)
@@ -1032,14 +1056,30 @@ export const api = {
           return mapDiagram(json.view)
         },
 
-        save: async (id: number, content: string): Promise<ViewMarkdownDocument> => {
+        save: async (
+          id: number,
+          content: string,
+          options: { expectedFileVersion?: string; force?: boolean } = {},
+        ): Promise<ViewMarkdownDocument> => {
           const json = await connectJsonRpc<{ markdown?: ProtoViewMarkdownDocument }>('SaveViewMarkdown', {
             viewId: id,
             content,
+            expectedFileVersion: options.expectedFileVersion ?? undefined,
+            force: options.force ?? false,
           })
           const markdown = mapViewMarkdown(json?.markdown)
           if (!markdown) throw new Error('View markdown save returned no markdown metadata')
           return markdown
+        },
+
+        move: async (id: number, targetKind: string, path?: string): Promise<ViewTreeNode> => {
+          const json = await connectJsonRpc<{ view?: ProtoDiagram }>('MoveViewMarkdown', {
+            viewId: id,
+            targetKind,
+            path: path ?? undefined,
+          })
+          if (!json?.view) throw new Error('View markdown move returned no updated view response')
+          return mapDiagram(json.view)
         },
 
         unlink: async (id: number, deleteManagedFile = false): Promise<ViewTreeNode> => {

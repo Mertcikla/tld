@@ -94,6 +94,7 @@ import {
 } from './hooks/useViewContextNeighbours'
 import { canonicalNodePairKey } from './pairKey'
 import { vscodeBridge } from '../../lib/vscodeBridge'
+import { openTextFile } from '../../lib/desktop'
 import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
 
 import { ViewEditorContext } from './context'
@@ -437,6 +438,10 @@ function viewSnapshotsEqual(left: ViewMetadataSnapshot, right: ViewMetadataSnaps
 function initialViewMarkdown(name?: string | null) {
   const trimmed = name?.trim()
   return trimmed ? `# ${trimmed}\n\n` : ''
+}
+
+function isMarkdownConflictError(error: unknown) {
+  return error instanceof Error && /markdown file changed/i.test(error.message)
 }
 
 function clampMarkdownPaneWidth(width: number, totalWidth: number, isMobileLayout: boolean) {
@@ -1197,6 +1202,7 @@ function ViewEditorInner({
   const [isMarkdownLoading, setIsMarkdownLoading] = useState(false)
   const [isMarkdownMutating, setIsMarkdownMutating] = useState(false)
   const [isMarkdownSaving, setIsMarkdownSaving] = useState(false)
+  const [markdownSaveConflict, setMarkdownSaveConflict] = useState(false)
   const [isMarkdownResizing, setIsMarkdownResizing] = useState(false)
   const [markdownPaneWidth, setMarkdownPaneWidth] = useState(() => {
     if (typeof window === 'undefined') return VIEW_EDITOR_MARKDOWN_DEFAULT_WIDTH
@@ -1267,6 +1273,7 @@ function ViewEditorInner({
         setViewMarkdownContent('')
         setLoadedViewMarkdownContent('')
         setViewMarkdownSyncToken((prev) => prev + 1)
+        setMarkdownSaveConflict(false)
         setIsMarkdownOpen(false)
         return null
       }
@@ -1274,6 +1281,7 @@ function ViewEditorInner({
       setViewMarkdownContent(result.content)
       setLoadedViewMarkdownContent(result.content)
       setViewMarkdownSyncToken((prev) => prev + 1)
+      setMarkdownSaveConflict(false)
       return result
     } catch (error) {
       if (markdownRequestSeqRef.current !== requestSeq) return null
@@ -1281,6 +1289,7 @@ function ViewEditorInner({
       setViewMarkdownContent('')
       setLoadedViewMarkdownContent('')
       setViewMarkdownSyncToken((prev) => prev + 1)
+      setMarkdownSaveConflict(false)
       if (!options.silent) {
         toast({
           status: 'error',
@@ -1301,6 +1310,7 @@ function ViewEditorInner({
       setViewMarkdownContent('')
       setLoadedViewMarkdownContent('')
       setViewMarkdownSyncToken((prev) => prev + 1)
+      setMarkdownSaveConflict(false)
       setIsMarkdownOpen(false)
       setIsMarkdownLoading(false)
       return
@@ -1332,13 +1342,15 @@ function ViewEditorInner({
     event.preventDefault()
   }, [isMarkdownOpen, markdownPaneWidth])
 
-  const handleCreateManagedMarkdown = useCallback(async (options: { fileName?: string; initialContent?: string; openEditor?: boolean } = {}) => {
+  const handleCreateManagedMarkdown = useCallback(async (options: { fileName?: string; initialContent?: string; openEditor?: boolean; targetKind?: string; path?: string } = {}) => {
     if (!canEdit || viewId === null) return null
     setIsMarkdownMutating(true)
     try {
       await api.workspace.views.markdown.create(viewId, {
         fileName: options.fileName,
         initialContent: options.initialContent ?? initialViewMarkdown(view?.name),
+        targetKind: options.targetKind,
+        path: options.path,
       })
       const loadedMarkdown = await loadViewMarkdown(viewId)
       if (options.openEditor !== false) setIsMarkdownOpen(true)
@@ -1355,6 +1367,10 @@ function ViewEditorInner({
     }
   }, [canEdit, loadViewMarkdown, toast, view?.name, viewId])
 
+  const handleCreateMarkdownFromPanel = useCallback(async (targetKind: string, path?: string) => {
+    await handleCreateManagedMarkdown({ targetKind, path, openEditor: true })
+  }, [handleCreateManagedMarkdown])
+
   const handleToggleMarkdown = useCallback(() => {
     if (window.__TLD_VSCODE__) {
       if (!viewMarkdown) {
@@ -1367,7 +1383,7 @@ function ViewEditorInner({
       return
     }
     if (!viewMarkdown) {
-      void handleCreateManagedMarkdown({ openEditor: true })
+      setIsMarkdownOpen(true)
       return
     }
     setIsMarkdownOpen((prev) => !prev)
@@ -1393,6 +1409,7 @@ function ViewEditorInner({
     try {
       await api.workspace.views.markdown.link(viewId, path)
       await loadViewMarkdown(viewId)
+      setMarkdownSaveConflict(false)
       setIsMarkdownOpen(true)
       toast({ status: 'success', title: 'Markdown linked' })
     } catch (error) {
@@ -1406,12 +1423,33 @@ function ViewEditorInner({
     }
   }, [canEdit, loadViewMarkdown, toast, viewId])
 
+  const handleMoveMarkdown = useCallback(async (targetKind: string, path?: string) => {
+    if (!canEdit || viewId === null) return
+    setIsMarkdownMutating(true)
+    try {
+      await api.workspace.views.markdown.move(viewId, targetKind, path)
+      await loadViewMarkdown(viewId)
+      setMarkdownSaveConflict(false)
+      setIsMarkdownOpen(true)
+      toast({ status: 'success', title: 'Markdown location updated' })
+    } catch (error) {
+      toast({
+        status: 'error',
+        title: 'Failed to move markdown',
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setIsMarkdownMutating(false)
+    }
+  }, [canEdit, loadViewMarkdown, toast, viewId])
+
   const handleUnlinkMarkdown = useCallback(async ({ deleteManagedFile }: { deleteManagedFile: boolean } = { deleteManagedFile: false }) => {
     if (!canEdit || viewId === null) return
     setIsMarkdownMutating(true)
     try {
       await api.workspace.views.markdown.unlink(viewId, deleteManagedFile)
       await loadViewMarkdown(viewId, { silent: true })
+      setMarkdownSaveConflict(false)
       setIsMarkdownOpen(false)
       toast({ status: 'success', title: 'Markdown unlinked' })
     } catch (error) {
@@ -1425,16 +1463,29 @@ function ViewEditorInner({
     }
   }, [canEdit, loadViewMarkdown, toast, viewId])
 
-  const handleSaveMarkdown = useCallback(async (markdown: string) => {
+  const handleSaveMarkdown = useCallback(async (markdown: string, options: { force?: boolean } = {}) => {
     if (viewId === null || !viewMarkdown) return
     setIsMarkdownSaving(true)
     try {
-      const updated = await api.workspace.views.markdown.save(viewId, markdown)
+      const updated = await api.workspace.views.markdown.save(viewId, markdown, {
+        expectedFileVersion: options.force ? undefined : viewMarkdown.file_version,
+        force: options.force ?? false,
+      })
       setViewMarkdown(updated)
       setViewMarkdownContent(markdown)
       setLoadedViewMarkdownContent(markdown)
+      setMarkdownSaveConflict(false)
       toast({ status: 'success', title: 'Notes saved' })
     } catch (error) {
+      if (isMarkdownConflictError(error)) {
+        setMarkdownSaveConflict(true)
+        toast({
+          status: 'warning',
+          title: 'Markdown changed on disk',
+          description: 'Reload the file or overwrite it from the notes panel.',
+        })
+        return
+      }
       toast({
         status: 'error',
         title: 'Failed to save notes',
@@ -1444,6 +1495,19 @@ function ViewEditorInner({
       setIsMarkdownSaving(false)
     }
   }, [toast, viewId, viewMarkdown])
+
+  const handleForceSaveMarkdown = useCallback(async (markdown: string) => {
+    await handleSaveMarkdown(markdown, { force: true })
+  }, [handleSaveMarkdown])
+
+  const handlePickMarkdownFile = useCallback(async () => {
+    const result = await openTextFile([
+      { displayName: 'Markdown Files (*.md;*.markdown;*.mdx)', pattern: '*.md;*.markdown;*.mdx' },
+      { displayName: 'All Files (*.*)', pattern: '*.*' },
+    ])
+    if (result.canceled) return null
+    return result.path
+  }, [])
 
   const handleSaveMarkdownAs = useCallback(async (markdown: string) => {
     const baseName = sanitizeExportFilename(view?.name || 'view-notes')
@@ -1787,6 +1851,7 @@ function ViewEditorInner({
         setViewMarkdownContent(msg.content)
         setLoadedViewMarkdownContent(msg.content)
         setViewMarkdownSyncToken((prev) => prev + 1)
+        setMarkdownSaveConflict(false)
       }
     })
     return unsub
@@ -4056,8 +4121,15 @@ function ViewEditorInner({
                   isLoading={isMarkdownLoading}
                   isSaving={isMarkdownSaving}
                   isDirty={markdownDirty}
+                  hasSaveConflict={markdownSaveConflict}
                   onChange={setViewMarkdownContent}
                   onSave={handleSaveMarkdown}
+                  onForceSave={handleForceSaveMarkdown}
+                  onCreateMarkdown={handleCreateMarkdownFromPanel}
+                  onAttachMarkdown={handleLinkMarkdown}
+                  onMoveMarkdown={handleMoveMarkdown}
+                  onUnlinkMarkdown={handleUnlinkMarkdown}
+                  onPickMarkdownFile={handlePickMarkdownFile}
                   onSaveAs={handleSaveMarkdownAs}
                   onOpenInEditor={window.__TLD_VSCODE__ ? handleOpenMarkdownInEditor : undefined}
                   onReload={handleReloadMarkdown}
@@ -4146,7 +4218,6 @@ function ViewEditorInner({
           hasBackdrop={isMobileLayout}
           markdown={viewMarkdown}
           markdownLoading={isMarkdownLoading}
-          onLinkMarkdown={handleLinkMarkdown}
           onUnlinkMarkdown={handleUnlinkMarkdown}
           onOpenMarkdown={handleOpenMarkdown}
         />

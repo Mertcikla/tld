@@ -1,8 +1,15 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type FocusEvent, type MouseEvent } from 'react'
 import {
+  Badge,
   Box,
+  Button,
   HStack,
   IconButton,
+  Input,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
   Spinner,
   Text,
   Tooltip,
@@ -129,6 +136,42 @@ const MERMAID_CODE_BLOCK_DESCRIPTOR: CodeBlockEditorDescriptor = {
   Editor: MermaidCollapsedCodeBlock,
 }
 
+function markdownSourceLabel(markdown: ViewMarkdownDocument | null) {
+  if (!markdown) return 'No notes'
+  if (!markdown.exists) return 'Missing file'
+  switch (markdown.source_kind) {
+    case 'PRIVATE_WORKSPACE':
+    case 'PRIVATE_APP':
+      return 'Private note'
+    case 'REPO':
+      return 'Repo note'
+    case 'ATTACHED':
+      return 'Attached file'
+    default:
+      return markdown.is_managed ? 'Private note' : 'Attached file'
+  }
+}
+
+function markdownStatusLabel(markdown: ViewMarkdownDocument | null) {
+  if (!markdown) return 'No notes'
+  const source = markdownSourceLabel(markdown)
+  if (!markdown.exists) return source
+  if (!markdown.can_edit) return `${source} · read-only`
+  if (markdown.source_kind === 'REPO' && markdown.git_state && markdown.git_state !== 'unknown') {
+    return `${source} · ${markdown.git_state.replace(/_/g, ' ')}`
+  }
+  return source
+}
+
+function defaultRepoMarkdownPath(viewName?: string | null) {
+  const slug = (viewName || 'view-notes')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'view-notes'
+  return `docs/diagrams/${slug}.md`
+}
+
 interface Props {
   isOpen: boolean
   onClose: () => void
@@ -142,8 +185,15 @@ interface Props {
   isLoading?: boolean
   isSaving?: boolean
   isDirty?: boolean
+  hasSaveConflict?: boolean
   onChange: (markdown: string) => void
   onSave: (markdown: string) => Promise<void> | void
+  onForceSave?: (markdown: string) => Promise<void> | void
+  onCreateMarkdown?: (targetKind: string, path?: string) => Promise<void> | void
+  onAttachMarkdown?: (path: string) => Promise<void> | void
+  onMoveMarkdown?: (targetKind: string, path?: string) => Promise<void> | void
+  onUnlinkMarkdown?: (options?: { deleteManagedFile: boolean }) => Promise<void> | void
+  onPickMarkdownFile?: () => Promise<string | null>
   onSaveAs?: (markdown: string) => Promise<void> | void
   onOpenInEditor?: () => void
   onReload?: () => Promise<void> | void
@@ -152,6 +202,7 @@ interface Props {
 function ViewMarkdownPanel({
   isOpen,
   onClose,
+  viewName,
   markdown,
   content,
   syncToken,
@@ -161,8 +212,15 @@ function ViewMarkdownPanel({
   isLoading = false,
   isSaving = false,
   isDirty = false,
+  hasSaveConflict = false,
   onChange,
   onSave,
+  onForceSave,
+  onCreateMarkdown,
+  onAttachMarkdown,
+  onMoveMarkdown,
+  onUnlinkMarkdown,
+  onPickMarkdownFile,
   onSaveAs,
   onOpenInEditor,
   onReload,
@@ -173,6 +231,33 @@ function ViewMarkdownPanel({
   const [mermaidSyncStatus, setMermaidSyncStatus] = useState<MermaidMarkdownSyncStatus | null>(null)
   const [mermaidBlockStatusByCode, setMermaidBlockStatusByCode] = useState<Map<string, MermaidMarkdownSyncStatus>>(() => new Map())
   latestContentRef.current = content
+  const suggestedRepoPath = useMemo(() => defaultRepoMarkdownPath(viewName), [viewName])
+  const [repoPath, setRepoPath] = useState(suggestedRepoPath)
+  const [attachPath, setAttachPath] = useState('')
+  const [moveRepoPath, setMoveRepoPath] = useState(suggestedRepoPath)
+  const canEditDocument = canEdit && !!markdown?.can_edit
+  const showNativeAttachPicker = isWailsApp && !!onPickMarkdownFile
+  const showAttachPathInput = !showNativeAttachPicker
+
+  useEffect(() => {
+    setRepoPath(suggestedRepoPath)
+    setMoveRepoPath(suggestedRepoPath)
+  }, [suggestedRepoPath])
+
+  const currentEditorMarkdown = useCallback(() => editorRef.current?.getMarkdown() ?? latestContentRef.current, [])
+
+  const handleAttachPickedFile = useCallback(async () => {
+    if (!onPickMarkdownFile || !onAttachMarkdown) return
+    const path = await onPickMarkdownFile()
+    if (!path) return
+    setAttachPath(path)
+    await onAttachMarkdown(path)
+  }, [onAttachMarkdown, onPickMarkdownFile])
+
+  const handleCopyPath = useCallback(async () => {
+    if (!markdown?.path || typeof navigator === 'undefined' || !navigator.clipboard) return
+    await navigator.clipboard.writeText(markdown.path)
+  }, [markdown?.path])
 
   useEffect(() => {
     if (!isOpen || !mermaidIntegrationEnabled || !viewId) {
@@ -202,8 +287,8 @@ function ViewMarkdownPanel({
 
   const mermaidContextValue = useMemo(() => ({
     blockStatusByCode: mermaidBlockStatusByCode,
-    canEdit,
-  }), [canEdit, mermaidBlockStatusByCode])
+    canEdit: canEditDocument,
+  }), [canEditDocument, mermaidBlockStatusByCode])
 
   const handleSyncMermaidBlock = useCallback(async () => {
     if (!viewId) return
@@ -243,7 +328,7 @@ function ViewMarkdownPanel({
         toolbarClassName: 'tld-markdown-toolbar',
         toolbarContents: () => (
           <>
-            {canEdit && (
+            {canEditDocument && (
               <Box className="tld-markdown-toolbar-formatting" display="flex" flex="0 1 auto" minW={0} overflow="hidden" gap={1.5} alignItems="center">
                 <UndoRedo />
                 <BoldItalicUnderlineToggles />
@@ -256,19 +341,19 @@ function ViewMarkdownPanel({
             <HStack className="tld-markdown-toolbar-actions" spacing={1.5}>
               {mermaidIntegrationEnabled && (
                 <Tooltip
-                  label={mermaidSyncStatus === 'synced' ? 'Mermaid block is synced' : mermaidSyncStatus === 'stale' ? 'Update Mermaid block from view' : 'Insert Mermaid block from view'}
+                  label={mermaidSyncStatus === 'synced' ? 'Diagram block is synced' : mermaidSyncStatus === 'stale' ? 'Update diagram block from view' : 'Insert diagram block from view'}
                   hasArrow
                   openDelay={200}
                 >
                   <Box as="span">
                     <IconButton
-                      aria-label="Sync Mermaid block"
+                      aria-label="Insert/update diagram"
                       size="xs"
                       variant="ghost"
                       className={`tld-markdown-toolbar-action tld-markdown-toolbar-action-mermaid tld-markdown-toolbar-action-mermaid-${mermaidSyncStatus ?? 'missing'}`}
                       icon={<ReloadIcon />}
                       onClick={() => { void handleSyncMermaidBlock() }}
-                      isDisabled={!canEdit || isLoading || !markdown || !viewId || mermaidSyncStatus === 'synced'}
+                      isDisabled={!canEditDocument || isLoading || !markdown || !viewId || mermaidSyncStatus === 'synced'}
                     />
                   </Box>
                 </Tooltip>
@@ -293,9 +378,9 @@ function ViewMarkdownPanel({
                     size="xs"
                     className="tld-markdown-toolbar-action tld-markdown-toolbar-action-save"
                     icon={<SaveIcon />}
-                    onClick={() => { void onSave(editorRef.current?.getMarkdown() ?? latestContentRef.current) }}
+                    onClick={() => { void onSave(currentEditorMarkdown()) }}
                     isLoading={isSaving}
-                    isDisabled={!canEdit || isLoading || !markdown || !isDirty}
+                    isDisabled={!canEditDocument || isLoading || !markdown || !isDirty}
                   />
                 </Box>
               </Tooltip>
@@ -307,7 +392,7 @@ function ViewMarkdownPanel({
                       size="xs"
                       className="tld-markdown-toolbar-action"
                       icon={<SaveIcon />}
-                      onClick={() => { void onSaveAs(editorRef.current?.getMarkdown() ?? latestContentRef.current) }}
+                      onClick={() => { void onSaveAs(currentEditorMarkdown()) }}
                       isDisabled={isLoading || !markdown}
                     />
                   </Box>
@@ -347,7 +432,7 @@ function ViewMarkdownPanel({
     ]
 
     return base
-  }, [canEdit, handleSyncMermaidBlock, isDirty, isLoading, isSaving, markdown, mermaidIntegrationEnabled, mermaidSyncStatus, onClose, onOpenInEditor, onReload, onSave, onSaveAs, viewId])
+  }, [canEditDocument, currentEditorMarkdown, handleSyncMermaidBlock, isDirty, isLoading, isSaving, markdown, mermaidIntegrationEnabled, mermaidSyncStatus, onClose, onOpenInEditor, onReload, onSave, onSaveAs, viewId])
 
   if (!isOpen) return null
 
@@ -362,6 +447,56 @@ function ViewMarkdownPanel({
       bg="var(--bg-panel)"
       bgImage="var(--grad-panel)"
     >
+      <HStack
+        flex="0 0 auto"
+        minH="46px"
+        px={3}
+        py={2}
+        spacing={2}
+        borderBottom="1px solid"
+        borderColor="whiteAlpha.100"
+        bg="rgba(2, 8, 23, 0.72)"
+      >
+        <Box minW={0} flex={1}>
+          <HStack spacing={2} minW={0}>
+            <Text fontSize="sm" fontWeight="semibold" color="whiteAlpha.900" flexShrink={0}>Notes</Text>
+            <Badge data-testid="view-markdown-status" colorScheme={markdown?.exists === false ? 'red' : markdown?.can_edit === false ? 'yellow' : 'blue'} variant="subtle" maxW="180px" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+              {markdownStatusLabel(markdown)}
+            </Badge>
+          </HStack>
+          {markdown?.path && (
+            <Text fontSize="10px" color="gray.500" isTruncated title={markdown.repo_relative_path || markdown.path}>
+              {markdown.repo_relative_path || markdown.path}
+            </Text>
+          )}
+        </Box>
+        {hasSaveConflict && markdown && (
+          <HStack spacing={1}>
+            <Button size="xs" variant="outline" onClick={() => { void onReload?.() }}>Reload</Button>
+            <Button data-testid="view-markdown-overwrite" size="xs" colorScheme="blue" onClick={() => { void onForceSave?.(currentEditorMarkdown()) }}>
+              Overwrite
+            </Button>
+          </HStack>
+        )}
+        <Menu placement="bottom-end">
+          <MenuButton as={Button} size="xs" variant="ghost" isDisabled={isLoading}>
+            File
+          </MenuButton>
+          <MenuList bg="var(--bg-panel)" borderColor="whiteAlpha.200" fontSize="sm">
+            <MenuItem bg="transparent" onClick={() => { void onReload?.() }} isDisabled={!markdown || isLoading}>Reload</MenuItem>
+            <MenuItem bg="transparent" onClick={() => { void onSave(currentEditorMarkdown()) }} isDisabled={!canEditDocument || !markdown || !isDirty || isLoading}>Save</MenuItem>
+            <MenuItem bg="transparent" onClick={() => { void onForceSave?.(currentEditorMarkdown()) }} isDisabled={!canEditDocument || !markdown || isLoading}>Overwrite from pane</MenuItem>
+            <MenuItem bg="transparent" onClick={() => { void handleCopyPath() }} isDisabled={!markdown?.path}>Copy path</MenuItem>
+            {onOpenInEditor && (
+              <MenuItem bg="transparent" onClick={onOpenInEditor} isDisabled={!markdown}>Open in editor</MenuItem>
+            )}
+            <MenuItem data-testid="view-markdown-move-private" bg="transparent" onClick={() => { void onMoveMarkdown?.('PRIVATE_WORKSPACE') }} isDisabled={!canEdit || !markdown || isLoading}>Move/copy to private</MenuItem>
+            <MenuItem data-testid="view-markdown-move-repo" bg="transparent" onClick={() => { void onMoveMarkdown?.('REPO', moveRepoPath || suggestedRepoPath) }} isDisabled={!canEdit || !markdown || isLoading}>Move/copy to repo</MenuItem>
+            <MenuItem data-testid="view-markdown-detach" bg="transparent" color="red.200" onClick={() => { void onUnlinkMarkdown?.({ deleteManagedFile: false }) }} isDisabled={!canEdit || !markdown || isLoading}>Detach from view</MenuItem>
+            <MenuItem bg="transparent" onClick={onClose}>Close</MenuItem>
+          </MenuList>
+        </Menu>
+      </HStack>
       <Box
         flex="1 1 auto"
         minH={0}
@@ -628,12 +763,64 @@ function ViewMarkdownPanel({
             <Spinner size="md" color="blue.300" />
             <Text fontSize="sm">Loading markdown…</Text>
           </VStack>
+        ) : markdown && !markdown.exists ? (
+          <VStack justify="center" align="center" spacing={3} h="full" color="whiteAlpha.800" px={6} textAlign="center">
+            <Text fontSize="sm" fontWeight="semibold">Markdown file is missing</Text>
+            <Text fontSize="xs" color="gray.500" maxW="320px" noOfLines={2}>{markdown.path}</Text>
+            <HStack spacing={2} flexWrap="wrap" justify="center">
+              <Button size="sm" variant="outline" onClick={() => { void onReload?.() }}>Reload</Button>
+              <Button
+                data-testid="view-markdown-create-replacement"
+                size="sm"
+                colorScheme="blue"
+                onClick={() => { void onForceSave?.(viewName?.trim() ? `# ${viewName.trim()}\n\n` : '') }}
+                isDisabled={!canEdit || !onForceSave}
+              >
+                Create replacement
+              </Button>
+              <Button
+                data-testid="view-markdown-missing-detach"
+                size="sm"
+                variant="outline"
+                colorScheme="red"
+                onClick={() => { void onUnlinkMarkdown?.({ deleteManagedFile: false }) }}
+                isDisabled={!canEdit || !onUnlinkMarkdown}
+              >
+                Detach
+              </Button>
+            </HStack>
+            {canEdit && onAttachMarkdown && (
+              <VStack spacing={2} w="full" maxW="360px" pt={2}>
+                {showAttachPathInput && (
+                  <Input
+                    data-testid="view-markdown-attach-path"
+                    size="sm"
+                    value={attachPath}
+                    onChange={(event) => setAttachPath(event.target.value)}
+                    placeholder="docs/overview.md or /absolute/path/overview.md"
+                  />
+                )}
+                <HStack spacing={2} w="full">
+                  {showAttachPathInput && (
+                    <Button data-testid="view-markdown-relink" size="sm" variant="outline" flex={1} onClick={() => { void onAttachMarkdown(attachPath.trim()) }} isDisabled={!attachPath.trim()}>
+                      Relink
+                    </Button>
+                  )}
+                  {showNativeAttachPicker && (
+                    <Button data-testid="view-markdown-choose-file" size="sm" variant="outline" flex={1} onClick={() => { void handleAttachPickedFile() }}>
+                      Choose file
+                    </Button>
+                  )}
+                </HStack>
+              </VStack>
+            )}
+          </VStack>
         ) : markdown ? (
           <MermaidMarkdownContext.Provider value={mermaidContextValue}>
             <MDXEditor
               ref={editorRef}
               markdown={content}
-              readOnly={!canEdit}
+              readOnly={!canEditDocument}
               spellCheck
               className="tld-markdown-editor"
               contentEditableClassName="tld-markdown-editor__content"
@@ -643,11 +830,68 @@ function ViewMarkdownPanel({
             />
           </MermaidMarkdownContext.Provider>
         ) : (
-          <VStack justify="center" align="center" spacing={3} h="full" color="whiteAlpha.700" px={6} textAlign="center">
-            <Text fontSize="sm" fontWeight="semibold">No markdown document linked</Text>
-            <Text fontSize="xs">
-              Create a managed file from the toolbar, or link an existing markdown file from the view details panel.
-            </Text>
+          <VStack justify="center" align="stretch" spacing={4} h="full" color="whiteAlpha.800" px={6} textAlign="left">
+            <Box textAlign="center">
+              <Text fontSize="sm" fontWeight="semibold">No notes file for this view</Text>
+              <Text fontSize="xs" color="gray.500" mt={1}>Choose where this view's markdown notes should live.</Text>
+            </Box>
+            <Button
+              data-testid="view-markdown-create-private"
+              size="sm"
+              colorScheme="blue"
+              onClick={() => { void onCreateMarkdown?.('PRIVATE_WORKSPACE') }}
+              isDisabled={!canEdit || !onCreateMarkdown}
+            >
+              Create private note
+            </Button>
+            <VStack spacing={2} align="stretch">
+              <Input
+                data-testid="view-markdown-repo-path"
+                size="sm"
+                value={repoPath}
+                onChange={(event) => setRepoPath(event.target.value)}
+                placeholder={suggestedRepoPath}
+              />
+              <Button
+                data-testid="view-markdown-create-repo"
+                size="sm"
+                variant="outline"
+                onClick={() => { void onCreateMarkdown?.('REPO', repoPath.trim() || suggestedRepoPath) }}
+                isDisabled={!canEdit || !onCreateMarkdown}
+              >
+                Create repo note
+              </Button>
+            </VStack>
+            {showAttachPathInput ? (
+              <VStack spacing={2} align="stretch">
+                <Input
+                  data-testid="view-markdown-attach-path"
+                  size="sm"
+                  value={attachPath}
+                  onChange={(event) => setAttachPath(event.target.value)}
+                  placeholder="docs/overview.md or /absolute/path/overview.md"
+                />
+                <Button
+                  data-testid="view-markdown-attach"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { void onAttachMarkdown?.(attachPath.trim()) }}
+                  isDisabled={!canEdit || !onAttachMarkdown || !attachPath.trim()}
+                >
+                  Attach existing file
+                </Button>
+              </VStack>
+            ) : (
+              <Button
+                data-testid="view-markdown-choose-file"
+                size="sm"
+                variant="outline"
+                onClick={() => { void handleAttachPickedFile() }}
+                isDisabled={!canEdit || !onAttachMarkdown}
+              >
+                Attach existing file
+              </Button>
+            )}
           </VStack>
         )}
       </Box>

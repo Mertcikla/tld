@@ -3,6 +3,7 @@ import type { PlanElement } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/
 import type { LibraryElement } from '../types'
 import {
   libraryElementToDependency,
+  mapViewMarkdown,
   normalizeFrontendImportElements,
   protoElementToLibrary,
   protoPlacedElement,
@@ -90,5 +91,49 @@ describe('technology icon normalization', () => {
     ])
 
     expect(normalizeLogoUrl('', links)).toBe('')
+  })
+})
+
+describe('markdown metadata mapping', () => {
+  it('maps source, editability, git, and version metadata from proto casing variants', () => {
+    const markdown = mapViewMarkdown({
+      path: 'docs/diagrams/checkout.md',
+      isManaged: true,
+      updatedAt: '2026-06-12T00:00:00Z',
+      sourceKind: 'REPO',
+      exists: true,
+      writable: false,
+      canEdit: false,
+      gitState: 'modified',
+      repoRelativePath: 'docs/diagrams/checkout.md',
+      linkedViewCount: 2,
+      fileVersion: '123:45',
+    })
+
+    expect(markdown).toEqual({
+      path: 'docs/diagrams/checkout.md',
+      is_managed: true,
+      updated_at: '2026-06-12T00:00:00Z',
+      source_kind: 'REPO',
+      exists: true,
+      writable: false,
+      can_edit: false,
+      git_state: 'modified',
+      repo_relative_path: 'docs/diagrams/checkout.md',
+      linked_view_count: 2,
+      file_version: '123:45',
+    })
+  })
+
+  it('defaults legacy markdown metadata to editable unknown status', () => {
+    expect(mapViewMarkdown({ path: 'view-markdown/view-1-system.md' })).toMatchObject({
+      source_kind: '',
+      exists: true,
+      writable: true,
+      can_edit: true,
+      git_state: 'unknown',
+      linked_view_count: 0,
+      file_version: '',
+    })
   })
 })

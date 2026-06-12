@@ -189,6 +189,14 @@ export interface ViewMarkdownDocument {
   path: string
   is_managed: boolean
   updated_at: string
+  source_kind: 'PRIVATE_WORKSPACE' | 'PRIVATE_APP' | 'REPO' | 'ATTACHED' | 'LEGACY' | string
+  exists: boolean
+  writable: boolean
+  can_edit: boolean
+  git_state: 'outside_repo' | 'ignored' | 'untracked' | 'modified' | 'deleted' | 'tracked' | 'unknown' | string
+  repo_relative_path?: string
+  linked_view_count: number
+  file_version: string
 }
 
 export interface ViewLayer {

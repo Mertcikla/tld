@@ -508,7 +508,7 @@ function ViewFloatingMenu({
         {onMarkdownToggle && (
           <>
             <Tooltip
-              label={!hasMarkdown ? 'Create a markdown note for this view' : markdownOpen ? 'Hide notes' : 'Open notes'}
+              label={!hasMarkdown ? 'Open notes setup' : markdownOpen ? 'Hide notes' : 'Open notes'}
               placement="top"
               openDelay={200}
             >

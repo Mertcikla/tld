@@ -47,10 +47,25 @@ interface Props {
   isInline?: boolean
   markdown?: ViewMarkdownDocument | null
   markdownLoading?: boolean
-  onLinkMarkdown?: (path: string) => Promise<void> | void
   onUnlinkMarkdown?: (options?: { deleteManagedFile: boolean }) => Promise<void> | void
   onOpenMarkdown?: () => void
   actions?: ReactNode
+}
+
+function viewMarkdownSummary(markdown: ViewMarkdownDocument) {
+  if (!markdown.exists) return 'Missing file'
+  const source = markdown.source_kind === 'REPO'
+    ? 'Repo note'
+    : markdown.source_kind === 'ATTACHED'
+      ? 'Attached file'
+      : markdown.source_kind === 'PRIVATE_WORKSPACE' || markdown.source_kind === 'PRIVATE_APP'
+        ? 'Private note'
+        : markdown.is_managed ? 'Private note' : 'Attached file'
+  if (!markdown.can_edit) return `${source} · read-only`
+  if (markdown.source_kind === 'REPO' && markdown.git_state && markdown.git_state !== 'unknown') {
+    return `${source} · ${markdown.git_state.replace(/_/g, ' ')}`
+  }
+  return source
 }
 
 /**
@@ -72,7 +87,6 @@ function ViewPanel({
   isInline = false,
   markdown = null,
   markdownLoading = false,
-  onLinkMarkdown,
   onUnlinkMarkdown,
   onOpenMarkdown,
   actions,
@@ -95,9 +109,8 @@ function ViewPanel({
   const [selectedPopulateIds, setSelectedPopulateIds] = useState<number[]>([])
   const [loadingPopulate, setLoadingPopulate] = useState(false)
   const [searchedPopulate, setSearchedPopulate] = useState(false)
-  const [markdownPath, setMarkdownPath] = useState('')
   const [deleteManagedFile, setDeleteManagedFile] = useState(true)
-  const [markdownAction, setMarkdownAction] = useState<'link' | 'unlink' | null>(null)
+  const [markdownAction, setMarkdownAction] = useState<'unlink' | null>(null)
   const [markdownOpen, setMarkdownOpen] = useState(!!markdown)
   const [populateOpen, setPopulateOpen] = useState(false)
 
@@ -107,7 +120,6 @@ function ViewPanel({
       setDescription(view.description || '')
       setLevelLabel(view.level_label || '')
       setTags(view.tags || [])
-      setMarkdownPath(markdown?.path ?? '')
       setDeleteManagedFile(true)
       setMarkdownOpen(!!markdown)
 
@@ -186,23 +198,11 @@ function ViewPanel({
     }
   }
 
-
-  const handleLinkMarkdown = async () => {
-    if (!canEdit || !onLinkMarkdown || !markdownPath.trim()) return
-    setMarkdownAction('link')
-    try {
-      await onLinkMarkdown(markdownPath.trim())
-    } finally {
-      setMarkdownAction(null)
-    }
-  }
-
   const handleUnlinkMarkdown = async () => {
     if (!canEdit || !onUnlinkMarkdown) return
     setMarkdownAction('unlink')
     try {
       await onUnlinkMarkdown({ deleteManagedFile })
-      setMarkdownPath('')
     } finally {
       setMarkdownAction(null)
     }
@@ -300,7 +300,7 @@ function ViewPanel({
                 <Collapse in={markdownOpen} animateOpacity>
                   <VStack align="stretch" spacing={3} pt={1}>
                     <Text fontSize="xs" color="gray.400">
-                      Attach a markdown file to this view.
+                      Current notes file metadata.
                     </Text>
 
                     {markdownLoading ? (
@@ -320,7 +320,7 @@ function ViewPanel({
                             </Text>
                             {onOpenMarkdown && (
                               <Button data-testid="view-panel-markdown-open" size="xs" variant="outline" onClick={onOpenMarkdown}>
-                                Edit
+                                Open
                               </Button>
                             )}
                           </HStack>
@@ -329,6 +329,9 @@ function ViewPanel({
                               Updated {new Date(markdown.updated_at).toLocaleString()}
                             </Text>
                           )}
+                          <Text fontSize="10px" color={markdown.exists ? 'gray.500' : 'red.300'}>
+                            {viewMarkdownSummary(markdown)}
+                          </Text>
                           {markdown.is_managed && canEdit && (
                             <Checkbox
                               size="sm"
@@ -347,7 +350,7 @@ function ViewPanel({
                               onClick={() => { void handleUnlinkMarkdown() }}
                               isLoading={markdownAction === 'unlink'}
                             >
-                              Unlink
+                              Detach
                             </Button>
                           )}
                         </VStack>
@@ -358,29 +361,10 @@ function ViewPanel({
                       </Text>
                     )}
 
-                    {canEdit && (
-                      <>
-                        <FormControl>
-                          <FormLabel fontSize="xs" color="gray.400">Link Existing File</FormLabel>
-                          <Input
-                            data-testid="view-panel-markdown-path"
-                            size="sm"
-                            value={markdownPath}
-                            onChange={(event) => setMarkdownPath(event.target.value)}
-                            placeholder="docs/overview.md or /absolute/path/overview.md"
-                          />
-                        </FormControl>
-                        <Button
-                          data-testid="view-panel-markdown-link"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => { void handleLinkMarkdown() }}
-                          isLoading={markdownAction === 'link'}
-                          isDisabled={!markdownPath.trim()}
-                        >
-                          {markdown ? 'Relink File' : 'Link File'}
-                        </Button>
-                      </>
+                    {canEdit && !markdown && (
+                      <Text fontSize="xs" color="gray.500">
+                        Open Notes from the canvas toolbar to create or attach a markdown file.
+                      </Text>
                     )}
                   </VStack>
                 </Collapse>
