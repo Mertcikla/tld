@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type FocusEvent, type MouseEvent } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type FocusEvent, type MouseEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   Badge,
   Box,
@@ -15,7 +15,7 @@ import {
   Tooltip,
   VStack,
 } from '@chakra-ui/react'
-import { ExternalLinkIcon } from '@chakra-ui/icons'
+import { ChevronDownIcon, DragHandleIcon, ExternalLinkIcon, ViewIcon, ViewOffIcon } from '@chakra-ui/icons'
 import {
   BlockTypeSelect,
   BoldItalicUnderlineToggles,
@@ -172,6 +172,23 @@ function defaultRepoMarkdownPath(viewName?: string | null) {
   return `docs/diagrams/${slug}.md`
 }
 
+const FLOATING_MENU_MARGIN = 8
+const FLOATING_MENU_DEFAULT_Y = 56
+
+interface FloatingMenuPosition {
+  x: number | null
+  y: number
+}
+
+interface ConcreteFloatingMenuPosition {
+  x: number
+  y: number
+}
+
+function sameFloatingMenuPosition(left: FloatingMenuPosition, right: FloatingMenuPosition) {
+  return left.x === right.x && left.y === right.y
+}
+
 interface Props {
   isOpen: boolean
   onClose: () => void
@@ -224,10 +241,16 @@ function ViewMarkdownPanel({
   onReload,
 }: Props) {
   const editorRef = useRef<MDXEditorMethods>(null)
+  const panelBodyRef = useRef<HTMLDivElement | null>(null)
+  const floatingMenuRef = useRef<HTMLDivElement | null>(null)
+  const floatingMenuDragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null)
   const latestContentRef = useRef(content)
   const lastSyncTokenRef = useRef(syncToken)
   const [mermaidSyncStatus, setMermaidSyncStatus] = useState<MermaidMarkdownSyncStatus | null>(null)
   const [mermaidBlockStatusByCode, setMermaidBlockStatusByCode] = useState<Map<string, MermaidMarkdownSyncStatus>>(() => new Map())
+  const [floatingMenuPosition, setFloatingMenuPosition] = useState<FloatingMenuPosition>(() => ({ x: null, y: FLOATING_MENU_DEFAULT_Y }))
+  const [isFloatingMenuHidden, setIsFloatingMenuHidden] = useState(false)
+  const [isFloatingMenuDragging, setIsFloatingMenuDragging] = useState(false)
   latestContentRef.current = content
   const suggestedRepoPath = useMemo(() => defaultRepoMarkdownPath(viewName), [viewName])
   const [repoPath, setRepoPath] = useState(suggestedRepoPath)
@@ -254,6 +277,100 @@ function ViewMarkdownPanel({
     if (!markdown?.path || typeof navigator === 'undefined' || !navigator.clipboard) return
     await navigator.clipboard.writeText(markdown.path)
   }, [markdown?.path])
+
+  const clampFloatingMenuPosition = useCallback((position: ConcreteFloatingMenuPosition): ConcreteFloatingMenuPosition => {
+    const panelRect = panelBodyRef.current?.getBoundingClientRect()
+    if (!panelRect) return position
+
+    const menuRect = floatingMenuRef.current?.getBoundingClientRect()
+    const maxMenuWidth = Math.max(0, panelRect.width - FLOATING_MENU_MARGIN * 2)
+    const maxMenuHeight = Math.max(0, panelRect.height - FLOATING_MENU_MARGIN * 2)
+    const menuWidth = Math.min(menuRect?.width ?? 280, maxMenuWidth)
+    const menuHeight = Math.min(menuRect?.height ?? 36, maxMenuHeight)
+    const maxX = Math.max(FLOATING_MENU_MARGIN, panelRect.width - menuWidth - FLOATING_MENU_MARGIN)
+    const maxY = Math.max(FLOATING_MENU_MARGIN, panelRect.height - menuHeight - FLOATING_MENU_MARGIN)
+
+    return {
+      x: Math.min(Math.max(position.x, FLOATING_MENU_MARGIN), maxX),
+      y: Math.min(Math.max(position.y, FLOATING_MENU_MARGIN), maxY),
+    }
+  }, [])
+
+  const handleFloatingMenuDragStart = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return
+
+    const panelRect = panelBodyRef.current?.getBoundingClientRect()
+    const menuRect = floatingMenuRef.current?.getBoundingClientRect()
+    if (!panelRect || !menuRect) return
+
+    floatingMenuDragRef.current = {
+      pointerId: event.pointerId,
+      offsetX: event.clientX - menuRect.left,
+      offsetY: event.clientY - menuRect.top,
+    }
+    setFloatingMenuPosition(clampFloatingMenuPosition({
+      x: menuRect.left - panelRect.left,
+      y: menuRect.top - panelRect.top,
+    }))
+    setIsFloatingMenuDragging(true)
+    event.preventDefault()
+    event.stopPropagation()
+  }, [clampFloatingMenuPosition])
+
+  useEffect(() => {
+    if (!isFloatingMenuDragging) return
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const dragState = floatingMenuDragRef.current
+      const panelRect = panelBodyRef.current?.getBoundingClientRect()
+      if (!dragState || dragState.pointerId !== event.pointerId || !panelRect) return
+
+      event.preventDefault()
+      setFloatingMenuPosition(clampFloatingMenuPosition({
+        x: event.clientX - panelRect.left - dragState.offsetX,
+        y: event.clientY - panelRect.top - dragState.offsetY,
+      }))
+    }
+
+    const stopDragging = (event: PointerEvent) => {
+      const dragState = floatingMenuDragRef.current
+      if (dragState && dragState.pointerId !== event.pointerId) return
+      floatingMenuDragRef.current = null
+      setIsFloatingMenuDragging(false)
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', stopDragging)
+    window.addEventListener('pointercancel', stopDragging)
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', stopDragging)
+      window.removeEventListener('pointercancel', stopDragging)
+    }
+  }, [clampFloatingMenuPosition, isFloatingMenuDragging])
+
+  useEffect(() => {
+    const clampCurrentPosition = () => {
+      setFloatingMenuPosition((current) => {
+        if (current.x === null) return current
+        const next = clampFloatingMenuPosition({ x: current.x, y: current.y })
+        return sameFloatingMenuPosition(current, next) ? current : next
+      })
+    }
+
+    clampCurrentPosition()
+    const observer = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(clampCurrentPosition)
+    if (panelBodyRef.current) observer?.observe(panelBodyRef.current)
+    if (floatingMenuRef.current) observer?.observe(floatingMenuRef.current)
+    window.addEventListener('resize', clampCurrentPosition)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', clampCurrentPosition)
+    }
+  }, [clampFloatingMenuPosition, isFloatingMenuHidden])
 
   useEffect(() => {
     if (!isOpen || !mermaidIntegrationEnabled || !viewId) {
@@ -443,58 +560,12 @@ function ViewMarkdownPanel({
       bg="var(--bg-panel)"
       bgImage="var(--grad-panel)"
     >
-      <HStack
-        flex="0 0 auto"
-        minH="46px"
-        px={3}
-        py={2}
-        spacing={2}
-        borderBottom="1px solid"
-        borderColor="whiteAlpha.100"
-        bg="rgba(2, 8, 23, 0.72)"
-      >
-        <Box minW={0} flex={1}>
-          <HStack spacing={2} minW={0}>
-            <Text fontSize="sm" fontWeight="semibold" color="whiteAlpha.900" flexShrink={0}>Notes</Text>
-            <Badge data-testid="view-markdown-status" colorScheme={markdown?.exists === false ? 'red' : markdown?.can_edit === false ? 'yellow' : 'blue'} variant="subtle" maxW="180px" overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
-              {markdownStatusLabel(markdown)}
-            </Badge>
-          </HStack>
-          {markdown?.path && (
-            <Text fontSize="10px" color="gray.500" isTruncated title={markdown.repo_relative_path || markdown.path}>
-              {markdown.repo_relative_path || markdown.path}
-            </Text>
-          )}
-        </Box>
-        {hasSaveConflict && markdown && (
-          <HStack spacing={1}>
-            <Button size="xs" variant="outline" onClick={() => { void onReload?.() }}>Reload</Button>
-            <Button data-testid="view-markdown-overwrite" size="xs" colorScheme="blue" onClick={() => { void onForceSave?.(currentEditorMarkdown()) }}>
-              Overwrite
-            </Button>
-          </HStack>
-        )}
-        <Menu placement="bottom-end">
-          <MenuButton as={Button} size="xs" variant="ghost" isDisabled={isLoading}>
-            File
-          </MenuButton>
-          <MenuList bg="var(--bg-panel)" borderColor="whiteAlpha.200" fontSize="sm">
-            <MenuItem bg="transparent" onClick={() => { void onReload?.() }} isDisabled={!markdown || isLoading}>Reload</MenuItem>
-            <MenuItem bg="transparent" onClick={() => { void onSave(currentEditorMarkdown()) }} isDisabled={!canEditDocument || !markdown || !isDirty || isLoading}>Save</MenuItem>
-            <MenuItem bg="transparent" onClick={() => { void onForceSave?.(currentEditorMarkdown()) }} isDisabled={!canEditDocument || !markdown || isLoading}>Overwrite from pane</MenuItem>
-            <MenuItem bg="transparent" onClick={() => { void handleCopyPath() }} isDisabled={!markdown?.path}>Copy path</MenuItem>
-            {onOpenInEditor && (
-              <MenuItem bg="transparent" onClick={onOpenInEditor} isDisabled={!markdown}>Open in editor</MenuItem>
-            )}
-            <MenuItem data-testid="view-markdown-detach" bg="transparent" color="red.200" onClick={() => { void onUnlinkMarkdown?.({ deleteManagedFile: false }) }} isDisabled={!canEdit || !markdown || isLoading}>Detach from view</MenuItem>
-            <MenuItem bg="transparent" onClick={onClose}>Close</MenuItem>
-          </MenuList>
-        </Menu>
-      </HStack>
       <Box
+        ref={panelBodyRef}
         flex="1 1 auto"
         minH={0}
         overflow="hidden"
+        position="relative"
         bg="var(--bg-canvas)"
         color="gray.100"
         sx={{
@@ -752,6 +823,120 @@ function ViewMarkdownPanel({
           },
         }}
       >
+        <Box
+          ref={floatingMenuRef}
+          data-testid="view-markdown-floating-menu"
+          position="absolute"
+          top={`${floatingMenuPosition.y}px`}
+          left={floatingMenuPosition.x === null ? undefined : `${floatingMenuPosition.x}px`}
+          right={floatingMenuPosition.x === null ? 3 : undefined}
+          zIndex={30}
+          pointerEvents="none"
+          maxW="calc(100% - 16px)"
+        >
+          {isFloatingMenuHidden ? (
+            <Tooltip label="Show notes menu" hasArrow openDelay={200}>
+              <Button
+                data-testid="view-markdown-menu-show"
+                pointerEvents="auto"
+                size="xs"
+                leftIcon={<ViewIcon />}
+                bg="rgba(2, 8, 23, 0.86)"
+                color="whiteAlpha.900"
+                border="1px solid"
+                borderColor="whiteAlpha.200"
+                boxShadow="0 12px 28px rgba(0,0,0,0.36)"
+                backdropFilter="blur(18px)"
+                _hover={{ bg: 'rgba(15, 23, 42, 0.94)' }}
+                onClick={() => setIsFloatingMenuHidden(false)}
+                onPointerDown={(event) => event.stopPropagation()}
+              >
+                Notes
+              </Button>
+            </Tooltip>
+          ) : (
+            <HStack
+              data-testid="view-markdown-floating-menu-expanded"
+              pointerEvents="auto"
+              spacing={1}
+              minW={0}
+              maxW="100%"
+              px={1.5}
+              py={1}
+              bg="rgba(2, 8, 23, 0.86)"
+              border="1px solid"
+              borderColor={isFloatingMenuDragging ? 'blue.300' : 'whiteAlpha.200'}
+              rounded="lg"
+              boxShadow="0 12px 28px rgba(0,0,0,0.36)"
+              backdropFilter="blur(18px)"
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <Tooltip label="Move notes menu" hasArrow openDelay={200}>
+                <IconButton
+                  data-testid="view-markdown-menu-drag-handle"
+                  aria-label="Move notes menu"
+                  size="xs"
+                  variant="ghost"
+                  icon={<DragHandleIcon />}
+                  color="whiteAlpha.700"
+                  cursor={isFloatingMenuDragging ? 'grabbing' : 'grab'}
+                  style={{ touchAction: 'none' }}
+                  _hover={{ bg: 'whiteAlpha.100', color: 'whiteAlpha.900' }}
+                  onPointerDown={handleFloatingMenuDragStart}
+                />
+              </Tooltip>
+              <Box minW={0} maxW={{ base: '150px', md: '240px' }} px={1}>
+                <HStack spacing={1.5} minW={0}>
+                  <Text fontSize="xs" fontWeight="semibold" color="whiteAlpha.900" flexShrink={0}>Notes</Text>
+                  <Badge data-testid="view-markdown-status" colorScheme={markdown?.exists === false ? 'red' : markdown?.can_edit === false ? 'yellow' : 'blue'} variant="subtle" maxW={{ base: '90px', md: '150px' }} overflow="hidden" textOverflow="ellipsis" whiteSpace="nowrap">
+                    {markdownStatusLabel(markdown)}
+                  </Badge>
+                </HStack>
+                {markdown?.path && (
+                  <Text fontSize="10px" color="gray.500" isTruncated title={markdown.repo_relative_path || markdown.path}>
+                    {markdown.repo_relative_path || markdown.path}
+                  </Text>
+                )}
+              </Box>
+              {hasSaveConflict && markdown && (
+                <HStack spacing={1} flexShrink={0}>
+                  <Button size="xs" variant="outline" onClick={() => { void onReload?.() }}>Reload</Button>
+                  <Button data-testid="view-markdown-overwrite" size="xs" colorScheme="blue" onClick={() => { void onForceSave?.(currentEditorMarkdown()) }}>
+                    Overwrite
+                  </Button>
+                </HStack>
+              )}
+              <Menu placement="bottom-end">
+                <MenuButton as={Button} size="xs" variant="ghost" rightIcon={<ChevronDownIcon boxSize={2.5} />} isDisabled={isLoading}>
+                  File
+                </MenuButton>
+                <MenuList bg="var(--bg-panel)" borderColor="whiteAlpha.200" fontSize="sm">
+                  <MenuItem bg="transparent" onClick={() => { void onReload?.() }} isDisabled={!markdown || isLoading}>Reload</MenuItem>
+                  <MenuItem bg="transparent" onClick={() => { void onSave(currentEditorMarkdown()) }} isDisabled={!canEditDocument || !markdown || !isDirty || isLoading}>Save</MenuItem>
+                  <MenuItem bg="transparent" onClick={() => { void onForceSave?.(currentEditorMarkdown()) }} isDisabled={!canEditDocument || !markdown || isLoading}>Overwrite from pane</MenuItem>
+                  <MenuItem bg="transparent" onClick={() => { void handleCopyPath() }} isDisabled={!markdown?.path}>Copy path</MenuItem>
+                  {onOpenInEditor && (
+                    <MenuItem bg="transparent" onClick={onOpenInEditor} isDisabled={!markdown}>Open in editor</MenuItem>
+                  )}
+                  <MenuItem data-testid="view-markdown-detach" bg="transparent" color="red.200" onClick={() => { void onUnlinkMarkdown?.({ deleteManagedFile: false }) }} isDisabled={!canEdit || !markdown || isLoading}>Detach from view</MenuItem>
+                  <MenuItem bg="transparent" onClick={onClose}>Close</MenuItem>
+                </MenuList>
+              </Menu>
+              <Tooltip label="Hide notes menu" hasArrow openDelay={200}>
+                <IconButton
+                  data-testid="view-markdown-menu-hide"
+                  aria-label="Hide notes menu"
+                  size="xs"
+                  variant="ghost"
+                  icon={<ViewOffIcon />}
+                  color="whiteAlpha.700"
+                  _hover={{ bg: 'whiteAlpha.100', color: 'whiteAlpha.900' }}
+                  onClick={() => setIsFloatingMenuHidden(true)}
+                />
+              </Tooltip>
+            </HStack>
+          )}
+        </Box>
         {isLoading ? (
           <VStack justify="center" align="center" spacing={3} h="full" color="whiteAlpha.700">
             <Spinner size="md" color="blue.300" />
