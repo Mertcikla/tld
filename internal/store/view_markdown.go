@@ -359,7 +359,19 @@ func (a *APIAdapter) resolveStoredMarkdownDocumentPath(doc *app.ViewMarkdownDocu
 			return filepath.Clean(doc.Path), nil
 		}
 		if root, ok := a.workspaceContentRoot(); ok {
-			return filepath.Join(root, filepath.Clean(doc.Path)), nil
+			cleanPath := filepath.Clean(doc.Path)
+			absPath := filepath.Join(root, cleanPath)
+			if sourceKind == markdownSourceAttached {
+				if _, err := os.Stat(absPath); os.IsNotExist(err) {
+					if notesRoot, ok := a.workspaceNotesRoot(); ok {
+						notesPath := filepath.Join(notesRoot, cleanPath)
+						if _, notesErr := os.Stat(notesPath); notesErr == nil {
+							return notesPath, nil
+						}
+					}
+				}
+			}
+			return absPath, nil
 		}
 		return a.resolvePathFromDataDir(doc.Path)
 	case markdownSourcePrivateApp, markdownSourceLegacy:
@@ -393,7 +405,20 @@ func (a *APIAdapter) normalizeLinkedMarkdownPath(path string) (string, string, e
 			}
 			return absPath, absPath, nil
 		}
-		return normalizePathUnderRoot(root, trimmed)
+		storedPath, absPath, err := normalizePathUnderRoot(root, trimmed)
+		if err != nil {
+			return "", "", err
+		}
+		if _, statErr := os.Stat(absPath); os.IsNotExist(statErr) {
+			if notesRoot, ok := a.workspaceNotesRoot(); ok {
+				if _, notesPath, notesErr := normalizePathUnderRoot(notesRoot, trimmed); notesErr == nil {
+					if _, notesStatErr := os.Stat(notesPath); notesStatErr == nil {
+						return storedPath, notesPath, nil
+					}
+				}
+			}
+		}
+		return storedPath, absPath, nil
 	}
 	dataDir, err := a.requireDataDir()
 	if err != nil {

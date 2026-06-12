@@ -505,6 +505,43 @@ func TestViewMarkdownLinkReadsRelativeFilesFromDataDir(t *testing.T) {
 	}
 }
 
+func TestViewMarkdownLinkReadsPrivateWorkspacePathFromWorkspaceNotes(t *testing.T) {
+	sqliteStore := openAdapterTestStore(t)
+	dataDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	adapter := NewAPIAdapter(sqliteStore, dataDir, workspaceDir)
+	ctx := context.Background()
+
+	insertAdapterTestView(t, sqliteStore, 31, "Linked Notes")
+
+	relPath := filepath.Join(managedViewMarkdownDir, "source-notes.md")
+	absPath := filepath.Join(workspaceDir, ".tld", relPath)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkedContent := "# Source notes\n\nLinked private note.\n"
+	if err := os.WriteFile(absPath, []byte(linkedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := adapter.LinkViewMarkdown(ctx, 31, uuid.Nil, relPath); err != nil {
+		t.Fatal(err)
+	}
+	markdown, content, err := adapter.GetViewMarkdown(ctx, 31, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markdown.GetPath() != relPath {
+		t.Fatalf("path = %q, want %q", markdown.GetPath(), relPath)
+	}
+	if markdown.GetSourceKind() != markdownSourceAttached {
+		t.Fatalf("source kind = %s, want %s", markdown.GetSourceKind(), markdownSourceAttached)
+	}
+	if content != linkedContent {
+		t.Fatalf("content = %q, want %q", content, linkedContent)
+	}
+}
+
 func TestViewMarkdownPrivateWorkspaceCreatesUnderTLDAndReportsMissing(t *testing.T) {
 	sqliteStore := openAdapterTestStore(t)
 	dataDir := t.TempDir()
