@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	mermaidcore "github.com/mertcikla/tld/v2/internal/mermaid"
 )
 
 type metadataEntry struct {
@@ -17,45 +19,11 @@ type metadataEntry struct {
 var metadataKeyPattern = regexp.MustCompile(`(^|\s+)([A-Za-z][A-Za-z0-9_]*)=`)
 
 func escapeMetadataValue(value string) string {
-	replacer := strings.NewReplacer(
-		`\`, `\\`,
-		"\n", `\n`,
-		"\r", `\r`,
-		"\t", `\t`,
-		"=", `\=`,
-		",", `\,`,
-		"|", `\|`,
-		":", `\:`,
-	)
-	return replacer.Replace(value)
+	return mermaidcore.EscapeMetadataValue(value)
 }
 
 func unescapeMetadataValue(value string) (string, bool) {
-	var out strings.Builder
-	for index := 0; index < len(value); index++ {
-		char := value[index]
-		if char != '\\' {
-			out.WriteByte(char)
-			continue
-		}
-		index++
-		if index >= len(value) {
-			return "", false
-		}
-		switch value[index] {
-		case '\\', '=', ',', '|', ':':
-			out.WriteByte(value[index])
-		case 'n':
-			out.WriteByte('\n')
-		case 'r':
-			out.WriteByte('\r')
-		case 't':
-			out.WriteByte('\t')
-		default:
-			return "", false
-		}
-	}
-	return out.String(), true
+	return mermaidcore.UnescapeMetadataValue(value)
 }
 
 func metadataComment(kind string, entries []metadataEntry) string {
@@ -138,27 +106,20 @@ func pairFloat(pairs map[string]string, key string) (float64, bool) {
 }
 
 func encodeStringList(values []string) string {
-	encoded := make([]string, 0, len(values))
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			encoded = append(encoded, escapeMetadataValue(trimmed))
-		}
-	}
-	return strings.Join(encoded, ",")
+	return mermaidcore.EncodeStringList(values)
 }
 
 func decodeStringList(value string) []string {
 	if value == "" {
 		return nil
 	}
-	parts := splitEscaped(value, ',')
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		decoded, ok := unescapeMetadataValue(part)
-		if !ok {
-			return nil
-		}
-		if trimmed := strings.TrimSpace(decoded); trimmed != "" {
+	decoded, ok := mermaidcore.DecodeStringList(value)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(decoded))
+	for _, part := range decoded {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
 			out = append(out, trimmed)
 		}
 	}
@@ -171,28 +132,6 @@ func pairStringList(pairs map[string]string, key string) []string {
 		return nil
 	}
 	return decodeStringList(raw)
-}
-
-func splitEscaped(value string, separator byte) []string {
-	var out []string
-	var current strings.Builder
-	for index := 0; index < len(value); index++ {
-		char := value[index]
-		if char == '\\' && index+1 < len(value) {
-			current.WriteByte(char)
-			index++
-			current.WriteByte(value[index])
-			continue
-		}
-		if char == separator {
-			out = append(out, current.String())
-			current.Reset()
-			continue
-		}
-		current.WriteByte(char)
-	}
-	out = append(out, current.String())
-	return out
 }
 
 func compactNumber(value float64) string {

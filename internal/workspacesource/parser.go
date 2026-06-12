@@ -3,13 +3,14 @@ package workspacesource
 import (
 	"crypto/sha256"
 	"fmt"
-	"html"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	mermaidcore "github.com/mertcikla/tld/v2/internal/mermaid"
 )
 
 var (
@@ -354,9 +355,7 @@ func boolValue(value *bool) bool {
 }
 
 func mermaidLabel(value string) string {
-	value = strings.ReplaceAll(value, `\"`, `"`)
-	value = strings.ReplaceAll(value, `\\`, `\`)
-	return strings.TrimSpace(html.UnescapeString(value))
+	return mermaidcore.DecodeMermaidLabel(value)
 }
 
 func sameElementIdentity(a, b *desiredElement) bool {

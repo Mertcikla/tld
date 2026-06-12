@@ -1,10 +1,10 @@
 module github.com/mertcikla/tld/v2
 
-go 1.26.1
+go 1.26.2
 
 require (
-	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.20.0-20260611001310-23d1a33146c4.1
-	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.11-20260611001310-23d1a33146c4.1
+	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.20.0-20260612134952-e7ea5f5df0d2.1
+	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.11-20260612134952-e7ea5f5df0d2.1
 	connectrpc.com/connect v1.20.0
 	github.com/bmatcuk/doublestar/v4 v4.6.1
 	github.com/compose-spec/compose-go/v2 v2.10.2
@@ -14,6 +14,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/odvcencio/gotreesitter v0.15.2
 	github.com/openai/openai-go v1.12.0
+	github.com/sammcj/mermaid-check v0.0.4
 	github.com/speps/go-hashids/v2 v2.0.1
 	github.com/spf13/cobra v1.10.1
 	github.com/tetratelabs/wazero v1.11.0
@@ -131,7 +132,7 @@ require (
 	github.com/leaanthony/u v1.1.1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/mattn/go-shellwords v1.0.12 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect

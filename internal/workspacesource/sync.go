@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +16,7 @@ import (
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/google/uuid"
+	mermaidcore "github.com/mertcikla/tld/v2/internal/mermaid"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -871,10 +871,7 @@ func safePathSegment(ref string) string {
 }
 
 func escapeMermaidLabel(value string) string {
-	value = strings.ReplaceAll(value, "\r", " ")
-	value = strings.ReplaceAll(value, "\n", " ")
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	return strings.ReplaceAll(html.EscapeString(value), "&#34;", "&quot;")
+	return mermaidcore.EscapeMermaidLabel(value)
 }
 
 func mermaidAlias(ref string, existing map[int32]string) string {

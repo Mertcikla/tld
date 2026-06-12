@@ -19,7 +19,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/watch"
-	"github.com/mertcikla/tld/v2/internal/workspacesource"
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
 
@@ -56,12 +55,8 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	orgSvc := &api.OrgService{Store: apiStore, Hooks: collabHooks}
 	depSvc := &api.DependencyService{Store: apiStore}
 	importSvc := &api.ImportService{Store: apiStore}
-	versionSvc := &workspaceVersionService{
-		WorkspaceVersionService: &api.WorkspaceVersionService{Store: apiStore, Hooks: collabHooks},
-		store:                   apiStore,
-		workspaceID:             workspaceID,
-		base:                    workspacesource.Options{WorkspaceDir: opts.WorkspaceDir, WorkspaceID: workspaceID},
-	}
+	mermaidSvc := &api.MermaidService{Store: apiStore, Hooks: collabHooks}
+	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: collabHooks}
 	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 
@@ -125,6 +120,9 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 
 	importPath, importHandler := diagv1connect.NewImportServiceHandler(importSvc)
 	mux.Handle("/api"+importPath, http.StripPrefix("/api", importHandler))
+
+	mermaidPath, mermaidHandler := diagv1connect.NewMermaidServiceHandler(mermaidSvc)
+	mux.Handle("/api"+mermaidPath, http.StripPrefix("/api", mermaidHandler))
 
 	versionPath, versionHandler := diagv1connect.NewWorkspaceVersionServiceHandler(versionSvc)
 	mux.Handle("/api"+versionPath, http.StripPrefix("/api", versionHandler))
