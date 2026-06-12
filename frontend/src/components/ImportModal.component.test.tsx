@@ -61,6 +61,7 @@ describe('ImportModal warnings', () => {
         <ImportModal
           isOpen
           onClose={vi.fn()}
+          mermaidEnabled
           onImport={onImport}
           getImportWarnings={getImportWarnings}
         />,

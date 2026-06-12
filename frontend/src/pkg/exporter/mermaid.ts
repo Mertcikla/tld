@@ -14,6 +14,7 @@ export interface MermaidWorkspaceView {
 
 export interface MermaidExportOptions {
   includeTldMetadata?: boolean
+  viewId?: number | null
 }
 
 type MetadataEntry = [key: string, encodedValue: string]
@@ -41,6 +42,14 @@ function metadataComment(kind: 'tld-element' | 'tld-connector', subject: string 
   if (subject) parts.push(subject)
   parts.push(...entries.map(([key, value]) => `${key}=${value}`))
   return parts.join(' ')
+}
+
+function inferViewId(view: MermaidWorkspaceView, explicitViewId: number | null | undefined) {
+  if (explicitViewId !== undefined) return explicitViewId
+  const ids = new Set<number>()
+  for (const placement of view.placements) ids.add(placement.view_id)
+  for (const connector of view.connectors) ids.add(connector.view_id)
+  return ids.size === 1 ? [...ids][0] : null
 }
 
 function stringEntry(key: string, value: string | null | undefined): MetadataEntry | null {
@@ -114,7 +123,9 @@ export class MermaidExporter {
       .filter((connector) => elementIds.has(connector.source_element_id) && elementIds.has(connector.target_element_id))
       .sort((a, b) => a.id - b.id)
 
-    const lines = includeTldMetadata ? ['flowchart LR', '%% tld/v1'] : ['flowchart LR']
+    const viewId = inferViewId(this.view, this.options.viewId)
+    const marker = viewId !== null ? `%% tld/v1 view=${viewId}` : '%% tld/v1'
+    const lines = includeTldMetadata ? ['flowchart LR', marker] : ['flowchart LR']
     for (const element of sortedElements) {
       const nodeId = sanitizeMermaidId(`node_${element.element_id}`)
       lines.push(`  ${nodeId}["${escapeMermaidLabel(element.name)}"]`)
@@ -139,6 +150,10 @@ export class MermaidExporter {
 
     return `${lines.join('\n')}\n`
   }
+
+  toMarkdownBlock() {
+    return `\`\`\`mermaid\n${this.toMermaid()}\`\`\`\n`
+  }
 }
 
 export function serializeViewToMermaid(
@@ -147,4 +162,12 @@ export function serializeViewToMermaid(
   options?: MermaidExportOptions,
 ) {
   return new MermaidExporter({ placements: viewElements, connectors }, options).toMermaid()
+}
+
+export function serializeViewToMermaidMarkdownBlock(
+  viewElements: readonly PlacedElement[],
+  connectors: readonly Connector[],
+  options?: MermaidExportOptions,
+) {
+  return new MermaidExporter({ placements: viewElements, connectors }, options).toMarkdownBlock()
 }

@@ -39,6 +39,7 @@ import { inferImportFileFormat, unsupportedImportFileMessage } from './importFil
 interface Props {
   isOpen: boolean
   onClose: () => void
+  mermaidEnabled?: boolean
   isImporting?: boolean
   onImport: (parsed: ParsedImport) => Promise<void> | void
   getImportWarnings?: (parsed: ParsedImport) => Promise<string[]> | string[]
@@ -57,9 +58,9 @@ const STRUCTURIZR_PLACEHOLDER = `workspace {
   }
 }`
 
-function ImportModal({ isOpen, onClose, isImporting, onImport, getImportWarnings }: Props) {
+function ImportModal({ isOpen, onClose, mermaidEnabled = false, isImporting, onImport, getImportWarnings }: Props) {
   const [code, setCode] = useState('')
-  const [format, setFormat] = useState<Format>('mermaid')
+  const [format, setFormat] = useState<Format>(() => mermaidEnabled ? 'mermaid' : 'structurizr')
   const [step, setStep] = useState<'input' | 'summary'>('input')
   const [parsed, setParsed] = useState<ParsedImport | null>(null)
   const [importWarnings, setImportWarnings] = useState<string[]>([])
@@ -71,14 +72,15 @@ function ImportModal({ isOpen, onClose, isImporting, onImport, getImportWarnings
   useEffect(() => {
     if (!isOpen) return
     setCode('')
+    setFormat(mermaidEnabled ? 'mermaid' : 'structurizr')
     setStep('input')
     setParsed(null)
     setImportWarnings([])
     setParseError(null)
-  }, [isOpen])
+  }, [isOpen, mermaidEnabled])
 
   const handleTabChange = (index: number) => {
-    setFormat(index === 0 ? 'mermaid' : 'structurizr')
+    setFormat(mermaidEnabled && index === 0 ? 'mermaid' : 'structurizr')
     setCode('')
     setImportWarnings([])
     setParseError(null)
@@ -91,13 +93,17 @@ function ImportModal({ isOpen, onClose, isImporting, onImport, getImportWarnings
       return
     }
     const nextFormat = inferImportFileFormat(path)
+    if (nextFormat === 'mermaid' && !mermaidEnabled) {
+      setParseError('Mermaid Markdown import is experimental. Enable it in settings to import Markdown Mermaid blocks.')
+      return
+    }
     setFormat(nextFormat === 'structurizr' ? 'structurizr' : 'mermaid')
     setCode(content)
     setStep('input')
     setParsed(null)
     setImportWarnings([])
     setParseError(null)
-  }, [])
+  }, [mermaidEnabled])
 
   const handleOpenFile = useCallback(async () => {
     if (!isWailsApp) return
@@ -208,29 +214,31 @@ function ImportModal({ isOpen, onClose, isImporting, onImport, getImportWarnings
               </HStack>
             )}
             {step === 'input' ? (
-              <Tabs index={format === 'mermaid' ? 0 : 1} onChange={handleTabChange} size="sm" variant="enclosed">
+              <Tabs index={mermaidEnabled && format === 'mermaid' ? 0 : mermaidEnabled ? 1 : 0} onChange={handleTabChange} size="sm" variant="enclosed">
                 <TabList>
-                  <Tab>Mermaid</Tab>
+                  {mermaidEnabled && <Tab>Mermaid Markdown</Tab>}
                   <Tab>Structurizr DSL</Tab>
                 </TabList>
                 <TabPanels>
-                  <TabPanel px={0} pb={0}>
-                    <FormControl>
-                      <FormLabel fontSize="sm">Mermaid code</FormLabel>
-                      <Textarea
-                        data-testid="import-mermaid-textarea"
-                        value={code}
-                        onChange={(e) => setCode(e.target.value)}
-                        placeholder={MERMAID_PLACEHOLDER}
-                        size="sm"
-                        rows={12}
-                        fontFamily="mono"
-                      />
-                      <Text mt={1.5} fontSize="xs" color="gray.400">
-                        Supported: flowchart, C4, sequence, class, ER, state, requirement, sankey, pie, git graph, quadrant, mindmap, journey, gantt, timeline, and XY chart.
-                      </Text>
-                    </FormControl>
-                  </TabPanel>
+                  {mermaidEnabled && (
+                    <TabPanel px={0} pb={0}>
+                      <FormControl>
+                        <FormLabel fontSize="sm">Markdown Mermaid block</FormLabel>
+                        <Textarea
+                          data-testid="import-mermaid-textarea"
+                          value={code}
+                          onChange={(e) => setCode(e.target.value)}
+                          placeholder={MERMAID_PLACEHOLDER}
+                          size="sm"
+                          rows={12}
+                          fontFamily="mono"
+                        />
+                        <Text mt={1.5} fontSize="xs" color="gray.400">
+                          Supported: flowchart, C4, sequence, class, ER, state, requirement, sankey, pie, git graph, quadrant, mindmap, journey, gantt, timeline, and XY chart.
+                        </Text>
+                      </FormControl>
+                    </TabPanel>
+                  )}
                   <TabPanel px={0} pb={0}>
                     <FormControl>
                       <FormLabel fontSize="sm">Structurizr DSL</FormLabel>

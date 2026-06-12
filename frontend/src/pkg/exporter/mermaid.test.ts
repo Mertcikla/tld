@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseMermaid } from '../importer/mermaid'
-import { MermaidExporter, serializeViewToMermaid, type MermaidWorkspaceView } from './mermaid'
+import { MermaidExporter, serializeViewToMermaid, serializeViewToMermaidMarkdownBlock, type MermaidWorkspaceView } from './mermaid'
 import type { Connector, PlacedElement } from '../../types'
 
 describe('MermaidExporter', () => {
@@ -21,6 +21,7 @@ describe('MermaidExporter', () => {
     expect(code).toContain('node_2["Worker &quot;A&quot;"]')
     expect(code).toContain('node_2 -- "writes to" --> node_3')
     expect(code.match(/%% tld\/v1/g)).toHaveLength(1)
+    expect(code).toContain('%% tld/v1 view=1')
     expect(code).toContain('%% tld-element ref=node_2 x=0 y=0 kind=service')
     expect(code).not.toContain('%% tld-element node_2')
     expect(code).toContain('%% tld-connector ref=9 source=node_2 target=node_3 label=writes to')
@@ -72,7 +73,7 @@ describe('MermaidExporter', () => {
     const lines = new MermaidExporter(view).toMermaid().trim().split('\n')
 
     expect(lines[0]).toBe('flowchart LR')
-    expect(lines[1]).toBe('%% tld/v1')
+    expect(lines[1]).toBe('%% tld/v1 view=1')
     expect(lines.filter((line) => line.includes('tld/v1'))).toHaveLength(1)
     expect(lines[2]).toBe('  node_2["Worker"]')
     expect(lines[3]).toBe('%% tld-element ref=node_2 x=10 y=20 kind=service')
@@ -112,6 +113,25 @@ describe('MermaidExporter', () => {
     expect(parsed.elements.find((element) => element.ref === 'node_2')?.placements[0]?.positionX).toBeUndefined()
     expect(parsed.connectors[0]?.label).toBe('writes to')
     expect(parsed.connectors[0]?.relationship).toBeUndefined()
+  })
+
+  it('wraps exported Mermaid in a markdown block for file-oriented integration', () => {
+    const view = {
+      placements: [
+        { element_id: 2, name: 'Worker', view_id: 7, id: 1, position_x: 10, position_y: 20, kind: 'service', description: null, technology: null, url: null, logo_url: null, technology_connectors: [], tags: [], has_view: false, view_label: null },
+      ],
+      connectors: [],
+    } satisfies MermaidWorkspaceView
+
+    const block = serializeViewToMermaidMarkdownBlock(view.placements, view.connectors)
+
+    expect(block).toBe(`\`\`\`mermaid
+flowchart LR
+%% tld/v1 view=7
+  node_2["Worker"]
+%% tld-element ref=node_2 x=10 y=20 kind=service
+\`\`\`
+`)
   })
 
   it('round-trips escaped explicit TLD metadata refs and connector labels', () => {

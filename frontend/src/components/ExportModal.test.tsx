@@ -46,6 +46,7 @@ describe('ExportModal', () => {
           isOpen
           onClose={vi.fn()}
           defaultFilename="System"
+          mermaidEnabled
           onExport={onExport}
         />,
       )
@@ -53,9 +54,6 @@ describe('ExportModal', () => {
 
     act(() => {
       renderer.root.findByProps({ name: 'format' }).props.onChange('mermaid')
-    })
-    act(() => {
-      renderer.root.findByProps({ 'data-testid': 'export-mermaid-metadata-checkbox' }).props.onChange({ target: { checked: false } })
     })
     await act(async () => {
       await renderer.root.findByProps({ 'data-testid': 'export-submit' }).props.onClick()
@@ -65,7 +63,7 @@ describe('ExportModal', () => {
       format: 'mermaid',
       scale: 2,
       filename: 'System',
-      includeTldMetadata: false,
+      includeTldMetadata: true,
     })
   })
 })

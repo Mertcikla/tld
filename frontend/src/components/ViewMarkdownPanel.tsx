@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, type FocusEvent, type MouseEvent } from 'react'
 import {
   Box,
   HStack,
@@ -12,6 +12,8 @@ import { ExternalLinkIcon } from '@chakra-ui/icons'
 import {
   BlockTypeSelect,
   BoldItalicUnderlineToggles,
+  codeBlockPlugin,
+  codeMirrorPlugin,
   CreateLink,
   headingsPlugin,
   linkDialogPlugin,
@@ -23,12 +25,121 @@ import {
   quotePlugin,
   thematicBreakPlugin,
   toolbarPlugin,
+  type CodeBlockEditorDescriptor,
+  type CodeBlockEditorProps,
   UndoRedo,
+  useCodeBlockEditorContext,
 } from '@mdxeditor/editor'
 import '@mdxeditor/editor/style.css'
 import { CloseIcon, ReloadIcon, SaveIcon } from './Icons'
 import type { ViewMarkdownDocument } from '../types'
 import { isWailsApp } from '../config/runtime'
+import {
+  extractTldMermaidViewId,
+  getMermaidMarkdownSyncStatus,
+  mermaidCodeEquals,
+  upsertMermaidMarkdownBlock,
+} from '../pkg/mermaid/markdown'
+
+interface MermaidMarkdownContextValue {
+  currentViewId: number | null
+  currentMermaidCode: string
+  canEdit: boolean
+}
+
+const MermaidMarkdownContext = createContext<MermaidMarkdownContextValue>({
+  currentViewId: null,
+  currentMermaidCode: '',
+  canEdit: false,
+})
+
+const CODE_BLOCK_LANGUAGES = {
+  mermaid: 'Mermaid',
+  markdown: 'Markdown',
+  ts: 'TypeScript',
+  tsx: 'TypeScript (React)',
+  js: 'JavaScript',
+  jsx: 'JavaScript (React)',
+  css: 'CSS',
+  json: 'JSON',
+  go: 'Go',
+  shell: 'Shell',
+}
+
+function MermaidCollapsedCodeBlock({ code }: CodeBlockEditorProps) {
+  const { currentViewId, currentMermaidCode, canEdit } = useContext(MermaidMarkdownContext)
+  const { setCode } = useCodeBlockEditorContext()
+  const blockViewId = extractTldMermaidViewId(code)
+  const isCurrentView = currentViewId !== null && blockViewId === currentViewId
+  const isSynced = isCurrentView && currentMermaidCode ? mermaidCodeEquals(code, currentMermaidCode) : false
+  const status = !blockViewId
+    ? 'unlinked'
+    : isCurrentView
+      ? isSynced ? 'synced' : 'stale'
+      : 'other'
+  const statusLabel = status === 'synced'
+    ? 'Synced'
+    : status === 'stale'
+      ? 'View changed'
+      : status === 'other'
+        ? `View #${blockViewId}`
+        : 'Unlinked'
+  const lineCount = code.trim() ? code.trim().split(/\r?\n/).length : 0
+  const lineLabel = `${lineCount} line${lineCount === 1 ? '' : 's'}`
+
+  const handleMouseLeave = useCallback((event: MouseEvent<HTMLDetailsElement>) => {
+    if (event.currentTarget.matches(':focus-within')) return
+    const movedBelow = event.clientY >= event.currentTarget.getBoundingClientRect().bottom - 1
+    if (movedBelow) event.currentTarget.open = false
+  }, [])
+
+  const handleBlur = useCallback((event: FocusEvent<HTMLDetailsElement>) => {
+    const nextTarget = event.relatedTarget
+    if (nextTarget && event.currentTarget.contains(nextTarget as Node)) return
+    event.currentTarget.open = false
+  }, [])
+
+  return (
+    <details
+      contentEditable={false}
+      className={`tld-mermaid-markdown-block tld-mermaid-markdown-block--${status}`}
+      onMouseEnter={(event) => { event.currentTarget.open = true }}
+      onMouseLeave={handleMouseLeave}
+      onFocusCapture={(event) => { event.currentTarget.open = true }}
+      onBlurCapture={handleBlur}
+    >
+      <summary className="tld-mermaid-markdown-block__summary">
+        <code>```mermaid</code>
+        <span className="tld-mermaid-markdown-block__meta">
+          {lineLabel} · {statusLabel}
+        </span>
+      </summary>
+      <div className="tld-mermaid-markdown-block__body">
+        {canEdit ? (
+          <pre>
+            <textarea
+              className="tld-mermaid-markdown-block__textarea"
+              value={code}
+              onChange={(event) => setCode(event.currentTarget.value)}
+              rows={Math.min(16, Math.max(4, lineCount))}
+              spellCheck={false}
+            />
+          </pre>
+        ) : (
+          <pre>
+            <code>{code}</code>
+          </pre>
+        )}
+      </div>
+    </details>
+  )
+}
+
+const MERMAID_CODE_BLOCK_DESCRIPTOR: CodeBlockEditorDescriptor = {
+  priority: 10,
+  match: (language) => (language ?? '').toLowerCase() === 'mermaid',
+  Editor: MermaidCollapsedCodeBlock,
+}
 
 interface Props {
   isOpen: boolean
@@ -37,6 +148,9 @@ interface Props {
   markdown: ViewMarkdownDocument | null
   content: string
   syncToken: number
+  viewId?: number | null
+  mermaidIntegrationEnabled?: boolean
+  currentMermaidCode?: string
   canEdit?: boolean
   isLoading?: boolean
   isSaving?: boolean
@@ -54,6 +168,9 @@ function ViewMarkdownPanel({
   markdown,
   content,
   syncToken,
+  viewId = null,
+  mermaidIntegrationEnabled = false,
+  currentMermaidCode = '',
   canEdit = true,
   isLoading = false,
   isSaving = false,
@@ -69,6 +186,26 @@ function ViewMarkdownPanel({
   const lastSyncTokenRef = useRef(syncToken)
   latestContentRef.current = content
 
+  const mermaidSyncStatus = useMemo(() => {
+    if (!mermaidIntegrationEnabled || !viewId || !currentMermaidCode) return null
+    return getMermaidMarkdownSyncStatus(content, viewId, currentMermaidCode)
+  }, [content, currentMermaidCode, mermaidIntegrationEnabled, viewId])
+
+  const mermaidContextValue = useMemo(() => ({
+    currentViewId: viewId,
+    currentMermaidCode,
+    canEdit,
+  }), [canEdit, currentMermaidCode, viewId])
+
+  const handleSyncMermaidBlock = useCallback(() => {
+    if (!viewId || !currentMermaidCode) return
+    const currentMarkdown = editorRef.current?.getMarkdown() ?? latestContentRef.current
+    const nextMarkdown = upsertMermaidMarkdownBlock(currentMarkdown, viewId, currentMermaidCode)
+    latestContentRef.current = nextMarkdown
+    editorRef.current?.setMarkdown(nextMarkdown)
+    onChange(nextMarkdown)
+  }, [currentMermaidCode, onChange, viewId])
+
   useEffect(() => {
     if (!isOpen) return
     if (lastSyncTokenRef.current === syncToken) return
@@ -82,6 +219,14 @@ function ViewMarkdownPanel({
       listsPlugin(),
       quotePlugin(),
       thematicBreakPlugin(),
+      codeBlockPlugin({
+        defaultCodeBlockLanguage: 'mermaid',
+        codeBlockEditorDescriptors: mermaidIntegrationEnabled ? [MERMAID_CODE_BLOCK_DESCRIPTOR] : [],
+      }),
+      codeMirrorPlugin({
+        codeBlockLanguages: CODE_BLOCK_LANGUAGES,
+        autoLoadLanguageSupport: false,
+      }),
       markdownShortcutPlugin(),
       linkDialogPlugin(),
       toolbarPlugin({
@@ -99,6 +244,25 @@ function ViewMarkdownPanel({
             )}
             <Box className="tld-markdown-toolbar-spacer" />
             <HStack className="tld-markdown-toolbar-actions" spacing={1.5}>
+              {mermaidIntegrationEnabled && (
+                <Tooltip
+                  label={mermaidSyncStatus === 'synced' ? 'Mermaid block is synced' : mermaidSyncStatus === 'stale' ? 'Update Mermaid block from view' : 'Insert Mermaid block from view'}
+                  hasArrow
+                  openDelay={200}
+                >
+                  <Box as="span">
+                    <IconButton
+                      aria-label="Sync Mermaid block"
+                      size="xs"
+                      variant="ghost"
+                      className={`tld-markdown-toolbar-action tld-markdown-toolbar-action-mermaid tld-markdown-toolbar-action-mermaid-${mermaidSyncStatus ?? 'missing'}`}
+                      icon={<ReloadIcon />}
+                      onClick={handleSyncMermaidBlock}
+                      isDisabled={!canEdit || isLoading || !markdown || !viewId || !currentMermaidCode || mermaidSyncStatus === 'synced'}
+                    />
+                  </Box>
+                </Tooltip>
+              )}
               <Tooltip label="Reload" hasArrow openDelay={200}>
                 <Box as="span">
                   <IconButton
@@ -173,7 +337,7 @@ function ViewMarkdownPanel({
     ]
 
     return base
-  }, [canEdit, isDirty, isLoading, isSaving, markdown, onClose, onOpenInEditor, onReload, onSave, onSaveAs])
+  }, [canEdit, currentMermaidCode, handleSyncMermaidBlock, isDirty, isLoading, isSaving, markdown, mermaidIntegrationEnabled, mermaidSyncStatus, onClose, onOpenInEditor, onReload, onSave, onSaveAs, viewId])
 
   if (!isOpen) return null
 
@@ -409,6 +573,53 @@ function ViewMarkdownPanel({
             color: 'inherit',
             fontSize: 'inherit',
           },
+          '.tld-mermaid-markdown-block': {
+            margin: '0.75rem 0 1rem',
+          },
+          '.tld-mermaid-markdown-block__summary': {
+            display: 'list-item',
+            cursor: 'pointer',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+            fontSize: '0.875em',
+            color: '#94a3b8',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          },
+          '.tld-mermaid-markdown-block__summary code': {
+            background: 'transparent',
+            color: 'inherit',
+            padding: 0,
+            borderRadius: 0,
+            fontSize: 'inherit',
+          },
+          '.tld-mermaid-markdown-block__meta': {
+            marginLeft: '0.75rem',
+            color: '#64748b',
+          },
+          '.tld-mermaid-markdown-block--stale .tld-mermaid-markdown-block__meta': {
+            color: '#facc15',
+          },
+          '.tld-mermaid-markdown-block--other .tld-mermaid-markdown-block__meta': {
+            opacity: 0.72,
+          },
+          '.tld-mermaid-markdown-block__body': {
+            marginTop: '0.5rem',
+          },
+          '.tld-mermaid-markdown-block__textarea': {
+            display: 'block',
+            width: '100%',
+            minHeight: '8rem',
+            margin: 0,
+            padding: 0,
+            resize: 'vertical',
+            border: 0,
+            outline: 'none',
+            color: 'inherit',
+            background: 'transparent',
+            font: 'inherit',
+            lineHeight: 'inherit',
+          },
           '.tld-markdown-editor__content ul, .tld-markdown-editor__content ol': {
             paddingLeft: '1.5rem',
             marginBottom: '1rem',
@@ -424,17 +635,19 @@ function ViewMarkdownPanel({
             <Text fontSize="sm">Loading markdown…</Text>
           </VStack>
         ) : markdown ? (
-          <MDXEditor
-            ref={editorRef}
-            markdown={content}
-            readOnly={!canEdit}
-            spellCheck
-            className="tld-markdown-editor"
-            contentEditableClassName="tld-markdown-editor__content"
-            placeholder="Start writing notes for this view…"
-            plugins={plugins}
-            onChange={(nextMarkdown) => onChange(nextMarkdown)}
-          />
+          <MermaidMarkdownContext.Provider value={mermaidContextValue}>
+            <MDXEditor
+              ref={editorRef}
+              markdown={content}
+              readOnly={!canEdit}
+              spellCheck
+              className="tld-markdown-editor"
+              contentEditableClassName="tld-markdown-editor__content"
+              placeholder="Start writing notes for this view…"
+              plugins={plugins}
+              onChange={(nextMarkdown) => onChange(nextMarkdown)}
+            />
+          </MermaidMarkdownContext.Provider>
         ) : (
           <VStack justify="center" align="center" spacing={3} h="full" color="whiteAlpha.700" px={6} textAlign="center">
             <Text fontSize="sm" fontWeight="semibold">No markdown document linked</Text>

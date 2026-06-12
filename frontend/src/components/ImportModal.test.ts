@@ -3,8 +3,8 @@ import { inferImportFileFormat, unsupportedImportFileMessage } from './importFil
 
 describe('ImportModal file helpers', () => {
   it('infers supported import formats from file extensions', () => {
-    expect(inferImportFileFormat('/tmp/diagram.mmd')).toBe('mermaid')
-    expect(inferImportFileFormat('/tmp/diagram.mermaid')).toBe('mermaid')
+    expect(inferImportFileFormat('/tmp/diagram.mmd')).toBe('unsupported')
+    expect(inferImportFileFormat('/tmp/diagram.mermaid')).toBe('unsupported')
     expect(inferImportFileFormat('/tmp/diagram.md')).toBe('mermaid')
     expect(inferImportFileFormat('/tmp/workspace.dsl')).toBe('structurizr')
     expect(inferImportFileFormat('/tmp/notes.txt')).toBe('mermaid')
@@ -13,6 +13,6 @@ describe('ImportModal file helpers', () => {
   it('returns explicit unsupported messages for yaml and unknown files', () => {
     expect(unsupportedImportFileMessage('/tmp/elements.yaml')).toContain('YAML workspace files are not supported')
     expect(unsupportedImportFileMessage('/tmp/diagram.json')).toContain('Unsupported file type')
-    expect(unsupportedImportFileMessage('/tmp/diagram.mmd')).toBeNull()
+    expect(unsupportedImportFileMessage('/tmp/diagram.mmd')).toContain('Unsupported file type')
   })
 })

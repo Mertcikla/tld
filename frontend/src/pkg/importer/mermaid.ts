@@ -165,7 +165,7 @@ export function extractMermaidCode(text: string): string | null {
   const trimmed = text.trim()
   if (!trimmed) return null
 
-  const fenced = trimmed.match(/```(?:mermaid|mmd)[ \t]*\r?\n([\s\S]*?)```/i)
+  const fenced = trimmed.match(/```mermaid[ \t]*\r?\n([\s\S]*?)```/i)
   if (fenced?.[1]?.trim()) return fenced[1].trim()
 
   if (isSupportedMermaidStart(trimmed)) return trimmed

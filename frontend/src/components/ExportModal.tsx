@@ -1,7 +1,6 @@
 import { memo, useEffect, useState } from 'react'
 import {
   Button,
-  Checkbox,
   FormControl,
   FormLabel,
   HStack,
@@ -31,6 +30,7 @@ interface Props {
   isOpen: boolean
   onClose: () => void
   defaultFilename: string
+  mermaidEnabled?: boolean
   isExporting?: boolean
   onExport: (options: ExportOptions) => Promise<void> | void
 }
@@ -45,21 +45,24 @@ function ExportModal({
   isOpen,
   onClose,
   defaultFilename,
+  mermaidEnabled = false,
   isExporting,
   onExport,
 }: Props) {
   const [format, setFormat] = useState<ExportFormat>('svg')
   const [scale, setScale] = useState<1 | 2 | 3>(2)
   const [filename, setFilename] = useState(defaultFilename)
-  const [includeTldMetadata, setIncludeTldMetadata] = useState(true)
 
   useEffect(() => {
     if (!isOpen) return
     setFilename(defaultFilename)
     setFormat('svg')
     setScale(2)
-    setIncludeTldMetadata(true)
   }, [isOpen, defaultFilename])
+
+  useEffect(() => {
+    if (!mermaidEnabled && format === 'mermaid') setFormat('svg')
+  }, [format, mermaidEnabled])
 
 
   const handleSubmit = async () => {
@@ -67,7 +70,7 @@ function ExportModal({
       format,
       scale,
       filename: sanitizeFilename(filename),
-      includeTldMetadata,
+      includeTldMetadata: true,
     })
   }
 
@@ -85,7 +88,7 @@ function ExportModal({
                 <HStack spacing={4}>
                   <Radio value="svg">SVG</Radio>
                   <Radio value="png">PNG</Radio>
-                  <Radio value="mermaid">Mermaid</Radio>
+                  {mermaidEnabled && <Radio value="mermaid">Mermaid Markdown</Radio>}
                 </HStack>
               </RadioGroup>
             </FormControl>
@@ -100,19 +103,6 @@ function ExportModal({
                     <Radio value="3">3x</Radio>
                   </HStack>
                 </RadioGroup>
-              </FormControl>
-            )}
-
-            {format === 'mermaid' && (
-              <FormControl id="export-mermaid-metadata">
-                <Checkbox
-                  data-testid="export-mermaid-metadata-checkbox"
-                  isChecked={includeTldMetadata}
-                  onChange={(event) => setIncludeTldMetadata(event.target.checked)}
-                  size="sm"
-                >
-                  TLD metadata
-                </Checkbox>
               </FormControl>
             )}
 
