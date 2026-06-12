@@ -55,6 +55,11 @@ describe('ExportModal', () => {
     act(() => {
       renderer.root.findByProps({ name: 'format' }).props.onChange('mermaid')
     })
+    act(() => {
+      renderer.root.findAllByType('input').find((input) => input.props.type === 'checkbox')?.props.onChange({
+        currentTarget: { checked: false },
+      })
+    })
     await act(async () => {
       await renderer.root.findByProps({ 'data-testid': 'export-submit' }).props.onClick()
     })
@@ -63,7 +68,7 @@ describe('ExportModal', () => {
       format: 'mermaid',
       scale: 2,
       filename: 'System',
-      includeTldMetadata: true,
+      includeTldMetadata: false,
     })
   })
 })

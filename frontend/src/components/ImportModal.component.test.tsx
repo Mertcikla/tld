@@ -10,6 +10,16 @@ vi.mock('../api/client', () => ({
     import: {
       parseStructurizr: vi.fn(),
     },
+    mermaid: {
+      parse: vi.fn(async (source: string) => ({
+        format: 'mermaid',
+        elements: [],
+        connectors: [],
+        warnings: [],
+        direction: 'LR',
+        source,
+      })),
+    },
   },
 }))
 

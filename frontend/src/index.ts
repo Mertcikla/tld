@@ -135,6 +135,11 @@ export {
   protoLayer,
   mapViewMarkdown,
   type ProtoDiagram,
+  type MermaidDirection,
+  type MermaidImportSummary,
+  type MermaidMarkdownBlock,
+  type MermaidMarkdownSyncStatus,
+  type ParsedImport,
 } from './api/client'
 export type { DependenciesResponse } from './api/client'
 
@@ -204,13 +209,6 @@ export {
 
 // ─── Lib ─────────────────────────────────────────────────────────────────────
 export { vscodeBridge } from './lib/vscodeBridge'
-
-// ─── Importer ────────────────────────────────────────────────────────────────
-export { parseMermaid as parseMermaidToElements, parseMermaidAsync as parseMermaidToElementsAsync, type ParsedImport } from './pkg/importer/mermaid'
-
-// ─── Exporter ────────────────────────────────────────────────────────────────
-export { MermaidExporter, serializeViewToMermaid, serializeViewToMermaidMarkdownBlock, type MermaidExportOptions, type MermaidWorkspaceView } from './pkg/exporter/mermaid'
-export { findMermaidMarkdownBlocks, findMermaidMarkdownBlockForView, upsertMermaidMarkdownBlock, type MermaidMarkdownBlock, type MermaidMarkdownSyncStatus } from './pkg/mermaid/markdown'
 
 // ─── VS Code Messages ────────────────────────────────────────────────────────
 export * from './types/vscode-messages'

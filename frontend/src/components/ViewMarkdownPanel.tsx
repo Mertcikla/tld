@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, type FocusEvent, type MouseEvent } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type FocusEvent, type MouseEvent } from 'react'
 import {
   Box,
   HStack,
@@ -34,22 +34,15 @@ import '@mdxeditor/editor/style.css'
 import { CloseIcon, ReloadIcon, SaveIcon } from './Icons'
 import type { ViewMarkdownDocument } from '../types'
 import { isWailsApp } from '../config/runtime'
-import {
-  extractTldMermaidViewId,
-  getMermaidMarkdownSyncStatus,
-  mermaidCodeEquals,
-  upsertMermaidMarkdownBlock,
-} from '../pkg/mermaid/markdown'
+import { api, type MermaidMarkdownSyncStatus } from '../api/client'
 
 interface MermaidMarkdownContextValue {
-  currentViewId: number | null
-  currentMermaidCode: string
+  blockStatusByCode: Map<string, MermaidMarkdownSyncStatus>
   canEdit: boolean
 }
 
 const MermaidMarkdownContext = createContext<MermaidMarkdownContextValue>({
-  currentViewId: null,
-  currentMermaidCode: '',
+  blockStatusByCode: new Map(),
   canEdit: false,
 })
 
@@ -83,22 +76,15 @@ function closeMermaidDetailsOnBlur(event: FocusEvent<HTMLDetailsElement>) {
 }
 
 function MermaidCollapsedCodeBlock({ code }: CodeBlockEditorProps) {
-  const { currentViewId, currentMermaidCode, canEdit } = useContext(MermaidMarkdownContext)
+  const { blockStatusByCode, canEdit } = useContext(MermaidMarkdownContext)
   const { setCode } = useCodeBlockEditorContext()
-  const blockViewId = extractTldMermaidViewId(code)
-  const isCurrentView = currentViewId !== null && blockViewId === currentViewId
-  const isSynced = isCurrentView && currentMermaidCode ? mermaidCodeEquals(code, currentMermaidCode) : false
-  const status = !blockViewId
-    ? 'unlinked'
-    : isCurrentView
-      ? isSynced ? 'synced' : 'stale'
-      : 'other'
+  const status = blockStatusByCode.get(code) ?? 'unlinked'
   const statusLabel = status === 'synced'
     ? 'Synced'
     : status === 'stale'
       ? 'View changed'
       : status === 'other'
-        ? `View #${blockViewId}`
+        ? 'Other view'
         : 'Unlinked'
   const lineCount = code.trim() ? code.trim().split(/\r?\n/).length : 0
   const lineLabel = `${lineCount} line${lineCount === 1 ? '' : 's'}`
@@ -152,7 +138,6 @@ interface Props {
   syncToken: number
   viewId?: number | null
   mermaidIntegrationEnabled?: boolean
-  currentMermaidCode?: string
   canEdit?: boolean
   isLoading?: boolean
   isSaving?: boolean
@@ -172,7 +157,6 @@ function ViewMarkdownPanel({
   syncToken,
   viewId = null,
   mermaidIntegrationEnabled = false,
-  currentMermaidCode = '',
   canEdit = true,
   isLoading = false,
   isSaving = false,
@@ -186,27 +170,51 @@ function ViewMarkdownPanel({
   const editorRef = useRef<MDXEditorMethods>(null)
   const latestContentRef = useRef(content)
   const lastSyncTokenRef = useRef(syncToken)
+  const [mermaidSyncStatus, setMermaidSyncStatus] = useState<MermaidMarkdownSyncStatus | null>(null)
+  const [mermaidBlockStatusByCode, setMermaidBlockStatusByCode] = useState<Map<string, MermaidMarkdownSyncStatus>>(() => new Map())
   latestContentRef.current = content
 
-  const mermaidSyncStatus = useMemo(() => {
-    if (!mermaidIntegrationEnabled || !viewId || !currentMermaidCode) return null
-    return getMermaidMarkdownSyncStatus(content, viewId, currentMermaidCode)
-  }, [content, currentMermaidCode, mermaidIntegrationEnabled, viewId])
+  useEffect(() => {
+    if (!isOpen || !mermaidIntegrationEnabled || !viewId) {
+      setMermaidSyncStatus(null)
+      setMermaidBlockStatusByCode(new Map())
+      return undefined
+    }
+
+    let canceled = false
+    const timer = window.setTimeout(() => {
+      void api.mermaid.inspectMarkdown(content, viewId).then((result) => {
+        if (canceled) return
+        setMermaidSyncStatus(result.syncStatus)
+        setMermaidBlockStatusByCode(new Map(result.blocks.map((block) => [block.code, block.syncStatusValue])))
+      }).catch(() => {
+        if (canceled) return
+        setMermaidSyncStatus(null)
+        setMermaidBlockStatusByCode(new Map())
+      })
+    }, 250)
+
+    return () => {
+      canceled = true
+      window.clearTimeout(timer)
+    }
+  }, [content, isOpen, mermaidIntegrationEnabled, viewId])
 
   const mermaidContextValue = useMemo(() => ({
-    currentViewId: viewId,
-    currentMermaidCode,
+    blockStatusByCode: mermaidBlockStatusByCode,
     canEdit,
-  }), [canEdit, currentMermaidCode, viewId])
+  }), [canEdit, mermaidBlockStatusByCode])
 
-  const handleSyncMermaidBlock = useCallback(() => {
-    if (!viewId || !currentMermaidCode) return
+  const handleSyncMermaidBlock = useCallback(async () => {
+    if (!viewId) return
     const currentMarkdown = editorRef.current?.getMarkdown() ?? latestContentRef.current
-    const nextMarkdown = upsertMermaidMarkdownBlock(currentMarkdown, viewId, currentMermaidCode)
+    const result = await api.mermaid.upsertMarkdownBlock(viewId, currentMarkdown, true)
+    const nextMarkdown = result.markdown
     latestContentRef.current = nextMarkdown
     editorRef.current?.setMarkdown(nextMarkdown)
+    setMermaidSyncStatus('synced')
     onChange(nextMarkdown)
-  }, [currentMermaidCode, onChange, viewId])
+  }, [onChange, viewId])
 
   useEffect(() => {
     if (!isOpen) return
@@ -259,8 +267,8 @@ function ViewMarkdownPanel({
                       variant="ghost"
                       className={`tld-markdown-toolbar-action tld-markdown-toolbar-action-mermaid tld-markdown-toolbar-action-mermaid-${mermaidSyncStatus ?? 'missing'}`}
                       icon={<ReloadIcon />}
-                      onClick={handleSyncMermaidBlock}
-                      isDisabled={!canEdit || isLoading || !markdown || !viewId || !currentMermaidCode || mermaidSyncStatus === 'synced'}
+                      onClick={() => { void handleSyncMermaidBlock() }}
+                      isDisabled={!canEdit || isLoading || !markdown || !viewId || mermaidSyncStatus === 'synced'}
                     />
                   </Box>
                 </Tooltip>
@@ -339,7 +347,7 @@ function ViewMarkdownPanel({
     ]
 
     return base
-  }, [canEdit, currentMermaidCode, handleSyncMermaidBlock, isDirty, isLoading, isSaving, markdown, mermaidIntegrationEnabled, mermaidSyncStatus, onClose, onOpenInEditor, onReload, onSave, onSaveAs, viewId])
+  }, [canEdit, handleSyncMermaidBlock, isDirty, isLoading, isSaving, markdown, mermaidIntegrationEnabled, mermaidSyncStatus, onClose, onOpenInEditor, onReload, onSave, onSaveAs, viewId])
 
   if (!isOpen) return null
 

@@ -1,6 +1,7 @@
 import { memo, useEffect, useState } from 'react'
 import {
   Button,
+  Checkbox,
   FormControl,
   FormLabel,
   HStack,
@@ -52,12 +53,14 @@ function ExportModal({
   const [format, setFormat] = useState<ExportFormat>('svg')
   const [scale, setScale] = useState<1 | 2 | 3>(2)
   const [filename, setFilename] = useState(defaultFilename)
+  const [includeTldMetadata, setIncludeTldMetadata] = useState(true)
 
   useEffect(() => {
     if (!isOpen) return
     setFilename(defaultFilename)
     setFormat('svg')
     setScale(2)
+    setIncludeTldMetadata(true)
   }, [isOpen, defaultFilename])
 
   useEffect(() => {
@@ -70,7 +73,7 @@ function ExportModal({
       format,
       scale,
       filename: sanitizeFilename(filename),
-      includeTldMetadata: true,
+      includeTldMetadata,
     })
   }
 
@@ -104,6 +107,16 @@ function ExportModal({
                   </HStack>
                 </RadioGroup>
               </FormControl>
+            )}
+
+            {format === 'mermaid' && (
+              <Checkbox
+                size="sm"
+                isChecked={includeTldMetadata}
+                onChange={(event) => setIncludeTldMetadata(event.currentTarget.checked)}
+              >
+                Include tlDiagram metadata
+              </Checkbox>
             )}
 
             <FormControl id="export-filename">

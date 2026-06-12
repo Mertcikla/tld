@@ -22,16 +22,7 @@ import {
   TabPanels,
   TabPanel,
 } from '@chakra-ui/react'
-import {
-  extractMermaidCode,
-  mermaidImportSourceLimitError,
-  parseMermaidAsync,
-  parsedMermaidImportError,
-  parsedMermaidImportLimitError,
-  type ParsedImport,
-} from '../pkg/importer/mermaid'
-import { api } from '../api/client'
-import type { PlanConnector, PlanElement } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
+import { api, type ParsedImport } from '../api/client'
 import { isWailsApp } from '../config/runtime'
 import { mermaidImportFilters, onFileDrop, openTextFile, readTextFile } from '../lib/desktop'
 import { inferImportFileFormat, unsupportedImportFileMessage } from './importFile'
@@ -144,28 +135,14 @@ function ImportModal({ isOpen, onClose, mermaidEnabled = false, isImporting, onI
     setImportWarnings([])
 
     if (format === 'mermaid') {
-      const mermaidSource = extractMermaidCode(code) ?? code.trim()
-      const sourceLimitError = mermaidImportSourceLimitError(mermaidSource)
-      if (sourceLimitError) {
-        setParseError(sourceLimitError)
-        return
-      }
       setIsParsing(true)
       try {
-        const result = await parseMermaidAsync(code)
-        const error = parsedMermaidImportError(result)
-        if (error) {
-          setParseError(error)
-          return
-        }
-        const limitError = parsedMermaidImportLimitError(result)
-        if (limitError) {
-          setParseError(limitError)
-          return
-        }
+        const result = await api.mermaid.parse(code)
         setImportWarnings(getImportWarnings ? await getImportWarnings(result) : [])
         setParsed(result)
         setStep('summary')
+      } catch (e: unknown) {
+        setParseError(e instanceof Error ? e.message : 'Failed to parse Mermaid diagram')
       } finally {
         setIsParsing(false)
       }
@@ -177,8 +154,9 @@ function ImportModal({ isOpen, onClose, mermaidEnabled = false, isImporting, onI
     try {
       const res = await api.import.parseStructurizr(code)
       const result: ParsedImport = {
-        elements: res.elements as PlanElement[],
-        connectors: res.connectors as PlanConnector[],
+        format: 'structurizr',
+        elements: res.elements,
+        connectors: res.connectors,
         warnings: res.warnings,
         direction: 'LR',
         source: code,
