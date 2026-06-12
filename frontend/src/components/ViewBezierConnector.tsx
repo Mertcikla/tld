@@ -65,7 +65,7 @@ export function ViewConnectorConnectionLine({
     targetHeight,
   })
 
-  return <path fill="none" d={path} style={connectionLineStyle} />
+  return <path className="vieweditor-temporary-connector-path" fill="none" d={path} style={connectionLineStyle} />
 }
 
 function ViewBezierConnector({

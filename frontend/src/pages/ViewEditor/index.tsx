@@ -121,6 +121,7 @@ import { pickUnusedColor } from '../../components/ViewExplorer/utils'
 import { EmptyCanvasState } from './components/EmptyCanvasState'
 import { EditorOverlays } from './components/EditorOverlays'
 import { ConnectorContextMenu, CanvasContextMenu } from './components/EditorMenus'
+import { TEMPORARY_CONNECTOR_EDGE_STYLE, TEMPORARY_CONNECTOR_PATH_STYLE } from './temporaryConnectorStyle'
 import {
   VIEW_SELECTION_CLIPBOARD_MIME,
   buildViewSelectionClipboardPayload,
@@ -170,12 +171,6 @@ const EMPTY_LINKS: ViewConnector[] = []
 const EMPTY_TAG_COLORS: Record<string, Tag> = {}
 const noop = () => { }
 const noopAsync = async () => { }
-const CONNECTOR_DRAG_CONNECTION_LINE_STYLE = {
-  stroke: 'var(--accent)',
-  strokeWidth: 2,
-  strokeDasharray: '6 5',
-  opacity: 0.75,
-}
 const VIEW_EDITOR_MIN_ZOOM_FLOOR = 0.12
 const VIEW_EDITOR_INITIAL_FIT_PADDING = 0.25
 const VIEW_EDITOR_FOCUS_FIT_PADDING = 0.35
@@ -2818,6 +2813,7 @@ function ViewEditorInner({
           sourceHandle: getCenterVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
           targetHandle: getCenterVisualHandleId(previewTargetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
           type: previewConnectorStyle === 'bezier' ? 'default' : previewConnectorStyle,
+          className: 'vieweditor-temporary-connector',
           label: '',
           data: {
             id: -sourceId,
@@ -2836,14 +2832,9 @@ function ViewEditorInner({
             created_at: '',
             updated_at: '',
           },
-          style: {
-            stroke: 'var(--accent)',
-            strokeWidth: 2,
-            opacity: 0.55,
-            pointerEvents: 'none',
-          },
-          labelStyle: { fontSize: 11, fill: 'var(--accent)', opacity: 0.55 },
-          labelBgStyle: { fill: 'var(--chakra-colors-gray-900)', fillOpacity: 0.55 },
+          style: TEMPORARY_CONNECTOR_EDGE_STYLE,
+          labelStyle: { fontSize: 11, fill: 'var(--accent)', opacity: 1 },
+          labelBgStyle: { fill: 'var(--chakra-colors-gray-900)', fillOpacity: 1 },
           markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'var(--accent)' },
           zIndex: 1500,
         }
@@ -2964,8 +2955,8 @@ function ViewEditorInner({
     onDragOver, onDrop, onWheelCapture,
   } = canvas
   const connectionLineStyle = useMemo(() => {
-    if (!pendingElement?.preview) return CONNECTOR_DRAG_CONNECTION_LINE_STYLE
-    return { ...CONNECTOR_DRAG_CONNECTION_LINE_STYLE, opacity: 0 }
+    if (!pendingElement?.preview) return TEMPORARY_CONNECTOR_PATH_STYLE
+    return { ...TEMPORARY_CONNECTOR_PATH_STYLE, opacity: 0 }
   }, [pendingElement?.preview])
 
   const handleRealtimeCanvasMouseMove = useCallback((event: React.MouseEvent) => {

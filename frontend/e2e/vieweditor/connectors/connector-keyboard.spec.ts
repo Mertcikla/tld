@@ -1,9 +1,11 @@
 import { expect, test } from '../../fixtures'
 import {
   createAndLoadDiagramWithNodes,
+  dragNodeByName,
   expectConnector,
   handleLocator,
   listConnectors,
+  locatorCenter,
   nodeByName,
 } from '../../helpers/vieweditor'
 
@@ -20,6 +22,51 @@ test('creates a connector with the E shortcut and target click flow', async ({ p
     targetElementId: elements[1].id,
   }, true, diagram.id)
   await expect(page.locator('.react-flow__edge')).toHaveCount(1)
+})
+
+test('E shortcut persists the preview source handle on target click', async ({ page }) => {
+  const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Keyboard Connector Source Handle')
+  const sourceNode = nodeByName(page, elements[0].name)
+  const targetNode = nodeByName(page, elements[1].name)
+  const sourceCenter = await locatorCenter(sourceNode)
+  const targetCenter = await locatorCenter(targetNode)
+  const expectedSourceHandle = sourceCenter.y > 260 ? 'top' : 'bottom'
+  const targetY = sourceCenter.y + (expectedSourceHandle === 'top' ? -180 : 180)
+
+  await dragNodeByName(page, elements[1].name, sourceCenter.x - targetCenter.x, targetY - targetCenter.y)
+
+  await sourceNode.click()
+  await page.keyboard.press('e')
+  await expect(sourceNode.getByText(/tap element to connect/)).toBeVisible()
+  const movedTargetCenter = await locatorCenter(targetNode)
+  await page.mouse.move(movedTargetCenter.x, movedTargetCenter.y)
+  await expect(page.getByTestId('click-connect-connector')).toHaveCount(1)
+  const ghostPathStyle = await page.getByTestId('click-connect-connector').locator('.vieweditor-temporary-connector-path').evaluate((path) => {
+    const style = getComputedStyle(path)
+    const accentProbe = document.createElement('span')
+    accentProbe.style.color = 'var(--accent)'
+    document.body.appendChild(accentProbe)
+    const accent = getComputedStyle(accentProbe).color
+    accentProbe.remove()
+    return {
+      accent,
+      stroke: style.stroke,
+      strokeDasharray: style.strokeDasharray,
+      opacity: style.opacity,
+    }
+  })
+  expect(ghostPathStyle.stroke).toBe(ghostPathStyle.accent)
+  expect(ghostPathStyle.strokeDasharray).toBe('6px, 5px')
+  expect(ghostPathStyle.opacity).toBe('1')
+  await targetNode.click()
+
+  await expect.poll(async () => {
+    const connectors = await listConnectors(page, diagram.id)
+    const connector = connectors.find((candidate) =>
+      candidate.sourceElementId === elements[0].id && candidate.targetElementId === elements[1].id
+    )
+    return connector?.sourceHandle ?? connector?.source_handle ?? null
+  }).toBe(expectedSourceHandle)
 })
 
 test('clicking the source handle cancels keyboard connector creation', async ({ page }) => {

@@ -1062,7 +1062,7 @@ export function useCanvasInteractions({
     if (cid === null || sourceIds.length === 0) return
 
     const sourceHandle = getLogicalHandleId(
-      pendingConnectionSourceHandleRef.current ?? clickConnectModeRef.current?.sourceHandle,
+      clickConnectModeRef.current?.sourceHandle ?? pendingConnectionSourceHandleRef.current,
       DEFAULT_SOURCE_HANDLE_SIDE,
     ) ?? DEFAULT_SOURCE_HANDLE_SIDE
     const logicalTargetHandle = getLogicalHandleId(targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE
@@ -1087,6 +1087,41 @@ export function useCanvasInteractions({
       }
       onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
+  }, [activeConnectionSourceIds, canEdit, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, interactionSourceIdRef, onUnsupportedMutation, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef])
+
+  const connectClickModeToElement = useCallback(async (targetElementId: number) => {
+    if (!canEdit) return false
+    const mode = clickConnectModeRef.current
+    if (!mode?.sourceHandle) return false
+    const cid = viewIdRef.current
+    const sourceElementId = interactionSourceIdRef.current
+    const sourceIds = activeConnectionSourceIds(sourceElementId, targetElementId)
+    if (cid === null || sourceIds.length === 0) return false
+
+    const sourceHandle = getLogicalHandleId(mode.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
+    const targetHandle = getLogicalHandleId(mode.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? getOppositeHandleSide(sourceHandle)
+
+    setSyncedInteractionSourceId(null)
+    clearPendingConnectionRefs()
+    setSyncedClickConnectMode(null)
+    setClickConnectCursorPos(null)
+
+    try {
+      for (const nextSourceId of sourceIds) {
+        const newConnector = await api.workspace.connectors.create(cid, {
+          source_element_id: nextSourceId,
+          target_element_id: targetElementId,
+          source_handle: sourceHandle,
+          target_handle: targetHandle,
+          style: createConnectorStyle,
+          direction: 'forward',
+        })
+        const connector = connectorToConnector(newConnector)
+        await finalizeConnectorCreate(connector)
+      }
+      onUnsupportedMutation?.()
+    } catch { /* intentionally empty */ }
+    return true
   }, [activeConnectionSourceIds, canEdit, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, interactionSourceIdRef, onUnsupportedMutation, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef])
 
   const stableOnInteractionStart = useCallback((elementId: number, options?: InteractionStartOptions) => {
@@ -1142,12 +1177,13 @@ export function useCanvasInteractions({
   }, [canEdit, connectClickModeToHandle, interactionSourceIdRef, multiConnectionSourceIdsRef, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId])
 
   const stableOnConnectToAndReset = useCallback(async (targetElementId: number) => {
+    if (await connectClickModeToElement(targetElementId)) return
     await stableOnConnectTo(targetElementId)
     setSyncedInteractionSourceId(null)
     clearPendingConnectionRefs()
     setSyncedClickConnectMode(null)
     setClickConnectCursorPos(null)
-  }, [clearPendingConnectionRefs, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, stableOnConnectTo])
+  }, [clearPendingConnectionRefs, connectClickModeToElement, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, stableOnConnectTo])
 
   // ── Node/connector changes ─────────────────────────────────────────────────────
   const onNodesChange = useCallback((changes: NodeChange[]) => {

@@ -84,10 +84,30 @@ test('connector handle drag previews a pending placeholder only over empty canva
       accent,
       stroke: style.stroke,
       strokeDasharray: style.strokeDasharray,
+      opacity: style.opacity,
     }
   })
   expect(connectionPathStyle.stroke).toBe(connectionPathStyle.accent)
   expect(connectionPathStyle.strokeDasharray).toBe('6px, 5px')
+  expect(connectionPathStyle.opacity).toBe('0')
+
+  const pendingPreviewPathStyle = await page.locator('.vieweditor-temporary-connector .react-flow__edge-path').first().evaluate((path) => {
+    const style = getComputedStyle(path)
+    const accentProbe = document.createElement('span')
+    accentProbe.style.color = 'var(--accent)'
+    document.body.appendChild(accentProbe)
+    const accent = getComputedStyle(accentProbe).color
+    accentProbe.remove()
+    return {
+      accent,
+      stroke: style.stroke,
+      strokeDasharray: style.strokeDasharray,
+      opacity: style.opacity,
+    }
+  })
+  expect(pendingPreviewPathStyle.stroke).toBe(pendingPreviewPathStyle.accent)
+  expect(pendingPreviewPathStyle.strokeDasharray).toBe('6px, 5px')
+  expect(pendingPreviewPathStyle.opacity).toBe('1')
 
   await page.mouse.move(targetBox!.x + targetBox!.width / 2, targetBox!.y + targetBox!.height / 2, { steps: 10 })
   await expect(pendingNode).toHaveCount(0)
