@@ -9,7 +9,6 @@ import { SharedInfiniteZoom } from './pages/InfiniteZoom'
 import Settings from './pages/Settings'
 import ProfileSettings from './pages/ProfileSettings'
 import AppearanceSettings from './pages/AppearanceSettings'
-import WorkspaceSourceSettings from './pages/WorkspaceSourceSettings'
 import ExperimentalSettings from './pages/ExperimentalSettings'
 import UpdateSettings from './pages/UpdateSettings'
 import { HeaderProvider, useHeader } from './components/HeaderContext'
@@ -131,7 +130,6 @@ export default function App() {
                 {platform.getSettingsRoutes({ user: null })}
                 <Route path="profile" element={<ProfileSettings />} />
                 <Route path="appearance" element={<AppearanceSettings />} />
-                <Route path="workspace-source" element={<WorkspaceSourceSettings />} />
                 <Route path="experimental" element={<ExperimentalSettings />} />
                 <Route path="updates" element={isWailsApp ? <UpdateSettings /> : <Navigate to="/settings/appearance" replace />} />
               </Route>
