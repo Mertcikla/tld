@@ -69,6 +69,20 @@ async function dragLocatorToPoint(
   await page.mouse.up()
 }
 
+async function dragLocatorToPointWithMidDragCheck(
+  page: Parameters<typeof handleLocator>[0],
+  locator: ReturnType<typeof handleLocator>,
+  point: { x: number; y: number },
+  check: () => Promise<void>,
+) {
+  const start = await locatorCenter(locator)
+  await page.mouse.move(start.x, start.y)
+  await page.mouse.down()
+  await page.mouse.move(point.x, point.y, { steps: 12 })
+  await check()
+  await page.mouse.up()
+}
+
 async function openEdgeContextMenu(page: Parameters<typeof handleLocator>[0]) {
   const edge = page.locator('.react-flow__edge').first()
   await edge.click({ button: 'right', force: true })
@@ -78,20 +92,29 @@ async function openEdgeContextMenu(page: Parameters<typeof handleLocator>[0]) {
   await longPressLocator(edge, { durationMs: 650 })
 }
 
+async function clickRevealedHandle(
+  node: ReturnType<typeof nodeByName>,
+  handle: ReturnType<typeof handleLocator>,
+) {
+  await node.hover()
+  await handle.click()
+}
+
 test('starts, cancels, and creates click-connect flows from handles', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Connector Click Handles')
   await closeViewEditorPanels(page)
+  const sourceNode = nodeByName(page, elements[0].name)
   const sourceHandle = handleLocator(page, elements[0].id, 'right-2')
   const targetHandle = handleLocator(page, elements[1].id, 'left-2')
 
-  await sourceHandle.click({ force: true })
-  await expect(nodeByName(page, elements[0].name).getByText(/tap element to connect/i)).toBeVisible()
-  await sourceHandle.click({ force: true })
-  await expect(nodeByName(page, elements[0].name).getByText(/tap element to connect/i)).toHaveCount(0)
+  await clickRevealedHandle(sourceNode, sourceHandle)
+  await expect(sourceNode.getByText(/tap element to connect/i)).toBeVisible()
+  await sourceHandle.click()
+  await expect(sourceNode.getByText(/tap element to connect/i)).toHaveCount(0)
   await expect.poll(async () => (await listConnectors(page, diagram.id)).length).toBe(0)
 
-  await sourceHandle.click({ force: true })
-  await targetHandle.click({ force: true })
+  await clickRevealedHandle(sourceNode, sourceHandle)
+  await targetHandle.click()
   await expectConnector(page, {
     sourceElementId: elements[0].id,
     targetElementId: elements[1].id,
@@ -115,9 +138,11 @@ test('drags handles to target handles, node bodies, empty pending elements, and 
   }, true, diagram.id)
 
   const paneBox = await reactFlowPaneBox(page)
-  await dragLocatorToPoint(page, handleLocator(page, elements[2].id, 'right-2'), {
+  await dragLocatorToPointWithMidDragCheck(page, handleLocator(page, elements[2].id, 'right-2'), {
     x: paneBox.x + paneBox.width * 0.64,
     y: paneBox.y + paneBox.height * 0.78,
+  }, async () => {
+    await expect(page.getByTestId('click-connect-connector')).toHaveCount(0)
   })
   await expect(page.getByTestId('pending-element-label-input')).toBeVisible()
   const pendingName = uniqueName('Connector Pending Target')

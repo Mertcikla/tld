@@ -6,14 +6,13 @@ import { useSafeFitView } from '../../hooks/useSafeFitView'
 import { SafeBackground } from '../../components/SafeBackground'
 import ReactFlow, {
   BackgroundVariant,
-  ConnectionLineType,
   ConnectionMode,
   MarkerType,
   PanOnScrollMode,
   ReactFlowProvider,
   useReactFlow,
 } from 'reactflow'
-import type { Edge as RFEdge, EdgeMarker as RFEdgeMarker, Node as RFNode, NodeChange } from 'reactflow'
+import type { ConnectionLineType, Edge as RFEdge, EdgeMarker as RFEdgeMarker, Node as RFNode, NodeChange } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { toPng, toSvg } from 'html-to-image'
 import {
@@ -82,7 +81,7 @@ import ViewEditorOnboarding from '../../components/ViewEditorOnboarding'
 import DrawingCanvas, { type DrawingCanvasHandle, type DrawingPath } from '../../components/DrawingCanvas'
 import ViewFloatingMenu from '../../components/ViewFloatingMenu'
 import ViewDrawMenu from '../../components/ViewDrawMenu'
-import ViewBezierConnector from '../../components/ViewBezierConnector'
+import ViewBezierConnector, { ViewConnectorConnectionLine } from '../../components/ViewBezierConnector'
 import ViewContextNeighborElement from '../../components/ContextNeighborElement'
 import ContextBoundaryElement from '../../components/ContextBoundaryElement'
 import ContextStraightConnector from '../../components/ContextStraightConnector'
@@ -116,12 +115,13 @@ import { useViewEditHistory } from './hooks/useViewEditHistory'
 import { useOverlapDetection } from './hooks/useOverlapDetection'
 import { removeCollisions } from '../../utils/layout'
 import { connectorToConnector, findClosestHandles, sanitizeExportFilename, triggerBlobDownload, triggerDownload } from './utils'
-import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, ensureVisualHandleId } from '../../utils/edgeDistribution'
+import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, getCenterVisualHandleId, getLogicalHandleId, getOppositeHandleSide } from '../../utils/edgeDistribution'
 import { pickUnusedColor } from '../../components/ViewExplorer/utils'
 
 import { EmptyCanvasState } from './components/EmptyCanvasState'
 import { EditorOverlays } from './components/EditorOverlays'
 import { ConnectorContextMenu, CanvasContextMenu } from './components/EditorMenus'
+import { TEMPORARY_CONNECTOR_EDGE_STYLE, TEMPORARY_CONNECTOR_PATH_STYLE } from './temporaryConnectorStyle'
 import {
   VIEW_SELECTION_CLIPBOARD_MIME,
   buildViewSelectionClipboardPayload,
@@ -159,17 +159,18 @@ const nodeTypes = {
   contextNeighborNode: ViewContextNeighborElement,
   ContextBoundaryElement: ContextBoundaryElement,
 }
-const edgeTypes = { default: ViewBezierConnector, contextStraightConnector: ContextStraightConnector, proxyConnectorEdge: ProxyConnectorEdge }
+const edgeTypes = {
+  default: ViewBezierConnector,
+  straight: ViewBezierConnector,
+  step: ViewBezierConnector,
+  smoothstep: ViewBezierConnector,
+  contextStraightConnector: ContextStraightConnector,
+  proxyConnectorEdge: ProxyConnectorEdge,
+}
 const EMPTY_LINKS: ViewConnector[] = []
 const EMPTY_TAG_COLORS: Record<string, Tag> = {}
 const noop = () => { }
 const noopAsync = async () => { }
-const CONNECTOR_DRAG_CONNECTION_LINE_STYLE = {
-  stroke: 'var(--accent)',
-  strokeWidth: 2,
-  strokeDasharray: '6 5',
-  opacity: 0.75,
-}
 const VIEW_EDITOR_MIN_ZOOM_FLOOR = 0.12
 const VIEW_EDITOR_INITIAL_FIT_PADDING = 0.25
 const VIEW_EDITOR_FOCUS_FIT_PADDING = 0.35
@@ -227,19 +228,6 @@ function cursorColorForUser(userId: string) {
     hash = (hash * 31 + userId.charCodeAt(i)) >>> 0
   }
   return REMOTE_CURSOR_COLORS[hash % REMOTE_CURSOR_COLORS.length]
-}
-
-function connectorStyleToConnectionLineType(style: string) {
-  switch (style) {
-    case 'straight':
-      return ConnectionLineType.Straight
-    case 'step':
-      return ConnectionLineType.Step
-    case 'smoothstep':
-      return ConnectionLineType.SmoothStep
-    default:
-      return ConnectionLineType.Bezier
-  }
 }
 
 function isRenderableCursor(cursor: RealtimeCursor, selfUserId: string | null): cursor is RealtimeCursor {
@@ -742,6 +730,14 @@ function ViewEditorInner({
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
   const [selectedProxyConnectorDetails, setSelectedProxyConnectorDetails] = useState<ProxyConnectorDetails | null>(null)
+  const [suppressedSelectedConnectorHandleHighlightId, setSuppressedSelectedConnectorHandleHighlightId] = useState<number | null>(null)
+  const suppressSelectedConnectorHandleHighlight = selectedEdge !== null && suppressedSelectedConnectorHandleHighlightId === selectedEdge.id
+
+  useEffect(() => {
+    if (suppressedSelectedConnectorHandleHighlightId !== null && selectedEdge?.id !== suppressedSelectedConnectorHandleHighlightId) {
+      setSuppressedSelectedConnectorHandleHighlightId(null)
+    }
+  }, [selectedEdge?.id, suppressedSelectedConnectorHandleHighlightId])
 
   const [prevViewId, setPrevViewId] = useState(viewId)
   if (viewId !== prevViewId) {
@@ -901,6 +897,7 @@ function ViewEditorInner({
   const [interactionSourceId, setInteractionSourceId] = useState<number | null>(null)
   const [clickConnectMode, setClickConnectMode] = useState<ClickConnectModeState | null>(null)
   const [clickConnectCursorPos, setClickConnectCursorPos] = useState<ClickConnectCursorPosition | null>(null)
+  const [isConnectorCreatePreviewActive, setConnectorCreatePreviewActive] = useState(false)
   const interactionSourceIdRef = useRef<number | null>(null)
   const multiConnectionSourceIdsRef = useRef<number[] | null>(null)
   const [deletedLibraryElementIds, setDeletedLibraryElementIds] = useState<number[]>([])
@@ -947,7 +944,9 @@ function ViewEditorInner({
     viewId,
     interactionSourceId,
     clickConnectMode,
+    isConnectorCreatePreviewActive,
     selectedConnector: selectedEdge,
+    suppressSelectedConnectorHandleHighlight,
     activeTags,
     hiddenLayerTags,
     hoveredLayerTags,
@@ -2417,7 +2416,6 @@ function ViewEditorInner({
   const { defaultConnectorStyle } = useConnectorStyle()
   const createConnectorStyle = connectorStyleForCreate(defaultConnectorStyle)
   const previewConnectorStyle = connectorStyleForPreview(defaultConnectorStyle)
-  const connectionLineType = connectorStyleToConnectionLineType(previewConnectorStyle)
 
   // ── Canvas interactions ────────────────────────────────────────────────────
   const canvas = useCanvasInteractions({
@@ -2428,6 +2426,7 @@ function ViewEditorInner({
     setClickConnectMode,
     clickConnectCursorPos,
     setClickConnectCursorPos,
+    onConnectorCreatePreviewActiveChange: setConnectorCreatePreviewActive,
     drawingMode, isMobileLayout,
     rfNodesRef, interactionNodesRef, rfEdgesRef, viewElementsRef, viewIdRef,
     incomingLinksRef,
@@ -2503,6 +2502,12 @@ function ViewEditorInner({
     onPlacementRemoved: pushPlacementRemoveAction,
     onConnectorSaved: publishRealtimeConnectorUpsert,
     onConnectorUpdated: pushConnectorEditAction,
+    onConnectorReconnected: useCallback((connector: Connector) => {
+      setSuppressedSelectedConnectorHandleHighlightId(connector.id)
+    }, []),
+    onConnectorSelected: useCallback(() => {
+      setSuppressedSelectedConnectorHandleHighlightId(null)
+    }, []),
     onConnectorDeleted: pushConnectorDeleteAction,
     onSelectionRemoveFromView: handleBulkRemoveFromView,
     onUnsupportedMutation: handleUnsupportedMutation,
@@ -2580,11 +2585,15 @@ function ViewEditorInner({
     if (Object.keys(hiddenProxyCountsByPair).length === 0) return rfEdges
 
     let changed = false
+    const badgePairs = new Set<string>()
     const next = rfEdges.map((edge) => {
       const pairKey = canonicalNodePairKey(edge.source, edge.target)
-      const proxyBadgeCount = hiddenProxyCountsByPair[pairKey] ?? 0
+      const rawProxyBadgeCount = hiddenProxyCountsByPair[pairKey] ?? 0
+      const showProxyBadge = rawProxyBadgeCount > 0 && !badgePairs.has(pairKey)
+      if (rawProxyBadgeCount > 0) badgePairs.add(pairKey)
+      const proxyBadgeCount = showProxyBadge ? rawProxyBadgeCount : 0
       const currentBadgeCount = (edge.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount ?? 0
-      const proxyBadgeDetails = hiddenProxyDetailsByPair[pairKey] ?? null
+      const proxyBadgeDetails = showProxyBadge ? (hiddenProxyDetailsByPair[pairKey] ?? null) : null
       const currentBadgeDetails = (edge.data as { proxyBadgeDetails?: ProxyConnectorDetails | null } | undefined)?.proxyBadgeDetails ?? null
       if (proxyBadgeCount === currentBadgeCount && proxyBadgeDetails === currentBadgeDetails) return edge
       changed = true
@@ -2784,7 +2793,7 @@ function ViewEditorInner({
 
   const pendingPreviewEdges = useMemo((): RFEdge[] => {
     const pending = canvas.pendingElement
-    if (!pending || pending.preview || !pendingElementNode || pending.sourceElementIds.length === 0) return []
+    if (!pending || !pendingElementNode || pending.sourceElementIds.length === 0) return []
 
     return pending.sourceElementIds
       .filter((sourceId) => sourceId !== -1)
@@ -2793,13 +2802,18 @@ function ViewEditorInner({
         const handles = sourceNode
           ? findClosestHandles(sourceNode, pendingElementNode)
           : { sourceHandle: DEFAULT_SOURCE_HANDLE_SIDE, targetHandle: DEFAULT_TARGET_HANDLE_SIDE }
+        const pendingSourceSide = getLogicalHandleId(pending.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
+        const previewTargetHandle = pending.sourceHandle && pendingSourceSide
+          ? getOppositeHandleSide(pendingSourceSide)
+          : handles.targetHandle
         return {
           id: `pending-element-edge-${sourceId}`,
           source: String(sourceId),
           target: pending.id,
-          sourceHandle: ensureVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
-          targetHandle: ensureVisualHandleId(handles.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
+          sourceHandle: getCenterVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
+          targetHandle: getCenterVisualHandleId(previewTargetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
           type: previewConnectorStyle === 'bezier' ? 'default' : previewConnectorStyle,
+          className: 'vieweditor-temporary-connector',
           label: '',
           data: {
             id: -sourceId,
@@ -2813,20 +2827,14 @@ function ViewEditorInner({
             style: previewConnectorStyle,
             url: null,
             source_handle: pending.sourceHandle ?? handles.sourceHandle,
-            target_handle: handles.targetHandle,
+            target_handle: previewTargetHandle,
             tags: [],
             created_at: '',
             updated_at: '',
           },
-          style: {
-            stroke: 'var(--accent)',
-            strokeWidth: 2,
-            opacity: 0.55,
-            pointerEvents: 'none',
-            strokeDasharray: '6 5',
-          },
-          labelStyle: { fontSize: 11, fill: 'var(--accent)', opacity: 0.55 },
-          labelBgStyle: { fill: 'var(--chakra-colors-gray-900)', fillOpacity: 0.55 },
+          style: TEMPORARY_CONNECTOR_EDGE_STYLE,
+          labelStyle: { fontSize: 11, fill: 'var(--accent)', opacity: 1 },
+          labelBgStyle: { fill: 'var(--chakra-colors-gray-900)', fillOpacity: 1 },
           markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'var(--accent)' },
           zIndex: 1500,
         }
@@ -2946,6 +2954,10 @@ function ViewEditorInner({
     onContainerPointerDown, onContainerPointerMove, onContainerPointerUp,
     onDragOver, onDrop, onWheelCapture,
   } = canvas
+  const connectionLineStyle = useMemo(() => {
+    if (!pendingElement?.preview) return TEMPORARY_CONNECTOR_PATH_STYLE
+    return { ...TEMPORARY_CONNECTOR_PATH_STYLE, opacity: 0 }
+  }, [pendingElement?.preview])
 
   const handleRealtimeCanvasMouseMove = useCallback((event: React.MouseEvent) => {
     const flowPos = screenToFlowPositionRef.current({ x: event.clientX, y: event.clientY })
@@ -3859,6 +3871,7 @@ function ViewEditorInner({
             <Box
               ref={viewEditorCanvasRef}
               data-testid="vieweditor-canvas"
+              data-connector-preview-active={isConnectorCreatePreviewActive || !!canvas.handleReconnectDrag || !!clickConnectMode || interactionSourceId !== null ? 'true' : undefined}
               position="relative"
               w="full"
               h="full"
@@ -3892,14 +3905,16 @@ function ViewEditorInner({
                 onMoveStart={onMoveStart} onMove={handleRealtimeMove} onMoveEnd={onMoveEnd}
                 translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={VIEW_EDITOR_MAX_ZOOM}
                 onReconnect={onReconnect} onReconnectStart={onReconnectStart} onReconnectEnd={onReconnectEnd}
-                connectionLineStyle={CONNECTOR_DRAG_CONNECTION_LINE_STYLE}
-                connectionLineType={connectionLineType}
+                connectionLineStyle={connectionLineStyle}
+                connectionLineType={previewConnectorStyle as ConnectionLineType}
+                connectionLineComponent={ViewConnectorConnectionLine}
                 nodeTypes={nodeTypesMemo} edgeTypes={edgeTypesMemo}
                 nodesDraggable={canEdit} connectionMode={ConnectionMode.Loose} connectionRadius={25}
                 edgesUpdatable={canEdit} reconnectRadius={0}
                 snapToGrid={snapToGrid}
                 snapGrid={SNAP_GRID}
                 deleteKeyCode={null}
+                connectOnClick={false}
                 onlyRenderVisibleElements
                 autoPanOnNodeDrag={false}
                 selectionOnDrag={canEdit && !drawingMode}
@@ -3947,6 +3962,7 @@ function ViewEditorInner({
             <EditorOverlays
               clickConnectMode={clickConnectMode}
               clickConnectCursorPos={clickConnectCursorPos}
+              connectorRouteStyle={previewConnectorStyle}
               handleReconnectDrag={canvas.handleReconnectDrag}
               rfNodes={flowNodes}
             />

@@ -1,4 +1,5 @@
 import type { DiagramGroupLayout, HoveredItem, LayoutNode, ZUIViewState } from './types'
+import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
@@ -146,27 +147,46 @@ export function buildEdgeRoutePoints(
   }
 
   if (type === 'step' || type === 'smoothstep') {
-    const midX = (sourcePoint.x + targetPoint.x) / 2
-    const midY = (sourcePoint.y + targetPoint.y) / 2
-    const sourceOrth = sourcePoint.side === 'left' || sourcePoint.side === 'right' ? 'h' : 'v'
-    const targetOrth = targetPoint.side === 'left' || targetPoint.side === 'right' ? 'h' : 'v'
-    const points: EdgeRoutePoint[] = [{ x: sourcePoint.x, y: sourcePoint.y }]
+    const points = stepRoutePoints(
+      sourcePoint.x,
+      sourcePoint.y,
+      targetPoint.x,
+      targetPoint.y,
+      positionForHandleSide(sourcePoint.side),
+      positionForHandleSide(targetPoint.side),
+      source.worldW,
+      source.worldH,
+      target.worldW,
+      target.worldH,
+    )
+    let midX = (sourcePoint.x + targetPoint.x) / 2
+    let midY = (sourcePoint.y + targetPoint.y) / 2
 
-    if (sourceOrth === 'h' && targetOrth === 'h') {
-      points.push({ x: midX, y: sourcePoint.y }, { x: midX, y: targetPoint.y })
-    } else if (sourceOrth === 'v' && targetOrth === 'v') {
-      points.push({ x: sourcePoint.x, y: midY }, { x: targetPoint.x, y: midY })
-    } else if (sourceOrth === 'h' && targetOrth === 'v') {
-      points.push({ x: targetPoint.x, y: sourcePoint.y })
-    } else {
-      points.push({ x: sourcePoint.x, y: targetPoint.y })
+    if (points.length > 1) {
+      let maxLen = -1
+      let bestIdx = 0
+      const startIdx = points.length >= 4 ? 1 : 0
+      const endIdx = points.length >= 4 ? points.length - 2 : points.length - 1
+
+      for (let i = startIdx; i < endIdx; i++) {
+        const p1 = points[i]
+        const p2 = points[i + 1]
+        const len = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+        if (len > maxLen) {
+          maxLen = len
+          bestIdx = i
+        }
+      }
+      const p1 = points[bestIdx]
+      const p2 = points[bestIdx + 1]
+      midX = (p1.x + p2.x) / 2
+      midY = (p1.y + p2.y) / 2
     }
-    points.push({ x: targetPoint.x, y: targetPoint.y })
-    const midIndex = Math.floor((points.length - 1) / 2)
+
     return {
       points,
-      midX: (points[midIndex].x + points[midIndex + 1].x) / 2,
-      midY: (points[midIndex].y + points[midIndex + 1].y) / 2,
+      midX,
+      midY,
     }
   }
 

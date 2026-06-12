@@ -10,6 +10,7 @@ import {
   getConnectorDeletionTarget,
   getPlacementPositionTimerKeys,
   pendingElementPositionFromFlowPoint,
+  resolveConnectorDragAttachHandles,
   resolveConnectorDropTarget,
   shouldDisplayConnectorDragPlaceholder,
   shouldZoomViewEditorWheel,
@@ -261,6 +262,22 @@ describe('connector drag placeholder visibility', () => {
     expect(shouldDisplayConnectorDragPlaceholder({ nodeId: '12', isHandle: false })).toBe(false)
     expect(shouldDisplayConnectorDragPlaceholder({ nodeId: '12', isHandle: true })).toBe(false)
     expect(shouldDisplayConnectorDragPlaceholder({ isHandle: true })).toBe(false)
+  })
+})
+
+describe('connector drag attach handle resolution', () => {
+  it('preserves explicit handle sides instead of choosing closest geometry', () => {
+    expect(resolveConnectorDragAttachHandles('bottom-2', 'right-4')).toEqual({
+      sourceHandle: 'bottom',
+      targetHandle: 'right',
+    })
+  })
+
+  it('falls back to default sides when a drag attach has no explicit target handle', () => {
+    expect(resolveConnectorDragAttachHandles('top-2', null)).toEqual({
+      sourceHandle: 'top',
+      targetHandle: 'left',
+    })
   })
 })
 

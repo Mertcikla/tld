@@ -1,4 +1,5 @@
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
+import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUITransitionRebase } from './layoutEngine'
 import {
@@ -1160,36 +1161,38 @@ function drawEdges(
       } else if (type === 'step' || type === 'smoothstep') {
         const borderRadius = type === 'smoothstep' ? 6 / zoom : 0
 
-        const points: Array<{ x: number; y: number }> = [{ x: sH.x, y: sH.y }]
-        const sOrth = sH.pos === 'left' || sH.pos === 'right' ? 'h' : 'v'
-        const tOrth = tH.pos === 'left' || tH.pos === 'right' ? 'h' : 'v'
+        const points = stepRoutePoints(
+          sH.x,
+          sH.y,
+          tH.x,
+          tH.y,
+          positionForHandleSide(sH.pos),
+          positionForHandleSide(tH.pos),
+          effWSource,
+          effHSource,
+          effWTarget,
+          effHTarget,
+        )
 
-        if (sOrth === 'h' && tOrth === 'h') {
-          points.push({ x: midX, y: sH.y })
-          points.push({ x: midX, y: tH.y })
-        } else if (sOrth === 'v' && tOrth === 'v') {
-          points.push({ x: sH.x, y: midY })
-          points.push({ x: tH.x, y: midY })
-        } else if (sOrth === 'h' && tOrth === 'v') {
-          points.push({ x: tH.x, y: sH.y })
-        } else if (sOrth === 'v' && tOrth === 'h') {
-          points.push({ x: sH.x, y: tH.y })
-        }
-        points.push({ x: tH.x, y: tH.y })
+        if (points.length > 1) {
+          let maxLen = -1
+          let bestIdx = 0
+          const startIdx = points.length >= 4 ? 1 : 0
+          const endIdx = points.length >= 4 ? points.length - 2 : points.length - 1
 
-        if (points.length === 4) {
-          midX = (points[1].x + points[2].x) / 2
-          midY = (points[1].y + points[2].y) / 2
-        } else if (points.length === 3) {
-          const d1 = Math.abs(points[1].x - points[0].x) + Math.abs(points[1].y - points[0].y)
-          const d2 = Math.abs(points[2].x - points[1].x) + Math.abs(points[2].y - points[1].y)
-          if (d1 > d2) {
-            midX = (points[0].x + points[1].x) / 2
-            midY = (points[0].y + points[1].y) / 2
-          } else {
-            midX = (points[1].x + points[2].x) / 2
-            midY = (points[1].y + points[2].y) / 2
+          for (let i = startIdx; i < endIdx; i++) {
+            const p1 = points[i]
+            const p2 = points[i + 1]
+            const len = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+            if (len > maxLen) {
+              maxLen = len
+              bestIdx = i
+            }
           }
+          const p1 = points[bestIdx]
+          const p2 = points[bestIdx + 1]
+          midX = (p1.x + p2.x) / 2
+          midY = (p1.y + p2.y) / 2
         }
 
         ctx.beginPath()
