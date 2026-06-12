@@ -2,6 +2,7 @@ import { expect, test } from '../../fixtures'
 import {
   createAndLoadDiagramWithNodes,
   expectConnector,
+  handleLocator,
   listConnectors,
   nodeByName,
 } from '../../helpers/vieweditor'
@@ -40,8 +41,10 @@ test('clicking the source handle cancels keyboard connector creation', async ({ 
 test('Escape cancels source-handle connector creation', async ({ page }) => {
   const { diagram, elements } = await createAndLoadDiagramWithNodes(page, 2, 'Handle Connector Escape')
   const sourceNode = nodeByName(page, elements[0].name)
+  const sourceHandle = handleLocator(page, elements[0].id, 'right-2')
 
-  await sourceNode.locator('.react-flow__handle').first().click({ force: true })
+  await sourceNode.hover()
+  await sourceHandle.click()
   await expect(sourceNode.getByText(/tap element to connect/)).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(sourceNode.getByText(/tap element to connect/)).toHaveCount(0)

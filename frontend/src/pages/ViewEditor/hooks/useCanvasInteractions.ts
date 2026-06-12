@@ -46,6 +46,7 @@ import { isNotchedWheelGesture, wheelZoomFactor, type WheelDeltaLike } from '../
 import { safariGestureClientPoint, safariGestureFactor, type SafariGestureEventLike } from '../../../utils/safariGesture'
 
 const CONNECTOR_DRAG_UPDATE_INTERVAL_MS = 25
+const CONNECTOR_CLICK_MOVE_TOLERANCE = 6
 const PANE_CLICK_SUPPRESSION_MS = 250
 export const PENDING_ELEMENT_NODE_ID = 'pending-element'
 const PENDING_ELEMENT_OFFSET_X = 100
@@ -1275,6 +1276,9 @@ export function useCanvasInteractions({
     if (!canEdit || isReconnectingRef.current) return
     clearConnectorDragPreview()
     connectWasValidRef.current = true
+    setSyncedInteractionSourceId(null)
+    setSyncedClickConnectMode(null)
+    setClickConnectCursorPos(null)
     if (viewId === null || !params.source || !params.target) {
       clearPendingConnectionRefs()
       return
@@ -1298,7 +1302,7 @@ export function useCanvasInteractions({
       onUnsupportedMutation?.()
     } catch { /* intentionally empty */ }
     clearPendingConnectionRefs()
-  }, [canEdit, clearConnectorDragPreview, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, getInteractionNodes, onUnsupportedMutation, viewId])
+  }, [canEdit, clearConnectorDragPreview, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, getInteractionNodes, onUnsupportedMutation, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewId])
 
   const onConnectStart = useCallback((event: React.MouseEvent | React.TouchEvent, { nodeId, handleId }: OnConnectStartParams) => {
     if (!canEdit || isReconnectingRef.current) return
@@ -1316,10 +1320,24 @@ export function useCanvasInteractions({
     if (!nodeId) return
 
     connectorDragLastUpdateRef.current = 0
+    const startPoint = 'clientX' in event
+      ? { clientX: event.clientX, clientY: event.clientY }
+      : event.touches[0]
+        ? { clientX: event.touches[0].clientX, clientY: event.touches[0].clientY }
+        : null
     const updateFromPoint = (clientX: number, clientY: number, forceConnect = false) => {
       const now = performance.now()
       if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
       connectorDragLastUpdateRef.current = now
+      if (
+        startPoint &&
+        clickConnectModeRef.current &&
+        Math.hypot(clientX - startPoint.clientX, clientY - startPoint.clientY) > CONNECTOR_CLICK_MOVE_TOLERANCE
+      ) {
+        setSyncedInteractionSourceId(null)
+        setSyncedClickConnectMode(null)
+        setClickConnectCursorPos(null)
+      }
       updateConnectorDragPreview(clientX, clientY, nodeId, forceConnect)
     }
 
@@ -1340,7 +1358,7 @@ export function useCanvasInteractions({
     connectorDragPreviewListenersRef.current = { move, touchMove }
     document.addEventListener('pointermove', move)
     document.addEventListener('touchmove', touchMove, { passive: true })
-  }, [canEdit, clearConnectorDragPreviewListeners, getInteractionNodes, onConnectorCreatePreviewActiveChange, updateConnectorDragPreview])
+  }, [canEdit, clearConnectorDragPreviewListeners, getInteractionNodes, onConnectorCreatePreviewActiveChange, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, updateConnectorDragPreview])
 
   const onConnectEnd = useCallback((event: MouseEvent | TouchEvent | PointerEvent) => {
     if (!canEdit || isReconnectingRef.current) return
@@ -1389,6 +1407,9 @@ export function useCanvasInteractions({
       return
     }
     if (nearNode) {
+      setSyncedInteractionSourceId(null)
+      setSyncedClickConnectMode(null)
+      setClickConnectCursorPos(null)
       const targetElementId = resolveElementIdFromNode(nearNode)
       if (targetElementId === null) {
         clearPendingConnectionRefs()
@@ -1409,11 +1430,14 @@ export function useCanvasInteractions({
       }).catch(() => { /* intentionally empty */ })
       clearPendingConnectionRefs()
     } else {
+      setSyncedInteractionSourceId(null)
+      setSyncedClickConnectMode(null)
+      setClickConnectCursorPos(null)
       pendingConnectionSourceRef.current = sourceElementId
       suppressImmediatePaneClick()
       showAddingElementAt(clientX, clientY, true, 'connect', 'shiftKey' in event && event.shiftKey)
     }
-  }, [canEdit, clearConnectorDragPreview, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, getInteractionNodes, onConnectorCreatePreviewActiveChange, onUnsupportedMutation, showAddingElementAt, suppressImmediatePaneClick, viewIdRef])
+  }, [canEdit, clearConnectorDragPreview, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, getInteractionNodes, onConnectorCreatePreviewActiveChange, onUnsupportedMutation, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, showAddingElementAt, suppressImmediatePaneClick, viewIdRef])
 
   // ── Reconnect ──────────────────────────────────────────────────────────────
   const performReconnect = useCallback(async (oldConnector: RFEdge, newConnection: Connection) => {

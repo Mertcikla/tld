@@ -717,6 +717,15 @@ function ElementNode({ data, selected }: Props) {
       e.stopPropagation()
       return
     }
+    if (Date.now() < suppressHandleClickUntil.current) {
+      suppressHandleClickUntil.current = 0
+      e.stopPropagation()
+      return
+    }
+    if ((e.target as Element).closest('.react-flow__handle')) {
+      e.stopPropagation()
+      return
+    }
     if (longPressActivated.current) {
       longPressActivated.current = false
       return
@@ -819,20 +828,24 @@ function ElementNode({ data, selected }: Props) {
                     data.onInteractionStart(data.element_id)
                   }
                 }}
-                onClick={(e: React.MouseEvent) => {
-                  if (isPending) return
-                  if (Date.now() < suppressHandleClickUntil.current) {
-                    suppressHandleClickUntil.current = 0
-                    e.preventDefault()
-                    e.stopPropagation()
-                    return
-                  }
-                  e.preventDefault()
-                  e.stopPropagation()
+                onMouseDown={(e: React.MouseEvent) => {
+                  if (isPending || e.button !== 0 || data.interactionSourceId === data.element_id) return
+                  suppressHandleClickUntil.current = Date.now() + 500
                   data.onInteractionStart(data.element_id, {
                     sourceHandle: handleId,
                     clientX: e.clientX,
                     clientY: e.clientY,
+                  })
+                }}
+                onTouchStart={(e: React.TouchEvent) => {
+                  if (isPending || data.interactionSourceId === data.element_id) return
+                  const touch = e.touches[0]
+                  if (!touch) return
+                  suppressHandleClickUntil.current = Date.now() + 500
+                  data.onInteractionStart(data.element_id, {
+                    sourceHandle: handleId,
+                    clientX: touch?.clientX,
+                    clientY: touch?.clientY,
                   })
                 }}
                 style={{

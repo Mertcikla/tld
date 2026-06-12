@@ -3888,6 +3888,7 @@ function ViewEditorInner({
                 snapToGrid={snapToGrid}
                 snapGrid={SNAP_GRID}
                 deleteKeyCode={null}
+                connectOnClick={false}
                 onlyRenderVisibleElements
                 autoPanOnNodeDrag={false}
                 selectionOnDrag={canEdit && !drawingMode}

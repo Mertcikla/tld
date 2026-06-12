@@ -72,7 +72,11 @@ export const EditorOverlays: React.FC<EditorOverlaysProps> = React.memo(({
           targetHeight: 80 * viewportState.zoom,
         })
         return (
-          <svg key="click-connect-connector" style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 9997 }}>
+          <svg
+            key="click-connect-connector"
+            data-testid="click-connect-connector"
+            style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 9997 }}
+          >
             <path d={path}
               className="react-flow__connector-path" stroke="var(--theme-blue)" strokeWidth="2" fill="none" opacity="0.8" />
           </svg>
