@@ -253,6 +253,22 @@ describe('ElementPanel bypass noise gate', () => {
       await Promise.resolve()
     })
 
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'element-panel-custom-technology-create' })).toHaveLength(0)
+    await act(async () => {
+      vi.advanceTimersByTime(150)
+      await Promise.resolve()
+    })
+    const customCreateRows = renderer!.root.findAll((node) => (
+      node.type === 'div' &&
+      node.props['data-testid'] === 'element-panel-custom-technology-create'
+    ))
+    expect(customCreateRows).toHaveLength(1)
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'custom-technology-icon-dropzone' })).toHaveLength(0)
+
+    await act(async () => {
+      customCreateRows[0].props.onClick()
+    })
+
     const iconDropzones = renderer!.root.findAll((node) => (
       node.type === 'button' &&
       node.props['data-testid'] === 'custom-technology-icon-dropzone'
@@ -262,7 +278,7 @@ describe('ElementPanel bypass noise gate', () => {
     expect(iconDropzone.props['aria-label']).toBe('Choose custom technology icon')
     expect(renderer!.root.findAllByProps({ 'data-testid': 'custom-technology-file-trigger' })).toHaveLength(0)
     await act(async () => {
-      iconDropzone.props.onClick()
+      iconDropzone.props.onClick({ stopPropagation: vi.fn() })
     })
     expect(fileInputClick).toHaveBeenCalledTimes(1)
 
@@ -270,11 +286,15 @@ describe('ElementPanel bypass noise gate', () => {
     await act(async () => {
       renderer!.root.findByProps({ 'data-testid': 'custom-technology-file' }).props.onChange({ target: { files: [file] } })
     })
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'custom-technology-aliases' })).toHaveLength(0)
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'custom-technology-options-toggle' }).props.onClick({ stopPropagation: vi.fn() })
+    })
     await act(async () => {
       renderer!.root.findByProps({ 'data-testid': 'custom-technology-aliases' }).props.onChange({ target: { value: 'acme-sdk' } })
     })
     await act(async () => {
-      await renderer!.root.findByProps({ 'data-testid': 'custom-technology-save' }).props.onClick()
+      await renderer!.root.findByProps({ 'data-testid': 'custom-technology-save' }).props.onClick({ stopPropagation: vi.fn() })
       await Promise.resolve()
     })
     await act(async () => {
