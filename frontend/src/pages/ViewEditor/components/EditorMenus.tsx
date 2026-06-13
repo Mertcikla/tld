@@ -110,7 +110,7 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = React.memo(({
               onClick={onCopyMermaid}>
               <HStack spacing={2} w="full">
                 <CopyIcon boxSize={3} />
-                <Text fontSize="xs" fontWeight="normal" flex={1}>Copy Mermaid Block</Text>
+                <Text fontSize="xs" fontWeight="normal" flex={1}>Copy as Mermaid</Text>
               </HStack>
             </Button>
           </>

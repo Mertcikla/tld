@@ -323,7 +323,7 @@ export default function SelectionBulkBar({
       )}
 
       {onCopyMermaid && (
-        <ToolbarIconButton testId="selection-bulk-copy-mermaid" label="Copy Mermaid Block" onClick={onCopyMermaid}>
+        <ToolbarIconButton testId="selection-bulk-copy-mermaid" label="Copy as Mermaid" onClick={onCopyMermaid}>
           <CopyIcon boxSize="14px" />
         </ToolbarIconButton>
       )}

@@ -43,6 +43,7 @@ export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
   disableImportExport?: boolean
   onImport: () => void
   onExport: () => void
+  onCopyMermaid?: () => void
   onShare?: () => void
   focusMode: boolean
   onFocusModeChange: (enabled: boolean) => void
@@ -95,6 +96,7 @@ function ViewFloatingMenu({
   disableImportExport = false,
   onImport,
   onExport,
+  onCopyMermaid,
   focusMode,
   onFocusModeChange,
   densityLevel = 0,
@@ -633,6 +635,25 @@ function ViewFloatingMenu({
               >
                 <Text fontSize="11px" fontWeight="normal">Export</Text>
               </Button>
+
+              {onCopyMermaid && (
+                <Button
+                  data-testid="vieweditor-toolbar-copy-mermaid"
+                  variant="ghost"
+                  h="28px"
+                  px={2.5}
+                  color="gray.300"
+                  leftIcon={<MarkdownSvg size={16} />}
+                  isDisabled={disableImportExport}
+                  _disabled={{ opacity: 0.35, cursor: 'not-allowed' }}
+                  _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+                  onClick={onCopyMermaid}
+                >
+                  <Text fontSize="11px" fontWeight="normal">Copy as Mermaid</Text>
+                </Button>
+              )}
+
+
 
               {shareSlot}
               {toolbarSlot}
