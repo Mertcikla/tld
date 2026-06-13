@@ -10,39 +10,27 @@ const pkg = JSON.parse(readFileSync("./package.json", "utf-8"));
 const appBase = process.env.VITE_APP_BASE ?? "/";
 const apiTargetHost = process.env.VITE_API_TARGET_HOST ?? "127.0.0.1";
 const apiTargetPort = process.env.PORT ?? "8060";
+const apiTarget = process.env.VITE_API_TARGET ?? `http://${apiTargetHost}:${apiTargetPort}`;
 const localProtoGenDir = process.env.TLD_LOCAL_PROTO_GEN
   ? resolve(__dirname, process.env.TLD_LOCAL_PROTO_GEN)
   : existsSync(resolve(__dirname, "src/gen"))
     ? resolve(__dirname, "src/gen")
     : null;
 
-// Middleware that makes /icons/* available as an alias for <base>icons/* in dev.
-// This mirrors the nginx alias used in production so that icon URLs without the
-// /app/ prefix (created on native builds) resolve correctly in the web dev server.
-import type { ViteDevServer, Plugin } from "vite";
+import type { Plugin } from "vite";
 
-function iconsAliasPlugin() {
-  return {
-    name: "icons-alias",
-    configureServer(server: ViteDevServer) {
-      server.middlewares.use(
-        (
-          req: import("http").IncomingMessage & { url?: string },
-          _res: import("http").ServerResponse,
-          next: (err?: unknown) => void,
-        ) => {
-          if (
-            req.url &&
-            req.url.startsWith("/icons/") &&
-            !appBase.startsWith("/icons")
-          ) {
-            req.url = `${appBase}icons/${req.url.slice("/icons/".length)}`;
-          }
-          next();
-        },
-      );
-    },
-  } as Plugin;
+function devPublicIconPath(requestUrl: string | undefined): string | undefined {
+  if (!requestUrl?.startsWith("/icons/")) return undefined;
+
+  const parsed = new URL(requestUrl, "http://tld.local");
+  const filename = decodeURIComponent(parsed.pathname.slice("/icons/".length));
+  if (!filename || filename.includes("/") || filename.includes("\\")) return undefined;
+
+  const localIcon = resolve(__dirname, "public", "icons", filename);
+  if (!existsSync(localIcon)) return undefined;
+
+  const normalizedBase = appBase.endsWith("/") ? appBase : `${appBase}/`;
+  return `${normalizedBase}icons/${filename}${parsed.search}`;
 }
 
 export default defineConfig(async () => {
@@ -62,7 +50,6 @@ export default defineConfig(async () => {
       projects: [fileURLToPath(new URL("./tsconfig.json", import.meta.url))],
       ignoreConfigErrors: true,
     }),
-    iconsAliasPlugin(),
   ];
 
   return {
@@ -128,9 +115,19 @@ export default defineConfig(async () => {
         usePolling: true,
       },
       proxy: {
+        "/icons.json": {
+          target: apiTarget,
+          changeOrigin: true,
+          secure: false,
+        },
+        "/icons": {
+          target: apiTarget,
+          changeOrigin: true,
+          secure: false,
+          bypass: (req) => devPublicIconPath(req.url),
+        },
         "/api": {
-          target:
-            process.env.VITE_API_TARGET ?? `http://${apiTargetHost}:${apiTargetPort}`,
+          target: apiTarget,
           changeOrigin: true,
           secure: false,
         },

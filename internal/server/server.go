@@ -261,7 +261,8 @@ func serveStatic(static fs.FS, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if os.Getenv("DEV") == "true" {
+	isIconAssetRequest := strings.HasPrefix(cleaned, "icons/")
+	if os.Getenv("DEV") == "true" && !isIconAssetRequest {
 		target, err := url.Parse("http://localhost:5173")
 		if err == nil {
 			httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
@@ -271,7 +272,9 @@ func serveStatic(static fs.FS, w http.ResponseWriter, r *http.Request) {
 
 	tryPaths := []string{
 		path.Join("frontend/dist", cleaned),
-		"frontend/dist/index.html",
+	}
+	if !isIconAssetRequest {
+		tryPaths = append(tryPaths, "frontend/dist/index.html")
 	}
 	for _, candidate := range tryPaths {
 		data, encoding, err := readStaticAsset(static, candidate, r.Header.Get("Accept-Encoding"))

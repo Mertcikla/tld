@@ -611,6 +611,38 @@ func TestServerServesDynamicCustomIconAssets(t *testing.T) {
 	}
 }
 
+func TestServerServesIconAssetPathsLocallyInDevMode(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	_, routes := newTestServer(t, uuid.New(), fstest.MapFS{
+		"frontend/dist/index.html":           {Data: []byte("<html>app</html>")},
+		"frontend/dist/icons/bundled.svg":    {Data: []byte("<svg>bundled</svg>")},
+		"frontend/dist/icons/bundled.svg.br": {Data: []byte("compressed")},
+	})
+	t.Setenv("DEV", "true")
+
+	iconRec := httptest.NewRecorder()
+	routes.ServeHTTP(iconRec, httptest.NewRequest(http.MethodGet, "/icons/bundled.svg", nil))
+	if iconRec.Code != http.StatusOK {
+		t.Fatalf("bundled icon status = %d, body = %s", iconRec.Code, iconRec.Body.String())
+	}
+	if got := iconRec.Header().Get("Content-Type"); got != "image/svg+xml" {
+		t.Fatalf("bundled icon content type = %q, want image/svg+xml", got)
+	}
+	if got := iconRec.Body.String(); got != "<svg>bundled</svg>" {
+		t.Fatalf("bundled icon body = %q, want bundled svg", got)
+	}
+
+	missingRec := httptest.NewRecorder()
+	routes.ServeHTTP(missingRec, httptest.NewRequest(http.MethodGet, "/icons/missing.svg", nil))
+	if missingRec.Code != http.StatusNotFound {
+		t.Fatalf("missing icon status = %d, body = %s", missingRec.Code, missingRec.Body.String())
+	}
+	if strings.Contains(missingRec.Body.String(), "<html>app</html>") {
+		t.Fatalf("missing icon fell back to app shell: %s", missingRec.Body.String())
+	}
+}
+
 func TestPopulateScoreGateAllowsLexicallyAnchoredJinaMatches(t *testing.T) {
 	tests := []struct {
 		name             string
