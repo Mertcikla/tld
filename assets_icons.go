@@ -96,7 +96,7 @@ func copyCustomIcons(dstBase string) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".svg") {
+		if entry.IsDir() || !isSupportedCustomIconExt(filepath.Ext(entry.Name())) {
 			continue
 		}
 		info, err := entry.Info()
@@ -113,6 +113,10 @@ func copyCustomIcons(dstBase string) error {
 		}
 	}
 	return nil
+}
+
+func isSupportedCustomIconExt(ext string) bool {
+	return strings.EqualFold(ext, ".svg") || strings.EqualFold(ext, ".png")
 }
 
 func copyFile(dst, src string, mode os.FileMode) error {

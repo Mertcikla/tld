@@ -41,6 +41,12 @@ func TestStaticFSMergesCustomIconCatalogAndFiles(t *testing.T) {
     "nameShort": "Custom",
     "defaultSlug": "my-custom-icon",
     "aliases": ["custom-service"]
+  },
+  {
+    "iconUrl": "/icons/my-custom-png.png",
+    "name": "My Custom PNG",
+    "nameShort": "Custom PNG",
+    "defaultSlug": "my-custom-png"
   }
 ]`), 0o644); err != nil {
 		t.Fatalf("write custom catalog: %v", err)
@@ -50,6 +56,9 @@ func TestStaticFSMergesCustomIconCatalogAndFiles(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(customIcons, "my-custom-icon.svg"), []byte(`<svg id="my-custom-icon"></svg>`), 0o644); err != nil {
 		t.Fatalf("write custom icon: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(customIcons, "my-custom-png.png"), []byte("png-body"), 0o644); err != nil {
+		t.Fatalf("write custom png icon: %v", err)
 	}
 
 	staticFS, err := StaticFS()
@@ -75,6 +84,9 @@ func TestStaticFSMergesCustomIconCatalogAndFiles(t *testing.T) {
 	if !catalogContains(catalog, "my-custom-icon", "My Custom Icon", "custom-service") {
 		t.Fatalf("merged catalog missing custom icon")
 	}
+	if !catalogContains(catalog, "my-custom-png", "My Custom PNG", "") {
+		t.Fatalf("merged catalog missing custom png")
+	}
 	if _, err := fs.ReadFile(staticFS, "frontend/dist/icons.json.br"); err == nil {
 		t.Fatal("compressed embedded icons.json should not bypass merged catalog overlay")
 	}
@@ -86,6 +98,13 @@ func TestStaticFSMergesCustomIconCatalogAndFiles(t *testing.T) {
 	if !strings.Contains(string(iconBody), `id="custom-go"`) {
 		t.Fatalf("go icon was not overlaid: %s", string(iconBody))
 	}
+	pngBody, err := fs.ReadFile(staticFS, "frontend/dist/icons/my-custom-png.png")
+	if err != nil {
+		t.Fatalf("read custom png icon: %v", err)
+	}
+	if string(pngBody) != "png-body" {
+		t.Fatalf("custom png body = %q, want png-body", string(pngBody))
+	}
 }
 
 func catalogContains(items []struct {
@@ -96,6 +115,9 @@ func catalogContains(items []struct {
 	for _, item := range items {
 		if item.DefaultSlug != slug || item.Name != name {
 			continue
+		}
+		if alias == "" {
+			return true
 		}
 		for _, candidate := range item.Aliases {
 			if candidate == alias {

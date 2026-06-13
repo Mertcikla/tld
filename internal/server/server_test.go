@@ -25,6 +25,7 @@ import (
 	"github.com/gorilla/websocket"
 	assets "github.com/mertcikla/tld/v2"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/watch"
 )
 
@@ -553,6 +554,60 @@ func TestServerServesPrecompressedStaticAssets(t *testing.T) {
 				t.Fatalf("vary = %q, want Accept-Encoding", rec.Header().Get("Vary"))
 			}
 		})
+	}
+}
+
+func TestServerServesDynamicCustomIconAssets(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	tech.ReloadCatalog()
+	t.Cleanup(tech.ReloadCatalog)
+
+	customRoot := filepath.Join(configDir, "icons")
+	customIcons := filepath.Join(customRoot, "icons")
+	if err := os.MkdirAll(customIcons, 0o755); err != nil {
+		t.Fatalf("mkdir custom icons: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(customRoot, "icons.json"), []byte(`[
+  {
+    "iconUrl": "/icons/live-icon.png",
+    "name": "Live Icon",
+    "nameShort": "Live",
+    "defaultSlug": "live-icon"
+  }
+]`), 0o644); err != nil {
+		t.Fatalf("write custom catalog: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(customIcons, "live-icon.png"), []byte("custom-png"), 0o644); err != nil {
+		t.Fatalf("write custom icon: %v", err)
+	}
+
+	_, routes := newTestServer(t, uuid.New(), fstest.MapFS{
+		"frontend/dist/index.html": {Data: []byte("<html>app</html>")},
+	})
+
+	iconRec := httptest.NewRecorder()
+	routes.ServeHTTP(iconRec, httptest.NewRequest(http.MethodGet, "/icons/live-icon.png", nil))
+	if iconRec.Code != http.StatusOK {
+		t.Fatalf("icon status = %d, body = %s", iconRec.Code, iconRec.Body.String())
+	}
+	if got := iconRec.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("icon content type = %q, want image/png", got)
+	}
+	if got := iconRec.Body.String(); got != "custom-png" {
+		t.Fatalf("icon body = %q, want custom-png", got)
+	}
+
+	catalogRec := httptest.NewRecorder()
+	routes.ServeHTTP(catalogRec, httptest.NewRequest(http.MethodGet, "/icons.json", nil))
+	if catalogRec.Code != http.StatusOK {
+		t.Fatalf("catalog status = %d, body = %s", catalogRec.Code, catalogRec.Body.String())
+	}
+	if !strings.Contains(catalogRec.Body.String(), `"defaultSlug": "live-icon"`) {
+		t.Fatalf("catalog body missing custom item: %s", catalogRec.Body.String())
+	}
+	if got := catalogRec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("catalog cache-control = %q, want no-store", got)
 	}
 }
 

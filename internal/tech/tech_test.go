@@ -1,6 +1,10 @@
 package tech
 
 import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,4 +214,138 @@ func TestLookupCatalogFuzzyRejectsUnknownLabels(t *testing.T) {
 	if slug, name, ok := LookupCatalogFuzzy("Internal SDK"); ok {
 		t.Fatalf("LookupCatalogFuzzy(%q) = slug:%q name:%q ok:%v, want no match", "Internal SDK", slug, name, ok)
 	}
+}
+
+func TestCreateCustomTechnologyWritesSVGAndReloadsCatalog(t *testing.T) {
+	configDir := isolateCatalog(t)
+	_ = Catalog()
+
+	item, err := CreateCustomTechnology(CustomTechnologyInput{
+		Name:      "My Custom Icon",
+		NameShort: "Custom",
+		Aliases:   []string{"custom-service"},
+		Icon:      []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M1 1h14v14H1z"/></svg>`),
+		MediaType: "image/svg+xml",
+	})
+	if err != nil {
+		t.Fatalf("CreateCustomTechnology: %v", err)
+	}
+	if item.DefaultSlug != "my-custom-icon" || item.IconURL != "/icons/my-custom-icon.svg" {
+		t.Fatalf("custom item = %+v, want my-custom-icon svg", item)
+	}
+
+	iconBody, err := os.ReadFile(filepath.Join(configDir, "icons", "icons", "my-custom-icon.svg"))
+	if err != nil {
+		t.Fatalf("read custom icon: %v", err)
+	}
+	if !strings.Contains(string(iconBody), "<svg") {
+		t.Fatalf("custom icon body not written: %s", string(iconBody))
+	}
+	catalogBody, err := os.ReadFile(filepath.Join(configDir, "icons", "icons.json"))
+	if err != nil {
+		t.Fatalf("read custom catalog: %v", err)
+	}
+	if !strings.Contains(string(catalogBody), `"defaultSlug": "my-custom-icon"`) {
+		t.Fatalf("custom catalog missing item: %s", string(catalogBody))
+	}
+
+	slug, name, ok := LookupCatalog("custom-service")
+	if !ok || slug != "my-custom-icon" || name != "My Custom Icon" {
+		t.Fatalf("LookupCatalog custom alias = slug:%q name:%q ok:%v, want my-custom-icon/My Custom Icon/true", slug, name, ok)
+	}
+	if got, ok := IconURLForSlug("my-custom-icon"); !ok || got != "/icons/my-custom-icon.svg" {
+		t.Fatalf("IconURLForSlug custom = %q, %v; want custom icon URL", got, ok)
+	}
+}
+
+func TestCreateCustomTechnologyNormalizesPNG(t *testing.T) {
+	configDir := isolateCatalog(t)
+
+	item, err := CreateCustomTechnology(CustomTechnologyInput{
+		Name:      "Wide PNG",
+		Icon:      testPNG(t, 4, 2),
+		MediaType: "image/png",
+	})
+	if err != nil {
+		t.Fatalf("CreateCustomTechnology png: %v", err)
+	}
+	if item.IconURL != "/icons/wide-png.png" {
+		t.Fatalf("png icon URL = %q, want /icons/wide-png.png", item.IconURL)
+	}
+
+	body, err := os.ReadFile(filepath.Join(configDir, "icons", "icons", "wide-png.png"))
+	if err != nil {
+		t.Fatalf("read normalized png: %v", err)
+	}
+	cfg, err := png.DecodeConfig(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("decode normalized png config: %v", err)
+	}
+	if cfg.Width != normalizedPNGIconSize || cfg.Height != normalizedPNGIconSize {
+		t.Fatalf("normalized png dimensions = %dx%d, want %dx%d", cfg.Width, cfg.Height, normalizedPNGIconSize, normalizedPNGIconSize)
+	}
+	if got, ok := IconURLForSlug("wide-png"); !ok || got != "/icons/wide-png.png" {
+		t.Fatalf("IconURLForSlug png = %q, %v; want png icon URL", got, ok)
+	}
+}
+
+func TestCreateCustomTechnologyGeneratesUniqueSlug(t *testing.T) {
+	isolateCatalog(t)
+
+	first, err := CreateCustomTechnology(CustomTechnologyInput{
+		Name:      "Go",
+		Icon:      []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`),
+		MediaType: "image/svg+xml",
+	})
+	if err != nil {
+		t.Fatalf("CreateCustomTechnology first: %v", err)
+	}
+	second, err := CreateCustomTechnology(CustomTechnologyInput{
+		Name:      "Go",
+		Icon:      []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`),
+		MediaType: "image/svg+xml",
+	})
+	if err != nil {
+		t.Fatalf("CreateCustomTechnology second: %v", err)
+	}
+	if first.DefaultSlug != "go-2" || second.DefaultSlug != "go-3" {
+		t.Fatalf("generated slugs = %q, %q; want go-2, go-3", first.DefaultSlug, second.DefaultSlug)
+	}
+}
+
+func TestCreateCustomTechnologyRejectsInvalidInput(t *testing.T) {
+	isolateCatalog(t)
+
+	_, err := CreateCustomTechnology(CustomTechnologyInput{
+		Name:      "Bad SVG",
+		Icon:      []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script /></svg>`),
+		MediaType: "image/svg+xml",
+	})
+	if !IsInvalidCustomTechnology(err) {
+		t.Fatalf("script svg error = %v, want invalid custom technology", err)
+	}
+
+	_, err = CreateCustomTechnology(CustomTechnologyInput{
+		Name:      "Bad File",
+		Icon:      []byte("not an icon"),
+		MediaType: "text/plain",
+	})
+	if !IsInvalidCustomTechnology(err) {
+		t.Fatalf("plain text error = %v, want invalid custom technology", err)
+	}
+}
+
+func testPNG(t *testing.T, width, height int) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+	}
+	var out bytes.Buffer
+	if err := png.Encode(&out, img); err != nil {
+		t.Fatalf("encode png: %v", err)
+	}
+	return out.Bytes()
 }
