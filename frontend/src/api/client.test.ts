@@ -84,6 +84,10 @@ describe('technology icon normalization', () => {
     expect(normalizeLogoUrl('/icons/javascript.png', [])).toBe('/icons/javascript.svg')
   })
 
+  it('preserves explicit custom png icon urls', () => {
+    expect(normalizeLogoUrl('/icons/acme-platform.png', [])).toBe('/icons/acme-platform.png')
+  })
+
   it('preserves explicit no-icon logo clears', () => {
     const links = normalizeTechnologyConnectors([
       { type: 'catalog', slug: 'go', label: 'Go', isPrimaryIcon: true },

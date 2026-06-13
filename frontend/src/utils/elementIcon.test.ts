@@ -12,6 +12,10 @@ describe('resolveElementIconUrl', () => {
     expect(resolveElementIconUrl('/icons/golang.png', [])).toBe('/icons/go.svg')
   })
 
+  it('preserves explicit custom png icon urls', () => {
+    expect(resolveElementIconUrl('/icons/acme-platform.png', [])).toBe('/icons/acme-platform.png')
+  })
+
   it('derives the selected catalog technology icon when logo_url is missing', () => {
     expect(resolveElementIconUrl(null, [
       { type: 'catalog', slug: 'go', label: 'Go', is_primary_icon: true },

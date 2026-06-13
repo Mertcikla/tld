@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import viteCompression from "vite-plugin-compression";
 import tsconfigPaths from "vite-tsconfig-paths";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath, URL } from "node:url";
 import { resolve } from "node:path";
 
@@ -12,7 +12,9 @@ const apiTargetHost = process.env.VITE_API_TARGET_HOST ?? "127.0.0.1";
 const apiTargetPort = process.env.PORT ?? "8060";
 const localProtoGenDir = process.env.TLD_LOCAL_PROTO_GEN
   ? resolve(__dirname, process.env.TLD_LOCAL_PROTO_GEN)
-  : null;
+  : existsSync(resolve(__dirname, "src/gen"))
+    ? resolve(__dirname, "src/gen")
+    : null;
 
 // Middleware that makes /icons/* available as an alias for <base>icons/* in dev.
 // This mirrors the nginx alias used in production so that icon URLs without the

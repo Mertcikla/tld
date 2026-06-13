@@ -6,6 +6,7 @@ import ElementPanel from './ElementPanel'
 
 const apiMocks = vi.hoisted(() => ({
   createElement: vi.fn(),
+  createCustomTechnology: vi.fn(),
   updateElement: vi.fn(),
 }))
 
@@ -14,6 +15,9 @@ vi.mock('../api/client', () => ({
     elements: {
       create: apiMocks.createElement,
       update: apiMocks.updateElement,
+    },
+    technology: {
+      createCustom: apiMocks.createCustomTechnology,
     },
   },
 }))
@@ -38,26 +42,37 @@ vi.mock('../pages/ViewEditor/context', () => ({
 vi.mock('../utils/technologyCatalog', () => ({
   getTechnologyCatalogIndex: vi.fn(async () => ({ bySlug: new Map(), items: [] })),
   getTechnologyCatalogItemBySlug: vi.fn(async () => null),
-  resolveWithBase: (_base: string, value: string) => value,
+  invalidateTechnologyCatalog: vi.fn(),
+  resolveWithBase: (value: string) => value,
   searchTechnologyCatalog: vi.fn(async () => []),
 }))
 
 vi.mock('@chakra-ui/react', async () => {
   const ReactModule = await import('react')
-  const BoxLike = ({ children, ...props }: { children?: React.ReactNode }) => ReactModule.createElement('div', props, children)
+  const BoxLike = ({ children, as: Component = 'div', ...props }: { children?: React.ReactNode; as?: React.ElementType }) => ReactModule.createElement(Component, props, children)
   const ButtonLike = ({ children, onClick, ...props }: { children?: React.ReactNode; onClick?: () => void }) => ReactModule.createElement('button', { ...props, onClick }, children)
+  const InputLike = ReactModule.forwardRef<HTMLInputElement, Record<string, unknown>>((props, ref) => ReactModule.createElement('input', { ...props, ref }))
+  InputLike.displayName = 'InputLike'
 
   return {
     Badge: BoxLike,
     Box: BoxLike,
     Button: ButtonLike,
     CloseButton: ButtonLike,
+    Flex: BoxLike,
     FormControl: BoxLike,
     FormLabel: BoxLike,
     HStack: BoxLike,
-    Input: (props: Record<string, unknown>) => ReactModule.createElement('input', props),
+    Input: InputLike,
     InputGroup: BoxLike,
     InputRightElement: BoxLike,
+    Modal: ({ children, isOpen }: { children?: React.ReactNode; isOpen?: boolean }) => (isOpen ? ReactModule.createElement('div', {}, children) : null),
+    ModalBody: BoxLike,
+    ModalCloseButton: ButtonLike,
+    ModalContent: BoxLike,
+    ModalFooter: BoxLike,
+    ModalHeader: BoxLike,
+    ModalOverlay: BoxLike,
     Popover: BoxLike,
     PopoverArrow: BoxLike,
     PopoverBody: BoxLike,
@@ -89,7 +104,11 @@ vi.mock('@chakra-ui/react', async () => {
     Wrap: BoxLike,
     WrapItem: BoxLike,
     useBreakpointValue: () => false,
-    useDisclosure: () => ({ isOpen: false, onClose: vi.fn(), onOpen: vi.fn() }),
+    useDisclosure: () => {
+      const [isOpen, setIsOpen] = ReactModule.useState(false)
+      return { isOpen, onClose: () => setIsOpen(false), onOpen: () => setIsOpen(true) }
+    },
+    useToast: () => vi.fn(),
   }
 })
 
@@ -130,7 +149,15 @@ describe('ElementPanel bypass noise gate', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     apiMocks.createElement.mockReset()
+    apiMocks.createCustomTechnology.mockReset()
     apiMocks.updateElement.mockReset()
+    apiMocks.createCustomTechnology.mockImplementation(async () => ({
+      iconUrl: '/icons/acme-platform.svg',
+      name: 'Acme Platform',
+      nameShort: 'Acme',
+      defaultSlug: 'acme-platform',
+      aliases: ['acme-sdk'],
+    }))
     apiMocks.updateElement.mockImplementation(async (id: number, payload: Partial<LibraryElement>) => ({
       ...element(),
       ...payload,
@@ -143,6 +170,13 @@ describe('ElementPanel bypass noise gate', () => {
         clearTimeout,
         removeEventListener: vi.fn(),
         setTimeout,
+      },
+    })
+    Object.defineProperty(globalThis, 'URL', {
+      configurable: true,
+      value: {
+        createObjectURL: vi.fn(() => 'blob:custom-icon'),
+        revokeObjectURL: vi.fn(),
       },
     })
   })
@@ -184,5 +218,88 @@ describe('ElementPanel bypass noise gate', () => {
     expect(apiMocks.updateElement).toHaveBeenCalledWith(10, expect.objectContaining({ bypass_noise_gate: true }))
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ bypass_noise_gate: true }))
     expect(renderer!.root.findAllByProps({ 'aria-label': 'Element noise gate' })).toHaveLength(0)
+  })
+
+  it('creates a custom technology inline, attaches it, and autosaves the primary icon', async () => {
+    const onSave = vi.fn()
+    const fileInputClick = vi.fn()
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <ElementPanel
+          isOpen
+          autoSave
+          element={element()}
+          onClose={vi.fn()}
+          onSave={onSave}
+          onVisibilityOverrideDeltaChange={vi.fn()}
+        />,
+        {
+          createNodeMock: (node: { props?: Record<string, unknown> }) => {
+            if (node.props?.['data-testid'] === 'custom-technology-file') {
+              return { click: fileInputClick }
+            }
+            return null
+          },
+        },
+      )
+      await Promise.resolve()
+    })
+
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'element-panel-custom-technology-open' })).toHaveLength(0)
+
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-technology-input' }).props.onChange({ target: { value: 'Acme Platform' } })
+      await Promise.resolve()
+    })
+
+    const iconDropzones = renderer!.root.findAll((node) => (
+      node.type === 'button' &&
+      node.props['data-testid'] === 'custom-technology-icon-dropzone'
+    ))
+    expect(iconDropzones).toHaveLength(1)
+    const iconDropzone = iconDropzones[0]
+    expect(iconDropzone.props['aria-label']).toBe('Choose custom technology icon')
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'custom-technology-file-trigger' })).toHaveLength(0)
+    await act(async () => {
+      iconDropzone.props.onClick()
+    })
+    expect(fileInputClick).toHaveBeenCalledTimes(1)
+
+    const file = new File(['<svg xmlns="http://www.w3.org/2000/svg"></svg>'], 'acme-platform.svg', { type: 'image/svg+xml' })
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'custom-technology-file' }).props.onChange({ target: { files: [file] } })
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'custom-technology-aliases' }).props.onChange({ target: { value: 'acme-sdk' } })
+    })
+    await act(async () => {
+      await renderer!.root.findByProps({ 'data-testid': 'custom-technology-save' }).props.onClick()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      vi.runAllTimers()
+      await Promise.resolve()
+    })
+
+    expect(apiMocks.createCustomTechnology).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Acme Platform',
+      aliases: ['acme-sdk'],
+      media_type: 'image/svg+xml',
+    }))
+    expect(apiMocks.createCustomTechnology.mock.calls[0][0].icon).toBeInstanceOf(Uint8Array)
+    expect(apiMocks.updateElement).toHaveBeenCalledWith(10, expect.objectContaining({
+      logo_url: '/icons/acme-platform.svg',
+      technology: 'Acme Platform',
+      technology_connectors: [
+        {
+          type: 'catalog',
+          slug: 'acme-platform',
+          label: 'Acme Platform',
+          is_primary_icon: true,
+        },
+      ],
+    }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ logo_url: '/icons/acme-platform.svg' }))
   })
 })
