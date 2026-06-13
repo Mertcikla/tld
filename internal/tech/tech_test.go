@@ -335,6 +335,46 @@ func TestCreateCustomTechnologyRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestValidateSVGIconRejectsDisallowedURLSchemes(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "href javascript with encoded whitespace",
+			body: `<svg xmlns="http://www.w3.org/2000/svg"><image href="java&#x0A;script:alert(1)" /></svg>`,
+		},
+		{
+			name: "src data",
+			body: `<svg xmlns="http://www.w3.org/2000/svg"><image src="d&#x61;ta:image/svg+xml;base64,PHN2Zy8+" /></svg>`,
+		},
+		{
+			name: "xlink href vbscript",
+			body: `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><use xlink:href="vb&#x73;cript:msgbox(1)" /></svg>`,
+		},
+		{
+			name: "style data URL",
+			body: `<svg xmlns="http://www.w3.org/2000/svg"><rect style="background-image:url(d&#x61;ta:image/svg+xml;base64,PHN2Zy8+)" /></svg>`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := validateSVGIcon([]byte(tt.body)); err == nil {
+				t.Fatal("validateSVGIcon succeeded, want disallowed scheme error")
+			}
+		})
+	}
+}
+
+func TestValidateSVGIconAllowsSafeURLReferences(t *testing.T) {
+	body := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="g" /></defs><use href="#g" /><rect fill="url(#g)" /></svg>`)
+
+	if err := validateSVGIcon(body); err != nil {
+		t.Fatalf("validateSVGIcon safe references: %v", err)
+	}
+}
+
 func testPNG(t *testing.T, width, height int) []byte {
 	t.Helper()
 	img := image.NewNRGBA(image.Rect(0, 0, width, height))

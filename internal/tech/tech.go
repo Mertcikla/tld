@@ -13,6 +13,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -97,6 +98,12 @@ const (
 	customCatalogFilePerm = 0o644
 	customCatalogDirPerm  = 0o755
 )
+
+var disallowedSVGURLSchemes = map[string]struct{}{
+	"data":       {},
+	"javascript": {},
+	"vbscript":   {},
+}
 
 // CatalogEntry is a read-only public view of one catalog item.
 type CatalogEntry struct {
@@ -532,7 +539,7 @@ func validateSVGIcon(body []byte) error {
 	}
 
 	lower := strings.ToLower(string(body))
-	for _, marker := range []string{"<script", "javascript:", "data:text/html"} {
+	for _, marker := range []string{"<script", "javascript:", "data:", "vbscript:"} {
 		if strings.Contains(lower, marker) {
 			return fmt.Errorf("svg icon contains disallowed content %q", marker)
 		}
@@ -572,10 +579,10 @@ func validateSVGIcon(body []byte) error {
 			if strings.HasPrefix(attrName, "on") {
 				return fmt.Errorf("svg icon contains disallowed event attribute %q", attr.Name.Local)
 			}
-			if (attrName == "href" || attrName == "src") && strings.HasPrefix(attrValue, "javascript:") {
+			if (attrName == "href" || attrName == "src") && hasDisallowedSVGURLScheme(attrValue) {
 				return fmt.Errorf("svg icon contains disallowed %q value", attr.Name.Local)
 			}
-			if attrName == "style" && strings.Contains(attrValue, "javascript:") {
+			if attrName == "style" && containsDisallowedSVGURLScheme(attrValue) {
 				return errors.New("svg icon contains disallowed style value")
 			}
 		}
@@ -584,6 +591,40 @@ func validateSVGIcon(body []byte) error {
 		return errors.New("svg icon root must be <svg>")
 	}
 	return nil
+}
+
+func hasDisallowedSVGURLScheme(value string) bool {
+	normalized := normalizeSVGURLSchemeInput(value)
+	if normalized == "" {
+		return false
+	}
+
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed.Scheme == "" {
+		return false
+	}
+	_, disallowed := disallowedSVGURLSchemes[strings.ToLower(parsed.Scheme)]
+	return disallowed
+}
+
+func containsDisallowedSVGURLScheme(value string) bool {
+	normalized := normalizeSVGURLSchemeInput(value)
+	for scheme := range disallowedSVGURLSchemes {
+		if strings.Contains(normalized, scheme+":") {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeSVGURLSchemeInput(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, value)
 }
 
 func normalizePNGIcon(body []byte) ([]byte, error) {
