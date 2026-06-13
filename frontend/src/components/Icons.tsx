@@ -253,6 +253,14 @@ export function ChevronDownIcon({ size = 14, strokeWidth = 3 }: { size?: number,
   )
 }
 
+export function ChevronUpIcon({ size = 14, strokeWidth = 3 }: { size?: number, strokeWidth?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 15l-6-6-6 6" />
+    </svg>
+  )
+}
+
 export function TagsIcon({ size = 14, strokeWidth = 2.5 }: { size?: number, strokeWidth?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">

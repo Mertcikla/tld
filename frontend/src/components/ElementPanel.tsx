@@ -45,7 +45,7 @@ import PanelHeader from './PanelHeader'
 import GitSourceLinker from './GitSourceLinker'
 import { getTechnologyCatalogIndex, getTechnologyCatalogItemBySlug, invalidateTechnologyCatalog, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
 import { canonicalTechnologySlug } from '../utils/technologyIcon'
-import { ImageUploadIcon, ZoomInIcon, ZoomOutIcon } from './Icons'
+import { ChevronDownIcon, ChevronUpIcon, ImageUploadIcon, ZoomInIcon, ZoomOutIcon } from './Icons'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
 import { openExternalUrl } from '../lib/desktop'
@@ -1320,37 +1320,86 @@ function ElementPanel({
                                     </Button>
                                   </HStack>
                                 )}
-                                <Button
+                                <Box
+                                  as="button"
+                                  type="button"
                                   data-testid="custom-technology-options-toggle"
-                                  size="xs"
-                                  variant="ghost"
+                                  display="flex"
+                                  alignItems="center"
+                                  justifyContent="center"
+                                  gap="6px"
+                                  w="full"
+                                  py={1.5}
+                                  rounded="md"
+                                  bg="transparent"
                                   color="gray.400"
-                                  alignSelf="flex-start"
-                                  onClick={(event) => {
+                                  fontSize="xs"
+                                  fontWeight="medium"
+                                  letterSpacing="0.02em"
+                                  cursor="pointer"
+                                  transition="color 150ms ease, background 150ms ease"
+                                  _hover={{ color: 'gray.200', bg: 'whiteAlpha.50' }}
+                                  onClick={(event: React.MouseEvent) => {
                                     event.stopPropagation()
                                     setCustomTechnologyOptionsOpen((value) => !value)
                                   }}
                                 >
-                                  {customTechnologyOptionsOpen ? 'Hide' : 'Show optional fields'}
-                                </Button>
+                                  <Box
+                                    flex={1}
+                                    h="1px"
+                                    bg="whiteAlpha.100"
+                                  />
+                                  <HStack spacing="4px" flexShrink={0}>
+                                    <Text fontSize="xs" lineHeight="1">
+                                      {customTechnologyOptionsOpen ? 'Hide optional fields' : 'Show optional fields'}
+                                    </Text>
+                                    <Box
+                                      as="span"
+                                      display="inline-flex"
+                                      transition="transform 200ms ease"
+                                      transform={customTechnologyOptionsOpen ? 'rotate(180deg)' : 'rotate(0deg)'}
+                                    >
+                                      <ChevronDownIcon size={10} strokeWidth={2.5} />
+                                    </Box>
+                                  </HStack>
+                                  <Box
+                                    flex={1}
+                                    h="1px"
+                                    bg="whiteAlpha.100"
+                                  />
+                                </Box>
                                 {customTechnologyOptionsOpen && (
-                                  <VStack align="stretch" spacing={2}>
-                                    <Input
-                                      data-testid="custom-technology-short-name"
-                                      size="sm"
-                                      value={customTechnologyShortName}
-                                      onChange={(event) => setCustomTechnologyShortName(event.target.value)}
-                                      placeholder="Short name"
-                                      isDisabled={customTechnologySaving}
-                                    />
-                                    <Input
-                                      data-testid="custom-technology-aliases"
-                                      size="sm"
-                                      value={customTechnologyAliases}
-                                      onChange={(event) => setCustomTechnologyAliases(event.target.value)}
-                                      placeholder="Aliases, comma separated"
-                                      isDisabled={customTechnologySaving}
-                                    />
+                                  <VStack
+                                    align="stretch"
+                                    spacing={3}
+                                    p={3}
+                                    rounded="md"
+                                    bg="whiteAlpha.50"
+                                    border="1px solid"
+                                    borderColor="whiteAlpha.100"
+                                  >
+                                    <Box>
+                                      <Text fontSize="xs" color="gray.400" mb={1} fontWeight="medium">Short name</Text>
+                                      <Input
+                                        data-testid="custom-technology-short-name"
+                                        size="sm"
+                                        value={customTechnologyShortName}
+                                        onChange={(event) => setCustomTechnologyShortName(event.target.value)}
+                                        placeholder="e.g. K8s"
+                                        isDisabled={customTechnologySaving}
+                                      />
+                                    </Box>
+                                    <Box>
+                                      <Text fontSize="xs" color="gray.400" mb={1} fontWeight="medium">Aliases</Text>
+                                      <Input
+                                        data-testid="custom-technology-aliases"
+                                        size="sm"
+                                        value={customTechnologyAliases}
+                                        onChange={(event) => setCustomTechnologyAliases(event.target.value)}
+                                        placeholder="Comma separated, e.g. k8s, kube"
+                                        isDisabled={customTechnologySaving}
+                                      />
+                                    </Box>
                                   </VStack>
                                 )}
                                 <Button
