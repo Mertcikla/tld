@@ -1,14 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box } from '@chakra-ui/react'
-import type { MDXEditorMethods } from '@mdxeditor/editor'
 import { isWailsApp } from '../../config/runtime'
 import { defaultRepoMarkdownPath } from './metadata'
-import { MarkdownEditor } from './MarkdownEditor'
-import { MarkdownFloatingMenu } from './MarkdownFloatingMenu'
+import { MarkdownEditor, type MarkdownEditorHandle } from './MarkdownEditor'
 import { LoadingMarkdownState, MarkdownSetupState, MissingMarkdownState } from './MarkdownPanelStates'
 import { markdownPanelBodySx } from './styles'
 import type { ViewMarkdownPanelProps } from './types'
-import { useFloatingMarkdownMenu } from './hooks/useFloatingMarkdownMenu'
 import { useMermaidMarkdownSync } from './hooks/useMermaidMarkdownSync'
 
 function ViewMarkdownPanel({
@@ -17,14 +14,12 @@ function ViewMarkdownPanel({
   viewName,
   markdown,
   content,
-  syncToken,
   viewId = null,
   mermaidIntegrationEnabled = false,
   canEdit = true,
   isLoading = false,
   isSaving = false,
   isDirty = false,
-  hasSaveConflict = false,
   onChange,
   onSave,
   onForceSave,
@@ -36,7 +31,7 @@ function ViewMarkdownPanel({
   onOpenInEditor,
   onReload,
 }: ViewMarkdownPanelProps) {
-  const editorRef = useRef<MDXEditorMethods>(null)
+  const editorRef = useRef<MarkdownEditorHandle>(null)
   const latestContentRef = useRef(content)
   latestContentRef.current = content
 
@@ -46,17 +41,16 @@ function ViewMarkdownPanel({
   const canEditDocument = canEdit && !!markdown?.can_edit
   const showNativeAttachPicker = isWailsApp && !!onPickMarkdownFile
   const showAttachPathInput = !showNativeAttachPicker
-  const {
-    panelBodyRef,
-    floatingMenuRef,
-    floatingMenuPosition,
-    isFloatingMenuHidden,
-    setIsFloatingMenuHidden,
-    isFloatingMenuDragging,
-    handleFloatingMenuDragStart,
-  } = useFloatingMarkdownMenu()
 
   const currentEditorMarkdown = useCallback(() => editorRef.current?.getMarkdown() ?? latestContentRef.current, [])
+  const replaceEditorMarkdown = useCallback((nextMarkdown: string) => {
+    latestContentRef.current = nextMarkdown
+    if (editorRef.current) {
+      editorRef.current.setMarkdown(nextMarkdown)
+      return
+    }
+    onChange(nextMarkdown)
+  }, [onChange])
 
   const {
     mermaidContextValue,
@@ -65,12 +59,12 @@ function ViewMarkdownPanel({
   } = useMermaidMarkdownSync({
     canEditDocument,
     content,
-    editorRef,
     enabled: mermaidIntegrationEnabled,
+    getMarkdown: currentEditorMarkdown,
     isOpen,
-    latestContentRef,
-    onChange,
+    replaceMarkdown: replaceEditorMarkdown,
     viewId,
+    viewName,
   })
 
   useEffect(() => {
@@ -84,11 +78,6 @@ function ViewMarkdownPanel({
     setAttachPath(path)
     await onAttachMarkdown(path)
   }, [onAttachMarkdown, onPickMarkdownFile])
-
-  const handleCopyPath = useCallback(async () => {
-    if (!markdown?.path || typeof navigator === 'undefined' || !navigator.clipboard) return
-    await navigator.clipboard.writeText(markdown.path)
-  }, [markdown?.path])
 
   if (!isOpen) return null
 
@@ -104,7 +93,6 @@ function ViewMarkdownPanel({
       bgImage="var(--grad-panel)"
     >
       <Box
-        ref={panelBodyRef}
         flex="1 1 auto"
         minH={0}
         overflow="hidden"
@@ -113,29 +101,6 @@ function ViewMarkdownPanel({
         color="gray.100"
         sx={markdownPanelBodySx}
       >
-        <MarkdownFloatingMenu
-          canEdit={canEdit}
-          canEditDocument={canEditDocument}
-          currentEditorMarkdown={currentEditorMarkdown}
-          floatingMenuPosition={floatingMenuPosition}
-          floatingMenuRef={floatingMenuRef}
-          handleCopyPath={handleCopyPath}
-          handleFloatingMenuDragStart={handleFloatingMenuDragStart}
-          hasSaveConflict={hasSaveConflict}
-          isDirty={isDirty}
-          isFloatingMenuDragging={isFloatingMenuDragging}
-          isFloatingMenuHidden={isFloatingMenuHidden}
-          isLoading={isLoading}
-          markdown={markdown}
-          onClose={onClose}
-          onForceSave={onForceSave}
-          onOpenInEditor={onOpenInEditor}
-          onReload={onReload}
-          onSave={onSave}
-          onUnlinkMarkdown={onUnlinkMarkdown}
-          setIsFloatingMenuHidden={setIsFloatingMenuHidden}
-        />
-
         {isLoading ? (
           <LoadingMarkdownState />
         ) : markdown && !markdown.exists ? (
@@ -157,7 +122,6 @@ function ViewMarkdownPanel({
           <MarkdownEditor
             canEditDocument={canEditDocument}
             content={content}
-            currentEditorMarkdown={currentEditorMarkdown}
             editorRef={editorRef}
             handleSyncMermaidBlock={handleSyncMermaidBlock}
             isDirty={isDirty}
@@ -165,7 +129,6 @@ function ViewMarkdownPanel({
             isSaving={isSaving}
             markdown={markdown}
             mermaidContextValue={mermaidContextValue}
-            mermaidIntegrationEnabled={mermaidIntegrationEnabled}
             mermaidSyncStatus={mermaidSyncStatus}
             onChange={onChange}
             onClose={onClose}
@@ -173,7 +136,6 @@ function ViewMarkdownPanel({
             onReload={onReload}
             onSave={onSave}
             onSaveAs={onSaveAs}
-            syncToken={syncToken}
             viewId={viewId}
           />
         ) : (

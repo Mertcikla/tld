@@ -1,27 +1,26 @@
-import { useCallback, useEffect, useMemo, useState, type MutableRefObject } from 'react'
-import type { MDXEditorMethods } from '@mdxeditor/editor'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api, type MermaidMarkdownSyncStatus } from '../../../api/client'
 
 interface UseMermaidMarkdownSyncParams {
   canEditDocument: boolean
   content: string
-  editorRef: MutableRefObject<MDXEditorMethods | null>
   enabled: boolean
+  getMarkdown: () => string
   isOpen: boolean
-  latestContentRef: MutableRefObject<string>
-  onChange: (markdown: string) => void
+  replaceMarkdown: (markdown: string) => void
   viewId: number | null
+  viewName?: string | null
 }
 
 export function useMermaidMarkdownSync({
   canEditDocument,
   content,
-  editorRef,
   enabled,
+  getMarkdown,
   isOpen,
-  latestContentRef,
-  onChange,
+  replaceMarkdown,
   viewId,
+  viewName,
 }: UseMermaidMarkdownSyncParams) {
   const [mermaidSyncStatus, setMermaidSyncStatus] = useState<MermaidMarkdownSyncStatus | null>(null)
   const [mermaidBlockStatusByCode, setMermaidBlockStatusByCode] = useState<Map<string, MermaidMarkdownSyncStatus>>(() => new Map())
@@ -55,18 +54,18 @@ export function useMermaidMarkdownSync({
   const mermaidContextValue = useMemo(() => ({
     blockStatusByCode: mermaidBlockStatusByCode,
     canEdit: canEditDocument,
-  }), [canEditDocument, mermaidBlockStatusByCode])
+    currentViewId: viewId,
+    currentViewName: viewName,
+  }), [canEditDocument, mermaidBlockStatusByCode, viewId, viewName])
 
   const handleSyncMermaidBlock = useCallback(async () => {
     if (!viewId) return
-    const currentMarkdown = editorRef.current?.getMarkdown() ?? latestContentRef.current
+    const currentMarkdown = getMarkdown()
     const result = await api.mermaid.upsertMarkdownBlock(viewId, currentMarkdown, true)
     const nextMarkdown = result.markdown
-    latestContentRef.current = nextMarkdown
-    editorRef.current?.setMarkdown(nextMarkdown)
+    replaceMarkdown(nextMarkdown)
     setMermaidSyncStatus('synced')
-    onChange(nextMarkdown)
-  }, [editorRef, latestContentRef, onChange, viewId])
+  }, [getMarkdown, replaceMarkdown, viewId])
 
   return {
     mermaidContextValue,

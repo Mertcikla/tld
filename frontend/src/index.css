@@ -61,12 +61,6 @@ body {
     margin: 0;
 }
 
-/* MDXEditor renders Radix tooltip poppers under body with inline z-index: 2. */
-.mdxeditor-popup-container.tld-markdown-editor,
-.mdxeditor-popup-container.tld-markdown-editor [data-radix-popper-content-wrapper] {
-    z-index: 1200 !important;
-}
-
 .react-flow {
     background-color: var(--bg-canvas);
 }

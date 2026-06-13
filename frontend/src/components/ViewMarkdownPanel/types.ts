@@ -25,13 +25,3 @@ export interface ViewMarkdownPanelProps {
   onOpenInEditor?: () => void
   onReload?: () => Promise<void> | void
 }
-
-export interface FloatingMenuPosition {
-  x: number | null
-  y: number
-}
-
-export interface ConcreteFloatingMenuPosition {
-  x: number
-  y: number
-}
