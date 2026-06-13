@@ -45,7 +45,7 @@ import PanelHeader from './PanelHeader'
 import GitSourceLinker from './GitSourceLinker'
 import { getTechnologyCatalogIndex, getTechnologyCatalogItemBySlug, invalidateTechnologyCatalog, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
 import { canonicalTechnologySlug } from '../utils/technologyIcon'
-import { AddElementIcon, ZoomInIcon, ZoomOutIcon } from './Icons'
+import { AddElementIcon, ExportIcon, ZoomInIcon, ZoomOutIcon } from './Icons'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
 import { openExternalUrl } from '../lib/desktop'
@@ -1160,7 +1160,7 @@ function ElementPanel({
                         >
                           <VStack align="stretch" spacing={3}>
                             <Text fontWeight="semibold" fontSize="sm" color="white">
-                              Add to custom catalog
+                              Define new with custom icon
                             </Text>
                             <HStack align="start" spacing={3}>
                               <Box
@@ -1172,8 +1172,9 @@ function ElementPanel({
                                 w="86px"
                                 minH="74px"
                                 rounded="md"
-                                border="1px solid"
-                                borderColor="whiteAlpha.200"
+                                border="1px"
+                                borderStyle={customTechnologyPreviewUrl ? 'solid' : 'dashed'}
+                                borderColor={customTechnologyPreviewUrl ? 'whiteAlpha.300' : 'whiteAlpha.200'}
                                 bg="whiteAlpha.100"
                                 color="inherit"
                                 cursor={customTechnologySaving ? 'not-allowed' : 'pointer'}
@@ -1201,15 +1202,21 @@ function ElementPanel({
                                     />
                                   ) : (
                                     <Box color="gray.500">
-                                      <AddElementIcon size={18} />
+                                      <ExportIcon size={16} />
                                     </Box>
                                   )}
                                 </Flex>
-                                <Text mt={1} fontSize="10px" color="gray.200" noOfLines={1}>
-                                  {inlineCustomTechnologyName || 'Element'}
-                                </Text>
+                                {customTechnologyPreviewUrl ? (
+                                  <Text mt={1} fontSize="10px" color="gray.200" noOfLines={1}>
+                                    {inlineCustomTechnologyName || 'Element'}
+                                  </Text>
+                                ) : (
+                                  <Text mt={1} fontSize="9px" color="gray.600" letterSpacing="0.04em">
+                                    SVG · PNG
+                                  </Text>
+                                )}
                               </Box>
-                              <VStack align="stretch" justify="center" minW={0} minH="74px" flex={1}>
+                              <VStack align="stretch" justify="center" minW={0} minH="74px" flex={1} spacing={2}>
                                 <Input
                                   data-testid="custom-technology-file"
                                   ref={customTechnologyFileInputRef}
@@ -1218,6 +1225,11 @@ function ElementPanel({
                                   accept=".svg,.png,image/svg+xml,image/png"
                                   onChange={handleCustomTechnologyFileChange}
                                 />
+                                {!customTechnologyFile && (
+                                  <Text fontSize="xs" color="gray.500" lineHeight="1.4">
+                                    Upload an icon, then name your technology.
+                                  </Text>
+                                )}
                                 <Button
                                   data-testid="custom-technology-save"
                                   size="xs"
@@ -1232,23 +1244,30 @@ function ElementPanel({
                               </VStack>
                             </HStack>
                             {customTechnologyFile && (
-                              <VStack spacing={2} align="stretch">
-                                <Input
-                                  data-testid="custom-technology-short-name"
-                                  size="sm"
-                                  value={customTechnologyShortName}
-                                  onChange={(event) => setCustomTechnologyShortName(event.target.value)}
-                                  placeholder="Short name"
-                                  isDisabled={customTechnologySaving}
-                                />
-                                <Input
-                                  data-testid="custom-technology-aliases"
-                                  size="sm"
-                                  value={customTechnologyAliases}
-                                  onChange={(event) => setCustomTechnologyAliases(event.target.value)}
-                                  placeholder="Aliases"
-                                  isDisabled={customTechnologySaving}
-                                />
+                              <VStack spacing={3} align="stretch">
+                                <Box>
+                                  <Text fontSize="xs" color="gray.400" mb={1}>Short name <Text as="span" color="gray.600">(optional)</Text></Text>
+                                  <Input
+                                    data-testid="custom-technology-short-name"
+                                    size="sm"
+                                    value={customTechnologyShortName}
+                                    onChange={(event) => setCustomTechnologyShortName(event.target.value)}
+                                    placeholder="e.g. Kafka"
+                                    isDisabled={customTechnologySaving}
+                                  />
+                                </Box>
+                                <Box>
+                                  <Text fontSize="xs" color="gray.400" mb={1}>Aliases <Text as="span" color="gray.600">(optional)</Text></Text>
+                                  <Input
+                                    data-testid="custom-technology-aliases"
+                                    size="sm"
+                                    value={customTechnologyAliases}
+                                    onChange={(event) => setCustomTechnologyAliases(event.target.value)}
+                                    placeholder="e.g. apache kafka, kafka broker"
+                                    isDisabled={customTechnologySaving}
+                                  />
+                                  <Text fontSize="10px" color="gray.600" mt={1}>Separate multiple aliases with commas.</Text>
+                                </Box>
                               </VStack>
                             )}
                             {customTechnologyError && (
