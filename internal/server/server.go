@@ -307,11 +307,7 @@ func serveDynamicIconAsset(cleaned string, w http.ResponseWriter) bool {
 		return true
 	case strings.HasPrefix(cleaned, "icons/"):
 		filename := strings.TrimPrefix(cleaned, "icons/")
-		if filename == "" || filename != path.Base(filename) {
-			return false
-		}
-		ext := strings.ToLower(path.Ext(filename))
-		if ext != ".svg" && ext != ".png" {
+		if !isSafeDynamicIconFilename(filename) {
 			return false
 		}
 		configDir, err := workspace.ConfigDir()
@@ -329,6 +325,17 @@ func serveDynamicIconAsset(cleaned string, w http.ResponseWriter) bool {
 	default:
 		return false
 	}
+}
+
+func isSafeDynamicIconFilename(filename string) bool {
+	if filename == "" || strings.ContainsAny(filename, "/\\:\x00") {
+		return false
+	}
+	if filename != path.Base(filename) || filename != filepath.Base(filename) {
+		return false
+	}
+	ext := strings.ToLower(path.Ext(filename))
+	return ext == ".svg" || ext == ".png"
 }
 
 func readStaticAsset(static fs.FS, candidate, acceptEncoding string) ([]byte, string, error) {

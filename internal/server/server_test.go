@@ -643,6 +643,33 @@ func TestServerServesIconAssetPathsLocallyInDevMode(t *testing.T) {
 	}
 }
 
+func TestIsSafeDynamicIconFilenameRejectsPathSyntax(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		want     bool
+	}{
+		{name: "svg", filename: "live-icon.svg", want: true},
+		{name: "png", filename: "live-icon.png", want: true},
+		{name: "empty", filename: "", want: false},
+		{name: "unsupported extension", filename: "live-icon.gif", want: false},
+		{name: "slash path", filename: "nested/live-icon.svg", want: false},
+		{name: "windows separator path", filename: `nested\live-icon.svg`, want: false},
+		{name: "windows traversal", filename: `..\secret.svg`, want: false},
+		{name: "windows drive path", filename: `C:\secret.svg`, want: false},
+		{name: "windows drive relative path", filename: "C:secret.svg", want: false},
+		{name: "windows alternate data stream", filename: "live-icon.svg:stream", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isSafeDynamicIconFilename(tt.filename); got != tt.want {
+				t.Fatalf("isSafeDynamicIconFilename(%q) = %v, want %v", tt.filename, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPopulateScoreGateAllowsLexicallyAnchoredJinaMatches(t *testing.T) {
 	tests := []struct {
 		name             string
