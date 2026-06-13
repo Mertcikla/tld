@@ -1323,8 +1323,6 @@ function ElementPanel({
                     )
                   })}
                 </Wrap>
-
-                <Text fontSize="10px" color="gray.500">Maximum 3 linked technologies.</Text>
               </VStack>
             </FormControl>
             <FormControl isDisabled={isReadOnly}>
