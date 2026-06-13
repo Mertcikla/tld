@@ -1391,7 +1391,7 @@ function ElementPanel({
                       <>
                         <HStack justify="space-between" align="flex-start" mb={2.5}>
                           <Box>
-                            <Text fontSize="xs" color="gray.500">Choose when this element starts appearing</Text>
+                            <Text fontSize="xs" color="gray.500">Choose when this element starts appearing when filtering is enabled.</Text>
                           </Box>
                         </HStack>
                         <Box px={1} pt={1} pb={0.5} mb={isEdit && canEdit && onMerge ? 3 : 0}>
