@@ -1383,7 +1383,7 @@ function ViewEditorInner({
       return
     }
     if (!viewMarkdown) {
-      setIsMarkdownOpen(true)
+      setIsMarkdownOpen((prev) => !prev)
       return
     }
     setIsMarkdownOpen((prev) => !prev)
