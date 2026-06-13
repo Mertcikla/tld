@@ -50,16 +50,12 @@ function getMermaidApi() {
   return mermaidApiPromise
 }
 
-function lineLabel(code: string) {
-  const lineCount = code.trim() ? code.trim().split(/\r?\n/).length : 0
-  return `${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`
-}
 
 function statusLabel(status: string) {
   if (status === 'synced') return 'synced'
   if (status === 'stale') return 'stale'
   if (status === 'other') return 'linked elsewhere'
-  if (status === 'unlinked') return 'preview'
+  if (status === 'unlinked') return ' '
   return 'not inserted'
 }
 
@@ -130,7 +126,7 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
         <span className={`tld-mermaid-preview__status tld-mermaid-preview__status--${syncStatus}`}>
           {statusLabel(syncStatus)}
         </span>
-        <span className="tld-mermaid-preview__meta">{blockViewLabel} · {lineLabel(code)}</span>
+        <span className="tld-mermaid-preview__meta">{blockViewLabel}</span>
       </figcaption>
       {renderState.status === 'empty' ? (
         <div className="tld-mermaid-preview__empty">Empty Mermaid block</div>
