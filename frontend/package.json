@@ -41,7 +41,7 @@
     "test:e2e:debug": "playwright test -c playwright.config.ts --debug"
   },
   "dependencies": {
-    "@buf/tldiagramcom_diagram.bufbuild_es": "^2.12.0-20260530185800-eeadd0a49d13.1",
+    "@buf/tldiagramcom_diagram.bufbuild_es": "^2.12.0-20260613195140-80aca3bd89aa.1",
     "@bufbuild/protobuf": "^2.11.0",
     "@mdxeditor/editor": "^4.0.1",
     "perfect-freehand": "^1.2.3",
