@@ -234,13 +234,14 @@ describe('MarkdownEditor', () => {
       handleSyncMermaidBlock,
       mermaidSyncStatus: 'missing',
     })
+    codeMirrorMock.setSelection(8)
     const syncButton = renderer.root.findByProps({ 'data-testid': 'markdown-insert-view-mermaid-button' })
 
     act(() => {
       syncButton.props.onClick()
     })
 
-    expect(handleSyncMermaidBlock).toHaveBeenCalled()
+    expect(handleSyncMermaidBlock).toHaveBeenCalledWith({ insertRange: { from: 8, to: 8 } })
     expect(syncButton.props.children).toBe('Insert Mermaid')
     expect(syncButton.props['aria-label']).toBe('Insert current view as Mermaid block')
     expect(renderer.root.findAllByProps({ 'data-testid': 'markdown-insert-button' })).toHaveLength(0)

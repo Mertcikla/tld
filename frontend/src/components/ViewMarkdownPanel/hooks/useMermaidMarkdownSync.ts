@@ -14,6 +14,31 @@ interface UseMermaidMarkdownSyncParams {
   onNavigateToView?: (viewId: number) => void
 }
 
+interface MermaidMarkdownInsertRange {
+  from: number
+  to: number
+}
+
+export interface MermaidMarkdownSyncOptions {
+  insertRange?: MermaidMarkdownInsertRange
+}
+
+function clampPosition(position: number, markdownLength: number) {
+  return Math.max(0, Math.min(position, markdownLength))
+}
+
+function insertMarkdownBlock(markdown: string, block: string, range: MermaidMarkdownInsertRange) {
+  const from = clampPosition(Math.min(range.from, range.to), markdown.length)
+  const to = clampPosition(Math.max(range.from, range.to), markdown.length)
+  const before = markdown.slice(0, from)
+  const after = markdown.slice(to)
+  const normalizedBlock = block.trim()
+  const beforeSeparator = before.length === 0 || before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n'
+  const afterSeparator = after.length === 0 || after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n'
+
+  return `${before}${beforeSeparator}${normalizedBlock}${afterSeparator}${after}`
+}
+
 export function useMermaidMarkdownSync({
   canEditDocument,
   content,
@@ -84,11 +109,19 @@ export function useMermaidMarkdownSync({
     onNavigateToView,
   }), [canEditDocument, mermaidBlockStatusByCode, onNavigateToView, viewId, viewName, viewNameById])
 
-  const handleSyncMermaidBlock = useCallback(async () => {
+  const handleSyncMermaidBlock = useCallback(async (options: MermaidMarkdownSyncOptions = {}) => {
     if (!enabled || !viewId) return
     const currentMarkdown = getMarkdown()
-    const result = await api.mermaid.upsertMarkdownBlock(viewId, currentMarkdown, true)
-    const nextMarkdown = result.markdown
+    let nextMarkdown: string
+
+    if (options.insertRange) {
+      const result = await api.mermaid.exportView(viewId, { includeTldMetadata: true, markdownBlock: true })
+      nextMarkdown = insertMarkdownBlock(currentMarkdown, result.markdown, options.insertRange)
+    } else {
+      const result = await api.mermaid.upsertMarkdownBlock(viewId, currentMarkdown, true)
+      nextMarkdown = result.markdown
+    }
+
     replaceMarkdown(nextMarkdown)
     const inspection = await api.mermaid.inspectMarkdown(nextMarkdown, viewId)
     applyInspectionResult(inspection)

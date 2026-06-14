@@ -8,6 +8,7 @@ import { useMermaidMarkdownSync } from './useMermaidMarkdownSync'
 vi.mock('../../../api/client', () => ({
   api: {
     mermaid: {
+      exportView: vi.fn(),
       inspectMarkdown: vi.fn(),
       upsertMarkdownBlock: vi.fn(),
     },
@@ -41,6 +42,7 @@ async function flushPromises() {
 describe('useMermaidMarkdownSync', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    vi.mocked(api.mermaid.exportView).mockReset()
     vi.mocked(api.mermaid.inspectMarkdown).mockReset()
     vi.mocked(api.mermaid.upsertMarkdownBlock).mockReset()
   })
@@ -169,5 +171,50 @@ describe('useMermaidMarkdownSync', () => {
     expect(api.mermaid.inspectMarkdown).toHaveBeenCalledWith(updatedMarkdown, 6)
     expect(hookResult?.mermaidSyncStatus).toBe('synced')
     expect(hookResult?.currentMermaidBlock).toBe(syncedBlock)
+  })
+
+  it('inserts an exported Mermaid block at the requested markdown range', async () => {
+    const exactMarkdown = '# Note\n\nPlace diagram here\n'
+    const exportedBlock = '```mermaid\nflowchart TD\n%% tld/v1 view=6\n  A --> B\n```'
+    const insertAt = '# Note\n\n'.length
+    const expectedMarkdown = '# Note\n\n```mermaid\nflowchart TD\n%% tld/v1 view=6\n  A --> B\n```\n\nPlace diagram here\n'
+    const syncedBlock = mermaidBlock({ syncStatusValue: 'synced' })
+    const replaceMarkdown = vi.fn()
+    const getMarkdown = vi.fn(() => exactMarkdown)
+    vi.mocked(api.mermaid.exportView).mockResolvedValue({
+      code: 'flowchart TD\n%% tld/v1 view=6\n  A --> B',
+      markdown: exportedBlock,
+      warnings: [],
+    })
+    vi.mocked(api.mermaid.inspectMarkdown).mockResolvedValue({
+      blocks: [syncedBlock],
+      syncStatus: 'synced',
+      warnings: [],
+    })
+    let syncMarkdownBlock: ReturnType<typeof useMermaidMarkdownSync>['handleSyncMermaidBlock'] | undefined
+
+    function Harness() {
+      const hookResult = useMermaidMarkdownSync({
+        canEditDocument: true,
+        content: exactMarkdown,
+        enabled: true,
+        getMarkdown,
+        isOpen: true,
+        replaceMarkdown,
+        viewId: 6,
+      })
+      syncMarkdownBlock = hookResult.handleSyncMermaidBlock
+      return null
+    }
+
+    create(<Harness />)
+    await act(async () => {
+      await syncMarkdownBlock?.({ insertRange: { from: insertAt, to: insertAt } })
+    })
+
+    expect(api.mermaid.exportView).toHaveBeenCalledWith(6, { includeTldMetadata: true, markdownBlock: true })
+    expect(api.mermaid.upsertMarkdownBlock).not.toHaveBeenCalled()
+    expect(replaceMarkdown).toHaveBeenCalledWith(expectedMarkdown)
+    expect(api.mermaid.inspectMarkdown).toHaveBeenCalledWith(expectedMarkdown, 6)
   })
 })

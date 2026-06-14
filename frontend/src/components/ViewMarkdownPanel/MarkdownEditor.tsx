@@ -11,6 +11,7 @@ import { isWailsApp } from '../../config/runtime'
 import type { ViewMarkdownDocument } from '../../types'
 import { CloseIcon, ReloadIcon, SaveIcon } from '../Icons'
 import { MarkdownPreview } from './MarkdownPreview'
+import type { MermaidMarkdownSyncOptions } from './hooks/useMermaidMarkdownSync'
 import { MermaidMarkdownContext, type MermaidMarkdownContextValue } from './mermaidContext'
 
 export interface MarkdownEditorHandle {
@@ -24,7 +25,7 @@ interface MarkdownEditorProps {
   content: string
   currentMermaidBlock: MermaidMarkdownBlock | null
   editorRef: MutableRefObject<MarkdownEditorHandle | null>
-  handleSyncMermaidBlock: () => Promise<void> | void
+  handleSyncMermaidBlock: (options?: MermaidMarkdownSyncOptions) => Promise<void> | void
   isDirty: boolean
   isLoading: boolean
   isSaving: boolean
@@ -127,6 +128,20 @@ export function MarkdownEditor({
     onChange(nextMarkdown)
   }, [onChange])
 
+  const getEditorSelectionRange = useCallback(() => {
+    const view = codeMirrorRef.current?.view
+    if (!view) {
+      const position = contentRef.current.length
+      return { from: position, to: position }
+    }
+
+    const selection = view.state.selection.main
+    return {
+      from: Math.min(selection.from, selection.to),
+      to: Math.max(selection.from, selection.to),
+    }
+  }, [])
+
   const scrollToCurrentMermaidBlock = useCallback(() => {
     if (!currentMermaidBlock) return
     const view = codeMirrorRef.current?.view
@@ -154,11 +169,11 @@ export function MarkdownEditor({
 
   const handleMermaidPrimaryAction = useCallback(() => {
     if (mermaidPrimaryAction === 'insert') {
-      void handleSyncMermaidBlock()
+      void handleSyncMermaidBlock({ insertRange: getEditorSelectionRange() })
       return
     }
     if (mermaidPrimaryAction === 'scroll') scrollToCurrentMermaidBlock()
-  }, [handleSyncMermaidBlock, mermaidPrimaryAction, scrollToCurrentMermaidBlock])
+  }, [getEditorSelectionRange, handleSyncMermaidBlock, mermaidPrimaryAction, scrollToCurrentMermaidBlock])
 
   const canSaveDocument = canEditDocument && !isLoading && !isSaving && Boolean(markdownDocument) && isDirty
   const handleSave = useCallback(() => {
