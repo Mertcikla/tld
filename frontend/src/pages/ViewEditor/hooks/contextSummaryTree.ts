@@ -164,7 +164,10 @@ export function buildVisibleContextSummaryForest(
     const node = forest.nodesById[nodeId]
     if (!node) return
 
-    const isAutoExpanded = allowAutoExpand && node.childIds.length > 0 && node.descendantLeafIds.length <= quietLeafBudget
+    const isAutoExpanded = allowAutoExpand &&
+      node.childIds.length > 0 &&
+      node.descendantLeafIds.length > 1 &&
+      node.descendantLeafIds.length <= quietLeafBudget
     const isExpanded = expandedNodeIds.has(nodeId)
     const shouldShowChildren = isAutoExpanded || isExpanded
 

@@ -17,6 +17,7 @@ import TopMenuBarCollaboration, { type CollaborationProps } from './components/T
 import WorkspacePanel from './components/WorkspacePanel'
 import { ExperimentalProvider, useExperimental } from './context/ExperimentalContext'
 import { WorkspaceVersionProvider } from './context/WorkspaceVersionContext'
+import { ConnectorStyleProvider } from './context/ConnectorStyleContext'
 import { initializeTheme, ThemeProvider } from './context/ThemeContext'
 import { platform } from './platform/local'
 import { HomeRedirect } from './components/HomeRedirect'
@@ -103,8 +104,9 @@ export default function App() {
   }
 
   return (
-    <ExperimentalProvider>
+      <ExperimentalProvider>
       <ThemeProvider>
+      <ConnectorStyleProvider>
         <Box h="var(--app-viewport-height)" bg="var(--bg-canvas)" overflow="hidden">
           <Routes>
             {platform.getRoutes({ user: null })}
@@ -138,6 +140,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Box>
+      </ConnectorStyleProvider>
       </ThemeProvider>
     </ExperimentalProvider>
   )

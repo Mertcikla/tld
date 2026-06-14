@@ -237,6 +237,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
   return (
     <SlidingPanel
+      data-testid="code-preview-panel"
       isOpen={isOpen}
       onClose={onClose}
       panelKey="code-preview"
@@ -374,9 +375,16 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
               </Button>
             </Tooltip>
           )}
-          <CloseButton size="sm" color="whiteAlpha.500"
+          <CloseButton
+            data-testid="code-preview-close"
+            aria-label="Close code preview"
+            size="sm"
+            color="whiteAlpha.500"
             _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
-            onClick={onClose} />
+            onClick={(event) => {
+              event.stopPropagation()
+              onClose()
+            }} />
         </HStack>
       </HStack>
 

@@ -89,7 +89,7 @@ function resolveSetter<T>(next: StoreSetter<T>, previous: T): T {
 export function findViewByOwner(nodes: ViewTreeNode[], elementId: number): ViewTreeNode | null {
   for (const node of nodes) {
     if (node.owner_element_id !== null && Number(node.owner_element_id) === Number(elementId)) return node
-    const found = findViewByOwner(node.children, elementId)
+    const found = findViewByOwner(node.children ?? [], elementId)
     if (found) return found
   }
   return null
@@ -98,7 +98,7 @@ export function findViewByOwner(nodes: ViewTreeNode[], elementId: number): ViewT
 export function findViewPath(nodes: ViewTreeNode[], targetId: number, path: ViewTreeNode[] = []): ViewTreeNode[] | null {
   for (const node of nodes) {
     if (node.id === targetId) return [...path, node]
-    const found = findViewPath(node.children, targetId, [...path, node])
+    const found = findViewPath(node.children ?? [], targetId, [...path, node])
     if (found) return found
   }
   return null

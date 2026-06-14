@@ -25,7 +25,7 @@ export function flattenTree(roots: ViewTreeNode[]): ViewTreeNode[] {
   const result: ViewTreeNode[] = []
   const traverse = (node: ViewTreeNode) => {
     result.push(node)
-    node.children.forEach(traverse)
+    ;(node.children ?? []).forEach(traverse)
   }
   roots.forEach(traverse)
   return result

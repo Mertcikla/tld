@@ -59,6 +59,19 @@ describe('contextSummaryTree', () => {
     expect(Object.values(visible.leafToVisibleNodeId).sort()).toEqual(root.visibleChildIds.slice().sort())
   })
 
+  it('keeps one-leaf roots collapsed even at rich density', () => {
+    const forest = buildContextSummaryForest([
+      endpoint({ actualElementId: 6, branchPathElementIds: [5, 6] }),
+    ])
+
+    const visible = buildVisibleContextSummaryForest(forest, new Set(), settings(200))
+    const rootId = forest.rootIds[0]
+
+    expect(visible.nodesById[rootId]?.isAutoExpanded).toBe(false)
+    expect(Object.keys(visible.nodesById)).toEqual([rootId])
+    expect(Object.values(visible.leafToVisibleNodeId)).toEqual([rootId])
+  })
+
   it('keeps two-leaf roots collapsed at normal density', () => {
     const forest = buildContextSummaryForest([
       endpoint({ actualElementId: 6, branchPathElementIds: [5, 6] }),

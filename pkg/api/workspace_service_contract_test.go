@@ -9,6 +9,7 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"github.com/mertcikla/tld/v2/internal/tech"
 )
 
 func TestWorkspaceService_ListElementsReturnsPaginationAndChecksRead(t *testing.T) {
@@ -290,6 +291,50 @@ func TestWorkspaceService_UpdateElementPreservesExistingTechnologyLinksWhenOmitt
 	}
 	if update.LogoURL != nil {
 		t.Fatalf("logo patch = %v, want nil so store preserves existing logo", update.LogoURL)
+	}
+}
+
+func TestWorkspaceService_CreateCustomTechnologyWritesCatalogItem(t *testing.T) {
+	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
+	tech.ReloadCatalog()
+	t.Cleanup(tech.ReloadCatalog)
+
+	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	hooks := &recordingHooks{}
+	service := &WorkspaceService{Hooks: hooks}
+
+	resp, err := service.CreateCustomTechnology(WithWorkspaceID(context.Background(), workspaceID), connect.NewRequest(&diagv1.CreateCustomTechnologyRequest{
+		Name:      "Team Platform",
+		NameShort: new("Platform"),
+		Aliases:   []string{"team-sdk"},
+		Icon:      []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`),
+		MediaType: "image/svg+xml",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := resp.Msg.GetItem()
+	if item.GetDefaultSlug() != "team-platform" || item.GetIconUrl() != "/icons/team-platform.svg" || item.GetNameShort() != "Platform" {
+		t.Fatalf("item = %+v, want team platform catalog item", item)
+	}
+	if strings.Join(hooks.events, ",") != "write:elements,after:create:technology:team-platform" {
+		t.Fatalf("hook events = %v, want write and after-create", hooks.events)
+	}
+}
+
+func TestWorkspaceService_CreateCustomTechnologyMapsInvalidUploads(t *testing.T) {
+	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
+	tech.ReloadCatalog()
+	t.Cleanup(tech.ReloadCatalog)
+
+	service := &WorkspaceService{Hooks: &recordingHooks{}}
+	_, err := service.CreateCustomTechnology(context.Background(), connect.NewRequest(&diagv1.CreateCustomTechnologyRequest{
+		Name:      "Bad Upload",
+		Icon:      []byte("not an icon"),
+		MediaType: "text/plain",
+	}))
+	if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
+		t.Fatalf("error code = %s, want invalid argument; err=%v", code, err)
 	}
 }
 

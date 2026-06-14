@@ -734,7 +734,7 @@ func openAppStore(t *testing.T) *Store {
 	return store
 }
 
-func TestStoreCreateConnectorSemanticDeduplicationAndPlacementConnectorEnrichment(t *testing.T) {
+func TestStoreCreateConnectorAllowsDuplicatePairsAndPlacementConnectorEnrichment(t *testing.T) {
 	store := openAppStore(t)
 	ctx := context.Background()
 
@@ -777,8 +777,8 @@ func TestStoreCreateConnectorSemanticDeduplicationAndPlacementConnectorEnrichmen
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dupConn.ID != conn.ID {
-		t.Fatalf("Expected duplicate CreateConnector call to return existing ID %d, got %d", conn.ID, dupConn.ID)
+	if dupConn.ID == conn.ID {
+		t.Fatalf("duplicate CreateConnector call returned existing ID %d, want a new connector", conn.ID)
 	}
 
 	if _, err := store.AddPlacement(ctx, 1, e1.ID, 100, 100); err != nil {
@@ -801,13 +801,23 @@ func TestStoreCreateConnectorSemanticDeduplicationAndPlacementConnectorEnrichmen
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(conns1) != 1 {
-		t.Fatalf("Expected 1 auto-included connector, got %d", len(conns1))
+	if len(conns1) != 2 {
+		t.Fatalf("Expected 2 auto-included connectors, got %d", len(conns1))
 	}
 	if conns1[0].SourceElementID != e1.ID || conns1[0].TargetElementID != e2.ID {
 		t.Fatalf("Unexpected connector source/target: %+v", conns1[0])
 	}
 	if conns1[0].Label == nil || *conns1[0].Label != "calls" {
 		t.Fatalf("Unexpected connector label: %v", conns1[0].Label)
+	}
+	if _, err := store.AddPlacement(ctx, 1, e2.ID, 275, 110); err != nil {
+		t.Fatal(err)
+	}
+	conns1, err = store.Connectors(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conns1) != 2 {
+		t.Fatalf("Expected placement update not to duplicate auto-included connectors, got %d", len(conns1))
 	}
 }

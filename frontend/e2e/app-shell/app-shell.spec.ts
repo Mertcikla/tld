@@ -5,6 +5,23 @@ import {
   uniqueName,
 } from '../helpers/vieweditor'
 
+async function clickVisibleNav(page: import('@playwright/test').Page, desktopTestId: string, mobileTestId: string) {
+  const desktop = page.getByTestId(desktopTestId)
+  if (await desktop.isVisible().catch(() => false)) {
+    await desktop.click()
+    return
+  }
+  await page.getByTestId(mobileTestId).click()
+}
+
+async function openAppearance(page: import('@playwright/test').Page) {
+  const desktop = page.getByTestId('topnav-appearance')
+  if (await desktop.isVisible().catch(() => false)) {
+    await desktop.click()
+    return
+  }
+  await page.getByTestId('mobile-topnav-appearance').click()
+}
 
 test('home redirects to the first available root diagram', async ({ page }) => {
   await createApiView(page, uniqueName('Home Redirect Root'))
@@ -18,15 +35,15 @@ test('home redirects to the first available root diagram', async ({ page }) => {
 test('top navigation opens core pages and marks route changes', async ({ page }) => {
   await createDiagram(page, uniqueName('Top Nav Diagram'))
 
-  await page.getByTestId('topnav-inventory').click()
+  await clickVisibleNav(page, 'topnav-inventory', 'mobile-topnav-inventory')
   await expect(page).toHaveURL(/\/inventory$/)
   await expect(page.getByTestId('inventory-page')).toBeVisible()
 
-  await page.getByTestId('topnav-diagrams').click()
+  await clickVisibleNav(page, 'topnav-diagrams', 'mobile-topnav-diagrams')
   await expect(page).toHaveURL(/\/views(\?.*)?$/)
   await expect(page.getByRole('button', { name: 'Hierarchy view' })).toBeVisible()
 
-  await page.getByTestId('topnav-editor').click()
+  await clickVisibleNav(page, 'topnav-editor', 'mobile-topnav-editor')
   await expect(page).toHaveURL(/\/views\/\d+$/)
   await expect(page.getByTestId('vieweditor-canvas')).toBeVisible()
 })
@@ -34,7 +51,7 @@ test('top navigation opens core pages and marks route changes', async ({ page })
 test('appearance popover applies settings from the top bar', async ({ page }) => {
   await createDiagram(page, uniqueName('Appearance Popover'))
 
-  await page.getByTestId('topnav-appearance').click()
+  await openAppearance(page)
   await page.getByRole('button', { name: 'Teal accent color', exact: true }).click()
 
   await expect.poll(async () => page.evaluate(() => localStorage.getItem('diag:accent-color'))).toBe('#4fd1c5')

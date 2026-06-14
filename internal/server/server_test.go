@@ -25,6 +25,7 @@ import (
 	"github.com/gorilla/websocket"
 	assets "github.com/mertcikla/tld/v2"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/watch"
 )
 
@@ -551,6 +552,119 @@ func TestServerServesPrecompressedStaticAssets(t *testing.T) {
 			}
 			if !strings.Contains(rec.Header().Get("Vary"), "Accept-Encoding") {
 				t.Fatalf("vary = %q, want Accept-Encoding", rec.Header().Get("Vary"))
+			}
+		})
+	}
+}
+
+func TestServerServesDynamicCustomIconAssets(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	tech.ReloadCatalog()
+	t.Cleanup(tech.ReloadCatalog)
+
+	customRoot := filepath.Join(configDir, "icons")
+	customIcons := filepath.Join(customRoot, "icons")
+	if err := os.MkdirAll(customIcons, 0o755); err != nil {
+		t.Fatalf("mkdir custom icons: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(customRoot, "icons.json"), []byte(`[
+  {
+    "iconUrl": "/icons/live-icon.png",
+    "name": "Live Icon",
+    "nameShort": "Live",
+    "defaultSlug": "live-icon"
+  }
+]`), 0o644); err != nil {
+		t.Fatalf("write custom catalog: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(customIcons, "live-icon.png"), []byte("custom-png"), 0o644); err != nil {
+		t.Fatalf("write custom icon: %v", err)
+	}
+
+	_, routes := newTestServer(t, uuid.New(), fstest.MapFS{
+		"frontend/dist/index.html": {Data: []byte("<html>app</html>")},
+	})
+
+	iconRec := httptest.NewRecorder()
+	routes.ServeHTTP(iconRec, httptest.NewRequest(http.MethodGet, "/icons/live-icon.png", nil))
+	if iconRec.Code != http.StatusOK {
+		t.Fatalf("icon status = %d, body = %s", iconRec.Code, iconRec.Body.String())
+	}
+	if got := iconRec.Header().Get("Content-Type"); got != "image/png" {
+		t.Fatalf("icon content type = %q, want image/png", got)
+	}
+	if got := iconRec.Body.String(); got != "custom-png" {
+		t.Fatalf("icon body = %q, want custom-png", got)
+	}
+
+	catalogRec := httptest.NewRecorder()
+	routes.ServeHTTP(catalogRec, httptest.NewRequest(http.MethodGet, "/icons.json", nil))
+	if catalogRec.Code != http.StatusOK {
+		t.Fatalf("catalog status = %d, body = %s", catalogRec.Code, catalogRec.Body.String())
+	}
+	if !strings.Contains(catalogRec.Body.String(), `"defaultSlug": "live-icon"`) {
+		t.Fatalf("catalog body missing custom item: %s", catalogRec.Body.String())
+	}
+	if got := catalogRec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("catalog cache-control = %q, want no-store", got)
+	}
+}
+
+func TestServerServesIconAssetPathsLocallyInDevMode(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	_, routes := newTestServer(t, uuid.New(), fstest.MapFS{
+		"frontend/dist/index.html":           {Data: []byte("<html>app</html>")},
+		"frontend/dist/icons/bundled.svg":    {Data: []byte("<svg>bundled</svg>")},
+		"frontend/dist/icons/bundled.svg.br": {Data: []byte("compressed")},
+	})
+	t.Setenv("DEV", "true")
+
+	iconRec := httptest.NewRecorder()
+	routes.ServeHTTP(iconRec, httptest.NewRequest(http.MethodGet, "/icons/bundled.svg", nil))
+	if iconRec.Code != http.StatusOK {
+		t.Fatalf("bundled icon status = %d, body = %s", iconRec.Code, iconRec.Body.String())
+	}
+	if got := iconRec.Header().Get("Content-Type"); got != "image/svg+xml" {
+		t.Fatalf("bundled icon content type = %q, want image/svg+xml", got)
+	}
+	if got := iconRec.Body.String(); got != "<svg>bundled</svg>" {
+		t.Fatalf("bundled icon body = %q, want bundled svg", got)
+	}
+
+	missingRec := httptest.NewRecorder()
+	routes.ServeHTTP(missingRec, httptest.NewRequest(http.MethodGet, "/icons/missing.svg", nil))
+	if missingRec.Code != http.StatusNotFound {
+		t.Fatalf("missing icon status = %d, body = %s", missingRec.Code, missingRec.Body.String())
+	}
+	if strings.Contains(missingRec.Body.String(), "<html>app</html>") {
+		t.Fatalf("missing icon fell back to app shell: %s", missingRec.Body.String())
+	}
+}
+
+func TestIsSafeDynamicIconFilenameRejectsPathSyntax(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		want     bool
+	}{
+		{name: "svg", filename: "live-icon.svg", want: true},
+		{name: "png", filename: "live-icon.png", want: true},
+		{name: "empty", filename: "", want: false},
+		{name: "unsupported extension", filename: "live-icon.gif", want: false},
+		{name: "slash path", filename: "nested/live-icon.svg", want: false},
+		{name: "windows separator path", filename: `nested\live-icon.svg`, want: false},
+		{name: "windows traversal", filename: `..\secret.svg`, want: false},
+		{name: "windows drive path", filename: `C:\secret.svg`, want: false},
+		{name: "windows drive relative path", filename: "C:secret.svg", want: false},
+		{name: "windows alternate data stream", filename: "live-icon.svg:stream", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isSafeDynamicIconFilename(tt.filename); got != tt.want {
+				t.Fatalf("isSafeDynamicIconFilename(%q) = %v, want %v", tt.filename, got, tt.want)
 			}
 		})
 	}

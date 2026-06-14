@@ -12,7 +12,7 @@ import ReactFlow, {
   ReactFlowProvider,
   useReactFlow,
 } from 'reactflow'
-import type { Edge as RFEdge, EdgeMarker as RFEdgeMarker, Node as RFNode, NodeChange } from 'reactflow'
+import type { ConnectionLineType, Edge as RFEdge, EdgeMarker as RFEdgeMarker, Node as RFNode, NodeChange } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { toPng, toSvg } from 'html-to-image'
 import {
@@ -64,6 +64,8 @@ import ViewExplorer from '../../components/ViewExplorer'
 import ViewMarkdownPanel from '../../components/ViewMarkdownPanel'
 import ViewPanel from '../../components/ViewPanel'
 import { useSetHeader } from '../../components/HeaderContext'
+import { useTouchOnlyCanvasInput } from '../../hooks/useCanvasInputMode'
+import { shouldEnableCanvasWheelPan } from '../../utils/canvasInputMode'
 import { usePlatform } from '../../platform/context'
 import type {
   RealtimeCursor,
@@ -79,7 +81,7 @@ import ViewEditorOnboarding from '../../components/ViewEditorOnboarding'
 import DrawingCanvas, { type DrawingCanvasHandle, type DrawingPath } from '../../components/DrawingCanvas'
 import ViewFloatingMenu from '../../components/ViewFloatingMenu'
 import ViewDrawMenu from '../../components/ViewDrawMenu'
-import ViewBezierConnector from '../../components/ViewBezierConnector'
+import ViewBezierConnector, { ViewConnectorConnectionLine } from '../../components/ViewBezierConnector'
 import ViewContextNeighborElement from '../../components/ContextNeighborElement'
 import ContextBoundaryElement from '../../components/ContextBoundaryElement'
 import ContextStraightConnector from '../../components/ContextStraightConnector'
@@ -100,6 +102,7 @@ import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
 import { ViewEditorContext } from './context'
 import { useViewData } from './hooks/useViewData'
 import { useDrawingEngine } from './hooks/useDrawingEngine'
+import { connectorStyleForCreate, connectorStyleForPreview, useConnectorStyle } from '../../context/ConnectorStyleContext'
 import {
   PENDING_ELEMENT_NODE_ID,
   applyNodeChangesWithStructuralSharing,
@@ -111,12 +114,13 @@ import { useViewEditHistory } from './hooks/useViewEditHistory'
 import { useOverlapDetection } from './hooks/useOverlapDetection'
 import { removeCollisions } from '../../utils/layout'
 import { connectorToConnector, findClosestHandles, sanitizeExportFilename, triggerBlobDownload, triggerDownload } from './utils'
-import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, ensureVisualHandleId } from '../../utils/edgeDistribution'
+import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, getCenterVisualHandleId, getLogicalHandleId, getOppositeHandleSide } from '../../utils/edgeDistribution'
 import { pickUnusedColor } from '../../components/ViewExplorer/utils'
 
 import { EmptyCanvasState } from './components/EmptyCanvasState'
 import { EditorOverlays } from './components/EditorOverlays'
 import { ConnectorContextMenu, CanvasContextMenu } from './components/EditorMenus'
+import { TEMPORARY_CONNECTOR_EDGE_STYLE, TEMPORARY_CONNECTOR_PATH_STYLE } from './temporaryConnectorStyle'
 import {
   VIEW_SELECTION_CLIPBOARD_MIME,
   buildViewSelectionClipboardPayload,
@@ -155,17 +159,18 @@ const nodeTypes = {
   contextNeighborNode: ViewContextNeighborElement,
   ContextBoundaryElement: ContextBoundaryElement,
 }
-const edgeTypes = { default: ViewBezierConnector, contextStraightConnector: ContextStraightConnector, proxyConnectorEdge: ProxyConnectorEdge }
+const edgeTypes = {
+  default: ViewBezierConnector,
+  straight: ViewBezierConnector,
+  step: ViewBezierConnector,
+  smoothstep: ViewBezierConnector,
+  contextStraightConnector: ContextStraightConnector,
+  proxyConnectorEdge: ProxyConnectorEdge,
+}
 const EMPTY_LINKS: ViewConnector[] = []
 const EMPTY_TAG_COLORS: Record<string, Tag> = {}
 const noop = () => { }
 const noopAsync = async () => { }
-const CONNECTOR_DRAG_CONNECTION_LINE_STYLE = {
-  stroke: 'var(--accent)',
-  strokeWidth: 2,
-  strokeDasharray: '6 5',
-  opacity: 0.75,
-}
 const VIEW_EDITOR_MIN_ZOOM_FLOOR = 0.12
 const VIEW_EDITOR_INITIAL_FIT_PADDING = 0.25
 const VIEW_EDITOR_FOCUS_FIT_PADDING = 0.35
@@ -173,6 +178,7 @@ const VIEW_EDITOR_EMPTY_EXTENT_RATIO = 0.75
 const VIEW_EDITOR_PAN_MARGIN_RATIO = 0.25
 const VIEW_EDITOR_PAN_MARGIN_MIN = 180
 const VIEW_EDITOR_PAN_MARGIN_MAX = 720
+const VIEW_EDITOR_MAX_ZOOM = 4
 const VIEW_EDITOR_MARKDOWN_DEFAULT_WIDTH = 540
 const VIEW_EDITOR_MARKDOWN_MIN_WIDTH = 360
 const VIEW_EDITOR_MARKDOWN_MIN_WIDTH_MOBILE = 280
@@ -590,6 +596,8 @@ function ViewEditorInner({
     }))
   }, [])
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
+  const touchOnlyCanvasInput = useTouchOnlyCanvasInput()
+  const enableCanvasWheelPan = shouldEnableCanvasWheelPan({ isMobileLayout, touchOnlyInput: touchOnlyCanvasInput })
   const [densityLevel, setDensityLevel] = useState(0)
   const [visibilityOverrides, setVisibilityOverrides] = useState<VisibilityOverride[]>([])
   const [noiseGateBusy, setNoiseGateBusy] = useState(false)
@@ -672,6 +680,14 @@ function ViewEditorInner({
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
   const [selectedProxyConnectorDetails, setSelectedProxyConnectorDetails] = useState<ProxyConnectorDetails | null>(null)
+  const [suppressedSelectedConnectorHandleHighlightId, setSuppressedSelectedConnectorHandleHighlightId] = useState<number | null>(null)
+  const suppressSelectedConnectorHandleHighlight = selectedEdge !== null && suppressedSelectedConnectorHandleHighlightId === selectedEdge.id
+
+  useEffect(() => {
+    if (suppressedSelectedConnectorHandleHighlightId !== null && selectedEdge?.id !== suppressedSelectedConnectorHandleHighlightId) {
+      setSuppressedSelectedConnectorHandleHighlightId(null)
+    }
+  }, [selectedEdge?.id, suppressedSelectedConnectorHandleHighlightId])
 
   const [prevViewId, setPrevViewId] = useState(viewId)
   if (viewId !== prevViewId) {
@@ -816,6 +832,7 @@ function ViewEditorInner({
   }, [clearEditHistory, viewId, toast])
 
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const viewEditorCanvasRef = useRef<HTMLDivElement | null>(null)
   const drawingCanvasRef = useRef<DrawingCanvasHandle | null>(null)
 
   const { safeFitView } = useSafeFitView(containerRef)
@@ -826,9 +843,11 @@ function ViewEditorInner({
   const rfReadyRef = useRef(false)
   const fittedContextForViewRef = useRef<number | null>(null)
   const [initialViewportReady, setInitialViewportReady] = useState(false)
+  const [computedMinZoom, setComputedMinZoom] = useState(VIEW_EDITOR_MIN_ZOOM_FLOOR)
   const [interactionSourceId, setInteractionSourceId] = useState<number | null>(null)
   const [clickConnectMode, setClickConnectMode] = useState<ClickConnectModeState | null>(null)
   const [clickConnectCursorPos, setClickConnectCursorPos] = useState<ClickConnectCursorPosition | null>(null)
+  const [isConnectorCreatePreviewActive, setConnectorCreatePreviewActive] = useState(false)
   const interactionSourceIdRef = useRef<number | null>(null)
   const multiConnectionSourceIdsRef = useRef<number[] | null>(null)
   const [deletedLibraryElementIds, setDeletedLibraryElementIds] = useState<number[]>([])
@@ -875,7 +894,9 @@ function ViewEditorInner({
     viewId,
     interactionSourceId,
     clickConnectMode,
+    isConnectorCreatePreviewActive,
     selectedConnector: selectedEdge,
+    suppressSelectedConnectorHandleHighlight,
     activeTags,
     hiddenLayerTags,
     hoveredLayerTags,
@@ -1262,6 +1283,17 @@ function ViewEditorInner({
     }
   }, [getClampedMarkdownPaneWidth, isMarkdownResizing])
 
+  const resetViewMarkdown = useCallback(() => {
+    markdownRequestSeqRef.current += 1
+    setViewMarkdown(null)
+    setViewMarkdownContent('')
+    setLoadedViewMarkdownContent('')
+    setViewMarkdownSyncToken((prev) => prev + 1)
+    setMarkdownSaveConflict(false)
+    setIsMarkdownOpen(false)
+    setIsMarkdownLoading(false)
+  }, [])
+
   const loadViewMarkdown = useCallback(async (targetViewId: number, options: { silent?: boolean } = {}) => {
     const requestSeq = ++markdownRequestSeqRef.current
     setIsMarkdownLoading(true)
@@ -1269,12 +1301,7 @@ function ViewEditorInner({
       const result = await api.workspace.views.markdown.get(targetViewId)
       if (markdownRequestSeqRef.current !== requestSeq) return null
       if (!result) {
-        setViewMarkdown(null)
-        setViewMarkdownContent('')
-        setLoadedViewMarkdownContent('')
-        setViewMarkdownSyncToken((prev) => prev + 1)
-        setMarkdownSaveConflict(false)
-        setIsMarkdownOpen(false)
+        resetViewMarkdown()
         return null
       }
       setViewMarkdown(result.markdown)
@@ -1285,11 +1312,7 @@ function ViewEditorInner({
       return result
     } catch (error) {
       if (markdownRequestSeqRef.current !== requestSeq) return null
-      setViewMarkdown(null)
-      setViewMarkdownContent('')
-      setLoadedViewMarkdownContent('')
-      setViewMarkdownSyncToken((prev) => prev + 1)
-      setMarkdownSaveConflict(false)
+      resetViewMarkdown()
       if (!options.silent) {
         toast({
           status: 'error',
@@ -1301,22 +1324,17 @@ function ViewEditorInner({
     } finally {
       if (markdownRequestSeqRef.current === requestSeq) setIsMarkdownLoading(false)
     }
-  }, [toast])
+  }, [resetViewMarkdown, toast])
+
+  const loadedViewMarkdownPath = view && view.id === viewId ? view.markdown?.path ?? null : undefined
 
   useEffect(() => {
-    if (viewId === null) {
-      markdownRequestSeqRef.current += 1
-      setViewMarkdown(null)
-      setViewMarkdownContent('')
-      setLoadedViewMarkdownContent('')
-      setViewMarkdownSyncToken((prev) => prev + 1)
-      setMarkdownSaveConflict(false)
-      setIsMarkdownOpen(false)
-      setIsMarkdownLoading(false)
+    if (viewId === null || !loadedViewMarkdownPath) {
+      resetViewMarkdown()
       return
     }
     void loadViewMarkdown(viewId, { silent: true })
-  }, [loadViewMarkdown, viewId])
+  }, [loadedViewMarkdownPath, loadViewMarkdown, resetViewMarkdown, viewId])
 
   const markdownDirty = viewMarkdownContent !== loadedViewMarkdownContent
   const markdownBusy = isMarkdownLoading || isMarkdownMutating || isMarkdownSaving
@@ -1346,12 +1364,13 @@ function ViewEditorInner({
     if (!canEdit || viewId === null) return null
     setIsMarkdownMutating(true)
     try {
-      await api.workspace.views.markdown.create(viewId, {
+      const updatedView = await api.workspace.views.markdown.create(viewId, {
         fileName: options.fileName,
         initialContent: options.initialContent ?? initialViewMarkdown(view?.name),
         targetKind: options.targetKind,
         path: options.path,
       })
+      setView(updatedView)
       const loadedMarkdown = await loadViewMarkdown(viewId)
       if (options.openEditor !== false) setIsMarkdownOpen(true)
       return loadedMarkdown
@@ -1365,7 +1384,7 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownMutating(false)
     }
-  }, [canEdit, loadViewMarkdown, toast, view?.name, viewId])
+  }, [canEdit, loadViewMarkdown, setView, toast, view?.name, viewId])
 
   const handleCreateMarkdownFromPanel = useCallback(async (targetKind: string, path?: string) => {
     await handleCreateManagedMarkdown({ targetKind, path, openEditor: true })
@@ -1407,7 +1426,8 @@ function ViewEditorInner({
     if (!canEdit || viewId === null) return
     setIsMarkdownMutating(true)
     try {
-      await api.workspace.views.markdown.link(viewId, path)
+      const updatedView = await api.workspace.views.markdown.link(viewId, path)
+      setView(updatedView)
       await loadViewMarkdown(viewId)
       setMarkdownSaveConflict(false)
       setIsMarkdownOpen(true)
@@ -1421,16 +1441,15 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownMutating(false)
     }
-  }, [canEdit, loadViewMarkdown, toast, viewId])
+  }, [canEdit, loadViewMarkdown, setView, toast, viewId])
 
   const handleUnlinkMarkdown = useCallback(async ({ deleteManagedFile }: { deleteManagedFile: boolean } = { deleteManagedFile: false }) => {
     if (!canEdit || viewId === null) return
     setIsMarkdownMutating(true)
     try {
-      await api.workspace.views.markdown.unlink(viewId, deleteManagedFile)
-      await loadViewMarkdown(viewId, { silent: true })
-      setMarkdownSaveConflict(false)
-      setIsMarkdownOpen(false)
+      const updatedView = await api.workspace.views.markdown.unlink(viewId, deleteManagedFile)
+      setView(updatedView)
+      resetViewMarkdown()
       toast({ status: 'success', title: 'Markdown unlinked' })
     } catch (error) {
       toast({
@@ -1441,7 +1460,7 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownMutating(false)
     }
-  }, [canEdit, loadViewMarkdown, toast, viewId])
+  }, [canEdit, resetViewMarkdown, setView, toast, viewId])
 
   const handleSaveMarkdown = useCallback(async (markdown: string, options: { force?: boolean } = {}) => {
     if (viewId === null || !viewMarkdown) return
@@ -2381,6 +2400,9 @@ function ViewEditorInner({
   const handleToggleExplorer = useCallback(() => setIsExplorerOpen((v) => !v), [])
 
   const interactionNodesRef = useRef<RFNode[]>([])
+  const { defaultConnectorStyle } = useConnectorStyle()
+  const createConnectorStyle = connectorStyleForCreate(defaultConnectorStyle)
+  const previewConnectorStyle = connectorStyleForPreview(defaultConnectorStyle)
 
   // ── Canvas interactions ────────────────────────────────────────────────────
   const canvas = useCanvasInteractions({
@@ -2391,12 +2413,14 @@ function ViewEditorInner({
     setClickConnectMode,
     clickConnectCursorPos,
     setClickConnectCursorPos,
+    onConnectorCreatePreviewActiveChange: setConnectorCreatePreviewActive,
     drawingMode, isMobileLayout,
     rfNodesRef, interactionNodesRef, rfEdgesRef, viewElementsRef, viewIdRef,
     incomingLinksRef,
     treeDataRef,
     navigateRef,
     containerRef,
+    gestureTargetRef: viewEditorCanvasRef,
     interactionSourceIdRef,
     multiConnectionSourceIdsRef,
     hoveredZoomRef, hoverPanLockedUntilRef,
@@ -2428,6 +2452,7 @@ function ViewEditorInner({
           const newConnector = await api.workspace.connectors.create(cid, {
             source_element_id: nextSourceId, target_element_id: targetElementId,
             source_handle: finalSourceHandle, target_handle: finalTargetHandle, direction: 'forward',
+            style: createConnectorStyle,
           })
           const connector = connectorToConnector(newConnector)
           upsertConnectorGraphSnapshot(connector)
@@ -2437,6 +2462,7 @@ function ViewEditorInner({
         handleUnsupportedMutation()
       } catch { /* intentionally empty */ }
     },
+    defaultConnectorStyle,
     existingElementIds, linksMapRef, parentLinksMapRef,
     openElementPanel: useCallback(() => openElementPanelRef.current(), []),
     closeElementPanel: useCallback(() => closeElementPanelRef.current(), []),
@@ -2463,12 +2489,20 @@ function ViewEditorInner({
     onPlacementRemoved: pushPlacementRemoveAction,
     onConnectorSaved: publishRealtimeConnectorUpsert,
     onConnectorUpdated: pushConnectorEditAction,
+    onConnectorReconnected: useCallback((connector: Connector) => {
+      setSuppressedSelectedConnectorHandleHighlightId(connector.id)
+    }, []),
+    onConnectorSelected: useCallback(() => {
+      setSuppressedSelectedConnectorHandleHighlightId(null)
+    }, []),
     onConnectorDeleted: pushConnectorDeleteAction,
     onSelectionRemoveFromView: handleBulkRemoveFromView,
     onUnsupportedMutation: handleUnsupportedMutation,
     handleUpdateTags,
     drawingCanvasRef,
     snapToGrid,
+    minZoom: computedMinZoom,
+    maxZoom: VIEW_EDITOR_MAX_ZOOM,
     libraryOpen,
     openLibrary: useCallback(() => setLibraryOpen(true), []),
     toggleLibrary: useCallback(() => setLibraryOpen((v) => !v), []),
@@ -2538,11 +2572,15 @@ function ViewEditorInner({
     if (Object.keys(hiddenProxyCountsByPair).length === 0) return rfEdges
 
     let changed = false
+    const badgePairs = new Set<string>()
     const next = rfEdges.map((edge) => {
       const pairKey = canonicalNodePairKey(edge.source, edge.target)
-      const proxyBadgeCount = hiddenProxyCountsByPair[pairKey] ?? 0
+      const rawProxyBadgeCount = hiddenProxyCountsByPair[pairKey] ?? 0
+      const showProxyBadge = rawProxyBadgeCount > 0 && !badgePairs.has(pairKey)
+      if (rawProxyBadgeCount > 0) badgePairs.add(pairKey)
+      const proxyBadgeCount = showProxyBadge ? rawProxyBadgeCount : 0
       const currentBadgeCount = (edge.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount ?? 0
-      const proxyBadgeDetails = hiddenProxyDetailsByPair[pairKey] ?? null
+      const proxyBadgeDetails = showProxyBadge ? (hiddenProxyDetailsByPair[pairKey] ?? null) : null
       const currentBadgeDetails = (edge.data as { proxyBadgeDetails?: ProxyConnectorDetails | null } | undefined)?.proxyBadgeDetails ?? null
       if (proxyBadgeCount === currentBadgeCount && proxyBadgeDetails === currentBadgeDetails) return edge
       changed = true
@@ -2742,7 +2780,7 @@ function ViewEditorInner({
 
   const pendingPreviewEdges = useMemo((): RFEdge[] => {
     const pending = canvas.pendingElement
-    if (!pending || pending.preview || !pendingElementNode || pending.sourceElementIds.length === 0) return []
+    if (!pending || !pendingElementNode || pending.sourceElementIds.length === 0) return []
 
     return pending.sourceElementIds
       .filter((sourceId) => sourceId !== -1)
@@ -2751,13 +2789,18 @@ function ViewEditorInner({
         const handles = sourceNode
           ? findClosestHandles(sourceNode, pendingElementNode)
           : { sourceHandle: DEFAULT_SOURCE_HANDLE_SIDE, targetHandle: DEFAULT_TARGET_HANDLE_SIDE }
+        const pendingSourceSide = getLogicalHandleId(pending.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
+        const previewTargetHandle = pending.sourceHandle && pendingSourceSide
+          ? getOppositeHandleSide(pendingSourceSide)
+          : handles.targetHandle
         return {
           id: `pending-element-edge-${sourceId}`,
           source: String(sourceId),
           target: pending.id,
-          sourceHandle: ensureVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
-          targetHandle: ensureVisualHandleId(handles.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
-          type: 'default',
+          sourceHandle: getCenterVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
+          targetHandle: getCenterVisualHandleId(previewTargetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
+          type: previewConnectorStyle === 'bezier' ? 'default' : previewConnectorStyle,
+          className: 'vieweditor-temporary-connector',
           label: '',
           data: {
             id: -sourceId,
@@ -2768,28 +2811,22 @@ function ViewEditorInner({
             description: null,
             relationship: null,
             direction: 'forward',
-            style: 'bezier',
+            style: previewConnectorStyle,
             url: null,
             source_handle: pending.sourceHandle ?? handles.sourceHandle,
-            target_handle: handles.targetHandle,
+            target_handle: previewTargetHandle,
             tags: [],
             created_at: '',
             updated_at: '',
           },
-          style: {
-            stroke: 'var(--accent)',
-            strokeWidth: 2,
-            opacity: 0.55,
-            pointerEvents: 'none',
-            strokeDasharray: '6 5',
-          },
-          labelStyle: { fontSize: 11, fill: 'var(--accent)', opacity: 0.55 },
-          labelBgStyle: { fill: 'var(--chakra-colors-gray-900)', fillOpacity: 0.55 },
+          style: TEMPORARY_CONNECTOR_EDGE_STYLE,
+          labelStyle: { fontSize: 11, fill: 'var(--accent)', opacity: 1 },
+          labelBgStyle: { fill: 'var(--chakra-colors-gray-900)', fillOpacity: 1 },
           markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'var(--accent)' },
           zIndex: 1500,
         }
       })
-  }, [canvas.pendingElement, pendingElementNode, rfNodes, viewId])
+  }, [canvas.pendingElement, pendingElementNode, previewConnectorStyle, rfNodes, viewId])
 
   const flowEdges = useMemo(() => {
     const baseEdges = contextConnectors.length === 0
@@ -2895,6 +2932,7 @@ function ViewEditorInner({
     showAddingElementAt,
     cancelPendingElement,
     onEdgesChange, onNodeDragStart, onNodeDrag, onNodeDragStop,
+    onSelectionDragStart, onSelectionDrag, onSelectionDragStop,
     onConnect, onConnectStart, onConnectEnd,
     onReconnect, onReconnectStart, onReconnectEnd,
     onEdgeClick, onEdgeContextMenu, onPaneClick, onPaneContextMenu, onPaneMouseMove,
@@ -2903,6 +2941,10 @@ function ViewEditorInner({
     onContainerPointerDown, onContainerPointerMove, onContainerPointerUp,
     onDragOver, onDrop, onWheelCapture,
   } = canvas
+  const connectionLineStyle = useMemo(() => {
+    if (!pendingElement?.preview) return TEMPORARY_CONNECTOR_PATH_STYLE
+    return { ...TEMPORARY_CONNECTOR_PATH_STYLE, opacity: 0 }
+  }, [pendingElement?.preview])
 
   const handleRealtimeCanvasMouseMove = useCallback((event: React.MouseEvent) => {
     const flowPos = screenToFlowPositionRef.current({ x: event.clientX, y: event.clientY })
@@ -2934,7 +2976,6 @@ function ViewEditorInner({
   // ── FitView ────────────────────────────────────────────────────────────────
   const fitViewRef = useRef(safeFitView)
   fitViewRef.current = safeFitView
-  const [computedMinZoom, setComputedMinZoom] = useState(VIEW_EDITOR_MIN_ZOOM_FLOOR)
   const [computedTranslateExtent, setComputedTranslateExtent] = useState<[[number, number], [number, number]] | undefined>(undefined)
   const {
     clampedRevealProgress,
@@ -3121,6 +3162,41 @@ function ViewEditorInner({
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [drawingMode, handleUndo, handleRedo, setDrawingTool])
+
+  // ── Keyboard shortcuts for view edits ─────────────────────────────────────
+  useEffect(() => {
+    if (drawingMode) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || isEditableKeyboardTarget(e.target) || !isCanvasKeyboardTarget(e.target)) return
+
+      const key = e.key.toLowerCase()
+      const isModifierShortcut = e.metaKey || e.ctrlKey
+      const isRedoShortcut = isModifierShortcut && !e.altKey && (
+        (key === 'z' && e.shiftKey) ||
+        (key === 'y' && !e.metaKey)
+      )
+      const isUndoShortcut = isModifierShortcut && !e.altKey && key === 'z' && !e.shiftKey
+
+      if (isRedoShortcut && canRedoViewEdit) {
+        e.preventDefault()
+        void handleRedoViewEdit()
+        return
+      }
+
+      if (isUndoShortcut && canUndoViewEdit) {
+        e.preventDefault()
+        void handleUndoViewEdit()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [
+    canRedoViewEdit,
+    canUndoViewEdit,
+    drawingMode,
+    handleRedoViewEdit,
+    handleUndoViewEdit,
+  ])
 
   // ── V shortcut to open View Details ────────────────────────────────────────
   useEffect(() => {
@@ -3797,7 +3873,9 @@ function ViewEditorInner({
             )}
 
             <Box
+              ref={viewEditorCanvasRef}
               data-testid="vieweditor-canvas"
+              data-connector-preview-active={isConnectorCreatePreviewActive || !!canvas.handleReconnectDrag || !!clickConnectMode || interactionSourceId !== null ? 'true' : undefined}
               position="relative"
               w="full"
               h="full"
@@ -3824,24 +3902,28 @@ function ViewEditorInner({
                 onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
                 onConnect={onConnect} onConnectStart={onConnectStart} onConnectEnd={onConnectEnd}
                 onNodeDragStart={onNodeDragStart} onNodeDrag={onNodeDrag} onNodeDragStop={onNodeDragStop}
+                onSelectionDragStart={onSelectionDragStart} onSelectionDrag={onSelectionDrag} onSelectionDragStop={onSelectionDragStop}
                 onEdgeClick={onEdgeClick} onEdgeContextMenu={onEdgeContextMenu}
                 onPaneContextMenu={onPaneContextMenu} onPaneClick={onPaneClick}
                 onPaneMouseMove={handleRealtimePaneMouseMove}
                 onMoveStart={onMoveStart} onMove={handleRealtimeMove} onMoveEnd={onMoveEnd}
-                translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={4}
+                translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={VIEW_EDITOR_MAX_ZOOM}
                 onReconnect={onReconnect} onReconnectStart={onReconnectStart} onReconnectEnd={onReconnectEnd}
-                connectionLineStyle={CONNECTOR_DRAG_CONNECTION_LINE_STYLE}
+                connectionLineStyle={connectionLineStyle}
+                connectionLineType={previewConnectorStyle as ConnectionLineType}
+                connectionLineComponent={ViewConnectorConnectionLine}
                 nodeTypes={nodeTypesMemo} edgeTypes={edgeTypesMemo}
                 nodesDraggable={canEdit} connectionMode={ConnectionMode.Loose} connectionRadius={25}
                 edgesUpdatable={canEdit} reconnectRadius={0}
                 snapToGrid={snapToGrid}
                 snapGrid={SNAP_GRID}
                 deleteKeyCode={null}
+                connectOnClick={false}
                 onlyRenderVisibleElements
                 autoPanOnNodeDrag={false}
                 selectionOnDrag={canEdit && !drawingMode}
                 panOnDrag={drawingMode ? false : canEdit ? [1, 2] : true}
-                panOnScroll={!isMobileLayout} panOnScrollSpeed={1.2} panOnScrollMode={PanOnScrollMode.Free}
+                panOnScroll={enableCanvasWheelPan} panOnScrollSpeed={1.2} panOnScrollMode={PanOnScrollMode.Free}
                 zoomOnScroll={false} zoomOnPinch
               >
                 <SafeBackground variant={BackgroundVariant.Dots} gap={16} color="#2D3748" size={1} />
@@ -3884,6 +3966,7 @@ function ViewEditorInner({
             <EditorOverlays
               clickConnectMode={clickConnectMode}
               clickConnectCursorPos={clickConnectCursorPos}
+              connectorRouteStyle={previewConnectorStyle}
               handleReconnectDrag={canvas.handleReconnectDrag}
               rfNodes={flowNodes}
             />
@@ -3906,6 +3989,7 @@ function ViewEditorInner({
                 zIndex={2000}
               >
                 <Input
+                  data-testid="drawing-text-input"
                   autoFocus
                   variant="unstyled"
                   bg="var(--bg-panel)"

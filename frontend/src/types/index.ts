@@ -182,6 +182,7 @@ export interface ViewTreeNode {
   created_at: string
   updated_at: string
   parent_view_id: number | null
+  markdown?: ViewMarkdownDocument | null
   children: ViewTreeNode[]
 }
 

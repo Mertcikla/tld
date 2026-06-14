@@ -44,6 +44,7 @@ export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
   onImport: () => void
   onExport: () => void
   onCopyMermaid?: () => void
+  onExportMermaid?: () => void
   onShare?: () => void
   focusMode: boolean
   onFocusModeChange: (enabled: boolean) => void
@@ -97,6 +98,7 @@ function ViewFloatingMenu({
   onImport,
   onExport,
   onCopyMermaid,
+  onExportMermaid,
   focusMode,
   onFocusModeChange,
   densityLevel = 0,
@@ -183,7 +185,7 @@ function ViewFloatingMenu({
         {(canUndo || canRedo) && (
           <>
             {canUndo && (
-              <Tooltip label="Undo" placement="top" openDelay={200}>
+              <Tooltip label="Undo (Cmd/Ctrl+Z)" placement="top" openDelay={200}>
                 <IconButton
                   aria-label="Undo"
                   icon={<UndoSvg size={16} />}
@@ -204,7 +206,7 @@ function ViewFloatingMenu({
             )}
 
             {canRedo && (
-              <Tooltip label="Redo" placement="top" openDelay={200}>
+              <Tooltip label="Redo (Cmd/Ctrl+Shift+Z)" placement="top" openDelay={200}>
                 <IconButton
                   aria-label="Redo"
                   icon={<RedoSvg size={16} />}
@@ -653,7 +655,22 @@ function ViewFloatingMenu({
                 </Button>
               )}
 
-
+              {onExportMermaid && (
+                <Button
+                  data-testid="vieweditor-toolbar-export-mermaid"
+                  variant="ghost"
+                  h="28px"
+                  px={2.5}
+                  color="gray.300"
+                  leftIcon={<ExportIcon size={14} />}
+                  isDisabled={disableImportExport}
+                  _disabled={{ opacity: 0.35, cursor: 'not-allowed' }}
+                  _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+                  onClick={onExportMermaid}
+                >
+                  <Text fontSize="11px" fontWeight="normal">Export Mermaid</Text>
+                </Button>
+              )}
 
               {shareSlot}
               {toolbarSlot}

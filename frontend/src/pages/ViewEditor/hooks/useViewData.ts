@@ -24,7 +24,9 @@ interface ViewDataOptions {
   viewId: number | null
   interactionSourceId: number | null
   clickConnectMode: { sourceNodeId: string; sourceHandle: string; targetHandle?: string } | null
+  isConnectorCreatePreviewActive?: boolean
   selectedConnector: Connector | null
+  suppressSelectedConnectorHandleHighlight?: boolean
   activeTags: string[]
   hiddenLayerTags: string[]
   hoveredLayerTags: string[] | null
@@ -165,7 +167,9 @@ export function useViewData({
   viewId,
   interactionSourceId,
   clickConnectMode,
+  isConnectorCreatePreviewActive = false,
   selectedConnector,
+  suppressSelectedConnectorHandleHighlight = false,
   activeTags,
   hiddenLayerTags,
   hoveredLayerTags,
@@ -391,8 +395,10 @@ export function useViewData({
       targetDraft.reconnect.push({ handleId: layout.targetHandle, edgeId, endpoint: 'target', selected: isSelected })
 
       if (isSelected) {
-        sourceDraft.selected.add(layout.sourceHandle)
-        targetDraft.selected.add(layout.targetHandle)
+        if (!suppressSelectedConnectorHandleHighlight) {
+          sourceDraft.selected.add(layout.sourceHandle)
+          targetDraft.selected.add(layout.targetHandle)
+        }
         sourceDraft.highlighted = true
         targetDraft.highlighted = true
       }
@@ -430,7 +436,7 @@ export function useViewData({
     }
     connectionMetaCacheRef.current = next
     return next
-  }, [connectorLayouts, selectedEdgeId])
+  }, [connectorLayouts, selectedEdgeId, suppressSelectedConnectorHandleHighlight])
 
   // ── Derive RF nodes ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -441,6 +447,7 @@ export function useViewData({
       const activeSet = activeTags.length > 0 ? new Set(activeTags) : null
       const hoveredSet = hoveredLayerTags !== null ? new Set(hoveredLayerTags) : null
       const isClickConnectMode = clickConnectMode !== null
+      const isCreateConnectMode = isConnectorCreatePreviewActive || isClickConnectMode || interactionSourceId !== null
       const versionElementChanges = versionPreview?.elementChanges
       const versionElementLineDeltas = versionPreview?.elementLineDeltas
       const versionActive = !!versionPreview
@@ -504,6 +511,7 @@ export function useViewData({
           existing.data.parentViewId === parentViewId &&
           existing.data.interactionSourceId === interactionSourceId &&
           existing.data.isClickConnectMode === isClickConnectMode &&
+          existing.data.isCreateConnectMode === isCreateConnectMode &&
           existing.data.tagColors === tagColors &&
           existing.data.layerHighlightColor === layerHighlightColor &&
           existing.data.forceShowTagPopup === isLayerHighlighted &&
@@ -535,7 +543,7 @@ export function useViewData({
             parentViewId,
             onZoomIn: stableOnZoomIn,
             onZoomOut: stableOnZoomOut,
-            onNavigateToView: stableOnNavigateToView,
+            onNavigateToDiagram: stableOnNavigateToView,
             onSelect: stableOnSelect,
             onOpenCodePreview: stableOnOpenCodePreview,
             onInteractionStart: stableOnInteractionStart,
@@ -546,6 +554,7 @@ export function useViewData({
             isZoomHovered,
             interactionSourceId,
             isClickConnectMode,
+            isCreateConnectMode,
             tagColors,
             layerHighlightColor,
             forceShowTagPopup: isLayerHighlighted,
@@ -561,7 +570,7 @@ export function useViewData({
     })
   }, [
     viewElements, linksMap, parentLinksMap, viewParentLinks, parentViewId,
-    interactionSourceId, clickConnectMode,
+    interactionSourceId, clickConnectMode, isConnectorCreatePreviewActive,
     stableOnZoomIn, stableOnZoomOut, stableOnNavigateToView, stableOnSelect,
     stableOnInteractionStart, stableOnConnectTo, stableOnStartHandleReconnect, stableOnRemoveElement, stableOnHoverZoom,
     stableOnOpenCodePreview, hoveredZoomRef, activeTags, hiddenLayerTags, hoveredLayerTags, hoveredLayerColor, tagColors,

@@ -267,6 +267,7 @@ export function ExploreToolbar({
       <HStack spacing={0}>
         <Tooltip label="Fit View" placement="top" openDelay={200}>
           <Button
+            data-testid="zui-fit-view"
             variant="ghost" h="28px" px={2.5}
             color="gray.300"
             _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
@@ -303,6 +304,7 @@ export function ExploreToolbar({
             >
               <PopoverTrigger>
                 <Button
+                  data-testid="zui-tags-button"
                   variant="ghost" h="28px" px={2.5}
                   color={isTagsOpen ? 'var(--accent)' : 'gray.300'}
                   _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
@@ -316,6 +318,7 @@ export function ExploreToolbar({
               </PopoverTrigger>
               <Portal>
                 <PopoverContent
+                  data-testid="zui-tags-panel"
                   data-zui-native-wheel="true"
                   bg="glass.bg"
                   backdropFilter="blur(16px)"

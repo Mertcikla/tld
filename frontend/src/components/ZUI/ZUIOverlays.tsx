@@ -96,6 +96,7 @@ export function ZUIBreadcrumb({
   if (!initialized || currentPath.length === 0) return null
   return (
     <Box
+      data-testid="zui-breadcrumb"
       position="absolute"
       top={isMobileLayout ? '66px' : 4}
       left={4}
@@ -190,6 +191,7 @@ export function ZUIHoverPopover({
       </PopoverTrigger>
       <Portal>
         <PopoverContent
+          data-testid="zui-hover-popover"
           bg="glass.bg"
           border="1px solid"
           borderColor="glass.border"

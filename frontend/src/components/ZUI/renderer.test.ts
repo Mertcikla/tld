@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createNodeScreenState, type SceneNode } from './sceneGraph'
-import { nodeConnectorEndpointAlphaFromState, shouldDrawConnectorDetailLabel } from './renderer'
+import { edgeLabelDrawRectFromCenter, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, shouldDrawConnectorDetailLabel } from './renderer'
 import type { LayoutNode } from './types'
 
 function layoutNode(id: string, elementId: number, children: LayoutNode[] = []): LayoutNode {
@@ -67,5 +67,16 @@ describe('shouldDrawConnectorDetailLabel', () => {
     expect(shouldDrawConnectorDetailLabel('bidirectional', 121, 80)).toBe(true)
     expect(shouldDrawConnectorDetailLabel('none', 80, 120)).toBe(false)
     expect(shouldDrawConnectorDetailLabel('none', 121, 80)).toBe(true)
+  })
+})
+
+describe('edge label positioning', () => {
+  it('draws the label box centered on the picked connector point', () => {
+    const matrix = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 } as DOMMatrix
+    const labelCenter = pickEdgeLabelPosition(matrix, 100, 50, 40, 20, 120, 0, [])
+    const labelRect = edgeLabelDrawRectFromCenter(labelCenter, 40, 20)
+
+    expect(labelCenter).toEqual({ x: 100, y: 50 })
+    expect(labelRect).toEqual({ x: 80, y: 40, width: 40, height: 20 })
   })
 })

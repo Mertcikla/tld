@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -18,7 +19,9 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/watch"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
 
@@ -257,7 +260,17 @@ func serveStatic(static fs.FS, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if os.Getenv("DEV") == "true" {
+	cleaned := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+	if cleaned == "" {
+		cleaned = "index.html"
+	}
+
+	if serveDynamicIconAsset(cleaned, w) {
+		return
+	}
+
+	isIconAssetRequest := strings.HasPrefix(cleaned, "icons/")
+	if os.Getenv("DEV") == "true" && !isIconAssetRequest {
 		target, err := url.Parse("http://localhost:5173")
 		if err == nil {
 			httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
@@ -265,14 +278,11 @@ func serveStatic(static fs.FS, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cleaned := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-	if cleaned == "" {
-		cleaned = "index.html"
-	}
-
 	tryPaths := []string{
 		path.Join("frontend/dist", cleaned),
-		"frontend/dist/index.html",
+	}
+	if !isIconAssetRequest {
+		tryPaths = append(tryPaths, "frontend/dist/index.html")
 	}
 	for _, candidate := range tryPaths {
 		data, encoding, err := readStaticAsset(static, candidate, r.Header.Get("Accept-Encoding"))
@@ -289,6 +299,51 @@ func serveStatic(static fs.FS, w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+func serveDynamicIconAsset(cleaned string, w http.ResponseWriter) bool {
+	switch {
+	case cleaned == "icons.json":
+		data, err := tech.CatalogJSON()
+		if err != nil {
+			http.Error(w, "technology catalog unavailable", http.StatusInternalServerError)
+			return true
+		}
+		w.Header().Set("Content-Type", contentType(cleaned))
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(data)
+		return true
+	case strings.HasPrefix(cleaned, "icons/"):
+		filename := strings.TrimPrefix(cleaned, "icons/")
+		if !isSafeDynamicIconFilename(filename) {
+			return false
+		}
+		configDir, err := workspace.ConfigDir()
+		if err != nil {
+			return false
+		}
+		data, err := os.ReadFile(filepath.Join(configDir, "icons", "icons", filename))
+		if err != nil {
+			return false
+		}
+		w.Header().Set("Content-Type", contentType(filename))
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(data)
+		return true
+	default:
+		return false
+	}
+}
+
+func isSafeDynamicIconFilename(filename string) bool {
+	if filename == "" || strings.ContainsAny(filename, "/\\:\x00") {
+		return false
+	}
+	if filename != path.Base(filename) || filename != filepath.Base(filename) {
+		return false
+	}
+	ext := strings.ToLower(path.Ext(filename))
+	return ext == ".svg" || ext == ".png"
 }
 
 func readStaticAsset(static fs.FS, candidate, acceptEncoding string) ([]byte, string, error) {
