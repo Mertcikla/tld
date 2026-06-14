@@ -128,6 +128,10 @@ export async function getTechnologyCatalogIndex(): Promise<TechnologyCatalogInde
   return indexPromise
 }
 
+export function invalidateTechnologyCatalog(): void {
+  indexPromise = null
+}
+
 export async function searchTechnologyCatalog(query: string, maxResults = 12): Promise<TechnologyCatalogItem[]> {
   const normalizedQuery = query.trim()
   if (!normalizedQuery) return []

@@ -134,6 +134,8 @@ function sanitizePathSegment(value: string) {
 
 function spawnServer(port: number, dataDir: string, logPath: string) {
   const binary = process.env.TLD_E2E_BINARY || 'tld'
+  const configDir = join(dataDir, 'config')
+  mkdirSync(configDir, { recursive: true })
   const log = createWriteStream(logPath, { flags: 'a' })
   const child = spawn(binary, [
     'serve',
@@ -148,6 +150,7 @@ function spawnServer(port: number, dataDir: string, logPath: string) {
     cwd: repoRoot,
     env: {
       ...process.env,
+      TLD_CONFIG_DIR: configDir,
       TLD_SKIP_STARTUP_UPDATE: '1',
     },
     stdio: ['ignore', 'pipe', 'pipe'],

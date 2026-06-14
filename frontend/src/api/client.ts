@@ -11,6 +11,7 @@ import type {
   NoiseGateInitialization,
   PlacedElement,
   Tag,
+  TechnologyCatalogItem,
   ThreadResolveEvent,
   View,
   ViewComment,
@@ -33,6 +34,7 @@ import {
   GetElementResponseSchema,
   CreateElementResponseSchema,
   UpdateElementResponseSchema,
+  CreateCustomTechnologyResponseSchema,
   ListElementPlacementsResponseSchema,
   ListPlacementsResponseSchema,
   CreatePlacementResponseSchema,
@@ -601,6 +603,20 @@ export function protoDiagramPlacement(p: Record<string, unknown>): ViewPlacement
   }
 }
 
+function protoTechnologyCatalogItem(raw: Record<string, unknown>): TechnologyCatalogItem {
+  return {
+    iconUrl: String(raw.icon_url ?? raw.iconUrl ?? ''),
+    name: String(raw.name ?? ''),
+    provider: typeof (raw.provider ?? undefined) === 'string' ? String(raw.provider) : undefined,
+    docsUrl: typeof (raw.docs_url ?? raw.docsUrl ?? undefined) === 'string' ? String(raw.docs_url ?? raw.docsUrl) : undefined,
+    description: typeof (raw.description ?? undefined) === 'string' ? String(raw.description) : undefined,
+    websiteUrl: typeof (raw.website_url ?? raw.websiteUrl ?? undefined) === 'string' ? String(raw.website_url ?? raw.websiteUrl) : undefined,
+    nameShort: String(raw.name_short ?? raw.nameShort ?? ''),
+    defaultSlug: String(raw.default_slug ?? raw.defaultSlug ?? ''),
+    aliases: Array.isArray(raw.aliases) ? raw.aliases.map(String) : undefined,
+  }
+}
+
 export function protoLayer(l: Record<string, unknown>): ViewLayer {
   return {
     id: Number(l.id ?? 0),
@@ -631,6 +647,30 @@ export const api = {
       if (prefs.background_color) localStorage.setItem('diag:background-color', prefs.background_color)
       if (prefs.element_color) localStorage.setItem('diag:element-color', prefs.element_color)
     },
+  },
+
+  technology: {
+    createCustom: (data: {
+      name: string
+      name_short?: string
+      aliases?: string[]
+      icon: Uint8Array
+      media_type: string
+      preferred_slug?: string
+    }): Promise<TechnologyCatalogItem> =>
+      rpc(async () => {
+        const res = await workspaceClient.createCustomTechnology({
+          name: data.name,
+          nameShort: data.name_short || undefined,
+          aliases: data.aliases ?? [],
+          icon: data.icon,
+          mediaType: data.media_type,
+          preferredSlug: data.preferred_slug || undefined,
+        } as Parameters<typeof workspaceClient.createCustomTechnology>[0])
+        const json = j<{ item?: Record<string, unknown> }>(CreateCustomTechnologyResponseSchema, res)
+        if (!json.item) throw new Error('Custom technology response was empty')
+        return protoTechnologyCatalogItem(json.item)
+      }),
   },
 
   elements: {

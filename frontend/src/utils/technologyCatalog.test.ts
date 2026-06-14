@@ -66,4 +66,30 @@ describe('technology catalog', () => {
 
     await expect(catalog.getTechnologyCatalogItemBySlug('golang')).resolves.toBe(custom)
   })
+
+  it('invalidates the cached catalog index', async () => {
+    const first: TechnologyCatalogItem = {
+      iconUrl: '/icons/first.svg',
+      name: 'First',
+      nameShort: 'First',
+      defaultSlug: 'first',
+    }
+    const second: TechnologyCatalogItem = {
+      iconUrl: '/icons/second.svg',
+      name: 'Second',
+      nameShort: 'Second',
+      defaultSlug: 'second',
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => [first] } as Response)
+      .mockResolvedValueOnce({ ok: true, json: async () => [second] } as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const catalog = await import('./technologyCatalog')
+
+    await expect(catalog.getTechnologyCatalogItemBySlug('first')).resolves.toBe(first)
+    catalog.invalidateTechnologyCatalog()
+    await expect(catalog.getTechnologyCatalogItemBySlug('second')).resolves.toBe(second)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 })
