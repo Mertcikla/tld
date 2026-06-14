@@ -53,7 +53,7 @@ describe('MermaidPreview', () => {
     const syncedStatus = renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--synced' })
     expect(syncedStatus.type).toBe('button')
     expect(syncedStatus.props.type).toBe('button')
-    expect(syncedStatus.props['aria-label']).toBe('Current view Mermaid block is synced')
+    expect(syncedStatus.props['aria-label']).toBe('Mermaid block is synced')
     expect(syncedStatus.props.disabled).toBe(true)
     expect(syncedStatus.findByType('svg')).toBeTruthy()
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('unlinked')
@@ -84,7 +84,7 @@ describe('MermaidPreview', () => {
     const staleStatus = renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--stale' })
     expect(staleStatus.type).toBe('button')
     expect(staleStatus.props.type).toBe('button')
-    expect(staleStatus.props['aria-label']).toBe('Update current view Mermaid block')
+    expect(staleStatus.props['aria-label']).toBe('Update Mermaid block')
     expect(staleStatus.props.disabled).toBe(false)
     expect(staleStatus.findByType('svg')).toBeTruthy()
     act(() => {

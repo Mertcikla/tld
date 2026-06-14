@@ -9,7 +9,7 @@ import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror'
 import type { MermaidMarkdownBlock, MermaidMarkdownSyncStatus } from '../../api/client'
 import { isWailsApp } from '../../config/runtime'
 import type { ViewMarkdownDocument } from '../../types'
-import { CloseIcon, ReloadIcon, SaveIcon } from '../Icons'
+import { CloseIcon, ReloadIcon, SaveIcon, NavigationIcon } from '../Icons'
 import { MarkdownPreview } from './MarkdownPreview'
 import type { MermaidMarkdownSyncOptions } from './hooks/useMermaidMarkdownSync'
 import { MermaidMarkdownContext, type MermaidMarkdownContextValue } from './mermaidContext'
@@ -50,17 +50,17 @@ const markdownExtensions = [
 ]
 
 function syncLabel(status: MermaidMarkdownSyncStatus | null) {
-  if (status === 'synced') return 'Current view Mermaid block is synced. Click to scroll to it.'
-  if (status === 'stale') return 'Current view Mermaid block is stale. Click to scroll to it.'
-  if (status === null) return 'Checking current view Mermaid block'
-  return 'Insert current view as Mermaid block'
+  if (status === 'synced') return 'Mermaid block is synced. Click to scroll'
+  if (status === 'stale') return 'Mermaid block is stale. Click to scroll'
+  if (status === null) return 'Checking Mermaid block'
+  return 'Insert as Mermaid block'
 }
 
 function syncButtonIcon(status: MermaidMarkdownSyncStatus | null) {
   if (status === 'synced') return <CheckCircleIcon />
   if (status === 'stale') return <WarningIcon />
   if (status === null) return <RepeatIcon />
-  return <AddIcon />
+  return <NavigationIcon />
 }
 
 export function MarkdownEditor({
@@ -212,11 +212,11 @@ export function MarkdownEditor({
                   </Box>
                 </Tooltip>
                 {mermaidSyncStatus === 'stale' && (
-                  <Tooltip label="Update current view Mermaid block" hasArrow openDelay={200}>
+                  <Tooltip label="Update Mermaid block" hasArrow openDelay={200}>
                     <Box as="span">
                       <IconButton
                         data-testid="markdown-update-view-mermaid-button"
-                        aria-label="Update current view Mermaid block"
+                        aria-label="Update Mermaid block"
                         size="xs"
                         variant="ghost"
                         className="tld-markdown-sync-update"

@@ -83,8 +83,8 @@ function initializeMermaid(mermaid: MermaidApi) {
 }
 
 function statusLabel(status: string) {
-  if (status === 'synced') return 'Current view Mermaid block is synced'
-  if (status === 'stale') return 'Update current view Mermaid block'
+  if (status === 'synced') return 'Mermaid block is synced'
+  if (status === 'stale') return 'Update Mermaid block'
   if (status === 'other') return ''
   if (status === 'unlinked') return ''
   return 'Insert current view as Mermaid block'

@@ -27,7 +27,7 @@ export const markdownPanelBodySx: SystemStyleObject = {
   },
   '.tld-markdown-toolbar': {
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+    gridTemplateColumns: 'auto minmax(0, 1fr) auto auto',
     alignItems: 'center',
     gap: '0.5rem',
     borderBottom: '1px solid var(--chakra-colors-whiteAlpha-100)',
@@ -40,6 +40,7 @@ export const markdownPanelBodySx: SystemStyleObject = {
     overflow: 'hidden',
   },
   '.tld-markdown-mode': {
+    gridColumn: '1',
     justifySelf: 'start',
     flexShrink: 0,
     padding: '2px',
@@ -78,15 +79,22 @@ export const markdownPanelBodySx: SystemStyleObject = {
     boxShadow: '0 0 20px rgba(var(--accent-rgb), 0.5)',
   },
   '.tld-markdown-toolbar-center': {
-    justifySelf: 'center',
+    gridColumn: '3',
+    justifySelf: 'end',
     minWidth: 0,
     maxWidth: '100%',
   },
   '.tld-markdown-sync-group': {
+    display: 'flex',
+    alignItems: 'center',
+    borderRight: '1px solid var(--chakra-colors-whiteAlpha-200)',
+    paddingRight: '0.65rem',
+    marginRight: '0.65rem',
     maxWidth: '100%',
     minWidth: 0,
   },
   '.tld-markdown-toolbar-actions': {
+    gridColumn: '4',
     justifySelf: 'end',
     flexShrink: 0,
   },
@@ -94,12 +102,8 @@ export const markdownPanelBodySx: SystemStyleObject = {
     height: '32px',
     minWidth: '32px',
     width: '32px',
-    border: '1px solid var(--chakra-colors-whiteAlpha-100)',
-    borderRadius: 'var(--chakra-radii-md)',
+    borderRadius: 'var(--chakra-radii-full)',
     paddingInline: 0,
-    background: 'var(--chakra-colors-whiteAlpha-100)',
-    color: 'var(--chakra-colors-whiteAlpha-700)',
-    boxShadow: 'var(--chakra-shadows-panel-sm)',
     transition: 'all 0.2s var(--chakra-transitions-easing-pop)',
   },
   '.tld-markdown-sync-button svg': {
@@ -115,20 +119,14 @@ export const markdownPanelBodySx: SystemStyleObject = {
   '.tld-markdown-sync-button-missing': {
     color: 'var(--accent)',
     borderColor: 'var(--accent)',
-    background: 'var(--chakra-colors-whiteAlpha-200)',
-    boxShadow: 'var(--chakra-shadows-panel-sm)',
   },
   '.tld-markdown-sync-button-stale': {
     color: 'var(--accent)',
     borderColor: 'var(--accent)',
-    background: 'var(--chakra-colors-whiteAlpha-200)',
-    boxShadow: 'var(--chakra-shadows-panel-sm)',
   },
   '.tld-markdown-sync-button-synced': {
     color: 'var(--accent)',
     borderColor: 'var(--accent)',
-    background: 'var(--chakra-colors-whiteAlpha-200)',
-    boxShadow: 'var(--chakra-shadows-panel-sm)',
   },
   '.tld-markdown-sync-button-checking': {
     color: 'var(--chakra-colors-whiteAlpha-700)',
@@ -144,11 +142,8 @@ export const markdownPanelBodySx: SystemStyleObject = {
     minWidth: '32px',
     width: '32px',
     paddingInline: 0,
-    border: '1px solid var(--accent)',
     borderRadius: 'var(--chakra-radii-full)',
-    background: 'var(--chakra-colors-whiteAlpha-200)',
     color: 'var(--accent)',
-    boxShadow: 'var(--chakra-shadows-panel-sm)',
     transition: 'all 0.2s var(--chakra-transitions-easing-pop)',
   },
   '.tld-markdown-sync-update:hover': {
@@ -613,7 +608,7 @@ export const markdownPanelBodySx: SystemStyleObject = {
     '.tld-markdown-toolbar-center': {
       gridColumn: '1',
       gridRow: '2',
-      justifySelf: 'start',
+      justifySelf: 'end',
       minWidth: 0,
     },
     '.tld-markdown-toolbar-actions': {

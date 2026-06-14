@@ -227,7 +227,7 @@ describe('MarkdownEditor', () => {
     expect(onSave).not.toHaveBeenCalled()
   })
 
-  it('inserts the current view Mermaid block when it is missing', () => {
+  it('inserts the Mermaid block when it is missing', () => {
     const handleSyncMermaidBlock = vi.fn()
     const { renderer } = renderEditor({
       currentMermaidBlock: null,
@@ -262,7 +262,7 @@ describe('MarkdownEditor', () => {
 
     expect(syncButton.props.children).toBeUndefined()
     expect(syncButton.props.icon).toBeTruthy()
-    expect(syncButton.props['aria-label']).toBe('Current view Mermaid block is stale. Click to scroll to it.')
+    expect(syncButton.props['aria-label']).toBe('Mermaid block is stale. Click to scroll')
     expect(handleSyncMermaidBlock).not.toHaveBeenCalled()
     expect(codeMirrorMock.view.dispatch).toHaveBeenCalledWith(expect.objectContaining({ effects: 'scroll-effect' }))
     expect(codeMirrorMock.view.focus).toHaveBeenCalled()
@@ -281,7 +281,7 @@ describe('MarkdownEditor', () => {
 
     expect(syncButton.props.children).toBeUndefined()
     expect(syncButton.props.icon).toBeTruthy()
-    expect(syncButton.props['aria-label']).toBe('Current view Mermaid block is synced. Click to scroll to it.')
+    expect(syncButton.props['aria-label']).toBe('Mermaid block is synced. Click to scroll')
     expect(syncButton.props.isDisabled).toBe(false)
   })
 
