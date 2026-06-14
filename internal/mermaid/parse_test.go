@@ -161,6 +161,46 @@ func connectorTexts(parsed *ParsedDiagram) []string {
 	return out
 }
 
+func TestParseFlowchartQuotedLabelsAndInlineTargetDefinition(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse(`flowchart LR
+  A["Checkout API Mutation"]
+  B["Checkout Orchestrator"]
+
+  C["manager"]
+  A -- "Submits order" --> B
+  A --> D["asd"]
+  C --> D`)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(parsed.Warnings) > 0 {
+		t.Fatalf("Parse() warnings = %v", parsed.Warnings)
+	}
+
+	wantNames := map[string]string{
+		"A": "Checkout API Mutation",
+		"B": "Checkout Orchestrator",
+		"C": "manager",
+		"D": "asd",
+	}
+	for _, element := range parsed.Elements {
+		if want, ok := wantNames[element.GetRef()]; ok {
+			if element.GetName() != want {
+				t.Fatalf("element %s name = %q, want %q", element.GetRef(), element.GetName(), want)
+			}
+			delete(wantNames, element.GetRef())
+		}
+	}
+	if len(wantNames) > 0 {
+		t.Fatalf("missing elements: %v", wantNames)
+	}
+	if !hasConnectorText(parsed, "Submits order") {
+		t.Fatalf("connector label/relationship does not contain %q: %v", "Submits order", connectorTexts(parsed))
+	}
+}
+
 func TestParseAppliesTldMetadataRefs(t *testing.T) {
 	t.Parallel()
 

@@ -121,12 +121,15 @@ func addElement(result *ParsedDiagram, ref, name, kind, description, technology 
 	if ref == "" {
 		return
 	}
+	cleanName := sanitizeLabel(name)
 	for _, element := range result.Elements {
 		if element.GetRef() == ref {
+			if cleanName != "" && element.GetName() == ref && cleanName != ref {
+				element.Name = cleanName
+			}
 			return
 		}
 	}
-	cleanName := sanitizeLabel(name)
 	if cleanName == "" {
 		cleanName = ref
 	}
@@ -177,7 +180,7 @@ func visitFlowchartStatements(result *ParsedDiagram, statements []mast.Statement
 	for _, statement := range statements {
 		switch item := statement.(type) {
 		case *mast.NodeDef:
-			addElement(result, item.ID, item.Label, "system", "", "")
+			addElement(result, item.ID, unwrapFlowchartNodeLabel(item.Label), "system", "", "")
 		case *mast.Link:
 			addElement(result, item.From, item.From, "system", "", "")
 			addElement(result, item.To, item.To, "system", "", "")
@@ -755,6 +758,14 @@ func sanitizeLabel(value string) string {
 	value = breakPattern.ReplaceAllString(value, " ")
 	value = tagPattern.ReplaceAllString(value, " ")
 	return strings.TrimSpace(regexp.MustCompile(`\s+`).ReplaceAllString(value, " "))
+}
+
+func unwrapFlowchartNodeLabel(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+		value = value[1 : len(value)-1]
+	}
+	return DecodeMermaidLabel(value)
 }
 
 func sanitizeRef(value string) string {
