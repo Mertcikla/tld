@@ -4216,6 +4216,7 @@ function ViewEditorInner({
                   onSaveAs={handleSaveMarkdownAs}
                   onOpenInEditor={window.__TLD_VSCODE__ ? handleOpenMarkdownInEditor : undefined}
                   onReload={handleReloadMarkdown}
+                  onNavigateToView={canvas.stableOnNavigateToView}
                 />
               </Box>
             </>

@@ -28,7 +28,7 @@ describe('MermaidPreview', () => {
     mermaidMocks.render.mockResolvedValue({ svg: '<svg role="img"><text>diagram</text></svg>' })
   })
 
-  it('renders Mermaid SVG previews and sync status', async () => {
+  it('renders Mermaid SVG previews with sync and view metadata', async () => {
     let renderer: ReturnType<typeof create>
     await act(async () => {
       renderer = create(
@@ -49,10 +49,12 @@ describe('MermaidPreview', () => {
     }))
     expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^tld-mermaid-/), 'flowchart TD\n  A --> B')
     expect(JSON.stringify(renderer!.toJSON())).toContain('diagram')
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__title' }).children).toEqual(['Mermaid'])
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--synced' }).children.join('')).toContain('synced')
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__meta' }).children.join('')).toContain('unlinked')
   })
 
-  it('uses the current view name when TLD metadata matches the active view', async () => {
+  it('shows current view metadata when TLD metadata matches the active view', async () => {
     const code = 'flowchart TD\n%% tld/v1 view=6\n  A --> B'
     let renderer: ReturnType<typeof create>
 
@@ -70,8 +72,60 @@ describe('MermaidPreview', () => {
       await flushPromises()
     })
 
-    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__title' }).children).toEqual(['Checkout'])
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__title' }).children).toEqual(['Mermaid'])
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--stale' }).children.join('')).toContain('stale')
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__meta' }).children.join('')).toContain('current view')
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'tld-mermaid-navigate-view' })).toHaveLength(0)
+  })
+
+  it('shows a navigate action for TLD Mermaid blocks linked to another view', async () => {
+    const code = 'flowchart TD\n%% tld/v1 view=9\n  A --> B'
+    const onNavigateToView = vi.fn()
+    let renderer: ReturnType<typeof create>
+
+    await act(async () => {
+      renderer = create(
+        <MermaidMarkdownContext.Provider value={{
+          blockStatusByCode: new Map([[code, 'other']]),
+          canEdit: true,
+          currentViewId: 6,
+          onNavigateToView,
+        }}>
+          <MermaidPreview code={code} />
+        </MermaidMarkdownContext.Provider>,
+      )
+      await flushPromises()
+    })
+
+    expect(renderer!.root.findByProps({ 'data-testid': 'tld-mermaid-preview' }).props['data-tld-view-id']).toBe(9)
+    const navigateButton = renderer!.root.findByProps({ 'data-testid': 'tld-mermaid-navigate-view' })
+    expect(navigateButton.children.join('')).toContain('Navigate to view')
+
+    act(() => {
+      navigateButton.props.onClick()
+    })
+
+    expect(onNavigateToView).toHaveBeenCalledWith(9)
+  })
+
+  it('does not show a navigate action for unlinked Mermaid blocks', async () => {
+    let renderer: ReturnType<typeof create>
+
+    await act(async () => {
+      renderer = create(
+        <MermaidMarkdownContext.Provider value={{
+          blockStatusByCode: new Map(),
+          canEdit: true,
+          currentViewId: 6,
+          onNavigateToView: vi.fn(),
+        }}>
+          <MermaidPreview code="flowchart TD\n  A --> B" />
+        </MermaidMarkdownContext.Provider>,
+      )
+      await flushPromises()
+    })
+
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'tld-mermaid-navigate-view' })).toHaveLength(0)
   })
 
   it('shows Mermaid render errors', async () => {

@@ -19,43 +19,72 @@ let mermaidRenderId = 0
 const tldMarkerPattern = /^%%[ \t]+tld\/v1(?:[ \t]+(.*))?$/
 const tldMarkerViewPattern = /(?:^|\s)(?:view|viewId)=([0-9]+)/
 
+function resolveCssColor(value: string, fallback: string) {
+  if (typeof document === 'undefined' || !document.body) return fallback
+
+  const probe = document.createElement('span')
+  probe.style.color = value || fallback
+  probe.style.display = 'none'
+  document.body.appendChild(probe)
+  const resolved = getComputedStyle(probe).color
+  probe.remove()
+
+  return resolved || fallback
+}
+
+function themeColor(cssVariable: string, fallback: string) {
+  if (typeof document === 'undefined') return fallback
+  const value = getComputedStyle(document.documentElement).getPropertyValue(cssVariable).trim()
+  return resolveCssColor(value, fallback)
+}
+
+function bodyTextColor() {
+  if (typeof document === 'undefined' || !document.body) return 'CanvasText'
+  return resolveCssColor(getComputedStyle(document.body).color, 'CanvasText')
+}
+
+function mermaidThemeVariables() {
+  const elementBackground = themeColor('--bg-element', 'Canvas')
+  const accent = themeColor('--accent', 'Highlight')
+  const text = bodyTextColor()
+
+  return {
+    background: 'transparent',
+    mainBkg: elementBackground,
+    primaryColor: elementBackground,
+    primaryTextColor: text,
+    primaryBorderColor: accent,
+    lineColor: accent,
+    edgeLabelBackground: 'transparent',
+    textColor: text,
+    fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
+  }
+}
+
 function getMermaidApi() {
   if (!mermaidApiPromise) {
     mermaidApiPromise = import('mermaid').then((module) => {
       const mermaid = module.default
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: 'strict',
-        theme: 'base',
-        themeVariables: {
-          background: '#0d121e',
-          mainBkg: '#2d3748',
-          primaryColor: '#2d3748',
-          primaryTextColor: '#eff6ff',
-          primaryBorderColor: '#63b3ed',
-          lineColor: '#63b3ed',
-          secondaryColor: '#1f2937',
-          tertiaryColor: '#171923',
-          clusterBkg: '#1f2937',
-          clusterBorder: '#63b3ed',
-          edgeLabelBackground: '#171923',
-          nodeBorder: '#63b3ed',
-          textColor: '#eff6ff',
-          fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
-        },
-      })
       return mermaid
     })
   }
   return mermaidApiPromise
 }
 
+function initializeMermaid(mermaid: MermaidApi) {
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    theme: 'base',
+    themeVariables: mermaidThemeVariables(),
+  })
+}
 
 function statusLabel(status: string) {
   if (status === 'synced') return 'synced'
   if (status === 'stale') return 'stale'
   if (status === 'other') return 'linked elsewhere'
-  if (status === 'unlinked') return ' '
+  if (status === 'unlinked') return ''
   return 'not inserted'
 }
 
@@ -76,7 +105,7 @@ function viewLabel(blockViewId: number | null, isCurrentViewBlock: boolean) {
 }
 
 export function MermaidPreview({ code }: MermaidPreviewProps) {
-  const { blockStatusByCode, currentViewId, currentViewName } = useContext(MermaidMarkdownContext)
+  const { blockStatusByCode, currentViewId, onNavigateToView } = useContext(MermaidMarkdownContext)
   const blockIdRef = useRef(0)
   const [renderState, setRenderState] = useState<MermaidRenderState>(() => (
     code.trim() ? { status: 'loading', svg: '', error: null } : { status: 'empty', svg: '', error: null }
@@ -84,8 +113,9 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
   const syncStatus = blockStatusByCode.get(code) ?? 'unlinked'
   const blockViewId = tldViewIdLabel(code)
   const isCurrentViewBlock = blockViewId !== null && currentViewId !== null && blockViewId === currentViewId
-  const title = isCurrentViewBlock && currentViewName?.trim() ? currentViewName.trim() : 'Mermaid'
+  const syncStatusLabel = statusLabel(syncStatus)
   const blockViewLabel = viewLabel(blockViewId, isCurrentViewBlock)
+  const showNavigateToView = blockViewId !== null && !isCurrentViewBlock && !!onNavigateToView
 
   useEffect(() => {
     const trimmedCode = code.trim()
@@ -100,7 +130,10 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
     setRenderState({ status: 'loading', svg: '', error: null })
 
     void getMermaidApi()
-      .then((mermaid) => mermaid.render(`tld-mermaid-${blockIdRef.current}-${renderRun}`, code))
+      .then((mermaid) => {
+        initializeMermaid(mermaid)
+        return mermaid.render(`tld-mermaid-${blockIdRef.current}-${renderRun}`, code)
+      })
       .then(({ svg }) => {
         if (canceled) return
         setRenderState({ status: 'ready', svg, error: null })
@@ -120,13 +153,34 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
   }, [code])
 
   return (
-    <figure className={`tld-mermaid-preview tld-mermaid-preview--${syncStatus} ${isCurrentViewBlock ? 'tld-mermaid-preview--current-view' : ''}`}>
+    <figure
+      className={`tld-mermaid-preview tld-mermaid-preview--${syncStatus} ${isCurrentViewBlock ? 'tld-mermaid-preview--current-view' : ''}`}
+      data-testid="tld-mermaid-preview"
+      data-tld-view-id={blockViewId ?? undefined}
+      data-tld-current-view={isCurrentViewBlock ? 'true' : undefined}
+    >
       <figcaption className="tld-mermaid-preview__header">
-        <span className="tld-mermaid-preview__title">{title}</span>
-        <span className={`tld-mermaid-preview__status tld-mermaid-preview__status--${syncStatus}`}>
-          {statusLabel(syncStatus)}
+        <span className="tld-mermaid-preview__title">Mermaid</span>
+        <span className="tld-mermaid-preview__metadata">
+          {syncStatusLabel && (
+            <span className={`tld-mermaid-preview__status tld-mermaid-preview__status--${syncStatus}`}>
+              {syncStatusLabel}
+            </span>
+          )}
+          <span className="tld-mermaid-preview__meta">{blockViewLabel}</span>
         </span>
-        <span className="tld-mermaid-preview__meta">{blockViewLabel}</span>
+        {showNavigateToView && (
+          <button
+            type="button"
+            className="tld-mermaid-preview__navigate"
+            data-testid="tld-mermaid-navigate-view"
+            onClick={() => {
+              if (blockViewId !== null) onNavigateToView?.(blockViewId)
+            }}
+          >
+            Navigate to view
+          </button>
+        )}
       </figcaption>
       {renderState.status === 'empty' ? (
         <div className="tld-mermaid-preview__empty">Empty Mermaid block</div>

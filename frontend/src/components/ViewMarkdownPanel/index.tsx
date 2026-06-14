@@ -30,6 +30,7 @@ function ViewMarkdownPanel({
   onSaveAs,
   onOpenInEditor,
   onReload,
+  onNavigateToView,
 }: ViewMarkdownPanelProps) {
   const editorRef = useRef<MarkdownEditorHandle>(null)
   const latestContentRef = useRef(content)
@@ -53,6 +54,7 @@ function ViewMarkdownPanel({
   }, [onChange])
 
   const {
+    currentMermaidBlock,
     mermaidContextValue,
     mermaidSyncStatus,
     handleSyncMermaidBlock,
@@ -65,6 +67,7 @@ function ViewMarkdownPanel({
     replaceMarkdown: replaceEditorMarkdown,
     viewId,
     viewName,
+    onNavigateToView,
   })
 
   useEffect(() => {
@@ -124,10 +127,12 @@ function ViewMarkdownPanel({
             content={content}
             editorRef={editorRef}
             handleSyncMermaidBlock={handleSyncMermaidBlock}
+            currentMermaidBlock={currentMermaidBlock}
             isDirty={isDirty}
             isLoading={isLoading}
             isSaving={isSaving}
             markdown={markdown}
+            mermaidIntegrationEnabled={mermaidIntegrationEnabled}
             mermaidContextValue={mermaidContextValue}
             mermaidSyncStatus={mermaidSyncStatus}
             onChange={onChange}

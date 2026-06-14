@@ -6,6 +6,7 @@ export interface MermaidMarkdownContextValue {
   canEdit: boolean
   currentViewId: number | null
   currentViewName?: string | null
+  onNavigateToView?: (viewId: number) => void
 }
 
 export const MermaidMarkdownContext = createContext<MermaidMarkdownContextValue>({

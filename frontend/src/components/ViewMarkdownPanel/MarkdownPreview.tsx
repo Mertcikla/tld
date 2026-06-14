@@ -1,4 +1,4 @@
-import { Children, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { Children, isValidElement, useMemo, type ReactElement, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema, type Options as SanitizeSchema } from 'rehype-sanitize'
@@ -7,6 +7,7 @@ import { MermaidPreview } from './MermaidPreview'
 
 interface MarkdownPreviewProps {
   markdown: string
+  mermaidEnabled?: boolean
 }
 
 interface CodeElementProps {
@@ -40,41 +41,45 @@ function isCodeElement(node: ReactNode): node is ReactElement<CodeElementProps> 
   return isValidElement(node) && typeof node.props === 'object' && node.props !== null && 'children' in node.props
 }
 
-const markdownComponents: Components = {
-  pre({ children }) {
-    const child = Children.count(children) === 1 ? Children.only(children) : null
-    if (isCodeElement(child)) {
-      const language = codeLanguage(child.props.className)
-      const rawCode = nodeText(child.props.children).replace(/\n$/, '')
+function createMarkdownComponents(mermaidEnabled: boolean): Components {
+  return {
+    pre({ children }) {
+      const child = Children.count(children) === 1 ? Children.only(children) : null
+      if (isCodeElement(child)) {
+        const language = codeLanguage(child.props.className)
+        const rawCode = nodeText(child.props.children).replace(/\n$/, '')
 
-      if (language === 'mermaid') {
-        return <MermaidPreview code={rawCode} />
+        if (language === 'mermaid' && mermaidEnabled) {
+          return <MermaidPreview code={rawCode} />
+        }
+
+        return (
+          <div className="tld-markdown-codeblock">
+            <div className="tld-markdown-codeblock__header">{language || 'text'}</div>
+            <pre className="tld-markdown-codeblock__pre">
+              <code className={child.props.className}>{child.props.children}</code>
+            </pre>
+          </div>
+        )
       }
 
-      return (
-        <div className="tld-markdown-codeblock">
-          <div className="tld-markdown-codeblock__header">{language || 'text'}</div>
-          <pre className="tld-markdown-codeblock__pre">
-            <code className={child.props.className}>{child.props.children}</code>
-          </pre>
-        </div>
-      )
-    }
-
-    return <pre>{children}</pre>
-  },
-  code({ className, children, ...props }) {
-    return <code className={className} {...props}>{children}</code>
-  },
-  a({ children, ...props }) {
-    return <a {...props} target="_blank" rel="noreferrer">{children}</a>
-  },
-  input({ ...props }) {
-    return <input {...props} readOnly />
-  },
+      return <pre>{children}</pre>
+    },
+    code({ className, children, ...props }) {
+      return <code className={className} {...props}>{children}</code>
+    },
+    a({ children, ...props }) {
+      return <a {...props} target="_blank" rel="noreferrer">{children}</a>
+    },
+    input({ ...props }) {
+      return <input {...props} readOnly />
+    },
+  }
 }
 
-export function MarkdownPreview({ markdown }: MarkdownPreviewProps) {
+export function MarkdownPreview({ markdown, mermaidEnabled = true }: MarkdownPreviewProps) {
+  const markdownComponents = useMemo(() => createMarkdownComponents(mermaidEnabled), [mermaidEnabled])
+
   return (
     <div className="tld-markdown-preview" data-testid="markdown-preview">
       <ReactMarkdown

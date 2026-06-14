@@ -52,6 +52,15 @@ describe('MarkdownPreview', () => {
     expect(renderer.root.findByProps({ 'data-testid': 'mock-mermaid-preview' }).children.join('')).toContain('flowchart TD')
   })
 
+  it('renders Mermaid fences as ordinary code when Mermaid is disabled', () => {
+    const renderer = create(
+      <MarkdownPreview markdown={'```mermaid\nflowchart TD\n  A --> B\n```'} mermaidEnabled={false} />,
+    )
+
+    expect(renderer.root.findAllByProps({ 'data-testid': 'mock-mermaid-preview' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ className: 'tld-markdown-codeblock__header' }).children).toEqual(['mermaid'])
+  })
+
   it('renders generic fenced code blocks with a language header', () => {
     const renderer = create(
       <MarkdownPreview markdown={'```go\nfmt.Println("hi")\n```'} />,

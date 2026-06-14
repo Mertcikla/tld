@@ -24,4 +24,5 @@ export interface ViewMarkdownPanelProps {
   onSaveAs?: (markdown: string) => Promise<void> | void
   onOpenInEditor?: () => void
   onReload?: () => Promise<void> | void
+  onNavigateToView?: (viewId: number) => void
 }

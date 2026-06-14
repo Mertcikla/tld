@@ -1,12 +1,12 @@
 import { useCallback, useImperativeHandle, useRef, useState, type MutableRefObject } from 'react'
 import { Box, Button, ButtonGroup, HStack, IconButton, Tooltip } from '@chakra-ui/react'
-import { AddIcon, CheckCircleIcon, ExternalLinkIcon, RepeatIcon } from '@chakra-ui/icons'
+import { AddIcon, CheckCircleIcon, ExternalLinkIcon, RepeatIcon, WarningIcon } from '@chakra-ui/icons'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { EditorView } from '@codemirror/view'
 import CodeMirror, { type ReactCodeMirrorRef } from '@uiw/react-codemirror'
-import type { MermaidMarkdownSyncStatus } from '../../api/client'
+import type { MermaidMarkdownBlock, MermaidMarkdownSyncStatus } from '../../api/client'
 import { isWailsApp } from '../../config/runtime'
 import type { ViewMarkdownDocument } from '../../types'
 import { CloseIcon, ReloadIcon, SaveIcon } from '../Icons'
@@ -22,12 +22,14 @@ export interface MarkdownEditorHandle {
 interface MarkdownEditorProps {
   canEditDocument: boolean
   content: string
+  currentMermaidBlock: MermaidMarkdownBlock | null
   editorRef: MutableRefObject<MarkdownEditorHandle | null>
   handleSyncMermaidBlock: () => Promise<void> | void
   isDirty: boolean
   isLoading: boolean
   isSaving: boolean
   markdown: ViewMarkdownDocument | null
+  mermaidIntegrationEnabled: boolean
   mermaidContextValue: MermaidMarkdownContextValue
   mermaidSyncStatus: MermaidMarkdownSyncStatus | null
   onChange: (markdown: string) => void
@@ -47,32 +49,37 @@ const markdownExtensions = [
 ]
 
 function syncLabel(status: MermaidMarkdownSyncStatus | null) {
-  if (status === 'synced') return 'Current view Mermaid block is synced'
-  if (status === 'stale') return 'Update current view Mermaid block'
+  if (status === 'synced') return 'Current view Mermaid block is synced. Click to scroll to it.'
+  if (status === 'stale') return 'Current view Mermaid block is stale. Click to scroll to it.'
+  if (status === null) return 'Checking current view Mermaid block'
   return 'Insert current view as Mermaid block'
 }
 
 function syncButtonLabel(status: MermaidMarkdownSyncStatus | null) {
   if (status === 'synced') return 'Mermaid synced'
-  if (status === 'stale') return 'Update Mermaid'
+  if (status === 'stale') return 'Mermaid stale'
+  if (status === null) return 'Checking Mermaid'
   return 'Insert Mermaid'
 }
 
 function syncButtonIcon(status: MermaidMarkdownSyncStatus | null) {
   if (status === 'synced') return <CheckCircleIcon />
-  if (status === 'stale') return <RepeatIcon />
+  if (status === 'stale') return <WarningIcon />
+  if (status === null) return <RepeatIcon />
   return <AddIcon />
 }
 
 export function MarkdownEditor({
   canEditDocument,
   content,
+  currentMermaidBlock,
   editorRef,
   handleSyncMermaidBlock,
   isDirty,
   isLoading,
   isSaving,
   markdown: markdownDocument,
+  mermaidIntegrationEnabled,
   mermaidContextValue,
   mermaidSyncStatus,
   onChange,
@@ -84,6 +91,7 @@ export function MarkdownEditor({
   viewId,
 }: MarkdownEditorProps) {
   const codeMirrorRef = useRef<ReactCodeMirrorRef>(null)
+  const previewPaneRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef(content)
   const [mode, setMode] = useState<MarkdownPanelMode>('split')
   contentRef.current = content
@@ -119,6 +127,39 @@ export function MarkdownEditor({
     onChange(nextMarkdown)
   }, [onChange])
 
+  const scrollToCurrentMermaidBlock = useCallback(() => {
+    if (!currentMermaidBlock) return
+    const view = codeMirrorRef.current?.view
+    if (view && mode !== 'preview') {
+      const position = Math.max(0, Math.min(currentMermaidBlock.start, view.state.doc.length))
+      view.dispatch({
+        effects: EditorView.scrollIntoView(position, { y: 'center' }),
+      })
+      view.focus()
+    }
+
+    if (mode !== 'source' && currentMermaidBlock.viewId != null) {
+      previewPaneRef.current
+        ?.querySelector<HTMLElement>(`[data-tld-view-id="${currentMermaidBlock.viewId}"]`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
+  }, [currentMermaidBlock, mode])
+
+  const mermaidPrimaryAction = mermaidSyncStatus === 'missing' ? 'insert' : currentMermaidBlock ? 'scroll' : 'checking'
+  const isMermaidPrimaryDisabled = isLoading ||
+    !markdownDocument ||
+    !viewId ||
+    mermaidPrimaryAction === 'checking' ||
+    (mermaidPrimaryAction === 'insert' && !canEditDocument)
+
+  const handleMermaidPrimaryAction = useCallback(() => {
+    if (mermaidPrimaryAction === 'insert') {
+      void handleSyncMermaidBlock()
+      return
+    }
+    if (mermaidPrimaryAction === 'scroll') scrollToCurrentMermaidBlock()
+  }, [handleSyncMermaidBlock, mermaidPrimaryAction, scrollToCurrentMermaidBlock])
+
   return (
     <MermaidMarkdownContext.Provider value={mermaidContextValue}>
       <Box className={`tld-markdown-editor tld-markdown-editor--${mode}`} data-testid="markdown-editor">
@@ -130,22 +171,42 @@ export function MarkdownEditor({
           </ButtonGroup>
 
           <Box className="tld-markdown-toolbar-center">
-            <Tooltip label={syncLabel(mermaidSyncStatus)} hasArrow openDelay={200}>
-              <Box as="span" minW={0}>
-                <Button
-                  data-testid="markdown-insert-view-mermaid-button"
-                  aria-label={syncLabel(mermaidSyncStatus)}
-                  size="xs"
-                  variant="ghost"
-                  className={`tld-markdown-sync-button tld-markdown-sync-button-${mermaidSyncStatus ?? 'missing'}`}
-                  leftIcon={syncButtonIcon(mermaidSyncStatus)}
-                  onClick={() => { void handleSyncMermaidBlock() }}
-                  isDisabled={!canEditDocument || isLoading || !markdownDocument || !viewId || mermaidSyncStatus === 'synced'}
-                >
-                  {syncButtonLabel(mermaidSyncStatus)}
-                </Button>
-              </Box>
-            </Tooltip>
+            {mermaidIntegrationEnabled && (
+              <HStack className="tld-markdown-sync-group" spacing={1}>
+                <Tooltip label={syncLabel(mermaidSyncStatus)} hasArrow openDelay={200}>
+                  <Box as="span" minW={0}>
+                    <Button
+                      data-testid="markdown-insert-view-mermaid-button"
+                      aria-label={syncLabel(mermaidSyncStatus)}
+                      size="xs"
+                      variant="ghost"
+                      className={`tld-markdown-sync-button tld-markdown-sync-button-${mermaidSyncStatus ?? 'checking'}`}
+                      leftIcon={syncButtonIcon(mermaidSyncStatus)}
+                      onClick={handleMermaidPrimaryAction}
+                      isDisabled={isMermaidPrimaryDisabled}
+                    >
+                      {syncButtonLabel(mermaidSyncStatus)}
+                    </Button>
+                  </Box>
+                </Tooltip>
+                {mermaidSyncStatus === 'stale' && (
+                  <Tooltip label="Update current view Mermaid block" hasArrow openDelay={200}>
+                    <Box as="span">
+                      <IconButton
+                        data-testid="markdown-update-view-mermaid-button"
+                        aria-label="Update current view Mermaid block"
+                        size="xs"
+                        variant="ghost"
+                        className="tld-markdown-sync-update"
+                        icon={<RepeatIcon />}
+                        onClick={() => { void handleSyncMermaidBlock() }}
+                        isDisabled={!canEditDocument || isLoading || !markdownDocument || !viewId}
+                      />
+                    </Box>
+                  </Tooltip>
+                )}
+              </HStack>
+            )}
           </Box>
 
           <HStack className="tld-markdown-toolbar-actions" spacing={1.5}>
@@ -241,8 +302,8 @@ export function MarkdownEditor({
             </Box>
           )}
           {mode !== 'source' && (
-            <Box className="tld-markdown-preview-pane" data-testid="markdown-preview-pane">
-              <MarkdownPreview markdown={content} />
+            <Box ref={previewPaneRef} className="tld-markdown-preview-pane" data-testid="markdown-preview-pane">
+              <MarkdownPreview markdown={content} mermaidEnabled={mermaidIntegrationEnabled} />
             </Box>
           )}
         </Box>
