@@ -215,6 +215,18 @@ type CanvasViewportStore = {
 
 type ViewMetadataSnapshot = Pick<ViewTreeNode, 'id' | 'name' | 'level_label'>
 
+function buildViewNameById(nodes: ViewTreeNode[]) {
+  const names = new Map<number, string>()
+  const visit = (items: ViewTreeNode[]) => {
+    for (const item of items) {
+      names.set(item.id, item.name)
+      if (item.children.length > 0) visit(item.children)
+    }
+  }
+  visit(nodes)
+  return names
+}
+
 type PendingDuplicatePaste = {
   payload: ViewSelectionClipboardPayload
   targetViewId: number
@@ -2524,6 +2536,7 @@ function ViewEditorInner({
     stableOnReconnectPickRef.current = canvas.stableOnReconnectPick
   }, [canvas.stableOnZoomIn, canvas.stableOnZoomOut, canvas.stableOnNavigateToView, canvas.stableOnRemoveElement, canvas.stableOnConnectTo, canvas.stableOnInteractionStart, canvas.stableOnStartHandleReconnect, canvas.stableOnReconnectPick])
   const viewName = view?.name ?? null
+  const viewNameById = useMemo(() => buildViewNameById(treeData), [treeData])
 
   const [expandedAncestorGroups, setExpandedAncestorGroups] = useState<Set<string>>(new Set())
   const [contextNodePositionOverrides, setContextNodePositionOverrides] = useState<Record<string, ContextNodePositionOverride>>({})
@@ -4200,6 +4213,7 @@ function ViewEditorInner({
                   content={viewMarkdownContent}
                   syncToken={viewMarkdownSyncToken}
                   viewId={viewId}
+                  viewNameById={viewNameById}
                   mermaidIntegrationEnabled={mermaidIntegrationEnabled}
                   canEdit={canEdit}
                   isLoading={isMarkdownLoading}

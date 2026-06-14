@@ -83,7 +83,7 @@ function initializeMermaid(mermaid: MermaidApi) {
 function statusLabel(status: string) {
   if (status === 'synced') return 'synced'
   if (status === 'stale') return 'stale'
-  if (status === 'other') return 'linked elsewhere'
+  if (status === 'other') return ''
   if (status === 'unlinked') return ''
   return 'not inserted'
 }
@@ -98,14 +98,16 @@ function tldViewIdLabel(code: string) {
   return null
 }
 
-function viewLabel(blockViewId: number | null, isCurrentViewBlock: boolean) {
-  if (blockViewId === null) return 'unlinked'
+function viewLabel(blockViewId: number | null, isCurrentViewBlock: boolean, viewNameById?: Map<number, string>) {
+  if (blockViewId === null) return null
+  const knownViewName = viewNameById?.get(blockViewId)
+  if (knownViewName) return knownViewName
   if (isCurrentViewBlock) return 'current view'
   return `view ${blockViewId}`
 }
 
 export function MermaidPreview({ code }: MermaidPreviewProps) {
-  const { blockStatusByCode, currentViewId, onNavigateToView } = useContext(MermaidMarkdownContext)
+  const { blockStatusByCode, currentViewId, viewNameById, onNavigateToView } = useContext(MermaidMarkdownContext)
   const blockIdRef = useRef(0)
   const [renderState, setRenderState] = useState<MermaidRenderState>(() => (
     code.trim() ? { status: 'loading', svg: '', error: null } : { status: 'empty', svg: '', error: null }
@@ -114,7 +116,7 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
   const blockViewId = tldViewIdLabel(code)
   const isCurrentViewBlock = blockViewId !== null && currentViewId !== null && blockViewId === currentViewId
   const syncStatusLabel = statusLabel(syncStatus)
-  const blockViewLabel = viewLabel(blockViewId, isCurrentViewBlock)
+  const blockViewLabel = viewLabel(blockViewId, isCurrentViewBlock, viewNameById)
   const showNavigateToView = blockViewId !== null && !isCurrentViewBlock && !!onNavigateToView
 
   useEffect(() => {
@@ -167,7 +169,9 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
               {syncStatusLabel}
             </span>
           )}
-          <span className="tld-mermaid-preview__meta">{blockViewLabel}</span>
+          {blockViewLabel && (
+            <span className="tld-mermaid-preview__meta">{blockViewLabel}</span>
+          )}
         </span>
         {showNavigateToView && (
           <button

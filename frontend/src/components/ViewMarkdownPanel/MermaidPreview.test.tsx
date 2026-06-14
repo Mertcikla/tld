@@ -51,7 +51,7 @@ describe('MermaidPreview', () => {
     expect(JSON.stringify(renderer!.toJSON())).toContain('diagram')
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__title' }).children).toEqual(['Mermaid'])
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--synced' }).children.join('')).toContain('synced')
-    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__meta' }).children.join('')).toContain('unlinked')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('unlinked')
   })
 
   it('shows current view metadata when TLD metadata matches the active view', async () => {
@@ -65,6 +65,7 @@ describe('MermaidPreview', () => {
           canEdit: true,
           currentViewId: 6,
           currentViewName: 'Checkout',
+          viewNameById: new Map([[6, 'Checkout']]),
         }}>
           <MermaidPreview code={code} />
         </MermaidMarkdownContext.Provider>,
@@ -74,7 +75,7 @@ describe('MermaidPreview', () => {
 
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__title' }).children).toEqual(['Mermaid'])
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--stale' }).children.join('')).toContain('stale')
-    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__meta' }).children.join('')).toContain('current view')
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__meta' }).children.join('')).toContain('Checkout')
     expect(renderer!.root.findAllByProps({ 'data-testid': 'tld-mermaid-navigate-view' })).toHaveLength(0)
   })
 
@@ -89,6 +90,7 @@ describe('MermaidPreview', () => {
           blockStatusByCode: new Map([[code, 'other']]),
           canEdit: true,
           currentViewId: 6,
+          viewNameById: new Map([[9, 'Payments']]),
           onNavigateToView,
         }}>
           <MermaidPreview code={code} />
@@ -98,6 +100,9 @@ describe('MermaidPreview', () => {
     })
 
     expect(renderer!.root.findByProps({ 'data-testid': 'tld-mermaid-preview' }).props['data-tld-view-id']).toBe(9)
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__meta' }).children.join('')).toContain('Payments')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('view 9')
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('linked elsewhere')
     const navigateButton = renderer!.root.findByProps({ 'data-testid': 'tld-mermaid-navigate-view' })
     expect(navigateButton.children.join('')).toContain('Navigate to view')
 
@@ -126,6 +131,7 @@ describe('MermaidPreview', () => {
     })
 
     expect(renderer!.root.findAllByProps({ 'data-testid': 'tld-mermaid-navigate-view' })).toHaveLength(0)
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__metadata' }).children).toEqual([])
   })
 
   it('shows Mermaid render errors', async () => {

@@ -8,6 +8,7 @@ export interface ViewMarkdownPanelProps {
   content: string
   syncToken: number
   viewId?: number | null
+  viewNameById?: Map<number, string>
   mermaidIntegrationEnabled?: boolean
   canEdit?: boolean
   isLoading?: boolean

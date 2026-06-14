@@ -10,6 +10,7 @@ interface UseMermaidMarkdownSyncParams {
   replaceMarkdown: (markdown: string) => void
   viewId: number | null
   viewName?: string | null
+  viewNameById?: Map<number, string>
   onNavigateToView?: (viewId: number) => void
 }
 
@@ -22,6 +23,7 @@ export function useMermaidMarkdownSync({
   replaceMarkdown,
   viewId,
   viewName,
+  viewNameById,
   onNavigateToView,
 }: UseMermaidMarkdownSyncParams) {
   const [mermaidSyncStatus, setMermaidSyncStatus] = useState<MermaidMarkdownSyncStatus | null>(null)
@@ -78,8 +80,9 @@ export function useMermaidMarkdownSync({
     canEdit: canEditDocument,
     currentViewId: viewId,
     currentViewName: viewName,
+    viewNameById,
     onNavigateToView,
-  }), [canEditDocument, mermaidBlockStatusByCode, onNavigateToView, viewId, viewName])
+  }), [canEditDocument, mermaidBlockStatusByCode, onNavigateToView, viewId, viewName, viewNameById])
 
   const handleSyncMermaidBlock = useCallback(async () => {
     if (!enabled || !viewId) return

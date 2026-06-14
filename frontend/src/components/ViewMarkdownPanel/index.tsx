@@ -15,6 +15,7 @@ function ViewMarkdownPanel({
   markdown,
   content,
   viewId = null,
+  viewNameById,
   mermaidIntegrationEnabled = false,
   canEdit = true,
   isLoading = false,
@@ -67,6 +68,7 @@ function ViewMarkdownPanel({
     replaceMarkdown: replaceEditorMarkdown,
     viewId,
     viewName,
+    viewNameById,
     onNavigateToView,
   })
 

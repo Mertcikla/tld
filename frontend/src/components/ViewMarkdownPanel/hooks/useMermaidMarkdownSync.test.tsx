@@ -91,6 +91,7 @@ describe('useMermaidMarkdownSync', () => {
       syncStatus: 'stale',
       warnings: [],
     })
+    const viewNameById = new Map([[6, 'Checkout'], [9, 'Payments']])
     let hookResult: ReturnType<typeof useMermaidMarkdownSync> | undefined
 
     function Harness() {
@@ -102,6 +103,7 @@ describe('useMermaidMarkdownSync', () => {
         isOpen: true,
         replaceMarkdown: vi.fn(),
         viewId: 6,
+        viewNameById,
       })
       return null
     }
@@ -121,6 +123,7 @@ describe('useMermaidMarkdownSync', () => {
     expect(hookResult?.otherViewMermaidBlocks).toEqual([otherBlock])
     expect(hookResult?.mermaidContextValue.blockStatusByCode.get(currentBlock.code)).toBe('stale')
     expect(hookResult?.mermaidContextValue.blockStatusByCode.get(otherBlock.code)).toBe('other')
+    expect(hookResult?.mermaidContextValue.viewNameById).toBe(viewNameById)
   })
 
   it('upserts the current markdown without formatting it first', async () => {
