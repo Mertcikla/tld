@@ -2,6 +2,7 @@ import React from 'react'
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LibraryElement } from '../types'
+import { fontAwesomeIconUrlForTechnologyLabel } from '../utils/fontAwesomeIcon'
 import ElementPanel from './ElementPanel'
 
 const apiMocks = vi.hoisted(() => ({
@@ -321,5 +322,163 @@ describe('ElementPanel bypass noise gate', () => {
       ],
     }))
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ logo_url: '/icons/acme-platform.svg' }))
+  })
+
+  it('adds and deselects a Font Awesome technology icon without catalog metadata', async () => {
+    const onSave = vi.fn()
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <ElementPanel
+          isOpen
+          autoSave
+          element={element()}
+          onClose={vi.fn()}
+          onSave={onSave}
+          onVisibilityOverrideDeltaChange={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-technology-input' }).props.onChange({ target: { value: 'fa:fa-car' } })
+      await Promise.resolve()
+    })
+
+    const fontAwesomeRows = renderer!.root.findAll((node) => (
+      node.type === 'div' &&
+      node.props['data-testid'] === 'element-panel-fontawesome-technology-option'
+    ))
+    expect(fontAwesomeRows).toHaveLength(1)
+
+    await act(async () => {
+      fontAwesomeRows[0].props.onClick()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      vi.runAllTimers()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      vi.runAllTimers()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(apiMocks.updateElement).toHaveBeenLastCalledWith(10, expect.objectContaining({
+      logo_url: expect.stringMatching(/^data:image\/svg\+xml;charset=utf-8,/),
+      technology: 'fa:fa-car',
+      technology_connectors: [
+        expect.objectContaining({
+          type: 'catalog',
+          label: 'fa:fa-car',
+          slug: 'fa:car',
+          is_primary_icon: true,
+        }),
+      ],
+    }))
+
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-technology-chip' }).props.onClick()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      vi.runAllTimers()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(apiMocks.updateElement).toHaveBeenLastCalledWith(10, expect.objectContaining({
+      logo_url: '',
+      technology_connectors: [
+        expect.objectContaining({
+          type: 'custom',
+          label: 'fa:fa-car',
+          is_primary_icon: false,
+        }),
+      ],
+    }))
+  })
+
+  it('persists a switched Font Awesome primary icon using the backend-compatible link shape', async () => {
+    const onSave = vi.fn()
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <ElementPanel
+          isOpen
+          autoSave
+          element={element({
+            technology: 'fa:fa-server',
+            logo_url: fontAwesomeIconUrlForTechnologyLabel('fa:fa-server'),
+            technology_connectors: [
+              { type: 'custom', label: 'fa:fa-server', is_primary_icon: true },
+            ],
+          })}
+          onClose={vi.fn()}
+          onSave={onSave}
+          onVisibilityOverrideDeltaChange={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+    })
+
+    apiMocks.updateElement.mockClear()
+
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-technology-input' }).props.onChange({ target: { value: 'fa:fa-car' } })
+      await Promise.resolve()
+    })
+    const fontAwesomeRows = renderer!.root.findAll((node) => (
+      node.type === 'div' &&
+      node.props['data-testid'] === 'element-panel-fontawesome-technology-option'
+    ))
+    expect(fontAwesomeRows).toHaveLength(1)
+
+    await act(async () => {
+      fontAwesomeRows[0].props.onClick()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      vi.runAllTimers()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    apiMocks.updateElement.mockClear()
+
+    const chips = renderer!.root.findAll((node) => (
+      node.type === 'div' &&
+      node.props['data-testid'] === 'element-panel-technology-chip'
+    ))
+    expect(chips).toHaveLength(2)
+    await act(async () => {
+      chips[1].props.onClick()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      vi.runAllTimers()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(apiMocks.updateElement).toHaveBeenLastCalledWith(10, expect.objectContaining({
+      logo_url: expect.stringMatching(/^data:image\/svg\+xml;charset=utf-8,/),
+      technology: 'fa:fa-server, fa:fa-car',
+      technology_connectors: [
+        expect.objectContaining({
+          type: 'custom',
+          label: 'fa:fa-server',
+          is_primary_icon: false,
+        }),
+        expect.objectContaining({
+          type: 'catalog',
+          label: 'fa:fa-car',
+          slug: 'fa:car',
+          is_primary_icon: true,
+        }),
+      ],
+    }))
   })
 })
