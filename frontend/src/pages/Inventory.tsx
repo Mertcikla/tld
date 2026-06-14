@@ -34,7 +34,7 @@ import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, DeleteIcon, EditIcon,
 import { ZoomInIcon } from '../components/Icons'
 import { api } from '../api/client'
 import { TYPE_COLORS } from '../types'
-import { resolveIconPath } from '../utils/url'
+import { resolveElementIconUrl } from '../utils/elementIcon'
 import ConnectorPanel from '../components/ConnectorPanel'
 import ElementPanel from '../components/ElementPanel'
 import ViewPanel from '../components/ViewPanel'
@@ -1372,7 +1372,7 @@ function InventoryRowIcon({ row }: { row: InventoryRow }) {
   // Elements: mirror ElementLibrary — logo img if available, else kind-letter with TYPE_COLORS
   if (row.objectType === 'element' && row.element) {
     const color = TYPE_COLORS[row.element.kind?.toLowerCase() ?? ''] ?? 'gray'
-    const logoUrl = resolveIconPath(row.element.logo_url)
+    const logoUrl = resolveElementIconUrl(row.element.logo_url, row.element.technology_connectors)
     if (logoUrl) {
       return (
         <Flex w="26px" h="26px" align="center" justify="center" flexShrink={0} bg="whiteAlpha.100" rounded="md" p="3px">

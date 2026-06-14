@@ -1,6 +1,10 @@
 package mermaid
 
-import "testing"
+import (
+	"testing"
+
+	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
+)
 
 func TestParseCompatibleMermaidFixtures(t *testing.T) {
 	t.Parallel()
@@ -161,6 +165,15 @@ func connectorTexts(parsed *ParsedDiagram) []string {
 	return out
 }
 
+func elementByRef(parsed *ParsedDiagram, ref string) *diagv1.PlanElement {
+	for _, element := range parsed.Elements {
+		if element.GetRef() == ref {
+			return element
+		}
+	}
+	return nil
+}
+
 func TestParseFlowchartQuotedLabelsAndInlineTargetDefinition(t *testing.T) {
 	t.Parallel()
 
@@ -198,6 +211,120 @@ func TestParseFlowchartQuotedLabelsAndInlineTargetDefinition(t *testing.T) {
 	}
 	if !hasConnectorText(parsed, "Submits order") {
 		t.Fatalf("connector label/relationship does not contain %q: %v", "Submits order", connectorTexts(parsed))
+	}
+}
+
+func TestParseFlowchartFontAwesomeNodeLabels(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse(`flowchart TD
+    A[Christmas] -->|Get money| B(Go shopping)
+    B --> C{Let me think}
+    C -->|One| D[Laptop]
+    C -->|Two| E[iPhone]
+    C -->|Three| F[fa:fa-car Car]`)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(parsed.Warnings) > 0 {
+		t.Fatalf("Parse() warnings = %v", parsed.Warnings)
+	}
+
+	element := elementByRef(parsed, "F")
+	if element == nil {
+		t.Fatal("missing element F")
+	}
+	if element.GetName() != "Car" {
+		t.Fatalf("element F name = %q, want Car", element.GetName())
+	}
+	links := element.GetTechnologyLinks()
+	if len(links) != 1 {
+		t.Fatalf("element F technology links = %d, want 1", len(links))
+	}
+	if links[0].GetType() != "custom" || links[0].GetLabel() != "fa:fa-car" || !links[0].GetIsPrimaryIcon() {
+		t.Fatalf("element F technology link = %+v, want primary custom fa:fa-car", links[0])
+	}
+	if element.GetTechnology() != "" {
+		t.Fatalf("element F technology = %q, want empty", element.GetTechnology())
+	}
+	if element.GetLogoUrl() != "" {
+		t.Fatalf("element F logo url = %q, want empty", element.GetLogoUrl())
+	}
+}
+
+func TestParseFlowchartFontAwesomeVariantsAndFallbackName(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse(`flowchart LR
+  A[fa:car]
+  B[fas:fa-shopping-cart Cart]
+  C[Some fa:fa-car Text]
+  Root --> D
+  D[fa:fa-server Server]`)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(parsed.Warnings) > 0 {
+		t.Fatalf("Parse() warnings = %v", parsed.Warnings)
+	}
+
+	elementA := elementByRef(parsed, "A")
+	if elementA == nil {
+		t.Fatal("missing element A")
+	}
+	if elementA.GetName() != "Car" || len(elementA.GetTechnologyLinks()) != 1 || elementA.GetTechnologyLinks()[0].GetLabel() != "fa:fa-car" {
+		t.Fatalf("element A = name %q links %+v, want fallback Car with fa:fa-car", elementA.GetName(), elementA.GetTechnologyLinks())
+	}
+
+	elementB := elementByRef(parsed, "B")
+	if elementB == nil {
+		t.Fatal("missing element B")
+	}
+	if elementB.GetName() != "Cart" || len(elementB.GetTechnologyLinks()) != 1 || elementB.GetTechnologyLinks()[0].GetLabel() != "fa:fa-shopping-cart" {
+		t.Fatalf("element B = name %q links %+v, want Cart with fa:fa-shopping-cart", elementB.GetName(), elementB.GetTechnologyLinks())
+	}
+
+	elementC := elementByRef(parsed, "C")
+	if elementC == nil {
+		t.Fatal("missing element C")
+	}
+	if elementC.GetName() != "Some fa:fa-car Text" || len(elementC.GetTechnologyLinks()) != 0 {
+		t.Fatalf("element C = name %q links %+v, want unchanged label without links", elementC.GetName(), elementC.GetTechnologyLinks())
+	}
+
+	elementD := elementByRef(parsed, "D")
+	if elementD == nil {
+		t.Fatal("missing element D")
+	}
+	if elementD.GetName() != "Server" || len(elementD.GetTechnologyLinks()) != 1 || elementD.GetTechnologyLinks()[0].GetLabel() != "fa:fa-server" {
+		t.Fatalf("element D = name %q links %+v, want duplicate ref update to Server with fa:fa-server", elementD.GetName(), elementD.GetTechnologyLinks())
+	}
+}
+
+func TestParseFlowchartFontAwesomeMetadataTechLinksOverride(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse(`flowchart LR
+%% tld/v1 view=42
+  F["fa:fa-car Car"]
+%% tld-element ref=F techLinks=catalog:go:Go:1`)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(parsed.Warnings) > 0 {
+		t.Fatalf("Parse() warnings = %v", parsed.Warnings)
+	}
+
+	element := elementByRef(parsed, "F")
+	if element == nil {
+		t.Fatal("missing element F")
+	}
+	links := element.GetTechnologyLinks()
+	if len(links) != 1 {
+		t.Fatalf("element F technology links = %d, want 1", len(links))
+	}
+	if links[0].GetType() != "catalog" || links[0].GetSlug() != "go" || links[0].GetLabel() != "Go" || !links[0].GetIsPrimaryIcon() {
+		t.Fatalf("element F technology link = %+v, want metadata catalog Go override", links[0])
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 )
 
 func TestMermaidServiceParseMermaid(t *testing.T) {
@@ -26,6 +27,79 @@ func TestMermaidServiceParseMermaid(t *testing.T) {
 	}
 	if got := resp.Msg.GetDirection(); got != diagv1.MermaidDirection_MERMAID_DIRECTION_LR {
 		t.Fatalf("ParseMermaid() direction = %v", got)
+	}
+}
+
+func TestMermaidServiceParseMermaidFontAwesomeNodeLabel(t *testing.T) {
+	t.Parallel()
+
+	service := &MermaidService{}
+	resp, err := service.ParseMermaid(context.Background(), connect.NewRequest(&diagv1.ParseMermaidRequest{
+		Source: "flowchart LR\n  F[fa:fa-car Car]",
+	}))
+	if err != nil {
+		t.Fatalf("ParseMermaid() error = %v", err)
+	}
+	if len(resp.Msg.GetElements()) != 1 {
+		t.Fatalf("ParseMermaid() elements = %d, want 1", len(resp.Msg.GetElements()))
+	}
+	element := resp.Msg.GetElements()[0]
+	if element.GetName() != "Car" {
+		t.Fatalf("element name = %q, want Car", element.GetName())
+	}
+	links := element.GetTechnologyLinks()
+	if len(links) != 1 {
+		t.Fatalf("technology links = %d, want 1", len(links))
+	}
+	if links[0].GetType() != "custom" || links[0].GetLabel() != "fa:fa-car" || !links[0].GetIsPrimaryIcon() {
+		t.Fatalf("technology link = %+v, want primary custom fa:fa-car", links[0])
+	}
+}
+
+func TestMermaidServiceImportMermaidFontAwesomeNodeLabel(t *testing.T) {
+	t.Parallel()
+
+	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	var createdInput ElementInput
+	store := &contractStore{
+		createElement: func(_ context.Context, id uuid.UUID, input ElementInput) (*diagv1.Element, error) {
+			if id != workspaceID {
+				t.Fatalf("workspace id = %s, want %s", id, workspaceID)
+			}
+			createdInput = input
+			return &diagv1.Element{
+				Id:              10,
+				Name:            input.Name,
+				TechnologyLinks: input.TechLinks,
+			}, nil
+		},
+	}
+	service := &MermaidService{Store: store}
+
+	_, err := service.ImportMermaidIntoView(context.Background(), connect.NewRequest(&diagv1.ImportMermaidIntoViewRequest{
+		OrgId:  workspaceID.String(),
+		ViewId: 7,
+		Source: "flowchart LR\n  F[fa:fa-car Car]",
+		DryRun: false,
+	}))
+	if err != nil {
+		t.Fatalf("ImportMermaidIntoView() error = %v", err)
+	}
+	if createdInput.Name != "Car" {
+		t.Fatalf("created name = %q, want Car", createdInput.Name)
+	}
+	links := createdInput.TechLinks
+	if len(links) != 1 {
+		t.Fatalf("created technology links = %d, want 1", len(links))
+	}
+	if links[0].GetType() != "custom" || links[0].GetLabel() != "fa:fa-car" || !links[0].GetIsPrimaryIcon() {
+		t.Fatalf("created technology link = %+v, want primary custom fa:fa-car", links[0])
+	}
+	if createdInput.Technology != nil {
+		t.Fatalf("created technology = %v, want nil", createdInput.Technology)
+	}
+	if createdInput.LogoURL != nil {
+		t.Fatalf("created logo url = %v, want nil", createdInput.LogoURL)
 	}
 }
 

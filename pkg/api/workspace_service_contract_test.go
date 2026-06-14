@@ -623,6 +623,7 @@ type contractStore struct {
 	listViews               func(context.Context, uuid.UUID) ([]*diagv1.View, error)
 	listElements            func(context.Context, uuid.UUID, int32, int32, string) ([]*diagv1.Element, int, error)
 	getElement              func(context.Context, int32, uuid.UUID) (*diagv1.Element, error)
+	createElement           func(context.Context, uuid.UUID, ElementInput) (*diagv1.Element, error)
 	createView              func(context.Context, uuid.UUID, *int32, string, *string, bool) (*diagv1.View, error)
 	getViewMarkdown         func(context.Context, int32, uuid.UUID) (*diagv1.ViewMarkdownDocument, string, error)
 	createViewMarkdown      func(context.Context, int32, uuid.UUID, *string, *string, string, *string) (*diagv1.View, error)
@@ -720,7 +721,10 @@ func (s *contractStore) GetElement(ctx context.Context, id int32, workspaceID uu
 	}
 	return nil, errors.New("element not found")
 }
-func (s *contractStore) CreateElement(context.Context, uuid.UUID, ElementInput) (*diagv1.Element, error) {
+func (s *contractStore) CreateElement(ctx context.Context, workspaceID uuid.UUID, input ElementInput) (*diagv1.Element, error) {
+	if s.createElement != nil {
+		return s.createElement(ctx, workspaceID, input)
+	}
 	return nil, nil
 }
 func (s *contractStore) UpdateElement(ctx context.Context, id int32, workspaceID uuid.UUID, input ElementInput) (*diagv1.Element, error) {

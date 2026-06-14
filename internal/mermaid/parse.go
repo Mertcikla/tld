@@ -23,6 +23,8 @@ var (
 	requirementRelationshipPattern = regexp.MustCompile(`(?i)^([A-Za-z_][\w.-]*)\s+-\s*([A-Za-z_][\w.-]*)\s+->\s+([A-Za-z_][\w.-]*)$`)
 	exportedQuotedConnectorPattern = regexp.MustCompile(`^(\s*[A-Za-z_][A-Za-z0-9_]*)\s+--\s+"((?:\\.|[^"\\])*)"\s+-->\s+([A-Za-z_][A-Za-z0-9_]*\s*)$`)
 	flowchartStartPattern          = regexp.MustCompile(`(?i)^(graph|flowchart|swimlane)$`)
+	fontAwesomeNodeLabelPattern    = regexp.MustCompile(`(?i)^(?:fa|fas):([A-Za-z0-9_-]+)(?:\s+(.*))?$`)
+	fontAwesomeNamePattern         = regexp.MustCompile(`[^a-z0-9-]+`)
 )
 
 func Parse(sourceText string) (*ParsedDiagram, error) {
@@ -123,10 +125,14 @@ func addElement(result *ParsedDiagram, ref, name, kind, description, technology 
 		return
 	}
 	cleanName := sanitizeLabel(name)
+	cleanName, fontAwesomeLinks := parseFontAwesomeNodeLabel(cleanName)
 	for _, element := range result.Elements {
 		if element.GetRef() == ref {
 			if cleanName != "" && element.GetName() == ref && cleanName != ref {
 				element.Name = cleanName
+			}
+			if len(fontAwesomeLinks) > 0 {
+				element.TechnologyLinks = fontAwesomeLinks
 			}
 			return
 		}
@@ -150,7 +156,50 @@ func addElement(result *ParsedDiagram, ref, name, kind, description, technology 
 	if technology != "" {
 		element.Technology = &technology
 	}
+	if len(fontAwesomeLinks) > 0 {
+		element.TechnologyLinks = fontAwesomeLinks
+	}
 	result.Elements = append(result.Elements, element)
+}
+
+func parseFontAwesomeNodeLabel(label string) (string, []*diagv1.TechnologyLink) {
+	match := fontAwesomeNodeLabelPattern.FindStringSubmatch(label)
+	if match == nil {
+		return label, nil
+	}
+	iconName := normalizeFontAwesomeIconName(match[1])
+	if iconName == "" {
+		return label, nil
+	}
+
+	name := strings.TrimSpace(match[2])
+	if name == "" {
+		name = humanizeFontAwesomeIconName(iconName)
+	}
+	return name, []*diagv1.TechnologyLink{{
+		Type:          "custom",
+		Label:         "fa:fa-" + iconName,
+		IsPrimaryIcon: true,
+	}}
+}
+
+func normalizeFontAwesomeIconName(value string) string {
+	clean := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(value, "_", "-")))
+	clean = strings.TrimPrefix(clean, "fa-")
+	clean = strings.Trim(fontAwesomeNamePattern.ReplaceAllString(clean, "-"), "-")
+	return clean
+}
+
+func humanizeFontAwesomeIconName(iconName string) string {
+	parts := strings.Split(iconName, "-")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		out = append(out, strings.ToUpper(part[:1])+part[1:])
+	}
+	return strings.Join(out, " ")
 }
 
 func addConnector(result *ParsedDiagram, source, target, label string, options ...func(*diagv1.PlanConnector)) {

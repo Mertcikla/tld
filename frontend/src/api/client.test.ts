@@ -59,6 +59,28 @@ describe('element bypass noise gate normalization', () => {
     expect(dependency.bypass_noise_gate).toBe(true)
   })
 
+  it('maps proto-field technology_links onto API elements and placements', () => {
+    const element = protoElementToLibrary({
+      id: 1,
+      name: 'Car',
+      technology_links: [{ type: 'custom', label: 'fa:fa-car', is_primary_icon: true }],
+    })
+    const placement = protoPlacedElement({
+      id: 2,
+      view_id: 6,
+      element_id: 1,
+      name: 'Car',
+      technology_links: [{ type: 'custom', label: 'fa:fa-car', is_primary_icon: true }],
+    })
+
+    expect(element.technology_connectors).toEqual([
+      { type: 'custom', label: 'fa:fa-car', is_primary_icon: true },
+    ])
+    expect(placement.technology_connectors).toEqual([
+      { type: 'custom', label: 'fa:fa-car', is_primary_icon: true },
+    ])
+  })
+
   it('defaults frontend import plan elements to bypass_noise_gate false', () => {
     const explicit = { ref: 'manual', name: 'Manual', bypassNoiseGate: true } as PlanElement
     const normalized = normalizeFrontendImportElements([

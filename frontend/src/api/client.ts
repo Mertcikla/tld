@@ -555,7 +555,7 @@ export function diagramToView(d: ProtoDiagram): View {
 }
 
 export function protoElementToLibrary(e: Record<string, unknown>): LibraryElement {
-  const technologyConnectors = normalizeTechnologyConnectors(e.technology_connectors ?? e.technologyLinks)
+  const technologyConnectors = normalizeTechnologyConnectors(e.technology_connectors ?? e.technology_links ?? e.technologyLinks)
   return {
     id: Number(e.id ?? 0),
     name: String(e.name ?? ''),
@@ -600,7 +600,7 @@ export function libraryElementToDependency(element: LibraryElement): DependencyE
 }
 
 export function protoPlacedElement(p: Record<string, unknown>): PlacedElement {
-  const technologyConnectors = normalizeTechnologyConnectors(p.technology_connect_ors ?? p.technology_connectors ?? p.technologyLinks)
+  const technologyConnectors = normalizeTechnologyConnectors(p.technology_connect_ors ?? p.technology_connectors ?? p.technology_links ?? p.technologyLinks)
   return {
     id: Number(p.id ?? 0),
     view_id: Number(p.view_id ?? p.viewId ?? 0),
