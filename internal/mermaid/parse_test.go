@@ -201,6 +201,111 @@ func TestParseFlowchartQuotedLabelsAndInlineTargetDefinition(t *testing.T) {
 	}
 }
 
+func TestParseFlowchartHeaderNormalization(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name          string
+		source        string
+		wantDirection Direction
+		minElements   int
+		minConnectors int
+	}{
+		{
+			name:          "semicolon header with inline statements",
+			source:        `graph TD;A-->B;B-->C;`,
+			wantDirection: DirectionTD,
+			minElements:   3,
+			minConnectors: 2,
+		},
+		{
+			name: "comment before semicolon header",
+			source: `%% comment
+graph TD;
+  A-->B;`,
+			wantDirection: DirectionTD,
+			minElements:   2,
+			minConnectors: 1,
+		},
+		{
+			name:          "symbol direction right",
+			source:        `graph >;A-->B;`,
+			wantDirection: DirectionLR,
+			minElements:   2,
+			minConnectors: 1,
+		},
+		{
+			name:          "symbol direction left",
+			source:        `graph <;A-->B;`,
+			wantDirection: DirectionRL,
+			minElements:   2,
+			minConnectors: 1,
+		},
+		{
+			name:          "symbol direction up",
+			source:        `graph ^;A-->B;`,
+			wantDirection: DirectionBT,
+			minElements:   2,
+			minConnectors: 1,
+		},
+		{
+			name:          "lowercase down direction",
+			source:        `graph v;A-->B;`,
+			wantDirection: DirectionTB,
+			minElements:   2,
+			minConnectors: 1,
+		},
+		{
+			name: "bare flowchart header",
+			source: `flowchart
+A-->B;`,
+			wantDirection: DirectionTD,
+			minElements:   2,
+			minConnectors: 1,
+		},
+		{
+			name:          "swimlane alias",
+			source:        `swimlane LR;A-->B;`,
+			wantDirection: DirectionLR,
+			minElements:   2,
+			minConnectors: 1,
+		},
+		{
+			name: "semicolon subgraph terminator",
+			source: `graph TD
+subgraph myTitle
+c-->d
+end;`,
+			wantDirection: DirectionTD,
+			minElements:   2,
+			minConnectors: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			parsed, err := Parse(tt.source)
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if len(parsed.Warnings) > 0 {
+				t.Fatalf("Parse() warnings = %v", parsed.Warnings)
+			}
+			if parsed.Direction != tt.wantDirection {
+				t.Fatalf("Parse() direction = %q, want %q", parsed.Direction, tt.wantDirection)
+			}
+			if len(parsed.Elements) < tt.minElements {
+				t.Fatalf("Parse() elements = %d, want at least %d", len(parsed.Elements), tt.minElements)
+			}
+			if len(parsed.Connectors) < tt.minConnectors {
+				t.Fatalf("Parse() connectors = %d, want at least %d", len(parsed.Connectors), tt.minConnectors)
+			}
+		})
+	}
+}
+
 func TestParseAppliesTldMetadataRefs(t *testing.T) {
 	t.Parallel()
 

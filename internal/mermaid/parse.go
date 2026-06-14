@@ -22,6 +22,7 @@ var (
 	requirementElementPattern      = regexp.MustCompile(`(?i)^element\s+([A-Za-z_][\w.-]*)(?:\s*\{(.*))?$`)
 	requirementRelationshipPattern = regexp.MustCompile(`(?i)^([A-Za-z_][\w.-]*)\s+-\s*([A-Za-z_][\w.-]*)\s+->\s+([A-Za-z_][\w.-]*)$`)
 	exportedQuotedConnectorPattern = regexp.MustCompile(`^(\s*[A-Za-z_][A-Za-z0-9_]*)\s+--\s+"((?:\\.|[^"\\])*)"\s+-->\s+([A-Za-z_][A-Za-z0-9_]*\s*)$`)
+	flowchartStartPattern          = regexp.MustCompile(`(?i)^(graph|flowchart|swimlane)$`)
 )
 
 func Parse(sourceText string) (*ParsedDiagram, error) {
@@ -660,6 +661,7 @@ func collectInlineBlockText(lines []string, index *int, first string) string {
 
 func normalizeParserSource(source string) string {
 	source = stripFrontmatter(source)
+	source = normalizeFlowchartSourceSyntax(source)
 	lines := strings.Split(source, "\n")
 	for index, line := range lines {
 		if match := exportedQuotedConnectorPattern.FindStringSubmatch(line); match != nil {
@@ -667,6 +669,131 @@ func normalizeParserSource(source string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func normalizeFlowchartSourceSyntax(source string) string {
+	lines := strings.Split(strings.ReplaceAll(source, "\r\n", "\n"), "\n")
+	headerIndex := -1
+	headerReplacement := []string(nil)
+	for index, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		replacement, ok := normalizeFlowchartHeaderLine(line)
+		if !ok {
+			return source
+		}
+		headerIndex = index
+		headerReplacement = replacement
+		break
+	}
+	if headerIndex == -1 {
+		return source
+	}
+
+	normalized := make([]string, 0, len(lines)+len(headerReplacement))
+	normalized = append(normalized, lines[:headerIndex]...)
+	normalized = append(normalized, headerReplacement...)
+	for _, line := range lines[headerIndex+1:] {
+		normalized = append(normalized, splitMermaidStatementLine(line)...)
+	}
+	return strings.Join(normalized, "\n")
+}
+
+func normalizeFlowchartHeaderLine(line string) ([]string, bool) {
+	trimmed := strings.TrimSpace(line)
+	header, rest, _ := strings.Cut(trimmed, ";")
+	fields := strings.Fields(header)
+	if len(fields) == 0 || len(fields) > 2 || !flowchartStartPattern.MatchString(fields[0]) {
+		return nil, false
+	}
+
+	keyword := strings.ToLower(fields[0])
+	if keyword == "swimlane" {
+		keyword = "graph"
+	}
+	direction := "TD"
+	if len(fields) == 2 {
+		direction = normalizeFlowchartDirection(fields[1])
+	}
+
+	replacement := []string{keyword + " " + direction}
+	if rest != "" {
+		replacement = append(replacement, splitMermaidStatementLine(rest)...)
+	}
+	return replacement, true
+}
+
+func normalizeFlowchartDirection(value string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case ">":
+		return "LR"
+	case "<":
+		return "RL"
+	case "^":
+		return "BT"
+	case "V":
+		return "TB"
+	case "TB", "TD", "BT", "RL", "LR":
+		return strings.ToUpper(strings.TrimSpace(value))
+	default:
+		return value
+	}
+}
+
+func splitMermaidStatementLine(line string) []string {
+	parts := splitMermaidStatements(line)
+	if len(parts) == 0 {
+		return []string{line}
+	}
+	return parts
+}
+
+func splitMermaidStatements(line string) []string {
+	var parts []string
+	start := 0
+	depth := 0
+	quote := rune(0)
+	escaped := false
+	for index, char := range line {
+		if quote != 0 {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if char == '\\' {
+				escaped = true
+				continue
+			}
+			if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch char {
+		case '\'', '"', '`':
+			quote = char
+		case '[', '(', '{':
+			depth++
+		case ']', ')', '}':
+			if depth > 0 {
+				depth--
+			}
+		case ';':
+			if depth == 0 {
+				part := strings.TrimSpace(line[start:index])
+				if part != "" {
+					parts = append(parts, part)
+				}
+				start = index + len(string(char))
+			}
+		}
+	}
+	part := strings.TrimSpace(line[start:])
+	if part != "" {
+		parts = append(parts, part)
+	}
+	return parts
 }
 
 func stripFrontmatter(source string) string {
