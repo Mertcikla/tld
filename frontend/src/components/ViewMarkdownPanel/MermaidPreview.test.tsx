@@ -154,6 +154,56 @@ describe('MermaidPreview', () => {
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__metadata' }).children).toEqual([])
   })
 
+  it('imports Mermaid blocks without TLD metadata into the current view', async () => {
+    const code = 'flowchart TD\n  A --> B'
+    const onImportMermaidBlock = vi.fn()
+    let renderer: ReturnType<typeof create>
+
+    await act(async () => {
+      renderer = create(
+        <MermaidMarkdownContext.Provider value={{
+          blockStatusByCode: new Map(),
+          canEdit: true,
+          currentViewId: 6,
+          onImportMermaidBlock,
+        }}>
+          <MermaidPreview code={code} />
+        </MermaidMarkdownContext.Provider>,
+      )
+      await flushPromises()
+    })
+
+    const importButton = renderer!.root.findByProps({ 'data-testid': 'tld-mermaid-import-current-view' })
+    expect(importButton.props['aria-label']).toBe('Import into current view')
+
+    act(() => {
+      importButton.props.onClick()
+    })
+
+    expect(onImportMermaidBlock).toHaveBeenCalledWith(code)
+  })
+
+  it('does not show the import action for Mermaid blocks with TLD metadata', async () => {
+    const code = 'flowchart TD\n%% tld/v1 view=6\n  A --> B'
+    let renderer: ReturnType<typeof create>
+
+    await act(async () => {
+      renderer = create(
+        <MermaidMarkdownContext.Provider value={{
+          blockStatusByCode: new Map([[code, 'synced']]),
+          canEdit: true,
+          currentViewId: 6,
+          onImportMermaidBlock: vi.fn(),
+        }}>
+          <MermaidPreview code={code} />
+        </MermaidMarkdownContext.Provider>,
+      )
+      await flushPromises()
+    })
+
+    expect(renderer!.root.findAllByProps({ 'data-testid': 'tld-mermaid-import-current-view' })).toHaveLength(0)
+  })
+
   it('shows Mermaid render errors', async () => {
     mermaidMocks.render.mockRejectedValueOnce(new Error('bad syntax'))
     let renderer: ReturnType<typeof create>

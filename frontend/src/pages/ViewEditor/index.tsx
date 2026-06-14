@@ -3520,6 +3520,17 @@ function ViewEditorInner({
     }
   }, [clearEditHistory, refreshElements, toast])
 
+  const handleImportMarkdownMermaidBlock = useCallback(async (source: string) => {
+    if (!canEdit) return
+    const currentViewId = viewIdRef.current
+    if (!currentViewId) return
+
+    await runMermaidImport({ format: 'mermaid', source }, currentViewId, getCanvasCenter(), {
+      successTitle: 'Imported Mermaid block',
+      failureTitle: 'Mermaid import failed',
+    })
+  }, [canEdit, getCanvasCenter, runMermaidImport, viewIdRef])
+
   const pasteViewSelectionPayload = useCallback(async (
     payload: ViewSelectionClipboardPayload,
     targetViewId: number,
@@ -4231,6 +4242,7 @@ function ViewEditorInner({
                   onOpenInEditor={window.__TLD_VSCODE__ ? handleOpenMarkdownInEditor : undefined}
                   onReload={handleReloadMarkdown}
                   onNavigateToView={canvas.stableOnNavigateToView}
+                  onImportMermaidBlock={handleImportMarkdownMermaidBlock}
                 />
               </Box>
             </>

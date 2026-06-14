@@ -26,4 +26,5 @@ export interface ViewMarkdownPanelProps {
   onOpenInEditor?: () => void
   onReload?: () => Promise<void> | void
   onNavigateToView?: (viewId: number) => void
+  onImportMermaidBlock?: (source: string) => Promise<void> | void
 }

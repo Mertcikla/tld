@@ -12,6 +12,7 @@ interface UseMermaidMarkdownSyncParams {
   viewName?: string | null
   viewNameById?: Map<number, string>
   onNavigateToView?: (viewId: number) => void
+  onImportMermaidBlock?: (source: string) => Promise<void> | void
 }
 
 interface MermaidMarkdownInsertRange {
@@ -50,6 +51,7 @@ export function useMermaidMarkdownSync({
   viewName,
   viewNameById,
   onNavigateToView,
+  onImportMermaidBlock,
 }: UseMermaidMarkdownSyncParams) {
   const [mermaidSyncStatus, setMermaidSyncStatus] = useState<MermaidMarkdownSyncStatus | null>(null)
   const [mermaidBlocks, setMermaidBlocks] = useState<MermaidMarkdownBlock[]>([])
@@ -126,7 +128,8 @@ export function useMermaidMarkdownSync({
     viewNameById,
     onNavigateToView,
     onSyncCurrentViewMermaidBlock: handleSyncMermaidBlock,
-  }), [canEditDocument, handleSyncMermaidBlock, mermaidBlockStatusByCode, onNavigateToView, viewId, viewName, viewNameById])
+    onImportMermaidBlock,
+  }), [canEditDocument, handleSyncMermaidBlock, mermaidBlockStatusByCode, onImportMermaidBlock, onNavigateToView, viewId, viewName, viewNameById])
 
   return {
     currentMermaidBlock,

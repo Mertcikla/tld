@@ -244,7 +244,7 @@ describe('MarkdownEditor', () => {
     expect(handleSyncMermaidBlock).toHaveBeenCalledWith({ insertRange: { from: 8, to: 8 } })
     expect(syncButton.props.children).toBeUndefined()
     expect(syncButton.props.icon).toBeTruthy()
-    expect(syncButton.props['aria-label']).toBe('Insert current view as Mermaid block')
+    expect(syncButton.props['aria-label']).toBe('Insert as Mermaid block')
     expect(renderer.root.findAllByProps({ 'data-testid': 'markdown-insert-button' })).toHaveLength(0)
     expect(renderer.root.findAllByProps({ 'aria-label': 'Search markdown' })).toHaveLength(0)
     expect(renderer.root.findAllByProps({ 'aria-label': 'Previous match' })).toHaveLength(0)

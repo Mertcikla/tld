@@ -32,6 +32,7 @@ function ViewMarkdownPanel({
   onOpenInEditor,
   onReload,
   onNavigateToView,
+  onImportMermaidBlock,
 }: ViewMarkdownPanelProps) {
   const editorRef = useRef<MarkdownEditorHandle>(null)
   const latestContentRef = useRef(content)
@@ -70,6 +71,7 @@ function ViewMarkdownPanel({
     viewName,
     viewNameById,
     onNavigateToView,
+    onImportMermaidBlock,
   })
 
   useEffect(() => {

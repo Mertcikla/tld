@@ -1,6 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react'
 import { CheckCircleIcon, EditIcon, WarningIcon } from '@chakra-ui/icons'
-import { NavigationIcon } from '../Icons'
+import { ImportIcon, NavigationIcon } from '../Icons'
 import { MermaidMarkdownContext } from './mermaidContext'
 
 type MermaidApi = typeof import('mermaid').default
@@ -106,6 +106,10 @@ function tldViewIdLabel(code: string) {
   return null
 }
 
+function hasTldMetadata(code: string) {
+  return code.split(/\r?\n/).some((line) => tldMarkerPattern.test(line.trim()))
+}
+
 function viewLabel(blockViewId: number | null, isCurrentViewBlock: boolean, viewNameById?: Map<number, string>) {
   if (blockViewId === null) return null
   const knownViewName = viewNameById?.get(blockViewId)
@@ -122,6 +126,7 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
     viewNameById,
     onNavigateToView,
     onSyncCurrentViewMermaidBlock,
+    onImportMermaidBlock,
   } = useContext(MermaidMarkdownContext)
   const blockIdRef = useRef(0)
   const [renderState, setRenderState] = useState<MermaidRenderState>(() => (
@@ -133,6 +138,7 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
   const syncStatusLabel = statusLabel(syncStatus)
   const syncStatusIcon = statusIcon(syncStatus)
   const canSyncFromStatus = syncStatus === 'stale' && canEdit && !!onSyncCurrentViewMermaidBlock
+  const canImportIntoCurrentView = canEdit && currentViewId !== null && !hasTldMetadata(code) && !!onImportMermaidBlock
   const blockViewLabel = viewLabel(blockViewId, isCurrentViewBlock, viewNameById)
   const showNavigateToView = blockViewId !== null && !isCurrentViewBlock && !!onNavigateToView
 
@@ -204,6 +210,18 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
             </span>
           )}
         </span>
+        {canImportIntoCurrentView && (
+          <button
+            type="button"
+            className="tld-mermaid-preview__import"
+            data-testid="tld-mermaid-import-current-view"
+            aria-label="Import into current view"
+            title="Import into current view"
+            onClick={() => { void onImportMermaidBlock?.(code) }}
+          >
+            <ImportIcon size={13} strokeWidth={2.4} />
+          </button>
+        )}
         {showNavigateToView && (
           <button
             type="button"

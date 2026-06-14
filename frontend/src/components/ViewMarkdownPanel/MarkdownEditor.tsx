@@ -1,6 +1,6 @@
 import { useCallback, useImperativeHandle, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from 'react'
 import { Box, Button, ButtonGroup, HStack, IconButton, Tooltip } from '@chakra-ui/react'
-import { AddIcon, CheckCircleIcon, ExternalLinkIcon, RepeatIcon, WarningIcon } from '@chakra-ui/icons'
+import { CheckCircleIcon, ExternalLinkIcon, RepeatIcon, WarningIcon } from '@chakra-ui/icons'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
 import { oneDark } from '@codemirror/theme-one-dark'
