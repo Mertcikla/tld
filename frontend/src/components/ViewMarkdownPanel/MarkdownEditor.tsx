@@ -164,7 +164,7 @@ export function MarkdownEditor({
     <MermaidMarkdownContext.Provider value={mermaidContextValue}>
       <Box className={`tld-markdown-editor tld-markdown-editor--${mode}`} data-testid="markdown-editor">
         <HStack className="tld-markdown-toolbar" spacing={1.5}>
-          <ButtonGroup className="tld-markdown-mode" size="xs" isAttached>
+          <ButtonGroup className="tld-markdown-mode" size="xs" variant="ghost" spacing={1}>
             <Button aria-pressed={mode === 'source'} onClick={() => setMode('source')}>Source</Button>
             <Button aria-pressed={mode === 'split'} onClick={() => setMode('split')}>Split</Button>
             <Button aria-pressed={mode === 'preview'} onClick={() => setMode('preview')}>Preview</Button>
