@@ -100,15 +100,6 @@ export function useMermaidMarkdownSync({
     return mermaidBlocks.filter((block) => block.viewId != null && block.viewId !== viewId)
   }, [mermaidBlocks, viewId])
 
-  const mermaidContextValue = useMemo(() => ({
-    blockStatusByCode: mermaidBlockStatusByCode,
-    canEdit: canEditDocument,
-    currentViewId: viewId,
-    currentViewName: viewName,
-    viewNameById,
-    onNavigateToView,
-  }), [canEditDocument, mermaidBlockStatusByCode, onNavigateToView, viewId, viewName, viewNameById])
-
   const handleSyncMermaidBlock = useCallback(async (options: MermaidMarkdownSyncOptions = {}) => {
     if (!enabled || !viewId) return
     const currentMarkdown = getMarkdown()
@@ -126,6 +117,16 @@ export function useMermaidMarkdownSync({
     const inspection = await api.mermaid.inspectMarkdown(nextMarkdown, viewId)
     applyInspectionResult(inspection)
   }, [applyInspectionResult, enabled, getMarkdown, replaceMarkdown, viewId])
+
+  const mermaidContextValue = useMemo(() => ({
+    blockStatusByCode: mermaidBlockStatusByCode,
+    canEdit: canEditDocument,
+    currentViewId: viewId,
+    currentViewName: viewName,
+    viewNameById,
+    onNavigateToView,
+    onSyncCurrentViewMermaidBlock: handleSyncMermaidBlock,
+  }), [canEditDocument, handleSyncMermaidBlock, mermaidBlockStatusByCode, onNavigateToView, viewId, viewName, viewNameById])
 
   return {
     currentMermaidBlock,

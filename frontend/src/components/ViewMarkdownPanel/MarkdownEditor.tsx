@@ -56,13 +56,6 @@ function syncLabel(status: MermaidMarkdownSyncStatus | null) {
   return 'Insert current view as Mermaid block'
 }
 
-function syncButtonLabel(status: MermaidMarkdownSyncStatus | null) {
-  if (status === 'synced') return 'Mermaid synced'
-  if (status === 'stale') return 'Mermaid stale'
-  if (status === null) return 'Checking Mermaid'
-  return 'Insert Mermaid'
-}
-
 function syncButtonIcon(status: MermaidMarkdownSyncStatus | null) {
   if (status === 'synced') return <CheckCircleIcon />
   if (status === 'stale') return <WarningIcon />
@@ -206,18 +199,16 @@ export function MarkdownEditor({
               <HStack className="tld-markdown-sync-group" spacing={1}>
                 <Tooltip label={syncLabel(mermaidSyncStatus)} hasArrow openDelay={200}>
                   <Box as="span" minW={0}>
-                    <Button
+                    <IconButton
                       data-testid="markdown-insert-view-mermaid-button"
                       aria-label={syncLabel(mermaidSyncStatus)}
                       size="xs"
                       variant="ghost"
                       className={`tld-markdown-sync-button tld-markdown-sync-button-${mermaidSyncStatus ?? 'checking'}`}
-                      leftIcon={syncButtonIcon(mermaidSyncStatus)}
+                      icon={syncButtonIcon(mermaidSyncStatus)}
                       onClick={handleMermaidPrimaryAction}
                       isDisabled={isMermaidPrimaryDisabled}
-                    >
-                      {syncButtonLabel(mermaidSyncStatus)}
-                    </Button>
+                    />
                   </Box>
                 </Tooltip>
                 {mermaidSyncStatus === 'stale' && (

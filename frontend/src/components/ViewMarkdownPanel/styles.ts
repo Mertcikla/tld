@@ -92,23 +92,15 @@ export const markdownPanelBodySx: SystemStyleObject = {
   },
   '.tld-markdown-sync-button': {
     height: '32px',
-    maxWidth: '13.5rem',
+    minWidth: '32px',
+    width: '32px',
     border: '1px solid var(--chakra-colors-whiteAlpha-100)',
     borderRadius: 'var(--chakra-radii-md)',
-    paddingInline: '0.75rem',
+    paddingInline: 0,
     background: 'var(--chakra-colors-whiteAlpha-100)',
     color: 'var(--chakra-colors-whiteAlpha-700)',
     boxShadow: 'var(--chakra-shadows-panel-sm)',
-    fontSize: '0.75rem',
-    fontWeight: 600,
-    letterSpacing: 0,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
     transition: 'all 0.2s var(--chakra-transitions-easing-pop)',
-  },
-  '.tld-markdown-sync-button .chakra-button__icon': {
-    marginInlineEnd: '0.42rem',
   },
   '.tld-markdown-sync-button svg': {
     width: '13px',
@@ -469,6 +461,33 @@ export const markdownPanelBodySx: SystemStyleObject = {
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   },
+  '.tld-mermaid-preview__status': {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    height: '28px',
+    width: '28px',
+    borderRadius: 'var(--chakra-radii-md)',
+    padding: 0,
+    background: 'transparent',
+    border: 0,
+    lineHeight: 1,
+    cursor: 'pointer',
+  },
+  '.tld-mermaid-preview__status svg': {
+    width: '13px',
+    height: '13px',
+  },
+  '.tld-mermaid-preview__status:hover': {
+    background: 'var(--chakra-colors-whiteAlpha-200)',
+  },
+  '.tld-mermaid-preview__status[data-disabled], .tld-mermaid-preview__status:disabled': {
+    cursor: 'default',
+  },
+  '.tld-mermaid-preview__status[data-disabled]:hover, .tld-mermaid-preview__status:disabled:hover': {
+    background: 'transparent',
+  },
   '.tld-mermaid-preview__status--synced': {
     color: 'var(--accent)',
   },
@@ -554,8 +573,8 @@ export const markdownPanelBodySx: SystemStyleObject = {
       gap: '0.3rem',
     },
     '.tld-markdown-sync-button': {
-      maxWidth: '8.75rem',
-      paddingInline: '0.5rem',
+      width: '32px',
+      minWidth: '32px',
     },
     '.tld-markdown-workspace': {
       gridTemplateColumns: 'minmax(0, 1fr)',
@@ -603,7 +622,8 @@ export const markdownPanelBodySx: SystemStyleObject = {
       justifySelf: 'end',
     },
     '.tld-markdown-sync-button': {
-      maxWidth: '8.25rem',
+      width: '32px',
+      minWidth: '32px',
     },
   },
 }

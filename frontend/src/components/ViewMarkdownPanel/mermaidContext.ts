@@ -8,6 +8,7 @@ export interface MermaidMarkdownContextValue {
   currentViewName?: string | null
   viewNameById?: Map<number, string>
   onNavigateToView?: (viewId: number) => void
+  onSyncCurrentViewMermaidBlock?: () => Promise<void> | void
 }
 
 export const MermaidMarkdownContext = createContext<MermaidMarkdownContextValue>({

@@ -242,7 +242,8 @@ describe('MarkdownEditor', () => {
     })
 
     expect(handleSyncMermaidBlock).toHaveBeenCalledWith({ insertRange: { from: 8, to: 8 } })
-    expect(syncButton.props.children).toBe('Insert Mermaid')
+    expect(syncButton.props.children).toBeUndefined()
+    expect(syncButton.props.icon).toBeTruthy()
     expect(syncButton.props['aria-label']).toBe('Insert current view as Mermaid block')
     expect(renderer.root.findAllByProps({ 'data-testid': 'markdown-insert-button' })).toHaveLength(0)
     expect(renderer.root.findAllByProps({ 'aria-label': 'Search markdown' })).toHaveLength(0)
@@ -259,7 +260,8 @@ describe('MarkdownEditor', () => {
       syncButton.props.onClick()
     })
 
-    expect(syncButton.props.children).toBe('Mermaid stale')
+    expect(syncButton.props.children).toBeUndefined()
+    expect(syncButton.props.icon).toBeTruthy()
     expect(syncButton.props['aria-label']).toBe('Current view Mermaid block is stale. Click to scroll to it.')
     expect(handleSyncMermaidBlock).not.toHaveBeenCalled()
     expect(codeMirrorMock.view.dispatch).toHaveBeenCalledWith(expect.objectContaining({ effects: 'scroll-effect' }))
@@ -277,7 +279,8 @@ describe('MarkdownEditor', () => {
     const { renderer } = renderEditor({ mermaidSyncStatus: 'synced' })
     const syncButton = renderer.root.findByProps({ 'data-testid': 'markdown-insert-view-mermaid-button' })
 
-    expect(syncButton.props.children).toBe('Mermaid synced')
+    expect(syncButton.props.children).toBeUndefined()
+    expect(syncButton.props.icon).toBeTruthy()
     expect(syncButton.props['aria-label']).toBe('Current view Mermaid block is synced. Click to scroll to it.')
     expect(syncButton.props.isDisabled).toBe(false)
   })

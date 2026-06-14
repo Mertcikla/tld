@@ -50,12 +50,18 @@ describe('MermaidPreview', () => {
     expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^tld-mermaid-/), 'flowchart TD\n  A --> B')
     expect(JSON.stringify(renderer!.toJSON())).toContain('diagram')
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__title' }).children).toEqual(['MERMAID'])
-    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--synced' }).children.join('')).toContain('synced')
+    const syncedStatus = renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--synced' })
+    expect(syncedStatus.type).toBe('button')
+    expect(syncedStatus.props.type).toBe('button')
+    expect(syncedStatus.props['aria-label']).toBe('Current view Mermaid block is synced')
+    expect(syncedStatus.props.disabled).toBe(true)
+    expect(syncedStatus.findByType('svg')).toBeTruthy()
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('unlinked')
   })
 
   it('shows current view metadata when TLD metadata matches the active view', async () => {
     const code = 'flowchart TD\n%% tld/v1 view=6\n  A --> B'
+    const onSyncCurrentViewMermaidBlock = vi.fn()
     let renderer: ReturnType<typeof create>
 
     await act(async () => {
@@ -66,6 +72,7 @@ describe('MermaidPreview', () => {
           currentViewId: 6,
           currentViewName: 'Checkout',
           viewNameById: new Map([[6, 'Checkout']]),
+          onSyncCurrentViewMermaidBlock,
         }}>
           <MermaidPreview code={code} />
         </MermaidMarkdownContext.Provider>,
@@ -74,7 +81,16 @@ describe('MermaidPreview', () => {
     })
 
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__title' }).children).toEqual(['MERMAID'])
-    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--stale' }).children.join('')).toContain('stale')
+    const staleStatus = renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--stale' })
+    expect(staleStatus.type).toBe('button')
+    expect(staleStatus.props.type).toBe('button')
+    expect(staleStatus.props['aria-label']).toBe('Update current view Mermaid block')
+    expect(staleStatus.props.disabled).toBe(false)
+    expect(staleStatus.findByType('svg')).toBeTruthy()
+    act(() => {
+      staleStatus.props.onClick()
+    })
+    expect(onSyncCurrentViewMermaidBlock).toHaveBeenCalled()
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__view-icon' }).findByType('svg')).toBeTruthy()
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__view-name' }).children.join('')).toContain('Checkout')
     expect(renderer!.root.findAllByProps({ 'data-testid': 'tld-mermaid-navigate-view' })).toHaveLength(0)

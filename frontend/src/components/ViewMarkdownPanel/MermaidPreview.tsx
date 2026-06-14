@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef, useState } from 'react'
-import { EditIcon } from '@chakra-ui/icons'
+import { CheckCircleIcon, EditIcon, WarningIcon } from '@chakra-ui/icons'
 import { NavigationIcon } from '../Icons'
 import { MermaidMarkdownContext } from './mermaidContext'
 
@@ -83,11 +83,17 @@ function initializeMermaid(mermaid: MermaidApi) {
 }
 
 function statusLabel(status: string) {
-  if (status === 'synced') return 'synced'
-  if (status === 'stale') return 'stale'
+  if (status === 'synced') return 'Current view Mermaid block is synced'
+  if (status === 'stale') return 'Update current view Mermaid block'
   if (status === 'other') return ''
   if (status === 'unlinked') return ''
-  return 'not inserted'
+  return 'Insert current view as Mermaid block'
+}
+
+function statusIcon(status: string) {
+  if (status === 'synced') return <CheckCircleIcon />
+  if (status === 'stale') return <WarningIcon />
+  return null
 }
 
 function tldViewIdLabel(code: string) {
@@ -109,7 +115,14 @@ function viewLabel(blockViewId: number | null, isCurrentViewBlock: boolean, view
 }
 
 export function MermaidPreview({ code }: MermaidPreviewProps) {
-  const { blockStatusByCode, currentViewId, viewNameById, onNavigateToView } = useContext(MermaidMarkdownContext)
+  const {
+    blockStatusByCode,
+    canEdit,
+    currentViewId,
+    viewNameById,
+    onNavigateToView,
+    onSyncCurrentViewMermaidBlock,
+  } = useContext(MermaidMarkdownContext)
   const blockIdRef = useRef(0)
   const [renderState, setRenderState] = useState<MermaidRenderState>(() => (
     code.trim() ? { status: 'loading', svg: '', error: null } : { status: 'empty', svg: '', error: null }
@@ -118,6 +131,8 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
   const blockViewId = tldViewIdLabel(code)
   const isCurrentViewBlock = blockViewId !== null && currentViewId !== null && blockViewId === currentViewId
   const syncStatusLabel = statusLabel(syncStatus)
+  const syncStatusIcon = statusIcon(syncStatus)
+  const canSyncFromStatus = syncStatus === 'stale' && canEdit && !!onSyncCurrentViewMermaidBlock
   const blockViewLabel = viewLabel(blockViewId, isCurrentViewBlock, viewNameById)
   const showNavigateToView = blockViewId !== null && !isCurrentViewBlock && !!onNavigateToView
 
@@ -166,10 +181,19 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
       <figcaption className="tld-mermaid-preview__header">
         <span className="tld-mermaid-preview__title">MERMAID</span>
         <span className="tld-mermaid-preview__metadata">
-          {syncStatusLabel && (
-            <span className={`tld-mermaid-preview__status tld-mermaid-preview__status--${syncStatus}`}>
-              {syncStatusLabel}
-            </span>
+          {syncStatusLabel && syncStatusIcon && (
+            <button
+              type="button"
+              className={`tld-mermaid-preview__status tld-mermaid-preview__status--${syncStatus}`}
+              aria-label={syncStatusLabel}
+              title={syncStatusLabel}
+              disabled={!canSyncFromStatus}
+              onClick={() => {
+                if (canSyncFromStatus) void onSyncCurrentViewMermaidBlock?.()
+              }}
+            >
+              {syncStatusIcon}
+            </button>
           )}
           {blockViewLabel && (
             <span className="tld-mermaid-preview__meta">
