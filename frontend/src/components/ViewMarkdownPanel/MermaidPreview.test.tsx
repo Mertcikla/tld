@@ -49,7 +49,7 @@ describe('MermaidPreview', () => {
     }))
     expect(mermaidMocks.render).toHaveBeenCalledWith(expect.stringMatching(/^tld-mermaid-/), 'flowchart TD\n  A --> B')
     expect(JSON.stringify(renderer!.toJSON())).toContain('diagram')
-    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__title' }).children).toEqual(['Mermaid'])
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__title' }).children).toEqual(['MERMAID'])
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--synced' }).children.join('')).toContain('synced')
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('unlinked')
   })
@@ -73,9 +73,10 @@ describe('MermaidPreview', () => {
       await flushPromises()
     })
 
-    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__title' }).children).toEqual(['Mermaid'])
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__title' }).children).toEqual(['MERMAID'])
     expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__status tld-mermaid-preview__status--stale' }).children.join('')).toContain('stale')
-    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__meta' }).children.join('')).toContain('Checkout')
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__view-icon' }).findByType('svg')).toBeTruthy()
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__view-name' }).children.join('')).toContain('Checkout')
     expect(renderer!.root.findAllByProps({ 'data-testid': 'tld-mermaid-navigate-view' })).toHaveLength(0)
   })
 
@@ -100,11 +101,14 @@ describe('MermaidPreview', () => {
     })
 
     expect(renderer!.root.findByProps({ 'data-testid': 'tld-mermaid-preview' }).props['data-tld-view-id']).toBe(9)
-    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__meta' }).children.join('')).toContain('Payments')
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__view-icon' }).findByType('svg')).toBeTruthy()
+    expect(renderer!.root.findByProps({ className: 'tld-mermaid-preview__view-name' }).children.join('')).toContain('Payments')
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('view 9')
     expect(JSON.stringify(renderer!.toJSON())).not.toContain('linked elsewhere')
     const navigateButton = renderer!.root.findByProps({ 'data-testid': 'tld-mermaid-navigate-view' })
-    expect(navigateButton.children.join('')).toContain('Navigate to view')
+    expect(navigateButton.props['aria-label']).toBe('Open in Editor')
+    expect(navigateButton.findByType('svg')).toBeTruthy()
+    expect(JSON.stringify(renderer!.toJSON())).not.toContain('Navigate to view')
 
     act(() => {
       navigateButton.props.onClick()

@@ -1,4 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react'
+import { EditIcon } from '@chakra-ui/icons'
+import { NavigationIcon } from '../Icons'
 import { MermaidMarkdownContext } from './mermaidContext'
 
 type MermaidApi = typeof import('mermaid').default
@@ -162,7 +164,7 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
       data-tld-current-view={isCurrentViewBlock ? 'true' : undefined}
     >
       <figcaption className="tld-mermaid-preview__header">
-        <span className="tld-mermaid-preview__title">Mermaid</span>
+        <span className="tld-mermaid-preview__title">MERMAID</span>
         <span className="tld-mermaid-preview__metadata">
           {syncStatusLabel && (
             <span className={`tld-mermaid-preview__status tld-mermaid-preview__status--${syncStatus}`}>
@@ -170,7 +172,12 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
             </span>
           )}
           {blockViewLabel && (
-            <span className="tld-mermaid-preview__meta">{blockViewLabel}</span>
+            <span className="tld-mermaid-preview__meta">
+              <span className="tld-mermaid-preview__view-icon" aria-hidden="true">
+                <NavigationIcon size={12} strokeWidth={2.1} />
+              </span>
+              <span className="tld-mermaid-preview__view-name">{blockViewLabel}</span>
+            </span>
           )}
         </span>
         {showNavigateToView && (
@@ -178,11 +185,13 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
             type="button"
             className="tld-mermaid-preview__navigate"
             data-testid="tld-mermaid-navigate-view"
+            aria-label="Open in Editor"
+            title="Open in Editor"
             onClick={() => {
               if (blockViewId !== null) onNavigateToView?.(blockViewId)
             }}
           >
-            Navigate to view
+            <EditIcon boxSize="14px" />
           </button>
         )}
       </figcaption>
