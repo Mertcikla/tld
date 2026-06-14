@@ -1,4 +1,4 @@
-import { useCallback, useImperativeHandle, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useImperativeHandle, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from 'react'
 import { Box, Button, ButtonGroup, HStack, IconButton, Tooltip } from '@chakra-ui/react'
 import { AddIcon, CheckCircleIcon, ExternalLinkIcon, RepeatIcon, WarningIcon } from '@chakra-ui/icons'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
@@ -160,9 +160,25 @@ export function MarkdownEditor({
     if (mermaidPrimaryAction === 'scroll') scrollToCurrentMermaidBlock()
   }, [handleSyncMermaidBlock, mermaidPrimaryAction, scrollToCurrentMermaidBlock])
 
+  const canSaveDocument = canEditDocument && !isLoading && !isSaving && Boolean(markdownDocument) && isDirty
+  const handleSave = useCallback(() => {
+    if (!canSaveDocument) return
+    void onSave(getMarkdown())
+  }, [canSaveDocument, getMarkdown, onSave])
+
+  const handleSaveShortcut = useCallback((event: ReactKeyboardEvent) => {
+    if (event.key.toLowerCase() !== 's' || event.shiftKey || event.altKey || (!event.metaKey && !event.ctrlKey)) return
+    event.preventDefault()
+    handleSave()
+  }, [handleSave])
+
   return (
     <MermaidMarkdownContext.Provider value={mermaidContextValue}>
-      <Box className={`tld-markdown-editor tld-markdown-editor--${mode}`} data-testid="markdown-editor">
+      <Box
+        className={`tld-markdown-editor tld-markdown-editor--${mode}`}
+        data-testid="markdown-editor"
+        onKeyDownCapture={handleSaveShortcut}
+      >
         <HStack className="tld-markdown-toolbar" spacing={1.5}>
           <ButtonGroup className="tld-markdown-mode" size="xs" variant="ghost" spacing={1}>
             <Button aria-pressed={mode === 'source'} onClick={() => setMode('source')}>Source</Button>
@@ -223,7 +239,7 @@ export function MarkdownEditor({
                 />
               </Box>
             </Tooltip>
-            <Tooltip label="Save" hasArrow openDelay={200}>
+            <Tooltip label="Save (Cmd/Ctrl+S)" hasArrow openDelay={200}>
               <Box as="span">
                 <IconButton
                   data-testid="markdown-save-button"
@@ -231,9 +247,9 @@ export function MarkdownEditor({
                   size="xs"
                   className="tld-markdown-toolbar-action tld-markdown-toolbar-action-save"
                   icon={<SaveIcon />}
-                  onClick={() => { void onSave(getMarkdown()) }}
+                  onClick={handleSave}
                   isLoading={isSaving}
-                  isDisabled={!canEditDocument || isLoading || !markdownDocument || !isDirty}
+                  isDisabled={!canSaveDocument}
                 />
               </Box>
             </Tooltip>

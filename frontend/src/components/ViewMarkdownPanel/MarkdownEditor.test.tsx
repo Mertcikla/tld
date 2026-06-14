@@ -1,6 +1,6 @@
 import React from 'react'
-import { act, create } from 'react-test-renderer'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, create, type ReactTestRenderer } from 'react-test-renderer'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MermaidMarkdownBlock } from '../../api/client'
 import type { ViewMarkdownDocument } from '../../types'
 import { MarkdownEditor, type MarkdownEditorHandle } from './MarkdownEditor'
@@ -99,6 +99,20 @@ vi.mock('@codemirror/theme-one-dark', () => ({ oneDark: 'one-dark' }))
 vi.mock('@codemirror/view', () => ({ EditorView: { lineWrapping: 'line-wrapping', scrollIntoView: vi.fn(() => 'scroll-effect') } }))
 vi.mock('../../config/runtime', () => ({ isWailsApp: false }))
 
+const mountedRenderers: ReactTestRenderer[] = []
+
+function saveShortcutEvent(overrides: Partial<Pick<React.KeyboardEvent, 'altKey' | 'ctrlKey' | 'key' | 'metaKey' | 'shiftKey'>> = {}) {
+  return {
+    altKey: false,
+    ctrlKey: false,
+    key: 's',
+    metaKey: false,
+    shiftKey: false,
+    preventDefault: vi.fn(),
+    ...overrides,
+  }
+}
+
 function mermaidBlock(overrides: Partial<MermaidMarkdownBlock> = {}): MermaidMarkdownBlock {
   return {
     index: 0,
@@ -140,13 +154,25 @@ function renderEditor(overrides: Partial<React.ComponentProps<typeof MarkdownEdi
     viewId: 6,
     ...overrides,
   }
-  const renderer = create(<MarkdownEditor {...props} />)
+  let renderer!: ReactTestRenderer
+  act(() => {
+    renderer = create(<MarkdownEditor {...props} />)
+  })
+  mountedRenderers.push(renderer)
   return { editorRef, props, renderer }
 }
 
 describe('MarkdownEditor', () => {
   beforeEach(() => {
     codeMirrorMock.reset()
+  })
+
+  afterEach(() => {
+    for (const renderer of mountedRenderers.splice(0)) {
+      act(() => {
+        renderer.unmount()
+      })
+    }
   })
 
   it('saves the exact CodeMirror string without markdown normalization', () => {
@@ -166,6 +192,39 @@ describe('MarkdownEditor', () => {
 
     expect(onChange).toHaveBeenCalledWith(nextMarkdown)
     expect(onSave).toHaveBeenCalledWith(nextMarkdown)
+  })
+
+  it('saves the exact CodeMirror string from Cmd/Ctrl+S', () => {
+    const onSave = vi.fn()
+    const { props, renderer } = renderEditor({ onSave })
+    const editor = renderer.root.findByProps({ 'data-testid': 'markdown-editor' })
+    const commandEvent = saveShortcutEvent({ metaKey: true })
+    const controlEvent = saveShortcutEvent({ ctrlKey: true })
+
+    act(() => {
+      editor.props.onKeyDownCapture(commandEvent)
+      editor.props.onKeyDownCapture(controlEvent)
+    })
+
+    expect(commandEvent.preventDefault).toHaveBeenCalled()
+    expect(controlEvent.preventDefault).toHaveBeenCalled()
+    expect(onSave).toHaveBeenCalledTimes(2)
+    expect(onSave).toHaveBeenNthCalledWith(1, props.content)
+    expect(onSave).toHaveBeenNthCalledWith(2, props.content)
+  })
+
+  it('does not save from Cmd/Ctrl+S when saving is unavailable', () => {
+    const onSave = vi.fn()
+    const { renderer } = renderEditor({ canEditDocument: false, onSave })
+    const editor = renderer.root.findByProps({ 'data-testid': 'markdown-editor' })
+    const event = saveShortcutEvent({ metaKey: true })
+
+    act(() => {
+      editor.props.onKeyDownCapture(event)
+    })
+
+    expect(event.preventDefault).toHaveBeenCalled()
+    expect(onSave).not.toHaveBeenCalled()
   })
 
   it('inserts the current view Mermaid block when it is missing', () => {
