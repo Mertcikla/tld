@@ -21,7 +21,8 @@ test('custom technology upload creates an icon asset that renders after reload',
 
   await openElementPanel(page, elements[0].name)
   await page.getByTestId('element-panel-technology-input').fill(technologyName)
-  await expect(page.getByTestId('element-panel-custom-technology-create')).toBeVisible()
+  await page.getByTestId('element-panel-custom-technology-create').click()
+  await expect(page.getByTestId('custom-technology-file')).toBeAttached()
 
   await page.getByTestId('custom-technology-file').setInputFiles({
     name: `${technologyName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}.svg`,
@@ -29,6 +30,7 @@ test('custom technology upload creates an icon asset that renders after reload',
     buffer: Buffer.from(customIconSvg),
   })
   await expect(page.getByTestId('custom-technology-preview-icon')).toBeVisible()
+  await page.getByTestId('custom-technology-options-toggle').click()
   await page.getByTestId('custom-technology-short-name').fill(shortName)
   await page.getByTestId('custom-technology-aliases').fill('e2e-custom-alias')
 
