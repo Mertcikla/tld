@@ -45,7 +45,7 @@ import PanelHeader from './PanelHeader'
 import GitSourceLinker from './GitSourceLinker'
 import { getTechnologyCatalogIndex, getTechnologyCatalogItemBySlug, invalidateTechnologyCatalog, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
 import { canonicalTechnologySlug } from '../utils/technologyIcon'
-import { ChevronDownIcon, ChevronUpIcon, ImageUploadIcon, ZoomInIcon, ZoomOutIcon } from './Icons'
+import { ChevronDownIcon, ImageUploadIcon, ZoomInIcon, ZoomOutIcon } from './Icons'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
 import { openExternalUrl } from '../lib/desktop'
@@ -1247,11 +1247,11 @@ function ElementPanel({
                                   _hover={customTechnologySaving ? undefined : { borderColor: 'blue.300', bg: 'whiteAlpha.100' }}
                                   _focusVisible={{ outline: 'none', boxShadow: '0 0 0 2px var(--accent)' }}
                                   _disabled={{ opacity: 0.55 }}
-                                  onClick={(event) => {
+                                  onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
                                     event.stopPropagation()
                                     openCustomTechnologyFilePicker()
                                   }}
-                                  onDragOver={(event) => event.preventDefault()}
+                                  onDragOver={(event: React.DragEvent<HTMLButtonElement>) => event.preventDefault()}
                                   onDrop={handleCustomTechnologyFileDrop}
                                 >
                                   <HStack spacing={3} align="center">
