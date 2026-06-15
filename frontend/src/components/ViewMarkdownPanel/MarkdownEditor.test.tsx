@@ -96,7 +96,13 @@ vi.mock('@codemirror/lang-markdown', () => ({
 }))
 vi.mock('@codemirror/language-data', () => ({ languages: [] }))
 vi.mock('@codemirror/theme-one-dark', () => ({ oneDark: 'one-dark' }))
-vi.mock('@codemirror/view', () => ({ EditorView: { lineWrapping: 'line-wrapping', scrollIntoView: vi.fn(() => 'scroll-effect') } }))
+vi.mock('@codemirror/view', () => ({
+  EditorView: {
+    contentAttributes: { of: vi.fn((attributes: Record<string, string>) => attributes) },
+    lineWrapping: 'line-wrapping',
+    scrollIntoView: vi.fn(() => 'scroll-effect'),
+  },
+}))
 vi.mock('../../config/runtime', () => ({ isWailsApp: false }))
 
 const mountedRenderers: ReactTestRenderer[] = []

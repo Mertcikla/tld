@@ -274,6 +274,7 @@ function serializeTechnologyLinkForSave(link: TechnologyConnector): TechnologyCo
 }
 
 type AutoSaveOverrides = {
+  tags?: string[]
   technologyLinks?: TechnologyConnector[]
   explicitLogoClear?: boolean
 }
@@ -520,6 +521,7 @@ function ElementPanel({
   }, [technologyMeta])
 
   const buildPayloadAndFingerprint = useCallback(async (overrides?: AutoSaveOverrides) => {
+    const tagsForSave = overrides?.tags ?? tags
     const linksForSave = overrides?.technologyLinks ?? technologyLinks
     const explicitLogoClearForSave = overrides?.explicitLogoClear ?? explicitLogoClear
 
@@ -547,7 +549,7 @@ function ElementPanel({
       url,
       logo_url: logoUrl,
       technology_connectors: normalizedLinks,
-      tags,
+      tags: tagsForSave,
       bypass_noise_gate: bypassNoiseGate,
       repo: element?.repo,
       branch: element?.branch,
@@ -1614,8 +1616,9 @@ function ElementPanel({
                 availableTags={availableTags}
                 onAddTag={(tag) => {
                   if (!tags.includes(tag)) {
-                    setTags((prev) => [...prev, tag])
-                    scheduleAutoSave()
+                    const nextTags = [...tags, tag]
+                    setTags(nextTags)
+                    scheduleAutoSave({ tags: nextTags })
                   }
                 }}
                 isReadOnly={isReadOnly}
@@ -1627,8 +1630,9 @@ function ElementPanel({
                       <TagLabel color="white">{tag}</TagLabel>
                       {!isReadOnly && (
                         <TagCloseButton data-testid="element-panel-tag-remove" onClick={() => {
-                          setTags((prev) => prev.filter((t) => t !== tag))
-                          scheduleAutoSave()
+                          const nextTags = tags.filter((t) => t !== tag)
+                          setTags(nextTags)
+                          scheduleAutoSave({ tags: nextTags })
                         }} />
                       )}
                     </Tag>

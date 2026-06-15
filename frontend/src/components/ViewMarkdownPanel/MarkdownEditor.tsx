@@ -1,5 +1,5 @@
 import { useCallback, useImperativeHandle, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject } from 'react'
-import { Box, Button, ButtonGroup, HStack, IconButton, Tooltip } from '@chakra-ui/react'
+import { Box, Button, ButtonGroup, HStack, IconButton, Text, Tooltip } from '@chakra-ui/react'
 import { CheckCircleIcon, ExternalLinkIcon, RepeatIcon, WarningIcon } from '@chakra-ui/icons'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
@@ -13,6 +13,7 @@ import { CloseIcon, ReloadIcon, SaveIcon, NavigationIcon } from '../Icons'
 import { MarkdownPreview } from './MarkdownPreview'
 import type { MermaidMarkdownSyncOptions } from './hooks/useMermaidMarkdownSync'
 import { MermaidMarkdownContext, type MermaidMarkdownContextValue } from './mermaidContext'
+import { markdownStatusLabel } from './metadata'
 
 export interface MarkdownEditorHandle {
   getMarkdown: () => string
@@ -47,6 +48,7 @@ type MarkdownPanelMode = 'source' | 'split' | 'preview'
 const markdownExtensions = [
   markdown({ base: markdownLanguage, codeLanguages: languages }),
   EditorView.lineWrapping,
+  EditorView.contentAttributes.of({ 'aria-label': 'editable markdown' }),
 ]
 
 function syncLabel(status: MermaidMarkdownSyncStatus | null) {
@@ -194,7 +196,10 @@ export function MarkdownEditor({
             <Button aria-pressed={mode === 'preview'} onClick={() => setMode('preview')}>Preview</Button>
           </ButtonGroup>
 
-          <Box className="tld-markdown-toolbar-center">
+          <HStack className="tld-markdown-toolbar-center" spacing={2}>
+            <Text data-testid="view-markdown-status" className="tld-markdown-status" fontSize="xs" color="gray.400" noOfLines={1}>
+              {markdownStatusLabel(markdownDocument)}
+            </Text>
             {mermaidIntegrationEnabled && (
               <HStack className="tld-markdown-sync-group" spacing={1}>
                 <Tooltip label={syncLabel(mermaidSyncStatus)} hasArrow openDelay={200}>
@@ -229,7 +234,7 @@ export function MarkdownEditor({
                 )}
               </HStack>
             )}
-          </Box>
+          </HStack>
 
           <HStack className="tld-markdown-toolbar-actions" spacing={1.5}>
             <Tooltip label="Reload" hasArrow openDelay={200}>
