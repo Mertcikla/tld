@@ -39,6 +39,9 @@ func ExtractMermaidCode(text string) (string, bool) {
 	if match := mermaidMarkdownFenceRe.FindStringSubmatch(trimmed); match != nil && strings.TrimSpace(match[1]) != "" {
 		return strings.TrimSpace(match[1]), true
 	}
+	if blocks := FindMarkdownBlocks(trimmed); len(blocks) > 0 && strings.TrimSpace(blocks[0].Code) != "" {
+		return strings.TrimSpace(blocks[0].Code), true
+	}
 	if isSupportedMermaidStart(trimmed) {
 		return trimmed, true
 	}

@@ -3705,6 +3705,7 @@ function ViewEditorInner({
     isPasteImportingRef.current = true
     try {
       const parsed = await api.mermaid.parse(mermaidText)
+      if (parsed.elements.length === 0 && parsed.connectors.length === 0) return
       event.preventDefault()
       await runMermaidImport(parsed, currentViewId, getCanvasCenter(), {
         successTitle: 'Mermaid imported',

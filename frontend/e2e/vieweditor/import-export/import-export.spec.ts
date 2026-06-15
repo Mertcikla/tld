@@ -36,14 +36,14 @@ test('export modal changes options and downloads Mermaid output', async ({ page 
   await page.getByTestId('vieweditor-toolbar-extras').click()
   await page.getByTestId('vieweditor-toolbar-export').click()
   await expect(page.getByTestId('export-modal')).toBeVisible()
-  await page.getByText('Mermaid').click()
+  await page.getByTestId('export-modal').getByText('Mermaid Markdown').click()
   const filename = uniqueName('export-mermaid')
   await page.getByTestId('export-filename-input').fill(filename)
 
   const downloadPromise = page.waitForEvent('download')
   await page.getByTestId('export-submit').click()
   const download = await downloadPromise
-  expect(download.suggestedFilename()).toBe(`${filename}.mermaid`)
+  expect(download.suggestedFilename()).toBe(`${filename}.md`)
 })
 
 test('pasting fenced Mermaid imports into the open view', async ({ page }) => {

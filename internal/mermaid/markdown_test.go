@@ -18,6 +18,7 @@ func TestExtractMermaidCode(t *testing.T) {
 		{name: "raw", text: "flowchart LR\n  A --> B", want: "flowchart LR\n  A --> B", ok: true},
 		{name: "architecture raw", text: "architecture-beta\n  service api(server)[API]", want: "architecture-beta\n  service api(server)[API]", ok: true},
 		{name: "fenced", text: "```mermaid\nflowchart TB\n  A --> B\n```\n", want: "flowchart TB\n  A --> B", ok: true},
+		{name: "embedded fenced", text: "Some markdown before.\n\n```mermaid\nflowchart LR\n  A --> B\n```\n", want: "flowchart LR\n  A --> B", ok: true},
 		{name: "wrong fence", text: "```mmd\nflowchart LR\n  A --> B\n```", ok: false},
 		{name: "plain text", text: "not a diagram", ok: false},
 	}

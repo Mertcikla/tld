@@ -15,7 +15,7 @@ test('exported Mermaid download contains node names and edge syntax', async ({ p
 
   await page.getByTestId('vieweditor-toolbar-extras').click()
   await page.getByTestId('vieweditor-toolbar-export').click()
-  await page.getByText('Mermaid').click()
+  await page.getByTestId('export-modal').getByText('Mermaid Markdown').click()
   await page.getByTestId('export-filename-input').fill(uniqueName('export-content'))
 
   const downloadPromise = page.waitForEvent('download')

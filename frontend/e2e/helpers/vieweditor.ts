@@ -72,7 +72,7 @@ export async function prepareStorage(page: Page) {
     localStorage.setItem('diag:snapToGrid', 'false')
     localStorage.setItem('diag:libraryOpen', 'false')
     localStorage.setItem('diag:explorerOpen', 'false')
-    localStorage.setItem('tld:experimental', JSON.stringify({ watchEnabled: true }))
+    localStorage.setItem('tld:experimental', JSON.stringify({ watchEnabled: true, mermaidIntegrationEnabled: true }))
   }, onboardingStorage)
 }
 
