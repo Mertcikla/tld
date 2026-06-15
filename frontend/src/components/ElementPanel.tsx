@@ -253,7 +253,7 @@ function buildTechnologyFingerprintPayload(
   }
 }
 
-function serializeTechnologyLinkForSave(link: TechnologyConnector) {
+function serializeTechnologyLinkForSave(link: TechnologyConnector): TechnologyConnector {
   const isPrimaryIcon = !!(link.is_primary_icon ?? link.isPrimaryIcon)
   const iconKey = technologyConnectorIconKey(link)
   if (link.type === 'custom' && isPrimaryIcon && iconKey?.startsWith('fa:')) {
@@ -1091,7 +1091,7 @@ function ElementPanel({
                 size="sm"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                onBlur={scheduleAutoSave}
+                onBlur={() => scheduleAutoSave()}
                 placeholder="Payment Service"
               />
             </FormControl>
@@ -1198,7 +1198,7 @@ function ElementPanel({
                 size="sm"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                onBlur={scheduleAutoSave}
+                onBlur={() => scheduleAutoSave()}
                 placeholder="What does this element do?"
                 rows={3}
               />
@@ -1603,7 +1603,7 @@ function ElementPanel({
                 size="sm"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                onBlur={scheduleAutoSave}
+                onBlur={() => scheduleAutoSave()}
                 placeholder="https://…"
               />
             </FormControl>

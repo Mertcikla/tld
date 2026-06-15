@@ -3525,7 +3525,16 @@ function ViewEditorInner({
     const currentViewId = viewIdRef.current
     if (!currentViewId) return
 
-    await runMermaidImport({ format: 'mermaid', source }, currentViewId, getCanvasCenter(), {
+    const parsed: ParsedImport = {
+      format: 'mermaid',
+      source,
+      elements: [],
+      connectors: [],
+      warnings: [],
+      direction: 'LR',
+    }
+
+    await runMermaidImport(parsed, currentViewId, getCanvasCenter(), {
       successTitle: 'Imported Mermaid block',
       failureTitle: 'Mermaid import failed',
     })
