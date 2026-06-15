@@ -214,6 +214,61 @@ func TestParseFlowchartQuotedLabelsAndInlineTargetDefinition(t *testing.T) {
 	}
 }
 
+func TestParseFlowchartNumericIDsWithQuotedEdgeLabels(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := Parse(`flowchart LR
+  125["API Gateway"]
+  126["Auth Service"]
+  127["CDN"]
+  128["User"]
+  129["Web App"]
+
+  125 --> 126
+  129 -- "API calls" --> 125
+  129 -- "Auth" --> 126
+  129 -- "Serves via" --> 127
+  128 -- "Uses" --> 129`)
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(parsed.Warnings) > 0 {
+		t.Fatalf("Parse() warnings = %v", parsed.Warnings)
+	}
+	if len(parsed.Elements) != 5 {
+		t.Fatalf("Parse() elements = %d, want 5", len(parsed.Elements))
+	}
+	if len(parsed.Connectors) != 5 {
+		t.Fatalf("Parse() connectors = %d, want 5", len(parsed.Connectors))
+	}
+
+	wantNames := map[string]string{
+		"125": "API Gateway",
+		"126": "Auth Service",
+		"127": "CDN",
+		"128": "User",
+		"129": "Web App",
+	}
+	for _, element := range parsed.Elements {
+		want, ok := wantNames[element.GetRef()]
+		if !ok {
+			t.Fatalf("unexpected element ref %q", element.GetRef())
+		}
+		if element.GetName() != want {
+			t.Fatalf("element %s name = %q, want %q", element.GetRef(), element.GetName(), want)
+		}
+		delete(wantNames, element.GetRef())
+	}
+	if len(wantNames) > 0 {
+		t.Fatalf("missing elements: %v", wantNames)
+	}
+	for _, label := range []string{"API calls", "Auth", "Serves via", "Uses"} {
+		if !hasConnectorText(parsed, label) {
+			t.Fatalf("connector label/relationship does not contain %q: %v", label, connectorTexts(parsed))
+		}
+	}
+}
+
 func TestParseFlowchartFontAwesomeNodeLabels(t *testing.T) {
 	t.Parallel()
 

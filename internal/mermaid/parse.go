@@ -12,6 +12,8 @@ import (
 	mast "github.com/sammcj/mermaid-check/ast"
 )
 
+const mermaidFlowchartIDPattern = `[A-Za-z0-9_][A-Za-z0-9_.-]*`
+
 var (
 	tagPattern                     = regexp.MustCompile(`<[^>]*>`)
 	breakPattern                   = regexp.MustCompile(`(?i)<br\s*/?>`)
@@ -21,7 +23,7 @@ var (
 	requirementNodePattern         = regexp.MustCompile(`(?i)^(requirement|functionalRequirement|interfaceRequirement|performanceRequirement|physicalRequirement|designConstraint)\s+([A-Za-z_][\w.-]*)(?:\s*\{(.*))?$`)
 	requirementElementPattern      = regexp.MustCompile(`(?i)^element\s+([A-Za-z_][\w.-]*)(?:\s*\{(.*))?$`)
 	requirementRelationshipPattern = regexp.MustCompile(`(?i)^([A-Za-z_][\w.-]*)\s+-\s*([A-Za-z_][\w.-]*)\s+->\s+([A-Za-z_][\w.-]*)$`)
-	exportedQuotedConnectorPattern = regexp.MustCompile(`^(\s*[A-Za-z_][A-Za-z0-9_]*)\s+--\s+"((?:\\.|[^"\\])*)"\s+-->\s+([A-Za-z_][A-Za-z0-9_]*\s*)$`)
+	exportedQuotedConnectorPattern = regexp.MustCompile(`^(\s*` + mermaidFlowchartIDPattern + `)\s+--\s+"((?:\\.|[^"\\])*)"\s+-->\s+(` + mermaidFlowchartIDPattern + `\s*)$`)
 	flowchartStartPattern          = regexp.MustCompile(`(?i)^(graph|flowchart|swimlane)$`)
 	fontAwesomeNodeLabelPattern    = regexp.MustCompile(`(?i)^(?:fa|fas):([A-Za-z0-9_-]+)(?:\s+(.*))?$`)
 	fontAwesomeNamePattern         = regexp.MustCompile(`[^a-z0-9-]+`)

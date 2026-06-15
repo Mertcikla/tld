@@ -432,6 +432,7 @@ export const markdownPanelBodySx: SystemStyleObject = {
     position: 'absolute',
     left: '50%',
     top: '50%',
+    fontSize: 'm',
     transform: 'translate(-50%, -50%)',
     display: 'inline-flex',
     alignItems: 'center',

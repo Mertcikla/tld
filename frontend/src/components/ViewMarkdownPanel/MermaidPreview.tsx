@@ -204,7 +204,7 @@ export function MermaidPreview({ code }: MermaidPreviewProps) {
           {blockViewLabel && (
             <span className="tld-mermaid-preview__meta">
               <span className="tld-mermaid-preview__view-icon" aria-hidden="true">
-                <NavigationIcon size={12} strokeWidth={2.1} />
+                <NavigationIcon size={12} strokeWidth={2.1} strokeColor={"var(--baseTextMuted)"} />
               </span>
               <span className="tld-mermaid-preview__view-name">{blockViewLabel}</span>
             </span>
