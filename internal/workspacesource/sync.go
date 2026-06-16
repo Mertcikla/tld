@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -49,17 +50,11 @@ func Export(ctx context.Context, store Store, opts Options) (*Result, error) {
 		return nil, err
 	}
 
-	if err := os.RemoveAll(root); err != nil {
-		return nil, fmt.Errorf("clear workspace-source views dir: %w", err)
+	if err := preflightExport(root, sourceLock, exported.docs); err != nil {
+		return nil, err
 	}
-	for _, doc := range exported.docs {
-		path := filepath.Join(root, filepath.FromSlash(doc.relDir), ViewFileName)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			return nil, fmt.Errorf("create %s: %w", filepath.Dir(path), err)
-		}
-		if err := os.WriteFile(path, []byte(doc.content), 0o644); err != nil {
-			return nil, fmt.Errorf("write %s: %w", path, err)
-		}
+	if err := writeExportDocuments(root, exported.docs); err != nil {
+		return nil, err
 	}
 	hash, err := HashTree(root)
 	if err != nil {
@@ -95,6 +90,177 @@ func Export(ctx context.Context, store Store, opts Options) (*Result, error) {
 		},
 		Warnings: exported.warnings,
 	}, nil
+}
+
+func preflightExport(root string, sourceLock *workspace.WorkspaceSourceLock, docs []exportDocument) error {
+	existing, rootExists, err := existingMMDRelPaths(root)
+	if err != nil {
+		return err
+	}
+	lastHash := ""
+	if sourceLock != nil {
+		lastHash = strings.TrimSpace(sourceLock.LastHash)
+	}
+	if lastHash != "" && !rootExists {
+		return fmt.Errorf("workspace-source views dir %s is missing; aborting export because a previous source hash is recorded", root)
+	}
+	currentHash, err := HashTree(root)
+	if err != nil {
+		return fmt.Errorf("hash workspace-source views dir: %w", err)
+	}
+	if lastHash != "" && currentHash != lastHash {
+		return fmt.Errorf("workspace-source views dir changed since last import/export; aborting export (expected %s, got %s)", lastHash, currentHash)
+	}
+	existingPaths := sortedStringSet(existing)
+	if lastHash == "" && len(existingPaths) > 0 {
+		return fmt.Errorf("workspace-source views dir contains unmanaged .mmd files; import or move them before exporting: %s", strings.Join(existingPaths, ", "))
+	}
+
+	expected := expectedExportMMDRelPaths(docs)
+	stale := make([]string, 0)
+	for rel := range existing {
+		if _, ok := expected[rel]; !ok {
+			stale = append(stale, rel)
+		}
+	}
+	sort.Strings(stale)
+	if len(stale) > 0 {
+		return fmt.Errorf("workspace-source export would leave stale .mmd files; remove or import them before exporting: %s", strings.Join(stale, ", "))
+	}
+	return nil
+}
+
+func expectedExportMMDRelPaths(docs []exportDocument) map[string]struct{} {
+	expected := make(map[string]struct{}, len(docs))
+	for _, doc := range docs {
+		expected[exportDocumentRelPath(doc)] = struct{}{}
+	}
+	return expected
+}
+
+func existingMMDRelPaths(root string) (map[string]struct{}, bool, error) {
+	paths := map[string]struct{}{}
+	info, err := os.Stat(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return paths, false, nil
+		}
+		return nil, false, fmt.Errorf("stat workspace-source views dir: %w", err)
+	}
+	if !info.IsDir() {
+		return nil, true, fmt.Errorf("workspace-source views dir %s is not a directory", root)
+	}
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".mmd" {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		paths[filepath.ToSlash(rel)] = struct{}{}
+		return nil
+	}); err != nil {
+		return nil, true, fmt.Errorf("scan workspace-source views dir: %w", err)
+	}
+	return paths, true, nil
+}
+
+func writeExportDocuments(root string, docs []exportDocument) error {
+	for _, doc := range docs {
+		path := exportDocumentPath(root, doc)
+		if err := prepareExportTarget(path); err != nil {
+			return err
+		}
+	}
+	for _, doc := range docs {
+		path := exportDocumentPath(root, doc)
+		if err := writeFileAtomic(path, []byte(doc.content)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func prepareExportTarget(path string) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", dir, err)
+	}
+	if !dirInfo.IsDir() {
+		return fmt.Errorf("workspace-source target directory %s is not a directory", dir)
+	}
+	if dirInfo.Mode().Perm()&0o222 == 0 {
+		return fmt.Errorf("workspace-source target directory %s is not writable", dir)
+	}
+
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("workspace-source target %s is not a regular file", path)
+	}
+	if info.Mode().Perm()&0o222 == 0 {
+		return fmt.Errorf("workspace-source target %s is not writable", path)
+	}
+	return nil
+}
+
+func writeFileAtomic(path string, content []byte) error {
+	dir := filepath.Dir(path)
+	file, err := os.CreateTemp(dir, ".view-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp for %s: %w", path, err)
+	}
+	tmpPath := file.Name()
+	defer func() {
+		if tmpPath != "" {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if _, err := file.Write(content); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("write temp for %s: %w", path, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close temp for %s: %w", path, err)
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		return fmt.Errorf("chmod temp for %s: %w", path, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	tmpPath = ""
+	return nil
+}
+
+func exportDocumentPath(root string, doc exportDocument) string {
+	return filepath.Join(root, filepath.FromSlash(doc.relDir), ViewFileName)
+}
+
+func exportDocumentRelPath(doc exportDocument) string {
+	return filepath.ToSlash(filepath.Join(filepath.FromSlash(doc.relDir), ViewFileName))
+}
+
+func sortedStringSet(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func Import(ctx context.Context, store Store, opts Options, dryRun bool) (*Result, error) {
