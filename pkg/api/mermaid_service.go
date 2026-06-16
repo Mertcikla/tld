@@ -217,6 +217,7 @@ func (s *MermaidService) importIntoView(ctx context.Context, workspaceID uuid.UU
 	summary := &diagv1.MermaidImportSummary{}
 	elementsByRef := map[string]*diagv1.Element{}
 	warnings := append([]string(nil), parsed.Warnings...)
+	nextDryRunElementID := int32(-1)
 
 	for _, element := range parsed.Elements {
 		if existingID := mermaidRefElementID(element.GetRef()); existingID != 0 {
@@ -237,6 +238,11 @@ func (s *MermaidService) importIntoView(ctx context.Context, workspaceID uuid.UU
 		}
 
 		if dryRun {
+			elementsByRef[element.GetRef()] = &diagv1.Element{
+				Id:   nextDryRunElementID,
+				Name: element.GetName(),
+			}
+			nextDryRunElementID--
 			summary.CreatedElementCount++
 			continue
 		}

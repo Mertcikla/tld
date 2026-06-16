@@ -172,6 +172,40 @@ func TestMermaidServiceImportMermaidCreatesReverseConnector(t *testing.T) {
 	}
 }
 
+func TestMermaidServiceDryRunCountsConnectorsBetweenNewElements(t *testing.T) {
+	t.Parallel()
+
+	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	store := &contractStore{
+		createElement: func(context.Context, uuid.UUID, ElementInput) (*diagv1.Element, error) {
+			t.Fatal("dry-run should not create elements")
+			return nil, nil
+		},
+		createConnector: func(context.Context, uuid.UUID, ConnectorInput) (*diagv1.Connector, error) {
+			t.Fatal("dry-run should not create connectors")
+			return nil, nil
+		},
+	}
+	service := &MermaidService{Store: store}
+
+	resp, err := service.ImportMermaidIntoView(context.Background(), connect.NewRequest(&diagv1.ImportMermaidIntoViewRequest{
+		OrgId:  workspaceID.String(),
+		ViewId: 7,
+		Source: "flowchart LR\n  A[API] -->|reads| B[DB]",
+		DryRun: true,
+	}))
+	if err != nil {
+		t.Fatalf("ImportMermaidIntoView() error = %v", err)
+	}
+	summary := resp.Msg.GetSummary()
+	if got := summary.GetCreatedElementCount(); got != 2 {
+		t.Fatalf("created element count = %d, want 2", got)
+	}
+	if got := summary.GetCreatedConnectorCount(); got != 1 {
+		t.Fatalf("created connector count = %d, want 1", got)
+	}
+}
+
 func TestMermaidServiceParseMermaidInvalidArgument(t *testing.T) {
 	t.Parallel()
 
