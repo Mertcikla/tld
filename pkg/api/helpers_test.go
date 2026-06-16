@@ -64,6 +64,14 @@ func TestConvertTechnologyLinksNormalizesDefaultsAndDefendsUniqueness(t *testing
 		t.Fatalf("expected custom primary validation error, got %v", err)
 	}
 
+	got, err = ConvertTechnologyLinks([]*diagv1.TechnologyLink{{Type: "custom", Label: "fa:fa-car", IsPrimaryIcon: true}})
+	if err != nil {
+		t.Fatalf("expected Font Awesome custom primary icon to be accepted, got %v", err)
+	}
+	if len(got) != 1 || got[0].GetType() != "custom" || got[0].GetLabel() != "fa:fa-car" || !got[0].GetIsPrimaryIcon() {
+		t.Fatalf("Font Awesome custom primary link was not preserved: %#v", got)
+	}
+
 	got, err = ConvertTechnologyLinks(nil)
 	if err != nil {
 		t.Fatalf("ConvertTechnologyLinks(nil) returned error: %v", err)

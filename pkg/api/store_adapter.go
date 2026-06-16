@@ -913,6 +913,12 @@ func (a *APIStore) ApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *di
 	return nil, ErrUnimplemented
 }
 
+var _ TransactionalStore = (*APIStore)(nil)
+
+func (*APIStore) RunInTransaction(_ context.Context, _ func(context.Context, Store) error) error {
+	return fmt.Errorf("transactional store: %w", ErrUnimplemented)
+}
+
 // ─── Versioning ──────────────────────────────────────────────────────────────
 
 var _ = []any{

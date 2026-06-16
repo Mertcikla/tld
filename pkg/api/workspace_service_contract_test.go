@@ -639,11 +639,21 @@ type contractStore struct {
 	createConnector         func(context.Context, uuid.UUID, ConnectorInput) (*diagv1.Connector, error)
 	getConnector            func(context.Context, int32, uuid.UUID) (*diagv1.Connector, error)
 	updateConnector         func(context.Context, int32, uuid.UUID, ConnectorInput) (*diagv1.Connector, error)
+	listConnectors          func(context.Context, int32, uuid.UUID) ([]*diagv1.Connector, error)
 	listAllConnectors       func(context.Context, uuid.UUID) ([]*diagv1.Connector, error)
 	applyPlan               func(context.Context, uuid.UUID, *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error)
+	runInTransaction        func(context.Context, func(context.Context, Store) error) error
 }
 
 var _ Store = (*contractStore)(nil)
+var _ TransactionalStore = (*contractStore)(nil)
+
+func (s *contractStore) RunInTransaction(ctx context.Context, fn func(context.Context, Store) error) error {
+	if s.runInTransaction != nil {
+		return s.runInTransaction(ctx, fn)
+	}
+	return fn(ctx, s)
+}
 
 func (s *contractStore) ListViews(context.Context, uuid.UUID) ([]*diagv1.View, error) {
 	if s.listViews != nil {
@@ -758,7 +768,10 @@ func (s *contractStore) RemovePlacement(ctx context.Context, viewID, elementID i
 	}
 	return nil
 }
-func (s *contractStore) ListConnectors(context.Context, int32, uuid.UUID) ([]*diagv1.Connector, error) {
+func (s *contractStore) ListConnectors(ctx context.Context, viewID int32, workspaceID uuid.UUID) ([]*diagv1.Connector, error) {
+	if s.listConnectors != nil {
+		return s.listConnectors(ctx, viewID, workspaceID)
+	}
 	return nil, nil
 }
 func (s *contractStore) ListAllConnectors(ctx context.Context, workspaceID uuid.UUID) ([]*diagv1.Connector, error) {

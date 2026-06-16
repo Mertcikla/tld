@@ -64,7 +64,7 @@ func (s *MermaidService) ImportMermaidIntoView(ctx context.Context, req *connect
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("no compatible diagram content found"))
 	}
 
-	result, err := s.importIntoView(ctx, workspaceID, viewID, parsed, mermaid.Point{X: m.GetCenterX(), Y: m.GetCenterY()}, m.GetDryRun())
+	result, err := s.importIntoViewSafely(ctx, workspaceID, viewID, parsed, mermaid.Point{X: m.GetCenterX(), Y: m.GetCenterY()}, m.GetDryRun())
 	if err != nil {
 		return nil, storeErr("import Mermaid", err)
 	}
@@ -356,6 +356,33 @@ func (s *MermaidService) importIntoView(ctx context.Context, workspaceID uuid.UU
 	}, nil
 }
 
+func (s *MermaidService) importIntoViewSafely(ctx context.Context, workspaceID uuid.UUID, viewID int32, parsed *mermaid.ParsedDiagram, center mermaid.Point, dryRun bool) (*diagv1.ImportMermaidIntoViewResponse, error) {
+	if dryRun {
+		return s.importIntoView(ctx, workspaceID, viewID, parsed, center, true)
+	}
+	transactional, ok := s.Store.(TransactionalStore)
+	if !ok {
+		return nil, fmt.Errorf("atomic Mermaid import: %w", ErrUnimplemented)
+	}
+	var result *diagv1.ImportMermaidIntoViewResponse
+	err := transactional.RunInTransaction(ctx, func(txCtx context.Context, txStore Store) error {
+		txService := *s
+		if txStore != nil {
+			txService.Store = txStore
+		}
+		var err error
+		result, err = txService.importIntoView(txCtx, workspaceID, viewID, parsed, center, false)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, errors.New("transactional Mermaid import returned no result")
+	}
+	return result, nil
+}
+
 func markdownBlockToProto(block mermaid.MarkdownBlock, status diagv1.MermaidMarkdownSyncStatus) *diagv1.MermaidMarkdownBlockInfo {
 	info := &diagv1.MermaidMarkdownBlockInfo{
 		Index:          int32(block.Index),
@@ -390,11 +417,7 @@ func mermaidRefElementID(ref string) int32 {
 }
 
 func connectorPersistenceKey(sourceID, targetID int32, label, relationship string) string {
-	left, right := sourceID, targetID
-	if right < left {
-		left, right = right, left
-	}
-	return fmt.Sprintf("%d:%d:%s:%s", left, right, strings.TrimSpace(label), strings.TrimSpace(relationship))
+	return fmt.Sprintf("%d:%d:%s:%s", sourceID, targetID, strings.TrimSpace(label), strings.TrimSpace(relationship))
 }
 
 func connectorWouldChangeExisting(existing *diagv1.Connector, planned *diagv1.PlanConnector, handles mermaid.ConnectorHandles) bool {

@@ -131,7 +131,7 @@ func ConvertTechnologyLinks(links []*diagv1.TechnologyLink) ([]*diagv1.Technolog
 			if label == "" {
 				return nil, invalidArgF(field+".label", "custom technology requires a non-empty label")
 			}
-			if l.GetIsPrimaryIcon() {
+			if l.GetIsPrimaryIcon() && !customTechnologySupportsPrimaryIcon(label) {
 				return nil, invalidArgF(field, "custom technology cannot be the primary icon")
 			}
 			slug = ""
@@ -163,6 +163,11 @@ func ConvertTechnologyLinks(links []*diagv1.TechnologyLink) ([]*diagv1.Technolog
 		return nil, invalidArg("technology_links", "only one technology link may be marked as primary icon")
 	}
 	return result, nil
+}
+
+func customTechnologySupportsPrimaryIcon(label string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(label))
+	return strings.HasPrefix(normalized, "fa:") || strings.HasPrefix(normalized, "fas:")
 }
 
 // OptStr returns nil when s is empty, otherwise returns a pointer to s.

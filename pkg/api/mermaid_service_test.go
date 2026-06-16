@@ -61,7 +61,13 @@ func TestMermaidServiceImportMermaidFontAwesomeNodeLabel(t *testing.T) {
 
 	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 	var createdInput ElementInput
-	store := &contractStore{
+	transactionCalled := false
+	var store *contractStore
+	store = &contractStore{
+		runInTransaction: func(ctx context.Context, fn func(context.Context, Store) error) error {
+			transactionCalled = true
+			return fn(ctx, store)
+		},
 		createElement: func(_ context.Context, id uuid.UUID, input ElementInput) (*diagv1.Element, error) {
 			if id != workspaceID {
 				t.Fatalf("workspace id = %s, want %s", id, workspaceID)
@@ -85,6 +91,9 @@ func TestMermaidServiceImportMermaidFontAwesomeNodeLabel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportMermaidIntoView() error = %v", err)
 	}
+	if !transactionCalled {
+		t.Fatal("ImportMermaidIntoView() did not run inside a transaction")
+	}
 	if createdInput.Name != "Car" {
 		t.Fatalf("created name = %q, want Car", createdInput.Name)
 	}
@@ -100,6 +109,66 @@ func TestMermaidServiceImportMermaidFontAwesomeNodeLabel(t *testing.T) {
 	}
 	if createdInput.LogoURL != nil {
 		t.Fatalf("created logo url = %v, want nil", createdInput.LogoURL)
+	}
+}
+
+func TestMermaidServiceImportMermaidCreatesReverseConnector(t *testing.T) {
+	t.Parallel()
+
+	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	var createdInput ConnectorInput
+	store := &contractStore{
+		getElement: func(_ context.Context, id int32, _ uuid.UUID) (*diagv1.Element, error) {
+			return &diagv1.Element{Id: id, Name: map[int32]string{1: "A", 2: "B"}[id]}, nil
+		},
+		listConnectors: func(context.Context, int32, uuid.UUID) ([]*diagv1.Connector, error) {
+			label := "calls"
+			return []*diagv1.Connector{{
+				Id:              10,
+				ViewId:          7,
+				SourceElementId: 1,
+				TargetElementId: 2,
+				Label:           &label,
+				Direction:       "forward",
+				Style:           "bezier",
+			}}, nil
+		},
+		createConnector: func(_ context.Context, _ uuid.UUID, input ConnectorInput) (*diagv1.Connector, error) {
+			createdInput = input
+			return &diagv1.Connector{
+				Id:              11,
+				ViewId:          input.ViewID,
+				SourceElementId: input.SourceID,
+				TargetElementId: input.TargetID,
+				Label:           input.Label,
+				Direction:       input.Direction,
+				Style:           input.Style,
+			}, nil
+		},
+	}
+	service := &MermaidService{Store: store}
+
+	resp, err := service.ImportMermaidIntoView(context.Background(), connect.NewRequest(&diagv1.ImportMermaidIntoViewRequest{
+		OrgId:  workspaceID.String(),
+		ViewId: 7,
+		Source: `flowchart LR
+  node_1["A"]
+  %% tld-element ref=node_1
+  node_2["B"]
+  %% tld-element ref=node_2
+  node_2 -- "calls" --> node_1`,
+	}))
+	if err != nil {
+		t.Fatalf("ImportMermaidIntoView() error = %v", err)
+	}
+	if createdInput.SourceID != 2 || createdInput.TargetID != 1 {
+		t.Fatalf("created connector endpoints = %d -> %d, want 2 -> 1", createdInput.SourceID, createdInput.TargetID)
+	}
+	if got := resp.Msg.GetSummary().GetCreatedConnectorCount(); got != 1 {
+		t.Fatalf("created connector count = %d, want 1", got)
+	}
+	if got := resp.Msg.GetSummary().GetResolvedConnectorCount(); got != 0 {
+		t.Fatalf("resolved connector count = %d, want 0", got)
 	}
 }
 

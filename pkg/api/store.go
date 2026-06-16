@@ -178,3 +178,9 @@ type Store interface {
 	// GetWorkspaceResourceCounts returns current view/element/connector counts (for version snapshots).
 	GetWorkspaceResourceCounts(ctx context.Context, workspaceID uuid.UUID) (views, elements, connectors int, err error)
 }
+
+// TransactionalStore is implemented by Store adapters that can run a logical
+// workspace mutation against a transaction-bound store.
+type TransactionalStore interface {
+	RunInTransaction(ctx context.Context, fn func(context.Context, Store) error) error
+}

@@ -35,7 +35,7 @@ export const markdownPanelBodySx: SystemStyleObject = {
     backdropFilter: 'blur(16px)',
     color: 'var(--baseText)',
     paddingInline: '0.625rem',
-    minHeight: '48px',
+    minHeight: '44px',
     flexShrink: 0,
     overflow: 'hidden',
   },
@@ -581,11 +581,6 @@ export const markdownPanelBodySx: SystemStyleObject = {
     overflowX: 'auto',
   },
   '@container (max-width: 760px)': {
-    '.tld-markdown-toolbar': {
-      minHeight: '44px',
-      paddingInline: '0.35rem',
-      gap: '0.3rem',
-    },
     '.tld-markdown-sync-button': {
       width: '32px',
       minWidth: '32px',
