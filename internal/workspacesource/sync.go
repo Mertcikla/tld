@@ -93,7 +93,14 @@ func Export(ctx context.Context, store Store, opts Options) (*Result, error) {
 }
 
 func preflightExport(root string, sourceLock *workspace.WorkspaceSourceLock, docs []exportDocument) error {
-	existing, rootExists, err := existingMMDRelPaths(root)
+	legacy, err := legacyMMDRelPaths(root)
+	if err != nil {
+		return err
+	}
+	if len(legacy) > 0 {
+		return fmt.Errorf("workspace-source views dir contains legacy .mmd files; rename them to %s before exporting: %s", ViewFileName, strings.Join(legacy, ", "))
+	}
+	existing, rootExists, err := existingWorkspaceSourceRelPaths(root)
 	if err != nil {
 		return err
 	}
@@ -113,10 +120,10 @@ func preflightExport(root string, sourceLock *workspace.WorkspaceSourceLock, doc
 	}
 	existingPaths := sortedStringSet(existing)
 	if lastHash == "" && len(existingPaths) > 0 {
-		return fmt.Errorf("workspace-source views dir contains unmanaged .mmd files; import or move them before exporting: %s", strings.Join(existingPaths, ", "))
+		return fmt.Errorf("workspace-source views dir contains unmanaged %s files; import or move them before exporting: %s", ViewFileName, strings.Join(existingPaths, ", "))
 	}
 
-	expected := expectedExportMMDRelPaths(docs)
+	expected := expectedExportWorkspaceSourceRelPaths(docs)
 	stale := make([]string, 0)
 	for rel := range existing {
 		if _, ok := expected[rel]; !ok {
@@ -125,12 +132,12 @@ func preflightExport(root string, sourceLock *workspace.WorkspaceSourceLock, doc
 	}
 	sort.Strings(stale)
 	if len(stale) > 0 {
-		return fmt.Errorf("workspace-source export would leave stale .mmd files; remove or import them before exporting: %s", strings.Join(stale, ", "))
+		return fmt.Errorf("workspace-source export would leave stale %s files; remove or import them before exporting: %s", ViewFileName, strings.Join(stale, ", "))
 	}
 	return nil
 }
 
-func expectedExportMMDRelPaths(docs []exportDocument) map[string]struct{} {
+func expectedExportWorkspaceSourceRelPaths(docs []exportDocument) map[string]struct{} {
 	expected := make(map[string]struct{}, len(docs))
 	for _, doc := range docs {
 		expected[exportDocumentRelPath(doc)] = struct{}{}
@@ -138,7 +145,7 @@ func expectedExportMMDRelPaths(docs []exportDocument) map[string]struct{} {
 	return expected
 }
 
-func existingMMDRelPaths(root string) (map[string]struct{}, bool, error) {
+func existingWorkspaceSourceRelPaths(root string) (map[string]struct{}, bool, error) {
 	paths := map[string]struct{}{}
 	info, err := os.Stat(root)
 	if err != nil {
@@ -154,7 +161,7 @@ func existingMMDRelPaths(root string) (map[string]struct{}, bool, error) {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || filepath.Ext(path) != ".mmd" {
+		if entry.IsDir() || filepath.Base(path) != ViewFileName {
 			return nil
 		}
 		rel, err := filepath.Rel(root, path)
@@ -167,6 +174,31 @@ func existingMMDRelPaths(root string) (map[string]struct{}, bool, error) {
 		return nil, true, fmt.Errorf("scan workspace-source views dir: %w", err)
 	}
 	return paths, true, nil
+}
+
+func legacyMMDRelPaths(root string) ([]string, error) {
+	var paths []string
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".mmd" {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		paths = append(paths, filepath.ToSlash(rel))
+		return nil
+	}); err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scan legacy .mmd files: %w", err)
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 func writeExportDocuments(root string, docs []exportDocument) error {
@@ -452,7 +484,7 @@ func buildExportDocuments(state *sqliteState, refs *refResolver) (*exportBundle,
 			relDir = relParent + "/" + dirName
 		}
 		content, elementRefs, connectorRefs := renderViewDocument(view, parentRef, viewRef, state, refs)
-		out.docs = append(out.docs, exportDocument{relDir: relDir, content: content})
+		out.docs = append(out.docs, exportDocument{relDir: relDir, content: mermaidcore.MermaidBlock(content)})
 		out.viewMetadata[viewRef] = resourceMetadata(view.GetId(), view.GetUpdatedAt())
 		for ref, meta := range elementRefs {
 			out.elementMetadata[ref] = meta

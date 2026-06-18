@@ -50,16 +50,19 @@ func ParseTree(root string) (*desiredWorkspace, error) {
 		if !entry.IsDir() {
 			return nil
 		}
-		matches, err := filepath.Glob(filepath.Join(path, "*.mmd"))
+
+		docPath := filepath.Join(path, ViewFileName)
+		info, err := os.Stat(docPath)
 		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
 			return err
 		}
-		if len(matches) > 1 {
-			return fmt.Errorf("%s contains multiple .mmd files; each view folder can contain only one", path)
+		if info.IsDir() {
+			return fmt.Errorf("%s must be a file", docPath)
 		}
-		if len(matches) == 1 {
-			docs = append(docs, docFile{path: matches[0], dir: path})
-		}
+		docs = append(docs, docFile{path: docPath, dir: path})
 		return nil
 	}); err != nil {
 		return nil, err
@@ -130,7 +133,11 @@ func parseDocument(path string, derivedParentRef string) (*parsedDocument, error
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	lines := strings.Split(string(data), "\n")
+	source, err := extractWorkspaceSourceMermaidCode(path, string(data))
+	if err != nil {
+		return nil, err
+	}
+	lines := strings.Split(source, "\n")
 	out := &parsedDocument{
 		elements:       map[string]*desiredElement{},
 		placements:     map[string]desiredPlacement{},
@@ -251,6 +258,24 @@ func parseDocument(path string, derivedParentRef string) (*parsedDocument, error
 		return nil, fmt.Errorf("%s: edge %s -> %s is missing tld-connector metadata", path, pendingEdge.sourceAlias, pendingEdge.targetAlias)
 	}
 	return out, nil
+}
+
+func extractWorkspaceSourceMermaidCode(path, markdown string) (string, error) {
+	blocks := mermaidcore.FindMarkdownBlocks(markdown)
+	if len(blocks) != 1 {
+		return "", fmt.Errorf("%s: expected exactly one Markdown Mermaid block", path)
+	}
+	block := blocks[0]
+	if strings.TrimSpace(markdown[:block.Start]) != "" || strings.TrimSpace(markdown[block.End:]) != "" {
+		return "", fmt.Errorf("%s: workspace-source Markdown must contain only one Mermaid block", path)
+	}
+	if !strings.HasPrefix(block.Fence, "```") {
+		return "", fmt.Errorf("%s: workspace-source Mermaid block must use backtick fences", path)
+	}
+	if strings.TrimSpace(block.Code) == "" {
+		return "", fmt.Errorf("%s: empty Mermaid block", path)
+	}
+	return strings.TrimSpace(block.Code), nil
 }
 
 type pendingConnectorEdge struct {
@@ -381,7 +406,7 @@ func HashTree(root string) (string, error) {
 		if err != nil {
 			return err
 		}
-		if entry.IsDir() || filepath.Ext(path) != ".mmd" {
+		if entry.IsDir() || filepath.Base(path) != ViewFileName {
 			return nil
 		}
 		files = append(files, path)

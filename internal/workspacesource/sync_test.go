@@ -74,7 +74,7 @@ func readFileString(t *testing.T, path string) string {
 	return string(data)
 }
 
-func TestExportPreservesNonMMDNeighbors(t *testing.T) {
+func TestExportPreservesNonViewMarkdownNeighbors(t *testing.T) {
 	dir := t.TempDir()
 	store := newExportTestStore("Platform")
 	exportWorkspaceSource(t, dir, store)
@@ -83,14 +83,24 @@ func TestExportPreservesNonMMDNeighbors(t *testing.T) {
 	if err := os.WriteFile(neighbor, []byte("keep me"), 0o644); err != nil {
 		t.Fatalf("write neighbor: %v", err)
 	}
+	markdownNeighbor := filepath.Join(dir, "views", "notes.md")
+	if err := os.WriteFile(markdownNeighbor, []byte("# keep me"), 0o644); err != nil {
+		t.Fatalf("write markdown neighbor: %v", err)
+	}
 
 	exportWorkspaceSource(t, dir, store)
 
 	if got := readFileString(t, neighbor); got != "keep me" {
 		t.Fatalf("neighbor content = %q, want preserved", got)
 	}
+	if got := readFileString(t, markdownNeighbor); got != "# keep me" {
+		t.Fatalf("markdown neighbor content = %q, want preserved", got)
+	}
 	if _, err := os.Stat(platformViewFile(dir)); err != nil {
 		t.Fatalf("expected exported view file: %v", err)
+	}
+	if got := readFileString(t, platformViewFile(dir)); !strings.HasPrefix(got, "```mermaid\n") || !strings.HasSuffix(got, "\n```\n") {
+		t.Fatalf("exported view file is not a Mermaid Markdown block:\n%s", got)
 	}
 }
 
@@ -129,10 +139,10 @@ func TestExportAbortsWhenPreviouslyManagedRootIsMissing(t *testing.T) {
 	}
 }
 
-func TestExportAbortsWhenExistingMMDWouldBecomeStale(t *testing.T) {
+func TestExportAbortsWhenExistingViewMarkdownWouldBecomeStale(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "views")
-	writeTestMMD(t, root, "old/view.mmd", `flowchart LR
+	writeTestViewMarkdown(t, root, "old/view.md", `flowchart LR
 %% tld/v1 view ref=old parent=root name=Old
 `)
 	hash, err := HashTree(root)
@@ -150,13 +160,31 @@ func TestExportAbortsWhenExistingMMDWouldBecomeStale(t *testing.T) {
 	}
 
 	store := newExportTestStore("Platform")
-	requireExportError(t, dir, store, "would leave stale .mmd files")
+	requireExportError(t, dir, store, "would leave stale view.md files")
 
 	if _, err := os.Stat(filepath.Join(root, "old", ViewFileName)); err != nil {
 		t.Fatalf("stale file was removed: %v", err)
 	}
 	if _, err := os.Stat(platformViewFile(dir)); !os.IsNotExist(err) {
 		t.Fatalf("new export file was written despite stale source, stat err=%v", err)
+	}
+}
+
+func TestExportAbortsWhenLegacyMMDExists(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "views")
+	writeLegacyMMD(t, root, "old/view.mmd", `flowchart LR
+%% tld/v1 view ref=old parent=root name=Old
+`)
+
+	store := newExportTestStore("Platform")
+	requireExportError(t, dir, store, "legacy .mmd files")
+
+	if _, err := os.Stat(filepath.Join(root, "old", "view.mmd")); err != nil {
+		t.Fatalf("legacy file was removed: %v", err)
+	}
+	if _, err := os.Stat(platformViewFile(dir)); !os.IsNotExist(err) {
+		t.Fatalf("new export file was written despite legacy source, stat err=%v", err)
 	}
 }
 

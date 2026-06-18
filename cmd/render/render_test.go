@@ -37,7 +37,7 @@ func TestRenderCmd_MermaidToFile(t *testing.T) {
 	cmd.MustInitWorkspace(t, dir)
 	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
 
-	outPath := filepath.Join(dir, "diagram.mmd")
+	outPath := filepath.Join(dir, "diagram.md")
 	_, _, err := cmd.RunCmd(t, dir, "render", "root", "-o", outPath)
 	if err != nil {
 		t.Fatalf("render -o: %v", err)

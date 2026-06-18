@@ -7,20 +7,32 @@ import (
 	"testing"
 )
 
-func writeTestMMD(t *testing.T, root, rel, content string) {
+func writeTestViewMarkdown(t *testing.T, root, rel, content string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	markdown := "```mermaid\n" + strings.TrimSpace(content) + "\n```\n"
+	if err := os.WriteFile(path, []byte(markdown), 0o644); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
+}
+
+func writeLegacyMMD(t *testing.T, root, rel, content string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(rel))
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write mmd: %v", err)
+		t.Fatalf("write legacy mmd: %v", err)
 	}
 }
 
 func TestParseTreeNestedViewsAndDuplicateElementAcrossViews(t *testing.T) {
 	root := t.TempDir()
-	writeTestMMD(t, root, "platform/view.mmd", `flowchart LR
+	writeTestViewMarkdown(t, root, "platform/view.md", `flowchart LR
 %% tld/v1 view ref=platform parent=root name=Platform owner=platform
   api["API"]
 %% tld-element ref=api kind=service x=120 y=80 file=internal/api.go tags=backend
@@ -29,7 +41,7 @@ func TestParseTreeNestedViewsAndDuplicateElementAcrossViews(t *testing.T) {
   api -- "reads" --> db
 %% tld-connector ref=9 source=api target=db label=reads rel=query
 `)
-	writeTestMMD(t, root, "platform/api/view.mmd", `flowchart LR
+	writeTestViewMarkdown(t, root, "platform/api/view.md", `flowchart LR
 %% tld/v1 view ref=api parent=platform name=API owner=api
   api["API"]
 %% tld-element ref=api kind=service x=0 y=0 file=internal/api.go tags=backend
@@ -65,10 +77,10 @@ func TestParseTreeNestedViewsAndDuplicateElementAcrossViews(t *testing.T) {
 
 func TestParseTreeRejectsDuplicateRefs(t *testing.T) {
 	root := t.TempDir()
-	writeTestMMD(t, root, "one/view.mmd", `flowchart LR
+	writeTestViewMarkdown(t, root, "one/view.md", `flowchart LR
 %% tld/v1 view ref=platform parent=root name=Platform
 `)
-	writeTestMMD(t, root, "two/view.mmd", `flowchart LR
+	writeTestViewMarkdown(t, root, "two/view.md", `flowchart LR
 %% tld/v1 view ref=platform parent=root name=Other
 `)
 
@@ -78,24 +90,25 @@ func TestParseTreeRejectsDuplicateRefs(t *testing.T) {
 	}
 }
 
-func TestParseTreeRejectsMultipleMMDsInFolder(t *testing.T) {
+func TestParseTreeRejectsMarkdownWithProse(t *testing.T) {
 	root := t.TempDir()
-	writeTestMMD(t, root, "platform/view.mmd", `flowchart LR
-%% tld/v1 view ref=platform parent=root name=Platform
-`)
-	writeTestMMD(t, root, "platform/extra.mmd", `flowchart LR
-%% tld/v1 view ref=extra parent=root name=Extra
-`)
+	path := filepath.Join(root, "platform", ViewFileName)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("# Platform\n\n```mermaid\nflowchart LR\n%% tld/v1 view ref=platform parent=root name=Platform\n```\n"), 0o644); err != nil {
+		t.Fatalf("write markdown: %v", err)
+	}
 
 	_, err := ParseTree(root)
-	if err == nil || !strings.Contains(err.Error(), "multiple .mmd files") {
-		t.Fatalf("ParseTree() error = %v, want multiple .mmd files", err)
+	if err == nil || !strings.Contains(err.Error(), "must contain only one Mermaid block") {
+		t.Fatalf("ParseTree() error = %v, want prose rejection", err)
 	}
 }
 
 func TestParseTreeRequiresExplicitElementRefs(t *testing.T) {
 	root := t.TempDir()
-	writeTestMMD(t, root, "platform/view.mmd", `flowchart LR
+	writeTestViewMarkdown(t, root, "platform/view.md", `flowchart LR
 %% tld/v1 view ref=platform parent=root name=Platform
   api["API"]
 `)

@@ -7,7 +7,7 @@ import (
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
 
-const ViewFileName = "view.mmd"
+const ViewFileName = "view.md"
 
 type Options struct {
 	WorkspaceDir   string
