@@ -204,13 +204,22 @@ func (s *MermaidService) importIntoView(ctx context.Context, workspaceID uuid.UU
 	if err != nil {
 		return nil, err
 	}
+	workspaceConnectors, err := s.Store.ListAllConnectors(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
 
 	placedElementIDs := map[int32]struct{}{}
 	for _, placement := range placements {
 		placedElementIDs[placement.GetElementId()] = struct{}{}
 	}
+	existingPlacementsByFingerprint := placedElementImportFingerprints(placements)
+	fingerprintResolvedElementIDs := map[int32]struct{}{}
 	existingConnectorByKey := map[string]*diagv1.Connector{}
 	for _, connector := range connectors {
+		existingConnectorByKey[connectorPersistenceKey(connector.GetSourceElementId(), connector.GetTargetElementId(), connector.GetLabel(), connector.GetRelationship())] = connector
+	}
+	for _, connector := range workspaceConnectors {
 		existingConnectorByKey[connectorPersistenceKey(connector.GetSourceElementId(), connector.GetTargetElementId(), connector.GetLabel(), connector.GetRelationship())] = connector
 	}
 
@@ -235,6 +244,14 @@ func (s *MermaidService) importIntoView(ctx context.Context, workspaceID uuid.UU
 			if !errors.Is(err, sql.ErrNoRows) {
 				return nil, err
 			}
+		}
+
+		if existing := resolvePlacedElementByImportFingerprint(element, existingPlacementsByFingerprint, fingerprintResolvedElementIDs); existing != nil {
+			elementsByRef[element.GetRef()] = existing
+			summary.ResolvedElementCount++
+			summary.ResolvedElementIds = append(summary.ResolvedElementIds, existing.GetId())
+			summary.ImportedElementIds = append(summary.ImportedElementIds, existing.GetId())
+			continue
 		}
 
 		if dryRun {
@@ -424,6 +441,105 @@ func mermaidRefElementID(ref string) int32 {
 
 func connectorPersistenceKey(sourceID, targetID int32, label, relationship string) string {
 	return fmt.Sprintf("%d:%d:%s:%s", sourceID, targetID, strings.TrimSpace(label), strings.TrimSpace(relationship))
+}
+
+func resolvePlacedElementByImportFingerprint(element *diagv1.PlanElement, existing map[string][]*diagv1.PlacedElement, used map[int32]struct{}) *diagv1.Element {
+	if !isExportedTldElementRef(element) {
+		return nil
+	}
+	candidates := existing[importElementFingerprint(element)]
+	if len(candidates) != 1 {
+		return nil
+	}
+	placement := candidates[0]
+	elementID := placement.GetElementId()
+	if _, ok := used[elementID]; ok {
+		return nil
+	}
+	used[elementID] = struct{}{}
+	return placedElementAsElement(placement)
+}
+
+func isExportedTldElementRef(element *diagv1.PlanElement) bool {
+	if mermaidRefElementID(element.GetRef()) == 0 {
+		return false
+	}
+	for _, placement := range element.GetPlacements() {
+		if placement.PositionX != nil && placement.PositionY != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func placedElementImportFingerprints(placements []*diagv1.PlacedElement) map[string][]*diagv1.PlacedElement {
+	out := map[string][]*diagv1.PlacedElement{}
+	for _, placement := range placements {
+		key := placedElementFingerprint(placement)
+		out[key] = append(out[key], placement)
+	}
+	return out
+}
+
+func importElementFingerprint(element *diagv1.PlanElement) string {
+	return strings.Join([]string{
+		strings.TrimSpace(element.GetName()),
+		strings.TrimSpace(element.GetKind()),
+		strings.TrimSpace(element.GetDescription()),
+		strings.TrimSpace(element.GetTechnology()),
+		strings.TrimSpace(element.GetUrl()),
+		strings.TrimSpace(element.GetLogoUrl()),
+		mermaid.EncodeStringList(element.GetTags()),
+		mermaid.EncodeTechnologyLinks(element.GetTechnologyLinks()),
+		strings.TrimSpace(element.GetRepo()),
+		strings.TrimSpace(element.GetBranch()),
+		strings.TrimSpace(element.GetFilePath()),
+		strings.TrimSpace(element.GetLanguage()),
+		strconv.FormatBool(element.GetBypassNoiseGate()),
+		strconv.FormatBool(element.GetHasView()),
+		strings.TrimSpace(element.GetViewLabel()),
+	}, "\x00")
+}
+
+func placedElementFingerprint(placement *diagv1.PlacedElement) string {
+	return strings.Join([]string{
+		strings.TrimSpace(placement.GetName()),
+		strings.TrimSpace(placement.GetKind()),
+		strings.TrimSpace(placement.GetDescription()),
+		strings.TrimSpace(placement.GetTechnology()),
+		strings.TrimSpace(placement.GetUrl()),
+		strings.TrimSpace(placement.GetLogoUrl()),
+		mermaid.EncodeStringList(placement.GetTags()),
+		mermaid.EncodeTechnologyLinks(placement.GetTechnologyLinks()),
+		strings.TrimSpace(placement.GetRepo()),
+		strings.TrimSpace(placement.GetBranch()),
+		strings.TrimSpace(placement.GetFilePath()),
+		strings.TrimSpace(placement.GetLanguage()),
+		strconv.FormatBool(placement.GetBypassNoiseGate()),
+		strconv.FormatBool(placement.GetHasView()),
+		strings.TrimSpace(placement.GetViewLabel()),
+	}, "\x00")
+}
+
+func placedElementAsElement(placement *diagv1.PlacedElement) *diagv1.Element {
+	return &diagv1.Element{
+		Id:              placement.GetElementId(),
+		Name:            placement.GetName(),
+		Description:     placement.Description,
+		Kind:            placement.Kind,
+		Technology:      placement.Technology,
+		Url:             placement.Url,
+		LogoUrl:         placement.LogoUrl,
+		TechnologyLinks: placement.GetTechnologyLinks(),
+		Tags:            cloneStringSlice(placement.GetTags()),
+		Repo:            placement.Repo,
+		Branch:          placement.Branch,
+		FilePath:        placement.FilePath,
+		Language:        placement.Language,
+		HasView:         placement.GetHasView(),
+		ViewLabel:       placement.ViewLabel,
+		BypassNoiseGate: placement.GetBypassNoiseGate(),
+	}
 }
 
 func connectorWouldChangeExisting(existing *diagv1.Connector, planned *diagv1.PlanConnector, handles mermaid.ConnectorHandles) bool {

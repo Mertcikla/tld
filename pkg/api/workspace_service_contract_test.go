@@ -634,6 +634,7 @@ type contractStore struct {
 	getView                 func(context.Context, int32, uuid.UUID) (*diagv1.View, error)
 	getProjectedViewContent func(context.Context, int32, uuid.UUID, *int32) (*diagv1.ViewContent, error)
 	updateView              func(context.Context, int32, uuid.UUID, string, *string, *string, []string) (*diagv1.View, error)
+	listPlacements          func(context.Context, int32) ([]*diagv1.PlacedElement, error)
 	addPlacement            func(context.Context, int32, int32, float64, float64) (*diagv1.PlacedElement, error)
 	removePlacement         func(context.Context, int32, int32) error
 	createConnector         func(context.Context, uuid.UUID, ConnectorInput) (*diagv1.Connector, error)
@@ -744,7 +745,10 @@ func (s *contractStore) UpdateElement(ctx context.Context, id int32, workspaceID
 	return nil, nil
 }
 func (s *contractStore) DeleteElement(context.Context, int32, uuid.UUID) error { return nil }
-func (s *contractStore) ListPlacements(context.Context, int32) ([]*diagv1.PlacedElement, error) {
+func (s *contractStore) ListPlacements(ctx context.Context, viewID int32) ([]*diagv1.PlacedElement, error) {
+	if s.listPlacements != nil {
+		return s.listPlacements(ctx, viewID)
+	}
 	return nil, nil
 }
 func (s *contractStore) ListAllPlacements(context.Context, uuid.UUID) ([]*diagv1.PlacedElement, error) {
