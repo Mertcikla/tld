@@ -684,12 +684,16 @@ export async function getElement(page: Page, elementId: number) {
     description?: string
     technology?: string
     url?: string
+    logoUrl?: string
     tags?: string[]
-    technology_connectors?: Array<{ type: string; slug?: string; label: string; is_primary_icon?: boolean }>
+    technologyLinks?: Array<{ type: string; slug?: string; label: string; isPrimaryIcon?: boolean }>
     repo?: string
     branch?: string
-    file_path?: string
+    filePath?: string
     language?: string
+    hasView?: boolean
+    viewLabel?: string
+    bypassNoiseGate?: boolean
   }
 }
 
@@ -876,8 +880,6 @@ export async function createConnector(page: Page, viewId: number, sourceElementI
   url?: string
   sourceHandle?: string | null
   targetHandle?: string | null
-  source_handle?: string | null
-  target_handle?: string | null
   tags?: string[]
 } = {}) {
   const response = await page.request.post('/api/diag.v1.WorkspaceService/CreateConnector', {
@@ -891,8 +893,8 @@ export async function createConnector(page: Page, viewId: number, sourceElementI
       description: data.description ?? '',
       relationship: data.relationship ?? '',
       url: data.url ?? '',
-      sourceHandle: data.sourceHandle ?? data.source_handle ?? undefined,
-      targetHandle: data.targetHandle ?? data.target_handle ?? undefined,
+      sourceHandle: data.sourceHandle ?? undefined,
+      targetHandle: data.targetHandle ?? undefined,
       tags: data.tags ?? [],
     },
   })
