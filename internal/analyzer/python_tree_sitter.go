@@ -58,6 +58,7 @@ func (p *pythonParser) appendClass(node *gotreesitter.Node, lang *gotreesitter.L
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     "class",
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     int(nameNode.StartPoint().Row) + 1,
 		EndLine:  int(node.EndPoint().Row) + 1,
@@ -82,6 +83,7 @@ func (p *pythonParser) appendFunction(node *gotreesitter.Node, lang *gotreesitte
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     kind,
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     int(nameNode.StartPoint().Row) + 1,
 		EndLine:  int(node.EndPoint().Row) + 1,

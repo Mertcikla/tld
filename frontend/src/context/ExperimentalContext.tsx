@@ -3,12 +3,14 @@ import { createContext, useContext, useState, useMemo, type ReactNode } from 're
 
 export interface Experimental {
   watchEnabled: boolean
+  mermaidIntegrationEnabled: boolean
 }
 
 const EXPERIMENTAL_KEY = 'tld:experimental'
 
 const DEFAULT_EXPERIMENTAL: Experimental = {
   watchEnabled: false,
+  mermaidIntegrationEnabled: false,
 }
 
 interface ExperimentalContextValue {

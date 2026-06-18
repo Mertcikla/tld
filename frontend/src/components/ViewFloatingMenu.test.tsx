@@ -82,6 +82,26 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof ViewFloatingM
 }
 
 describe('ViewFloatingMenu noise gate toggle', () => {
+  it('renders Mermaid copy and export actions in the extras menu', () => {
+    const onCopyMermaid = vi.fn()
+    const onExportMermaid = vi.fn()
+    const renderer = renderMenu({
+      extrasOpen: true,
+      onCopyMermaid,
+      onExportMermaid,
+    })
+
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'vieweditor-toolbar-copy-mermaid' }).props.onClick()
+    })
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'vieweditor-toolbar-export-mermaid' }).props.onClick()
+    })
+
+    expect(onCopyMermaid).toHaveBeenCalledOnce()
+    expect(onExportMermaid).toHaveBeenCalledOnce()
+  })
+
   it('shows an off gate with a disabled density slider and can request initialization', () => {
     const onNoiseGateEnabledChange = vi.fn()
     const renderer = renderMenu({

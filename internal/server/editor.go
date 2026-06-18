@@ -86,6 +86,9 @@ type repositoryFetcher interface {
 
 func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue string, filePath string) (string, error) {
 	cleanFile := strings.TrimSpace(filePath)
+	if before, _, ok := strings.Cut(cleanFile, "#"); ok {
+		cleanFile = before
+	}
 
 	repos, err := store.Repositories(ctx)
 	if err != nil {

@@ -41,6 +41,7 @@ type ServeOptions struct {
 	Port           string
 	PublicURL      string
 	AllowedOrigins []string
+	WorkspaceDir   string
 	StaticFS       fs.FS
 	Config         *workspace.Config
 }
@@ -121,6 +122,7 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 	}
 	srv, err := server.NewWithOptions(sqliteStore, staticFS, localWorkspaceID, server.Options{
 		DataDir:        dataDir,
+		WorkspaceDir:   o.WorkspaceDir,
 		PublicURL:      publicURL,
 		AllowedOrigins: allowedOrigins,
 	})

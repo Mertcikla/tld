@@ -31,4 +31,5 @@ func (c Card) Render() {}
 			t.Fatalf("missing Render parent %q in symbols: %+v", want, result.Symbols)
 		}
 	}
+	assertSymbolNodeType(t, result, "Render", "method", "Page", "method_declaration")
 }

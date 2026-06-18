@@ -1,6 +1,7 @@
-import { memo, useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import {
   Button,
+  Checkbox,
   FormControl,
   FormLabel,
   HStack,
@@ -14,7 +15,6 @@ import {
   ModalOverlay,
   Radio,
   RadioGroup,
-  Text,
   VStack,
 } from '@chakra-ui/react'
 
@@ -24,12 +24,14 @@ export interface ExportOptions {
   format: ExportFormat
   scale: 1 | 2 | 3
   filename: string
+  includeTldMetadata?: boolean
 }
 
 interface Props {
   isOpen: boolean
   onClose: () => void
   defaultFilename: string
+  mermaidEnabled?: boolean
   isExporting?: boolean
   onExport: (options: ExportOptions) => Promise<void> | void
 }
@@ -44,27 +46,34 @@ function ExportModal({
   isOpen,
   onClose,
   defaultFilename,
+  mermaidEnabled = false,
   isExporting,
   onExport,
 }: Props) {
   const [format, setFormat] = useState<ExportFormat>('svg')
   const [scale, setScale] = useState<1 | 2 | 3>(2)
   const [filename, setFilename] = useState(defaultFilename)
+  const [includeTldMetadata, setIncludeTldMetadata] = useState(true)
 
   useEffect(() => {
     if (!isOpen) return
     setFilename(defaultFilename)
     setFormat('svg')
     setScale(2)
+    setIncludeTldMetadata(true)
   }, [isOpen, defaultFilename])
 
-  const extension = useMemo(() => (format === 'svg' ? '.svg' : format === 'png' ? '.png' : '.mermaid'), [format])
+  useEffect(() => {
+    if (!mermaidEnabled && format === 'mermaid') setFormat('svg')
+  }, [format, mermaidEnabled])
+
 
   const handleSubmit = async () => {
     await onExport({
       format,
       scale,
       filename: sanitizeFilename(filename),
+      includeTldMetadata,
     })
   }
 
@@ -82,7 +91,7 @@ function ExportModal({
                 <HStack spacing={4}>
                   <Radio value="svg">SVG</Radio>
                   <Radio value="png">PNG</Radio>
-                  <Radio value="mermaid">Mermaid</Radio>
+                  {mermaidEnabled && <Radio value="mermaid">Mermaid Markdown</Radio>}
                 </HStack>
               </RadioGroup>
             </FormControl>
@@ -100,6 +109,16 @@ function ExportModal({
               </FormControl>
             )}
 
+            {format === 'mermaid' && (
+              <Checkbox
+                size="sm"
+                isChecked={includeTldMetadata}
+                onChange={(event) => setIncludeTldMetadata(event.currentTarget.checked)}
+              >
+                Include tlDiagram metadata
+              </Checkbox>
+            )}
+
             <FormControl id="export-filename">
               <FormLabel fontSize="sm">Filename</FormLabel>
               <Input
@@ -110,9 +129,6 @@ function ExportModal({
                 placeholder="diagram-export"
                 size="sm"
               />
-              <Text mt={1.5} fontSize="xs" color="gray.400">
-                File extension will be added automatically ({extension})
-              </Text>
             </FormControl>
           </VStack>
         </ModalBody>

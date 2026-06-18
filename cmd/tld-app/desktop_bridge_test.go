@@ -18,8 +18,8 @@ func TestDecodeBase64Content(t *testing.T) {
 }
 
 func TestSanitizeDefaultFilename(t *testing.T) {
-	if got := sanitizeDefaultFilename("../diagram.mmd"); got != "diagram.mmd" {
-		t.Fatalf("filename = %q, want diagram.mmd", got)
+	if got := sanitizeDefaultFilename("../diagram.md"); got != "diagram.md" {
+		t.Fatalf("filename = %q, want diagram.md", got)
 	}
 	if got := sanitizeDefaultFilename(""); got != "untitled" {
 		t.Fatalf("empty filename = %q, want untitled", got)
@@ -28,8 +28,8 @@ func TestSanitizeDefaultFilename(t *testing.T) {
 
 func TestReadTextFile(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "diagram.mmd")
-	if err := os.WriteFile(path, []byte("flowchart LR"), 0o600); err != nil {
+	path := filepath.Join(dir, "diagram.md")
+	if err := os.WriteFile(path, []byte("```mermaid\nflowchart LR\n```\n"), 0o600); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
 
@@ -40,8 +40,8 @@ func TestReadTextFile(t *testing.T) {
 	if got.Path != path {
 		t.Fatalf("path = %q, want %q", got.Path, path)
 	}
-	if got.Content != "flowchart LR" {
-		t.Fatalf("content = %q, want flowchart LR", got.Content)
+	if got.Content != "```mermaid\nflowchart LR\n```\n" {
+		t.Fatalf("content = %q, want Mermaid Markdown block", got.Content)
 	}
 }
 

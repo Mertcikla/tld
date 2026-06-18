@@ -142,8 +142,12 @@ func mermaidID(ref string) string {
 }
 
 func escapeMermaid(input string) string {
-	out := strings.ReplaceAll(input, "\\", "\\\\")
-	out = strings.ReplaceAll(out, "\"", "\\\"")
+	out := strings.ReplaceAll(input, "\r\n", " ")
+	out = strings.ReplaceAll(out, "\n", " ")
+	out = strings.ReplaceAll(out, "\r", " ")
+	out = strings.ReplaceAll(out, "&", "&amp;")
+	out = strings.ReplaceAll(out, "\\", "\\\\")
+	out = strings.ReplaceAll(out, "\"", "&quot;")
 	return out
 }
 

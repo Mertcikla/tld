@@ -58,19 +58,19 @@ describe('desktop helpers', () => {
   })
 
   it('saves blobs through the desktop bridge in Wails mode', async () => {
-    const saveFile = vi.fn().mockResolvedValue({ path: '/tmp/diagram.mmd', canceled: false })
+    const saveFile = vi.fn().mockResolvedValue({ path: '/tmp/diagram.md', canceled: false })
     installWindow({ __TLD_APP__: true, go: { main: { DesktopBridge: { SaveFile: saveFile } } } })
     const { saveBlobAs } = await import('./desktop')
 
-    const result = await saveBlobAs(new Blob(['flowchart LR']), 'diagram.mmd', [
-      { displayName: 'Mermaid Files (*.mmd)', pattern: '*.mmd' },
+    const result = await saveBlobAs(new Blob(['```mermaid\nflowchart LR\n```\n']), 'diagram.md', [
+      { displayName: 'Markdown Files (*.md)', pattern: '*.md' },
     ])
 
-    expect(result).toEqual({ path: '/tmp/diagram.mmd', canceled: false })
+    expect(result).toEqual({ path: '/tmp/diagram.md', canceled: false })
     expect(saveFile).toHaveBeenCalledWith(
-      'diagram.mmd',
-      [{ displayName: 'Mermaid Files (*.mmd)', pattern: '*.mmd' }],
-      'Zmxvd2NoYXJ0IExS',
+      'diagram.md',
+      [{ displayName: 'Markdown Files (*.md)', pattern: '*.md' }],
+      'YGBgbWVybWFpZApmbG93Y2hhcnQgTFIKYGBgCg==',
     )
   })
 

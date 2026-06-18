@@ -25,7 +25,7 @@ import { KbdHint } from './PanelUI'
 import { api } from '../api/client'
 import type { LibraryElement } from '../types'
 import { TYPE_COLORS } from '../types'
-import { resolveIconPath } from '../utils/url'
+import { resolveElementIconUrl } from '../utils/elementIcon'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 
 import { useViewEditorContext } from '../pages/ViewEditor/context'
@@ -465,7 +465,8 @@ function ElementLibrary({
             const already = existingElementIds.has(obj.id)
             const isFocused = virtualItems.topSpacerHeight / LIBRARY_ITEM_HEIGHT + idx === focusedIdx
             const color = TYPE_COLORS[obj.kind ?? ''] ?? 'gray'
-            const hasLogo = !!obj.logo_url
+            const logoUrl = resolveElementIconUrl(obj.logo_url, obj.technology_connectors)
+            const hasLogo = !!logoUrl
 
             return (
               <Tooltip
@@ -546,7 +547,7 @@ function ElementLibrary({
 
                     {hasLogo ? (
                       <Flex w="24px" h="24px" align="center" justify="center" flexShrink={0} bg="whiteAlpha.100" rounded="md" p={1}>
-                        <Box as="img" src={resolveIconPath(obj.logo_url!)} maxW="100%" maxH="100%" objectFit="contain" />
+                        <Box as="img" src={logoUrl} maxW="100%" maxH="100%" objectFit="contain" />
                       </Flex>
                     ) : (
                       <Flex w="24px" h="24px" align="center" justify="center" flexShrink={0} bg={`${color}.900`} color={`${color}.300`} rounded="md" fontSize="10px" fontWeight="bold">

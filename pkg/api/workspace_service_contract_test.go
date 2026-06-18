@@ -623,11 +623,12 @@ type contractStore struct {
 	listViews               func(context.Context, uuid.UUID) ([]*diagv1.View, error)
 	listElements            func(context.Context, uuid.UUID, int32, int32, string) ([]*diagv1.Element, int, error)
 	getElement              func(context.Context, int32, uuid.UUID) (*diagv1.Element, error)
+	createElement           func(context.Context, uuid.UUID, ElementInput) (*diagv1.Element, error)
 	createView              func(context.Context, uuid.UUID, *int32, string, *string, bool) (*diagv1.View, error)
 	getViewMarkdown         func(context.Context, int32, uuid.UUID) (*diagv1.ViewMarkdownDocument, string, error)
-	createViewMarkdown      func(context.Context, int32, uuid.UUID, *string, *string) (*diagv1.View, error)
+	createViewMarkdown      func(context.Context, int32, uuid.UUID, *string, *string, string, *string) (*diagv1.View, error)
 	linkViewMarkdown        func(context.Context, int32, uuid.UUID, string) (*diagv1.View, error)
-	saveViewMarkdown        func(context.Context, int32, uuid.UUID, string) (*diagv1.ViewMarkdownDocument, error)
+	saveViewMarkdown        func(context.Context, int32, uuid.UUID, string, *string, bool) (*diagv1.ViewMarkdownDocument, error)
 	unlinkViewMarkdown      func(context.Context, int32, uuid.UUID, bool) (*diagv1.View, error)
 	updateElement           func(context.Context, int32, uuid.UUID, ElementInput) (*diagv1.Element, error)
 	getView                 func(context.Context, int32, uuid.UUID) (*diagv1.View, error)
@@ -638,11 +639,21 @@ type contractStore struct {
 	createConnector         func(context.Context, uuid.UUID, ConnectorInput) (*diagv1.Connector, error)
 	getConnector            func(context.Context, int32, uuid.UUID) (*diagv1.Connector, error)
 	updateConnector         func(context.Context, int32, uuid.UUID, ConnectorInput) (*diagv1.Connector, error)
+	listConnectors          func(context.Context, int32, uuid.UUID) ([]*diagv1.Connector, error)
 	listAllConnectors       func(context.Context, uuid.UUID) ([]*diagv1.Connector, error)
 	applyPlan               func(context.Context, uuid.UUID, *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error)
+	runInTransaction        func(context.Context, func(context.Context, Store) error) error
 }
 
 var _ Store = (*contractStore)(nil)
+var _ TransactionalStore = (*contractStore)(nil)
+
+func (s *contractStore) RunInTransaction(ctx context.Context, fn func(context.Context, Store) error) error {
+	if s.runInTransaction != nil {
+		return s.runInTransaction(ctx, fn)
+	}
+	return fn(ctx, s)
+}
 
 func (s *contractStore) ListViews(context.Context, uuid.UUID) ([]*diagv1.View, error) {
 	if s.listViews != nil {
@@ -677,9 +688,9 @@ func (s *contractStore) CreateView(ctx context.Context, workspaceID uuid.UUID, o
 	}
 	return nil, nil
 }
-func (s *contractStore) CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string) (*diagv1.View, error) {
+func (s *contractStore) CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string, targetKind string, path *string) (*diagv1.View, error) {
 	if s.createViewMarkdown != nil {
-		return s.createViewMarkdown(ctx, viewID, workspaceID, fileName, initialContent)
+		return s.createViewMarkdown(ctx, viewID, workspaceID, fileName, initialContent, targetKind, path)
 	}
 	return nil, nil
 }
@@ -695,9 +706,9 @@ func (s *contractStore) UpdateView(ctx context.Context, id int32, workspaceID uu
 	}
 	return nil, nil
 }
-func (s *contractStore) SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string) (*diagv1.ViewMarkdownDocument, error) {
+func (s *contractStore) SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string, expectedFileVersion *string, force bool) (*diagv1.ViewMarkdownDocument, error) {
 	if s.saveViewMarkdown != nil {
-		return s.saveViewMarkdown(ctx, viewID, workspaceID, content)
+		return s.saveViewMarkdown(ctx, viewID, workspaceID, content, expectedFileVersion, force)
 	}
 	return nil, nil
 }
@@ -720,7 +731,10 @@ func (s *contractStore) GetElement(ctx context.Context, id int32, workspaceID uu
 	}
 	return nil, errors.New("element not found")
 }
-func (s *contractStore) CreateElement(context.Context, uuid.UUID, ElementInput) (*diagv1.Element, error) {
+func (s *contractStore) CreateElement(ctx context.Context, workspaceID uuid.UUID, input ElementInput) (*diagv1.Element, error) {
+	if s.createElement != nil {
+		return s.createElement(ctx, workspaceID, input)
+	}
 	return nil, nil
 }
 func (s *contractStore) UpdateElement(ctx context.Context, id int32, workspaceID uuid.UUID, input ElementInput) (*diagv1.Element, error) {
@@ -754,7 +768,10 @@ func (s *contractStore) RemovePlacement(ctx context.Context, viewID, elementID i
 	}
 	return nil
 }
-func (s *contractStore) ListConnectors(context.Context, int32, uuid.UUID) ([]*diagv1.Connector, error) {
+func (s *contractStore) ListConnectors(ctx context.Context, viewID int32, workspaceID uuid.UUID) ([]*diagv1.Connector, error) {
+	if s.listConnectors != nil {
+		return s.listConnectors(ctx, viewID, workspaceID)
+	}
 	return nil, nil
 }
 func (s *contractStore) ListAllConnectors(ctx context.Context, workspaceID uuid.UUID) ([]*diagv1.Connector, error) {

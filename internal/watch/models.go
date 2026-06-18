@@ -57,6 +57,7 @@ type Symbol struct {
 	Name          string `json:"name"`
 	QualifiedName string `json:"qualified_name"`
 	Kind          string `json:"kind"`
+	NodeType      string `json:"node_type,omitempty"`
 	StartLine     int    `json:"start_line"`
 	EndLine       *int   `json:"end_line"`
 	SignatureHash string `json:"signature_hash"`

@@ -36,7 +36,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
 } from '../../components/Icons'
-import { api } from '../../api/client'
+import { api, type MermaidImportSummary, type ParsedImport } from '../../api/client'
 import type {
   ViewTreeNode,
   PlacedElement,
@@ -95,9 +95,8 @@ import {
   useViewContextNeighbours,
 } from './hooks/useViewContextNeighbours'
 import { canonicalNodePairKey } from './pairKey'
-import type { ParsedImport } from '../../pkg/importer/mermaid'
-import { extractMermaidCode, parseMermaidAsync, serializeViewToMermaid, type MermaidDirection } from '../../pkg/importer/mermaid'
 import { vscodeBridge } from '../../lib/vscodeBridge'
+import { openTextFile } from '../../lib/desktop'
 import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
 
 import { ViewEditorContext } from './context'
@@ -141,6 +140,7 @@ import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
 import { buildElementLibraryItems, useStore, placedElementToLibraryElement, resolveElementForUpdate } from '../../store/useStore'
 import { useWorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
+import { useExperimental } from '../../context/ExperimentalContext'
 import {
   elementSelectionRects,
   planSelectionAlignment,
@@ -214,6 +214,18 @@ type CanvasViewportStore = {
 }
 
 type ViewMetadataSnapshot = Pick<ViewTreeNode, 'id' | 'name' | 'level_label'>
+
+function buildViewNameById(nodes: ViewTreeNode[]) {
+  const names = new Map<number, string>()
+  const visit = (items: ViewTreeNode[]) => {
+    for (const item of items) {
+      names.set(item.id, item.name)
+      if (item.children.length > 0) visit(item.children)
+    }
+  }
+  visit(nodes)
+  return names
+}
 
 type PendingDuplicatePaste = {
   payload: ViewSelectionClipboardPayload
@@ -446,6 +458,10 @@ function initialViewMarkdown(name?: string | null) {
   return trimmed ? `# ${trimmed}\n\n` : ''
 }
 
+function isMarkdownConflictError(error: unknown) {
+  return error instanceof Error && /markdown file changed/i.test(error.message)
+}
+
 function clampMarkdownPaneWidth(width: number, totalWidth: number, isMobileLayout: boolean) {
   const minMarkdownWidth = isMobileLayout
     ? VIEW_EDITOR_MARKDOWN_MIN_WIDTH_MOBILE
@@ -486,79 +502,23 @@ function isCanvasKeyboardTarget(target: EventTarget | null) {
   return !!target.closest('[data-testid="vieweditor-canvas"]')
 }
 
+function countLabel(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`
+}
+
+function mermaidImportDescription(summary: MermaidImportSummary) {
+  return [
+    `Resolved ${countLabel(summary.resolvedElementCount, 'element')} and ${countLabel(summary.resolvedConnectorCount, 'connector')}.`,
+    `Created ${countLabel(summary.createdElementCount, 'element')} and ${countLabel(summary.createdConnectorCount, 'connector')}.`,
+  ].join(' ')
+}
+
 function fadeMarker(marker: string | RFEdgeMarker | undefined, opacity: number) {
   if (!marker || typeof marker === 'string') return marker
   return {
     ...marker,
     color: alphaColor(marker.color ?? 'var(--accent)', opacity),
   }
-}
-
-function mermaidConnectorHandles(direction: MermaidDirection) {
-  if (direction === 'RL') return { source_handle: 'left', target_handle: 'right' }
-  if (direction === 'TB' || direction === 'TD') return { source_handle: 'bottom', target_handle: 'top' }
-  if (direction === 'BT') return { source_handle: 'top', target_handle: 'bottom' }
-  return { source_handle: 'right', target_handle: 'left' }
-}
-
-function layoutMermaidImport(parsed: ParsedImport, center: { x: number; y: number }) {
-  const refs = parsed.elements.map((element) => element.ref).filter(Boolean)
-  const refSet = new Set(refs)
-  const outgoing = new Map<string, string[]>()
-  const indegree = new Map<string, number>()
-  const rank = new Map<string, number>()
-  refs.forEach((ref) => {
-    outgoing.set(ref, [])
-    indegree.set(ref, 0)
-    rank.set(ref, 0)
-  })
-
-  parsed.connectors.forEach((connector) => {
-    const source = connector.sourceElementRef
-    const target = connector.targetElementRef
-    if (!refSet.has(source) || !refSet.has(target)) return
-    outgoing.get(source)?.push(target)
-    indegree.set(target, (indegree.get(target) ?? 0) + 1)
-  })
-
-  const queue = refs.filter((ref) => (indegree.get(ref) ?? 0) === 0)
-  let cursor = 0
-  while (cursor < queue.length) {
-    const ref = queue[cursor++]
-    for (const target of outgoing.get(ref) ?? []) {
-      rank.set(target, Math.max(rank.get(target) ?? 0, (rank.get(ref) ?? 0) + 1))
-      const nextIndegree = (indegree.get(target) ?? 0) - 1
-      indegree.set(target, nextIndegree)
-      if (nextIndegree === 0) queue.push(target)
-    }
-  }
-
-  const groups = new Map<number, string[]>()
-  refs.forEach((ref, index) => {
-    const refRank = cursor === refs.length ? (rank.get(ref) ?? 0) : Math.floor(index / 4)
-    const group = groups.get(refRank) ?? []
-    group.push(ref)
-    groups.set(refRank, group)
-  })
-
-  const horizontal = parsed.direction === 'LR' || parsed.direction === 'RL'
-  const reverse = parsed.direction === 'RL' || parsed.direction === 'BT'
-  const rankSpacing = 280
-  const itemSpacing = 150
-  const rankCount = groups.size || 1
-  const positions = new Map<string, { x: number; y: number }>()
-
-  Array.from(groups.entries()).sort(([a], [b]) => a - b).forEach(([groupRank, group]) => {
-    const rankOffset = (groupRank - (rankCount - 1) / 2) * rankSpacing * (reverse ? -1 : 1)
-    group.forEach((ref, index) => {
-      const itemOffset = (index - (group.length - 1) / 2) * itemSpacing
-      positions.set(ref, horizontal
-        ? { x: center.x + rankOffset, y: center.y + itemOffset }
-        : { x: center.x + itemOffset, y: center.y + rankOffset })
-    })
-  })
-
-  return positions
 }
 
 function areTranslateExtentsEqual(
@@ -611,6 +571,8 @@ function ViewEditorInner({
   navigateRef.current = navigate
 
   const toast = useToast()
+  const { experimental } = useExperimental()
+  const mermaidIntegrationEnabled = experimental.mermaidIntegrationEnabled
   const {
     canUndo: canUndoViewEdit,
     canRedo: canRedoViewEdit,
@@ -1273,6 +1235,7 @@ function ViewEditorInner({
   const [isMarkdownLoading, setIsMarkdownLoading] = useState(false)
   const [isMarkdownMutating, setIsMarkdownMutating] = useState(false)
   const [isMarkdownSaving, setIsMarkdownSaving] = useState(false)
+  const [markdownSaveConflict, setMarkdownSaveConflict] = useState(false)
   const [isMarkdownResizing, setIsMarkdownResizing] = useState(false)
   const [markdownPaneWidth, setMarkdownPaneWidth] = useState(() => {
     if (typeof window === 'undefined') return VIEW_EDITOR_MARKDOWN_DEFAULT_WIDTH
@@ -1338,6 +1301,7 @@ function ViewEditorInner({
     setViewMarkdownContent('')
     setLoadedViewMarkdownContent('')
     setViewMarkdownSyncToken((prev) => prev + 1)
+    setMarkdownSaveConflict(false)
     setIsMarkdownOpen(false)
     setIsMarkdownLoading(false)
   }, [])
@@ -1356,6 +1320,7 @@ function ViewEditorInner({
       setViewMarkdownContent(result.content)
       setLoadedViewMarkdownContent(result.content)
       setViewMarkdownSyncToken((prev) => prev + 1)
+      setMarkdownSaveConflict(false)
       return result
     } catch (error) {
       if (markdownRequestSeqRef.current !== requestSeq) return null
@@ -1407,13 +1372,15 @@ function ViewEditorInner({
     event.preventDefault()
   }, [isMarkdownOpen, markdownPaneWidth])
 
-  const handleCreateManagedMarkdown = useCallback(async (options: { fileName?: string; initialContent?: string; openEditor?: boolean } = {}) => {
+  const handleCreateManagedMarkdown = useCallback(async (options: { fileName?: string; initialContent?: string; openEditor?: boolean; targetKind?: string; path?: string } = {}) => {
     if (!canEdit || viewId === null) return null
     setIsMarkdownMutating(true)
     try {
       const updatedView = await api.workspace.views.markdown.create(viewId, {
         fileName: options.fileName,
         initialContent: options.initialContent ?? initialViewMarkdown(view?.name),
+        targetKind: options.targetKind,
+        path: options.path,
       })
       setView(updatedView)
       const loadedMarkdown = await loadViewMarkdown(viewId)
@@ -1431,6 +1398,10 @@ function ViewEditorInner({
     }
   }, [canEdit, loadViewMarkdown, setView, toast, view?.name, viewId])
 
+  const handleCreateMarkdownFromPanel = useCallback(async (targetKind: string, path?: string) => {
+    await handleCreateManagedMarkdown({ targetKind, path, openEditor: true })
+  }, [handleCreateManagedMarkdown])
+
   const handleToggleMarkdown = useCallback(() => {
     if (window.__TLD_VSCODE__) {
       if (!viewMarkdown) {
@@ -1443,7 +1414,7 @@ function ViewEditorInner({
       return
     }
     if (!viewMarkdown) {
-      void handleCreateManagedMarkdown({ openEditor: true })
+      setIsMarkdownOpen((prev) => !prev)
       return
     }
     setIsMarkdownOpen((prev) => !prev)
@@ -1470,6 +1441,7 @@ function ViewEditorInner({
       const updatedView = await api.workspace.views.markdown.link(viewId, path)
       setView(updatedView)
       await loadViewMarkdown(viewId)
+      setMarkdownSaveConflict(false)
       setIsMarkdownOpen(true)
       toast({ status: 'success', title: 'Markdown linked' })
     } catch (error) {
@@ -1502,16 +1474,29 @@ function ViewEditorInner({
     }
   }, [canEdit, resetViewMarkdown, setView, toast, viewId])
 
-  const handleSaveMarkdown = useCallback(async (markdown: string) => {
+  const handleSaveMarkdown = useCallback(async (markdown: string, options: { force?: boolean } = {}) => {
     if (viewId === null || !viewMarkdown) return
     setIsMarkdownSaving(true)
     try {
-      const updated = await api.workspace.views.markdown.save(viewId, markdown)
+      const updated = await api.workspace.views.markdown.save(viewId, markdown, {
+        expectedFileVersion: options.force ? undefined : viewMarkdown.file_version,
+        force: options.force ?? false,
+      })
       setViewMarkdown(updated)
       setViewMarkdownContent(markdown)
       setLoadedViewMarkdownContent(markdown)
+      setMarkdownSaveConflict(false)
       toast({ status: 'success', title: 'Notes saved' })
     } catch (error) {
+      if (isMarkdownConflictError(error)) {
+        setMarkdownSaveConflict(true)
+        toast({
+          status: 'warning',
+          title: 'Markdown changed on disk',
+          description: 'Reload the file or overwrite it from the notes panel.',
+        })
+        return
+      }
       toast({
         status: 'error',
         title: 'Failed to save notes',
@@ -1521,6 +1506,19 @@ function ViewEditorInner({
       setIsMarkdownSaving(false)
     }
   }, [toast, viewId, viewMarkdown])
+
+  const handleForceSaveMarkdown = useCallback(async (markdown: string) => {
+    await handleSaveMarkdown(markdown, { force: true })
+  }, [handleSaveMarkdown])
+
+  const handlePickMarkdownFile = useCallback(async () => {
+    const result = await openTextFile([
+      { displayName: 'Markdown Files (*.md;*.markdown;*.mdx)', pattern: '*.md;*.markdown;*.mdx' },
+      { displayName: 'All Files (*.*)', pattern: '*.*' },
+    ])
+    if (result.canceled) return null
+    return result.path
+  }, [])
 
   const handleSaveMarkdownAs = useCallback(async (markdown: string) => {
     const baseName = sanitizeExportFilename(view?.name || 'view-notes')
@@ -1864,6 +1862,7 @@ function ViewEditorInner({
         setViewMarkdownContent(msg.content)
         setLoadedViewMarkdownContent(msg.content)
         setViewMarkdownSyncToken((prev) => prev + 1)
+        setMarkdownSaveConflict(false)
       }
     })
     return unsub
@@ -2537,6 +2536,7 @@ function ViewEditorInner({
     stableOnReconnectPickRef.current = canvas.stableOnReconnectPick
   }, [canvas.stableOnZoomIn, canvas.stableOnZoomOut, canvas.stableOnNavigateToView, canvas.stableOnRemoveElement, canvas.stableOnConnectTo, canvas.stableOnInteractionStart, canvas.stableOnStartHandleReconnect, canvas.stableOnReconnectPick])
   const viewName = view?.name ?? null
+  const viewNameById = useMemo(() => buildViewNameById(treeData), [treeData])
 
   const [expandedAncestorGroups, setExpandedAncestorGroups] = useState<Set<string>>(new Set())
   const [contextNodePositionOverrides, setContextNodePositionOverrides] = useState<Record<string, ContextNodePositionOverride>>({})
@@ -3385,31 +3385,50 @@ function ViewEditorInner({
 
   // ── Export / Import ────────────────────────────────────────────────────────
   const handleCopyMermaidDirect = useCallback(async () => {
-    const code = serializeViewToMermaid(viewElements, connectors)
     setCanvasMenu(null)
+    if (viewId === null) return
     try {
-      await copyTextToClipboard(code)
-      toast({ status: 'success', title: 'Copied Mermaid', description: 'Mermaid source copied to clipboard.' })
+      const exported = await api.mermaid.exportView(viewId, { includeTldMetadata: true, markdownBlock: true })
+      if (!exported.markdown) return
+      await copyTextToClipboard(exported.markdown)
+      toast({ status: 'success', title: 'Copied Mermaid block', description: 'Markdown Mermaid block copied to clipboard.' })
     } catch {
-      toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid source to the clipboard.' })
+      toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid block to the clipboard.' })
     }
-  }, [connectors, setCanvasMenu, toast, viewElements])
+  }, [setCanvasMenu, toast, viewId])
 
   const handleBulkCopyMermaid = useCallback(async () => {
-    const code = serializeViewToMermaid(selectedCanvasElements, connectors)
+    if (viewId === null) return
     try {
-      await copyTextToClipboard(code)
-      toast({ status: 'success', title: 'Copied Mermaid', description: 'Mermaid source copied to clipboard.' })
+      const exported = await api.mermaid.exportView(viewId, { includeTldMetadata: true, markdownBlock: true })
+      if (!exported.markdown) return
+      await copyTextToClipboard(exported.markdown)
+      toast({ status: 'success', title: 'Copied Mermaid block', description: 'Markdown Mermaid block copied to clipboard.' })
     } catch {
-      toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid source to the clipboard.' })
+      toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid block to the clipboard.' })
     }
-  }, [connectors, selectedCanvasElements, toast])
+  }, [toast, viewId])
+
+  const handleExportMermaidDirect = useCallback(async () => {
+    if (viewId === null) return
+    const baseName = sanitizeExportFilename(viewName || 'view-export')
+    const downloadName = `${baseName}.md`
+    try {
+      setIsExporting(true)
+      const exported = await api.mermaid.exportView(viewId, { includeTldMetadata: true, markdownBlock: true })
+      const result = await triggerBlobDownload(new Blob([exported.markdown], { type: 'text/markdown;charset=utf-8' }), downloadName, 'markdown')
+      if (result.canceled) return
+      toast({ status: 'success', title: 'Export complete', description: `Saved ${downloadName}` })
+    } catch {
+      toast({ status: 'error', title: 'Export failed', description: 'Please try again.' })
+    } finally {
+      setIsExporting(false)
+    }
+  }, [toast, viewId, viewName])
 
   const handleExportView = useCallback(async (options: ExportOptions) => {
-    const flowRoot = containerRef.current?.querySelector('.react-flow') as HTMLElement | null
-    if (!flowRoot) { toast({ status: 'error', title: 'Export failed', description: 'Could not find the view canvas.' }); return }
     const baseName = sanitizeExportFilename(options.filename || viewName || 'view-export')
-    const downloadName = `${baseName}.${options.format}`
+    const downloadName = options.format === 'mermaid' ? `${baseName}.md` : `${baseName}.${options.format}`
     const filterNode = (node: HTMLElement) => {
       const cn = node.className
       if (typeof cn !== 'string') return true
@@ -3418,22 +3437,30 @@ function ViewEditorInner({
     try {
       setIsExporting(true)
       if (options.format === 'mermaid') {
-        const code = serializeViewToMermaid(viewElements, connectors)
-        const result = await triggerBlobDownload(new Blob([code], { type: 'text/plain;charset=utf-8' }), downloadName, options.format)
-        if (result.canceled) return
-      } else if (options.format === 'svg') {
-        const result = await triggerDownload(await toSvg(flowRoot, { cacheBust: true, filter: filterNode }), downloadName, options.format)
+        if (viewId === null) return
+        const exported = await api.mermaid.exportView(viewId, {
+          includeTldMetadata: options.includeTldMetadata ?? true,
+          markdownBlock: true,
+        })
+        const result = await triggerBlobDownload(new Blob([exported.markdown], { type: 'text/markdown;charset=utf-8' }), downloadName, 'markdown')
         if (result.canceled) return
       } else {
-        const result = await triggerDownload(await toPng(flowRoot, { cacheBust: true, pixelRatio: options.scale, filter: filterNode }), downloadName, options.format)
-        if (result.canceled) return
+        const flowRoot = containerRef.current?.querySelector('.react-flow') as HTMLElement | null
+        if (!flowRoot) { toast({ status: 'error', title: 'Export failed', description: 'Could not find the view canvas.' }); return }
+        if (options.format === 'svg') {
+          const result = await triggerDownload(await toSvg(flowRoot, { cacheBust: true, filter: filterNode }), downloadName, options.format)
+          if (result.canceled) return
+        } else {
+          const result = await triggerDownload(await toPng(flowRoot, { cacheBust: true, pixelRatio: options.scale, filter: filterNode }), downloadName, options.format)
+          if (result.canceled) return
+        }
       }
       closeExportModalRef.current()
       toast({ status: 'success', title: 'Export complete', description: `Saved ${downloadName}` })
     } catch {
       toast({ status: 'error', title: 'Export failed', description: 'Please try again.' })
     } finally { setIsExporting(false) }
-  }, [viewName, viewElements, connectors, toast])
+  }, [toast, viewId, viewName])
 
   const getClipboardPasteCenter = useCallback(() => {
     const rect = containerRef.current?.getBoundingClientRect()
@@ -3450,6 +3477,68 @@ function ViewEditorInner({
 
     return screenToFlowPositionRef.current(screenPoint)
   }, [lastMousePosRef])
+
+  const getCanvasCenter = useCallback(() => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    return rect
+      ? screenToFlowPositionRef.current({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+      : { x: 0, y: 0 }
+  }, [])
+
+  const runMermaidImport = useCallback(async (
+    parsed: ParsedImport,
+    currentViewId: number,
+    center: { x: number; y: number },
+    options: {
+      successTitle: string
+      failureTitle: string
+      onSuccess?: () => void
+    },
+  ) => {
+    try {
+      const result = await api.mermaid.importIntoView(currentViewId, parsed.source, center)
+      const { summary } = result
+      clearEditHistory()
+      await refreshElements()
+      pendingPasteSelectionRef.current = {
+        viewId: currentViewId,
+        elementIds: summary.importedElementIds,
+      }
+      options.onSuccess?.()
+      toast({
+        status: 'success',
+        title: options.successTitle,
+        description: [mermaidImportDescription(summary), ...result.warnings.slice(0, 1)].join(' '),
+        duration: 5000,
+        isClosable: true,
+      })
+      return true
+    } catch (err) {
+      await refreshElements()
+      toast({ status: 'error', title: options.failureTitle, description: err instanceof Error ? err.message : String(err) })
+      return false
+    }
+  }, [clearEditHistory, refreshElements, toast])
+
+  const handleImportMarkdownMermaidBlock = useCallback(async (source: string) => {
+    if (!canEdit) return
+    const currentViewId = viewIdRef.current
+    if (!currentViewId) return
+
+    const parsed: ParsedImport = {
+      format: 'mermaid',
+      source,
+      elements: [],
+      connectors: [],
+      warnings: [],
+      direction: 'LR',
+    }
+
+    await runMermaidImport(parsed, currentViewId, getCanvasCenter(), {
+      successTitle: 'Imported Mermaid block',
+      failureTitle: 'Mermaid import failed',
+    })
+  }, [canEdit, getCanvasCenter, runMermaidImport, viewIdRef])
 
   const pasteViewSelectionPayload = useCallback(async (
     payload: ViewSelectionClipboardPayload,
@@ -3607,95 +3696,35 @@ function ViewEditorInner({
       return
     }
 
-    const mermaidCode = extractMermaidCode(event.clipboardData?.getData('text/plain') ?? '')
-    if (!mermaidCode) return
+    const mermaidText = event.clipboardData?.getData('text/plain') ?? ''
+    if (!mermaidIntegrationEnabled || !mermaidText.trim()) return
 
     const currentViewId = viewIdRef.current
     if (!currentViewId) return
 
-    event.preventDefault()
     isPasteImportingRef.current = true
     try {
-      const parsed = await parseMermaidAsync(mermaidCode)
-      if (parsed.warnings.length > 0 || (parsed.elements.length === 0 && parsed.connectors.length === 0)) {
-        toast({ status: 'error', title: 'Mermaid import failed', description: parsed.warnings[0] ?? 'No compatible diagram content found.' })
-        return
-      }
-
-      const rect = containerRef.current?.getBoundingClientRect()
-      const center = rect
-        ? screenToFlowPositionRef.current({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
-        : { x: 0, y: 0 }
-      const positions = layoutMermaidImport(parsed, center)
-      const createdByRef = new Map<string, WorkspaceElement>()
-
-      for (const element of parsed.elements) {
-        const created = await api.elements.create({
-          name: element.name,
-          kind: element.kind ?? 'system',
-          description: element.description ?? '',
-          technology: element.technology ?? '',
-          url: element.url ?? '',
-          tags: element.tags ?? [],
-        })
-        createdByRef.set(element.ref, created)
-      }
-
-      await Promise.all(parsed.elements.map((element) => {
-        const created = createdByRef.get(element.ref)
-        if (!created) return Promise.resolve()
-        const position = positions.get(element.ref) ?? center
-        return api.workspace.views.placements.add(currentViewId, created.id, position.x, position.y)
-      }))
-
-      const handles = mermaidConnectorHandles(parsed.direction)
-      const createdConnectors = await Promise.all(parsed.connectors.map((connector) => {
-        const source = createdByRef.get(connector.sourceElementRef)
-        const target = createdByRef.get(connector.targetElementRef)
-        if (!source || !target) return Promise.resolve(null)
-        return api.workspace.connectors.create(currentViewId, {
-          source_element_id: source.id,
-          target_element_id: target.id,
-          label: connector.label ?? '',
-          direction: connector.direction ?? 'forward',
-          style: connector.style ?? 'bezier',
-          source_handle: connector.sourceHandle ?? handles.source_handle,
-          target_handle: connector.targetHandle ?? handles.target_handle,
-        })
-      }))
-      createdConnectors
-        .filter((connector): connector is Connector => connector !== null)
-        .map(connectorToConnector)
-        .forEach(publishRealtimeConnectorUpsert)
-
-      clearEditHistory()
-      await refreshElements()
-      pendingPasteSelectionRef.current = {
-        viewId: currentViewId,
-        elementIds: new Set(Array.from(createdByRef.values(), (element) => element.id)),
-      }
-      toast({
-        status: 'success',
-        title: 'Mermaid imported',
-        description: `Created ${parsed.elements.length} elements and ${parsed.connectors.length} connectors.`,
-        duration: 5000,
-        isClosable: true,
+      const parsed = await api.mermaid.parse(mermaidText)
+      if (parsed.elements.length === 0 && parsed.connectors.length === 0) return
+      event.preventDefault()
+      await runMermaidImport(parsed, currentViewId, getCanvasCenter(), {
+        successTitle: 'Mermaid imported',
+        failureTitle: 'Mermaid import failed',
       })
-    } catch (err) {
-      await refreshElements()
-      toast({ status: 'error', title: 'Mermaid import failed', description: err instanceof Error ? err.message : String(err) })
+    } catch {
+      return
     } finally {
       isPasteImportingRef.current = false
     }
   }, [
     canEdit,
-    clearEditHistory,
     duplicatePasteConfirm,
+    getCanvasCenter,
     getClipboardPasteCenter,
+    mermaidIntegrationEnabled,
     pasteViewSelectionPayload,
     pendingElement,
-    publishRealtimeConnectorUpsert,
-    refreshElements,
+    runMermaidImport,
     textEditorState,
     toast,
     viewElementsRef,
@@ -3730,6 +3759,15 @@ function ViewEditorInner({
     if (!currentViewId) return
     setIsImporting(true)
     try {
+      if (parsed.format === 'mermaid') {
+        await runMermaidImport(parsed, currentViewId, getCanvasCenter(), {
+          successTitle: 'Import complete',
+          failureTitle: 'Import failed',
+          onSuccess: () => closeImportModalRef.current(),
+        })
+        return
+      }
+
       const res = await api.import.resources('', { elements: parsed.elements, connectors: parsed.connectors })
       clearEditHistory()
       closeImportModalRef.current()
@@ -3739,7 +3777,7 @@ function ViewEditorInner({
     } catch (e) {
       toast({ status: 'error', title: 'Import failed', description: e instanceof Error ? e.message : 'Unknown error' })
     } finally { setIsImporting(false) }
-  }, [clearEditHistory, navigate, toast, viewIdRef])
+  }, [clearEditHistory, getCanvasCenter, navigate, runMermaidImport, toast, viewIdRef])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Render states
@@ -4132,7 +4170,10 @@ function ViewEditorInner({
               onUndo={handleUndoViewEdit}
               onRedo={handleRedoViewEdit}
               disableImportExport={disableImportExport}
-              onImport={importModal.onOpen} onExport={handleOpenExport} onShare={onShare}
+              onImport={importModal.onOpen} onExport={handleOpenExport}
+              onCopyMermaid={handleCopyMermaidDirect}
+              onExportMermaid={handleExportMermaidDirect}
+              onShare={onShare}
               allTags={availableTags}
               layers={layers}
               tagColors={tagColors}
@@ -4192,15 +4233,26 @@ function ViewEditorInner({
                   markdown={viewMarkdown}
                   content={viewMarkdownContent}
                   syncToken={viewMarkdownSyncToken}
+                  viewId={viewId}
+                  viewNameById={viewNameById}
+                  mermaidIntegrationEnabled={mermaidIntegrationEnabled}
                   canEdit={canEdit}
                   isLoading={isMarkdownLoading}
                   isSaving={isMarkdownSaving}
                   isDirty={markdownDirty}
+                  hasSaveConflict={markdownSaveConflict}
                   onChange={setViewMarkdownContent}
                   onSave={handleSaveMarkdown}
+                  onForceSave={handleForceSaveMarkdown}
+                  onCreateMarkdown={handleCreateMarkdownFromPanel}
+                  onAttachMarkdown={handleLinkMarkdown}
+                  onUnlinkMarkdown={handleUnlinkMarkdown}
+                  onPickMarkdownFile={handlePickMarkdownFile}
                   onSaveAs={handleSaveMarkdownAs}
                   onOpenInEditor={window.__TLD_VSCODE__ ? handleOpenMarkdownInEditor : undefined}
                   onReload={handleReloadMarkdown}
+                  onNavigateToView={canvas.stableOnNavigateToView}
+                  onImportMermaidBlock={handleImportMarkdownMermaidBlock}
                 />
               </Box>
             </>
@@ -4286,7 +4338,6 @@ function ViewEditorInner({
           hasBackdrop={isMobileLayout}
           markdown={viewMarkdown}
           markdownLoading={isMarkdownLoading}
-          onLinkMarkdown={handleLinkMarkdown}
           onUnlinkMarkdown={handleUnlinkMarkdown}
           onOpenMarkdown={handleOpenMarkdown}
         />
@@ -4294,10 +4345,12 @@ function ViewEditorInner({
         <ExportModal
           isOpen={exportModal.isOpen} onClose={exportModal.onClose}
           defaultFilename={sanitizeExportFilename((view as ViewTreeNode).name)}
+          mermaidEnabled
           onExport={handleExportView} isExporting={isExporting}
         />
         <ImportModal
           isOpen={importModal.isOpen} onClose={importModal.onClose}
+          mermaidEnabled={mermaidIntegrationEnabled}
           onImport={handleImportView} isImporting={isImporting}
         />
         <ConfirmDialog

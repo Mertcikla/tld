@@ -1,6 +1,37 @@
 import type { TechnologyConnector } from '../types'
-import { catalogIconUrlForSlug, normalizeCatalogIconPath } from './technologyIcon'
+import { fontAwesomeIconUrlForTechnologyLabel, parseFontAwesomeTechnologyIconName } from './fontAwesomeIcon'
+import { canonicalTechnologySlug, catalogIconUrlForSlug, normalizeCatalogIconPath } from './technologyIcon'
 import { resolveIconPath } from './url'
+
+export function technologyConnectorIconKey(link: TechnologyConnector): string | null {
+  if (link.type === 'catalog' && link.slug) {
+    return `catalog:${canonicalTechnologySlug(link.slug)}`
+  }
+
+  if (link.type === 'custom') {
+    const iconName = parseFontAwesomeTechnologyIconName(link.label)
+    if (iconName && fontAwesomeIconUrlForTechnologyLabel(link.label)) {
+      return `fa:${iconName}`
+    }
+  }
+
+  return null
+}
+
+export function resolveTechnologyConnectorIconUrl(
+  link: TechnologyConnector,
+  catalogIconUrl?: string | null,
+): string | null {
+  if (link.type === 'catalog' && link.slug) {
+    return catalogIconUrl ?? catalogIconUrlForSlug(link.slug)
+  }
+
+  if (link.type === 'custom') {
+    return fontAwesomeIconUrlForTechnologyLabel(link.label)
+  }
+
+  return null
+}
 
 export function resolveElementIconUrl(
   logoUrl: string | null | undefined,
@@ -10,13 +41,9 @@ export function resolveElementIconUrl(
     return logoUrl === '' ? null : resolveIconPath(normalizeCatalogIconPath(logoUrl))
   }
 
-  const catalogLinks = technologyConnectors?.filter((link) => link.type === 'catalog' && !!link.slug) ?? []
-  const selected = catalogLinks.find((link) => (
-    link.type === 'catalog' &&
-    !!(link.is_primary_icon ?? link.isPrimaryIcon) &&
-    !!link.slug
-  )) ?? catalogLinks[0]
-  if (!selected?.slug) return null
-  const iconUrl = catalogIconUrlForSlug(selected.slug)
-  return iconUrl ? resolveIconPath(iconUrl) : null
+  const iconLinks = (technologyConnectors ?? [])
+    .map((link) => ({ link, iconUrl: resolveTechnologyConnectorIconUrl(link) }))
+    .filter((entry): entry is { link: TechnologyConnector; iconUrl: string } => !!entry.iconUrl)
+  const selected = iconLinks.find(({ link }) => !!(link.is_primary_icon ?? link.isPrimaryIcon)) ?? iconLinks[0]
+  return selected ? resolveIconPath(selected.iconUrl) : null
 }

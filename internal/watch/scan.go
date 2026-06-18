@@ -1917,6 +1917,7 @@ func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath, language stri
 			Name:          sym.Name,
 			QualifiedName: qualified,
 			Kind:          sym.Kind,
+			NodeType:      sym.NodeType,
 			StartLine:     sym.Line,
 			EndLine:       &endPtr,
 			SignatureHash: hashString(fmt.Sprintf("%s:%s", sym.Kind, qualified)),

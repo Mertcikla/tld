@@ -28,6 +28,7 @@ test('creates edits connects tags reloads and exports a small diagram', async ({
   await page.getByTestId('tag-upsert-input').fill('workflow-tag')
   await page.getByTestId('tag-upsert-input').press('Enter')
   await expect(page.getByTestId('element-panel-tag-chip').filter({ hasText: 'workflow-tag' }).first()).toBeVisible()
+  await expect.poll(async () => (await getElement(page, second.id)).tags?.includes('workflow-tag')).toBeTruthy()
   await page.getByTestId('element-panel-url-input').blur()
   await page.reload()
 
@@ -37,7 +38,7 @@ test('creates edits connects tags reloads and exports a small diagram', async ({
 
   await page.getByTestId('vieweditor-toolbar-extras').click()
   await page.getByTestId('vieweditor-toolbar-export').click()
-  await page.getByText('Mermaid').click()
+  await page.getByTestId('export-modal').getByText('Mermaid Markdown').click()
   await page.getByTestId('export-filename-input').fill(uniqueName('full-flow-export'))
   const downloadPromise = page.waitForEvent('download')
   await page.getByTestId('export-submit').click()

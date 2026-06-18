@@ -22,9 +22,7 @@ import {
   TabPanels,
   TabPanel,
 } from '@chakra-ui/react'
-import { parseMermaidAsync, ParsedImport } from '../pkg/importer/mermaid'
-import { api } from '../api/client'
-import type { PlanConnector, PlanElement } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
+import { api, type ParsedImport } from '../api/client'
 import { isWailsApp } from '../config/runtime'
 import { mermaidImportFilters, onFileDrop, openTextFile, readTextFile } from '../lib/desktop'
 import { inferImportFileFormat, unsupportedImportFileMessage } from './importFile'
@@ -32,8 +30,10 @@ import { inferImportFileFormat, unsupportedImportFileMessage } from './importFil
 interface Props {
   isOpen: boolean
   onClose: () => void
+  mermaidEnabled?: boolean
   isImporting?: boolean
   onImport: (parsed: ParsedImport) => Promise<void> | void
+  getImportWarnings?: (parsed: ParsedImport) => Promise<string[]> | string[]
 }
 
 type Format = 'mermaid' | 'structurizr'
@@ -49,26 +49,31 @@ const STRUCTURIZR_PLACEHOLDER = `workspace {
   }
 }`
 
-function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
+function ImportModal({ isOpen, onClose, mermaidEnabled = false, isImporting, onImport, getImportWarnings }: Props) {
   const [code, setCode] = useState('')
-  const [format, setFormat] = useState<Format>('mermaid')
+  const [format, setFormat] = useState<Format>(() => mermaidEnabled ? 'mermaid' : 'structurizr')
   const [step, setStep] = useState<'input' | 'summary'>('input')
   const [parsed, setParsed] = useState<ParsedImport | null>(null)
+  const [importWarnings, setImportWarnings] = useState<string[]>([])
   const [parseError, setParseError] = useState<string | null>(null)
   const [isParsing, setIsParsing] = useState(false)
   const [isOpeningFile, setIsOpeningFile] = useState(false)
+  const summaryWarnings = parsed ? [...parsed.warnings, ...importWarnings] : []
 
   useEffect(() => {
     if (!isOpen) return
     setCode('')
+    setFormat(mermaidEnabled ? 'mermaid' : 'structurizr')
     setStep('input')
     setParsed(null)
+    setImportWarnings([])
     setParseError(null)
-  }, [isOpen])
+  }, [isOpen, mermaidEnabled])
 
   const handleTabChange = (index: number) => {
-    setFormat(index === 0 ? 'mermaid' : 'structurizr')
+    setFormat(mermaidEnabled && index === 0 ? 'mermaid' : 'structurizr')
     setCode('')
+    setImportWarnings([])
     setParseError(null)
   }
 
@@ -79,12 +84,17 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
       return
     }
     const nextFormat = inferImportFileFormat(path)
+    if (nextFormat === 'mermaid' && !mermaidEnabled) {
+      setParseError('Mermaid Markdown import is experimental. Enable it in settings to import Markdown Mermaid blocks.')
+      return
+    }
     setFormat(nextFormat === 'structurizr' ? 'structurizr' : 'mermaid')
     setCode(content)
     setStep('input')
     setParsed(null)
+    setImportWarnings([])
     setParseError(null)
-  }, [])
+  }, [mermaidEnabled])
 
   const handleOpenFile = useCallback(async () => {
     if (!isWailsApp) return
@@ -122,17 +132,17 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
   const handleNext = async () => {
     if (!code.trim()) return
     setParseError(null)
+    setImportWarnings([])
 
     if (format === 'mermaid') {
       setIsParsing(true)
       try {
-        const result = await parseMermaidAsync(code)
-        if (result.warnings.length > 0 && result.elements.length === 0 && result.connectors.length === 0) {
-          setParseError(result.warnings[0] ?? 'Unsupported diagram type')
-          return
-        }
+        const result = await api.mermaid.parse(code)
+        setImportWarnings(getImportWarnings ? await getImportWarnings(result) : [])
         setParsed(result)
         setStep('summary')
+      } catch (e: unknown) {
+        setParseError(e instanceof Error ? e.message : 'Failed to parse Mermaid diagram')
       } finally {
         setIsParsing(false)
       }
@@ -144,12 +154,14 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
     try {
       const res = await api.import.parseStructurizr(code)
       const result: ParsedImport = {
-        elements: res.elements as PlanElement[],
-        connectors: res.connectors as PlanConnector[],
+        format: 'structurizr',
+        elements: res.elements,
+        connectors: res.connectors,
         warnings: res.warnings,
         direction: 'LR',
         source: code,
       }
+      setImportWarnings(getImportWarnings ? await getImportWarnings(result) : [])
       setParsed(result)
       setStep('summary')
     } catch (e: unknown) {
@@ -180,29 +192,31 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
               </HStack>
             )}
             {step === 'input' ? (
-              <Tabs index={format === 'mermaid' ? 0 : 1} onChange={handleTabChange} size="sm" variant="enclosed">
+              <Tabs index={mermaidEnabled && format === 'mermaid' ? 0 : mermaidEnabled ? 1 : 0} onChange={handleTabChange} size="sm" variant="enclosed">
                 <TabList>
-                  <Tab>Mermaid</Tab>
+                  {mermaidEnabled && <Tab>Mermaid Markdown</Tab>}
                   <Tab>Structurizr DSL</Tab>
                 </TabList>
                 <TabPanels>
-                  <TabPanel px={0} pb={0}>
-                    <FormControl>
-                      <FormLabel fontSize="sm">Mermaid code</FormLabel>
-                      <Textarea
-                        data-testid="import-mermaid-textarea"
-                        value={code}
-                        onChange={(e) => setCode(e.target.value)}
-                        placeholder={MERMAID_PLACEHOLDER}
-                        size="sm"
-                        rows={12}
-                        fontFamily="mono"
-                      />
-                      <Text mt={1.5} fontSize="xs" color="gray.400">
-                        Supported: flowchart, C4, sequence, class, ER, state, requirement, sankey, pie, git graph, quadrant, mindmap, journey, gantt, timeline, and XY chart.
-                      </Text>
-                    </FormControl>
-                  </TabPanel>
+                  {mermaidEnabled && (
+                    <TabPanel px={0} pb={0}>
+                      <FormControl>
+                        <FormLabel fontSize="sm">Markdown Mermaid block</FormLabel>
+                        <Textarea
+                          data-testid="import-mermaid-textarea"
+                          value={code}
+                          onChange={(e) => setCode(e.target.value)}
+                          placeholder={MERMAID_PLACEHOLDER}
+                          size="sm"
+                          rows={12}
+                          fontFamily="mono"
+                        />
+                        <Text mt={1.5} fontSize="xs" color="gray.400">
+                          Supported: flowchart, C4, sequence, class, ER, state, requirement, sankey, pie, git graph, quadrant, mindmap, journey, gantt, timeline, and XY chart.
+                        </Text>
+                      </FormControl>
+                    </TabPanel>
+                  )}
                   <TabPanel px={0} pb={0}>
                     <FormControl>
                       <FormLabel fontSize="sm">Structurizr DSL</FormLabel>
@@ -229,17 +243,17 @@ function ImportModal({ isOpen, onClose, isImporting, onImport }: Props) {
                   <Text>• Elements: {parsed?.elements.length}</Text>
                   <Text>• Connectors: {parsed?.connectors.length}</Text>
                 </VStack>
-                {parsed?.warnings && parsed.warnings.length > 0 && (
+                {summaryWarnings.length > 0 && (
                   <Box p={3} bg="orange.50" color="orange.800" borderRadius="md" mb={4}>
                     <Text fontWeight="bold" fontSize="xs">Warnings:</Text>
-                    {parsed.warnings.map((w, i) => (
+                    {summaryWarnings.map((w, i) => (
                       <Text key={i} fontSize="xs">• {w}</Text>
                     ))}
                   </Box>
                 )}
                 <Divider mb={4} />
                 <Text color="gray.500">
-                  This will create the resources listed above in your current workspace.
+                  This will import the resources listed above into your current workspace.
                 </Text>
               </Box>
             )}

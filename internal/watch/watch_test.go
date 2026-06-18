@@ -630,6 +630,7 @@ func CreateUser() {}
 	if !sourceHandle.Valid || sourceHandle.String == "" || !targetHandle.Valid || targetHandle.String == "" {
 		t.Fatalf("expected route fact connector to store handle sides, got source=%q target=%q", sourceHandle.String, targetHandle.String)
 	}
+	assertElementSourceLink(t, db, "/users/{id}", "main.go#L4")
 }
 
 func TestComposeRuntimeConnectionsMaterializeAsConnectors(t *testing.T) {
@@ -970,6 +971,7 @@ func helper() {}
 	if first.ConnectorsCreated == 0 {
 		t.Fatalf("expected symbol connector, got %+v", first)
 	}
+	assertElementSourceLink(t, db, "Main", "cmd/app/main.go#function_declaration:Main")
 	countsAfterFirst := workspaceCounts(t, db)
 
 	second, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
@@ -5568,6 +5570,22 @@ func elementIDByName(t *testing.T, db *sql.DB, name string) int64 {
 		t.Fatalf("find element %s: %v", name, err)
 	}
 	return id
+}
+
+func assertElementSourceLink(t *testing.T, db *sql.DB, name, wantFilePath string) {
+	t.Helper()
+	var filePath string
+	var description sql.NullString
+	if err := db.QueryRow(`SELECT COALESCE(file_path, ''), description FROM elements WHERE name = ? ORDER BY id LIMIT 1`, name).Scan(&filePath, &description); err != nil {
+		t.Fatalf("element source link %s: %v", name, err)
+	}
+	if filePath != wantFilePath {
+		t.Fatalf("%s file_path = %q, want %q", name, filePath, wantFilePath)
+	}
+	basePath := strings.SplitN(wantFilePath, "#", 2)[0]
+	if description.Valid && basePath != "" && strings.Contains(description.String, basePath) {
+		t.Fatalf("%s description contains source location %q", name, description.String)
+	}
 }
 
 func elementBypassesNoiseGate(t *testing.T, db *sql.DB, id int64) bool {

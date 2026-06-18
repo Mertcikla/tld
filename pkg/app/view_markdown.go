@@ -8,9 +8,10 @@ import (
 )
 
 type ViewMarkdownDocument struct {
-	Path      string `json:"path"`
-	IsManaged bool   `json:"is_managed"`
-	UpdatedAt string `json:"updated_at"`
+	Path       string `json:"path"`
+	IsManaged  bool   `json:"is_managed"`
+	UpdatedAt  string `json:"updated_at"`
+	SourceKind string `json:"source_kind"`
 }
 
 func (s *Store) viewMarkdownMap(ctx context.Context) (map[int64]*ViewMarkdownDocument, error) {
@@ -48,28 +49,52 @@ func (s *Store) ViewMarkdownByViewID(ctx context.Context, viewID int64) (*ViewMa
 	return viewMarkdownDocumentFromModel(row), nil
 }
 
-func (s *Store) UpsertViewMarkdown(ctx context.Context, viewID int64, path string, isManaged bool, updatedAt string) error {
+func (s *Store) UpsertViewMarkdown(ctx context.Context, viewID int64, path string, isManaged bool, updatedAt string, sourceKind ...string) error {
 	if updatedAt == "" {
 		updatedAt = nowString()
 	}
 	if err := s.ensureViewMarkdownTable(ctx); err != nil {
 		return err
 	}
+	kind := ""
+	if len(sourceKind) > 0 {
+		kind = strings.TrimSpace(sourceKind[0])
+	}
+	if kind == "" {
+		if isManaged {
+			kind = "PRIVATE_APP"
+		} else {
+			kind = "ATTACHED"
+		}
+	}
 	row := &viewMarkdownModel{
-		ViewID:    viewID,
-		Path:      path,
-		IsManaged: isManaged,
-		CreatedAt: updatedAt,
-		UpdatedAt: updatedAt,
+		ViewID:     viewID,
+		Path:       path,
+		IsManaged:  isManaged,
+		SourceKind: kind,
+		CreatedAt:  updatedAt,
+		UpdatedAt:  updatedAt,
 	}
 	_, err := s.bun.NewInsert().
 		Model(row).
 		On("CONFLICT(view_id) DO UPDATE").
 		Set("path = EXCLUDED.path").
 		Set("is_managed = EXCLUDED.is_managed").
+		Set("source_kind = EXCLUDED.source_kind").
 		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
 	return err
+}
+
+func (s *Store) CountViewMarkdownByPath(ctx context.Context, path string) (int, error) {
+	if err := s.ensureViewMarkdownTable(ctx); err != nil {
+		return 0, err
+	}
+	count, err := s.bun.NewSelect().
+		Model((*viewMarkdownModel)(nil)).
+		Where("path = ?", path).
+		Count(ctx)
+	return count, err
 }
 
 func (s *Store) DeleteViewMarkdown(ctx context.Context, viewID int64) error {
@@ -88,29 +113,42 @@ func (s *Store) DeleteViewMarkdown(ctx context.Context, viewID int64) error {
 
 func (s *Store) ensureViewMarkdownTable(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `
-		CREATE TABLE IF NOT EXISTS view_markdown_documents (
-			view_id INTEGER PRIMARY KEY,
-			org_id TEXT NULL,
-			path TEXT NOT NULL,
-			is_managed INTEGER NOT NULL DEFAULT 0,
-			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL,
-			FOREIGN KEY (view_id) REFERENCES views(id) ON DELETE CASCADE
-		)
-	`); err != nil {
+			CREATE TABLE IF NOT EXISTS view_markdown_documents (
+				view_id INTEGER PRIMARY KEY,
+				org_id TEXT NULL,
+				path TEXT NOT NULL,
+				is_managed INTEGER NOT NULL DEFAULT 0,
+				source_kind TEXT NOT NULL DEFAULT '',
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				FOREIGN KEY (view_id) REFERENCES views(id) ON DELETE CASCADE
+			)
+		`); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE view_markdown_documents ADD COLUMN org_id TEXT NULL`); err != nil && !isDuplicateColumnError(err) {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE view_markdown_documents ADD COLUMN source_kind TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnError(err) {
 		return err
 	}
 	return nil
 }
 
 func viewMarkdownDocumentFromModel(row viewMarkdownModel) *ViewMarkdownDocument {
+	sourceKind := strings.TrimSpace(row.SourceKind)
+	if sourceKind == "" {
+		if row.IsManaged {
+			sourceKind = "PRIVATE_APP"
+		} else {
+			sourceKind = "ATTACHED"
+		}
+	}
 	return &ViewMarkdownDocument{
-		Path:      row.Path,
-		IsManaged: row.IsManaged,
-		UpdatedAt: row.UpdatedAt,
+		Path:       row.Path,
+		IsManaged:  row.IsManaged,
+		UpdatedAt:  row.UpdatedAt,
+		SourceKind: sourceKind,
 	}
 }
 
@@ -128,6 +166,6 @@ func isDuplicateColumnError(err error) bool {
 		return false
 	}
 	message := err.Error()
-	return strings.Contains(message, "duplicate column name: org_id") ||
-		strings.Contains(message, `column "org_id" of relation "view_markdown_documents" already exists`)
+	return strings.Contains(message, "duplicate column name:") ||
+		strings.Contains(message, `of relation "view_markdown_documents" already exists`)
 }

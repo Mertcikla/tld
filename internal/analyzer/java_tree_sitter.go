@@ -62,6 +62,7 @@ func (p *javaParser) appendType(node *gotreesitter.Node, lang *gotreesitter.Lang
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     kind,
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     int(nameNode.StartPoint().Row) + 1,
 		EndLine:  int(node.EndPoint().Row) + 1,
@@ -78,6 +79,7 @@ func (p *javaParser) appendMethod(node *gotreesitter.Node, lang *gotreesitter.La
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     nodeText(nameNode, source),
 		Kind:     kind,
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     int(nameNode.StartPoint().Row) + 1,
 		EndLine:  int(node.EndPoint().Row) + 1,

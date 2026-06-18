@@ -45,6 +45,7 @@ import PanelHeader from './PanelHeader'
 import GitSourceLinker from './GitSourceLinker'
 import { getTechnologyCatalogIndex, getTechnologyCatalogItemBySlug, invalidateTechnologyCatalog, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
 import { canonicalTechnologySlug } from '../utils/technologyIcon'
+import { resolveTechnologyConnectorIconUrl, technologyConnectorIconKey } from '../utils/elementIcon'
 import { ChevronDownIcon, ImageUploadIcon, ZoomInIcon, ZoomOutIcon } from './Icons'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
@@ -136,7 +137,13 @@ function dedupeTechnologyLinks(links: TechnologyConnector[]): TechnologyConnecto
     const key = normalizeTechnologyLabel(label)
     if (seenCustom.has(key)) continue
     seenCustom.add(key)
-    result.push({ type: 'custom', label, is_primary_icon: false })
+    const customLink: TechnologyConnector = { type: 'custom', label }
+    const canUseAsPrimaryIcon = !!technologyConnectorIconKey(customLink)
+    result.push({
+      ...customLink,
+      is_primary_icon: canUseAsPrimaryIcon && !primarySet && isPrimary,
+    })
+    if (canUseAsPrimaryIcon && isPrimary) primarySet = true
   }
 
   return result.slice(0, 3)
@@ -161,7 +168,11 @@ async function normalizeInitialTechnologyLinks(element: LibraryElement): Promise
         is_primary_icon: isPrimaryIcon,
       })
     } else {
-      normalized.push({ type: 'custom', label: label.trim(), is_primary_icon: false })
+      const customLink: TechnologyConnector = { type: 'custom', label: label.trim() }
+      normalized.push({
+        ...customLink,
+        is_primary_icon: !!isPrimaryIcon && !!technologyConnectorIconKey(customLink),
+      })
     }
   }
 
@@ -177,14 +188,18 @@ async function normalizeInitialTechnologyLinks(element: LibraryElement): Promise
             is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
           })
         } else if (link.label.trim()) {
-          normalized.push({ type: 'custom', label: link.label.trim(), is_primary_icon: false })
+          const customLink: TechnologyConnector = { type: 'custom', label: link.label.trim() }
+          normalized.push({
+            ...customLink,
+            is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!technologyConnectorIconKey(customLink),
+          })
         }
       } else {
         const parts = splitTechnologyLabel(link.label)
         if (parts.length > 1) {
           for (const part of parts) pushLabel(part)
         } else {
-          pushLabel(link.label)
+          pushLabel(link.label, !!(link.is_primary_icon ?? link.isPrimaryIcon))
         }
       }
     }
@@ -197,7 +212,7 @@ async function normalizeInitialTechnologyLinks(element: LibraryElement): Promise
   // If no catalog item is primary, try to match against element.logo_url. An
   // explicit empty logo_url means the user deselected technology icons.
   const deduped = dedupeTechnologyLinks(normalized)
-  const hasPrimary = deduped.some(l => l.type === 'catalog' && l.is_primary_icon)
+  const hasPrimary = deduped.some(l => !!technologyConnectorIconKey(l) && l.is_primary_icon)
   if (!hasPrimary && element.logo_url !== '') {
     let bestMatchIndex = -1
     if (element.logo_url) {
@@ -217,12 +232,7 @@ function buildTechnologyFingerprintPayload(
   links: TechnologyConnector[],
   type: string,
 ) {
-  const normalizedLinks = links.map((link) => ({
-    type: link.type,
-    slug: link.type === 'catalog' ? link.slug : undefined,
-    label: link.label,
-    is_primary_icon: !!link.is_primary_icon,
-  }))
+  const normalizedLinks = links.map(serializeTechnologyLinkForSave)
   const normalizedType = type.trim().toLowerCase()
   const technology = links.map((link) => link.label).join(', ')
 
@@ -243,6 +253,32 @@ function buildTechnologyFingerprintPayload(
   }
 }
 
+function serializeTechnologyLinkForSave(link: TechnologyConnector): TechnologyConnector {
+  const isPrimaryIcon = !!(link.is_primary_icon ?? link.isPrimaryIcon)
+  const iconKey = technologyConnectorIconKey(link)
+  if (link.type === 'custom' && isPrimaryIcon && iconKey?.startsWith('fa:')) {
+    return {
+      type: 'catalog',
+      slug: iconKey,
+      label: link.label,
+      is_primary_icon: true,
+    }
+  }
+
+  return {
+    type: link.type,
+    slug: link.type === 'catalog' ? link.slug : undefined,
+    label: link.label,
+    is_primary_icon: link.type === 'catalog' && isPrimaryIcon,
+  }
+}
+
+type AutoSaveOverrides = {
+  tags?: string[]
+  technologyLinks?: TechnologyConnector[]
+  explicitLogoClear?: boolean
+}
+
 const NOISE_GATE_STOPS = [
   { value: -2, label: 'Quiet' },
   { value: -1, label: 'Lean' },
@@ -250,6 +286,8 @@ const NOISE_GATE_STOPS = [
   { value: 1, label: 'Rich' },
   { value: 2, label: 'Full' },
 ] as const
+
+const AUTO_SAVE_DELAY_MS = 150
 
 function clampNoiseGateLevel(level: number) {
   return Math.max(-2, Math.min(2, level))
@@ -346,6 +384,7 @@ function ElementPanel({
   const lastSavedFingerprintRef = useRef<string>('')
   const savingRef = useRef(false)
   const pendingSaveRef = useRef(false)
+  const pendingSaveOverridesRef = useRef<AutoSaveOverrides | undefined>(undefined)
   const [techResultIndex, setTechResultIndex] = useState(-1)
   const confirmPermanentDelete = useDisclosure()
   const customTechnologyFileInputRef = useRef<HTMLInputElement>(null)
@@ -458,49 +497,59 @@ function ElementPanel({
     }
   }, [element, isOpen])
 
-  const buildPayloadAndFingerprint = useCallback(async () => {
-    const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && link.slug)
-    const primarySlug = primaryLink?.slug
+  const resolveTechnologyLogoUrlForSave = useCallback(async (link: TechnologyConnector | undefined): Promise<string> => {
+    if (!link) return ''
 
-    const normalizedLinks = technologyLinks.map((link) => ({
-      type: link.type,
-      slug: link.type === 'catalog' ? link.slug : undefined,
-      label: link.label,
-      is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
-    }))
+    const directIconUrl = resolveTechnologyConnectorIconUrl(link)
+    if (link.type !== 'catalog' || !link.slug) return directIconUrl ?? ''
+
+    const slug = link.slug
+    const cached = technologyMeta[slug]
+    if (cached?.iconUrl) return cached.iconUrl
+
+    try {
+      const item = await getTechnologyCatalogItemBySlug(slug)
+      if (item) {
+        setTechnologyMeta((prev) => ({ ...prev, [slug]: item }))
+        return item.iconUrl || directIconUrl || ''
+      }
+    } catch {
+      // ignore
+    }
+
+    return directIconUrl ?? ''
+  }, [technologyMeta])
+
+  const buildPayloadAndFingerprint = useCallback(async (overrides?: AutoSaveOverrides) => {
+    const tagsForSave = overrides?.tags ?? tags
+    const linksForSave = overrides?.technologyLinks ?? technologyLinks
+    const explicitLogoClearForSave = overrides?.explicitLogoClear ?? explicitLogoClear
+
+    const primaryLink = linksForSave.find((link) => (
+      !!technologyConnectorIconKey(link) && !!(link.is_primary_icon ?? link.isPrimaryIcon)
+    ))
+
+    const normalizedLinks = linksForSave.map(serializeTechnologyLinkForSave)
 
     const normalizedType = type.trim().toLowerCase()
 
     let logoUrl = element?.logo_url ?? ''
-    if (explicitLogoClear) {
+    if (explicitLogoClearForSave) {
       logoUrl = ''
     }
-    if (!explicitLogoClear && primarySlug) {
-      const cached = technologyMeta[primarySlug]
-      if (cached?.iconUrl) {
-        logoUrl = cached.iconUrl
-      } else {
-        try {
-          const item = await getTechnologyCatalogItemBySlug(primarySlug)
-          if (item) {
-            setTechnologyMeta((prev) => ({ ...prev, [primarySlug]: item }))
-            if (item.iconUrl) logoUrl = item.iconUrl
-          }
-        } catch {
-          // ignore
-        }
-      }
+    if (!explicitLogoClearForSave && primaryLink) {
+      logoUrl = await resolveTechnologyLogoUrlForSave(primaryLink)
     }
 
     const payload = {
       name,
       description,
       kind: normalizedType,
-      technology: technologyLinks.map((link) => link.label).join(', '),
+      technology: linksForSave.map((link) => link.label).join(', '),
       url,
       logo_url: logoUrl,
       technology_connectors: normalizedLinks,
-      tags,
+      tags: tagsForSave,
       bypass_noise_gate: bypassNoiseGate,
       repo: element?.repo,
       branch: element?.branch,
@@ -508,20 +557,21 @@ function ElementPanel({
       language: element?.language,
     }
     return { payload, fingerprint: JSON.stringify(payload) }
-  }, [technologyLinks, technologyMeta, explicitLogoClear, type, element, name, description, url, tags, bypassNoiseGate])
+  }, [technologyLinks, explicitLogoClear, type, element, name, description, url, tags, bypassNoiseGate, resolveTechnologyLogoUrlForSave])
 
-  const saveIfDirty = useCallback(async () => {
+  const saveIfDirty = useCallback(async (overrides?: AutoSaveOverrides) => {
     if (!autoSaveEdit || !element) return
     if (!name.trim()) return
 
     if (savingRef.current) {
       pendingSaveRef.current = true
+      pendingSaveOverridesRef.current = overrides ?? pendingSaveOverridesRef.current
       return
     }
 
     savingRef.current = true
     try {
-      const { payload, fingerprint } = await buildPayloadAndFingerprint()
+      const { payload, fingerprint } = await buildPayloadAndFingerprint(overrides)
       if (fingerprint === lastSavedFingerprintRef.current) return
       const saved = await api.elements.update(element.id, payload)
       lastSavedFingerprintRef.current = fingerprint
@@ -531,29 +581,31 @@ function ElementPanel({
     } finally {
       savingRef.current = false
       if (pendingSaveRef.current) {
+        const pendingOverrides = pendingSaveOverridesRef.current
         pendingSaveRef.current = false
+        pendingSaveOverridesRef.current = undefined
         window.setTimeout(() => {
-          void saveIfDirtyRef.current?.()
-        }, 0)
+          void saveIfDirtyRef.current?.(pendingOverrides)
+        }, AUTO_SAVE_DELAY_MS)
       }
     }
   }, [autoSaveEdit, element, name, buildPayloadAndFingerprint, onSave])
 
-  const saveIfDirtyRef = useRef<(() => Promise<void>) | null>(null)
+  const saveIfDirtyRef = useRef<((overrides?: AutoSaveOverrides) => Promise<void>) | null>(null)
   useEffect(() => { saveIfDirtyRef.current = saveIfDirty }, [saveIfDirty])
 
-  const scheduleAutoSave = () => {
+  const scheduleAutoSave = (overrides?: AutoSaveOverrides) => {
     if (!autoSaveEdit) return
     window.setTimeout(() => {
-      void saveIfDirtyRef.current?.()
-    }, 0)
+      void saveIfDirtyRef.current?.(overrides)
+    }, AUTO_SAVE_DELAY_MS)
   }
 
   useEffect(() => {
     if (!autoSaveEdit || !element) return
     const timer = window.setTimeout(() => {
       void saveIfDirtyRef.current?.()
-    }, 150)
+    }, AUTO_SAVE_DELAY_MS)
     return () => window.clearTimeout(timer)
   }, [autoSaveEdit, element, name, description, type, url, tags, technologyLinks, explicitLogoClear, bypassNoiseGate])
 
@@ -692,17 +744,18 @@ function ElementPanel({
     if (isReadOnly || !name.trim()) return
     setLoading(true)
     try {
-      const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && link.slug)
-      const primaryMetadata = primaryLink?.slug
-        ? (technologyMeta[primaryLink.slug] ?? await getTechnologyCatalogItemBySlug(primaryLink.slug))
-        : null
+      const primaryLink = technologyLinks.find((link) => (
+        !!technologyConnectorIconKey(link) && !!(link.is_primary_icon ?? link.isPrimaryIcon)
+      ))
+      const logoUrl = explicitLogoClear ? '' : await resolveTechnologyLogoUrlForSave(primaryLink)
 
-      const normalizedLinks = technologyLinks.map((link) => ({
-        type: link.type,
-        slug: link.type === 'catalog' ? canonicalTechnologySlug(link.slug) : undefined,
-        label: link.label,
-        is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
-      }))
+      const normalizedLinks = technologyLinks.map((link) => {
+        const serialized = serializeTechnologyLinkForSave(link)
+        return {
+          ...serialized,
+          slug: serialized.type === 'catalog' ? canonicalTechnologySlug(serialized.slug) : undefined,
+        }
+      })
 
       const normalizedType = type.trim().toLowerCase()
 
@@ -712,7 +765,7 @@ function ElementPanel({
         kind: normalizedType,
         technology: technologyLinks.map((link) => link.label).join(', '),
         url,
-        logo_url: explicitLogoClear ? '' : (primaryMetadata?.iconUrl ?? ''),
+        logo_url: logoUrl,
         technology_connectors: normalizedLinks,
         tags,
         bypass_noise_gate: bypassNoiseGate,
@@ -727,7 +780,7 @@ function ElementPanel({
     } finally {
       setLoading(false)
     }
-  }, [isReadOnly, name, technologyLinks, technologyMeta, type, explicitLogoClear, tags, bypassNoiseGate, isEdit, element, onSave, handleClose, description, url])
+  }, [isReadOnly, name, technologyLinks, type, explicitLogoClear, tags, bypassNoiseGate, isEdit, element, onSave, handleClose, description, url, resolveTechnologyLogoUrlForSave])
 
   useEffect(() => {
     if (!isOpen) return
@@ -759,22 +812,25 @@ function ElementPanel({
     if (technologyLinks.length >= 3) return
     if (technologyLinks.some((link) => link.type === 'catalog' && link.slug === item.defaultSlug)) return
 
-    const hasPrimaryCatalog = technologyLinks.some((link) => link.type === 'catalog' && !!link.is_primary_icon)
+    const hasPrimaryIcon = technologyLinks.some((link) => (
+      !!technologyConnectorIconKey(link) && !!(link.is_primary_icon ?? link.isPrimaryIcon)
+    ))
 
-    setTechnologyConnectors((prev) => ([
-      ...prev,
+    const nextLinks: TechnologyConnector[] = [
+      ...technologyLinks,
       {
         type: 'catalog',
         slug: item.defaultSlug,
         label: item.name,
-        is_primary_icon: !explicitLogoClear && !hasPrimaryCatalog,
+        is_primary_icon: !explicitLogoClear && !hasPrimaryIcon,
       },
-    ]))
+    ]
+    setTechnologyConnectors(nextLinks)
     setTechnologyQuery('')
     setTechnologyResults([])
     resetCustomTechnologyForm()
     setTechnologyMeta((prev) => ({ ...prev, [item.defaultSlug]: item }))
-    scheduleAutoSave()
+    scheduleAutoSave({ technologyLinks: nextLinks })
   }
 
   const addCustomTechnology = () => {
@@ -782,11 +838,23 @@ function ElementPanel({
     if (!value || technologyLinks.length >= 3) return
     if (technologyLinks.some((link) => link.type === 'custom' && link.label.toLowerCase() === value.toLowerCase())) return
 
-    setTechnologyConnectors((prev) => ([...prev, { type: 'custom', label: value }]))
+    const link: TechnologyConnector = { type: 'custom', label: value }
+    const canUseAsPrimaryIcon = !!technologyConnectorIconKey(link)
+    const hasPrimaryIcon = technologyLinks.some((item) => (
+      !!technologyConnectorIconKey(item) && !!(item.is_primary_icon ?? item.isPrimaryIcon)
+    ))
+    const nextLinks: TechnologyConnector[] = [
+      ...technologyLinks,
+      {
+        ...link,
+        is_primary_icon: canUseAsPrimaryIcon && !explicitLogoClear && !hasPrimaryIcon,
+      },
+    ]
+    setTechnologyConnectors(nextLinks)
     setTechnologyQuery('')
     setTechnologyResults([])
     resetCustomTechnologyForm()
-    scheduleAutoSave()
+    scheduleAutoSave({ technologyLinks: nextLinks })
   }
 
   const resetCustomTechnologyForm = () => {
@@ -880,8 +948,10 @@ function ElementPanel({
       setTechnologyConnectors((prev) => {
         if (prev.length >= 3) return prev
         if (prev.some((link) => link.type === 'catalog' && link.slug === item.defaultSlug)) return prev
-        const hasPrimaryCatalog = prev.some((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon))
-        const shouldBePrimary = !explicitLogoClear && !hasPrimaryCatalog
+        const hasPrimaryIcon = prev.some((link) => (
+          !!technologyConnectorIconKey(link) && !!(link.is_primary_icon ?? link.isPrimaryIcon)
+        ))
+        const shouldBePrimary = !explicitLogoClear && !hasPrimaryIcon
         return [
           ...prev,
           {
@@ -906,37 +976,50 @@ function ElementPanel({
   }
 
   const removeTechnology = (linkToRemove: TechnologyConnector) => {
-    if (linkToRemove.type === 'catalog' && linkToRemove.is_primary_icon) {
+    const shouldClearLogo = !!technologyConnectorIconKey(linkToRemove) && !!(linkToRemove.is_primary_icon ?? linkToRemove.isPrimaryIcon)
+    const nextExplicitLogoClear = shouldClearLogo ? true : explicitLogoClear
+    const nextLinks = technologyLinks.filter((link) => (
+      !(link.type === linkToRemove.type && link.slug === linkToRemove.slug && link.label === linkToRemove.label)
+    ))
+    if (shouldClearLogo) {
       setExplicitLogoClear(true)
     }
-    setTechnologyConnectors((prev) => prev.filter((link) => (
-      !(link.type === linkToRemove.type && link.slug === linkToRemove.slug && link.label === linkToRemove.label)
-    )))
-    scheduleAutoSave()
+    setTechnologyConnectors(nextLinks)
+    scheduleAutoSave({ technologyLinks: nextLinks, explicitLogoClear: nextExplicitLogoClear })
   }
 
-  const togglePrimaryIcon = (selectedSlug: string) => {
-    const isDeselecting = selectedPrimarySlug === selectedSlug
-    setTechnologyConnectors((prev) => prev.map((link) => {
-      if (link.type !== 'catalog') {
-        return { ...link, is_primary_icon: false }
-      }
+  const togglePrimaryIcon = (selectedIconKey: string) => {
+    const isDeselecting = selectedPrimaryIconKey === selectedIconKey
+    const nextLinks = technologyLinks.map((link) => {
       return {
         ...link,
-        is_primary_icon: !isDeselecting && link.slug === selectedSlug,
+        is_primary_icon: !isDeselecting && technologyConnectorIconKey(link) === selectedIconKey,
       }
-    }))
+    })
+    setTechnologyConnectors(nextLinks)
     setExplicitLogoClear(isDeselecting)
-    scheduleAutoSave()
+    scheduleAutoSave({ technologyLinks: nextLinks, explicitLogoClear: isDeselecting })
   }
 
-  const selectedPrimarySlug = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!link.slug)?.slug ?? ''
+  const selectedPrimaryIconLink = technologyLinks.find((link) => (
+    !!technologyConnectorIconKey(link) && !!(link.is_primary_icon ?? link.isPrimaryIcon)
+  ))
+  const selectedPrimaryIconKey = selectedPrimaryIconLink ? technologyConnectorIconKey(selectedPrimaryIconLink) ?? '' : ''
   const inlineCustomTechnologyName = technologyQuery.trim() || (customTechnologyFile ? defaultTechnologyNameFromFile(customTechnologyFile) : '')
   const customTechnologyCanCreate = !!inlineCustomTechnologyName && !!customTechnologyFile && technologyLinks.length < 3 && !customTechnologySaving
   const normalizedTechnologyQuery = technologyQuery.trim()
+  const fontAwesomeQueryIconUrl = normalizedTechnologyQuery
+    ? resolveTechnologyConnectorIconUrl({ type: 'custom', label: normalizedTechnologyQuery })
+    : null
+  const showFontAwesomeTechnologyCreate = (
+    !!fontAwesomeQueryIconUrl &&
+    technologyLinks.length < 3 &&
+    !technologyLinks.some((link) => link.type === 'custom' && normalizeTechnologyLabel(link.label) === normalizeTechnologyLabel(normalizedTechnologyQuery))
+  )
   const showCustomTechnologyCreate = (
     !!normalizedTechnologyQuery &&
     technologyLinks.length < 3 &&
+    !fontAwesomeQueryIconUrl &&
     !technologySearchLoading &&
     technologySearchSettledQuery === normalizedTechnologyQuery &&
     technologyResults.length === 0
@@ -1010,7 +1093,7 @@ function ElementPanel({
                 size="sm"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                onBlur={scheduleAutoSave}
+                onBlur={() => scheduleAutoSave()}
                 placeholder="Payment Service"
               />
             </FormControl>
@@ -1117,7 +1200,7 @@ function ElementPanel({
                 size="sm"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                onBlur={scheduleAutoSave}
+                onBlur={() => scheduleAutoSave()}
                 placeholder="What does this element do?"
                 rows={3}
               />
@@ -1196,6 +1279,27 @@ function ElementPanel({
                       ))}
                       {technologySearchLoading && (
                         <Text px={2} py={2} fontSize="xs" color="gray.400">Searching...</Text>
+                      )}
+                      {showFontAwesomeTechnologyCreate && fontAwesomeQueryIconUrl && (
+                        <Box
+                          data-testid="element-panel-fontawesome-technology-option"
+                          borderColor="whiteAlpha.100"
+                          px={2}
+                          py={2}
+                          cursor="pointer"
+                          _hover={{ bg: 'whiteAlpha.100' }}
+                          onClick={addCustomTechnology}
+                        >
+                          <HStack justify="space-between" align="center">
+                            <HStack spacing={2} minW={0}>
+                              <Flex w="18px" h="18px" align="center" justify="center" flexShrink={0}>
+                                <Box as="img" src={fontAwesomeQueryIconUrl} alt="" boxSize="15px" objectFit="contain" />
+                              </Flex>
+                              <Text fontSize="sm" color="white" noOfLines={1}>{normalizedTechnologyQuery}</Text>
+                            </HStack>
+                            <Badge variant="subtle" colorScheme="purple" fontSize="8px">Font Awesome</Badge>
+                          </HStack>
+                        </Box>
                       )}
                       {showCustomTechnologyCreate && (
                         <Box
@@ -1434,8 +1538,10 @@ function ElementPanel({
                   {technologyLinks.map((link) => {
                     const meta = link.slug ? technologyMeta[link.slug] : undefined
                     const sourceUrl = meta?.websiteUrl || meta?.docsUrl
-                    const isSelectable = link.type === 'catalog' && !!link.slug && !isReadOnly
-                    const isPrimaryIcon = link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!link.slug
+                    const iconKey = technologyConnectorIconKey(link)
+                    const iconUrl = resolveTechnologyConnectorIconUrl(link, meta?.iconUrl)
+                    const isSelectable = !!iconKey && !isReadOnly
+                    const isPrimaryIcon = !!iconKey && !!(link.is_primary_icon ?? link.isPrimaryIcon)
                     return (
                       <WrapItem key={`${link.type}:${link.slug ?? link.label}`}>
                         <Popover trigger={isMobile ? 'click' : 'hover'} placement="top" closeOnBlur>
@@ -1450,12 +1556,12 @@ function ElementPanel({
                               color={isPrimaryIcon ? 'white' : undefined}
                               cursor={isSelectable ? 'pointer' : 'default'}
                               onClick={() => {
-                                if (isSelectable && link.slug) togglePrimaryIcon(link.slug)
+                                if (isSelectable && iconKey) togglePrimaryIcon(iconKey)
                               }}
                             >
                               <TagLabel color="white">
-                                {link.type === 'catalog' && meta && (
-                                  <Box as="img" src={resolveWithBase(meta.iconUrl)} alt={link.label} boxSize="12px" objectFit="contain" display="inline-block" mr={1.5} verticalAlign="middle" />
+                                {iconUrl && (
+                                  <Box as="img" src={resolveWithBase(iconUrl)} alt={link.label} boxSize="12px" objectFit="contain" display="inline-block" mr={1.5} verticalAlign="middle" />
                                 )}
                                 {link.label}
                               </TagLabel>
@@ -1476,7 +1582,7 @@ function ElementPanel({
                             <PopoverBody>
                               <VStack align="stretch" spacing={1}>
                                 <Text fontSize="sm" color="white" fontWeight="semibold">{meta?.name || link.label}</Text>
-                                <Text fontSize="xs" color="gray.400">{link.type === 'custom' ? 'Custom technology' : (meta?.provider || 'General')}</Text>
+                                <Text fontSize="xs" color="gray.400">{iconKey?.startsWith('fa:') ? 'Font Awesome icon' : (link.type === 'custom' ? 'Custom technology' : (meta?.provider || 'General'))}</Text>
                                 {sourceUrl && (
                                   <Text as="button" type="button" onClick={() => openExternalUrl(sourceUrl)} fontSize="xs" color="blue.300" textDecoration="underline" pointerEvents="auto" textAlign="left">
                                     {sourceUrl}
@@ -1499,7 +1605,7 @@ function ElementPanel({
                 size="sm"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                onBlur={scheduleAutoSave}
+                onBlur={() => scheduleAutoSave()}
                 placeholder="https://…"
               />
             </FormControl>
@@ -1510,8 +1616,9 @@ function ElementPanel({
                 availableTags={availableTags}
                 onAddTag={(tag) => {
                   if (!tags.includes(tag)) {
-                    setTags((prev) => [...prev, tag])
-                    scheduleAutoSave()
+                    const nextTags = [...tags, tag]
+                    setTags(nextTags)
+                    scheduleAutoSave({ tags: nextTags })
                   }
                 }}
                 isReadOnly={isReadOnly}
@@ -1523,8 +1630,9 @@ function ElementPanel({
                       <TagLabel color="white">{tag}</TagLabel>
                       {!isReadOnly && (
                         <TagCloseButton data-testid="element-panel-tag-remove" onClick={() => {
-                          setTags((prev) => prev.filter((t) => t !== tag))
-                          scheduleAutoSave()
+                          const nextTags = tags.filter((t) => t !== tag)
+                          setTags(nextTags)
+                          scheduleAutoSave({ tags: nextTags })
                         }} />
                       )}
                     </Tag>

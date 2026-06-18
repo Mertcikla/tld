@@ -22,6 +22,22 @@ describe('resolveElementIconUrl', () => {
     ])).toBe('/icons/go.svg')
   })
 
+  it('derives the selected Font Awesome custom technology icon when logo_url is missing', () => {
+    const iconUrl = resolveElementIconUrl(null, [
+      { type: 'custom', label: 'fa:fa-car', is_primary_icon: true },
+    ])
+
+    expect(iconUrl).toMatch(/^data:image\/svg\+xml;charset=utf-8,/)
+    expect(decodeURIComponent(iconUrl?.split(',')[1] ?? '')).toContain('viewBox="0 0 512 512"')
+  })
+
+  it('prefers a selected Font Awesome custom icon over an unselected catalog icon', () => {
+    expect(resolveElementIconUrl(null, [
+      { type: 'catalog', slug: 'go', label: 'Go' },
+      { type: 'custom', label: 'fa:fa-car', is_primary_icon: true },
+    ])).toMatch(/^data:image\/svg\+xml;charset=utf-8,/)
+  })
+
   it('falls back to the first catalog link when the API omits primary icon metadata', () => {
     expect(resolveElementIconUrl(null, [
       { type: 'catalog', slug: 'javascript', label: 'JavaScript' },

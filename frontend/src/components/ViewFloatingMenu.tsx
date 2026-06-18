@@ -43,6 +43,8 @@ export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
   disableImportExport?: boolean
   onImport: () => void
   onExport: () => void
+  onCopyMermaid?: () => void
+  onExportMermaid?: () => void
   onShare?: () => void
   focusMode: boolean
   onFocusModeChange: (enabled: boolean) => void
@@ -95,6 +97,8 @@ function ViewFloatingMenu({
   disableImportExport = false,
   onImport,
   onExport,
+  onCopyMermaid,
+  onExportMermaid,
   focusMode,
   onFocusModeChange,
   densityLevel = 0,
@@ -508,7 +512,7 @@ function ViewFloatingMenu({
         {onMarkdownToggle && (
           <>
             <Tooltip
-              label={!hasMarkdown ? 'Create a markdown note for this view' : markdownOpen ? 'Hide notes' : 'Open notes'}
+              label={!hasMarkdown ? 'Open notes setup' : markdownOpen ? 'Hide notes' : 'Open notes'}
               placement="top"
               openDelay={200}
             >
@@ -633,6 +637,40 @@ function ViewFloatingMenu({
               >
                 <Text fontSize="11px" fontWeight="normal">Export</Text>
               </Button>
+
+              {onCopyMermaid && (
+                <Button
+                  data-testid="vieweditor-toolbar-copy-mermaid"
+                  variant="ghost"
+                  h="28px"
+                  px={2.5}
+                  color="gray.300"
+                  leftIcon={<MarkdownSvg size={16} />}
+                  isDisabled={disableImportExport}
+                  _disabled={{ opacity: 0.35, cursor: 'not-allowed' }}
+                  _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+                  onClick={onCopyMermaid}
+                >
+                  <Text fontSize="11px" fontWeight="normal">Copy as Mermaid</Text>
+                </Button>
+              )}
+
+              {onExportMermaid && (
+                <Button
+                  data-testid="vieweditor-toolbar-export-mermaid"
+                  variant="ghost"
+                  h="28px"
+                  px={2.5}
+                  color="gray.300"
+                  leftIcon={<ExportIcon size={14} />}
+                  isDisabled={disableImportExport}
+                  _disabled={{ opacity: 0.35, cursor: 'not-allowed' }}
+                  _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+                  onClick={onExportMermaid}
+                >
+                  <Text fontSize="11px" fontWeight="normal">Export Mermaid</Text>
+                </Button>
+              )}
 
               {shareSlot}
               {toolbarSlot}

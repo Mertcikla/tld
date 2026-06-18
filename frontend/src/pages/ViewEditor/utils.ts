@@ -80,7 +80,7 @@ export function sanitizeExportFilename(value: string) {
 }
 
 export const exportFilters: Record<string, DialogFilter[]> = {
-  mermaid: [{ displayName: 'Mermaid Files (*.mmd;*.mermaid)', pattern: '*.mmd;*.mermaid' }],
+  mermaid: [{ displayName: 'Markdown Files (*.md)', pattern: '*.md' }],
   svg: [{ displayName: 'SVG Files (*.svg)', pattern: '*.svg' }],
   png: [{ displayName: 'PNG Files (*.png)', pattern: '*.png' }],
   markdown: [{ displayName: 'Markdown Files (*.md)', pattern: '*.md' }],
