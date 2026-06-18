@@ -190,7 +190,7 @@ export interface ViewMarkdownDocument {
   path: string
   is_managed: boolean
   updated_at: string
-  source_kind: 'PRIVATE_WORKSPACE' | 'PRIVATE_APP' | 'REPO' | 'ATTACHED' | 'LEGACY' | string
+  source_kind: 'PRIVATE_WORKSPACE' | 'PRIVATE_APP' | 'REPO' | 'ATTACHED' | string
   exists: boolean
   writable: boolean
   can_edit: boolean

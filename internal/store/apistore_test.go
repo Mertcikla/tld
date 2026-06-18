@@ -660,17 +660,17 @@ func TestViewMarkdownSaveDetectsFileVersionConflict(t *testing.T) {
 	}
 }
 
-func TestViewMarkdownLegacyRelativePathResolvesFromDataDir(t *testing.T) {
+func TestViewMarkdownUnmanagedRelativePathResolvesFromWorkspaceRoot(t *testing.T) {
 	sqliteStore := openAdapterTestStore(t)
 	dataDir := t.TempDir()
 	workspaceDir := t.TempDir()
 	adapter := NewAPIAdapter(sqliteStore, dataDir, workspaceDir)
 	ctx := context.Background()
-	insertAdapterTestView(t, sqliteStore, 45, "Legacy Notes")
+	insertAdapterTestView(t, sqliteStore, 45, "Unmanaged Notes")
 
-	relPath := filepath.Join("docs", "legacy.md")
-	dataDirContent := "# Legacy\n\nData dir file.\n"
-	workspaceContent := "# Legacy\n\nWorkspace file.\n"
+	relPath := filepath.Join("docs", "unmanaged.md")
+	dataDirContent := "# Unmanaged\n\nData dir file.\n"
+	workspaceContent := "# Unmanaged\n\nWorkspace file.\n"
 	if err := os.MkdirAll(filepath.Join(dataDir, "docs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -691,11 +691,11 @@ func TestViewMarkdownLegacyRelativePathResolvesFromDataDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if markdown.GetSourceKind() != "LEGACY" {
-		t.Fatalf("source kind = %q, want LEGACY", markdown.GetSourceKind())
+	if markdown.GetSourceKind() != markdownSourceAttached {
+		t.Fatalf("source kind = %q, want %s", markdown.GetSourceKind(), markdownSourceAttached)
 	}
-	if content != dataDirContent {
-		t.Fatalf("content = %q, want legacy data dir content %q", content, dataDirContent)
+	if content != workspaceContent {
+		t.Fatalf("content = %q, want workspace content %q", content, workspaceContent)
 	}
 }
 

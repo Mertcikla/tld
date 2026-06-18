@@ -172,7 +172,7 @@ func normalizeViewMarkdownTargetKind(value string) string {
 	switch strings.ToUpper(strings.TrimSpace(value)) {
 	case "", "PRIVATE":
 		return "PRIVATE_WORKSPACE"
-	case "PRIVATE_WORKSPACE", "PRIVATE_APP", "REPO", "ATTACHED", "LEGACY":
+	case "PRIVATE_WORKSPACE", "PRIVATE_APP", "REPO", "ATTACHED":
 		return strings.ToUpper(strings.TrimSpace(value))
 	default:
 		return strings.ToUpper(strings.TrimSpace(value))

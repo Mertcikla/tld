@@ -64,7 +64,7 @@ func (s *Store) UpsertViewMarkdown(ctx context.Context, viewID int64, path strin
 		if isManaged {
 			kind = "PRIVATE_APP"
 		} else {
-			kind = "LEGACY"
+			kind = "ATTACHED"
 		}
 	}
 	row := &viewMarkdownModel{
@@ -141,7 +141,7 @@ func viewMarkdownDocumentFromModel(row viewMarkdownModel) *ViewMarkdownDocument 
 		if row.IsManaged {
 			sourceKind = "PRIVATE_APP"
 		} else {
-			sourceKind = "LEGACY"
+			sourceKind = "ATTACHED"
 		}
 	}
 	return &ViewMarkdownDocument{

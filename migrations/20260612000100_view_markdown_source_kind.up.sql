@@ -11,5 +11,5 @@ CREATE TABLE IF NOT EXISTS view_markdown_documents (
 ALTER TABLE view_markdown_documents ADD COLUMN source_kind TEXT NOT NULL DEFAULT '';
 
 UPDATE view_markdown_documents
-SET source_kind = CASE WHEN is_managed THEN 'PRIVATE_APP' ELSE 'LEGACY' END
+SET source_kind = CASE WHEN is_managed THEN 'PRIVATE_APP' ELSE 'ATTACHED' END
 WHERE source_kind = '';

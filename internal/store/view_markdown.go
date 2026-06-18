@@ -23,7 +23,6 @@ const (
 	markdownSourcePrivateApp       = "PRIVATE_APP"
 	markdownSourceRepo             = "REPO"
 	markdownSourceAttached         = "ATTACHED"
-	markdownSourceLegacy           = "LEGACY"
 
 	markdownGitOutsideRepo = "outside_repo"
 	markdownGitUnknown     = "unknown"
@@ -278,13 +277,11 @@ func normalizeMarkdownSourceKind(sourceKind string, isManaged bool) string {
 		return markdownSourceRepo
 	case markdownSourceAttached:
 		return markdownSourceAttached
-	case markdownSourceLegacy:
-		return markdownSourceLegacy
 	case "":
 		if isManaged {
 			return markdownSourcePrivateApp
 		}
-		return markdownSourceLegacy
+		return markdownSourceAttached
 	default:
 		if isManaged {
 			return markdownSourcePrivateApp
@@ -374,7 +371,7 @@ func (a *APIAdapter) resolveStoredMarkdownDocumentPath(doc *app.ViewMarkdownDocu
 			return absPath, nil
 		}
 		return a.resolvePathFromDataDir(doc.Path)
-	case markdownSourcePrivateApp, markdownSourceLegacy:
+	case markdownSourcePrivateApp:
 		return a.resolvePathFromDataDir(doc.Path)
 	default:
 		return a.resolvePathFromDataDir(doc.Path)
