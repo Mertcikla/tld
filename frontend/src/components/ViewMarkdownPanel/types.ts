@@ -10,6 +10,7 @@ export interface ViewMarkdownPanelProps {
   viewId?: number | null
   viewNameById?: Map<number, string>
   mermaidIntegrationEnabled?: boolean
+  dbOnlyNotes?: boolean
   canEdit?: boolean
   isLoading?: boolean
   isSaving?: boolean

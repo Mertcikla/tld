@@ -17,6 +17,7 @@ function ViewMarkdownPanel({
   viewId = null,
   viewNameById,
   mermaidIntegrationEnabled = false,
+  dbOnlyNotes = false,
   canEdit = true,
   isLoading = false,
   isSaving = false,
@@ -42,7 +43,7 @@ function ViewMarkdownPanel({
   const [repoPath, setRepoPath] = useState(suggestedRepoPath)
   const [attachPath, setAttachPath] = useState('')
   const canEditDocument = canEdit && !!markdown?.can_edit
-  const showNativeAttachPicker = isWailsApp && !!onPickMarkdownFile
+  const showNativeAttachPicker = !dbOnlyNotes && isWailsApp && !!onPickMarkdownFile
   const showAttachPathInput = !showNativeAttachPicker
 
   const currentEditorMarkdown = useCallback(() => editorRef.current?.getMarkdown() ?? latestContentRef.current, [])
@@ -110,7 +111,7 @@ function ViewMarkdownPanel({
       >
         {isLoading ? (
           <LoadingMarkdownState />
-        ) : markdown && !markdown.exists ? (
+        ) : markdown && !markdown.exists && !dbOnlyNotes ? (
           <MissingMarkdownState
             attachPath={attachPath}
             canEdit={canEdit}
@@ -125,7 +126,7 @@ function ViewMarkdownPanel({
             showNativeAttachPicker={showNativeAttachPicker}
             viewName={viewName}
           />
-        ) : markdown ? (
+        ) : markdown && markdown.exists ? (
           <MarkdownEditor
             canEditDocument={canEditDocument}
             content={content}
@@ -151,6 +152,7 @@ function ViewMarkdownPanel({
           <MarkdownSetupState
             attachPath={attachPath}
             canEdit={canEdit}
+            dbOnlyNotes={dbOnlyNotes}
             handleAttachPickedFile={handleAttachPickedFile}
             onAttachMarkdown={onAttachMarkdown}
             onCreateMarkdown={onCreateMarkdown}

@@ -542,12 +542,14 @@ export interface ViewEditorPermissions {
   isFreePlan?: boolean
 }
 
-interface Props extends CoreUISlots, ViewEditorPermissions {
+export interface ViewEditorProps extends CoreUISlots, ViewEditorPermissions {
   demoOptions?: ViewEditorDemoOptions
+  dbOnlyNotes?: boolean
 }
 
 function ViewEditorInner({
   demoOptions,
+  dbOnlyNotes = false,
   canEdit = true,
   isOwner = true,
   isFreePlan = false,
@@ -561,7 +563,7 @@ function ViewEditorInner({
   settingsSlot: _settingsSlot,
   mobileSettingsSlot: _mobileSettingsSlot,
   userControlsSlot: _userControlsSlot,
-}: Props) {
+}: ViewEditorProps) {
   const { id: viewIdParam } = useParams<{ id: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const viewId = parseNumericId(viewIdParam)
@@ -1377,10 +1379,10 @@ function ViewEditorInner({
     setIsMarkdownMutating(true)
     try {
       const updatedView = await api.workspace.views.markdown.create(viewId, {
-        fileName: options.fileName,
+        fileName: dbOnlyNotes ? undefined : options.fileName,
         initialContent: options.initialContent ?? initialViewMarkdown(view?.name),
-        targetKind: options.targetKind,
-        path: options.path,
+        targetKind: dbOnlyNotes ? 'PRIVATE_APP' : options.targetKind,
+        path: dbOnlyNotes ? undefined : options.path,
       })
       setView(updatedView)
       const loadedMarkdown = await loadViewMarkdown(viewId)
@@ -1396,14 +1398,26 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownMutating(false)
     }
-  }, [canEdit, loadViewMarkdown, setView, toast, view?.name, viewId])
+  }, [canEdit, dbOnlyNotes, loadViewMarkdown, setView, toast, view?.name, viewId])
 
   const handleCreateMarkdownFromPanel = useCallback(async (targetKind: string, path?: string) => {
-    await handleCreateManagedMarkdown({ targetKind, path, openEditor: true })
-  }, [handleCreateManagedMarkdown])
+    await handleCreateManagedMarkdown({
+      targetKind: dbOnlyNotes ? 'PRIVATE_APP' : targetKind,
+      path: dbOnlyNotes ? undefined : path,
+      openEditor: true,
+    })
+  }, [dbOnlyNotes, handleCreateManagedMarkdown])
 
   const handleToggleMarkdown = useCallback(() => {
-    if (window.__TLD_VSCODE__) {
+    if (dbOnlyNotes && !viewMarkdown) {
+      if (canEdit) {
+        void handleCreateManagedMarkdown({ openEditor: true, targetKind: 'PRIVATE_APP' })
+      } else {
+        setIsMarkdownOpen((prev) => !prev)
+      }
+      return
+    }
+    if (!dbOnlyNotes && window.__TLD_VSCODE__) {
       if (!viewMarkdown) {
         void handleCreateManagedMarkdown({ openEditor: false }).then((result) => {
           openMarkdownPathInEditor(result?.markdown.path, result?.content ?? '')
@@ -1418,16 +1432,16 @@ function ViewEditorInner({
       return
     }
     setIsMarkdownOpen((prev) => !prev)
-  }, [handleCreateManagedMarkdown, openMarkdownPathInEditor, viewMarkdown])
+  }, [canEdit, dbOnlyNotes, handleCreateManagedMarkdown, openMarkdownPathInEditor, viewMarkdown])
 
   const handleOpenMarkdown = useCallback(() => {
     if (!viewMarkdown) return
-    if (window.__TLD_VSCODE__) {
+    if (!dbOnlyNotes && window.__TLD_VSCODE__) {
       openMarkdownPathInEditor(viewMarkdown.path)
       return
     }
     setIsMarkdownOpen(true)
-  }, [openMarkdownPathInEditor, viewMarkdown])
+  }, [dbOnlyNotes, openMarkdownPathInEditor, viewMarkdown])
 
   const handleReloadMarkdown = useCallback(async () => {
     if (viewId === null) return
@@ -1435,6 +1449,7 @@ function ViewEditorInner({
   }, [loadViewMarkdown, viewId])
 
   const handleLinkMarkdown = useCallback(async (path: string) => {
+    if (dbOnlyNotes) return
     if (!canEdit || viewId === null) return
     setIsMarkdownMutating(true)
     try {
@@ -1453,7 +1468,7 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownMutating(false)
     }
-  }, [canEdit, loadViewMarkdown, setView, toast, viewId])
+  }, [canEdit, dbOnlyNotes, loadViewMarkdown, setView, toast, viewId])
 
   const handleUnlinkMarkdown = useCallback(async ({ deleteManagedFile }: { deleteManagedFile: boolean } = { deleteManagedFile: false }) => {
     if (!canEdit || viewId === null) return
@@ -4236,6 +4251,7 @@ function ViewEditorInner({
                   viewId={viewId}
                   viewNameById={viewNameById}
                   mermaidIntegrationEnabled={mermaidIntegrationEnabled}
+                  dbOnlyNotes={dbOnlyNotes}
                   canEdit={canEdit}
                   isLoading={isMarkdownLoading}
                   isSaving={isMarkdownSaving}
@@ -4249,7 +4265,7 @@ function ViewEditorInner({
                   onUnlinkMarkdown={handleUnlinkMarkdown}
                   onPickMarkdownFile={handlePickMarkdownFile}
                   onSaveAs={handleSaveMarkdownAs}
-                  onOpenInEditor={window.__TLD_VSCODE__ ? handleOpenMarkdownInEditor : undefined}
+                  onOpenInEditor={!dbOnlyNotes && window.__TLD_VSCODE__ ? handleOpenMarkdownInEditor : undefined}
                   onReload={handleReloadMarkdown}
                   onNavigateToView={canvas.stableOnNavigateToView}
                   onImportMermaidBlock={handleImportMarkdownMermaidBlock}
@@ -4336,6 +4352,7 @@ function ViewEditorInner({
           onUnsupportedMutation={handleUnsupportedMutation}
           onConnectorSaved={publishRealtimeConnectorUpsert}
           hasBackdrop={isMobileLayout}
+          dbOnlyNotes={dbOnlyNotes}
           markdown={viewMarkdown}
           markdownLoading={isMarkdownLoading}
           onUnlinkMarkdown={handleUnlinkMarkdown}
@@ -4377,7 +4394,7 @@ function ViewEditorInner({
   )
 }
 
-export default function ViewEditor(props: Props) {
+export default function ViewEditor(props: ViewEditorProps) {
   return (
     <ReactFlowProvider>
       <ViewEditorInner {...props} />

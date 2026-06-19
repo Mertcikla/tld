@@ -101,6 +101,7 @@ export function MissingMarkdownState({
 interface MarkdownSetupStateProps {
   attachPath: string
   canEdit: boolean
+  dbOnlyNotes?: boolean
   handleAttachPickedFile: () => Promise<void> | void
   onAttachMarkdown?: (path: string) => Promise<void> | void
   onCreateMarkdown?: (targetKind: string, path?: string) => Promise<void> | void
@@ -114,6 +115,7 @@ interface MarkdownSetupStateProps {
 export function MarkdownSetupState({
   attachPath,
   canEdit,
+  dbOnlyNotes = false,
   handleAttachPickedFile,
   onAttachMarkdown,
   onCreateMarkdown,
@@ -126,65 +128,71 @@ export function MarkdownSetupState({
   return (
     <VStack justify="center" align="stretch" spacing={4} h="full" color="whiteAlpha.800" px={6} textAlign="left">
       <Box textAlign="center">
-        <Text fontSize="sm" fontWeight="semibold">No notes file for this view</Text>
-        <Text fontSize="xs" color="gray.500" mt={1}>Choose where this view's markdown notes should live.</Text>
+        <Text fontSize="sm" fontWeight="semibold">No notes for this view</Text>
+        <Text fontSize="xs" color="gray.500" mt={1}>
+          {dbOnlyNotes ? 'Create a private note for this view.' : 'Choose where this view\'s markdown notes should live.'}
+        </Text>
       </Box>
       <Button
         data-testid="view-markdown-create-private"
         size="sm"
         colorScheme="blue"
-        onClick={() => { void onCreateMarkdown?.('PRIVATE_WORKSPACE') }}
+        onClick={() => { void onCreateMarkdown?.(dbOnlyNotes ? 'PRIVATE_APP' : 'PRIVATE_WORKSPACE') }}
         isDisabled={!canEdit || !onCreateMarkdown}
       >
-        Create private note
+        {dbOnlyNotes ? 'Create note' : 'Create private note'}
       </Button>
-      <VStack spacing={2} align="stretch">
-        <Input
-          data-testid="view-markdown-repo-path"
-          size="sm"
-          value={repoPath}
-          onChange={(event) => setRepoPath(event.target.value)}
-          placeholder={suggestedRepoPath}
-        />
-        <Button
-          data-testid="view-markdown-create-repo"
-          size="sm"
-          variant="outline"
-          onClick={() => { void onCreateMarkdown?.('REPO', repoPath.trim() || suggestedRepoPath) }}
-          isDisabled={!canEdit || !onCreateMarkdown}
-        >
-          Create repo note
-        </Button>
-      </VStack>
-      {showAttachPathInput ? (
-        <VStack spacing={2} align="stretch">
-          <Input
-            data-testid="view-markdown-attach-path"
-            size="sm"
-            value={attachPath}
-            onChange={(event) => setAttachPath(event.target.value)}
-            placeholder="docs/overview.md or /absolute/path/overview.md"
-          />
-          <Button
-            data-testid="view-markdown-attach"
-            size="sm"
-            variant="outline"
-            onClick={() => { void onAttachMarkdown?.(attachPath.trim()) }}
-            isDisabled={!canEdit || !onAttachMarkdown || !attachPath.trim()}
-          >
-            Attach existing file
-          </Button>
-        </VStack>
-      ) : (
-        <Button
-          data-testid="view-markdown-choose-file"
-          size="sm"
-          variant="outline"
-          onClick={() => { void handleAttachPickedFile() }}
-          isDisabled={!canEdit || !onAttachMarkdown}
-        >
-          Attach existing file
-        </Button>
+      {!dbOnlyNotes && (
+        <>
+          <VStack spacing={2} align="stretch">
+            <Input
+              data-testid="view-markdown-repo-path"
+              size="sm"
+              value={repoPath}
+              onChange={(event) => setRepoPath(event.target.value)}
+              placeholder={suggestedRepoPath}
+            />
+            <Button
+              data-testid="view-markdown-create-repo"
+              size="sm"
+              variant="outline"
+              onClick={() => { void onCreateMarkdown?.('REPO', repoPath.trim() || suggestedRepoPath) }}
+              isDisabled={!canEdit || !onCreateMarkdown}
+            >
+              Create repo note
+            </Button>
+          </VStack>
+          {showAttachPathInput ? (
+            <VStack spacing={2} align="stretch">
+              <Input
+                data-testid="view-markdown-attach-path"
+                size="sm"
+                value={attachPath}
+                onChange={(event) => setAttachPath(event.target.value)}
+                placeholder="docs/overview.md or /absolute/path/overview.md"
+              />
+              <Button
+                data-testid="view-markdown-attach"
+                size="sm"
+                variant="outline"
+                onClick={() => { void onAttachMarkdown?.(attachPath.trim()) }}
+                isDisabled={!canEdit || !onAttachMarkdown || !attachPath.trim()}
+              >
+                Attach existing file
+              </Button>
+            </VStack>
+          ) : (
+            <Button
+              data-testid="view-markdown-choose-file"
+              size="sm"
+              variant="outline"
+              onClick={() => { void handleAttachPickedFile() }}
+              isDisabled={!canEdit || !onAttachMarkdown}
+            >
+              Attach existing file
+            </Button>
+          )}
+        </>
       )}
     </VStack>
   )

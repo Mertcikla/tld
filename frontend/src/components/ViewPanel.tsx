@@ -45,6 +45,7 @@ interface Props {
   hasBackdrop?: boolean
   availableTags?: string[]
   isInline?: boolean
+  dbOnlyNotes?: boolean
   markdown?: ViewMarkdownDocument | null
   markdownLoading?: boolean
   onUnlinkMarkdown?: (options?: { deleteManagedFile: boolean }) => Promise<void> | void
@@ -85,6 +86,7 @@ function ViewPanel({
   hasBackdrop = true,
   availableTags = [],
   isInline = false,
+  dbOnlyNotes = false,
   markdown = null,
   markdownLoading = false,
   onUnlinkMarkdown,
@@ -300,7 +302,7 @@ function ViewPanel({
                 <Collapse in={markdownOpen} animateOpacity>
                   <VStack align="stretch" spacing={3} pt={1}>
                     <Text fontSize="xs" color="gray.400">
-                      Current notes file metadata.
+                      {dbOnlyNotes ? 'Current note metadata.' : 'Current notes file metadata.'}
                     </Text>
 
                     {markdownLoading ? (
@@ -315,9 +317,15 @@ function ViewPanel({
                       >
                         <VStack align="stretch" spacing={2.5}>
                           <HStack justify="space-between" align="start">
-                            <Text fontSize="xs" color="gray.400" wordBreak="break-all" flex={1} mr={2}>
-                              {markdown.path}
-                            </Text>
+                            {dbOnlyNotes ? (
+                              <Text fontSize="xs" color="gray.400" flex={1} mr={2}>
+                                Private note
+                              </Text>
+                            ) : (
+                              <Text fontSize="xs" color="gray.400" wordBreak="break-all" flex={1} mr={2}>
+                                {markdown.path}
+                              </Text>
+                            )}
                             {onOpenMarkdown && (
                               <Button data-testid="view-panel-markdown-open" size="xs" variant="outline" onClick={onOpenMarkdown}>
                                 Open
@@ -332,7 +340,7 @@ function ViewPanel({
                           <Text fontSize="10px" color={markdown.exists ? 'gray.500' : 'red.300'}>
                             {viewMarkdownSummary(markdown)}
                           </Text>
-                          {markdown.is_managed && canEdit && (
+                          {markdown.is_managed && canEdit && !dbOnlyNotes && (
                             <Checkbox
                               size="sm"
                               isChecked={deleteManagedFile}
@@ -350,20 +358,22 @@ function ViewPanel({
                               onClick={() => { void handleUnlinkMarkdown() }}
                               isLoading={markdownAction === 'unlink'}
                             >
-                              Detach
+                              {dbOnlyNotes ? 'Delete note' : 'Detach'}
                             </Button>
                           )}
                         </VStack>
                       </Box>
                     ) : (
                       <Text fontSize="xs" color="gray.500">
-                        No file attached.
+                        {dbOnlyNotes ? 'No note created.' : 'No file attached.'}
                       </Text>
                     )}
 
                     {canEdit && !markdown && (
                       <Text fontSize="xs" color="gray.500">
-                        Open Notes from the canvas toolbar to create or attach a markdown file.
+                        {dbOnlyNotes
+                          ? 'Open Notes from the canvas toolbar to create a note.'
+                          : 'Open Notes from the canvas toolbar to create or attach a markdown file.'}
                       </Text>
                     )}
                   </VStack>
