@@ -1,4 +1,4 @@
-import { expect, type APIResponse, type Locator, type Page } from '@playwright/test'
+import { expect, type APIResponse, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test'
 
 const e2eOrgId = '11111111-1111-1111-1111-111111111111'
 
@@ -11,6 +11,56 @@ export const onboardingStorage = {
   sharedZoom: 'shared_zoom_onboarding_dismissed',
 }
 
+export type CollaborationIdentity = {
+  client_id: string
+  user_id: string
+  username: string
+}
+
+export type RealtimeFrame = {
+  type?: string
+  [key: string]: unknown
+}
+
+export type CollaborationSession = {
+  context: BrowserContext
+  page: Page
+  identity: CollaborationIdentity
+  receivedFrames: RealtimeFrame[]
+  sentFrames: RealtimeFrame[]
+}
+
+export type CollaborationPair = {
+  alice: CollaborationSession
+  bob: CollaborationSession
+  close: () => Promise<void>
+}
+
+export async function disableAnimations(page: Page) {
+  await page.addInitScript(() => {
+    const styleText = `
+      *, *::before, *::after {
+        animation-delay: 0s !important;
+        animation-duration: 0.001s !important;
+        scroll-behavior: auto !important;
+        transition-delay: 0s !important;
+        transition-duration: 0s !important;
+      }
+    `
+    const install = () => {
+      const style = document.createElement('style')
+      style.dataset.tldE2e = 'disable-animations'
+      style.textContent = styleText
+      document.head.appendChild(style)
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', install, { once: true })
+    } else {
+      install()
+    }
+  })
+}
+
 export async function prepareStorage(page: Page) {
   await page.addInitScript((keys) => {
     localStorage.setItem(keys.editor, '1')
@@ -19,15 +69,131 @@ export async function prepareStorage(page: Page) {
     localStorage.setItem(keys.viewGrid, '1')
     localStorage.setItem(keys.shown, '1')
     localStorage.setItem(keys.sharedZoom, 'true')
-    localStorage.setItem('diag:libraryOpen', 'true')
-    localStorage.setItem('diag:explorerOpen', 'true')
     localStorage.setItem('diag:snapToGrid', 'false')
-    localStorage.setItem('tld:experimental', JSON.stringify({ watchEnabled: true }))
+    localStorage.setItem('diag:libraryOpen', 'false')
+    localStorage.setItem('diag:explorerOpen', 'false')
+    localStorage.setItem('tld:experimental', JSON.stringify({ watchEnabled: true, mermaidIntegrationEnabled: true }))
   }, onboardingStorage)
+}
+
+export async function prepareE2EPage(page: Page, identity?: CollaborationIdentity) {
+  await disableAnimations(page)
+  await prepareStorage(page)
+  if (identity) {
+    await page.addInitScript((storedIdentity) => {
+      localStorage.setItem('tld.collaboration.identity.v1', JSON.stringify(storedIdentity))
+    }, identity)
+  }
 }
 
 export function uniqueName(prefix: string) {
   return `${prefix} ${Date.now()} ${Math.random().toString(36).slice(2, 8)}`
+}
+
+function parseRealtimeFrame(payload: unknown): RealtimeFrame {
+  const text = typeof payload === 'string' ? payload : String(payload)
+  try {
+    const parsed = JSON.parse(text) as unknown
+    return parsed && typeof parsed === 'object'
+      ? parsed as RealtimeFrame
+      : { raw: text }
+  } catch {
+    return { raw: text }
+  }
+}
+
+function frameUserIds(frame: RealtimeFrame): Set<string> {
+  const users = new Set<string>()
+  if (frame.type === 'presence_join') {
+    const viewer = frame.viewer as { user_id?: unknown } | undefined
+    if (typeof viewer?.user_id === 'string') users.add(viewer.user_id)
+  }
+  for (const key of ['viewers', 'collaborators']) {
+    const items = frame[key]
+    if (!Array.isArray(items)) continue
+    for (const item of items) {
+      const userId = (item as { user_id?: unknown } | undefined)?.user_id
+      if (typeof userId === 'string') users.add(userId)
+    }
+  }
+  return users
+}
+
+function sawRealtimeUser(session: CollaborationSession, userId: string) {
+  return session.receivedFrames.some((frame) => frameUserIds(frame).has(userId))
+}
+
+export async function waitForRealtimeFrame(session: CollaborationSession, type: string) {
+  await expect.poll(() => session.receivedFrames.some((frame) => frame.type === type)).toBe(true)
+}
+
+export async function createCollaborationSession(browser: Browser, viewId: number, identity: CollaborationIdentity, baseURL?: string) {
+  const context = await browser.newContext({
+    baseURL,
+    viewport: { width: 1440, height: 1000 },
+  })
+  const page = await context.newPage()
+  await prepareE2EPage(page, identity)
+
+  const session: CollaborationSession = {
+    context,
+    page,
+    identity,
+    receivedFrames: [],
+    sentFrames: [],
+  }
+  let sawViewSocket = false
+
+  page.on('websocket', (socket) => {
+    if (!socket.url().includes(`/api/views/${viewId}/ws`)) return
+    sawViewSocket = true
+    socket.on('framereceived', (frame) => {
+      session.receivedFrames.push(parseRealtimeFrame(frame.payload))
+    })
+    socket.on('framesent', (frame) => {
+      session.sentFrames.push(parseRealtimeFrame(frame.payload))
+    })
+  })
+
+  await gotoView(page, viewId)
+  await expect.poll(() => sawViewSocket).toBe(true)
+  await waitForRealtimeFrame(session, 'presence_snapshot')
+  return session
+}
+
+export async function closeCollaborationSessions(...sessions: CollaborationSession[]) {
+  await Promise.all(sessions.map((session) => session.context.close().catch(() => {})))
+}
+
+export async function createCollaborationPair(browser: Browser, viewId: number, baseURL?: string, prefix = uniqueName('Collab User')): Promise<CollaborationPair> {
+  const sessions: CollaborationSession[] = []
+  try {
+    const alice = await createCollaborationSession(browser, viewId, {
+      client_id: `${prefix}-alice-client`.replace(/\s+/g, '-').toLowerCase(),
+      user_id: `${prefix}-alice`.replace(/\s+/g, '-').toLowerCase(),
+      username: `${prefix} Alice`,
+    }, baseURL)
+    sessions.push(alice)
+
+    const bob = await createCollaborationSession(browser, viewId, {
+      client_id: `${prefix}-bob-client`.replace(/\s+/g, '-').toLowerCase(),
+      user_id: `${prefix}-bob`.replace(/\s+/g, '-').toLowerCase(),
+      username: `${prefix} Bob`,
+    }, baseURL)
+    sessions.push(bob)
+
+    await expect.poll(() => sawRealtimeUser(alice, bob.identity.user_id)).toBe(true)
+    await expect.poll(() => sawRealtimeUser(bob, alice.identity.user_id)).toBe(true)
+
+    return {
+      alice,
+      bob,
+      close: () => closeCollaborationSessions(alice, bob),
+    }
+  } catch (error) {
+    await closeCollaborationSessions(...sessions)
+    throw error
+  }
 }
 
 export async function createDiagram(page: Page, name = uniqueName('E2E Diagram')) {
@@ -65,6 +231,286 @@ export async function reactFlowPaneBox(page: Page) {
   const box = await pane.boundingBox()
   if (!box) throw new Error('React Flow pane is not visible')
   return box
+}
+
+export async function locatorCenter(locator: Locator) {
+  const box = await locator.boundingBox()
+  if (!box) throw new Error('Locator is not visible')
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+}
+
+export async function nodeCenter(page: Page, name: string) {
+  return locatorCenter(nodeByName(page, name))
+}
+
+export async function isMobileLayout(page: Page) {
+  return page.evaluate(() => window.matchMedia('(max-width: 767px)').matches || navigator.maxTouchPoints > 0)
+}
+
+async function closePanelIfVisible(panel: Locator) {
+  if (!await isPanelUsablyVisible(panel)) return
+  const closeButton = panel.getByTestId('panel-close').or(panel.getByRole('button', { name: 'Close' })).first()
+  if (await closeButton.isVisible({ timeout: 500 }).catch(() => false)) {
+    await closeButton.click({ force: true })
+  } else {
+    await panel.page().keyboard.press('Escape')
+  }
+  await expect.poll(async () => !await isPanelUsablyVisible(panel), { timeout: 1500 }).toBe(true).catch(async () => {
+    await panel.page().keyboard.press('Escape')
+    await expect.poll(async () => !await isPanelUsablyVisible(panel), { timeout: 1500 }).toBe(true).catch(() => {})
+  })
+}
+
+async function isPanelUsablyVisible(panel: Locator) {
+  if (!await panel.isVisible().catch(() => false)) return false
+  const box = await panel.boundingBox().catch(() => null)
+  if (!box || box.width <= 0 || box.height <= 0) return false
+  const viewport = panel.page().viewportSize()
+  if (!viewport) return true
+  return box.x < viewport.width && box.x + box.width > 0 && box.y < viewport.height && box.y + box.height > 0
+}
+
+export async function openElementLibrary(page: Page) {
+  const panel = page.getByTestId('element-library-panel')
+  if (await isPanelUsablyVisible(panel)) return panel
+
+  await closePanelIfVisible(page.getByTestId('view-explorer-panel'))
+
+  const desktopToggle = page.getByTestId('vieweditor-toggle-library')
+  if (await desktopToggle.isVisible().catch(() => false)) {
+    await desktopToggle.click()
+  } else {
+    await page.getByRole('button', { name: 'Open element library' }).click()
+  }
+  await expect.poll(async () => await isPanelUsablyVisible(panel)).toBe(true)
+  return panel
+}
+
+export async function openViewExplorer(page: Page) {
+  const panel = page.getByTestId('view-explorer-panel')
+  if (await isPanelUsablyVisible(panel)) return panel
+
+  await closePanelIfVisible(page.getByTestId('element-library-panel'))
+
+  const desktopToggle = page.getByTestId('vieweditor-toggle-explorer')
+  if (await desktopToggle.isVisible().catch(() => false)) {
+    await desktopToggle.click()
+  } else {
+    await page.getByRole('button', { name: 'Open view navigation' }).click()
+  }
+  await expect.poll(async () => await isPanelUsablyVisible(panel)).toBe(true)
+  return panel
+}
+
+export async function closeViewEditorPanels(page: Page) {
+  await closePanelIfVisible(page.getByTestId('element-library-panel'))
+  await closePanelIfVisible(page.getByTestId('view-explorer-panel'))
+}
+
+export async function reactFlowViewport(page: Page) {
+  return page.locator('.react-flow__viewport').evaluate((viewport) => {
+    const transform = getComputedStyle(viewport).transform
+    if (!transform || transform === 'none') return { x: 0, y: 0, zoom: 1 }
+    const matrix = new DOMMatrixReadOnly(transform)
+    return { x: matrix.m41, y: matrix.m42, zoom: matrix.a }
+  })
+}
+
+export async function dispatchWheelOnLocator(
+  locator: Locator,
+  options: {
+    clientX?: number
+    clientY?: number
+    deltaX?: number
+    deltaY?: number
+    deltaMode?: number
+    ctrlKey?: boolean
+    cancelable?: boolean
+  },
+) {
+  const box = await locator.boundingBox()
+  if (!box) throw new Error('Wheel target is not visible')
+  await locator.dispatchEvent('wheel', {
+    bubbles: true,
+    cancelable: options.cancelable ?? true,
+    clientX: options.clientX ?? box.x + box.width / 2,
+    clientY: options.clientY ?? box.y + box.height / 2,
+    deltaX: options.deltaX ?? 0,
+    deltaY: options.deltaY ?? 0,
+    deltaMode: options.deltaMode ?? 0,
+    ctrlKey: options.ctrlKey ?? false,
+  })
+}
+
+export async function dispatchSafariGestureOnLocator(
+  locator: Locator,
+  options: {
+    clientX?: number
+    clientY?: number
+    startScale?: number
+    changeScale?: number
+  } = {},
+) {
+  const box = await locator.boundingBox()
+  if (!box) throw new Error('Gesture target is not visible')
+  const clientX = options.clientX ?? box.x + box.width / 2
+  const clientY = options.clientY ?? box.y + box.height / 2
+  await locator.evaluate((element, payload) => {
+    const dispatch = (type: 'gesturestart' | 'gesturechange' | 'gestureend', scale: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'scale', { value: scale })
+      Object.defineProperty(event, 'clientX', { value: payload.clientX })
+      Object.defineProperty(event, 'clientY', { value: payload.clientY })
+      element.dispatchEvent(event)
+    }
+    dispatch('gesturestart', payload.startScale)
+    dispatch('gesturechange', payload.changeScale)
+    dispatch('gestureend', payload.changeScale)
+  }, {
+    clientX,
+    clientY,
+    startScale: options.startScale ?? 1,
+    changeScale: options.changeScale ?? 1.3,
+  })
+}
+
+export async function dispatchPointerEventOnLocator(
+  locator: Locator,
+  type: 'pointerdown' | 'pointermove' | 'pointerup' | 'pointercancel',
+  options: {
+    clientX: number
+    clientY: number
+    pointerId?: number
+    pointerType?: 'mouse' | 'touch' | 'pen'
+    pressure?: number
+    button?: number
+    buttons?: number
+  },
+) {
+  await locator.dispatchEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    clientX: options.clientX,
+    clientY: options.clientY,
+    pointerId: options.pointerId ?? 1,
+    pointerType: options.pointerType ?? 'touch',
+    pressure: options.pressure ?? (type === 'pointerup' || type === 'pointercancel' ? 0 : 0.5),
+    button: options.button ?? 0,
+    buttons: options.buttons ?? (type === 'pointerup' || type === 'pointercancel' ? 0 : 1),
+  })
+}
+
+export async function longPressLocator(
+  locator: Locator,
+  options: {
+    clientX?: number
+    clientY?: number
+    durationMs?: number
+    pointerType?: 'touch' | 'pen'
+  } = {},
+) {
+  const point = options.clientX !== undefined && options.clientY !== undefined
+    ? { x: options.clientX, y: options.clientY }
+    : await locatorCenter(locator)
+  await dispatchPointerEventOnLocator(locator, 'pointerdown', {
+    clientX: point.x,
+    clientY: point.y,
+    pointerType: options.pointerType ?? 'touch',
+  })
+  await locator.evaluate((_, durationMs) => new Promise((resolve) => {
+    window.setTimeout(resolve, durationMs)
+  }), options.durationMs ?? 650)
+  await dispatchPointerEventOnLocator(locator, 'pointerup', {
+    clientX: point.x,
+    clientY: point.y,
+    pointerType: options.pointerType ?? 'touch',
+    buttons: 0,
+  })
+}
+
+export async function dispatchTouchEventOnLocator(
+  locator: Locator,
+  type: 'touchstart' | 'touchmove' | 'touchend' | 'touchcancel',
+  touches: Array<{ identifier: number; clientX: number; clientY: number }>,
+  changedTouches = touches,
+) {
+  await locator.evaluate((element, payload) => {
+    const makeTouch = (point: { identifier: number; clientX: number; clientY: number }) => {
+      if (typeof Touch === 'function') {
+        try {
+          return new Touch({
+            identifier: point.identifier,
+            target: element,
+            clientX: point.clientX,
+            clientY: point.clientY,
+            screenX: point.clientX,
+            screenY: point.clientY,
+            pageX: point.clientX,
+            pageY: point.clientY,
+          })
+        } catch {
+          // WebKit exposes Touch but rejects construction in Playwright's harness.
+        }
+      }
+      return {
+        identifier: point.identifier,
+        target: element,
+        clientX: point.clientX,
+        clientY: point.clientY,
+        screenX: point.clientX,
+        screenY: point.clientY,
+        pageX: point.clientX,
+        pageY: point.clientY,
+      } as Touch
+    }
+    const active = payload.touches.map(makeTouch)
+    const changed = payload.changedTouches.map(makeTouch)
+    let event: Event
+    if (typeof TouchEvent === 'function') {
+      try {
+        event = new TouchEvent(payload.type, {
+          bubbles: true,
+          cancelable: true,
+          touches: active,
+          targetTouches: active,
+          changedTouches: changed,
+        })
+      } catch {
+        event = new Event(payload.type, { bubbles: true, cancelable: true })
+        Object.defineProperty(event, 'touches', { value: active })
+        Object.defineProperty(event, 'targetTouches', { value: active })
+        Object.defineProperty(event, 'changedTouches', { value: changed })
+      }
+    } else {
+      event = new Event(payload.type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'touches', { value: active })
+      Object.defineProperty(event, 'targetTouches', { value: active })
+      Object.defineProperty(event, 'changedTouches', { value: changed })
+    }
+    element.dispatchEvent(event)
+  }, { type, touches, changedTouches })
+}
+
+export async function dragWithMouse(page: Page, from: { x: number; y: number }, to: { x: number; y: number }, steps = 12) {
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(to.x, to.y, { steps })
+  await page.mouse.up()
+}
+
+export function handleLocator(page: Page, elementId: number, handleId: string) {
+  return page.locator(`.react-flow__node[data-id="${elementId}"] .react-flow__handle[data-handleid="${handleId}"]`)
+}
+
+export async function pasteTextOnCanvas(page: Page, text: string) {
+  await page.getByTestId('vieweditor-canvas').click()
+  await page.evaluate((pasteText) => {
+    const data = new DataTransfer()
+    data.setData('text/plain', pasteText)
+    const event = new Event('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(event, 'clipboardData', { value: data })
+    window.dispatchEvent(event)
+  }, text)
 }
 
 export async function addNodeWithToolbar(page: Page, name = uniqueName('Toolbar Node')) {
@@ -125,6 +571,25 @@ export async function removeSelectedNodeWithBackspace(page: Page, name: string) 
   await nodeByName(page, name).click()
   await page.keyboard.press('Backspace')
   await expect(nodeByName(page, name)).toHaveCount(0)
+}
+
+export async function dragNodeByName(page: Page, name: string, deltaX: number, deltaY: number) {
+  const node = nodeByName(page, name)
+  const box = await node.boundingBox()
+  if (!box) throw new Error(`Node "${name}" is not visible`)
+  const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  await page.mouse.move(center.x, center.y)
+  await page.mouse.down()
+  await page.mouse.move(center.x + deltaX, center.y + deltaY, { steps: 12 })
+  await page.mouse.up()
+}
+
+export async function createConnectorWithKeyboard(page: Page, sourceName: string, targetName: string) {
+  await nodeByName(page, sourceName).click()
+  await page.keyboard.press('e')
+  await expect(nodeByName(page, sourceName).getByText(/tap element to connect/i)).toBeVisible()
+  await nodeByName(page, targetName).click()
+  await expect(page.locator('.react-flow__edge').first()).toBeAttached()
 }
 
 export async function listPlacements(page: Page, viewId = currentViewId(page)) {
@@ -219,12 +684,16 @@ export async function getElement(page: Page, elementId: number) {
     description?: string
     technology?: string
     url?: string
+    logoUrl?: string
     tags?: string[]
-    technology_connectors?: Array<{ type: string; slug?: string; label: string; is_primary_icon?: boolean }>
+    technologyLinks?: Array<{ type: string; slug?: string; label: string; isPrimaryIcon?: boolean }>
     repo?: string
     branch?: string
-    file_path?: string
+    filePath?: string
     language?: string
+    hasView?: boolean
+    viewLabel?: string
+    bypassNoiseGate?: boolean
   }
 }
 
@@ -307,19 +776,49 @@ export async function getViewMarkdown(page: Page, viewId: number) {
   if (response.status() === 404) return null
   expect(response.ok()).toBeTruthy()
   const json = await response.json()
-  return json as { markdown?: { path?: string; isManaged?: boolean; is_managed?: boolean; updatedAt?: string; updated_at?: string }; content?: string }
+  return json as {
+    markdown?: {
+      path?: string
+      isManaged?: boolean
+      is_managed?: boolean
+      updatedAt?: string
+      updated_at?: string
+      sourceKind?: string
+      source_kind?: string
+      exists?: boolean
+      writable?: boolean
+      canEdit?: boolean
+      can_edit?: boolean
+      gitState?: string
+      git_state?: string
+      repoRelativePath?: string
+      repo_relative_path?: string
+      linkedViewCount?: number
+      linked_view_count?: number
+      fileVersion?: string
+      file_version?: string
+    }
+    content?: string
+  }
 }
 
-export async function createViewMarkdown(page: Page, viewId: number, fileName: string, initialContent = '') {
+export async function createViewMarkdown(page: Page, viewId: number, fileName: string, initialContent = '', targetKind?: string, path?: string) {
   const response = await page.request.post('/api/diag.v1.WorkspaceService/CreateViewMarkdown', {
-    data: { viewId, fileName, initialContent },
+    data: { viewId, fileName, initialContent, targetKind, path },
   })
   expect(response.ok()).toBeTruthy()
 }
 
-export async function saveViewMarkdown(page: Page, viewId: number, content: string) {
+export async function linkViewMarkdown(page: Page, viewId: number, path: string) {
+  const response = await page.request.post('/api/diag.v1.WorkspaceService/LinkViewMarkdown', {
+    data: { viewId, path },
+  })
+  expect(response.ok()).toBeTruthy()
+}
+
+export async function saveViewMarkdown(page: Page, viewId: number, content: string, force = false) {
   const response = await page.request.post('/api/diag.v1.WorkspaceService/SaveViewMarkdown', {
-    data: { viewId, content },
+    data: { viewId, content, force },
   })
   expect(response.ok()).toBeTruthy()
 }
@@ -381,8 +880,6 @@ export async function createConnector(page: Page, viewId: number, sourceElementI
   url?: string
   sourceHandle?: string | null
   targetHandle?: string | null
-  source_handle?: string | null
-  target_handle?: string | null
   tags?: string[]
 } = {}) {
   const response = await page.request.post('/api/diag.v1.WorkspaceService/CreateConnector', {
@@ -396,8 +893,8 @@ export async function createConnector(page: Page, viewId: number, sourceElementI
       description: data.description ?? '',
       relationship: data.relationship ?? '',
       url: data.url ?? '',
-      sourceHandle: data.sourceHandle ?? data.source_handle ?? undefined,
-      targetHandle: data.targetHandle ?? data.target_handle ?? undefined,
+      sourceHandle: data.sourceHandle ?? undefined,
+      targetHandle: data.targetHandle ?? undefined,
       tags: data.tags ?? [],
     },
   })
@@ -463,14 +960,14 @@ export async function openElementPanel(page: Page, name: string) {
 
 export async function openConnectorPanelFromFirstEdge(page: Page) {
   const edge = page.locator('.react-flow__edge').first()
-  await expect(edge).toBeVisible()
+  await expect(edge).toBeAttached()
   await edge.click({ force: true })
   await edge.click({ force: true })
   await expect(page.getByTestId('connector-panel')).toBeVisible()
 }
 
 export async function addExistingFromLibrary(page: Page, name: string) {
-  await expect(page.getByTestId('element-library-panel')).toBeVisible()
+  await openElementLibrary(page)
   await page.getByTestId('element-library-search').fill(name)
   const item = libraryItemByName(page, name)
   await expect(item).toBeVisible()

@@ -71,17 +71,22 @@ function normalizeText(value: string): string {
   return value.toLowerCase().trim()
 }
 
+function normalizeCatalogSlug(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase()
+}
+
 function createHaystack(item: TechnologyCatalogItem): string {
   return normalizeText([
     item.name,
     item.nameShort,
     item.provider,
     item.defaultSlug,
+    ...(item.aliases ?? []),
   ].filter(Boolean).join(' '))
 }
 
 async function loadCatalogItems(): Promise<TechnologyCatalogItem[]> {
-  const response = await fetch(resolveWithBase('icons.json'), { cache: 'force-cache' })
+  const response = await fetch(resolveWithBase('icons.json'), { cache: 'no-store' })
   if (!response.ok) {
     throw new Error('Failed to load technology catalog')
   }
@@ -97,9 +102,20 @@ export async function getTechnologyCatalogIndex(): Promise<TechnologyCatalogInde
       const bySlug = new Map<string, TechnologyCatalogItem>()
       const searchable: SearchableCatalogItem[] = []
 
+      const catalogAliases: Array<[string, TechnologyCatalogItem]> = []
       for (const item of items) {
         bySlug.set(item.defaultSlug, item)
+        bySlug.set(normalizeCatalogSlug(item.defaultSlug), item)
+        for (const alias of item.aliases ?? []) {
+          catalogAliases.push([alias, item])
+        }
         searchable.push({ item, haystack: createHaystack(item) })
+      }
+      for (const [alias, item] of catalogAliases) {
+        const cleanAlias = normalizeCatalogSlug(alias)
+        if (cleanAlias && !bySlug.has(cleanAlias)) {
+          bySlug.set(cleanAlias, item)
+        }
       }
 
       return { items, searchable, bySlug }
@@ -110,6 +126,10 @@ export async function getTechnologyCatalogIndex(): Promise<TechnologyCatalogInde
   }
 
   return indexPromise
+}
+
+export function invalidateTechnologyCatalog(): void {
+  indexPromise = null
 }
 
 export async function searchTechnologyCatalog(query: string, maxResults = 12): Promise<TechnologyCatalogItem[]> {
@@ -142,7 +162,7 @@ export async function searchTechnologyCatalog(query: string, maxResults = 12): P
 }
 
 export async function getTechnologyCatalogItemBySlug(slug: string): Promise<TechnologyCatalogItem | null> {
-  const cleanSlug = slug.trim()
+  const cleanSlug = normalizeCatalogSlug(slug)
   if (!cleanSlug) return null
   const index = await getTechnologyCatalogIndex()
   return index.bySlug.get(cleanSlug) ?? null

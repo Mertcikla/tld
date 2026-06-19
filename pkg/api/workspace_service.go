@@ -174,12 +174,17 @@ func (s *WorkspaceService) DeleteElement(
 	if _, err := s.Store.GetElement(ctx, elementID, workspaceID); err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("element not found"))
 	}
+	placements, _ := s.Store.ListElementPlacements(ctx, elementID, workspaceID)
+	viewIDs := make([]int32, 0, len(placements))
+	for _, placement := range placements {
+		viewIDs = append(viewIDs, placement.GetViewId())
+	}
 	if err := s.Store.DeleteElement(ctx, elementID, workspaceID); err != nil {
 		return nil, storeErr("delete element", err)
 	}
 
 	resp := &diagv1.DeleteElementResponse{}
-	s.hooks().AfterWrite(ctx, workspaceID, "delete", "element", strconv.Itoa(int(elementID)), nil, resp)
+	s.hooks().AfterWrite(ctx, workspaceID, "delete", "element", strconv.Itoa(int(elementID)), map[string]any{"view_ids": viewIDs}, resp)
 
 	return connect.NewResponse(resp), nil
 }
@@ -203,7 +208,8 @@ func (s *WorkspaceService) DeleteConnector(
 		return nil, err
 	}
 
-	if _, err := s.Store.GetConnector(ctx, connectorID, workspaceID); err != nil {
+	existing, err := s.Store.GetConnector(ctx, connectorID, workspaceID)
+	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, errors.New("connector not found"))
 	}
 	if err := s.Store.DeleteConnector(ctx, connectorID, workspaceID); err != nil {
@@ -211,7 +217,7 @@ func (s *WorkspaceService) DeleteConnector(
 	}
 
 	resp := &diagv1.DeleteConnectorResponse{}
-	s.hooks().AfterWrite(ctx, workspaceID, "delete", "connector", strconv.Itoa(int(connectorID)), nil, resp)
+	s.hooks().AfterWrite(ctx, workspaceID, "delete", "connector", strconv.Itoa(int(connectorID)), map[string]any{"view_id": existing.GetViewId()}, resp)
 
 	return connect.NewResponse(resp), nil
 }

@@ -104,36 +104,41 @@ func TestDefaultEnrichersHaveUniqueIDs(t *testing.T) {
 	}
 }
 
-func TestDefaultEnrichersIncludeExpandedCatalog(t *testing.T) {
+func TestDefaultEnrichersIncludeCuratedCatalog(t *testing.T) {
 	enrichers := DefaultEnrichers()
-	if len(enrichers) < 360 || len(enrichers) > 430 {
-		t.Fatalf("expected expanded default catalog, got %d", len(enrichers))
+	if len(enrichers) != 39 {
+		t.Fatalf("expected curated default catalog with dependency inventory, got %d", len(enrichers))
 	}
 	want := []string{
-		"ts.process_env",
-		"python.httpx",
+		"dependency.inventory",
+		"go.nethttp",
+		"go.chi",
+		"go.gin",
+		"go.gorilla_mux",
+		"go.echo",
+		"go.fiber",
+		"ts.express",
+		"ts.fastify",
+		"ts.nestjs",
+		"ts.hono",
+		"python.flask",
+		"python.fastapi",
+		"python.django",
+		"python.starlette",
 		"java.spring_web",
 		"rust.axum",
 		"cpp.drogon",
-		"python.sqlalchemy",
-		"rust.tonic",
-		"ts.kafkajs",
-		"go.aws_sdk_v2",
-		"java.opensearch",
-		"iac.terraform",
-		"ts.opentelemetry",
-		"go.jwt",
-		"ts.bullmq",
-		"apispec.openapi",
-		"deployment.github_actions",
-		"secrets.code.aws_secrets_manager",
-		"workspace.nx",
-		"python.openai",
-		"go.mqtt",
-		"go.unix_socket",
-		"python.airflow",
-		"ts.ethers",
-		"os.uri_schemes",
+		"ts.nextjs",
+		"ts.react_router",
+		"protobuf.contracts",
+		"go.grpc",
+		"python.grpc",
+		"node.grpc",
+		"java.grpc",
+		"dotnet.grpc",
+		"runtime.manifests",
+		"compose.docker_compose",
+		"datastore.glue",
 	}
 	seen := map[string]struct{}{}
 	for _, enricher := range enrichers {
@@ -146,6 +151,34 @@ func TestDefaultEnrichersIncludeExpandedCatalog(t *testing.T) {
 	}
 	if _, ok := seen["generic.architecture_glue"]; ok {
 		t.Fatalf("generic architecture glue should not be registered alongside categorized enrichers")
+	}
+	removed := []string{
+		"ts.process_env",
+		"python.httpx",
+		"go.aws_sdk_v2",
+		"ts.kafkajs",
+		"secrets.code.aws_secrets_manager",
+		"workspace.nx",
+		"python.openai",
+		"go.mqtt",
+		"go.unix_socket",
+		"python.airflow",
+		"ts.ethers",
+		"os.uri_schemes",
+	}
+	for _, id := range removed {
+		if _, ok := seen[id]; ok {
+			t.Fatalf("removed weak enricher %s is still registered", id)
+		}
+	}
+	withoutInventory := defaults.DefaultEnrichersWithDependencyInventory(false)
+	if len(withoutInventory) != 38 {
+		t.Fatalf("expected curated default catalog without dependency inventory, got %d", len(withoutInventory))
+	}
+	for _, enricher := range withoutInventory {
+		if enricher.Metadata().ID == "dependency.inventory" {
+			t.Fatalf("dependency inventory should be omitted when disabled")
+		}
 	}
 }
 
@@ -208,15 +241,14 @@ func TestDefaultRegistryEmitsDemoFacts(t *testing.T) {
 			wantTag:  "framework:nextjs",
 		},
 		{
-			name: "prisma query",
+			name: "datastore dependency",
 			input: FileInput{
-				RelPath:  "db.ts",
-				Language: "typescript",
-				Source:   []byte(`await prisma.user.findMany()`),
+				RelPath:  "cache.go",
+				Language: "go",
+				Source:   []byte(`func connect() { _ = "redis://cache:6379" }`),
 			},
-			signals:  []ActivationSignal{{Kind: SignalDependency, Value: "@prisma/client"}},
-			wantType: "orm.query",
-			wantTag:  "orm:prisma",
+			wantType: "datastore.dependency",
+			wantTag:  "datastore:redis",
 		},
 	}
 
@@ -231,6 +263,100 @@ func TestDefaultRegistryEmitsDemoFacts(t *testing.T) {
 				t.Fatalf("missing %s/%s in %+v", tt.wantType, tt.wantTag, facts)
 			}
 		})
+	}
+}
+
+func TestDefaultHighSignalFactsAreConcrete(t *testing.T) {
+	allowed := map[string]struct{}{
+		"http.route":           {},
+		"frontend.route":       {},
+		"runtime.component":    {},
+		"runtime.connection":   {},
+		"runtime.endpoint":     {},
+		"storage.volume":       {},
+		"grpc.server":          {},
+		"grpc.contract":        {},
+		"grpc.client":          {},
+		"datastore.dependency": {},
+	}
+	tests := []FileInput{
+		{
+			RelPath:  "server.ts",
+			Language: "typescript",
+			Source:   []byte(`router.get("/api/users", listUsers)`),
+			Signals:  []ActivationSignal{{Kind: SignalDependency, Value: "express"}},
+		},
+		{
+			RelPath:  "src/app/users/[id]/page.tsx",
+			Language: "typescript",
+			Source:   []byte(`export default function Page() { return null }`),
+			Signals:  []ActivationSignal{{Kind: SignalDependency, Value: "next"}},
+		},
+		{
+			RelPath:  "src/frontend/rpc.go",
+			Language: "go",
+			Source:   []byte(`func f() { _ = pb.NewCartServiceClient(conn).GetCart(ctx, req) }`),
+			Signals:  []ActivationSignal{{Kind: SignalImport, Value: "google.golang.org/grpc"}},
+		},
+		{
+			RelPath:  "protos/demo.proto",
+			Language: "protobuf",
+			Source:   []byte(`service CheckoutService { rpc PlaceOrder(PlaceOrderRequest) returns (PlaceOrderResponse); }`),
+		},
+		{
+			RelPath:  "kubernetes-manifests/frontend.yaml",
+			Language: "yaml",
+			Source: []byte(`apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  template:
+    spec:
+      containers:
+      - image: frontend
+        env:
+        - name: CART_SERVICE_ADDR
+          value: cartservice:7070
+`),
+		},
+		{
+			RelPath:  "compose.yaml",
+			Language: "yaml",
+			Source: []byte(`services:
+  web:
+    image: nginx
+    depends_on:
+      db:
+        condition: service_started
+    ports:
+      - "8080:80"
+    volumes:
+      - ./static:/usr/share/nginx/html
+  db:
+    image: postgres
+`),
+			Signals: []ActivationSignal{{Kind: SignalDependency, Value: "docker-compose"}},
+		},
+		{
+			RelPath:  "cache.go",
+			Language: "go",
+			Source:   []byte(`func connect() { _ = "redis://cache:6379" }`),
+		},
+	}
+	for _, input := range tests {
+		facts, _, err := NewDefaultRegistry().EnrichFile(context.Background(), input)
+		if err != nil {
+			t.Fatalf("enrich %s: %v", input.RelPath, err)
+		}
+		for _, fact := range facts {
+			if fact.VisibilityHints["high_signal"] <= 0 {
+				continue
+			}
+			if _, ok := allowed[fact.Type]; !ok {
+				t.Fatalf("default high-signal fact %s from %s is not a concrete visual fact: %+v", fact.Type, fact.Enricher, fact)
+			}
+		}
 	}
 }
 

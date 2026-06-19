@@ -1,29 +1,71 @@
 import { memo, useCallback } from 'react'
-import { BaseEdge, EdgeLabelRenderer, Position, useStore, type EdgeProps } from 'reactflow'
+import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProps, type EdgeProps, type Node as RFNode } from 'reactflow'
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
 import type { ProxyConnectorDetails } from '../crossBranch/types'
+import { buildViewConnectorPath, handleSideForPosition, positionForHandleSide, routeStyleFromValue } from '../utils/connectorRoute'
+import {
+  DEFAULT_SOURCE_HANDLE_SIDE,
+  DEFAULT_TARGET_HANDLE_SIDE,
+  getCenterVisualHandleId,
+  getHandleFlowPosition,
+  getLogicalHandleId,
+} from '../utils/edgeDistribution'
 
-const CURVATURE = 0.5
+function getNodeFlowOrigin(node: RFNode) {
+  return ((node as { positionAbsolute?: { x: number; y: number } }).positionAbsolute ?? node.position)
+}
 
-/**
- * Returns the bezier control point for one end of an connector.
- * The stem extends in the handle's exit direction by at least `minStem`
- * world-units, preventing the curve from turning sharply when dx/dy is small.
- */
-function controlPoint(
-  x: number, y: number,
-  tx: number, ty: number,
-  pos: Position,
-  minStem: number,
-): [number, number] {
-  const dx = Math.abs(tx - x)
-  const dy = Math.abs(ty - y)
-  switch (pos) {
-    case Position.Left:   return [x - Math.max(dx * CURVATURE, minStem), y]
-    case Position.Right:  return [x + Math.max(dx * CURVATURE, minStem), y]
-    case Position.Top:    return [x, y - Math.max(dy * CURVATURE, minStem)]
-    case Position.Bottom: return [x, y + Math.max(dy * CURVATURE, minStem)]
+export function ViewConnectorConnectionLine({
+  connectionLineStyle,
+  connectionLineType,
+  fromNode,
+  fromHandle,
+  fromX,
+  fromY,
+  toX,
+  toY,
+  fromPosition,
+  toPosition,
+}: ConnectionLineComponentProps) {
+  const sourceFallbackSide = handleSideForPosition(fromPosition, DEFAULT_SOURCE_HANDLE_SIDE)
+  const sourceSide = getLogicalHandleId(fromHandle?.id, sourceFallbackSide) ?? sourceFallbackSide
+  const sourceHandle = getCenterVisualHandleId(fromHandle?.id ?? sourceSide, sourceSide) ?? sourceSide
+  let finalFromX = fromX
+  let finalFromY = fromY
+  const finalToX = toX
+  const finalToY = toY
+  let finalSourceSide = sourceSide
+  const finalTargetSide = handleSideForPosition(toPosition, DEFAULT_TARGET_HANDLE_SIDE)
+  let sourceWidth = 200
+  let sourceHeight = 100
+  const targetWidth = 200
+  const targetHeight = 100
+
+  if (fromNode) {
+    sourceWidth = fromNode.width ?? sourceWidth
+    sourceHeight = fromNode.height ?? sourceHeight
+    const sourceOrigin = getNodeFlowOrigin(fromNode)
+    const sourcePoint = getHandleFlowPosition(sourceOrigin.x, sourceOrigin.y, sourceWidth, sourceHeight, sourceHandle, sourceSide)
+    finalFromX = sourcePoint.x
+    finalFromY = sourcePoint.y
+    finalSourceSide = sourcePoint.side
   }
+
+  const { path } = buildViewConnectorPath({
+    routeStyle: routeStyleFromValue(connectionLineType),
+    sourceX: finalFromX,
+    sourceY: finalFromY,
+    targetX: finalToX,
+    targetY: finalToY,
+    sourcePosition: positionForHandleSide(finalSourceSide),
+    targetPosition: positionForHandleSide(finalTargetSide),
+    sourceWidth,
+    sourceHeight,
+    targetWidth,
+    targetHeight,
+  })
+
+  return <path className="vieweditor-temporary-connector-path" fill="none" d={path} style={connectionLineStyle} />
 }
 
 function ViewBezierConnector({
@@ -33,6 +75,7 @@ function ViewBezierConnector({
   style, label, labelStyle, labelBgStyle, labelShowBg: _labelShowBg, labelBgPadding, labelBgBorderRadius,
   markerStart, markerEnd,
   selected,
+  data,
 }: EdgeProps) {
   const sourceNode = useStore((s) => s.nodeInternals.get(source))
   const targetNode = useStore((s) => s.nodeInternals.get(target))
@@ -48,33 +91,43 @@ function ViewBezierConnector({
   const tgtW = targetNode?.width ?? 200
   const tgtH = targetNode?.height ?? 100
 
-  const srcMinStem = (sourcePosition === Position.Left || sourcePosition === Position.Right)
-    ? srcW * 0.5 : srcH * 0.5
-  const tgtMinStem = (targetPosition === Position.Left || targetPosition === Position.Right)
-    ? tgtW * 0.5 : tgtH * 0.5
-
-  const [cp1x, cp1y] = controlPoint(finalSourceX, finalSourceY, finalTargetX, finalTargetY, sourcePosition, srcMinStem)
-  // Target control point: extend from target back toward source
-  const [cp2x, cp2y] = controlPoint(finalTargetX, finalTargetY, finalSourceX, finalSourceY, targetPosition, tgtMinStem)
-
-  const path = `M ${finalSourceX},${finalSourceY} C ${cp1x},${cp1y} ${cp2x},${cp2y} ${finalTargetX},${finalTargetY}`
+  const routeStyle = routeStyleFromValue((data as { style?: unknown } | undefined)?.style)
+  const { path, labelX, labelY } = buildViewConnectorPath({
+    routeStyle,
+    sourceX: finalSourceX,
+    sourceY: finalSourceY,
+    targetX: finalTargetX,
+    targetY: finalTargetY,
+    sourcePosition,
+    targetPosition,
+    sourceWidth: srcW,
+    sourceHeight: srcH,
+    targetWidth: tgtW,
+    targetHeight: tgtH,
+  })
 
   const INTERACTION_PADDING = 24
-  const lenSource = Math.hypot(cp1x - finalSourceX, cp1y - finalSourceY)
-  const lenTarget = Math.hypot(cp2x - finalTargetX, cp2y - finalTargetY)
-
-  const ix1 = lenSource > INTERACTION_PADDING ? finalSourceX + (cp1x - finalSourceX) * (INTERACTION_PADDING / lenSource) : finalSourceX
-  const iy1 = lenSource > INTERACTION_PADDING ? finalSourceY + (cp1y - finalSourceY) * (INTERACTION_PADDING / lenSource) : finalSourceY
-  const ix2 = lenTarget > INTERACTION_PADDING ? finalTargetX + (cp2x - finalTargetX) * (INTERACTION_PADDING / lenTarget) : finalTargetX
-  const iy2 = lenTarget > INTERACTION_PADDING ? finalTargetY + (cp2y - finalTargetY) * (INTERACTION_PADDING / lenTarget) : finalTargetY
-
-  const interactionPath = `M ${ix1},${iy1} C ${cp1x},${cp1y} ${cp2x},${cp2y} ${ix2},${iy2}`
+  const interactionPath = routeStyle === 'bezier'
+    ? buildViewConnectorPath({
+      routeStyle,
+      sourceX: finalSourceX,
+      sourceY: finalSourceY,
+      targetX: finalTargetX,
+      targetY: finalTargetY,
+      sourcePosition,
+      targetPosition,
+      sourceWidth: Math.max(srcW - INTERACTION_PADDING * 2, 0),
+      sourceHeight: Math.max(srcH - INTERACTION_PADDING * 2, 0),
+      targetWidth: Math.max(tgtW - INTERACTION_PADDING * 2, 0),
+      targetHeight: Math.max(tgtH - INTERACTION_PADDING * 2, 0),
+    }).path
+    : path
 
   const fontSize = Number(labelStyle?.fontSize ?? 11)
   const fontWeight = 500
   const fullText = typeof label === 'string' ? label : ''
-  const text = (!selected && fullText.length > 30) ? `${fullText.slice(0, 30)}...` : fullText
-  const textWidth = text ? measureEdgeLabel(text, `${fontWeight} ${fontSize}px Inter, system-ui, sans-serif`) : 0
+  const displayText = (!selected && fullText.length > 30) ? `${fullText.slice(0, 30)}...` : fullText
+  const textWidth = displayText ? measureEdgeLabel(displayText, `${fontWeight} ${fontSize}px Inter, system-ui, sans-serif`) : 0
   const padding = Array.isArray(labelBgPadding) ? labelBgPadding : [2, 4]
   const proxyBadgeCount = typeof (edge?.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount === 'number'
     ? (edge?.data as { proxyBadgeCount: number }).proxyBadgeCount
@@ -99,18 +152,14 @@ function ViewBezierConnector({
   const badgeWidth = proxyBadgeText
     ? Math.max(badgeSize, measureEdgeLabel(proxyBadgeText, `600 ${badgeFontSize}px Inter, system-ui, sans-serif`) + badgeHorizontalPadding * 2)
     : 0
-  const labelHeight = text ? fontSize + padding[0] * 2 : 0
-  const badgeGap = (text && (proxyBadgeText || versionBadgeText)) || (proxyBadgeText && versionBadgeText) ? 8 : 0
+  const labelHeight = fullText ? fontSize + padding[0] * 2 : 0
+  const badgeGap = (fullText && (proxyBadgeText || versionBadgeText)) || (proxyBadgeText && versionBadgeText) ? 8 : 0
   const stackWidth = Math.max(labelWidth, badgeWidth, versionBadgeWidth)
   const stackHeight = labelHeight +
-    (text && (proxyBadgeText || versionBadgeText) ? badgeGap : 0) +
+    (fullText && (proxyBadgeText || versionBadgeText) ? badgeGap : 0) +
     (versionBadgeText ? badgeSize : 0) +
     (versionBadgeText && proxyBadgeText ? badgeGap : 0) +
     (proxyBadgeText ? badgeSize : 0)
-
-  // Cubic bezier midpoint at t=0.5
-  const labelX = 0.125 * finalSourceX + 0.375 * cp1x + 0.375 * cp2x + 0.125 * finalTargetX
-  const labelY = 0.125 * finalSourceY + 0.375 * cp1y + 0.375 * cp2y + 0.125 * finalTargetY
 
   const labelLayout = useEdgeLabelLayout({
     id,
@@ -123,7 +172,7 @@ function ViewBezierConnector({
   })
 
   const labelCenterY = labelLayout.y - ((proxyBadgeText || versionBadgeText) ? (stackHeight - labelHeight) / 2 : 0)
-  const labelPath = text ? ` M ${labelLayout.x - labelWidth / 2},${labelCenterY} L ${labelLayout.x + labelWidth / 2},${labelCenterY}` : ''
+  const labelPath = fullText ? ` M ${labelLayout.x - labelWidth / 2},${labelCenterY} L ${labelLayout.x + labelWidth / 2},${labelCenterY}` : ''
   const combinedInteractionPath = `${interactionPath}${labelPath}`
   const handleBadgeClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
@@ -148,7 +197,7 @@ function ViewBezierConnector({
         interactionWidth={20}
         style={{ stroke: 'transparent' }}
       />
-      {(text || proxyBadgeText || versionBadgeText) && (
+      {(fullText || proxyBadgeText || versionBadgeText) && (
         <EdgeLabelRenderer>
           <div
             style={{
@@ -163,9 +212,12 @@ function ViewBezierConnector({
               gap: badgeGap,
             }}
           >
-            {text && (
+            {fullText && (
               <div
+                aria-label={fullText}
+                title={fullText}
                 style={{
+                  width: labelWidth,
                   padding: `${padding[0]}px ${padding[1]}px`,
                   borderRadius: Array.isArray(labelBgBorderRadius) ? labelBgBorderRadius[0] : Number(labelBgBorderRadius ?? 4),
                   background: String(labelBgStyle?.fill ?? 'var(--chakra-colors-gray-900)'),
@@ -174,9 +226,12 @@ function ViewBezierConnector({
                   fontWeight,
                   lineHeight: 1,
                   whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  boxSizing: 'border-box',
                 }}
               >
-                {text}
+                {fullText}
               </div>
             )}
             {proxyBadgeText && (

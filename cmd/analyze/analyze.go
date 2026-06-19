@@ -407,6 +407,9 @@ func resolveAnalyzeWatchSettings(cfg *workspace.Config, languages []string, maxE
 		settings.Watcher = cfg.Watch.Watcher
 		settings.PollInterval = parseAnalyzeDurationOrZero(cfg.Watch.PollInterval)
 		settings.Debounce = parseAnalyzeDurationOrZero(cfg.Watch.Debounce)
+		settings.Dependencies = watchpkg.DependencyConfig{
+			Enabled: cfg.Watch.Dependencies.Enabled,
+		}
 		settings.Thresholds = watchpkg.Thresholds{
 			MaxElementsPerView:            cfg.Watch.Thresholds.MaxElementsPerView,
 			MaxConnectorsPerView:          cfg.Watch.Thresholds.MaxConnectorsPerView,

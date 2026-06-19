@@ -9,6 +9,7 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
+	"github.com/mertcikla/tld/v2/internal/tech"
 )
 
 func TestWorkspaceService_ListElementsReturnsPaginationAndChecksRead(t *testing.T) {
@@ -290,6 +291,50 @@ func TestWorkspaceService_UpdateElementPreservesExistingTechnologyLinksWhenOmitt
 	}
 	if update.LogoURL != nil {
 		t.Fatalf("logo patch = %v, want nil so store preserves existing logo", update.LogoURL)
+	}
+}
+
+func TestWorkspaceService_CreateCustomTechnologyWritesCatalogItem(t *testing.T) {
+	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
+	tech.ReloadCatalog()
+	t.Cleanup(tech.ReloadCatalog)
+
+	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	hooks := &recordingHooks{}
+	service := &WorkspaceService{Hooks: hooks}
+
+	resp, err := service.CreateCustomTechnology(WithWorkspaceID(context.Background(), workspaceID), connect.NewRequest(&diagv1.CreateCustomTechnologyRequest{
+		Name:      "Team Platform",
+		NameShort: new("Platform"),
+		Aliases:   []string{"team-sdk"},
+		Icon:      []byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`),
+		MediaType: "image/svg+xml",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := resp.Msg.GetItem()
+	if item.GetDefaultSlug() != "team-platform" || item.GetIconUrl() != "/icons/team-platform.svg" || item.GetNameShort() != "Platform" {
+		t.Fatalf("item = %+v, want team platform catalog item", item)
+	}
+	if strings.Join(hooks.events, ",") != "write:elements,after:create:technology:team-platform" {
+		t.Fatalf("hook events = %v, want write and after-create", hooks.events)
+	}
+}
+
+func TestWorkspaceService_CreateCustomTechnologyMapsInvalidUploads(t *testing.T) {
+	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
+	tech.ReloadCatalog()
+	t.Cleanup(tech.ReloadCatalog)
+
+	service := &WorkspaceService{Hooks: &recordingHooks{}}
+	_, err := service.CreateCustomTechnology(context.Background(), connect.NewRequest(&diagv1.CreateCustomTechnologyRequest{
+		Name:      "Bad Upload",
+		Icon:      []byte("not an icon"),
+		MediaType: "text/plain",
+	}))
+	if code := connect.CodeOf(err); code != connect.CodeInvalidArgument {
+		t.Fatalf("error code = %s, want invalid argument; err=%v", code, err)
 	}
 }
 
@@ -578,26 +623,38 @@ type contractStore struct {
 	listViews               func(context.Context, uuid.UUID) ([]*diagv1.View, error)
 	listElements            func(context.Context, uuid.UUID, int32, int32, string) ([]*diagv1.Element, int, error)
 	getElement              func(context.Context, int32, uuid.UUID) (*diagv1.Element, error)
+	createElement           func(context.Context, uuid.UUID, ElementInput) (*diagv1.Element, error)
 	createView              func(context.Context, uuid.UUID, *int32, string, *string, bool) (*diagv1.View, error)
 	getViewMarkdown         func(context.Context, int32, uuid.UUID) (*diagv1.ViewMarkdownDocument, string, error)
-	createViewMarkdown      func(context.Context, int32, uuid.UUID, *string, *string) (*diagv1.View, error)
+	createViewMarkdown      func(context.Context, int32, uuid.UUID, *string, *string, string, *string) (*diagv1.View, error)
 	linkViewMarkdown        func(context.Context, int32, uuid.UUID, string) (*diagv1.View, error)
-	saveViewMarkdown        func(context.Context, int32, uuid.UUID, string) (*diagv1.ViewMarkdownDocument, error)
+	saveViewMarkdown        func(context.Context, int32, uuid.UUID, string, *string, bool) (*diagv1.ViewMarkdownDocument, error)
 	unlinkViewMarkdown      func(context.Context, int32, uuid.UUID, bool) (*diagv1.View, error)
 	updateElement           func(context.Context, int32, uuid.UUID, ElementInput) (*diagv1.Element, error)
 	getView                 func(context.Context, int32, uuid.UUID) (*diagv1.View, error)
 	getProjectedViewContent func(context.Context, int32, uuid.UUID, *int32) (*diagv1.ViewContent, error)
 	updateView              func(context.Context, int32, uuid.UUID, string, *string, *string, []string) (*diagv1.View, error)
+	listPlacements          func(context.Context, int32) ([]*diagv1.PlacedElement, error)
 	addPlacement            func(context.Context, int32, int32, float64, float64) (*diagv1.PlacedElement, error)
 	removePlacement         func(context.Context, int32, int32) error
 	createConnector         func(context.Context, uuid.UUID, ConnectorInput) (*diagv1.Connector, error)
 	getConnector            func(context.Context, int32, uuid.UUID) (*diagv1.Connector, error)
 	updateConnector         func(context.Context, int32, uuid.UUID, ConnectorInput) (*diagv1.Connector, error)
+	listConnectors          func(context.Context, int32, uuid.UUID) ([]*diagv1.Connector, error)
 	listAllConnectors       func(context.Context, uuid.UUID) ([]*diagv1.Connector, error)
 	applyPlan               func(context.Context, uuid.UUID, *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error)
+	runInTransaction        func(context.Context, func(context.Context, Store) error) error
 }
 
 var _ Store = (*contractStore)(nil)
+var _ TransactionalStore = (*contractStore)(nil)
+
+func (s *contractStore) RunInTransaction(ctx context.Context, fn func(context.Context, Store) error) error {
+	if s.runInTransaction != nil {
+		return s.runInTransaction(ctx, fn)
+	}
+	return fn(ctx, s)
+}
 
 func (s *contractStore) ListViews(context.Context, uuid.UUID) ([]*diagv1.View, error) {
 	if s.listViews != nil {
@@ -632,9 +689,9 @@ func (s *contractStore) CreateView(ctx context.Context, workspaceID uuid.UUID, o
 	}
 	return nil, nil
 }
-func (s *contractStore) CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string) (*diagv1.View, error) {
+func (s *contractStore) CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string, targetKind string, path *string) (*diagv1.View, error) {
 	if s.createViewMarkdown != nil {
-		return s.createViewMarkdown(ctx, viewID, workspaceID, fileName, initialContent)
+		return s.createViewMarkdown(ctx, viewID, workspaceID, fileName, initialContent, targetKind, path)
 	}
 	return nil, nil
 }
@@ -650,9 +707,9 @@ func (s *contractStore) UpdateView(ctx context.Context, id int32, workspaceID uu
 	}
 	return nil, nil
 }
-func (s *contractStore) SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string) (*diagv1.ViewMarkdownDocument, error) {
+func (s *contractStore) SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string, expectedFileVersion *string, force bool) (*diagv1.ViewMarkdownDocument, error) {
 	if s.saveViewMarkdown != nil {
-		return s.saveViewMarkdown(ctx, viewID, workspaceID, content)
+		return s.saveViewMarkdown(ctx, viewID, workspaceID, content, expectedFileVersion, force)
 	}
 	return nil, nil
 }
@@ -675,7 +732,10 @@ func (s *contractStore) GetElement(ctx context.Context, id int32, workspaceID uu
 	}
 	return nil, errors.New("element not found")
 }
-func (s *contractStore) CreateElement(context.Context, uuid.UUID, ElementInput) (*diagv1.Element, error) {
+func (s *contractStore) CreateElement(ctx context.Context, workspaceID uuid.UUID, input ElementInput) (*diagv1.Element, error) {
+	if s.createElement != nil {
+		return s.createElement(ctx, workspaceID, input)
+	}
 	return nil, nil
 }
 func (s *contractStore) UpdateElement(ctx context.Context, id int32, workspaceID uuid.UUID, input ElementInput) (*diagv1.Element, error) {
@@ -685,7 +745,10 @@ func (s *contractStore) UpdateElement(ctx context.Context, id int32, workspaceID
 	return nil, nil
 }
 func (s *contractStore) DeleteElement(context.Context, int32, uuid.UUID) error { return nil }
-func (s *contractStore) ListPlacements(context.Context, int32) ([]*diagv1.PlacedElement, error) {
+func (s *contractStore) ListPlacements(ctx context.Context, viewID int32) ([]*diagv1.PlacedElement, error) {
+	if s.listPlacements != nil {
+		return s.listPlacements(ctx, viewID)
+	}
 	return nil, nil
 }
 func (s *contractStore) ListAllPlacements(context.Context, uuid.UUID) ([]*diagv1.PlacedElement, error) {
@@ -709,7 +772,10 @@ func (s *contractStore) RemovePlacement(ctx context.Context, viewID, elementID i
 	}
 	return nil
 }
-func (s *contractStore) ListConnectors(context.Context, int32, uuid.UUID) ([]*diagv1.Connector, error) {
+func (s *contractStore) ListConnectors(ctx context.Context, viewID int32, workspaceID uuid.UUID) ([]*diagv1.Connector, error) {
+	if s.listConnectors != nil {
+		return s.listConnectors(ctx, viewID, workspaceID)
+	}
 	return nil, nil
 }
 func (s *contractStore) ListAllConnectors(ctx context.Context, workspaceID uuid.UUID) ([]*diagv1.Connector, error) {
@@ -766,6 +832,36 @@ func (s *contractStore) UpdateTag(context.Context, uuid.UUID, string, string, *s
 	return nil
 }
 func (s *contractStore) DeleteTag(context.Context, uuid.UUID, string) error { return nil }
+func (s *contractStore) ListViewThreads(context.Context, uuid.UUID, int32, *int32, *int32) ([]*diagv1.ThreadInfo, error) {
+	return nil, nil
+}
+func (s *contractStore) CreateViewThread(context.Context, uuid.UUID, int32, *int32, *int32, string, string) (*diagv1.ThreadInfo, error) {
+	return nil, nil
+}
+func (s *contractStore) GetViewThread(context.Context, uuid.UUID, int32, int32) (*diagv1.ThreadInfo, error) {
+	return nil, nil
+}
+func (s *contractStore) SetViewThreadResolved(context.Context, uuid.UUID, int32, int32, bool) error {
+	return nil
+}
+func (s *contractStore) CreateViewComment(context.Context, uuid.UUID, int32, int32, string, string, string) (*diagv1.CommentInfo, error) {
+	return nil, nil
+}
+func (s *contractStore) ListViewElementReactions(context.Context, uuid.UUID, int32, string) ([]*diagv1.NodeReactionSummary, error) {
+	return nil, nil
+}
+func (s *contractStore) ToggleElementReaction(context.Context, uuid.UUID, int32, int32, string, string) (bool, error) {
+	return false, nil
+}
+func (s *contractStore) ListDrawings(context.Context, uuid.UUID, int32) ([]RealtimeDrawingInput, error) {
+	return nil, nil
+}
+func (s *contractStore) UpsertDrawing(context.Context, uuid.UUID, int32, RealtimeDrawingInput) error {
+	return nil
+}
+func (s *contractStore) DeleteDrawing(context.Context, uuid.UUID, int32, string) error {
+	return nil
+}
 func (s *contractStore) ApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
 	if s.applyPlan != nil {
 		return s.applyPlan(ctx, workspaceID, req)

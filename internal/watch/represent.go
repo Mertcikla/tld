@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -102,7 +103,8 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
 		return RepresentResult{}, err
 	}
-	reuseAllowed := req.AssumeNoRawChanges && len(contextPolicies.Show) == 0 && len(contextPolicies.Hide) == 0 && len(contextExpansions.Tiers) == 0
+	blastRadiusFiles := normalizeBlastRadiusFiles(req.BlastRadiusFiles)
+	reuseAllowed := req.AssumeNoRawChanges && len(blastRadiusFiles) == 0 && len(contextPolicies.Show) == 0 && len(contextPolicies.Hide) == 0 && len(contextExpansions.Tiers) == 0
 	if reuseAllowed {
 		cached, reused, err := r.reuseRepresentation(ctx, repositoryID, rawGraphHash, settingsHash, modelIDPtr, prepareStarted, req)
 		if err != nil {
@@ -129,7 +131,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		return RepresentResult{}, err
 	}
 	progressAdvance(req.Progress, "Changed resources loaded")
-	if len(changedRaw.Files) == 0 && len(changedRaw.Symbols) == 0 && len(contextPolicies.Show) == 0 && len(contextPolicies.Hide) == 0 && len(contextExpansions.Tiers) == 0 {
+	if len(changedRaw.Files) == 0 && len(changedRaw.Symbols) == 0 && len(blastRadiusFiles) == 0 && len(contextPolicies.Show) == 0 && len(contextPolicies.Hide) == 0 && len(contextExpansions.Tiers) == 0 {
 		cached, reused, err := r.reuseRepresentation(ctx, repositoryID, rawGraphHash, settingsHash, modelIDPtr, prepareStarted, req)
 		if err != nil {
 			progressFinish(req.Progress)
@@ -141,12 +143,13 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 			return cached, nil
 		}
 	}
-	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, nil, changedRaw.Symbols, contextPolicies, identityKeys)
+	filtered, err := runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, nil, changedRaw.Symbols, blastRadiusFiles, contextPolicies, identityKeys)
 	if err != nil {
 		progressFinish(req.Progress)
 		logError(ctx, req.Logger, "watch.representation.prepare.failed", err, "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID)
 		return RepresentResult{}, err
 	}
+	filtered.Dependencies = req.Dependencies
 	filtered.ChangedFiles = changedRaw.Files
 	progressAdvance(req.Progress, "Architecture view filtered")
 	progressFinish(req.Progress)
@@ -167,12 +170,13 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		result.EmbeddingsCreated = stats.Created
 		if len(embeddingSymbols) == len(filtered.VisibleSymbols) {
 			progressStart(req.Progress, "Refreshing semantic filter", 1)
-			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, vectors, changedRaw.Symbols, contextPolicies, identityKeys)
+			filtered, err = runFilter(ctx, r.Store, repositoryID, req.Thresholds, req.Visibility, rawGraphHash, settingsHash, vectors, changedRaw.Symbols, blastRadiusFiles, contextPolicies, identityKeys)
 			if err != nil {
 				progressFinish(req.Progress)
 				logError(ctx, req.Logger, "watch.representation.semantic_filter.failed", err, "repository_id", repositoryID)
 				return RepresentResult{}, err
 			}
+			filtered.Dependencies = req.Dependencies
 			filtered.ChangedFiles = changedRaw.Files
 			progressAdvance(req.Progress, "Semantic filter refreshed")
 			progressFinish(req.Progress)
@@ -278,6 +282,19 @@ func (r *Representer) reuseRepresentation(ctx context.Context, repositoryID int6
 	cached.ViewsCreated = 0
 	logInfo(ctx, req.Logger, "watch.representation.reused", "elapsed", logElapsed(started), "repository_id", repositoryID, "representation_run_id", cached.RepresentationRun, "raw_graph_hash", rawGraphHash, "representation_hash", cached.RepresentationHash, "assume_no_raw_changes", req.AssumeNoRawChanges)
 	return cached, true, nil
+}
+
+func normalizeBlastRadiusFiles(files []string) map[string]string {
+	out := map[string]string{}
+	for _, file := range files {
+		file = strings.TrimSpace(filepathToSlash(file))
+		file = strings.TrimPrefix(file, "file:")
+		if file == "" || file == "." || strings.HasPrefix(file, "../") || filepath.IsAbs(file) {
+			continue
+		}
+		out[file] = "blast radius of changed file"
+	}
+	return out
 }
 
 func (r *Representer) RepresentArchitecture(ctx context.Context, repo Repository, architecture architectureModel, thresholds Thresholds, progress ProgressSink) (RepresentResult, error) {
@@ -1046,6 +1063,9 @@ func buildSemanticTagPlan(repo Repository, filtered filterResult, thresholds Thr
 	add("repository", fmt.Sprintf("repository:%d", repo.ID), semanticLanguageTag(repoLanguage))
 
 	visibleFiles := filesForSymbols(filtered.VisibleSymbols)
+	for file := range filtered.VisibleFiles {
+		visibleFiles[file] = struct{}{}
+	}
 	for _, folder := range folderSet(visibleFiles) {
 		add("folder", "folder:"+folder, append(semanticPathTags(folder, repoLanguage), ownerMatcher.TagsForPath(folder)...)...)
 	}
@@ -1448,6 +1468,9 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	for file := range filtered.ChangedFiles {
 		visibleFiles[file] = struct{}{}
 	}
+	for file := range filtered.BlastRadiusFiles {
+		visibleFiles[file] = struct{}{}
+	}
 	folders := folderSet(visibleFiles)
 	folderElements := map[string]int64{}
 	folderViews := map[string]int64{}
@@ -1580,15 +1603,14 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 			for i, sym := range chunk {
 				language := languageFromStableKey(sym.StableKey)
 				elem, err := m.upsertElement(ctx, "symbol", symbolOwnerKey(sym, m.identityKeys), elementInput{
-					Name:        symbolDisplayNames[sym.ID],
-					Kind:        sym.Kind,
-					Description: fmt.Sprintf("%s:%d", sym.FilePath, sym.StartLine),
-					Technology:  technologyLabel(language),
-					Repo:        repoIdentity(repo),
-					Branch:      nullStringValue(repo.Branch),
-					FilePath:    sym.FilePath,
-					Language:    language,
-					Tags:        tagPlan.tagsFor("symbol", symbolOwnerKey(sym, m.identityKeys)),
+					Name:       symbolDisplayNames[sym.ID],
+					Kind:       sym.Kind,
+					Technology: technologyLabel(language),
+					Repo:       repoIdentity(repo),
+					Branch:     nullStringValue(repo.Branch),
+					FilePath:   symbolSourceLink(sym),
+					Language:   language,
+					Tags:       tagPlan.tagsFor("symbol", symbolOwnerKey(sym, m.identityKeys)),
 				})
 				if err != nil {
 					return m.stats, err
@@ -1609,7 +1631,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		return m.stats, err
 	}
 
-	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, folderElements, fileElements, symbolElements, symbolViews, structuralView); err != nil {
+	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, folderElements, folderViews, fileElements, symbolElements, symbolViews, structuralView); err != nil {
 		return m.stats, err
 	}
 	if len(architecture.Components) > 0 {
@@ -2075,10 +2097,40 @@ func (m *materializer) viewLayoutConnectors(ctx context.Context, viewID int64) (
 	return out, rows.Err()
 }
 
-type filePairReference struct {
-	Key   string
-	Ref   Reference
-	Count int
+type viewPairReference struct {
+	Key             string
+	OwnerKey        string
+	ViewID          int64
+	SourceElementID int64
+	TargetElementID int64
+	Forward         bool
+	Backward        bool
+	Ref             Reference
+	Count           int
+}
+
+func (p *viewPairReference) addDirection(sourceElementID, targetElementID int64) {
+	if p == nil {
+		return
+	}
+	if sourceElementID == p.SourceElementID && targetElementID == p.TargetElementID {
+		p.Forward = true
+		return
+	}
+	if sourceElementID == p.TargetElementID && targetElementID == p.SourceElementID {
+		p.Backward = true
+	}
+}
+
+func (p viewPairReference) direction() string {
+	switch {
+	case p.Forward && p.Backward:
+		return "both"
+	case p.Backward:
+		return "backward"
+	default:
+		return "forward"
+	}
 }
 
 func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbols map[int64]Symbol, structuralView int64, fileElements map[string]int64, fileViews map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, symbolPositions map[int64]layoutPoint, occupied map[int64]map[string]struct{}, filtered filterResult) error {
@@ -2110,9 +2162,10 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 			connectionFactsByFile[fact.FilePath] = append(connectionFactsByFile[fact.FilePath], fact)
 			continue
 		}
-		if highSignalFact(fact) {
+		highSignal := highSignalFact(fact)
+		if highSignal && standaloneFactNode(fact) {
 			nodeFactsByFile[fact.FilePath] = append(nodeFactsByFile[fact.FilePath], fact)
-		} else {
+		} else if !highSignal {
 			summaryFactsByFile[fact.FilePath] = append(summaryFactsByFile[fact.FilePath], fact)
 		}
 	}
@@ -2169,7 +2222,7 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 				Technology:  factTechnology(fact),
 				Repo:        repoIdentity(m.repo),
 				Branch:      nullStringValue(m.repo.Branch),
-				FilePath:    fact.FilePath,
+				FilePath:    factSourceLink(fact),
 				Language:    m.languageForFile(fact.FilePath),
 				Tags:        m.tagPlan.tagsFor("fact", factOwnerKey(fact)),
 			})
@@ -2230,7 +2283,7 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 				Technology:  factTechnology(fact),
 				Repo:        repoIdentity(m.repo),
 				Branch:      nullStringValue(m.repo.Branch),
-				FilePath:    fact.FilePath,
+				FilePath:    factSourceLink(fact),
 				Language:    m.languageForFile(fact.FilePath),
 				Tags:        m.tagPlan.tagsFor("fact", factOwnerKey(fact)),
 			})
@@ -2249,8 +2302,10 @@ func (m *materializer) materializeFacts(ctx context.Context, facts []Fact, symbo
 			}
 		}
 	}
-	if err := m.materializeDependencyImports(ctx, dependencyImportFactsByFile, structuralView, fileElements, occupied, filtered, changedFactLines); err != nil {
-		return err
+	if filtered.Dependencies.Enabled {
+		if err := m.materializeDependencyImports(ctx, dependencyImportFactsByFile, structuralView, fileElements, occupied, filtered, changedFactLines); err != nil {
+			return err
+		}
 	}
 	if err := m.applyTechnologyMetadataFacts(ctx, metadataFactsByFile, fileElements, symbolElements, symbolIDByStable); err != nil {
 		return err
@@ -2516,7 +2571,7 @@ func (m *materializer) materializeRuntimeComponents(ctx context.Context, facts [
 			Technology:  factTechnology(primary),
 			Repo:        repoIdentity(m.repo),
 			Branch:      nullStringValue(m.repo.Branch),
-			FilePath:    primary.FilePath,
+			FilePath:    factSourceLink(primary),
 			Language:    m.languageForFile(primary.FilePath),
 			Tags:        m.tagPlan.tagsFor("runtime-component", ownerKey),
 		})
@@ -2920,6 +2975,19 @@ func runtimeEndpointFact(fact Fact) bool {
 	return fact.Type == "runtime.endpoint"
 }
 
+func standaloneFactNode(fact Fact) bool {
+	switch fact.Type {
+	case "http.route", "frontend.route", "runtime.endpoint", "storage.volume":
+		return concreteFactObject(fact)
+	default:
+		return false
+	}
+}
+
+func concreteFactObject(fact Fact) bool {
+	return strings.TrimSpace(firstNonEmpty(fact.ObjectStableKey, fact.ObjectName, fact.Name)) != ""
+}
+
 func componentSourceForFact(fact Fact, attrs map[string]string) string {
 	if source := strings.TrimSpace(attrs["source"]); source != "" {
 		return source
@@ -3223,71 +3291,128 @@ func (m *materializer) relativeFactPath(value string) string {
 	return filepath.ToSlash(value)
 }
 
+func symbolSourceLink(sym Symbol) string {
+	filePath := strings.TrimSpace(filepathToSlash(sym.FilePath))
+	if filePath == "" {
+		return ""
+	}
+	nodeType := strings.TrimSpace(sym.NodeType)
+	if nodeType == "" {
+		return sourceLineLink(filePath, sym.StartLine)
+	}
+	name := strings.TrimSpace(sym.QualifiedName)
+	if name == "" {
+		name = strings.TrimSpace(sym.Name)
+	}
+	if name == "" {
+		return sourceLineLink(filePath, sym.StartLine)
+	}
+	return filePath + "#" + nodeType + ":" + url.PathEscape(name)
+}
+
+func factSourceLink(fact Fact) string {
+	return sourceLineLink(filepathToSlash(fact.FilePath), fact.StartLine)
+}
+
+func sourceLineLink(filePath string, line int) string {
+	filePath = strings.TrimSpace(filepathToSlash(filePath))
+	if filePath == "" {
+		return ""
+	}
+	if line <= 0 {
+		return filePath
+	}
+	return fmt.Sprintf("%s#L%d", filePath, line)
+}
+
 func factNodeDescription(fact Fact) string {
 	parts := []string{fact.Type}
 	if fact.Relationship != "" {
 		parts = append(parts, fact.Relationship)
 	}
-	if fact.FilePath != "" && fact.StartLine > 0 {
-		parts = append(parts, fmt.Sprintf("%s:%d", fact.FilePath, fact.StartLine))
-	}
 	return strings.Join(parts, " - ")
 }
 
-func (m *materializer) materializeConnectors(ctx context.Context, refs []Reference, symbols map[int64]Symbol, folderElements map[string]int64, fileElements map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, repoView int64) error {
-	filePairs := map[string]filePairReference{}
-	symbolConnectorCount := map[int64]int{}
+func (m *materializer) materializeConnectors(ctx context.Context, refs []Reference, symbols map[int64]Symbol, folderElements map[string]int64, folderViews map[string]int64, fileElements map[string]int64, symbolElements map[int64]int64, symbolViews map[int64]int64, repoView int64) error {
+	filePairs := map[string]viewPairReference{}
+	provenanceFilePairs := map[string]viewPairReference{}
+	symbolPairs := map[string]viewPairReference{}
 	for _, ref := range refs {
 		source := symbols[ref.SourceSymbolID]
 		target := symbols[ref.TargetSymbolID]
 		if source.FilePath != "" && target.FilePath != "" && source.FilePath != target.FilePath {
-			key := source.FilePath + "->" + target.FilePath
+			sourceFileElementID := fileElements[source.FilePath]
+			targetFileElementID := fileElements[target.FilePath]
+			if sourceFileElementID != 0 && targetFileElementID != 0 {
+				provenanceKey := canonicalViewPairKey(repoView, sourceFileElementID, targetFileElementID, "file")
+				provenancePair := provenanceFilePairs[provenanceKey]
+				if provenancePair.Count == 0 {
+					provenancePair = viewPairReference{Key: provenanceKey, OwnerKey: "file:" + source.FilePath + "->" + target.FilePath, ViewID: repoView, SourceElementID: sourceFileElementID, TargetElementID: targetFileElementID, Ref: ref}
+				}
+				provenancePair.addDirection(sourceFileElementID, targetFileElementID)
+				provenancePair.Count++
+				provenanceFilePairs[provenanceKey] = provenancePair
+			}
+			viewID, sourceElementID, targetElementID, ownerKey, ok := connectorViewEndpoints(source.FilePath, target.FilePath, folderElements, folderViews, fileElements, repoView)
+			if !ok {
+				continue
+			}
+			key := canonicalViewPairKey(viewID, sourceElementID, targetElementID, "file")
 			pair := filePairs[key]
 			if pair.Count == 0 {
-				pair = filePairReference{Key: key, Ref: ref}
+				pair = viewPairReference{Key: key, OwnerKey: ownerKey, ViewID: viewID, SourceElementID: sourceElementID, TargetElementID: targetElementID, Ref: ref}
 			}
+			pair.addDirection(sourceElementID, targetElementID)
 			pair.Count++
 			filePairs[key] = pair
 			continue
 		}
 		viewID := symbolViews[ref.SourceSymbolID]
-		if viewID == 0 || viewID != symbolViews[ref.TargetSymbolID] || symbolConnectorCount[viewID] >= m.thresholds.MaxConnectorsPerView {
+		if viewID == 0 || viewID != symbolViews[ref.TargetSymbolID] {
 			continue
 		}
-		sourceKey := symbolOwnerKey(source, m.identityKeys)
-		targetKey := symbolOwnerKey(target, m.identityKeys)
-		ownerKey := fmt.Sprintf("symbol:%s:%s:%s", sourceKey, targetKey, ref.Kind)
-		if m.contextPolicyHidden("reference", ownerKey) {
+		sourceElementID := symbolElements[ref.SourceSymbolID]
+		targetElementID := symbolElements[ref.TargetSymbolID]
+		ownerKey := fmt.Sprintf("symbol:%s:%s:%s", symbolOwnerKey(source, m.identityKeys), symbolOwnerKey(target, m.identityKeys), ref.Kind)
+		key := canonicalViewPairKey(viewID, sourceElementID, targetElementID, ref.Kind)
+		pair := symbolPairs[key]
+		if pair.Count == 0 {
+			pair = viewPairReference{Key: key, OwnerKey: ownerKey, ViewID: viewID, SourceElementID: sourceElementID, TargetElementID: targetElementID, Ref: ref}
+		}
+		pair.addDirection(sourceElementID, targetElementID)
+		pair.Count++
+		symbolPairs[key] = pair
+	}
+
+	symbolConnectorCount := map[int64]int{}
+	for _, key := range sortedKeys(symbolPairs) {
+		pair := symbolPairs[key]
+		if symbolConnectorCount[pair.ViewID] >= m.thresholds.MaxConnectorsPerView {
 			continue
 		}
-		if err := m.upsertConnector(ctx, "reference", ownerKey, viewID, symbolElements[ref.SourceSymbolID], symbolElements[ref.TargetSymbolID], "calls"); err != nil {
+		if m.contextPolicyHidden("reference", pair.OwnerKey) {
+			continue
+		}
+		if err := m.upsertConnectorDetailedWithDirection(ctx, "reference", pair.OwnerKey, pair.ViewID, pair.SourceElementID, pair.TargetElementID, "calls", "calls", pair.direction(), ""); err != nil {
 			return err
 		}
-		symbolConnectorCount[viewID]++
+		symbolConnectorCount[pair.ViewID]++
 	}
 
-	fileGroups := map[string][]filePairReference{}
-	for _, key := range sortedKeys(filePairs) {
-		pair := filePairs[key]
-		source := symbols[pair.Ref.SourceSymbolID]
-		target := symbols[pair.Ref.TargetSymbolID]
-		sourceGroup := connectorGroupFolder(source.FilePath)
-		targetGroup := connectorGroupFolder(target.FilePath)
-		if sourceGroup == "" || targetGroup == "" || sourceGroup == targetGroup || folderElements[sourceGroup] == 0 || folderElements[targetGroup] == 0 {
-			fileGroups["file:"+key] = append(fileGroups["file:"+key], pair)
+	provenanceGroups := map[string][]viewPairReference{}
+	for _, key := range sortedKeys(provenanceFilePairs) {
+		pair := provenanceFilePairs[key]
+		provenanceGroups[pair.OwnerKey] = append(provenanceGroups[pair.OwnerKey], pair)
+	}
+
+	fileConnectorCountByView := map[int64]int{}
+	for _, groupKey := range sortedFileGroupKeys(provenanceGroups) {
+		group := provenanceGroups[groupKey]
+		if len(group) == 0 {
 			continue
 		}
-		groupKey := "folder:" + sourceGroup + "->" + targetGroup
-		fileGroups[groupKey] = append(fileGroups[groupKey], pair)
-	}
-
-	fileConnectorCount := 0
-	for _, groupKey := range sortedFileGroupKeys(fileGroups) {
-		if fileConnectorCount >= m.thresholds.MaxConnectorsPerView {
-			break
-		}
-		group := fileGroups[groupKey]
-		if len(group) == 0 {
+		viewID := group[0].ViewID
+		if fileConnectorCountByView[viewID] >= m.thresholds.MaxConnectorsPerView {
 			continue
 		}
 		rawReferenceCount := filePairReferenceCount(group)
@@ -3295,35 +3420,66 @@ func (m *materializer) materializeConnectors(ctx context.Context, refs []Referen
 			if m.contextPolicyHidden("folder-reference", groupKey) {
 				continue
 			}
-			first := group[0].Ref
-			source := symbols[first.SourceSymbolID]
-			target := symbols[first.TargetSymbolID]
-			sourceGroup := connectorGroupFolder(source.FilePath)
-			targetGroup := connectorGroupFolder(target.FilePath)
-			if err := m.upsertConnector(ctx, "folder-reference", groupKey, repoView, folderElements[sourceGroup], folderElements[targetGroup], fmt.Sprintf("%d references", rawReferenceCount)); err != nil {
+			first := group[0]
+			if err := m.upsertConnectorDetailedWithDirection(ctx, "folder-reference", groupKey, first.ViewID, first.SourceElementID, first.TargetElementID, fmt.Sprintf("%d references", rawReferenceCount), fmt.Sprintf("%d references", rawReferenceCount), viewPairDirection(group), ""); err != nil {
 				return err
 			}
-			fileConnectorCount++
+			fileConnectorCountByView[viewID]++
 			continue
 		}
 		for _, item := range group {
-			if fileConnectorCount >= m.thresholds.MaxConnectorsPerView {
+			if fileConnectorCountByView[item.ViewID] >= m.thresholds.MaxConnectorsPerView {
 				break
 			}
-			ref := item.Ref
-			source := symbols[ref.SourceSymbolID]
-			target := symbols[ref.TargetSymbolID]
-			if fileElements[source.FilePath] == 0 || fileElements[target.FilePath] == 0 {
+			if m.contextPolicyHidden("file-reference", item.OwnerKey) {
 				continue
 			}
-			ownerKey := "file:" + item.Key
-			if m.contextPolicyHidden("file-reference", ownerKey) {
-				continue
-			}
-			if err := m.upsertConnector(ctx, "file-reference", ownerKey, repoView, fileElements[source.FilePath], fileElements[target.FilePath], "references"); err != nil {
+			if err := m.upsertConnectorDetailedWithDirection(ctx, "file-reference", item.OwnerKey, item.ViewID, item.SourceElementID, item.TargetElementID, "", "", viewPairDirection([]viewPairReference{item}), ""); err != nil {
 				return err
 			}
-			fileConnectorCount++
+			fileConnectorCountByView[item.ViewID]++
+		}
+	}
+
+	localFileGroups := map[string][]viewPairReference{}
+	for _, key := range sortedKeys(filePairs) {
+		pair := filePairs[key]
+		localFileGroups[pair.OwnerKey] = append(localFileGroups[pair.OwnerKey], pair)
+	}
+
+	localConnectorCountByView := map[int64]int{}
+	for _, groupKey := range sortedFileGroupKeys(localFileGroups) {
+		group := localFileGroups[groupKey]
+		if len(group) == 0 {
+			continue
+		}
+		viewID := group[0].ViewID
+		if localConnectorCountByView[viewID] >= m.thresholds.MaxConnectorsPerView {
+			continue
+		}
+		rawReferenceCount := filePairReferenceCount(group)
+		if strings.HasPrefix(groupKey, "folder:") && rawReferenceCount > m.thresholds.MaxExpandedConnectorsPerGroup {
+			if m.contextPolicyHidden("view-folder-reference", groupKey) {
+				continue
+			}
+			first := group[0]
+			if err := m.upsertConnectorDetailedWithDirection(ctx, "view-folder-reference", groupKey, first.ViewID, first.SourceElementID, first.TargetElementID, fmt.Sprintf("%d references", rawReferenceCount), fmt.Sprintf("%d references", rawReferenceCount), viewPairDirection(group), ""); err != nil {
+				return err
+			}
+			localConnectorCountByView[viewID]++
+			continue
+		}
+		for _, item := range group {
+			if localConnectorCountByView[item.ViewID] >= m.thresholds.MaxConnectorsPerView {
+				break
+			}
+			if m.contextPolicyHidden("view-file-reference", item.OwnerKey) {
+				continue
+			}
+			if err := m.upsertConnectorDetailedWithDirection(ctx, "view-file-reference", item.OwnerKey, item.ViewID, item.SourceElementID, item.TargetElementID, "", "", viewPairDirection([]viewPairReference{item}), ""); err != nil {
+				return err
+			}
+			localConnectorCountByView[item.ViewID]++
 		}
 	}
 	return nil
@@ -3339,7 +3495,7 @@ func (m *materializer) contextPolicyShown(ownerType, ownerKey string) bool {
 	return shown
 }
 
-func filePairReferenceCount(group []filePairReference) int {
+func filePairReferenceCount(group []viewPairReference) int {
 	count := 0
 	for _, item := range group {
 		count += item.Count
@@ -3347,7 +3503,30 @@ func filePairReferenceCount(group []filePairReference) int {
 	return count
 }
 
-func sortedFileGroupKeys(groups map[string][]filePairReference) []string {
+func viewPairDirection(group []viewPairReference) string {
+	var forward, backward bool
+	for _, item := range group {
+		switch item.direction() {
+		case "both":
+			forward = true
+			backward = true
+		case "backward":
+			backward = true
+		default:
+			forward = true
+		}
+	}
+	switch {
+	case forward && backward:
+		return "both"
+	case backward:
+		return "backward"
+	default:
+		return "forward"
+	}
+}
+
+func sortedFileGroupKeys(groups map[string][]viewPairReference) []string {
 	keys := sortedKeys(groups)
 	sort.SliceStable(keys, func(i, j int) bool {
 		left := keys[i]
@@ -3367,19 +3546,99 @@ func sortedFileGroupKeys(groups map[string][]filePairReference) []string {
 	return keys
 }
 
-func connectorGroupFolder(filePath string) string {
-	dir := path.Dir(filePath)
-	if dir == "." || dir == "/" || dir == "" {
-		return ""
+func connectorViewEndpoints(sourcePath, targetPath string, folderElements, folderViews map[string]int64, fileElements map[string]int64, repoView int64) (int64, int64, int64, string, bool) {
+	common := commonConnectorDir(sourcePath, targetPath)
+	viewID := repoView
+	if common != "" {
+		viewID = folderViews[common]
 	}
-	if before, _, ok := strings.Cut(dir, "/"); ok {
-		return before
+	if viewID == 0 {
+		return 0, 0, 0, "", false
 	}
-	return dir
+	sourceElementID, sourceKey := connectorChildElement(sourcePath, common, folderElements, fileElements)
+	targetElementID, targetKey := connectorChildElement(targetPath, common, folderElements, fileElements)
+	if sourceElementID == 0 || targetElementID == 0 || sourceElementID == targetElementID {
+		return 0, 0, 0, "", false
+	}
+	ownerPrefix := "file"
+	if sourceKey != sourcePath || targetKey != targetPath {
+		ownerPrefix = "folder"
+	}
+	return viewID, sourceElementID, targetElementID, ownerPrefix + ":" + sourceKey + "->" + targetKey, true
 }
 
-func (m *materializer) upsertConnector(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label string) error {
-	return m.upsertConnectorDetailed(ctx, ownerType, ownerKey, viewID, sourceElementID, targetElementID, label, label, "")
+func canonicalViewPairKey(viewID, sourceElementID, targetElementID int64, scope string) string {
+	if sourceElementID > targetElementID {
+		sourceElementID, targetElementID = targetElementID, sourceElementID
+	}
+	return fmt.Sprintf("%d:%d:%d:%s", viewID, sourceElementID, targetElementID, scope)
+}
+
+func connectorChildElement(filePath, commonDir string, folderElements map[string]int64, fileElements map[string]int64) (int64, string) {
+	dir := path.Dir(filePath)
+	if dir == "." {
+		dir = ""
+	}
+	if dir == commonDir {
+		return fileElements[filePath], filePath
+	}
+	child := firstPathChild(filePath, commonDir)
+	if child == "" {
+		return 0, ""
+	}
+	return folderElements[child], child
+}
+
+func firstPathChild(filePath, commonDir string) string {
+	trimmed := filePath
+	if commonDir != "" {
+		prefix := strings.TrimSuffix(commonDir, "/") + "/"
+		if !strings.HasPrefix(filePath, prefix) {
+			return ""
+		}
+		trimmed = strings.TrimPrefix(filePath, prefix)
+	}
+	first, _, _ := strings.Cut(trimmed, "/")
+	if first == "" || first == trimmed {
+		return ""
+	}
+	if commonDir == "" {
+		return first
+	}
+	return commonDir + "/" + first
+}
+
+func commonConnectorDir(leftPath, rightPath string) string {
+	leftDir := path.Dir(leftPath)
+	rightDir := path.Dir(rightPath)
+	if leftDir == "." {
+		leftDir = ""
+	}
+	if rightDir == "." {
+		rightDir = ""
+	}
+	leftParts := splitPathParts(leftDir)
+	rightParts := splitPathParts(rightDir)
+	limit := len(leftParts)
+	if len(rightParts) < limit {
+		limit = len(rightParts)
+	}
+	var common []string
+	for i := 0; i < limit; i++ {
+		if leftParts[i] != rightParts[i] {
+			break
+		}
+		common = append(common, leftParts[i])
+	}
+	return strings.Join(common, "/")
+}
+
+func splitPathParts(value string) []string {
+	value = strings.Trim(value, "/")
+	if value == "" || value == "." {
+		return nil
+	}
+	return strings.Split(value, "/")
 }
 
 func (m *materializer) upsertConnectorDetailed(ctx context.Context, ownerType, ownerKey string, viewID, sourceElementID, targetElementID int64, label, relationship, description string) error {
@@ -3647,6 +3906,9 @@ func technologyLinksForElement(technology, language string) []materializedTechno
 	if len(links) > 0 {
 		return links
 	}
+	if strings.TrimSpace(technology) != "" {
+		return nil
+	}
 	if langLinks := technologyLinksForLanguage(language); len(langLinks) > 0 {
 		return langLinks
 	}
@@ -3696,10 +3958,6 @@ func technologyLabelParts(label string) []string {
 
 func technologyCatalogMatchForLabel(label string) (string, string) {
 	switch strings.ToLower(strings.TrimSpace(label)) {
-	case "architecture":
-		return "architecture", "Architecture"
-	case "structural":
-		return "structural", "Structural"
 	case "container":
 		return "docker", "Container"
 	default:
@@ -3714,7 +3972,7 @@ func technologyCatalogMatchForLabel(label string) (string, string) {
 func technologyCatalogSlug(language string) string {
 	switch language {
 	case "go":
-		return "golang"
+		return "go"
 	case "typescript":
 		return "typescript"
 	case "javascript":
@@ -3724,11 +3982,11 @@ func technologyCatalogSlug(language string) string {
 	case "java":
 		return "java"
 	case "cpp":
-		return "c-plusplus"
+		return "cplusplus"
 	case "c":
 		return "c"
 	case "json":
-		return "json-javascript-object-notation"
+		return "json"
 	default:
 		return ""
 	}
@@ -3804,6 +4062,9 @@ func representationHash(filtered filterResult, req RepresentRequest) string {
 	parts := []string{filtered.RawGraphHash, filtered.SettingsHash, stableHash(req)}
 	for _, file := range sortedKeys(filtered.ChangedFiles) {
 		parts = append(parts, "f:"+file)
+	}
+	for _, file := range sortedKeys(filtered.VisibleFiles) {
+		parts = append(parts, "vf:"+file)
 	}
 	for _, sym := range sortedSymbols(filtered.VisibleSymbols) {
 		parts = append(parts, "s:"+sym.StableKey)

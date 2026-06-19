@@ -56,7 +56,10 @@ type Scanner struct {
 
 type definitionResolver interface {
 	ResolveDefinitions(context.Context, analyzer.Ref) ([]analyzerlsp.DefinitionLocation, error)
+	References(context.Context, string, int, int) ([]analyzerlsp.DefinitionLocation, error)
+	Implementations(context.Context, string, int, int) ([]analyzerlsp.DefinitionLocation, error)
 	IncomingCalls(context.Context, string, int, int) ([]analyzerlsp.CallLocation, error)
+	OutgoingCalls(context.Context, string, int, int) ([]analyzerlsp.CallLocation, error)
 	Close() error
 }
 
@@ -100,10 +103,9 @@ func (p *synchronizedProgress) Finish() {
 
 func NewScanner(store *Store) *Scanner {
 	return &Scanner{
-		Store:     store,
-		Analyzer:  analyzer.NewService(),
-		Enrichers: defaults.NewRegistry(),
-		Rules:     &ignore.Rules{},
+		Store:    store,
+		Analyzer: analyzer.NewService(),
+		Rules:    &ignore.Rules{},
 	}
 }
 
@@ -112,8 +114,9 @@ func (s *Scanner) Scan(ctx context.Context, path string) (ScanResult, error) {
 }
 
 type ScanOptions struct {
-	Force   bool
-	DataDir string
+	Force      bool
+	DataDir    string
+	FocusFiles []string
 }
 
 func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, relFiles []string, opts ScanOptions) (ScanResult, error) {
@@ -127,9 +130,6 @@ func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, rel
 	if s.Analyzer == nil {
 		s.Analyzer = analyzer.NewService()
 	}
-	if s.Enrichers == nil {
-		s.Enrichers = defaults.NewRegistry()
-	}
 	repoRoot := filepath.Clean(repo.RepoRoot)
 	gitignoreRules, err := ignore.LoadGitIgnore(repoRoot)
 	if err != nil {
@@ -141,6 +141,7 @@ func (s *Scanner) ScanFilesWithOptions(ctx context.Context, repo Repository, rel
 	}
 	s.EffectiveRules = effectiveRules
 	settings := NormalizeSettings(s.Settings)
+	s.ensureDefaultEnrichers(settings)
 	allowed := map[string]struct{}{}
 	for _, language := range settings.Languages {
 		allowed[language] = struct{}{}
@@ -263,9 +264,6 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	if s.Analyzer == nil {
 		s.Analyzer = analyzer.NewService()
 	}
-	if s.Enrichers == nil {
-		s.Enrichers = defaults.NewRegistry()
-	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return ScanResult{}, err
@@ -285,6 +283,7 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	}
 	s.EffectiveRules = effectiveRules
 	settings := NormalizeSettings(s.Settings)
+	s.ensureDefaultEnrichers(settings)
 
 	repoInput := RepositoryInput{
 		RemoteURL:    detectString(func() (string, error) { return tldgit.DetectRemoteURL(repoRoot) }),
@@ -344,37 +343,17 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 	progress := &synchronizedProgress{sink: s.Progress}
 	var files []string
 	if plan.Limited {
+		focusFiles, focusWarnings := s.limitedFocusFiles(ctx, repo.ID, repoRoot, opts.FocusFiles, settings, effectiveRules)
+		result.Warnings = append(result.Warnings, focusWarnings...)
 		seeds := append([]string{}, plan.RecentFiles...)
-		committed, err := gitChangesSinceLatestWatchVersion(ctx, s.Store, repo.ID, repoRoot)
-		if err != nil {
-			result.Warnings = append(result.Warnings, "limited view: committed change detection failed: "+err.Error())
-		} else {
-			seeds = append(seeds, changedScanFiles(repoRoot, committed, settings, effectiveRules)...)
-		}
-		changed, err := tldgit.WorktreeChangesAgainstHead(repoRoot)
-		if err != nil {
-			result.Warnings = append(result.Warnings, "limited view: git change detection failed: "+err.Error())
-		} else {
-			seeds = append(seeds, changedScanFiles(repoRoot, changed, settings, effectiveRules)...)
-		}
-		expanded, err := s.expandLimitedFiles(ctx, repo.ID, repoRoot, seeds, plan.AnchorFiles, settings, effectiveRules)
+		expanded, err := s.expandLimitedFiles(ctx, repo.ID, repoRoot, focusFiles, seeds, plan.AnchorFiles, settings, effectiveRules)
 		if err != nil {
 			result.Warnings = append(result.Warnings, "limited view: graph expansion failed: "+err.Error())
-			files = uniqueLimitedAbsFiles(append(append([]string{}, seeds...), plan.AnchorFiles...), settings.Scale.MaxLimitedFiles)
+			files = uniqueLimitedAbsFiles(append(append(append([]string{}, focusFiles...), seeds...), plan.AnchorFiles...), settings.Scale.MaxLimitedFiles)
 			result.LimitedFallback = "graph expansion failed"
 		} else {
 			files = expanded.Files
-			result.RecentFiles = expanded.RecentFiles
-			result.AnchorFiles = expanded.AnchorFiles
-			result.NeighborFiles = expanded.NeighborFiles
-			result.CallerFiles = expanded.CallerFiles
-			result.CallerDepthReached = expanded.CallerDepthReached
-			result.SharedAncestorFound = expanded.SharedAncestorFound
-			result.LimitedCapReached = expanded.CapReached
-			result.LimitedFallback = expanded.Fallback
-			if expanded.Fallback != "" {
-				result.Warnings = append(result.Warnings, "limited view: "+expanded.Fallback)
-			}
+			applyLimitedExpansionResult(repoRoot, &result, expanded)
 		}
 		logInfo(ctx, s.Logger, "watch.scan.source_discovery.completed", "repository_id", repo.ID, "files", len(files), "tracked_files", result.TrackedFiles, "selected_files", result.SelectedFiles, "mode", result.Mode, "strategy", result.Strategy)
 	} else {
@@ -403,12 +382,14 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 				return result, err
 			}
 			result.TrackedFiles = tracked.Total
+			focusFiles, focusWarnings := s.limitedFocusFiles(ctx, repo.ID, repoRoot, opts.FocusFiles, settings, effectiveRules)
+			result.Warnings = append(result.Warnings, focusWarnings...)
 			seeds := selectRecentFiles(repoRoot, settings, effectiveRules)
 			if len(seeds) == 0 {
 				result.Warnings = append(result.Warnings, "limited view: local git history did not return recent files; falling back to tracked file order")
 				seeds = selectTrackedFallbackFiles(repoRoot, tracked.Files, settings, effectiveRules)
 			}
-			expanded, expandErr := s.expandLimitedFiles(ctx, repo.ID, repoRoot, seeds, selectAnchorFiles(repoRoot, tracked.Files, settings, effectiveRules), settings, effectiveRules)
+			expanded, expandErr := s.expandLimitedFiles(ctx, repo.ID, repoRoot, focusFiles, seeds, selectAnchorFiles(repoRoot, tracked.Files, settings, effectiveRules), settings, effectiveRules)
 			if expandErr != nil {
 				scanErr = err
 				result.Warnings = append(result.Warnings, "limited view: graph expansion failed during fallback: "+expandErr.Error())
@@ -416,16 +397,7 @@ func (s *Scanner) ScanWithOptions(ctx context.Context, path string, opts ScanOpt
 				return result, err
 			}
 			files = expanded.Files
-			result.RecentFiles = expanded.RecentFiles
-			result.AnchorFiles = expanded.AnchorFiles
-			result.NeighborFiles = expanded.NeighborFiles
-			result.CallerFiles = expanded.CallerFiles
-			result.CallerDepthReached = expanded.CallerDepthReached
-			result.SharedAncestorFound = expanded.SharedAncestorFound
-			result.LimitedCapReached = expanded.CapReached
-			if expanded.Fallback != "" {
-				result.Warnings = append(result.Warnings, "limited view: "+expanded.Fallback)
-			}
+			applyLimitedExpansionResult(repoRoot, &result, expanded)
 			logInfo(ctx, s.Logger, "watch.scan.source_discovery.fallback_limited", "elapsed", logElapsed(discoveryStarted), "repository_id", repo.ID, "files", len(files), "reason", fallbackReason)
 		} else {
 			logInfo(ctx, s.Logger, "watch.scan.source_discovery.completed", "elapsed", logElapsed(discoveryStarted), "repository_id", repo.ID, "files", len(files), "mode", result.Mode, "strategy", result.Strategy)
@@ -558,6 +530,55 @@ func changedScanFiles(repoRoot string, changes map[string]tldgit.WorktreeChange,
 	return files
 }
 
+func (s *Scanner) limitedFocusFiles(ctx context.Context, repositoryID int64, repoRoot string, explicit []string, settings Settings, rules *ignore.Rules) ([]string, []string) {
+	var files []string
+	var warnings []string
+	add := func(candidates []string) {
+		for _, candidate := range candidates {
+			abs, _, ok := limitedCandidateFile(repoRoot, candidate, settings, rules)
+			if ok {
+				files = append(files, abs)
+			}
+		}
+	}
+	add(explicit)
+	committed, err := gitChangesSinceLatestWatchVersion(ctx, s.Store, repositoryID, repoRoot)
+	if err != nil {
+		warnings = append(warnings, "limited view: committed change detection failed: "+err.Error())
+	} else {
+		add(changedScanFiles(repoRoot, committed, settings, rules))
+	}
+	changed, err := tldgit.WorktreeChangesAgainstHead(repoRoot)
+	if err != nil {
+		warnings = append(warnings, "limited view: git change detection failed: "+err.Error())
+	} else {
+		add(changedScanFiles(repoRoot, changed, settings, rules))
+	}
+	return uniqueLimitedAbsFiles(files, 0), warnings
+}
+
+func applyLimitedExpansionResult(repoRoot string, result *ScanResult, expanded limitedExpansion) {
+	if result == nil {
+		return
+	}
+	result.RecentFiles = expanded.RecentFiles
+	result.AnchorFiles = expanded.AnchorFiles
+	result.NeighborFiles = expanded.NeighborFiles
+	result.CallerFiles = expanded.CallerFiles
+	result.CallerDepthReached = expanded.CallerDepthReached
+	result.SharedAncestorFound = expanded.SharedAncestorFound
+	result.BlastRadiusFiles = expanded.blastRadiusFiles(repoRoot)
+	result.BlastRadiusRoots = expanded.blastRadiusRoots(repoRoot)
+	result.LimitedCapReached = expanded.CapReached
+	result.LimitedFallback = expanded.Fallback
+	if expanded.CapReached {
+		result.Warnings = append(result.Warnings, "limited view: max_limited_files cap reached; graph expansion may be incomplete")
+	}
+	if expanded.Fallback != "" {
+		result.Warnings = append(result.Warnings, "limited view: "+expanded.Fallback)
+	}
+}
+
 type limitedExpansion struct {
 	Files               []string
 	RecentFiles         int
@@ -569,31 +590,26 @@ type limitedExpansion struct {
 	CapReached          bool
 	Fallback            string
 
-	capacity int
-	seen     map[string]string
-	roots    map[string]map[string]struct{}
+	capacity   int
+	seen       map[string]string
+	roots      map[string]map[string]struct{}
+	blastRoots map[string]map[string]struct{}
 }
 
 type limitedParsedFile struct {
-	AbsFile string
-	RelPath string
-	Roots   []string
-	Result  analyzer.Result
-}
-
-type limitedCallerNode struct {
-	FilePath string
-	Line     int
-	Name     string
-	Root     string
-	SymbolID int64
+	AbsFile    string
+	RelPath    string
+	Roots      []string
+	BlastRoots []string
+	Result     analyzer.Result
 }
 
 func newLimitedExpansion(capacity int) limitedExpansion {
 	return limitedExpansion{
-		capacity: capacity,
-		seen:     map[string]string{},
-		roots:    map[string]map[string]struct{}{},
+		capacity:   capacity,
+		seen:       map[string]string{},
+		roots:      map[string]map[string]struct{}{},
+		blastRoots: map[string]map[string]struct{}{},
 	}
 }
 
@@ -602,12 +618,12 @@ func (e *limitedExpansion) add(absFile, reason string, roots ...string) bool {
 	if absFile == "" {
 		return false
 	}
-	if e.capacity > 0 && len(e.Files) >= e.capacity {
-		e.CapReached = true
-		return false
-	}
 	if _, ok := e.seen[absFile]; ok {
 		e.addRoots(absFile, roots...)
+		return false
+	}
+	if e.capacity > 0 && len(e.Files) >= e.capacity {
+		e.CapReached = true
 		return false
 	}
 	e.seen[absFile] = reason
@@ -620,10 +636,32 @@ func (e *limitedExpansion) add(absFile, reason string, roots ...string) bool {
 		e.AnchorFiles++
 	case "neighbor":
 		e.NeighborFiles++
+	case "blast":
+		e.RecentFiles++
 	case "caller":
 		e.CallerFiles++
 	}
 	return true
+}
+
+func (e *limitedExpansion) addBlast(absFile, root string) bool {
+	absFile = filepath.Clean(absFile)
+	_, exists := e.seen[absFile]
+	added := e.add(absFile, "blast", root)
+	if added || exists {
+		e.addBlastRoots(absFile, root)
+	}
+	return added
+}
+
+func (e *limitedExpansion) addRelated(absFile, reason string, roots, blastRoots []string) bool {
+	absFile = filepath.Clean(absFile)
+	_, exists := e.seen[absFile]
+	added := e.add(absFile, reason, roots...)
+	if added || exists {
+		e.addBlastRoots(absFile, blastRoots...)
+	}
+	return added
 }
 
 func (e *limitedExpansion) addRoots(absFile string, roots ...string) {
@@ -641,6 +679,22 @@ func (e *limitedExpansion) addRoots(absFile string, roots ...string) {
 	}
 }
 
+func (e *limitedExpansion) addBlastRoots(absFile string, roots ...string) {
+	if len(roots) == 0 {
+		return
+	}
+	absFile = filepath.Clean(absFile)
+	if e.blastRoots[absFile] == nil {
+		e.blastRoots[absFile] = map[string]struct{}{}
+	}
+	for _, root := range roots {
+		root = strings.TrimSpace(root)
+		if root != "" {
+			e.blastRoots[absFile][root] = struct{}{}
+		}
+	}
+}
+
 func (e limitedExpansion) fileRoots(absFile string) []string {
 	rootSet := e.roots[filepath.Clean(absFile)]
 	if len(rootSet) == 0 {
@@ -654,15 +708,85 @@ func (e limitedExpansion) fileRoots(absFile string) []string {
 	return roots
 }
 
-func (s *Scanner) expandLimitedFiles(ctx context.Context, repositoryID int64, repoRoot string, seeds, anchors []string, settings Settings, rules *ignore.Rules) (limitedExpansion, error) {
+func (e limitedExpansion) fileBlastRoots(absFile string) []string {
+	rootSet := e.blastRoots[filepath.Clean(absFile)]
+	if len(rootSet) == 0 {
+		return nil
+	}
+	roots := make([]string, 0, len(rootSet))
+	for root := range rootSet {
+		roots = append(roots, root)
+	}
+	sort.Strings(roots)
+	return roots
+}
+
+func (e limitedExpansion) blastRadiusFiles(repoRoot string) []string {
+	files := make([]string, 0, len(e.blastRoots))
+	for absFile, roots := range e.blastRoots {
+		if len(roots) == 0 {
+			continue
+		}
+		rel, err := filepath.Rel(repoRoot, absFile)
+		if err != nil {
+			continue
+		}
+		files = append(files, filepath.ToSlash(rel))
+	}
+	sort.Strings(files)
+	return files
+}
+
+func (e limitedExpansion) blastRadiusRoots(repoRoot string) map[string][]string {
+	out := map[string][]string{}
+	for absFile := range e.blastRoots {
+		roots := e.fileBlastRoots(absFile)
+		if len(roots) == 0 {
+			continue
+		}
+		rel, err := filepath.Rel(repoRoot, absFile)
+		if err != nil {
+			continue
+		}
+		out[filepath.ToSlash(rel)] = roots
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func (s *Scanner) expandLimitedFiles(ctx context.Context, repositoryID int64, repoRoot string, focus, seeds, anchors []string, settings Settings, rules *ignore.Rules) (limitedExpansion, error) {
 	settings = NormalizeSettings(settings)
 	expanded := newLimitedExpansion(settings.Scale.MaxLimitedFiles)
+	var frontier []string
+	for _, file := range focus {
+		absFile, rel, ok := limitedCandidateFile(repoRoot, file, settings, rules)
+		if !ok {
+			continue
+		}
+		if expanded.addBlast(absFile, rel) {
+			frontier = append(frontier, absFile)
+		}
+	}
+	focused := len(frontier) > 0
+	resolver := s.getOrCreateResolver(repoRoot, settings)
+	if focused {
+		s.expandBlastRadius(ctx, repositoryID, repoRoot, settings, rules, resolver, frontier, &expanded)
+	}
+	useRecentRoots := !focused
 	for _, file := range seeds {
 		absFile, rel, ok := limitedCandidateFile(repoRoot, file, settings, rules)
 		if !ok {
 			continue
 		}
-		expanded.add(absFile, "recent", rel)
+		if useRecentRoots {
+			if expanded.add(absFile, "recent", rel) {
+				frontier = append(frontier, absFile)
+			}
+		} else {
+			expanded.add(absFile, "recent")
+		}
 	}
 	for _, file := range anchors {
 		absFile, _, ok := limitedCandidateFile(repoRoot, file, settings, rules)
@@ -680,9 +804,19 @@ func (s *Scanner) expandLimitedFiles(ctx context.Context, repositoryID int64, re
 	if len(parseWarnings) > 0 {
 		expanded.Fallback = strings.Join(parseWarnings, "; ")
 	}
-	resolver := s.getOrCreateResolver(repoRoot, settings)
-	s.expandReferenceNeighbors(ctx, repositoryID, repoRoot, settings, rules, resolver, parsed, &expanded)
-	s.expandCallerAncestors(ctx, repositoryID, repoRoot, settings, rules, resolver, parsed, &expanded)
+	referenceParsed := parsed
+	if focused {
+		referenceParsed = make([]limitedParsedFile, 0, len(parsed))
+		for _, file := range parsed {
+			if len(file.BlastRoots) == 0 {
+				referenceParsed = append(referenceParsed, file)
+			}
+		}
+	}
+	s.expandReferenceNeighbors(ctx, repositoryID, repoRoot, settings, rules, resolver, referenceParsed, &expanded)
+	if !focused {
+		s.expandBlastRadius(ctx, repositoryID, repoRoot, settings, rules, resolver, frontier, &expanded)
+	}
 	return expanded, nil
 }
 
@@ -761,10 +895,11 @@ func (s *Scanner) parseLimitedExpansionFiles(ctx context.Context, repoRoot strin
 			}
 		}
 		parsed = append(parsed, limitedParsedFile{
-			AbsFile: absFile,
-			RelPath: rel,
-			Roots:   expanded.fileRoots(absFile),
-			Result:  *result,
+			AbsFile:    absFile,
+			RelPath:    rel,
+			Roots:      expanded.fileRoots(absFile),
+			BlastRoots: expanded.fileBlastRoots(absFile),
+			Result:     *result,
 		})
 	}
 	return parsed, warnings
@@ -812,6 +947,222 @@ func (s *Scanner) expandReferenceNeighbors(ctx context.Context, repositoryID int
 		}
 	}
 	s.expandStoredReferenceNeighbors(ctx, repositoryID, repoRoot, settings, rules, parsed, expanded)
+}
+
+func (s *Scanner) expandBlastRadius(ctx context.Context, repositoryID int64, repoRoot string, settings Settings, rules *ignore.Rules, resolver definitionResolver, frontier []string, expanded *limitedExpansion) {
+	if expanded == nil || settings.Scale.MaxBlastRadiusHops <= 0 || len(frontier) == 0 {
+		return
+	}
+	frontier = uniqueLimitedAbsFiles(frontier, 0)
+	processed := map[string]struct{}{}
+	for depth := 1; depth <= settings.Scale.MaxBlastRadiusHops && len(frontier) > 0; depth++ {
+		if expanded.CapReached {
+			return
+		}
+		var current []string
+		for _, absFile := range frontier {
+			absFile = filepath.Clean(absFile)
+			if _, ok := processed[absFile]; ok {
+				continue
+			}
+			processed[absFile] = struct{}{}
+			current = append(current, absFile)
+		}
+		if len(current) == 0 {
+			return
+		}
+		parsed, parseWarnings := s.parseLimitedExpansionFiles(ctx, repoRoot, current, rules, *expanded)
+		if len(parseWarnings) > 0 {
+			if expanded.Fallback == "" {
+				expanded.Fallback = strings.Join(parseWarnings, "; ")
+			} else {
+				expanded.Fallback += "; " + strings.Join(parseWarnings, "; ")
+			}
+		}
+		if len(parsed) == 0 {
+			return
+		}
+		expanded.CallerDepthReached = max(expanded.CallerDepthReached, depth)
+		nextSet := map[string]struct{}{}
+		addNeighbor := func(absFile, reason string, roots, blastRoots []string) {
+			if len(roots) == 0 && len(blastRoots) == 0 {
+				return
+			}
+			if reason == "caller" && limitedRootUnionCount(expanded.fileRoots(absFile), roots) >= 2 {
+				expanded.SharedAncestorFound = true
+			}
+			hadBlastRoots := len(expanded.fileBlastRoots(absFile)) > 0
+			added := expanded.addRelated(absFile, reason, roots, blastRoots)
+			hasBlastRoots := len(expanded.fileBlastRoots(absFile)) > 0
+			if added || (!hadBlastRoots && hasBlastRoots) {
+				nextSet[filepath.Clean(absFile)] = struct{}{}
+			}
+		}
+		s.expandStoredBlastRadiusNeighbors(ctx, repositoryID, repoRoot, settings, rules, parsed, addNeighbor)
+		for _, file := range parsed {
+			if len(file.Roots) == 0 && len(file.BlastRoots) == 0 {
+				continue
+			}
+			for _, ref := range file.Result.Refs {
+				if ref.Kind != "" && ref.Kind != "call" {
+					continue
+				}
+				if resolver == nil {
+					continue
+				}
+				locations, err := resolver.ResolveDefinitions(ctx, ref)
+				if err == nil {
+					for _, location := range locations {
+						if absFile, _, ok := limitedCandidateFile(repoRoot, location.FilePath, settings, rules); ok {
+							addNeighbor(absFile, "neighbor", file.Roots, file.BlastRoots)
+						}
+					}
+				}
+			}
+			for _, symbol := range file.Result.Symbols {
+				if resolver == nil {
+					continue
+				}
+				for _, query := range []struct {
+					kind      string
+					locations []analyzerlsp.DefinitionLocation
+				}{
+					{kind: "caller", locations: definitionLocationsFromResolver(ctx, resolver.References, file.AbsFile, symbol.Line, 1)},
+					{kind: "neighbor", locations: definitionLocationsFromResolver(ctx, resolver.Implementations, file.AbsFile, symbol.Line, 1)},
+				} {
+					for _, location := range query.locations {
+						if absFile, _, ok := limitedCandidateFile(repoRoot, location.FilePath, settings, rules); ok {
+							addNeighbor(absFile, query.kind, file.Roots, file.BlastRoots)
+						}
+					}
+				}
+				for _, query := range []struct {
+					kind  string
+					calls []analyzerlsp.CallLocation
+				}{
+					{kind: "caller", calls: callLocationsFromResolver(ctx, resolver.IncomingCalls, file.AbsFile, symbol.Line, 1)},
+					{kind: "neighbor", calls: callLocationsFromResolver(ctx, resolver.OutgoingCalls, file.AbsFile, symbol.Line, 1)},
+				} {
+					for _, call := range query.calls {
+						if absFile, _, ok := limitedCandidateFile(repoRoot, call.FilePath, settings, rules); ok {
+							addNeighbor(absFile, query.kind, file.Roots, file.BlastRoots)
+						}
+					}
+				}
+			}
+		}
+		frontier = sortedLimitedAbsSet(nextSet)
+	}
+}
+
+func limitedRootUnionCount(left, right []string) int {
+	seen := map[string]struct{}{}
+	for _, value := range left {
+		if value = strings.TrimSpace(value); value != "" {
+			seen[value] = struct{}{}
+		}
+	}
+	for _, value := range right {
+		if value = strings.TrimSpace(value); value != "" {
+			seen[value] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
+func definitionLocationsFromResolver(ctx context.Context, fn func(context.Context, string, int, int) ([]analyzerlsp.DefinitionLocation, error), filePath string, line, column int) []analyzerlsp.DefinitionLocation {
+	locations, err := fn(ctx, filePath, line, column)
+	if err != nil {
+		return nil
+	}
+	return locations
+}
+
+func callLocationsFromResolver(ctx context.Context, fn func(context.Context, string, int, int) ([]analyzerlsp.CallLocation, error), filePath string, line, column int) []analyzerlsp.CallLocation {
+	calls, err := fn(ctx, filePath, line, column)
+	if err != nil {
+		return nil
+	}
+	return calls
+}
+
+func sortedLimitedAbsSet(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, filepath.Clean(value))
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (s *Scanner) expandStoredBlastRadiusNeighbors(ctx context.Context, repositoryID int64, repoRoot string, settings Settings, rules *ignore.Rules, parsed []limitedParsedFile, add func(string, string, []string, []string)) {
+	if s == nil || s.Store == nil || len(parsed) == 0 || add == nil {
+		return
+	}
+	parsedByRel := map[string]limitedParsedFile{}
+	var filePaths []string
+	for _, file := range parsed {
+		parsedByRel[file.RelPath] = file
+		filePaths = append(filePaths, file.RelPath)
+	}
+	symbols, err := s.Store.QuerySymbolsByFiles(ctx, repositoryID, filePaths)
+	if err != nil || len(symbols) == 0 {
+		return
+	}
+	symbolByID := map[int64]Symbol{}
+	var ids []int64
+	for _, symbol := range symbols {
+		symbolByID[symbol.ID] = symbol
+		ids = append(ids, symbol.ID)
+	}
+	addRefs := func(refs []Reference, sourceSide bool) {
+		var relatedIDs []int64
+		for _, ref := range refs {
+			if sourceSide {
+				relatedIDs = append(relatedIDs, ref.TargetSymbolID)
+			} else {
+				relatedIDs = append(relatedIDs, ref.SourceSymbolID)
+			}
+		}
+		relatedSymbols, err := s.Store.QuerySymbolsByIDs(ctx, repositoryID, relatedIDs)
+		if err != nil {
+			return
+		}
+		relatedByID := map[int64]Symbol{}
+		for _, sym := range relatedSymbols {
+			relatedByID[sym.ID] = sym
+		}
+		for _, ref := range refs {
+			var rootSymbol Symbol
+			var related Symbol
+			var ok bool
+			reason := "neighbor"
+			if sourceSide {
+				rootSymbol, ok = symbolByID[ref.SourceSymbolID]
+				related = relatedByID[ref.TargetSymbolID]
+			} else {
+				rootSymbol, ok = symbolByID[ref.TargetSymbolID]
+				related = relatedByID[ref.SourceSymbolID]
+				reason = "caller"
+			}
+			if !ok || strings.TrimSpace(related.FilePath) == "" {
+				continue
+			}
+			rootFile, ok := parsedByRel[rootSymbol.FilePath]
+			if !ok {
+				continue
+			}
+			if absFile, _, ok := limitedCandidateFile(repoRoot, related.FilePath, settings, rules); ok {
+				add(absFile, reason, rootFile.Roots, rootFile.BlastRoots)
+			}
+		}
+	}
+	if refs, err := s.Store.QueryReferencesBySourceIDs(ctx, repositoryID, ids); err == nil {
+		addRefs(refs, true)
+	}
+	if refs, err := s.Store.QueryReferencesByTargetIDs(ctx, repositoryID, ids); err == nil {
+		addRefs(refs, false)
+	}
 }
 
 func (s *Scanner) expandStoredReferenceNeighbors(ctx context.Context, repositoryID int64, repoRoot string, settings Settings, rules *ignore.Rules, parsed []limitedParsedFile, expanded *limitedExpansion) {
@@ -869,199 +1220,8 @@ func (s *Scanner) expandStoredReferenceNeighbors(ctx context.Context, repository
 	}
 }
 
-func (s *Scanner) expandCallerAncestors(ctx context.Context, repositoryID int64, repoRoot string, settings Settings, rules *ignore.Rules, resolver definitionResolver, parsed []limitedParsedFile, expanded *limitedExpansion) {
-	if settings.Scale.MaxCallerDepth <= 0 || len(parsed) == 0 {
-		return
-	}
-	var seedFiles []string
-	for _, file := range parsed {
-		seedFiles = append(seedFiles, file.RelPath)
-	}
-	storedSymbols, _ := s.Store.QuerySymbolsByFiles(ctx, repositoryID, seedFiles)
-	storedByLocation := map[string]Symbol{}
-	for _, symbol := range storedSymbols {
-		key := callerLocationKey(filepath.Join(repoRoot, filepath.FromSlash(symbol.FilePath)), symbol.StartLine, symbol.Name)
-		storedByLocation[key] = symbol
-	}
-	var frontier []limitedCallerNode
-	for _, file := range parsed {
-		if len(file.Roots) == 0 {
-			continue
-		}
-		for _, symbol := range file.Result.Symbols {
-			for _, root := range file.Roots {
-				node := limitedCallerNode{FilePath: file.AbsFile, Line: symbol.Line, Name: symbol.Name, Root: root}
-				if stored, ok := storedByLocation[callerLocationKey(file.AbsFile, symbol.Line, symbol.Name)]; ok {
-					node.SymbolID = stored.ID
-				}
-				frontier = append(frontier, node)
-			}
-		}
-	}
-	ancestorRoots := map[string]map[string]struct{}{}
-	for depth := 1; depth <= settings.Scale.MaxCallerDepth && len(frontier) > 0; depth++ {
-		expanded.CallerDepthReached = depth
-		var next []limitedCallerNode
-
-		// 1. Batch query references and source symbols for DB candidates in the current frontier
-		var dbTargetIDs []int64
-		seenTargetIDs := map[int64]bool{}
-		for _, node := range frontier {
-			if node.SymbolID > 0 && !seenTargetIDs[node.SymbolID] {
-				seenTargetIDs[node.SymbolID] = true
-				dbTargetIDs = append(dbTargetIDs, node.SymbolID)
-			}
-		}
-
-		var dbRefs []Reference
-		if len(dbTargetIDs) > 0 && s != nil && s.Store != nil {
-			dbRefs, _ = s.Store.QueryReferencesByTargetIDs(ctx, repositoryID, dbTargetIDs)
-		}
-
-		var dbSourceIDs []int64
-		seenSourceIDs := map[int64]bool{}
-		for _, ref := range dbRefs {
-			if !seenSourceIDs[ref.SourceSymbolID] {
-				seenSourceIDs[ref.SourceSymbolID] = true
-				dbSourceIDs = append(dbSourceIDs, ref.SourceSymbolID)
-			}
-		}
-
-		var sourceSymbols []Symbol
-		if len(dbSourceIDs) > 0 && s != nil && s.Store != nil {
-			sourceSymbols, _ = s.Store.QuerySymbolsByIDs(ctx, repositoryID, dbSourceIDs)
-		}
-
-		sourceByID := map[int64]Symbol{}
-		for _, sym := range sourceSymbols {
-			sourceByID[sym.ID] = sym
-		}
-
-		dbCallersByTargetID := map[int64][]Symbol{}
-		for _, ref := range dbRefs {
-			if srcSym, ok := sourceByID[ref.SourceSymbolID]; ok {
-				dbCallersByTargetID[ref.TargetSymbolID] = append(dbCallersByTargetID[ref.TargetSymbolID], srcSym)
-			}
-		}
-
-		// 2. Iterate through frontier nodes to find callers
-		for _, node := range frontier {
-			var callers []limitedCallerNode
-			var foundInDB bool
-
-			if node.SymbolID > 0 {
-				if dbSyms, ok := dbCallersByTargetID[node.SymbolID]; ok && len(dbSyms) > 0 {
-					foundInDB = true
-					for _, sym := range dbSyms {
-						callers = append(callers, limitedCallerNode{
-							FilePath: filepath.Join(repoRoot, filepath.FromSlash(sym.FilePath)),
-							Line:     sym.StartLine,
-							Name:     sym.Name,
-							SymbolID: sym.ID,
-						})
-					}
-				}
-			}
-
-			if !foundInDB && resolver != nil {
-				calls, err := resolver.IncomingCalls(ctx, node.FilePath, node.Line, 1)
-				if err == nil {
-					for _, call := range calls {
-						callers = append(callers, limitedCallerNode{
-							FilePath: call.FilePath,
-							Line:     call.Line,
-							Name:     call.Name,
-						})
-					}
-				}
-			}
-
-			for _, caller := range callers {
-				absFile, _, ok := limitedCandidateFile(repoRoot, caller.FilePath, settings, rules)
-				if !ok {
-					continue
-				}
-				caller.FilePath = absFile
-				caller.Root = node.Root
-				expanded.add(absFile, "caller", node.Root)
-				key := callerLocationKey(caller.FilePath, caller.Line, caller.Name)
-				if ancestorRoots[key] == nil {
-					ancestorRoots[key] = map[string]struct{}{}
-				}
-				ancestorRoots[key][node.Root] = struct{}{}
-				if len(ancestorRoots[key]) >= 2 {
-					expanded.SharedAncestorFound = true
-					return
-				}
-				next = append(next, caller)
-			}
-		}
-
-		// 3. Deduplicate and build next level's frontier
-		frontier = dedupeCallerNodes(next)
-
-		// 4. Resolve SymbolIDs for the new frontier's unresolved nodes in batch
-		var unresolvedFiles []string
-		seenUnresolved := map[string]bool{}
-		for _, node := range frontier {
-			if node.SymbolID <= 0 {
-				rel, err := filepath.Rel(repoRoot, node.FilePath)
-				if err == nil {
-					rel = filepath.ToSlash(rel)
-					if !seenUnresolved[rel] {
-						seenUnresolved[rel] = true
-						unresolvedFiles = append(unresolvedFiles, rel)
-					}
-				}
-			}
-		}
-
-		if len(unresolvedFiles) > 0 && s != nil && s.Store != nil {
-			resolvedSyms, err := s.Store.QuerySymbolsByFiles(ctx, repositoryID, unresolvedFiles)
-			if err == nil {
-				resolvedByLoc := map[string]int64{}
-				for _, sym := range resolvedSyms {
-					locKey := callerLocationKey(filepath.Join(repoRoot, filepath.FromSlash(sym.FilePath)), sym.StartLine, sym.Name)
-					resolvedByLoc[locKey] = sym.ID
-				}
-				for i := range frontier {
-					if frontier[i].SymbolID <= 0 {
-						locKey := callerLocationKey(frontier[i].FilePath, frontier[i].Line, frontier[i].Name)
-						if id, ok := resolvedByLoc[locKey]; ok {
-							frontier[i].SymbolID = id
-						}
-					}
-				}
-			}
-		}
-
-		if expanded.CapReached {
-			return
-		}
-	}
-}
-
 func callerLocationKey(filePath string, line int, name string) string {
 	return filepath.Clean(filePath) + ":" + fmt.Sprint(line) + ":" + name
-}
-
-func dedupeCallerNodes(nodes []limitedCallerNode) []limitedCallerNode {
-	seen := map[string]struct{}{}
-	out := make([]limitedCallerNode, 0, len(nodes))
-	for _, node := range nodes {
-		key := callerLocationKey(node.FilePath, node.Line, node.Name) + ":" + node.Root
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		out = append(out, node)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		left := callerLocationKey(out[i].FilePath, out[i].Line, out[i].Name) + ":" + out[i].Root
-		right := callerLocationKey(out[j].FilePath, out[j].Line, out[j].Name) + ":" + out[j].Root
-		return left < right
-	})
-	return out
 }
 
 func (s *Scanner) prepareLimitedBaselineWorktree(repoRoot string, repositoryID int64, dataDir, head string, result *ScanResult) string {
@@ -1432,9 +1592,7 @@ func (s *Scanner) backfillFactsForCachedFile(ctx context.Context, workerAnalyzer
 }
 
 func (s *Scanner) enrichFile(ctx context.Context, repositoryID, fileID int64, repoRoot, rel, absFile, language string, data []byte, extracted *analyzer.Result, repoSignals []enrich.ActivationSignal, result *scanFileResult) error {
-	if s.Enrichers == nil {
-		s.Enrichers = defaults.NewRegistry()
-	}
+	s.ensureDefaultEnrichers(NormalizeSettings(s.Settings))
 	signals := append([]enrich.ActivationSignal{}, repoSignals...)
 	if extracted != nil {
 		signals = append(signals, enrich.ImportSignals(extracted.Refs)...)
@@ -1459,6 +1617,13 @@ func (s *Scanner) enrichFile(ctx context.Context, repositoryID, fileID int64, re
 	watchFacts := watchFactsFromEnrich(repositoryID, fileID, rel, facts)
 	watchFacts = append(watchFacts, enrichmentVersionFact(repositoryID, fileID, rel))
 	return s.Store.ReplaceFactsForFile(ctx, repositoryID, fileID, watchFacts)
+}
+
+func (s *Scanner) ensureDefaultEnrichers(settings Settings) {
+	if s.Enrichers != nil {
+		return
+	}
+	s.Enrichers = defaults.NewRegistryWithDependencyInventory(settings.Dependencies.Enabled)
 }
 
 func watchedFileLanguage(path string) (language string, parseable bool, ok bool) {
@@ -1752,6 +1917,7 @@ func watchSymbolsFromAnalyzer(repositoryID, fileID int64, relPath, language stri
 			Name:          sym.Name,
 			QualifiedName: qualified,
 			Kind:          sym.Kind,
+			NodeType:      sym.NodeType,
 			StartLine:     sym.Line,
 			EndLine:       &endPtr,
 			SignatureHash: hashString(fmt.Sprintf("%s:%s", sym.Kind, qualified)),

@@ -48,6 +48,16 @@ const (
 	WorktreeDeleted WorktreeChange = "deleted"
 )
 
+const (
+	FileStateOutsideRepo = "outside_repo"
+	FileStateIgnored     = "ignored"
+	FileStateUntracked   = "untracked"
+	FileStateModified    = "modified"
+	FileStateDeleted     = "deleted"
+	FileStateTracked     = "tracked"
+	FileStateUnknown     = "unknown"
+)
+
 // DetectBranch returns the current branch name for the git repo rooted at dir.
 func DetectBranch(dir string) (string, error) {
 	out, err := run(dir, "branch", "--show-current")
@@ -264,6 +274,85 @@ func StatusSnapshot(dir string) (Status, error) {
 		}
 	}
 	return status, nil
+}
+
+// FileState returns a compact git state for a single path. filePath may be
+// absolute or relative to dir. The returned path is repository-relative.
+func FileState(dir, filePath string) (string, string, error) {
+	root, err := RepoRoot(dir)
+	if err != nil {
+		return FileStateOutsideRepo, "", nil
+	}
+	absPath := filePath
+	if !filepath.IsAbs(absPath) {
+		absPath = filepath.Join(dir, filePath)
+	}
+	absPath, err = filepath.Abs(absPath)
+	if err != nil {
+		return FileStateUnknown, "", err
+	}
+	relRoot := root
+	if evaluated, evalErr := filepath.EvalSymlinks(root); evalErr == nil {
+		relRoot = evaluated
+	}
+	relPath := absPath
+	if evaluated, evalErr := filepath.EvalSymlinks(absPath); evalErr == nil {
+		relPath = evaluated
+	} else if parent, parentErr := filepath.EvalSymlinks(filepath.Dir(absPath)); parentErr == nil {
+		relPath = filepath.Join(parent, filepath.Base(absPath))
+	}
+	rel, err := filepath.Rel(relRoot, relPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return FileStateOutsideRepo, "", nil
+	}
+	rel = filepath.ToSlash(rel)
+	if ignored, err := IsIgnored(root, rel); err != nil {
+		return FileStateUnknown, rel, err
+	} else if ignored {
+		return FileStateIgnored, rel, nil
+	}
+	status, err := StatusSnapshot(root)
+	if err != nil {
+		return FileStateUnknown, rel, err
+	}
+	if stringSliceContains(status.Deleted, rel) {
+		return FileStateDeleted, rel, nil
+	}
+	if stringSliceContains(status.Untracked, rel) {
+		return FileStateUntracked, rel, nil
+	}
+	if stringSliceContains(status.Staged, rel) || stringSliceContains(status.Unstaged, rel) {
+		return FileStateModified, rel, nil
+	}
+	if _, err := FileBlobHash(root, rel); err == nil {
+		return FileStateTracked, rel, nil
+	}
+	return FileStateUntracked, rel, nil
+}
+
+func IsIgnored(dir, filePath string) (bool, error) {
+	cmd := exec.Command("git", "check-ignore", "-q", "--", filepath.ToSlash(filePath))
+	cmd.Dir = dir
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return false, fmt.Errorf("git check-ignore: %s", strings.TrimSpace(string(exitErr.Stderr)))
+	}
+	return false, fmt.Errorf("git check-ignore: %w", err)
+}
+
+func stringSliceContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func WorktreeChangesAgainstHead(dir string) (map[string]WorktreeChange, error) {

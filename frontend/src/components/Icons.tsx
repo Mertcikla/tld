@@ -126,9 +126,9 @@ export function MarkdownIcon({ size = 26 }: { size?: number, strokeWidth?: numbe
     </svg>
   )
 }
-export function NavigationIcon({ size = 14, strokeWidth = 1.8 }: { size?: number, strokeWidth?: number }) {
+export function NavigationIcon({ size = 14, strokeWidth = 1.8, strokeColor = "currentColor" }: { size?: number, strokeWidth?: number, strokeColor?: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={strokeColor} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
       <rect x="8" y="2" width="8" height="5" rx="1.5" fill="none" />
       <line x1="12" y1="7" x2="12" y2="11.5" />
       <line x1="4.5" y1="11.5" x2="19.5" y2="11.5" />
@@ -207,6 +207,18 @@ export function ExportIcon({ size = 12, strokeWidth = 2.5 }: { size?: number, st
   )
 }
 
+export function ImageUploadIcon({ size = 14, strokeWidth = 2.3 }: { size?: number, strokeWidth?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <circle cx="8.5" cy="10.5" r="1.5" />
+      <path d="M21 16l-4.5-4.5L8 20" />
+      <path d="M14 8h5" />
+      <path d="M16.5 5.5v5" />
+    </svg>
+  )
+}
+
 export function LayerIcon({ size = 14, strokeWidth = 2.5 }: { size?: number, strokeWidth?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
@@ -237,6 +249,14 @@ export function ChevronDownIcon({ size = 14, strokeWidth = 3 }: { size?: number,
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
       <path d="M6 9l6 6 6-6" />
+    </svg>
+  )
+}
+
+export function ChevronUpIcon({ size = 14, strokeWidth = 3 }: { size?: number, strokeWidth?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 15l-6-6-6 6" />
     </svg>
   )
 }

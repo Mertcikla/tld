@@ -46,8 +46,6 @@ func DatastoreGlue() Enricher {
 				{"postgres://", "postgres", "PostgreSQL"},
 				{"postgresql://", "postgres", "PostgreSQL"},
 				{"github.com/lib/pq", "postgres", "PostgreSQL"},
-				{"secretmanager.googleapis.com", "secretmanager", "Secret Manager"},
-				{"go.opentelemetry.io/otel", "opentelemetry", "OpenTelemetry"},
 			}
 			for _, candidate := range candidates {
 				if !strings.Contains(lower, candidate.needle) {

@@ -65,6 +65,7 @@ func (p *cppParser) appendType(node *gotreesitter.Node, lang *gotreesitter.Langu
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     kind,
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     int(nameNode.StartPoint().Row) + 1,
 		EndLine:  int(node.EndPoint().Row) + 1,
@@ -83,6 +84,7 @@ func (p *cppParser) appendFunction(node *gotreesitter.Node, lang *gotreesitter.L
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     cppFunctionKind(name, owner),
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     cppNodeLine(declarator, node),
 		EndLine:  int(node.EndPoint().Row) + 1,
@@ -103,6 +105,7 @@ func (p *cppParser) appendMemberDeclaration(node *gotreesitter.Node, lang *gotre
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     cppFunctionKind(name, owner),
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     cppNodeLine(declarator, node),
 		EndLine:  int(node.EndPoint().Row) + 1,

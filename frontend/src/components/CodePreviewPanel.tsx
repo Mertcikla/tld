@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import type { SVGProps } from 'react'
 import { Box, Button, CloseButton, HStack, Icon, Spinner, Text, Tooltip, VStack } from '@chakra-ui/react'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
@@ -18,6 +18,7 @@ import { githubCache } from '../utils/githubCache'
 import { getGithubRepoVisibility } from '../utils/githubApi'
 import { parseRepoSlug } from '../utils/url'
 import { useSourceEditor } from '../utils/sourceEditor'
+import { parseSourceLink } from '../utils/sourceLinks'
 import { toast } from '../utils/toast'
 import { openExternalUrl } from '../lib/desktop'
 import type { PlacedElement } from '../types'
@@ -61,31 +62,6 @@ interface Props {
   hasBackdrop?: boolean
 }
 
-function parseAnchor(anchorStr: string):
-  | { kind: 'symbol'; name: string; type: string }
-  | { kind: 'lines'; startLine: number; endLine: number }
-  | { kind: 'none' } {
-  if (!anchorStr) return { kind: 'none' }
-  try {
-    const p = JSON.parse(anchorStr)
-    if (p.name && !p.startLine) return { kind: 'symbol', name: p.name, type: p.type || '' }
-    if (p.startLine) return { kind: 'lines', startLine: p.startLine, endLine: p.endLine ?? p.startLine }
-  } catch {
-    // intentionally empty
-  }
-  return { kind: 'none' }
-}
-
-function inferLineFromDescription(description: string | null | undefined, basePath: string): number | null {
-  if (!description || !basePath) return null
-  const match = description.match(/:(\d+)(?::\d+)?$/)
-  if (!match) return null
-  const pathPart = description.slice(0, match.index)
-  if (pathPart && pathPart !== basePath) return null
-  const line = Number(match[1])
-  return Number.isFinite(line) && line > 0 ? line : null
-}
-
 export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop = true }: Props) {
   const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
@@ -99,14 +75,10 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   const editorRef = useRef<ReactCodeMirrorRef>(null)
 
   const filePath = element?.file_path || ''
-  const hashIdx = filePath.indexOf('#')
-  const basePath = hashIdx >= 0 ? filePath.slice(0, hashIdx) : filePath
-  const symbolInfoStr = hashIdx >= 0 ? filePath.slice(hashIdx + 1) : ''
+  const { basePath, anchor } = useMemo(() => parseSourceLink(filePath), [filePath])
   const repoSlug = element?.repo ? parseRepoSlug(element.repo) : ''
-  const anchor = parseAnchor(symbolInfoStr)
-  const anchorStartLine = anchor.kind === 'lines' ? anchor.startLine : null
-  const fallbackStartLine = inferLineFromDescription(element?.description, basePath)
-  const editorStartLine = resolvedStartLine ?? anchorStartLine ?? fallbackStartLine
+  const anchorStartLine = anchor.kind === 'line' ? anchor.startLine : null
+  const editorStartLine = resolvedStartLine ?? anchorStartLine
 
   useEffect(() => {
     if (!isOpen || !element || !repoSlug || !basePath) return
@@ -148,18 +120,17 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
       if (cached) {
         if (!cancelled) setCode(cached)
         if (!cancelled) setLoading(false)
-        const anchor = parseAnchor(symbolInfoStr)
         const effectiveLanguage = element.language || detectLanguage(basePath)
         if (anchor.kind === 'symbol' && effectiveLanguage) {
           getParser(effectiveLanguage as SupportedLanguage).then(async (parser) => {
             const tree = parser.parse(cached)
-            const found = findSymbolByName(tree, effectiveLanguage as SupportedLanguage, anchor.name, anchor.type)
+            const found = findSymbolByName(tree, effectiveLanguage as SupportedLanguage, anchor.symbolName, anchor.nodeType)
             if (!cancelled && found) {
               setResolvedStartLine(found.startLine)
               setResolvedEndLine(found.endLine)
             }
           }).catch(() => {})
-        } else if (anchor.kind === 'lines' && !cancelled) {
+        } else if (anchor.kind === 'line' && !cancelled) {
           setResolvedStartLine(anchor.startLine)
           setResolvedEndLine(anchor.endLine)
         }
@@ -174,13 +145,12 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
         githubCache.setContent(rawUrl, text)
         setCode(text)
 
-        const anchor = parseAnchor(symbolInfoStr)
         const effectiveLanguage = element.language || detectLanguage(basePath)
         if (anchor.kind === 'symbol' && effectiveLanguage) {
           try {
             const parser = await getParser(effectiveLanguage as SupportedLanguage)
             const tree = parser.parse(text)
-            const found = findSymbolByName(tree, effectiveLanguage as SupportedLanguage, anchor.name, anchor.type)
+            const found = findSymbolByName(tree, effectiveLanguage as SupportedLanguage, anchor.symbolName, anchor.nodeType)
             if (!cancelled && found) {
               setResolvedStartLine(found.startLine)
               setResolvedEndLine(found.endLine)
@@ -188,7 +158,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
           } catch {
             // intentionally empty
           }
-        } else if (anchor.kind === 'lines') {
+        } else if (anchor.kind === 'line') {
           if (!cancelled) {
             setResolvedStartLine(anchor.startLine)
             setResolvedEndLine(anchor.endLine)
@@ -203,7 +173,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
     checkAndFetch()
     return () => { cancelled = true }
-  }, [isOpen, element, repoSlug, basePath, symbolInfoStr])
+  }, [isOpen, element, repoSlug, basePath, anchor])
 
   useEffect(() => {
     if (!code || !resolvedStartLine || !editorRef.current?.view) return
@@ -267,6 +237,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
   return (
     <SlidingPanel
+      data-testid="code-preview-panel"
       isOpen={isOpen}
       onClose={onClose}
       panelKey="code-preview"
@@ -404,9 +375,16 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
               </Button>
             </Tooltip>
           )}
-          <CloseButton size="sm" color="whiteAlpha.500"
+          <CloseButton
+            data-testid="code-preview-close"
+            aria-label="Close code preview"
+            size="sm"
+            color="whiteAlpha.500"
             _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
-            onClick={onClose} />
+            onClick={(event) => {
+              event.stopPropagation()
+              onClose()
+            }} />
         </HStack>
       </HStack>
 

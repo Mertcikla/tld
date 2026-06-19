@@ -46,7 +46,7 @@ export function useZUIProxyConnectors(
   const visibleElementSig = useMemo(() =>
     Array.from(anchors.visibleAnchors.entries())
       .sort(([a], [b]) => a - b)
-      .map(([id, anchor]) => `${id}:${anchor.nodeId}:${anchor.renderAlpha >= (crossBranchSettings.minConnectorAnchorAlpha ?? DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA) ? 1 : 0}`)
+      .map(([id, anchor]) => `${id}:${anchor.nodeId}:${anchor.renderAlpha >= (crossBranchSettings.minConnectorAnchorAlpha ?? DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA) ? 1 : 0}:${anchor.nativeRendered ? 1 : 0}`)
       .join(','),
     [anchors.visibleAnchors, crossBranchSettings.minConnectorAnchorAlpha],
   )

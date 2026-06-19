@@ -61,6 +61,7 @@ export async function getParser(language: SupportedLanguage): Promise<Parser> {
 export interface ParsedSymbol {
   name: string
   type: string
+  qualifiedName?: string
   startLine: number
   endLine: number
 }
@@ -73,50 +74,147 @@ export function extractSymbols(tree: Parser.Tree, language: SupportedLanguage): 
     switch (language) {
       case 'javascript':
       case 'typescript':
-        return ['class_declaration', 'function_declaration', 'method_definition', 'interface_declaration', 'type_alias_declaration'].includes(nodeType)
+        return ['abstract_class_declaration', 'class_declaration', 'enum_declaration', 'function_declaration', 'generator_function_declaration', 'interface_declaration', 'method_definition', 'type_alias_declaration', 'variable_declarator'].includes(nodeType)
       case 'python':
         return ['class_definition', 'function_definition'].includes(nodeType)
       case 'java':
-        return ['class_declaration', 'method_declaration', 'interface_declaration'].includes(nodeType)
+        return ['class_declaration', 'constructor_declaration', 'enum_declaration', 'interface_declaration', 'method_declaration', 'record_declaration'].includes(nodeType)
       case 'cpp':
-        return ['class_specifier', 'function_definition', 'struct_specifier'].includes(nodeType)
+        return ['class_specifier', 'declaration', 'enum_specifier', 'function_definition', 'struct_specifier'].includes(nodeType)
       case 'go':
-        return ['function_declaration', 'method_declaration', 'type_declaration'].includes(nodeType)
+        return ['function_declaration', 'method_declaration', 'type_alias', 'type_declaration', 'type_spec'].includes(nodeType)
       case 'rust':
-        return ['function_item', 'struct_item', 'impl_item', 'trait_item'].includes(nodeType)
+        return ['enum_item', 'function_item', 'function_signature_item', 'mod_item', 'struct_item', 'trait_item', 'type_item'].includes(nodeType)
       default:
         return false
     }
   }
 
-  const getNameField = (node: Parser.SyntaxNode): string => {
-    // Attempt to find an identifier child
-    if (node.type === 'method_definition') {
-      const nameNode = node.childForFieldName('name')
-      if (nameNode) return nameNode.text
+  const shouldIncludeNode = (node: Parser.SyntaxNode) => {
+    if (!isTargetNode(node.type)) return false
+    if (node.type === 'variable_declarator') {
+      const valueNode = node.childForFieldName('value')
+      return !!valueNode && ['arrow_function', 'function_expression', 'generator_function_expression'].includes(valueNode.type)
     }
+    if (language === 'cpp' && node.type === 'declaration') {
+      return /\b[A-Za-z_~][A-Za-z0-9_:~]*\s*\(/.test(node.text)
+    }
+    return true
+  }
+
+  const firstIdentifierChild = (node: Parser.SyntaxNode): string => {
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i)
-      if (child && ['identifier', 'type_identifier', 'name'].includes(child.type)) {
+      if (child && ['field_identifier', 'identifier', 'property_identifier', 'type_identifier', 'name'].includes(child.type)) {
         return child.text
       }
     }
-    return node.child(1)?.text || 'unknown'
+    return ''
   }
 
-  const traverse = (node: Parser.SyntaxNode) => {
-    if (isTargetNode(node.type)) {
+  const simpleCppName = (text: string) => {
+    const beforeCall = text.split('(')[0] ?? text
+    const parts = beforeCall.trim().split(/::|\s+/).filter(Boolean)
+    return parts[parts.length - 1]?.replace(/^~/, '') ?? ''
+  }
+
+  const cppOwner = (text: string) => {
+    const beforeCall = text.split('(')[0] ?? text
+    const parts = beforeCall.trim().split('::')
+    if (parts.length < 2) return ''
+    return simpleCppName(parts.slice(0, -1).join('::'))
+  }
+
+  const goReceiverName = (node: Parser.SyntaxNode) => {
+    const receiver = node.childForFieldName('receiver')?.text ?? ''
+    const cleaned = receiver.replace(/[()]/g, ' ').replace(/\*/g, ' ').trim()
+    const parts = cleaned.split(/\s+/).filter(Boolean)
+    return parts[parts.length - 1] ?? ''
+  }
+
+  const rustImplTarget = (node: Parser.SyntaxNode) => {
+    const typeNode = node.childForFieldName('type')
+    if (typeNode) return typeNode.text
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i)
+      if (child && child.type === 'type_identifier') return child.text
+    }
+    return ''
+  }
+
+  const getNameField = (node: Parser.SyntaxNode): string => {
+    const nameNode = node.childForFieldName('name')
+    if (nameNode) return nameNode.text
+    if (language === 'cpp' && (node.type === 'function_definition' || node.type === 'declaration')) {
+      const declarator = node.childForFieldName('declarator')?.text ?? node.text
+      return simpleCppName(declarator)
+    }
+    return firstIdentifierChild(node) || node.child(1)?.text || 'unknown'
+  }
+
+  const parentNameForNode = (node: Parser.SyntaxNode, symbolName: string) => {
+    switch (node.type) {
+      case 'abstract_class_declaration':
+      case 'class_declaration':
+      case 'class_definition':
+      case 'class_specifier':
+      case 'enum_declaration':
+      case 'enum_item':
+      case 'enum_specifier':
+      case 'interface_declaration':
+      case 'mod_item':
+      case 'record_declaration':
+      case 'struct_item':
+      case 'struct_specifier':
+      case 'trait_item':
+      case 'type_spec':
+        return symbolName
+      case 'impl_item':
+        return rustImplTarget(node)
+      default:
+        return ''
+    }
+  }
+
+  const qualifiedNameForNode = (node: Parser.SyntaxNode, name: string, parentName: string) => {
+    if (language === 'go' && node.type === 'method_declaration') {
+      const receiver = goReceiverName(node)
+      return receiver ? `${receiver}.${name}` : name
+    }
+    if (language === 'cpp' && (node.type === 'function_definition' || node.type === 'declaration')) {
+      const declarator = node.childForFieldName('declarator')?.text ?? node.text
+      const owner = cppOwner(declarator) || parentName
+      return owner ? `${owner}.${name}` : name
+    }
+    if (parentName && ['constructor_declaration', 'function_definition', 'function_item', 'function_signature_item', 'method_declaration', 'method_definition'].includes(node.type)) {
+      return `${parentName}.${name}`
+    }
+    return name
+  }
+
+  const traverse = (node: Parser.SyntaxNode, parentName = '') => {
+    let nextParent = parentName
+    if (shouldIncludeNode(node)) {
+      const name = getNameField(node)
+      const qualifiedName = qualifiedNameForNode(node, name, parentName)
       symbols.push({
-        name: getNameField(node),
+        name,
+        qualifiedName,
         type: node.type,
         startLine: node.startPosition.row + 1,
         endLine: node.endPosition.row + 1
       })
+      nextParent = parentNameForNode(node, name) || nextParent
+    } else if (node.type === 'impl_item') {
+      nextParent = rustImplTarget(node) || nextParent
+    } else {
+      const nodeName = getNameField(node)
+      nextParent = parentNameForNode(node, nodeName) || nextParent
     }
 
     for (let i = 0; i < node.childCount; i++) {
       const child = node.child(i)
-      if (child) traverse(child)
+      if (child) traverse(child, nextParent)
     }
   }
 
@@ -132,16 +230,15 @@ export function findSymbolByName(
   type: string
 ): ParsedSymbol | null {
   const all = extractSymbols(tree, language)
-  // Exact match
-  let found = all.find(s => s.name === name && s.type === type)
+  const matchesName = (symbol: ParsedSymbol) => symbol.name === name || symbol.qualifiedName === name
+
+  let found = all.find(s => matchesName(s) && s.type === type)
   if (found) return found
 
-  // Partial type match (e.g., 'function_item' contains 'function')
   if (type) {
-    found = all.find(s => s.name === name && (s.type.includes(type) || type.includes(s.type)))
+    found = all.find(s => matchesName(s) && (s.type.includes(type) || type.includes(s.type)))
     if (found) return found
   }
 
-  // Fallback to just name match
-  return all.find(s => s.name === name) ?? null
+  return all.find(matchesName) ?? null
 }

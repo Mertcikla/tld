@@ -7,6 +7,7 @@
 import { Box, Button, HStack, Text } from '@chakra-ui/react'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import { vscodeBridge } from '../lib/vscodeBridge'
+import { parseSourceLink } from '../utils/sourceLinks'
 import type { PlacedElement } from '../types'
 
 interface Props {
@@ -17,20 +18,10 @@ interface Props {
 export default function CodePreviewPanel({ element, onClose }: Props) {
   if (!element?.file_path) return null
 
-  const filePath = element.file_path
-  const hashIdx = filePath.indexOf('#')
-  const fp = hashIdx >= 0 ? filePath.slice(0, hashIdx) : filePath
-  let symbolName: string | undefined
-  let symbolKind: string | undefined
-  let startLine: number | undefined
-  if (hashIdx >= 0) {
-    try {
-      const p = JSON.parse(filePath.slice(hashIdx + 1))
-      symbolName = typeof p.name === 'string' ? p.name : undefined
-      symbolKind = typeof p.type === 'string' ? p.type : undefined
-      startLine = typeof p.startLine === 'number' ? p.startLine : undefined
-    } catch { /* intentionally empty */ }
-  }
+  const { basePath: fp, anchor } = parseSourceLink(element.file_path)
+  const symbolName = anchor.kind === 'symbol' ? anchor.symbolName : undefined
+  const symbolKind = anchor.kind === 'symbol' ? anchor.nodeType : undefined
+  const startLine = anchor.kind === 'line' ? anchor.startLine : undefined
 
   const handleOpen = () => {
     vscodeBridge.postMessage({ type: 'open-file', filePath: fp, startLine, symbolName, symbolKind })

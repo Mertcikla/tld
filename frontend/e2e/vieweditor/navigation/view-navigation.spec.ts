@@ -4,6 +4,7 @@ import {
   createApiView,
   gotoView,
   nodeByName,
+  openViewExplorer,
   uniqueName,
 } from '../../helpers/vieweditor'
 
@@ -26,6 +27,7 @@ test('searches and opens a view from the explorer tree', async ({ page }) => {
   const target = await createApiView(page, uniqueName('Explorer Target View'), elements[0].id)
   await gotoView(page, diagram.id)
   await page.reload()
+  await openViewExplorer(page)
 
   await page.getByTestId('view-explorer-search').fill(target.name)
   const targetItem = page.getByTestId('view-explorer-tree-item').filter({ hasText: target.name })

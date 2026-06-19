@@ -58,7 +58,7 @@ declare global {
 }
 
 export const mermaidImportFilters: DialogFilter[] = [
-  { displayName: 'Diagram Files (*.mmd;*.mermaid;*.md;*.dsl;*.txt)', pattern: '*.mmd;*.mermaid;*.md;*.dsl;*.txt' },
+  { displayName: 'Diagram Files (*.md;*.dsl;*.txt)', pattern: '*.md;*.dsl;*.txt' },
   { displayName: 'All Files (*.*)', pattern: '*.*' },
 ]
 

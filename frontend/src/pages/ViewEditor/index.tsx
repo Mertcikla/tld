@@ -12,7 +12,7 @@ import ReactFlow, {
   ReactFlowProvider,
   useReactFlow,
 } from 'reactflow'
-import type { Edge as RFEdge, EdgeMarker as RFEdgeMarker, Node as RFNode, NodeChange } from 'reactflow'
+import type { ConnectionLineType, Edge as RFEdge, EdgeMarker as RFEdgeMarker, Node as RFNode, NodeChange } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { toPng, toSvg } from 'html-to-image'
 import {
@@ -36,28 +36,36 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
 } from '../../components/Icons'
-import { api } from '../../api/client'
+import { api, type MermaidImportSummary, type ParsedImport } from '../../api/client'
 import type {
   ViewTreeNode,
   PlacedElement,
   LibraryElement as WorkspaceElement,
   Connector,
+  ElementReactionSummary,
+  ThreadResolveEvent,
   ViewMarkdownDocument,
+  ViewComment,
   ViewConnector,
+  ViewThread,
   VisibilityOverride,
   Tag,
 } from '../../types'
 import ElementNode from '../../components/ElementNode'
 import ElementPanel from '../../components/ElementPanel'
+import ElementPanelCollaboration from '../../components/ElementPanelCollaboration'
 import MergeDialog from '../../components/MergeDialog'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import CodePreviewPanel from '../../components/CodePreviewPanel'
 import ConnectorPanel from '../../components/ConnectorPanel'
+import ConnectorPanelCollaboration from '../../components/ConnectorPanelCollaboration'
 import ElementLibrary from '../../components/ElementLibrary'
 import ViewExplorer from '../../components/ViewExplorer'
 import ViewMarkdownPanel from '../../components/ViewMarkdownPanel'
 import ViewPanel from '../../components/ViewPanel'
 import { useSetHeader } from '../../components/HeaderContext'
+import { useTouchOnlyCanvasInput } from '../../hooks/useCanvasInputMode'
+import { shouldEnableCanvasWheelPan } from '../../utils/canvasInputMode'
 import { usePlatform } from '../../platform/context'
 import type {
   RealtimeCursor,
@@ -73,7 +81,7 @@ import ViewEditorOnboarding from '../../components/ViewEditorOnboarding'
 import DrawingCanvas, { type DrawingCanvasHandle, type DrawingPath } from '../../components/DrawingCanvas'
 import ViewFloatingMenu from '../../components/ViewFloatingMenu'
 import ViewDrawMenu from '../../components/ViewDrawMenu'
-import ViewBezierConnector from '../../components/ViewBezierConnector'
+import ViewBezierConnector, { ViewConnectorConnectionLine } from '../../components/ViewBezierConnector'
 import ViewContextNeighborElement from '../../components/ContextNeighborElement'
 import ContextBoundaryElement from '../../components/ContextBoundaryElement'
 import ContextStraightConnector from '../../components/ContextStraightConnector'
@@ -87,14 +95,14 @@ import {
   useViewContextNeighbours,
 } from './hooks/useViewContextNeighbours'
 import { canonicalNodePairKey } from './pairKey'
-import type { ParsedImport } from '../../pkg/importer/mermaid'
-import { extractMermaidCode, parseMermaidAsync, serializeViewToMermaid, type MermaidDirection } from '../../pkg/importer/mermaid'
 import { vscodeBridge } from '../../lib/vscodeBridge'
+import { openTextFile } from '../../lib/desktop'
 import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
 
 import { ViewEditorContext } from './context'
 import { useViewData } from './hooks/useViewData'
 import { useDrawingEngine } from './hooks/useDrawingEngine'
+import { connectorStyleForCreate, connectorStyleForPreview, useConnectorStyle } from '../../context/ConnectorStyleContext'
 import {
   PENDING_ELEMENT_NODE_ID,
   applyNodeChangesWithStructuralSharing,
@@ -106,12 +114,13 @@ import { useViewEditHistory } from './hooks/useViewEditHistory'
 import { useOverlapDetection } from './hooks/useOverlapDetection'
 import { removeCollisions } from '../../utils/layout'
 import { connectorToConnector, findClosestHandles, sanitizeExportFilename, triggerBlobDownload, triggerDownload } from './utils'
-import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, ensureVisualHandleId } from '../../utils/edgeDistribution'
+import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, getCenterVisualHandleId, getLogicalHandleId, getOppositeHandleSide } from '../../utils/edgeDistribution'
 import { pickUnusedColor } from '../../components/ViewExplorer/utils'
 
 import { EmptyCanvasState } from './components/EmptyCanvasState'
 import { EditorOverlays } from './components/EditorOverlays'
 import { ConnectorContextMenu, CanvasContextMenu } from './components/EditorMenus'
+import { TEMPORARY_CONNECTOR_EDGE_STYLE, TEMPORARY_CONNECTOR_PATH_STYLE } from './temporaryConnectorStyle'
 import {
   VIEW_SELECTION_CLIPBOARD_MIME,
   buildViewSelectionClipboardPayload,
@@ -131,6 +140,7 @@ import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
 import { buildElementLibraryItems, useStore, placedElementToLibraryElement, resolveElementForUpdate } from '../../store/useStore'
 import { useWorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
+import { useExperimental } from '../../context/ExperimentalContext'
 import {
   elementSelectionRects,
   planSelectionAlignment,
@@ -149,17 +159,18 @@ const nodeTypes = {
   contextNeighborNode: ViewContextNeighborElement,
   ContextBoundaryElement: ContextBoundaryElement,
 }
-const edgeTypes = { default: ViewBezierConnector, contextStraightConnector: ContextStraightConnector, proxyConnectorEdge: ProxyConnectorEdge }
+const edgeTypes = {
+  default: ViewBezierConnector,
+  straight: ViewBezierConnector,
+  step: ViewBezierConnector,
+  smoothstep: ViewBezierConnector,
+  contextStraightConnector: ContextStraightConnector,
+  proxyConnectorEdge: ProxyConnectorEdge,
+}
 const EMPTY_LINKS: ViewConnector[] = []
 const EMPTY_TAG_COLORS: Record<string, Tag> = {}
 const noop = () => { }
 const noopAsync = async () => { }
-const CONNECTOR_DRAG_CONNECTION_LINE_STYLE = {
-  stroke: 'var(--accent)',
-  strokeWidth: 2,
-  strokeDasharray: '6 5',
-  opacity: 0.75,
-}
 const VIEW_EDITOR_MIN_ZOOM_FLOOR = 0.12
 const VIEW_EDITOR_INITIAL_FIT_PADDING = 0.25
 const VIEW_EDITOR_FOCUS_FIT_PADDING = 0.35
@@ -167,6 +178,7 @@ const VIEW_EDITOR_EMPTY_EXTENT_RATIO = 0.75
 const VIEW_EDITOR_PAN_MARGIN_RATIO = 0.25
 const VIEW_EDITOR_PAN_MARGIN_MIN = 180
 const VIEW_EDITOR_PAN_MARGIN_MAX = 720
+const VIEW_EDITOR_MAX_ZOOM = 4
 const VIEW_EDITOR_MARKDOWN_DEFAULT_WIDTH = 540
 const VIEW_EDITOR_MARKDOWN_MIN_WIDTH = 360
 const VIEW_EDITOR_MARKDOWN_MIN_WIDTH_MOBILE = 280
@@ -202,6 +214,18 @@ type CanvasViewportStore = {
 }
 
 type ViewMetadataSnapshot = Pick<ViewTreeNode, 'id' | 'name' | 'level_label'>
+
+function buildViewNameById(nodes: ViewTreeNode[]) {
+  const names = new Map<number, string>()
+  const visit = (items: ViewTreeNode[]) => {
+    for (const item of items) {
+      names.set(item.id, item.name)
+      if (item.children.length > 0) visit(item.children)
+    }
+  }
+  visit(nodes)
+  return names
+}
 
 type PendingDuplicatePaste = {
   payload: ViewSelectionClipboardPayload
@@ -434,6 +458,10 @@ function initialViewMarkdown(name?: string | null) {
   return trimmed ? `# ${trimmed}\n\n` : ''
 }
 
+function isMarkdownConflictError(error: unknown) {
+  return error instanceof Error && /markdown file changed/i.test(error.message)
+}
+
 function clampMarkdownPaneWidth(width: number, totalWidth: number, isMobileLayout: boolean) {
   const minMarkdownWidth = isMobileLayout
     ? VIEW_EDITOR_MARKDOWN_MIN_WIDTH_MOBILE
@@ -474,79 +502,23 @@ function isCanvasKeyboardTarget(target: EventTarget | null) {
   return !!target.closest('[data-testid="vieweditor-canvas"]')
 }
 
+function countLabel(count: number, singular: string, plural = `${singular}s`) {
+  return `${count} ${count === 1 ? singular : plural}`
+}
+
+function mermaidImportDescription(summary: MermaidImportSummary) {
+  return [
+    `Resolved ${countLabel(summary.resolvedElementCount, 'element')} and ${countLabel(summary.resolvedConnectorCount, 'connector')}.`,
+    `Created ${countLabel(summary.createdElementCount, 'element')} and ${countLabel(summary.createdConnectorCount, 'connector')}.`,
+  ].join(' ')
+}
+
 function fadeMarker(marker: string | RFEdgeMarker | undefined, opacity: number) {
   if (!marker || typeof marker === 'string') return marker
   return {
     ...marker,
     color: alphaColor(marker.color ?? 'var(--accent)', opacity),
   }
-}
-
-function mermaidConnectorHandles(direction: MermaidDirection) {
-  if (direction === 'RL') return { source_handle: 'left', target_handle: 'right' }
-  if (direction === 'TB' || direction === 'TD') return { source_handle: 'bottom', target_handle: 'top' }
-  if (direction === 'BT') return { source_handle: 'top', target_handle: 'bottom' }
-  return { source_handle: 'right', target_handle: 'left' }
-}
-
-function layoutMermaidImport(parsed: ParsedImport, center: { x: number; y: number }) {
-  const refs = parsed.elements.map((element) => element.ref).filter(Boolean)
-  const refSet = new Set(refs)
-  const outgoing = new Map<string, string[]>()
-  const indegree = new Map<string, number>()
-  const rank = new Map<string, number>()
-  refs.forEach((ref) => {
-    outgoing.set(ref, [])
-    indegree.set(ref, 0)
-    rank.set(ref, 0)
-  })
-
-  parsed.connectors.forEach((connector) => {
-    const source = connector.sourceElementRef
-    const target = connector.targetElementRef
-    if (!refSet.has(source) || !refSet.has(target)) return
-    outgoing.get(source)?.push(target)
-    indegree.set(target, (indegree.get(target) ?? 0) + 1)
-  })
-
-  const queue = refs.filter((ref) => (indegree.get(ref) ?? 0) === 0)
-  let cursor = 0
-  while (cursor < queue.length) {
-    const ref = queue[cursor++]
-    for (const target of outgoing.get(ref) ?? []) {
-      rank.set(target, Math.max(rank.get(target) ?? 0, (rank.get(ref) ?? 0) + 1))
-      const nextIndegree = (indegree.get(target) ?? 0) - 1
-      indegree.set(target, nextIndegree)
-      if (nextIndegree === 0) queue.push(target)
-    }
-  }
-
-  const groups = new Map<number, string[]>()
-  refs.forEach((ref, index) => {
-    const refRank = cursor === refs.length ? (rank.get(ref) ?? 0) : Math.floor(index / 4)
-    const group = groups.get(refRank) ?? []
-    group.push(ref)
-    groups.set(refRank, group)
-  })
-
-  const horizontal = parsed.direction === 'LR' || parsed.direction === 'RL'
-  const reverse = parsed.direction === 'RL' || parsed.direction === 'BT'
-  const rankSpacing = 280
-  const itemSpacing = 150
-  const rankCount = groups.size || 1
-  const positions = new Map<string, { x: number; y: number }>()
-
-  Array.from(groups.entries()).sort(([a], [b]) => a - b).forEach(([groupRank, group]) => {
-    const rankOffset = (groupRank - (rankCount - 1) / 2) * rankSpacing * (reverse ? -1 : 1)
-    group.forEach((ref, index) => {
-      const itemOffset = (index - (group.length - 1) / 2) * itemSpacing
-      positions.set(ref, horizontal
-        ? { x: center.x + rankOffset, y: center.y + itemOffset }
-        : { x: center.x + itemOffset, y: center.y + rankOffset })
-    })
-  })
-
-  return positions
 }
 
 function areTranslateExtentsEqual(
@@ -599,6 +571,8 @@ function ViewEditorInner({
   navigateRef.current = navigate
 
   const toast = useToast()
+  const { experimental } = useExperimental()
+  const mermaidIntegrationEnabled = experimental.mermaidIntegrationEnabled
   const {
     canUndo: canUndoViewEdit,
     canRedo: canRedoViewEdit,
@@ -623,6 +597,10 @@ function ViewEditorInner({
     collaborators: [],
     followUserId: null,
   })
+  const [liveThreadUpsert, setLiveThreadUpsert] = useState<ViewThread | null>(null)
+  const [liveThreadResolve, setLiveThreadResolve] = useState<ThreadResolveEvent | null>(null)
+  const [liveCommentCreate, setLiveCommentCreate] = useState<ViewComment | null>(null)
+  const [liveReactions, setLiveReactions] = useState<ElementReactionSummary[] | undefined>(undefined)
   const handleCollaborationAvatarClick = useCallback((userId: string) => {
     setCollaboration((prev) => ({
       ...prev,
@@ -630,6 +608,8 @@ function ViewEditorInner({
     }))
   }, [])
   const isMobileLayout = useBreakpointValue({ base: true, md: false }) ?? false
+  const touchOnlyCanvasInput = useTouchOnlyCanvasInput()
+  const enableCanvasWheelPan = shouldEnableCanvasWheelPan({ isMobileLayout, touchOnlyInput: touchOnlyCanvasInput })
   const [densityLevel, setDensityLevel] = useState(0)
   const [visibilityOverrides, setVisibilityOverrides] = useState<VisibilityOverride[]>([])
   const [noiseGateBusy, setNoiseGateBusy] = useState(false)
@@ -712,6 +692,14 @@ function ViewEditorInner({
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
   const [selectedProxyConnectorDetails, setSelectedProxyConnectorDetails] = useState<ProxyConnectorDetails | null>(null)
+  const [suppressedSelectedConnectorHandleHighlightId, setSuppressedSelectedConnectorHandleHighlightId] = useState<number | null>(null)
+  const suppressSelectedConnectorHandleHighlight = selectedEdge !== null && suppressedSelectedConnectorHandleHighlightId === selectedEdge.id
+
+  useEffect(() => {
+    if (suppressedSelectedConnectorHandleHighlightId !== null && selectedEdge?.id !== suppressedSelectedConnectorHandleHighlightId) {
+      setSuppressedSelectedConnectorHandleHighlightId(null)
+    }
+  }, [selectedEdge?.id, suppressedSelectedConnectorHandleHighlightId])
 
   const [prevViewId, setPrevViewId] = useState(viewId)
   if (viewId !== prevViewId) {
@@ -856,6 +844,7 @@ function ViewEditorInner({
   }, [clearEditHistory, viewId, toast])
 
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const viewEditorCanvasRef = useRef<HTMLDivElement | null>(null)
   const drawingCanvasRef = useRef<DrawingCanvasHandle | null>(null)
 
   const { safeFitView } = useSafeFitView(containerRef)
@@ -866,9 +855,11 @@ function ViewEditorInner({
   const rfReadyRef = useRef(false)
   const fittedContextForViewRef = useRef<number | null>(null)
   const [initialViewportReady, setInitialViewportReady] = useState(false)
+  const [computedMinZoom, setComputedMinZoom] = useState(VIEW_EDITOR_MIN_ZOOM_FLOOR)
   const [interactionSourceId, setInteractionSourceId] = useState<number | null>(null)
   const [clickConnectMode, setClickConnectMode] = useState<ClickConnectModeState | null>(null)
   const [clickConnectCursorPos, setClickConnectCursorPos] = useState<ClickConnectCursorPosition | null>(null)
+  const [isConnectorCreatePreviewActive, setConnectorCreatePreviewActive] = useState(false)
   const interactionSourceIdRef = useRef<number | null>(null)
   const multiConnectionSourceIdsRef = useRef<number[] | null>(null)
   const [deletedLibraryElementIds, setDeletedLibraryElementIds] = useState<number[]>([])
@@ -915,7 +906,9 @@ function ViewEditorInner({
     viewId,
     interactionSourceId,
     clickConnectMode,
+    isConnectorCreatePreviewActive,
     selectedConnector: selectedEdge,
+    suppressSelectedConnectorHandleHighlight,
     activeTags,
     hiddenLayerTags,
     hoveredLayerTags,
@@ -1047,8 +1040,10 @@ function ViewEditorInner({
       })
       snapshot.crdt_connectors.forEach((state) => {
         if (state.deleted) {
+          if (viewId !== null) removeConnectorGraphSnapshot(viewId, state.connector_id)
           removeStoreConnector(state.connector_id)
         } else if (state.connector) {
+          upsertConnectorGraphSnapshot(state.connector)
           upsertStoreConnector(state.connector)
         }
       })
@@ -1109,10 +1104,14 @@ function ViewEditorInner({
     },
     onCRDTConnectorUpsert: (state) => {
       if (state.actor_user_id && state.actor_user_id === realtimeSelfUserIdRef.current) return
-      if (state.connector) upsertStoreConnector(state.connector)
+      if (state.connector) {
+        upsertConnectorGraphSnapshot(state.connector)
+        upsertStoreConnector(state.connector)
+      }
     },
     onCRDTConnectorDelete: (state) => {
       if (state.actor_user_id && state.actor_user_id === realtimeSelfUserIdRef.current) return
+      if (viewId !== null) removeConnectorGraphSnapshot(viewId, state.connector_id)
       removeStoreConnector(state.connector_id)
     },
     onViewElementAdd: (element) => {
@@ -1128,10 +1127,18 @@ function ViewEditorInner({
     onElementUpdate: (element) => {
       applyElementSaved(element)
     },
-    onThreadUpsert: () => { },
-    onThreadResolve: () => { },
-    onCommentCreate: () => { },
-    onReactionsSnapshot: () => { },
+    onThreadUpsert: (thread) => {
+      setLiveThreadUpsert(thread as ViewThread)
+    },
+    onThreadResolve: (event) => {
+      setLiveThreadResolve(event)
+    },
+    onCommentCreate: (comment) => {
+      setLiveCommentCreate(comment as ViewComment)
+    },
+    onReactionsSnapshot: (items) => {
+      setLiveReactions(items as ElementReactionSummary[])
+    },
     onViewStateChange: scheduleRemoteViewRefresh,
     onClose: () => { },
     onRoomFull: () => {
@@ -1149,6 +1156,7 @@ function ViewEditorInner({
     toast,
     updateStoreElementPosition,
     upsertStoreConnector,
+    viewId,
   ])
 
   useEffect(() => {
@@ -1157,15 +1165,19 @@ function ViewEditorInner({
     realtimeSelfUserIdRef.current = null
     setRemoteCursors([])
     setCollaboration({ viewers: [], collaborators: [], followUserId: null })
+    setLiveThreadUpsert(null)
+    setLiveThreadResolve(null)
+    setLiveCommentCreate(null)
+    setLiveReactions(undefined)
 
-    if (viewId === null || isFreePlan || !platform.connectRealtime) return
+    if (viewId === null || !platform.connectRealtime) return
     realtimeRef.current = platform.connectRealtime(viewId, realtimeHandlers)
 
     return () => {
       realtimeRef.current?.disconnect()
       realtimeRef.current = null
     }
-  }, [isFreePlan, platform, realtimeHandlers, viewId])
+  }, [platform, realtimeHandlers, viewId])
 
   useEffect(() => {
     if (applyingRemoteVisibilityRef.current) return
@@ -1205,6 +1217,16 @@ function ViewEditorInner({
     realtimeRef.current?.sendCRDTElementPosition(elementId, x, y, realtimeClockRef.current)
   }, [])
 
+  const publishRealtimeConnectorUpsert = useCallback((connector: Connector) => {
+    realtimeClockRef.current += 1
+    realtimeRef.current?.sendCRDTConnectorUpsert(connector, realtimeClockRef.current)
+  }, [])
+
+  const publishRealtimeConnectorDelete = useCallback((connectorId: number) => {
+    realtimeClockRef.current += 1
+    realtimeRef.current?.sendCRDTConnectorDelete(connectorId, realtimeClockRef.current)
+  }, [])
+
   const [viewMarkdown, setViewMarkdown] = useState<ViewMarkdownDocument | null>(null)
   const [viewMarkdownContent, setViewMarkdownContent] = useState('')
   const [loadedViewMarkdownContent, setLoadedViewMarkdownContent] = useState('')
@@ -1213,6 +1235,7 @@ function ViewEditorInner({
   const [isMarkdownLoading, setIsMarkdownLoading] = useState(false)
   const [isMarkdownMutating, setIsMarkdownMutating] = useState(false)
   const [isMarkdownSaving, setIsMarkdownSaving] = useState(false)
+  const [markdownSaveConflict, setMarkdownSaveConflict] = useState(false)
   const [isMarkdownResizing, setIsMarkdownResizing] = useState(false)
   const [markdownPaneWidth, setMarkdownPaneWidth] = useState(() => {
     if (typeof window === 'undefined') return VIEW_EDITOR_MARKDOWN_DEFAULT_WIDTH
@@ -1272,6 +1295,17 @@ function ViewEditorInner({
     }
   }, [getClampedMarkdownPaneWidth, isMarkdownResizing])
 
+  const resetViewMarkdown = useCallback(() => {
+    markdownRequestSeqRef.current += 1
+    setViewMarkdown(null)
+    setViewMarkdownContent('')
+    setLoadedViewMarkdownContent('')
+    setViewMarkdownSyncToken((prev) => prev + 1)
+    setMarkdownSaveConflict(false)
+    setIsMarkdownOpen(false)
+    setIsMarkdownLoading(false)
+  }, [])
+
   const loadViewMarkdown = useCallback(async (targetViewId: number, options: { silent?: boolean } = {}) => {
     const requestSeq = ++markdownRequestSeqRef.current
     setIsMarkdownLoading(true)
@@ -1279,24 +1313,18 @@ function ViewEditorInner({
       const result = await api.workspace.views.markdown.get(targetViewId)
       if (markdownRequestSeqRef.current !== requestSeq) return null
       if (!result) {
-        setViewMarkdown(null)
-        setViewMarkdownContent('')
-        setLoadedViewMarkdownContent('')
-        setViewMarkdownSyncToken((prev) => prev + 1)
-        setIsMarkdownOpen(false)
+        resetViewMarkdown()
         return null
       }
       setViewMarkdown(result.markdown)
       setViewMarkdownContent(result.content)
       setLoadedViewMarkdownContent(result.content)
       setViewMarkdownSyncToken((prev) => prev + 1)
+      setMarkdownSaveConflict(false)
       return result
     } catch (error) {
       if (markdownRequestSeqRef.current !== requestSeq) return null
-      setViewMarkdown(null)
-      setViewMarkdownContent('')
-      setLoadedViewMarkdownContent('')
-      setViewMarkdownSyncToken((prev) => prev + 1)
+      resetViewMarkdown()
       if (!options.silent) {
         toast({
           status: 'error',
@@ -1308,21 +1336,17 @@ function ViewEditorInner({
     } finally {
       if (markdownRequestSeqRef.current === requestSeq) setIsMarkdownLoading(false)
     }
-  }, [toast])
+  }, [resetViewMarkdown, toast])
+
+  const loadedViewMarkdownPath = view && view.id === viewId ? view.markdown?.path ?? null : undefined
 
   useEffect(() => {
-    if (viewId === null) {
-      markdownRequestSeqRef.current += 1
-      setViewMarkdown(null)
-      setViewMarkdownContent('')
-      setLoadedViewMarkdownContent('')
-      setViewMarkdownSyncToken((prev) => prev + 1)
-      setIsMarkdownOpen(false)
-      setIsMarkdownLoading(false)
+    if (viewId === null || !loadedViewMarkdownPath) {
+      resetViewMarkdown()
       return
     }
     void loadViewMarkdown(viewId, { silent: true })
-  }, [loadViewMarkdown, viewId])
+  }, [loadedViewMarkdownPath, loadViewMarkdown, resetViewMarkdown, viewId])
 
   const markdownDirty = viewMarkdownContent !== loadedViewMarkdownContent
   const markdownBusy = isMarkdownLoading || isMarkdownMutating || isMarkdownSaving
@@ -1348,14 +1372,17 @@ function ViewEditorInner({
     event.preventDefault()
   }, [isMarkdownOpen, markdownPaneWidth])
 
-  const handleCreateManagedMarkdown = useCallback(async (options: { fileName?: string; initialContent?: string; openEditor?: boolean } = {}) => {
+  const handleCreateManagedMarkdown = useCallback(async (options: { fileName?: string; initialContent?: string; openEditor?: boolean; targetKind?: string; path?: string } = {}) => {
     if (!canEdit || viewId === null) return null
     setIsMarkdownMutating(true)
     try {
-      await api.workspace.views.markdown.create(viewId, {
+      const updatedView = await api.workspace.views.markdown.create(viewId, {
         fileName: options.fileName,
         initialContent: options.initialContent ?? initialViewMarkdown(view?.name),
+        targetKind: options.targetKind,
+        path: options.path,
       })
+      setView(updatedView)
       const loadedMarkdown = await loadViewMarkdown(viewId)
       if (options.openEditor !== false) setIsMarkdownOpen(true)
       return loadedMarkdown
@@ -1369,7 +1396,11 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownMutating(false)
     }
-  }, [canEdit, loadViewMarkdown, toast, view?.name, viewId])
+  }, [canEdit, loadViewMarkdown, setView, toast, view?.name, viewId])
+
+  const handleCreateMarkdownFromPanel = useCallback(async (targetKind: string, path?: string) => {
+    await handleCreateManagedMarkdown({ targetKind, path, openEditor: true })
+  }, [handleCreateManagedMarkdown])
 
   const handleToggleMarkdown = useCallback(() => {
     if (window.__TLD_VSCODE__) {
@@ -1383,7 +1414,7 @@ function ViewEditorInner({
       return
     }
     if (!viewMarkdown) {
-      void handleCreateManagedMarkdown({ openEditor: true })
+      setIsMarkdownOpen((prev) => !prev)
       return
     }
     setIsMarkdownOpen((prev) => !prev)
@@ -1407,8 +1438,10 @@ function ViewEditorInner({
     if (!canEdit || viewId === null) return
     setIsMarkdownMutating(true)
     try {
-      await api.workspace.views.markdown.link(viewId, path)
+      const updatedView = await api.workspace.views.markdown.link(viewId, path)
+      setView(updatedView)
       await loadViewMarkdown(viewId)
+      setMarkdownSaveConflict(false)
       setIsMarkdownOpen(true)
       toast({ status: 'success', title: 'Markdown linked' })
     } catch (error) {
@@ -1420,15 +1453,15 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownMutating(false)
     }
-  }, [canEdit, loadViewMarkdown, toast, viewId])
+  }, [canEdit, loadViewMarkdown, setView, toast, viewId])
 
   const handleUnlinkMarkdown = useCallback(async ({ deleteManagedFile }: { deleteManagedFile: boolean } = { deleteManagedFile: false }) => {
     if (!canEdit || viewId === null) return
     setIsMarkdownMutating(true)
     try {
-      await api.workspace.views.markdown.unlink(viewId, deleteManagedFile)
-      await loadViewMarkdown(viewId, { silent: true })
-      setIsMarkdownOpen(false)
+      const updatedView = await api.workspace.views.markdown.unlink(viewId, deleteManagedFile)
+      setView(updatedView)
+      resetViewMarkdown()
       toast({ status: 'success', title: 'Markdown unlinked' })
     } catch (error) {
       toast({
@@ -1439,18 +1472,31 @@ function ViewEditorInner({
     } finally {
       setIsMarkdownMutating(false)
     }
-  }, [canEdit, loadViewMarkdown, toast, viewId])
+  }, [canEdit, resetViewMarkdown, setView, toast, viewId])
 
-  const handleSaveMarkdown = useCallback(async (markdown: string) => {
+  const handleSaveMarkdown = useCallback(async (markdown: string, options: { force?: boolean } = {}) => {
     if (viewId === null || !viewMarkdown) return
     setIsMarkdownSaving(true)
     try {
-      const updated = await api.workspace.views.markdown.save(viewId, markdown)
+      const updated = await api.workspace.views.markdown.save(viewId, markdown, {
+        expectedFileVersion: options.force ? undefined : viewMarkdown.file_version,
+        force: options.force ?? false,
+      })
       setViewMarkdown(updated)
       setViewMarkdownContent(markdown)
       setLoadedViewMarkdownContent(markdown)
+      setMarkdownSaveConflict(false)
       toast({ status: 'success', title: 'Notes saved' })
     } catch (error) {
+      if (isMarkdownConflictError(error)) {
+        setMarkdownSaveConflict(true)
+        toast({
+          status: 'warning',
+          title: 'Markdown changed on disk',
+          description: 'Reload the file or overwrite it from the notes panel.',
+        })
+        return
+      }
       toast({
         status: 'error',
         title: 'Failed to save notes',
@@ -1460,6 +1506,19 @@ function ViewEditorInner({
       setIsMarkdownSaving(false)
     }
   }, [toast, viewId, viewMarkdown])
+
+  const handleForceSaveMarkdown = useCallback(async (markdown: string) => {
+    await handleSaveMarkdown(markdown, { force: true })
+  }, [handleSaveMarkdown])
+
+  const handlePickMarkdownFile = useCallback(async () => {
+    const result = await openTextFile([
+      { displayName: 'Markdown Files (*.md;*.markdown;*.mdx)', pattern: '*.md;*.markdown;*.mdx' },
+      { displayName: 'All Files (*.*)', pattern: '*.*' },
+    ])
+    if (result.canceled) return null
+    return result.path
+  }, [])
 
   const handleSaveMarkdownAs = useCallback(async (markdown: string) => {
     const baseName = sanitizeExportFilename(view?.name || 'view-notes')
@@ -1803,6 +1862,7 @@ function ViewEditorInner({
         setViewMarkdownContent(msg.content)
         setLoadedViewMarkdownContent(msg.content)
         setViewMarkdownSyncToken((prev) => prev + 1)
+        setMarkdownSaveConflict(false)
       }
     })
     return unsub
@@ -2228,6 +2288,7 @@ function ViewEditorInner({
         const connector = connectorToConnector(updated)
         upsertConnectorGraphSnapshot(connector)
         upsertStoreConnector(connector)
+        publishRealtimeConnectorUpsert(connector)
         setSelectedEdge((current) => current?.id === connector.id ? connector : current)
         await refreshElements()
       },
@@ -2236,11 +2297,12 @@ function ViewEditorInner({
         const connector = connectorToConnector(updated)
         upsertConnectorGraphSnapshot(connector)
         upsertStoreConnector(connector)
+        publishRealtimeConnectorUpsert(connector)
         setSelectedEdge((current) => current?.id === connector.id ? connector : current)
         await refreshElements()
       },
     })
-  }, [pushEditAction, refreshElements, upsertStoreConnector])
+  }, [publishRealtimeConnectorUpsert, pushEditAction, refreshElements, upsertStoreConnector])
 
   const pushConnectorDeleteAction = useCallback((deleted: Connector) => {
     let activeConnector = deleted
@@ -2250,17 +2312,19 @@ function ViewEditorInner({
         activeConnector = connectorToConnector(created)
         upsertConnectorGraphSnapshot(activeConnector)
         upsertStoreConnector(activeConnector)
+        publishRealtimeConnectorUpsert(activeConnector)
         await refreshElements()
       },
       redo: async () => {
         await api.workspace.connectors.delete('', activeConnector.id)
         removeConnectorGraphSnapshot(activeConnector.view_id, activeConnector.id)
         removeStoreConnector(activeConnector.id)
+        publishRealtimeConnectorDelete(activeConnector.id)
         setSelectedEdge((current) => current?.id === activeConnector.id ? null : current)
         await refreshElements()
       },
     })
-  }, [pushEditAction, refreshElements, removeStoreConnector, upsertStoreConnector])
+  }, [publishRealtimeConnectorDelete, publishRealtimeConnectorUpsert, pushEditAction, refreshElements, removeStoreConnector, upsertStoreConnector])
 
   const elementEditSessionRef = useRef<{ before: WorkspaceElement; after: WorkspaceElement | null } | null>(null)
   const finalizeElementEditSession = useCallback(() => {
@@ -2320,8 +2384,9 @@ function ViewEditorInner({
     }
     upsertConnectorGraphSnapshot(connector)
     upsertStoreConnector(connector)
+    publishRealtimeConnectorUpsert(connector)
     setSelectedEdge(connector)
-  }, [selectedEdge, upsertStoreConnector])
+  }, [publishRealtimeConnectorUpsert, selectedEdge, upsertStoreConnector])
 
   const handleConnectorPanelClose = useCallback(() => {
     finalizeConnectorEditSession()
@@ -2347,6 +2412,9 @@ function ViewEditorInner({
   const handleToggleExplorer = useCallback(() => setIsExplorerOpen((v) => !v), [])
 
   const interactionNodesRef = useRef<RFNode[]>([])
+  const { defaultConnectorStyle } = useConnectorStyle()
+  const createConnectorStyle = connectorStyleForCreate(defaultConnectorStyle)
+  const previewConnectorStyle = connectorStyleForPreview(defaultConnectorStyle)
 
   // ── Canvas interactions ────────────────────────────────────────────────────
   const canvas = useCanvasInteractions({
@@ -2357,12 +2425,14 @@ function ViewEditorInner({
     setClickConnectMode,
     clickConnectCursorPos,
     setClickConnectCursorPos,
+    onConnectorCreatePreviewActiveChange: setConnectorCreatePreviewActive,
     drawingMode, isMobileLayout,
     rfNodesRef, interactionNodesRef, rfEdgesRef, viewElementsRef, viewIdRef,
     incomingLinksRef,
     treeDataRef,
     navigateRef,
     containerRef,
+    gestureTargetRef: viewEditorCanvasRef,
     interactionSourceIdRef,
     multiConnectionSourceIdsRef,
     hoveredZoomRef, hoverPanLockedUntilRef,
@@ -2394,14 +2464,17 @@ function ViewEditorInner({
           const newConnector = await api.workspace.connectors.create(cid, {
             source_element_id: nextSourceId, target_element_id: targetElementId,
             source_handle: finalSourceHandle, target_handle: finalTargetHandle, direction: 'forward',
+            style: createConnectorStyle,
           })
           const connector = connectorToConnector(newConnector)
           upsertConnectorGraphSnapshot(connector)
           upsertStoreConnector(connector)
+          publishRealtimeConnectorUpsert(connector)
         }
         handleUnsupportedMutation()
       } catch { /* intentionally empty */ }
     },
+    defaultConnectorStyle,
     existingElementIds, linksMapRef, parentLinksMapRef,
     openElementPanel: useCallback(() => openElementPanelRef.current(), []),
     closeElementPanel: useCallback(() => closeElementPanelRef.current(), []),
@@ -2419,19 +2492,29 @@ function ViewEditorInner({
       const vid = ownerViewId ?? viewId
       if (vid != null) removeConnectorGraphSnapshot(vid, edgeId)
       removeStoreConnector(edgeId)
+      publishRealtimeConnectorDelete(edgeId)
       void refreshElementsRef.current()
-    }, [removeStoreConnector, viewId]),
+    }, [publishRealtimeConnectorDelete, removeStoreConnector, viewId]),
     onPlacementMoved: pushPlacementMoveAction,
     onPlacementsMoved: pushPlacementMoveBatchAction,
     onElementPositionPreview: handleRealtimeElementPositionPreview,
     onPlacementRemoved: pushPlacementRemoveAction,
+    onConnectorSaved: publishRealtimeConnectorUpsert,
     onConnectorUpdated: pushConnectorEditAction,
+    onConnectorReconnected: useCallback((connector: Connector) => {
+      setSuppressedSelectedConnectorHandleHighlightId(connector.id)
+    }, []),
+    onConnectorSelected: useCallback(() => {
+      setSuppressedSelectedConnectorHandleHighlightId(null)
+    }, []),
     onConnectorDeleted: pushConnectorDeleteAction,
     onSelectionRemoveFromView: handleBulkRemoveFromView,
     onUnsupportedMutation: handleUnsupportedMutation,
     handleUpdateTags,
     drawingCanvasRef,
     snapToGrid,
+    minZoom: computedMinZoom,
+    maxZoom: VIEW_EDITOR_MAX_ZOOM,
     libraryOpen,
     openLibrary: useCallback(() => setLibraryOpen(true), []),
     toggleLibrary: useCallback(() => setLibraryOpen((v) => !v), []),
@@ -2453,6 +2536,7 @@ function ViewEditorInner({
     stableOnReconnectPickRef.current = canvas.stableOnReconnectPick
   }, [canvas.stableOnZoomIn, canvas.stableOnZoomOut, canvas.stableOnNavigateToView, canvas.stableOnRemoveElement, canvas.stableOnConnectTo, canvas.stableOnInteractionStart, canvas.stableOnStartHandleReconnect, canvas.stableOnReconnectPick])
   const viewName = view?.name ?? null
+  const viewNameById = useMemo(() => buildViewNameById(treeData), [treeData])
 
   const [expandedAncestorGroups, setExpandedAncestorGroups] = useState<Set<string>>(new Set())
   const [contextNodePositionOverrides, setContextNodePositionOverrides] = useState<Record<string, ContextNodePositionOverride>>({})
@@ -2501,11 +2585,15 @@ function ViewEditorInner({
     if (Object.keys(hiddenProxyCountsByPair).length === 0) return rfEdges
 
     let changed = false
+    const badgePairs = new Set<string>()
     const next = rfEdges.map((edge) => {
       const pairKey = canonicalNodePairKey(edge.source, edge.target)
-      const proxyBadgeCount = hiddenProxyCountsByPair[pairKey] ?? 0
+      const rawProxyBadgeCount = hiddenProxyCountsByPair[pairKey] ?? 0
+      const showProxyBadge = rawProxyBadgeCount > 0 && !badgePairs.has(pairKey)
+      if (rawProxyBadgeCount > 0) badgePairs.add(pairKey)
+      const proxyBadgeCount = showProxyBadge ? rawProxyBadgeCount : 0
       const currentBadgeCount = (edge.data as { proxyBadgeCount?: number } | undefined)?.proxyBadgeCount ?? 0
-      const proxyBadgeDetails = hiddenProxyDetailsByPair[pairKey] ?? null
+      const proxyBadgeDetails = showProxyBadge ? (hiddenProxyDetailsByPair[pairKey] ?? null) : null
       const currentBadgeDetails = (edge.data as { proxyBadgeDetails?: ProxyConnectorDetails | null } | undefined)?.proxyBadgeDetails ?? null
       if (proxyBadgeCount === currentBadgeCount && proxyBadgeDetails === currentBadgeDetails) return edge
       changed = true
@@ -2705,7 +2793,7 @@ function ViewEditorInner({
 
   const pendingPreviewEdges = useMemo((): RFEdge[] => {
     const pending = canvas.pendingElement
-    if (!pending || pending.preview || !pendingElementNode || pending.sourceElementIds.length === 0) return []
+    if (!pending || !pendingElementNode || pending.sourceElementIds.length === 0) return []
 
     return pending.sourceElementIds
       .filter((sourceId) => sourceId !== -1)
@@ -2714,13 +2802,18 @@ function ViewEditorInner({
         const handles = sourceNode
           ? findClosestHandles(sourceNode, pendingElementNode)
           : { sourceHandle: DEFAULT_SOURCE_HANDLE_SIDE, targetHandle: DEFAULT_TARGET_HANDLE_SIDE }
+        const pendingSourceSide = getLogicalHandleId(pending.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
+        const previewTargetHandle = pending.sourceHandle && pendingSourceSide
+          ? getOppositeHandleSide(pendingSourceSide)
+          : handles.targetHandle
         return {
           id: `pending-element-edge-${sourceId}`,
           source: String(sourceId),
           target: pending.id,
-          sourceHandle: ensureVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
-          targetHandle: ensureVisualHandleId(handles.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
-          type: 'default',
+          sourceHandle: getCenterVisualHandleId(pending.sourceHandle ?? handles.sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? undefined,
+          targetHandle: getCenterVisualHandleId(previewTargetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? undefined,
+          type: previewConnectorStyle === 'bezier' ? 'default' : previewConnectorStyle,
+          className: 'vieweditor-temporary-connector',
           label: '',
           data: {
             id: -sourceId,
@@ -2731,28 +2824,22 @@ function ViewEditorInner({
             description: null,
             relationship: null,
             direction: 'forward',
-            style: 'bezier',
+            style: previewConnectorStyle,
             url: null,
             source_handle: pending.sourceHandle ?? handles.sourceHandle,
-            target_handle: handles.targetHandle,
+            target_handle: previewTargetHandle,
             tags: [],
             created_at: '',
             updated_at: '',
           },
-          style: {
-            stroke: 'var(--accent)',
-            strokeWidth: 2,
-            opacity: 0.55,
-            pointerEvents: 'none',
-            strokeDasharray: '6 5',
-          },
-          labelStyle: { fontSize: 11, fill: 'var(--accent)', opacity: 0.55 },
-          labelBgStyle: { fill: 'var(--chakra-colors-gray-900)', fillOpacity: 0.55 },
+          style: TEMPORARY_CONNECTOR_EDGE_STYLE,
+          labelStyle: { fontSize: 11, fill: 'var(--accent)', opacity: 1 },
+          labelBgStyle: { fill: 'var(--chakra-colors-gray-900)', fillOpacity: 1 },
           markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: 'var(--accent)' },
           zIndex: 1500,
         }
       })
-  }, [canvas.pendingElement, pendingElementNode, rfNodes, viewId])
+  }, [canvas.pendingElement, pendingElementNode, previewConnectorStyle, rfNodes, viewId])
 
   const flowEdges = useMemo(() => {
     const baseEdges = contextConnectors.length === 0
@@ -2858,6 +2945,7 @@ function ViewEditorInner({
     showAddingElementAt,
     cancelPendingElement,
     onEdgesChange, onNodeDragStart, onNodeDrag, onNodeDragStop,
+    onSelectionDragStart, onSelectionDrag, onSelectionDragStop,
     onConnect, onConnectStart, onConnectEnd,
     onReconnect, onReconnectStart, onReconnectEnd,
     onEdgeClick, onEdgeContextMenu, onPaneClick, onPaneContextMenu, onPaneMouseMove,
@@ -2866,6 +2954,10 @@ function ViewEditorInner({
     onContainerPointerDown, onContainerPointerMove, onContainerPointerUp,
     onDragOver, onDrop, onWheelCapture,
   } = canvas
+  const connectionLineStyle = useMemo(() => {
+    if (!pendingElement?.preview) return TEMPORARY_CONNECTOR_PATH_STYLE
+    return { ...TEMPORARY_CONNECTOR_PATH_STYLE, opacity: 0 }
+  }, [pendingElement?.preview])
 
   const handleRealtimeCanvasMouseMove = useCallback((event: React.MouseEvent) => {
     const flowPos = screenToFlowPositionRef.current({ x: event.clientX, y: event.clientY })
@@ -2897,7 +2989,6 @@ function ViewEditorInner({
   // ── FitView ────────────────────────────────────────────────────────────────
   const fitViewRef = useRef(safeFitView)
   fitViewRef.current = safeFitView
-  const [computedMinZoom, setComputedMinZoom] = useState(VIEW_EDITOR_MIN_ZOOM_FLOOR)
   const [computedTranslateExtent, setComputedTranslateExtent] = useState<[[number, number], [number, number]] | undefined>(undefined)
   const {
     clampedRevealProgress,
@@ -3085,6 +3176,41 @@ function ViewEditorInner({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [drawingMode, handleUndo, handleRedo, setDrawingTool])
 
+  // ── Keyboard shortcuts for view edits ─────────────────────────────────────
+  useEffect(() => {
+    if (drawingMode) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || isEditableKeyboardTarget(e.target) || !isCanvasKeyboardTarget(e.target)) return
+
+      const key = e.key.toLowerCase()
+      const isModifierShortcut = e.metaKey || e.ctrlKey
+      const isRedoShortcut = isModifierShortcut && !e.altKey && (
+        (key === 'z' && e.shiftKey) ||
+        (key === 'y' && !e.metaKey)
+      )
+      const isUndoShortcut = isModifierShortcut && !e.altKey && key === 'z' && !e.shiftKey
+
+      if (isRedoShortcut && canRedoViewEdit) {
+        e.preventDefault()
+        void handleRedoViewEdit()
+        return
+      }
+
+      if (isUndoShortcut && canUndoViewEdit) {
+        e.preventDefault()
+        void handleUndoViewEdit()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [
+    canRedoViewEdit,
+    canUndoViewEdit,
+    drawingMode,
+    handleRedoViewEdit,
+    handleUndoViewEdit,
+  ])
+
   // ── V shortcut to open View Details ────────────────────────────────────────
   useEffect(() => {
     if (drawingMode) return
@@ -3165,8 +3291,9 @@ function ViewEditorInner({
     const vid = ownerViewId ?? viewId
     if (vid != null) removeConnectorGraphSnapshot(vid, edgeId)
     removeStoreConnector(edgeId)
+    publishRealtimeConnectorDelete(edgeId)
     void refreshElements()
-  }, [refreshElements, removeStoreConnector, viewId])
+  }, [publishRealtimeConnectorDelete, refreshElements, removeStoreConnector, viewId])
 
   const handleOpenMerge = useCallback((elementId: number) => {
     const el = allElements.find((e) => e.id === elementId)
@@ -3258,31 +3385,50 @@ function ViewEditorInner({
 
   // ── Export / Import ────────────────────────────────────────────────────────
   const handleCopyMermaidDirect = useCallback(async () => {
-    const code = serializeViewToMermaid(viewElements, connectors)
     setCanvasMenu(null)
+    if (viewId === null) return
     try {
-      await copyTextToClipboard(code)
-      toast({ status: 'success', title: 'Copied Mermaid', description: 'Mermaid source copied to clipboard.' })
+      const exported = await api.mermaid.exportView(viewId, { includeTldMetadata: true, markdownBlock: true })
+      if (!exported.markdown) return
+      await copyTextToClipboard(exported.markdown)
+      toast({ status: 'success', title: 'Copied Mermaid block', description: 'Markdown Mermaid block copied to clipboard.' })
     } catch {
-      toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid source to the clipboard.' })
+      toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid block to the clipboard.' })
     }
-  }, [connectors, setCanvasMenu, toast, viewElements])
+  }, [setCanvasMenu, toast, viewId])
 
   const handleBulkCopyMermaid = useCallback(async () => {
-    const code = serializeViewToMermaid(selectedCanvasElements, connectors)
+    if (viewId === null) return
     try {
-      await copyTextToClipboard(code)
-      toast({ status: 'success', title: 'Copied Mermaid', description: 'Mermaid source copied to clipboard.' })
+      const exported = await api.mermaid.exportView(viewId, { includeTldMetadata: true, markdownBlock: true })
+      if (!exported.markdown) return
+      await copyTextToClipboard(exported.markdown)
+      toast({ status: 'success', title: 'Copied Mermaid block', description: 'Markdown Mermaid block copied to clipboard.' })
     } catch {
-      toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid source to the clipboard.' })
+      toast({ status: 'error', title: 'Copy failed', description: 'Could not write Mermaid block to the clipboard.' })
     }
-  }, [connectors, selectedCanvasElements, toast])
+  }, [toast, viewId])
+
+  const handleExportMermaidDirect = useCallback(async () => {
+    if (viewId === null) return
+    const baseName = sanitizeExportFilename(viewName || 'view-export')
+    const downloadName = `${baseName}.md`
+    try {
+      setIsExporting(true)
+      const exported = await api.mermaid.exportView(viewId, { includeTldMetadata: true, markdownBlock: true })
+      const result = await triggerBlobDownload(new Blob([exported.markdown], { type: 'text/markdown;charset=utf-8' }), downloadName, 'markdown')
+      if (result.canceled) return
+      toast({ status: 'success', title: 'Export complete', description: `Saved ${downloadName}` })
+    } catch {
+      toast({ status: 'error', title: 'Export failed', description: 'Please try again.' })
+    } finally {
+      setIsExporting(false)
+    }
+  }, [toast, viewId, viewName])
 
   const handleExportView = useCallback(async (options: ExportOptions) => {
-    const flowRoot = containerRef.current?.querySelector('.react-flow') as HTMLElement | null
-    if (!flowRoot) { toast({ status: 'error', title: 'Export failed', description: 'Could not find the view canvas.' }); return }
     const baseName = sanitizeExportFilename(options.filename || viewName || 'view-export')
-    const downloadName = `${baseName}.${options.format}`
+    const downloadName = options.format === 'mermaid' ? `${baseName}.md` : `${baseName}.${options.format}`
     const filterNode = (node: HTMLElement) => {
       const cn = node.className
       if (typeof cn !== 'string') return true
@@ -3291,22 +3437,30 @@ function ViewEditorInner({
     try {
       setIsExporting(true)
       if (options.format === 'mermaid') {
-        const code = serializeViewToMermaid(viewElements, connectors)
-        const result = await triggerBlobDownload(new Blob([code], { type: 'text/plain;charset=utf-8' }), downloadName, options.format)
-        if (result.canceled) return
-      } else if (options.format === 'svg') {
-        const result = await triggerDownload(await toSvg(flowRoot, { cacheBust: true, filter: filterNode }), downloadName, options.format)
+        if (viewId === null) return
+        const exported = await api.mermaid.exportView(viewId, {
+          includeTldMetadata: options.includeTldMetadata ?? true,
+          markdownBlock: true,
+        })
+        const result = await triggerBlobDownload(new Blob([exported.markdown], { type: 'text/markdown;charset=utf-8' }), downloadName, 'markdown')
         if (result.canceled) return
       } else {
-        const result = await triggerDownload(await toPng(flowRoot, { cacheBust: true, pixelRatio: options.scale, filter: filterNode }), downloadName, options.format)
-        if (result.canceled) return
+        const flowRoot = containerRef.current?.querySelector('.react-flow') as HTMLElement | null
+        if (!flowRoot) { toast({ status: 'error', title: 'Export failed', description: 'Could not find the view canvas.' }); return }
+        if (options.format === 'svg') {
+          const result = await triggerDownload(await toSvg(flowRoot, { cacheBust: true, filter: filterNode }), downloadName, options.format)
+          if (result.canceled) return
+        } else {
+          const result = await triggerDownload(await toPng(flowRoot, { cacheBust: true, pixelRatio: options.scale, filter: filterNode }), downloadName, options.format)
+          if (result.canceled) return
+        }
       }
       closeExportModalRef.current()
       toast({ status: 'success', title: 'Export complete', description: `Saved ${downloadName}` })
     } catch {
       toast({ status: 'error', title: 'Export failed', description: 'Please try again.' })
     } finally { setIsExporting(false) }
-  }, [viewName, viewElements, connectors, toast])
+  }, [toast, viewId, viewName])
 
   const getClipboardPasteCenter = useCallback(() => {
     const rect = containerRef.current?.getBoundingClientRect()
@@ -3323,6 +3477,68 @@ function ViewEditorInner({
 
     return screenToFlowPositionRef.current(screenPoint)
   }, [lastMousePosRef])
+
+  const getCanvasCenter = useCallback(() => {
+    const rect = containerRef.current?.getBoundingClientRect()
+    return rect
+      ? screenToFlowPositionRef.current({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+      : { x: 0, y: 0 }
+  }, [])
+
+  const runMermaidImport = useCallback(async (
+    parsed: ParsedImport,
+    currentViewId: number,
+    center: { x: number; y: number },
+    options: {
+      successTitle: string
+      failureTitle: string
+      onSuccess?: () => void
+    },
+  ) => {
+    try {
+      const result = await api.mermaid.importIntoView(currentViewId, parsed.source, center)
+      const { summary } = result
+      clearEditHistory()
+      await refreshElements()
+      pendingPasteSelectionRef.current = {
+        viewId: currentViewId,
+        elementIds: summary.importedElementIds,
+      }
+      options.onSuccess?.()
+      toast({
+        status: 'success',
+        title: options.successTitle,
+        description: [mermaidImportDescription(summary), ...result.warnings.slice(0, 1)].join(' '),
+        duration: 5000,
+        isClosable: true,
+      })
+      return true
+    } catch (err) {
+      await refreshElements()
+      toast({ status: 'error', title: options.failureTitle, description: err instanceof Error ? err.message : String(err) })
+      return false
+    }
+  }, [clearEditHistory, refreshElements, toast])
+
+  const handleImportMarkdownMermaidBlock = useCallback(async (source: string) => {
+    if (!canEdit) return
+    const currentViewId = viewIdRef.current
+    if (!currentViewId) return
+
+    const parsed: ParsedImport = {
+      format: 'mermaid',
+      source,
+      elements: [],
+      connectors: [],
+      warnings: [],
+      direction: 'LR',
+    }
+
+    await runMermaidImport(parsed, currentViewId, getCanvasCenter(), {
+      successTitle: 'Imported Mermaid block',
+      failureTitle: 'Mermaid import failed',
+    })
+  }, [canEdit, getCanvasCenter, runMermaidImport, viewIdRef])
 
   const pasteViewSelectionPayload = useCallback(async (
     payload: ViewSelectionClipboardPayload,
@@ -3366,7 +3582,7 @@ function ViewEditorInner({
       await Promise.all(placementPlan.map((placement) =>
         api.workspace.views.placements.add(targetViewId, placement.elementId, placement.x, placement.y)
       ))
-      await Promise.all(connectorPlan.map((connector) =>
+      const createdConnectors = await Promise.all(connectorPlan.map((connector) =>
         api.workspace.connectors.create(targetViewId, {
           source_element_id: connector.sourceElementId,
           target_element_id: connector.targetElementId,
@@ -3381,6 +3597,7 @@ function ViewEditorInner({
           tags: connector.tags,
         })
       ))
+      createdConnectors.map(connectorToConnector).forEach(publishRealtimeConnectorUpsert)
 
       await refreshElements()
       pendingPasteSelectionRef.current = {
@@ -3399,7 +3616,7 @@ function ViewEditorInner({
       isPasteImportingRef.current = false
       setIsClipboardPasting(false)
     }
-  }, [canEdit, refreshElements, toast])
+  }, [canEdit, publishRealtimeConnectorUpsert, refreshElements, toast])
 
   const handleCopyCutViewSelection = useCallback((event: ClipboardEvent) => {
     if (isEditableKeyboardTarget(event.target) || !isCanvasKeyboardTarget(event.target) || drawingMode || textEditorState || pendingElement) return
@@ -3479,90 +3696,35 @@ function ViewEditorInner({
       return
     }
 
-    const mermaidCode = extractMermaidCode(event.clipboardData?.getData('text/plain') ?? '')
-    if (!mermaidCode) return
+    const mermaidText = event.clipboardData?.getData('text/plain') ?? ''
+    if (!mermaidIntegrationEnabled || !mermaidText.trim()) return
 
     const currentViewId = viewIdRef.current
     if (!currentViewId) return
 
-    event.preventDefault()
     isPasteImportingRef.current = true
     try {
-      const parsed = await parseMermaidAsync(mermaidCode)
-      if (parsed.warnings.length > 0 || (parsed.elements.length === 0 && parsed.connectors.length === 0)) {
-        toast({ status: 'error', title: 'Mermaid import failed', description: parsed.warnings[0] ?? 'No compatible diagram content found.' })
-        return
-      }
-
-      const rect = containerRef.current?.getBoundingClientRect()
-      const center = rect
-        ? screenToFlowPositionRef.current({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
-        : { x: 0, y: 0 }
-      const positions = layoutMermaidImport(parsed, center)
-      const createdByRef = new Map<string, WorkspaceElement>()
-
-      for (const element of parsed.elements) {
-        const created = await api.elements.create({
-          name: element.name,
-          kind: element.kind ?? 'system',
-          description: element.description ?? '',
-          technology: element.technology ?? '',
-          url: element.url ?? '',
-          tags: element.tags ?? [],
-        })
-        createdByRef.set(element.ref, created)
-      }
-
-      await Promise.all(parsed.elements.map((element) => {
-        const created = createdByRef.get(element.ref)
-        if (!created) return Promise.resolve()
-        const position = positions.get(element.ref) ?? center
-        return api.workspace.views.placements.add(currentViewId, created.id, position.x, position.y)
-      }))
-
-      const handles = mermaidConnectorHandles(parsed.direction)
-      await Promise.all(parsed.connectors.map((connector) => {
-        const source = createdByRef.get(connector.sourceElementRef)
-        const target = createdByRef.get(connector.targetElementRef)
-        if (!source || !target) return Promise.resolve()
-        return api.workspace.connectors.create(currentViewId, {
-          source_element_id: source.id,
-          target_element_id: target.id,
-          label: connector.label ?? '',
-          direction: connector.direction ?? 'forward',
-          style: connector.style ?? 'bezier',
-          source_handle: connector.sourceHandle ?? handles.source_handle,
-          target_handle: connector.targetHandle ?? handles.target_handle,
-        })
-      }))
-
-      clearEditHistory()
-      await refreshElements()
-      pendingPasteSelectionRef.current = {
-        viewId: currentViewId,
-        elementIds: new Set(Array.from(createdByRef.values(), (element) => element.id)),
-      }
-      toast({
-        status: 'success',
-        title: 'Mermaid imported',
-        description: `Created ${parsed.elements.length} elements and ${parsed.connectors.length} connectors.`,
-        duration: 5000,
-        isClosable: true,
+      const parsed = await api.mermaid.parse(mermaidText)
+      if (parsed.elements.length === 0 && parsed.connectors.length === 0) return
+      event.preventDefault()
+      await runMermaidImport(parsed, currentViewId, getCanvasCenter(), {
+        successTitle: 'Mermaid imported',
+        failureTitle: 'Mermaid import failed',
       })
-    } catch (err) {
-      await refreshElements()
-      toast({ status: 'error', title: 'Mermaid import failed', description: err instanceof Error ? err.message : String(err) })
+    } catch {
+      return
     } finally {
       isPasteImportingRef.current = false
     }
   }, [
     canEdit,
-    clearEditHistory,
     duplicatePasteConfirm,
+    getCanvasCenter,
     getClipboardPasteCenter,
+    mermaidIntegrationEnabled,
     pasteViewSelectionPayload,
     pendingElement,
-    refreshElements,
+    runMermaidImport,
     textEditorState,
     toast,
     viewElementsRef,
@@ -3597,6 +3759,15 @@ function ViewEditorInner({
     if (!currentViewId) return
     setIsImporting(true)
     try {
+      if (parsed.format === 'mermaid') {
+        await runMermaidImport(parsed, currentViewId, getCanvasCenter(), {
+          successTitle: 'Import complete',
+          failureTitle: 'Import failed',
+          onSuccess: () => closeImportModalRef.current(),
+        })
+        return
+      }
+
       const res = await api.import.resources('', { elements: parsed.elements, connectors: parsed.connectors })
       clearEditHistory()
       closeImportModalRef.current()
@@ -3606,7 +3777,7 @@ function ViewEditorInner({
     } catch (e) {
       toast({ status: 'error', title: 'Import failed', description: e instanceof Error ? e.message : 'Unknown error' })
     } finally { setIsImporting(false) }
-  }, [clearEditHistory, navigate, toast, viewIdRef])
+  }, [clearEditHistory, getCanvasCenter, navigate, runMermaidImport, toast, viewIdRef])
 
   // ─────────────────────────────────────────────────────────────────────────────
   // Render states
@@ -3617,6 +3788,24 @@ function ViewEditorInner({
   if (view === null) {
     return <Flex h="100%" align="center" justify="center"><Text>View not found.</Text></Flex>
   }
+
+  const resolvedElementPanelAfterContentSlot = elementPanelAfterContentSlot ?? (
+    <ElementPanelCollaboration
+      element={selectedElement}
+      liveThreadUpsert={liveThreadUpsert}
+      liveThreadResolve={liveThreadResolve}
+      liveCommentCreate={liveCommentCreate}
+      liveReactions={liveReactions}
+    />
+  )
+  const resolvedConnectorPanelAfterContentSlot = connectorPanelAfterContentSlot ?? (
+    <ConnectorPanelCollaboration
+      connector={selectedEdge}
+      liveThreadUpsert={liveThreadUpsert}
+      liveThreadResolve={liveThreadResolve}
+      liveCommentCreate={liveCommentCreate}
+    />
+  )
 
   return (
     <ViewEditorContext.Provider value={{
@@ -3718,7 +3907,9 @@ function ViewEditorInner({
             )}
 
             <Box
+              ref={viewEditorCanvasRef}
               data-testid="vieweditor-canvas"
+              data-connector-preview-active={isConnectorCreatePreviewActive || !!canvas.handleReconnectDrag || !!clickConnectMode || interactionSourceId !== null ? 'true' : undefined}
               position="relative"
               w="full"
               h="full"
@@ -3745,24 +3936,28 @@ function ViewEditorInner({
                 onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
                 onConnect={onConnect} onConnectStart={onConnectStart} onConnectEnd={onConnectEnd}
                 onNodeDragStart={onNodeDragStart} onNodeDrag={onNodeDrag} onNodeDragStop={onNodeDragStop}
+                onSelectionDragStart={onSelectionDragStart} onSelectionDrag={onSelectionDrag} onSelectionDragStop={onSelectionDragStop}
                 onEdgeClick={onEdgeClick} onEdgeContextMenu={onEdgeContextMenu}
                 onPaneContextMenu={onPaneContextMenu} onPaneClick={onPaneClick}
                 onPaneMouseMove={handleRealtimePaneMouseMove}
                 onMoveStart={onMoveStart} onMove={handleRealtimeMove} onMoveEnd={onMoveEnd}
-                translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={4}
+                translateExtent={computedTranslateExtent} nodeExtent={computedTranslateExtent} minZoom={computedMinZoom} maxZoom={VIEW_EDITOR_MAX_ZOOM}
                 onReconnect={onReconnect} onReconnectStart={onReconnectStart} onReconnectEnd={onReconnectEnd}
-                connectionLineStyle={CONNECTOR_DRAG_CONNECTION_LINE_STYLE}
+                connectionLineStyle={connectionLineStyle}
+                connectionLineType={previewConnectorStyle as ConnectionLineType}
+                connectionLineComponent={ViewConnectorConnectionLine}
                 nodeTypes={nodeTypesMemo} edgeTypes={edgeTypesMemo}
                 nodesDraggable={canEdit} connectionMode={ConnectionMode.Loose} connectionRadius={25}
                 edgesUpdatable={canEdit} reconnectRadius={0}
                 snapToGrid={snapToGrid}
                 snapGrid={SNAP_GRID}
                 deleteKeyCode={null}
+                connectOnClick={false}
                 onlyRenderVisibleElements
                 autoPanOnNodeDrag={false}
                 selectionOnDrag={canEdit && !drawingMode}
                 panOnDrag={drawingMode ? false : canEdit ? [1, 2] : true}
-                panOnScroll={!isMobileLayout} panOnScrollSpeed={1.2} panOnScrollMode={PanOnScrollMode.Free}
+                panOnScroll={enableCanvasWheelPan} panOnScrollSpeed={1.2} panOnScrollMode={PanOnScrollMode.Free}
                 zoomOnScroll={false} zoomOnPinch
               >
                 <SafeBackground variant={BackgroundVariant.Dots} gap={16} color="#2D3748" size={1} />
@@ -3805,6 +4000,7 @@ function ViewEditorInner({
             <EditorOverlays
               clickConnectMode={clickConnectMode}
               clickConnectCursorPos={clickConnectCursorPos}
+              connectorRouteStyle={previewConnectorStyle}
               handleReconnectDrag={canvas.handleReconnectDrag}
               rfNodes={flowNodes}
             />
@@ -3827,6 +4023,7 @@ function ViewEditorInner({
                 zIndex={2000}
               >
                 <Input
+                  data-testid="drawing-text-input"
                   autoFocus
                   variant="unstyled"
                   bg="var(--bg-panel)"
@@ -3868,8 +4065,7 @@ function ViewEditorInner({
                 if (!viewId) return
                 try {
                   await api.workspace.connectors.delete('', edgeId)
-                  removeConnectorGraphSnapshot(viewId, edgeId)
-                  removeStoreConnector(edgeId)
+                  handleConnectorDeleted(edgeId, viewId)
                 } catch { /* intentionally empty */ }
               }}
             />
@@ -3974,7 +4170,10 @@ function ViewEditorInner({
               onUndo={handleUndoViewEdit}
               onRedo={handleRedoViewEdit}
               disableImportExport={disableImportExport}
-              onImport={importModal.onOpen} onExport={handleOpenExport} onShare={onShare}
+              onImport={importModal.onOpen} onExport={handleOpenExport}
+              onCopyMermaid={handleCopyMermaidDirect}
+              onExportMermaid={handleExportMermaidDirect}
+              onShare={onShare}
               allTags={availableTags}
               layers={layers}
               tagColors={tagColors}
@@ -4034,15 +4233,26 @@ function ViewEditorInner({
                   markdown={viewMarkdown}
                   content={viewMarkdownContent}
                   syncToken={viewMarkdownSyncToken}
+                  viewId={viewId}
+                  viewNameById={viewNameById}
+                  mermaidIntegrationEnabled={mermaidIntegrationEnabled}
                   canEdit={canEdit}
                   isLoading={isMarkdownLoading}
                   isSaving={isMarkdownSaving}
                   isDirty={markdownDirty}
+                  hasSaveConflict={markdownSaveConflict}
                   onChange={setViewMarkdownContent}
                   onSave={handleSaveMarkdown}
+                  onForceSave={handleForceSaveMarkdown}
+                  onCreateMarkdown={handleCreateMarkdownFromPanel}
+                  onAttachMarkdown={handleLinkMarkdown}
+                  onUnlinkMarkdown={handleUnlinkMarkdown}
+                  onPickMarkdownFile={handlePickMarkdownFile}
                   onSaveAs={handleSaveMarkdownAs}
                   onOpenInEditor={window.__TLD_VSCODE__ ? handleOpenMarkdownInEditor : undefined}
                   onReload={handleReloadMarkdown}
+                  onNavigateToView={canvas.stableOnNavigateToView}
+                  onImportMermaidBlock={handleImportMarkdownMermaidBlock}
                 />
               </Box>
             </>
@@ -4080,7 +4290,7 @@ function ViewEditorInner({
           hasBackdrop={isMobileLayout}
           availableTags={availableTags}
           noFocusLock={!!pendingElement || !!textEditorState}
-          elementPanelAfterContentSlot={elementPanelAfterContentSlot}
+          elementPanelAfterContentSlot={resolvedElementPanelAfterContentSlot}
         />
 
         <CodePreviewPanel isOpen={codePreview.isOpen} onClose={codePreview.onClose} element={previewElement} hasBackdrop={isMobileLayout} />
@@ -4096,7 +4306,7 @@ function ViewEditorInner({
           onResetVisibility={(id) => handleVisibilityOverride('connector', id, 'reset')}
           hasBackdrop={isMobileLayout}
           noFocusLock={!!pendingElement || !!textEditorState}
-          connectorPanelAfterContentSlot={connectorPanelAfterContentSlot}
+          connectorPanelAfterContentSlot={resolvedConnectorPanelAfterContentSlot}
         />
         <ProxyConnectorPanel
           isOpen={proxyConnectorPanel.isOpen}
@@ -4124,10 +4334,10 @@ function ViewEditorInner({
           view={view as ViewTreeNode}
           onSave={handleViewSave}
           onUnsupportedMutation={handleUnsupportedMutation}
+          onConnectorSaved={publishRealtimeConnectorUpsert}
           hasBackdrop={isMobileLayout}
           markdown={viewMarkdown}
           markdownLoading={isMarkdownLoading}
-          onLinkMarkdown={handleLinkMarkdown}
           onUnlinkMarkdown={handleUnlinkMarkdown}
           onOpenMarkdown={handleOpenMarkdown}
         />
@@ -4135,10 +4345,12 @@ function ViewEditorInner({
         <ExportModal
           isOpen={exportModal.isOpen} onClose={exportModal.onClose}
           defaultFilename={sanitizeExportFilename((view as ViewTreeNode).name)}
+          mermaidEnabled
           onExport={handleExportView} isExporting={isExporting}
         />
         <ImportModal
           isOpen={importModal.isOpen} onClose={importModal.onClose}
+          mermaidEnabled={mermaidIntegrationEnabled}
           onImport={handleImportView} isImporting={isImporting}
         />
         <ConfirmDialog

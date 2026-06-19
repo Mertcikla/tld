@@ -5,16 +5,21 @@ import type {
   DependencyConnector,
   DependencyElement,
   ElementPlacement,
+  ElementReactionSummary,
   ExploreData,
   LibraryElement,
   NoiseGateInitialization,
   PlacedElement,
   Tag,
+  TechnologyCatalogItem,
+  ThreadResolveEvent,
   View,
+  ViewComment,
   ViewConnector,
   ViewMarkdownDocument,
   ViewLayer,
   ViewPlacement,
+  ViewThread,
   ViewTreeNode,
   VisibilityOverride,
 } from '../types'
@@ -29,6 +34,7 @@ import {
   GetElementResponseSchema,
   CreateElementResponseSchema,
   UpdateElementResponseSchema,
+  CreateCustomTechnologyResponseSchema,
   ListElementPlacementsResponseSchema,
   ListPlacementsResponseSchema,
   CreatePlacementResponseSchema,
@@ -41,6 +47,7 @@ import {
   UpdateViewLayerResponseSchema,
   PlanElement,
   PlanConnector,
+  type ViewContent,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
 import {
   DependencyService,
@@ -50,6 +57,13 @@ import {
   ImportService,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/import_service_pb'
 import {
+  MermaidDirection as MermaidDirectionProto,
+  MermaidMarkdownSyncStatus as MermaidMarkdownSyncStatusProto,
+  MermaidService,
+  type MermaidImportSummary as ProtoMermaidImportSummary,
+  type MermaidMarkdownBlockInfo,
+} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/mermaid_service_pb'
+import {
   WorkspaceVersionService,
   type WorkspaceVersionInfo,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_version_service_pb'
@@ -57,6 +71,13 @@ import {
   OrgService,
   ListTagColorsResponseSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/org_service_pb'
+import {
+  CollaborationService,
+  ListThreadsResponseSchema,
+  CreateThreadResponseSchema,
+  AddCommentResponseSchema,
+  ListReactionsResponseSchema,
+} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/collaboration_service_pb'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset, isWailsApp } from '../config/runtime'
 import {
@@ -239,14 +260,50 @@ export interface WorkspaceVersion {
 }
 
 export type SourceEditor = 'zed' | 'vscode'
+export type MermaidDirection = 'TB' | 'TD' | 'BT' | 'RL' | 'LR'
+export type MermaidImportFormat = 'mermaid' | 'structurizr'
+export type MermaidMarkdownSyncStatus = 'missing' | 'synced' | 'stale' | 'other' | 'unlinked'
+
+export interface ParsedImport {
+  format: MermaidImportFormat
+  elements: PlanElement[]
+  connectors: PlanConnector[]
+  warnings: string[]
+  direction: MermaidDirection
+  source: string
+}
+
+export interface MermaidImportSummary {
+  resolvedElementCount: number
+  createdElementCount: number
+  resolvedConnectorCount: number
+  createdConnectorCount: number
+  importedElementIds: Set<number>
+  resolvedElementIds: number[]
+  createdElementIds: number[]
+  resolvedConnectorIds: number[]
+  createdConnectorIds: number[]
+}
+
+export interface MermaidImportResult {
+  summary: MermaidImportSummary
+  warnings: string[]
+  content?: ViewContent
+}
+
+export interface MermaidMarkdownBlock extends MermaidMarkdownBlockInfo {
+  syncStatusValue: MermaidMarkdownSyncStatus
+}
 
 // ─── RPC clients ─────────────────────────────────────────────────────────────
 
 const workspaceClient = createClient(WorkspaceService, transport)
 const dependencyClient = createClient(DependencyService, transport)
 const importClient = createClient(ImportService, transport)
+const mermaidClient = createClient(MermaidService, transport)
 const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
 const orgClient = createClient(OrgService, transport)
+const collaborationClient = createClient(CollaborationService, transport)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -263,7 +320,7 @@ export function j<T>(schema: Parameters<typeof toJson>[0], msg: Parameters<typeo
   return toJson(schema, msg, { useProtoFieldName: true, emitDefaultValues: true }) as unknown as T
 }
 
-function timestampToISOString(value: WorkspaceVersionInfo['createdAt']): string {
+function timestampToISOString(value?: WorkspaceVersionInfo['createdAt'] | null): string {
   if (!value) return ''
   const seconds = typeof value.seconds === 'bigint' ? Number(value.seconds) : Number(value.seconds ?? 0)
   const nanos = Number(value.nanos ?? 0)
@@ -282,6 +339,88 @@ function mapWorkspaceVersion(version: WorkspaceVersionInfo): WorkspaceVersion {
     description: version.description,
     workspace_hash: version.workspaceHash,
     created_at: timestampToISOString(version.createdAt),
+  }
+}
+
+function mapViewComment(raw: Record<string, unknown>): ViewComment {
+  const viewId = Number(raw.view_id ?? 0)
+  return {
+    id: Number(raw.id ?? 0),
+    org_id: String(raw.org_id ?? ''),
+    view_id: viewId,
+    diagram_id: viewId,
+    thread_id: Number(raw.thread_id ?? 0),
+    author_id: String(raw.author_id ?? ''),
+    author_username: String(raw.author_username ?? ''),
+    body: String(raw.body ?? ''),
+    created_at: String(raw.created_at ?? ''),
+    updated_at: String(raw.updated_at ?? ''),
+  }
+}
+
+function mapViewThread(raw: Record<string, unknown>): ViewThread {
+  const viewId = Number(raw.view_id ?? 0)
+  return {
+    id: Number(raw.id ?? 0),
+    org_id: String(raw.org_id ?? ''),
+    view_id: viewId,
+    diagram_id: viewId,
+    element_id: raw.element_id != null ? Number(raw.element_id) : null,
+    connector_id: raw.connector_id != null ? Number(raw.connector_id) : null,
+    created_by: String(raw.created_by ?? ''),
+    created_by_username: String(raw.created_by_username ?? ''),
+    status: raw.status === 'resolved' ? 'resolved' : 'open',
+    created_at: String(raw.created_at ?? ''),
+    resolved_at: raw.resolved_at ? String(raw.resolved_at) : null,
+    comments: Array.isArray(raw.comments)
+      ? raw.comments.map((item) => mapViewComment((item ?? {}) as Record<string, unknown>))
+      : [],
+  }
+}
+
+function mapReactionSummary(raw: Record<string, unknown>): ElementReactionSummary {
+  return {
+    element_id: Number(raw.element_id ?? 0),
+    emoji: String(raw.emoji ?? ''),
+    count: Number(raw.count ?? 0),
+    reacted_by_me: Boolean(raw.reacted_by_me ?? false),
+  }
+}
+
+function mapMermaidDirection(value: MermaidDirectionProto): MermaidDirection {
+  if (value === MermaidDirectionProto.TB) return 'TB'
+  if (value === MermaidDirectionProto.TD) return 'TD'
+  if (value === MermaidDirectionProto.BT) return 'BT'
+  if (value === MermaidDirectionProto.RL) return 'RL'
+  return 'LR'
+}
+
+function mapMermaidMarkdownSyncStatus(value: MermaidMarkdownSyncStatusProto): MermaidMarkdownSyncStatus {
+  if (value === MermaidMarkdownSyncStatusProto.SYNCED) return 'synced'
+  if (value === MermaidMarkdownSyncStatusProto.STALE) return 'stale'
+  if (value === MermaidMarkdownSyncStatusProto.OTHER_VIEW) return 'other'
+  if (value === MermaidMarkdownSyncStatusProto.UNLINKED) return 'unlinked'
+  return 'missing'
+}
+
+function mapMermaidImportSummary(summary?: ProtoMermaidImportSummary): MermaidImportSummary {
+  return {
+    resolvedElementCount: summary?.resolvedElementCount ?? 0,
+    createdElementCount: summary?.createdElementCount ?? 0,
+    resolvedConnectorCount: summary?.resolvedConnectorCount ?? 0,
+    createdConnectorCount: summary?.createdConnectorCount ?? 0,
+    importedElementIds: new Set(summary?.importedElementIds ?? []),
+    resolvedElementIds: summary?.resolvedElementIds ?? [],
+    createdElementIds: summary?.createdElementIds ?? [],
+    resolvedConnectorIds: summary?.resolvedConnectorIds ?? [],
+    createdConnectorIds: summary?.createdConnectorIds ?? [],
+  }
+}
+
+function mapMermaidMarkdownBlock(block: MermaidMarkdownBlockInfo): MermaidMarkdownBlock {
+  return {
+    ...block,
+    syncStatusValue: mapMermaidMarkdownSyncStatus(block.syncStatus),
   }
 }
 
@@ -304,6 +443,7 @@ export interface ProtoDiagram {
   tags?: string[]
   parent_view_id?: number | null
   parentViewId?: number | null
+  markdown?: ProtoViewMarkdownDocument | null
   children?: ProtoDiagram[]
 }
 
@@ -313,14 +453,42 @@ interface ProtoViewMarkdownDocument {
   is_managed?: boolean
   updatedAt?: string
   updated_at?: string
+  sourceKind?: string
+  source_kind?: string
+  exists?: boolean
+  writable?: boolean
+  canEdit?: boolean
+  can_edit?: boolean
+  gitState?: string
+  git_state?: string
+  repoRelativePath?: string
+  repo_relative_path?: string
+  linkedViewCount?: number
+  linked_view_count?: number
+  fileVersion?: string
+  file_version?: string
 }
 
 export function mapViewMarkdown(doc: ProtoViewMarkdownDocument | null | undefined): ViewMarkdownDocument | null {
   if (!doc?.path) return null
+  const hasModernMetadata = doc.sourceKind != null || doc.source_kind != null ||
+    doc.gitState != null || doc.git_state != null ||
+    doc.repoRelativePath != null || doc.repo_relative_path != null ||
+    doc.linkedViewCount != null || doc.linked_view_count != null ||
+    doc.fileVersion != null || doc.file_version != null
+  const defaultAvailability = !hasModernMetadata
   return {
     path: String(doc.path),
     is_managed: Boolean(doc.isManaged ?? doc.is_managed),
     updated_at: String(doc.updatedAt ?? doc.updated_at ?? ''),
+    source_kind: String(doc.sourceKind ?? doc.source_kind ?? ''),
+    exists: Boolean(doc.exists ?? defaultAvailability),
+    writable: Boolean(doc.writable ?? defaultAvailability),
+    can_edit: Boolean(doc.canEdit ?? doc.can_edit ?? defaultAvailability),
+    git_state: String(doc.gitState ?? doc.git_state ?? 'unknown'),
+    repo_relative_path: doc.repoRelativePath ?? doc.repo_relative_path,
+    linked_view_count: Number(doc.linkedViewCount ?? doc.linked_view_count ?? 0),
+    file_version: String(doc.fileVersion ?? doc.file_version ?? ''),
   }
 }
 
@@ -341,6 +509,7 @@ export function mapDiagram(d: ProtoDiagram): ViewTreeNode {
     parent_view_id: d.parentViewId != null || d.parent_view_id != null
       ? Number(d.parentViewId ?? d.parent_view_id)
       : null,
+    markdown: mapViewMarkdown(d.markdown),
     children: (d.children ?? []).map(mapDiagram),
   }
 }
@@ -392,7 +561,7 @@ export function diagramToView(d: ProtoDiagram): View {
 }
 
 export function protoElementToLibrary(e: Record<string, unknown>): LibraryElement {
-  const technologyConnectors = normalizeTechnologyConnectors(e.technology_connectors ?? e.technologyLinks)
+  const technologyConnectors = normalizeTechnologyConnectors(e.technology_connectors ?? e.technology_links ?? e.technologyLinks)
   return {
     id: Number(e.id ?? 0),
     name: String(e.name ?? ''),
@@ -437,7 +606,7 @@ export function libraryElementToDependency(element: LibraryElement): DependencyE
 }
 
 export function protoPlacedElement(p: Record<string, unknown>): PlacedElement {
-  const technologyConnectors = normalizeTechnologyConnectors(p.technology_connect_ors ?? p.technology_connectors ?? p.technologyLinks)
+  const technologyConnectors = normalizeTechnologyConnectors(p.technology_connect_ors ?? p.technology_connectors ?? p.technology_links ?? p.technologyLinks)
   return {
     id: Number(p.id ?? 0),
     view_id: Number(p.view_id ?? p.viewId ?? 0),
@@ -542,6 +711,20 @@ export function protoDiagramPlacement(p: Record<string, unknown>): ViewPlacement
   }
 }
 
+function protoTechnologyCatalogItem(raw: Record<string, unknown>): TechnologyCatalogItem {
+  return {
+    iconUrl: String(raw.icon_url ?? raw.iconUrl ?? ''),
+    name: String(raw.name ?? ''),
+    provider: typeof (raw.provider ?? undefined) === 'string' ? String(raw.provider) : undefined,
+    docsUrl: typeof (raw.docs_url ?? raw.docsUrl ?? undefined) === 'string' ? String(raw.docs_url ?? raw.docsUrl) : undefined,
+    description: typeof (raw.description ?? undefined) === 'string' ? String(raw.description) : undefined,
+    websiteUrl: typeof (raw.website_url ?? raw.websiteUrl ?? undefined) === 'string' ? String(raw.website_url ?? raw.websiteUrl) : undefined,
+    nameShort: String(raw.name_short ?? raw.nameShort ?? ''),
+    defaultSlug: String(raw.default_slug ?? raw.defaultSlug ?? ''),
+    aliases: Array.isArray(raw.aliases) ? raw.aliases.map(String) : undefined,
+  }
+}
+
 export function protoLayer(l: Record<string, unknown>): ViewLayer {
   return {
     id: Number(l.id ?? 0),
@@ -572,6 +755,30 @@ export const api = {
       if (prefs.background_color) localStorage.setItem('diag:background-color', prefs.background_color)
       if (prefs.element_color) localStorage.setItem('diag:element-color', prefs.element_color)
     },
+  },
+
+  technology: {
+    createCustom: (data: {
+      name: string
+      name_short?: string
+      aliases?: string[]
+      icon: Uint8Array
+      media_type: string
+      preferred_slug?: string
+    }): Promise<TechnologyCatalogItem> =>
+      rpc(async () => {
+        const res = await workspaceClient.createCustomTechnology({
+          name: data.name,
+          nameShort: data.name_short || undefined,
+          aliases: data.aliases ?? [],
+          icon: data.icon,
+          mediaType: data.media_type,
+          preferredSlug: data.preferred_slug || undefined,
+        } as Parameters<typeof workspaceClient.createCustomTechnology>[0])
+        const json = j<{ item?: Record<string, unknown> }>(CreateCustomTechnologyResponseSchema, res)
+        if (!json.item) throw new Error('Custom technology response was empty')
+        return protoTechnologyCatalogItem(json.item)
+      }),
   },
 
   elements: {
@@ -875,12 +1082,14 @@ export const api = {
 
         create: async (
           id: number,
-          data: { fileName?: string; initialContent?: string } = {},
+          data: { fileName?: string; initialContent?: string; targetKind?: string; path?: string } = {},
         ): Promise<ViewTreeNode> => {
           const json = await connectJsonRpc<{ view?: ProtoDiagram }>('CreateViewMarkdown', {
             viewId: id,
             fileName: data.fileName ?? undefined,
             initialContent: data.initialContent ?? undefined,
+            targetKind: data.targetKind ?? undefined,
+            path: data.path ?? undefined,
           })
           if (!json?.view) throw new Error('View markdown was created without an updated view response')
           return mapDiagram(json.view)
@@ -895,10 +1104,16 @@ export const api = {
           return mapDiagram(json.view)
         },
 
-        save: async (id: number, content: string): Promise<ViewMarkdownDocument> => {
+        save: async (
+          id: number,
+          content: string,
+          options: { expectedFileVersion?: string; force?: boolean } = {},
+        ): Promise<ViewMarkdownDocument> => {
           const json = await connectJsonRpc<{ markdown?: ProtoViewMarkdownDocument }>('SaveViewMarkdown', {
             viewId: id,
             content,
+            expectedFileVersion: options.expectedFileVersion ?? undefined,
+            force: options.force ?? false,
           })
           const markdown = mapViewMarkdown(json?.markdown)
           if (!markdown) throw new Error('View markdown save returned no markdown metadata')
@@ -913,6 +1128,58 @@ export const api = {
           if (!json?.view) throw new Error('View markdown unlink returned no updated view response')
           return mapDiagram(json.view)
         },
+      },
+
+      threads: {
+        listForElement: (viewId: number, elementId: number): Promise<ViewThread[]> =>
+          rpc(async () => {
+            const res = await collaborationClient.listThreads({ viewId, elementId })
+            const json = j<{ threads?: Record<string, unknown>[] }>(ListThreadsResponseSchema, res)
+            return (json.threads ?? []).map(mapViewThread)
+          }),
+        listForConnector: (viewId: number, connectorId: number): Promise<ViewThread[]> =>
+          rpc(async () => {
+            const res = await collaborationClient.listThreads({ viewId, connectorId })
+            const json = j<{ threads?: Record<string, unknown>[] }>(ListThreadsResponseSchema, res)
+            return (json.threads ?? []).map(mapViewThread)
+          }),
+        createForElement: (viewId: number, elementId: number, body: string): Promise<ViewThread> =>
+          rpc(async () => {
+            const res = await collaborationClient.createThread({ viewId, elementId, body })
+            const json = j<{ thread?: Record<string, unknown> }>(CreateThreadResponseSchema, res)
+            return mapViewThread(json.thread ?? {})
+          }),
+        createForConnector: (viewId: number, connectorId: number, body: string): Promise<ViewThread> =>
+          rpc(async () => {
+            const res = await collaborationClient.createThread({ viewId, connectorId, body })
+            const json = j<{ thread?: Record<string, unknown> }>(CreateThreadResponseSchema, res)
+            return mapViewThread(json.thread ?? {})
+          }),
+        addComment: (viewId: number, threadId: number, body: string): Promise<ViewComment> =>
+          rpc(async () => {
+            const res = await collaborationClient.addComment({ viewId, threadId, body })
+            const json = j<{ comment?: Record<string, unknown> }>(AddCommentResponseSchema, res)
+            return mapViewComment(json.comment ?? {})
+          }),
+        resolve: (viewId: number, threadId: number, resolved: boolean): Promise<ThreadResolveEvent> =>
+          rpc(async () => {
+            await collaborationClient.resolveThread({ viewId, threadId, resolved })
+            return { thread_id: threadId, resolved }
+          }),
+      },
+
+      reactions: {
+        list: (viewId: number): Promise<ElementReactionSummary[]> =>
+          rpc(async () => {
+            const res = await collaborationClient.listReactions({ viewId })
+            const json = j<{ reactions?: Record<string, unknown>[] }>(ListReactionsResponseSchema, res)
+            return (json.reactions ?? []).map(mapReactionSummary)
+          }),
+        toggleForElement: (viewId: number, elementId: number, emoji: string): Promise<{ active: boolean }> =>
+          rpc(async () => {
+            const res = await collaborationClient.toggleReaction({ viewId, elementId, emoji })
+            return { active: res.active }
+          }),
       },
 
       rename: (id: number, name: string): Promise<View> =>
@@ -1215,7 +1482,12 @@ export const api = {
           }
         }
         const res = await dependencyClient.listDependencies({})
-        return j<DependenciesResponse>(ListDependenciesResponseSchema, res)
+        const json = j<Partial<DependenciesResponse> & { total_count?: number }>(ListDependenciesResponseSchema, res)
+        return {
+          elements: json.elements ?? [],
+          connectors: json.connectors ?? [],
+          totalCount: json.totalCount ?? json.total_count,
+        }
       }),
   },
 
@@ -1339,6 +1611,99 @@ export const api = {
         return {
           elements: res.elements,
           connectors: res.connectors,
+          warnings: res.warnings,
+        }
+      }),
+  },
+
+  mermaid: {
+    parse: (source: string): Promise<ParsedImport> =>
+      rpc(async () => {
+        const res = await mermaidClient.parseMermaid({ source })
+        return {
+          format: 'mermaid',
+          elements: res.elements,
+          connectors: res.connectors,
+          warnings: res.warnings,
+          direction: mapMermaidDirection(res.direction),
+          source: res.source,
+        }
+      }),
+
+    importIntoView: (
+      viewId: number,
+      source: string,
+      center: { x: number; y: number },
+      dryRun = false,
+    ): Promise<MermaidImportResult> =>
+      rpc(async () => {
+        const res = await mermaidClient.importMermaidIntoView({
+          orgId: orgIdOrLocal(''),
+          viewId,
+          source,
+          centerX: center.x,
+          centerY: center.y,
+          dryRun,
+        })
+        return {
+          summary: mapMermaidImportSummary(res.summary),
+          warnings: res.warnings,
+          content: res.content,
+        }
+      }),
+
+    exportView: (
+      viewId: number,
+      options: {
+        includeTldMetadata: boolean
+        markdownBlock?: boolean
+        densityOverride?: number
+      },
+    ): Promise<{ code: string; markdown: string; warnings: string[] }> =>
+      rpc(async () => {
+        const res = await mermaidClient.exportMermaidView({
+          orgId: orgIdOrLocal(''),
+          viewId,
+          includeTldMetadata: options.includeTldMetadata,
+          markdownBlock: options.markdownBlock ?? false,
+          densityOverride: options.densityOverride,
+        })
+        return {
+          code: res.code,
+          markdown: res.markdown,
+          warnings: res.warnings,
+        }
+      }),
+
+    inspectMarkdown: (markdown: string, viewId?: number | null): Promise<{ blocks: MermaidMarkdownBlock[]; syncStatus: MermaidMarkdownSyncStatus; warnings: string[] }> =>
+      rpc(async () => {
+        const res = await mermaidClient.inspectMermaidMarkdown({
+          orgId: orgIdOrLocal(''),
+          markdown,
+          viewId: viewId ?? undefined,
+        })
+        return {
+          blocks: res.blocks.map(mapMermaidMarkdownBlock),
+          syncStatus: mapMermaidMarkdownSyncStatus(res.syncStatus),
+          warnings: res.warnings,
+        }
+      }),
+
+    upsertMarkdownBlock: (
+      viewId: number,
+      markdown: string,
+      includeTldMetadata = true,
+    ): Promise<{ markdown: string; previousStatus: MermaidMarkdownSyncStatus; warnings: string[] }> =>
+      rpc(async () => {
+        const res = await mermaidClient.upsertMermaidMarkdownBlock({
+          orgId: orgIdOrLocal(''),
+          viewId,
+          markdown,
+          includeTldMetadata,
+        })
+        return {
+          markdown: res.markdown,
+          previousStatus: mapMermaidMarkdownSyncStatus(res.previousStatus),
           warnings: res.warnings,
         }
       }),

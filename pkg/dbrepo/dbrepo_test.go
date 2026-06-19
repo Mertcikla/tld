@@ -36,8 +36,9 @@ func TestOpenSQLiteAppliesLocalMigrations(t *testing.T) {
 	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM bun_migrations`).Scan(&count); err != nil {
 		t.Fatalf("query bun migrations table: %v", err)
 	}
-	if count != 7 {
-		t.Fatalf("bun_migrations count = %d, want 7", count)
+	expectedMigrations := countSQLiteMigrations(t)
+	if count != expectedMigrations {
+		t.Fatalf("bun_migrations count = %d, want %d", count, expectedMigrations)
 	}
 }
 
@@ -59,9 +60,25 @@ func TestOpenSQLiteBootstrapsLegacyMigrationState(t *testing.T) {
 	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM bun_migrations`).Scan(&count); err != nil {
 		t.Fatalf("query bun migrations table: %v", err)
 	}
-	if count != 7 {
-		t.Fatalf("bun_migrations count = %d, want 7", count)
+	expectedMigrations := countSQLiteMigrations(t)
+	if count != expectedMigrations {
+		t.Fatalf("bun_migrations count = %d, want %d", count, expectedMigrations)
 	}
+}
+
+func countSQLiteMigrations(t *testing.T) int {
+	t.Helper()
+	entries, err := fs.ReadDir(assets.FS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".up.sql") {
+			count++
+		}
+	}
+	return count
 }
 
 func applySQLiteMigrationsWithoutTracking(t *testing.T, dbPath string) {

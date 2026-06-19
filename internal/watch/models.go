@@ -57,6 +57,7 @@ type Symbol struct {
 	Name          string `json:"name"`
 	QualifiedName string `json:"qualified_name"`
 	Kind          string `json:"kind"`
+	NodeType      string `json:"node_type,omitempty"`
 	StartLine     int    `json:"start_line"`
 	EndLine       *int   `json:"end_line"`
 	SignatureHash string `json:"signature_hash"`
@@ -120,31 +121,33 @@ type Summary struct {
 }
 
 type ScanResult struct {
-	RepositoryID        int64     `json:"repository_id"`
-	ScanRunID           int64     `json:"scan_run_id"`
-	FilesSeen           int       `json:"files_seen"`
-	FilesParsed         int       `json:"files_parsed"`
-	FilesSkipped        int       `json:"files_skipped"`
-	SymbolsSeen         int       `json:"symbols_seen"`
-	ReferencesSeen      int       `json:"references_seen"`
-	LSP                 LSPStatus `json:"lsp"`
-	Mode                string    `json:"mode,omitempty"`
-	Strategy            string    `json:"strategy,omitempty"`
-	StrategyReason      string    `json:"strategy_reason,omitempty"`
-	TrackedFiles        int       `json:"tracked_files,omitempty"`
-	SelectedFiles       int       `json:"selected_files,omitempty"`
-	SkippedTrackedFiles int       `json:"skipped_tracked_files,omitempty"`
-	BaselineWorktree    string    `json:"baseline_worktree,omitempty"`
-	RecentFiles         int       `json:"recent_files,omitempty"`
-	AnchorFiles         int       `json:"anchor_files,omitempty"`
-	NeighborFiles       int       `json:"neighbor_files,omitempty"`
-	CallerFiles         int       `json:"caller_files,omitempty"`
-	CallerDepthReached  int       `json:"caller_depth_reached,omitempty"`
-	SharedAncestorFound bool      `json:"shared_ancestor_found,omitempty"`
-	LimitedCapReached   bool      `json:"limited_cap_reached,omitempty"`
-	LimitedFallback     string    `json:"limited_fallback,omitempty"`
-	Warning             string    `json:"warning,omitempty"`
-	Warnings            []string  `json:"warnings,omitempty"`
+	RepositoryID        int64               `json:"repository_id"`
+	ScanRunID           int64               `json:"scan_run_id"`
+	FilesSeen           int                 `json:"files_seen"`
+	FilesParsed         int                 `json:"files_parsed"`
+	FilesSkipped        int                 `json:"files_skipped"`
+	SymbolsSeen         int                 `json:"symbols_seen"`
+	ReferencesSeen      int                 `json:"references_seen"`
+	LSP                 LSPStatus           `json:"lsp"`
+	Mode                string              `json:"mode,omitempty"`
+	Strategy            string              `json:"strategy,omitempty"`
+	StrategyReason      string              `json:"strategy_reason,omitempty"`
+	TrackedFiles        int                 `json:"tracked_files,omitempty"`
+	SelectedFiles       int                 `json:"selected_files,omitempty"`
+	SkippedTrackedFiles int                 `json:"skipped_tracked_files,omitempty"`
+	BaselineWorktree    string              `json:"baseline_worktree,omitempty"`
+	RecentFiles         int                 `json:"recent_files,omitempty"`
+	AnchorFiles         int                 `json:"anchor_files,omitempty"`
+	NeighborFiles       int                 `json:"neighbor_files,omitempty"`
+	CallerFiles         int                 `json:"caller_files,omitempty"`
+	CallerDepthReached  int                 `json:"caller_depth_reached,omitempty"`
+	SharedAncestorFound bool                `json:"shared_ancestor_found,omitempty"`
+	BlastRadiusFiles    []string            `json:"blast_radius_files,omitempty"`
+	BlastRadiusRoots    map[string][]string `json:"blast_radius_roots,omitempty"`
+	LimitedCapReached   bool                `json:"limited_cap_reached,omitempty"`
+	LimitedFallback     string              `json:"limited_fallback,omitempty"`
+	Warning             string              `json:"warning,omitempty"`
+	Warnings            []string            `json:"warnings,omitempty"`
 }
 
 type LSPStatus struct {
@@ -229,18 +232,24 @@ type Settings struct {
 	Watcher      string           `json:"watcher"`
 	PollInterval time.Duration    `json:"poll_interval"`
 	Debounce     time.Duration    `json:"debounce"`
+	Dependencies DependencyConfig `json:"dependencies"`
 	Thresholds   Thresholds       `json:"thresholds"`
 	Visibility   VisibilityConfig `json:"visibility"`
 	Scale        ScaleConfig      `json:"scale"`
 	LSP          LSPConfig        `json:"lsp"`
 }
 
+type DependencyConfig struct {
+	Enabled bool `json:"enabled" yaml:"enabled"`
+}
+
 type ScaleConfig struct {
-	Strategy        string `json:"strategy" yaml:"strategy"`
-	MaxTrackedFiles int    `json:"max_tracked_files" yaml:"max_tracked_files"`
-	MaxLimitedFiles int    `json:"max_limited_files" yaml:"max_limited_files"`
-	MaxRecentFiles  int    `json:"max_recent_files" yaml:"max_recent_files"`
-	MaxCallerDepth  int    `json:"max_caller_depth" yaml:"max_caller_depth"`
+	Strategy           string `json:"strategy" yaml:"strategy"`
+	MaxTrackedFiles    int    `json:"max_tracked_files" yaml:"max_tracked_files"`
+	MaxLimitedFiles    int    `json:"max_limited_files" yaml:"max_limited_files"`
+	MaxRecentFiles     int    `json:"max_recent_files" yaml:"max_recent_files"`
+	MaxCallerDepth     int    `json:"max_caller_depth" yaml:"max_caller_depth"`
+	MaxBlastRadiusHops int    `json:"max_blast_radius_hops" yaml:"max_blast_radius_hops"`
 }
 
 type LSPConfig struct {
@@ -254,7 +263,9 @@ type RepresentRequest struct {
 	Embedding          EmbeddingConfig  `json:"embedding"`
 	Thresholds         Thresholds       `json:"thresholds"`
 	Visibility         VisibilityConfig `json:"visibility"`
+	Dependencies       DependencyConfig `json:"dependencies"`
 	AssumeNoRawChanges bool             `json:"-"`
+	BlastRadiusFiles   []string         `json:"-"`
 	Progress           ProgressSink     `json:"-"`
 	Logger             EventLogger      `json:"-"`
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -44,14 +45,18 @@ func defaultServeRunE(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	workspaceDir, err := resolveCommandWorkspaceDir(cmd)
+	if err != nil {
+		return err
+	}
 
 	if foreground {
-		return runForeground(cmd, host, port, dataDir, openBrowser)
+		return runForeground(cmd, host, port, dataDir, workspaceDir, openBrowser)
 	}
-	return runBackground(cmd, host, port, dataDir, openBrowser)
+	return runBackground(cmd, host, port, dataDir, workspaceDir, openBrowser)
 }
 
-func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser bool) error {
+func runForeground(cmd *cobra.Command, host, port, dataDir, workspaceDir string, openBrowser bool) error {
 	started := time.Now()
 	cfg, err := workspace.LoadGlobalConfig()
 	if err != nil {
@@ -59,6 +64,7 @@ func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 	}
 	opts := resolveServeOptions(cfg, host, port)
 	opts.Config = cfg
+	opts.WorkspaceDir = workspaceDir
 
 	app, err := localserver.Bootstrap(dataDir, opts)
 	if err != nil {
@@ -110,7 +116,7 @@ func runForeground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 	return nil
 }
 
-func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser bool) error {
+func runBackground(cmd *cobra.Command, host, port, dataDir, workspaceDir string, openBrowser bool) error {
 	started := time.Now()
 	cfg, err := workspace.LoadGlobalConfig()
 	if err != nil {
@@ -157,7 +163,11 @@ func runBackground(cmd *cobra.Command, host, port, dataDir string, openBrowser b
 		return err
 	}
 
-	fwdArgs := []string{"serve", "--foreground"}
+	fwdArgs := []string{}
+	if workspaceDir != "" {
+		fwdArgs = append(fwdArgs, "--workspace", workspaceDir)
+	}
+	fwdArgs = append(fwdArgs, "serve", "--foreground")
 	if opts.Host != "" {
 		fwdArgs = append(fwdArgs, "--host", opts.Host)
 	}
@@ -413,6 +423,26 @@ func resolveServeOptions(cfg *workspace.Config, flagHost, flagPort string) local
 		PublicURL:      serve.PublicURL,
 		AllowedOrigins: serve.AllowedOrigins,
 	}
+}
+
+func resolveCommandWorkspaceDir(cmd *cobra.Command) (string, error) {
+	root := cmd.Root()
+	if root == nil {
+		return "", nil
+	}
+	flag := root.PersistentFlags().Lookup("workspace")
+	if flag == nil {
+		return "", nil
+	}
+	value := strings.TrimSpace(flag.Value.String())
+	if value == "" {
+		return "", nil
+	}
+	abs, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace directory: %w", err)
+	}
+	return abs, nil
 }
 
 func NewServeCmd(runE func(*cobra.Command, []string) error) *cobra.Command {

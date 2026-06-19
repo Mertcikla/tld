@@ -87,12 +87,6 @@ func architectureFromFacts(facts []Fact) architectureModel {
 			source := firstNonEmpty(attrs["source"], sourceByFile[fact.FilePath])
 			target := firstNonEmpty(attrs["target"], fact.ObjectName)
 			addFactConnector(model, source, target, firstNonEmpty(attrs["label"], "uses"), firstNonEmpty(fact.Relationship, "runtime-dependency"), fact.Confidence, factEvidence(fact, "runtime-connection"))
-		case "runtime.endpoint_ref":
-			source := sourceByFile[fact.FilePath]
-			target := firstNonEmpty(attrs["target"], fact.ObjectName)
-			if target != "" && source != "" {
-				addFactConnector(model, source, target, "uses", "runtime-dependency", fact.Confidence, factEvidence(fact, "endpoint-reference"))
-			}
 		case "grpc.server", "grpc.contract":
 			name := firstNonEmpty(attrs["service"], fact.Name, fact.ObjectName)
 			if name == "" {
@@ -132,7 +126,7 @@ func architectureFromFacts(facts []Fact) architectureModel {
 
 func architectureFactType(factType string) bool {
 	switch factType {
-	case "runtime.component", "runtime.connection", "runtime.endpoint_ref", "grpc.server", "grpc.contract", "grpc.client", "http.client", "datastore.dependency", "external.dependency":
+	case "runtime.component", "runtime.connection", "grpc.server", "grpc.contract", "grpc.client", "http.client", "datastore.dependency", "external.dependency":
 		return true
 	default:
 		return false

@@ -321,9 +321,11 @@ function collapseEndpointToAncestor(
     return endpoint
   }
 
-  const collapseAncestorElementId = [...(endpoint.contextPathElementIds ?? [])]
+  const collapsePath = endpoint.contextPathElementIds ?? []
+  const collapseAncestorElementId = collapsePath
+    .slice(0, Math.max(0, collapsePath.length - 1))
     .reverse()
-    .find((elementId) => (collapseCounts.get(elementId) ?? 0) >= 2)
+    .find((elementId) => (collapseCounts.get(elementId) ?? 0) >= 1)
 
   if (collapseAncestorElementId == null) {
     return endpoint
@@ -619,6 +621,7 @@ export interface ResolveZUIProxyConnectorOptions {
   viewport?: ZUIViewportBounds | null
   anchorsByElementId?: Map<number, ZUIConnectorAnchorInfo>
   connectorPriority?: CrossBranchConnectorPriority
+  nativeRenderedElementIds?: Set<number>
 }
 
 function endpointPathForOwnerView(snapshot: WorkspaceGraphSnapshot, ownerViewId: number, elementId: number): number[] {
@@ -651,6 +654,9 @@ interface ZUIEndpointCandidate {
   placementViewId: number | null
   placementViewName: string | null
   depth: number
+  path: number[]
+  pathIndex: number
+  deepestVisibleAnchorElementId: number
 }
 
 function visibleEndpointCandidates(
@@ -668,8 +674,15 @@ function visibleEndpointCandidates(
 
   const actualElementName = firstPlacementForElement(snapshot, actualElementId)?.element.name ?? `Element ${actualElementId}`
   const deepestVisibleIndex = visibleIndexes[visibleIndexes.length - 1]
+  const deepestVisibleAnchorElementId = path[deepestVisibleIndex]
   const candidateIndexes = [deepestVisibleIndex]
-  if (visibleIndexes.length >= 2) candidateIndexes.push(visibleIndexes[visibleIndexes.length - 2])
+  if (visibleIndexes.length >= 2) {
+    const previousVisibleIndex = visibleIndexes[visibleIndexes.length - 2]
+    const actualElementVisible = deepestVisibleAnchorElementId === actualElementId
+    if (actualElementVisible && previousVisibleIndex === deepestVisibleIndex - 1) {
+      candidateIndexes.push(previousVisibleIndex)
+    }
+  }
 
   return candidateIndexes.map((pathIndex) => {
     const anchorElementId = path[pathIndex]
@@ -684,6 +697,9 @@ function visibleEndpointCandidates(
       placementViewId: ownerViewId,
       placementViewName: viewName(snapshot, ownerViewId),
       depth: Math.max(0, path.length - 1 - pathIndex),
+      path,
+      pathIndex,
+      deepestVisibleAnchorElementId,
     }
   })
 }
@@ -693,9 +709,49 @@ function isNativelyRenderedInZUI(
   sourceAnchorElementId: number,
   targetAnchorElementId: number,
   visibleNodeIdsByElementId: Map<number, string>,
+  nativeRenderedElementIds?: Set<number>,
 ): boolean {
+  if (
+    nativeRenderedElementIds &&
+    (!nativeRenderedElementIds.has(sourceAnchorElementId) || !nativeRenderedElementIds.has(targetAnchorElementId))
+  ) {
+    return false
+  }
   return visibleNodeIdsByElementId.get(sourceAnchorElementId) === `d${connector.view_id}-o${sourceAnchorElementId}` &&
     visibleNodeIdsByElementId.get(targetAnchorElementId) === `d${connector.view_id}-o${targetAnchorElementId}`
+}
+
+function candidateOwnsConnectorView(
+  snapshot: WorkspaceGraphSnapshot,
+  candidate: ZUIEndpointCandidate,
+  ownerViewId: number,
+): boolean {
+  const childViewId = snapshot.childViewIdByOwnerElementId[candidate.anchorElementId]
+  return childViewId != null && isDescendantView(snapshot, ownerViewId, childViewId)
+}
+
+function candidateIsAncestorOf(left: ZUIEndpointCandidate, right: ZUIEndpointCandidate): boolean {
+  const index = right.path.indexOf(left.anchorElementId)
+  return index >= 0 && index < right.pathIndex
+}
+
+function shouldSkipCollapsedOwnerPair(
+  snapshot: WorkspaceGraphSnapshot,
+  ownerViewId: number,
+  sourceCandidate: ZUIEndpointCandidate,
+  targetCandidate: ZUIEndpointCandidate,
+): boolean {
+  if (sourceCandidate.deepestVisibleAnchorElementId === targetCandidate.deepestVisibleAnchorElementId) {
+    return true
+  }
+
+  return (
+    candidateOwnsConnectorView(snapshot, sourceCandidate, ownerViewId) &&
+    candidateIsAncestorOf(targetCandidate, sourceCandidate)
+  ) || (
+    candidateOwnsConnectorView(snapshot, targetCandidate, ownerViewId) &&
+    candidateIsAncestorOf(sourceCandidate, targetCandidate)
+  )
 }
 
 function visibleEndpointCandidateCacheKey(ownerViewId: number, actualElementId: number): string {
@@ -779,6 +835,7 @@ export function resolveZUIProxyConnectors(
 
   const visibleElements = new Set(visibleNodeIdsByElementId.keys())
   const connectors = connectorsForSnapshot(snapshot)
+  const nativeRenderedElementIds = options?.nativeRenderedElementIds
   const endpointCandidateCache = new Map<string, ZUIEndpointCandidate[]>()
   const endpointCandidates = (ownerViewId: number, actualElementId: number): ZUIEndpointCandidate[] => {
     const key = visibleEndpointCandidateCacheKey(ownerViewId, actualElementId)
@@ -794,12 +851,32 @@ export function resolveZUIProxyConnectors(
 
   for (const connector of connectors) {
     if (!visibleElements.has(connector.source_element_id) || !visibleElements.has(connector.target_element_id)) continue
-    if (!isNativelyRenderedInZUI(connector, connector.source_element_id, connector.target_element_id, visibleNodeIdsByElementId)) continue
+    if (!isNativelyRenderedInZUI(
+      connector,
+      connector.source_element_id,
+      connector.target_element_id,
+      visibleNodeIdsByElementId,
+      nativeRenderedElementIds,
+    )) continue
     const [leftAnchorElementId, rightAnchorElementId] = canonicalPairElements(connector.source_element_id, connector.target_element_id)
     nativeVisiblePairs.set([leftAnchorElementId, rightAnchorElementId].join('::'), connector)
   }
 
   for (const connector of connectors) {
+    if (
+      visibleElements.has(connector.source_element_id) &&
+      visibleElements.has(connector.target_element_id) &&
+      isNativelyRenderedInZUI(
+        connector,
+        connector.source_element_id,
+        connector.target_element_id,
+        visibleNodeIdsByElementId,
+        nativeRenderedElementIds,
+      )
+    ) {
+      continue
+    }
+
     const sourceCandidates = endpointCandidates(connector.view_id, connector.source_element_id)
     const targetCandidates = endpointCandidates(connector.view_id, connector.target_element_id)
     const seenPairsForConnector = new Set<string>()
@@ -807,6 +884,7 @@ export function resolveZUIProxyConnectors(
     for (const sourceCandidate of sourceCandidates) {
       for (const targetCandidate of targetCandidates) {
         if (sourceCandidate.anchorElementId === targetCandidate.anchorElementId) continue
+        if (shouldSkipCollapsedOwnerPair(snapshot, connector.view_id, sourceCandidate, targetCandidate)) continue
         if (
           sourceCandidate.actualElementId === sourceCandidate.anchorElementId &&
           targetCandidate.actualElementId === targetCandidate.anchorElementId &&
@@ -815,6 +893,7 @@ export function resolveZUIProxyConnectors(
             sourceCandidate.anchorElementId,
             targetCandidate.anchorElementId,
             visibleNodeIdsByElementId,
+            nativeRenderedElementIds,
           )
         ) {
           continue

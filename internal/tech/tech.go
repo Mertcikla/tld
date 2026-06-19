@@ -2,59 +2,141 @@
 package tech
 
 import (
-	_ "embed"
+	"bytes"
 	"encoding/json"
+	"encoding/xml"
+	"errors"
+	"fmt"
+	"image"
+	"image/color"
+	"image/png"
+	"io"
+	"math"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf8"
+
+	buildassets "github.com/mertcikla/tld/v2/build-assets"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
-//go:embed icons.json
-var iconsJSON []byte
-
-// catalogItem represents an entry in the embedded icons.json.
+// catalogItem represents an entry in the frontend icons.json catalog.
 type catalogItem struct {
-	Name        string `json:"name"`
-	NameShort   string `json:"nameShort"`
-	DefaultSlug string `json:"defaultSlug"`
+	IconURL     string   `json:"iconUrl"`
+	Name        string   `json:"name"`
+	Provider    string   `json:"provider,omitempty"`
+	DocsURL     string   `json:"docsUrl,omitempty"`
+	Description string   `json:"description,omitempty"`
+	WebsiteURL  string   `json:"websiteUrl,omitempty"`
+	NameShort   string   `json:"nameShort"`
+	DefaultSlug string   `json:"defaultSlug"`
+	Aliases     []string `json:"aliases,omitempty"`
+	custom      bool
 }
 
-// CatalogEntry is a read-only public view of one embedded catalog item.
+// CustomTechnologyInput is the browser-provided payload for a custom icon
+// catalog entry.
+type CustomTechnologyInput struct {
+	Name          string
+	NameShort     string
+	Aliases       []string
+	Icon          []byte
+	MediaType     string
+	PreferredSlug string
+}
+
+// CatalogItem is the browser-facing shape used by the technology catalog.
+type CatalogItem struct {
+	IconURL     string   `json:"iconUrl"`
+	Name        string   `json:"name"`
+	Provider    string   `json:"provider,omitempty"`
+	DocsURL     string   `json:"docsUrl,omitempty"`
+	Description string   `json:"description,omitempty"`
+	WebsiteURL  string   `json:"websiteUrl,omitempty"`
+	NameShort   string   `json:"nameShort"`
+	DefaultSlug string   `json:"defaultSlug"`
+	Aliases     []string `json:"aliases,omitempty"`
+}
+
+// InvalidCustomTechnologyError marks user-correctable custom technology input
+// failures separately from filesystem or catalog IO failures.
+type InvalidCustomTechnologyError struct {
+	Err error
+}
+
+func (e InvalidCustomTechnologyError) Error() string {
+	if e.Err == nil {
+		return "invalid custom technology"
+	}
+	return e.Err.Error()
+}
+
+func (e InvalidCustomTechnologyError) Unwrap() error {
+	return e.Err
+}
+
+func invalidCustomTechnology(err error) error {
+	return InvalidCustomTechnologyError{Err: err}
+}
+
+// IsInvalidCustomTechnology reports whether err came from invalid upload input.
+func IsInvalidCustomTechnology(err error) bool {
+	var target InvalidCustomTechnologyError
+	return errors.As(err, &target)
+}
+
+const (
+	maxCustomIconBytes    = 2 * 1024 * 1024
+	maxCustomPNGDimension = 4096
+	normalizedPNGIconSize = 128
+	customCatalogFilePerm = 0o644
+	customCatalogDirPerm  = 0o755
+)
+
+var disallowedSVGURLSchemes = map[string]struct{}{
+	"data":       {},
+	"javascript": {},
+	"vbscript":   {},
+}
+
+// CatalogEntry is a read-only public view of one catalog item.
 type CatalogEntry struct {
 	Slug      string `json:"slug"`
 	Name      string `json:"name"`
 	NameShort string `json:"name_short,omitempty"`
+	IconURL   string `json:"icon_url,omitempty"`
 }
 
 var (
 	catalogCache     map[string]bool
 	catalogSlugCache map[string]catalogItem
 	catalogItems     []CatalogEntry
+	catalogRawItems  []catalogItem
 	catalogOnce      sync.Once
 )
 
 func initializeCatalog() {
-	var items []catalogItem
-	err := json.Unmarshal(iconsJSON, &items)
-	if err != nil {
-		catalogCache = make(map[string]bool)
-		catalogItems = nil
-		return
-	}
+	items := loadCatalogItems()
 
 	cache := make(map[string]bool, len(items)*3)
 	slugCache := make(map[string]catalogItem, len(items)*3)
 	entries := make([]CatalogEntry, 0, len(items))
+	aliases := make([]catalogAlias, 0)
 
-	add := func(key string, item catalogItem) {
-		key = strings.ToLower(strings.TrimSpace(key))
+	add := func(key string, item catalogItem, replace bool) {
+		key = normalizeCatalogKey(key)
 		if key == "" {
 			return
 		}
 		cache[key] = true
 		if item.DefaultSlug != "" {
-			if _, exists := slugCache[key]; exists {
+			if _, exists := slugCache[key]; exists && !replace {
 				return
 			}
 			slugCache[key] = item
@@ -62,38 +144,31 @@ func initializeCatalog() {
 	}
 
 	for _, item := range items {
-		add(item.Name, item)
+		add(item.Name, item, false)
 		if item.NameShort != "" {
-			add(item.NameShort, item)
+			add(item.NameShort, item, false)
 		}
-		add(item.DefaultSlug, item)
+		add(item.DefaultSlug, item, false)
+		for _, alias := range item.Aliases {
+			aliases = append(aliases, catalogAlias{key: alias, item: item})
+		}
 		if item.DefaultSlug != "" {
 			entries = append(entries, CatalogEntry{
 				Slug:      item.DefaultSlug,
 				Name:      item.Name,
 				NameShort: item.NameShort,
+				IconURL:   item.IconURL,
 			})
 		}
 	}
 
-	manualAliases := map[string]string{
-		"go": "golang", "postgres": "postgresql", "node": "nodejs", "ts": "typescript", "js": "javascript",
-		"tailwind": "tailwind-css", "tailwindcss": "tailwind-css", "next.js": "nextjs",
-		"k8s": "kubernetes", "dockerfile": "docker", "python3": "python", "cpp": "cplusplus",
-		"c#": "csharp", "dotnet": "dotnet", "aws": "aws", "gcp": "gcp", "azure": "azure",
-		"container": "docker",
-	}
-
-	for alias, slug := range manualAliases {
-		item, ok := slugCache[strings.ToLower(slug)]
-		if !ok {
-			item = catalogItem{Name: alias, NameShort: alias, DefaultSlug: slug}
-		}
-		add(alias, item)
+	for _, alias := range aliases {
+		add(alias.key, alias.item, alias.item.custom)
 	}
 
 	catalogCache = cache
 	catalogSlugCache = slugCache
+	catalogRawItems = stripCatalogSource(items)
 	sort.SliceStable(entries, func(i, j int) bool {
 		left := strings.ToLower(entries[i].Name)
 		right := strings.ToLower(entries[j].Name)
@@ -105,12 +180,533 @@ func initializeCatalog() {
 	catalogItems = entries
 }
 
-// Catalog returns the embedded technology catalog sorted by display name.
+type catalogAlias struct {
+	key  string
+	item catalogItem
+}
+
+func loadCatalogItems() []catalogItem {
+	builtinBody, err := buildassets.IconCatalogJSON()
+	if err != nil {
+		return loadCustomCatalogItems()
+	}
+	builtin, err := decodeCatalogJSON(builtinBody, false)
+	if err != nil {
+		return loadCustomCatalogItems()
+	}
+	return mergeCatalogs(builtin, loadCustomCatalogItems())
+}
+
+func loadCustomCatalogItems() []catalogItem {
+	items, err := readCustomCatalogItems()
+	if err != nil {
+		return nil
+	}
+	return items
+}
+
+func readCustomCatalogItems() ([]catalogItem, error) {
+	configDir, err := workspace.ConfigDir()
+	if err != nil {
+		return nil, err
+	}
+	body, err := os.ReadFile(filepath.Join(configDir, "icons", "icons.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	items, err := decodeCatalogJSON(body, true)
+	if err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func decodeCatalogJSON(body []byte, custom bool) ([]catalogItem, error) {
+	var items []catalogItem
+	if err := json.Unmarshal(body, &items); err != nil {
+		return nil, err
+	}
+
+	out := make([]catalogItem, 0, len(items))
+	for _, item := range items {
+		normalized, ok := normalizeCatalogItem(item, custom)
+		if ok {
+			out = append(out, normalized)
+		}
+	}
+	return out, nil
+}
+
+func mergeCatalogs(builtin, custom []catalogItem) []catalogItem {
+	out := make([]catalogItem, 0, len(builtin)+len(custom))
+	bySlug := make(map[string]int, len(builtin)+len(custom))
+
+	add := func(item catalogItem) {
+		slug := normalizeCatalogKey(item.DefaultSlug)
+		if slug == "" {
+			return
+		}
+		if idx, ok := bySlug[slug]; ok {
+			item.Aliases = mergeAliases(out[idx].Aliases, item.Aliases)
+			out[idx] = item
+			return
+		}
+		bySlug[slug] = len(out)
+		out = append(out, item)
+	}
+
+	for _, item := range builtin {
+		add(item)
+	}
+	for _, item := range custom {
+		add(item)
+	}
+	return out
+}
+
+func mergeAliases(left, right []string) []string {
+	return normalizeAliases(append(append([]string{}, left...), right...))
+}
+
+func normalizeCatalogItem(item catalogItem, custom bool) (catalogItem, bool) {
+	item.DefaultSlug = normalizeCatalogKey(item.DefaultSlug)
+	if item.DefaultSlug == "" {
+		return catalogItem{}, false
+	}
+	item.IconURL = strings.TrimSpace(item.IconURL)
+	if item.IconURL == "" {
+		item.IconURL = "/icons/" + item.DefaultSlug + ".svg"
+	}
+	item.Name = strings.TrimSpace(item.Name)
+	if item.Name == "" {
+		item.Name = item.DefaultSlug
+	}
+	item.NameShort = strings.TrimSpace(item.NameShort)
+	item.Provider = strings.TrimSpace(item.Provider)
+	item.DocsURL = strings.TrimSpace(item.DocsURL)
+	item.Description = strings.TrimSpace(item.Description)
+	item.WebsiteURL = strings.TrimSpace(item.WebsiteURL)
+	item.Aliases = normalizeAliases(item.Aliases)
+	item.custom = custom
+	return item, true
+}
+
+func normalizeAliases(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]bool, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		key := normalizeCatalogKey(trimmed)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func normalizeCatalogKey(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func stripCatalogSource(items []catalogItem) []catalogItem {
+	out := make([]catalogItem, len(items))
+	copy(out, items)
+	for i := range out {
+		out[i].custom = false
+	}
+	return out
+}
+
+func resetCatalog() {
+	catalogOnce = sync.Once{}
+	catalogCache = nil
+	catalogSlugCache = nil
+	catalogItems = nil
+	catalogRawItems = nil
+}
+
+// ReloadCatalog invalidates the in-process technology catalog cache. It should
+// be called after writing custom catalog files.
+func ReloadCatalog() {
+	resetCatalog()
+}
+
+func publicCatalogItem(item catalogItem) CatalogItem {
+	return CatalogItem{
+		IconURL:     item.IconURL,
+		Name:        item.Name,
+		Provider:    item.Provider,
+		DocsURL:     item.DocsURL,
+		Description: item.Description,
+		WebsiteURL:  item.WebsiteURL,
+		NameShort:   item.NameShort,
+		DefaultSlug: item.DefaultSlug,
+		Aliases:     append([]string{}, item.Aliases...),
+	}
+}
+
+// CreateCustomTechnology validates and persists a user-provided technology
+// icon, appends it to the global custom catalog, and reloads catalog state.
+func CreateCustomTechnology(input CustomTechnologyInput) (CatalogItem, error) {
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		return CatalogItem{}, invalidCustomTechnology(errors.New("name must not be empty"))
+	}
+	if len(input.Icon) == 0 {
+		return CatalogItem{}, invalidCustomTechnology(errors.New("icon must not be empty"))
+	}
+	if len(input.Icon) > maxCustomIconBytes {
+		return CatalogItem{}, invalidCustomTechnology(fmt.Errorf("icon must be %d bytes or smaller", maxCustomIconBytes))
+	}
+
+	ext, iconBody, err := normalizeCustomIcon(input.Icon, input.MediaType)
+	if err != nil {
+		return CatalogItem{}, invalidCustomTechnology(err)
+	}
+
+	customItems, err := readCustomCatalogItems()
+	if err != nil {
+		return CatalogItem{}, fmt.Errorf("read custom catalog: %w", err)
+	}
+	builtinItems, err := builtinCatalogItems()
+	if err != nil {
+		return CatalogItem{}, fmt.Errorf("read built-in catalog: %w", err)
+	}
+
+	slugBase := sanitizeCatalogSlug(input.PreferredSlug)
+	if slugBase == "" {
+		slugBase = sanitizeCatalogSlug(name)
+	}
+	if slugBase == "" {
+		return CatalogItem{}, invalidCustomTechnology(errors.New("name must contain letters or numbers"))
+	}
+	slug := uniqueCatalogSlug(slugBase, mergeCatalogs(builtinItems, customItems))
+
+	nameShort := strings.TrimSpace(input.NameShort)
+	if nameShort == "" {
+		nameShort = name
+	}
+
+	item := catalogItem{
+		IconURL:     fmt.Sprintf("/icons/%s.%s", slug, ext),
+		Name:        name,
+		NameShort:   nameShort,
+		DefaultSlug: slug,
+		Aliases:     normalizeAliases(input.Aliases),
+		custom:      true,
+	}
+
+	configDir, err := workspace.ConfigDir()
+	if err != nil {
+		return CatalogItem{}, err
+	}
+	customRoot := filepath.Join(configDir, "icons")
+	customIconsDir := filepath.Join(customRoot, "icons")
+	if err := os.MkdirAll(customIconsDir, customCatalogDirPerm); err != nil {
+		return CatalogItem{}, fmt.Errorf("create custom icons directory: %w", err)
+	}
+
+	iconFilename := slug + "." + ext
+	if err := os.WriteFile(filepath.Join(customIconsDir, iconFilename), iconBody, customCatalogFilePerm); err != nil {
+		return CatalogItem{}, fmt.Errorf("write custom icon: %w", err)
+	}
+
+	nextItems := append(append([]catalogItem{}, customItems...), item)
+	if err := persistCustomCatalog(filepath.Join(customRoot, "icons.json"), nextItems); err != nil {
+		return CatalogItem{}, err
+	}
+
+	ReloadCatalog()
+	return publicCatalogItem(item), nil
+}
+
+func builtinCatalogItems() ([]catalogItem, error) {
+	body, err := buildassets.IconCatalogJSON()
+	if err != nil {
+		return nil, err
+	}
+	return decodeCatalogJSON(body, false)
+}
+
+func persistCustomCatalog(target string, items []catalogItem) error {
+	body, err := json.MarshalIndent(stripCatalogSource(items), "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal custom catalog: %w", err)
+	}
+	body = append(body, '\n')
+
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".icons-*.json")
+	if err != nil {
+		return fmt.Errorf("create custom catalog temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("write custom catalog temp file: %w", err)
+	}
+	if err := tmp.Chmod(customCatalogFilePerm); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("chmod custom catalog temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close custom catalog temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("replace custom catalog: %w", err)
+	}
+	return nil
+}
+
+func uniqueCatalogSlug(base string, existing []catalogItem) string {
+	used := make(map[string]struct{}, len(existing))
+	for _, item := range existing {
+		if slug := sanitizeCatalogSlug(item.DefaultSlug); slug != "" {
+			used[slug] = struct{}{}
+		}
+	}
+	if _, ok := used[base]; !ok {
+		return base
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		if _, ok := used[candidate]; !ok {
+			return candidate
+		}
+	}
+}
+
+func sanitizeCatalogSlug(value string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(value)) {
+		switch {
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
+			lastDash = false
+		case r == '-' || r == '_' || unicode.IsSpace(r):
+			if b.Len() > 0 && !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 80 {
+		out = strings.Trim(out[:80], "-")
+	}
+	return out
+}
+
+func normalizeCustomIcon(body []byte, mediaType string) (ext string, normalized []byte, err error) {
+	mediaType = strings.ToLower(strings.TrimSpace(strings.Split(mediaType, ";")[0]))
+	detected := http.DetectContentType(body)
+
+	switch {
+	case mediaType == "image/svg+xml":
+		if err := validateSVGIcon(body); err != nil {
+			return "", nil, err
+		}
+		return "svg", body, nil
+	case mediaType == "image/png" || detected == "image/png":
+		normalized, err := normalizePNGIcon(body)
+		if err != nil {
+			return "", nil, err
+		}
+		return "png", normalized, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported icon media type %q", mediaType)
+	}
+}
+
+func validateSVGIcon(body []byte) error {
+	if !utf8.Valid(body) {
+		return errors.New("svg icon must be valid UTF-8")
+	}
+
+	lower := strings.ToLower(string(body))
+	for _, marker := range []string{"<script", "javascript:", "data:", "vbscript:"} {
+		if strings.Contains(lower, marker) {
+			return fmt.Errorf("svg icon contains disallowed content %q", marker)
+		}
+	}
+
+	decoder := xml.NewDecoder(bytes.NewReader(body))
+	seenRoot := false
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return fmt.Errorf("parse svg icon: %w", err)
+		}
+		start, ok := token.(xml.StartElement)
+		if !ok {
+			continue
+		}
+
+		name := strings.ToLower(start.Name.Local)
+		if !seenRoot {
+			if name != "svg" {
+				return errors.New("svg icon root must be <svg>")
+			}
+			seenRoot = true
+		}
+
+		switch name {
+		case "script", "foreignobject", "iframe", "object", "embed":
+			return fmt.Errorf("svg icon contains disallowed element <%s>", name)
+		}
+
+		for _, attr := range start.Attr {
+			attrName := strings.ToLower(attr.Name.Local)
+			attrValue := strings.ToLower(strings.TrimSpace(attr.Value))
+			if strings.HasPrefix(attrName, "on") {
+				return fmt.Errorf("svg icon contains disallowed event attribute %q", attr.Name.Local)
+			}
+			if (attrName == "href" || attrName == "src") && hasDisallowedSVGURLScheme(attrValue) {
+				return fmt.Errorf("svg icon contains disallowed %q value", attr.Name.Local)
+			}
+			if attrName == "style" && containsDisallowedSVGURLScheme(attrValue) {
+				return errors.New("svg icon contains disallowed style value")
+			}
+		}
+	}
+	if !seenRoot {
+		return errors.New("svg icon root must be <svg>")
+	}
+	return nil
+}
+
+func hasDisallowedSVGURLScheme(value string) bool {
+	normalized := normalizeSVGURLSchemeInput(value)
+	if normalized == "" {
+		return false
+	}
+
+	parsed, err := url.Parse(normalized)
+	if err != nil || parsed.Scheme == "" {
+		return false
+	}
+	_, disallowed := disallowedSVGURLSchemes[strings.ToLower(parsed.Scheme)]
+	return disallowed
+}
+
+func containsDisallowedSVGURLScheme(value string) bool {
+	normalized := normalizeSVGURLSchemeInput(value)
+	for scheme := range disallowedSVGURLSchemes {
+		if strings.Contains(normalized, scheme+":") {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeSVGURLSchemeInput(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, value)
+}
+
+func normalizePNGIcon(body []byte) ([]byte, error) {
+	cfg, err := png.DecodeConfig(bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("decode png icon: %w", err)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return nil, errors.New("png icon dimensions must be positive")
+	}
+	if cfg.Width > maxCustomPNGDimension || cfg.Height > maxCustomPNGDimension {
+		return nil, fmt.Errorf("png icon dimensions must be %dx%d or smaller", maxCustomPNGDimension, maxCustomPNGDimension)
+	}
+
+	img, err := png.Decode(bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("decode png icon: %w", err)
+	}
+	dst := fitImageNearest(img, normalizedPNGIconSize)
+
+	var out bytes.Buffer
+	if err := png.Encode(&out, dst); err != nil {
+		return nil, fmt.Errorf("encode normalized png icon: %w", err)
+	}
+	return out.Bytes(), nil
+}
+
+func fitImageNearest(src image.Image, size int) *image.NRGBA {
+	dst := image.NewNRGBA(image.Rect(0, 0, size, size))
+	bounds := src.Bounds()
+	srcW := bounds.Dx()
+	srcH := bounds.Dy()
+	scale := math.Min(float64(size)/float64(srcW), float64(size)/float64(srcH))
+	drawW := max(1, int(math.Round(float64(srcW)*scale)))
+	drawH := max(1, int(math.Round(float64(srcH)*scale)))
+	offsetX := (size - drawW) / 2
+	offsetY := (size - drawH) / 2
+
+	for y := 0; y < drawH; y++ {
+		srcY := bounds.Min.Y + min(srcH-1, int(float64(y)*float64(srcH)/float64(drawH)))
+		for x := 0; x < drawW; x++ {
+			srcX := bounds.Min.X + min(srcW-1, int(float64(x)*float64(srcW)/float64(drawW)))
+			c := color.NRGBAModel.Convert(src.At(srcX, srcY)).(color.NRGBA)
+			dst.SetNRGBA(offsetX+x, offsetY+y, c)
+		}
+	}
+	return dst
+}
+
+// Catalog returns the technology catalog sorted by display name.
 func Catalog() []CatalogEntry {
 	catalogOnce.Do(initializeCatalog)
 	out := make([]CatalogEntry, len(catalogItems))
 	copy(out, catalogItems)
 	return out
+}
+
+// CatalogJSON returns the merged frontend catalog JSON.
+func CatalogJSON() ([]byte, error) {
+	catalogOnce.Do(initializeCatalog)
+	out := stripCatalogSource(catalogRawItems)
+	body, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(body, '\n'), nil
+}
+
+// IconURLForSlug returns the SVG icon URL for a catalog slug or a supported
+// legacy slug alias.
+func IconURLForSlug(slug string) (string, bool) {
+	catalogOnce.Do(initializeCatalog)
+
+	normalized := normalizeCatalogKey(slug)
+	item, ok := catalogSlugCache[normalized]
+	if !ok || item.DefaultSlug == "" {
+		return "", false
+	}
+	if item.IconURL != "" {
+		return item.IconURL, true
+	}
+	return "/icons/" + item.DefaultSlug + ".svg", true
 }
 
 // scored holds a candidate match with its edit distance.
@@ -124,7 +720,7 @@ type scored struct {
 func SuggestSimilar(label string, maxResults int) []string {
 	catalogOnce.Do(initializeCatalog)
 
-	normalized := strings.ToLower(strings.TrimSpace(label))
+	normalized := normalizeCatalogKey(label)
 	if normalized == "" {
 		return nil
 	}
@@ -242,8 +838,7 @@ func Validate(techStr string) (missing []string) {
 			continue
 		}
 
-		lower := strings.ToLower(p)
-		if !catalogCache[lower] {
+		if !catalogCache[normalizeCatalogKey(p)] {
 			missing = append(missing, p)
 		}
 	}
@@ -256,7 +851,7 @@ func Validate(techStr string) (missing []string) {
 func LookupCatalog(label string) (slug, name string, ok bool) {
 	catalogOnce.Do(initializeCatalog)
 
-	normalized := strings.ToLower(strings.TrimSpace(label))
+	normalized := normalizeCatalogKey(label)
 	item, ok := catalogSlugCache[normalized]
 	if !ok || item.DefaultSlug == "" {
 		return "", "", false

@@ -237,6 +237,9 @@ func ValidateGlobalConfig(cfg *Config) ConfigValidationErrors {
 			add(item.key, "must be positive")
 		}
 	}
+	if cfg.Watch.Scale.MaxBlastRadiusHops < 0 {
+		add("watch.scale.max_blast_radius_hops", "must be zero or positive")
+	}
 	if cfg.Watch.LSP.MemoryLimitBytes <= 0 {
 		add("watch.lsp.memory_limit_bytes", "must be positive")
 	}
@@ -378,6 +381,8 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "watch.scale.max_limited_files", Env: []string{"TLD_WATCH_SCALE_MAX_LIMITED_FILES"}, Description: "Maximum files selected in limited view after recent-file, anchor, neighbor, and caller expansion."},
 	{Key: "watch.scale.max_recent_files", Env: []string{"TLD_WATCH_SCALE_MAX_RECENT_FILES"}, Description: "Maximum recently changed local-git-history files used as limited-view seeds."},
 	{Key: "watch.scale.max_caller_depth", Env: []string{"TLD_WATCH_SCALE_MAX_CALLER_DEPTH"}, Description: "Maximum incoming caller depth used during limited-view expansion."},
+	{Key: "watch.scale.max_blast_radius_hops", Env: []string{"TLD_WATCH_SCALE_MAX_BLAST_RADIUS_HOPS"}, Description: "Maximum relationship hops used to expand limited-view changed-file blast radius; 0 disables blast expansion."},
+	{Key: "watch.dependencies.enabled", Env: []string{"TLD_WATCH_DEPENDENCIES_ENABLED"}, Description: "Enable dependency/import inventory scanning and materialization for external libraries and imports."},
 	{Key: "watch.lsp.enabled", Env: []string{"TLD_WATCH_LSP_ENABLED"}, Description: "Enable language-server definition resolution during watch/analyze scans."},
 	{Key: "watch.lsp.health_interval", Env: []string{"TLD_WATCH_LSP_HEALTH_INTERVAL"}, Description: "Minimum interval between language-server health checks."},
 	{Key: "watch.lsp.memory_limit_bytes", Env: []string{"TLD_WATCH_LSP_MEMORY_LIMIT_BYTES"}, Description: "Per-language-server RSS limit before the server is restarted."},
@@ -520,6 +525,8 @@ func applyEnvOverridesDetailed(cfg *Config, root *yaml.Node) ([]ConfigValue, err
 		{"watch.scale.max_limited_files", "TLD_WATCH_SCALE_MAX_LIMITED_FILES"},
 		{"watch.scale.max_recent_files", "TLD_WATCH_SCALE_MAX_RECENT_FILES"},
 		{"watch.scale.max_caller_depth", "TLD_WATCH_SCALE_MAX_CALLER_DEPTH"},
+		{"watch.scale.max_blast_radius_hops", "TLD_WATCH_SCALE_MAX_BLAST_RADIUS_HOPS"},
+		{"watch.dependencies.enabled", "TLD_WATCH_DEPENDENCIES_ENABLED"},
 		{"watch.lsp.enabled", "TLD_WATCH_LSP_ENABLED"},
 		{"watch.lsp.health_interval", "TLD_WATCH_LSP_HEALTH_INTERVAL"},
 		{"watch.lsp.memory_limit_bytes", "TLD_WATCH_LSP_MEMORY_LIMIT_BYTES"},
@@ -698,6 +705,18 @@ func setConfigValue(cfg *Config, key, value string) error {
 			return err
 		}
 		cfg.Watch.Scale.MaxCallerDepth = v
+	case "watch.scale.max_blast_radius_hops":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Scale.MaxBlastRadiusHops = v
+	case "watch.dependencies.enabled":
+		v, err := parseBool(value)
+		if err != nil {
+			return err
+		}
+		cfg.Watch.Dependencies.Enabled = v
 	case "watch.lsp.enabled":
 		v, err := parseBool(value)
 		if err != nil {
@@ -950,6 +969,10 @@ func getConfigValue(cfg *Config, key string) any {
 		return cfg.Watch.Scale.MaxRecentFiles
 	case "watch.scale.max_caller_depth":
 		return cfg.Watch.Scale.MaxCallerDepth
+	case "watch.scale.max_blast_radius_hops":
+		return cfg.Watch.Scale.MaxBlastRadiusHops
+	case "watch.dependencies.enabled":
+		return cfg.Watch.Dependencies.Enabled
 	case "watch.lsp.enabled":
 		return cfg.Watch.LSP.Enabled
 	case "watch.lsp.health_interval":
@@ -1093,8 +1116,14 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	addScalar(scale, "max_limited_files", cfg.Watch.Scale.MaxLimitedFiles, desc("watch.scale.max_limited_files"))
 	addScalar(scale, "max_recent_files", cfg.Watch.Scale.MaxRecentFiles, desc("watch.scale.max_recent_files"))
 	addScalar(scale, "max_caller_depth", cfg.Watch.Scale.MaxCallerDepth, desc("watch.scale.max_caller_depth"))
-	appendUnknownEntries(scale, mappingValueNode(mappingValueNode(existing, "watch"), "scale"), setOf("strategy", "max_tracked_files", "max_limited_files", "max_recent_files", "max_caller_depth"))
+	addScalar(scale, "max_blast_radius_hops", cfg.Watch.Scale.MaxBlastRadiusHops, desc("watch.scale.max_blast_radius_hops"))
+	appendUnknownEntries(scale, mappingValueNode(mappingValueNode(existing, "watch"), "scale"), setOf("strategy", "max_tracked_files", "max_limited_files", "max_recent_files", "max_caller_depth", "max_blast_radius_hops"))
 	addMap(watchNode, "scale", scale, "Huge-repo detection and limited-view settings.")
+
+	dependencies := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addScalar(dependencies, "enabled", cfg.Watch.Dependencies.Enabled, desc("watch.dependencies.enabled"))
+	appendUnknownEntries(dependencies, mappingValueNode(mappingValueNode(existing, "watch"), "dependencies"), setOf("enabled"))
+	addMap(watchNode, "dependencies", dependencies, "Dependency and import inventory settings.")
 
 	lsp := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	addScalar(lsp, "enabled", cfg.Watch.LSP.Enabled, desc("watch.lsp.enabled"))
@@ -1148,7 +1177,7 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	appendUnknownEntries(layout, mappingValueNode(mappingValueNode(existing, "watch"), "layout"), setOf("link_distance", "charge_strength", "collide_radius", "gravity_strength"))
 	addMap(watchNode, "layout", layout, "Organic layout tuning for generated watch views.")
 
-	appendUnknownEntries(watchNode, mappingValueNode(existing, "watch"), setOf("languages", "watcher", "poll_interval", "debounce", "thresholds", "scale", "lsp", "visibility", "embedding", "layout"))
+	appendUnknownEntries(watchNode, mappingValueNode(existing, "watch"), setOf("languages", "watcher", "poll_interval", "debounce", "thresholds", "scale", "dependencies", "lsp", "visibility", "embedding", "layout"))
 	addMap(mapping, "watch", watchNode, "Source watch/analyze pipeline settings.")
 
 	completion := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}

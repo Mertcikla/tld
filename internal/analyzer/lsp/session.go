@@ -172,6 +172,14 @@ func (s *Session) SupportsTypeDefinition() bool {
 	return capabilityEnabled(s.capabilities.TypeDefinitionProvider)
 }
 
+func (s *Session) SupportsImplementation() bool {
+	return capabilityEnabled(s.capabilities.ImplementationProvider)
+}
+
+func (s *Session) SupportsReferences() bool {
+	return capabilityEnabled(s.capabilities.ReferencesProvider)
+}
+
 func (s *Session) SupportsCallHierarchy() bool {
 	return capabilityEnabled(s.capabilities.CallHierarchyProvider)
 }
@@ -218,6 +226,20 @@ func (s *Session) TypeDefinition(ctx context.Context, params *protocol.TypeDefin
 		return nil, fmt.Errorf("LSP session is not initialized")
 	}
 	return s.server.TypeDefinition(ctx, params)
+}
+
+func (s *Session) Implementation(ctx context.Context, params *protocol.ImplementationParams) ([]protocol.Location, error) {
+	if s.server == nil {
+		return nil, fmt.Errorf("LSP session is not initialized")
+	}
+	return s.server.Implementation(ctx, params)
+}
+
+func (s *Session) References(ctx context.Context, params *protocol.ReferenceParams) ([]protocol.Location, error) {
+	if s.server == nil {
+		return nil, fmt.Errorf("LSP session is not initialized")
+	}
+	return s.server.References(ctx, params)
 }
 
 func (s *Session) PrepareCallHierarchy(ctx context.Context, params *protocol.CallHierarchyPrepareParams) ([]protocol.CallHierarchyItem, error) {

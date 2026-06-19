@@ -4,6 +4,7 @@ import {
   createConnector,
   currentViewId,
   nodeByName,
+  pasteTextOnCanvas,
   uniqueName,
 } from '../../helpers/vieweditor'
 
@@ -35,14 +36,14 @@ test('export modal changes options and downloads Mermaid output', async ({ page 
   await page.getByTestId('vieweditor-toolbar-extras').click()
   await page.getByTestId('vieweditor-toolbar-export').click()
   await expect(page.getByTestId('export-modal')).toBeVisible()
-  await page.getByText('Mermaid').click()
+  await page.getByTestId('export-modal').getByText('Mermaid Markdown').click()
   const filename = uniqueName('export-mermaid')
   await page.getByTestId('export-filename-input').fill(filename)
 
   const downloadPromise = page.waitForEvent('download')
   await page.getByTestId('export-submit').click()
   const download = await downloadPromise
-  expect(download.suggestedFilename()).toBe(`${filename}.mermaid`)
+  expect(download.suggestedFilename()).toBe(`${filename}.md`)
 })
 
 test('pasting fenced Mermaid imports into the open view', async ({ page }) => {
@@ -56,12 +57,7 @@ flowchart LR
 \`\`\`
 `
 
-  await page.getByTestId('vieweditor-canvas').click()
-  await page.evaluate((text) => {
-    const data = new DataTransfer()
-    data.setData('text/plain', text)
-    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
-  }, source)
+  await pasteTextOnCanvas(page, source)
 
   await expect(page).toHaveURL(new RegExp(`/views/${viewId}$`))
   await expect(nodeByName(page, 'Paste API')).toBeVisible()
@@ -90,12 +86,7 @@ test('pasting architecture-beta Mermaid imports into the open view', async ({ pa
     top_gateway:B -- T:junctionRight
     bottom_gateway:T -- B:junctionRight`
 
-  await page.getByTestId('vieweditor-canvas').click()
-  await page.evaluate((text) => {
-    const data = new DataTransfer()
-    data.setData('text/plain', text)
-    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
-  }, source)
+  await pasteTextOnCanvas(page, source)
 
   await expect(page).toHaveURL(new RegExp(`/views/${viewId}$`))
   await expect(page.getByTestId('vieweditor-node').filter({ hasText: 'Disk' })).toHaveCount(3)
@@ -109,12 +100,7 @@ test('pasting non-Mermaid text is ignored by canvas import', async ({ page }) =>
   await createAndLoadDiagramWithNodes(page, 0, 'Paste Ignore Host')
   const viewId = currentViewId(page)
 
-  await page.getByTestId('vieweditor-canvas').click()
-  await page.evaluate(() => {
-    const data = new DataTransfer()
-    data.setData('text/plain', 'this is not a diagram')
-    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
-  })
+  await pasteTextOnCanvas(page, 'this is not a diagram')
 
   await expect(page).toHaveURL(new RegExp(`/views/${viewId}$`))
   await expect(page.getByTestId('vieweditor-node')).toHaveCount(0)

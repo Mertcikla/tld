@@ -31,6 +31,8 @@ func TestDatastoreGlueNegatives(t *testing.T) {
 		{"ignores redis in comments", `// TODO: consider using redis://cache:6379`},
 		{"ignores bare redis mention", `var x = "redis"`},
 		{"ignores postgres in comments", `/* postgres://localhost */`},
+		{"ignores secret manager marker", `const endpoint = "secretmanager.googleapis.com"`},
+		{"ignores observability marker", `import "go.opentelemetry.io/otel"`},
 	}
 
 	for _, tc := range cases {

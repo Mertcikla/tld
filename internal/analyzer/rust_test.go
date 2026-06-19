@@ -70,6 +70,8 @@ fn main() {
 			t.Errorf("Symbol not found or mismatch: %+v", expected)
 		}
 	}
+	assertSymbolNodeType(t, result, "Point", "struct", "", "struct_item")
+	assertSymbolNodeType(t, result, "new", "method", "Point", "function_item")
 
 	// Verify Refs
 	expectedRefs := []Ref{

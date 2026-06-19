@@ -100,6 +100,37 @@ func TestSetGlobalConfigValueSupportsEmbeddingMaxTokens(t *testing.T) {
 	}
 }
 
+func TestWatchDependenciesEnabledConfigDefaultsAndOverrides(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if cfg.Watch.Dependencies.Enabled {
+		t.Fatal("watch.dependencies.enabled should default to false")
+	}
+	if err := workspace.SetGlobalConfigValue("watch.dependencies.enabled", "true"); err != nil {
+		t.Fatalf("SetGlobalConfigValue: %v", err)
+	}
+	cfg, err = workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if !cfg.Watch.Dependencies.Enabled {
+		t.Fatal("watch.dependencies.enabled should be true after config set")
+	}
+	t.Setenv("TLD_WATCH_DEPENDENCIES_ENABLED", "false")
+	cfg, err = workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig with env: %v", err)
+	}
+	if cfg.Watch.Dependencies.Enabled {
+		t.Fatal("TLD_WATCH_DEPENDENCIES_ENABLED=false should override file config")
+	}
+}
+
 func TestWatchEmbeddingEndpointSupportsMultipleValues(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)
@@ -272,6 +303,7 @@ func TestGlobalConfigScaleRecentAndCallerEnvOverrides(t *testing.T) {
 	t.Setenv("TLD_CONFIG_DIR", configDir)
 	t.Setenv("TLD_WATCH_SCALE_MAX_RECENT_FILES", "123")
 	t.Setenv("TLD_WATCH_SCALE_MAX_CALLER_DEPTH", "7")
+	t.Setenv("TLD_WATCH_SCALE_MAX_BLAST_RADIUS_HOPS", "0")
 
 	cfg, err := workspace.LoadGlobalConfig()
 	if err != nil {
@@ -282,6 +314,9 @@ func TestGlobalConfigScaleRecentAndCallerEnvOverrides(t *testing.T) {
 	}
 	if cfg.Watch.Scale.MaxCallerDepth != 7 {
 		t.Fatalf("MaxCallerDepth = %d, want 7", cfg.Watch.Scale.MaxCallerDepth)
+	}
+	if cfg.Watch.Scale.MaxBlastRadiusHops != 0 {
+		t.Fatalf("MaxBlastRadiusHops = %d, want 0", cfg.Watch.Scale.MaxBlastRadiusHops)
 	}
 }
 

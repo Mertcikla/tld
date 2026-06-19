@@ -7,6 +7,7 @@ import {
   listLayers,
   nodeByName,
   openElementPanel,
+  openViewExplorer,
   uniqueName,
 } from '../../helpers/vieweditor'
 
@@ -17,6 +18,7 @@ test('shows a tag in the explorer and applies it to an element from the panel', 
 
   await createTag(page, tag)
   await page.reload()
+  await openViewExplorer(page)
   const otherTags = page.getByRole('button', { name: /Other tags/ })
   await expect(otherTags).toBeVisible()
   await otherTags.click()
@@ -45,6 +47,7 @@ test('layer visibility hides and shows nodes with matching tags', async ({ page 
 
   const layer = await createLayer(page, diagram.id, { name: uniqueName('QA Layer'), tags: [tag] })
   await page.reload()
+  await openViewExplorer(page)
   await expect(page.getByTestId('tag-manager-layer').filter({ hasText: layer.name })).toBeVisible()
 
   await page.getByTestId('tag-manager-layer').filter({ hasText: layer.name }).getByTestId('tag-manager-layer-visibility').click()
@@ -63,6 +66,7 @@ test('deletes a layer from the explorer tag manager', async ({ page }) => {
   const { diagram } = await createAndLoadDiagramWithNodes(page, 0, 'Layer Delete')
   const layer = await createLayer(page, diagram.id, { name: uniqueName('Delete Layer'), tags: ['temporary'] })
   await page.reload()
+  await openViewExplorer(page)
 
   const layerItem = page.getByTestId('tag-manager-layer').filter({ hasText: layer.name })
   await layerItem.click()
@@ -85,9 +89,13 @@ test('dragging tags and layers onto a canvas node updates element tags', async (
   await createTag(page, layerTagB, '#63B3ED')
   const layer = await createLayer(page, diagram.id, { name: uniqueName('Drop Layer'), tags: [layerTagA, layerTagB] })
   await page.reload()
+  await openViewExplorer(page)
 
   const otherTags = page.getByRole('button', { name: /Other tags/ })
-  if (await otherTags.count()) await otherTags.click()
+  await expect(otherTags).toBeVisible()
+  await otherTags.click()
+  const tagItem = page.getByTestId('tag-manager-tag').filter({ hasText: tag })
+  await expect(tagItem).toBeVisible()
 
   const target = nodeByName(page, elements[0].name)
   const targetBox = await target.boundingBox()
@@ -98,7 +106,7 @@ test('dragging tags and layers onto a canvas node updates element tags', async (
   }
 
   const tagTransfer = await page.evaluateHandle(() => new DataTransfer())
-  await page.getByTestId('tag-manager-tag').filter({ hasText: tag }).dispatchEvent('dragstart', { dataTransfer: tagTransfer })
+  await tagItem.dispatchEvent('dragstart', { dataTransfer: tagTransfer })
   await target.dispatchEvent('dragover', { dataTransfer: tagTransfer, ...dropPoint })
   await target.dispatchEvent('drop', { dataTransfer: tagTransfer, ...dropPoint })
 

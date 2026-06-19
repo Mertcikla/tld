@@ -81,6 +81,8 @@ export default function App() {
 			t.Errorf("symbol not found: %+v (got %v)", expected, result.Symbols)
 		}
 	}
+	assertSymbolNodeType(t, result, "UserService", "class", "", "class_declaration")
+	assertSymbolNodeType(t, result, "helperFn", "function", "", "variable_declarator")
 
 	expectedRefs := []Ref{
 		{Name: "React", Kind: "import", TargetPath: "react"},

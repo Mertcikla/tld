@@ -138,7 +138,7 @@ export interface SelectionBulkBarProps {
   onRemoveTag: (tag: string) => void
   onMergeInto?: (survivorId: number) => void
   onRemoveFromView: () => void
-  onCopyMermaid: () => void
+  onCopyMermaid?: () => void
 }
 
 export default function SelectionBulkBar({
@@ -322,9 +322,11 @@ export default function SelectionBulkBar({
         </Popover>
       )}
 
-      <ToolbarIconButton testId="selection-bulk-copy-mermaid" label="Copy as Mermaid" onClick={onCopyMermaid}>
-        <CopyIcon boxSize="14px" />
-      </ToolbarIconButton>
+      {onCopyMermaid && (
+        <ToolbarIconButton testId="selection-bulk-copy-mermaid" label="Copy as Mermaid" onClick={onCopyMermaid}>
+          <CopyIcon boxSize="14px" />
+        </ToolbarIconButton>
+      )}
       <ToolbarIconButton testId="selection-bulk-fit" label="Fit selection" onClick={onFitSelection}>
         <FitViewIcon size={16} />
       </ToolbarIconButton>

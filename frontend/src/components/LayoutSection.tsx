@@ -20,7 +20,7 @@ import {
 } from '@chakra-ui/react'
 import { ChevronDownIcon, ChevronRightIcon } from './Icons'
 import { api } from '../api/client'
-import type { ViewTreeNode } from '../types'
+import type { Connector, ViewTreeNode } from '../types'
 import ConfirmDialog from './ConfirmDialog'
 import { removeCollisions } from '../utils/layout'
 
@@ -51,9 +51,10 @@ interface Props {
   view: ViewTreeNode | null
   canEdit: boolean
   onUnsupportedMutation?: () => void
+  onConnectorSaved?: (connector: Connector) => void
 }
 
-export default function LayoutSection({ view, canEdit, onUnsupportedMutation }: Props) {
+export default function LayoutSection({ view, canEdit, onUnsupportedMutation, onConnectorSaved }: Props) {
   const [open, setOpen] = useState(false)
   const [algo, setAlgo] = useState<Algorithm>('dagre')
   const [running, setRunning] = useState(false)
@@ -160,7 +161,8 @@ export default function LayoutSection({ view, canEdit, onUnsupportedMutation }: 
         }
       }
 
-      await Promise.all(handleUpdates)
+      const updatedConnectors = await Promise.all(handleUpdates)
+      if (onConnectorSaved) updatedConnectors.forEach(onConnectorSaved)
       window.location.reload()
     } catch (err) {
       console.error('Layout failed:', err)

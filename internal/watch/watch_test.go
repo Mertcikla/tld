@@ -29,6 +29,30 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+func dependencyInventorySettings() Settings {
+	settings := DefaultSettings()
+	settings.Dependencies.Enabled = true
+	return settings
+}
+
+func scanWithDependencyInventory(t *testing.T, store *Store, repo string) ScanResult {
+	t.Helper()
+	scanner := NewScanner(store)
+	scanner.Settings = dependencyInventorySettings()
+	result, err := scanner.Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func representRequestWithDependencyInventory() RepresentRequest {
+	return RepresentRequest{
+		Embedding:    EmbeddingConfig{Provider: "none"},
+		Dependencies: DependencyConfig{Enabled: true},
+	}
+}
+
 func TestMigrationCreatesWatchTablesAndIndexes(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -177,7 +201,7 @@ func quietHelper() string {
 	return "quiet"
 }
 
-`)
+	`)
 
 	store := NewStore(db)
 	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
@@ -320,28 +344,23 @@ func Routes(r chi.Router) {
 func GetUser() {}
 `)
 	writeFile(t, repo, "package.json", `{
-  "dependencies": {
-    "next": "14.0.0",
-    "@prisma/client": "5.0.0"
+ "dependencies": {
+	"next": "14.0.0",
+    "lodash": "4.17.21"
   }
 }`)
 	writeFile(t, repo, "src/app/users/[id]/page.tsx", `export default function Page() {
   return null
 }`)
-	writeFile(t, repo, "db.ts", `import { PrismaClient } from "@prisma/client"
+	writeFile(t, repo, "db.ts", `import lodash from "lodash"
 
-const prisma = new PrismaClient()
-
-export async function Users() {
-  return prisma.user.findMany()
+export function Users() {
+  return lodash.compact([1, 2, undefined])
 }
 `)
 
 	store := NewStore(db)
-	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scanResult := scanWithDependencyInventory(t, store, repo)
 	facts, err := store.FactsForRepository(context.Background(), scanResult.RepositoryID)
 	if err != nil {
 		t.Fatal(err)
@@ -354,16 +373,15 @@ export async function Users() {
 		{"dependency.import", "dependency:import"},
 		{"http.route", "framework:chi"},
 		{"frontend.route", "framework:nextjs"},
-		{"orm.query", "orm:prisma"},
 	} {
 		if !factsContain(facts, want.factType, want.tag) {
 			t.Fatalf("missing fact %s/%s in %+v", want.factType, want.tag, facts)
 		}
 	}
-	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, representRequestWithDependencyInventory()); err != nil {
 		t.Fatal(err)
 	}
-	for _, tag := range []string{"http:route", "framework:chi", "frontend:route", "framework:nextjs", "orm:prisma"} {
+	for _, tag := range []string{"http:route", "framework:chi", "frontend:route", "framework:nextjs"} {
 		if count := countElementTag(t, db, tag); count != 0 {
 			t.Fatalf("expected representation to omit noisy generated tag %q, found on %d elements", tag, count)
 		}
@@ -382,6 +400,41 @@ export async function Users() {
 	}
 	if !connectorExistsBetween(t, db, "main.go", "External packages") {
 		t.Fatal("expected importing file to connect to grouped external dependencies")
+	}
+}
+
+func TestDependencyInventoryDisabledByDefault(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", `package main
+
+import "fmt"
+
+func Main() {
+	fmt.Println("hello")
+}
+`)
+
+	store := NewStore(db)
+	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts, err := store.FactsForRepository(context.Background(), scanResult.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fact := range facts {
+		if fact.Type == "dependency.import" || fact.Type == "dependency.module" {
+			t.Fatalf("dependency inventory should be disabled by default, got %+v", facts)
+		}
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatal(err)
+	}
+	if groups := elementKindCount(t, db, "dependency-group"); groups != 0 {
+		t.Fatalf("dependency groups should not materialize by default, found %d", groups)
 	}
 }
 
@@ -407,13 +460,11 @@ func main() {
 `)
 
 	store := NewStore(db)
-	scanResult, err := NewScanner(store).Scan(context.Background(), repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scanResult := scanWithDependencyInventory(t, store, repo)
 	req := RepresentRequest{
-		Embedding:  EmbeddingConfig{Provider: "none"},
-		Visibility: VisibilityConfig{CoreThresholdEnabled: false, CoreThresholdSet: true},
+		Embedding:    EmbeddingConfig{Provider: "none"},
+		Dependencies: DependencyConfig{Enabled: true},
+		Visibility:   VisibilityConfig{CoreThresholdEnabled: false, CoreThresholdSet: true},
 	}
 	if _, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, req); err != nil {
 		t.Fatal(err)
@@ -579,6 +630,7 @@ func CreateUser() {}
 	if !sourceHandle.Valid || sourceHandle.String == "" || !targetHandle.Valid || targetHandle.String == "" {
 		t.Fatalf("expected route fact connector to store handle sides, got source=%q target=%q", sourceHandle.String, targetHandle.String)
 	}
+	assertElementSourceLink(t, db, "/users/{id}", "main.go#L4")
 }
 
 func TestComposeRuntimeConnectionsMaterializeAsConnectors(t *testing.T) {
@@ -919,6 +971,7 @@ func helper() {}
 	if first.ConnectorsCreated == 0 {
 		t.Fatalf("expected symbol connector, got %+v", first)
 	}
+	assertElementSourceLink(t, db, "Main", "cmd/app/main.go#function_declaration:Main")
 	countsAfterFirst := workspaceCounts(t, db)
 
 	second, err := NewRepresenter(store).Represent(context.Background(), scanResult.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
@@ -1241,19 +1294,18 @@ func Main() {}
 	if err := json.Unmarshal([]byte(raw), &links); err != nil {
 		t.Fatal(err)
 	}
-	want := materializedTechnologyLink{Type: "catalog", Slug: "golang", Label: "Go", IsPrimaryIcon: true}
+	want := materializedTechnologyLink{Type: "catalog", Slug: "go", Label: "Go", IsPrimaryIcon: true}
 	if len(links) != 1 || links[0] != want {
 		t.Fatalf("technology links for main.go = %+v, want %+v", links, want)
 	}
 
 	for _, tt := range []struct {
 		name string
-		slug string
 	}{
-		{name: "Architecture", slug: "architecture"},
-		{name: "Structural", slug: "structural"},
+		{name: "Architecture"},
+		{name: "Structural"},
 	} {
-		t.Run(tt.name+" section icon", func(t *testing.T) {
+		t.Run(tt.name+" section has no retired catalog icon", func(t *testing.T) {
 			var technology, raw string
 			if err := db.QueryRow(`SELECT technology, technology_connectors FROM elements WHERE name = ? AND kind = 'view'`, tt.name).Scan(&technology, &raw); err != nil {
 				t.Fatal(err)
@@ -1262,9 +1314,8 @@ func Main() {}
 			if err := json.Unmarshal([]byte(raw), &sectionLinks); err != nil {
 				t.Fatal(err)
 			}
-			want := materializedTechnologyLink{Type: "catalog", Slug: tt.slug, Label: tt.name, IsPrimaryIcon: true}
-			if technology != tt.name || len(sectionLinks) != 1 || sectionLinks[0] != want {
-				t.Fatalf("%s section technology=%q links=%+v, want technology=%q links=%+v", tt.name, technology, sectionLinks, tt.name, want)
+			if technology != tt.name || len(sectionLinks) != 0 {
+				t.Fatalf("%s section technology=%q links=%+v, want technology=%q and no links", tt.name, technology, sectionLinks, tt.name)
 			}
 		})
 	}
@@ -1299,7 +1350,7 @@ func TestTechnologyLinksForLanguage(t *testing.T) {
 			language: "go",
 			want: []materializedTechnologyLink{{
 				Type:          "catalog",
-				Slug:          "golang",
+				Slug:          "go",
 				Label:         "Go",
 				IsPrimaryIcon: true,
 			}},
@@ -1331,7 +1382,7 @@ func TestTechnologyLinksForLanguage(t *testing.T) {
 	}
 }
 
-func TestTechnologyLinksForElementUsesSectionCatalogIcon(t *testing.T) {
+func TestTechnologyLinksForElementUsesDeviconCatalogIcons(t *testing.T) {
 	tests := []struct {
 		name       string
 		technology string
@@ -1342,23 +1393,13 @@ func TestTechnologyLinksForElementUsesSectionCatalogIcon(t *testing.T) {
 			name:       "architecture",
 			technology: "Architecture",
 			language:   "go",
-			want: []materializedTechnologyLink{{
-				Type:          "catalog",
-				Slug:          "architecture",
-				Label:         "Architecture",
-				IsPrimaryIcon: true,
-			}},
+			want:       nil,
 		},
 		{
 			name:       "structural",
 			technology: "Structural",
 			language:   "go",
-			want: []materializedTechnologyLink{{
-				Type:          "catalog",
-				Slug:          "structural",
-				Label:         "Structural",
-				IsPrimaryIcon: true,
-			}},
+			want:       nil,
 		},
 		{
 			name:       "container maps to docker",
@@ -1405,7 +1446,7 @@ func TestTechnologyLinksForElementUsesSectionCatalogIcon(t *testing.T) {
 			language:   "",
 			want: []materializedTechnologyLink{{
 				Type:          "catalog",
-				Slug:          "golang",
+				Slug:          "go",
 				Label:         "Go",
 				IsPrimaryIcon: true,
 			}, {
@@ -1420,7 +1461,7 @@ func TestTechnologyLinksForElementUsesSectionCatalogIcon(t *testing.T) {
 			language:   "go",
 			want: []materializedTechnologyLink{{
 				Type:          "catalog",
-				Slug:          "golang",
+				Slug:          "go",
 				Label:         "Go",
 				IsPrimaryIcon: true,
 			}},
@@ -1500,10 +1541,30 @@ func Main() {
 	if label != "10 references" {
 		t.Fatalf("expected raw reference count label, got %q", label)
 	}
+	var localSummaryCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM watch_materialization
+		WHERE repository_id = ? AND owner_type = 'view-folder-reference'`, scanResult.RepositoryID).Scan(&localSummaryCount); err != nil {
+		t.Fatal(err)
+	}
+	if localSummaryCount == 0 {
+		t.Fatal("expected local folder summary connector to be materialized")
+	}
+	var provenanceCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM watch_materialization
+		WHERE repository_id = ? AND owner_type = 'file-reference'`, scanResult.RepositoryID).Scan(&provenanceCount); err != nil {
+		t.Fatal(err)
+	}
+	if provenanceCount == 0 {
+		t.Fatal("expected file provenance connector to remain available for off-view")
+	}
 }
 
 func TestRepresentPrioritizesCrossFolderAggregatesOverFilePairs(t *testing.T) {
-	groups := map[string][]filePairReference{
+	groups := map[string][]viewPairReference{
 		"file:cmd/a.go->cmd/b.go": {
 			{Key: "cmd/a.go->cmd/b.go", Count: 500},
 		},
@@ -1521,6 +1582,47 @@ func TestRepresentPrioritizesCrossFolderAggregatesOverFilePairs(t *testing.T) {
 	}
 	if keys[0] != "folder:cmd->internal" {
 		t.Fatalf("expected cross-folder aggregate to be materialized first, got %+v", keys)
+	}
+}
+
+func TestConnectorViewEndpointsUseNearestCommonFolderView(t *testing.T) {
+	folderElements := map[string]int64{
+		"cmd":         10,
+		"cmd/watch":   11,
+		"cmd/analyze": 12,
+		"internal":    13,
+	}
+	folderViews := map[string]int64{
+		"cmd": 100,
+	}
+	fileElements := map[string]int64{
+		"cmd/watch/watch.go":     21,
+		"cmd/analyze/analyze.go": 22,
+	}
+
+	viewID, sourceID, targetID, ownerKey, ok := connectorViewEndpoints("cmd/watch/watch.go", "cmd/analyze/analyze.go", folderElements, folderViews, fileElements, 1)
+	if !ok {
+		t.Fatal("expected connector endpoints in common folder view")
+	}
+	if viewID != 100 || sourceID != 11 || targetID != 12 {
+		t.Fatalf("endpoints = view:%d source:%d target:%d, want view 100 between child folders 11 and 12", viewID, sourceID, targetID)
+	}
+	if ownerKey != "folder:cmd/watch->cmd/analyze" {
+		t.Fatalf("owner key = %q", ownerKey)
+	}
+}
+
+func TestViewPairReferenceDirectionMergesReciprocalReferences(t *testing.T) {
+	var pair viewPairReference
+	pair.SourceElementID = 10
+	pair.TargetElementID = 20
+	pair.addDirection(10, 20)
+	if pair.direction() != "forward" {
+		t.Fatalf("one-way direction = %q, want forward", pair.direction())
+	}
+	pair.addDirection(20, 10)
+	if pair.direction() != "both" {
+		t.Fatalf("reciprocal direction = %q, want both", pair.direction())
 	}
 }
 
@@ -2108,11 +2210,8 @@ type Item struct{}
 	runGit(t, repo, "commit", "-m", "initial")
 
 	store := NewStore(db)
-	scan, err := NewScanner(store).Scan(context.Background(), repo)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	scan := scanWithDependencyInventory(t, store, repo)
+	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, representRequestWithDependencyInventory())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2142,10 +2241,8 @@ func TestOrder(t *testing.T) {
 	}
 }
 `)
-	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
-		t.Fatal(err)
-	}
-	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}})
+	scanWithDependencyInventory(t, store, repo)
+	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, representRequestWithDependencyInventory())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2208,13 +2305,11 @@ func main() {
 	runGit(t, repo, "commit", "-m", "initial imports")
 
 	store := NewStore(db)
-	scan, err := NewScanner(store).Scan(context.Background(), repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scan := scanWithDependencyInventory(t, store, repo)
 	req := RepresentRequest{
-		Embedding:  EmbeddingConfig{Provider: "none"},
-		Visibility: VisibilityConfig{CoreThresholdEnabled: false, CoreThresholdSet: true},
+		Embedding:    EmbeddingConfig{Provider: "none"},
+		Dependencies: DependencyConfig{Enabled: true},
+		Visibility:   VisibilityConfig{CoreThresholdEnabled: false, CoreThresholdSet: true},
 	}
 	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, req)
 	if err != nil {
@@ -2257,9 +2352,7 @@ func main() {
 	fmt.Println(catalog.DefaultCurrency)
 }
 `)
-	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
-		t.Fatal(err)
-	}
+	scanWithDependencyInventory(t, store, repo)
 	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, req)
 	if err != nil {
 		t.Fatal(err)
@@ -2290,9 +2383,7 @@ func main() {
 	if _, err := store.CreateWatchVersion(context.Background(), scan.RepositoryID, "commit2", "remove pricing import", "commit1", "main", next.RepresentationHash, nil, diffs); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
-		t.Fatal(err)
-	}
+	scanWithDependencyInventory(t, store, repo)
 	clean, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, req)
 	if err != nil {
 		t.Fatal(err)
@@ -2337,13 +2428,11 @@ func main() {
 	runGit(t, repo, "commit", "-m", "initial grouped imports")
 
 	store := NewStore(db)
-	scan, err := NewScanner(store).Scan(context.Background(), repo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	scan := scanWithDependencyInventory(t, store, repo)
 	req := RepresentRequest{
-		Embedding:  EmbeddingConfig{Provider: "none"},
-		Visibility: VisibilityConfig{CoreThresholdEnabled: false, CoreThresholdSet: true},
+		Embedding:    EmbeddingConfig{Provider: "none"},
+		Dependencies: DependencyConfig{Enabled: true},
+		Visibility:   VisibilityConfig{CoreThresholdEnabled: false, CoreThresholdSet: true},
 	}
 	rep, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, req)
 	if err != nil {
@@ -2368,9 +2457,7 @@ func main() {
 	fmt.Println(catalog.DefaultCurrency)
 }
 `)
-	if _, err := NewScanner(store).Scan(context.Background(), repo); err != nil {
-		t.Fatal(err)
-	}
+	scanWithDependencyInventory(t, store, repo)
 	next, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, req)
 	if err != nil {
 		t.Fatal(err)
@@ -4067,6 +4154,102 @@ func TestWatchElementHashIgnoresManagedGitTags(t *testing.T) {
 	}
 }
 
+func TestRepresenterMaterializesBlastRadiusLowSignalSymbols(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "helper.go", "package main\nfunc helper() {}\n")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	sym, err := symbolsByName(context.Background(), store, scan.RepositoryID, "helper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityKeys, err := store.SymbolIdentityKeys(context.Background(), scan.RepositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerKey := symbolOwnerKey(sym, identityKeys)
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatalf("Represent without blast radius: %v", err)
+	}
+	if _, ok, err := store.MappingResourceID(context.Background(), scan.RepositoryID, "symbol", ownerKey, "element"); err != nil || ok {
+		t.Fatalf("low-signal helper should be hidden without blast radius, ok=%v err=%v", ok, err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}, BlastRadiusFiles: []string{"helper.go"}}); err != nil {
+		t.Fatalf("Represent with blast radius: %v", err)
+	}
+	if _, ok, err := store.MappingResourceID(context.Background(), scan.RepositoryID, "symbol", ownerKey, "element"); err != nil || !ok {
+		t.Fatalf("blast-radius helper symbol was not materialized, ok=%v err=%v", ok, err)
+	}
+	if _, ok, err := store.MappingResourceID(context.Background(), scan.RepositoryID, "file", "file:helper.go", "element"); err != nil || !ok {
+		t.Fatalf("blast-radius helper file was not materialized, ok=%v err=%v", ok, err)
+	}
+}
+
+func TestApplyBlastRadiusTagsAddsRemovesAndDoesNotAffectHash(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "main.go", "package main\nfunc Main() {}\n")
+
+	store := NewStore(db)
+	scan, err := NewScanner(store).Scan(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if _, err := NewRepresenter(store).Represent(context.Background(), scan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}, BlastRadiusFiles: []string{"main.go"}}); err != nil {
+		t.Fatalf("Represent: %v", err)
+	}
+	elementID, ok, err := store.MappingResourceID(context.Background(), scan.RepositoryID, "file", "file:main.go", "element")
+	if err != nil || !ok {
+		t.Fatalf("expected file element mapping, ok=%v err=%v", ok, err)
+	}
+	before, ok, err := store.WatchResourceHash(context.Background(), "element", elementID)
+	if err != nil || !ok {
+		t.Fatalf("expected element hash before blast tag, ok=%v err=%v", ok, err)
+	}
+	roots := map[string][]string{"main.go": {"main.go"}}
+	first, err := store.ApplyBlastRadiusTags(context.Background(), scan.RepositoryID, []string{"main.go"}, roots, GitStatus{Unstaged: []string{"main.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.TagsAdded == 0 || first.TagsRemoved != 0 {
+		t.Fatalf("expected blast tags to be added only, got %+v", first)
+	}
+	second, err := store.ApplyBlastRadiusTags(context.Background(), scan.RepositoryID, []string{"main.go"}, roots, GitStatus{Unstaged: []string{"main.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.TagsAdded != 0 || second.TagsRemoved != 0 {
+		t.Fatalf("expected repeated blast tags to be a no-op, got %+v", second)
+	}
+	if tagged := countElementTag(t, db, blastRadiusTag); tagged == 0 {
+		t.Fatalf("expected blast-radius tag on materialized elements")
+	}
+	afterManaged, ok, err := store.WatchResourceHash(context.Background(), "element", elementID)
+	if err != nil || !ok {
+		t.Fatalf("expected element hash after blast tag, ok=%v err=%v", ok, err)
+	}
+	if afterManaged != before {
+		t.Fatalf("blast-radius tag should not affect element hash: before=%s after=%s", before, afterManaged)
+	}
+	clean, err := store.ApplyBlastRadiusTags(context.Background(), scan.RepositoryID, []string{"main.go"}, roots, GitStatus{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clean.TagsAdded != 0 || clean.TagsRemoved != first.TagsAdded {
+		t.Fatalf("expected clean status to remove blast tags, first=%+v clean=%+v", first, clean)
+	}
+	if tagged := countElementTag(t, db, blastRadiusTag); tagged != 0 {
+		t.Fatalf("expected blast-radius tag to be removed, found %d tagged elements", tagged)
+	}
+}
+
 func TestEmbeddingCacheAvoidsProviderCalls(t *testing.T) {
 	db := openTestDB(t)
 	defer func() { _ = db.Close() }()
@@ -5389,6 +5572,22 @@ func elementIDByName(t *testing.T, db *sql.DB, name string) int64 {
 	return id
 }
 
+func assertElementSourceLink(t *testing.T, db *sql.DB, name, wantFilePath string) {
+	t.Helper()
+	var filePath string
+	var description sql.NullString
+	if err := db.QueryRow(`SELECT COALESCE(file_path, ''), description FROM elements WHERE name = ? ORDER BY id LIMIT 1`, name).Scan(&filePath, &description); err != nil {
+		t.Fatalf("element source link %s: %v", name, err)
+	}
+	if filePath != wantFilePath {
+		t.Fatalf("%s file_path = %q, want %q", name, filePath, wantFilePath)
+	}
+	basePath := strings.SplitN(wantFilePath, "#", 2)[0]
+	if description.Valid && basePath != "" && strings.Contains(description.String, basePath) {
+		t.Fatalf("%s description contains source location %q", name, description.String)
+	}
+}
+
 func elementBypassesNoiseGate(t *testing.T, db *sql.DB, id int64) bool {
 	t.Helper()
 	var bypass bool
@@ -5500,10 +5699,13 @@ func symbolsByName(ctx context.Context, store *Store, repositoryID int64, name s
 }
 
 type fakeDefinitionResolver struct {
-	locationsByName map[string][]analyzerlsp.DefinitionLocation
-	incomingByKey   map[string][]analyzerlsp.CallLocation
-	calls           int
-	refs            []analyzer.Ref
+	locationsByName      map[string][]analyzerlsp.DefinitionLocation
+	referencesByKey      map[string][]analyzerlsp.DefinitionLocation
+	implementationsByKey map[string][]analyzerlsp.DefinitionLocation
+	incomingByKey        map[string][]analyzerlsp.CallLocation
+	outgoingByKey        map[string][]analyzerlsp.CallLocation
+	calls                int
+	refs                 []analyzer.Ref
 }
 
 func (r *fakeDefinitionResolver) ResolveDefinitions(_ context.Context, ref analyzer.Ref) ([]analyzerlsp.DefinitionLocation, error) {
@@ -5513,6 +5715,32 @@ func (r *fakeDefinitionResolver) ResolveDefinitions(_ context.Context, ref analy
 		return append([]analyzerlsp.DefinitionLocation(nil), locations...), nil
 	}
 	return append([]analyzerlsp.DefinitionLocation(nil), r.locationsByName["*"]...), nil
+}
+
+func (r *fakeDefinitionResolver) References(_ context.Context, filePath string, line, _ int) ([]analyzerlsp.DefinitionLocation, error) {
+	if r == nil {
+		return nil, nil
+	}
+	if locations, ok := r.referencesByKey[callerLocationKey(filePath, line, "")]; ok {
+		return append([]analyzerlsp.DefinitionLocation(nil), locations...), nil
+	}
+	if locations, ok := r.referencesByKey[callerLocationKey(filePath, line, "*")]; ok {
+		return append([]analyzerlsp.DefinitionLocation(nil), locations...), nil
+	}
+	return append([]analyzerlsp.DefinitionLocation(nil), r.referencesByKey["*"]...), nil
+}
+
+func (r *fakeDefinitionResolver) Implementations(_ context.Context, filePath string, line, _ int) ([]analyzerlsp.DefinitionLocation, error) {
+	if r == nil {
+		return nil, nil
+	}
+	if locations, ok := r.implementationsByKey[callerLocationKey(filePath, line, "")]; ok {
+		return append([]analyzerlsp.DefinitionLocation(nil), locations...), nil
+	}
+	if locations, ok := r.implementationsByKey[callerLocationKey(filePath, line, "*")]; ok {
+		return append([]analyzerlsp.DefinitionLocation(nil), locations...), nil
+	}
+	return append([]analyzerlsp.DefinitionLocation(nil), r.implementationsByKey["*"]...), nil
 }
 
 func (r *fakeDefinitionResolver) IncomingCalls(_ context.Context, filePath string, line, _ int) ([]analyzerlsp.CallLocation, error) {
@@ -5526,6 +5754,19 @@ func (r *fakeDefinitionResolver) IncomingCalls(_ context.Context, filePath strin
 		return append([]analyzerlsp.CallLocation(nil), calls...), nil
 	}
 	return append([]analyzerlsp.CallLocation(nil), r.incomingByKey["*"]...), nil
+}
+
+func (r *fakeDefinitionResolver) OutgoingCalls(_ context.Context, filePath string, line, _ int) ([]analyzerlsp.CallLocation, error) {
+	if r == nil {
+		return nil, nil
+	}
+	if calls, ok := r.outgoingByKey[callerLocationKey(filePath, line, "")]; ok {
+		return append([]analyzerlsp.CallLocation(nil), calls...), nil
+	}
+	if calls, ok := r.outgoingByKey[callerLocationKey(filePath, line, "*")]; ok {
+		return append([]analyzerlsp.CallLocation(nil), calls...), nil
+	}
+	return append([]analyzerlsp.CallLocation(nil), r.outgoingByKey["*"]...), nil
 }
 
 func (r *fakeDefinitionResolver) Close() error {
@@ -5650,6 +5891,28 @@ func countElementTag(t *testing.T, db *sql.DB, tag string) int {
 		t.Fatal(err)
 	}
 	return count
+}
+
+func assertRawSymbolFiles(t *testing.T, store *Store, repositoryID int64, want []string) {
+	t.Helper()
+	symbols, err := store.SymbolsForRepository(context.Background(), repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotSet := map[string]struct{}{}
+	for _, symbol := range symbols {
+		gotSet[symbol.FilePath] = struct{}{}
+	}
+	got := make([]string, 0, len(gotSet))
+	for file := range gotSet {
+		got = append(got, file)
+	}
+	sort.Strings(got)
+	want = append([]string(nil), want...)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("raw symbol files = %+v, want %+v", got, want)
+	}
 }
 
 func elementTagsByName(t *testing.T, db *sql.DB, name string) []string {
@@ -6314,7 +6577,7 @@ func TestScannerLimitedModeExpandsImmediateDefinitionNeighbors(t *testing.T) {
 		}}
 	}
 
-	result, err := scanner.expandLimitedFiles(context.Background(), 1, repo, []string{filepath.Join(repo, "a.go")}, nil, settings, &ignore.Rules{})
+	result, err := scanner.expandLimitedFiles(context.Background(), 1, repo, nil, []string{filepath.Join(repo, "a.go")}, nil, settings, &ignore.Rules{})
 	if err != nil {
 		t.Fatalf("expandLimitedFiles: %v", err)
 	}
@@ -6344,7 +6607,7 @@ func TestScannerLimitedModeStopsAtSharedCallerAncestor(t *testing.T) {
 		}}
 	}
 
-	result, err := scanner.expandLimitedFiles(context.Background(), 1, repo, []string{filepath.Join(repo, "leaf_one.go"), filepath.Join(repo, "leaf_two.go")}, nil, settings, &ignore.Rules{})
+	result, err := scanner.expandLimitedFiles(context.Background(), 1, repo, nil, []string{filepath.Join(repo, "leaf_one.go"), filepath.Join(repo, "leaf_two.go")}, nil, settings, &ignore.Rules{})
 	if err != nil {
 		t.Fatalf("expandLimitedFiles: %v", err)
 	}
@@ -6353,6 +6616,251 @@ func TestScannerLimitedModeStopsAtSharedCallerAncestor(t *testing.T) {
 	}
 	if len(result.Files) != 3 {
 		t.Fatalf("files = %d, want 3", len(result.Files))
+	}
+}
+
+func TestScannerLimitedModePrioritizesFocusedChangedFiles(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	writeFile(t, repo, "old.go", "package main\nfunc Old() {}\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "old")
+	writeFile(t, repo, "recent.go", "package main\nfunc Recent() {}\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "recent")
+
+	store := NewStore(db)
+	scanner := NewScanner(store)
+	settings := DefaultSettings()
+	settings.Scale.Strategy = ScanStrategyLimited
+	settings.Scale.MaxLimitedFiles = 1
+	scanner.Settings = settings
+	result, err := scanner.ScanWithOptions(context.Background(), repo, ScanOptions{FocusFiles: []string{"old.go"}})
+	if err != nil {
+		t.Fatalf("ScanWithOptions: %v", err)
+	}
+	if result.FilesSeen != 1 || result.FilesParsed != 1 {
+		t.Fatalf("focused scan counts = %+v, want one parsed file", result)
+	}
+	if !reflect.DeepEqual(result.BlastRadiusFiles, []string{"old.go"}) {
+		t.Fatalf("BlastRadiusFiles = %+v, want old.go", result.BlastRadiusFiles)
+	}
+	if _, err := symbolsByName(context.Background(), store, result.RepositoryID, "Old"); err != nil {
+		t.Fatalf("focused changed file was not parsed into raw graph: %v", err)
+	}
+	if _, err := symbolsByName(context.Background(), store, result.RepositoryID, "Recent"); err == nil {
+		t.Fatalf("recent file should not displace focused file when limited cap is reached")
+	}
+}
+
+func TestScannerLimitedModeBlastRadiusUsesLSPRelationshipTypes(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := t.TempDir()
+	writeFile(t, repo, "seed.go", "package main\nfunc Seed() { Def() }\n")
+	writeFile(t, repo, "def.go", "package main\nfunc Def() {}\n")
+	writeFile(t, repo, "refs.go", "package main\nfunc Refs() { Seed() }\n")
+	writeFile(t, repo, "impl.go", "package main\nfunc Impl() {}\n")
+	writeFile(t, repo, "incoming.go", "package main\nfunc Incoming() { Seed() }\n")
+	writeFile(t, repo, "outgoing.go", "package main\nfunc Outgoing() {}\n")
+
+	store := NewStore(db)
+	scanner := NewScanner(store)
+	settings := DefaultSettings()
+	settings.Scale.MaxLimitedFiles = 10
+	settings.Scale.MaxBlastRadiusHops = 1
+	settings.LSP.Enabled = true
+	scanner.resolverFactory = func(string) definitionResolver {
+		return &fakeDefinitionResolver{
+			locationsByName: map[string][]analyzerlsp.DefinitionLocation{
+				"Def": {{FilePath: filepath.Join(repo, "def.go"), Line: 2}},
+			},
+			referencesByKey: map[string][]analyzerlsp.DefinitionLocation{
+				"*": {{FilePath: filepath.Join(repo, "refs.go"), Line: 2}},
+			},
+			implementationsByKey: map[string][]analyzerlsp.DefinitionLocation{
+				"*": {{FilePath: filepath.Join(repo, "impl.go"), Line: 2}},
+			},
+			incomingByKey: map[string][]analyzerlsp.CallLocation{
+				"*": {{FilePath: filepath.Join(repo, "incoming.go"), Line: 2, Name: "Incoming"}},
+			},
+			outgoingByKey: map[string][]analyzerlsp.CallLocation{
+				"*": {{FilePath: filepath.Join(repo, "outgoing.go"), Line: 2, Name: "Outgoing"}},
+			},
+		}
+	}
+
+	result, err := scanner.expandLimitedFiles(context.Background(), 1, repo, []string{filepath.Join(repo, "seed.go")}, nil, nil, settings, &ignore.Rules{})
+	if err != nil {
+		t.Fatalf("expandLimitedFiles: %v", err)
+	}
+	got := relTestFiles(t, repo, result.Files)
+	want := []string{"def.go", "impl.go", "incoming.go", "outgoing.go", "refs.go", "seed.go"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("blast radius files = %+v, want %+v", got, want)
+	}
+	blast := result.blastRadiusFiles(repo)
+	if !reflect.DeepEqual(blast, want) {
+		t.Fatalf("blast metadata files = %+v, want %+v", blast, want)
+	}
+}
+
+func TestScannerLimitedModeBlastRadiusHonorsHopDepth(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := t.TempDir()
+	writeFile(t, repo, "seed.go", "package main\nfunc Seed() { Mid() }\n")
+	writeFile(t, repo, "mid.go", "package main\nfunc Mid() { Far() }\n")
+	writeFile(t, repo, "far.go", "package main\nfunc Far() {}\n")
+
+	store := NewStore(db)
+	scanner := NewScanner(store)
+	settings := DefaultSettings()
+	settings.Scale.MaxLimitedFiles = 10
+	settings.Scale.MaxBlastRadiusHops = 1
+	scanner.resolverFactory = func(string) definitionResolver {
+		return &fakeDefinitionResolver{locationsByName: map[string][]analyzerlsp.DefinitionLocation{
+			"Mid": {{FilePath: filepath.Join(repo, "mid.go"), Line: 2}},
+			"Far": {{FilePath: filepath.Join(repo, "far.go"), Line: 2}},
+		}}
+	}
+
+	oneHop, err := scanner.expandLimitedFiles(context.Background(), 1, repo, []string{filepath.Join(repo, "seed.go")}, nil, nil, settings, &ignore.Rules{})
+	if err != nil {
+		t.Fatalf("expandLimitedFiles one hop: %v", err)
+	}
+	if got := relTestFiles(t, repo, oneHop.Files); !reflect.DeepEqual(got, []string{"mid.go", "seed.go"}) {
+		t.Fatalf("one-hop files = %+v, want seed and mid", got)
+	}
+	settings.Scale.MaxBlastRadiusHops = 2
+	twoHop, err := scanner.expandLimitedFiles(context.Background(), 1, repo, []string{filepath.Join(repo, "seed.go")}, nil, nil, settings, &ignore.Rules{})
+	if err != nil {
+		t.Fatalf("expandLimitedFiles two hop: %v", err)
+	}
+	if got := relTestFiles(t, repo, twoHop.Files); !reflect.DeepEqual(got, []string{"far.go", "mid.go", "seed.go"}) {
+		t.Fatalf("two-hop files = %+v, want seed, mid, and far", got)
+	}
+}
+
+func TestScannerLimitedModeCommitFlowAccumulatesRawGraphLikeFullScan(t *testing.T) {
+	db := openTestDB(t)
+	defer func() { _ = db.Close() }()
+	repo := initGitRepoNoCommit(t)
+	repo, err := tldgit.RepoRoot(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, repo, "a.go", "package main\n\nfunc A() {\n\tB()\n}\n")
+	writeFile(t, repo, "b.go", "package main\n\nfunc B() {}\n")
+	writeFile(t, repo, "c.go", "package main\n\nfunc C() {}\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "init")
+
+	ctx := context.Background()
+	store := NewStore(db)
+	settings := DefaultSettings()
+	settings.Scale.Strategy = ScanStrategyLimited
+	settings.Scale.MaxTrackedFiles = 1
+	settings.Scale.MaxLimitedFiles = 2
+	settings.Scale.MaxRecentFiles = 1
+	settings.Scale.MaxBlastRadiusHops = 1
+	settings.LSP.Enabled = true
+	scanner := NewScanner(store)
+	scanner.Settings = settings
+	scanner.resolverFactory = func(string) definitionResolver {
+		return &fakeDefinitionResolver{locationsByName: map[string][]analyzerlsp.DefinitionLocation{
+			"B": {{FilePath: filepath.Join(repo, "b.go"), Line: 3}},
+		}}
+	}
+	representer := NewRepresenter(store)
+	recorder := NewVersionRecorder(store)
+	var repositoryID int64
+
+	runLimited := func(label string, focus []string) {
+		t.Helper()
+		scan, err := scanner.ScanWithOptions(ctx, repo, ScanOptions{FocusFiles: focus})
+		if err != nil {
+			t.Fatalf("%s limited scan: %v", label, err)
+		}
+		repositoryID = scan.RepositoryID
+		rep, err := representer.Represent(ctx, scan.RepositoryID, RepresentRequest{
+			Embedding:        EmbeddingConfig{Provider: "none"},
+			BlastRadiusFiles: scan.BlastRadiusFiles,
+		})
+		if err != nil {
+			t.Fatalf("%s represent: %v", label, err)
+		}
+		status, err := gitStatusSnapshot(repo)
+		if err != nil {
+			t.Fatalf("%s status: %v", label, err)
+		}
+		if _, err := store.ApplyBlastRadiusTags(ctx, scan.RepositoryID, scan.BlastRadiusFiles, scan.BlastRadiusRoots, status); err != nil {
+			t.Fatalf("%s blast tags: %v", label, err)
+		}
+		if _, err := recorder.RecordHead(ctx, VersionRecordRequest{
+			RepositoryID:       scan.RepositoryID,
+			Status:             status,
+			RepresentationHash: rep.RepresentationHash,
+		}); err != nil {
+			t.Fatalf("%s record head: %v", label, err)
+		}
+	}
+
+	runLimited("init", []string{"a.go"})
+	assertRawSymbolFiles(t, store, repositoryID, []string{"a.go", "b.go"})
+
+	writeFile(t, repo, "c.go", "package main\n\nfunc C() {\n\tB()\n}\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "A")
+	runLimited("A", nil)
+	assertRawSymbolFiles(t, store, repositoryID, []string{"a.go", "b.go", "c.go"})
+
+	writeFile(t, repo, "b.go", "package main\n\nfunc B() {\n\tprintln(\"B\")\n}\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "B")
+	runLimited("B", nil)
+	assertRawSymbolFiles(t, store, repositoryID, []string{"a.go", "b.go", "c.go"})
+
+	writeFile(t, repo, "a.go", "package main\n\nfunc A() {\n\tB()\n\tB()\n}\n")
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-m", "C")
+	runLimited("C", nil)
+	assertRawSymbolFiles(t, store, repositoryID, []string{"a.go", "b.go", "c.go"})
+	if tagged := countElementTag(t, db, blastRadiusTag); tagged != 0 {
+		t.Fatalf("committed clean limited runs should not retain blast-radius tags, found %d", tagged)
+	}
+
+	fullDB := openTestDB(t)
+	defer func() { _ = fullDB.Close() }()
+	fullStore := NewStore(fullDB)
+	fullScanner := NewScanner(fullStore)
+	fullSettings := DefaultSettings()
+	fullSettings.Scale.Strategy = ScanStrategyFull
+	fullSettings.LSP.Enabled = true
+	fullScanner.Settings = fullSettings
+	fullScanner.resolverFactory = func(string) definitionResolver {
+		return &fakeDefinitionResolver{locationsByName: map[string][]analyzerlsp.DefinitionLocation{
+			"B": {{FilePath: filepath.Join(repo, "b.go"), Line: 3}},
+		}}
+	}
+	fullScan, err := fullScanner.Scan(ctx, repo)
+	if err != nil {
+		t.Fatalf("full scan at C: %v", err)
+	}
+	if _, err := NewRepresenter(fullStore).Represent(ctx, fullScan.RepositoryID, RepresentRequest{Embedding: EmbeddingConfig{Provider: "none"}}); err != nil {
+		t.Fatalf("full represent at C: %v", err)
+	}
+	limitedHash, err := store.RawGraphHash(ctx, repositoryID)
+	if err != nil {
+		t.Fatalf("limited raw graph hash: %v", err)
+	}
+	fullHash, err := fullStore.RawGraphHash(ctx, fullScan.RepositoryID)
+	if err != nil {
+		t.Fatalf("full raw graph hash: %v", err)
+	}
+	if limitedHash != fullHash {
+		t.Fatalf("limited raw graph hash %s != full raw graph hash %s", limitedHash, fullHash)
 	}
 }
 

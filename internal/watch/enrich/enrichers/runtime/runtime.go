@@ -2,6 +2,7 @@ package runtimeenrich
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path"
 	"regexp"
@@ -112,10 +113,22 @@ func emitTerraformFacts(input FileInput, emit FactEmitter) error {
 }
 
 func emitOpenAPIFact(input FileInput, emit FactEmitter) error {
-	if !strings.Contains(strings.ToLower(string(input.Source)), `"openapi"`) {
+	var spec struct {
+		OpenAPI string `json:"openapi"`
+		Info    struct {
+			Title string `json:"title"`
+		} `json:"info"`
+	}
+	if err := json.Unmarshal(input.Source, &spec); err != nil {
 		return nil
 	}
-	name := strings.TrimSuffix(path.Base(input.RelPath), path.Ext(input.RelPath))
+	if strings.TrimSpace(spec.OpenAPI) == "" {
+		return nil
+	}
+	name := strings.TrimSpace(spec.Info.Title)
+	if name == "" {
+		return nil
+	}
 	return emitComponentFact(input, emit, name, "interface", "OpenAPI", 1, []string{"arch:contract", "protocol:http"}, map[string]string{"protocol": "http"})
 }
 

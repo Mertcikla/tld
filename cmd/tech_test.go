@@ -39,8 +39,9 @@ func TestTechCommandJSONPagination(t *testing.T) {
 
 	var payload struct {
 		Items []struct {
-			Slug string `json:"slug"`
-			Name string `json:"name"`
+			Slug    string `json:"slug"`
+			Name    string `json:"name"`
+			IconURL string `json:"icon_url"`
 		} `json:"items"`
 		Limit  int    `json:"limit"`
 		Offset int    `json:"offset"`
@@ -54,7 +55,7 @@ func TestTechCommandJSONPagination(t *testing.T) {
 	if payload.Limit != 2 || payload.Offset != 0 || payload.Count != 2 || payload.Total <= payload.Count || payload.Next == "" {
 		t.Fatalf("unexpected tech json pagination: %+v", payload)
 	}
-	if payload.Items[0].Slug == "" || payload.Items[0].Name == "" {
+	if payload.Items[0].Slug == "" || payload.Items[0].Name == "" || !strings.HasSuffix(payload.Items[0].IconURL, ".svg") {
 		t.Fatalf("expected compact catalog items, got %+v", payload.Items)
 	}
 }

@@ -1,0 +1,923 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TLD Icon Browser</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f6f8;
+        --panel: #ffffff;
+        --panel-soft: #f9fafb;
+        --text: #1f2937;
+        --muted: #6b7280;
+        --line: #d9dee7;
+        --line-strong: #bac3d1;
+        --accent: #166d5b;
+        --accent-strong: #0f4f42;
+        --accent-soft: #e3f4ef;
+        --danger: #aa3028;
+        --warning: #9a5b00;
+        --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+      }
+
+      button,
+      input,
+      textarea {
+        font: inherit;
+      }
+
+      button {
+        border: 1px solid var(--line-strong);
+        border-radius: 6px;
+        background: #fff;
+        color: var(--text);
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 650;
+        min-height: 34px;
+        padding: 0 12px;
+      }
+
+      button:hover {
+        border-color: var(--accent);
+        color: var(--accent-strong);
+      }
+
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+
+      button.primary:hover {
+        background: var(--accent-strong);
+        color: #fff;
+      }
+
+      button.danger {
+        border-color: #e6b8b4;
+        color: var(--danger);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.58;
+      }
+
+      .shell {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-height: 100vh;
+      }
+
+      .topbar {
+        align-items: center;
+        background: #fff;
+        border-bottom: 1px solid var(--line);
+        display: grid;
+        gap: 16px;
+        grid-template-columns: minmax(220px, 1fr) auto;
+        padding: 14px 18px;
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+
+      .brand {
+        min-width: 0;
+      }
+
+      .brand h1 {
+        font-size: 18px;
+        line-height: 1.2;
+        margin: 0 0 4px;
+      }
+
+      .path {
+        color: var(--muted);
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .actions {
+        align-items: center;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+
+      .status {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        min-height: 28px;
+        padding: 5px 9px;
+        white-space: nowrap;
+      }
+
+      .status.dirty {
+        background: #fff7ed;
+        border-color: #f0c38b;
+        color: var(--warning);
+      }
+
+      .workspace {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: minmax(0, 1fr) minmax(340px, 430px);
+        padding: 16px;
+      }
+
+      .catalog {
+        min-width: 0;
+      }
+
+      .toolbar {
+        align-items: center;
+        display: grid;
+        gap: 12px;
+        grid-template-columns: minmax(220px, 420px) 1fr;
+        margin-bottom: 12px;
+      }
+
+      .search {
+        position: relative;
+      }
+
+      .search input {
+        background: #fff;
+        border: 1px solid var(--line-strong);
+        border-radius: 6px;
+        color: var(--text);
+        height: 38px;
+        outline: none;
+        padding: 0 12px;
+        width: 100%;
+      }
+
+      .search input:focus,
+      input:focus,
+      textarea:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(22, 109, 91, 0.14);
+      }
+
+      .metrics {
+        color: var(--muted);
+        display: flex;
+        flex-wrap: wrap;
+        font-size: 12px;
+        gap: 8px;
+        justify-content: flex-end;
+      }
+
+      .metric {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 7px 9px;
+      }
+
+      .metric.alert {
+        border-color: #f0c38b;
+        color: var(--warning);
+      }
+
+      .grid {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+      }
+
+      .icon-card {
+        align-content: start;
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        box-shadow: none;
+        display: grid;
+        gap: 8px;
+        min-height: 132px;
+        padding: 12px;
+        text-align: left;
+        width: 100%;
+      }
+
+      .icon-card:hover {
+        border-color: var(--line-strong);
+        box-shadow: var(--shadow);
+      }
+
+      .icon-card.selected {
+        background: var(--accent-soft);
+        border-color: var(--accent);
+      }
+
+      .thumb {
+        align-items: center;
+        background: var(--panel-soft);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        display: flex;
+        height: 56px;
+        justify-content: center;
+      }
+
+      .thumb img {
+        display: block;
+        max-height: 34px;
+        max-width: 46px;
+      }
+
+      .icon-name {
+        font-size: 13px;
+        font-weight: 750;
+        line-height: 1.25;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .icon-slug {
+        color: var(--muted);
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .panel {
+        align-self: start;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        box-shadow: var(--shadow);
+        position: sticky;
+        top: 76px;
+      }
+
+      .panel-section {
+        border-bottom: 1px solid var(--line);
+        padding: 16px;
+      }
+
+      .panel-section:last-child {
+        border-bottom: 0;
+      }
+
+      .panel-title {
+        align-items: center;
+        display: flex;
+        gap: 10px;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+
+      .panel-title h2 {
+        font-size: 15px;
+        line-height: 1.25;
+        margin: 0;
+      }
+
+      .preview-row {
+        align-items: center;
+        display: grid;
+        gap: 12px;
+        grid-template-columns: 72px 1fr;
+        margin-bottom: 14px;
+      }
+
+      .preview {
+        align-items: center;
+        background: var(--panel-soft);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        display: flex;
+        height: 72px;
+        justify-content: center;
+        width: 72px;
+      }
+
+      .preview img {
+        max-height: 46px;
+        max-width: 54px;
+      }
+
+      .selected-meta {
+        min-width: 0;
+      }
+
+      .selected-meta strong,
+      .selected-meta span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .selected-meta span {
+        color: var(--muted);
+        font-family:
+          ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        font-size: 12px;
+        margin-top: 3px;
+      }
+
+      .form {
+        display: grid;
+        gap: 10px;
+      }
+
+      .field {
+        display: grid;
+        gap: 5px;
+      }
+
+      label {
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      input,
+      textarea {
+        background: #fff;
+        border: 1px solid var(--line-strong);
+        border-radius: 6px;
+        color: var(--text);
+        outline: none;
+        padding: 8px 10px;
+        width: 100%;
+      }
+
+      textarea {
+        min-height: 74px;
+        resize: vertical;
+      }
+
+      .row {
+        display: grid;
+        gap: 10px;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .button-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: flex-end;
+        margin-top: 4px;
+      }
+
+      .empty {
+        align-items: center;
+        background: #fff;
+        border: 1px dashed var(--line-strong);
+        border-radius: 8px;
+        color: var(--muted);
+        display: flex;
+        min-height: 180px;
+        padding: 18px;
+      }
+
+      .message {
+        border-radius: 6px;
+        font-size: 13px;
+        line-height: 1.45;
+        margin-top: 10px;
+        padding: 10px 12px;
+      }
+
+      .message.info {
+        background: var(--accent-soft);
+        color: var(--accent-strong);
+      }
+
+      .message.error {
+        background: #fff1f0;
+        color: var(--danger);
+      }
+
+      .help {
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .hidden {
+        display: none !important;
+      }
+
+      @media (max-width: 980px) {
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .panel {
+          position: static;
+        }
+      }
+
+      @media (max-width: 680px) {
+        .topbar,
+        .toolbar,
+        .row {
+          grid-template-columns: 1fr;
+        }
+
+        .actions,
+        .metrics {
+          justify-content: flex-start;
+        }
+
+        .workspace {
+          padding: 12px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <h1>TLD Icon Catalog</h1>
+          <div id="archivePath" class="path">Loading archive...</div>
+        </div>
+        <div class="actions">
+          <span id="dirtyStatus" class="status">Clean</span>
+          <button id="reloadButton" type="button">Reload archive</button>
+          <button id="repackButton" type="button" class="primary">Repack archive</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="catalog">
+          <div class="toolbar">
+            <div class="search">
+              <input
+                id="searchInput"
+                type="search"
+                placeholder="Search names, slugs, providers, aliases"
+                autocomplete="off"
+              />
+            </div>
+            <div class="metrics">
+              <span id="entryCount" class="metric">0 entries</span>
+              <span id="fileCount" class="metric">0 SVG files</span>
+              <span id="missingCount" class="metric">0 missing</span>
+              <span id="orphanCount" class="metric">0 orphan files</span>
+            </div>
+          </div>
+          <div id="grid" class="grid"></div>
+          <div id="emptyState" class="empty hidden">No icons match this search.</div>
+        </section>
+
+        <aside class="panel">
+          <section class="panel-section">
+            <div class="panel-title">
+              <h2>Metadata</h2>
+              <button id="resetButton" type="button">Reset form</button>
+            </div>
+            <div id="selectedEmpty" class="empty">Select an icon to edit its catalog JSON metadata.</div>
+            <form id="editForm" class="form hidden">
+              <div class="preview-row">
+                <div class="preview"><img id="selectedPreview" alt="" /></div>
+                <div class="selected-meta">
+                  <strong id="selectedName">Icon</strong>
+                  <span id="selectedSlug">slug</span>
+                </div>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label for="editName">name</label>
+                  <input id="editName" name="name" required />
+                </div>
+                <div class="field">
+                  <label for="editNameShort">nameShort</label>
+                  <input id="editNameShort" name="nameShort" />
+                </div>
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label for="editSlug">defaultSlug</label>
+                  <input id="editSlug" name="defaultSlug" required />
+                </div>
+                <div class="field">
+                  <label for="editIconUrl">iconUrl</label>
+                  <input id="editIconUrl" name="iconUrl" required />
+                </div>
+              </div>
+              <div class="field">
+                <label for="editAliases">aliases</label>
+                <input id="editAliases" name="aliases" placeholder="comma separated" />
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label for="editProvider">provider</label>
+                  <input id="editProvider" name="provider" />
+                </div>
+                <div class="field">
+                  <label for="editWebsiteUrl">websiteUrl</label>
+                  <input id="editWebsiteUrl" name="websiteUrl" />
+                </div>
+              </div>
+              <div class="field">
+                <label for="editDocsUrl">docsUrl</label>
+                <input id="editDocsUrl" name="docsUrl" />
+              </div>
+              <div class="field">
+                <label for="editDescription">description</label>
+                <textarea id="editDescription" name="description"></textarea>
+              </div>
+              <div class="button-row">
+                <button type="submit" class="primary">Save metadata</button>
+              </div>
+            </form>
+            <div id="editMessage" class="message hidden"></div>
+          </section>
+
+          <section class="panel-section">
+            <div class="panel-title">
+              <h2>Add Icon</h2>
+            </div>
+            <form id="addForm" class="form">
+              <div class="field">
+                <label for="addIcon">SVG file</label>
+                <input id="addIcon" name="icon" type="file" accept=".svg,image/svg+xml" required />
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label for="addName">name</label>
+                  <input id="addName" name="name" required />
+                </div>
+                <div class="field">
+                  <label for="addNameShort">nameShort</label>
+                  <input id="addNameShort" name="nameShort" />
+                </div>
+              </div>
+              <div class="field">
+                <label for="addSlug">defaultSlug</label>
+                <input id="addSlug" name="defaultSlug" placeholder="defaults from name" />
+              </div>
+              <div class="field">
+                <label for="addAliases">aliases</label>
+                <input id="addAliases" name="aliases" placeholder="comma separated" />
+              </div>
+              <div class="row">
+                <div class="field">
+                  <label for="addProvider">provider</label>
+                  <input id="addProvider" name="provider" />
+                </div>
+                <div class="field">
+                  <label for="addWebsiteUrl">websiteUrl</label>
+                  <input id="addWebsiteUrl" name="websiteUrl" />
+                </div>
+              </div>
+              <div class="field">
+                <label for="addDocsUrl">docsUrl</label>
+                <input id="addDocsUrl" name="docsUrl" />
+              </div>
+              <div class="field">
+                <label for="addDescription">description</label>
+                <textarea id="addDescription" name="description"></textarea>
+              </div>
+              <div class="button-row">
+                <button type="submit" class="primary">Add icon</button>
+              </div>
+            </form>
+            <p class="help">
+              Edits are written to the temporary unpacked workspace first. Use
+              Repack archive to atomically update the tarball with a timestamped backup.
+            </p>
+            <div id="addMessage" class="message hidden"></div>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <script>
+      const state = {
+        catalog: [],
+        files: [],
+        selectedSlug: "",
+        query: "",
+        dirty: false,
+        cacheBust: Date.now(),
+      };
+
+      const el = {
+        archivePath: document.getElementById("archivePath"),
+        dirtyStatus: document.getElementById("dirtyStatus"),
+        reloadButton: document.getElementById("reloadButton"),
+        repackButton: document.getElementById("repackButton"),
+        searchInput: document.getElementById("searchInput"),
+        grid: document.getElementById("grid"),
+        emptyState: document.getElementById("emptyState"),
+        entryCount: document.getElementById("entryCount"),
+        fileCount: document.getElementById("fileCount"),
+        missingCount: document.getElementById("missingCount"),
+        orphanCount: document.getElementById("orphanCount"),
+        selectedEmpty: document.getElementById("selectedEmpty"),
+        editForm: document.getElementById("editForm"),
+        resetButton: document.getElementById("resetButton"),
+        selectedPreview: document.getElementById("selectedPreview"),
+        selectedName: document.getElementById("selectedName"),
+        selectedSlug: document.getElementById("selectedSlug"),
+        editMessage: document.getElementById("editMessage"),
+        addForm: document.getElementById("addForm"),
+        addMessage: document.getElementById("addMessage"),
+      };
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, {
+          headers: options.body instanceof FormData ? undefined : { "Content-Type": "application/json" },
+          ...options,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.error || `Request failed with ${response.status}`);
+        }
+        return payload;
+      }
+
+      async function loadState({ selectSlug = state.selectedSlug } = {}) {
+        const payload = await api("/api/state");
+        applyState(payload, selectSlug);
+      }
+
+      function applyState(payload, selectSlug) {
+        state.catalog = payload.catalog || [];
+        state.files = payload.iconFiles || [];
+        state.dirty = Boolean(payload.dirty);
+        state.cacheBust = Date.now();
+
+        el.archivePath.textContent = payload.archivePath || "";
+        el.entryCount.textContent = `${state.catalog.length} entries`;
+        el.fileCount.textContent = `${state.files.length} SVG files`;
+        el.missingCount.textContent = `${(payload.missingIcons || []).length} missing`;
+        el.orphanCount.textContent = `${(payload.orphanIcons || []).length} orphan files`;
+        el.missingCount.classList.toggle("alert", (payload.missingIcons || []).length > 0);
+        el.orphanCount.classList.toggle("alert", (payload.orphanIcons || []).length > 0);
+        el.dirtyStatus.textContent = state.dirty ? "Unsaved archive" : "Clean";
+        el.dirtyStatus.classList.toggle("dirty", state.dirty);
+
+        if (selectSlug && state.catalog.some((item) => item.defaultSlug === selectSlug)) {
+          state.selectedSlug = selectSlug;
+        } else {
+          state.selectedSlug = state.catalog[0]?.defaultSlug || "";
+        }
+        renderGrid();
+        renderSelected();
+      }
+
+      function filteredCatalog() {
+        const query = state.query.trim().toLowerCase();
+        if (!query) return state.catalog;
+        return state.catalog.filter((item) => {
+          const haystack = [
+            item.name,
+            item.nameShort,
+            item.defaultSlug,
+            item.provider,
+            item.iconUrl,
+            ...(item.aliases || []),
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          return haystack.includes(query);
+        });
+      }
+
+      function iconSrc(item) {
+        const url = item.iconUrl || `/icons/${item.defaultSlug}.svg`;
+        return `${url}?v=${state.cacheBust}`;
+      }
+
+      function renderGrid() {
+        const items = filteredCatalog();
+        el.grid.replaceChildren(
+          ...items.map((item) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `icon-card${item.defaultSlug === state.selectedSlug ? " selected" : ""}`;
+            button.addEventListener("click", () => {
+              state.selectedSlug = item.defaultSlug;
+              renderGrid();
+              renderSelected();
+            });
+
+            const thumb = document.createElement("div");
+            thumb.className = "thumb";
+            const img = document.createElement("img");
+            img.src = iconSrc(item);
+            img.alt = "";
+            thumb.append(img);
+
+            const name = document.createElement("div");
+            name.className = "icon-name";
+            name.textContent = item.name || item.defaultSlug;
+
+            const slug = document.createElement("div");
+            slug.className = "icon-slug";
+            slug.textContent = item.defaultSlug;
+
+            button.append(thumb, name, slug);
+            return button;
+          }),
+        );
+        el.emptyState.classList.toggle("hidden", items.length > 0);
+      }
+
+      function selectedItem() {
+        return state.catalog.find((item) => item.defaultSlug === state.selectedSlug) || null;
+      }
+
+      function renderSelected() {
+        const item = selectedItem();
+        el.selectedEmpty.classList.toggle("hidden", Boolean(item));
+        el.editForm.classList.toggle("hidden", !item);
+        el.resetButton.disabled = !item;
+        clearMessage(el.editMessage);
+        if (!item) return;
+
+        el.selectedPreview.src = iconSrc(item);
+        el.selectedName.textContent = item.name || item.defaultSlug;
+        el.selectedSlug.textContent = item.defaultSlug;
+        setFormValue("editName", item.name);
+        setFormValue("editNameShort", item.nameShort);
+        setFormValue("editSlug", item.defaultSlug);
+        setFormValue("editIconUrl", item.iconUrl || `/icons/${item.defaultSlug}.svg`);
+        setFormValue("editAliases", (item.aliases || []).join(", "));
+        setFormValue("editProvider", item.provider);
+        setFormValue("editWebsiteUrl", item.websiteUrl);
+        setFormValue("editDocsUrl", item.docsUrl);
+        setFormValue("editDescription", item.description);
+      }
+
+      function readEditForm() {
+        return {
+          name: value("editName"),
+          nameShort: value("editNameShort"),
+          defaultSlug: value("editSlug"),
+          iconUrl: value("editIconUrl"),
+          aliases: splitAliases(value("editAliases")),
+          provider: value("editProvider"),
+          websiteUrl: value("editWebsiteUrl"),
+          docsUrl: value("editDocsUrl"),
+          description: value("editDescription"),
+        };
+      }
+
+      function setFormValue(id, nextValue) {
+        document.getElementById(id).value = nextValue || "";
+      }
+
+      function value(id) {
+        return document.getElementById(id).value.trim();
+      }
+
+      function splitAliases(raw) {
+        return raw
+          .split(",")
+          .map((part) => part.trim())
+          .filter(Boolean);
+      }
+
+      function showMessage(target, kind, message) {
+        target.className = `message ${kind}`;
+        target.textContent = message;
+      }
+
+      function clearMessage(target) {
+        target.className = "message hidden";
+        target.textContent = "";
+      }
+
+      function setBusy(button, busy) {
+        button.disabled = busy;
+      }
+
+      el.searchInput.addEventListener("input", (event) => {
+        state.query = event.currentTarget.value;
+        renderGrid();
+      });
+
+      document.getElementById("editSlug").addEventListener("input", (event) => {
+        const slug = event.currentTarget.value.trim();
+        if (slug) {
+          setFormValue("editIconUrl", `/icons/${slug}.svg`);
+        }
+      });
+
+      el.resetButton.addEventListener("click", () => {
+        renderSelected();
+      });
+
+      el.editForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const item = selectedItem();
+        if (!item) return;
+        const submitButton = event.submitter;
+        setBusy(submitButton, true);
+        clearMessage(el.editMessage);
+        try {
+          const updated = await api(`/api/icons/${encodeURIComponent(item.defaultSlug)}`, {
+            method: "PATCH",
+            body: JSON.stringify(readEditForm()),
+          });
+          await loadState({ selectSlug: updated.defaultSlug });
+          showMessage(el.editMessage, "info", "Metadata saved in the unpacked workspace.");
+        } catch (error) {
+          showMessage(el.editMessage, "error", error.message);
+        } finally {
+          setBusy(submitButton, false);
+        }
+      });
+
+      el.addForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const submitButton = event.submitter;
+        setBusy(submitButton, true);
+        clearMessage(el.addMessage);
+        try {
+          const formData = new FormData(el.addForm);
+          const created = await api("/api/icons", {
+            method: "POST",
+            body: formData,
+          });
+          el.addForm.reset();
+          await loadState({ selectSlug: created.defaultSlug });
+          showMessage(el.addMessage, "info", `Added ${created.name}. Repack archive when ready.`);
+        } catch (error) {
+          showMessage(el.addMessage, "error", error.message);
+        } finally {
+          setBusy(submitButton, false);
+        }
+      });
+
+      el.reloadButton.addEventListener("click", async () => {
+        if (state.dirty && !confirm("Reload the archive and discard unpacked workspace edits?")) {
+          return;
+        }
+        setBusy(el.reloadButton, true);
+        try {
+          const payload = await api("/api/unpack", { method: "POST" });
+          applyState(payload, state.selectedSlug);
+        } catch (error) {
+          alert(error.message);
+        } finally {
+          setBusy(el.reloadButton, false);
+        }
+      });
+
+      el.repackButton.addEventListener("click", async () => {
+        if (!confirm("Repack build-assets/icons.tar.gz from the edited workspace? A timestamped backup will be created first.")) {
+          return;
+        }
+        setBusy(el.repackButton, true);
+        try {
+          const payload = await api("/api/repack", { method: "POST" });
+          await loadState({ selectSlug: state.selectedSlug });
+          alert(`${payload.message}\nBackup: ${payload.backupPath}`);
+        } catch (error) {
+          alert(error.message);
+        } finally {
+          setBusy(el.repackButton, false);
+        }
+      });
+
+      loadState().catch((error) => {
+        el.archivePath.textContent = error.message;
+      });
+    </script>
+  </body>
+</html>

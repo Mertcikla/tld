@@ -33,9 +33,20 @@ export interface DrawingCanvasHandle {
 }
 
 /**
- * A premium free-drawing overlay with smooth ink-like strokes, hit detection for move/erase,
+ * Free-drawing overlay with smooth ink-like strokes, hit detection for move/erase,
  * and a broad eraser brush.
  */
+function trySetPointerCapture(canvas: HTMLCanvasElement, pointerId: number) {
+  try {
+    canvas.setPointerCapture(pointerId)
+  } catch (e) {
+    // Firefox rejects capture for synthetic or otherwise non-active pointer ids.
+    // The event data is still usable, so drawing can continue without capture.
+    if (e instanceof DOMException && (e.name === 'InvalidPointerId' || e.name === 'NotFoundError')) return
+    throw e
+  }
+}
+
 const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(function DrawingCanvas({
   paths,
   isDrawing,
@@ -253,7 +264,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(functi
     const flowPt = screenToFlow(e.clientX - rect.left, e.clientY - rect.top)
 
     if (modeRef.current === 'eraser') {
-      canvas.setPointerCapture(e.pointerId)
+      trySetPointerCapture(canvas, e.pointerId)
       activePointerIdRef.current = e.pointerId
       isPointerDownRef.current = true
       const hit = findPathAt(flowPt)
@@ -264,7 +275,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(functi
     if (modeRef.current === 'select') {
       const hit = findPathAt(flowPt)
       if (hit) {
-        canvas.setPointerCapture(e.pointerId)
+        trySetPointerCapture(canvas, e.pointerId)
         activePointerIdRef.current = e.pointerId
         setSelectedPathId(hit.id)
         isPointerDownRef.current = true
@@ -281,7 +292,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle, DrawingCanvasProps>(functi
       return
     }
 
-    canvas.setPointerCapture(e.pointerId)
+    trySetPointerCapture(canvas, e.pointerId)
     activePointerIdRef.current = e.pointerId
     isPointerDownRef.current = true
     currentPathRef.current = getPointerFlowPoints(e, canvas)

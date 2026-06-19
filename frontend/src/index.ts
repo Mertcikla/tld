@@ -21,9 +21,12 @@ export { default as AppearanceSettings } from './pages/AppearanceSettings'
 export { default as ElementNode } from './components/ElementNode'
 export { default as ViewGridNode, type ViewGridNodeData } from './components/ViewGridNode'
 export { default as ElementPanel, type ElementPanelProps } from './components/ElementPanel'
+export { default as ElementPanelCollaboration } from './components/ElementPanelCollaboration'
 export { default as ConnectorPanel, type ConnectorPanelProps } from './components/ConnectorPanel'
+export { default as ConnectorPanelCollaboration } from './components/ConnectorPanelCollaboration'
 export { default as ElementLibrary } from './components/ElementLibrary'
 export { default as TopMenuBar } from './components/TopMenuBar'
+export { default as TopMenuBarCollaboration, type CollaborationProps } from './components/TopMenuBarCollaboration'
 export { default as ViewFloatingMenu } from './components/ViewFloatingMenu'
 export type { ViewFloatingMenuProps } from './components/ViewFloatingMenu'
 export { default as ViewBezierConnector } from './components/ViewBezierConnector'
@@ -111,6 +114,7 @@ export type { PlatformFeatures, PlatformRouteContext } from './platform/types'
 export { platform as localPlatform } from './platform/local'
 export { PlatformProvider } from './platform/PlatformContext'
 export { usePlatform } from './platform/context'
+export { connectViewRealtime } from './api/realtime'
 
 // ─── API Contract ────────────────────────────────────────────────────────────
 // The library ships with a reference stub client (offline/local mode).
@@ -131,6 +135,11 @@ export {
   protoLayer,
   mapViewMarkdown,
   type ProtoDiagram,
+  type MermaidDirection,
+  type MermaidImportSummary,
+  type MermaidMarkdownBlock,
+  type MermaidMarkdownSyncStatus,
+  type ParsedImport,
 } from './api/client'
 export type { DependenciesResponse } from './api/client'
 
@@ -200,9 +209,6 @@ export {
 
 // ─── Lib ─────────────────────────────────────────────────────────────────────
 export { vscodeBridge } from './lib/vscodeBridge'
-
-// ─── Importer ────────────────────────────────────────────────────────────────
-export { parseMermaid as parseMermaidToElements, parseMermaidAsync as parseMermaidToElementsAsync, type ParsedImport } from './pkg/importer/mermaid'
 
 // ─── VS Code Messages ────────────────────────────────────────────────────────
 export * from './types/vscode-messages'

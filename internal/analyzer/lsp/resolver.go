@@ -181,6 +181,95 @@ func (r *MultiLanguageResolver) ResolveDefinitions(ctx context.Context, ref anal
 	return resolved, nil
 }
 
+func (r *MultiLanguageResolver) Implementations(ctx context.Context, filePath string, line, column int) ([]DefinitionLocation, error) {
+	if r == nil || r.RootDir == "" || filePath == "" || line <= 0 {
+		return nil, nil
+	}
+	language, ok := analyzer.DetectLanguage(filePath)
+	if !ok {
+		return nil, nil
+	}
+	session, ok, err := r.sessionForLanguage(ctx, language)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if !session.SupportsImplementation() {
+		return nil, nil
+	}
+	if err := r.openDocument(ctx, session, filePath); err != nil {
+		r.markFailed(ctx, language, "open_document", err)
+		return nil, err
+	}
+	if column <= 0 {
+		column = 1
+	}
+	callCtx := ctx
+	cancel := func() {}
+	if r.cfg.DefinitionTimeout > 0 {
+		callCtx, cancel = context.WithTimeout(ctx, r.cfg.DefinitionTimeout)
+	}
+	defer cancel()
+	locations, err := session.Implementation(callCtx, &protocol.ImplementationParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(filePath)},
+			Position: protocol.Position{
+				Line:      uint32(line - 1),
+				Character: uint32(column - 1),
+			},
+		},
+	})
+	if err != nil {
+		r.markFailed(ctx, language, "implementation", err)
+		return nil, err
+	}
+	return definitionLocationsFromProtocol(locations), nil
+}
+
+func (r *MultiLanguageResolver) References(ctx context.Context, filePath string, line, column int) ([]DefinitionLocation, error) {
+	if r == nil || r.RootDir == "" || filePath == "" || line <= 0 {
+		return nil, nil
+	}
+	language, ok := analyzer.DetectLanguage(filePath)
+	if !ok {
+		return nil, nil
+	}
+	session, ok, err := r.sessionForLanguage(ctx, language)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if !session.SupportsReferences() {
+		return nil, nil
+	}
+	if err := r.openDocument(ctx, session, filePath); err != nil {
+		r.markFailed(ctx, language, "open_document", err)
+		return nil, err
+	}
+	if column <= 0 {
+		column = 1
+	}
+	callCtx := ctx
+	cancel := func() {}
+	if r.cfg.DefinitionTimeout > 0 {
+		callCtx, cancel = context.WithTimeout(ctx, r.cfg.DefinitionTimeout)
+	}
+	defer cancel()
+	locations, err := session.References(callCtx, &protocol.ReferenceParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(filePath)},
+			Position: protocol.Position{
+				Line:      uint32(line - 1),
+				Character: uint32(column - 1),
+			},
+		},
+		Context: protocol.ReferenceContext{IncludeDeclaration: false},
+	})
+	if err != nil {
+		r.markFailed(ctx, language, "references", err)
+		return nil, err
+	}
+	return definitionLocationsFromProtocol(locations), nil
+}
+
 func (r *MultiLanguageResolver) IncomingCalls(ctx context.Context, filePath string, line, column int) ([]CallLocation, error) {
 	if r == nil || r.RootDir == "" || filePath == "" || line <= 0 {
 		return nil, nil
@@ -244,6 +333,69 @@ func (r *MultiLanguageResolver) IncomingCalls(ctx context.Context, filePath stri
 	return calls, nil
 }
 
+func (r *MultiLanguageResolver) OutgoingCalls(ctx context.Context, filePath string, line, column int) ([]CallLocation, error) {
+	if r == nil || r.RootDir == "" || filePath == "" || line <= 0 {
+		return nil, nil
+	}
+	language, ok := analyzer.DetectLanguage(filePath)
+	if !ok {
+		return nil, nil
+	}
+	session, ok, err := r.sessionForLanguage(ctx, language)
+	if err != nil || !ok {
+		return nil, err
+	}
+	if !session.SupportsCallHierarchy() {
+		return nil, nil
+	}
+	if err := r.openDocument(ctx, session, filePath); err != nil {
+		r.markFailed(ctx, language, "open_document", err)
+		return nil, err
+	}
+	if column <= 0 {
+		column = 1
+	}
+	callCtx := ctx
+	cancel := func() {}
+	if r.cfg.DefinitionTimeout > 0 {
+		callCtx, cancel = context.WithTimeout(ctx, r.cfg.DefinitionTimeout)
+	}
+	defer cancel()
+	items, err := session.PrepareCallHierarchy(callCtx, &protocol.CallHierarchyPrepareParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(filePath)},
+			Position: protocol.Position{
+				Line:      uint32(line - 1),
+				Character: uint32(column - 1),
+			},
+		},
+	})
+	if err != nil {
+		r.markFailed(ctx, language, "call_hierarchy_prepare", err)
+		return nil, err
+	}
+	var calls []CallLocation
+	for _, item := range items {
+		outgoing, err := session.OutgoingCalls(callCtx, item)
+		if err != nil {
+			r.markFailed(ctx, language, "outgoing_calls", err)
+			return nil, err
+		}
+		for _, call := range outgoing {
+			filePath := filepath.Clean(call.To.URI.Filename())
+			if filePath == "" {
+				continue
+			}
+			calls = append(calls, CallLocation{
+				FilePath: filePath,
+				Line:     int(call.To.Range.Start.Line) + 1,
+				Name:     call.To.Name,
+			})
+		}
+	}
+	return calls, nil
+}
+
 func (r *MultiLanguageResolver) Snapshot() StatusSnapshot {
 	if r == nil {
 		return StatusSnapshot{}
@@ -270,6 +422,21 @@ func (r *MultiLanguageResolver) Close() error {
 		delete(r.sessions, language)
 	}
 	return errors.Join(errs...)
+}
+
+func definitionLocationsFromProtocol(locations []protocol.Location) []DefinitionLocation {
+	resolved := make([]DefinitionLocation, 0, len(locations))
+	for _, location := range locations {
+		filePath := filepath.Clean(location.URI.Filename())
+		if filePath == "" {
+			continue
+		}
+		resolved = append(resolved, DefinitionLocation{
+			FilePath: filePath,
+			Line:     int(location.Range.Start.Line) + 1,
+		})
+	}
+	return resolved
 }
 
 func (r *MultiLanguageResolver) sessionForLanguage(ctx context.Context, language analyzer.Language) (*Session, bool, error) {

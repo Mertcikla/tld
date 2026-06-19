@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from 'react'
-import type { Connector, LibraryElement, PlacedElement } from '../types'
+import type { Connector, ElementReactionSummary, LibraryElement, PlacedElement, ThreadResolveEvent, ViewComment, ViewThread } from '../types'
 
 export interface PlatformRouteContext<User = unknown> {
   user: User | null
@@ -71,6 +71,7 @@ export interface RealtimeCanvasVisibility {
 
 export interface RealtimePresenceSnapshot {
   self_user_id: string
+  self_username?: string
   viewers: RealtimeUserPresence[]
   collaborators: RealtimeUserPresence[]
   cursors: RealtimeCursor[]
@@ -83,27 +84,10 @@ export interface RealtimePresenceSnapshot {
   has_canvas_visibility?: boolean
 }
 
-export interface RealtimeThreadResolveEvent {
-  thread_id: number
-  resolved: boolean
-}
-
-export interface RealtimeViewThread {
-  id: number
-  [key: string]: unknown
-}
-
-export interface RealtimeViewComment {
-  id: number
-  [key: string]: unknown
-}
-
-export interface RealtimeReactionSummary {
-  element_id: number
-  emoji: string
-  count: number
-  reacted_by_me: boolean
-}
+export type RealtimeThreadResolveEvent = ThreadResolveEvent
+export type RealtimeViewThread = ViewThread
+export type RealtimeViewComment = ViewComment
+export type RealtimeReactionSummary = ElementReactionSummary
 
 export interface RealtimeViewStateEvent {
   type: string

@@ -33,10 +33,6 @@ if (typeof window !== "undefined") {
     },
     { passive: false },
   )
-
-  const preventGesture = (e: Event) => e.preventDefault()
-  document.addEventListener("gesturestart", preventGesture, { passive: false })
-  document.addEventListener("gesturechange", preventGesture, { passive: false })
 }
 
 createRoot(document.getElementById("root")!).render(
@@ -44,13 +40,7 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <ChakraProvider theme={theme}>
         <PlatformProvider platform={localPlatform}>
-          <BrowserRouter
-            basename={routerBasename}
-            future={{
-              v7_startTransition: false,
-              v7_relativeSplatPath: true,
-            }}
-          >
+          <BrowserRouter basename={routerBasename}>
             <App />
           </BrowserRouter>
           <ToastContainer />

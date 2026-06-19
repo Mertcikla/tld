@@ -85,6 +85,7 @@ func appendTSClass(node *gotreesitter.Node, lang *gotreesitter.Language, source 
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:        name,
 		Kind:        "class",
+		NodeType:    nodeKind(node, lang),
 		FilePath:    path,
 		Line:        int(nameNode.StartPoint().Row) + 1,
 		EndLine:     int(node.EndPoint().Row) + 1,
@@ -103,6 +104,7 @@ func appendTSInterface(node *gotreesitter.Node, lang *gotreesitter.Language, sou
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:        name,
 		Kind:        "interface",
+		NodeType:    nodeKind(node, lang),
 		FilePath:    path,
 		Line:        int(nameNode.StartPoint().Row) + 1,
 		EndLine:     int(node.EndPoint().Row) + 1,
@@ -121,6 +123,7 @@ func appendTSEnum(node *gotreesitter.Node, lang *gotreesitter.Language, source [
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     "enum",
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     int(nameNode.StartPoint().Row) + 1,
 		EndLine:  int(node.EndPoint().Row) + 1,
@@ -137,6 +140,7 @@ func appendTSTypeAlias(node *gotreesitter.Node, lang *gotreesitter.Language, sou
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     nodeText(nameNode, source),
 		Kind:     "type",
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     int(nameNode.StartPoint().Row) + 1,
 		EndLine:  int(node.EndPoint().Row) + 1,
@@ -152,6 +156,7 @@ func appendTSFunction(node *gotreesitter.Node, lang *gotreesitter.Language, sour
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:        nodeText(nameNode, source),
 		Kind:        "function",
+		NodeType:    nodeKind(node, lang),
 		FilePath:    path,
 		Line:        int(nameNode.StartPoint().Row) + 1,
 		EndLine:     int(node.EndPoint().Row) + 1,
@@ -173,6 +178,7 @@ func appendTSMethod(node *gotreesitter.Node, lang *gotreesitter.Language, source
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     kind,
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     int(nameNode.StartPoint().Row) + 1,
 		EndLine:  int(node.EndPoint().Row) + 1,
@@ -203,6 +209,7 @@ func appendTSVariableDecl(node *gotreesitter.Node, lang *gotreesitter.Language, 
 		result.Symbols = append(result.Symbols, Symbol{
 			Name:     tsIdentifierName(nameNode, source),
 			Kind:     kind,
+			NodeType: nodeKind(child, lang),
 			FilePath: path,
 			Line:     int(nameNode.StartPoint().Row) + 1,
 			EndLine:  int(valueNode.EndPoint().Row) + 1,

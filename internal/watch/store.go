@@ -1205,6 +1205,10 @@ func (s *Store) EnsureGitTags(ctx context.Context) error {
 	return tagcolors.EnsureBun(ctx, s.bun, managedGitTags())
 }
 
+func (s *Store) EnsureBlastRadiusTags(ctx context.Context) error {
+	return tagcolors.EnsureBun(ctx, s.bun, []string{blastRadiusTag})
+}
+
 func (s *Store) ApplyGitTags(ctx context.Context, repositoryID int64, status GitStatus) (GitTagUpdateResult, error) {
 	if err := s.EnsureGitTags(ctx); err != nil {
 		return GitTagUpdateResult{}, err
@@ -1292,6 +1296,98 @@ func (s *Store) ApplyGitTags(ctx context.Context, repositoryID int64, status Git
 	for _, item := range updates {
 		desired := sortedSetValues(desiredByID[item.id])
 		added, err := s.addElementTags(ctx, item.id, desired)
+		if err != nil {
+			return GitTagUpdateResult{}, err
+		}
+		result.TagsAdded += added
+	}
+	return result, nil
+}
+
+func (s *Store) ApplyBlastRadiusTags(ctx context.Context, repositoryID int64, files []string, roots map[string][]string, status GitStatus) (GitTagUpdateResult, error) {
+	if err := s.EnsureBlastRadiusTags(ctx); err != nil {
+		return GitTagUpdateResult{}, err
+	}
+	uncommitted := map[string]struct{}{}
+	addUncommitted := func(paths []string) {
+		for _, p := range paths {
+			p = filepathToSlash(p)
+			if p != "" {
+				uncommitted[p] = struct{}{}
+			}
+		}
+	}
+	addUncommitted(status.Staged)
+	addUncommitted(status.Unstaged)
+	addUncommitted(status.Untracked)
+	desiredFiles := map[string]struct{}{}
+	for file, fileRoots := range roots {
+		file = filepathToSlash(file)
+		for _, root := range fileRoots {
+			if _, ok := uncommitted[filepathToSlash(root)]; ok {
+				desiredFiles[file] = struct{}{}
+				break
+			}
+		}
+	}
+	if len(roots) == 0 {
+		for _, file := range files {
+			file = filepathToSlash(file)
+			if _, ok := uncommitted[file]; ok {
+				desiredFiles[file] = struct{}{}
+			}
+		}
+	}
+	rows, err := s.rowsRaw(ctx, `
+		SELECT resource_id, owner_type, owner_key
+		FROM watch_materialization
+		WHERE repository_id = ? AND resource_type = 'element' AND owner_type IN ('file', 'symbol')`, repositoryID)
+	if err != nil {
+		return GitTagUpdateResult{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	type elementOwner struct {
+		id        int64
+		ownerType string
+		ownerKey  string
+	}
+	var owners []elementOwner
+	for rows.Next() {
+		var owner elementOwner
+		if err := rows.Scan(&owner.id, &owner.ownerType, &owner.ownerKey); err != nil {
+			return GitTagUpdateResult{}, err
+		}
+		owners = append(owners, owner)
+	}
+	if err := rows.Err(); err != nil {
+		return GitTagUpdateResult{}, err
+	}
+	var result GitTagUpdateResult
+	desiredByID := map[int64]struct{}{}
+	for _, owner := range owners {
+		file, ok, err := s.materializedOwnerFilePath(ctx, repositoryID, owner.ownerType, owner.ownerKey)
+		if err != nil {
+			return GitTagUpdateResult{}, err
+		}
+		if !ok {
+			continue
+		}
+		if _, keep := desiredFiles[file]; keep {
+			desiredByID[owner.id] = struct{}{}
+		}
+	}
+	for _, owner := range owners {
+		if _, keep := desiredByID[owner.id]; keep {
+			continue
+		}
+		removed, err := s.removeElementTags(ctx, owner.id, []string{blastRadiusTag})
+		if err != nil {
+			return GitTagUpdateResult{}, err
+		}
+		result.TagsRemoved += removed
+	}
+	for id := range desiredByID {
+		added, err := s.addElementTags(ctx, id, []string{blastRadiusTag})
 		if err != nil {
 			return GitTagUpdateResult{}, err
 		}

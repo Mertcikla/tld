@@ -3,14 +3,21 @@ import type { Node as RFNode, NodeChange } from 'reactflow'
 import type { Connector } from '../../../types'
 import {
   PENDING_ELEMENT_NODE_ID,
+  accelerateViewEditorPinchZoomFactor,
   applyPendingElementNodeChanges,
   getDraggedElementNodes,
+  getDraggedSelectionElementNodes,
   getConnectorDeletionTarget,
+  getPlacementPositionTimerKeys,
   pendingElementPositionFromFlowPoint,
+  resolveConnectorDragAttachHandles,
   resolveConnectorDropTarget,
   shouldDisplayConnectorDragPlaceholder,
+  shouldZoomViewEditorWheel,
+  zoomViewportAroundClientPoint,
   type PendingElementState,
 } from './useCanvasInteractions'
+import type { WheelDeltaLike } from '../../../utils/wheel'
 
 const connector = (id: number): Connector => ({
   id,
@@ -54,6 +61,16 @@ class FakeElement {
 
 function node(id: string, options: Partial<RFNode> = {}): RFNode {
   return { id, type: 'elementNode', position: { x: 0, y: 0 }, data: {}, ...options } as RFNode
+}
+
+function wheel(overrides: Partial<WheelDeltaLike>): WheelDeltaLike {
+  return {
+    deltaX: 0,
+    deltaY: 0,
+    deltaMode: 0,
+    ctrlKey: false,
+    ...overrides,
+  }
 }
 
 function installPointHitTest(elements: FakeElement[]) {
@@ -170,6 +187,22 @@ describe('dragged element node resolution', () => {
     ])
   })
 
+  it('includes selected fallback nodes when React Flow drag payload only contains the primary node', () => {
+    const primary = node('1', { selected: true, position: { x: 40, y: 20 } })
+    const latestSelection = [
+      node('1', { selected: true, position: { x: 35, y: 15 } }),
+      node('2', { selected: true, position: { x: 140, y: 20 } }),
+    ]
+
+    expect(getDraggedElementNodes(primary, [primary], latestSelection).map((dragged) => ({
+      id: dragged.id,
+      position: dragged.position,
+    }))).toEqual([
+      { id: '1', position: { x: 40, y: 20 } },
+      { id: '2', position: { x: 140, y: 20 } },
+    ])
+  })
+
   it('falls back to selected element refs when React Flow gives no drag payload', () => {
     const primary = node('1', { selected: true })
     const fallbackNodes = [
@@ -179,6 +212,40 @@ describe('dragged element node resolution', () => {
     ]
 
     expect(getDraggedElementNodes(primary, [], fallbackNodes).map((dragged) => dragged.id)).toEqual(['1', '2'])
+  })
+
+  it('resolves selected nodes for React Flow selection drags', () => {
+    const latestSelection = [
+      node('1', { selected: true, position: { x: 0, y: 0 } }),
+      node('2', { selected: true, position: { x: 100, y: 0 } }),
+      node('ctx:3', { selected: true, type: 'contextNode' }),
+      node('4', { selected: false, position: { x: 300, y: 0 } }),
+    ]
+    const draggedNodes = [
+      node('1', { selected: true, position: { x: 30, y: 25 } }),
+      node('2', { selected: true, position: { x: 130, y: 25 } }),
+    ]
+
+    expect(getDraggedSelectionElementNodes(draggedNodes, latestSelection).map((dragged) => ({
+      id: dragged.id,
+      position: dragged.position,
+    }))).toEqual([
+      { id: '1', position: { x: 30, y: 25 } },
+      { id: '2', position: { x: 130, y: 25 } },
+    ])
+  })
+})
+
+describe('placement position debounce timer keys', () => {
+  it('keys single placement moves by the element so follow-up nudges debounce', () => {
+    expect(getPlacementPositionTimerKeys('1', [1])).toEqual(['1'])
+    expect(getPlacementPositionTimerKeys('selection:1', [1])).toEqual(['selection:1', '1'])
+  })
+
+  it('keys multi-placement moves by the whole batch instead of each element', () => {
+    expect(getPlacementPositionTimerKeys('1', [1, 2])).toEqual(['batch:1:2'])
+    expect(getPlacementPositionTimerKeys('2', [2, 1])).toEqual(['batch:1:2'])
+    expect(getPlacementPositionTimerKeys('selection:1:2', [1, 2])).toEqual(['batch:1:2'])
   })
 })
 
@@ -195,6 +262,80 @@ describe('connector drag placeholder visibility', () => {
     expect(shouldDisplayConnectorDragPlaceholder({ nodeId: '12', isHandle: false })).toBe(false)
     expect(shouldDisplayConnectorDragPlaceholder({ nodeId: '12', isHandle: true })).toBe(false)
     expect(shouldDisplayConnectorDragPlaceholder({ isHandle: true })).toBe(false)
+  })
+})
+
+describe('connector drag attach handle resolution', () => {
+  it('preserves explicit handle sides instead of choosing closest geometry', () => {
+    expect(resolveConnectorDragAttachHandles('bottom-2', 'right-4')).toEqual({
+      sourceHandle: 'bottom',
+      targetHandle: 'right',
+    })
+  })
+
+  it('falls back to default sides when a drag attach has no explicit target handle', () => {
+    expect(resolveConnectorDragAttachHandles('top-2', null)).toEqual({
+      sourceHandle: 'top',
+      targetHandle: 'left',
+    })
+  })
+})
+
+describe('viewport zoom helpers', () => {
+  it('zooms vertical smooth wheel input before React Flow can pan it', () => {
+    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 6 }), false)).toBe(true)
+    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 20.5 }), false)).toBe(true)
+  })
+
+  it('keeps two-axis wheel gestures available for canvas panning', () => {
+    expect(shouldZoomViewEditorWheel(wheel({ deltaX: 8, deltaY: 20 }), false)).toBe(false)
+    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 6 }), true)).toBe(false)
+  })
+
+  it('lets React Flow handle ctrl-wheel pinch gestures such as Firefox trackpad pinch', () => {
+    expect(shouldZoomViewEditorWheel(wheel({ ctrlKey: true, deltaY: 6 }), false)).toBe(false)
+    expect(shouldZoomViewEditorWheel(wheel({ ctrlKey: true, deltaY: 1, deltaMode: 1 }), false)).toBe(false)
+  })
+
+  it('doubles incremental pinch zoom distance from neutral', () => {
+    expect(accelerateViewEditorPinchZoomFactor(1)).toBe(1)
+    expect(accelerateViewEditorPinchZoomFactor(1.04)).toBeCloseTo(1.08)
+    expect(accelerateViewEditorPinchZoomFactor(0.96)).toBeCloseTo(0.92)
+  })
+
+  it('keeps the flow point under the client point fixed while zooming', () => {
+    const viewport = { x: 80, y: 40, zoom: 2 }
+    const rect = { left: 10, top: 20 }
+    const point = { clientX: 310, clientY: 220 }
+    const beforeFlow = {
+      x: (point.clientX - rect.left - viewport.x) / viewport.zoom,
+      y: (point.clientY - rect.top - viewport.y) / viewport.zoom,
+    }
+
+    const next = zoomViewportAroundClientPoint(viewport, rect, point, 1.5, 0.1, 4)
+    const afterFlow = {
+      x: (point.clientX - rect.left - next.x) / next.zoom,
+      y: (point.clientY - rect.top - next.y) / next.zoom,
+    }
+
+    expect(next.zoom).toBe(3)
+    expect(afterFlow.x).toBeCloseTo(beforeFlow.x)
+    expect(afterFlow.y).toBeCloseTo(beforeFlow.y)
+  })
+
+  it('clamps zoom while preserving the anchored client point', () => {
+    const next = zoomViewportAroundClientPoint(
+      { x: 0, y: 0, zoom: 3 },
+      { left: 0, top: 0 },
+      { clientX: 300, clientY: 150 },
+      2,
+      0.5,
+      4,
+    )
+
+    expect(next.zoom).toBe(4)
+    expect((300 - next.x) / next.zoom).toBeCloseTo(100)
+    expect((150 - next.y) / next.zoom).toBeCloseTo(50)
   })
 })
 

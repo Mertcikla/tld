@@ -38,13 +38,7 @@ createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
       <ChakraProvider theme={theme}>
         <PlatformProvider platform={localPlatform}>
-          <MemoryRouter
-            initialEntries={[initialPath]}
-            future={{
-              v7_startTransition: true,
-              v7_relativeSplatPath: true,
-            }}
-          >
+          <MemoryRouter initialEntries={[initialPath]}>
             <App />
           </MemoryRouter>
           <ToastContainer />
@@ -53,4 +47,3 @@ createRoot(document.getElementById('root')!).render(
     </QueryClientProvider>
   </StrictMode>,
 )
-

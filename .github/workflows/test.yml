@@ -26,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: ["1.26.1"]
+        go-version: ["1.26.2"]
 
     steps:
       - name: Checkout code
@@ -116,10 +116,16 @@ jobs:
     name: Playwright E2E Tests
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      # Keep this tag in sync with frontend/package-lock.json @playwright/test.
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
+      options: --user 1001
     strategy:
       fail-fast: false
       matrix:
-        go-version: ["1.26.1"]
+        go-version: ["1.26.2"]
+        project: [chromium, firefox, webkit, mobile-safari, mobile-chrome, tablet-touch, desktop-touch-chromium]
         shard: [1, 2, 3, 4]
 
     steps:
@@ -135,7 +141,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '24'
+          node-version: '24.14.1'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -147,34 +153,6 @@ jobs:
         working-directory: frontend
         run: npm run build:app
 
-      - name: Resolve Playwright version
-        id: playwright-version
-        working-directory: frontend
-        run: node -e "console.log('version=' + require('@playwright/test/package.json').version)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}-chromium
-
-      - name: Install Playwright system dependencies
-        working-directory: frontend
-        timeout-minutes: 10
-        run: npx playwright install-deps chromium
-
-      - name: Install Playwright Chromium
-        working-directory: frontend
-        timeout-minutes: 25
-        env:
-          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: 120000
-          DEBUG: pw:install
-        run: |
-          set -euo pipefail
-          npx playwright install chromium
-          npx playwright --version
-          du -sh ~/.cache/ms-playwright || true
-
       - name: Build E2E binary
         run: go build -o /tmp/tld-e2e ./cmd/tld
 
@@ -183,14 +161,78 @@ jobs:
         env:
           TLD_E2E_BINARY: /tmp/tld-e2e
           TLD_E2E_PORT: 1806${{ matrix.shard }}
-          TLD_E2E_DATA_DIR: /tmp/tld-playwright-${{ github.run_id }}-${{ matrix.shard }}
-          PLAYWRIGHT_JSON_OUTPUT_NAME: report-${{ matrix.shard }}.json
-        run: npx playwright test -c playwright.config.ts --shard=${{ matrix.shard }}/4 --reporter=json,line
+          TLD_E2E_DATA_DIR: /tmp/tld-playwright-${{ github.run_id }}-${{ matrix.project }}-${{ matrix.shard }}
+        run: npx playwright test -c playwright.config.ts --project=${{ matrix.project }} --shard=${{ matrix.shard }}/4 --reporter=github,blob
 
-      - name: Publish Playwright report
-        if: ${{ github.event_name == 'pull_request' && !cancelled() && hashFiles(format('frontend/report-{0}.json', matrix.shard)) != '' }}
-        uses: sidharthv96/playwright-report-action@v2.0-rc.5
+      - name: Upload Playwright blob report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-blob-report-${{ matrix.project }}-${{ matrix.shard }}
+          path: frontend/blob-report/
+          retention-days: 30
+
+  e2e-report:
+    name: Playwright E2E Report
+    if: ${{ !cancelled() && (needs.e2e-tests.result == 'success' || needs.e2e-tests.result == 'failure') }}
+    needs: e2e-tests
+    runs-on: ubuntu-latest
+    container:
+      # Keep this tag in sync with frontend/package-lock.json @playwright/test.
+      image: mcr.microsoft.com/playwright:v1.59.1-noble
+      options: --user 1001
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24.14.1'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Download Playwright blob reports
+        uses: actions/download-artifact@v6
+        with:
+          pattern: playwright-blob-report-*
+          path: frontend/all-blob-reports
+          merge-multiple: true
+
+      - name: Merge Playwright reports
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: report.json
+        run: npx playwright merge-reports --reporter=html,json ./all-blob-reports
+
+      - name: Verify merged Playwright report
+        working-directory: frontend
+        run: |
+          test -s report.json
+          test -f playwright-report/index.html
+
+      - name: Upload Playwright report
+        id: playwright-report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish Playwright results
+        if: ${{ github.event_name == 'pull_request' && !cancelled() && hashFiles('frontend/report.json') != '' }}
+        uses: daun/playwright-report-summary@v4
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          coverage-file: frontend/report-${{ matrix.shard }}.json
-          skip-step: all
+          report-file: frontend/report.json
+          report-url: ${{ steps.playwright-report.outputs.artifact-url }}
+          comment-title: Playwright E2E results
+          sections: failed, -flaky, -skipped, -passed
+          job-summary: true

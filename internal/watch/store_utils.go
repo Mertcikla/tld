@@ -579,6 +579,14 @@ func managedGitTags() []string {
 	return []string{"git:staged", "git:unstaged", "git:untracked", "watch:deleted"}
 }
 
+const blastRadiusTag = "watch:blast-radius"
+
+func managedEphemeralTags() []string {
+	tags := append([]string{}, managedGitTags()...)
+	tags = append(tags, blastRadiusTag)
+	return tags
+}
+
 func stringSet(values []string) map[string]struct{} {
 	out := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -816,7 +824,7 @@ func normalizedElementTagsForHash(raw string) any {
 	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
 		return normalizedJSONValue(raw)
 	}
-	managed := stringSet(managedGitTags())
+	managed := stringSet(managedEphemeralTags())
 	filtered := make([]string, 0, len(tags))
 	for _, tag := range tags {
 		if _, ok := managed[tag]; ok {

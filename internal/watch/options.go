@@ -46,6 +46,9 @@ func ResolveSettings(cfg *workspace.Config, languages []string, watcherMode, pol
 		settings.Watcher = cfg.Watch.Watcher
 		settings.PollInterval = parseDurationOrZero(cfg.Watch.PollInterval)
 		settings.Debounce = parseDurationOrZero(cfg.Watch.Debounce)
+		settings.Dependencies = DependencyConfig{
+			Enabled: cfg.Watch.Dependencies.Enabled,
+		}
 		settings.Thresholds = Thresholds{
 			MaxElementsPerView:            cfg.Watch.Thresholds.MaxElementsPerView,
 			MaxConnectorsPerView:          cfg.Watch.Thresholds.MaxConnectorsPerView,
@@ -73,11 +76,12 @@ func ResolveSettings(cfg *workspace.Config, languages []string, watcherMode, pol
 			},
 		}
 		settings.Scale = ScaleConfig{
-			Strategy:        cfg.Watch.Scale.Strategy,
-			MaxTrackedFiles: cfg.Watch.Scale.MaxTrackedFiles,
-			MaxLimitedFiles: cfg.Watch.Scale.MaxLimitedFiles,
-			MaxRecentFiles:  cfg.Watch.Scale.MaxRecentFiles,
-			MaxCallerDepth:  cfg.Watch.Scale.MaxCallerDepth,
+			Strategy:           cfg.Watch.Scale.Strategy,
+			MaxTrackedFiles:    cfg.Watch.Scale.MaxTrackedFiles,
+			MaxLimitedFiles:    cfg.Watch.Scale.MaxLimitedFiles,
+			MaxRecentFiles:     cfg.Watch.Scale.MaxRecentFiles,
+			MaxCallerDepth:     cfg.Watch.Scale.MaxCallerDepth,
+			MaxBlastRadiusHops: cfg.Watch.Scale.MaxBlastRadiusHops,
 		}
 		settings.LSP = LSPConfig{
 			Enabled:          cfg.Watch.LSP.Enabled,

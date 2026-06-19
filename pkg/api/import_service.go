@@ -77,7 +77,7 @@ func (s *ImportService) ParseStructurizr(ctx context.Context, req *connect.Reque
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 
-	viewRef := "imported_view"
+	viewRef := "root"
 
 	elements := make([]*diagv1.PlanElement, 0, len(parsed.Elements))
 	for _, e := range parsed.Elements {

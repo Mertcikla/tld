@@ -8,16 +8,12 @@ import {
   listElements,
   listPlacements,
   nodeByName,
+  pasteTextOnCanvas,
   uniqueName,
 } from '../helpers/vieweditor'
 
 async function pasteMermaid(page: Parameters<typeof currentViewId>[0], source: string) {
-  await page.getByTestId('vieweditor-canvas').click()
-  await page.evaluate((text) => {
-    const data = new DataTransfer()
-    data.setData('text/plain', text)
-    window.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
-  }, source)
+  await pasteTextOnCanvas(page, source)
 }
 
 function placementX(placement: Awaited<ReturnType<typeof listPlacements>>[number]) {
@@ -124,7 +120,7 @@ test('selection bulk tags apply to every selected imported element', async ({ pa
     return elements.every((element) => element.tags?.includes(tag))
   }).toBe(true)
 
-  await page.getByRole('button', { name: 'Remove', exact: true }).click()
+  await page.getByTestId(`selection-bulk-remove-tag-${tag}`).click()
 
   await expect.poll(async () => {
     const elements = await Promise.all(ids.map((id) => getElement(page, id)))

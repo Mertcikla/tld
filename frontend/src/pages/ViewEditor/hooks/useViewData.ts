@@ -24,7 +24,9 @@ interface ViewDataOptions {
   viewId: number | null
   interactionSourceId: number | null
   clickConnectMode: { sourceNodeId: string; sourceHandle: string; targetHandle?: string } | null
+  isConnectorCreatePreviewActive?: boolean
   selectedConnector: Connector | null
+  suppressSelectedConnectorHandleHighlight?: boolean
   activeTags: string[]
   hiddenLayerTags: string[]
   hoveredLayerTags: string[] | null
@@ -165,7 +167,9 @@ export function useViewData({
   viewId,
   interactionSourceId,
   clickConnectMode,
+  isConnectorCreatePreviewActive = false,
   selectedConnector,
+  suppressSelectedConnectorHandleHighlight = false,
   activeTags,
   hiddenLayerTags,
   hoveredLayerTags,
@@ -245,27 +249,31 @@ export function useViewData({
     }
   }, [queryClient, viewId])
 
+  const fetchViewEditorContent = useCallback(async (targetViewId: number) => {
+    const [content, tree] = await Promise.all([
+      api.workspace.views.content(targetViewId),
+      api.workspace.views.treeAround(targetViewId, { ancestorLevels: 2, descendantLevels: 2 }),
+    ])
+    const viewElements = content.placements || []
+    const connectors = content.connectors || []
+    const view = content.view ?? findViewInTree(tree, targetViewId)
+    if (!view) throw new Error('View not found')
+    return {
+      view,
+      viewElements,
+      connectors,
+      treeData: tree,
+      ...buildViewContentLinks(tree, targetViewId, viewElements),
+    }
+  }, [])
+
   // ── Fetch view content ──────────────────────────────────────────────────
   const viewContentQuery = useQuery({
     queryKey: ['workspace', 'views', viewId, 'editor-content'],
     enabled: viewId !== null,
     queryFn: async () => {
       if (viewId === null) throw new Error('Missing view id')
-      const [content, tree] = await Promise.all([
-        api.workspace.views.content(viewId),
-        api.workspace.views.treeAround(viewId, { ancestorLevels: 2, descendantLevels: 2 }),
-      ])
-      const viewElements = content.placements || []
-      const connectors = content.connectors || []
-      const view = content.view ?? findViewInTree(tree, viewId)
-      if (!view) throw new Error('View not found')
-      return {
-        view,
-        viewElements,
-        connectors,
-        treeData: tree,
-        ...buildViewContentLinks(tree, viewId, viewElements),
-      }
+      return fetchViewEditorContent(viewId)
     },
   })
 
@@ -290,19 +298,12 @@ export function useViewData({
   const refreshElements = useCallback(async () => {
     if (viewId === null) return
     const fresh = await queryClient.fetchQuery({
-      queryKey: ['workspace', 'views', viewId, 'content'],
-      queryFn: () => api.workspace.views.content(viewId),
+      queryKey: ['workspace', 'views', viewId, 'editor-content'],
+      queryFn: () => fetchViewEditorContent(viewId),
       staleTime: 0,
     }).catch(() => null)
-    if (fresh) {
-      setViewElements(fresh.placements)
-      setConnectors(fresh.connectors)
-      const links = buildViewContentLinks(treeDataRef.current, viewId, fresh.placements)
-      setLinksMap(links.linksMap)
-      setParentLinksMap(links.parentLinksMap)
-      useStore.getState().setIncomingLinks(links.incomingLinks)
-    }
-  }, [queryClient, setConnectors, setLinksMap, setParentLinksMap, setViewElements, viewId])
+    if (fresh) hydrateViewContent(fresh)
+  }, [fetchViewEditorContent, hydrateViewContent, queryClient, viewId])
 
   // ── Element mutation helpers ───────────────────────────────────────────────
   const handleElementDeleted = useCallback((deletedId: number) => {
@@ -394,8 +395,10 @@ export function useViewData({
       targetDraft.reconnect.push({ handleId: layout.targetHandle, edgeId, endpoint: 'target', selected: isSelected })
 
       if (isSelected) {
-        sourceDraft.selected.add(layout.sourceHandle)
-        targetDraft.selected.add(layout.targetHandle)
+        if (!suppressSelectedConnectorHandleHighlight) {
+          sourceDraft.selected.add(layout.sourceHandle)
+          targetDraft.selected.add(layout.targetHandle)
+        }
         sourceDraft.highlighted = true
         targetDraft.highlighted = true
       }
@@ -433,7 +436,7 @@ export function useViewData({
     }
     connectionMetaCacheRef.current = next
     return next
-  }, [connectorLayouts, selectedEdgeId])
+  }, [connectorLayouts, selectedEdgeId, suppressSelectedConnectorHandleHighlight])
 
   // ── Derive RF nodes ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -444,6 +447,7 @@ export function useViewData({
       const activeSet = activeTags.length > 0 ? new Set(activeTags) : null
       const hoveredSet = hoveredLayerTags !== null ? new Set(hoveredLayerTags) : null
       const isClickConnectMode = clickConnectMode !== null
+      const isCreateConnectMode = isConnectorCreatePreviewActive || isClickConnectMode || interactionSourceId !== null
       const versionElementChanges = versionPreview?.elementChanges
       const versionElementLineDeltas = versionPreview?.elementLineDeltas
       const versionActive = !!versionPreview
@@ -507,6 +511,7 @@ export function useViewData({
           existing.data.parentViewId === parentViewId &&
           existing.data.interactionSourceId === interactionSourceId &&
           existing.data.isClickConnectMode === isClickConnectMode &&
+          existing.data.isCreateConnectMode === isCreateConnectMode &&
           existing.data.tagColors === tagColors &&
           existing.data.layerHighlightColor === layerHighlightColor &&
           existing.data.forceShowTagPopup === isLayerHighlighted &&
@@ -538,7 +543,7 @@ export function useViewData({
             parentViewId,
             onZoomIn: stableOnZoomIn,
             onZoomOut: stableOnZoomOut,
-            onNavigateToView: stableOnNavigateToView,
+            onNavigateToDiagram: stableOnNavigateToView,
             onSelect: stableOnSelect,
             onOpenCodePreview: stableOnOpenCodePreview,
             onInteractionStart: stableOnInteractionStart,
@@ -549,6 +554,7 @@ export function useViewData({
             isZoomHovered,
             interactionSourceId,
             isClickConnectMode,
+            isCreateConnectMode,
             tagColors,
             layerHighlightColor,
             forceShowTagPopup: isLayerHighlighted,
@@ -564,7 +570,7 @@ export function useViewData({
     })
   }, [
     viewElements, linksMap, parentLinksMap, viewParentLinks, parentViewId,
-    interactionSourceId, clickConnectMode,
+    interactionSourceId, clickConnectMode, isConnectorCreatePreviewActive,
     stableOnZoomIn, stableOnZoomOut, stableOnNavigateToView, stableOnSelect,
     stableOnInteractionStart, stableOnConnectTo, stableOnStartHandleReconnect, stableOnRemoveElement, stableOnHoverZoom,
     stableOnOpenCodePreview, hoveredZoomRef, activeTags, hiddenLayerTags, hoveredLayerTags, hoveredLayerColor, tagColors,

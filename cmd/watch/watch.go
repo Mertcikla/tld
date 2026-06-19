@@ -739,7 +739,13 @@ func newRepresentCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{Embedding: embeddingCfg, Thresholds: watchSettings.Thresholds, Visibility: watchSettings.Visibility, Progress: progress})
+			result, err := watch.NewRepresenter(watchStore).Represent(cmd.Context(), scanResult.RepositoryID, watch.RepresentRequest{
+				Embedding:    embeddingCfg,
+				Thresholds:   watchSettings.Thresholds,
+				Visibility:   watchSettings.Visibility,
+				Dependencies: watchSettings.Dependencies,
+				Progress:     progress,
+			})
 			if err != nil {
 				return err
 			}

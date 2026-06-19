@@ -131,7 +131,7 @@ func ConvertTechnologyLinks(links []*diagv1.TechnologyLink) ([]*diagv1.Technolog
 			if label == "" {
 				return nil, invalidArgF(field+".label", "custom technology requires a non-empty label")
 			}
-			if l.GetIsPrimaryIcon() {
+			if l.GetIsPrimaryIcon() && !customTechnologySupportsPrimaryIcon(label) {
 				return nil, invalidArgF(field, "custom technology cannot be the primary icon")
 			}
 			slug = ""
@@ -165,6 +165,11 @@ func ConvertTechnologyLinks(links []*diagv1.TechnologyLink) ([]*diagv1.Technolog
 	return result, nil
 }
 
+func customTechnologySupportsPrimaryIcon(label string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(label))
+	return strings.HasPrefix(normalized, "fa:") || strings.HasPrefix(normalized, "fas:")
+}
+
 // OptStr returns nil when s is empty, otherwise returns a pointer to s.
 func OptStr(s string) *string {
 	if s == "" {
@@ -184,6 +189,9 @@ func invalidArgF(field, format string, args ...any) *connect.Error {
 func storeErr(op string, err error) error {
 	if errors.Is(err, ErrUnimplemented) {
 		return connect.NewError(connect.CodeUnimplemented, err)
+	}
+	if errors.Is(err, ErrMarkdownFileChanged) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	return connect.NewError(connect.CodeInternal, fmt.Errorf("%s: %w", op, err))
 }

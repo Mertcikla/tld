@@ -79,10 +79,31 @@ func TestAnalyzeCmd_QualifiesCollidingGeneratedSymbolNames(t *testing.T) {
 	}
 }
 
-func TestAnalyzeCmd_GroupsDependencyImportsByDefault(t *testing.T) {
+func TestAnalyzeCmd_SkipsDependencyImportsByDefault(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
+	repoDir := filepath.Join(dir, "app")
+	cmd.InitGitRepo(t, repoDir, "alpha.go", "package app\n\nimport \"fmt\"\n\nfunc Alpha() { fmt.Println(\"alpha\") }\n")
+
+	stdout, stderr, err := cmd.RunCmd(t, dir, "analyze", repoDir, "--data-dir", dataDir, "--embedding-provider", "none")
+	if err != nil {
+		t.Fatalf("analyze: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if countElementName(ws, "fmt") != 0 || countElementName(ws, "Go standard library") != 0 || countKind(ws, "dependency-group") != 0 {
+		t.Fatalf("expected dependency imports to be disabled by default, got %+v", ws.Elements)
+	}
+}
+
+func TestAnalyzeCmd_GroupsDependencyImportsWhenEnabled(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "config", "set", "watch.dependencies.enabled", "true")
 	repoDir := filepath.Join(dir, "app")
 	cmd.InitGitRepo(t, repoDir, "alpha.go", "package app\n\nimport \"fmt\"\n\nfunc Alpha() { fmt.Println(\"alpha\") }\n")
 	writeAnalyzeTestFile(t, repoDir, "beta.go", "package app\n\nimport \"fmt\"\n\nfunc Beta() { fmt.Println(\"beta\") }\n")
@@ -109,7 +130,7 @@ func TestAnalyzeCmd_GroupsDependencyImportsByDefault(t *testing.T) {
 	}
 }
 
-func TestAnalyzeCmd_TechnologyMetadataFactsDoNotMaterializeStandaloneElements(t *testing.T) {
+func TestAnalyzeCmd_RemovedWeakORMEnrichersDoNotMaterializeMetadata(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
@@ -125,10 +146,10 @@ func TestAnalyzeCmd_TechnologyMetadataFactsDoNotMaterializeStandaloneElements(t 
 		t.Fatal(err)
 	}
 	if countElementName(ws, "Python SQLAlchemy") != 0 {
-		t.Fatalf("expected orm.query fact not to materialize as standalone element: %+v", ws.Elements)
+		t.Fatalf("expected removed SQLAlchemy enricher not to materialize a standalone element: %+v", ws.Elements)
 	}
-	if !anyElementTechnologyContains(ws, "sqlalchemy") {
-		t.Fatalf("expected SQLAlchemy metadata to be attached as element technology: %+v", ws.Elements)
+	if anyElementTechnologyContains(ws, "sqlalchemy") {
+		t.Fatalf("expected removed SQLAlchemy enricher not to attach element technology: %+v", ws.Elements)
 	}
 }
 

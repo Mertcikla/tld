@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -25,6 +26,29 @@ func openAdapterTestStore(t *testing.T) *SQLiteStore {
 	}
 	t.Cleanup(func() { _ = sqliteStore.Legacy().Close() })
 	return sqliteStore
+}
+
+func insertAdapterTestView(t *testing.T, sqliteStore *SQLiteStore, id int32, name string) {
+	t.Helper()
+	if _, err := sqliteStore.DB().ExecContext(context.Background(), `
+		INSERT INTO views(id, owner_element_id, name, description, level_label, level, created_at, updated_at)
+		VALUES (?, NULL, ?, NULL, 'System', 0, 'now', 'now')
+	`, id, name); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func runGitCommand(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git binary is required for git status tests")
+	}
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, string(out))
+	}
 }
 
 func TestElementToProtoPreservesPrimaryIconMetadata(t *testing.T) {
@@ -52,7 +76,7 @@ func TestElementToProtoPreservesPrimaryIconMetadata(t *testing.T) {
 	if !strings.Contains(body, `"isPrimaryIcon":true`) {
 		t.Fatalf("response body = %s, want primary icon metadata", body)
 	}
-	if element.GetLogoUrl() != "/icons/javascript.png" {
+	if element.GetLogoUrl() != "/icons/javascript.svg" {
 		t.Fatalf("logo url = %q, want derived primary technology icon", element.GetLogoUrl())
 	}
 }
@@ -79,8 +103,42 @@ func TestPlacedElementToProtoPreservesPrimaryIconMetadata(t *testing.T) {
 	if !strings.Contains(body, `"isPrimaryIcon":true`) {
 		t.Fatalf("response body = %s, want primary icon metadata", body)
 	}
-	if placement.GetLogoUrl() != "/icons/javascript.png" {
+	if placement.GetLogoUrl() != "/icons/javascript.svg" {
 		t.Fatalf("logo url = %q, want derived primary technology icon", placement.GetLogoUrl())
+	}
+}
+
+func TestElementToProtoResolvesLegacyCatalogIconSlug(t *testing.T) {
+	element := elementToProto(app.LibraryElement{
+		ID:   1,
+		Name: "API",
+		TechnologyConnectors: []app.TechnologyConnector{{
+			Type:          "catalog",
+			Slug:          "golang",
+			Label:         "Go",
+			IsPrimaryIcon: true,
+		}},
+	}, uuid.Nil)
+
+	if element.GetLogoUrl() != "/icons/go.svg" {
+		t.Fatalf("logo url = %q, want legacy slug resolved to devicon SVG", element.GetLogoUrl())
+	}
+}
+
+func TestElementToProtoDoesNotInventRemovedCatalogIcon(t *testing.T) {
+	element := elementToProto(app.LibraryElement{
+		ID:   1,
+		Name: "Cloud",
+		TechnologyConnectors: []app.TechnologyConnector{{
+			Type:          "catalog",
+			Slug:          "aws-amazon-ec2-instances",
+			Label:         "EC2 Instances",
+			IsPrimaryIcon: true,
+		}},
+	}, uuid.Nil)
+
+	if element.LogoUrl != nil {
+		t.Fatalf("logo url = %q, want no derived icon for removed catalog slug", element.GetLogoUrl())
 	}
 }
 
@@ -355,7 +413,7 @@ func TestViewMarkdownManagedLifecycle(t *testing.T) {
 	}
 
 	initialContent := "# System Context\n\nInitial notes.\n"
-	if _, err := adapter.CreateViewMarkdown(ctx, 20, uuid.Nil, nil, &initialContent); err != nil {
+	if _, err := adapter.CreateViewMarkdown(ctx, 20, uuid.Nil, nil, &initialContent, "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -379,7 +437,7 @@ func TestViewMarkdownManagedLifecycle(t *testing.T) {
 	}
 
 	updatedContent := "# Updated\n\nSaved notes.\n"
-	updatedMarkdown, err := adapter.SaveViewMarkdown(ctx, 20, uuid.Nil, updatedContent)
+	updatedMarkdown, err := adapter.SaveViewMarkdown(ctx, 20, uuid.Nil, updatedContent, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -444,6 +502,232 @@ func TestViewMarkdownLinkReadsRelativeFilesFromDataDir(t *testing.T) {
 	}
 	if content != linkedContent {
 		t.Fatalf("content = %q, want %q", content, linkedContent)
+	}
+}
+
+func TestViewMarkdownLinkReadsPrivateWorkspacePathFromWorkspaceNotes(t *testing.T) {
+	sqliteStore := openAdapterTestStore(t)
+	dataDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	adapter := NewAPIAdapter(sqliteStore, dataDir, workspaceDir)
+	ctx := context.Background()
+
+	insertAdapterTestView(t, sqliteStore, 31, "Linked Notes")
+
+	relPath := filepath.Join(managedViewMarkdownDir, "source-notes.md")
+	absPath := filepath.Join(workspaceDir, ".tld", relPath)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkedContent := "# Source notes\n\nLinked private note.\n"
+	if err := os.WriteFile(absPath, []byte(linkedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := adapter.LinkViewMarkdown(ctx, 31, uuid.Nil, relPath); err != nil {
+		t.Fatal(err)
+	}
+	markdown, content, err := adapter.GetViewMarkdown(ctx, 31, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markdown.GetPath() != relPath {
+		t.Fatalf("path = %q, want %q", markdown.GetPath(), relPath)
+	}
+	if markdown.GetSourceKind() != markdownSourceAttached {
+		t.Fatalf("source kind = %s, want %s", markdown.GetSourceKind(), markdownSourceAttached)
+	}
+	if content != linkedContent {
+		t.Fatalf("content = %q, want %q", content, linkedContent)
+	}
+}
+
+func TestViewMarkdownPrivateWorkspaceCreatesUnderTLDAndReportsMissing(t *testing.T) {
+	sqliteStore := openAdapterTestStore(t)
+	dataDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	adapter := NewAPIAdapter(sqliteStore, dataDir, workspaceDir)
+	ctx := context.Background()
+	insertAdapterTestView(t, sqliteStore, 40, "System Context")
+
+	initialContent := "# System Context\n\nPrivate notes.\n"
+	if _, err := adapter.CreateViewMarkdown(ctx, 40, uuid.Nil, nil, &initialContent, "PRIVATE_WORKSPACE", nil); err != nil {
+		t.Fatal(err)
+	}
+
+	markdown, content, err := adapter.GetViewMarkdown(ctx, 40, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markdown.GetSourceKind() != "PRIVATE_WORKSPACE" {
+		t.Fatalf("source kind = %q, want PRIVATE_WORKSPACE", markdown.GetSourceKind())
+	}
+	if markdown.GetGitState() != "outside_repo" {
+		t.Fatalf("git state = %q, want outside_repo for private note outside a git repo", markdown.GetGitState())
+	}
+	if !markdown.GetExists() || !markdown.GetCanEdit() || !markdown.GetWritable() {
+		t.Fatalf("metadata exists/editable/writable = %v/%v/%v, want true/true/true", markdown.GetExists(), markdown.GetCanEdit(), markdown.GetWritable())
+	}
+	if content != initialContent {
+		t.Fatalf("content = %q, want %q", content, initialContent)
+	}
+	managedPath := filepath.Join(workspaceDir, ".tld", markdown.GetPath())
+	if _, err := os.Stat(managedPath); err != nil {
+		t.Fatalf("private workspace file was not created under .tld: %v", err)
+	}
+
+	if err := os.Remove(managedPath); err != nil {
+		t.Fatal(err)
+	}
+	markdown, content, err = adapter.GetViewMarkdown(ctx, 40, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markdown.GetExists() || markdown.GetCanEdit() || markdown.GetWritable() || content != "" {
+		t.Fatalf("missing metadata/content = exists:%v can_edit:%v writable:%v content:%q, want false/false/false/empty",
+			markdown.GetExists(), markdown.GetCanEdit(), markdown.GetWritable(), content)
+	}
+}
+
+func TestViewMarkdownRepoCreationReportsGitState(t *testing.T) {
+	sqliteStore := openAdapterTestStore(t)
+	dataDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	runGitCommand(t, workspaceDir, "init")
+	adapter := NewAPIAdapter(sqliteStore, dataDir, workspaceDir)
+	ctx := context.Background()
+	insertAdapterTestView(t, sqliteStore, 41, "Checkout Flow")
+	insertAdapterTestView(t, sqliteStore, 42, "Ignored Flow")
+
+	repoPath := "docs/diagrams/checkout-flow.md"
+	if _, err := adapter.CreateViewMarkdown(ctx, 41, uuid.Nil, nil, nil, "REPO", &repoPath); err != nil {
+		t.Fatal(err)
+	}
+	markdown, _, err := adapter.GetViewMarkdown(ctx, 41, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markdown.GetSourceKind() != "REPO" {
+		t.Fatalf("source kind = %q, want REPO", markdown.GetSourceKind())
+	}
+	if markdown.GetRepoRelativePath() != repoPath {
+		t.Fatalf("repo relative path = %q, want %q", markdown.GetRepoRelativePath(), repoPath)
+	}
+	if markdown.GetGitState() != "untracked" {
+		t.Fatalf("git state = %q, want untracked", markdown.GetGitState())
+	}
+
+	if err := os.WriteFile(filepath.Join(workspaceDir, ".gitignore"), []byte("docs/diagrams/ignored.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ignoredPath := "docs/diagrams/ignored.md"
+	if _, err := adapter.CreateViewMarkdown(ctx, 42, uuid.Nil, nil, nil, "REPO", &ignoredPath); err != nil {
+		t.Fatal(err)
+	}
+	markdown, _, err = adapter.GetViewMarkdown(ctx, 42, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markdown.GetGitState() != "ignored" {
+		t.Fatalf("ignored git state = %q, want ignored", markdown.GetGitState())
+	}
+}
+
+func TestViewMarkdownSaveDetectsFileVersionConflict(t *testing.T) {
+	sqliteStore := openAdapterTestStore(t)
+	dataDir := t.TempDir()
+	adapter := NewAPIAdapter(sqliteStore, dataDir)
+	ctx := context.Background()
+	insertAdapterTestView(t, sqliteStore, 44, "Conflict Notes")
+
+	initialContent := "# Conflict\n\nInitial.\n"
+	if _, err := adapter.CreateViewMarkdown(ctx, 44, uuid.Nil, nil, &initialContent, "PRIVATE_APP", nil); err != nil {
+		t.Fatal(err)
+	}
+	markdown, _, err := adapter.GetViewMarkdown(ctx, 44, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedPath := filepath.Join(dataDir, markdown.GetPath())
+	if err := os.WriteFile(managedPath, []byte("# Conflict\n\nChanged externally with more bytes.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adapter.SaveViewMarkdown(ctx, 44, uuid.Nil, "# Conflict\n\nEditor save.\n", &markdown.FileVersion, false); !errors.Is(err, api.ErrMarkdownFileChanged) {
+		t.Fatalf("save err = %v, want ErrMarkdownFileChanged", err)
+	}
+	if _, err := adapter.SaveViewMarkdown(ctx, 44, uuid.Nil, "# Conflict\n\nForced save.\n", &markdown.FileVersion, true); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestViewMarkdownUnmanagedRelativePathResolvesFromWorkspaceRoot(t *testing.T) {
+	sqliteStore := openAdapterTestStore(t)
+	dataDir := t.TempDir()
+	workspaceDir := t.TempDir()
+	adapter := NewAPIAdapter(sqliteStore, dataDir, workspaceDir)
+	ctx := context.Background()
+	insertAdapterTestView(t, sqliteStore, 45, "Unmanaged Notes")
+
+	relPath := filepath.Join("docs", "unmanaged.md")
+	dataDirContent := "# Unmanaged\n\nData dir file.\n"
+	workspaceContent := "# Unmanaged\n\nWorkspace file.\n"
+	if err := os.MkdirAll(filepath.Join(dataDir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, relPath), []byte(dataDirContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(workspaceDir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspaceDir, relPath), []byte(workspaceContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.Legacy().UpsertViewMarkdown(ctx, 45, relPath, false, nowString()); err != nil {
+		t.Fatal(err)
+	}
+
+	markdown, content, err := adapter.GetViewMarkdown(ctx, 45, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markdown.GetSourceKind() != markdownSourceAttached {
+		t.Fatalf("source kind = %q, want %s", markdown.GetSourceKind(), markdownSourceAttached)
+	}
+	if content != workspaceContent {
+		t.Fatalf("content = %q, want workspace content %q", content, workspaceContent)
+	}
+}
+
+func TestViewMarkdownReadOnlyAttachedFileIsNotEditable(t *testing.T) {
+	sqliteStore := openAdapterTestStore(t)
+	dataDir := t.TempDir()
+	adapter := NewAPIAdapter(sqliteStore, dataDir)
+	ctx := context.Background()
+	insertAdapterTestView(t, sqliteStore, 46, "Read Only Notes")
+
+	relPath := filepath.Join("docs", "read-only.md")
+	absPath := filepath.Join(dataDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(absPath, []byte("# Read only\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(absPath, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(absPath, 0o644) })
+
+	if _, err := adapter.LinkViewMarkdown(ctx, 46, uuid.Nil, relPath); err != nil {
+		t.Fatal(err)
+	}
+	markdown, _, err := adapter.GetViewMarkdown(ctx, 46, uuid.Nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if markdown.GetWritable() || markdown.GetCanEdit() {
+		t.Fatalf("read-only metadata writable/can_edit = %v/%v, want false/false", markdown.GetWritable(), markdown.GetCanEdit())
 	}
 }
 func TestConnectorAdapterPreservesHandlesDefaultsAndViewFiltering(t *testing.T) {

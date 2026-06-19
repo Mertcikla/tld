@@ -3,40 +3,19 @@ import {
   createAndLoadDiagramWithNodes,
 } from '../../helpers/vieweditor'
 
-async function drawStroke(page: import('@playwright/test').Page, from: { x: number; y: number }, to: { x: number; y: number }) {
-  const canvas = page.getByTestId('drawing-canvas')
-  await canvas.dispatchEvent('pointerdown', {
-    clientX: from.x,
-    clientY: from.y,
-    pointerId: 1,
-    pointerType: 'mouse',
-    button: 0,
-    buttons: 1,
-  })
-  await canvas.dispatchEvent('pointermove', {
-    clientX: (from.x + to.x) / 2,
-    clientY: (from.y + to.y) / 2,
-    pointerId: 1,
-    pointerType: 'mouse',
-    button: 0,
-    buttons: 1,
-  })
-  await canvas.dispatchEvent('pointermove', {
-    clientX: to.x,
-    clientY: to.y,
-    pointerId: 1,
-    pointerType: 'mouse',
-    button: 0,
-    buttons: 1,
-  })
-  await canvas.dispatchEvent('pointerup', {
-    clientX: to.x,
-    clientY: to.y,
-    pointerId: 1,
-    pointerType: 'mouse',
-    button: 0,
-    buttons: 0,
-  })
+type CanvasBox = { x: number; y: number; width: number; height: number }
+type Point = { x: number; y: number }
+
+async function drawStroke(page: import('@playwright/test').Page, from: Point, to: Point) {
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 4 })
+  await page.mouse.move(to.x, to.y, { steps: 4 })
+  await page.mouse.up()
+}
+
+function canvasPoint(box: CanvasBox, xRatio: number, yRatio: number) {
+  return { x: box.x + box.width * xRatio, y: box.y + box.height * yRatio }
 }
 
 async function drawStylusStroke(page: import('@playwright/test').Page, from: { x: number; y: number }, to: { x: number; y: number }) {
@@ -88,7 +67,7 @@ test('draws a pencil path, hides it, shows it, and exits drawing mode', async ({
   const canvas = page.getByTestId('drawing-canvas')
   const box = await canvas.boundingBox()
   if (!box) throw new Error('Drawing canvas is not visible')
-  await drawStroke(page, { x: box.x + 260, y: box.y + 260 }, { x: box.x + 340, y: box.y + 320 })
+  await drawStroke(page, canvasPoint(box, 0.62, 0.34), canvasPoint(box, 0.72, 0.44))
 
   await expect(canvas).toHaveAttribute('data-path-count', '1')
   await expect(page.getByTestId('vieweditor-toolbar-draw-visibility')).toBeVisible()
@@ -108,7 +87,7 @@ test('supports drawing undo and redo shortcuts', async ({ page }) => {
   const box = await canvas.boundingBox()
   if (!box) throw new Error('Drawing canvas is not visible')
 
-  await drawStroke(page, { x: box.x + 180, y: box.y + 210 }, { x: box.x + 260, y: box.y + 250 })
+  await drawStroke(page, canvasPoint(box, 0.58, 0.30), canvasPoint(box, 0.68, 0.38))
   await expect(canvas).toHaveAttribute('data-path-count', '1')
 
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z')
@@ -143,6 +122,6 @@ test('changes drawing tool, color, and width from the draw menu', async ({ page 
   const canvas = page.getByTestId('drawing-canvas')
   const box = await canvas.boundingBox()
   if (!box) throw new Error('Drawing canvas is not visible')
-  await drawStroke(page, { x: box.x + 220, y: box.y + 360 }, { x: box.x + 360, y: box.y + 360 })
+  await drawStroke(page, canvasPoint(box, 0.60, 0.52), canvasPoint(box, 0.74, 0.52))
   await expect(canvas).toHaveAttribute('data-path-count', '1')
 })

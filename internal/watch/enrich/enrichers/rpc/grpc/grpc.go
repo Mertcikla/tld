@@ -27,7 +27,6 @@ const (
 )
 
 var (
-	fileSubject    = enrich.FileSubject
 	lineForOffset  = enrich.LineForOffset
 	matchLanguages = enrich.MatchLanguages
 	subjectForLine = enrich.SubjectForLine
@@ -61,7 +60,7 @@ func GoGRPC() Enricher {
 			if err := emitServiceMatches(input, emit, "grpc.client", "go", regexp.MustCompile(`\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?New([A-Za-z_][A-Za-z0-9_]*)Client\s*\(`), []string{"protocol:grpc", "grpc:client", "framework:go-grpc"}); err != nil {
 				return err
 			}
-			return emitEndpointReads(input, emit, "go")
+			return nil
 		},
 	)
 }
@@ -83,7 +82,7 @@ func PythonGRPC() Enricher {
 			if err := emitServiceMatches(input, emit, "grpc.client", "python", regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)Stub\s*\(`), []string{"protocol:grpc", "grpc:client", "framework:python-grpc"}); err != nil {
 				return err
 			}
-			return emitEndpointReads(input, emit, "python")
+			return nil
 		},
 	)
 }
@@ -96,10 +95,7 @@ func NodeGRPC() Enricher {
 		},
 		matchLanguages("javascript", "typescript"),
 		func(ctx context.Context, input FileInput, emit FactEmitter) error {
-			if err := emitServiceMatches(input, emit, "grpc.server", "node", regexp.MustCompile(`\.addService\(\s*[^,\n]*\.([A-Za-z_][A-Za-z0-9_]*)\.service`), []string{"protocol:grpc", "grpc:server", "framework:node-grpc"}); err != nil {
-				return err
-			}
-			return emitEndpointReads(input, emit, "node")
+			return emitServiceMatches(input, emit, "grpc.server", "node", regexp.MustCompile(`\.addService\(\s*[^,\n]*\.([A-Za-z_][A-Za-z0-9_]*)\.service`), []string{"protocol:grpc", "grpc:server", "framework:node-grpc"})
 		},
 	)
 }
@@ -110,11 +106,8 @@ func JavaGRPC() Enricher {
 			ID: "java.grpc", Name: "Java gRPC glue", Mode: ActivationImportOrDependency,
 			Triggers: []ActivationSignal{{Kind: SignalImport, Value: "io.grpc"}, {Kind: SignalDependency, Value: "io.grpc"}},
 		},
-		func(input FileInput) bool { return matchLanguages("java", "gradle")(input) },
+		matchLanguages("java"),
 		func(ctx context.Context, input FileInput, emit FactEmitter) error {
-			if input.Language == "gradle" {
-				return emitBuildDependencyFact(input, emit, "io.grpc", "grpc", "java-grpc")
-			}
 			if err := emitServiceMatches(input, emit, "grpc.server", "java", regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)Grpc\.([A-Za-z_][A-Za-z0-9_]*)ImplBase\b`), []string{"protocol:grpc", "grpc:server", "framework:java-grpc"}); err != nil {
 				return err
 			}
@@ -137,7 +130,7 @@ func DotNetGRPC() Enricher {
 			if err := emitServiceMatches(input, emit, "grpc.contract", "dotnet", regexp.MustCompile(`<Protobuf\s+Include=["']([^"']+)["'][^>]*GrpcServices=["']([^"']+)["']`), []string{"protocol:grpc", "arch:contract", "framework:dotnet-grpc"}); err != nil {
 				return err
 			}
-			return emitEndpointReads(input, emit, "dotnet")
+			return nil
 		},
 	)
 }
@@ -178,60 +171,6 @@ func emitServiceMatches(input FileInput, emit FactEmitter, factType, framework s
 		}
 	}
 	return nil
-}
-
-func emitEndpointReads(input FileInput, emit FactEmitter, framework string) error {
-	source := string(input.Source)
-	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`\b(?:os\.Getenv|os\.LookupEnv|os\.environ\.get|process\.env(?:\[[^\]]+\]|\.[A-Za-z_][A-Za-z0-9_]*)|Configuration\[[^\]]+\])\s*\(?\s*["']?([A-Z0-9_]*(?:ADDR|HOST|URL|PORT|REDIS|SPANNER|ALLOYDB|COLLECTOR)[A-Z0-9_]*)["']?`),
-		regexp.MustCompile(`\bmustMapEnv\([^,\n]+,\s*"([A-Z0-9_]+)"\s*\)`),
-	}
-	for _, re := range patterns {
-		for _, indexes := range re.FindAllStringSubmatchIndex(source, -1) {
-			match := submatches(source, indexes)
-			if len(match) < 2 {
-				continue
-			}
-			env := strings.Trim(match[1], `"'[]`)
-			target := ""
-			line := lineForOffset(source, indexes[0])
-			if err := emit.EmitFact(Fact{
-				Type:            "runtime.endpoint_ref",
-				StableKey:       fmt.Sprintf("runtime.endpoint_ref:%s:%s:%d", input.RelPath, env, line),
-				Subject:         subjectForLine(input, line),
-				Object:          SubjectRef{Kind: "runtime.endpoint", StableKey: "runtime.endpoint:" + target, Name: target},
-				Relationship:    "uses",
-				Source:          SourceSpan{FilePath: input.RelPath, StartLine: line, EndLine: line},
-				Confidence:      0.62,
-				Name:            env,
-				Tags:            []string{"arch:endpoint-ref", "framework:" + framework},
-				Attributes:      map[string]string{"env": env, "target": target, "framework": framework},
-				VisibilityHints: map[string]float64{"high_signal": 0.5},
-			}); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func emitBuildDependencyFact(input FileInput, emit FactEmitter, needle, name, framework string) error {
-	if !strings.Contains(string(input.Source), needle) {
-		return nil
-	}
-	return emit.EmitFact(Fact{
-		Type:            "dependency.module",
-		StableKey:       fmt.Sprintf("dependency.module:%s:%s", input.RelPath, name),
-		Subject:         fileSubject(input.RelPath),
-		Object:          SubjectRef{Kind: "dependency.module", StableKey: "dependency.module:" + name, Name: name},
-		Relationship:    "declares_dependency",
-		Source:          SourceSpan{FilePath: input.RelPath, StartLine: 1, EndLine: 1},
-		Confidence:      1,
-		Name:            name,
-		Tags:            []string{"dependency:module", "framework:" + framework},
-		Attributes:      map[string]string{"module": name, "ecosystem": framework},
-		VisibilityHints: map[string]float64{"dependency": 1},
-	})
 }
 
 func normalizeServiceName(value string) string {

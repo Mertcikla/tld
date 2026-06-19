@@ -5,6 +5,8 @@ import {
   createDiagram,
   expectPlacement,
   nodeByName,
+  openElementLibrary,
+  openViewExplorer,
   uniqueName,
 } from '../../helpers/vieweditor'
 
@@ -13,6 +15,8 @@ test('empty editor shows a usable canvas and primary panels', async ({ page }) =
   await createDiagram(page, uniqueName('Empty Editor'))
 
   await expect(page.getByTestId('vieweditor-canvas')).toBeVisible()
+  await openElementLibrary(page)
+  await openViewExplorer(page)
   await expect(page.getByTestId('element-library-panel')).toBeVisible()
   await expect(page.getByTestId('view-explorer-panel')).toBeVisible()
 })

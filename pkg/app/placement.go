@@ -109,6 +109,14 @@ func (s *Store) ElementPlacements(ctx context.Context, viewID int64) ([]ElementP
 
 func (s *Store) AddPlacement(ctx context.Context, viewID, elementID int64, x, y float64) (ElementPlacement, error) {
 	now := nowString()
+	placementExists, err := s.bun.NewSelect().
+		Model((*elementPlacementModel)(nil)).
+		Where("view_id = ?", viewID).
+		Where("element_id = ?", elementID).
+		Exists(ctx)
+	if err != nil {
+		return ElementPlacement{}, err
+	}
 	row := &elementPlacementModel{
 		ViewID:    viewID,
 		ElementID: elementID,
@@ -117,7 +125,7 @@ func (s *Store) AddPlacement(ctx context.Context, viewID, elementID int64, x, y 
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	_, err := s.bun.NewInsert().
+	_, err = s.bun.NewInsert().
 		Model(row).
 		On("CONFLICT(view_id, element_id) DO UPDATE").
 		Set("position_x = excluded.position_x").
@@ -136,31 +144,33 @@ func (s *Store) AddPlacement(ctx context.Context, viewID, elementID int64, x, y 
 		return ElementPlacement{}, err
 	}
 
-	// Auto-include related connectors when placing an element if the opposite
-	// endpoint is already present in this view and the source connector exists
-	// in another view.
-	var related []connectorModel
-	if err := s.bun.NewSelect().
-		Model(&related).
-		Column("source_element_id", "target_element_id", "label", "description", "relationship", "direction", "style", "url", "source_handle", "target_handle", "tags").
-		Where("((source_element_id = ? AND target_element_id IN (SELECT element_id FROM placements WHERE view_id = ?)) OR (target_element_id = ? AND source_element_id IN (SELECT element_id FROM placements WHERE view_id = ?)))", elementID, viewID, elementID, viewID).
-		Where("view_id != ?", viewID).
-		Scan(ctx); err == nil {
-		for _, c := range related {
-			_, _ = s.CreateConnector(ctx, Connector{
-				ViewID:          viewID,
-				SourceElementID: c.SourceElementID,
-				TargetElementID: c.TargetElementID,
-				Label:           c.Label,
-				Description:     c.Description,
-				Relationship:    c.Relationship,
-				Direction:       c.Direction,
-				Style:           c.Style,
-				URL:             c.URL,
-				SourceHandle:    c.SourceHandle,
-				TargetHandle:    c.TargetHandle,
-				Tags:            parseStrings(c.Tags),
-			})
+	if !placementExists {
+		// Auto-include related connectors when placing an element if the opposite
+		// endpoint is already present in this view and the source connector exists
+		// in another view.
+		var related []connectorModel
+		if err := s.bun.NewSelect().
+			Model(&related).
+			Column("source_element_id", "target_element_id", "label", "description", "relationship", "direction", "style", "url", "source_handle", "target_handle", "tags").
+			Where("((source_element_id = ? AND target_element_id IN (SELECT element_id FROM placements WHERE view_id = ?)) OR (target_element_id = ? AND source_element_id IN (SELECT element_id FROM placements WHERE view_id = ?)))", elementID, viewID, elementID, viewID).
+			Where("view_id != ?", viewID).
+			Scan(ctx); err == nil {
+			for _, c := range related {
+				_, _ = s.CreateConnector(ctx, Connector{
+					ViewID:          viewID,
+					SourceElementID: c.SourceElementID,
+					TargetElementID: c.TargetElementID,
+					Label:           c.Label,
+					Description:     c.Description,
+					Relationship:    c.Relationship,
+					Direction:       c.Direction,
+					Style:           c.Style,
+					URL:             c.URL,
+					SourceHandle:    c.SourceHandle,
+					TargetHandle:    c.TargetHandle,
+					Tags:            parseStrings(c.Tags),
+				})
+			}
 		}
 	}
 

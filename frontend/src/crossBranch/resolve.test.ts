@@ -140,6 +140,100 @@ function baseData(connectors: Connector[]): ExploreData {
   }
 }
 
+const nestedZuiTree: ViewTreeNode[] = [{
+  id: 1,
+  owner_element_id: null,
+  name: 'Workspace',
+  description: null,
+  level_label: null,
+  level: 0,
+  depth: 0,
+  created_at: '2024-01-01',
+  updated_at: '2024-01-01',
+  parent_view_id: null,
+  children: [{
+    id: 3,
+    owner_element_id: 29,
+    name: 'System Context',
+    description: null,
+    level_label: null,
+    level: 1,
+    depth: 1,
+    created_at: '2024-01-01',
+    updated_at: '2024-01-01',
+    parent_view_id: 1,
+    children: [
+      {
+        id: 2,
+        owner_element_id: 3,
+        name: 'API Gateway',
+        description: null,
+        level_label: null,
+        level: 2,
+        depth: 2,
+        created_at: '2024-01-01',
+        updated_at: '2024-01-01',
+        parent_view_id: 3,
+        children: [],
+      },
+      {
+        id: 4,
+        owner_element_id: 31,
+        name: 'Web App',
+        description: null,
+        level_label: null,
+        level: 2,
+        depth: 2,
+        created_at: '2024-01-01',
+        updated_at: '2024-01-01',
+        parent_view_id: 3,
+        children: [],
+      },
+    ],
+  }],
+}]
+
+function nestedZuiData(connectorsByView: Record<string, Connector[]>): ExploreData {
+  return {
+    tree: nestedZuiTree,
+    navigations: [
+      { id: 1, element_id: 29, from_view_id: 1, to_view_id: 3, to_view_name: 'System Context', relation_type: 'child' },
+      { id: 2, element_id: 3, from_view_id: 3, to_view_id: 2, to_view_name: 'API Gateway', relation_type: 'child' },
+      { id: 3, element_id: 31, from_view_id: 3, to_view_id: 4, to_view_name: 'Web App', relation_type: 'child' },
+    ],
+    views: {
+      '1': {
+        placements: [placedElement(1, 29, 'System Context')],
+        connectors: connectorsByView['1'] ?? [],
+      },
+      '2': {
+        placements: [placedElement(2, 14, 'Edge Router')],
+        connectors: connectorsByView['2'] ?? [],
+      },
+      '3': {
+        placements: [
+          placedElement(3, 3, 'API Gateway'),
+          placedElement(3, 8, 'Auth Service'),
+          placedElement(3, 10, 'CDN'),
+          placedElement(3, 30, 'User'),
+          placedElement(3, 31, 'Web App'),
+        ],
+        connectors: connectorsByView['3'] ?? [],
+      },
+      '4': {
+        placements: [
+          placedElement(4, 2, 'API Client'),
+          placedElement(4, 6, 'Auth Adapter'),
+          placedElement(4, 9, 'Cart State'),
+          placedElement(4, 11, 'Checkout'),
+          placedElement(4, 19, 'Payment Adapter'),
+        ],
+        connectors: connectorsByView['4'] ?? [],
+      },
+    },
+  }
+}
+
 describe('resolveZUIProxyConnectors', () => {
   it('collapses direct-child off-view connectors into a native +N badge', () => {
     const snapshot = buildWorkspaceGraphSnapshot(baseData([
@@ -207,6 +301,112 @@ describe('resolveZUIProxyConnectors', () => {
       [2, 3],
       [2, 4],
     ])
+  })
+
+  it('does not bubble child-view internals into a collapsed owner connector count', () => {
+    const snapshot = buildWorkspaceGraphSnapshot(nestedZuiData({
+      '3': [
+        connector(12, 3, 30, 31, 'Uses'),
+        connector(13, 3, 31, 3, 'API calls'),
+        connector(14, 3, 31, 8, 'Auth'),
+        connector(15, 3, 31, 10, 'Serves via'),
+      ],
+      '4': [
+        connector(16, 4, 2, 6, 'Attaches token'),
+        connector(20, 4, 9, 11, 'Starts checkout'),
+        connector(32, 4, 19, 14, 'Payment handoff'),
+      ],
+    }))
+
+    const resolved = resolveZUIProxyConnectors(
+      snapshot,
+      new Map([
+        [29, 'd1-o29'],
+        [31, 'd3-o31'],
+      ]),
+      zuiSettings(),
+    )
+
+    const ownerConnector = resolved.connectors.find((item) => item.key === '29::31')
+    expect(ownerConnector?.details.connectors.map((leaf) => leaf.connector.id).sort((a, b) => a - b)).toEqual([12, 13, 14, 15])
+    expect(ownerConnector?.details.count).toBe(4)
+  })
+
+  it('does not emit ancestor merged connectors for native visible endpoint pairs', () => {
+    const data = nestedZuiData({
+      '4': [
+        connector(16, 4, 40, 41, 'Provides state'),
+        connector(17, 4, 40, 42, 'Provides state'),
+        connector(18, 4, 40, 43, 'Provides state'),
+      ],
+    })
+    data.views['4'].placements = [
+      placedElement(4, 40, 'App Shell'),
+      placedElement(4, 41, 'Route Map'),
+      placedElement(4, 42, 'State Store'),
+      placedElement(4, 43, 'Error Boundary'),
+    ]
+    const snapshot = buildWorkspaceGraphSnapshot(data)
+
+    const resolved = resolveZUIProxyConnectors(
+      snapshot,
+      new Map([
+        [31, 'd3-o31'],
+        [40, 'd4-o40'],
+        [41, 'd4-o41'],
+        [42, 'd4-o42'],
+        [43, 'd4-o43'],
+      ]),
+      zuiSettings(),
+      { nativeRenderedElementIds: new Set([40, 41, 42, 43]) },
+    )
+
+    expect(resolved.connectors.find((item) => item.key === '31::40')).toBeUndefined()
+    expect(resolved.connectors).toHaveLength(0)
+  })
+
+  it('does not emit proxy lines for native connectors when endpoints are boundary anchors', () => {
+    const snapshot = buildWorkspaceGraphSnapshot(baseData([
+      connector(1, 1, 1, 2, 'A-B'),
+    ]))
+
+    const resolved = resolveZUIProxyConnectors(
+      snapshot,
+      new Map([
+        [1, 'd1-o1'],
+        [2, 'd1-o2'],
+      ]),
+      zuiSettings(),
+      { nativeRenderedElementIds: new Set([1, 2]) },
+    )
+
+    expect(resolved.connectors).toHaveLength(0)
+    expect(resolved.hiddenBadges).toHaveLength(0)
+  })
+
+  it('does not collapse sibling leaf connectors to their common ancestor boundary', () => {
+    const snapshot = buildWorkspaceGraphSnapshot(nestedZuiData({
+      '4': [
+        connector(16, 4, 2, 14, 'Cross-view'),
+      ],
+    }))
+
+    const resolved = resolveZUIProxyConnectors(
+      snapshot,
+      new Map([
+        [29, 'd1-o29'],
+        [3, 'd3-o3'],
+        [31, 'd3-o31'],
+      ]),
+      zuiSettings(),
+      {
+        nativeRenderedElementIds: new Set([29, 3, 31]),
+      },
+    )
+
+    const keys = resolved.connectors.map((item) => item.key)
+    expect(keys).toContain('3::31')
+    expect(keys.some((key) => key.split('::').includes('29'))).toBe(false)
   })
 
   it('budgets visible connector groups and reports the omitted leaf count', () => {

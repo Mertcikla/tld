@@ -185,11 +185,16 @@ type WatchLayoutConfig struct {
 }
 
 type WatchScaleConfig struct {
-	Strategy        string `yaml:"strategy"`
-	MaxTrackedFiles int    `yaml:"max_tracked_files"`
-	MaxLimitedFiles int    `yaml:"max_limited_files"`
-	MaxRecentFiles  int    `yaml:"max_recent_files"`
-	MaxCallerDepth  int    `yaml:"max_caller_depth"`
+	Strategy           string `yaml:"strategy"`
+	MaxTrackedFiles    int    `yaml:"max_tracked_files"`
+	MaxLimitedFiles    int    `yaml:"max_limited_files"`
+	MaxRecentFiles     int    `yaml:"max_recent_files"`
+	MaxCallerDepth     int    `yaml:"max_caller_depth"`
+	MaxBlastRadiusHops int    `yaml:"max_blast_radius_hops"`
+}
+
+type WatchDependencyConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 type WatchLSPConfig struct {
@@ -209,6 +214,7 @@ type WatchConfig struct {
 	Embedding    WatchEmbeddingConfig  `yaml:"embedding"`
 	Layout       WatchLayoutConfig     `yaml:"layout"`
 	Scale        WatchScaleConfig      `yaml:"scale"`
+	Dependencies WatchDependencyConfig `yaml:"dependencies"`
 	LSP          WatchLSPConfig        `yaml:"lsp"`
 }
 
@@ -282,11 +288,15 @@ func DefaultConfig() *Config {
 				GravityStrength: 0.05,
 			},
 			Scale: WatchScaleConfig{
-				Strategy:        "auto",
-				MaxTrackedFiles: 15000,
-				MaxLimitedFiles: 2000,
-				MaxRecentFiles:  1000,
-				MaxCallerDepth:  10,
+				Strategy:           "auto",
+				MaxTrackedFiles:    15000,
+				MaxLimitedFiles:    2000,
+				MaxRecentFiles:     1000,
+				MaxCallerDepth:     10,
+				MaxBlastRadiusHops: 1,
+			},
+			Dependencies: WatchDependencyConfig{
+				Enabled: false,
 			},
 			LSP: WatchLSPConfig{
 				Enabled:          true,

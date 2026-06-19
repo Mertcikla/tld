@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -18,7 +19,9 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/watch"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
 
@@ -28,6 +31,7 @@ type Server struct {
 
 type Options struct {
 	DataDir        string
+	WorkspaceDir   string
 	PublicURL      string
 	AllowedOrigins []string
 }
@@ -43,16 +47,24 @@ func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, da
 func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, opts Options) (*Server, error) {
 	watchStore := watch.NewStoreWithBun(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
 	dataDirs := []string{}
-	if opts.DataDir != "" {
+	if opts.DataDir != "" || opts.WorkspaceDir != "" {
 		dataDirs = append(dataDirs, opts.DataDir)
+		if opts.WorkspaceDir != "" {
+			dataDirs = append(dataDirs, opts.WorkspaceDir)
+		}
 	}
 	apiStore := store.NewAPIAdapter(sqliteStore, dataDirs...)
 	lockHooks := watchLockHooks{store: watchStore}
-	wsSvc := &api.WorkspaceService{Store: apiStore, Hooks: lockHooks}
-	orgSvc := &api.OrgService{Store: apiStore, Hooks: lockHooks}
+	collabHub := api.NewCollaborationHub()
+	collabHooks := collaborationHooks{base: lockHooks, store: apiStore, hub: collabHub}
+	wsSvc := &api.WorkspaceService{Store: apiStore, Hooks: collabHooks}
+	orgSvc := &api.OrgService{Store: apiStore, Hooks: collabHooks}
 	depSvc := &api.DependencyService{Store: apiStore}
 	importSvc := &api.ImportService{Store: apiStore}
-	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: lockHooks}
+	mermaidSvc := &api.MermaidService{Store: apiStore, Hooks: collabHooks}
+	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: collabHooks}
+	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
+	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 
 	mux := http.NewServeMux()
 	watch.NewHandler(watchStore).Register(mux)
@@ -101,6 +113,8 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 		_, _ = w.Write([]byte(svg))
 	})
 
+	mux.HandleFunc("GET /api/views/{id}/ws", collabRealtime.WS)
+
 	wsPath, wsHandler := diagv1connect.NewWorkspaceServiceHandler(wsSvc)
 	mux.Handle("/api"+wsPath, http.StripPrefix("/api", wsHandler))
 
@@ -113,15 +127,23 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	importPath, importHandler := diagv1connect.NewImportServiceHandler(importSvc)
 	mux.Handle("/api"+importPath, http.StripPrefix("/api", importHandler))
 
+	mermaidPath, mermaidHandler := diagv1connect.NewMermaidServiceHandler(mermaidSvc)
+	mux.Handle("/api"+mermaidPath, http.StripPrefix("/api", mermaidHandler))
+
 	versionPath, versionHandler := diagv1connect.NewWorkspaceVersionServiceHandler(versionSvc)
 	mux.Handle("/api"+versionPath, http.StripPrefix("/api", versionHandler))
+
+	collabPath, collabHandler := diagv1connect.NewCollaborationServiceHandler(collabSvc)
+	mux.Handle("/api"+collabPath, http.StripPrefix("/api", collabHandler))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		serveStatic(static, w, r)
 	})
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mux.ServeHTTP(w, r.WithContext(api.WithWorkspaceID(r.Context(), workspaceID)))
+		ctx := api.WithWorkspaceID(r.Context(), workspaceID)
+		ctx = api.WithCollaborationRequestInfo(ctx, api.CollaborationRequestInfo{RemoteAddr: r.RemoteAddr})
+		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
 
 	return &Server{handler: localCORSMiddleware(handler, opts)}, nil
@@ -238,7 +260,17 @@ func serveStatic(static fs.FS, w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if os.Getenv("DEV") == "true" {
+	cleaned := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
+	if cleaned == "" {
+		cleaned = "index.html"
+	}
+
+	if serveDynamicIconAsset(cleaned, w) {
+		return
+	}
+
+	isIconAssetRequest := strings.HasPrefix(cleaned, "icons/")
+	if os.Getenv("DEV") == "true" && !isIconAssetRequest {
 		target, err := url.Parse("http://localhost:5173")
 		if err == nil {
 			httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
@@ -246,14 +278,11 @@ func serveStatic(static fs.FS, w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cleaned := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-	if cleaned == "" {
-		cleaned = "index.html"
-	}
-
 	tryPaths := []string{
 		path.Join("frontend/dist", cleaned),
-		"frontend/dist/index.html",
+	}
+	if !isIconAssetRequest {
+		tryPaths = append(tryPaths, "frontend/dist/index.html")
 	}
 	for _, candidate := range tryPaths {
 		data, encoding, err := readStaticAsset(static, candidate, r.Header.Get("Accept-Encoding"))
@@ -270,6 +299,51 @@ func serveStatic(static fs.FS, w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+func serveDynamicIconAsset(cleaned string, w http.ResponseWriter) bool {
+	switch {
+	case cleaned == "icons.json":
+		data, err := tech.CatalogJSON()
+		if err != nil {
+			http.Error(w, "technology catalog unavailable", http.StatusInternalServerError)
+			return true
+		}
+		w.Header().Set("Content-Type", contentType(cleaned))
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(data)
+		return true
+	case strings.HasPrefix(cleaned, "icons/"):
+		filename := strings.TrimPrefix(cleaned, "icons/")
+		if !isSafeDynamicIconFilename(filename) {
+			return false
+		}
+		configDir, err := workspace.ConfigDir()
+		if err != nil {
+			return false
+		}
+		data, err := os.ReadFile(filepath.Join(configDir, "icons", "icons", filename))
+		if err != nil {
+			return false
+		}
+		w.Header().Set("Content-Type", contentType(filename))
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(data)
+		return true
+	default:
+		return false
+	}
+}
+
+func isSafeDynamicIconFilename(filename string) bool {
+	if filename == "" || strings.ContainsAny(filename, "/\\:\x00") {
+		return false
+	}
+	if filename != path.Base(filename) || filename != filepath.Base(filename) {
+		return false
+	}
+	ext := strings.ToLower(path.Ext(filename))
+	return ext == ".svg" || ext == ".png"
 }
 
 func readStaticAsset(static fs.FS, candidate, acceptEncoding string) ([]byte, string, error) {

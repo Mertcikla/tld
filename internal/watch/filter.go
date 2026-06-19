@@ -18,12 +18,14 @@ type filterResult struct {
 	VisibleReferences []Reference
 	VisibleFacts      []Fact
 	VisibleFiles      map[string]struct{}
+	BlastRadiusFiles  map[string]struct{}
 	Incoming          map[int64]int
 	Outgoing          map[int64]int
 	ChangedFiles      map[string]struct{}
 	ContextPolicies   contextPolicySet
 	ContextExpansions contextExpansionSet
 	Visibility        VisibilityConfig
+	Dependencies      DependencyConfig
 }
 
 type visibilitySignal struct {
@@ -94,7 +96,7 @@ func settingsHash(req RepresentRequest) string {
 	return stableHash(req)
 }
 
-func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds Thresholds, visibilityCfg VisibilityConfig, rawGraphHash, settingsHash string, embeddings map[int64]Vector, forcedVisibleSymbols map[int64]string, contextPolicies contextPolicySet, identityKeys map[string]string) (filterResult, error) {
+func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds Thresholds, visibilityCfg VisibilityConfig, rawGraphHash, settingsHash string, embeddings map[int64]Vector, forcedVisibleSymbols map[int64]string, forcedVisibleFiles map[string]string, contextPolicies contextPolicySet, identityKeys map[string]string) (filterResult, error) {
 	visibilityCfg = defaultVisibilityConfig(visibilityCfg)
 	symbols, err := store.SymbolsForRepository(ctx, repositoryID)
 	if err != nil {
@@ -148,6 +150,13 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 				reason = "changed since latest watch version"
 			}
 			score.add("change.changed", visibilityCfg.Weights.Changed, reason)
+			score.Forced = true
+		}
+		if reason, ok := forcedVisibleFiles[sym.FilePath]; ok {
+			if strings.TrimSpace(reason) == "" {
+				reason = "blast radius of changed file"
+			}
+			score.add("change.blast_radius", visibilityCfg.Weights.Changed, reason)
 			score.Forced = true
 		}
 		if reason, ok := contextPolicies.showSymbol(sym, identityKeys); ok {
@@ -333,6 +342,11 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 	for file := range forcedVisibleSymbolsByFile(symbols, forcedVisibleSymbols) {
 		visibleFiles[file] = struct{}{}
 	}
+	blastRadiusFiles := map[string]struct{}{}
+	for file := range forcedVisibleFiles {
+		visibleFiles[file] = struct{}{}
+		blastRadiusFiles[file] = struct{}{}
+	}
 	for file := range expansionsFiles(symbols, expansions, identityKeys) {
 		visibleFiles[file] = struct{}{}
 	}
@@ -356,6 +370,7 @@ func runFilter(ctx context.Context, store *Store, repositoryID int64, thresholds
 		VisibleReferences: visibleRefs,
 		VisibleFacts:      visibleFacts,
 		VisibleFiles:      visibleFiles,
+		BlastRadiusFiles:  blastRadiusFiles,
 		Incoming:          incoming,
 		Outgoing:          outgoing,
 		ContextPolicies:   contextPolicies,

@@ -7,6 +7,7 @@ import {
   Box,
   Button,
   CloseButton,
+  Flex,
   FormControl,
   FormLabel,
   HStack,
@@ -30,6 +31,7 @@ import {
   Textarea,
   useBreakpointValue,
   useDisclosure,
+  useToast,
   VStack,
   Wrap,
   WrapItem,
@@ -41,8 +43,10 @@ import ConfirmDialog from './ConfirmDialog'
 import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
 import GitSourceLinker from './GitSourceLinker'
-import { getTechnologyCatalogIndex, getTechnologyCatalogItemBySlug, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
-import { ZoomInIcon, ZoomOutIcon } from './Icons'
+import { getTechnologyCatalogIndex, getTechnologyCatalogItemBySlug, invalidateTechnologyCatalog, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
+import { canonicalTechnologySlug } from '../utils/technologyIcon'
+import { resolveTechnologyConnectorIconUrl, technologyConnectorIconKey } from '../utils/elementIcon'
+import { ChevronDownIcon, ImageUploadIcon, ZoomInIcon, ZoomOutIcon } from './Icons'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
 import { openExternalUrl } from '../lib/desktop'
@@ -57,17 +61,39 @@ function splitTechnologyLabel(value: string): string[] {
   return value.split(',').map((part) => part.trim()).filter(Boolean)
 }
 
+function parseCustomTechnologyAliases(value: string): string[] {
+  const aliases = value
+    .split(/[\n,]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+  return Array.from(new Set(aliases))
+}
+
+function mediaTypeForIconFile(file: File): string {
+  if (file.type) return file.type
+  const lowerName = file.name.toLowerCase()
+  if (lowerName.endsWith('.svg')) return 'image/svg+xml'
+  if (lowerName.endsWith('.png')) return 'image/png'
+  return ''
+}
+
+function defaultTechnologyNameFromFile(file: File): string {
+  const withoutExt = file.name.replace(/\.[^.]+$/, '')
+  return withoutExt.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
 function findCatalogItemByLabel(index: Awaited<ReturnType<typeof getTechnologyCatalogIndex>>, label: string): TechnologyCatalogItem | null {
   const normalized = normalizeTechnologyLabel(label)
   if (!normalized) return null
 
-  const bySlugMatch = index.bySlug.get(label.trim())
+  const bySlugMatch = index.bySlug.get(canonicalTechnologySlug(label))
   if (bySlugMatch) return bySlugMatch
 
   return index.items.find((item) => (
     normalizeTechnologyLabel(item.name) === normalized ||
     normalizeTechnologyLabel(item.nameShort) === normalized ||
-    normalizeTechnologyLabel(item.defaultSlug) === normalized
+    normalizeTechnologyLabel(item.defaultSlug) === normalized ||
+    (item.aliases ?? []).some((alias) => normalizeTechnologyLabel(alias) === normalized)
   )) ?? null
 }
 
@@ -93,8 +119,9 @@ function dedupeTechnologyLinks(links: TechnologyConnector[]): TechnologyConnecto
     const isPrimary = !!(link.is_primary_icon ?? link.isPrimaryIcon)
 
     if (link.type === 'catalog' && link.slug) {
-      const slug = link.slug.trim()
-      const key = slug.toLowerCase()
+      const slug = canonicalTechnologySlug(link.slug)
+      if (!slug) continue
+      const key = slug
       if (seenCatalog.has(key)) continue
       seenCatalog.add(key)
       result.push({
@@ -110,7 +137,13 @@ function dedupeTechnologyLinks(links: TechnologyConnector[]): TechnologyConnecto
     const key = normalizeTechnologyLabel(label)
     if (seenCustom.has(key)) continue
     seenCustom.add(key)
-    result.push({ type: 'custom', label, is_primary_icon: false })
+    const customLink: TechnologyConnector = { type: 'custom', label }
+    const canUseAsPrimaryIcon = !!technologyConnectorIconKey(customLink)
+    result.push({
+      ...customLink,
+      is_primary_icon: canUseAsPrimaryIcon && !primarySet && isPrimary,
+    })
+    if (canUseAsPrimaryIcon && isPrimary) primarySet = true
   }
 
   return result.slice(0, 3)
@@ -135,26 +168,38 @@ async function normalizeInitialTechnologyLinks(element: LibraryElement): Promise
         is_primary_icon: isPrimaryIcon,
       })
     } else {
-      normalized.push({ type: 'custom', label: label.trim(), is_primary_icon: false })
+      const customLink: TechnologyConnector = { type: 'custom', label: label.trim() }
+      normalized.push({
+        ...customLink,
+        is_primary_icon: !!isPrimaryIcon && !!technologyConnectorIconKey(customLink),
+      })
     }
   }
 
   if (rawLinks.length > 0) {
     for (const link of rawLinks) {
       if (link.type === 'catalog') {
-        const match = link.slug ? index.bySlug.get(link.slug) : null
-        normalized.push({
-          type: 'catalog',
-          slug: link.slug,
-          label: match?.name ?? link.label,
-          is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
-        })
+        const match = link.slug ? index.bySlug.get(canonicalTechnologySlug(link.slug)) : null
+        if (match) {
+          normalized.push({
+            type: 'catalog',
+            slug: match.defaultSlug,
+            label: match.name,
+            is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
+          })
+        } else if (link.label.trim()) {
+          const customLink: TechnologyConnector = { type: 'custom', label: link.label.trim() }
+          normalized.push({
+            ...customLink,
+            is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!technologyConnectorIconKey(customLink),
+          })
+        }
       } else {
         const parts = splitTechnologyLabel(link.label)
         if (parts.length > 1) {
           for (const part of parts) pushLabel(part)
         } else {
-          pushLabel(link.label)
+          pushLabel(link.label, !!(link.is_primary_icon ?? link.isPrimaryIcon))
         }
       }
     }
@@ -167,7 +212,7 @@ async function normalizeInitialTechnologyLinks(element: LibraryElement): Promise
   // If no catalog item is primary, try to match against element.logo_url. An
   // explicit empty logo_url means the user deselected technology icons.
   const deduped = dedupeTechnologyLinks(normalized)
-  const hasPrimary = deduped.some(l => l.type === 'catalog' && l.is_primary_icon)
+  const hasPrimary = deduped.some(l => !!technologyConnectorIconKey(l) && l.is_primary_icon)
   if (!hasPrimary && element.logo_url !== '') {
     let bestMatchIndex = -1
     if (element.logo_url) {
@@ -187,12 +232,7 @@ function buildTechnologyFingerprintPayload(
   links: TechnologyConnector[],
   type: string,
 ) {
-  const normalizedLinks = links.map((link) => ({
-    type: link.type,
-    slug: link.type === 'catalog' ? link.slug : undefined,
-    label: link.label,
-    is_primary_icon: !!link.is_primary_icon,
-  }))
+  const normalizedLinks = links.map(serializeTechnologyLinkForSave)
   const normalizedType = type.trim().toLowerCase()
   const technology = links.map((link) => link.label).join(', ')
 
@@ -213,6 +253,32 @@ function buildTechnologyFingerprintPayload(
   }
 }
 
+function serializeTechnologyLinkForSave(link: TechnologyConnector): TechnologyConnector {
+  const isPrimaryIcon = !!(link.is_primary_icon ?? link.isPrimaryIcon)
+  const iconKey = technologyConnectorIconKey(link)
+  if (link.type === 'custom' && isPrimaryIcon && iconKey?.startsWith('fa:')) {
+    return {
+      type: 'catalog',
+      slug: iconKey,
+      label: link.label,
+      is_primary_icon: true,
+    }
+  }
+
+  return {
+    type: link.type,
+    slug: link.type === 'catalog' ? link.slug : undefined,
+    label: link.label,
+    is_primary_icon: link.type === 'catalog' && isPrimaryIcon,
+  }
+}
+
+type AutoSaveOverrides = {
+  tags?: string[]
+  technologyLinks?: TechnologyConnector[]
+  explicitLogoClear?: boolean
+}
+
 const NOISE_GATE_STOPS = [
   { value: -2, label: 'Quiet' },
   { value: -1, label: 'Lean' },
@@ -220,6 +286,8 @@ const NOISE_GATE_STOPS = [
   { value: 1, label: 'Rich' },
   { value: 2, label: 'Full' },
 ] as const
+
+const AUTO_SAVE_DELAY_MS = 150
 
 function clampNoiseGateLevel(level: number) {
   return Math.max(-2, Math.min(2, level))
@@ -292,6 +360,7 @@ function ElementPanel({
   const isReadOnly = !canEdit
   const autoSaveEdit = autoSave && isEdit && !isReadOnly
   const navigate = useNavigate()
+  const toast = useToast()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [type, setType] = useState('')
@@ -303,6 +372,7 @@ function ElementPanel({
   const [technologyResults, setTechnologyResults] = useState<TechnologyCatalogItem[]>([])
   const [technologyMeta, setTechnologyMeta] = useState<Record<string, TechnologyCatalogItem>>({})
   const [technologySearchLoading, setTechnologySearchLoading] = useState(false)
+  const [technologySearchSettledQuery, setTechnologySearchSettledQuery] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [bypassNoiseGate, setBypassNoiseGate] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -314,14 +384,35 @@ function ElementPanel({
   const lastSavedFingerprintRef = useRef<string>('')
   const savingRef = useRef(false)
   const pendingSaveRef = useRef(false)
+  const pendingSaveOverridesRef = useRef<AutoSaveOverrides | undefined>(undefined)
   const [techResultIndex, setTechResultIndex] = useState(-1)
   const confirmPermanentDelete = useDisclosure()
+  const customTechnologyFileInputRef = useRef<HTMLInputElement>(null)
+  const [customTechnologyShortName, setCustomTechnologyShortName] = useState('')
+  const [customTechnologyAliases, setCustomTechnologyAliases] = useState('')
+  const [customTechnologyFile, setCustomTechnologyFile] = useState<File | null>(null)
+  const [customTechnologyPreviewUrl, setCustomTechnologyPreviewUrl] = useState('')
+  const [customTechnologyError, setCustomTechnologyError] = useState('')
+  const [customTechnologySaving, setCustomTechnologySaving] = useState(false)
+  const [customTechnologyExpanded, setCustomTechnologyExpanded] = useState(false)
+  const [customTechnologyOptionsOpen, setCustomTechnologyOptionsOpen] = useState(false)
   const isMobile = useBreakpointValue({ base: true, md: false }) ?? false
   const initializedElementIdRef = useRef<number | null>(null)
 
   useEffect(() => {
     setTechResultIndex(-1)
+    setTechnologySearchSettledQuery('')
+    setCustomTechnologyExpanded(false)
+    setCustomTechnologyOptionsOpen(false)
   }, [technologyQuery])
+
+  useEffect(() => {
+    return () => {
+      if (customTechnologyPreviewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(customTechnologyPreviewUrl)
+      }
+    }
+  }, [customTechnologyPreviewUrl])
 
   useEffect(() => {
     let cancelled = false
@@ -406,49 +497,59 @@ function ElementPanel({
     }
   }, [element, isOpen])
 
-  const buildPayloadAndFingerprint = useCallback(async () => {
-    const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && link.slug)
-    const primarySlug = primaryLink?.slug
+  const resolveTechnologyLogoUrlForSave = useCallback(async (link: TechnologyConnector | undefined): Promise<string> => {
+    if (!link) return ''
 
-    const normalizedLinks = technologyLinks.map((link) => ({
-      type: link.type,
-      slug: link.type === 'catalog' ? link.slug : undefined,
-      label: link.label,
-      is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
-    }))
+    const directIconUrl = resolveTechnologyConnectorIconUrl(link)
+    if (link.type !== 'catalog' || !link.slug) return directIconUrl ?? ''
+
+    const slug = link.slug
+    const cached = technologyMeta[slug]
+    if (cached?.iconUrl) return cached.iconUrl
+
+    try {
+      const item = await getTechnologyCatalogItemBySlug(slug)
+      if (item) {
+        setTechnologyMeta((prev) => ({ ...prev, [slug]: item }))
+        return item.iconUrl || directIconUrl || ''
+      }
+    } catch {
+      // ignore
+    }
+
+    return directIconUrl ?? ''
+  }, [technologyMeta])
+
+  const buildPayloadAndFingerprint = useCallback(async (overrides?: AutoSaveOverrides) => {
+    const tagsForSave = overrides?.tags ?? tags
+    const linksForSave = overrides?.technologyLinks ?? technologyLinks
+    const explicitLogoClearForSave = overrides?.explicitLogoClear ?? explicitLogoClear
+
+    const primaryLink = linksForSave.find((link) => (
+      !!technologyConnectorIconKey(link) && !!(link.is_primary_icon ?? link.isPrimaryIcon)
+    ))
+
+    const normalizedLinks = linksForSave.map(serializeTechnologyLinkForSave)
 
     const normalizedType = type.trim().toLowerCase()
 
     let logoUrl = element?.logo_url ?? ''
-    if (explicitLogoClear) {
+    if (explicitLogoClearForSave) {
       logoUrl = ''
     }
-    if (!explicitLogoClear && primarySlug) {
-      const cached = technologyMeta[primarySlug]
-      if (cached?.iconUrl) {
-        logoUrl = cached.iconUrl
-      } else {
-        try {
-          const item = await getTechnologyCatalogItemBySlug(primarySlug)
-          if (item) {
-            setTechnologyMeta((prev) => ({ ...prev, [primarySlug]: item }))
-            if (item.iconUrl) logoUrl = item.iconUrl
-          }
-        } catch {
-          // ignore
-        }
-      }
+    if (!explicitLogoClearForSave && primaryLink) {
+      logoUrl = await resolveTechnologyLogoUrlForSave(primaryLink)
     }
 
     const payload = {
       name,
       description,
       kind: normalizedType,
-      technology: technologyLinks.map((link) => link.label).join(', '),
+      technology: linksForSave.map((link) => link.label).join(', '),
       url,
       logo_url: logoUrl,
       technology_connectors: normalizedLinks,
-      tags,
+      tags: tagsForSave,
       bypass_noise_gate: bypassNoiseGate,
       repo: element?.repo,
       branch: element?.branch,
@@ -456,20 +557,21 @@ function ElementPanel({
       language: element?.language,
     }
     return { payload, fingerprint: JSON.stringify(payload) }
-  }, [technologyLinks, technologyMeta, explicitLogoClear, type, element, name, description, url, tags, bypassNoiseGate])
+  }, [technologyLinks, explicitLogoClear, type, element, name, description, url, tags, bypassNoiseGate, resolveTechnologyLogoUrlForSave])
 
-  const saveIfDirty = useCallback(async () => {
+  const saveIfDirty = useCallback(async (overrides?: AutoSaveOverrides) => {
     if (!autoSaveEdit || !element) return
     if (!name.trim()) return
 
     if (savingRef.current) {
       pendingSaveRef.current = true
+      pendingSaveOverridesRef.current = overrides ?? pendingSaveOverridesRef.current
       return
     }
 
     savingRef.current = true
     try {
-      const { payload, fingerprint } = await buildPayloadAndFingerprint()
+      const { payload, fingerprint } = await buildPayloadAndFingerprint(overrides)
       if (fingerprint === lastSavedFingerprintRef.current) return
       const saved = await api.elements.update(element.id, payload)
       lastSavedFingerprintRef.current = fingerprint
@@ -479,29 +581,31 @@ function ElementPanel({
     } finally {
       savingRef.current = false
       if (pendingSaveRef.current) {
+        const pendingOverrides = pendingSaveOverridesRef.current
         pendingSaveRef.current = false
+        pendingSaveOverridesRef.current = undefined
         window.setTimeout(() => {
-          void saveIfDirtyRef.current?.()
-        }, 0)
+          void saveIfDirtyRef.current?.(pendingOverrides)
+        }, AUTO_SAVE_DELAY_MS)
       }
     }
   }, [autoSaveEdit, element, name, buildPayloadAndFingerprint, onSave])
 
-  const saveIfDirtyRef = useRef<(() => Promise<void>) | null>(null)
+  const saveIfDirtyRef = useRef<((overrides?: AutoSaveOverrides) => Promise<void>) | null>(null)
   useEffect(() => { saveIfDirtyRef.current = saveIfDirty }, [saveIfDirty])
 
-  const scheduleAutoSave = () => {
+  const scheduleAutoSave = (overrides?: AutoSaveOverrides) => {
     if (!autoSaveEdit) return
     window.setTimeout(() => {
-      void saveIfDirtyRef.current?.()
-    }, 0)
+      void saveIfDirtyRef.current?.(overrides)
+    }, AUTO_SAVE_DELAY_MS)
   }
 
   useEffect(() => {
     if (!autoSaveEdit || !element) return
     const timer = window.setTimeout(() => {
       void saveIfDirtyRef.current?.()
-    }, 150)
+    }, AUTO_SAVE_DELAY_MS)
     return () => window.clearTimeout(timer)
   }, [autoSaveEdit, element, name, description, type, url, tags, technologyLinks, explicitLogoClear, bypassNoiseGate])
 
@@ -583,8 +687,11 @@ function ElementPanel({
       setTechnologyMeta((prev) => {
         const next = { ...prev }
         for (const slug of slugs) {
-          const item = index.bySlug.get(slug)
-          if (item) next[slug] = item
+          const item = index.bySlug.get(canonicalTechnologySlug(slug))
+          if (item) {
+            next[slug] = item
+            next[item.defaultSlug] = item
+          }
         }
         return next
       })
@@ -596,14 +703,19 @@ function ElementPanel({
     const query = technologyQuery.trim()
     if (!query) {
       setTechnologyResults([])
+      setTechnologySearchLoading(false)
+      setTechnologySearchSettledQuery('')
       return
     }
 
+    let cancelled = false
     const timer = setTimeout(() => {
       setTechnologySearchLoading(true)
       searchTechnologyCatalog(query)
         .then((results) => {
+          if (cancelled) return
           setTechnologyResults(results)
+          setTechnologySearchSettledQuery(query)
           setTechnologyMeta((prev) => {
             const next = { ...prev }
             for (const item of results) {
@@ -612,28 +724,38 @@ function ElementPanel({
             return next
           })
         })
-        .catch(() => setTechnologyResults([]))
-        .finally(() => setTechnologySearchLoading(false))
+        .catch(() => {
+          if (cancelled) return
+          setTechnologyResults([])
+          setTechnologySearchSettledQuery(query)
+        })
+        .finally(() => {
+          if (!cancelled) setTechnologySearchLoading(false)
+        })
     }, 140)
 
-    return () => clearTimeout(timer)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [isOpen, technologyQuery])
 
   const handleSave = useCallback(async () => {
     if (isReadOnly || !name.trim()) return
     setLoading(true)
     try {
-      const primaryLink = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && link.slug)
-      const primaryMetadata = primaryLink?.slug
-        ? (technologyMeta[primaryLink.slug] ?? await getTechnologyCatalogItemBySlug(primaryLink.slug))
-        : null
+      const primaryLink = technologyLinks.find((link) => (
+        !!technologyConnectorIconKey(link) && !!(link.is_primary_icon ?? link.isPrimaryIcon)
+      ))
+      const logoUrl = explicitLogoClear ? '' : await resolveTechnologyLogoUrlForSave(primaryLink)
 
-      const normalizedLinks = technologyLinks.map((link) => ({
-        type: link.type,
-        slug: link.type === 'catalog' ? link.slug : undefined,
-        label: link.label,
-        is_primary_icon: !!(link.is_primary_icon ?? link.isPrimaryIcon),
-      }))
+      const normalizedLinks = technologyLinks.map((link) => {
+        const serialized = serializeTechnologyLinkForSave(link)
+        return {
+          ...serialized,
+          slug: serialized.type === 'catalog' ? canonicalTechnologySlug(serialized.slug) : undefined,
+        }
+      })
 
       const normalizedType = type.trim().toLowerCase()
 
@@ -643,7 +765,7 @@ function ElementPanel({
         kind: normalizedType,
         technology: technologyLinks.map((link) => link.label).join(', '),
         url,
-        logo_url: explicitLogoClear ? '' : (primaryMetadata?.iconUrl ?? ''),
+        logo_url: logoUrl,
         technology_connectors: normalizedLinks,
         tags,
         bypass_noise_gate: bypassNoiseGate,
@@ -658,7 +780,7 @@ function ElementPanel({
     } finally {
       setLoading(false)
     }
-  }, [isReadOnly, name, technologyLinks, technologyMeta, type, explicitLogoClear, tags, bypassNoiseGate, isEdit, element, onSave, handleClose, description, url])
+  }, [isReadOnly, name, technologyLinks, type, explicitLogoClear, tags, bypassNoiseGate, isEdit, element, onSave, handleClose, description, url, resolveTechnologyLogoUrlForSave])
 
   useEffect(() => {
     if (!isOpen) return
@@ -690,21 +812,25 @@ function ElementPanel({
     if (technologyLinks.length >= 3) return
     if (technologyLinks.some((link) => link.type === 'catalog' && link.slug === item.defaultSlug)) return
 
-    const hasPrimaryCatalog = technologyLinks.some((link) => link.type === 'catalog' && !!link.is_primary_icon)
+    const hasPrimaryIcon = technologyLinks.some((link) => (
+      !!technologyConnectorIconKey(link) && !!(link.is_primary_icon ?? link.isPrimaryIcon)
+    ))
 
-    setTechnologyConnectors((prev) => ([
-      ...prev,
+    const nextLinks: TechnologyConnector[] = [
+      ...technologyLinks,
       {
         type: 'catalog',
         slug: item.defaultSlug,
         label: item.name,
-        is_primary_icon: !explicitLogoClear && !hasPrimaryCatalog,
+        is_primary_icon: !explicitLogoClear && !hasPrimaryIcon,
       },
-    ]))
+    ]
+    setTechnologyConnectors(nextLinks)
     setTechnologyQuery('')
     setTechnologyResults([])
+    resetCustomTechnologyForm()
     setTechnologyMeta((prev) => ({ ...prev, [item.defaultSlug]: item }))
-    scheduleAutoSave()
+    scheduleAutoSave({ technologyLinks: nextLinks })
   }
 
   const addCustomTechnology = () => {
@@ -712,38 +838,192 @@ function ElementPanel({
     if (!value || technologyLinks.length >= 3) return
     if (technologyLinks.some((link) => link.type === 'custom' && link.label.toLowerCase() === value.toLowerCase())) return
 
-    setTechnologyConnectors((prev) => ([...prev, { type: 'custom', label: value }]))
+    const link: TechnologyConnector = { type: 'custom', label: value }
+    const canUseAsPrimaryIcon = !!technologyConnectorIconKey(link)
+    const hasPrimaryIcon = technologyLinks.some((item) => (
+      !!technologyConnectorIconKey(item) && !!(item.is_primary_icon ?? item.isPrimaryIcon)
+    ))
+    const nextLinks: TechnologyConnector[] = [
+      ...technologyLinks,
+      {
+        ...link,
+        is_primary_icon: canUseAsPrimaryIcon && !explicitLogoClear && !hasPrimaryIcon,
+      },
+    ]
+    setTechnologyConnectors(nextLinks)
     setTechnologyQuery('')
     setTechnologyResults([])
-    scheduleAutoSave()
+    resetCustomTechnologyForm()
+    scheduleAutoSave({ technologyLinks: nextLinks })
+  }
+
+  const resetCustomTechnologyForm = () => {
+    setCustomTechnologyShortName('')
+    setCustomTechnologyAliases('')
+    setCustomTechnologyFile(null)
+    setCustomTechnologyPreviewUrl('')
+    setCustomTechnologyError('')
+    setCustomTechnologySaving(false)
+    setCustomTechnologyExpanded(false)
+    setCustomTechnologyOptionsOpen(false)
+  }
+
+  const openCustomTechnologyFilePicker = () => {
+    if (customTechnologySaving) return
+    customTechnologyFileInputRef.current?.click()
+  }
+
+  const setCustomTechnologyIconFile = (file: File | null) => {
+    setCustomTechnologyError('')
+    setCustomTechnologyFile(null)
+    setCustomTechnologyPreviewUrl('')
+
+    if (!file) return
+
+    const mediaType = mediaTypeForIconFile(file)
+    if (mediaType !== 'image/svg+xml' && mediaType !== 'image/png') {
+      setCustomTechnologyError('Choose an SVG or PNG file.')
+      return
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setCustomTechnologyError('Choose a file under 2 MB.')
+      return
+    }
+
+    setCustomTechnologyFile(file)
+    if (!technologyQuery.trim()) {
+      setTechnologyQuery(defaultTechnologyNameFromFile(file))
+    }
+    if (typeof URL !== 'undefined' && URL.createObjectURL) {
+      setCustomTechnologyPreviewUrl(URL.createObjectURL(file))
+    }
+  }
+
+  const handleCustomTechnologyFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setCustomTechnologyIconFile(event.target.files?.[0] ?? null)
+  }
+
+  const handleCustomTechnologyFileDrop = (event: React.DragEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    if (customTechnologySaving) return
+    setCustomTechnologyIconFile(event.dataTransfer.files?.[0] ?? null)
+  }
+
+  const clearCustomTechnologyFile = () => {
+    setCustomTechnologyIconFile(null)
+    if (customTechnologyFileInputRef.current) {
+      customTechnologyFileInputRef.current.value = ''
+    }
+  }
+
+  const handleCreateCustomTechnology = async () => {
+    if (isReadOnly || customTechnologySaving) return
+    const trimmedName = technologyQuery.trim() || (customTechnologyFile ? defaultTechnologyNameFromFile(customTechnologyFile) : '')
+    if (!trimmedName) {
+      setCustomTechnologyError('Name is required.')
+      return
+    }
+    if (!customTechnologyFile) {
+      setCustomTechnologyError('Icon file is required.')
+      return
+    }
+    if (technologyLinks.length >= 3) {
+      setCustomTechnologyError('Remove a technology before attaching another one.')
+      return
+    }
+
+    setCustomTechnologySaving(true)
+    setCustomTechnologyError('')
+    try {
+      const icon = new Uint8Array(await customTechnologyFile.arrayBuffer())
+      const item = await api.technology.createCustom({
+        name: trimmedName,
+        name_short: customTechnologyShortName.trim() || undefined,
+        aliases: parseCustomTechnologyAliases(customTechnologyAliases),
+        icon,
+        media_type: mediaTypeForIconFile(customTechnologyFile),
+      })
+      invalidateTechnologyCatalog()
+      setTechnologyMeta((prev) => ({ ...prev, [item.defaultSlug]: item }))
+      setTechnologyConnectors((prev) => {
+        if (prev.length >= 3) return prev
+        if (prev.some((link) => link.type === 'catalog' && link.slug === item.defaultSlug)) return prev
+        const hasPrimaryIcon = prev.some((link) => (
+          !!technologyConnectorIconKey(link) && !!(link.is_primary_icon ?? link.isPrimaryIcon)
+        ))
+        const shouldBePrimary = !explicitLogoClear && !hasPrimaryIcon
+        return [
+          ...prev,
+          {
+            type: 'catalog',
+            slug: item.defaultSlug,
+            label: item.name,
+            is_primary_icon: shouldBePrimary,
+          },
+        ]
+      })
+      setTechnologyQuery('')
+      setTechnologyResults([])
+      resetCustomTechnologyForm()
+      scheduleAutoSave()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Create failed'
+      setCustomTechnologyError(message)
+      toast({ status: 'error', title: 'Create failed', description: message })
+    } finally {
+      setCustomTechnologySaving(false)
+    }
   }
 
   const removeTechnology = (linkToRemove: TechnologyConnector) => {
-    if (linkToRemove.type === 'catalog' && linkToRemove.is_primary_icon) {
+    const shouldClearLogo = !!technologyConnectorIconKey(linkToRemove) && !!(linkToRemove.is_primary_icon ?? linkToRemove.isPrimaryIcon)
+    const nextExplicitLogoClear = shouldClearLogo ? true : explicitLogoClear
+    const nextLinks = technologyLinks.filter((link) => (
+      !(link.type === linkToRemove.type && link.slug === linkToRemove.slug && link.label === linkToRemove.label)
+    ))
+    if (shouldClearLogo) {
       setExplicitLogoClear(true)
     }
-    setTechnologyConnectors((prev) => prev.filter((link) => (
-      !(link.type === linkToRemove.type && link.slug === linkToRemove.slug && link.label === linkToRemove.label)
-    )))
-    scheduleAutoSave()
+    setTechnologyConnectors(nextLinks)
+    scheduleAutoSave({ technologyLinks: nextLinks, explicitLogoClear: nextExplicitLogoClear })
   }
 
-  const togglePrimaryIcon = (selectedSlug: string) => {
-    const isDeselecting = selectedPrimarySlug === selectedSlug
-    setTechnologyConnectors((prev) => prev.map((link) => {
-      if (link.type !== 'catalog') {
-        return { ...link, is_primary_icon: false }
-      }
+  const togglePrimaryIcon = (selectedIconKey: string) => {
+    const isDeselecting = selectedPrimaryIconKey === selectedIconKey
+    const nextLinks = technologyLinks.map((link) => {
       return {
         ...link,
-        is_primary_icon: !isDeselecting && link.slug === selectedSlug,
+        is_primary_icon: !isDeselecting && technologyConnectorIconKey(link) === selectedIconKey,
       }
-    }))
+    })
+    setTechnologyConnectors(nextLinks)
     setExplicitLogoClear(isDeselecting)
-    scheduleAutoSave()
+    scheduleAutoSave({ technologyLinks: nextLinks, explicitLogoClear: isDeselecting })
   }
 
-  const selectedPrimarySlug = technologyLinks.find((link) => link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!link.slug)?.slug ?? ''
+  const selectedPrimaryIconLink = technologyLinks.find((link) => (
+    !!technologyConnectorIconKey(link) && !!(link.is_primary_icon ?? link.isPrimaryIcon)
+  ))
+  const selectedPrimaryIconKey = selectedPrimaryIconLink ? technologyConnectorIconKey(selectedPrimaryIconLink) ?? '' : ''
+  const inlineCustomTechnologyName = technologyQuery.trim() || (customTechnologyFile ? defaultTechnologyNameFromFile(customTechnologyFile) : '')
+  const customTechnologyCanCreate = !!inlineCustomTechnologyName && !!customTechnologyFile && technologyLinks.length < 3 && !customTechnologySaving
+  const normalizedTechnologyQuery = technologyQuery.trim()
+  const fontAwesomeQueryIconUrl = normalizedTechnologyQuery
+    ? resolveTechnologyConnectorIconUrl({ type: 'custom', label: normalizedTechnologyQuery })
+    : null
+  const showFontAwesomeTechnologyCreate = (
+    !!fontAwesomeQueryIconUrl &&
+    technologyLinks.length < 3 &&
+    !technologyLinks.some((link) => link.type === 'custom' && normalizeTechnologyLabel(link.label) === normalizeTechnologyLabel(normalizedTechnologyQuery))
+  )
+  const showCustomTechnologyCreate = (
+    !!normalizedTechnologyQuery &&
+    technologyLinks.length < 3 &&
+    !fontAwesomeQueryIconUrl &&
+    !technologySearchLoading &&
+    technologySearchSettledQuery === normalizedTechnologyQuery &&
+    technologyResults.length === 0
+  )
 
   const commitTypeFromQuery = () => {
     if (isReadOnly) return
@@ -813,7 +1093,7 @@ function ElementPanel({
                 size="sm"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                onBlur={scheduleAutoSave}
+                onBlur={() => scheduleAutoSave()}
                 placeholder="Payment Service"
               />
             </FormControl>
@@ -920,7 +1200,7 @@ function ElementPanel({
                 size="sm"
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                onBlur={scheduleAutoSave}
+                onBlur={() => scheduleAutoSave()}
                 placeholder="What does this element do?"
                 rows={3}
               />
@@ -955,6 +1235,7 @@ function ElementPanel({
                         e.stopPropagation()
                         setTechnologyQuery('')
                         setTechResultIndex(-1)
+                        resetCustomTechnologyForm()
                         techInputRef.current?.blur()
                       }
                     }}
@@ -972,7 +1253,7 @@ function ElementPanel({
                 </HStack>
 
                 {!isReadOnly && technologyQuery.trim() && technologyLinks.length < 3 && (
-                  <Box border="1px solid" borderColor="whiteAlpha.200" rounded="md" bg="blackAlpha.300" maxH="190px" overflowY="auto">
+                  <Box border="1px solid" borderColor="whiteAlpha.200" rounded="md" bg="blackAlpha.300" maxH="280px" overflowY="auto">
                     <VStack spacing={0} align="stretch">
                       {technologyResults.map((item, idx) => (
                         <Box
@@ -999,8 +1280,255 @@ function ElementPanel({
                       {technologySearchLoading && (
                         <Text px={2} py={2} fontSize="xs" color="gray.400">Searching...</Text>
                       )}
-                      {!technologySearchLoading && technologyResults.length === 0 && (
-                        <Text px={2} py={2} fontSize="xs" color="gray.400">No match in catalog. Use Add Custom.</Text>
+                      {showFontAwesomeTechnologyCreate && fontAwesomeQueryIconUrl && (
+                        <Box
+                          data-testid="element-panel-fontawesome-technology-option"
+                          borderColor="whiteAlpha.100"
+                          px={2}
+                          py={2}
+                          cursor="pointer"
+                          _hover={{ bg: 'whiteAlpha.100' }}
+                          onClick={addCustomTechnology}
+                        >
+                          <HStack justify="space-between" align="center">
+                            <HStack spacing={2} minW={0}>
+                              <Flex w="18px" h="18px" align="center" justify="center" flexShrink={0}>
+                                <Box as="img" src={fontAwesomeQueryIconUrl} alt="" boxSize="15px" objectFit="contain" />
+                              </Flex>
+                              <Text fontSize="sm" color="white" noOfLines={1}>{normalizedTechnologyQuery}</Text>
+                            </HStack>
+                            <Badge variant="subtle" colorScheme="purple" fontSize="8px">Font Awesome</Badge>
+                          </HStack>
+                        </Box>
+                      )}
+                      {showCustomTechnologyCreate && (
+                        <Box
+                          data-testid="element-panel-custom-technology-create"
+                          borderColor="whiteAlpha.100"
+                          px={2}
+                          py={2}
+                          cursor={customTechnologyExpanded ? 'default' : 'pointer'}
+                          _hover={customTechnologyExpanded ? undefined : { bg: 'whiteAlpha.100' }}
+                          onClick={() => {
+                            if (!customTechnologyExpanded) setCustomTechnologyExpanded(true)
+                          }}
+                        >
+                          <VStack align="stretch" spacing={customTechnologyExpanded ? 3 : 0}>
+                            <HStack justify="space-between" align="center" spacing={3} minH="24px">
+                              <HStack spacing={2} minW={0}>
+                                <Flex w="18px" h="18px" align="center" justify="center" color="gray.500" flexShrink={0}>
+                                  <ImageUploadIcon size={14} />
+                                </Flex>
+                                <Text fontSize="sm" color="white" noOfLines={1}>
+                                  Create custom technology
+                                </Text>
+                              </HStack>
+                              <Text fontSize="xs" color="gray.500" flexShrink={0}>
+                                Add icon
+                              </Text>
+                            </HStack>
+                            {customTechnologyExpanded && (
+                              <VStack align="stretch" spacing={3} pt={2}>
+                                <Box
+                                  data-testid="custom-technology-icon-dropzone"
+                                  as="button"
+                                  type="button"
+                                  aria-label="Choose custom technology icon"
+                                  disabled={customTechnologySaving}
+                                  w="full"
+                                  minH="72px"
+                                  rounded="md"
+                                  border="1px"
+                                  borderStyle={customTechnologyPreviewUrl ? 'solid' : 'dashed'}
+                                  borderColor={customTechnologyError ? 'red.300' : (customTechnologyPreviewUrl ? 'blue.300' : 'whiteAlpha.300')}
+                                  bg={customTechnologyPreviewUrl ? 'whiteAlpha.100' : 'blackAlpha.200'}
+                                  color="inherit"
+                                  cursor={customTechnologySaving ? 'not-allowed' : 'pointer'}
+                                  px={3}
+                                  py={2}
+                                  textAlign="left"
+                                  transition="border-color 120ms ease, background 120ms ease, box-shadow 120ms ease"
+                                  _hover={customTechnologySaving ? undefined : { borderColor: 'blue.300', bg: 'whiteAlpha.100' }}
+                                  _focusVisible={{ outline: 'none', boxShadow: '0 0 0 2px var(--accent)' }}
+                                  _disabled={{ opacity: 0.55 }}
+                                  onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
+                                    event.stopPropagation()
+                                    openCustomTechnologyFilePicker()
+                                  }}
+                                  onDragOver={(event: React.DragEvent<HTMLButtonElement>) => event.preventDefault()}
+                                  onDrop={handleCustomTechnologyFileDrop}
+                                >
+                                  <HStack spacing={3} align="center">
+                                    <Flex
+                                      w="38px"
+                                      h="38px"
+                                      align="center"
+                                      justify="center"
+                                      rounded="md"
+                                      bg="blackAlpha.300"
+                                      border="1px solid"
+                                      borderColor="whiteAlpha.100"
+                                      flexShrink={0}
+                                    >
+                                      {customTechnologyPreviewUrl ? (
+                                        <Box
+                                          data-testid="custom-technology-preview-icon"
+                                          as="img"
+                                          src={customTechnologyPreviewUrl}
+                                          alt=""
+                                          maxW="28px"
+                                          maxH="28px"
+                                          objectFit="contain"
+                                          opacity={0.95}
+                                        />
+                                      ) : (
+                                        <Box color="gray.500">
+                                          <ImageUploadIcon size={16} />
+                                        </Box>
+                                      )}
+                                    </Flex>
+                                    <Box minW={0}>
+                                      <Text fontSize="sm" color="gray.100" noOfLines={1}>
+                                        {customTechnologyFile ? customTechnologyFile.name : 'Upload icon'}
+                                      </Text>
+                                      <Text fontSize="xs" color="gray.500" lineHeight="1.35">
+                                        {customTechnologyFile ? 'Click to replace, or drop another file.' : 'Drop or choose SVG/PNG, max 2 MB.'}
+                                      </Text>
+                                    </Box>
+                                  </HStack>
+                                </Box>
+                                <Input
+                                  data-testid="custom-technology-file"
+                                  ref={customTechnologyFileInputRef}
+                                  type="file"
+                                  display="none"
+                                  accept=".svg,.png,image/svg+xml,image/png"
+                                  onChange={handleCustomTechnologyFileChange}
+                                />
+                                {customTechnologyFile && (
+                                  <HStack justify="space-between" spacing={2}>
+                                    <Text fontSize="xs" color="gray.400" noOfLines={1}>
+                                      Name: {inlineCustomTechnologyName}
+                                    </Text>
+                                    <Button
+                                      size="xs"
+                                      variant="ghost"
+                                      color="gray.400"
+                                      onClick={(event) => {
+                                        event.stopPropagation()
+                                        clearCustomTechnologyFile()
+                                      }}
+                                      isDisabled={customTechnologySaving}
+                                    >
+                                      Clear
+                                    </Button>
+                                  </HStack>
+                                )}
+                                <Box
+                                  as="button"
+                                  type="button"
+                                  data-testid="custom-technology-options-toggle"
+                                  display="flex"
+                                  alignItems="center"
+                                  justifyContent="center"
+                                  gap="6px"
+                                  w="full"
+                                  py={1.5}
+                                  rounded="md"
+                                  bg="transparent"
+                                  color="gray.400"
+                                  fontSize="xs"
+                                  fontWeight="medium"
+                                  letterSpacing="0.02em"
+                                  cursor="pointer"
+                                  transition="color 150ms ease, background 150ms ease"
+                                  _hover={{ color: 'gray.200', bg: 'whiteAlpha.50' }}
+                                  onClick={(event: React.MouseEvent) => {
+                                    event.stopPropagation()
+                                    setCustomTechnologyOptionsOpen((value) => !value)
+                                  }}
+                                >
+                                  <Box
+                                    flex={1}
+                                    h="1px"
+                                    bg="whiteAlpha.100"
+                                  />
+                                  <HStack spacing="4px" flexShrink={0}>
+                                    <Text fontSize="xs" lineHeight="1">
+                                      {customTechnologyOptionsOpen ? 'Hide optional fields' : 'Show optional fields'}
+                                    </Text>
+                                    <Box
+                                      as="span"
+                                      display="inline-flex"
+                                      transition="transform 200ms ease"
+                                      transform={customTechnologyOptionsOpen ? 'rotate(180deg)' : 'rotate(0deg)'}
+                                    >
+                                      <ChevronDownIcon size={10} strokeWidth={2.5} />
+                                    </Box>
+                                  </HStack>
+                                  <Box
+                                    flex={1}
+                                    h="1px"
+                                    bg="whiteAlpha.100"
+                                  />
+                                </Box>
+                                {customTechnologyOptionsOpen && (
+                                  <VStack
+                                    align="stretch"
+                                    spacing={3}
+                                    p={3}
+                                    rounded="md"
+                                    bg="whiteAlpha.50"
+                                    border="1px solid"
+                                    borderColor="whiteAlpha.100"
+                                  >
+                                    <Box>
+                                      <Text fontSize="xs" color="gray.400" mb={1} fontWeight="medium">Short name</Text>
+                                      <Input
+                                        data-testid="custom-technology-short-name"
+                                        size="sm"
+                                        value={customTechnologyShortName}
+                                        onChange={(event) => setCustomTechnologyShortName(event.target.value)}
+                                        placeholder="e.g. K8s"
+                                        isDisabled={customTechnologySaving}
+                                      />
+                                    </Box>
+                                    <Box>
+                                      <Text fontSize="xs" color="gray.400" mb={1} fontWeight="medium">Aliases</Text>
+                                      <Input
+                                        data-testid="custom-technology-aliases"
+                                        size="sm"
+                                        value={customTechnologyAliases}
+                                        onChange={(event) => setCustomTechnologyAliases(event.target.value)}
+                                        placeholder="Comma separated, e.g. k8s, kube"
+                                        isDisabled={customTechnologySaving}
+                                      />
+                                    </Box>
+                                  </VStack>
+                                )}
+                                <Button
+                                  data-testid="custom-technology-save"
+                                  size="sm"
+                                  colorScheme="blue"
+                                  isLoading={customTechnologySaving}
+                                  isDisabled={!customTechnologyCanCreate}
+                                  w="full"
+                                  onClick={(event) => {
+                                    event.stopPropagation()
+                                    void handleCreateCustomTechnology()
+                                  }}
+                                >
+                                  Create and attach
+                                </Button>
+                                {customTechnologyError && (
+                                  <Text data-testid="custom-technology-error" fontSize="xs" color="red.300">
+                                    {customTechnologyError}
+                                  </Text>
+                                )}
+                              </VStack>
+                            )}
+                          </VStack>
+                        </Box>
                       )}
                     </VStack>
                   </Box>
@@ -1010,8 +1538,10 @@ function ElementPanel({
                   {technologyLinks.map((link) => {
                     const meta = link.slug ? technologyMeta[link.slug] : undefined
                     const sourceUrl = meta?.websiteUrl || meta?.docsUrl
-                    const isSelectable = link.type === 'catalog' && !!link.slug && !isReadOnly
-                    const isPrimaryIcon = link.type === 'catalog' && !!(link.is_primary_icon ?? link.isPrimaryIcon) && !!link.slug
+                    const iconKey = technologyConnectorIconKey(link)
+                    const iconUrl = resolveTechnologyConnectorIconUrl(link, meta?.iconUrl)
+                    const isSelectable = !!iconKey && !isReadOnly
+                    const isPrimaryIcon = !!iconKey && !!(link.is_primary_icon ?? link.isPrimaryIcon)
                     return (
                       <WrapItem key={`${link.type}:${link.slug ?? link.label}`}>
                         <Popover trigger={isMobile ? 'click' : 'hover'} placement="top" closeOnBlur>
@@ -1026,12 +1556,12 @@ function ElementPanel({
                               color={isPrimaryIcon ? 'white' : undefined}
                               cursor={isSelectable ? 'pointer' : 'default'}
                               onClick={() => {
-                                if (isSelectable && link.slug) togglePrimaryIcon(link.slug)
+                                if (isSelectable && iconKey) togglePrimaryIcon(iconKey)
                               }}
                             >
                               <TagLabel color="white">
-                                {link.type === 'catalog' && meta && (
-                                  <Box as="img" src={resolveWithBase(meta.iconUrl)} alt={link.label} boxSize="12px" objectFit="contain" display="inline-block" mr={1.5} verticalAlign="middle" />
+                                {iconUrl && (
+                                  <Box as="img" src={resolveWithBase(iconUrl)} alt={link.label} boxSize="12px" objectFit="contain" display="inline-block" mr={1.5} verticalAlign="middle" />
                                 )}
                                 {link.label}
                               </TagLabel>
@@ -1052,7 +1582,7 @@ function ElementPanel({
                             <PopoverBody>
                               <VStack align="stretch" spacing={1}>
                                 <Text fontSize="sm" color="white" fontWeight="semibold">{meta?.name || link.label}</Text>
-                                <Text fontSize="xs" color="gray.400">{link.type === 'custom' ? 'Custom technology' : (meta?.provider || 'General')}</Text>
+                                <Text fontSize="xs" color="gray.400">{iconKey?.startsWith('fa:') ? 'Font Awesome icon' : (link.type === 'custom' ? 'Custom technology' : (meta?.provider || 'General'))}</Text>
                                 {sourceUrl && (
                                   <Text as="button" type="button" onClick={() => openExternalUrl(sourceUrl)} fontSize="xs" color="blue.300" textDecoration="underline" pointerEvents="auto" textAlign="left">
                                     {sourceUrl}
@@ -1066,8 +1596,6 @@ function ElementPanel({
                     )
                   })}
                 </Wrap>
-
-                <Text fontSize="10px" color="gray.500">Maximum 3 linked technologies.</Text>
               </VStack>
             </FormControl>
             <FormControl isDisabled={isReadOnly}>
@@ -1077,7 +1605,7 @@ function ElementPanel({
                 size="sm"
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
-                onBlur={scheduleAutoSave}
+                onBlur={() => scheduleAutoSave()}
                 placeholder="https://…"
               />
             </FormControl>
@@ -1088,8 +1616,9 @@ function ElementPanel({
                 availableTags={availableTags}
                 onAddTag={(tag) => {
                   if (!tags.includes(tag)) {
-                    setTags((prev) => [...prev, tag])
-                    scheduleAutoSave()
+                    const nextTags = [...tags, tag]
+                    setTags(nextTags)
+                    scheduleAutoSave({ tags: nextTags })
                   }
                 }}
                 isReadOnly={isReadOnly}
@@ -1101,8 +1630,9 @@ function ElementPanel({
                       <TagLabel color="white">{tag}</TagLabel>
                       {!isReadOnly && (
                         <TagCloseButton data-testid="element-panel-tag-remove" onClick={() => {
-                          setTags((prev) => prev.filter((t) => t !== tag))
-                          scheduleAutoSave()
+                          const nextTags = tags.filter((t) => t !== tag)
+                          setTags(nextTags)
+                          scheduleAutoSave({ tags: nextTags })
                         }} />
                       )}
                     </Tag>
@@ -1136,7 +1666,7 @@ function ElementPanel({
                       <>
                         <HStack justify="space-between" align="flex-start" mb={2.5}>
                           <Box>
-                            <Text fontSize="xs" color="gray.500">Choose when this element starts appearing</Text>
+                            <Text fontSize="xs" color="gray.500">Choose when this element starts appearing when filtering is enabled.</Text>
                           </Box>
                         </HStack>
                         <Box px={1} pt={1} pb={0.5} mb={isEdit && canEdit && onMerge ? 3 : 0}>

@@ -11,9 +11,10 @@ import (
 
 // WorkspaceConfig is parsed from the workspace-local .tld.yaml.
 type WorkspaceConfig struct {
-	ProjectName  string                `yaml:"project_name,omitempty"`
-	Exclude      []string              `yaml:"exclude,omitempty"`
-	Repositories map[string]Repository `yaml:"repositories,omitempty"`
+	ProjectName     string                 `yaml:"project_name,omitempty"`
+	Exclude         []string               `yaml:"exclude,omitempty"`
+	Repositories    map[string]Repository  `yaml:"repositories,omitempty"`
+	WorkspaceSource *WorkspaceSourceConfig `yaml:"workspace_source,omitempty"`
 }
 
 // RepositoryConfig holds per-repository behavior flags.
@@ -21,13 +22,19 @@ type RepositoryConfig struct {
 	Mode string `yaml:"mode,omitempty"`
 }
 
+// WorkspaceSourceConfig holds opt-in Mermaid workspace sync settings.
+type WorkspaceSourceConfig struct {
+	ViewsDir string `yaml:"views_dir,omitempty"`
+}
+
 // Repository describes one repository in a multi-repo workspace.
 type Repository struct {
-	URL      string            `yaml:"url,omitempty"`
-	LocalDir string            `yaml:"localDir,omitempty"`
-	Root     string            `yaml:"root,omitempty"`
-	Config   *RepositoryConfig `yaml:"config,omitempty"`
-	Exclude  []string          `yaml:"exclude,omitempty"`
+	URL             string                 `yaml:"url,omitempty"`
+	LocalDir        string                 `yaml:"localDir,omitempty"`
+	Root            string                 `yaml:"root,omitempty"`
+	Config          *RepositoryConfig      `yaml:"config,omitempty"`
+	Exclude         []string               `yaml:"exclude,omitempty"`
+	WorkspaceSource *WorkspaceSourceConfig `yaml:"workspace_source,omitempty"`
 }
 
 // ViewPlacement is an element placement within another element's internal view.
@@ -162,6 +169,15 @@ type ResourceMetadata struct {
 	Conflict  bool       `yaml:"conflict,omitempty"` // True if both local and server changed since last sync
 }
 
+// WorkspaceSourceLock tracks refs managed by the Mermaid workspace source workflow.
+type WorkspaceSourceLock struct {
+	ViewsDir          string                       `yaml:"views_dir,omitempty"`
+	LastHash          string                       `yaml:"last_hash,omitempty"`
+	ManagedElements   map[string]*ResourceMetadata `yaml:"managed_elements,omitempty"`
+	ManagedViews      map[string]*ResourceMetadata `yaml:"managed_views,omitempty"`
+	ManagedConnectors map[string]*ResourceMetadata `yaml:"managed_connectors,omitempty"`
+}
+
 // LockFile tracks workspace versioning and change history
 type LockFile struct {
 	Version           string                       `yaml:"version"`    // "v1"
@@ -175,6 +191,7 @@ type LockFile struct {
 	CurrentElements   map[string]*ResourceMetadata `yaml:"current_elements,omitempty"`   // Current local element metadata, migrated from _meta_elements
 	CurrentViews      map[string]*ResourceMetadata `yaml:"current_views,omitempty"`      // Current local view metadata, migrated from _meta_views
 	CurrentConnectors map[string]*ResourceMetadata `yaml:"current_connectors,omitempty"` // Current local connector metadata; connector timestamps now live here
+	WorkspaceSource   *WorkspaceSourceLock         `yaml:"workspace_source,omitempty"`   // Mermaid workspace source managed refs
 }
 
 // ResourceCounts holds current model counts plus legacy fields retained for lockfile compatibility.

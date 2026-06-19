@@ -9,12 +9,13 @@ export interface TechnologyConnector {
 export interface TechnologyCatalogItem {
   iconUrl: string
   name: string
-  provider: string
-  docsUrl: string
-  description: string
-  websiteUrl: string
+  provider?: string
+  docsUrl?: string
+  description?: string
+  websiteUrl?: string
   nameShort: string
   defaultSlug: string
+  aliases?: string[]
 }
 
 export interface Tag {
@@ -129,6 +130,46 @@ export interface Connector {
   updated_at: string
 }
 
+export interface ViewComment {
+  id: number
+  org_id: string
+  view_id: number
+  diagram_id: number
+  thread_id: number
+  author_id: string
+  author_username: string
+  body: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ViewThread {
+  id: number
+  org_id: string
+  view_id: number
+  diagram_id: number
+  element_id: number | null
+  connector_id: number | null
+  created_by: string
+  created_by_username: string
+  status: 'open' | 'resolved'
+  created_at: string
+  resolved_at: string | null
+  comments: ViewComment[]
+}
+
+export interface ThreadResolveEvent {
+  thread_id: number
+  resolved: boolean
+}
+
+export interface ElementReactionSummary {
+  element_id: number
+  emoji: string
+  count: number
+  reacted_by_me: boolean
+}
+
 export interface ViewTreeNode {
   id: number
   owner_element_id?: number | null
@@ -141,6 +182,7 @@ export interface ViewTreeNode {
   created_at: string
   updated_at: string
   parent_view_id: number | null
+  markdown?: ViewMarkdownDocument | null
   children: ViewTreeNode[]
 }
 
@@ -148,6 +190,14 @@ export interface ViewMarkdownDocument {
   path: string
   is_managed: boolean
   updated_at: string
+  source_kind: 'PRIVATE_WORKSPACE' | 'PRIVATE_APP' | 'REPO' | 'ATTACHED' | string
+  exists: boolean
+  writable: boolean
+  can_edit: boolean
+  git_state: 'outside_repo' | 'ignored' | 'untracked' | 'modified' | 'deleted' | 'tracked' | 'unknown' | string
+  repo_relative_path?: string
+  linked_view_count: number
+  file_version: string
 }
 
 export interface ViewLayer {

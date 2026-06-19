@@ -5,8 +5,6 @@ export function inferImportFileFormat(path: string): ImportFileFormat {
   if (clean.endsWith('.dsl')) return 'structurizr'
   if (clean.endsWith('.yaml') || clean.endsWith('.yml')) return 'unsupported-yaml'
   if (
-    clean.endsWith('.mmd') ||
-    clean.endsWith('.mermaid') ||
     clean.endsWith('.md') ||
     clean.endsWith('.txt')
   ) {
@@ -21,7 +19,7 @@ export function unsupportedImportFileMessage(path: string) {
     return 'YAML workspace files are not supported by this import flow yet. Use Mermaid or Structurizr DSL.'
   }
   if (format === 'unsupported') {
-    return 'Unsupported file type. Choose a Mermaid, Markdown, Structurizr DSL, or text file.'
+    return 'Unsupported file type. Choose a Markdown, Structurizr DSL, or text file.'
   }
   return null
 }

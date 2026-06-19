@@ -104,6 +104,7 @@ func (p *rustParser) appendFunction(node *gotreesitter.Node, lang *gotreesitter.
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     kind,
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     int(nameNode.StartPoint().Row) + 1,
 		EndLine:  int(node.EndPoint().Row) + 1,
@@ -132,6 +133,7 @@ func (p *rustParser) appendSymbol(node *gotreesitter.Node, lang *gotreesitter.La
 	result.Symbols = append(result.Symbols, Symbol{
 		Name:     name,
 		Kind:     kind,
+		NodeType: nodeKind(node, lang),
 		FilePath: path,
 		Line:     int(nameNode.StartPoint().Row) + 1,
 		EndLine:  int(node.EndPoint().Row) + 1,

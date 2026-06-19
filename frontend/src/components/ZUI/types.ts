@@ -16,6 +16,20 @@ export interface ZUIViewState {
   originY?: number
 }
 
+export interface ZUITestInteraction {
+  type: 'wheel' | 'mouse' | 'touch' | 'dblclick' | 'gesture'
+  mode: string
+  deltaX?: number
+  deltaY?: number
+  deltaMode?: number
+  ctrlKey?: boolean
+  button?: number
+  scale?: number
+  factor?: number
+  zoomBefore?: number
+  zoomAfter?: number
+}
+
 /**
  * A node in the global world-space layout.
  *

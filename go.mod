@@ -1,18 +1,20 @@
 module github.com/mertcikla/tld/v2
 
-go 1.26.1
+go 1.26.2
 
 require (
-	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.20.0-20260530185800-eeadd0a49d13.1
-	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.11-20260530185800-eeadd0a49d13.1
+	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.20.0-20260613195140-80aca3bd89aa.1
+	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.11-20260613195140-80aca3bd89aa.1
 	connectrpc.com/connect v1.20.0
 	github.com/bmatcuk/doublestar/v4 v4.6.1
 	github.com/compose-spec/compose-go/v2 v2.10.2
 	github.com/fsnotify/fsnotify v1.10.0
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/odvcencio/gotreesitter v0.15.2
 	github.com/openai/openai-go v1.12.0
+	github.com/sammcj/mermaid-check v0.0.4
 	github.com/speps/go-hashids/v2 v2.0.1
 	github.com/spf13/cobra v1.10.1
 	github.com/tetratelabs/wazero v1.11.0
@@ -111,7 +113,6 @@ require (
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
 	github.com/googleapis/gax-go/v2 v2.17.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/aws-sdk-go-base/v2 v2.0.0-beta.72 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-getter v1.8.6 // indirect
@@ -131,7 +132,7 @@ require (
 	github.com/leaanthony/u v1.1.1 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
-	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-runewidth v0.0.23 // indirect
 	github.com/mattn/go-shellwords v1.0.12 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect

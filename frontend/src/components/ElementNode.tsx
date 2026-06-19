@@ -10,6 +10,7 @@ import { resolveElementIconUrl } from '../utils/elementIcon'
 import { ZoomInIcon, ZoomOutIcon, TrashIcon as TrashSvg, DrawIcon as EditSvg } from './Icons'
 import { vscodeBridge } from '../lib/vscodeBridge'
 import { openExternalUrl } from '../lib/desktop'
+import { parseSourceLink, sourceAnchorLabel } from '../utils/sourceLinks'
 import type { ExtensionToWebviewMessage } from '../types/vscode-messages'
 import { useElementSearch } from '../hooks/useElementSearch'
 import ElementCreateSearchResults from './ElementCreateSearchResults'
@@ -37,17 +38,10 @@ function VscodeCodePreview({
   const [isOpen, setIsOpen] = useState(false)
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const [relPath, anchorStr] = filePath.split('#')
-  const anchor = useMemo(() => {
-    try {
-      return anchorStr ? JSON.parse(decodeURIComponent(anchorStr)) : null
-    } catch {
-      return null
-    }
-  }, [anchorStr])
-  const startLine = typeof anchor?.startLine === 'number' ? anchor.startLine : undefined
-  const symbolName = typeof anchor?.name === 'string' ? anchor.name : fallbackSymbolName
-  const symbolKind = typeof anchor?.type === 'string' ? anchor.type : fallbackSymbolKind ?? undefined
+  const { basePath: relPath, anchor } = useMemo(() => parseSourceLink(filePath), [filePath])
+  const startLine = anchor.kind === 'line' ? anchor.startLine : undefined
+  const symbolName = anchor.kind === 'symbol' ? anchor.symbolName : fallbackSymbolName
+  const symbolKind = anchor.kind === 'symbol' ? anchor.nodeType : fallbackSymbolKind ?? undefined
 
   useEffect(() => {
     if (!isOpen) return
@@ -160,6 +154,7 @@ interface NodeData extends PlacedElement {
   interactionSourceId: number | null
   onOpenCodePreview?: (elementId: number) => void
   isClickConnectMode?: boolean
+  isCreateConnectMode?: boolean
   tagColors: Record<string, Tag>
   layerHighlightColor?: string
   forceShowTagPopup?: boolean
@@ -673,6 +668,7 @@ function ElementNode({ data, selected }: Props) {
 
   const onPointerDown = (e: React.PointerEvent) => {
     if (isPending) return
+    if (e.pointerType !== 'touch' && e.button !== 0) return
     if ((e.target as Element).closest('.react-flow__handle')) return
     pointerStart.current = { x: e.clientX, y: e.clientY }
     longPressActivated.current = false
@@ -715,6 +711,15 @@ function ElementNode({ data, selected }: Props) {
       e.stopPropagation()
       return
     }
+    if (Date.now() < suppressHandleClickUntil.current) {
+      suppressHandleClickUntil.current = 0
+      e.stopPropagation()
+      return
+    }
+    if ((e.target as Element).closest('.react-flow__handle')) {
+      e.stopPropagation()
+      return
+    }
     if (longPressActivated.current) {
       longPressActivated.current = false
       return
@@ -735,6 +740,7 @@ function ElementNode({ data, selected }: Props) {
 
   const isSource = data.interactionSourceId === data.element_id
   const isTarget = !!data.interactionSourceId && !isSource
+  const isCreateConnectMode = !!data.isCreateConnectMode
 
   const bodyCursor = isPending ? 'grab' : isSource ? 'crosshair' : isTarget ? 'cell' : 'pointer'
   const versionColor = data.versionChangeType === 'added'
@@ -788,8 +794,11 @@ function ElementNode({ data, selected }: Props) {
         HANDLE_SLOTS.map((slot) => {
           const handleId = getVisualHandleId(side, slot)
           const isFallbackSlot = slot === HANDLE_SLOT_CENTER_INDEX && !activeSides.has(side)
+          const isPreviewHiddenSlot = isCreateConnectMode && slot !== HANDLE_SLOT_CENTER_INDEX
           const className = [
             'element-node-handle',
+            slot === HANDLE_SLOT_CENTER_INDEX ? 'handle-center-slot' : 'handle-visual-slot',
+            isPreviewHiddenSlot ? 'handle-hidden-during-create' : '',
             connectedHandleIds.has(handleId) ? 'handle-active-slot' : '',
             isFallbackSlot ? 'handle-fallback-slot' : '',
             connectedHandleIds.has(handleId) ? 'handle-connected' : '',
@@ -803,7 +812,7 @@ function ElementNode({ data, selected }: Props) {
                 position={position}
                 id={handleId}
                 className={className}
-                isConnectable={!isPending}
+                isConnectable={!isPending && !isPreviewHiddenSlot}
                 onPointerDown={(e: React.PointerEvent) => {
                   if (isPending) return
                   if (data.interactionSourceId === data.element_id) {
@@ -813,31 +822,39 @@ function ElementNode({ data, selected }: Props) {
                     data.onInteractionStart(data.element_id)
                   }
                 }}
-                onClick={(e: React.MouseEvent) => {
-                  if (isPending) return
-                  if (Date.now() < suppressHandleClickUntil.current) {
-                    suppressHandleClickUntil.current = 0
-                    e.preventDefault()
-                    e.stopPropagation()
-                    return
-                  }
-                  e.preventDefault()
-                  e.stopPropagation()
+                onMouseDown={(e: React.MouseEvent) => {
+                  if (isPending || e.button !== 0 || data.interactionSourceId === data.element_id) return
+                  suppressHandleClickUntil.current = Date.now() + 500
                   data.onInteractionStart(data.element_id, {
                     sourceHandle: handleId,
                     clientX: e.clientX,
                     clientY: e.clientY,
                   })
                 }}
+                onTouchStart={(e: React.TouchEvent) => {
+                  if (isPending || data.interactionSourceId === data.element_id) return
+                  const touch = e.touches[0]
+                  if (!touch) return
+                  suppressHandleClickUntil.current = Date.now() + 500
+                  data.onInteractionStart(data.element_id, {
+                    sourceHandle: handleId,
+                    clientX: touch?.clientX,
+                    clientY: touch?.clientY,
+                  })
+                }}
                 style={{
                   ...getVisualHandleStyle(position, slot),
                   background: isPending ? 'rgba(var(--accent-rgb), 0.45)' : 'var(--accent)',
-                  pointerEvents: isPending ? 'none' : undefined,
+                  pointerEvents: isPending || isPreviewHiddenSlot ? 'none' : undefined,
                 }}
               />
               {data.onStartHandleReconnect && reconnectCandidateByHandle.has(handleId) && (
                 <Box
                   position="absolute"
+                  data-testid="vieweditor-node-reconnect-zone"
+                  data-edge-id={reconnectCandidateByHandle.get(handleId)?.edgeId}
+                  data-endpoint={reconnectCandidateByHandle.get(handleId)?.endpoint}
+                  data-handle-id={handleId}
                   className="element-node-reconnect-zone"
                   style={getReconnectZoneStyle(position, slot)}
                   pointerEvents="auto"
@@ -1056,7 +1073,7 @@ function ElementNode({ data, selected }: Props) {
             <Tooltip
               label={
                 data.repo
-                  ? `View source: ${data.file_path?.includes('#') ? (() => { try { return JSON.parse(data.file_path.split('#')[1]).name } catch { return 'Link' } })() : 'Link'}${data.url ? ' / URL' : ''}`
+                  ? `View source: ${sourceAnchorLabel(parseSourceLink(data.file_path).anchor) || 'Link'}${data.url ? ' / URL' : ''}`
                   : 'Open Link'
               }
               placement="top"
@@ -1064,6 +1081,7 @@ function ElementNode({ data, selected }: Props) {
             >
               <Box
                 as="button"
+                data-testid="vieweditor-node-source-link"
                 display="flex"
                 alignItems="center"
                 justifyContent="center"
@@ -1367,10 +1385,18 @@ function arePropsEqual(prev: Props, next: Props) {
     p.file_path === n.file_path &&
     p.language === n.language &&
     p.isClickConnectMode === n.isClickConnectMode &&
+    p.isCreateConnectMode === n.isCreateConnectMode &&
     p.tagColors === n.tagColors &&
     p.layerHighlightColor === n.layerHighlightColor &&
     p.forceShowTagPopup === n.forceShowTagPopup &&
-    p.isMultiSelected === n.isMultiSelected
+    p.isMultiSelected === n.isMultiSelected &&
+    p.connectedHandleIds === n.connectedHandleIds &&
+    p.selectedHandleIds === n.selectedHandleIds &&
+    p.reconnectCandidates === n.reconnectCandidates &&
+    p.isConnectorHighlighted === n.isConnectorHighlighted &&
+    p.versionChangeType === n.versionChangeType &&
+    p.versionLineDelta === n.versionLineDelta &&
+    p.parentViewId === n.parentViewId
   )
 }
 

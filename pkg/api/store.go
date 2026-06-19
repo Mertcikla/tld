@@ -8,6 +8,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
@@ -18,6 +19,9 @@ import (
 // ErrUnimplemented is returned by Store methods that are not supported by a
 // particular implementation (e.g. versioning in the offline tld app).
 var ErrUnimplemented = errors.New("not implemented")
+
+// ErrMarkdownFileChanged is returned when a save includes a stale file token.
+var ErrMarkdownFileChanged = errors.New("markdown file changed on disk")
 
 type contextKey string
 
@@ -41,21 +45,21 @@ func WithWorkspaceID(ctx context.Context, id uuid.UUID) context.Context {
 
 // ElementInput holds mutable fields for element create/update.
 type ElementInput struct {
-	Name        string
-	Description *string
-	Kind        *string
-	Technology  *string
-	URL         *string
-	LogoURL     *string
-	TechLinks   []*diagv1.TechnologyLink
-	Tags        []string
-	Repo        *string
-	Branch      *string
-	Language    *string
-	FilePath    *string
+	Name            string
+	Description     *string
+	Kind            *string
+	Technology      *string
+	URL             *string
+	LogoURL         *string
+	TechLinks       []*diagv1.TechnologyLink
+	Tags            []string
+	Repo            *string
+	Branch          *string
+	Language        *string
+	FilePath        *string
 	BypassNoiseGate *bool
-	HasView     bool
-	ViewLabel   *string
+	HasView         bool
+	ViewLabel       *string
 }
 
 // ConnectorInput holds mutable fields for connector create/update.
@@ -74,6 +78,25 @@ type ConnectorInput struct {
 	Tags         []string
 }
 
+// CollaborationIdentity is the per-request/display identity used by core
+// collaboration without creating a user/account system.
+type CollaborationIdentity struct {
+	ClientID string
+	UserID   string
+	Username string
+}
+
+// RealtimeDrawingInput holds durable freehand/text drawing state for a view.
+type RealtimeDrawingInput struct {
+	PathID   string
+	UserID   string
+	Points   json.RawMessage
+	Color    string
+	Width    float64
+	Text     string
+	FontSize float64
+}
+
 // Store is the persistence interface for the shared workspace API.
 // Implementations exist for PostgreSQL (backend) and SQLite (tld).
 type Store interface {
@@ -85,9 +108,9 @@ type Store interface {
 	GetViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID) (*diagv1.ViewMarkdownDocument, string, error)
 	CreateView(ctx context.Context, workspaceID uuid.UUID, ownerElementID *int32, name string, label *string, isRoot bool) (*diagv1.View, error)
 	UpdateView(ctx context.Context, id int32, workspaceID uuid.UUID, name string, description *string, label *string, tags []string) (*diagv1.View, error)
-	CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string) (*diagv1.View, error)
+	CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string, targetKind string, path *string) (*diagv1.View, error)
 	LinkViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, path string) (*diagv1.View, error)
-	SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string) (*diagv1.ViewMarkdownDocument, error)
+	SaveViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, content string, expectedFileVersion *string, force bool) (*diagv1.ViewMarkdownDocument, error)
 	UnlinkViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, deleteManagedFile bool) (*diagv1.View, error)
 	DeleteView(ctx context.Context, id int32, workspaceID uuid.UUID) error
 
@@ -131,6 +154,18 @@ type Store interface {
 	UpdateTag(ctx context.Context, workspaceID uuid.UUID, name, color string, description *string) error
 	DeleteTag(ctx context.Context, workspaceID uuid.UUID, name string) error
 
+	// Collaboration
+	ListViewThreads(ctx context.Context, workspaceID uuid.UUID, viewID int32, elementID, connectorID *int32) ([]*diagv1.ThreadInfo, error)
+	CreateViewThread(ctx context.Context, workspaceID uuid.UUID, viewID int32, elementID, connectorID *int32, createdBy, createdByUsername string) (*diagv1.ThreadInfo, error)
+	GetViewThread(ctx context.Context, workspaceID uuid.UUID, viewID, threadID int32) (*diagv1.ThreadInfo, error)
+	SetViewThreadResolved(ctx context.Context, workspaceID uuid.UUID, viewID, threadID int32, resolved bool) error
+	CreateViewComment(ctx context.Context, workspaceID uuid.UUID, viewID, threadID int32, authorID, authorUsername, body string) (*diagv1.CommentInfo, error)
+	ListViewElementReactions(ctx context.Context, workspaceID uuid.UUID, viewID int32, userID string) ([]*diagv1.NodeReactionSummary, error)
+	ToggleElementReaction(ctx context.Context, workspaceID uuid.UUID, viewID, elementID int32, userID, emoji string) (bool, error)
+	ListDrawings(ctx context.Context, workspaceID uuid.UUID, viewID int32) ([]RealtimeDrawingInput, error)
+	UpsertDrawing(ctx context.Context, workspaceID uuid.UUID, viewID int32, input RealtimeDrawingInput) error
+	DeleteDrawing(ctx context.Context, workspaceID uuid.UUID, viewID int32, pathID string) error
+
 	// ApplyPlan atomically applies a CLI workspace plan (create/update elements, views, connectors).
 	ApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error)
 
@@ -142,4 +177,10 @@ type Store interface {
 	SetVersioningEnabled(ctx context.Context, workspaceID uuid.UUID, enabled bool) error
 	// GetWorkspaceResourceCounts returns current view/element/connector counts (for version snapshots).
 	GetWorkspaceResourceCounts(ctx context.Context, workspaceID uuid.UUID) (views, elements, connectors int, err error)
+}
+
+// TransactionalStore is implemented by Store adapters that can run a logical
+// workspace mutation against a transaction-bound store.
+type TransactionalStore interface {
+	RunInTransaction(ctx context.Context, fn func(context.Context, Store) error) error
 }

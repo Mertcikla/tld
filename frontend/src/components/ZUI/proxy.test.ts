@@ -66,6 +66,8 @@ describe('collectVisibleNodeAnchors', () => {
 
     expect(anchors.visibleAnchors.get(1)?.renderAlpha).toBeGreaterThanOrEqual(DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA)
     expect(anchors.visibleAnchors.get(2)?.renderAlpha).toBeGreaterThanOrEqual(DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA)
+    expect(anchors.visibleAnchors.get(1)?.nativeRendered).toBe(true)
+    expect(anchors.visibleAnchors.get(2)?.nativeRendered).toBe(true)
   })
 
   it('keeps ancestor anchors eligible while the body fades into the dashed border', () => {
@@ -93,6 +95,7 @@ function anchor(partial: Partial<VisibleNodeAnchor>): VisibleNodeAnchor {
     worldH: partial.worldH ?? 100,
     pathDepth: partial.pathDepth ?? 1,
     renderAlpha: partial.renderAlpha ?? 1,
+    nativeRendered: partial.nativeRendered ?? true,
   }
 }
 

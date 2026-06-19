@@ -14,6 +14,25 @@ type EventQueue struct {
 	stopOnce sync.Once
 }
 
+type WatchEventPublisher interface {
+	Publish(Event)
+}
+
+type QueueEventPublisher struct {
+	Queue *EventQueue
+}
+
+func (p QueueEventPublisher) Publish(event Event) {
+	emit(p.Queue, event)
+}
+
+func emit(eq *EventQueue, event Event) {
+	if eq == nil {
+		return
+	}
+	eq.Push(event)
+}
+
 // NewEventQueue creates a new unbounded event queue.
 func NewEventQueue() *EventQueue {
 	eq := &EventQueue{

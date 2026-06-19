@@ -1,4 +1,5 @@
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
+import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import type { SceneGraph, SceneNode } from './sceneGraph'
 import type { ZUITransitionRebase } from './layoutEngine'
 import {
@@ -20,6 +21,8 @@ const BADGE_THRESHOLD = 100
 const CONNECTOR_MIN_ALPHA = 0.32
 const CONNECTOR_MAX_ALPHA = 0.95
 const CONNECTOR_LINE_PX = 2
+const CONNECTOR_ENDPOINT_MIN_ALPHA = 0.35
+const MIN_NODE_W_FOR_CONNECTOR_DETAIL = 120
 
 const MIN_FONT_HINT = 12
 const MAX_FONT_HINT = 24
@@ -34,6 +37,13 @@ export interface ScreenRect {
   top: number
   right: number
   bottom: number
+}
+
+export interface EdgeLabelDrawRect {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
 const frameLabelRects: ScreenRect[] = []
@@ -287,6 +297,15 @@ export function pickEdgeLabelPosition(
   return { x: midX, y: midY }
 }
 
+export function edgeLabelDrawRectFromCenter(center: { x: number; y: number }, width: number, height: number): EdgeLabelDrawRect {
+  return {
+    x: center.x - width / 2,
+    y: center.y - height / 2,
+    width,
+    height,
+  }
+}
+
 function pickNavigationHintPosition(
   matrix: DOMMatrix,
   candidates: Array<{ x: number; y: number }>,
@@ -398,6 +417,18 @@ function drawArrowHead(ctx: CanvasRenderingContext2D, x: number, y: number, angl
   ctx.fillStyle = color
   ctx.fill()
   ctx.restore()
+}
+
+export function shouldDrawConnectorDetailLabel(direction: string | null | undefined, visualSourceScreenW: number, visualTargetScreenW: number): boolean {
+  const dir = direction ?? 'forward'
+  const sourceVisible = visualSourceScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
+  const targetVisible = visualTargetScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
+
+  if (dir === 'forward') return targetVisible
+  if (dir === 'backward') return sourceVisible
+  if (dir === 'both' || dir === 'bidirectional') return sourceVisible || targetVisible
+
+  return sourceVisible || targetVisible
 }
 
 function drawGroupLabel(
@@ -940,6 +971,12 @@ function nodeSelfAlphaFromState(node: SceneNode): number {
   return 1 - node.state.t
 }
 
+export function nodeConnectorEndpointAlphaFromState(node: SceneNode): number {
+  const selfAlpha = nodeSelfAlphaFromState(node)
+  if (node.layout.children.length === 0 || node.state.inheritedAlpha <= 0.01) return selfAlpha
+  return Math.max(selfAlpha, Math.min(node.state.inheritedAlpha, CONNECTOR_ENDPOINT_MIN_ALPHA))
+}
+
 function getHandlePos(
   nodeX: number, nodeY: number, nodeW: number, nodeH: number,
   handleId: string | null, isSource: boolean, slotScale = 1,
@@ -999,8 +1036,8 @@ function drawEdges(
       }
 
       const endpointAlphaFactor = Math.min(
-        nodeSelfAlphaFromState(sn),
-        targetSn ? nodeSelfAlphaFromState(targetSn) : 1,
+        nodeConnectorEndpointAlphaFromState(sn),
+        targetSn ? nodeConnectorEndpointAlphaFromState(targetSn) : 1,
       )
       const edgeAlpha = alpha * endpointAlphaFactor
       if (edgeAlpha < 0.05) continue
@@ -1124,36 +1161,38 @@ function drawEdges(
       } else if (type === 'step' || type === 'smoothstep') {
         const borderRadius = type === 'smoothstep' ? 6 / zoom : 0
 
-        const points: Array<{ x: number; y: number }> = [{ x: sH.x, y: sH.y }]
-        const sOrth = sH.pos === 'left' || sH.pos === 'right' ? 'h' : 'v'
-        const tOrth = tH.pos === 'left' || tH.pos === 'right' ? 'h' : 'v'
+        const points = stepRoutePoints(
+          sH.x,
+          sH.y,
+          tH.x,
+          tH.y,
+          positionForHandleSide(sH.pos),
+          positionForHandleSide(tH.pos),
+          effWSource,
+          effHSource,
+          effWTarget,
+          effHTarget,
+        )
 
-        if (sOrth === 'h' && tOrth === 'h') {
-          points.push({ x: midX, y: sH.y })
-          points.push({ x: midX, y: tH.y })
-        } else if (sOrth === 'v' && tOrth === 'v') {
-          points.push({ x: sH.x, y: midY })
-          points.push({ x: tH.x, y: midY })
-        } else if (sOrth === 'h' && tOrth === 'v') {
-          points.push({ x: tH.x, y: sH.y })
-        } else if (sOrth === 'v' && tOrth === 'h') {
-          points.push({ x: sH.x, y: tH.y })
-        }
-        points.push({ x: tH.x, y: tH.y })
+        if (points.length > 1) {
+          let maxLen = -1
+          let bestIdx = 0
+          const startIdx = points.length >= 4 ? 1 : 0
+          const endIdx = points.length >= 4 ? points.length - 2 : points.length - 1
 
-        if (points.length === 4) {
-          midX = (points[1].x + points[2].x) / 2
-          midY = (points[1].y + points[2].y) / 2
-        } else if (points.length === 3) {
-          const d1 = Math.abs(points[1].x - points[0].x) + Math.abs(points[1].y - points[0].y)
-          const d2 = Math.abs(points[2].x - points[1].x) + Math.abs(points[2].y - points[1].y)
-          if (d1 > d2) {
-            midX = (points[0].x + points[1].x) / 2
-            midY = (points[0].y + points[1].y) / 2
-          } else {
-            midX = (points[1].x + points[2].x) / 2
-            midY = (points[1].y + points[2].y) / 2
+          for (let i = startIdx; i < endIdx; i++) {
+            const p1 = points[i]
+            const p2 = points[i + 1]
+            const len = Math.hypot(p2.x - p1.x, p2.y - p1.y)
+            if (len > maxLen) {
+              maxLen = len
+              bestIdx = i
+            }
           }
+          const p1 = points[bestIdx]
+          const p2 = points[bestIdx + 1]
+          midX = (p1.x + p2.x) / 2
+          midY = (p1.y + p2.y) / 2
         }
 
         ctx.beginPath()
@@ -1197,22 +1236,23 @@ function drawEdges(
       const visualSourceScreenW = effWSource * zoom
 
       const ARROW_SIZE_BASE = 10
-      const MIN_NODE_W_FOR_ARROW = 120
+      const sourceConnectorDetailVisible = visualSourceScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
+      const targetConnectorDetailVisible = visualTargetScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
 
       if (dir === 'forward' || dir === 'both' || dir === 'bidirectional') {
-        if (visualTargetScreenW > MIN_NODE_W_FOR_ARROW) {
+        if (targetConnectorDetailVisible) {
           const arrowScreenSize = Math.min(ARROW_SIZE_BASE, visualTargetScreenW * 0.2)
           drawArrowHead(ctx, tH.x, tH.y, finalAngleT, arrowScreenSize / zoom, accent)
         }
       }
       if (dir === 'backward' || dir === 'both' || dir === 'bidirectional') {
-        if (visualSourceScreenW > MIN_NODE_W_FOR_ARROW) {
+        if (sourceConnectorDetailVisible) {
           const arrowScreenSize = Math.min(ARROW_SIZE_BASE, visualSourceScreenW * 0.2)
           drawArrowHead(ctx, sH.x, sH.y, finalAngleS, arrowScreenSize / zoom, accent)
         }
       }
 
-      if (!lowDetail && edge.label) {
+      if (!lowDetail && edge.label && shouldDrawConnectorDetailLabel(dir, visualSourceScreenW, visualTargetScreenW)) {
         const screenFontSize = 12
         const worldFontSize = screenFontSize / zoom
         ctx.font = `${worldFontSize}px Inter, system-ui, sans-serif`
@@ -1226,7 +1266,7 @@ function drawEdges(
         const labelW = textW + padX * 2
         const labelH = worldFontSize * 1.2 + padY * 2
 
-        const labelPos = pickEdgeLabelPosition(
+        const labelCenter = pickEdgeLabelPosition(
           ctx.getTransform(),
           midX, midY,
           labelW, labelH,
@@ -1234,16 +1274,17 @@ function drawEdges(
           tH.y - sH.y,
           occupiedLabelRects,
         )
+        const labelRect = edgeLabelDrawRectFromCenter(labelCenter, labelW, labelH)
 
         ctx.fillStyle = labelBg
         ctx.globalAlpha = Math.min(edgeAlpha, connectorAlpha(edgeAlpha * 1.1))
         ctx.beginPath()
-        ctx.roundRect(labelPos.x, labelPos.y, labelW, labelH, 4 / zoom)
+        ctx.roundRect(labelRect.x, labelRect.y, labelRect.width, labelRect.height, 4 / zoom)
         ctx.fill()
 
         ctx.globalAlpha = edgeAlpha
         ctx.fillStyle = '#cbd5e0'
-        ctx.fillText(edge.label, labelPos.x + labelW / 2, labelPos.y + labelH / 2)
+        ctx.fillText(edge.label, labelCenter.x, labelCenter.y)
       }
 
       ctx.restore()
