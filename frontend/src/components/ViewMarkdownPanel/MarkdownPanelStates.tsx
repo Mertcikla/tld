@@ -126,25 +126,71 @@ export function MarkdownSetupState({
   suggestedRepoPath,
 }: MarkdownSetupStateProps) {
   return (
-    <VStack justify="center" align="stretch" spacing={4} h="full" color="whiteAlpha.800" px={6} textAlign="left">
+    <VStack justify="center" align="stretch" spacing={5} h="full" color="whiteAlpha.800" px={6}>
       <Box textAlign="center">
-        <Text fontSize="sm" fontWeight="semibold">No notes for this view</Text>
+        <Text fontSize="sm" fontWeight="semibold">Markdown Notes</Text>
         <Text fontSize="xs" color="gray.500" mt={1}>
-          {dbOnlyNotes ? 'Create a private note for this view.' : 'Choose where this view\'s markdown notes should live.'}
+          {dbOnlyNotes
+            ? 'Create a personal note attached to this view with easy export and insert the view as a mermaid diagram'
+            : 'Attach a markdown document to keep notes alongside this view. Export, insert and sync the view as a mermaid diagram'}
         </Text>
       </Box>
-      <Button
-        data-testid="view-markdown-create-private"
-        size="sm"
-        colorScheme="blue"
-        onClick={() => { void onCreateMarkdown?.(dbOnlyNotes ? 'PRIVATE_APP' : 'PRIVATE_WORKSPACE') }}
-        isDisabled={!canEdit || !onCreateMarkdown}
-      >
-        {dbOnlyNotes ? 'Create note' : 'Create private note'}
-      </Button>
-      {!dbOnlyNotes && (
-        <>
-          <VStack spacing={2} align="stretch">
+
+      {dbOnlyNotes ? (
+        <Button
+          data-testid="view-markdown-create-private"
+          size="sm"
+          colorScheme="blue"
+          onClick={() => { void onCreateMarkdown?.('PRIVATE_APP') }}
+          isDisabled={!canEdit || !onCreateMarkdown}
+        >
+          Create note
+        </Button>
+      ) : (
+        <HStack spacing={3} align="stretch">
+          {/* Option 1: local note */}
+          <VStack
+            flex={1}
+            align="stretch"
+            spacing={3}
+            borderWidth="1px"
+            borderColor="whiteAlpha.200"
+            borderRadius="md"
+            p={4}
+          >
+            <Box>
+              <Text fontSize="xs" fontWeight="semibold" mb={1}>Local note</Text>
+              <Text fontSize="xs" color="gray.500" lineHeight="tall">
+                Stored locally. Not committed to your repository, ideal for personal annotations.
+              </Text>
+            </Box>
+            <Button
+              data-testid="view-markdown-create-private"
+              size="sm"
+              colorScheme="blue"
+              onClick={() => { void onCreateMarkdown?.('PRIVATE_WORKSPACE') }}
+              isDisabled={!canEdit || !onCreateMarkdown}
+            >
+              Create local note
+            </Button>
+          </VStack>
+
+          {/* Option 2: repo file */}
+          <VStack
+            flex={1}
+            align="stretch"
+            spacing={3}
+            borderWidth="1px"
+            borderColor="whiteAlpha.200"
+            borderRadius="md"
+            p={4}
+          >
+            <Box>
+              <Text fontSize="xs" fontWeight="semibold" mb={1}>File in repo</Text>
+              <Text fontSize="xs" color="gray.500" lineHeight="tall">
+                Saved as a markdown file inside your project. Can be committed with your code and visible to your team.
+              </Text>
+            </Box>
             <Input
               data-testid="view-markdown-repo-path"
               size="sm"
@@ -159,11 +205,27 @@ export function MarkdownSetupState({
               onClick={() => { void onCreateMarkdown?.('REPO', repoPath.trim() || suggestedRepoPath) }}
               isDisabled={!canEdit || !onCreateMarkdown}
             >
-              Create repo note
+              Create file
             </Button>
           </VStack>
-          {showAttachPathInput ? (
-            <VStack spacing={2} align="stretch">
+
+          {/* Option 3: attach existing */}
+          <VStack
+            flex={1}
+            align="stretch"
+            spacing={3}
+            borderWidth="1px"
+            borderColor="whiteAlpha.200"
+            borderRadius="md"
+            p={4}
+          >
+            <Box>
+              <Text fontSize="xs" fontWeight="semibold" mb={1}>Existing file</Text>
+              <Text fontSize="xs" color="gray.500" lineHeight="tall">
+                Link a markdown file that already exists in your project or anywhere on disk.
+              </Text>
+            </Box>
+            {showAttachPathInput && (
               <Input
                 data-testid="view-markdown-attach-path"
                 size="sm"
@@ -171,6 +233,8 @@ export function MarkdownSetupState({
                 onChange={(event) => setAttachPath(event.target.value)}
                 placeholder="docs/overview.md or /absolute/path/overview.md"
               />
+            )}
+            {showAttachPathInput ? (
               <Button
                 data-testid="view-markdown-attach"
                 size="sm"
@@ -178,21 +242,21 @@ export function MarkdownSetupState({
                 onClick={() => { void onAttachMarkdown?.(attachPath.trim()) }}
                 isDisabled={!canEdit || !onAttachMarkdown || !attachPath.trim()}
               >
-                Attach existing file
+                Attach file
               </Button>
-            </VStack>
-          ) : (
-            <Button
-              data-testid="view-markdown-choose-file"
-              size="sm"
-              variant="outline"
-              onClick={() => { void handleAttachPickedFile() }}
-              isDisabled={!canEdit || !onAttachMarkdown}
-            >
-              Attach existing file
-            </Button>
-          )}
-        </>
+            ) : (
+              <Button
+                data-testid="view-markdown-choose-file"
+                size="sm"
+                variant="outline"
+                onClick={() => { void handleAttachPickedFile() }}
+                isDisabled={!canEdit || !onAttachMarkdown}
+              >
+                Choose file…
+              </Button>
+            )}
+          </VStack>
+        </HStack>
       )}
     </VStack>
   )
