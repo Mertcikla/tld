@@ -41,3 +41,39 @@ func TestImportResourcesDefaultsElementBypassNoiseGateFalse(t *testing.T) {
 		t.Fatal("ImportResources should not mutate caller-owned plan elements")
 	}
 }
+
+func TestParseStructurizrUsesRootViewForConnectors(t *testing.T) {
+	service := &ImportService{}
+
+	resp, err := service.ParseStructurizr(context.Background(), connect.NewRequest(&diagv1.ParseStructurizrRequest{
+		Code: `workspace {
+  model {
+    user = person "User"
+    app = softwareSystem "App"
+    user -> app "Uses"
+  }
+}`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	elements := resp.Msg.GetElements()
+	if len(elements) != 2 {
+		t.Fatalf("elements = %d, want 2", len(elements))
+	}
+	for _, element := range elements {
+		placements := element.GetPlacements()
+		if len(placements) != 1 || placements[0].GetParentRef() != "root" {
+			t.Fatalf("element %q placements = %+v, want one root placement", element.GetRef(), placements)
+		}
+	}
+
+	connectors := resp.Msg.GetConnectors()
+	if len(connectors) != 1 {
+		t.Fatalf("connectors = %d, want 1", len(connectors))
+	}
+	if got := connectors[0].GetViewRef(); got != "root" {
+		t.Fatalf("connector view ref = %q, want root", got)
+	}
+}

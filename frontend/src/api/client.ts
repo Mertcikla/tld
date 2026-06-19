@@ -471,14 +471,20 @@ interface ProtoViewMarkdownDocument {
 
 export function mapViewMarkdown(doc: ProtoViewMarkdownDocument | null | undefined): ViewMarkdownDocument | null {
   if (!doc?.path) return null
+  const hasModernMetadata = doc.sourceKind != null || doc.source_kind != null ||
+    doc.gitState != null || doc.git_state != null ||
+    doc.repoRelativePath != null || doc.repo_relative_path != null ||
+    doc.linkedViewCount != null || doc.linked_view_count != null ||
+    doc.fileVersion != null || doc.file_version != null
+  const defaultAvailability = !hasModernMetadata
   return {
     path: String(doc.path),
     is_managed: Boolean(doc.isManaged ?? doc.is_managed),
     updated_at: String(doc.updatedAt ?? doc.updated_at ?? ''),
     source_kind: String(doc.sourceKind ?? doc.source_kind ?? ''),
-    exists: Boolean(doc.exists ?? true),
-    writable: Boolean(doc.writable ?? true),
-    can_edit: Boolean(doc.canEdit ?? doc.can_edit ?? true),
+    exists: Boolean(doc.exists ?? defaultAvailability),
+    writable: Boolean(doc.writable ?? defaultAvailability),
+    can_edit: Boolean(doc.canEdit ?? doc.can_edit ?? defaultAvailability),
     git_state: String(doc.gitState ?? doc.git_state ?? 'unknown'),
     repo_relative_path: doc.repoRelativePath ?? doc.repo_relative_path,
     linked_view_count: Number(doc.linkedViewCount ?? doc.linked_view_count ?? 0),

@@ -47,11 +47,9 @@ func LayoutImport(parsed *ParsedDiagram, center Point) map[string]Point {
 		return layoutRefs(parsed, refs, center)
 	}
 
-	left, right, top, bottom := bounds(metadataPositions)
-	metadataCenter := Point{X: left + (right-left)/2, Y: top + (bottom-top)/2}
 	positions := map[string]Point{}
 	for ref, position := range metadataPositions {
-		positions[ref] = Point{X: center.X + position.X - metadataCenter.X, Y: center.Y + position.Y - metadataCenter.Y}
+		positions[ref] = position
 	}
 
 	missingRefs := make([]string, 0, len(refs))
@@ -64,12 +62,14 @@ func LayoutImport(parsed *ParsedDiagram, center Point) map[string]Point {
 		return positions
 	}
 
+	left, right, top, bottom := bounds(metadataPositions)
+	metadataCenter := Point{X: left + (right-left)/2, Y: top + (bottom-top)/2}
 	horizontal := parsed.Direction == DirectionLR || parsed.Direction == DirectionRL
 	reverse := parsed.Direction == DirectionRL || parsed.Direction == DirectionBT
 	metadataWidth := right - left
 	metadataHeight := bottom - top
 	offset := 0.0
-	fallbackCenter := center
+	fallbackCenter := metadataCenter
 	if horizontal {
 		offset = maxFloat(360, metadataWidth/2+320)
 		if reverse {

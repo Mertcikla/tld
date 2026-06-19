@@ -162,4 +162,20 @@ describe('markdown metadata mapping', () => {
       file_version: '',
     })
   })
+
+  it('maps omitted modern availability booleans as false for missing files', () => {
+    expect(mapViewMarkdown({
+      path: 'docs/missing.md',
+      sourceKind: 'ATTACHED',
+      gitState: 'deleted',
+      repoRelativePath: 'docs/missing.md',
+    })).toMatchObject({
+      source_kind: 'ATTACHED',
+      exists: false,
+      writable: false,
+      can_edit: false,
+      git_state: 'deleted',
+      repo_relative_path: 'docs/missing.md',
+    })
+  })
 })
