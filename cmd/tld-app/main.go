@@ -29,6 +29,10 @@ func main() {
 		return
 	}
 
+	if err := configureAppStoreRuntimePaths(); err != nil {
+		log.Fatalf("failed to configure app store runtime paths: %v", err)
+	}
+
 	_ = workspace.EnsureGlobalConfig()
 
 	cfg, err := workspace.LoadGlobalConfig()
@@ -105,6 +109,7 @@ func main() {
     <script>
         window.__TLD_SERVER_URL__ = 'http://%s';
         window.__TLD_APP__ = true;
+        window.__TLD_APP_STORE__ = %t;
         window.__TLD_PLATFORM__ = %q;
         window.__TLD_VERSION__ = %q;
 
@@ -132,7 +137,7 @@ func main() {
         document.addEventListener('gestureend', function(e) {
             e.preventDefault();
         }, { passive: false });
-    </script>`, app.Addr, runtime.GOOS, cmdversion.Version),
+    </script>`, app.Addr, appStoreBuild, runtime.GOOS, cmdversion.Version),
 								1,
 							)
 							w.Header().Set("Content-Type", "text/html; charset=utf-8")

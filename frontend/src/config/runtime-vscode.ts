@@ -26,6 +26,7 @@ export const appBase = '/app/'
 export const routerBasename = undefined
 export const isNativeApp = false
 export const isWailsApp = false
+export const isWailsAppStore = false
 export const wailsPlatform = undefined
 export const tldVersion = 'dev'
 export const isWailsMac = false

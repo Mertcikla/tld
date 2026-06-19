@@ -1,6 +1,7 @@
 package assets
 
 import (
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -53,7 +54,10 @@ func ExtractIcons(dstBase string) error {
 func materializeIconsTree() (string, error) {
 	root, err := os.MkdirTemp("", "tld-icons-*")
 	if err != nil {
-		return "", err
+		root, err = materializeIconsTreeInDataDir(err)
+		if err != nil {
+			return "", err
+		}
 	}
 
 	dist := filepath.Join(root, "frontend", "dist")
@@ -75,6 +79,22 @@ func materializeIconsTree() (string, error) {
 		return "", err
 	}
 
+	return root, nil
+}
+
+func materializeIconsTreeInDataDir(tempErr error) (string, error) {
+	dataDir, err := workspace.DataDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve icon cache dir after temp dir failed (%v): %w", tempErr, err)
+	}
+	base := filepath.Join(dataDir, "cache")
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		return "", fmt.Errorf("create icon cache dir after temp dir failed (%v): %w", tempErr, err)
+	}
+	root, err := os.MkdirTemp(base, "tld-icons-*")
+	if err != nil {
+		return "", fmt.Errorf("create icon cache dir after temp dir failed (%v): %w", tempErr, err)
+	}
 	return root, nil
 }
 

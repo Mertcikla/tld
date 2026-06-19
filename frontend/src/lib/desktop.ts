@@ -1,4 +1,4 @@
-import { isWailsApp } from '../config/runtime'
+import { isWailsApp, isWailsAppStore } from '../config/runtime'
 
 export interface DialogFilter {
   displayName: string
@@ -119,12 +119,18 @@ export async function checkForDesktopUpdate(): Promise<DesktopUpdateStatus> {
   if (!isWailsApp) {
     throw new Error('Update checks are only available in the desktop app')
   }
+  if (isWailsAppStore) {
+    throw new Error('Updates are managed by the Mac App Store')
+  }
   return desktopBridge().CheckForUpdate()
 }
 
 export async function installDesktopUpdate(): Promise<DesktopUpdateStatus> {
   if (!isWailsApp) {
     throw new Error('Self update is only available in the desktop app')
+  }
+  if (isWailsAppStore) {
+    throw new Error('Updates are managed by the Mac App Store')
   }
   return desktopBridge().InstallUpdate()
 }

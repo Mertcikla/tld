@@ -110,4 +110,20 @@ describe('desktop helpers', () => {
 
     await expect(checkForDesktopUpdate()).rejects.toThrow('desktop app')
   })
+
+  it('rejects self updates in Mac App Store mode', async () => {
+    const checkForUpdate = vi.fn()
+    const installUpdate = vi.fn()
+    installWindow({
+      __TLD_APP__: true,
+      __TLD_APP_STORE__: true,
+      go: { main: { DesktopBridge: { CheckForUpdate: checkForUpdate, InstallUpdate: installUpdate } } },
+    })
+    const { checkForDesktopUpdate, installDesktopUpdate } = await import('./desktop')
+
+    await expect(checkForDesktopUpdate()).rejects.toThrow('Mac App Store')
+    await expect(installDesktopUpdate()).rejects.toThrow('Mac App Store')
+    expect(checkForUpdate).not.toHaveBeenCalled()
+    expect(installUpdate).not.toHaveBeenCalled()
+  })
 })

@@ -41,6 +41,13 @@ func (b *DesktopBridge) CheckForUpdate() (DesktopUpdateStatus, error) {
 	if b.ctx == nil {
 		return DesktopUpdateStatus{}, errors.New("desktop bridge is not ready")
 	}
+	if appStoreBuild {
+		return DesktopUpdateStatus{
+			Current:   cmdversion.Version,
+			Supported: false,
+			Message:   "Updates are managed by the Mac App Store.",
+		}, nil
+	}
 	ctx, cancel := context.WithTimeout(b.ctx, selfupdate.DefaultCheckTimeout)
 	defer cancel()
 	status, _, err := checkDesktopUpdate(ctx, true)
@@ -50,6 +57,13 @@ func (b *DesktopBridge) CheckForUpdate() (DesktopUpdateStatus, error) {
 func (b *DesktopBridge) InstallUpdate() (DesktopUpdateStatus, error) {
 	if b.ctx == nil {
 		return DesktopUpdateStatus{}, errors.New("desktop bridge is not ready")
+	}
+	if appStoreBuild {
+		return DesktopUpdateStatus{
+			Current:   cmdversion.Version,
+			Supported: false,
+			Message:   "Updates are managed by the Mac App Store.",
+		}, errors.New("self update is disabled for Mac App Store builds")
 	}
 	ctx, cancel := context.WithTimeout(b.ctx, selfupdate.DefaultInstallTimeout)
 	defer cancel()
