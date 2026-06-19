@@ -107,6 +107,40 @@ func TestStaticFSMergesCustomIconCatalogAndFiles(t *testing.T) {
 	}
 }
 
+func TestStaticFSFallsBackToDataDirWhenTempDirIsNotWritable(t *testing.T) {
+	resetStaticFSForTest()
+	t.Cleanup(resetStaticFSForTest)
+
+	dataDir := t.TempDir()
+	t.Setenv("TLD_DATA_DIR", dataDir)
+	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
+
+	unwritable := filepath.Join(t.TempDir(), "unwritable")
+	if err := os.Mkdir(unwritable, 0o500); err != nil {
+		t.Fatalf("mkdir unwritable temp root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(unwritable, 0o700)
+	})
+	t.Setenv("TMPDIR", unwritable)
+
+	staticFS, err := StaticFS()
+	if err != nil {
+		t.Fatalf("StaticFS: %v", err)
+	}
+	if _, err := fs.ReadFile(staticFS, "frontend/dist/icons/go.svg"); err != nil {
+		t.Fatalf("read fallback icon: %v", err)
+	}
+
+	entries, err := os.ReadDir(filepath.Join(dataDir, "cache"))
+	if err != nil {
+		t.Fatalf("read fallback cache dir: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatal("expected icon overlay to be materialized under data dir cache")
+	}
+}
+
 func catalogContains(items []struct {
 	Name        string   `json:"name"`
 	DefaultSlug string   `json:"defaultSlug"`

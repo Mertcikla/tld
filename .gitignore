@@ -18,3 +18,4 @@ build/
 .bin/
 .gocache/
 testdata/
+wiki/

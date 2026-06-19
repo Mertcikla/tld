@@ -29,6 +29,10 @@ func main() {
 		return
 	}
 
+	if err := configureAppStoreRuntimePaths(); err != nil {
+		log.Fatalf("failed to configure app store runtime paths: %v", err)
+	}
+
 	_ = workspace.EnsureGlobalConfig()
 
 	cfg, err := workspace.LoadGlobalConfig()
