@@ -40,13 +40,7 @@ createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <ChakraProvider theme={theme}>
         <PlatformProvider platform={localPlatform}>
-          <BrowserRouter
-            basename={routerBasename}
-            future={{
-              v7_startTransition: false,
-              v7_relativeSplatPath: true,
-            }}
-          >
+          <BrowserRouter basename={routerBasename}>
             <App />
           </BrowserRouter>
           <ToastContainer />
