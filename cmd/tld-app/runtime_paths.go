@@ -9,8 +9,8 @@ import (
 
 const macAppStoreSupportDir = "tlDiagram"
 
-func configureAppStoreRuntimePaths() error {
-	if !appStoreBuild || runtime.GOOS != "darwin" {
+func configureDesktopRuntimePaths() error {
+	if !useMacContainerRuntimePaths() {
 		return nil
 	}
 	configRoot, err := os.UserConfigDir()
@@ -18,6 +18,13 @@ func configureAppStoreRuntimePaths() error {
 		return fmt.Errorf("resolve app store config dir: %w", err)
 	}
 	return setAppStoreRuntimePathEnv(configRoot)
+}
+
+func useMacContainerRuntimePaths() bool {
+	if runtime.GOOS != "darwin" {
+		return false
+	}
+	return appStoreBuild || os.Getenv("APP_SANDBOX_CONTAINER_ID") != ""
 }
 
 func setAppStoreRuntimePathEnv(configRoot string) error {

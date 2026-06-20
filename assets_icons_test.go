@@ -2,6 +2,7 @@ package assets
 
 import (
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ func resetStaticFSForTest() {
 	iconsFSOnce = sync.Once{}
 	iconsFS = nil
 	iconsFSErr = nil
+	materializeIconsTreeForStaticFS = materializeIconsTree
 }
 
 func TestStaticFSMergesCustomIconCatalogAndFiles(t *testing.T) {
@@ -138,6 +140,23 @@ func TestStaticFSFallsBackToDataDirWhenTempDirIsNotWritable(t *testing.T) {
 	}
 	if len(entries) == 0 {
 		t.Fatal("expected icon overlay to be materialized under data dir cache")
+	}
+}
+
+func TestStaticFSFallsBackToEmbeddedFSWhenIconMaterializationFails(t *testing.T) {
+	resetStaticFSForTest()
+	t.Cleanup(resetStaticFSForTest)
+
+	materializeIconsTreeForStaticFS = func() (string, error) {
+		return "", errors.New("icon cache denied")
+	}
+
+	staticFS, err := StaticFS()
+	if err != nil {
+		t.Fatalf("StaticFS returned error for recoverable icon materialization failure: %v", err)
+	}
+	if _, err := fs.ReadFile(staticFS, "frontend/dist/index.html"); err != nil {
+		t.Fatalf("read embedded index.html after icon materialization failure: %v", err)
 	}
 }
 
