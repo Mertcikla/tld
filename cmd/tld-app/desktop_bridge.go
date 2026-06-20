@@ -86,6 +86,26 @@ func (b *DesktopBridge) OpenTextFile(filters []DialogFilter) (FileDialogResult, 
 	return readTextFile(path)
 }
 
+func (b *DesktopBridge) PickWritableMarkdownFile() (FileDialogResult, error) {
+	if b.ctx == nil {
+		return FileDialogResult{}, errors.New("desktop bridge is not ready")
+	}
+	path, err := wailsruntime.OpenFileDialog(b.ctx, wailsruntime.OpenDialogOptions{
+		Title: "Choose Markdown File",
+		Filters: toWailsFilters([]DialogFilter{
+			{DisplayName: "Markdown Files (*.md;*.markdown;*.mdx)", Pattern: "*.md;*.markdown;*.mdx"},
+		}),
+		ResolvesAliases: true,
+	})
+	if err != nil {
+		return FileDialogResult{}, err
+	}
+	if strings.TrimSpace(path) == "" {
+		return FileDialogResult{Canceled: true}, nil
+	}
+	return writableMarkdownFile(path)
+}
+
 func (b *DesktopBridge) ReadTextFile(path string) (FileDialogResult, error) {
 	return readTextFile(path)
 }
@@ -130,6 +150,44 @@ func readTextFile(path string) (FileDialogResult, error) {
 		return FileDialogResult{}, err
 	}
 	return FileDialogResult{Path: cleanPath, Content: string(content)}, nil
+}
+
+func writableMarkdownFile(path string) (FileDialogResult, error) {
+	cleanPath := strings.TrimSpace(path)
+	if cleanPath == "" {
+		return FileDialogResult{}, errors.New("path is required")
+	}
+	if !isMarkdownFilePath(cleanPath) {
+		return FileDialogResult{}, errors.New("path must point to a markdown file")
+	}
+	info, err := os.Stat(cleanPath)
+	if err != nil {
+		return FileDialogResult{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return FileDialogResult{}, errors.New("path must point to a regular file")
+	}
+	if info.Mode().Perm()&0o222 == 0 {
+		return FileDialogResult{}, errors.New("markdown file is not writable")
+	}
+	file, err := os.OpenFile(cleanPath, os.O_WRONLY, 0)
+	if err != nil {
+		if os.IsPermission(err) {
+			return FileDialogResult{}, fmt.Errorf("markdown file is not writable: %w", err)
+		}
+		return FileDialogResult{}, err
+	}
+	if err := file.Close(); err != nil {
+		return FileDialogResult{}, err
+	}
+	return FileDialogResult{Path: cleanPath}, nil
+}
+
+func isMarkdownFilePath(path string) bool {
+	lower := strings.ToLower(strings.TrimSpace(path))
+	return strings.HasSuffix(lower, ".md") ||
+		strings.HasSuffix(lower, ".markdown") ||
+		strings.HasSuffix(lower, ".mdx")
 }
 
 func sanitizeDefaultFilename(value string) string {

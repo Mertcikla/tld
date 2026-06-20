@@ -96,7 +96,7 @@ import {
 } from './hooks/useViewContextNeighbours'
 import { canonicalNodePairKey } from './pairKey'
 import { vscodeBridge } from '../../lib/vscodeBridge'
-import { openTextFile } from '../../lib/desktop'
+import { pickWritableMarkdownFile } from '../../lib/desktop'
 import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
 
 import { ViewEditorContext } from './context'
@@ -1529,13 +1529,19 @@ function ViewEditorInner({
   }, [handleSaveMarkdown])
 
   const handlePickMarkdownFile = useCallback(async () => {
-    const result = await openTextFile([
-      { displayName: 'Markdown Files (*.md;*.markdown;*.mdx)', pattern: '*.md;*.markdown;*.mdx' },
-      { displayName: 'All Files (*.*)', pattern: '*.*' },
-    ])
-    if (result.canceled) return null
-    return result.path
-  }, [])
+    try {
+      const result = await pickWritableMarkdownFile()
+      if (result.canceled) return null
+      return result.path
+    } catch (error) {
+      toast({
+        status: 'error',
+        title: 'Failed to choose markdown file',
+        description: error instanceof Error ? error.message : String(error),
+      })
+      return null
+    }
+  }, [toast])
 
   const handleSaveMarkdownAs = useCallback(async (markdown: string) => {
     const baseName = sanitizeExportFilename(view?.name || 'view-notes')

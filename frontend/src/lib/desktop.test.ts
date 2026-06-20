@@ -82,6 +82,30 @@ describe('desktop helpers', () => {
     await expect(openTextFile()).resolves.toEqual({ path: '', content: '', canceled: true })
   })
 
+  it('picks writable markdown files through the desktop bridge', async () => {
+    const pickMarkdown = vi.fn().mockResolvedValue({ path: '/tmp/notes.md', content: '', canceled: false })
+    installWindow({ __TLD_APP__: true, go: { main: { DesktopBridge: { PickWritableMarkdownFile: pickMarkdown } } } })
+    const { pickWritableMarkdownFile } = await import('./desktop')
+
+    await expect(pickWritableMarkdownFile()).resolves.toEqual({ path: '/tmp/notes.md', content: '', canceled: false })
+    expect(pickMarkdown).toHaveBeenCalled()
+  })
+
+  it('returns canceled markdown picker results from the desktop bridge', async () => {
+    const pickMarkdown = vi.fn().mockResolvedValue({ path: '', content: '', canceled: true })
+    installWindow({ __TLD_APP__: true, go: { main: { DesktopBridge: { PickWritableMarkdownFile: pickMarkdown } } } })
+    const { pickWritableMarkdownFile } = await import('./desktop')
+
+    await expect(pickWritableMarkdownFile()).resolves.toEqual({ path: '', content: '', canceled: true })
+  })
+
+  it('rejects markdown picking outside Wails mode', async () => {
+    installWindow()
+    const { pickWritableMarkdownFile } = await import('./desktop')
+
+    await expect(pickWritableMarkdownFile()).rejects.toThrow('desktop app')
+  })
+
   it('checks desktop updates through the bridge in Wails mode', async () => {
     const updateStatus = {
       checked: true,
