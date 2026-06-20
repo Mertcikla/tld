@@ -36,6 +36,7 @@ type FileDropCallback = (x: number, y: number, paths: string[]) => void
 interface DesktopBridge {
   SaveFile(defaultFilename: string, filters: DialogFilter[], base64Content: string): Promise<SaveFileResult>
   OpenTextFile(filters: DialogFilter[]): Promise<FileDialogResult>
+  PickWritableMarkdownFile(): Promise<FileDialogResult>
   ReadTextFile(path: string): Promise<FileDialogResult>
   OpenPath(path: string): Promise<void>
   CheckForUpdate(): Promise<DesktopUpdateStatus>
@@ -106,6 +107,13 @@ export async function openTextFile(filters: DialogFilter[] = mermaidImportFilter
     throw new Error('Native file open is only available in the desktop app')
   }
   return desktopBridge().OpenTextFile(filters)
+}
+
+export async function pickWritableMarkdownFile(): Promise<FileDialogResult> {
+  if (!isWailsApp) {
+    throw new Error('Native markdown file picking is only available in the desktop app')
+  }
+  return desktopBridge().PickWritableMarkdownFile()
 }
 
 export async function readTextFile(path: string): Promise<FileDialogResult> {

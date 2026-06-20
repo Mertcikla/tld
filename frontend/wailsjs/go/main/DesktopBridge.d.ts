@@ -10,6 +10,8 @@ export function OpenPath(arg1:string):Promise<void>;
 
 export function OpenTextFile(arg1:Array<main.DialogFilter>):Promise<main.FileDialogResult>;
 
+export function PickWritableMarkdownFile():Promise<main.FileDialogResult>;
+
 export function ReadTextFile(arg1:string):Promise<main.FileDialogResult>;
 
 export function SaveFile(arg1:string,arg2:Array<main.DialogFilter>,arg3:string):Promise<main.SaveFileResult>;

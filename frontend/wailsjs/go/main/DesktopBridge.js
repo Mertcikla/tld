@@ -18,6 +18,10 @@ export function OpenTextFile(arg1) {
   return window['go']['main']['DesktopBridge']['OpenTextFile'](arg1);
 }
 
+export function PickWritableMarkdownFile() {
+  return window['go']['main']['DesktopBridge']['PickWritableMarkdownFile']();
+}
+
 export function ReadTextFile(arg1) {
   return window['go']['main']['DesktopBridge']['ReadTextFile'](arg1);
 }
