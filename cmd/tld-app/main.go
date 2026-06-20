@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"runtime"
@@ -29,8 +30,8 @@ func main() {
 		return
 	}
 
-	if err := configureAppStoreRuntimePaths(); err != nil {
-		log.Fatalf("failed to configure app store runtime paths: %v", err)
+	if err := configureDesktopRuntimePaths(); err != nil {
+		log.Fatalf("failed to configure desktop runtime paths: %v", err)
 	}
 
 	_ = workspace.EnsureGlobalConfig()
@@ -50,23 +51,36 @@ func main() {
 		log.Fatalf("failed to start local server: %v", err)
 	}
 
-	if err := localserver.RegisterProcess(localserver.ProcessRecord{
-		Kind:    localserver.ProcessKindServer,
-		PID:     os.Getpid(),
-		DataDir: dataDir,
-		Addr:    app.Addr,
-	}); err != nil {
-		log.Fatalf("failed to register server process: %v", err)
-	}
-	defer func() { _ = localserver.RemoveProcess(os.Getpid()) }()
+	listener, serverAddr, err := listenDesktopLocalServer(app.Addr)
+	if err != nil {
+		log.Printf("failed to listen for local server; desktop API requests will use the Wails asset server: %v", err)
+	} else {
+		defer func() { _ = listener.Close() }()
 
-	srv := &http.Server{Addr: app.Addr, Handler: app.Handler}
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("backend server error: %v", err)
+		if err := localserver.RegisterProcess(localserver.ProcessRecord{
+			Kind:    localserver.ProcessKindServer,
+			PID:     os.Getpid(),
+			DataDir: dataDir,
+			Addr:    serverAddr,
+		}); err != nil {
+			log.Printf("failed to register server process: %v", err)
+		} else {
+			defer func() { _ = localserver.RemoveProcess(os.Getpid()) }()
 		}
-	}()
-	defer func() { _ = srv.Close() }()
+
+		srv := &http.Server{Addr: app.Addr, Handler: app.Handler}
+		go func() {
+			if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+				log.Printf("backend server error: %v", err)
+			}
+		}()
+		defer func() { _ = srv.Close() }()
+	}
+
+	serverURL := ""
+	if serverAddr != "" {
+		serverURL = "http://" + serverAddr
+	}
 
 	rootFS, err := tld.StaticFS()
 	if err != nil {
@@ -107,7 +121,7 @@ func main() {
 								"<head>",
 								fmt.Sprintf(`<head>
     <script>
-        window.__TLD_SERVER_URL__ = 'http://%s';
+        window.__TLD_SERVER_URL__ = %q;
         window.__TLD_APP__ = true;
         window.__TLD_APP_STORE__ = %t;
         window.__TLD_PLATFORM__ = %q;
@@ -137,7 +151,7 @@ func main() {
         document.addEventListener('gestureend', function(e) {
             e.preventDefault();
         }, { passive: false });
-    </script>`, app.Addr, appStoreBuild, runtime.GOOS, cmdversion.Version),
+    </script>`, serverURL, appStoreBuild, runtime.GOOS, cmdversion.Version),
 								1,
 							)
 							w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -163,4 +177,33 @@ func main() {
 	if err != nil {
 		log.Fatal("Error:", err.Error())
 	}
+}
+
+func listenDesktopLocalServer(addr string) (net.Listener, string, error) {
+	listener, err := net.Listen("tcp", addr)
+	if err == nil {
+		return listener, clientAddrForListener(listener), nil
+	}
+
+	const fallbackAddr = "127.0.0.1:0"
+	fallback, fallbackErr := net.Listen("tcp", fallbackAddr)
+	if fallbackErr != nil {
+		return nil, "", fmt.Errorf("listen on %s: %w; fallback %s: %v", addr, err, fallbackAddr, fallbackErr)
+	}
+	log.Printf("local server listen on %s failed (%v); using %s", addr, err, fallback.Addr().String())
+	return fallback, clientAddrForListener(fallback), nil
+}
+
+func clientAddrForListener(listener net.Listener) string {
+	host, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		return listener.Addr().String()
+	}
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
 }

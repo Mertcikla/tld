@@ -19,15 +19,18 @@ var (
 	iconsFSOnce sync.Once
 	iconsFS     fs.FS
 	iconsFSErr  error
+
+	materializeIconsTreeForStaticFS = materializeIconsTree
 )
 
 // StaticFS returns the embedded application files plus the icon archive
 // unpacked into a temporary overlay filesystem.
 func StaticFS() (fs.FS, error) {
 	iconsFSOnce.Do(func() {
-		root, err := materializeIconsTree()
+		root, err := materializeIconsTreeForStaticFS()
 		if err != nil {
 			iconsFSErr = err
+			iconsFS = FS
 			return
 		}
 		iconsFS = overlayFS{
@@ -36,7 +39,10 @@ func StaticFS() (fs.FS, error) {
 		}
 	})
 
-	return iconsFS, iconsFSErr
+	if iconsFS != nil {
+		return iconsFS, nil
+	}
+	return FS, iconsFSErr
 }
 
 // ExtractIcons writes the embedded icon archive into dstBase.
