@@ -545,11 +545,13 @@ export interface ViewEditorPermissions {
 export interface ViewEditorProps extends CoreUISlots, ViewEditorPermissions {
   demoOptions?: ViewEditorDemoOptions
   dbOnlyNotes?: boolean
+  mermaidIntegrationEnabled?: boolean
 }
 
 function ViewEditorInner({
   demoOptions,
   dbOnlyNotes = false,
+  mermaidIntegrationEnabled: mermaidIntegrationEnabledOverride,
   canEdit = true,
   isOwner = true,
   isFreePlan = false,
@@ -574,7 +576,7 @@ function ViewEditorInner({
 
   const toast = useToast()
   const { experimental } = useExperimental()
-  const mermaidIntegrationEnabled = experimental.mermaidIntegrationEnabled
+  const mermaidIntegrationEnabled = mermaidIntegrationEnabledOverride ?? experimental.mermaidIntegrationEnabled
   const {
     canUndo: canUndoViewEdit,
     canRedo: canRedoViewEdit,
