@@ -4,8 +4,6 @@ frontend/node_modules
 frontend/public
 tmp
 frontend/*.tgz
-.agents
-.claude/skills/impeccable
 skills-lock.json
 .DS_Store
 .tld/
@@ -18,4 +16,3 @@ build/
 .bin/
 .gocache/
 testdata/
-wiki/

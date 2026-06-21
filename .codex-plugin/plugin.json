@@ -1,0 +1,31 @@
+{
+  "name": "create-diagram",
+  "version": "0.1.0",
+  "description": "Create tld architecture diagrams from a local codebase or system description.",
+  "author": {
+    "name": "Mert Cikla",
+    "url": "https://github.com/Mertcikla"
+  },
+  "homepage": "https://github.com/Mertcikla/tld",
+  "repository": "https://github.com/Mertcikla/tld",
+  "license": "Apache 2.0",
+  "keywords": [
+    "architecture",
+    "diagrams",
+    "tld"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Create Diagram",
+    "shortDescription": "Create tld architecture diagrams from codebases.",
+    "longDescription": "Create Diagram helps Codex inspect a codebase or system description and build a navigable tld architecture model with elements, views, and connectors.",
+    "developerName": "Mert Cikla",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/Mertcikla/tld",
+    "defaultPrompt": "Create an architecture diagram for this repo."
+  }
+}

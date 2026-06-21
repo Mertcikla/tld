@@ -1,0 +1,20 @@
+{
+  "name": "tld",
+  "interface": {
+    "displayName": "tld"
+  },
+  "plugins": [
+    {
+      "name": "create-diagram",
+      "source": {
+        "source": "local",
+        "path": "."
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
