@@ -98,7 +98,6 @@ function ViewFloatingMenu({
   onImport,
   onExport,
   onCopyMermaid,
-  onExportMermaid,
   focusMode,
   onFocusModeChange,
   densityLevel = 0,
@@ -638,6 +637,8 @@ function ViewFloatingMenu({
                 <Text fontSize="11px" fontWeight="normal">Export</Text>
               </Button>
 
+              <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
+
               {onCopyMermaid && (
                 <Button
                   data-testid="vieweditor-toolbar-copy-mermaid"
@@ -652,23 +653,6 @@ function ViewFloatingMenu({
                   onClick={onCopyMermaid}
                 >
                   <Text fontSize="11px" fontWeight="normal">Copy as Mermaid</Text>
-                </Button>
-              )}
-
-              {onExportMermaid && (
-                <Button
-                  data-testid="vieweditor-toolbar-export-mermaid"
-                  variant="ghost"
-                  h="28px"
-                  px={2.5}
-                  color="gray.300"
-                  leftIcon={<ExportIcon size={14} />}
-                  isDisabled={disableImportExport}
-                  _disabled={{ opacity: 0.35, cursor: 'not-allowed' }}
-                  _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
-                  onClick={onExportMermaid}
-                >
-                  <Text fontSize="11px" fontWeight="normal">Export Mermaid</Text>
                 </Button>
               )}
 
