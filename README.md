@@ -40,6 +40,7 @@ Here are some examples that were generated using the agent skill.
 - **Editor and Github Integration**: Jump to the code in your editor or Github from diagrams, or open the code symbol in diagram from your editor to visualize the code using the [VSCode extension](https://marketplace.visualstudio.com/items?itemName=tlDiagram-com.tldiagram). 
 - **Mermaid Integration**: Paste your mermaid diagrams into canvas to import them or export as mermaid for quick sharing.
 - **Markdown Notes Support**: Add notes and documentation for your diagram or link an existing one, preview and edit diagrams and markdown side-by-side. 
+- **Mermaid Integration**: Easily sync your diagrams with mermaid blocks in a markdown file for portable viewing in any markdown viewer. [Link to docs](https://tldiagram.com/docs/ui/mermaid/)
 - **Bi-directional Sync**: (Experimental) Seamlessly sync changes between your local YAML files, the self-hosted web UI, and the cloud version at tlDiagram.com.
 - **Git diff visualization**: (Experimental) Sync and visualize the changes you or your agent are making live in diagram form. Inspect the dependencies and intervene when necessary.
 - **Diagrams as Code**: (Experimental) A git/terraform like workflow (`plan`/`apply`) to manage architectural evolution alongside your source code.
