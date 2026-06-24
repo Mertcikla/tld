@@ -28,7 +28,7 @@ describe('resolveElementIconUrl', () => {
     ])
 
     expect(iconUrl).toMatch(/^data:image\/svg\+xml;charset=utf-8,/)
-    expect(decodeURIComponent(iconUrl?.split(',')[1] ?? '')).toContain('viewBox="0 0 512 512"')
+    expect(decodeURIComponent(iconUrl?.split(',')[1] ?? '')).toContain('width="512" height="512" viewBox="-40.96 -40.96 593.92 593.92"')
   })
 
   it('prefers a selected Font Awesome custom icon over an unselected catalog icon', () => {

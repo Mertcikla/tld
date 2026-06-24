@@ -1,0 +1,15 @@
+import { describe, expect, it } from 'vitest'
+import { fontAwesomeIconUrlForTechnologyLabel } from './fontAwesomeIcon'
+
+function decodeIconUrl(iconUrl: string | null): string {
+  expect(iconUrl).toMatch(/^data:image\/svg\+xml;charset=utf-8,/)
+  return decodeURIComponent(iconUrl?.split(',')[1] ?? '')
+}
+
+describe('fontAwesomeIconUrlForTechnologyLabel', () => {
+  it('pads generated SVGs so tall glyphs like fa:person are not clipped by the viewBox', () => {
+    const svg = decodeIconUrl(fontAwesomeIconUrlForTechnologyLabel('fa:fa-person'))
+
+    expect(svg).toContain('width="384" height="512" viewBox="-30.72 -40.96 445.44 593.92"')
+  })
+})

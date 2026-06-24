@@ -7,6 +7,7 @@ interface FontAwesomeIconDefinition {
 }
 
 const FONT_AWESOME_ICON_FILL = '#E2E8F0'
+const FONT_AWESOME_ICON_VIEWBOX_PADDING_RATIO = 0.08
 const FONT_AWESOME_PREFIX_PATTERN = /^(?:fa|fas):(.+)$/i
 const FONT_AWESOME_STYLE_CLASSES = new Set([
   'fa-solid',
@@ -54,6 +55,24 @@ function escapeSvgAttribute(value: string): string {
     .replace(/"/g, '&quot;')
 }
 
+function formatSvgNumber(value: number): string {
+  return Number.isInteger(value)
+    ? String(value)
+    : value.toFixed(3).replace(/\.?0+$/, '')
+}
+
+function paddedSvgViewBox(width: number, height: number): string {
+  const padX = width * FONT_AWESOME_ICON_VIEWBOX_PADDING_RATIO
+  const padY = height * FONT_AWESOME_ICON_VIEWBOX_PADDING_RATIO
+
+  return [
+    -padX,
+    -padY,
+    width + padX * 2,
+    height + padY * 2,
+  ].map(formatSvgNumber).join(' ')
+}
+
 export function parseFontAwesomeTechnologyIconName(value: string | null | undefined): string | null {
   const match = (value ?? '').trim().match(FONT_AWESOME_PREFIX_PATTERN)
   if (!match) return null
@@ -80,7 +99,7 @@ export function fontAwesomeIconUrlForName(iconName: string | null | undefined): 
   const paths = (Array.isArray(svgPathData) ? svgPathData : [svgPathData])
     .map((path) => `<path fill="${FONT_AWESOME_ICON_FILL}" d="${escapeSvgAttribute(path)}"/>`)
     .join('')
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">${paths}</svg>`
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${paddedSvgViewBox(width, height)}">${paths}</svg>`
   const iconUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
   iconUrlCache.set(cleanName, iconUrl)
   return iconUrl
