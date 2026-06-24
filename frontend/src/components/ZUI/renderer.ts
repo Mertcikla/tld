@@ -646,7 +646,9 @@ function drawSceneNode(
       const logoMaxDim = h * 0.35
       const topOffset = h * 0.06
 
-      const aspect = img.width / img.height
+      const intrinsicW = img.naturalWidth || img.width
+      const intrinsicH = img.naturalHeight || img.height
+      const aspect = intrinsicH > 0 ? intrinsicW / intrinsicH : 1
       let drawW = logoMaxDim
       let drawH = drawW / aspect
 

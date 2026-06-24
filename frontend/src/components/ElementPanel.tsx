@@ -46,6 +46,7 @@ import GitSourceLinker from './GitSourceLinker'
 import { getTechnologyCatalogIndex, getTechnologyCatalogItemBySlug, invalidateTechnologyCatalog, resolveWithBase, searchTechnologyCatalog } from '../utils/technologyCatalog'
 import { canonicalTechnologySlug } from '../utils/technologyIcon'
 import { resolveTechnologyConnectorIconUrl, technologyConnectorIconKey } from '../utils/elementIcon'
+import { matchFontAwesomeTechnologyIconQuery } from '../utils/fontAwesomeIcon'
 import { ChevronDownIcon, ImageUploadIcon, ZoomInIcon, ZoomOutIcon } from './Icons'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
@@ -833,12 +834,17 @@ function ElementPanel({
     scheduleAutoSave({ technologyLinks: nextLinks })
   }
 
-  const addCustomTechnology = () => {
-    const value = technologyQuery.trim()
+  const addCustomTechnology = (labelOverride?: string) => {
+    const value = (labelOverride ?? technologyQuery).trim()
     if (!value || technologyLinks.length >= 3) return
-    if (technologyLinks.some((link) => link.type === 'custom' && link.label.toLowerCase() === value.toLowerCase())) return
 
     const link: TechnologyConnector = { type: 'custom', label: value }
+    const iconKey = technologyConnectorIconKey(link)
+    if (technologyLinks.some((item) => (
+      (item.type === 'custom' && item.label.toLowerCase() === value.toLowerCase()) ||
+      (!!iconKey && technologyConnectorIconKey(item) === iconKey)
+    ))) return
+
     const canUseAsPrimaryIcon = !!technologyConnectorIconKey(link)
     const hasPrimaryIcon = technologyLinks.some((item) => (
       !!technologyConnectorIconKey(item) && !!(item.is_primary_icon ?? item.isPrimaryIcon)
@@ -1008,13 +1014,17 @@ function ElementPanel({
   const inlineCustomTechnologyName = technologyQuery.trim() || (customTechnologyFile ? defaultTechnologyNameFromFile(customTechnologyFile) : '')
   const customTechnologyCanCreate = !!inlineCustomTechnologyName && !!customTechnologyFile && technologyLinks.length < 3 && !customTechnologySaving
   const normalizedTechnologyQuery = technologyQuery.trim()
-  const fontAwesomeQueryIconUrl = normalizedTechnologyQuery
-    ? resolveTechnologyConnectorIconUrl({ type: 'custom', label: normalizedTechnologyQuery })
-    : null
+  const fontAwesomeQueryMatch = matchFontAwesomeTechnologyIconQuery(normalizedTechnologyQuery)
+  const fontAwesomeQueryIconUrl = fontAwesomeQueryMatch?.iconUrl ?? null
+  const fontAwesomeQueryLabel = fontAwesomeQueryMatch?.label ?? ''
+  const fontAwesomeQueryIconKey = fontAwesomeQueryMatch ? `fa:${fontAwesomeQueryMatch.iconName}` : ''
   const showFontAwesomeTechnologyCreate = (
-    !!fontAwesomeQueryIconUrl &&
+    !!fontAwesomeQueryMatch &&
     technologyLinks.length < 3 &&
-    !technologyLinks.some((link) => link.type === 'custom' && normalizeTechnologyLabel(link.label) === normalizeTechnologyLabel(normalizedTechnologyQuery))
+    !technologyLinks.some((link) => (
+      technologyConnectorIconKey(link) === fontAwesomeQueryIconKey ||
+      (link.type === 'custom' && normalizeTechnologyLabel(link.label) === normalizeTechnologyLabel(fontAwesomeQueryLabel))
+    ))
   )
   const showCustomTechnologyCreate = (
     !!normalizedTechnologyQuery &&
@@ -1226,6 +1236,9 @@ function ElementPanel({
                         if (techResultIndex >= 0 && technologyResults[techResultIndex]) {
                           e.preventDefault()
                           addCatalogTechnology(technologyResults[techResultIndex])
+                        } else if (e.key === 'Enter' && showFontAwesomeTechnologyCreate && fontAwesomeQueryMatch) {
+                          e.preventDefault()
+                          addCustomTechnology(fontAwesomeQueryLabel)
                         } else if (e.key === 'Enter' && technologyQuery.trim()) {
                           e.preventDefault()
                           addCustomTechnology()
@@ -1245,7 +1258,7 @@ function ElementPanel({
                   <Button
                     data-testid="element-panel-technology-add"
                     size="sm"
-                    onClick={addCustomTechnology}
+                    onClick={() => addCustomTechnology()}
                     isDisabled={isReadOnly || technologyLinks.length >= 3 || !technologyQuery.trim()}
                   >
                     Add
@@ -1288,14 +1301,14 @@ function ElementPanel({
                           py={2}
                           cursor="pointer"
                           _hover={{ bg: 'whiteAlpha.100' }}
-                          onClick={addCustomTechnology}
+                          onClick={() => addCustomTechnology(fontAwesomeQueryLabel)}
                         >
                           <HStack justify="space-between" align="center">
                             <HStack spacing={2} minW={0}>
                               <Flex w="18px" h="18px" align="center" justify="center" flexShrink={0}>
                                 <Box as="img" src={fontAwesomeQueryIconUrl} alt="" boxSize="15px" objectFit="contain" />
                               </Flex>
-                              <Text fontSize="sm" color="white" noOfLines={1}>{normalizedTechnologyQuery}</Text>
+                              <Text fontSize="sm" color="white" noOfLines={1}>{fontAwesomeQueryLabel}</Text>
                             </HStack>
                             <Badge variant="subtle" colorScheme="purple" fontSize="8px">Font Awesome</Badge>
                           </HStack>
