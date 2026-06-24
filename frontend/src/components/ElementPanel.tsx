@@ -1258,7 +1258,7 @@ function ElementPanel({
                   <Button
                     data-testid="element-panel-technology-add"
                     size="sm"
-                    onClick={addCustomTechnology}
+                    onClick={() => addCustomTechnology()}
                     isDisabled={isReadOnly || technologyLinks.length >= 3 || !technologyQuery.trim()}
                   >
                     Add
