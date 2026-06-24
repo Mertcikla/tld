@@ -46,7 +46,7 @@ function VscodeCodePreview({
   useEffect(() => {
     if (!isOpen) return
     const requestId = `file-${Math.random().toString(36).slice(2)}`
-    
+
     const unsub = vscodeBridge.onMessage((msg: ExtensionToWebviewMessage) => {
       if (msg.type === 'file-content' && msg.requestId === requestId) {
         setContent(msg.content)
@@ -908,14 +908,14 @@ function ElementNode({ data, selected }: Props) {
           </LayerButton>
         )}
 
-        <Flex flex={1} justify="center" align="center" minW={0} pointerEvents="none">
+        <Flex boxSize="28px" justify="center" align="center" minW={0} pointerEvents="none">
           {!isPending && nodeLogoUrl && (
             <Box
               as="img"
               src={nodeLogoUrl}
               alt="technology icon"
-              maxW="28px"
-              maxH="28px"
+              maxW="100%"
+              maxH="130%"
               objectFit="contain"
               opacity={0.95}
             />
