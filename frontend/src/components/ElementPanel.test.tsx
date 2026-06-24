@@ -342,7 +342,7 @@ describe('ElementPanel bypass noise gate', () => {
     })
 
     await act(async () => {
-      renderer!.root.findByProps({ 'data-testid': 'element-panel-technology-input' }).props.onChange({ target: { value: 'fa:fa-car' } })
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-technology-input' }).props.onChange({ target: { value: 'car' } })
       await Promise.resolve()
     })
 
@@ -369,11 +369,11 @@ describe('ElementPanel bypass noise gate', () => {
 
     expect(apiMocks.updateElement).toHaveBeenLastCalledWith(10, expect.objectContaining({
       logo_url: expect.stringMatching(/^data:image\/svg\+xml;charset=utf-8,/),
-      technology: 'fa:fa-car',
+      technology: 'fa:car',
       technology_connectors: [
         expect.objectContaining({
           type: 'catalog',
-          label: 'fa:fa-car',
+          label: 'fa:car',
           slug: 'fa:car',
           is_primary_icon: true,
         }),
@@ -395,7 +395,7 @@ describe('ElementPanel bypass noise gate', () => {
       technology_connectors: [
         expect.objectContaining({
           type: 'custom',
-          label: 'fa:fa-car',
+          label: 'fa:car',
           is_primary_icon: false,
         }),
       ],
@@ -465,7 +465,7 @@ describe('ElementPanel bypass noise gate', () => {
 
     expect(apiMocks.updateElement).toHaveBeenLastCalledWith(10, expect.objectContaining({
       logo_url: expect.stringMatching(/^data:image\/svg\+xml;charset=utf-8,/),
-      technology: 'fa:fa-server, fa:fa-car',
+      technology: 'fa:fa-server, fa:car',
       technology_connectors: [
         expect.objectContaining({
           type: 'custom',
@@ -474,7 +474,7 @@ describe('ElementPanel bypass noise gate', () => {
         }),
         expect.objectContaining({
           type: 'catalog',
-          label: 'fa:fa-car',
+          label: 'fa:car',
           slug: 'fa:car',
           is_primary_icon: true,
         }),

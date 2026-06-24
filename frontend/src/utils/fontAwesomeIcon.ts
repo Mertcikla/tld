@@ -6,6 +6,12 @@ interface FontAwesomeIconDefinition {
   icon: [number, number, string[], string, FontAwesomeSvgPath]
 }
 
+export interface FontAwesomeTechnologyIconMatch {
+  iconName: string
+  label: string
+  iconUrl: string
+}
+
 const FONT_AWESOME_ICON_FILL = '#E2E8F0'
 const FONT_AWESOME_ICON_VIEWBOX_PADDING_RATIO = 0.08
 const FONT_AWESOME_PREFIX_PATTERN = /^(?:fa|fas):(.+)$/i
@@ -22,6 +28,7 @@ const FONT_AWESOME_STYLE_CLASSES = new Set([
   'fal',
   'fat',
   'fad',
+  'fa',
 ])
 
 const solidIcons = fas as Record<string, FontAwesomeIconDefinition | undefined>
@@ -36,6 +43,27 @@ function exportKeyForIconName(iconName: string): string {
   return `fa${suffix}`
 }
 
+function iconNameForExportKey(exportKey: string): string {
+  return exportKey
+    .replace(/^fa/, '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
+    .toLowerCase()
+}
+
+function toKebabFontAwesomeIconName(rawIconName: string): string {
+  return rawIconName
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, '-')
+    .split(/\s+/)
+    .filter((token) => token && !FONT_AWESOME_STYLE_CLASSES.has(token))
+    .map((token) => token.replace(/^fa-/, ''))
+    .join('-')
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
 function cleanFontAwesomeIconName(rawIconName: string): string {
   const normalized = rawIconName.trim().toLowerCase().replace(/_/g, '-')
   const tokens = normalized.split(/\s+/).filter(Boolean)
@@ -47,6 +75,38 @@ function cleanFontAwesomeIconName(rawIconName: string): string {
     .replace(/^fa-/, '')
     .replace(/[^a-z0-9-]/g, '')
     .replace(/^-+|-+$/g, '')
+}
+
+function fontAwesomeIconNameCandidates(value: string | null | undefined): string[] {
+  const trimmed = (value ?? '').trim()
+  if (!trimmed) return []
+
+  const prefixedMatch = trimmed.match(FONT_AWESOME_PREFIX_PATTERN)
+  const body = prefixedMatch ? prefixedMatch[1] : trimmed
+  const candidates = [
+    toKebabFontAwesomeIconName(body),
+    cleanFontAwesomeIconName(body),
+  ]
+
+  return Array.from(new Set(candidates.filter(Boolean)))
+}
+
+function findFontAwesomeIconNameByPrefix(candidates: string[]): string | null {
+  const searchableCandidates = candidates.filter((candidate) => candidate.length >= 4)
+  if (searchableCandidates.length === 0) return null
+
+  for (const candidate of searchableCandidates) {
+    let bestMatch: string | null = null
+    for (const exportKey of Object.keys(solidIcons)) {
+      const iconName = iconNameForExportKey(exportKey)
+      if (!iconName.startsWith(candidate)) continue
+      if (!bestMatch || iconName.length < bestMatch.length || (iconName.length === bestMatch.length && iconName < bestMatch)) {
+        bestMatch = iconName
+      }
+    }
+    if (bestMatch) return bestMatch
+  }
+  return null
 }
 
 function escapeSvgAttribute(value: string): string {
@@ -107,4 +167,20 @@ export function fontAwesomeIconUrlForName(iconName: string | null | undefined): 
 
 export function fontAwesomeIconUrlForTechnologyLabel(label: string | null | undefined): string | null {
   return fontAwesomeIconUrlForName(parseFontAwesomeTechnologyIconName(label))
+}
+
+export function matchFontAwesomeTechnologyIconQuery(value: string | null | undefined): FontAwesomeTechnologyIconMatch | null {
+  const candidates = fontAwesomeIconNameCandidates(value)
+  for (const candidate of candidates) {
+    const iconUrl = fontAwesomeIconUrlForName(candidate)
+    if (iconUrl) {
+      return { iconName: candidate, label: `fa:${candidate}`, iconUrl }
+    }
+  }
+
+  const prefixMatch = findFontAwesomeIconNameByPrefix(candidates)
+  if (!prefixMatch) return null
+
+  const iconUrl = fontAwesomeIconUrlForName(prefixMatch)
+  return iconUrl ? { iconName: prefixMatch, label: `fa:${prefixMatch}`, iconUrl } : null
 }
