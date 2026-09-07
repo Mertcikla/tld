@@ -84,6 +84,10 @@ jobs:
     needs: verify-binaries
     runs-on: ubuntu-latest
     environment: release
+    permissions:
+      contents: write
+      id-token: write
+      packages: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -115,6 +119,27 @@ jobs:
           GORELEASER_CURRENT_TAG: ${{ env.RELEASE_TAG }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Extract standalone Linux release binary for Docker
+        run: tar -xzf dist/tld_Linux_x86_64.tar.gz tld
+
+      - name: Build distroless image from release binary
+        run: |
+          docker build --platform linux/amd64 \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            -t tld:ci .
+
+
+      - name: Publish Docker image to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker tag tld:ci "${image}:${RELEASE_TAG}"
+          docker tag tld:ci "${image}:latest"
+          docker push "${image}:${RELEASE_TAG}"
+          docker push "${image}:latest"
 
       - name: Commit version bump
         uses: stefanzweifel/git-auto-commit-action@v7

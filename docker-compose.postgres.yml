@@ -1,0 +1,40 @@
+name: tld-postgres
+services:
+  tld:
+    image: ${TLD_IMAGE:-ghcr.io/mertcikla/tld:latest}
+    restart: unless-stopped
+    ports:
+      - "${TLD_BIND_IP:-127.0.0.1}:${PORT:-8060}:${PORT:-8060}"
+    environment:
+      TLD_HOST: ${TLD_HOST:-0.0.0.0}
+      PORT: ${PORT:-8060}
+      TLD_DATA_DIR: ${TLD_DATA_DIR:-/home/nonroot/data}
+      TLD_CONFIG_DIR: ${TLD_CONFIG_DIR:-/home/nonroot/config}
+      TLD_DB_DRIVER: postgres
+      TLD_DATABASE_URL: ${TLD_DATABASE_URL:-postgres://tld:tld@postgres:5432/tld?sslmode=disable}
+      TLD_PUBLIC_URL: ${TLD_PUBLIC_URL:-}
+      TLD_ALLOWED_ORIGINS: ${TLD_ALLOWED_ORIGINS:-}
+    volumes:
+      - tld-data:/home/nonroot
+    depends_on:
+      postgres:
+        condition: service_healthy
+  postgres:
+    # Core migrations require the vector extension.
+    image: ${POSTGRES_IMAGE:-pgvector/pgvector:pg16}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tld}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tld}
+      POSTGRES_DB: ${POSTGRES_DB:-tld}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+volumes:
+  tld-data:
+  postgres-data:

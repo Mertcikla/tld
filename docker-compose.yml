@@ -1,0 +1,19 @@
+name: tld
+services:
+  tld:
+    image: ${TLD_IMAGE:-ghcr.io/mertcikla/tld:latest}
+    restart: unless-stopped
+    ports:
+      - "${TLD_BIND_IP:-127.0.0.1}:${PORT:-8060}:${PORT:-8060}"
+    environment:
+      TLD_HOST: ${TLD_HOST:-0.0.0.0}
+      PORT: ${PORT:-8060}
+      TLD_DATA_DIR: ${TLD_DATA_DIR:-/home/nonroot/data}
+      TLD_CONFIG_DIR: ${TLD_CONFIG_DIR:-/home/nonroot/config}
+      TLD_DATABASE_URL: ""
+      TLD_PUBLIC_URL: ${TLD_PUBLIC_URL:-}
+      TLD_ALLOWED_ORIGINS: ${TLD_ALLOWED_ORIGINS:-}
+    volumes:
+      - tld-data:/home/nonroot
+volumes:
+  tld-data:
