@@ -53,6 +53,21 @@ Here are some examples that were generated using the agent skill.
 
 ## Quick Start
 
+### Docker
+
+Both Compose files use `ghcr.io/mertcikla/tld:latest` from GitHub Container
+Registry. Start either stack (Docker Compose v2):
+
+```bash
+# SQLite
+docker compose up
+
+# Or PostgreSQL with pgvector, required by the core migrations
+docker compose -f docker-compose.postgres.yml up
+```
+
+### Native binary
+
 macOS and Linux
 ```bash
 curl -LsSf https://tldiagram.com/install.sh | sh -s serve --open
