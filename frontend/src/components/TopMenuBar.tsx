@@ -26,6 +26,7 @@ import ExperimentalSettings from "../pages/ExperimentalSettings"
 import UpdateSettings from "../pages/UpdateSettings"
 import { isWailsApp, isWailsMac, isWailsWindows } from "../config/runtime"
 import WindowsWindowControls from "./WindowsWindowControls"
+import FeedbackButton from "./FeedbackButton"
 
 const FolderTreeIcon = ({ size = 32 }: { size?: number }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -184,21 +185,33 @@ export default function TopMenuBar({
           }}
         >
           <PopoverArrow bg="rgba(var(--bg-main-rgb), 0.95)" />
-          <PopoverBody p={4} pb={7} overflowY="auto" flex={1} minH={0}>
+          <PopoverBody p={4} overflowY="auto" flex={1} minH={0}>
             <Flex direction="column" gap={5}>
               <AppearanceSettings compact />
               <ExperimentalSettings compact />
               {isWailsApp && <UpdateSettings compact />}
             </Flex>
           </PopoverBody>
-          <Box
-            position="absolute"
-            bottom={2}
-            right={4}
-            pointerEvents="none"
-            userSelect="none"
+          <Flex
+            align="center"
+            justify="space-between"
+            gap={3}
+            px={4}
+            py={3}
+            borderTop="1px solid"
+            borderColor="whiteAlpha.100"
+            bg="rgba(var(--bg-main-rgb), 0.35)"
           >
-          </Box>
+            <Box minW={0}>
+              <Text fontSize="xs" color="gray.300" fontWeight="500">
+                Help us improve
+              </Text>
+              <Text fontSize="xs" color="gray.500" noOfLines={1}>
+                Share an idea or report an issue.
+              </Text>
+            </Box>
+            <FeedbackButton />
+          </Flex>
         </PopoverContent>
       </Portal>
     </Popover>
