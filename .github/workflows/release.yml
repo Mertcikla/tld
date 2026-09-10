@@ -88,6 +88,8 @@ jobs:
       contents: write
       id-token: write
       packages: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -120,6 +122,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
+      - name: Attest release artifacts provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+
       - name: Extract standalone Linux release binary for Docker
         run: tar -xzf dist/tld_Linux_x86_64.tar.gz tld
 
@@ -131,6 +141,7 @@ jobs:
 
 
       - name: Publish Docker image to GitHub Container Registry
+        id: docker_publish
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -140,6 +151,17 @@ jobs:
           docker tag tld:ci "${image}:latest"
           docker push "${image}:${RELEASE_TAG}"
           docker push "${image}:latest"
+          digest=$(docker inspect --format='{{index .RepoDigests 0}}' "${image}:${RELEASE_TAG}")
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          echo "digest=${digest#*@}" >> "$GITHUB_OUTPUT"
+
+      - name: Attest Docker image provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.docker_publish.outputs.image }}
+          subject-digest: ${{ steps.docker_publish.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
 
       - name: Commit version bump
         uses: stefanzweifel/git-auto-commit-action@v7
@@ -157,4 +179,4 @@ jobs:
           if [[ "${RELEASE_TAG}" == *-* ]]; then
             NPM_TAG=beta
           fi
-          npm publish --access public --tag "$NPM_TAG"
+          npm publish --access public --tag "$NPM_TAG" --provenance
