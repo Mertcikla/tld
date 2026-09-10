@@ -140,7 +140,6 @@ import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
 import { buildElementLibraryItems, useStore, placedElementToLibraryElement, resolveElementForUpdate } from '../../store/useStore'
 import { useWorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
-import { useExperimental } from '../../context/ExperimentalContext'
 import {
   elementSelectionRects,
   planSelectionAlignment,
@@ -575,8 +574,7 @@ function ViewEditorInner({
   navigateRef.current = navigate
 
   const toast = useToast()
-  const { experimental } = useExperimental()
-  const mermaidIntegrationEnabled = mermaidIntegrationEnabledOverride ?? experimental.mermaidIntegrationEnabled
+  const mermaidIntegrationEnabled = mermaidIntegrationEnabledOverride ?? true
   const {
     canUndo: canUndoViewEdit,
     canRedo: canRedoViewEdit,

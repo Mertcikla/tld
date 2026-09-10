@@ -41,19 +41,6 @@ export default function ExperimentalSettings({ compact = false }: { compact?: bo
             Docs
           </Link>
         </HStack>
-
-        <HStack spacing={2} align="center" mt={3}>
-          <Checkbox
-            size="sm"
-            colorScheme="blue"
-            isChecked={experimental.mermaidIntegrationEnabled}
-            onChange={() => toggleExperimental('mermaidIntegrationEnabled')}
-          >
-            <Text fontSize="sm" color="gray.200" userSelect="none">
-              Mermaid Markdown Integration
-            </Text>
-          </Checkbox>
-        </HStack>
       </Box>
     </VStack>
   )

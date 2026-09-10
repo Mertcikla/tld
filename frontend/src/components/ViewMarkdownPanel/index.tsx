@@ -16,7 +16,7 @@ function ViewMarkdownPanel({
   content,
   viewId = null,
   viewNameById,
-  mermaidIntegrationEnabled = false,
+  mermaidIntegrationEnabled = true,
   dbOnlyNotes = false,
   canEdit = true,
   isLoading = false,
