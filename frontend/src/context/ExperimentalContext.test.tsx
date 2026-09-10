@@ -41,7 +41,6 @@ describe('ExperimentalProvider', () => {
 
     expect(controls).not.toBeNull()
     expect(controls!.experimental.watchEnabled).toBe(false)
-    expect(controls!.experimental.mermaidIntegrationEnabled).toBe(false)
   })
 
   it('toggles and persists experimental features', () => {
@@ -68,7 +67,7 @@ describe('ExperimentalProvider', () => {
 
     expect(controls!.experimental.watchEnabled).toBe(true)
     expect(globalThis.localStorage.getItem('tld:experimental')).toBe(
-      JSON.stringify({ watchEnabled: true, mermaidIntegrationEnabled: false }),
+      JSON.stringify({ watchEnabled: true }),
     )
 
     act(() => {
@@ -77,7 +76,7 @@ describe('ExperimentalProvider', () => {
 
     expect(controls!.experimental.watchEnabled).toBe(false)
     expect(globalThis.localStorage.getItem('tld:experimental')).toBe(
-      JSON.stringify({ watchEnabled: false, mermaidIntegrationEnabled: false }),
+      JSON.stringify({ watchEnabled: false }),
     )
   })
 
@@ -100,6 +99,5 @@ describe('ExperimentalProvider', () => {
     })
 
     expect(controls!.experimental.watchEnabled).toBe(true)
-    expect(controls!.experimental.mermaidIntegrationEnabled).toBe(false)
   })
 })

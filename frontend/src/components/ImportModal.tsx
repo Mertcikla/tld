@@ -85,7 +85,7 @@ function ImportModal({ isOpen, onClose, mermaidEnabled = false, isImporting, onI
     }
     const nextFormat = inferImportFileFormat(path)
     if (nextFormat === 'mermaid' && !mermaidEnabled) {
-      setParseError('Mermaid Markdown import is experimental. Enable it in settings to import Markdown Mermaid blocks.')
+      setParseError('Mermaid Markdown import is not enabled.')
       return
     }
     setFormat(nextFormat === 'structurizr' ? 'structurizr' : 'mermaid')
