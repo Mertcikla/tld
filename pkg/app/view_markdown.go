@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+
+	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )
 
 type ViewMarkdownDocument struct {
@@ -126,10 +128,14 @@ func (s *Store) ensureViewMarkdownTable(ctx context.Context) error {
 		`); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE view_markdown_documents ADD COLUMN org_id TEXT NULL`); err != nil && !isDuplicateColumnError(err) {
+	addColumn := "ALTER TABLE view_markdown_documents ADD COLUMN "
+	if s.dialect == dbrepo.DialectPostgres {
+		addColumn += "IF NOT EXISTS "
+	}
+	if _, err := s.db.ExecContext(ctx, addColumn+`org_id TEXT NULL`); err != nil && !isDuplicateColumnError(err) {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE view_markdown_documents ADD COLUMN source_kind TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnError(err) {
+	if _, err := s.db.ExecContext(ctx, addColumn+`source_kind TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnError(err) {
 		return err
 	}
 	return nil
