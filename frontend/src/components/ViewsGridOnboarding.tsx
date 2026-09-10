@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Box, Button, HStack, Text, VStack } from '@chakra-ui/react'
+import OnboardingHint from './OnboardingHint'
 
 const STORAGE_KEY = `viewgrid_tutorial_v2_core`
 
@@ -292,109 +292,26 @@ export default function ViewsGridOnboarding({  hasViews }: Props) {
   if (!visible) return null
 
   const current = STEPS[step]
-  const isLast = step === STEPS.length - 1
 
   return (
-    <Box
-      position="fixed"
-      inset={0}
-      zIndex={2000}
-      display="flex"
-      alignItems="center"
-      justifyContent="center"
-      pointerEvents="none"
-    >
-      {/* Backdrop */}
-      <Box
-        position="absolute"
-        inset={0}
-        bg="blackAlpha.700"
-        pointerEvents="auto"
-        onClick={dismiss}
-      />
-
-      {/* Tutorial card */}
-      <Box
-        position="relative"
-        w="380px"
-        bg="var(--bg-panel)"
-        border="1px solid"
-        borderColor="var(--border-main)"
-        borderRadius="16px"
-        p={6}
-        boxShadow="0 24px 60px rgba(0,0,0,0.6), 0 4px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04)"
-        pointerEvents="auto"
-      >
-        {/* Skip Tutorial */}
-        <Button
-          position="absolute"
-          top={3}
-          right={3}
-          size="xs"
-          variant="ghost"
-          color="gray.500"
-          _hover={{ color: 'gray.200', bg: 'whiteAlpha.100' }}
-          onClick={dismiss}
-          fontWeight="normal"
-        >
-          Skip Tutorial
-        </Button>
-
-        {/* Step indicator dots */}
-        <HStack justify="center" spacing={2} mb={5}>
-          {STEPS.map((_, i) => (
-            <Box
-              key={i}
-              w={i === step ? '18px' : '6px'}
-              h="6px"
-              rounded="full"
-              bg={i === step ? 'blue.400' : 'gray.600'}
-              transition="all 0.25s ease"
-              cursor="pointer"
-              onClick={() => setStep(i)}
-              _hover={{ bg: i === step ? 'blue.400' : 'gray.500' }}
-            />
-          ))}
-        </HStack>
-
-        {/* Visual + text content */}
-        <VStack spacing={4} textAlign="center">
-          {current.visual === 'grid' && <GridExploreIllustration />}
-          {current.visual === 'hierarchy' && <HierarchyIllustration />}
-          {current.visual === 'connect' && <ConnectIllustration />}
-
-          <VStack spacing={2}>
-            <Text fontWeight="bold" fontSize="lg" color="gray.100" lineHeight="short">
-              {current.title}
-            </Text>
-            <Text fontSize="sm" color="gray.400" lineHeight="tall" maxW="300px">
-              {current.body}
-            </Text>
-          </VStack>
-        </VStack>
-
-        {/* Navigation */}
-        <HStack mt={6} justify="space-between" align="center">
-          <Button
-            size="sm"
-            variant="ghost"
-            color="gray.500"
-            _hover={{ color: 'gray.300' }}
-            onClick={() => setStep(step - 1)}
-            visibility={step > 0 ? 'visible' : 'hidden'}
-          >
-            ← Back
-          </Button>
-          <Button
-            size="sm"
-            colorScheme="blue"
-            px={5}
-            onClick={isLast ? dismiss : () => setStep(step + 1)}
-          >
-            {isLast ? 'Got it' : 'Next →'}
-          </Button>
-        </HStack>
-      </Box>
-    </Box>
+    <OnboardingHint
+      step={step}
+      totalSteps={STEPS.length}
+      title={current.title}
+      body={current.body}
+      visual={
+        current.visual === 'grid' ? (
+          <GridExploreIllustration />
+        ) : current.visual === 'hierarchy' ? (
+          <HierarchyIllustration />
+        ) : (
+          <ConnectIllustration />
+        )
+      }
+      onBack={() => setStep((s) => Math.max(0, s - 1))}
+      onNext={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
+      onSelectStep={setStep}
+      onDismiss={dismiss}
+    />
   )
 }
