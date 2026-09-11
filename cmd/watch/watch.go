@@ -429,8 +429,8 @@ func confirmLSPProceed(cmd *cobra.Command, status watch.LSPStatus) error {
 	if !watch.LSPNeedsConfirmation(status) {
 		return nil
 	}
-	term.Warn(cmd.OutOrStdout(), "Some requested language servers are unavailable or unhealthy. Reference resolution quality will be lower.")
-	term.Hint(cmd.OutOrStdout(), "tld will fall back to conservative name matching, which may drop ambiguous connectors.")
+	term.Warn(cmd.OutOrStdout(), "tlDiagram is missing language servers and cannot analyze your code accurately.")
+	term.Hint(cmd.OutOrStdout(), "Without them, references and diagram connectors will be incomplete or missing. Install the language servers below; otherwise tld falls back to conservative name matching.")
 	hasUnavailable := false
 	hasFailed := false
 	for _, server := range watch.LSPDegradedServers(status) {
@@ -479,7 +479,7 @@ func confirmLSPProceed(cmd *cobra.Command, status watch.LSPStatus) error {
 	}
 	term.Hint(cmd.OutOrStdout(), "Alternatively, disable LSP with `tld config set watch.lsp.enabled false`.")
 	if !isInteractiveInput(cmd.InOrStdin()) {
-		term.Hint(cmd.OutOrStdout(), "Non-interactive input detected; continuing without confirmation.")
+		term.Warn(cmd.OutOrStdout(), "Continuing without language servers; analysis quality will be degraded.")
 		return nil
 	}
 	_, _ = fmt.Fprint(cmd.OutOrStdout(), "  Continue with lower-quality reference resolution? [yes/no]: ")
@@ -511,8 +511,7 @@ func isInteractiveInput(r io.Reader) bool {
 	if !ok {
 		return false
 	}
-	info, err := f.Stat()
-	return err == nil && (info.Mode()&os.ModeCharDevice) != 0
+	return xterm.IsTerminal(int(f.Fd()))
 }
 
 func workspaceStatusSummary(result watch.SourceFileChangeResult, changedFiles int) string {
