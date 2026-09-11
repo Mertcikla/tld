@@ -77,12 +77,12 @@ func TestConfirmLSPProceedWarnsAndContinuesForNonInteractiveInput(t *testing.T) 
 	}
 	got := out.String()
 	for _, want := range []string{
-		"Reference resolution quality will be lower",
+		"tlDiagram is missing language servers and cannot analyze your code accurately",
 		"Go (gopls): not found in PATH",
 		"Error: no installed LSP server found",
 		`Override: tld config set watch.lsp.commands.go "/path/to/gopls"`,
 		"Remediation: install the missing language server(s) or ensure they are on your PATH",
-		"Non-interactive input detected; continuing without confirmation",
+		"Continuing without language servers; analysis quality will be degraded",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in output:\n%s", want, got)
@@ -836,5 +836,29 @@ func writeFile(t *testing.T, root, name, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestIsInteractiveInputTreatsNullAndPipesAsNonInteractive(t *testing.T) {
+	devNull, err := os.Open(os.DevNull)
+	if err == nil {
+		defer func() { _ = devNull.Close() }()
+		if isInteractiveInput(devNull) {
+			t.Fatalf("expected %s to be treated as non-interactive", os.DevNull)
+		}
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	defer func() { _ = w.Close() }()
+	if isInteractiveInput(r) {
+		t.Fatal("expected pipe to be treated as non-interactive")
+	}
+
+	if isInteractiveInput(strings.NewReader("yes\n")) {
+		t.Fatal("expected non-file reader to be treated as non-interactive")
 	}
 }
