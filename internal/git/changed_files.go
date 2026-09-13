@@ -44,6 +44,29 @@ func FileChangesSince(repoRoot, fromSHA string) (map[string]WorktreeChange, erro
 	return changes, nil
 }
 
+// MergeBase returns the best common ancestor commit between ref and HEAD.
+func MergeBase(repoRoot, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("merge base: empty ref")
+	}
+	out, err := run(repoRoot, "merge-base", ref, "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("git merge-base: %w", err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// FileChangesAgainstBase returns files changed between the merge base of ref and
+// HEAD, keyed by repository-relative path.
+func FileChangesAgainstBase(repoRoot, ref string) (map[string]WorktreeChange, error) {
+	base, err := MergeBase(repoRoot, ref)
+	if err != nil {
+		return nil, err
+	}
+	return FileChangesSince(repoRoot, base)
+}
+
 // FilesChangedSince returns the list of files modified between fromSHA and HEAD.
 func FilesChangedSince(repoRoot, fromSHA string) ([]string, error) {
 	out, err := run(repoRoot, "diff", "--name-only", fromSHA+"..HEAD")

@@ -12,6 +12,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/connect"
 	"github.com/mertcikla/tld/v2/cmd/diff"
 	"github.com/mertcikla/tld/v2/cmd/export"
+	impactcmd "github.com/mertcikla/tld/v2/cmd/impact"
 	"github.com/mertcikla/tld/v2/cmd/initialize"
 	inspectcmd "github.com/mertcikla/tld/v2/cmd/inspect"
 	"github.com/mertcikla/tld/v2/cmd/login"
@@ -162,6 +163,9 @@ and apply them atomically with 'tld apply'.`,
 	checkCmd := check.NewCheckCmd(&wdir)
 	checkCmd.GroupID = secondaryGroup.ID
 
+	impactCmd := impactcmd.NewImpactCmd(&wdir)
+	impactCmd.GroupID = secondaryGroup.ID
+
 	configCmd := configcmd.NewConfigCmd()
 	configCmd.GroupID = secondaryGroup.ID
 
@@ -201,6 +205,7 @@ and apply them atomically with 'tld apply'.`,
 		renameCmd,
 		analyzeCmd,
 		checkCmd,
+		impactCmd,
 		configCmd,
 		techCmd,
 		watchCmd,

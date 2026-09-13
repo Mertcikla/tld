@@ -151,7 +151,7 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 	}
 	filtered.Dependencies = req.Dependencies
 	filtered.ChangedFiles = changedRaw.Files
-	progressAdvance(req.Progress, "Architecture view filtered")
+	progressAdvance(req.Progress, "Code graph filtered")
 	progressFinish(req.Progress)
 	logInfo(ctx, req.Logger, "watch.representation.prepare.completed", "elapsed", logElapsed(prepareStarted), "repository_id", repositoryID, "raw_graph_hash", rawGraphHash, "provider", model.Provider, "model", model.Model, "visible_symbols", len(filtered.VisibleSymbols), "visible_references", len(filtered.VisibleReferences), "visible_files", len(filtered.VisibleFiles), "visible_facts", len(filtered.VisibleFacts), "changed_files", len(changedRaw.Files), "changed_symbols", len(changedRaw.Symbols))
 
@@ -295,127 +295,6 @@ func normalizeBlastRadiusFiles(files []string) map[string]string {
 		out[file] = "blast radius of changed file"
 	}
 	return out
-}
-
-func (r *Representer) RepresentArchitecture(ctx context.Context, repo Repository, architecture architectureModel, thresholds Thresholds, progress ProgressSink) (RepresentResult, error) {
-	if r == nil || r.Store == nil {
-		return RepresentResult{}, fmt.Errorf("watch representer requires a store")
-	}
-	thresholds = defaultThresholds(thresholds)
-	rawGraphHash := stableHash(architecture)
-	settingsHash := stableHash(thresholds)
-	representationHash := stableHash([]any{rawGraphHash, settingsHash, "architecture"})
-	result := RepresentResult{
-		RepositoryID:       repo.ID,
-		RawGraphHash:       rawGraphHash,
-		SettingsHash:       settingsHash,
-		RepresentationHash: representationHash,
-	}
-	runID, err := r.Store.BeginRepresentationRun(ctx, repo.ID, rawGraphHash, settingsHash, nil, representationHash)
-	if err != nil {
-		return RepresentResult{}, err
-	}
-	result.RepresentationRun = runID
-	status := "completed"
-	var runErr error
-	defer func() {
-		if runErr != nil {
-			status = "failed"
-		}
-		_ = r.Store.FinishRepresentationRun(context.Background(), runID, status, result, runErr)
-	}()
-
-	progressStart(progress, "Materializing architecture view", 7)
-	applyToken := randomToken()
-	if err := r.Store.AcquireApplyLock(ctx, repo.ID, os.Getpid(), applyToken, LockHeartbeatTimeout); err != nil {
-		progressFinish(progress)
-		runErr = err
-		return result, err
-	}
-	progressAdvance(progress, "Apply lock acquired")
-	defer func() {
-		_ = r.Store.ReleaseApplyLock(context.Background(), repo.ID, applyToken)
-	}()
-
-	initialLayout, err := r.Store.RepositoryMaterializationCount(ctx, repo.ID)
-	if err != nil {
-		progressFinish(progress)
-		runErr = err
-		return result, err
-	}
-	progressAdvance(progress, "Existing materialization inspected")
-	m := &materializer{
-		store:         r.Store,
-		repo:          repo,
-		thresholds:    thresholds,
-		settingsHash:  settingsHash,
-		identityKeys:  map[string]string{},
-		tagPlan:       semanticTagPlan{approved: map[string]struct{}{}, byOwner: map[string][]string{}},
-		initialLayout: initialLayout == 0,
-		runMarker:     time.Now().UTC().Format(time.RFC3339Nano),
-		newPlacements: map[int64]map[int64]struct{}{},
-	}
-	rootViewID, err := m.workspaceRootViewID(ctx)
-	if err != nil {
-		progressFinish(progress)
-		runErr = err
-		return result, err
-	}
-	progressAdvance(progress, "Workspace root loaded")
-	repoElem, err := m.upsertElement(ctx, "repository", fmt.Sprintf("repository:%d", repo.ID), elementInput{
-		Name:       repo.DisplayName,
-		Kind:       "repository",
-		Technology: "Runtime",
-		Repo:       repoIdentity(repo),
-		Branch:     nullStringValue(repo.Branch),
-		Tags:       []string{"view:architecture"},
-	})
-	if err != nil {
-		progressFinish(progress)
-		runErr = err
-		return result, err
-	}
-	if err := m.upsertPlacement(ctx, rootViewID, repoElem, 0, 0); err != nil {
-		progressFinish(progress)
-		runErr = err
-		return result, err
-	}
-	repoView, err := m.upsertView(ctx, "repository", fmt.Sprintf("repository:%d", repo.ID), repoElem, repo.DisplayName, "Architecture")
-	if err != nil {
-		progressFinish(progress)
-		runErr = err
-		return result, err
-	}
-	progressAdvance(progress, "Repository view materialized")
-	if err := m.materializeArchitecture(ctx, architecture, repoView); err != nil {
-		progressFinish(progress)
-		runErr = err
-		return result, err
-	}
-	progressAdvance(progress, "Architecture resources materialized")
-	if err := m.pruneStaleResources(ctx); err != nil {
-		progressFinish(progress)
-		runErr = err
-		return result, err
-	}
-	progressAdvance(progress, "Stale generated resources pruned")
-	if err := m.layoutPlacements(ctx); err != nil {
-		progressFinish(progress)
-		runErr = err
-		return result, err
-	}
-	progressAdvance(progress, "Layout updated")
-	progressFinish(progress)
-	result.ElementsCreated = m.stats.ElementsCreated
-	result.ElementsUpdated = m.stats.ElementsUpdated
-	result.ConnectorsCreated = m.stats.ConnectorsCreated
-	result.ConnectorsUpdated = m.stats.ConnectorsUpdated
-	result.ViewsCreated = m.stats.ViewsCreated
-	result.ElementsPreserved = m.stats.ElementsPreserved
-	result.ConnectorsPreserved = m.stats.ConnectorsPreserved
-	result.ViewsPreserved = m.stats.ViewsPreserved
-	result.DeletesPreserved = m.stats.DeletesPreserved
-	return result, nil
 }
 
 type embeddingCacheStats struct {
@@ -583,7 +462,7 @@ func (r *Representer) populateResourceEmbeddingInputs(ctx context.Context, repos
 		JOIN elements el ON el.id = m.resource_id
 		WHERE m.repository_id = ?
 		  AND m.resource_type = 'element'
-		  AND COALESCE(el.kind, '') IN ('architecture-component', 'repository-section', 'folder', 'cluster', 'dependency-group', 'fact-summary', 'repository', 'file')
+		  AND COALESCE(el.kind, '') IN ('repository-section', 'folder', 'cluster', 'dependency-group', 'fact-summary', 'repository', 'file')
 		ORDER BY m.owner_type, m.owner_key`, repositoryID)
 	if err != nil {
 		return nil, err
@@ -1454,12 +1333,10 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 		return m.stats, err
 	}
 
-	architectureView, structuralView, err := m.materializeRepositorySections(ctx, repoView, repoLanguage)
+	structuralView, err := m.materializeStructuralSection(ctx, repoView, repoLanguage)
 	if err != nil {
 		return m.stats, err
 	}
-
-	architecture := pruneDisconnectedArchitecture(canonicalizeArchitecture(mergeArchitectureModels(inferArchitecture(repo.RepoRoot), architectureFromFacts(facts))))
 
 	visibleFiles := filesForSymbols(filtered.VisibleSymbols)
 	for file := range filtered.VisibleFiles {
@@ -1634,11 +1511,6 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	if err := m.materializeConnectors(ctx, filtered.VisibleReferences, filtered.VisibleSymbols, folderElements, folderViews, fileElements, symbolElements, symbolViews, structuralView); err != nil {
 		return m.stats, err
 	}
-	if len(architecture.Components) > 0 {
-		if err := m.materializeArchitecture(ctx, architecture, architectureView); err != nil {
-			return m.stats, err
-		}
-	}
 	if err := m.pruneStaleResources(ctx); err != nil {
 		return m.stats, err
 	}
@@ -1648,44 +1520,7 @@ func (r *Representer) materialize(ctx context.Context, repo Repository, filtered
 	return m.stats, nil
 }
 
-func (m *materializer) materializeArchitecture(ctx context.Context, architecture architectureModel, repoView int64) error {
-	componentElements := map[string]int64{}
-	for i, component := range sortedArchitectureComponents(architecture.Components) {
-		tags := appendUnique(component.Tags, "view:architecture")
-		elem, err := m.upsertElement(ctx, "architecture-component", component.Key, elementInput{
-			Name:        component.Name,
-			Kind:        component.Kind,
-			Description: component.Description,
-			Technology:  firstNonEmpty(component.Technology, "Runtime"),
-			Repo:        repoIdentity(m.repo),
-			Branch:      nullStringValue(m.repo.Branch),
-			FilePath:    component.FilePath,
-			Tags:        tags,
-		})
-		if err != nil {
-			return err
-		}
-		x, y := gridPosition(i)
-		if err := m.upsertPlacement(ctx, repoView, elem, x, y); err != nil {
-			return err
-		}
-		componentElements[component.Key] = elem
-	}
-
-	for _, connector := range sortedArchitectureConnectors(architecture.Connectors) {
-		sourceID := componentElements[connector.SourceKey]
-		targetID := componentElements[connector.TargetKey]
-		if sourceID == 0 || targetID == 0 {
-			continue
-		}
-		if err := m.upsertConnectorDetailedWithDirection(ctx, "architecture-connector", connector.Key, repoView, sourceID, targetID, connector.Label, connector.Relationship, connector.Direction, ""); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *materializer) materializeRepositorySections(ctx context.Context, repoView int64, repoLanguage string) (int64, int64, error) {
+func (m *materializer) materializeStructuralSection(ctx context.Context, repoView int64, repoLanguage string) (int64, error) {
 	structuralElem, err := m.upsertElement(ctx, "repository-section", fmt.Sprintf("repository-structural:%d", m.repo.ID), elementInput{
 		Name:        "Structural",
 		Kind:        "view",
@@ -1697,78 +1532,16 @@ func (m *materializer) materializeRepositorySections(ctx context.Context, repoVi
 		Tags:        []string{"view:structural"},
 	})
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
 	if err := m.upsertPlacement(ctx, repoView, structuralElem, 0, 0); err != nil {
-		return 0, 0, err
+		return 0, err
 	}
 	structuralView, err := m.upsertView(ctx, "repository-section", fmt.Sprintf("repository-structural:%d", m.repo.ID), structuralElem, m.repo.DisplayName+" Structural", "Structural")
 	if err != nil {
-		return 0, 0, err
+		return 0, err
 	}
-
-	architectureElem, err := m.upsertElement(ctx, "repository-section", fmt.Sprintf("repository-architecture:%d", m.repo.ID), elementInput{
-		Name:        "Architecture",
-		Kind:        "view",
-		Description: "Generated architecture view",
-		Technology:  "Architecture",
-		Repo:        repoIdentity(m.repo),
-		Branch:      nullStringValue(m.repo.Branch),
-		Language:    repoLanguage,
-		Tags:        []string{"view:architecture"},
-	})
-	if err != nil {
-		return 0, 0, err
-	}
-	if err := m.upsertPlacement(ctx, structuralView, architectureElem, 0, 0); err != nil {
-		return 0, 0, err
-	}
-	architectureView, err := m.upsertView(ctx, "repository-section", fmt.Sprintf("repository-architecture:%d", m.repo.ID), architectureElem, m.repo.DisplayName+" Architecture", "Architecture")
-	if err != nil {
-		return 0, 0, err
-	}
-
-	return architectureView, structuralView, nil
-}
-
-func sortedArchitectureComponents(values map[string]*architectureComponent) []*architectureComponent {
-	out := make([]*architectureComponent, 0, len(values))
-	for _, value := range values {
-		out = append(out, value)
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Kind == out[j].Kind {
-			return out[i].Name < out[j].Name
-		}
-		return architectureKindRank(out[i].Kind) < architectureKindRank(out[j].Kind)
-	})
-	return out
-}
-
-func sortedArchitectureConnectors(values map[string]*architectureConnector) []*architectureConnector {
-	out := make([]*architectureConnector, 0, len(values))
-	for _, value := range values {
-		out = append(out, value)
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-	return out
-}
-
-func architectureKindRank(kind string) int {
-	switch kind {
-	case "external":
-		return 0
-	case "service":
-		return 1
-	case "interface":
-		return 2
-	case "datastore":
-		return 3
-	case "queue":
-		return 4
-	default:
-		return 5
-	}
+	return structuralView, nil
 }
 
 type materializer struct {
