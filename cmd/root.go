@@ -7,6 +7,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/add"
 	"github.com/mertcikla/tld/v2/cmd/analyze"
 	"github.com/mertcikla/tld/v2/cmd/apply"
+	bindcmd "github.com/mertcikla/tld/v2/cmd/bind"
 	"github.com/mertcikla/tld/v2/cmd/check"
 	configcmd "github.com/mertcikla/tld/v2/cmd/config"
 	"github.com/mertcikla/tld/v2/cmd/connect"
@@ -105,6 +106,9 @@ and apply them atomically with 'tld apply'.`,
 	connectCmd := connect.NewConnectCmd(&wdir, &outputFormat, &compactJSON)
 	connectCmd.GroupID = resourceGroup.ID
 
+	bindCmd := bindcmd.NewBindCmd(&wdir, &outputFormat, &compactJSON)
+	bindCmd.GroupID = resourceGroup.ID
+
 	removeCmd := remove.NewRemoveCmd(&wdir, &outputFormat, &compactJSON)
 	removeCmd.GroupID = resourceGroup.ID
 
@@ -200,6 +204,7 @@ and apply them atomically with 'tld apply'.`,
 		inspectCmd,
 		addCmd,
 		connectCmd,
+		bindCmd,
 		removeCmd,
 		updateCmd,
 		renameCmd,

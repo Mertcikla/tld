@@ -17,11 +17,17 @@ func RenderImpactJSON(w io.Writer, report ImpactReport) error {
 
 // RenderImpactText writes the default human-readable report.
 func RenderImpactText(w io.Writer, report ImpactReport) error {
+	if line := coverageSummaryLine(report.Coverage); line != "" {
+		writeImpactSection(w, "Coverage", []string{"  " + line})
+	}
 	writeImpactSection(w, "Changed", elementLines(report.Changed))
 	writeImpactSection(w, "Candidates", elementLines(report.Candidates))
 	writeImpactSection(w, "Related", elementLines(report.Related))
 	if len(report.Unmapped) > 0 {
 		writeImpactSection(w, "Unmapped", prefixLines(report.Unmapped, "  "))
+	}
+	if len(report.Coverage.Gaps) > 0 {
+		writeImpactSection(w, "Binding Gaps", coverageGapLines(report.Coverage.Gaps, "  "))
 	}
 	if len(report.Findings) > 0 {
 		writeImpactSection(w, "Findings", findingLines(report.Findings))
@@ -36,6 +42,10 @@ func RenderImpactText(w io.Writer, report ImpactReport) error {
 func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
 	_, _ = fmt.Fprintln(w, "## Architecture Impact")
 	_, _ = fmt.Fprintln(w)
+	if line := coverageSummaryLine(report.Coverage); line != "" {
+		_, _ = fmt.Fprintln(w, "**Coverage:** "+line)
+		_, _ = fmt.Fprintln(w)
+	}
 	if len(report.Changed) == 0 && len(report.Candidates) == 0 && len(report.Unmapped) == 0 {
 		_, _ = fmt.Fprintln(w, "No architecture-bound code changed.")
 		return nil
@@ -83,6 +93,29 @@ func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
 			_, _ = fmt.Fprintf(w, "- `%s`\n", file)
 		}
 	}
+	if len(report.Coverage.Gaps) > 0 {
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "**Binding gaps**")
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "_Add or extend a binding so impact analysis covers these files, then re-run `tld impact`._")
+		_, _ = fmt.Fprintln(w)
+		for _, gap := range report.Coverage.Gaps {
+			_, _ = fmt.Fprintf(w, "- `%s`", gap.File)
+			if gap.Change != "" {
+				_, _ = fmt.Fprintf(w, " (%s)", gap.Change)
+			}
+			_, _ = fmt.Fprintf(w, " — %s\n", gap.Reason)
+			switch {
+			case gap.SuggestedRef != "" && gap.CurrentPattern == "":
+				_, _ = fmt.Fprintf(w, "  - suggested owner: %s (%.2f) — `tld bind %s --file %q`\n", gap.SuggestedName, gap.SuggestedScore, gap.SuggestedRef, gap.File)
+			case gap.SuggestedRef != "":
+				_, _ = fmt.Fprintf(w, "  - suggested owner: %s (%.2f) already owns `%s`; extend that binding if this file belongs to it\n", gap.SuggestedName, gap.SuggestedScore, gap.CurrentPattern)
+			}
+			if gap.NewElementName != "" {
+				_, _ = fmt.Fprintf(w, "  - or create an element: `tld add %q --file %q`\n", gap.NewElementName, gap.File)
+			}
+		}
+	}
 	if len(report.Findings) > 0 {
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintln(w, "**Findings**")
@@ -114,6 +147,9 @@ func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
 
 // RenderImpactMermaid writes the impacted architecture as a Mermaid flowchart.
 func RenderImpactMermaid(w io.Writer, report ImpactReport) error {
+	if report.Coverage.Applicable {
+		_, _ = fmt.Fprintf(w, "%%%% coverage: %d%% (%s)\n", report.Coverage.Percent, report.Coverage.Confidence)
+	}
 	_, _ = fmt.Fprintln(w, "flowchart TD")
 	ids := map[string]string{}
 	index := 0
@@ -207,6 +243,40 @@ func findingLines(findings []ImpactFinding) []string {
 		line := fmt.Sprintf("  [%s] %s (%s)", finding.Severity, finding.Message, observed)
 		if evidence := evidenceSummary(finding.Evidence); evidence != "" {
 			line += " — " + evidence
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func coverageSummaryLine(coverage Coverage) string {
+	if !coverage.Applicable {
+		return "No source code changed — nothing to reconcile."
+	}
+	status := "analysis is complete"
+	if !coverage.Complete {
+		status = "analysis may be incomplete"
+	}
+	return fmt.Sprintf("%d%% (%s) — %d/%d source files owned; %s",
+		coverage.Percent, coverage.Confidence, coverage.BoundSourceFiles, coverage.SourceFiles, status)
+}
+
+func coverageGapLines(gaps []CoverageGap, prefix string) []string {
+	lines := make([]string, 0, len(gaps))
+	for _, gap := range gaps {
+		line := prefix + gap.File
+		if gap.Change != "" {
+			line += " (" + gap.Change + ")"
+		}
+		line += " — " + gap.Reason
+		switch {
+		case gap.SuggestedRef != "" && gap.CurrentPattern == "":
+			line += fmt.Sprintf("; suggested owner %q (%.2f): tld bind %s --file %q", gap.SuggestedName, gap.SuggestedScore, gap.SuggestedRef, gap.File)
+		case gap.SuggestedRef != "":
+			line += fmt.Sprintf("; suggested owner %q (%.2f) already owns %q", gap.SuggestedName, gap.SuggestedScore, gap.CurrentPattern)
+		}
+		if gap.NewElementName != "" {
+			line += fmt.Sprintf("; or add: tld add %q --file %q", gap.NewElementName, gap.File)
 		}
 		lines = append(lines, line)
 	}

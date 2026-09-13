@@ -286,6 +286,124 @@ func TestNarrateImpactReportDeterministicFallback(t *testing.T) {
 	}
 }
 
+func TestAnalyzeImpactCoverageComplete(t *testing.T) {
+	elements := map[string]*workspace.Element{
+		"checkout": {Name: "Checkout", FilePath: "backend/checkout/**"},
+		"risk":     {Name: "Risk", FilePath: "internal/risk/**"},
+	}
+	report := AnalyzeImpact(ImpactOptions{
+		RepoRoot: t.TempDir(),
+		Elements: elements,
+		ChangedFiles: map[string]tldgit.WorktreeChange{
+			"backend/checkout/service.go": tldgit.WorktreeUpdated,
+			"internal/risk/model.go":      tldgit.WorktreeAdded,
+		},
+	})
+	if !report.Coverage.Applicable || !report.Coverage.Complete {
+		t.Fatalf("coverage = %+v, want applicable+complete", report.Coverage)
+	}
+	if report.Coverage.Percent != 100 || report.Coverage.Confidence != "high" {
+		t.Fatalf("coverage = %+v, want 100/high", report.Coverage)
+	}
+	if len(report.Coverage.Gaps) != 0 {
+		t.Fatalf("gaps = %+v, want none", report.Coverage.Gaps)
+	}
+}
+
+func TestAnalyzeImpactCoverageGapsIgnoreNonSource(t *testing.T) {
+	elements := map[string]*workspace.Element{
+		"checkout": {Name: "Checkout", FilePath: "backend/checkout/**"},
+	}
+	report := AnalyzeImpact(ImpactOptions{
+		RepoRoot: t.TempDir(),
+		Elements: elements,
+		ChangedFiles: map[string]tldgit.WorktreeChange{
+			"backend/checkout/service.go": tldgit.WorktreeUpdated,
+			"internal/risk/model.go":      tldgit.WorktreeAdded,
+			".github/workflows/ci.yml":    tldgit.WorktreeUpdated,
+		},
+		Suggestions: []BindingSuggestion{
+			{File: "internal/risk/model.go", ElementRef: "checkout", ElementName: "Checkout", Score: 0.8},
+		},
+	})
+	if report.Coverage.SourceFiles != 2 {
+		t.Fatalf("source files = %d, want 2 (yaml ignored)", report.Coverage.SourceFiles)
+	}
+	if report.Coverage.NonSourceFiles != 1 {
+		t.Fatalf("non-source files = %d, want 1", report.Coverage.NonSourceFiles)
+	}
+	if report.Coverage.UnmappedSource != 1 || report.Coverage.Complete {
+		t.Fatalf("coverage = %+v, want 1 unmapped and incomplete", report.Coverage)
+	}
+	if len(report.Coverage.Gaps) != 1 {
+		t.Fatalf("gaps = %+v, want 1", report.Coverage.Gaps)
+	}
+	gap := report.Coverage.Gaps[0]
+	if gap.File != "internal/risk/model.go" || gap.Change != "added" {
+		t.Fatalf("gap = %+v, want internal/risk/model.go added", gap)
+	}
+	if gap.SuggestedName != "Checkout" || gap.NewElementName != "Model" {
+		t.Fatalf("gap suggestions = %+v, want Checkout/Model", gap)
+	}
+}
+
+func TestAnalyzeImpactCoverageNonSourceOnly(t *testing.T) {
+	report := AnalyzeImpact(ImpactOptions{
+		RepoRoot: t.TempDir(),
+		Elements: map[string]*workspace.Element{"a": {Name: "A", FilePath: "x/**"}},
+		ChangedFiles: map[string]tldgit.WorktreeChange{
+			".github/workflows/ci.yml": tldgit.WorktreeUpdated,
+		},
+	})
+	if report.Coverage.Applicable {
+		t.Fatalf("coverage = %+v, want not applicable", report.Coverage)
+	}
+	if report.Coverage.Confidence != "none" {
+		t.Fatalf("confidence = %q, want none", report.Coverage.Confidence)
+	}
+}
+
+func TestAnalyzeImpactCoverageWeakNameMatch(t *testing.T) {
+	report := AnalyzeImpact(ImpactOptions{
+		RepoRoot:              t.TempDir(),
+		IncludeNameHeuristics: true,
+		Elements:              map[string]*workspace.Element{"recorder": {Name: "Version Recorder"}},
+		ChangedFiles: map[string]tldgit.WorktreeChange{
+			"internal/watch/version_recorder.go": tldgit.WorktreeUpdated,
+		},
+	})
+	if report.Coverage.WeakSourceFiles != 1 || report.Coverage.Complete {
+		t.Fatalf("coverage = %+v, want 1 weak and incomplete", report.Coverage)
+	}
+	if len(report.Coverage.Gaps) != 1 || !strings.Contains(report.Coverage.Gaps[0].Reason, "weak") {
+		t.Fatalf("gaps = %+v, want one weak-name gap", report.Coverage.Gaps)
+	}
+}
+
+func TestRenderImpactMarkdownCoverageGaps(t *testing.T) {
+	report := ImpactReport{
+		Changed:  []ImpactElement{{Ref: "checkout", Name: "Checkout"}},
+		Unmapped: []string{"internal/risk/model.go"},
+		Coverage: Coverage{
+			Applicable: true, Percent: 50, Confidence: "low", SourceFiles: 2, BoundSourceFiles: 1,
+			Gaps: []CoverageGap{{
+				File: "internal/risk/model.go", Change: "added", Reason: "no architecture element owns this file",
+				NewElementName: "Model", NewElementRef: "model",
+			}},
+		},
+	}
+	var markdown bytes.Buffer
+	if err := RenderImpactMarkdown(&markdown, report); err != nil {
+		t.Fatal(err)
+	}
+	md := markdown.String()
+	for _, want := range []string{"**Coverage:**", "analysis may be incomplete", "**Binding gaps**", "internal/risk/model.go", `tld add "Model" --file "internal/risk/model.go"`} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("markdown missing %q:\n%s", want, md)
+		}
+	}
+}
+
 func hasFinding(findings []ImpactFinding, findingType string) bool {
 	for _, finding := range findings {
 		if finding.Type == findingType {

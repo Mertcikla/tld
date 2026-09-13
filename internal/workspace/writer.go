@@ -471,6 +471,12 @@ func mergeElementFields(ref string, existing, incoming *Element) (*Element, erro
 	if merged.URL == "" {
 		merged.URL = incoming.URL
 	}
+	if incoming.FilePath != "" {
+		merged.FilePath = incoming.FilePath
+	}
+	if incoming.Symbol != "" {
+		merged.Symbol = incoming.Symbol
+	}
 	if incoming.HasView {
 		merged.HasView = true
 		if merged.ViewLabel == "" {

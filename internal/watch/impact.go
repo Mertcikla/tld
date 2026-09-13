@@ -68,8 +68,42 @@ type ImpactReport struct {
 	Related    []ImpactElement `json:"related"`
 	Edges      []ImpactEdge    `json:"edges,omitempty"`
 	Unmapped   []string        `json:"unmapped"`
+	Coverage   Coverage        `json:"coverage"`
 	Findings   []ImpactFinding `json:"findings,omitempty"`
 	Narration  string          `json:"narration,omitempty"`
+}
+
+// Coverage describes how completely a change set could be reconciled against
+// authored architecture. It is computed from deterministic path bindings only
+// (never from the evidence store), so the score is stable across runs.
+type Coverage struct {
+	Applicable       bool          `json:"applicable"`
+	Complete         bool          `json:"complete"`
+	Score            float64       `json:"score"`
+	Percent          int           `json:"percent"`
+	Confidence       string        `json:"confidence"` // high | medium | low | none
+	SourceFiles      int           `json:"source_files"`
+	BoundSourceFiles int           `json:"bound_source_files"`
+	WeakSourceFiles  int           `json:"weak_source_files"`
+	UnmappedSource   int           `json:"unmapped_source_files"`
+	NonSourceFiles   int           `json:"non_source_files"`
+	AnchoredElements int           `json:"anchored_elements"`
+	TotalElements    int           `json:"total_elements"`
+	Gaps             []CoverageGap `json:"gaps,omitempty"`
+}
+
+// CoverageGap is a changed source file that is not reliably owned by any
+// architecture element, with enough context for a human or LLM agent to bind it.
+type CoverageGap struct {
+	File           string  `json:"file"`
+	Change         string  `json:"change,omitempty"`
+	Reason         string  `json:"reason"`
+	SuggestedRef   string  `json:"suggested_element_ref,omitempty"`
+	SuggestedName  string  `json:"suggested_element_name,omitempty"`
+	SuggestedScore float64 `json:"suggested_score,omitempty"`
+	CurrentPattern string  `json:"suggested_element_pattern,omitempty"`
+	NewElementName string  `json:"suggested_new_element,omitempty"`
+	NewElementRef  string  `json:"suggested_new_ref,omitempty"`
 }
 
 // CodeBinding connects an authored element to code paths it is expected to own.
@@ -193,8 +227,10 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 		}
 	}
 
+	sourceTotal, sourceBound, sourceWeak, nonSource := 0, 0, 0, 0
+	var unmappedSource, weakSource []string
 	for _, file := range files {
-		matched := false
+		strongMatched, weakMatched := false, false
 		for _, binding := range bindings {
 			var ok bool
 			var kind string
@@ -202,14 +238,19 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 			case binding.Pattern != "":
 				ok = bindingPatternMatch(binding.Pattern, file)
 				kind = "path"
+				if ok {
+					strongMatched = true
+				}
 			case binding.Name != "" && opts.IncludeNameHeuristics:
 				ok = namePathMatch(binding.Name, file)
 				kind = "name"
+				if ok {
+					weakMatched = true
+				}
 			}
 			if !ok {
 				continue
 			}
-			matched = true
 			addEvidence(binding.ElementRef, ImpactEvidence{
 				Level:    binding.Level,
 				Kind:     kind,
@@ -218,8 +259,22 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 				Observed: binding.Level == EvidenceStrong,
 			})
 		}
-		if !matched {
+		if !strongMatched && !weakMatched {
 			report.Unmapped = append(report.Unmapped, file)
+		}
+		if isSourceFile(file) {
+			sourceTotal++
+			switch {
+			case strongMatched:
+				sourceBound++
+			case weakMatched:
+				sourceWeak++
+				weakSource = append(weakSource, file)
+			default:
+				unmappedSource = append(unmappedSource, file)
+			}
+		} else {
+			nonSource++
 		}
 	}
 
@@ -255,6 +310,7 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 	report.Findings = append(report.Findings, staleBindingFindings(opts)...)
 	report.Findings = append(report.Findings, relationshipFindings(opts, changedRefs)...)
 	report.Findings = append(report.Findings, suggestionFindings(opts)...)
+	report.Coverage = buildCoverage(opts, sourceTotal, sourceBound, sourceWeak, nonSource, unmappedSource, weakSource)
 	return report
 }
 

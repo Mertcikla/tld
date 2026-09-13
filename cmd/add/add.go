@@ -23,6 +23,8 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 		ref             string
 		kind            string
 		parent          string
+		filePath        string
+		symbol          string
 		diagramLabel    string
 		legacyViewLabel string
 		legacyWithView  bool
@@ -82,6 +84,8 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				Description: description,
 				Technology:  normalizedTechnology,
 				URL:         url,
+				FilePath:    strings.TrimSpace(filePath),
+				Symbol:      strings.TrimSpace(symbol),
 				HasView:     false,
 				ViewLabel:   diagramLabel,
 				Placements: []workspace.ViewPlacement{{
@@ -135,6 +139,8 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().Float64Var(&positionY, "position-y", 0, "vertical canvas position")
 	c.Flags().StringVar(&ref, "ref", "", "override generated ref (default: slugified name)")
 	c.Flags().StringVar(&parent, "parent", "root", "parent element ref or root")
+	c.Flags().StringVar(&filePath, "file", "", "code path or glob this element owns, used by `tld impact` bindings")
+	c.Flags().StringVar(&symbol, "symbol", "", "named code symbol within --file (e.g. a class or function)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
 	c.Flags().StringVar(&diagramLabel, "diagram-label", "", "optional label for the element's canonical diagram")
 	c.Flags().BoolVar(&legacyWithView, "with-view", false, "deprecated")
