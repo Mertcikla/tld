@@ -88,9 +88,6 @@ func (s *TreeSitterService) extractDir(ctx context.Context, root string, rules *
 func (s *TreeSitterService) extractFile(ctx context.Context, path string) (*Result, error) {
 	language, parser, ok := s.registry.parserForPath(path)
 	if !ok {
-		if detectedLanguage, detected := DetectLanguage(path); detected {
-			return nil, unsupportedLanguageError(path, detectedLanguage)
-		}
 		return nil, unsupportedLanguageError(path, language)
 	}
 	source, err := os.ReadFile(path)
