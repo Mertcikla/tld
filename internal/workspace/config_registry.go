@@ -186,6 +186,9 @@ func ValidateGlobalConfig(cfg *Config) ConfigValidationErrors {
 	if strings.TrimSpace(cfg.Serve.PublicURL) != "" && !validRootHTTPURL(cfg.Serve.PublicURL) {
 		add("serve.public_url", "must be an http or https root URL")
 	}
+	if strings.TrimSpace(cfg.Serve.PopulateRerankerEndpoint) != "" && !validHTTPURL(cfg.Serve.PopulateRerankerEndpoint) {
+		add("serve.populate_reranker_endpoint", "must be a valid URL")
+	}
 	for _, origin := range cfg.Serve.AllowedOrigins {
 		if !validHTTPOrigin(origin) {
 			add("serve.allowed_origins", "entries must be http or https origins without a path")
@@ -367,6 +370,7 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "serve.data_dir", Env: []string{"TLD_DATA_DIR"}, Description: "Directory for local database and logs."},
 	{Key: "serve.public_url", Env: []string{"TLD_PUBLIC_URL"}, Description: "Public root URL for reverse-proxied self-hosted deployments."},
 	{Key: "serve.allowed_origins", Env: []string{"TLD_ALLOWED_ORIGINS"}, Description: "Additional comma-separated HTTP(S) origins allowed by local server CORS."},
+	{Key: "serve.populate_reranker_endpoint", Env: []string{"TLD_POPULATE_RERANKER_ENDPOINT"}, Description: "Opt-in populate reranker endpoint, a Jina-compatible /v1/rerank API (e.g. http://127.0.0.1:8000/v1/rerank); empty (default) disables so no source is sent."},
 	{Key: "watch.languages", Env: []string{"TLD_WATCH_LANGUAGES"}, Description: "Comma-separated source languages watched by analyze/watch."},
 	{Key: "watch.watcher", Env: []string{"TLD_WATCH_WATCHER"}, Description: "File watcher backend: auto, fsnotify, or poll."},
 	{Key: "watch.poll_interval", Env: []string{"TLD_WATCH_POLL_INTERVAL"}, Description: "Polling interval used by the poll watcher."},
@@ -516,6 +520,7 @@ func applyEnvOverridesDetailed(cfg *Config, root *yaml.Node) ([]ConfigValue, err
 		{"serve.data_dir", "TLD_DATA_DIR"},
 		{"serve.public_url", "TLD_PUBLIC_URL"},
 		{"serve.allowed_origins", "TLD_ALLOWED_ORIGINS"},
+		{"serve.populate_reranker_endpoint", "TLD_POPULATE_RERANKER_ENDPOINT"},
 		{"watch.languages", "TLD_WATCH_LANGUAGES"},
 		{"watch.watcher", "TLD_WATCH_WATCHER"},
 		{"watch.poll_interval", "TLD_WATCH_POLL_INTERVAL"},
@@ -671,6 +676,8 @@ func setConfigValue(cfg *Config, key, value string) error {
 		cfg.Serve.PublicURL = normalizePublicURLValue(value)
 	case "serve.allowed_origins":
 		cfg.Serve.AllowedOrigins = parseStringList(value)
+	case "serve.populate_reranker_endpoint":
+		cfg.Serve.PopulateRerankerEndpoint = strings.TrimSpace(value)
 	case "watch.languages":
 		cfg.Watch.Languages = parseStringList(value)
 	case "watch.watcher":
@@ -941,6 +948,8 @@ func getConfigValue(cfg *Config, key string) any {
 		return cfg.Serve.PublicURL
 	case "serve.allowed_origins":
 		return cfg.Serve.AllowedOrigins
+	case "serve.populate_reranker_endpoint":
+		return cfg.Serve.PopulateRerankerEndpoint
 	case "watch.languages":
 		return cfg.Watch.Languages
 	case "watch.watcher":
@@ -1092,7 +1101,8 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	addScalar(serve, "data_dir", cfg.Serve.DataDir, desc("serve.data_dir"))
 	addScalar(serve, "public_url", cfg.Serve.PublicURL, desc("serve.public_url"))
 	addStringSeq(serve, "allowed_origins", cfg.Serve.AllowedOrigins, desc("serve.allowed_origins"))
-	appendUnknownEntries(serve, mappingValueNode(existing, "serve"), setOf("host", "port", "data_dir", "public_url", "allowed_origins"))
+	addScalar(serve, "populate_reranker_endpoint", cfg.Serve.PopulateRerankerEndpoint, desc("serve.populate_reranker_endpoint"))
+	appendUnknownEntries(serve, mappingValueNode(existing, "serve"), setOf("host", "port", "data_dir", "public_url", "allowed_origins", "populate_reranker_endpoint"))
 	addMap(mapping, "serve", serve, "Local web server settings.")
 
 	watchNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}

@@ -30,10 +30,11 @@ type Server struct {
 }
 
 type Options struct {
-	DataDir        string
-	WorkspaceDir   string
-	PublicURL      string
-	AllowedOrigins []string
+	DataDir                  string
+	WorkspaceDir             string
+	PublicURL                string
+	AllowedOrigins           []string
+	PopulateRerankerEndpoint string
 }
 
 func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, dataDir ...string) (*Server, error) {
@@ -65,6 +66,8 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: collabHooks}
 	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
+
+	configurePopulateReranker(opts.PopulateRerankerEndpoint)
 
 	mux := http.NewServeMux()
 	watch.NewHandler(watchStore).Register(mux)

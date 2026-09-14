@@ -1095,6 +1095,26 @@ func TestPopulateRerankerReordersTopTwoXLimitAndUsesCodeContext(t *testing.T) {
 	}
 }
 
+func TestPopulateRerankerDisabledByDefault(t *testing.T) {
+	if populateRerankerEndpoint != "" {
+		t.Fatalf("populate reranker endpoint must default to empty so no source is sent without opt-in; got %q", populateRerankerEndpoint)
+	}
+}
+
+func TestConfigurePopulateReranker(t *testing.T) {
+	withPopulateRerankerEndpoint(t, "sentinel")
+
+	configurePopulateReranker("   ")
+	if populateRerankerEndpoint != "sentinel" {
+		t.Fatalf("blank endpoint must leave the reranker unchanged; got %q", populateRerankerEndpoint)
+	}
+
+	configurePopulateReranker("http://127.0.0.1:9999/v1/rerank")
+	if populateRerankerEndpoint != "http://127.0.0.1:9999/v1/rerank" {
+		t.Fatalf("configured endpoint not applied; got %q", populateRerankerEndpoint)
+	}
+}
+
 func TestPopulateFallsBackWhenRerankerFails(t *testing.T) {
 	fixture := seedPopulateRerankerFixture(t)
 	withPopulateRerankerEndpoint(t, "")
