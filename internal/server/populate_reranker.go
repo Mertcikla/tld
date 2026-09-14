@@ -18,7 +18,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/watch"
 )
 
-var populateRerankerEndpoint = "http://192.168.1.12:8000/v1/rerank"
+var populateRerankerEndpoint = ""
 var populateRerankerModel = "jina-reranker-v3"
 var populateRerankerHTTPClient = &http.Client{Timeout: 8 * time.Second}
 var populateRerankerObservedMetrics = newPopulateRerankerMetrics()
@@ -92,6 +92,12 @@ type populateRerankerLatencyMetricsSnapshot struct {
 	LE500  uint64  `json:"le_500"`
 	LE1000 uint64  `json:"le_1000"`
 	GT1000 uint64  `json:"gt_1000"`
+}
+
+func configurePopulateReranker(endpoint string) {
+	if endpoint = strings.TrimSpace(endpoint); endpoint != "" {
+		populateRerankerEndpoint = endpoint
+	}
 }
 
 func newPopulateRerankerMetrics() *populateRerankerMetrics {

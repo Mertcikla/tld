@@ -362,6 +362,58 @@ func TestGlobalConfigServeSelfHostedEnvOverrides(t *testing.T) {
 	}
 }
 
+func TestGlobalConfigPopulateRerankerEndpointFromEnv(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	t.Setenv("TLD_POPULATE_RERANKER_ENDPOINT", "http://127.0.0.1:8000/v1/rerank")
+
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if cfg.Serve.PopulateRerankerEndpoint != "http://127.0.0.1:8000/v1/rerank" {
+		t.Fatalf("Serve.PopulateRerankerEndpoint = %q, want env value", cfg.Serve.PopulateRerankerEndpoint)
+	}
+}
+
+func TestGlobalConfigPopulateRerankerEndpointDefaultsEmpty(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if cfg.Serve.PopulateRerankerEndpoint != "" {
+		t.Fatalf("Serve.PopulateRerankerEndpoint = %q, want empty default so no source is sent", cfg.Serve.PopulateRerankerEndpoint)
+	}
+}
+
+func TestSetGlobalConfigPopulateRerankerEndpointRoundTrips(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+
+	if err := workspace.SetGlobalConfigValue("serve.populate_reranker_endpoint", "http://127.0.0.1:8000/v1/rerank"); err != nil {
+		t.Fatalf("SetGlobalConfigValue: %v", err)
+	}
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if cfg.Serve.PopulateRerankerEndpoint != "http://127.0.0.1:8000/v1/rerank" {
+		t.Fatalf("Serve.PopulateRerankerEndpoint = %q after reload", cfg.Serve.PopulateRerankerEndpoint)
+	}
+}
+
+func TestSetGlobalConfigPopulateRerankerEndpointRejectsInvalidURL(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+
+	if err := workspace.SetGlobalConfigValue("serve.populate_reranker_endpoint", "not a url"); err == nil {
+		t.Fatal("SetGlobalConfigValue accepted an invalid reranker endpoint, want validation error")
+	}
+}
+
 func TestSetGlobalConfigSelfHostedValuesPreservesUnknownAndNormalizesPublicURL(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)

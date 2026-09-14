@@ -112,6 +112,7 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 
 	publicURL := o.PublicURL
 	allowedOrigins := o.AllowedOrigins
+	rerankerEndpoint := ""
 	if o.Config != nil {
 		if publicURL == "" {
 			publicURL = o.Config.Serve.PublicURL
@@ -119,12 +120,14 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 		if len(allowedOrigins) == 0 {
 			allowedOrigins = o.Config.Serve.AllowedOrigins
 		}
+		rerankerEndpoint = o.Config.Serve.PopulateRerankerEndpoint
 	}
 	srv, err := server.NewWithOptions(sqliteStore, staticFS, localWorkspaceID, server.Options{
-		DataDir:        dataDir,
-		WorkspaceDir:   o.WorkspaceDir,
-		PublicURL:      publicURL,
-		AllowedOrigins: allowedOrigins,
+		DataDir:                  dataDir,
+		WorkspaceDir:             o.WorkspaceDir,
+		PublicURL:                publicURL,
+		AllowedOrigins:           allowedOrigins,
+		PopulateRerankerEndpoint: rerankerEndpoint,
 	})
 	if err != nil {
 		return nil, err
