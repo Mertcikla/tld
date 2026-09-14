@@ -33,4 +33,5 @@ if ! docker exec "$container" pg_isready -U "$user" -d "$database" >/dev/null 2>
 fi
 
 export TLD_TEST_POSTGRES_URL="${TLD_TEST_POSTGRES_URL:-postgres://${user}:${password}@localhost:${port}/${database}?sslmode=disable}"
-go test -tags integration ./pkg/dbrepo ./tests/postgres -count=1 -v
+go test -tags integration ./pkg/dbrepo -count=1 -v
+go test -tags integration ./tests/postgres -count=1 -v
