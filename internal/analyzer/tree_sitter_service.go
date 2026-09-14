@@ -8,17 +8,14 @@ import (
 	"path/filepath"
 
 	"github.com/mertcikla/tld/v2/internal/ignore"
-	"github.com/mertcikla/tld/v2/internal/symbol"
 )
 
 type TreeSitterService struct {
-	fallback Service
 	registry *parserRegistry
 }
 
 func NewService() *TreeSitterService {
 	return &TreeSitterService{
-		fallback: NewLegacyService(),
 		registry: newDefaultParserRegistry(),
 	}
 }
@@ -91,12 +88,6 @@ func (s *TreeSitterService) extractDir(ctx context.Context, root string, rules *
 func (s *TreeSitterService) extractFile(ctx context.Context, path string) (*Result, error) {
 	language, parser, ok := s.registry.parserForPath(path)
 	if !ok {
-		if s.fallback != nil {
-			return s.fallback.ExtractPath(ctx, path, nil, nil)
-		}
-		if detectedLanguage, detected := DetectLanguage(path); detected {
-			return nil, unsupportedLanguageError(path, detectedLanguage)
-		}
 		return nil, unsupportedLanguageError(path, language)
 	}
 	source, err := os.ReadFile(path)
@@ -111,39 +102,4 @@ func (s *TreeSitterService) extractFile(ctx context.Context, path string) (*Resu
 		result.Symbols[i].Technology = string(language)
 	}
 	return result, nil
-}
-
-func resultFromLegacy(result *symbol.Result) *Result {
-	if result == nil {
-		return &Result{}
-	}
-	converted := &Result{
-		Symbols: make([]Symbol, 0, len(result.Symbols)),
-		Refs:    make([]Ref, 0, len(result.Refs)),
-	}
-	for _, sym := range result.Symbols {
-		tech := ""
-		if lang, ok := DetectLanguage(sym.FilePath); ok {
-			tech = string(lang)
-		}
-		converted.Symbols = append(converted.Symbols, Symbol{
-			Name:       sym.Name,
-			Kind:       sym.Kind,
-			FilePath:   sym.FilePath,
-			Line:       sym.Line,
-			EndLine:    sym.EndLine,
-			Parent:     sym.Parent,
-			Technology: tech,
-		})
-	}
-	for _, ref := range result.Refs {
-		converted.Refs = append(converted.Refs, Ref{
-			Name:     ref.Name,
-			Kind:     "call",
-			FilePath: ref.FilePath,
-			Line:     ref.Line,
-			Column:   0,
-		})
-	}
-	return converted
 }

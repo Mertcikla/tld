@@ -17,7 +17,6 @@ require (
 	github.com/sammcj/mermaid-check v0.0.4
 	github.com/speps/go-hashids/v2 v2.0.1
 	github.com/spf13/cobra v1.10.1
-	github.com/tetratelabs/wazero v1.11.0
 	github.com/uptrace/bun v1.2.18
 	github.com/uptrace/bun/dialect/pgdialect v1.2.18
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18
