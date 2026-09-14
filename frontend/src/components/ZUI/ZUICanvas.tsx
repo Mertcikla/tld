@@ -56,6 +56,7 @@ interface Props {
   diffLens?: ExploreDiffLens | null
   crossBranchSettings: CrossBranchContextSettings
   hoverLocked?: boolean
+  onElementActivate?: (elementId: number) => void
 }
 
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
@@ -72,6 +73,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   diffLens,
   crossBranchSettings,
   hoverLocked = false,
+  onElementActivate,
 }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -105,6 +107,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     hiddenTags,
     containerSize.w,
     hoverLocked,
+    onElementActivate,
   )
 
   const viewportBounds = useMemo(() => {

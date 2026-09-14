@@ -65,6 +65,7 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: collabHooks}
 	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
+	impactSvc := &impactService{store: apiStore, watchStore: watchStore, workspaceDir: opts.WorkspaceDir, dataDir: opts.DataDir}
 
 	mux := http.NewServeMux()
 	watch.NewHandler(watchStore).Register(mux)
@@ -135,6 +136,9 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 
 	collabPath, collabHandler := diagv1connect.NewCollaborationServiceHandler(collabSvc)
 	mux.Handle("/api"+collabPath, http.StripPrefix("/api", collabHandler))
+
+	impactPath, impactHandler := diagv1connect.NewImpactServiceHandler(impactSvc)
+	mux.Handle("/api"+impactPath, http.StripPrefix("/api", impactHandler))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		serveStatic(static, w, r)

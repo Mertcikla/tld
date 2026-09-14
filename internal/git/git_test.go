@@ -366,3 +366,126 @@ func intsToStrings(values []int) []string {
 	}
 	return out
 }
+
+func gitHead(t *testing.T, dir string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func gitCommitAll(t *testing.T, dir, message string) string {
+	t.Helper()
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-m", message}, {"rev-parse", "HEAD"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		if args[0] == "rev-parse" {
+			return strings.TrimSpace(string(out))
+		}
+	}
+	return ""
+}
+
+func TestFileChangesBetweenTwoCommits(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, map[string]string{
+		"main.go":   "package main\nfunc Main() {}\n",
+		"delete.go": "package main\nfunc DeleteMe() {}\n",
+	})
+	base := gitHead(t, dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc Changed() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "added.go"), []byte("package main\nfunc Added() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "delete.go")); err != nil {
+		t.Fatal(err)
+	}
+	head := gitCommitAll(t, dir, "changes")
+
+	changes, err := FileChangesBetween(dir, base, head)
+	if err != nil {
+		t.Fatalf("FileChangesBetween: %v", err)
+	}
+	if changes["main.go"] != WorktreeUpdated || changes["added.go"] != WorktreeAdded || changes["delete.go"] != WorktreeDeleted {
+		t.Fatalf("unexpected changes: %#v", changes)
+	}
+
+	if _, err := FileChangesBetween(dir, base, ""); err == nil {
+		t.Fatal("expected error for empty head ref")
+	}
+}
+
+func TestMergeBaseBetween(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, map[string]string{"main.go": "package main\n"})
+	common := gitHead(t, dir)
+
+	gitCheckoutNew := func(branch string) {
+		cmd := exec.Command("git", "checkout", "-b", branch)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("checkout %s: %v\n%s", branch, err, out)
+		}
+	}
+	gitCheckoutNew("feature")
+	if err := os.WriteFile(filepath.Join(dir, "feature.go"), []byte("package main\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommitAll(t, dir, "feature work")
+
+	cmd := exec.Command("git", "checkout", "main")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("checkout main: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main2.go"), []byte("package main\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	gitCommitAll(t, dir, "main work")
+
+	base, err := MergeBaseBetween(dir, "main", "feature")
+	if err != nil {
+		t.Fatalf("MergeBaseBetween: %v", err)
+	}
+	if base != common {
+		t.Fatalf("merge base = %q, want %q", base, common)
+	}
+}
+
+func TestRecentCommits(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, map[string]string{"main.go": "package main\n"})
+	if err := os.WriteFile(filepath.Join(dir, "second.go"), []byte("package main\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	head := gitCommitAll(t, dir, "second commit")
+
+	commits, err := RecentCommits(dir, 10)
+	if err != nil {
+		t.Fatalf("RecentCommits: %v", err)
+	}
+	if len(commits) != 2 {
+		t.Fatalf("commits = %d, want 2", len(commits))
+	}
+	if commits[0].SHA != head || commits[0].Subject != "second commit" {
+		t.Fatalf("unexpected newest commit: %+v", commits[0])
+	}
+	if commits[0].ShortSHA == "" || commits[0].Author != "Test" || commits[0].Date == "" {
+		t.Fatalf("incomplete commit metadata: %+v", commits[0])
+	}
+}

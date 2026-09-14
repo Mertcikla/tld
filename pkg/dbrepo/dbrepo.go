@@ -223,6 +223,8 @@ func legacySQLiteMigrationAlreadyApplied(ctx context.Context, db *bun.DB, commen
 		return sqliteColumnExists(ctx, db, "elements", "bypass_noise_gate")
 	case "view_markdown_source_kind":
 		return sqliteColumnExists(ctx, db, "view_markdown_documents", "source_kind")
+	case "repository_root_element":
+		return sqliteColumnExists(ctx, db, "watch_repositories", "root_element_id")
 	default:
 		return false, nil
 	}
@@ -310,6 +312,8 @@ func sqliteTableInfoQuery(table string) (string, bool) {
 		return "PRAGMA table_info(connectors)", true
 	case "view_markdown_documents":
 		return "PRAGMA table_info(view_markdown_documents)", true
+	case "watch_repositories":
+		return "PRAGMA table_info(watch_repositories)", true
 	default:
 		return "", false
 	}

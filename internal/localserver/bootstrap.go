@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/planner"
 	"github.com/mertcikla/tld/v2/internal/server"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -109,6 +110,17 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A workspace-as-code checkout has its architecture in YAML. When the
+	// database has no architecture of its own, project the workspace into it so
+	// the UI and impact analysis see the same architecture the CLI does.
+	if strings.TrimSpace(o.WorkspaceDir) != "" && !hasWorkspaceArchitecture(context.Background(), apiStore) {
+		if seeded, seedErr := seedWorkspace(context.Background(), apiStore, o.WorkspaceDir); seedErr == nil && seeded {
+			views, elements, connectors, err = apiStore.GetWorkspaceResourceCounts(context.Background(), localWorkspaceID)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
 
 	publicURL := o.PublicURL
 	allowedOrigins := o.AllowedOrigins
@@ -161,6 +173,44 @@ func ResolveAddr(o ServeOptions) string {
 		port = o.Port
 	}
 	return host + ":" + port
+}
+
+// hasWorkspaceArchitecture reports whether the database already holds
+// architecture (any element that is not a bare repository).
+func hasWorkspaceArchitecture(ctx context.Context, adapter *store.APIAdapter) bool {
+	elements, _, err := adapter.ListElements(ctx, localWorkspaceID, 0, 0, "")
+	if err != nil {
+		return false
+	}
+	for _, element := range elements {
+		if !strings.EqualFold(element.GetKind(), "repository") {
+			return true
+		}
+	}
+	return false
+}
+
+// seedWorkspace imports a YAML workspace into a fresh local database. It is
+// best-effort: a malformed workspace must never prevent the server starting.
+func seedWorkspace(ctx context.Context, adapter *store.APIAdapter, workspaceDir string) (bool, error) {
+	ws, err := workspace.Load(workspaceDir)
+	if err != nil {
+		return false, err
+	}
+	if len(ws.Elements) == 0 {
+		return false, nil
+	}
+	plan, err := planner.Build(ws, false)
+	if err != nil {
+		return false, err
+	}
+	if plan == nil || plan.Request == nil || len(plan.Request.GetElements()) == 0 {
+		return false, nil
+	}
+	if _, err := adapter.ApplyPlan(ctx, localWorkspaceID, plan.Request); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func localSQLiteWillBeInitialized(cfg *workspace.Config, dbPath string) bool {

@@ -56,6 +56,16 @@ const InventoryIcon = ({ size = 22 }: { size?: number }) => (
   </svg>
 )
 
+const RepositoriesIcon = ({ size = 22 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="6" cy="6" r="3" />
+    <circle cx="6" cy="18" r="3" />
+    <path d="M18 6a9 9 0 0 0-9 9" />
+    <circle cx="18" cy="18" r="3" />
+    <path d="M6 9v6" />
+  </svg>
+)
+
 interface Props extends TopMenuBarSlots {
   children?: React.ReactNode
   hideMobileBar?: boolean
@@ -65,13 +75,14 @@ type NavItem = {
   label: string
   path: string
   icon: (props: { size?: number }) => JSX.Element
-  shortcutKey: "1" | "2" | "3"
+  shortcutKey: "1" | "2" | "3" | "4"
 }
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Editor", path: "/", icon: PencilIcon, shortcutKey: "1" },
   { label: "Diagrams", path: "/views", icon: FolderTreeIcon, shortcutKey: "2" },
   { label: "Inventory", path: "/inventory", icon: InventoryIcon, shortcutKey: "3" },
+  { label: "Repositories", path: "/repositories", icon: RepositoriesIcon, shortcutKey: "4" },
 ]
 
 const NAV_SHORTCUT_PATHS: ReadonlyMap<string, string> = new Map(
@@ -476,6 +487,7 @@ export default function TopMenuBar({
             { label: "Editor", path: "/", icon: PencilIcon },
             { label: "Diagrams", path: "/views", icon: FolderTreeIcon },
             { label: "Inventory", path: "/inventory", icon: InventoryIcon },
+            { label: "Repositories", path: "/repositories", icon: RepositoriesIcon },
           ].map((item) => {
             const Icon = item.icon
             const active = isActive(item.path)

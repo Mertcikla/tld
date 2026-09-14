@@ -18,6 +18,9 @@ type RepositoryInput struct {
 	HeadCommit     string
 	IdentityStatus string
 	SettingsHash   string
+	// RootElementID links this repository to the diagram element that
+	// represents it. Nil leaves any existing link untouched.
+	RootElementID *int64
 }
 
 type factScanner interface {
@@ -231,7 +234,7 @@ func (s *Store) EnsureRepository(ctx context.Context, input RepositoryInput) (Re
 		return Repository{}, err
 	}
 	if existing.ID > 0 {
-		_, err = s.bun.NewUpdate().
+		update := s.bun.NewUpdate().
 			Model((*repositoryModel)(nil)).
 			Set("repo_root = ?", input.RepoRoot).
 			Set("display_name = ?", input.DisplayName).
@@ -239,9 +242,11 @@ func (s *Store) EnsureRepository(ctx context.Context, input RepositoryInput) (Re
 			Set("head_commit = ?", nullString(input.HeadCommit)).
 			Set("identity_status = ?", input.IdentityStatus).
 			Set("settings_hash = ?", input.SettingsHash).
-			Set("updated_at = ?", now).
-			Where("id = ?", existing.ID).
-			Exec(ctx)
+			Set("updated_at = ?", now)
+		if input.RootElementID != nil {
+			update = update.Set("root_element_id = ?", *input.RootElementID)
+		}
+		_, err = update.Where("id = ?", existing.ID).Exec(ctx)
 		if err != nil {
 			return Repository{}, err
 		}
@@ -256,6 +261,7 @@ func (s *Store) EnsureRepository(ctx context.Context, input RepositoryInput) (Re
 		HeadCommit:     stringPtrOrNil(input.HeadCommit),
 		IdentityStatus: input.IdentityStatus,
 		SettingsHash:   input.SettingsHash,
+		RootElementID:  input.RootElementID,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -297,6 +303,33 @@ func (s *Store) ReassociateRepository(ctx context.Context, id int64, remoteURL s
 		return Repository{}, err
 	}
 	return s.Repository(ctx, id)
+}
+
+// UpdateRepositoryBranch changes the tracked branch of a repository.
+func (s *Store) UpdateRepositoryBranch(ctx context.Context, id int64, branch string) (Repository, error) {
+	_, err := s.execRaw(ctx, `
+		UPDATE watch_repositories
+		SET branch = ?, updated_at = ?
+		WHERE id = ?`, nullString(strings.TrimSpace(branch)), nowString(), id)
+	if err != nil {
+		return Repository{}, err
+	}
+	return s.Repository(ctx, id)
+}
+
+// SetRepositoryRootElement links a repository to the element representing it.
+func (s *Store) SetRepositoryRootElement(ctx context.Context, id, elementID int64) error {
+	_, err := s.execRaw(ctx, `
+		UPDATE watch_repositories
+		SET root_element_id = ?, updated_at = ?
+		WHERE id = ?`, elementID, nowString(), id)
+	return err
+}
+
+// DeleteRepository removes a repository and its scanned state.
+func (s *Store) DeleteRepository(ctx context.Context, id int64) error {
+	_, err := s.execRaw(ctx, `DELETE FROM watch_repositories WHERE id = ?`, id)
+	return err
 }
 
 func (s *Store) BeginScanRun(ctx context.Context, repositoryID int64, mode string) (int64, error) {

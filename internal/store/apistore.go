@@ -219,6 +219,15 @@ func (a *APIAdapter) UpdateElement(ctx context.Context, id int32, _ uuid.UUID, i
 	return elementToProto(element, api.WorkspaceIDFromCtx(ctx)), nil
 }
 
+// UpdateElementBranch updates only an element's tracked branch, leaving all
+// other fields untouched.
+func (a *APIAdapter) UpdateElementBranch(ctx context.Context, id int32, branch string) error {
+	_, err := a.Store.DB().ExecContext(ctx,
+		`UPDATE elements SET branch = ?, updated_at = ? WHERE id = ?`,
+		branch, time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
 func (a *APIAdapter) DeleteElement(ctx context.Context, id int32, _ uuid.UUID) error {
 	if err := a.Store.DeleteResourceVisibilityOverrides(ctx, "element", int64(id)); err != nil {
 		return err
@@ -1341,6 +1350,12 @@ func (a *APIAdapter) GetWorkspaceResourceCounts(ctx context.Context, _ uuid.UUID
 		return 0, 0, 0, err
 	}
 	return views, elements, connectors, nil
+}
+
+// EnsureRootViewID exposes the workspace root view id to local services that
+// need to place top-level resources (for example, repositories).
+func (a *APIAdapter) EnsureRootViewID(ctx context.Context) (int32, error) {
+	return a.ensureRootViewID(ctx)
 }
 
 func (a *APIAdapter) ensureRootViewID(ctx context.Context) (int32, error) {

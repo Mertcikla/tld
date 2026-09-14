@@ -78,6 +78,15 @@ import {
   AddCommentResponseSchema,
   ListReactionsResponseSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/collaboration_service_pb'
+import {
+  ImpactService,
+  ListRepositoriesResponseSchema,
+  AddRepositoryResponseSchema,
+  UpdateRepositoryResponseSchema,
+  GetRepositoryStatusResponseSchema,
+  ListCommitsResponseSchema,
+  AnalyzeImpactResponseSchema,
+} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/impact_service_pb'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset, isWailsApp } from '../config/runtime'
 import {
@@ -144,6 +153,93 @@ export interface WatchRepository {
   branch: string | null
   head_commit: string | null
   identity_status: string
+}
+
+export interface ImpactRepository {
+  ref: string
+  name: string
+  remote_url: string
+  branch: string
+  local_path: string
+  head_commit: string
+  has_architecture: boolean
+  element_id: number
+}
+
+export interface ImpactCommit {
+  sha: string
+  short_sha: string
+  subject: string
+  author: string
+  date: string
+}
+
+export type ImpactChangeType = 'added' | 'modified' | 'deleted' | 'unknown'
+
+export interface ImpactElement {
+  ref: string
+  name: string
+  kind: string
+  element_id?: number
+  change: ImpactChangeType
+  evidence: string[]
+}
+
+export interface ImpactEdge {
+  source_ref: string
+  target_ref: string
+  label: string
+  connector_id?: number
+  observed: boolean
+}
+
+export interface ImpactFinding {
+  type: string
+  severity: string
+  message: string
+  observed: boolean
+}
+
+export interface ImpactCoverageGap {
+  file: string
+  change: string
+  reason: string
+  suggested_element_ref: string
+  suggested_element_name: string
+  suggested_score: number
+  suggested_element_pattern: string
+  suggested_new_element: string
+  suggested_new_ref: string
+}
+
+export interface ImpactCoverage {
+  applicable: boolean
+  complete: boolean
+  score: number
+  percent: number
+  confidence: string
+  source_files: number
+  bound_source_files: number
+  weak_source_files: number
+  unmapped_source_files: number
+  non_source_files: number
+  anchored_elements: number
+  total_elements: number
+  gaps: ImpactCoverageGap[]
+}
+
+export interface ImpactReport {
+  base: string
+  head: string
+  repo_root: string
+  changed: ImpactElement[]
+  candidates: ImpactElement[]
+  related: ImpactElement[]
+  edges: ImpactEdge[]
+  unmapped: string[]
+  coverage: ImpactCoverage
+  findings: ImpactFinding[]
+  summary: string
 }
 
 export interface WatchLock {
@@ -304,6 +400,7 @@ const mermaidClient = createClient(MermaidService, transport)
 const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
 const orgClient = createClient(OrgService, transport)
 const collaborationClient = createClient(CollaborationService, transport)
+const impactClient = createClient(ImpactService, transport)
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -734,6 +831,114 @@ export function protoLayer(l: Record<string, unknown>): ViewLayer {
     color: String(l.color ?? ''),
     created_at: String(l.created_at ?? new Date().toISOString()),
     updated_at: String(l.updated_at ?? new Date().toISOString()),
+  }
+}
+
+function impactChangeType(value: unknown): ImpactChangeType {
+  switch (String(value)) {
+    case 'IMPACT_CHANGE_TYPE_ADDED':
+      return 'added'
+    case 'IMPACT_CHANGE_TYPE_MODIFIED':
+      return 'modified'
+    case 'IMPACT_CHANGE_TYPE_DELETED':
+      return 'deleted'
+    default:
+      return 'unknown'
+  }
+}
+
+function toImpactElement(raw: Record<string, unknown>): ImpactElement {
+  return {
+    ref: String(raw.ref ?? ''),
+    name: String(raw.name ?? ''),
+    kind: String(raw.kind ?? ''),
+    element_id: typeof raw.element_id === 'number' ? raw.element_id : undefined,
+    change: impactChangeType(raw.change),
+    evidence: Array.isArray(raw.evidence) ? raw.evidence.map(String) : [],
+  }
+}
+
+function toImpactRepository(raw: Record<string, unknown>): ImpactRepository {
+  return {
+    ref: String(raw.ref ?? ''),
+    name: String(raw.name ?? ''),
+    remote_url: String(raw.remote_url ?? ''),
+    branch: String(raw.branch ?? ''),
+    local_path: String(raw.local_path ?? ''),
+    head_commit: String(raw.head_commit ?? ''),
+    has_architecture: Boolean(raw.has_architecture),
+    element_id: typeof raw.element_id === 'number' ? raw.element_id : 0,
+  }
+}
+
+function toImpactCommit(raw: Record<string, unknown>): ImpactCommit {
+  return {
+    sha: String(raw.sha ?? ''),
+    short_sha: String(raw.short_sha ?? ''),
+    subject: String(raw.subject ?? ''),
+    author: String(raw.author ?? ''),
+    date: String(raw.date ?? ''),
+  }
+}
+
+function toImpactCoverage(raw: Record<string, unknown> | undefined): ImpactCoverage {
+  const source = raw ?? {}
+  const gaps = Array.isArray(source.gaps) ? source.gaps : []
+  return {
+    applicable: Boolean(source.applicable),
+    complete: Boolean(source.complete),
+    score: Number(source.score ?? 0),
+    percent: Number(source.percent ?? 0),
+    confidence: String(source.confidence ?? ''),
+    source_files: Number(source.source_files ?? 0),
+    bound_source_files: Number(source.bound_source_files ?? 0),
+    weak_source_files: Number(source.weak_source_files ?? 0),
+    unmapped_source_files: Number(source.unmapped_source_files ?? 0),
+    non_source_files: Number(source.non_source_files ?? 0),
+    anchored_elements: Number(source.anchored_elements ?? 0),
+    total_elements: Number(source.total_elements ?? 0),
+    gaps: gaps.map((gap) => {
+      const item = gap as Record<string, unknown>
+      return {
+        file: String(item.file ?? ''),
+        change: String(item.change ?? ''),
+        reason: String(item.reason ?? ''),
+        suggested_element_ref: String(item.suggested_element_ref ?? ''),
+        suggested_element_name: String(item.suggested_element_name ?? ''),
+        suggested_score: Number(item.suggested_score ?? 0),
+        suggested_element_pattern: String(item.suggested_element_pattern ?? ''),
+        suggested_new_element: String(item.suggested_new_element ?? ''),
+        suggested_new_ref: String(item.suggested_new_ref ?? ''),
+      }
+    }),
+  }
+}
+
+function toImpactReport(raw: Record<string, unknown>): ImpactReport {
+  const list = (value: unknown) => (Array.isArray(value) ? (value as Record<string, unknown>[]) : [])
+  return {
+    base: String(raw.base ?? ''),
+    head: String(raw.head ?? ''),
+    repo_root: String(raw.repo_root ?? ''),
+    changed: list(raw.changed).map(toImpactElement),
+    candidates: list(raw.candidates).map(toImpactElement),
+    related: list(raw.related).map(toImpactElement),
+    edges: list(raw.edges).map((edge) => ({
+      source_ref: String(edge.source_ref ?? ''),
+      target_ref: String(edge.target_ref ?? ''),
+      label: String(edge.label ?? ''),
+      connector_id: typeof edge.connector_id === 'number' ? edge.connector_id : undefined,
+      observed: Boolean(edge.observed),
+    })),
+    unmapped: Array.isArray(raw.unmapped) ? raw.unmapped.map(String) : [],
+    coverage: toImpactCoverage(raw.coverage as Record<string, unknown> | undefined),
+    findings: list(raw.findings).map((finding) => ({
+      type: String(finding.type ?? ''),
+      severity: String(finding.severity ?? ''),
+      message: String(finding.message ?? ''),
+      observed: Boolean(finding.observed),
+    })),
+    summary: String(raw.summary ?? ''),
   }
 }
 
@@ -1754,6 +1959,86 @@ export const api = {
       if (!res.ok) throw await responseError(res, 'Failed to clean watch context')
       return res.json()
     },
+  },
+
+  impact: {
+    listRepositories: (): Promise<ImpactRepository[]> =>
+      rpc(async () => {
+        const res = await impactClient.listRepositories({ orgId: '' })
+        const json = j<{ repositories: Record<string, unknown>[] }>(ListRepositoriesResponseSchema, res)
+        return (json.repositories ?? []).map(toImpactRepository)
+      }),
+
+    addRepository: (input: { path: string; name?: string; branch?: string }): Promise<ImpactRepository> =>
+      rpc(async () => {
+        const res = await impactClient.addRepository({
+          orgId: '',
+          path: input.path,
+          name: input.name,
+          branch: input.branch,
+        })
+        const json = j<{ repository: Record<string, unknown> }>(AddRepositoryResponseSchema, res)
+        return toImpactRepository(json.repository ?? {})
+      }),
+
+    updateRepository: (input: { ref: string; branch?: string; path?: string }): Promise<ImpactRepository> =>
+      rpc(async () => {
+        const res = await impactClient.updateRepository({
+          orgId: '',
+          ref: input.ref,
+          branch: input.branch ?? '',
+          path: input.path,
+        })
+        const json = j<{ repository: Record<string, unknown> }>(UpdateRepositoryResponseSchema, res)
+        return toImpactRepository(json.repository ?? {})
+      }),
+
+    removeRepository: (ref: string): Promise<void> =>
+      rpc(async () => {
+        await impactClient.removeRepository({ orgId: '', ref })
+      }),
+
+    getRepositoryStatus: (ref: string): Promise<{ repository: ImpactRepository; commits: ImpactCommit[] }> =>
+      rpc(async () => {
+        const res = await impactClient.getRepositoryStatus({ orgId: '', ref })
+        const json = j<{ repository: Record<string, unknown>; commits: Record<string, unknown>[] }>(
+          GetRepositoryStatusResponseSchema,
+          res,
+        )
+        return {
+          repository: toImpactRepository(json.repository ?? {}),
+          commits: (json.commits ?? []).map(toImpactCommit),
+        }
+      }),
+
+    listCommits: (path: string, limit = 40): Promise<ImpactCommit[]> =>
+      rpc(async () => {
+        const res = await impactClient.listCommits({ orgId: '', path, limit })
+        const json = j<{ commits: Record<string, unknown>[] }>(ListCommitsResponseSchema, res)
+        return (json.commits ?? []).map(toImpactCommit)
+      }),
+
+    analyze: (input: {
+      path: string
+      base: string
+      head?: string
+      evidence?: boolean
+      suggestBindings?: boolean
+      narrate?: boolean
+    }): Promise<ImpactReport> =>
+      rpc(async () => {
+        const res = await impactClient.analyzeImpact({
+          orgId: '',
+          path: input.path,
+          base: input.base,
+          head: input.head ?? 'HEAD',
+          evidence: input.evidence ?? true,
+          suggestBindings: input.suggestBindings ?? true,
+          narrate: input.narrate ?? false,
+        })
+        const json = j<Record<string, unknown>>(AnalyzeImpactResponseSchema, res)
+        return toImpactReport(json)
+      }),
   },
 
   editor: {

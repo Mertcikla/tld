@@ -18,6 +18,7 @@ type repositoryModel struct {
 	HeadCommit     *string `bun:"head_commit"`
 	IdentityStatus string  `bun:"identity_status"`
 	SettingsHash   string  `bun:"settings_hash"`
+	RootElementID  *int64  `bun:"root_element_id"`
 	CreatedAt      string  `bun:"created_at"`
 	UpdatedAt      string  `bun:"updated_at"`
 }
@@ -63,9 +64,17 @@ func repositoryFromModel(row repositoryModel) Repository {
 		HeadCommit:     sqlNullStringFromPtr(row.HeadCommit),
 		IdentityStatus: row.IdentityStatus,
 		SettingsHash:   row.SettingsHash,
+		RootElementID:  sqlNullInt64FromPtr(row.RootElementID),
 		CreatedAt:      row.CreatedAt,
 		UpdatedAt:      row.UpdatedAt,
 	}
+}
+
+func sqlNullInt64FromPtr(value *int64) sql.NullInt64 {
+	if value == nil {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: *value, Valid: true}
 }
 
 func sqlNullStringFromPtr(value *string) sql.NullString {

@@ -217,9 +217,13 @@ export function useZUIInteraction(
   hiddenTags: string[] = [],
   canvasWidth: number = 0,
   hoverLocked: boolean = false,
+  onElementActivate?: (elementId: number) => void,
 ): ZUIInteraction {
   const [viewState, setViewStateInternal] = useState<ZUIViewState>(initialView)
   const [hoveredItem, setHoveredItemInternal] = useState<HoveredItem | null>(null)
+  const onElementActivateRef = useRef(onElementActivate)
+  onElementActivateRef.current = onElementActivate
+  const pointerMovedRef = useRef(false)
   const popoverHoverLockedRef = useRef(false)
   const externalHoverLockedRef = useRef(hoverLocked)
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -494,6 +498,7 @@ export function useZUIInteraction(
       e.preventDefault()
       dragging.current = true
       dragButton.current = e.button
+      pointerMovedRef.current = false
       lastMouse.current.x = e.clientX
       lastMouse.current.y = e.clientY
       lastPointerClient.current = { x: e.clientX, y: e.clientY }
@@ -510,6 +515,9 @@ export function useZUIInteraction(
       if (dragging.current) {
         const dx = e.clientX - lastMouse.current.x
         const dy = e.clientY - lastMouse.current.y
+        if (Math.abs(dx) + Math.abs(dy) > 3) {
+          pointerMovedRef.current = true
+        }
         lastMouse.current.x = e.clientX
         lastMouse.current.y = e.clientY
         recordZuiTestInteraction({
@@ -566,10 +574,21 @@ export function useZUIInteraction(
       }
     }
 
-    function onMouseUp() {
+    function onMouseUp(e: MouseEvent) {
+      const wasDragging = dragging.current
+      const moved = pointerMovedRef.current
       dragging.current = false
       dragButton.current = null
+      pointerMovedRef.current = false
       if (el) el.style.cursor = 'grab'
+      if (!wasDragging || moved || !onElementActivateRef.current || !el) return
+      const rect = el.getBoundingClientRect()
+      const view = viewStateRef.current
+      const worldX = screenToWorldX(e.clientX - rect.left, view)
+      const worldY = screenToWorldY(e.clientY - rect.top, view)
+      const thresholds = getExpandThresholds(rect.width)
+      const deepest = hitTestZUIRenderedNode(worldX, worldY, groupsRef.current, view, thresholds, hiddenTagsRef.current)
+      if (deepest) onElementActivateRef.current(deepest.node.elementId)
     }
 
     function onMouseOut() {

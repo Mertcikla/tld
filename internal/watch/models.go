@@ -16,6 +16,7 @@ type Repository struct {
 	HeadCommit     sql.NullString `json:"-"`
 	IdentityStatus string         `json:"identity_status"`
 	SettingsHash   string         `json:"settings_hash"`
+	RootElementID  sql.NullInt64  `json:"-"`
 	CreatedAt      string         `json:"created_at"`
 	UpdatedAt      string         `json:"updated_at"`
 }
@@ -29,6 +30,7 @@ type RepositoryJSON struct {
 	HeadCommit     *string `json:"head_commit"`
 	IdentityStatus string  `json:"identity_status"`
 	SettingsHash   string  `json:"settings_hash"`
+	RootElementID  *int64  `json:"root_element_id"`
 	CreatedAt      string  `json:"created_at"`
 	UpdatedAt      string  `json:"updated_at"`
 }
@@ -491,9 +493,17 @@ func (r Repository) JSON() RepositoryJSON {
 		HeadCommit:     nullStringPtr(r.HeadCommit),
 		IdentityStatus: r.IdentityStatus,
 		SettingsHash:   r.SettingsHash,
+		RootElementID:  nullInt64Ptr(r.RootElementID),
 		CreatedAt:      r.CreatedAt,
 		UpdatedAt:      r.UpdatedAt,
 	}
+}
+
+func nullInt64Ptr(value sql.NullInt64) *int64 {
+	if !value.Valid {
+		return nil
+	}
+	return &value.Int64
 }
 
 func nullStringPtr(value sql.NullString) *string {
