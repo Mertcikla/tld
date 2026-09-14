@@ -47,6 +47,19 @@ tasks:
     cmds:
       - cd frontend && VITE_APP_BASE=/ VITE_ROUTER_BASENAME=/ npm run build:app
 
+  grammars:
+    desc: Build embedded WASM grammar modules ./internal/symbol/grammars/src
+    sources:
+      - internal/symbol/grammars/src/**/*.go
+      - internal/symbol/grammars/src/**/go.mod
+    generates:
+      - internal/symbol/grammars/go.wasm
+      - internal/symbol/grammars/typescript.wasm
+      - internal/symbol/grammars/javascript.wasm
+      - internal/symbol/grammars/python.wasm
+    cmds:
+      - go generate ./internal/symbol/grammars/...
+
   lint-be:
     desc: Lint Go backend
     deps:

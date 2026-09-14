@@ -81,6 +81,25 @@ jobs:
           path: results.xml
           reporter: java-junit
 
+  grammars-reproducible:
+    name: Grammar WASM Reproducible Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Rebuild grammar modules from source
+        run: go generate ./internal/symbol/grammars/...
+
+      - name: Verify committed WASM matches source
+        run: git diff --exit-code -- internal/symbol/grammars
+
   postgres-integration-tests:
     name: PostgreSQL Integration Tests
     runs-on: ubuntu-latest
