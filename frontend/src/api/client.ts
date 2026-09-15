@@ -75,6 +75,9 @@ import {
   GetRepositoryStatusResponseSchema,
   GetLatestImpactResponseSchema,
   ListCommitsResponseSchema,
+  ListCommitGraphResponseSchema,
+  GetCommitDetailsResponseSchema,
+  GetRangeStatsResponseSchema,
   AnalyzeImpactResponseSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/impact_service_pb'
 import { transport } from './transport'
@@ -153,6 +156,24 @@ export interface ImpactCommit {
   subject: string
   author: string
   date: string
+  parents: string[]
+  refs: string[]
+  author_email: string
+  body: string
+}
+
+export interface ImpactCommitDetails {
+  commit: ImpactCommit
+  files: ImpactFile[]
+  added: number
+  removed: number
+}
+
+export interface ImpactRangeStats {
+  commits: number
+  files_changed: number
+  added: number
+  removed: number
 }
 
 export type ImpactChangeType = 'added' | 'modified' | 'deleted' | 'unknown'
@@ -868,12 +889,17 @@ function toImpactRepository(raw: Record<string, unknown>): ImpactRepository {
 }
 
 function toImpactCommit(raw: Record<string, unknown>): ImpactCommit {
+  const strList = (value: unknown): string[] => (Array.isArray(value) ? value.map(String) : [])
   return {
     sha: String(raw.sha ?? ''),
     short_sha: String(raw.short_sha ?? ''),
     subject: String(raw.subject ?? ''),
     author: String(raw.author ?? ''),
     date: String(raw.date ?? ''),
+    parents: strList(raw.parents),
+    refs: strList(raw.refs),
+    author_email: String(raw.author_email ?? ''),
+    body: String(raw.body ?? ''),
   }
 }
 
@@ -2253,6 +2279,43 @@ export const api = {
         const res = await impactClient.listCommits({ orgId: '', path, limit })
         const json = j<{ commits: Record<string, unknown>[] }>(ListCommitsResponseSchema, res)
         return (json.commits ?? []).map(toImpactCommit)
+      }),
+
+    listCommitGraph: (path: string, limit = 100): Promise<ImpactCommit[]> =>
+      rpc(async () => {
+        const res = await impactClient.listCommitGraph({ orgId: '', path, limit })
+        const json = j<{ commits: Record<string, unknown>[] }>(ListCommitGraphResponseSchema, res)
+        return (json.commits ?? []).map(toImpactCommit)
+      }),
+
+    getCommitDetails: (path: string, sha: string): Promise<ImpactCommitDetails> =>
+      rpc(async () => {
+        const res = await impactClient.getCommitDetails({ orgId: '', path, sha })
+        const json = j<{
+          commit?: Record<string, unknown>
+          files?: Record<string, unknown>[]
+          added?: number
+          removed?: number
+        }>(GetCommitDetailsResponseSchema, res)
+        const list = (value: unknown) => (Array.isArray(value) ? (value as Record<string, unknown>[]) : [])
+        return {
+          commit: toImpactCommit(json.commit ?? {}),
+          files: list(json.files).map(toImpactFile),
+          added: Number(json.added ?? 0),
+          removed: Number(json.removed ?? 0),
+        }
+      }),
+
+    getRangeStats: (path: string, base: string, head: string): Promise<ImpactRangeStats> =>
+      rpc(async () => {
+        const res = await impactClient.getRangeStats({ orgId: '', path, base, head })
+        const json = j<{ commits?: number; files_changed?: number; added?: number; removed?: number }>(GetRangeStatsResponseSchema, res)
+        return {
+          commits: Number(json.commits ?? 0),
+          files_changed: Number(json.files_changed ?? 0),
+          added: Number(json.added ?? 0),
+          removed: Number(json.removed ?? 0),
+        }
       }),
 
     analyze: (input: { path: string; base: string; head?: string; evidence?: boolean; suggestBindings?: boolean }): Promise<ImpactReport> =>

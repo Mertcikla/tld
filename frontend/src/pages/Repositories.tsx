@@ -8,7 +8,6 @@ import {
   Button,
   Center,
   Code,
-  Collapse,
   Divider,
   Flex,
   Grid,
@@ -37,7 +36,7 @@ import {
   Tooltip,
   useDisclosure,
 } from '@chakra-ui/react'
-import { AddIcon, ArrowUpDownIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon, SearchIcon, SmallCloseIcon } from '@chakra-ui/icons'
+import { AddIcon, ArrowUpDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon, SearchIcon, SmallCloseIcon } from '@chakra-ui/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   api,
@@ -49,6 +48,7 @@ import {
   type ImpactRepository,
 } from '../api/client'
 import ImpactCanvas from '../components/ImpactCanvas'
+import CommitHistoryPanel from '../components/CommitGraph'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { MarkdownPreview } from '../components/ViewMarkdownPanel/MarkdownPreview'
 import { markdownPanelBodySx } from '../components/ViewMarkdownPanel/styles'
@@ -667,7 +667,6 @@ export default function Repositories() {
   const [branchSaving, setBranchSaving] = useState(false)
   const [resultTab, setResultTab] = useState<ResultTab>('architecture')
   const [architectureView, setArchitectureView] = useState<ArchitectureView>('diagram')
-  const [showRangeCommits, setShowRangeCommits] = useState(true)
   const [changeView, setChangeView] = useState<ChangeView>('files')
   const [fileQuery, setFileQuery] = useState('')
   const [fileChangeFilter, setFileChangeFilter] = useState<FileChangeFilter>('all')
@@ -1332,6 +1331,16 @@ export default function Repositories() {
                     </Flex>
                   </Box>
                 </Box>
+
+                <CommitHistoryPanel
+                  path={localPath}
+                  base={base}
+                  head={head}
+                  onSelectBase={setBase}
+                  onSelectHead={setHead}
+                  onRun={() => void runImpact()}
+                  running={running}
+                />
 
                 {running && (
                   <Flex py={8} align="center" justify="center" direction="column" gap={3} color="gray.600" borderBottom="1px solid" borderColor="whiteAlpha.100">

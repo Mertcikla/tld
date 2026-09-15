@@ -294,7 +294,6 @@ func TestImpactServiceLinksCheckoutToExistingElement(t *testing.T) {
 		t.Fatalf("expected a linked local path: %+v", resp.Msg.GetRepository())
 	}
 }
-
 func TestImpactServiceListsUnlinkedRepositoryElement(t *testing.T) {
 	h := newImpactHarness(t)
 	h.addElement(t, "Legacy Repo", "repository", "https://github.com/example/legacy.git", "")
@@ -308,5 +307,65 @@ func TestImpactServiceListsUnlinkedRepositoryElement(t *testing.T) {
 	}
 	if listed.Msg.GetRepositories()[0].GetLocalPath() != "" {
 		t.Fatalf("unlinked repository should have no local path")
+	}
+}
+
+func impactSecondCommit(t *testing.T, repo string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(repo, "src", "b.go"), []byte("package src\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	impactGit(t, repo, "add", "-A")
+	impactGit(t, repo, "commit", "-m", "add b")
+}
+
+func TestImpactServiceCommitGraphDetailsAndRangeStats(t *testing.T) {
+	h := newImpactHarness(t)
+	repo := t.TempDir()
+	initImpactRepo(t, repo, map[string]string{"src/a.go": "package src\n"})
+	impactSecondCommit(t, repo)
+
+	graph, err := h.service.ListCommitGraph(h.ctx, connect.NewRequest(&diagv1.ListCommitGraphRequest{Path: repo, Limit: 50}))
+	if err != nil {
+		t.Fatalf("ListCommitGraph: %v", err)
+	}
+	commits := graph.Msg.GetCommits()
+	if len(commits) != 2 {
+		t.Fatalf("commits = %d, want 2", len(commits))
+	}
+	if len(commits[1].GetParents()) != 0 {
+		t.Errorf("root parents = %v, want none", commits[1].GetParents())
+	}
+	if len(commits[0].GetParents()) != 1 || commits[0].GetParents()[0] != commits[1].GetSha() {
+		t.Errorf("head parents = %v, want [%s]", commits[0].GetParents(), commits[1].GetSha())
+	}
+	if commits[0].GetAuthorEmail() == "" {
+		t.Errorf("expected author email: %+v", commits[0])
+	}
+
+	details, err := h.service.GetCommitDetails(h.ctx, connect.NewRequest(&diagv1.GetCommitDetailsRequest{Path: repo, Sha: commits[0].GetSha()}))
+	if err != nil {
+		t.Fatalf("GetCommitDetails: %v", err)
+	}
+	if len(details.Msg.GetFiles()) != 1 || details.Msg.GetFiles()[0].GetPath() != "src/b.go" {
+		t.Fatalf("files = %+v, want src/b.go", details.Msg.GetFiles())
+	}
+	if details.Msg.GetAdded() != 1 || details.Msg.GetRemoved() != 0 {
+		t.Fatalf("added/removed = %d/%d, want 1/0", details.Msg.GetAdded(), details.Msg.GetRemoved())
+	}
+
+	stats, err := h.service.GetRangeStats(h.ctx, connect.NewRequest(&diagv1.GetRangeStatsRequest{Path: repo, Base: "HEAD~1", Head: "HEAD"}))
+	if err != nil {
+		t.Fatalf("GetRangeStats: %v", err)
+	}
+	if stats.Msg.GetCommits() != 1 || stats.Msg.GetFilesChanged() != 1 || stats.Msg.GetAdded() != 1 {
+		t.Fatalf("range stats = %+v, want 1 commit / 1 file / 1 added", stats.Msg)
+	}
+
+	if _, err := h.service.GetCommitDetails(h.ctx, connect.NewRequest(&diagv1.GetCommitDetailsRequest{Path: repo, Sha: "deadbeef"})); err == nil {
+		t.Error("GetCommitDetails with bogus sha should fail")
+	}
+	if _, err := h.service.GetRangeStats(h.ctx, connect.NewRequest(&diagv1.GetRangeStatsRequest{Path: repo, Base: "", Head: "HEAD"})); err == nil {
+		t.Error("GetRangeStats with empty base should fail")
 	}
 }

@@ -14,6 +14,15 @@ type Commit struct {
 	Subject  string
 	Author   string
 	Date     string
+	// Parents holds full parent SHAs in git order. Empty for root commits,
+	// multiple entries for merge commits. Only populated by HistoryGraph and
+	// ShowCommit; RecentCommits leaves it empty.
+	Parents []string
+	// Refs holds `git log --decorate` decorations (e.g. "HEAD -> main",
+	// "origin/main", "tag: v1.2"). Empty when the commit has no refs.
+	Refs        []string
+	AuthorEmail string
+	Body        string
 }
 
 // RecentCommits returns up to limit recent commits, newest first, skipping
@@ -89,26 +98,7 @@ func FileLineStatsBetween(repoRoot, base, head string) (map[string]LineDiff, err
 	if err != nil {
 		return nil, fmt.Errorf("git diff numstat %s..%s: %w", base, head, err)
 	}
-	stats := map[string]LineDiff{}
-	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		fields := strings.Split(line, "\t")
-		if len(fields) < 3 || fields[0] == "-" || fields[1] == "-" {
-			continue
-		}
-		added, err := strconv.Atoi(fields[0])
-		if err != nil {
-			continue
-		}
-		removed, err := strconv.Atoi(fields[1])
-		if err != nil {
-			continue
-		}
-		stats[filepath.ToSlash(fields[2])] = LineDiff{Added: added, Removed: removed}
-	}
-	return stats, nil
+	return parseNumstat(out), nil
 }
 
 // MergeBaseBetween returns the best common ancestor commit between two refs.

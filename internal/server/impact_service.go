@@ -292,6 +292,89 @@ func (s *impactService) ListCommits(_ context.Context, req *connect.Request[diag
 	return connect.NewResponse(&diagv1.ListCommitsResponse{Commits: protoCommits(commits)}), nil
 }
 
+func (s *impactService) ListCommitGraph(_ context.Context, req *connect.Request[diagv1.ListCommitGraphRequest]) (*connect.Response[diagv1.ListCommitGraphResponse], error) {
+	path := strings.TrimSpace(req.Msg.GetPath())
+	if path == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path is required"))
+	}
+	repoRoot, err := tldgit.RepoRoot(path)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%q is not inside a git repository: %w", path, err))
+	}
+	commits, err := tldgit.HistoryGraph(repoRoot, int(req.Msg.GetLimit()))
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&diagv1.ListCommitGraphResponse{Commits: protoCommits(commits)}), nil
+}
+
+func (s *impactService) GetCommitDetails(_ context.Context, req *connect.Request[diagv1.GetCommitDetailsRequest]) (*connect.Response[diagv1.GetCommitDetailsResponse], error) {
+	path := strings.TrimSpace(req.Msg.GetPath())
+	sha := strings.TrimSpace(req.Msg.GetSha())
+	if path == "" || sha == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path and sha are required"))
+	}
+	repoRoot, err := tldgit.RepoRoot(path)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%q is not inside a git repository: %w", path, err))
+	}
+	header, files, added, removed, err := tldgit.ShowCommit(repoRoot, sha)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	protoFiles := make([]*diagv1.ImpactFile, 0, len(files))
+	for _, file := range files {
+		protoFiles = append(protoFiles, &diagv1.ImpactFile{
+			Path:    file.Path,
+			Change:  impactFileChangeType(string(file.Change)),
+			Added:   int32(file.Added),
+			Removed: int32(file.Removed),
+		})
+	}
+	return connect.NewResponse(&diagv1.GetCommitDetailsResponse{
+		Commit:  protoCommit(header),
+		Files:   protoFiles,
+		Added:   int32(added),
+		Removed: int32(removed),
+	}), nil
+}
+
+func (s *impactService) GetRangeStats(_ context.Context, req *connect.Request[diagv1.GetRangeStatsRequest]) (*connect.Response[diagv1.GetRangeStatsResponse], error) {
+	path := strings.TrimSpace(req.Msg.GetPath())
+	base := strings.TrimSpace(req.Msg.GetBase())
+	head := strings.TrimSpace(req.Msg.GetHead())
+	if path == "" || base == "" || head == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path, base and head are required"))
+	}
+	repoRoot, err := tldgit.RepoRoot(path)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("%q is not inside a git repository: %w", path, err))
+	}
+	count, err := tldgit.RangeCommitCount(repoRoot, base, head)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	changes, err := tldgit.FileChangesBetween(repoRoot, base, head)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	stats, err := tldgit.FileLineStatsBetween(repoRoot, base, head)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	added, removed := 0, 0
+	for _, stat := range stats {
+		added += stat.Added
+		removed += stat.Removed
+	}
+	return connect.NewResponse(&diagv1.GetRangeStatsResponse{
+		Commits:      int32(count),
+		FilesChanged: int32(len(changes)),
+		Added:        int32(added),
+		Removed:      int32(removed),
+	}), nil
+}
+
 func (s *impactService) AnalyzeImpact(ctx context.Context, req *connect.Request[diagv1.AnalyzeImpactRequest]) (*connect.Response[diagv1.AnalyzeImpactResponse], error) {
 	path := strings.TrimSpace(req.Msg.GetPath())
 	base := strings.TrimSpace(req.Msg.GetBase())
@@ -768,16 +851,24 @@ func protoCoverage(coverage watch.Coverage) *diagv1.ImpactCoverage {
 	return out
 }
 
+func protoCommit(commit tldgit.Commit) *diagv1.RepositoryCommit {
+	return &diagv1.RepositoryCommit{
+		Sha:         commit.SHA,
+		ShortSha:    commit.ShortSHA,
+		Subject:     commit.Subject,
+		Author:      commit.Author,
+		Date:        commit.Date,
+		Parents:     commit.Parents,
+		Refs:        commit.Refs,
+		AuthorEmail: commit.AuthorEmail,
+		Body:        commit.Body,
+	}
+}
+
 func protoCommits(commits []tldgit.Commit) []*diagv1.RepositoryCommit {
 	out := make([]*diagv1.RepositoryCommit, 0, len(commits))
 	for _, commit := range commits {
-		out = append(out, &diagv1.RepositoryCommit{
-			Sha:      commit.SHA,
-			ShortSha: commit.ShortSHA,
-			Subject:  commit.Subject,
-			Author:   commit.Author,
-			Date:     commit.Date,
-		})
+		out = append(out, protoCommit(commit))
 	}
 	return out
 }
