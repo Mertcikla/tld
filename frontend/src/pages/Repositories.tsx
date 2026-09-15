@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   Alert,
   AlertIcon,
-  Avatar,
   Badge,
   Box,
   Button,
@@ -36,9 +36,8 @@ import {
   VStack,
   Tooltip,
   useDisclosure,
-  useToast,
 } from '@chakra-ui/react'
-import { AddIcon, ArrowUpDownIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon, SearchIcon } from '@chakra-ui/icons'
+import { AddIcon, ArrowUpDownIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon, SearchIcon } from '@chakra-ui/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   api,
@@ -50,14 +49,16 @@ import {
   type ImpactRepository,
 } from '../api/client'
 import ImpactCanvas from '../components/ImpactCanvas'
+import ConfirmDialog from '../components/ConfirmDialog'
+import PanelHeader from '../components/PanelHeader'
+import { toast } from '../utils/toast'
 import { buildImpactFileTree, flattenImpactFileTree } from '../utils/impactFileTree'
 
 const panelStyle = {
   bg: 'var(--bg-panel)',
   border: '1px solid',
-  borderColor: 'var(--border-main)',
-  borderRadius: 'xl',
-  boxShadow: 'panel',
+  borderColor: 'whiteAlpha.100',
+  borderRadius: 'lg',
 } as const
 
 const SKILL_INSTALL_PATH = '~/.agents/skills/create-diagram-impact/SKILL.md'
@@ -140,41 +141,73 @@ function SegmentedControl<T extends string>({
   ariaLabel?: string
 }) {
   return (
-    <HStack spacing={0} border="1px solid" borderColor="var(--border-main)" borderRadius="md" overflow="hidden" aria-label={ariaLabel}>
-      {options.map((option) => {
-        const active = option.value === value
-        return (
-          <Box
-            key={option.value}
-            as="button"
-            type="button"
-            aria-pressed={active}
-            px={2.5}
-            py={1}
-            fontSize="2xs"
-            textTransform="uppercase"
-            letterSpacing="0.08em"
-            color={active ? 'gray.100' : 'gray.500'}
-            bg={active ? 'var(--bg-hover)' : 'transparent'}
-            _hover={{ color: 'gray.200' }}
-            onClick={() => onChange(option.value)}
-            whiteSpace="nowrap"
-          >
-            {option.label}
-            {typeof option.count === 'number' ? ` · ${option.count}` : ''}
-          </Box>
-        )
-      })}
-    </HStack>
+    <Box p={1} bg="whiteAlpha.50" borderRadius="xl" aria-label={ariaLabel}>
+      <HStack spacing={1}>
+        {options.map((option) => {
+          const active = option.value === value
+          return (
+            <Box
+              key={option.value}
+              flex={1}
+              as="button"
+              type="button"
+              aria-pressed={active}
+              py={1.5}
+              px={2}
+              fontSize="10px"
+              fontWeight="800"
+              letterSpacing="0.08em"
+              textTransform="uppercase"
+              cursor="pointer"
+              bg={active ? 'whiteAlpha.200' : 'transparent'}
+              color={active ? 'white' : 'whiteAlpha.500'}
+              borderRadius="lg"
+              _hover={{ bg: active ? 'whiteAlpha.200' : 'whiteAlpha.100', color: 'white' }}
+              transition="all 0.2s"
+              onClick={() => onChange(option.value)}
+              whiteSpace="nowrap"
+            >
+              {option.label}
+              {typeof option.count === 'number' ? ` · ${option.count}` : ''}
+            </Box>
+          )
+        })}
+      </HStack>
+    </Box>
+  )
+}
+
+function MicroLabel({ children }: { children: ReactNode }) {
+  return (
+    <Text fontSize="10px" fontWeight="700" color="whiteAlpha.500" textTransform="uppercase" letterSpacing="0.08em">
+      {children}
+    </Text>
+  )
+}
+
+function RepoGlyph({ name, size = 'sm' }: { name: string; size?: 'sm' | 'lg' }) {
+  const initial = name.trim() ? name.trim()[0].toUpperCase() : '?'
+  return (
+    <Flex
+      w={size === 'sm' ? '28px' : '48px'}
+      h={size === 'sm' ? '28px' : '48px'}
+      align="center"
+      justify="center"
+      flexShrink={0}
+      bg="whiteAlpha.100"
+      rounded="md"
+    >
+      <Text fontSize={size === 'sm' ? 'sm' : 'xl'} fontWeight="semibold" color="whiteAlpha.900">
+        {initial}
+      </Text>
+    </Flex>
   )
 }
 
 function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <Box {...panelStyle} p={3} minW={0}>
-      <Text fontSize="2xs" textTransform="uppercase" letterSpacing="0.1em" color="gray.500">
-        {label}
-      </Text>
+      <MicroLabel>{label}</MicroLabel>
       <Text fontSize="lg" fontWeight="semibold" color="gray.100" mt={1} isTruncated>
         {value}
       </Text>
@@ -196,7 +229,6 @@ function RepositoryReadiness({
   reloading: boolean
   onReload: () => void
 }) {
-  const toast = useToast()
   const prompt = `Use the create-diagram-impact skill to diagram ${repository.local_path || repository.name} at commit ${
     repository.head_commit || repository.branch || 'HEAD'
   }, binding elements to code so tld impact works.`
@@ -255,7 +287,7 @@ function RepositoryReadiness({
   return (
     <Box {...panelStyle} p={5}>
       <HStack spacing={2} align="center">
-        <Badge colorScheme="orange">No architecture</Badge>
+        <Badge variant="subtle" colorScheme="orange">No architecture</Badge>
         <Text fontSize="sm" fontWeight="semibold" color="gray.100">
           Bind this repository before comparing
         </Text>
@@ -266,8 +298,8 @@ function RepositoryReadiness({
       <VStack align="stretch" spacing={4} mt={5}>
         {steps.map((step, index) => (
           <HStack key={step.title} align="flex-start" spacing={3}>
-            <Center w={6} h={6} borderRadius="full" bg="var(--bg-hover)" border="1px solid" borderColor="var(--border-main)" flexShrink={0}>
-              <Text fontSize="xs" fontWeight="bold" color="gray.200">
+            <Center w={6} h={6} borderRadius="full" bg="whiteAlpha.100" flexShrink={0}>
+              <Text fontSize="xs" fontWeight="bold" color="white">
                 {index + 1}
               </Text>
             </Center>
@@ -285,7 +317,6 @@ function RepositoryReadiness({
 }
 
 function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
-  const toast = useToast()
   const [showGaps, setShowGaps] = useState(false)
 
   const copyGapCommand = async (command: string) => {
@@ -297,7 +328,7 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
     <Box {...panelStyle} p={4}>
       <Flex justify="space-between" align={{ base: 'flex-start', md: 'center' }} gap={3} wrap="wrap">
         <HStack spacing={3} wrap="wrap">
-          <Badge colorScheme={coverageColor(coverage)} fontSize="sm" px={2} py={1} borderRadius="md">
+          <Badge variant="subtle" colorScheme={coverageColor(coverage)} fontSize="sm" px={2} py={1} borderRadius="md">
             {coverageLabel(coverage)}
           </Badge>
           <Text fontSize="sm" color="gray.400">
@@ -309,7 +340,7 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
         </Text>
       </Flex>
       {coverage.applicable && (
-        <Progress value={coverage.percent} size="sm" mt={3} borderRadius="full" colorScheme={coverageColor(coverage)} bg="var(--bg-hover)" />
+        <Progress value={coverage.percent} size="sm" mt={3} borderRadius="full" colorScheme={coverageColor(coverage)} bg="whiteAlpha.100" />
       )}
       <HStack mt={2} spacing={4} fontSize="xs" color="gray.500" wrap="wrap">
         <Text>Weak: {coverage.weak_source_files}</Text>
@@ -318,7 +349,7 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
       </HStack>
       {coverage.gaps.length > 0 && (
         <>
-          <Divider my={3} borderColor="var(--border-main)" />
+          <Divider my={3} borderColor="whiteAlpha.100" />
           <Button
             variant="ghost"
             size="sm"
@@ -329,10 +360,8 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
             onClick={() => setShowGaps((current) => !current)}
             aria-expanded={showGaps}
           >
-            <Text fontSize="xs" textTransform="uppercase" letterSpacing="0.12em" color="gray.500">
-              Binding gaps
-            </Text>
-            <Badge colorScheme="orange" fontSize="xs" borderRadius="full" px={2}>
+            <MicroLabel>Binding gaps</MicroLabel>
+            <Badge variant="subtle" colorScheme="orange" fontSize="xs" borderRadius="full" px={2}>
               {coverage.gaps.length}
             </Badge>
           </Button>
@@ -342,7 +371,7 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
                 const bindCommand = gap.suggested_element_ref ? `tld bind ${gap.suggested_element_ref} --file "${gap.file}"` : ''
                 const addCommand = gap.suggested_new_element ? `tld add "${gap.suggested_new_element}" --file "${gap.file}"` : ''
                 return (
-                  <Box key={gap.file} fontSize="sm" bg="var(--bg-hover)" borderRadius="md" p={3}>
+                  <Box key={gap.file} fontSize="sm" bg="whiteAlpha.50" borderRadius="md" p={3}>
                     <Text color="gray.200">
                       <Code fontSize="xs">{gap.file}</Code>
                       {gap.change ? ` (${gap.change})` : ''} — {gap.reason}
@@ -408,7 +437,7 @@ function ChangedFilesTree({ files, query, changeFilter }: { files: ImpactFile[];
           spacing={2}
           minW={0}
           borderRadius="sm"
-          _hover={{ bg: 'var(--bg-hover)' }}
+          _hover={{ bg: 'whiteAlpha.50' }}
         >
           <Box w={2} h={2} borderRadius="sm" bg={node.isDir ? 'gray.500' : changeDotColor(node.change)} flexShrink={0} />
           <Text fontSize="sm" color={node.isDir ? 'gray.300' : 'gray.200'} isTruncated flex="1" title={node.path}>
@@ -443,7 +472,6 @@ function CompareSide({
   selected: ImpactCommit | null
   onSelect: (sha: string) => void
 }) {
-  const toast = useToast()
 
   const copySha = async () => {
     if (!selected) return
@@ -452,16 +480,13 @@ function CompareSide({
   }
 
   return (
-    <Box flex="1" minW={0} w="full" border="1px solid" borderColor="var(--border-main)" borderRadius="lg" bg="var(--bg-hover)" p={3}>
+    <Box flex="1" minW={0} w="full" border="1px solid" borderColor="whiteAlpha.100" borderRadius="lg" bg="whiteAlpha.50" p={3}>
       <HStack spacing={2} mb={2}>
         <Box w={2} h={2} borderRadius="full" bg={dot} flexShrink={0} />
-        <Text fontSize="2xs" fontWeight="semibold" textTransform="uppercase" letterSpacing="0.12em" color="gray.400">
-          {label}
-        </Text>
+        <MicroLabel>{label}</MicroLabel>
       </HStack>
       <Select
         size="sm"
-        bg="var(--bg-panel)"
         value={value}
         onChange={(event) => onSelect(event.target.value)}
         placeholder={commits.length ? undefined : 'No commits'}
@@ -505,7 +530,6 @@ function AddRepositoryModal({
   onClose: () => void
   onAdded: (repository: ImpactRepository) => void
 }) {
-  const toast = useToast()
   const [path, setPath] = useState('')
   const [name, setName] = useState('')
   const [branch, setBranch] = useState('')
@@ -543,7 +567,7 @@ function AddRepositoryModal({
   return (
     <Modal isOpen={isOpen} onClose={onClose} isCentered size="md">
       <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
-      <ModalContent bg="var(--bg-panel)" border="1px solid" borderColor="var(--border-main)" borderRadius="xl">
+      <ModalContent bg="var(--bg-panel)" border="1px solid" borderColor="whiteAlpha.100" borderRadius="xl">
         <ModalHeader color="gray.100" fontSize="md" pb={1}>
           Add repository
         </ModalHeader>
@@ -587,7 +611,7 @@ function AddRepositoryModal({
           <Button size="sm" variant="ghost" color="gray.500" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={() => { reset(); onClose() }}>
             Cancel
           </Button>
-          <Button size="sm" bg="var(--accent)" color="white" _hover={{ filter: 'brightness(1.1)' }} isLoading={adding} isDisabled={!path.trim()} onClick={submit}>
+          <Button size="sm" colorScheme="blue" isLoading={adding} isDisabled={!path.trim()} onClick={submit}>
             Add repository
           </Button>
         </ModalFooter>
@@ -598,7 +622,6 @@ function AddRepositoryModal({
 
 export default function Repositories() {
   const navigate = useNavigate()
-  const toast = useToast()
   const [searchParams, setSearchParams] = useSearchParams()
   const [repositories, setRepositories] = useState<ImpactRepository[]>([])
   const [loading, setLoading] = useState(true)
@@ -687,13 +710,20 @@ export default function Repositories() {
   const reloadStatus = useCallback(
     async (ref: string) => {
       setStatusLoading(true)
-      setReport(null)
       try {
         const result = await api.impact.getRepositoryStatus(ref)
         setStatus(result)
         const commits = result.commits
-        setHead((current) => current || commits[0]?.sha || 'HEAD')
-        setBase((current) => current || commits[1]?.sha || commits[0]?.sha || 'HEAD~1')
+        const path = result.repository?.local_path || ''
+        const latest = path ? await api.impact.latest(path) : null
+        setReport(latest)
+        if (latest) {
+          setBase(latest.base)
+          setHead(latest.head)
+        } else {
+          setHead((current) => current || commits[0]?.sha || 'HEAD')
+          setBase((current) => current || commits[1]?.sha || commits[0]?.sha || 'HEAD~1')
+        }
       } catch (statusError) {
         setError(statusError instanceof Error ? statusError.message : 'Could not load repository status')
       } finally {
@@ -919,7 +949,7 @@ export default function Repositories() {
         {repositories.length === 0 ? (
           <Box {...panelStyle} p={{ base: 6, md: 10 }} textAlign="center">
             <Center mb={3}>
-              <Avatar size="lg" name="R" bg="var(--bg-hover)" color="gray.300" />
+              <RepoGlyph name="R" size="lg" />
             </Center>
             <Text fontSize="md" fontWeight="semibold" color="gray.100">
               No repositories linked yet
@@ -927,7 +957,7 @@ export default function Repositories() {
             <Text fontSize="sm" color="gray.400" mt={1} maxW="420px" mx="auto">
               Link a local git checkout to compare its history against your architecture and see which elements each change touches.
             </Text>
-            <Button mt={4} size="sm" bg="var(--accent)" color="white" leftIcon={<AddIcon />} _hover={{ filter: 'brightness(1.1)' }} onClick={addDisclosure.onOpen}>
+            <Button mt={4} size="sm" colorScheme="blue" leftIcon={<AddIcon />} onClick={addDisclosure.onOpen}>
               Add your first repository
             </Button>
           </Box>
@@ -952,7 +982,7 @@ export default function Repositories() {
                             borderColor={repository.ref === selectedRef ? 'var(--accent)' : 'transparent'}
                             _hover={{ borderColor: 'gray.500' }}
                           >
-                            <Avatar size="sm" name={repository.name || '?'} bg="whiteAlpha.100" color="gray.100" />
+                            <RepoGlyph name={repository.name} />
                           </Box>
                         </Tooltip>
                       ))}
@@ -976,27 +1006,31 @@ export default function Repositories() {
               w={{ base: 'full', lg: '320px' }}
               flexShrink={0}
               {...panelStyle}
-              p={3}
               display="flex"
               flexDirection="column"
               minH={0}
               maxH={{ base: '38vh', lg: 'none' }}
               overflow="hidden"
             >
-              <Flex align="center" gap={1} mb={2}>
-                <Tooltip label="Collapse sidebar" placement="top">
-                  <IconButton aria-label="Collapse sidebar" icon={<ChevronLeftIcon />} size="sm" variant="ghost" onClick={() => setSidebarCollapsed(true)} />
-                </Tooltip>
-                <Text flex="1" fontSize="2xs" textTransform="uppercase" letterSpacing="0.1em" color="gray.500">
-                  Repositories
-                </Text>
-                <Tooltip label="Reload repositories and status" placement="top">
-                  <IconButton aria-label="Reload repositories" icon={<RepeatIcon />} size="sm" variant="ghost" onClick={reloadAll} />
-                </Tooltip>
-                <Tooltip label="Add repository" placement="top">
-                  <IconButton aria-label="Add repository" icon={<AddIcon />} size="sm" variant="ghost" color="gray.200" onClick={addDisclosure.onOpen} />
-                </Tooltip>
-              </Flex>
+              <PanelHeader
+                isInline
+                title="Repositories"
+                hasCloseButton={false}
+                actions={
+                  <>
+                    <Tooltip label="Collapse sidebar" placement="top">
+                      <IconButton aria-label="Collapse sidebar" icon={<ChevronLeftIcon />} size="sm" variant="ghost" color="whiteAlpha.600" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={() => setSidebarCollapsed(true)} />
+                    </Tooltip>
+                    <Tooltip label="Reload repositories and status" placement="top">
+                      <IconButton aria-label="Reload repositories" icon={<RepeatIcon />} size="sm" variant="ghost" color="whiteAlpha.600" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={reloadAll} />
+                    </Tooltip>
+                    <Tooltip label="Add repository" placement="top">
+                      <IconButton aria-label="Add repository" icon={<AddIcon />} size="sm" variant="ghost" color="whiteAlpha.600" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={addDisclosure.onOpen} />
+                    </Tooltip>
+                  </>
+                }
+              />
+              <Box p={3} display="flex" flexDirection="column" flex="1" minH={0} overflow="hidden">
               <InputGroup size="sm" mb={2}>
                 <InputLeftElement pointerEvents="none">
                   <SearchIcon color="gray.500" />
@@ -1035,15 +1069,15 @@ export default function Repositories() {
                       p={3}
                       borderRadius="lg"
                       border="1px solid"
-                      borderColor={active ? 'var(--accent)' : 'var(--border-main)'}
-                      bg={active ? 'var(--bg-hover)' : 'transparent'}
+                      borderColor={active ? 'rgba(var(--accent-rgb), 0.28)' : 'whiteAlpha.100'}
+                      bg={active ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
                       cursor="pointer"
-                      _hover={{ borderColor: active ? 'var(--accent)' : 'gray.600' }}
+                      _hover={{ bg: active ? 'rgba(var(--accent-rgb), 0.12)' : 'whiteAlpha.50' }}
                       onClick={() => selectRepo(repository.ref)}
                     >
                       <Flex align="center" gap={3}>
                       <Box position="relative" flexShrink={0}>
-                        <Avatar size="sm" name={repository.name || '?'} bg="whiteAlpha.100" color="gray.100" />
+                        <RepoGlyph name={repository.name} />
                         <Box position="absolute" bottom={-1} right={-1} w={2.5} h={2.5} borderRadius="full" bg={meta.dot} border="2px solid" borderColor="var(--bg-panel)" />
                       </Box>
                       <Box flex="1" minW={0}>
@@ -1056,7 +1090,7 @@ export default function Repositories() {
                           {repository.local_path || repository.remote_url || repository.ref}
                         </Text>
                         <HStack spacing={1.5} mt={1}>
-                          <Badge colorScheme={meta.scheme} fontSize="2xs" borderRadius="full" px={2}>
+                          <Badge variant="subtle" colorScheme={meta.scheme} fontSize="2xs" borderRadius="full" px={2}>
                             {meta.label}
                           </Badge>
                           {repository.branch && (
@@ -1074,7 +1108,7 @@ export default function Repositories() {
                           variant="ghost"
                           color="gray.500"
                           flexShrink={0}
-                          _hover={{ bg: 'red.900', color: 'red.200' }}
+                          _hover={{ bg: 'red.900', color: 'red.100' }}
                           onClick={(event) => {
                             event.stopPropagation()
                             setPendingDelete(repository)
@@ -1084,7 +1118,7 @@ export default function Repositories() {
                       </Tooltip>
                       </Flex>
                       {active && effectiveRepo && effectiveRepo.ref === repository.ref && (
-                        <Box mt={2} pt={2} borderTop="1px solid" borderColor="var(--border-main)" onClick={(event) => event.stopPropagation()}>
+                        <Box mt={2} pt={2} borderTop="1px solid" borderColor="whiteAlpha.100" onClick={(event) => event.stopPropagation()}>
                           <VStack align="stretch" spacing={2}>
                             {effectiveRepo.local_path ? (
                               <HStack spacing={1} minW={0}>
@@ -1157,6 +1191,7 @@ export default function Repositories() {
                   </Box>
                 )}
               </VStack>
+              </Box>
             </Box>
             )}
 
@@ -1198,27 +1233,25 @@ export default function Repositories() {
                   ) : (
                     <>
                       <Box {...panelStyle} p={0} overflow="hidden">
-                        <Flex px={4} pt={3} pb={2} align="center" gap={3} wrap="wrap">
-                          <HStack spacing={2} flex="1" minW="200px" minH={0}>
-                            <Box w={2} h={2} borderRadius="full" bg="var(--accent)" flexShrink={0} />
-                            <Text fontSize="sm" fontWeight="semibold" color="gray.100" flexShrink={0}>
-                              Compare & analyze
-                            </Text>
-                            {baseCommit && headCommit && (
-                              <Code fontSize="xs" color="gray.400" isTruncated title={`${baseCommit.sha} compared with ${headCommit.sha}`}>
-                                {baseCommit.short_sha} … {headCommit.short_sha}
-                              </Code>
-                            )}
-                          </HStack>
-                          <HStack spacing={1} flexShrink={0}>
-                            {([['Latest', 1], ['Last 5', 4], ['Last 10', 9]] as const).map(([label, depth]) => (
-                              <Button key={label} size="xs" variant="ghost" color="gray.400" _hover={{ color: 'gray.100' }} onClick={() => applyPreset(depth)} isDisabled={commits.length === 0}>
-                                {label}
-                              </Button>
-                            ))}
-                          </HStack>
-                        </Flex>
-                        <Box px={4} pb={4}>
+                        <PanelHeader
+                          title="Compare & analyze"
+                          hasCloseButton={false}
+                          actions={
+                            <>
+                              {baseCommit && headCommit && (
+                                <Code fontSize="xs" color="whiteAlpha.600" title={`${baseCommit.sha} compared with ${headCommit.sha}`}>
+                                  {baseCommit.short_sha} … {headCommit.short_sha}
+                                </Code>
+                              )}
+                              {([['Latest', 1], ['Last 5', 4], ['Last 10', 9]] as const).map(([label, depth]) => (
+                                <Button key={label} size="xs" variant="ghost" color="whiteAlpha.600" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={() => applyPreset(depth)} isDisabled={commits.length === 0}>
+                                  {label}
+                                </Button>
+                              ))}
+                            </>
+                          }
+                        />
+                        <Box px={4} pb={4} pt={3}>
                           <Flex gap={3} align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }}>
                             <CompareSide label="Base" dot="gray.400" value={base} commits={commits} selected={baseCommit} onSelect={setBase} />
                             <Tooltip label="Swap base and head" placement="top">
@@ -1237,7 +1270,7 @@ export default function Repositories() {
                           </Flex>
                           <Flex mt={3} align="center" justify="space-between" gap={3} wrap="wrap">
                             <HStack spacing={2} wrap="wrap" minW={0}>
-                              <Badge borderRadius="full" px={2} colorScheme={commitsApart === 0 ? 'gray' : 'blue'}>
+                              <Badge borderRadius="full" px={2} variant="subtle" colorScheme={commitsApart === 0 ? 'gray' : 'blue'}>
                                 {rangeLabel}
                               </Badge>
                               {rangeCommits.length > 1 && (
@@ -1253,7 +1286,7 @@ export default function Repositories() {
                             </Button>
                           </Flex>
                           {rangeCommits.length > 0 && (
-                            <Box mt={2} borderTop="1px solid" borderColor="var(--border-main)" pt={1}>
+                            <Box mt={2} borderTop="1px solid" borderColor="whiteAlpha.100" pt={1}>
                               <Button
                                 variant="ghost"
                                 size="xs"
@@ -1271,7 +1304,7 @@ export default function Repositories() {
                                     <HStack key={commit.sha} spacing={3} py={1.5} align="flex-start">
                                       <VStack spacing={0} align="center" pt={1}>
                                         <Box w={2} h={2} borderRadius="full" bg={index === 0 || index === rangeCommits.slice(0, 8).length - 1 ? 'var(--accent)' : 'gray.500'} />
-                                        {index < Math.min(rangeCommits.length, 8) - 1 && <Box w="1px" h={4} bg="var(--border-main)" />}
+                                        {index < Math.min(rangeCommits.length, 8) - 1 && <Box w="1px" h={4} bg="whiteAlpha.100" />}
                                       </VStack>
                                       <Box flex="1" minW={0}>
                                         <HStack spacing={2} minW={0} wrap="wrap">
@@ -1329,22 +1362,21 @@ export default function Repositories() {
                           <Box {...panelStyle} p={0} overflow="hidden">
                             <Tabs
                               size="sm"
-                              variant="soft-rounded"
-                              colorScheme="gray"
+                              variant="enclosed"
                               index={resultTab === 'architecture' ? 0 : resultTab === 'files' ? 1 : 2}
                               onChange={(index) => setResultTab(index === 0 ? 'architecture' : index === 1 ? 'files' : 'coverage')}
                             >
-                              <TabList p={2} gap={1}>
-                                <Tab borderRadius="md" fontSize="xs" fontWeight="semibold">
+                              <TabList>
+                                <Tab>
                                   Architecture
                                 </Tab>
-                                <Tab borderRadius="md" fontSize="xs" fontWeight="semibold">
+                                <Tab>
                                   Files
-                                  <Badge ml={1.5} fontSize="2xs" borderRadius="full">{report.changed_files.length}</Badge>
+                                  <Badge ml={1.5} variant="subtle" fontSize="2xs" borderRadius="full">{report.changed_files.length}</Badge>
                                 </Tab>
-                                <Tab borderRadius="md" fontSize="xs" fontWeight="semibold">
+                                <Tab>
                                   Gaps
-                                  <Badge ml={1.5} fontSize="2xs" borderRadius="full" colorScheme={report.coverage.gaps.length ? 'orange' : 'green'}>
+                                  <Badge ml={1.5} variant="subtle" fontSize="2xs" borderRadius="full" colorScheme={report.coverage.gaps.length ? 'orange' : 'green'}>
                                     {report.coverage.gaps.length}
                                   </Badge>
                                 </Tab>
@@ -1386,9 +1418,9 @@ export default function Repositories() {
                                       <VStack align="stretch" spacing={3}>
                                         {report.changed.length > 0 && (
                                           <Box>
-                                            <Text fontSize="xs" color="gray.500" px={2} mb={1}>
-                                              Changed architecture
-                                            </Text>
+                                            <Box px={2} mb={1}>
+                                              <MicroLabel>Changed architecture</MicroLabel>
+                                            </Box>
                                             {report.changed
                                               .filter((element) => !fileQuery.trim() || element.name.toLowerCase().includes(fileQuery.trim().toLowerCase()))
                                               .map((element) => (
@@ -1413,9 +1445,9 @@ export default function Repositories() {
                                         )}
                                         {report.unmapped.length > 0 && (
                                           <Box>
-                                            <Text fontSize="xs" color="gray.500" px={2} mb={1}>
-                                              Needs binding
-                                            </Text>
+                                            <Box px={2} mb={1}>
+                                              <MicroLabel>Needs binding</MicroLabel>
+                                            </Box>
                                             {report.unmapped
                                               .filter((file) => !fileQuery.trim() || file.toLowerCase().includes(fileQuery.trim().toLowerCase()))
                                               .map((file) => (
@@ -1430,9 +1462,9 @@ export default function Repositories() {
                                         )}
                                         {report.related.length > 0 && (
                                           <Box>
-                                            <Text fontSize="xs" color="gray.500" px={2} mb={1}>
-                                              Related context
-                                            </Text>
+                                            <Box px={2} mb={1}>
+                                              <MicroLabel>Related context</MicroLabel>
+                                            </Box>
                                             {report.related
                                               .filter((element) => !fileQuery.trim() || element.name.toLowerCase().includes(fileQuery.trim().toLowerCase()))
                                               .map((element) => (
@@ -1498,31 +1530,16 @@ export default function Repositories() {
         }}
       />
 
-      <Modal isOpen={deleteDisclosure.isOpen} onClose={() => { setPendingDelete(null); deleteDisclosure.onClose() }} isCentered size="sm">
-        <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
-        <ModalContent bg="var(--bg-panel)" border="1px solid" borderColor="var(--border-main)" borderRadius="xl">
-          <ModalHeader fontSize="md" color="gray.100">
-            Remove repository?
-          </ModalHeader>
-          <ModalBody>
-            <Text fontSize="sm" color="gray.400">
-              {pendingDelete ? (
-                <>Unlink <Text as="span" color="gray.100" fontWeight="semibold">{pendingDelete.name}</Text> ({pendingDelete.local_path || pendingDelete.ref})? This does not delete files on disk.</>
-              ) : (
-                'Unlink this repository?'
-              )}
-            </Text>
-          </ModalBody>
-          <ModalFooter gap={2}>
-            <Button size="sm" variant="ghost" onClick={() => { setPendingDelete(null); deleteDisclosure.onClose() }}>
-              Cancel
-            </Button>
-            <Button size="sm" colorScheme="red" isLoading={removing} leftIcon={<CheckIcon />} onClick={confirmRemove}>
-              Remove
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      <ConfirmDialog
+        isOpen={deleteDisclosure.isOpen}
+        onClose={() => { setPendingDelete(null); deleteDisclosure.onClose() }}
+        onConfirm={() => { void confirmRemove() }}
+        title="Remove repository?"
+        body={pendingDelete ? `Unlink ${pendingDelete.name} (${pendingDelete.local_path || pendingDelete.ref})? This does not delete files on disk.` : 'Unlink this repository?'}
+        confirmLabel="Remove"
+        confirmColorScheme="red"
+        isLoading={removing}
+      />
     </Box>
   )
 }

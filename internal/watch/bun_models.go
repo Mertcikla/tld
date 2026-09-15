@@ -39,6 +39,27 @@ type filterRunModel struct {
 	HiddenReferences  int    `bun:"hidden_references"`
 }
 
+type impactRunModel struct {
+	bun.BaseModel `bun:"table:impact_runs"`
+
+	ID           int64  `bun:"id,pk,autoincrement"`
+	RepoRef      string `bun:"repo_ref"`
+	RepoRoot     string `bun:"repo_root"`
+	RemoteURL    string `bun:"remote_url"`
+	Base         string `bun:"base"`
+	Head         string `bun:"head"`
+	ViewID       int32  `bun:"view_id"`
+	ArchRevision string `bun:"arch_revision"`
+	ChangedFiles string `bun:"changed_files"`
+	Changed      string `bun:"changed"`
+	Candidates   string `bun:"candidates"`
+	Related      string `bun:"related"`
+	Edges        string `bun:"edges"`
+	Unmapped     string `bun:"unmapped"`
+	Coverage     string `bun:"coverage"`
+	CreatedAt    string `bun:"created_at"`
+}
+
 type filterDecisionModel struct {
 	bun.BaseModel `bun:"table:watch_filter_decisions"`
 

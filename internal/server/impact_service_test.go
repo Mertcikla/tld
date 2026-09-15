@@ -175,6 +175,59 @@ func TestImpactServiceAnalyzeImpactReportsCoverageGap(t *testing.T) {
 	}
 }
 
+func TestImpactServicePersistsAndReloadsLatestRun(t *testing.T) {
+	h := newImpactHarness(t)
+	repo := t.TempDir()
+	initImpactRepo(t, repo, map[string]string{"src/a.go": "package src\n"})
+	h.addRepository(t, repo, "Sample")
+	h.addElement(t, "Core", "component", "https://github.com/example/sample.git", "src/**")
+
+	if err := os.WriteFile(filepath.Join(repo, "src", "b.go"), []byte("package src\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	impactGit(t, repo, "add", "-A")
+	impactGit(t, repo, "commit", "-m", "add b")
+
+	analyzed, err := h.service.AnalyzeImpact(h.ctx, connect.NewRequest(&diagv1.AnalyzeImpactRequest{
+		Path: repo, Base: "HEAD~1", Head: "HEAD",
+	}))
+	if err != nil {
+		t.Fatalf("AnalyzeImpact: %v", err)
+	}
+
+	latest, err := h.service.GetLatestImpact(h.ctx, connect.NewRequest(&diagv1.GetLatestImpactRequest{Path: repo}))
+	if err != nil {
+		t.Fatalf("GetLatestImpact: %v", err)
+	}
+	if !latest.Msg.GetFound() {
+		t.Fatal("expected a persisted run")
+	}
+	report := latest.Msg.GetReport()
+	if report.GetBase() != analyzed.Msg.GetBase() || report.GetHead() != analyzed.Msg.GetHead() {
+		t.Fatalf("reloaded range = %s..%s, want %s..%s", report.GetBase(), report.GetHead(), analyzed.Msg.GetBase(), analyzed.Msg.GetHead())
+	}
+	if len(report.GetChanged()) != 1 || report.GetChanged()[0].GetName() != "Core" {
+		t.Fatalf("reloaded changed = %+v, want Core", report.GetChanged())
+	}
+	if report.GetChanged()[0].GetElementId() == 0 {
+		t.Fatalf("reloaded element should keep its element id: %+v", report.GetChanged()[0])
+	}
+	if report.GetCoverage().GetPercent() != analyzed.Msg.GetCoverage().GetPercent() {
+		t.Fatalf("reloaded coverage = %d, want %d", report.GetCoverage().GetPercent(), analyzed.Msg.GetCoverage().GetPercent())
+	}
+}
+
+func TestImpactServiceLatestRunMissing(t *testing.T) {
+	h := newImpactHarness(t)
+	latest, err := h.service.GetLatestImpact(h.ctx, connect.NewRequest(&diagv1.GetLatestImpactRequest{Path: t.TempDir()}))
+	if err != nil {
+		t.Fatalf("GetLatestImpact: %v", err)
+	}
+	if latest.Msg.GetFound() {
+		t.Fatal("expected no persisted run")
+	}
+}
+
 func TestImpactServiceAddListRemoveRepository(t *testing.T) {
 	h := newImpactHarness(t)
 	repo := t.TempDir()

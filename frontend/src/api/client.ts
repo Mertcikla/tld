@@ -73,6 +73,7 @@ import {
   AddRepositoryResponseSchema,
   UpdateRepositoryResponseSchema,
   GetRepositoryStatusResponseSchema,
+  GetLatestImpactResponseSchema,
   ListCommitsResponseSchema,
   AnalyzeImpactResponseSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/impact_service_pb'
@@ -2269,6 +2270,14 @@ export const api = {
         })
         const json = j<Record<string, unknown>>(AnalyzeImpactResponseSchema, res)
         return toImpactReport(json)
+      }),
+
+    latest: (path: string): Promise<ImpactReport | null> =>
+      rpc(async () => {
+        const res = await impactClient.getLatestImpact({ orgId: '', path })
+        const json = j<{ found: boolean; report?: Record<string, unknown> }>(GetLatestImpactResponseSchema, res)
+        if (!json.found || !json.report) return null
+        return toImpactReport(json.report)
       }),
   },
 

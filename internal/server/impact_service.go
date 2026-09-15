@@ -349,7 +349,118 @@ func (s *impactService) AnalyzeImpact(ctx context.Context, req *connect.Request[
 	if err != nil {
 		summary = ""
 	}
-	return connect.NewResponse(s.protoReport(ctx, report, summary, changed)), nil
+	run := s.impactRun(ctx, report, changed, remote)
+	if s.watchStore != nil {
+		if saved, saveErr := s.watchStore.SaveImpactRun(ctx, run); saveErr == nil {
+			run = saved
+		}
+	}
+	return connect.NewResponse(s.protoImpactRun(run, summary)), nil
+}
+
+// GetLatestImpact returns the most recently persisted run for a checkout so the
+// UI can restore the last analysis without recomputing it.
+func (s *impactService) GetLatestImpact(ctx context.Context, req *connect.Request[diagv1.GetLatestImpactRequest]) (*connect.Response[diagv1.GetLatestImpactResponse], error) {
+	path := strings.TrimSpace(req.Msg.GetPath())
+	if path == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path is required"))
+	}
+	if s.watchStore == nil {
+		return connect.NewResponse(&diagv1.GetLatestImpactResponse{}), nil
+	}
+	repoRoot := path
+	if root, err := tldgit.RepoRoot(path); err == nil {
+		repoRoot = root
+	}
+	run, found, err := s.watchStore.LatestImpactRun(ctx, repoRoot)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	if !found {
+		return connect.NewResponse(&diagv1.GetLatestImpactResponse{}), nil
+	}
+	return connect.NewResponse(&diagv1.GetLatestImpactResponse{
+		Found:  true,
+		Report: s.protoImpactRun(run, ""),
+	}), nil
+}
+
+// impactRun trims a deterministic report into the persisted snapshot shape,
+// resolving element and connector ids so a loaded run renders without the live
+// architecture.
+func (s *impactService) impactRun(ctx context.Context, report watch.ImpactReport, changed map[string]tldgit.WorktreeChange, remote string) watch.ImpactRun {
+	ids := s.elementIDs(ctx)
+	connectors := s.connectorIDs(ctx)
+	elements := s.elements(ctx)
+	return watch.ImpactRun{
+		RepoRef:      repositoryRefForRemote(elements, remote),
+		RepoRoot:     report.RepoRoot,
+		RemoteURL:    remote,
+		Base:         report.Base,
+		Head:         report.Head,
+		ArchRevision: watch.ArchitectureRevision(elements, s.connectors(ctx)),
+		ChangedFiles: report.ChangedFiles,
+		Changed:      impactRunElements(report.Changed, ids, changed),
+		Candidates:   impactRunElements(report.Candidates, ids, changed),
+		Related:      impactRunElements(report.Related, ids, changed),
+		Edges:        impactRunEdges(report.Edges, ids, connectors),
+		Unmapped:     report.Unmapped,
+		Coverage:     report.Coverage,
+	}
+}
+
+func repositoryRefForRemote(elements map[string]*workspace.Element, remote string) string {
+	if strings.TrimSpace(remote) == "" {
+		return ""
+	}
+	for ref, element := range elements {
+		if element == nil {
+			continue
+		}
+		if strings.EqualFold(element.Kind, "repository") && sameRepo(element.Repo, remote) {
+			return ref
+		}
+	}
+	return ""
+}
+
+func impactRunElements(elements []watch.ImpactElement, ids map[string]int32, changed map[string]tldgit.WorktreeChange) []watch.ImpactRunElement {
+	out := make([]watch.ImpactRunElement, 0, len(elements))
+	for _, element := range elements {
+		item := watch.ImpactRunElement{
+			Ref:      element.Ref,
+			Name:     element.Name,
+			Kind:     element.Kind,
+			Change:   impactChangeTypeString(element, changed),
+			Evidence: impactEvidenceStrings(element),
+		}
+		if id, ok := ids[element.Ref]; ok {
+			item.ElementID = &id
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func impactRunEdges(edges []watch.ImpactEdge, ids map[string]int32, connectors map[string]int32) []watch.ImpactRunEdge {
+	out := make([]watch.ImpactRunEdge, 0, len(edges))
+	for _, edge := range edges {
+		item := watch.ImpactRunEdge{
+			SourceRef: edge.SourceRef,
+			TargetRef: edge.TargetRef,
+			Label:     edge.Label,
+			Observed:  edge.Observed,
+		}
+		sourceID, okSource := ids[edge.SourceRef]
+		targetID, okTarget := ids[edge.TargetRef]
+		if okSource && okTarget {
+			if connectorID, ok := connectors[connectorKey(sourceID, targetID, edge.Label)]; ok {
+				item.ConnectorID = &connectorID
+			}
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func (s *impactService) detectRelationships(ctx context.Context, repoRoot, remote string, elements map[string]*workspace.Element, changed map[string]tldgit.WorktreeChange) ([]watch.RelationshipEvidence, error) {
@@ -486,37 +597,28 @@ func (s *impactService) hasArchitecture(ctx context.Context, remote string) bool
 	return hasAny
 }
 
-func (s *impactService) protoReport(ctx context.Context, report watch.ImpactReport, summary string, changed map[string]tldgit.WorktreeChange) *diagv1.AnalyzeImpactResponse {
-	ids := s.elementIDs(ctx)
-	connectors := s.connectorIDs(ctx)
+func (s *impactService) protoImpactRun(run watch.ImpactRun, summary string) *diagv1.AnalyzeImpactResponse {
 	resp := &diagv1.AnalyzeImpactResponse{
-		Base:     report.Base,
-		Head:     report.Head,
-		RepoRoot: report.RepoRoot,
-		Unmapped: report.Unmapped,
-		Summary:  summary,
+		Base:         run.Base,
+		Head:         run.Head,
+		RepoRoot:     run.RepoRoot,
+		Unmapped:     run.Unmapped,
+		Summary:      summary,
+		Changed:      protoRunElements(run.Changed),
+		Candidates:   protoRunElements(run.Candidates),
+		Related:      protoRunElements(run.Related),
+		Coverage:     protoCoverage(run.Coverage),
+		ChangedFiles: protoImpactFiles(run.ChangedFiles),
 	}
-	resp.Changed = protoImpactElements(report.Changed, ids, changed)
-	resp.Candidates = protoImpactElements(report.Candidates, ids, changed)
-	resp.Related = protoImpactElements(report.Related, ids, changed)
-	for _, edge := range report.Edges {
-		out := &diagv1.ImpactEdge{
-			SourceRef: edge.SourceRef,
-			TargetRef: edge.TargetRef,
-			Label:     edge.Label,
-			Observed:  edge.Observed,
-		}
-		sourceID, okSource := ids[edge.SourceRef]
-		targetID, okTarget := ids[edge.TargetRef]
-		if okSource && okTarget {
-			if connectorID, ok := connectors[connectorKey(sourceID, targetID, edge.Label)]; ok {
-				out.ConnectorId = &connectorID
-			}
-		}
-		resp.Edges = append(resp.Edges, out)
+	for _, edge := range run.Edges {
+		resp.Edges = append(resp.Edges, &diagv1.ImpactEdge{
+			SourceRef:   edge.SourceRef,
+			TargetRef:   edge.TargetRef,
+			Label:       edge.Label,
+			Observed:    edge.Observed,
+			ConnectorId: edge.ConnectorID,
+		})
 	}
-	resp.Coverage = protoCoverage(report.Coverage)
-	resp.ChangedFiles = protoImpactFiles(report.ChangedFiles)
 	return resp
 }
 
@@ -570,25 +672,22 @@ func (s *impactService) connectorIDs(ctx context.Context) map[string]int32 {
 	return ids
 }
 
-func protoImpactElements(elements []watch.ImpactElement, ids map[string]int32, changed map[string]tldgit.WorktreeChange) []*diagv1.ImpactElement {
+func protoRunElements(elements []watch.ImpactRunElement) []*diagv1.ImpactElement {
 	out := make([]*diagv1.ImpactElement, 0, len(elements))
 	for _, element := range elements {
-		item := &diagv1.ImpactElement{
-			Ref:      element.Ref,
-			Name:     element.Name,
-			Kind:     element.Kind,
-			Change:   impactChangeType(element, changed),
-			Evidence: impactEvidenceStrings(element),
-		}
-		if id, ok := ids[element.Ref]; ok {
-			item.ElementId = &id
-		}
-		out = append(out, item)
+		out = append(out, &diagv1.ImpactElement{
+			Ref:       element.Ref,
+			Name:      element.Name,
+			Kind:      element.Kind,
+			ElementId: element.ElementID,
+			Change:    impactChangeTypeFromString(element.Change),
+			Evidence:  element.Evidence,
+		})
 	}
 	return out
 }
 
-func impactChangeType(element watch.ImpactElement, changed map[string]tldgit.WorktreeChange) diagv1.ImpactChangeType {
+func impactChangeTypeString(element watch.ImpactElement, changed map[string]tldgit.WorktreeChange) string {
 	added, deleted, other := 0, 0, 0
 	for _, evidence := range element.Evidence {
 		switch changed[evidence.Path] {
@@ -602,11 +701,24 @@ func impactChangeType(element watch.ImpactElement, changed map[string]tldgit.Wor
 	}
 	switch {
 	case added > 0 && deleted == 0 && other == 0:
-		return diagv1.ImpactChangeType_IMPACT_CHANGE_TYPE_ADDED
+		return "added"
 	case deleted > 0 && added == 0 && other == 0:
-		return diagv1.ImpactChangeType_IMPACT_CHANGE_TYPE_DELETED
+		return "deleted"
 	default:
+		return "modified"
+	}
+}
+
+func impactChangeTypeFromString(value string) diagv1.ImpactChangeType {
+	switch value {
+	case "added":
+		return diagv1.ImpactChangeType_IMPACT_CHANGE_TYPE_ADDED
+	case "deleted":
+		return diagv1.ImpactChangeType_IMPACT_CHANGE_TYPE_DELETED
+	case "modified":
 		return diagv1.ImpactChangeType_IMPACT_CHANGE_TYPE_MODIFIED
+	default:
+		return diagv1.ImpactChangeType_IMPACT_CHANGE_TYPE_UNSPECIFIED
 	}
 }
 
