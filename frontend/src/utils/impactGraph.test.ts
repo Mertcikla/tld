@@ -63,7 +63,10 @@ function exploreData(): ExploreData {
   return {
     tree: [node(1, null, [node(2, 1)])],
     views: {
-      '1': { placements: [placement(1, 1, 10), placement(2, 1, 11), placement(3, 1, 12)], connectors: [connector(100, 1, 10, 11)] },
+      '1': {
+        placements: [placement(1, 1, 10), placement(2, 1, 11), placement(3, 1, 12)],
+        connectors: [connector(100, 1, 10, 11)],
+      },
       '2': { placements: [placement(4, 2, 13)], connectors: [] },
     },
     navigations: [],
@@ -75,11 +78,47 @@ function report(): ImpactReport {
     base: 'a',
     head: 'b',
     repo_root: '/repo',
-    changed: [{ ref: 'a', name: 'A', kind: 'component', element_id: 10, change: 'modified', evidence: [] }],
-    candidates: [{ ref: 'c', name: 'C', kind: 'component', element_id: 12, change: 'unknown', evidence: [] }],
-    related: [{ ref: 'b', name: 'B', kind: 'component', element_id: 11, change: 'unknown', evidence: [] }],
-    edges: [{ source_ref: 'a', target_ref: 'b', label: 'calls', connector_id: 100, observed: false }],
+    changed: [
+      {
+        ref: 'a',
+        name: 'A',
+        kind: 'component',
+        element_id: 10,
+        change: 'modified',
+        evidence: [],
+      },
+    ],
+    candidates: [
+      {
+        ref: 'c',
+        name: 'C',
+        kind: 'component',
+        element_id: 12,
+        change: 'unknown',
+        evidence: [],
+      },
+    ],
+    related: [
+      {
+        ref: 'b',
+        name: 'B',
+        kind: 'component',
+        element_id: 11,
+        change: 'unknown',
+        evidence: [],
+      },
+    ],
+    edges: [
+      {
+        source_ref: 'a',
+        target_ref: 'b',
+        label: 'calls',
+        connector_id: 100,
+        observed: false,
+      },
+    ],
     unmapped: [],
+    changed_files: [],
     coverage: {
       applicable: true,
       complete: true,
@@ -95,7 +134,6 @@ function report(): ImpactReport {
       total_elements: 1,
       gaps: [],
     },
-    findings: [],
     summary: '',
   }
 }

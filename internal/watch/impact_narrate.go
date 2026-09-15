@@ -25,10 +25,10 @@ const impactNarratorSystemPrompt = `You are an architecture impact narrator for 
 You will receive a deterministic architecture impact report.
 Summarize it in 2-4 sentences for a pull request reviewer.
 Rules:
-- Only describe elements, relationships, and findings that appear in the report.
+- Only describe elements and relationships that appear in the report.
 - Never invent components, dependencies, or code locations.
 - Clearly label inferred suggestions as suggestions.
-- Do not propose editing the architecture; findings are for human review.`
+- Do not propose editing the architecture.`
 
 // NarrateImpactReport produces a human-readable summary of the report. When no
 // model is configured it falls back to a deterministic template so the command
@@ -97,17 +97,6 @@ func impactNarrationPrompt(report ImpactReport) string {
 	for _, file := range report.Unmapped {
 		fmt.Fprintf(&b, "- %s\n", file)
 	}
-	b.WriteString("\nFindings:\n")
-	if len(report.Findings) == 0 {
-		b.WriteString("- none\n")
-	}
-	for _, finding := range report.Findings {
-		observed := "observed"
-		if !finding.Observed {
-			observed = "inferred"
-		}
-		fmt.Fprintf(&b, "- [%s] %s (%s)\n", finding.Type, finding.Message, observed)
-	}
 	return b.String()
 }
 
@@ -137,15 +126,6 @@ func deterministicNarration(report ImpactReport) string {
 	}
 	if len(report.Unmapped) > 0 {
 		parts = append(parts, fmt.Sprintf("%d changed file(s) are not bound to any architecture element.", len(report.Unmapped)))
-	}
-	newRelationships := 0
-	for _, finding := range report.Findings {
-		if finding.Type == "possible_new_relationship" {
-			newRelationships++
-		}
-	}
-	if newRelationships > 0 {
-		parts = append(parts, fmt.Sprintf("%d possible new relationship(s) were observed in code.", newRelationships))
 	}
 	return strings.Join(parts, " ")
 }

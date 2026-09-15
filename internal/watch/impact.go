@@ -48,29 +48,28 @@ type ImpactEdge struct {
 	Observed  bool   `json:"observed"`
 }
 
-// ImpactFinding describes an observed or inferred difference between authored
-// architecture and code reality. It is a suggestion, never an automatic edit.
-type ImpactFinding struct {
-	Type     string           `json:"type"`
-	Severity string           `json:"severity"`
-	Message  string           `json:"message"`
-	Observed bool             `json:"observed"`
-	Evidence []ImpactEvidence `json:"evidence,omitempty"`
+// ChangedFile is a file in the analyzed diff with its change type and line
+// counts. Change is one of added, updated, or deleted.
+type ChangedFile struct {
+	Path    string `json:"path"`
+	Change  string `json:"change"`
+	Added   int    `json:"added"`
+	Removed int    `json:"removed"`
 }
 
 // ImpactReport is the deterministic output of `tld impact`.
 type ImpactReport struct {
-	Base       string          `json:"base,omitempty"`
-	Head       string          `json:"head,omitempty"`
-	RepoRoot   string          `json:"repo_root,omitempty"`
-	Changed    []ImpactElement `json:"changed"`
-	Candidates []ImpactElement `json:"candidates,omitempty"`
-	Related    []ImpactElement `json:"related"`
-	Edges      []ImpactEdge    `json:"edges,omitempty"`
-	Unmapped   []string        `json:"unmapped"`
-	Coverage   Coverage        `json:"coverage"`
-	Findings   []ImpactFinding `json:"findings,omitempty"`
-	Narration  string          `json:"narration,omitempty"`
+	Base         string          `json:"base,omitempty"`
+	Head         string          `json:"head,omitempty"`
+	RepoRoot     string          `json:"repo_root,omitempty"`
+	Changed      []ImpactElement `json:"changed"`
+	Candidates   []ImpactElement `json:"candidates,omitempty"`
+	Related      []ImpactElement `json:"related"`
+	Edges        []ImpactEdge    `json:"edges,omitempty"`
+	Unmapped     []string        `json:"unmapped"`
+	Coverage     Coverage        `json:"coverage"`
+	ChangedFiles []ChangedFile   `json:"changed_files,omitempty"`
+	Narration    string          `json:"narration,omitempty"`
 }
 
 // Coverage describes how completely a change set could be reconciled against
@@ -150,6 +149,9 @@ type ImpactOptions struct {
 	Elements     map[string]*workspace.Element
 	Connectors   map[string]*workspace.Connector
 	ChangedFiles map[string]tldgit.WorktreeChange
+	// LineStats carries added/removed line counts for changed paths, keyed by
+	// repository-relative path. Missing entries are treated as zero.
+	LineStats map[string]tldgit.LineDiff
 	// IncludeNameHeuristics enables weak name/path token bindings for elements
 	// that declare no explicit file path. Such matches are reported as
 	// candidates, never as observed changes.
@@ -210,6 +212,7 @@ func DeriveBindings(elements map[string]*workspace.Element, repoRoot, remoteURL 
 // produces a deterministic report. It never writes to the architecture.
 func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 	report := ImpactReport{Base: opts.Base, Head: opts.Head, RepoRoot: opts.RepoRoot}
+	report.ChangedFiles = buildChangedFiles(opts)
 	bindings := DeriveBindings(opts.Elements, opts.RepoRoot, opts.RemoteURL)
 
 	files := sortedChangePaths(opts.ChangedFiles)
@@ -304,12 +307,6 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 	report.Related = mergeImpactElements(report.Related, observedRelated)
 	report.Edges = append(report.Edges, observedEdges...)
 
-	report.Findings = append(report.Findings, changedElementFindings(report.Changed)...)
-	report.Findings = append(report.Findings, candidateFindings(report.Candidates)...)
-	report.Findings = append(report.Findings, unmappedFindings(report.Unmapped)...)
-	report.Findings = append(report.Findings, staleBindingFindings(opts)...)
-	report.Findings = append(report.Findings, relationshipFindings(opts, changedRefs)...)
-	report.Findings = append(report.Findings, suggestionFindings(opts)...)
 	report.Coverage = buildCoverage(opts, sourceTotal, sourceBound, sourceWeak, nonSource, unmappedSource, weakSource)
 	return report
 }
@@ -385,7 +382,7 @@ func relatedImpact(opts ImpactOptions, changedRefs map[string]struct{}) ([]Impac
 
 // observedRelationshipEdges surfaces code-observed relationships that are not
 // declared as authored connectors, so they appear on the diagram as inferred
-// (dashed) edges instead of only as findings.
+// (dashed) edges.
 func observedRelationshipEdges(opts ImpactOptions, changedRefs map[string]struct{}) ([]ImpactElement, []ImpactEdge) {
 	if len(opts.Relationships) == 0 {
 		return nil, nil
@@ -475,154 +472,6 @@ func mergeImpactElements(base, extra []ImpactElement) []ImpactElement {
 	return base
 }
 
-func changedElementFindings(changed []ImpactElement) []ImpactFinding {
-	findings := make([]ImpactFinding, 0, len(changed))
-	for _, element := range changed {
-		findings = append(findings, ImpactFinding{
-			Type:     "changed_element",
-			Severity: "info",
-			Message:  element.Name + " was affected by this change",
-			Observed: true,
-			Evidence: element.Evidence,
-		})
-	}
-	return findings
-}
-
-func candidateFindings(candidates []ImpactElement) []ImpactFinding {
-	findings := make([]ImpactFinding, 0, len(candidates))
-	for _, element := range candidates {
-		findings = append(findings, ImpactFinding{
-			Type:     "candidate_element",
-			Severity: "info",
-			Message:  element.Name + " may be affected (weak name match; consider adding a file binding)",
-			Observed: false,
-			Evidence: element.Evidence,
-		})
-	}
-	return findings
-}
-
-func unmappedFindings(unmapped []string) []ImpactFinding {
-	findings := make([]ImpactFinding, 0, len(unmapped))
-	for _, file := range unmapped {
-		findings = append(findings, ImpactFinding{
-			Type:     "unmapped_code",
-			Severity: "warning",
-			Message:  file + " changed but no architecture element is bound to it",
-			Observed: true,
-			Evidence: []ImpactEvidence{{Level: EvidenceStrong, Kind: "git", Path: file, Observed: true}},
-		})
-	}
-	return findings
-}
-
-func staleBindingFindings(opts ImpactOptions) []ImpactFinding {
-	if opts.RepoRoot == "" || len(opts.Elements) == 0 {
-		return nil
-	}
-	refs := make([]string, 0, len(opts.Elements))
-	for ref := range opts.Elements {
-		refs = append(refs, ref)
-	}
-	sort.Strings(refs)
-
-	var findings []ImpactFinding
-	for _, ref := range refs {
-		element := opts.Elements[ref]
-		if element == nil {
-			continue
-		}
-		filePath := normalizeCodePath(element.FilePath)
-		if filePath == "" || strings.ContainsAny(filePath, "*?[") {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(opts.RepoRoot, filepath.FromSlash(filePath))); err == nil {
-			continue
-		}
-		findings = append(findings, ImpactFinding{
-			Type:     "stale_binding",
-			Severity: "warning",
-			Message:  element.Name + " binds to " + filePath + ", which no longer exists",
-			Observed: true,
-			Evidence: []ImpactEvidence{{Level: EvidenceStrong, Kind: "path", Path: filePath, Observed: true}},
-		})
-	}
-	return findings
-}
-
-func relationshipFindings(opts ImpactOptions, changedRefs map[string]struct{}) []ImpactFinding {
-	if len(opts.Relationships) == 0 {
-		return nil
-	}
-	existing := existingConnectorPairs(opts.Connectors)
-	var findings []ImpactFinding
-	for _, rel := range opts.Relationships {
-		if rel.SourceRef == "" || rel.TargetRef == "" || rel.SourceRef == rel.TargetRef {
-			continue
-		}
-		if !containsRef(changedRefs, rel.SourceRef) && !containsRef(changedRefs, rel.TargetRef) {
-			continue
-		}
-		evidence := ImpactEvidence{
-			Level:    rel.Level,
-			Kind:     firstNonEmpty(rel.Kind, "call"),
-			Path:     rel.File,
-			Detail:   codeLocation(rel.File, rel.Line),
-			Observed: rel.Observed,
-		}
-		source := elementDisplayName(opts.Elements, rel.SourceRef)
-		target := elementDisplayName(opts.Elements, rel.TargetRef)
-		if existing[connectorPairKey(rel.SourceRef, rel.TargetRef)] {
-			findings = append(findings, ImpactFinding{
-				Type:     "observed_relationship",
-				Severity: "info",
-				Message:  source + " → " + target + " relationship observed in code",
-				Observed: rel.Observed,
-				Evidence: []ImpactEvidence{evidence},
-			})
-			continue
-		}
-		findings = append(findings, ImpactFinding{
-			Type:     "possible_new_relationship",
-			Severity: "warning",
-			Message:  "Possible new architectural dependency: " + source + " → " + target,
-			Observed: rel.Observed,
-			Evidence: []ImpactEvidence{evidence},
-		})
-	}
-	return findings
-}
-
-func suggestionFindings(opts ImpactOptions) []ImpactFinding {
-	if len(opts.Suggestions) == 0 {
-		return nil
-	}
-	var findings []ImpactFinding
-	for _, suggestion := range opts.Suggestions {
-		if suggestion.File == "" || suggestion.ElementRef == "" {
-			continue
-		}
-		name := suggestion.ElementName
-		if name == "" {
-			name = elementDisplayName(opts.Elements, suggestion.ElementRef)
-		}
-		findings = append(findings, ImpactFinding{
-			Type:     "unmapped_code_suggestion",
-			Severity: "info",
-			Message:  "Suggested owner for " + suggestion.File + ": " + name,
-			Observed: false,
-			Evidence: []ImpactEvidence{{
-				Level:  EvidenceWeak,
-				Kind:   "embedding",
-				Path:   suggestion.File,
-				Detail: formatSuggestionScore(suggestion.Score),
-			}},
-		})
-	}
-	return findings
-}
-
 func existingConnectorPairs(connectors map[string]*workspace.Connector) map[string]bool {
 	out := make(map[string]bool, len(connectors))
 	for _, connector := range connectors {
@@ -650,13 +499,6 @@ func connectorLabel(connector *workspace.Connector) string {
 		return view
 	}
 	return "connector"
-}
-
-func elementDisplayName(elements map[string]*workspace.Element, ref string) string {
-	if element := elements[ref]; element != nil && strings.TrimSpace(element.Name) != "" {
-		return element.Name
-	}
-	return ref
 }
 
 func bindingDetail(binding CodeBinding) string {
@@ -701,13 +543,6 @@ func itoa(value int) string {
 	return string(buf[pos:])
 }
 
-func formatSuggestionScore(score float64) string {
-	if score <= 0 {
-		return ""
-	}
-	return "confidence " + itoa(int(score*100)) + "%"
-}
-
 func sortedChangePaths(changes map[string]tldgit.WorktreeChange) []string {
 	files := make([]string, 0, len(changes))
 	for file := range changes {
@@ -718,6 +553,28 @@ func sortedChangePaths(changes map[string]tldgit.WorktreeChange) []string {
 		files = append(files, file)
 	}
 	sort.Strings(files)
+	return files
+}
+
+func buildChangedFiles(opts ImpactOptions) []ChangedFile {
+	if len(opts.ChangedFiles) == 0 {
+		return nil
+	}
+	files := make([]ChangedFile, 0, len(opts.ChangedFiles))
+	for path, change := range opts.ChangedFiles {
+		normalized := normalizeCodePath(path)
+		if normalized == "" {
+			continue
+		}
+		stats := opts.LineStats[path]
+		files = append(files, ChangedFile{
+			Path:    normalized,
+			Change:  string(change),
+			Added:   stats.Added,
+			Removed: stats.Removed,
+		})
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 	return files
 }
 

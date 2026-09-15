@@ -76,6 +76,41 @@ func FileChangesBetween(repoRoot, base, head string) (map[string]WorktreeChange,
 	return parseNameStatus(out), nil
 }
 
+// FileLineStatsBetween returns per-file added/removed line counts between two
+// arbitrary refs, keyed by repository-relative path. Renames are reported as a
+// delete plus an add to match FileChangesBetween, and binary files are omitted.
+func FileLineStatsBetween(repoRoot, base, head string) (map[string]LineDiff, error) {
+	base = strings.TrimSpace(base)
+	head = strings.TrimSpace(head)
+	if base == "" || head == "" {
+		return nil, fmt.Errorf("file line stats between: base and head are required")
+	}
+	out, err := run(repoRoot, "diff", "--numstat", "--no-renames", base+".."+head, "--")
+	if err != nil {
+		return nil, fmt.Errorf("git diff numstat %s..%s: %w", base, head, err)
+	}
+	stats := map[string]LineDiff{}
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 3 || fields[0] == "-" || fields[1] == "-" {
+			continue
+		}
+		added, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		removed, err := strconv.Atoi(fields[1])
+		if err != nil {
+			continue
+		}
+		stats[filepath.ToSlash(fields[2])] = LineDiff{Added: added, Removed: removed}
+	}
+	return stats, nil
+}
+
 // MergeBaseBetween returns the best common ancestor commit between two refs.
 func MergeBaseBetween(repoRoot, a, b string) (string, error) {
 	a = strings.TrimSpace(a)

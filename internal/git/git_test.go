@@ -430,6 +430,44 @@ func TestFileChangesBetweenTwoCommits(t *testing.T) {
 	}
 }
 
+func TestFileLineStatsBetween(t *testing.T) {
+	dir := t.TempDir()
+	initRepo(t, dir, map[string]string{
+		"main.go":   "package main\nfunc Main() {}\n",
+		"delete.go": "package main\nfunc DeleteMe() {}\n",
+	})
+	base := gitHead(t, dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\nfunc Changed() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "added.go"), []byte("package main\nfunc Added() {}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "delete.go")); err != nil {
+		t.Fatal(err)
+	}
+	head := gitCommitAll(t, dir, "changes")
+
+	stats, err := FileLineStatsBetween(dir, base, head)
+	if err != nil {
+		t.Fatalf("FileLineStatsBetween: %v", err)
+	}
+	if stats["main.go"] != (LineDiff{Added: 1, Removed: 1}) {
+		t.Fatalf("main.go stats = %#v", stats["main.go"])
+	}
+	if stats["added.go"] != (LineDiff{Added: 2, Removed: 0}) {
+		t.Fatalf("added.go stats = %#v", stats["added.go"])
+	}
+	if stats["delete.go"] != (LineDiff{Added: 0, Removed: 2}) {
+		t.Fatalf("delete.go stats = %#v", stats["delete.go"])
+	}
+
+	if _, err := FileLineStatsBetween(dir, base, ""); err == nil {
+		t.Fatal("expected error for empty head ref")
+	}
+}
+
 func TestMergeBaseBetween(t *testing.T) {
 	dir := t.TempDir()
 	initRepo(t, dir, map[string]string{"main.go": "package main\n"})

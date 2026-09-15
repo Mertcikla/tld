@@ -29,9 +29,6 @@ func RenderImpactText(w io.Writer, report ImpactReport) error {
 	if len(report.Coverage.Gaps) > 0 {
 		writeImpactSection(w, "Binding Gaps", coverageGapLines(report.Coverage.Gaps, "  "))
 	}
-	if len(report.Findings) > 0 {
-		writeImpactSection(w, "Findings", findingLines(report.Findings))
-	}
 	if strings.TrimSpace(report.Narration) != "" {
 		writeImpactSection(w, "Summary", []string{"  " + strings.TrimSpace(report.Narration)})
 	}
@@ -114,18 +111,6 @@ func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
 			if gap.NewElementName != "" {
 				_, _ = fmt.Fprintf(w, "  - or create an element: `tld add %q --file %q`\n", gap.NewElementName, gap.File)
 			}
-		}
-	}
-	if len(report.Findings) > 0 {
-		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, "**Findings**")
-		_, _ = fmt.Fprintln(w)
-		for _, finding := range report.Findings {
-			observed := "observed"
-			if !finding.Observed {
-				observed = "inferred"
-			}
-			_, _ = fmt.Fprintf(w, "- `%s` (%s, %s): %s\n", finding.Type, finding.Severity, observed, finding.Message)
 		}
 	}
 	if hasObservedEdges(report.Edges) {
@@ -227,22 +212,6 @@ func elementLines(elements []ImpactElement) []string {
 		line := "  " + element.Name
 		if evidence := evidenceSummary(element.Evidence); evidence != "" {
 			line += " (" + evidence + ")"
-		}
-		lines = append(lines, line)
-	}
-	return lines
-}
-
-func findingLines(findings []ImpactFinding) []string {
-	lines := make([]string, 0, len(findings))
-	for _, finding := range findings {
-		observed := "observed"
-		if !finding.Observed {
-			observed = "inferred"
-		}
-		line := fmt.Sprintf("  [%s] %s (%s)", finding.Severity, finding.Message, observed)
-		if evidence := evidenceSummary(finding.Evidence); evidence != "" {
-			line += " — " + evidence
 		}
 		lines = append(lines, line)
 	}

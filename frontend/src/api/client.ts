@@ -49,13 +49,8 @@ import {
   PlanConnector,
   type ViewContent,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
-import {
-  DependencyService,
-  ListDependenciesResponseSchema,
-} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/dependency_service_pb'
-import {
-  ImportService,
-} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/import_service_pb'
+import { DependencyService, ListDependenciesResponseSchema } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/dependency_service_pb'
+import { ImportService } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/import_service_pb'
 import {
   MermaidDirection as MermaidDirectionProto,
   MermaidMarkdownSyncStatus as MermaidMarkdownSyncStatusProto,
@@ -63,14 +58,8 @@ import {
   type MermaidImportSummary as ProtoMermaidImportSummary,
   type MermaidMarkdownBlockInfo,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/mermaid_service_pb'
-import {
-  WorkspaceVersionService,
-  type WorkspaceVersionInfo,
-} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_version_service_pb'
-import {
-  OrgService,
-  ListTagColorsResponseSchema,
-} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/org_service_pb'
+import { WorkspaceVersionService, type WorkspaceVersionInfo } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_version_service_pb'
+import { OrgService, ListTagColorsResponseSchema } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/org_service_pb'
 import {
   CollaborationService,
   ListThreadsResponseSchema,
@@ -89,17 +78,9 @@ import {
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/impact_service_pb'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset, isWailsApp } from '../config/runtime'
-import {
-  normalizeConnectorRouteStyle,
-  normalizeLogoUrl,
-  normalizeTechnologyConnectors,
-} from './client-normalize'
+import { normalizeConnectorRouteStyle, normalizeLogoUrl, normalizeTechnologyConnectors } from './client-normalize'
 
-export {
-  normalizeConnectorRouteStyle,
-  normalizeLogoUrl,
-  normalizeTechnologyConnectors,
-} from './client-normalize'
+export { normalizeConnectorRouteStyle, normalizeLogoUrl, normalizeTechnologyConnectors } from './client-normalize'
 
 const localWorkspaceOrgId = '11111111-1111-1111-1111-111111111111'
 const orgIdOrLocal = (orgId?: string | null) => orgId || localWorkspaceOrgId
@@ -115,17 +96,16 @@ export function watchWebSocketUrl(): string {
 }
 
 async function responseError(res: Response, fallback: string): Promise<Error> {
-  const body = await res.json().catch(() => null) as { error?: string; message?: string } | null
+  const body = (await res.json().catch(() => null)) as {
+    error?: string
+    message?: string
+  } | null
   return new Error(body?.message || body?.error || `${fallback}: ${res.statusText}`)
 }
 
 const WORKSPACE_CONNECT_SERVICE = 'diag.v1.WorkspaceService'
 
-async function connectJsonRpc<T>(
-  method: string,
-  body: Record<string, unknown>,
-  options: { allowNotFound?: boolean } = {},
-): Promise<T | null> {
+async function connectJsonRpc<T>(method: string, body: Record<string, unknown>, options: { allowNotFound?: boolean } = {}): Promise<T | null> {
   const res = await fetch(apiUrl(`/${WORKSPACE_CONNECT_SERVICE}/${method}`), {
     method: 'POST',
     headers: {
@@ -136,7 +116,7 @@ async function connectJsonRpc<T>(
   })
   if (options.allowNotFound && res.status === 404) return null
   if (!res.ok) throw await responseError(res, `Failed to ${method}`)
-  return await res.json() as T
+  return (await res.json()) as T
 }
 
 export interface DependenciesResponse {
@@ -193,11 +173,11 @@ export interface ImpactEdge {
   observed: boolean
 }
 
-export interface ImpactFinding {
-  type: string
-  severity: string
-  message: string
-  observed: boolean
+export interface ImpactFile {
+  path: string
+  change: ImpactChangeType
+  added: number
+  removed: number
 }
 
 export interface ImpactCoverageGap {
@@ -238,7 +218,7 @@ export interface ImpactReport {
   edges: ImpactEdge[]
   unmapped: string[]
   coverage: ImpactCoverage
-  findings: ImpactFinding[]
+  changed_files: ImpactFile[]
   summary: string
 }
 
@@ -414,7 +394,10 @@ export async function rpc<T>(call: () => Promise<T>): Promise<T> {
 }
 
 export function j<T>(schema: Parameters<typeof toJson>[0], msg: Parameters<typeof toJson>[1]): T {
-  return toJson(schema, msg, { useProtoFieldName: true, emitDefaultValues: true }) as unknown as T
+  return toJson(schema, msg, {
+    useProtoFieldName: true,
+    emitDefaultValues: true,
+  }) as unknown as T
 }
 
 function timestampToISOString(value?: WorkspaceVersionInfo['createdAt'] | null): string {
@@ -469,9 +452,7 @@ function mapViewThread(raw: Record<string, unknown>): ViewThread {
     status: raw.status === 'resolved' ? 'resolved' : 'open',
     created_at: String(raw.created_at ?? ''),
     resolved_at: raw.resolved_at ? String(raw.resolved_at) : null,
-    comments: Array.isArray(raw.comments)
-      ? raw.comments.map((item) => mapViewComment((item ?? {}) as Record<string, unknown>))
-      : [],
+    comments: Array.isArray(raw.comments) ? raw.comments.map((item) => mapViewComment((item ?? {}) as Record<string, unknown>)) : [],
   }
 }
 
@@ -568,11 +549,17 @@ interface ProtoViewMarkdownDocument {
 
 export function mapViewMarkdown(doc: ProtoViewMarkdownDocument | null | undefined): ViewMarkdownDocument | null {
   if (!doc?.path) return null
-  const hasModernMetadata = doc.sourceKind != null || doc.source_kind != null ||
-    doc.gitState != null || doc.git_state != null ||
-    doc.repoRelativePath != null || doc.repo_relative_path != null ||
-    doc.linkedViewCount != null || doc.linked_view_count != null ||
-    doc.fileVersion != null || doc.file_version != null
+  const hasModernMetadata =
+    doc.sourceKind != null ||
+    doc.source_kind != null ||
+    doc.gitState != null ||
+    doc.git_state != null ||
+    doc.repoRelativePath != null ||
+    doc.repo_relative_path != null ||
+    doc.linkedViewCount != null ||
+    doc.linked_view_count != null ||
+    doc.fileVersion != null ||
+    doc.file_version != null
   const defaultAvailability = !hasModernMetadata
   return {
     path: String(doc.path),
@@ -592,9 +579,7 @@ export function mapViewMarkdown(doc: ProtoViewMarkdownDocument | null | undefine
 export function mapDiagram(d: ProtoDiagram): ViewTreeNode {
   return {
     id: Number(d.id),
-    owner_element_id: d.ownerElementId != null || d.owner_element_id != null
-      ? Number(d.ownerElementId ?? d.owner_element_id)
-      : null,
+    owner_element_id: d.ownerElementId != null || d.owner_element_id != null ? Number(d.ownerElementId ?? d.owner_element_id) : null,
     name: d.name,
     description: d.description ?? null,
     level_label: d.levelLabel ?? d.level_label ?? null,
@@ -603,9 +588,7 @@ export function mapDiagram(d: ProtoDiagram): ViewTreeNode {
     depth: d.depth ?? 0,
     created_at: d.createdAt ?? d.created_at ?? '',
     updated_at: d.updatedAt ?? d.updated_at ?? '',
-    parent_view_id: d.parentViewId != null || d.parent_view_id != null
-      ? Number(d.parentViewId ?? d.parent_view_id)
-      : null,
+    parent_view_id: d.parentViewId != null || d.parent_view_id != null ? Number(d.parentViewId ?? d.parent_view_id) : null,
     markdown: mapViewMarkdown(d.markdown),
     children: (d.children ?? []).map(mapDiagram),
   }
@@ -624,9 +607,7 @@ function findViewPath(nodes: ViewTreeNode[], viewId: number, path: ViewTreeNode[
 function pruneDescendants(node: ViewTreeNode, remainingDepth: number): ViewTreeNode {
   return {
     ...node,
-    children: remainingDepth <= 0
-      ? []
-      : (node.children ?? []).map((child) => pruneDescendants(child, remainingDepth - 1)),
+    children: remainingDepth <= 0 ? [] : (node.children ?? []).map((child) => pruneDescendants(child, remainingDepth - 1)),
   }
 }
 
@@ -645,9 +626,7 @@ function pruneTreeAround(nodes: ViewTreeNode[], viewId: number, ancestorLevels: 
 export function diagramToView(d: ProtoDiagram): View {
   return {
     id: Number(d.id),
-    owner_element_id: d.ownerElementId != null || d.owner_element_id != null
-      ? Number(d.ownerElementId ?? d.owner_element_id)
-      : null,
+    owner_element_id: d.ownerElementId != null || d.owner_element_id != null ? Number(d.ownerElementId ?? d.owner_element_id) : null,
     name: d.name,
     label: d.levelLabel ?? d.level_label ?? null,
     tags: (d.tags ?? []) as string[],
@@ -758,7 +737,15 @@ export function normalizeFrontendImportElements(elements: PlanElement[]): PlanEl
   })
 }
 
-function normalizeVisibilityOverride(value: Record<string, unknown>, fallback?: { viewId: number; resourceType: VisibilityOverride['resource_type']; resourceId: number; levelDelta: number }): VisibilityOverride {
+function normalizeVisibilityOverride(
+  value: Record<string, unknown>,
+  fallback?: {
+    viewId: number
+    resourceType: VisibilityOverride['resource_type']
+    resourceId: number
+    levelDelta: number
+  },
+): VisibilityOverride {
   const rawLevelDelta = value.level_delta ?? value.levelDelta
   return {
     view_id: Number(value.view_id ?? value.viewId ?? fallback?.viewId ?? 0),
@@ -858,6 +845,15 @@ function toImpactElement(raw: Record<string, unknown>): ImpactElement {
   }
 }
 
+function toImpactFile(raw: Record<string, unknown>): ImpactFile {
+  return {
+    path: String(raw.path ?? ''),
+    change: impactChangeType(raw.change),
+    added: Number(raw.added ?? 0),
+    removed: Number(raw.removed ?? 0),
+  }
+}
+
 function toImpactRepository(raw: Record<string, unknown>): ImpactRepository {
   return {
     ref: String(raw.ref ?? ''),
@@ -932,24 +928,22 @@ function toImpactReport(raw: Record<string, unknown>): ImpactReport {
     })),
     unmapped: Array.isArray(raw.unmapped) ? raw.unmapped.map(String) : [],
     coverage: toImpactCoverage(raw.coverage as Record<string, unknown> | undefined),
-    findings: list(raw.findings).map((finding) => ({
-      type: String(finding.type ?? ''),
-      severity: String(finding.severity ?? ''),
-      message: String(finding.message ?? ''),
-      observed: Boolean(finding.observed),
-    })),
+    changed_files: list(raw.changed_files).map(toImpactFile),
     summary: String(raw.summary ?? ''),
   }
 }
 
 export const api = {
   system: {
-    ready: (): Promise<{ ok: boolean }> =>
-      rpc(() => workspaceClient.listViews({}).then(() => ({ ok: true }))),
+    ready: (): Promise<{ ok: boolean }> => rpc(() => workspaceClient.listViews({}).then(() => ({ ok: true }))),
   },
 
   user: {
-    getPreferences: (): Promise<{ accent_color: string | null; background_color: string | null; element_color: string | null }> =>
+    getPreferences: (): Promise<{
+      accent_color: string | null
+      background_color: string | null
+      element_color: string | null
+    }> =>
       Promise.resolve({
         accent_color: localStorage.getItem('diag:accent-color'),
         background_color: localStorage.getItem('diag:background-color'),
@@ -1014,7 +1008,7 @@ export const api = {
           technology: data.technology ?? undefined,
           url: data.url ?? undefined,
           logoUrl: data.logo_url ?? undefined,
-          technologyLinks: (data.technology_connectors ?? []).map(tl => ({
+          technologyLinks: (data.technology_connectors ?? []).map((tl) => ({
             type: tl.type,
             slug: tl.slug ?? '',
             label: tl.label,
@@ -1042,7 +1036,7 @@ export const api = {
           technology: data.technology ?? undefined,
           url: data.url ?? undefined,
           logoUrl: data.logo_url ?? undefined,
-          technologyLinks: (data.technology_connectors ?? []).map(tl => ({
+          technologyLinks: (data.technology_connectors ?? []).map((tl) => ({
             type: tl.type,
             slug: tl.slug ?? '',
             label: tl.label,
@@ -1061,32 +1055,53 @@ export const api = {
       }),
 
     delete: (orgId: string, id: number): Promise<void> =>
-      rpc(async () => { await workspaceClient.deleteElement({ orgId: orgIdOrLocal(orgId), elementId: id }) }),
+      rpc(async () => {
+        await workspaceClient.deleteElement({
+          orgId: orgIdOrLocal(orgId),
+          elementId: id,
+        })
+      }),
 
-    merge: (sourceId: number, survivorId: number, resolved: Partial<{
-      kind: string | null
-      description: string | null
-      repo: string | null
-      branch: string | null
-      file_path: string | null
-      language: string | null
-    }>): Promise<{ survivor: LibraryElement; deleted_id: number }> =>
+    merge: (
+      sourceId: number,
+      survivorId: number,
+      resolved: Partial<{
+        kind: string | null
+        description: string | null
+        repo: string | null
+        branch: string | null
+        file_path: string | null
+        language: string | null
+      }>,
+    ): Promise<{ survivor: LibraryElement; deleted_id: number }> =>
       rpc(async () => {
         const res = await fetch(apiUrl('/elements/merge'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ source_id: sourceId, survivor_id: survivorId, resolved }),
+          body: JSON.stringify({
+            source_id: sourceId,
+            survivor_id: survivorId,
+            resolved,
+          }),
         })
         if (!res.ok) {
           throw await responseError(res, 'Merge failed')
         }
-        const json = await res.json() as { survivor: Record<string, unknown>; deleted_id: number }
-        return { survivor: protoElementToLibrary(json.survivor), deleted_id: json.deleted_id }
+        const json = (await res.json()) as {
+          survivor: Record<string, unknown>
+          deleted_id: number
+        }
+        return {
+          survivor: protoElementToLibrary(json.survivor),
+          deleted_id: json.deleted_id,
+        }
       }),
 
     placements: (id: number): Promise<ViewPlacement[]> =>
       rpc(async () => {
-        const res = await workspaceClient.listElementPlacements({ elementId: id })
+        const res = await workspaceClient.listElementPlacements({
+          elementId: id,
+        })
         const json = j<{ placements: Record<string, unknown>[] }>(ListElementPlacementsResponseSchema, res)
         return (json.placements ?? []).map(protoDiagramPlacement)
       }),
@@ -1098,16 +1113,26 @@ export const api = {
         list: (): Promise<Record<string, Tag>> =>
           rpc(async () => {
             const res = await orgClient.listTagColors({})
-            const json = j<{ tags?: Record<string, { color?: string; description?: string | null }> }>(ListTagColorsResponseSchema, res)
+            const json = j<{
+              tags?: Record<string, { color?: string; description?: string | null }>
+            }>(ListTagColorsResponseSchema, res)
             const tags: Record<string, Tag> = {}
             Object.entries(json.tags ?? {}).forEach(([name, tag]) => {
-              tags[name] = { name, color: tag.color ?? '#A0AEC0', description: tag.description ?? null }
+              tags[name] = {
+                name,
+                color: tag.color ?? '#A0AEC0',
+                description: tag.description ?? null,
+              }
             })
             return tags
           }),
         update: (name: string, color: string, description?: string | null): Promise<void> =>
           rpc(async () => {
-            await orgClient.updateTag({ tag: name, color, description: description ?? undefined })
+            await orgClient.updateTag({
+              tag: name,
+              color,
+              description: description ?? undefined,
+            })
           }),
         delete: (name: string): Promise<void> =>
           rpc(async () => {
@@ -1118,8 +1143,7 @@ export const api = {
     },
 
     elements: {
-      list: (params?: { limit?: number; offset?: number; search?: string }): Promise<LibraryElement[]> =>
-        api.elements.list(params),
+      list: (params?: { limit?: number; offset?: number; search?: string }): Promise<LibraryElement[]> => api.elements.list(params),
       get: (id: number): Promise<LibraryElement> => api.elements.get(id),
       create: (data: Partial<LibraryElement>): Promise<LibraryElement> => api.elements.create(data),
       update: (id: number, data: Partial<LibraryElement>): Promise<LibraryElement> => api.elements.update(id, data),
@@ -1128,13 +1152,21 @@ export const api = {
       navigations: {
         list: (elementId: number, fromDiagramId: number): Promise<ViewConnector[]> =>
           rpc(async () => {
-            const res = await workspaceClient.listElementNavigations({ elementId, fromViewId: fromDiagramId, toViewId: 0 })
+            const res = await workspaceClient.listElementNavigations({
+              elementId,
+              fromViewId: fromDiagramId,
+              toViewId: 0,
+            })
             const json = j<{ navigations: Record<string, unknown>[] }>(ListElementNavigationsResponseSchema, res)
             return (json.navigations ?? []).map(protoNavigation)
           }),
         listParents: (elementId: number, toDiagramId: number): Promise<ViewConnector[]> =>
           rpc(async () => {
-            const res = await workspaceClient.listElementNavigations({ elementId, fromViewId: 0, toViewId: toDiagramId })
+            const res = await workspaceClient.listElementNavigations({
+              elementId,
+              fromViewId: 0,
+              toViewId: toDiagramId,
+            })
             const json = j<{ navigations: Record<string, unknown>[] }>(ListElementNavigationsResponseSchema, res)
             return (json.navigations ?? []).map(protoNavigation)
           }),
@@ -1146,7 +1178,7 @@ export const api = {
         rpc(async () => {
           const res = await workspaceClient.listViews({})
           const json = j<{ views: Record<string, unknown>[] }>(ListViewsResponseSchema, res)
-          return (json.views ?? []).map(v => ({
+          return (json.views ?? []).map((v) => ({
             id: Number(v.id ?? 0),
             owner_element_id: v.owner_element_id != null ? Number(v.owner_element_id) : null,
             name: String(v.name ?? ''),
@@ -1158,10 +1190,25 @@ export const api = {
           }))
         }),
 
-      content: (id: number): Promise<{ view?: ViewTreeNode; placements: PlacedElement[]; connectors: Connector[] }> =>
+      content: (
+        id: number,
+      ): Promise<{
+        view?: ViewTreeNode
+        placements: PlacedElement[]
+        connectors: Connector[]
+      }> =>
         rpc(async () => {
-          const res = await workspaceClient.getView({ viewId: id, includeContent: true })
-          const json = j<{ view?: ProtoDiagram; content?: { placements?: Record<string, unknown>[]; connectors?: Record<string, unknown>[] } }>(GetViewResponseSchema, res)
+          const res = await workspaceClient.getView({
+            viewId: id,
+            includeContent: true,
+          })
+          const json = j<{
+            view?: ProtoDiagram
+            content?: {
+              placements?: Record<string, unknown>[]
+              connectors?: Record<string, unknown>[]
+            }
+          }>(GetViewResponseSchema, res)
           return {
             view: json.view ? mapDiagram(json.view) : undefined,
             placements: (json.content?.placements ?? []).map(protoPlacedElement),
@@ -1171,7 +1218,9 @@ export const api = {
 
       tree: (): Promise<ViewTreeNode[]> =>
         rpc(async () => {
-          const res = await workspaceClient.getWorkspace({ includeContent: false })
+          const res = await workspaceClient.getWorkspace({
+            includeContent: false,
+          })
           const json = j<{ views: ProtoDiagram[] }>(GetWorkspaceResponseSchema, res)
           return (json.views ?? []).map(mapDiagram)
         }),
@@ -1206,10 +1255,7 @@ export const api = {
           return (json.views ?? []).map(mapDiagram)
         }),
 
-      treeAround: async (
-        viewId: number,
-        opts: { ancestorLevels?: number; descendantLevels?: number } = {},
-      ): Promise<ViewTreeNode[]> => {
+      treeAround: async (viewId: number, opts: { ancestorLevels?: number; descendantLevels?: number } = {}): Promise<ViewTreeNode[]> => {
         const ancestorLevels = opts.ancestorLevels ?? 2
         const descendantLevels = opts.descendantLevels ?? 2
         const tree = await api.workspace.views.tree()
@@ -1227,7 +1273,13 @@ export const api = {
           })
           const json = j<{
             views?: ProtoDiagram[]
-            content?: Record<string, { placements?: Record<string, unknown>[]; connectors?: Record<string, unknown>[] }>
+            content?: Record<
+              string,
+              {
+                placements?: Record<string, unknown>[]
+                connectors?: Record<string, unknown>[]
+              }
+            >
           }>(GetWorkspaceResponseSchema, res)
           return {
             views: (json.views ?? []).map(mapDiagram),
@@ -1238,7 +1290,7 @@ export const api = {
                   placements: (value.placements ?? []).map(protoPlacedElement),
                   connectors: (value.connectors ?? []).map(protoConnector),
                 },
-              ])
+              ]),
             ),
           }
         }),
@@ -1263,15 +1315,34 @@ export const api = {
           return diagramToView(json.view)
         }),
 
-      update: (id: number, data: { name: string; description?: string; label?: string; tags?: string[] }): Promise<View> =>
+      update: (
+        id: number,
+        data: {
+          name: string
+          description?: string
+          label?: string
+          tags?: string[]
+        },
+      ): Promise<View> =>
         rpc(async () => {
-          const res = await workspaceClient.updateView({ viewId: id, name: data.name, description: data.description ?? undefined, levelLabel: data.label ?? undefined, tags: data.tags })
+          const res = await workspaceClient.updateView({
+            viewId: id,
+            name: data.name,
+            description: data.description ?? undefined,
+            levelLabel: data.label ?? undefined,
+            tags: data.tags,
+          })
           const json = j<{ view: ProtoDiagram }>(UpdateViewResponseSchema, res)
           return diagramToView(json.view)
         }),
 
       markdown: {
-        get: async (id: number): Promise<{ markdown: ViewMarkdownDocument; content: string } | null> => {
+        get: async (
+          id: number,
+        ): Promise<{
+          markdown: ViewMarkdownDocument
+          content: string
+        } | null> => {
           const json = await connectJsonRpc<{
             markdown?: ProtoViewMarkdownDocument
             content?: string
@@ -1287,7 +1358,12 @@ export const api = {
 
         create: async (
           id: number,
-          data: { fileName?: string; initialContent?: string; targetKind?: string; path?: string } = {},
+          data: {
+            fileName?: string
+            initialContent?: string
+            targetKind?: string
+            path?: string
+          } = {},
         ): Promise<ViewTreeNode> => {
           const json = await connectJsonRpc<{ view?: ProtoDiagram }>('CreateViewMarkdown', {
             viewId: id,
@@ -1309,12 +1385,10 @@ export const api = {
           return mapDiagram(json.view)
         },
 
-        save: async (
-          id: number,
-          content: string,
-          options: { expectedFileVersion?: string; force?: boolean } = {},
-        ): Promise<ViewMarkdownDocument> => {
-          const json = await connectJsonRpc<{ markdown?: ProtoViewMarkdownDocument }>('SaveViewMarkdown', {
+        save: async (id: number, content: string, options: { expectedFileVersion?: string; force?: boolean } = {}): Promise<ViewMarkdownDocument> => {
+          const json = await connectJsonRpc<{
+            markdown?: ProtoViewMarkdownDocument
+          }>('SaveViewMarkdown', {
             viewId: id,
             content,
             expectedFileVersion: options.expectedFileVersion ?? undefined,
@@ -1338,37 +1412,59 @@ export const api = {
       threads: {
         listForElement: (viewId: number, elementId: number): Promise<ViewThread[]> =>
           rpc(async () => {
-            const res = await collaborationClient.listThreads({ viewId, elementId })
+            const res = await collaborationClient.listThreads({
+              viewId,
+              elementId,
+            })
             const json = j<{ threads?: Record<string, unknown>[] }>(ListThreadsResponseSchema, res)
             return (json.threads ?? []).map(mapViewThread)
           }),
         listForConnector: (viewId: number, connectorId: number): Promise<ViewThread[]> =>
           rpc(async () => {
-            const res = await collaborationClient.listThreads({ viewId, connectorId })
+            const res = await collaborationClient.listThreads({
+              viewId,
+              connectorId,
+            })
             const json = j<{ threads?: Record<string, unknown>[] }>(ListThreadsResponseSchema, res)
             return (json.threads ?? []).map(mapViewThread)
           }),
         createForElement: (viewId: number, elementId: number, body: string): Promise<ViewThread> =>
           rpc(async () => {
-            const res = await collaborationClient.createThread({ viewId, elementId, body })
+            const res = await collaborationClient.createThread({
+              viewId,
+              elementId,
+              body,
+            })
             const json = j<{ thread?: Record<string, unknown> }>(CreateThreadResponseSchema, res)
             return mapViewThread(json.thread ?? {})
           }),
         createForConnector: (viewId: number, connectorId: number, body: string): Promise<ViewThread> =>
           rpc(async () => {
-            const res = await collaborationClient.createThread({ viewId, connectorId, body })
+            const res = await collaborationClient.createThread({
+              viewId,
+              connectorId,
+              body,
+            })
             const json = j<{ thread?: Record<string, unknown> }>(CreateThreadResponseSchema, res)
             return mapViewThread(json.thread ?? {})
           }),
         addComment: (viewId: number, threadId: number, body: string): Promise<ViewComment> =>
           rpc(async () => {
-            const res = await collaborationClient.addComment({ viewId, threadId, body })
+            const res = await collaborationClient.addComment({
+              viewId,
+              threadId,
+              body,
+            })
             const json = j<{ comment?: Record<string, unknown> }>(AddCommentResponseSchema, res)
             return mapViewComment(json.comment ?? {})
           }),
         resolve: (viewId: number, threadId: number, resolved: boolean): Promise<ThreadResolveEvent> =>
           rpc(async () => {
-            await collaborationClient.resolveThread({ viewId, threadId, resolved })
+            await collaborationClient.resolveThread({
+              viewId,
+              threadId,
+              resolved,
+            })
             return { thread_id: threadId, resolved }
           }),
       },
@@ -1382,7 +1478,11 @@ export const api = {
           }),
         toggleForElement: (viewId: number, elementId: number, emoji: string): Promise<{ active: boolean }> =>
           rpc(async () => {
-            const res = await collaborationClient.toggleReaction({ viewId, elementId, emoji })
+            const res = await collaborationClient.toggleReaction({
+              viewId,
+              elementId,
+              emoji,
+            })
             return { active: res.active }
           }),
       },
@@ -1395,13 +1495,15 @@ export const api = {
         }),
 
       setLevel: (id: number, level: number): Promise<void> =>
-        rpc(async () => { await workspaceClient.setViewLevel({ viewId: id, level }) }),
+        rpc(async () => {
+          await workspaceClient.setViewLevel({ viewId: id, level })
+        }),
 
       density: {
         get: async (id: number): Promise<number> => {
           const res = await fetch(apiUrl(`/views/${id}/density`))
           if (!res.ok) throw new Error('Failed to load density')
-          const json = await res.json() as { density_level?: number }
+          const json = (await res.json()) as { density_level?: number }
           return Number(json.density_level ?? 0)
         },
         set: async (id: number, densityLevel: number): Promise<number> => {
@@ -1411,7 +1513,7 @@ export const api = {
             body: JSON.stringify({ density_level: densityLevel }),
           })
           if (!res.ok) throw new Error('Failed to save density')
-          const json = await res.json() as { density_level?: number }
+          const json = (await res.json()) as { density_level?: number }
           return Number(json.density_level ?? densityLevel)
         },
       },
@@ -1424,7 +1526,7 @@ export const api = {
             body: JSON.stringify(densityLevel == null ? {} : { density_level: densityLevel }),
           })
           if (!res.ok) throw new Error('Failed to initialize noise gate')
-          const json = await res.json() as Partial<NoiseGateInitialization>
+          const json = (await res.json()) as Partial<NoiseGateInitialization>
           return {
             view_id: Number(json.view_id ?? id),
             density_level: Number(json.density_level ?? densityLevel ?? 0),
@@ -1438,15 +1540,41 @@ export const api = {
         getQuery: async (id: number): Promise<{ query: string; enriched_query: string }> => {
           const res = await fetch(apiUrl(`/views/${id}/populate-query`))
           if (!res.ok) throw new Error('Failed to load populate query')
-          const json = await res.json() as { query: string; enriched_query?: string }
-          return { query: json.query, enriched_query: json.enriched_query ?? json.query }
+          const json = (await res.json()) as {
+            query: string
+            enriched_query?: string
+          }
+          return {
+            query: json.query,
+            enriched_query: json.enriched_query ?? json.query,
+          }
         },
-        search: async (id: number, q: string, limit: number): Promise<Array<LibraryElement & { similarity_score: number; match_kind?: string; match_reason?: string }>> => {
+        search: async (
+          id: number,
+          q: string,
+          limit: number,
+        ): Promise<
+          Array<
+            LibraryElement & {
+              similarity_score: number
+              match_kind?: string
+              match_reason?: string
+            }
+          >
+        > => {
           const params = new URLSearchParams({ q, limit: String(limit) })
           const res = await fetch(apiUrl(`/views/${id}/populate?${params}`))
           if (!res.ok) throw new Error('Failed to run similarity search')
-          const json = await res.json() as { results: Array<Record<string, unknown> & { similarity_score: number; match_kind?: string; match_reason?: string }> }
-          return (json.results ?? []).map(r => ({
+          const json = (await res.json()) as {
+            results: Array<
+              Record<string, unknown> & {
+                similarity_score: number
+                match_kind?: string
+                match_reason?: string
+              }
+            >
+          }
+          return (json.results ?? []).map((r) => ({
             ...protoElementToLibrary(r),
             similarity_score: r.similarity_score,
             match_kind: r.match_kind,
@@ -1459,7 +1587,9 @@ export const api = {
         list: async (id: number): Promise<VisibilityOverride[]> => {
           const res = await fetch(apiUrl(`/views/${id}/visibility-overrides`))
           if (!res.ok) throw new Error('Failed to load visibility overrides')
-          const json = await res.json() as { overrides?: Record<string, unknown>[] }
+          const json = (await res.json()) as {
+            overrides?: Record<string, unknown>[]
+          }
           return (json.overrides ?? []).map((override) => normalizeVisibilityOverride(override))
         },
         set: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number, levelDelta: number): Promise<VisibilityOverride> => {
@@ -1473,20 +1603,41 @@ export const api = {
             }),
           })
           if (!res.ok) throw new Error('Failed to save visibility override')
-          const json = await res.json() as { override?: Record<string, unknown> }
-          return normalizeVisibilityOverride(json.override ?? {}, { viewId: id, resourceType, resourceId, levelDelta })
+          const json = (await res.json()) as {
+            override?: Record<string, unknown>
+          }
+          return normalizeVisibilityOverride(json.override ?? {}, {
+            viewId: id,
+            resourceType,
+            resourceId,
+            levelDelta,
+          })
         },
         promote: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number): Promise<VisibilityOverride> => {
           const res = await fetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}/promote`), { method: 'POST' })
           if (!res.ok) throw new Error('Failed to promote visibility')
-          const json = await res.json() as { override?: Record<string, unknown> }
-          return normalizeVisibilityOverride(json.override ?? {}, { viewId: id, resourceType, resourceId, levelDelta: 1 })
+          const json = (await res.json()) as {
+            override?: Record<string, unknown>
+          }
+          return normalizeVisibilityOverride(json.override ?? {}, {
+            viewId: id,
+            resourceType,
+            resourceId,
+            levelDelta: 1,
+          })
         },
         demote: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number): Promise<VisibilityOverride> => {
           const res = await fetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}/demote`), { method: 'POST' })
           if (!res.ok) throw new Error('Failed to demote visibility')
-          const json = await res.json() as { override?: Record<string, unknown> }
-          return normalizeVisibilityOverride(json.override ?? {}, { viewId: id, resourceType, resourceId, levelDelta: -1 })
+          const json = (await res.json()) as {
+            override?: Record<string, unknown>
+          }
+          return normalizeVisibilityOverride(json.override ?? {}, {
+            viewId: id,
+            resourceType,
+            resourceId,
+            levelDelta: -1,
+          })
         },
         reset: async (id: number, resourceType: VisibilityOverride['resource_type'], resourceId: number): Promise<void> => {
           const res = await fetch(apiUrl(`/views/${id}/visibility-overrides/${resourceType}/${resourceId}`), { method: 'DELETE' })
@@ -1495,7 +1646,12 @@ export const api = {
       },
 
       delete: (orgId: string, id: number): Promise<void> =>
-        rpc(async () => { await workspaceClient.deleteView({ orgId: orgIdOrLocal(orgId), viewId: id }) }),
+        rpc(async () => {
+          await workspaceClient.deleteView({
+            orgId: orgIdOrLocal(orgId),
+            viewId: id,
+          })
+        }),
 
       thumbnail: async (id: number): Promise<string | null> => {
         const res = await fetchApiAsset(apiUrl(`/views/${id}/thumbnail.svg`), {
@@ -1509,9 +1665,11 @@ export const api = {
       placements: {
         list: (diagramId: number): Promise<ElementPlacement[]> =>
           rpc(async () => {
-            const res = await workspaceClient.listPlacements({ viewId: diagramId })
+            const res = await workspaceClient.listPlacements({
+              viewId: diagramId,
+            })
             const json = j<{ placements: Record<string, unknown>[] }>(ListPlacementsResponseSchema, res)
-            return (json.placements ?? []).map(protoPlacedElement).map(pe => ({
+            return (json.placements ?? []).map(protoPlacedElement).map((pe) => ({
               id: pe.id,
               view_id: pe.view_id,
               element_id: pe.element_id,
@@ -1522,45 +1680,81 @@ export const api = {
 
         add: (diagramId: number, elementId: number, x = 100, y = 100): Promise<ElementPlacement> =>
           rpc(async () => {
-            const res = await workspaceClient.createPlacement({ viewId: diagramId, elementId, positionX: x, positionY: y })
+            const res = await workspaceClient.createPlacement({
+              viewId: diagramId,
+              elementId,
+              positionX: x,
+              positionY: y,
+            })
             const json = j<{ placement: Record<string, unknown> }>(CreatePlacementResponseSchema, res)
             const pe = protoPlacedElement(json.placement ?? {})
-            return { id: pe.id, view_id: pe.view_id, element_id: pe.element_id, position_x: pe.position_x, position_y: pe.position_y }
+            return {
+              id: pe.id,
+              view_id: pe.view_id,
+              element_id: pe.element_id,
+              position_x: pe.position_x,
+              position_y: pe.position_y,
+            }
           }),
 
         updatePosition: (diagramId: number, elementId: number, x: number, y: number): Promise<void> =>
-          rpc(async () => { await workspaceClient.updatePlacementPosition({ viewId: diagramId, elementId, positionX: x, positionY: y }) }),
+          rpc(async () => {
+            await workspaceClient.updatePlacementPosition({
+              viewId: diagramId,
+              elementId,
+              positionX: x,
+              positionY: y,
+            })
+          }),
 
         remove: (diagramId: number, elementId: number): Promise<void> =>
-          rpc(async () => { await workspaceClient.deletePlacement({ viewId: diagramId, elementId }) }),
+          rpc(async () => {
+            await workspaceClient.deletePlacement({
+              viewId: diagramId,
+              elementId,
+            })
+          }),
       },
 
       layers: {
         list: (diagramId: number): Promise<ViewLayer[]> =>
           rpc(async () => {
-            const res = await workspaceClient.listViewLayers({ viewId: diagramId })
+            const res = await workspaceClient.listViewLayers({
+              viewId: diagramId,
+            })
             const json = j<{ layers: Record<string, unknown>[] }>(ListViewLayersResponseSchema, res)
             return (json.layers ?? []).map(protoLayer)
           }),
 
         create: (diagramId: number, data: { name: string; tags: string[]; color?: string }): Promise<ViewLayer> =>
           rpc(async () => {
-            const res = await workspaceClient.createViewLayer({ viewId: diagramId, name: data.name, tags: data.tags, color: data.color ?? '#888888' })
+            const res = await workspaceClient.createViewLayer({
+              viewId: diagramId,
+              name: data.name,
+              tags: data.tags,
+              color: data.color ?? '#888888',
+            })
             const json = j<{ layer: Record<string, unknown> }>(CreateViewLayerResponseSchema, res)
             return protoLayer(json.layer ?? {})
           }),
 
         update: (_diagramId: number, layerId: number, data: Partial<ViewLayer>): Promise<ViewLayer> =>
           rpc(async () => {
-            const res = await workspaceClient.updateViewLayer({ layerId, name: data.name ?? undefined, tags: data.tags ?? [], color: data.color ?? undefined })
+            const res = await workspaceClient.updateViewLayer({
+              layerId,
+              name: data.name ?? undefined,
+              tags: data.tags ?? [],
+              color: data.color ?? undefined,
+            })
             const json = j<{ layer: Record<string, unknown> }>(UpdateViewLayerResponseSchema, res)
             return protoLayer(json.layer ?? {})
           }),
 
         delete: (_diagramId: number, layerId: number): Promise<void> =>
-          rpc(async () => { await workspaceClient.deleteViewLayer({ layerId }) }),
+          rpc(async () => {
+            await workspaceClient.deleteViewLayer({ layerId })
+          }),
       },
-
     },
 
     connectors: {
@@ -1650,7 +1844,12 @@ export const api = {
         }),
 
       delete: (orgId: string, connectorId: number): Promise<void> =>
-        rpc(async () => { await workspaceClient.deleteConnector({ orgId: orgIdOrLocal(orgId), connectorId }) }),
+        rpc(async () => {
+          await workspaceClient.deleteConnector({
+            orgId: orgIdOrLocal(orgId),
+            connectorId,
+          })
+        }),
     },
   },
 
@@ -1659,24 +1858,29 @@ export const api = {
       rpc(async () => {
         if (params) {
           const [elements, connectors] = await Promise.all([
-            workspaceClient.listElements({
-              limit: params.limit ?? 0,
-              offset: params.offset ?? 0,
-              search: params.search ?? '',
-            }).then((res) => {
-              const json = j<{ elements: Record<string, unknown>[] }>(ListElementsResponseSchema, res)
-              return {
-                elements: (json.elements ?? []).map(protoElementToLibrary),
-                totalCount: res.pagination ? Number(res.pagination.totalCount) : undefined,
-              }
-            }),
-            workspaceClient.listConnectors({
-              viewId: 0,
-              limit: params.limit ?? 0,
-              offset: params.offset ?? 0,
-            })
+            workspaceClient
+              .listElements({
+                limit: params.limit ?? 0,
+                offset: params.offset ?? 0,
+                search: params.search ?? '',
+              })
               .then((res) => {
-                const connectorJson = j<{ connectors: Record<string, unknown>[] }>(ListConnectorsResponseSchema, res)
+                const json = j<{ elements: Record<string, unknown>[] }>(ListElementsResponseSchema, res)
+                return {
+                  elements: (json.elements ?? []).map(protoElementToLibrary),
+                  totalCount: res.pagination ? Number(res.pagination.totalCount) : undefined,
+                }
+              }),
+            workspaceClient
+              .listConnectors({
+                viewId: 0,
+                limit: params.limit ?? 0,
+                offset: params.offset ?? 0,
+              })
+              .then((res) => {
+                const connectorJson = j<{
+                  connectors: Record<string, unknown>[]
+                }>(ListConnectorsResponseSchema, res)
                 return (connectorJson.connectors ?? []).map(protoDependencyConnector)
               }),
           ])
@@ -1699,10 +1903,18 @@ export const api = {
   explore: {
     load: (): Promise<ExploreData & { password_required?: boolean }> =>
       rpc(async () => {
-        const res = await workspaceClient.getWorkspace({ includeContent: true })
+        const res = await workspaceClient.getWorkspace({
+          includeContent: true,
+        })
         const json = j<{
           views: ProtoDiagram[]
-          content: Record<string, { placements: Record<string, unknown>[]; connectors: Record<string, unknown>[] }>
+          content: Record<
+            string,
+            {
+              placements: Record<string, unknown>[]
+              connectors: Record<string, unknown>[]
+            }
+          >
           navigations: Record<string, unknown>[]
         }>(GetWorkspaceResponseSchema, res)
         return {
@@ -1714,7 +1926,7 @@ export const api = {
                 placements: (value.placements ?? []).map(protoPlacedElement),
                 connectors: (value.connectors ?? []).map(protoConnector),
               },
-            ])
+            ]),
           ),
           navigations: (json.navigations ?? []).map(protoNavigation),
           password_required: false,
@@ -1733,9 +1945,15 @@ export const api = {
       if (!res.ok) {
         throw new Error(`Failed to load shared diagram: ${res.statusText}`)
       }
-      const data = await res.json() as {
+      const data = (await res.json()) as {
         tree: ProtoDiagram[]
-        views: Record<string, { elements: Record<string, unknown>[]; connectors: Record<string, unknown>[] }>
+        views: Record<
+          string,
+          {
+            elements: Record<string, unknown>[]
+            connectors: Record<string, unknown>[]
+          }
+        >
         password_required?: boolean
       }
 
@@ -1747,18 +1965,18 @@ export const api = {
             placements: (value.elements ?? []).map(protoPlacedElement),
             connectors: (value.connectors ?? []).map(protoConnector),
           },
-        ])
+        ]),
       )
 
       // Ensure that the share root is treated as a root (no parent) so that computeLayout
       // picks it up even if it was nested in the original workspace.
-      const _sharedRoot = tree.find(n => String(n.id) === String(data.views[token]?.elements?.[0]?.view_id ?? ''))
+      const _sharedRoot = tree.find((n) => String(n.id) === String(data.views[token]?.elements?.[0]?.view_id ?? ''))
       // Backend actually returns the shareToken.ViewID as the root of the tree it builds.
       // We should find the node in 'tree' that has no parent *within the returned set*.
       // For shared explore, the backend typically returns a tree starting at the shared view.
-      tree.forEach(node => {
+      tree.forEach((node) => {
         // If the node's parent is not in our tree, it's a root for this shared view.
-        const parentInTree = tree.find(n => n.id === node.parent_view_id)
+        const parentInTree = tree.find((n) => n.id === node.parent_view_id)
         if (!parentInTree) {
           node.parent_view_id = null
         }
@@ -1767,7 +1985,7 @@ export const api = {
       const elementToChildView = new Map<number, ViewTreeNode>()
       const allViews: ViewTreeNode[] = []
       const flatTree = (nodes: ViewTreeNode[]) => {
-        nodes.forEach(n => {
+        nodes.forEach((n) => {
           allViews.push(n)
           if (n.owner_element_id) elementToChildView.set(n.owner_element_id, n)
           if (n.children) flatTree(n.children)
@@ -1810,7 +2028,13 @@ export const api = {
         })
         return { view_id: res.viewId, view_url: res.viewUrl }
       }),
-    parseStructurizr: (code: string): Promise<{ elements: PlanElement[]; connectors: PlanConnector[]; warnings: string[] }> =>
+    parseStructurizr: (
+      code: string,
+    ): Promise<{
+      elements: PlanElement[]
+      connectors: PlanConnector[]
+      warnings: string[]
+    }> =>
       rpc(async () => {
         const res = await importClient.parseStructurizr({ code })
         return {
@@ -1835,12 +2059,7 @@ export const api = {
         }
       }),
 
-    importIntoView: (
-      viewId: number,
-      source: string,
-      center: { x: number; y: number },
-      dryRun = false,
-    ): Promise<MermaidImportResult> =>
+    importIntoView: (viewId: number, source: string, center: { x: number; y: number }, dryRun = false): Promise<MermaidImportResult> =>
       rpc(async () => {
         const res = await mermaidClient.importMermaidIntoView({
           orgId: orgIdOrLocal(''),
@@ -1880,7 +2099,14 @@ export const api = {
         }
       }),
 
-    inspectMarkdown: (markdown: string, viewId?: number | null): Promise<{ blocks: MermaidMarkdownBlock[]; syncStatus: MermaidMarkdownSyncStatus; warnings: string[] }> =>
+    inspectMarkdown: (
+      markdown: string,
+      viewId?: number | null,
+    ): Promise<{
+      blocks: MermaidMarkdownBlock[]
+      syncStatus: MermaidMarkdownSyncStatus
+      warnings: string[]
+    }> =>
       rpc(async () => {
         const res = await mermaidClient.inspectMermaidMarkdown({
           orgId: orgIdOrLocal(''),
@@ -1898,7 +2124,11 @@ export const api = {
       viewId: number,
       markdown: string,
       includeTldMetadata = true,
-    ): Promise<{ markdown: string; previousStatus: MermaidMarkdownSyncStatus; warnings: string[] }> =>
+    ): Promise<{
+      markdown: string
+      previousStatus: MermaidMarkdownSyncStatus
+      warnings: string[]
+    }> =>
       rpc(async () => {
         const res = await mermaidClient.upsertMermaidMarkdownBlock({
           orgId: orgIdOrLocal(''),
@@ -1939,7 +2169,15 @@ export const api = {
       if (!res.ok) throw new Error(`Failed to load watch versions: ${res.statusText}`)
       return res.json()
     },
-    diffs: async (versionId: number, filters?: { owner_type?: string; change_type?: string; resource_type?: string; language?: string }): Promise<WatchDiff[]> => {
+    diffs: async (
+      versionId: number,
+      filters?: {
+        owner_type?: string
+        change_type?: string
+        resource_type?: string
+        language?: string
+      },
+    ): Promise<WatchDiff[]> => {
       const params = new URLSearchParams()
       if (filters?.owner_type) params.set('owner_type', filters.owner_type)
       if (filters?.change_type) params.set('change_type', filters.change_type)
@@ -2001,10 +2239,10 @@ export const api = {
     getRepositoryStatus: (ref: string): Promise<{ repository: ImpactRepository; commits: ImpactCommit[] }> =>
       rpc(async () => {
         const res = await impactClient.getRepositoryStatus({ orgId: '', ref })
-        const json = j<{ repository: Record<string, unknown>; commits: Record<string, unknown>[] }>(
-          GetRepositoryStatusResponseSchema,
-          res,
-        )
+        const json = j<{
+          repository: Record<string, unknown>
+          commits: Record<string, unknown>[]
+        }>(GetRepositoryStatusResponseSchema, res)
         return {
           repository: toImpactRepository(json.repository ?? {}),
           commits: (json.commits ?? []).map(toImpactCommit),
@@ -2018,14 +2256,7 @@ export const api = {
         return (json.commits ?? []).map(toImpactCommit)
       }),
 
-    analyze: (input: {
-      path: string
-      base: string
-      head?: string
-      evidence?: boolean
-      suggestBindings?: boolean
-      narrate?: boolean
-    }): Promise<ImpactReport> =>
+    analyze: (input: { path: string; base: string; head?: string; evidence?: boolean; suggestBindings?: boolean; narrate?: boolean }): Promise<ImpactReport> =>
       rpc(async () => {
         const res = await impactClient.analyzeImpact({
           orgId: '',

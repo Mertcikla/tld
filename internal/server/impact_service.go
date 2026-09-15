@@ -311,6 +311,7 @@ func (s *impactService) AnalyzeImpact(ctx context.Context, req *connect.Request[
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	lineStats, _ := tldgit.FileLineStatsBetween(repoRoot, base, head)
 	elements := s.elements(ctx)
 	opts := watch.ImpactOptions{
 		Base:                  base,
@@ -320,6 +321,7 @@ func (s *impactService) AnalyzeImpact(ctx context.Context, req *connect.Request[
 		Elements:              elements,
 		Connectors:            s.connectors(ctx),
 		ChangedFiles:          changed,
+		LineStats:             lineStats,
 		IncludeNameHeuristics: true,
 	}
 	if req.Msg.GetEvidence() {
@@ -513,16 +515,35 @@ func (s *impactService) protoReport(ctx context.Context, report watch.ImpactRepo
 		}
 		resp.Edges = append(resp.Edges, out)
 	}
-	for _, finding := range report.Findings {
-		resp.Findings = append(resp.Findings, &diagv1.ImpactFinding{
-			Type:     finding.Type,
-			Severity: finding.Severity,
-			Message:  finding.Message,
-			Observed: finding.Observed,
+	resp.Coverage = protoCoverage(report.Coverage)
+	resp.ChangedFiles = protoImpactFiles(report.ChangedFiles)
+	return resp
+}
+
+func protoImpactFiles(files []watch.ChangedFile) []*diagv1.ImpactFile {
+	out := make([]*diagv1.ImpactFile, 0, len(files))
+	for _, file := range files {
+		out = append(out, &diagv1.ImpactFile{
+			Path:    file.Path,
+			Change:  impactFileChangeType(file.Change),
+			Added:   int32(file.Added),
+			Removed: int32(file.Removed),
 		})
 	}
-	resp.Coverage = protoCoverage(report.Coverage)
-	return resp
+	return out
+}
+
+func impactFileChangeType(change string) diagv1.ImpactChangeType {
+	switch tldgit.WorktreeChange(change) {
+	case tldgit.WorktreeAdded:
+		return diagv1.ImpactChangeType_IMPACT_CHANGE_TYPE_ADDED
+	case tldgit.WorktreeDeleted:
+		return diagv1.ImpactChangeType_IMPACT_CHANGE_TYPE_DELETED
+	case tldgit.WorktreeUpdated:
+		return diagv1.ImpactChangeType_IMPACT_CHANGE_TYPE_MODIFIED
+	default:
+		return diagv1.ImpactChangeType_IMPACT_CHANGE_TYPE_UNSPECIFIED
+	}
 }
 
 func (s *impactService) elementIDs(ctx context.Context) map[string]int32 {

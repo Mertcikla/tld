@@ -61,6 +61,12 @@ owners for unmapped code. Nothing here mutates the architecture.`,
 			if err != nil {
 				return err
 			}
+			lineStats := map[string]tldgit.LineDiff{}
+			if mergeBase, err := tldgit.MergeBase(repoRoot, base); err == nil {
+				if stats, err := tldgit.FileLineStatsBetween(repoRoot, mergeBase, "HEAD"); err == nil {
+					lineStats = stats
+				}
+			}
 			if includeWorktree {
 				worktree, err := tldgit.WorktreeChangesAgainstHead(repoRoot)
 				if err != nil {
@@ -79,6 +85,7 @@ owners for unmapped code. Nothing here mutates the architecture.`,
 				Elements:              ws.Elements,
 				Connectors:            ws.Connectors,
 				ChangedFiles:          changed,
+				LineStats:             lineStats,
 				IncludeNameHeuristics: nameHeuristics,
 			}
 

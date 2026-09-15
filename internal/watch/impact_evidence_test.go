@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	tldgit "github.com/mertcikla/tld/v2/internal/git"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
@@ -54,13 +53,4 @@ func TestDetectObservedRelationshipsMapsBindings(t *testing.T) {
 		t.Fatalf("expected checkout -> fraud relationship, got %+v", relationships)
 	}
 
-	report := AnalyzeImpact(ImpactOptions{
-		RepoRoot:      repo,
-		Elements:      elements,
-		ChangedFiles:  map[string]tldgit.WorktreeChange{"services/checkout/service.go": tldgit.WorktreeUpdated},
-		Relationships: relationships,
-	})
-	if !hasFinding(report.Findings, "possible_new_relationship") {
-		t.Fatalf("expected possible_new_relationship finding, got %+v", report.Findings)
-	}
 }
