@@ -14,10 +14,9 @@ import (
 )
 
 // ImpactRun is a persisted, read-only snapshot of an impact analysis. It is a
-// trimmed form of ImpactReport: the narration is intentionally omitted because
-// it is model-generated and non-deterministic, and evidence is flattened to
-// display strings. Element/connector ids are resolved at persist time so a
-// loaded run can be rendered without the live architecture.
+// trimmed form of ImpactReport: evidence is flattened to display strings, and
+// element/connector ids are resolved at persist time so a loaded run can be
+// rendered without the live architecture.
 type ImpactRun struct {
 	ID           int64
 	RepoRef      string

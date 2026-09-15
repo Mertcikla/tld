@@ -345,17 +345,13 @@ func (s *impactService) AnalyzeImpact(ctx context.Context, req *connect.Request[
 			report = watch.AnalyzeImpact(opts)
 		}
 	}
-	summary, err := watch.NarrateImpactReport(ctx, watch.NarrateOptions{Report: report})
-	if err != nil {
-		summary = ""
-	}
 	run := s.impactRun(ctx, report, changed, remote)
 	if s.watchStore != nil {
 		if saved, saveErr := s.watchStore.SaveImpactRun(ctx, run); saveErr == nil {
 			run = saved
 		}
 	}
-	return connect.NewResponse(s.protoImpactRun(run, summary)), nil
+	return connect.NewResponse(s.protoImpactRun(run)), nil
 }
 
 // GetLatestImpact returns the most recently persisted run for a checkout so the
@@ -381,7 +377,7 @@ func (s *impactService) GetLatestImpact(ctx context.Context, req *connect.Reques
 	}
 	return connect.NewResponse(&diagv1.GetLatestImpactResponse{
 		Found:  true,
-		Report: s.protoImpactRun(run, ""),
+		Report: s.protoImpactRun(run),
 	}), nil
 }
 
@@ -597,13 +593,12 @@ func (s *impactService) hasArchitecture(ctx context.Context, remote string) bool
 	return hasAny
 }
 
-func (s *impactService) protoImpactRun(run watch.ImpactRun, summary string) *diagv1.AnalyzeImpactResponse {
+func (s *impactService) protoImpactRun(run watch.ImpactRun) *diagv1.AnalyzeImpactResponse {
 	resp := &diagv1.AnalyzeImpactResponse{
 		Base:         run.Base,
 		Head:         run.Head,
 		RepoRoot:     run.RepoRoot,
 		Unmapped:     run.Unmapped,
-		Summary:      summary,
 		Changed:      protoRunElements(run.Changed),
 		Candidates:   protoRunElements(run.Candidates),
 		Related:      protoRunElements(run.Related),

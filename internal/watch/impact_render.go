@@ -29,9 +29,6 @@ func RenderImpactText(w io.Writer, report ImpactReport) error {
 	if len(report.Coverage.Gaps) > 0 {
 		writeImpactSection(w, "Binding Gaps", coverageGapLines(report.Coverage.Gaps, "  "))
 	}
-	if strings.TrimSpace(report.Narration) != "" {
-		writeImpactSection(w, "Summary", []string{"  " + strings.TrimSpace(report.Narration)})
-	}
 	return nil
 }
 
@@ -123,10 +120,6 @@ func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
 		return err
 	}
 	_, _ = fmt.Fprintln(w, "```")
-	if strings.TrimSpace(report.Narration) != "" {
-		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, strings.TrimSpace(report.Narration))
-	}
 	return nil
 }
 

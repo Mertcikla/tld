@@ -139,9 +139,6 @@ func TestImpactServiceAnalyzeImpact(t *testing.T) {
 	if resp.Msg.GetChanged()[0].GetElementId() == 0 {
 		t.Fatalf("changed element should carry an element id: %+v", resp.Msg.GetChanged()[0])
 	}
-	if resp.Msg.GetSummary() == "" {
-		t.Fatal("expected a deterministic summary")
-	}
 }
 
 func TestImpactServiceAnalyzeImpactReportsCoverageGap(t *testing.T) {

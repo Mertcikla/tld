@@ -19,10 +19,9 @@ import (
 func NewImpactCmd(wdir *string) *cobra.Command {
 	var base string
 	var render string
-	var includeWorktree, evidence, rescan, suggestBindings, narrate, nameHeuristics bool
+	var includeWorktree, evidence, rescan, suggestBindings, nameHeuristics bool
 	var dataDirFlag string
 	var embeddingProvider, embeddingEndpoint, embeddingModel string
-	var narrateEndpoint, narrateModel string
 
 	c := &cobra.Command{
 		Use:   "impact [path]",
@@ -116,18 +115,6 @@ owners for unmapped code. Nothing here mutates the architecture.`,
 				report = watchpkg.AnalyzeImpact(opts)
 			}
 
-			if narrate {
-				narration, err := watchpkg.NarrateImpactReport(cmd.Context(), watchpkg.NarrateOptions{
-					Report:   report,
-					Endpoint: narrateEndpoint,
-					Model:    narrateModel,
-				})
-				if err != nil {
-					return err
-				}
-				report.Narration = narration
-			}
-
 			if formatFlag(cmd) == "json" {
 				return watchpkg.RenderImpactJSON(cmd.OutOrStdout(), report)
 			}
@@ -149,13 +136,10 @@ owners for unmapped code. Nothing here mutates the architecture.`,
 	c.Flags().BoolVar(&evidence, "evidence", false, "detect observed implementation relationships (Tree-sitter/LSP)")
 	c.Flags().BoolVar(&rescan, "rescan", false, "force reparsing changed files when collecting evidence")
 	c.Flags().BoolVar(&suggestBindings, "suggest-bindings", false, "suggest architecture owners for unmapped code using embeddings")
-	c.Flags().BoolVar(&narrate, "narrate", false, "add an LLM-generated summary constrained to the report")
 	c.Flags().StringVar(&dataDirFlag, "data-dir", "", "directory for the local app database")
 	c.Flags().StringVar(&embeddingProvider, "embedding-provider", "", "embedding provider for suggestions")
 	c.Flags().StringVar(&embeddingEndpoint, "embedding-endpoint", "", "embedding endpoint for suggestions")
 	c.Flags().StringVar(&embeddingModel, "embedding-model", "", "embedding model for suggestions")
-	c.Flags().StringVar(&narrateEndpoint, "narrate-endpoint", "", "OpenAI-compatible endpoint for narration")
-	c.Flags().StringVar(&narrateModel, "narrate-model", "", "chat model for narration")
 	return c
 }
 

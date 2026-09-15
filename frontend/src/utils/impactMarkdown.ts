@@ -136,8 +136,5 @@ export function impactMarkdown(report: ImpactReport): string {
   }
 
   lines.push('', '```mermaid', impactMermaid(report), '```')
-  if (report.summary && report.summary.trim()) {
-    lines.push('', report.summary.trim())
-  }
   return lines.join('\n')
 }

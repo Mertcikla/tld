@@ -28,7 +28,6 @@ function report(overrides: Partial<ImpactReport> = {}): ImpactReport {
       gaps: [],
     },
     changed_files: [],
-    summary: '',
     ...overrides,
   }
 }
@@ -64,7 +63,6 @@ describe('impactMarkdown', () => {
         changed: [{ ref: '1', name: 'Core', kind: 'component', change: 'modified', evidence: ['src/a.go'] }],
         unmapped: ['src/loose.ts'],
         edges: [{ source_ref: '1', target_ref: '2', label: '', observed: true }],
-        summary: 'Touches the core module.',
       }),
     )
 
@@ -76,7 +74,6 @@ describe('impactMarkdown', () => {
     expect(md).toContain('_Dashed edges are observed in code but not declared in the architecture._')
     expect(md).toContain('```mermaid')
     expect(md).toContain('flowchart TD')
-    expect(md).toContain('Touches the core module.')
   })
 
   it('renders binding gap suggestions as tld commands', () => {

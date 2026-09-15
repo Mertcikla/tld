@@ -69,7 +69,6 @@ type ImpactReport struct {
 	Unmapped     []string        `json:"unmapped"`
 	Coverage     Coverage        `json:"coverage"`
 	ChangedFiles []ChangedFile   `json:"changed_files,omitempty"`
-	Narration    string          `json:"narration,omitempty"`
 }
 
 // Coverage describes how completely a change set could be reconciled against

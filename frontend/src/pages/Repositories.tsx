@@ -1407,13 +1407,6 @@ export default function Repositories() {
 
                 {report && !running && (
                   <>
-                    {report.summary && (
-                      <Box px={4} py={3} borderBottom="1px solid" borderColor="whiteAlpha.100">
-                        <Text fontSize="sm" color="gray.200" whiteSpace="pre-wrap">
-                          {report.summary}
-                        </Text>
-                      </Box>
-                    )}
                     {reportStats && (
                       <Flex borderBottom="1px solid" borderColor="whiteAlpha.100" align="stretch">
                         <StatCell label="Changed elements" value={String(reportStats.elements)} sub={`${report.related.length} related`} />

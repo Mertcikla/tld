@@ -220,7 +220,6 @@ export interface ImpactReport {
   unmapped: string[]
   coverage: ImpactCoverage
   changed_files: ImpactFile[]
-  summary: string
 }
 
 export interface WatchLock {
@@ -930,7 +929,6 @@ function toImpactReport(raw: Record<string, unknown>): ImpactReport {
     unmapped: Array.isArray(raw.unmapped) ? raw.unmapped.map(String) : [],
     coverage: toImpactCoverage(raw.coverage as Record<string, unknown> | undefined),
     changed_files: list(raw.changed_files).map(toImpactFile),
-    summary: String(raw.summary ?? ''),
   }
 }
 
@@ -2257,7 +2255,7 @@ export const api = {
         return (json.commits ?? []).map(toImpactCommit)
       }),
 
-    analyze: (input: { path: string; base: string; head?: string; evidence?: boolean; suggestBindings?: boolean; narrate?: boolean }): Promise<ImpactReport> =>
+    analyze: (input: { path: string; base: string; head?: string; evidence?: boolean; suggestBindings?: boolean }): Promise<ImpactReport> =>
       rpc(async () => {
         const res = await impactClient.analyzeImpact({
           orgId: '',
@@ -2266,7 +2264,6 @@ export const api = {
           head: input.head ?? 'HEAD',
           evidence: input.evidence ?? true,
           suggestBindings: input.suggestBindings ?? true,
-          narrate: input.narrate ?? false,
         })
         const json = j<Record<string, unknown>>(AnalyzeImpactResponseSchema, res)
         return toImpactReport(json)

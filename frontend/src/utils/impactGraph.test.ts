@@ -134,7 +134,6 @@ function report(): ImpactReport {
       total_elements: 1,
       gaps: [],
     },
-    summary: '',
   }
 }
 

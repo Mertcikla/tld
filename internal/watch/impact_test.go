@@ -2,7 +2,6 @@ package watch
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
 
@@ -249,23 +248,6 @@ func TestRenderImpactMermaidAndMarkdown(t *testing.T) {
 	}
 	if !strings.Contains(text.String(), "Changed") || strings.Contains(text.String(), "Findings") {
 		t.Fatalf("unexpected text:\n%s", text.String())
-	}
-}
-
-func TestNarrateImpactReportDeterministicFallback(t *testing.T) {
-	report := ImpactReport{
-		Changed:  []ImpactElement{{Ref: "checkout", Name: "Checkout"}},
-		Unmapped: []string{"internal/risk/model.go"},
-	}
-	out, err := NarrateImpactReport(context.Background(), NarrateOptions{Report: report})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, "Checkout") {
-		t.Fatalf("narration missing changed element: %q", out)
-	}
-	if !strings.Contains(out, "1 changed file") {
-		t.Fatalf("narration missing unmapped count: %q", out)
 	}
 }
 
