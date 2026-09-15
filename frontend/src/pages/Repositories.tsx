@@ -806,19 +806,7 @@ export default function Repositories() {
     [repositories.length, readyCount, setupCount],
   )
 
-  const baseIndex = useMemo(() => commits.findIndex((commit) => commit.sha === base), [commits, base])
-  const headIndex = useMemo(() => commits.findIndex((commit) => commit.sha === head), [commits, head])
-  const commitsApart = baseIndex >= 0 && headIndex >= 0 ? Math.abs(baseIndex - headIndex) : 0
-  const rangeCommits = useMemo(() => {
-    if (baseIndex < 0 || headIndex < 0) return []
-    const [from, to] = baseIndex < headIndex ? [baseIndex, headIndex] : [headIndex, baseIndex]
-    return commits.slice(from, to + 1)
-  }, [commits, baseIndex, headIndex])
-  const rangeLabel = useMemo(() => {
-    if (!rangeCommits.length) return 'Select two commits'
-    if (commitsApart === 0) return 'Same commit selected'
-    return `${commitsApart} commit${commitsApart === 1 ? '' : 's'} apart`
-  }, [rangeCommits, commitsApart])
+
   const baseCommit = useMemo(() => commits.find((commit) => commit.sha === base) ?? null, [commits, base])
   const headCommit = useMemo(() => commits.find((commit) => commit.sha === head) ?? null, [commits, head])
 
@@ -1342,66 +1330,6 @@ export default function Repositories() {
                       </Tooltip>
                       <CompareSide label="Head" dot="green.400" value={head} commits={commits} selected={headCommit} onSelect={setHead} />
                     </Flex>
-                    <Flex mt={3} align="center" justify="space-between" gap={3} wrap="wrap">
-                      <HStack spacing={2} wrap="wrap" minW={0}>
-                        <Badge borderRadius="full" px={2} variant="subtle" colorScheme={commitsApart === 0 ? 'gray' : 'blue'}>
-                          {rangeLabel}
-                        </Badge>
-                        {rangeCommits.length > 1 && (
-                          <Text fontSize="xs" color="gray.500" isTruncated>
-                            {formatCommitDate(rangeCommits[rangeCommits.length - 1].date)}
-                            {' → '}
-                            {formatCommitDate(rangeCommits[0].date)}
-                          </Text>
-                        )}
-                      </HStack>
-                      <Button size="sm" colorScheme="blue" px={6} isLoading={running} isDisabled={!base || commits.length === 0} onClick={runImpact}>
-                        Run impact
-                      </Button>
-                    </Flex>
-                    {rangeCommits.length > 0 && (
-                      <Box mt={2} borderTop="1px solid" borderColor="whiteAlpha.100" pt={1}>
-                        <Button
-                          variant="ghost"
-                          size="xs"
-                          color="gray.400"
-                          _hover={{ color: 'gray.100' }}
-                          rightIcon={<ChevronDownIcon transform={showRangeCommits ? 'rotate(180deg)' : undefined} transition="transform 0.2s" />}
-                          onClick={() => setShowRangeCommits((current) => !current)}
-                          aria-expanded={showRangeCommits}
-                        >
-                          {rangeCommits.length} commit{rangeCommits.length === 1 ? '' : 's'} in range
-                        </Button>
-                        <Collapse in={showRangeCommits} animateOpacity>
-                          <VStack align="stretch" spacing={0} mt={1}>
-                            {rangeCommits.slice(0, 8).map((commit, index) => (
-                              <HStack key={commit.sha} spacing={3} py={1.5} align="flex-start">
-                                <VStack spacing={0} align="center" pt={1}>
-                                  <Box w={2} h={2} borderRadius="full" bg={index === 0 || index === rangeCommits.slice(0, 8).length - 1 ? 'var(--accent)' : 'gray.500'} />
-                                  {index < Math.min(rangeCommits.length, 8) - 1 && <Box w="1px" h={4} bg="whiteAlpha.100" />}
-                                </VStack>
-                                <Box flex="1" minW={0}>
-                                  <HStack spacing={2} minW={0} wrap="wrap">
-                                    <Code fontSize="xs" color="gray.300">{commit.short_sha}</Code>
-                                    <Text fontSize="sm" color="gray.200" isTruncated flex="1">
-                                      {commit.subject}
-                                    </Text>
-                                  </HStack>
-                                  <Text fontSize="xs" color="gray.500">
-                                    {[commit.author, formatCommitDate(commit.date)].filter(Boolean).join(' · ')}
-                                  </Text>
-                                </Box>
-                              </HStack>
-                            ))}
-                            {rangeCommits.length > 8 && (
-                              <Text fontSize="xs" color="gray.500" pl={5}>
-                                +{rangeCommits.length - 8} more in range
-                              </Text>
-                            )}
-                          </VStack>
-                        </Collapse>
-                      </Box>
-                    )}
                   </Box>
                 </Box>
 
