@@ -737,13 +737,20 @@ export default function Repositories() {
   const reloadStatus = useCallback(
     async (ref: string) => {
       setStatusLoading(true)
-      setReport(null)
       try {
         const result = await api.impact.getRepositoryStatus(ref)
         setStatus(result)
         const commits = result.commits
-        setHead((current) => current || commits[0]?.sha || 'HEAD')
-        setBase((current) => current || commits[1]?.sha || commits[0]?.sha || 'HEAD~1')
+        const path = result.repository?.local_path || ''
+        const latest = path ? await api.impact.latest(path) : null
+        setReport(latest)
+        if (latest) {
+          setBase(latest.base)
+          setHead(latest.head)
+        } else {
+          setHead((current) => current || commits[0]?.sha || 'HEAD')
+          setBase((current) => current || commits[1]?.sha || commits[0]?.sha || 'HEAD~1')
+        }
       } catch (statusError) {
         setError(statusError instanceof Error ? statusError.message : 'Could not load repository status')
       } finally {

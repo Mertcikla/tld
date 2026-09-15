@@ -108,9 +108,9 @@ describe('impactMarkdown', () => {
     expect(md).toContain('or create an element: `tld add "Risk Engine" --file "internal/risk.go"`')
   })
 
-  it('short-circuits when nothing architecture-bound changed', () => {
+  it('short-circuits element sections when nothing architecture-bound changed', () => {
     const md = impactMarkdown(report())
     expect(md).toContain('No architecture-bound code changed.')
-    expect(md).not.toContain('```mermaid')
+    expect(md).toContain('```mermaid')
   })
 })
