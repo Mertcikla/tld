@@ -51,7 +51,7 @@ func StartupUpdateStatus(ctx context.Context, cfg *workspace.Config, progressWri
 	if cfg.Updates.Auto {
 		status, err := selfupdate.Install(ctx, opts)
 		if err != nil {
-			return nil, ""
+			return nil, fmt.Sprintf("Automatic update failed: %v. Retry with tld version update.", err)
 		}
 		if status.UpdateAvailable {
 			return &status, fmt.Sprintf("Auto-updated tld to %s. Restart to use the new version.", status.Latest)

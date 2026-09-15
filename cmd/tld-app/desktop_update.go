@@ -12,6 +12,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cmdversion "github.com/mertcikla/tld/v2/cmd/version"
@@ -19,6 +20,8 @@ import (
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
+
+var desktopInstallMu sync.Mutex
 
 const desktopUpdateStateFilename = "desktop-update-check.json"
 
@@ -55,6 +58,15 @@ func (b *DesktopBridge) CheckForUpdate() (DesktopUpdateStatus, error) {
 }
 
 func (b *DesktopBridge) InstallUpdate() (DesktopUpdateStatus, error) {
+	if !desktopInstallMu.TryLock() {
+		return DesktopUpdateStatus{}, errors.New("a desktop update is already in progress")
+	}
+	started := false
+	defer func() {
+		if !started {
+			desktopInstallMu.Unlock()
+		}
+	}()
 	if b.ctx == nil {
 		return DesktopUpdateStatus{}, errors.New("desktop bridge is not ready")
 	}
@@ -87,10 +99,14 @@ func (b *DesktopBridge) InstallUpdate() (DesktopUpdateStatus, error) {
 	if err != nil {
 		return status, err
 	}
+	if err := validateDesktopUpdateAsset(ctx, assetPath); err != nil {
+		return status, err
+	}
 	if err := startDesktopUpdate(ctx, assetPath); err != nil {
 		return status, err
 	}
 
+	started = true
 	status.InstallStarted = true
 	status.RestartRequired = true
 	status.Message = "Update installer started. tlDiagram will close to finish updating."
@@ -319,41 +335,46 @@ func writeMacUpdateScripts(dir string) (string, string, error) {
 	scriptPath := filepath.Join(dir, "install-tld-update.sh")
 	osascriptPath := filepath.Join(dir, "install-tld-update.applescript")
 	shellScript := `#!/bin/sh
+# The same transaction runs directly or under administrator privileges.
+if [ "$1" = "--apply" ]; then
+  src="$2"
+  dst="$3"
+  stage=$(/usr/bin/mktemp -d "${dst}.update.XXXXXX") || exit 1
+  backup="$stage/previous.app"
+  trap '/bin/rm -rf "$stage"' EXIT
+  /usr/bin/ditto "$src" "$stage/new.app" || exit 1
+  /bin/mv "$dst" "$backup" || exit 1
+  if ! /bin/mv "$stage/new.app" "$dst"; then
+    if ! /bin/mv "$backup" "$dst"; then
+      # Retain the only known working copy if rollback itself fails.
+      trap - EXIT
+      echo "Update rollback failed; previous app retained at $backup" >&2
+    fi
+    exit 1
+  fi
+  exit 0
+fi
+
 pid="$1"
 src="$2"
 dst="$3"
 osa="$4"
-backup="${dst}.old-update"
-
 while /bin/kill -0 "$pid" 2>/dev/null; do
   /bin/sleep 0.2
 done
 
-/bin/rm -rf "$backup"
-if /bin/mv "$dst" "$backup" 2>/dev/null && /bin/mv "$src" "$dst" 2>/dev/null; then
-  /bin/rm -rf "$backup"
+if /bin/sh "$0" --apply "$src" "$dst" || /usr/bin/osascript "$osa" "$0" "$src" "$dst"; then
   /usr/bin/open "$dst"
   exit 0
 fi
-
-if [ -e "$backup" ] && [ ! -e "$dst" ]; then
-  /bin/mv "$backup" "$dst" 2>/dev/null || true
-fi
-
-if /usr/bin/osascript "$osa" "$src" "$dst"; then
-  /usr/bin/open "$dst"
-  exit 0
-fi
-
-if [ -e "$dst" ]; then
-  /usr/bin/open "$dst"
-fi
+/usr/bin/open "$dst"
 exit 1
 `
 	appleScript := `on run argv
-  set srcPath to item 1 of argv
-  set dstPath to item 2 of argv
-  do shell script "/bin/rm -rf " & quoted form of dstPath & " && /bin/mv " & quoted form of srcPath & " " & quoted form of dstPath with administrator privileges
+  set helperPath to item 1 of argv
+  set srcPath to item 2 of argv
+  set dstPath to item 3 of argv
+  do shell script "/bin/sh " & quoted form of helperPath & " --apply " & quoted form of srcPath & " " & quoted form of dstPath with administrator privileges
 end run
 `
 	if err := os.WriteFile(scriptPath, []byte(shellScript), 0o700); err != nil {
@@ -369,24 +390,28 @@ func startWindowsDesktopInstaller(assetPath string) error {
 	if !strings.EqualFold(filepath.Ext(assetPath), ".exe") {
 		return fmt.Errorf("windows desktop update asset must be an exe: %s", filepath.Base(assetPath))
 	}
-	scriptPath := filepath.Join(filepath.Dir(assetPath), "install-tld-update.cmd")
-	script := `@echo off
-set PID=%~1
-set INSTALLER=%~2
-
-:wait
-tasklist /FI "PID eq %PID%" 2>NUL | find "%PID%" >NUL
-if not errorlevel 1 (
-  timeout /T 1 /NOBREAK >NUL
-  goto wait
-)
-
-start "" "%INSTALLER%"
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	scriptPath := filepath.Join(filepath.Dir(assetPath), "install-tld-update.ps1")
+	script := `param([int] $ParentId, [string] $Installer, [string] $InstallDir)
+$ErrorActionPreference = 'Stop'
+Wait-Process -Id $ParentId -ErrorAction SilentlyContinue
+# NSIS requires /D last, without quotes; ArgumentList is passed directly to
+# CreateProcess so spaces and shell metacharacters in the directory are safe.
+$process = Start-Process -FilePath $Installer -ArgumentList "/S /D=$InstallDir" -Wait -PassThru
+if ($process.ExitCode -ne 0) {
+  Start-Process -FilePath (Join-Path $InstallDir 'tld.exe')
+  exit $process.ExitCode
+}
+Start-Process -FilePath (Join-Path $InstallDir 'tld.exe')
 `
 	if err := os.WriteFile(scriptPath, []byte(script), 0o600); err != nil {
 		return err
 	}
-	cmd := exec.Command("cmd", "/c", scriptPath, strconv.Itoa(os.Getpid()), assetPath)
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+		"-File", scriptPath, strconv.Itoa(os.Getpid()), assetPath, filepath.Dir(exe))
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start desktop update installer: %w", err)
 	}
