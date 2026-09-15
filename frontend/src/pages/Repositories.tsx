@@ -37,7 +37,7 @@ import {
   Tooltip,
   useDisclosure,
 } from '@chakra-ui/react'
-import { AddIcon, ArrowUpDownIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon, SearchIcon } from '@chakra-ui/icons'
+import { AddIcon, ArrowUpDownIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon, SearchIcon, SmallCloseIcon } from '@chakra-ui/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   api,
@@ -50,16 +50,8 @@ import {
 } from '../api/client'
 import ImpactCanvas from '../components/ImpactCanvas'
 import ConfirmDialog from '../components/ConfirmDialog'
-import PanelHeader from '../components/PanelHeader'
 import { toast } from '../utils/toast'
 import { buildImpactFileTree, flattenImpactFileTree } from '../utils/impactFileTree'
-
-const panelStyle = {
-  bg: 'var(--bg-panel)',
-  border: '1px solid',
-  borderColor: 'whiteAlpha.100',
-  borderRadius: 'lg',
-} as const
 
 const SKILL_INSTALL_PATH = '~/.agents/skills/create-diagram-impact/SKILL.md'
 
@@ -179,7 +171,7 @@ function SegmentedControl<T extends string>({
 
 function MicroLabel({ children }: { children: ReactNode }) {
   return (
-    <Text fontSize="10px" fontWeight="700" color="whiteAlpha.500" textTransform="uppercase" letterSpacing="0.08em">
+    <Text fontSize="10px" fontWeight="700" color="gray.500" textTransform="uppercase" letterSpacing="0.08em">
       {children}
     </Text>
   )
@@ -204,18 +196,43 @@ function RepoGlyph({ name, size = 'sm' }: { name: string; size?: 'sm' | 'lg' }) 
   )
 }
 
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function StatCell({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
-    <Box {...panelStyle} p={3} minW={0}>
+    <Box px={4} py={2} minW={0} flex={1}>
       <MicroLabel>{label}</MicroLabel>
-      <Text fontSize="lg" fontWeight="semibold" color="gray.100" mt={1} isTruncated>
+      <Text fontSize="md" fontWeight="semibold" color="gray.100" mt={0.5} isTruncated>
         {value}
       </Text>
       {sub && (
-        <Text fontSize="xs" color="gray.500" mt={0.5} isTruncated>
+        <Text fontSize="xs" color="gray.500" isTruncated>
           {sub}
         </Text>
       )}
+    </Box>
+  )
+}
+
+function SidebarSection({ title, defaultOpen = true, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <Box borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
+      <Flex
+        px={3}
+        py={2}
+        align="center"
+        cursor="pointer"
+        onClick={() => setOpen((current) => !current)}
+        _hover={{ bg: 'whiteAlpha.50' }}
+        userSelect="none"
+      >
+        <Text fontSize="10px" color="gray.500" fontWeight="bold" textTransform="uppercase" flex={1}>
+          {title}
+        </Text>
+        <Box color="gray.600" transform={open ? 'rotate(90deg)' : 'rotate(0deg)'} transition="transform 0.15s">
+          <ChevronRightIcon boxSize={3} />
+        </Box>
+      </Flex>
+      {open && <Box px={3} pb={3}>{children}</Box>}
     </Box>
   )
 }
@@ -285,7 +302,7 @@ function RepositoryReadiness({
   ]
 
   return (
-    <Box {...panelStyle} p={5}>
+    <Box>
       <HStack spacing={2} align="center">
         <Badge variant="subtle" colorScheme="orange">No architecture</Badge>
         <Text fontSize="sm" fontWeight="semibold" color="gray.100">
@@ -325,7 +342,7 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
   }
 
   return (
-    <Box {...panelStyle} p={4}>
+    <Box>
       <Flex justify="space-between" align={{ base: 'flex-start', md: 'center' }} gap={3} wrap="wrap">
         <HStack spacing={3} wrap="wrap">
           <Badge variant="subtle" colorScheme={coverageColor(coverage)} fontSize="sm" px={2} py={1} borderRadius="md">
@@ -371,7 +388,7 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
                 const bindCommand = gap.suggested_element_ref ? `tld bind ${gap.suggested_element_ref} --file "${gap.file}"` : ''
                 const addCommand = gap.suggested_new_element ? `tld add "${gap.suggested_new_element}" --file "${gap.file}"` : ''
                 return (
-                  <Box key={gap.file} fontSize="sm" bg="whiteAlpha.50" borderRadius="md" p={3}>
+                  <Box key={gap.file} fontSize="sm" bg="whiteAlpha.50" border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" p={3}>
                     <Text color="gray.200">
                       <Code fontSize="xs">{gap.file}</Code>
                       {gap.change ? ` (${gap.change})` : ''} — {gap.reason}
@@ -472,7 +489,6 @@ function CompareSide({
   selected: ImpactCommit | null
   onSelect: (sha: string) => void
 }) {
-
   const copySha = async () => {
     if (!selected) return
     const ok = await copyText(selected.sha)
@@ -620,6 +636,12 @@ function AddRepositoryModal({
   )
 }
 
+const FILTER_OPTIONS: { value: RepoFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'ready', label: 'Ready' },
+  { value: 'setup', label: 'Needs setup' },
+]
+
 export default function Repositories() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -710,20 +732,13 @@ export default function Repositories() {
   const reloadStatus = useCallback(
     async (ref: string) => {
       setStatusLoading(true)
+      setReport(null)
       try {
         const result = await api.impact.getRepositoryStatus(ref)
         setStatus(result)
         const commits = result.commits
-        const path = result.repository?.local_path || ''
-        const latest = path ? await api.impact.latest(path) : null
-        setReport(latest)
-        if (latest) {
-          setBase(latest.base)
-          setHead(latest.head)
-        } else {
-          setHead((current) => current || commits[0]?.sha || 'HEAD')
-          setBase((current) => current || commits[1]?.sha || commits[0]?.sha || 'HEAD~1')
-        }
+        setHead((current) => current || commits[0]?.sha || 'HEAD')
+        setBase((current) => current || commits[1]?.sha || commits[0]?.sha || 'HEAD~1')
       } catch (statusError) {
         setError(statusError instanceof Error ? statusError.message : 'Could not load repository status')
       } finally {
@@ -774,6 +789,10 @@ export default function Repositories() {
 
   const readyCount = useMemo(() => repositories.filter((repository) => repoStatus(repository) === 'ready').length, [repositories])
   const setupCount = repositories.length - readyCount
+  const filterCounts: Record<RepoFilter, number> = useMemo(
+    () => ({ all: repositories.length, ready: readyCount, setup: setupCount }),
+    [repositories.length, readyCount, setupCount],
+  )
 
   const baseIndex = useMemo(() => commits.findIndex((commit) => commit.sha === base), [commits, base])
   const headIndex = useMemo(() => commits.findIndex((commit) => commit.sha === head), [commits, head])
@@ -920,206 +939,254 @@ export default function Repositories() {
 
   if (loading) {
     return (
-      <Center h="full" bg="var(--bg-canvas)">
-        <VStack spacing={3}>
-          <Spinner size="xl" color="var(--accent)" />
-          <Text fontSize="sm" color="gray.500">
-            Loading repositories…
-          </Text>
-        </VStack>
-      </Center>
+      <Flex h="full" bg="var(--bg-canvas)" align="center" justify="center" direction="column" gap={3} color="gray.600">
+        <Spinner size="lg" color="var(--accent)" />
+        <Text fontSize="sm">Loading repositories…</Text>
+      </Flex>
     )
   }
 
   const selectedStatus = effectiveRepo ? repoStatus(effectiveRepo) : null
 
   return (
-    <Box h="full" bg="var(--bg-canvas)" overflow="hidden">
-      <Flex h="full" direction="column" maxW="1600px" mx="auto" px={{ base: 3, md: 5 }} py={{ base: 3, md: 5 }} gap={4}>
-        {error && (
-          <Alert status="error" borderRadius="md" flexShrink={0}>
-            <AlertIcon />
-            <Text flex="1">{error}</Text>
-            <Button size="xs" variant="outline" ml={2} onClick={() => { void load() }}>
-              Retry
-            </Button>
-          </Alert>
-        )}
-
-        {repositories.length === 0 ? (
-          <Box {...panelStyle} p={{ base: 6, md: 10 }} textAlign="center">
-            <Center mb={3}>
-              <RepoGlyph name="R" size="lg" />
-            </Center>
-            <Text fontSize="md" fontWeight="semibold" color="gray.100">
-              No repositories linked yet
-            </Text>
-            <Text fontSize="sm" color="gray.400" mt={1} maxW="420px" mx="auto">
-              Link a local git checkout to compare its history against your architecture and see which elements each change touches.
-            </Text>
-            <Button mt={4} size="sm" colorScheme="blue" leftIcon={<AddIcon />} onClick={addDisclosure.onOpen}>
-              Add your first repository
-            </Button>
+    <Box h="full" bg="var(--bg-canvas)" display="flex" flexDir="column" overflow="hidden">
+      <Flex px={4} py={2.5} gap={3} align="center" borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
+        <InputGroup size="sm" maxW={{ base: 'none', md: '480px' }} w="full" flex={1} minW={0}>
+          <InputLeftElement pointerEvents="none" color="gray.500">
+            <SearchIcon boxSize={3.5} />
+          </InputLeftElement>
+          <Input
+            placeholder="Filter repositories…"
+            value={sidebarQuery}
+            onChange={(event) => setSidebarQuery(event.target.value)}
+            variant="elevated"
+            _placeholder={{ color: 'gray.600' }}
+          />
+          {sidebarQuery && (
+            <InputRightElement>
+              <IconButton
+                aria-label="Clear filter"
+                icon={<SmallCloseIcon />}
+                size="xs"
+                variant="ghost"
+                color="gray.500"
+                _hover={{ color: 'gray.200' }}
+                onClick={() => setSidebarQuery('')}
+              />
+            </InputRightElement>
+          )}
+        </InputGroup>
+        <Flex align="center" gap={2} flexShrink={0} ml={{ md: 'auto' }}>
+          <Box fontSize="xs" color="gray.500" whiteSpace="nowrap" display={{ base: 'none', sm: 'block' }}>
+            <Box as="span" color="gray.300" fontWeight="medium">
+              {repositories.length}
+            </Box>
+            {' '}linked
           </Box>
-        ) : (
-          <Flex flex="1" minH={0} gap={4} direction={{ base: 'column', lg: 'row' }} overflow="hidden">
-            {sidebarCollapsed ? (
-              <Box w={{ base: 'full', lg: '60px' }} flexShrink={0} {...panelStyle} p={2} overflow="hidden">
-                <Flex direction={{ base: 'row', lg: 'column' }} align="center" gap={2}>
-                  <Tooltip label="Expand repositories" placement="right">
-                    <IconButton aria-label="Expand repositories" icon={<ChevronRightIcon />} size="sm" variant="ghost" onClick={() => setSidebarCollapsed(false)} />
-                  </Tooltip>
-                  <Box display={{ base: 'none', lg: 'block' }} overflowY="auto" flex="1" minH={0} w="full">
-                    <VStack spacing={2}>
-                      {repositories.map((repository) => (
-                        <Tooltip key={repository.ref} label={repository.name} placement="right">
-                          <Box
-                            as="button"
-                            type="button"
-                            onClick={() => selectRepo(repository.ref)}
-                            borderRadius="full"
-                            border="2px solid"
-                            borderColor={repository.ref === selectedRef ? 'var(--accent)' : 'transparent'}
-                            _hover={{ borderColor: 'gray.500' }}
-                          >
-                            <RepoGlyph name={repository.name} />
-                          </Box>
-                        </Tooltip>
-                      ))}
-                    </VStack>
-                  </Box>
-                  {selected && (
-                    <Text display={{ base: 'block', lg: 'none' }} fontSize="sm" color="gray.200" isTruncated flex="1">
-                      {selected.name}
-                    </Text>
-                  )}
-                  <Tooltip label="Reload repositories and status" placement="right">
-                    <IconButton aria-label="Reload repositories" icon={<RepeatIcon />} size="sm" variant="ghost" onClick={reloadAll} />
-                  </Tooltip>
-                  <Tooltip label="Add repository" placement="right">
-                    <IconButton aria-label="Add repository" icon={<AddIcon />} size="sm" variant="ghost" color="gray.200" onClick={addDisclosure.onOpen} />
-                  </Tooltip>
-                </Flex>
-              </Box>
-            ) : (
+          <Button size="sm" colorScheme="blue" leftIcon={<AddIcon />} onClick={addDisclosure.onOpen}>
+            Add
+          </Button>
+        </Flex>
+      </Flex>
+
+      {error && (
+        <Alert status="error" borderRadius={0} flexShrink={0}>
+          <AlertIcon />
+          <Text flex="1" fontSize="sm">
+            {error}
+          </Text>
+          <Button size="xs" variant="outline" ml={2} onClick={() => { void load() }}>
+            Retry
+          </Button>
+        </Alert>
+      )}
+
+      {repositories.length === 0 ? (
+        <Flex flex={1} align="center" justify="center" direction="column" gap={3} px={4} textAlign="center">
+          <RepoGlyph name="R" size="lg" />
+          <Text fontSize="md" fontWeight="semibold" color="gray.100">
+            No repositories linked yet
+          </Text>
+          <Text fontSize="sm" color="gray.400" maxW="420px">
+            Link a local git checkout to compare its history against your architecture and see which elements each change touches.
+          </Text>
+          <Button size="sm" colorScheme="blue" leftIcon={<AddIcon />} onClick={addDisclosure.onOpen}>
+            Add your first repository
+          </Button>
+        </Flex>
+      ) : (
+        <Flex flex={1} minH={0} overflow="hidden" direction={{ base: 'column', lg: 'row' }}>
+          {sidebarCollapsed ? (
+            <Box
+              w={{ base: 'full', lg: '60px' }}
+              flexShrink={0}
+              borderRight={{ lg: '1px solid' }}
+              borderBottom={{ base: '1px solid', lg: 'none' }}
+              borderColor="whiteAlpha.100"
+              p={2}
+              overflow="hidden"
+            >
+              <Flex direction={{ base: 'row', lg: 'column' }} align="center" gap={2}>
+                <Tooltip label="Expand repositories" placement="right">
+                  <IconButton aria-label="Expand repositories" icon={<ChevronRightIcon />} size="sm" variant="ghost" color="gray.500" _hover={{ color: 'gray.200' }} onClick={() => setSidebarCollapsed(false)} />
+                </Tooltip>
+                <Box display={{ base: 'none', lg: 'block' }} overflowY="auto" flex="1" minH={0} w="full">
+                  <VStack spacing={2}>
+                    {repositories.map((repository) => (
+                      <Tooltip key={repository.ref} label={repository.name} placement="right">
+                        <Box
+                          as="button"
+                          type="button"
+                          onClick={() => selectRepo(repository.ref)}
+                          borderRadius="full"
+                          border="2px solid"
+                          borderColor={repository.ref === selectedRef ? 'var(--accent)' : 'transparent'}
+                          _hover={{ borderColor: 'gray.500' }}
+                        >
+                          <RepoGlyph name={repository.name} />
+                        </Box>
+                      </Tooltip>
+                    ))}
+                  </VStack>
+                </Box>
+                {selected && (
+                  <Text display={{ base: 'block', lg: 'none' }} fontSize="sm" color="gray.200" isTruncated flex="1">
+                    {selected.name}
+                  </Text>
+                )}
+                <Tooltip label="Reload repositories and status" placement="right">
+                  <IconButton aria-label="Reload repositories" icon={<RepeatIcon />} size="sm" variant="ghost" color="gray.500" _hover={{ color: 'gray.200' }} onClick={reloadAll} />
+                </Tooltip>
+              </Flex>
+            </Box>
+          ) : (
             <Box
               w={{ base: 'full', lg: '320px' }}
-              flexShrink={0}
-              {...panelStyle}
               display="flex"
-              flexDirection="column"
+              flexDir="column"
+              borderRight={{ lg: '1px solid' }}
+              borderBottom={{ base: '1px solid', lg: 'none' }}
+              borderColor="whiteAlpha.100"
+              flexShrink={0}
               minH={0}
               maxH={{ base: '38vh', lg: 'none' }}
               overflow="hidden"
             >
-              <PanelHeader
-                isInline
-                title="Repositories"
-                hasCloseButton={false}
-                actions={
-                  <>
-                    <Tooltip label="Collapse sidebar" placement="top">
-                      <IconButton aria-label="Collapse sidebar" icon={<ChevronLeftIcon />} size="sm" variant="ghost" color="whiteAlpha.600" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={() => setSidebarCollapsed(true)} />
-                    </Tooltip>
-                    <Tooltip label="Reload repositories and status" placement="top">
-                      <IconButton aria-label="Reload repositories" icon={<RepeatIcon />} size="sm" variant="ghost" color="whiteAlpha.600" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={reloadAll} />
-                    </Tooltip>
-                    <Tooltip label="Add repository" placement="top">
-                      <IconButton aria-label="Add repository" icon={<AddIcon />} size="sm" variant="ghost" color="whiteAlpha.600" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={addDisclosure.onOpen} />
-                    </Tooltip>
-                  </>
-                }
-              />
-              <Box p={3} display="flex" flexDirection="column" flex="1" minH={0} overflow="hidden">
-              <InputGroup size="sm" mb={2}>
-                <InputLeftElement pointerEvents="none">
-                  <SearchIcon color="gray.500" />
-                </InputLeftElement>
-                <Input
-                  placeholder="Filter repositories…"
-                  value={sidebarQuery}
-                  onChange={(event) => setSidebarQuery(event.target.value)}
-                  pr={sidebarQuery ? 8 : 3}
-                />
-                {sidebarQuery && (
-                  <InputRightElement>
-                    <IconButton aria-label="Clear filter" icon={<CloseIcon fontSize="8px" />} size="xs" variant="ghost" onClick={() => setSidebarQuery('')} />
-                  </InputRightElement>
-                )}
-              </InputGroup>
-              <Flex justify="flex-start" align="center" mb={2} gap={2} wrap="wrap">
-                <SegmentedControl<RepoFilter>
-                  ariaLabel="Repository filter"
-                  value={repoFilter}
-                  onChange={setRepoFilter}
-                  options={[
-                    { value: 'all', label: 'All', count: repositories.length },
-                    { value: 'ready', label: 'Ready', count: readyCount },
-                    { value: 'setup', label: 'Setup', count: setupCount },
-                  ]}
-                />
+              <Flex px={4} py={2} align="center" gap={1} borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
+                <Text fontSize="10px" color="gray.500" fontWeight="bold" textTransform="uppercase" flex={1}>
+                  Repositories
+                </Text>
+                <Tooltip label="Collapse sidebar" placement="top">
+                  <IconButton aria-label="Collapse sidebar" icon={<ChevronLeftIcon />} size="xs" variant="ghost" color="gray.500" _hover={{ color: 'gray.200' }} onClick={() => setSidebarCollapsed(true)} />
+                </Tooltip>
+                <Tooltip label="Reload repositories and status" placement="top">
+                  <IconButton aria-label="Reload repositories" icon={<RepeatIcon />} size="xs" variant="ghost" color="gray.500" _hover={{ color: 'gray.200' }} onClick={reloadAll} />
+                </Tooltip>
               </Flex>
-              <VStack align="stretch" spacing={2} overflowY="auto" flex="1" minH={0} pr={0.5}>
+              <SidebarSection title="Status">
+                <VStack align="stretch" spacing={0.5}>
+                  {FILTER_OPTIONS.map((option) => {
+                    const isActive = repoFilter === option.value
+                    const count = filterCounts[option.value]
+                    return (
+                      <Flex
+                        key={option.value}
+                        align="center"
+                        px={2.5}
+                        py={1.5}
+                        borderRadius="md"
+                        cursor="pointer"
+                        bg={isActive ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
+                        _hover={{ bg: isActive ? 'rgba(var(--accent-rgb), 0.16)' : 'whiteAlpha.50' }}
+                        onClick={() => setRepoFilter(option.value)}
+                        userSelect="none"
+                      >
+                        <Text
+                          fontSize="sm"
+                          fontWeight={isActive ? 'semibold' : 'normal'}
+                          color={isActive ? 'var(--accent)' : 'gray.400'}
+                          flex={1}
+                        >
+                          {option.label}
+                        </Text>
+                        <Text
+                          fontSize="10px"
+                          fontWeight="bold"
+                          color={isActive ? 'var(--accent)' : 'gray.600'}
+                          bg={isActive ? 'rgba(var(--accent-rgb), 0.15)' : 'whiteAlpha.100'}
+                          px={1.5}
+                          py={0.5}
+                          borderRadius="full"
+                          minW="22px"
+                          textAlign="center"
+                        >
+                          {count}
+                        </Text>
+                      </Flex>
+                    )
+                  })}
+                </VStack>
+              </SidebarSection>
+              <Box flex={1} minH={0} overflowY="auto">
                 {filteredRepos.map((repository) => {
                   const active = repository.ref === selectedRef
                   const meta = statusMeta(repoStatus(repository))
                   return (
                     <Box
                       key={repository.ref}
-                      p={3}
-                      borderRadius="lg"
-                      border="1px solid"
-                      borderColor={active ? 'rgba(var(--accent-rgb), 0.28)' : 'whiteAlpha.100'}
-                      bg={active ? 'rgba(var(--accent-rgb), 0.12)' : 'transparent'}
+                      borderBottom="1px solid"
+                      borderColor="whiteAlpha.50"
+                      bg={active ? 'rgba(var(--accent-rgb), 0.08)' : 'transparent'}
                       cursor="pointer"
+                      role="group"
+                      transition="background 0.1s"
                       _hover={{ bg: active ? 'rgba(var(--accent-rgb), 0.12)' : 'whiteAlpha.50' }}
                       onClick={() => selectRepo(repository.ref)}
                     >
-                      <Flex align="center" gap={3}>
-                      <Box position="relative" flexShrink={0}>
-                        <RepoGlyph name={repository.name} />
-                        <Box position="absolute" bottom={-1} right={-1} w={2.5} h={2.5} borderRadius="full" bg={meta.dot} border="2px solid" borderColor="var(--bg-panel)" />
-                      </Box>
-                      <Box flex="1" minW={0}>
-                        <HStack spacing={2} minW={0}>
-                          <Text fontWeight="semibold" color="gray.100" fontSize="sm" isTruncated>
-                            {repository.name}
+                      <Flex px={4} py={2.5} align="center" gap={3}>
+                        <Box position="relative" flexShrink={0}>
+                          <RepoGlyph name={repository.name} />
+                          <Box position="absolute" bottom={-1} right={-1} w={2.5} h={2.5} borderRadius="full" bg={meta.dot} border="2px solid" borderColor="var(--bg-canvas)" />
+                        </Box>
+                        <Box flex="1" minW={0}>
+                          <HStack spacing={2} minW={0}>
+                            <Text fontWeight="semibold" color="gray.100" fontSize="sm" isTruncated>
+                              {repository.name}
+                            </Text>
+                            <Badge variant="subtle" colorScheme={meta.scheme} fontSize="2xs" borderRadius="full" px={2} flexShrink={0}>
+                              {meta.label}
+                            </Badge>
+                          </HStack>
+                          <Text fontSize="xs" color="gray.500" isTruncated title={repository.local_path || repository.remote_url || repository.ref}>
+                            {repository.local_path || repository.remote_url || repository.ref}
                           </Text>
-                        </HStack>
-                        <Text fontSize="xs" color="gray.500" isTruncated title={repository.local_path || repository.remote_url || repository.ref}>
-                          {repository.local_path || repository.remote_url || repository.ref}
-                        </Text>
-                        <HStack spacing={1.5} mt={1}>
-                          <Badge variant="subtle" colorScheme={meta.scheme} fontSize="2xs" borderRadius="full" px={2}>
-                            {meta.label}
-                          </Badge>
                           {repository.branch && (
-                            <Code fontSize="2xs" color="gray.400" maxW="120px" isTruncated>
+                            <Code fontSize="2xs" color="gray.400" maxW="160px" isTruncated>
                               {repository.branch}
                             </Code>
                           )}
-                        </HStack>
-                      </Box>
-                      <Tooltip label="Remove repository" placement="top">
-                        <IconButton
-                          aria-label="Remove repository"
-                          icon={<DeleteIcon />}
-                          size="sm"
-                          variant="ghost"
-                          color="gray.500"
-                          flexShrink={0}
-                          _hover={{ bg: 'red.900', color: 'red.100' }}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            setPendingDelete(repository)
-                            deleteDisclosure.onOpen()
-                          }}
-                        />
-                      </Tooltip>
+                        </Box>
+                        <Tooltip label="Remove repository" placement="top">
+                          <IconButton
+                            aria-label="Remove repository"
+                            icon={<DeleteIcon />}
+                            size="xs"
+                            variant="ghost"
+                            color="red.400"
+                            display={{ base: 'flex', lg: 'none' }}
+                            _groupHover={{ display: 'flex' }}
+                            flexShrink={0}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setPendingDelete(repository)
+                              deleteDisclosure.onOpen()
+                            }}
+                          />
+                        </Tooltip>
                       </Flex>
                       {active && effectiveRepo && effectiveRepo.ref === repository.ref && (
-                        <Box mt={2} pt={2} borderTop="1px solid" borderColor="whiteAlpha.100" onClick={(event) => event.stopPropagation()}>
-                          <VStack align="stretch" spacing={2}>
+                        <Box px={4} pb={3} onClick={(event) => event.stopPropagation()}>
+                          <VStack align="stretch" spacing={2} pl="40px">
                             {effectiveRepo.local_path ? (
                               <HStack spacing={1} minW={0}>
                                 <Code fontSize="2xs" color="gray.300" isTruncated flex="1" title={effectiveRepo.local_path}>
@@ -1181,345 +1248,334 @@ export default function Repositories() {
                   )
                 })}
                 {filteredRepos.length === 0 && (
-                  <Box p={4} textAlign="center">
+                  <Box p={4}>
                     <Text fontSize="sm" color="gray.500">
-                      No repositories match this filter.
+                      No matching repositories
                     </Text>
-                    <Button size="xs" variant="ghost" mt={2} onClick={() => { setSidebarQuery(''); setRepoFilter('all') }}>
+                    <Text fontSize="xs" color="gray.700" mt={1}>
+                      Try adjusting your filter
+                    </Text>
+                    <Button size="xs" variant="ghost" mt={2} color="gray.500" onClick={() => { setSidebarQuery(''); setRepoFilter('all') }}>
                       Clear filters
                     </Button>
                   </Box>
                 )}
-              </VStack>
               </Box>
             </Box>
-            )}
+          )}
 
-            <Box flex="1" minW={0} minH={0} overflowY="auto" pb={2}>
-              {!effectiveRepo ? (
-                <Box {...panelStyle} p={8} textAlign="center">
-                  <Text fontSize="sm" color="gray.400">
-                    Select a repository to inspect its status and run impact analysis.
-                  </Text>
-                </Box>
-              ) : (
-                <VStack align="stretch" spacing={4}>
-                  {statusLoading ? (
-                    <Center py={10} {...panelStyle}>
-                      <VStack spacing={3}>
-                        <Spinner color="var(--accent)" />
-                        <Text fontSize="sm" color="gray.500">
-                          Reading git history…
-                        </Text>
-                      </VStack>
-                    </Center>
-                  ) : selectedStatus === 'needs-architecture' ? (
-                    <RepositoryReadiness repository={effectiveRepo} reloading={statusLoading} onReload={() => void reloadStatus(effectiveRepo.ref)} />
-                  ) : !localPath ? (
-                    <Box {...panelStyle} p={5}>
-                      <Text fontSize="sm" fontWeight="semibold" color="gray.100">
-                        Link a local checkout
-                      </Text>
-                      <Text mt={1} fontSize="sm" color="gray.400">
-                        Point this repository at its local git checkout to compare commits and run impact analysis.
-                      </Text>
-                      <Flex mt={3} gap={3} direction={{ base: 'column', md: 'row' }}>
-                        <Input size="sm" placeholder="/path/to/local/checkout" value={linkPath} onChange={(event) => setLinkPath(event.target.value)} />
-                        <Button size="sm" colorScheme="blue" isLoading={linking} isDisabled={!linkPath.trim()} onClick={linkCheckout}>
-                          Link checkout
-                        </Button>
-                      </Flex>
-                    </Box>
-                  ) : (
-                    <>
-                      <Box {...panelStyle} p={0} overflow="hidden">
-                        <PanelHeader
-                          title="Compare & analyze"
-                          hasCloseButton={false}
-                          actions={
-                            <>
-                              {baseCommit && headCommit && (
-                                <Code fontSize="xs" color="whiteAlpha.600" title={`${baseCommit.sha} compared with ${headCommit.sha}`}>
-                                  {baseCommit.short_sha} … {headCommit.short_sha}
-                                </Code>
-                              )}
-                              {([['Latest', 1], ['Last 5', 4], ['Last 10', 9]] as const).map(([label, depth]) => (
-                                <Button key={label} size="xs" variant="ghost" color="whiteAlpha.600" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={() => applyPreset(depth)} isDisabled={commits.length === 0}>
-                                  {label}
-                                </Button>
-                              ))}
-                            </>
-                          }
+          <Box flex={1} minW={0} minH={0} overflowY="auto">
+            {!effectiveRepo ? (
+              <Flex h="100%" align="center" justify="center" direction="column" gap={2} color="gray.600" px={4} textAlign="center">
+                <Text fontSize="sm">Select a repository to inspect its status and run impact analysis.</Text>
+              </Flex>
+            ) : statusLoading ? (
+              <Flex h="100%" align="center" justify="center" direction="column" gap={3} color="gray.600">
+                <Spinner size="lg" color="var(--accent)" />
+                <Text fontSize="sm">Reading git history…</Text>
+              </Flex>
+            ) : selectedStatus === 'needs-architecture' ? (
+              <Box px={4} py={4} maxW="720px">
+                <RepositoryReadiness repository={effectiveRepo} reloading={statusLoading} onReload={() => void reloadStatus(effectiveRepo.ref)} />
+              </Box>
+            ) : !localPath ? (
+              <Box px={4} py={4} maxW="720px">
+                <Text fontSize="sm" fontWeight="semibold" color="gray.100">
+                  Link a local checkout
+                </Text>
+                <Text mt={1} fontSize="sm" color="gray.400">
+                  Point this repository at its local git checkout to compare commits and run impact analysis.
+                </Text>
+                <Flex mt={3} gap={3} direction={{ base: 'column', md: 'row' }} maxW="560px">
+                  <Input size="sm" placeholder="/path/to/local/checkout" value={linkPath} onChange={(event) => setLinkPath(event.target.value)} />
+                  <Button size="sm" colorScheme="blue" isLoading={linking} isDisabled={!linkPath.trim()} onClick={linkCheckout} flexShrink={0}>
+                    Link checkout
+                  </Button>
+                </Flex>
+              </Box>
+            ) : (
+              <>
+                <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
+                  <Flex px={4} h="40px" align="center" gap={2} borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
+                    <Text fontSize="10px" color="gray.500" fontWeight="bold" textTransform="uppercase" flex={1} isTruncated>
+                      Compare
+                    </Text>
+                    {baseCommit && headCommit && (
+                      <Code fontSize="xs" color="whiteAlpha.600" title={`${baseCommit.sha} compared with ${headCommit.sha}`}>
+                        {baseCommit.short_sha} … {headCommit.short_sha}
+                      </Code>
+                    )}
+                    {([['Latest', 1], ['Last 5', 4], ['Last 10', 9]] as const).map(([label, depth]) => (
+                      <Button key={label} size="xs" variant="ghost" color="whiteAlpha.600" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={() => applyPreset(depth)} isDisabled={commits.length === 0}>
+                        {label}
+                      </Button>
+                    ))}
+                  </Flex>
+                  <Box px={4} py={3}>
+                    <Flex gap={3} align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }}>
+                      <CompareSide label="Base" dot="gray.400" value={base} commits={commits} selected={baseCommit} onSelect={setBase} />
+                      <Tooltip label="Swap base and head" placement="top">
+                        <IconButton
+                          aria-label="Swap base and head"
+                          icon={<ArrowUpDownIcon />}
+                          size="sm"
+                          variant="outline"
+                          borderRadius="full"
+                          onClick={swapRange}
+                          alignSelf="center"
+                          flexShrink={0}
                         />
-                        <Box px={4} pb={4} pt={3}>
-                          <Flex gap={3} align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }}>
-                            <CompareSide label="Base" dot="gray.400" value={base} commits={commits} selected={baseCommit} onSelect={setBase} />
-                            <Tooltip label="Swap base and head" placement="top">
-                              <IconButton
-                                aria-label="Swap base and head"
-                                icon={<ArrowUpDownIcon />}
-                                size="sm"
-                                variant="outline"
-                                borderRadius="full"
-                                onClick={swapRange}
-                                alignSelf="center"
-                                flexShrink={0}
-                              />
-                            </Tooltip>
-                            <CompareSide label="Head" dot="green.400" value={head} commits={commits} selected={headCommit} onSelect={setHead} />
-                          </Flex>
-                          <Flex mt={3} align="center" justify="space-between" gap={3} wrap="wrap">
-                            <HStack spacing={2} wrap="wrap" minW={0}>
-                              <Badge borderRadius="full" px={2} variant="subtle" colorScheme={commitsApart === 0 ? 'gray' : 'blue'}>
-                                {rangeLabel}
-                              </Badge>
-                              {rangeCommits.length > 1 && (
-                                <Text fontSize="xs" color="gray.500" isTruncated>
-                                  {formatCommitDate(rangeCommits[rangeCommits.length - 1].date)}
-                                  {' → '}
-                                  {formatCommitDate(rangeCommits[0].date)}
-                                </Text>
-                              )}
-                            </HStack>
-                            <Button size="sm" colorScheme="blue" px={6} isLoading={running} isDisabled={!base || commits.length === 0} onClick={runImpact}>
-                              Run impact
-                            </Button>
-                          </Flex>
-                          {rangeCommits.length > 0 && (
-                            <Box mt={2} borderTop="1px solid" borderColor="whiteAlpha.100" pt={1}>
-                              <Button
-                                variant="ghost"
-                                size="xs"
-                                color="gray.400"
-                                _hover={{ color: 'gray.100' }}
-                                rightIcon={<ChevronDownIcon transform={showRangeCommits ? 'rotate(180deg)' : undefined} transition="transform 0.2s" />}
-                                onClick={() => setShowRangeCommits((current) => !current)}
-                                aria-expanded={showRangeCommits}
-                              >
-                                {rangeCommits.length} commit{rangeCommits.length === 1 ? '' : 's'} in range
-                              </Button>
-                              <Collapse in={showRangeCommits} animateOpacity>
-                                <VStack align="stretch" spacing={0} mt={1}>
-                                  {rangeCommits.slice(0, 8).map((commit, index) => (
-                                    <HStack key={commit.sha} spacing={3} py={1.5} align="flex-start">
-                                      <VStack spacing={0} align="center" pt={1}>
-                                        <Box w={2} h={2} borderRadius="full" bg={index === 0 || index === rangeCommits.slice(0, 8).length - 1 ? 'var(--accent)' : 'gray.500'} />
-                                        {index < Math.min(rangeCommits.length, 8) - 1 && <Box w="1px" h={4} bg="whiteAlpha.100" />}
-                                      </VStack>
-                                      <Box flex="1" minW={0}>
-                                        <HStack spacing={2} minW={0} wrap="wrap">
-                                          <Code fontSize="xs" color="gray.300">{commit.short_sha}</Code>
-                                          <Text fontSize="sm" color="gray.200" isTruncated flex="1">
-                                            {commit.subject}
-                                          </Text>
-                                        </HStack>
-                                        <Text fontSize="xs" color="gray.500">
-                                          {[commit.author, formatCommitDate(commit.date)].filter(Boolean).join(' · ')}
-                                        </Text>
+                      </Tooltip>
+                      <CompareSide label="Head" dot="green.400" value={head} commits={commits} selected={headCommit} onSelect={setHead} />
+                    </Flex>
+                    <Flex mt={3} align="center" justify="space-between" gap={3} wrap="wrap">
+                      <HStack spacing={2} wrap="wrap" minW={0}>
+                        <Badge borderRadius="full" px={2} variant="subtle" colorScheme={commitsApart === 0 ? 'gray' : 'blue'}>
+                          {rangeLabel}
+                        </Badge>
+                        {rangeCommits.length > 1 && (
+                          <Text fontSize="xs" color="gray.500" isTruncated>
+                            {formatCommitDate(rangeCommits[rangeCommits.length - 1].date)}
+                            {' → '}
+                            {formatCommitDate(rangeCommits[0].date)}
+                          </Text>
+                        )}
+                      </HStack>
+                      <Button size="sm" colorScheme="blue" px={6} isLoading={running} isDisabled={!base || commits.length === 0} onClick={runImpact}>
+                        Run impact
+                      </Button>
+                    </Flex>
+                    {rangeCommits.length > 0 && (
+                      <Box mt={2} borderTop="1px solid" borderColor="whiteAlpha.100" pt={1}>
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          color="gray.400"
+                          _hover={{ color: 'gray.100' }}
+                          rightIcon={<ChevronDownIcon transform={showRangeCommits ? 'rotate(180deg)' : undefined} transition="transform 0.2s" />}
+                          onClick={() => setShowRangeCommits((current) => !current)}
+                          aria-expanded={showRangeCommits}
+                        >
+                          {rangeCommits.length} commit{rangeCommits.length === 1 ? '' : 's'} in range
+                        </Button>
+                        <Collapse in={showRangeCommits} animateOpacity>
+                          <VStack align="stretch" spacing={0} mt={1}>
+                            {rangeCommits.slice(0, 8).map((commit, index) => (
+                              <HStack key={commit.sha} spacing={3} py={1.5} align="flex-start">
+                                <VStack spacing={0} align="center" pt={1}>
+                                  <Box w={2} h={2} borderRadius="full" bg={index === 0 || index === rangeCommits.slice(0, 8).length - 1 ? 'var(--accent)' : 'gray.500'} />
+                                  {index < Math.min(rangeCommits.length, 8) - 1 && <Box w="1px" h={4} bg="whiteAlpha.100" />}
+                                </VStack>
+                                <Box flex="1" minW={0}>
+                                  <HStack spacing={2} minW={0} wrap="wrap">
+                                    <Code fontSize="xs" color="gray.300">{commit.short_sha}</Code>
+                                    <Text fontSize="sm" color="gray.200" isTruncated flex="1">
+                                      {commit.subject}
+                                    </Text>
+                                  </HStack>
+                                  <Text fontSize="xs" color="gray.500">
+                                    {[commit.author, formatCommitDate(commit.date)].filter(Boolean).join(' · ')}
+                                  </Text>
+                                </Box>
+                              </HStack>
+                            ))}
+                            {rangeCommits.length > 8 && (
+                              <Text fontSize="xs" color="gray.500" pl={5}>
+                                +{rangeCommits.length - 8} more in range
+                              </Text>
+                            )}
+                          </VStack>
+                        </Collapse>
+                      </Box>
+                    )}
+                  </Box>
+                </Box>
+
+                {running && (
+                  <Flex py={8} align="center" justify="center" direction="column" gap={3} color="gray.600" borderBottom="1px solid" borderColor="whiteAlpha.100">
+                    <Spinner size="lg" color="var(--accent)" />
+                    <Text fontSize="sm">Analyzing impact…</Text>
+                  </Flex>
+                )}
+
+                {report && !running && (
+                  <>
+                    {report.summary && (
+                      <Box px={4} py={3} borderBottom="1px solid" borderColor="whiteAlpha.100">
+                        <Text fontSize="sm" color="gray.200" whiteSpace="pre-wrap">
+                          {report.summary}
+                        </Text>
+                      </Box>
+                    )}
+                    {reportStats && (
+                      <Flex borderBottom="1px solid" borderColor="whiteAlpha.100" align="stretch">
+                        <StatCell label="Changed elements" value={String(reportStats.elements)} sub={`${report.related.length} related`} />
+                        <Box w="1px" alignSelf="stretch" bg="whiteAlpha.100" flexShrink={0} />
+                        <StatCell label="Changed files" value={String(reportStats.files)} sub={`+${reportStats.added} / -${reportStats.removed} lines`} />
+                        <Box w="1px" alignSelf="stretch" bg="whiteAlpha.100" flexShrink={0} />
+                        <StatCell label="Coverage" value={coverageLabel(report.coverage)} sub={`${report.coverage.anchored_elements}/${report.coverage.total_elements} bound`} />
+                        <Box w="1px" alignSelf="stretch" bg="whiteAlpha.100" flexShrink={0} />
+                        <StatCell label="Binding gaps" value={String(reportStats.gaps)} sub={reportStats.gaps === 0 ? 'Fully bound' : 'Needs attention'} />
+                      </Flex>
+                    )}
+                    <Box px={4} py={3}>
+                      <Tabs
+                        size="sm"
+                        variant="enclosed"
+                        index={resultTab === 'architecture' ? 0 : resultTab === 'files' ? 1 : 2}
+                        onChange={(index) => setResultTab(index === 0 ? 'architecture' : index === 1 ? 'files' : 'coverage')}
+                      >
+                        <TabList>
+                          <Tab>
+                            Architecture
+                          </Tab>
+                          <Tab>
+                            Files
+                            <Badge ml={1.5} variant="subtle" fontSize="2xs" borderRadius="full">{report.changed_files.length}</Badge>
+                          </Tab>
+                          <Tab>
+                            Gaps
+                            <Badge ml={1.5} variant="subtle" fontSize="2xs" borderRadius="full" colorScheme={report.coverage.gaps.length ? 'orange' : 'green'}>
+                              {report.coverage.gaps.length}
+                            </Badge>
+                          </Tab>
+                        </TabList>
+                        <TabPanels>
+                          <TabPanel p={3}>
+                            <ImpactCanvas report={report} onOpenElement={openElement} />
+                          </TabPanel>
+                          <TabPanel p={3}>
+                            <Flex gap={2} mb={3} direction={{ base: 'column', md: 'row' }} align={{ base: 'stretch', md: 'center' }}>
+                              <InputGroup size="sm" flex="1">
+                                <InputLeftElement pointerEvents="none" color="gray.500">
+                                  <SearchIcon boxSize={3.5} />
+                                </InputLeftElement>
+                                <Input placeholder="Filter files or elements…" value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} variant="elevated" _placeholder={{ color: 'gray.600' }} />
+                              </InputGroup>
+                              <HStack spacing={2}>
+                                <Select size="sm" maxW="140px" value={fileChangeFilter} onChange={(event) => setFileChangeFilter(event.target.value as FileChangeFilter)}>
+                                  <option value="all">All changes</option>
+                                  <option value="added">Added</option>
+                                  <option value="modified">Modified</option>
+                                  <option value="deleted">Deleted</option>
+                                </Select>
+                                <SegmentedControl<ChangeView>
+                                  ariaLabel="Change view"
+                                  value={changeView}
+                                  onChange={setChangeView}
+                                  options={[
+                                    { value: 'files', label: 'Files' },
+                                    { value: 'elements', label: 'Elements' },
+                                  ]}
+                                />
+                              </HStack>
+                            </Flex>
+                            <Box maxH="460px" overflowY="auto" pr={1}>
+                              {changeView === 'files' ? (
+                                <ChangedFilesTree files={report.changed_files} query={fileQuery} changeFilter={fileChangeFilter} />
+                              ) : (
+                                <VStack align="stretch" spacing={3}>
+                                  {report.changed.length > 0 && (
+                                    <Box>
+                                      <Box px={2} mb={1}>
+                                        <MicroLabel>Changed architecture</MicroLabel>
                                       </Box>
-                                    </HStack>
-                                  ))}
-                                  {rangeCommits.length > 8 && (
-                                    <Text fontSize="xs" color="gray.500" pl={5}>
-                                      +{rangeCommits.length - 8} more in range
+                                      {report.changed
+                                        .filter((element) => !fileQuery.trim() || element.name.toLowerCase().includes(fileQuery.trim().toLowerCase()))
+                                        .map((element) => (
+                                          <Button
+                                            key={element.ref}
+                                            variant="ghost"
+                                            size="sm"
+                                            justifyContent="flex-start"
+                                            px={2}
+                                            w="full"
+                                            fontWeight="normal"
+                                            onClick={() => element.element_id && openElement(element.element_id)}
+                                            isDisabled={!element.element_id}
+                                          >
+                                            <Box w={2} h={2} borderRadius="sm" bg="green.400" mr={2} flexShrink={0} />
+                                            <Text fontSize="sm" isTruncated>
+                                              {element.name}
+                                            </Text>
+                                          </Button>
+                                        ))}
+                                    </Box>
+                                  )}
+                                  {report.unmapped.length > 0 && (
+                                    <Box>
+                                      <Box px={2} mb={1}>
+                                        <MicroLabel>Needs binding</MicroLabel>
+                                      </Box>
+                                      {report.unmapped
+                                        .filter((file) => !fileQuery.trim() || file.toLowerCase().includes(fileQuery.trim().toLowerCase()))
+                                        .map((file) => (
+                                          <HStack key={file} px={2} py={1} spacing={2} minW={0}>
+                                            <Box w={2} h={2} borderRadius="sm" bg="orange.400" flexShrink={0} />
+                                            <Code fontSize="xs" color="gray.300" isTruncated>
+                                              {file}
+                                            </Code>
+                                          </HStack>
+                                        ))}
+                                    </Box>
+                                  )}
+                                  {report.related.length > 0 && (
+                                    <Box>
+                                      <Box px={2} mb={1}>
+                                        <MicroLabel>Related context</MicroLabel>
+                                      </Box>
+                                      {report.related
+                                        .filter((element) => !fileQuery.trim() || element.name.toLowerCase().includes(fileQuery.trim().toLowerCase()))
+                                        .map((element) => (
+                                          <Button
+                                            key={element.ref}
+                                            variant="ghost"
+                                            size="sm"
+                                            justifyContent="flex-start"
+                                            px={2}
+                                            w="full"
+                                            fontWeight="normal"
+                                            onClick={() => element.element_id && openElement(element.element_id)}
+                                            isDisabled={!element.element_id}
+                                          >
+                                            <Box w={2} h={2} borderRadius="sm" bg="blue.400" mr={2} flexShrink={0} />
+                                            <Text fontSize="sm" isTruncated>
+                                              {element.name}
+                                            </Text>
+                                          </Button>
+                                        ))}
+                                    </Box>
+                                  )}
+                                  {report.changed.length === 0 && report.unmapped.length === 0 && report.related.length === 0 && (
+                                    <Text fontSize="sm" color="gray.500" px={2} py={3}>
+                                      No changed files or architecture elements.
                                     </Text>
                                   )}
                                 </VStack>
-                              </Collapse>
+                              )}
                             </Box>
-                          )}
-                        </Box>
-                      </Box>
+                          </TabPanel>
+                          <TabPanel p={3}>
+                            <CoveragePanel coverage={report.coverage} />
+                          </TabPanel>
+                        </TabPanels>
+                      </Tabs>
+                    </Box>
+                  </>
+                )}
 
-                      {running && (
-                        <Center py={8} {...panelStyle}>
-                          <VStack spacing={3}>
-                            <Spinner color="var(--accent)" />
-                            <Text fontSize="sm" color="gray.500">
-                              Analyzing impact…
-                            </Text>
-                          </VStack>
-                        </Center>
-                      )}
-
-                      {report && !running && (
-                        <VStack align="stretch" spacing={4}>
-                          {report.summary && (
-                            <Box {...panelStyle} p={4} borderLeft="3px solid" borderLeftColor="var(--accent)">
-                              <Text fontSize="sm" color="gray.200" whiteSpace="pre-wrap">
-                                {report.summary}
-                              </Text>
-                            </Box>
-                          )}
-                          {reportStats && (
-                            <Grid templateColumns={{ base: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }} gap={3}>
-                              <StatCard label="Changed elements" value={String(reportStats.elements)} sub={`${report.related.length} related`} />
-                              <StatCard label="Changed files" value={String(reportStats.files)} sub={`+${reportStats.added} / -${reportStats.removed} lines`} />
-                              <StatCard label="Coverage" value={coverageLabel(report.coverage)} sub={`${report.coverage.anchored_elements}/${report.coverage.total_elements} bound`} />
-                              <StatCard label="Binding gaps" value={String(reportStats.gaps)} sub={reportStats.gaps === 0 ? 'Fully bound' : 'Needs attention'} />
-                            </Grid>
-                          )}
-                          <Box {...panelStyle} p={0} overflow="hidden">
-                            <Tabs
-                              size="sm"
-                              variant="enclosed"
-                              index={resultTab === 'architecture' ? 0 : resultTab === 'files' ? 1 : 2}
-                              onChange={(index) => setResultTab(index === 0 ? 'architecture' : index === 1 ? 'files' : 'coverage')}
-                            >
-                              <TabList>
-                                <Tab>
-                                  Architecture
-                                </Tab>
-                                <Tab>
-                                  Files
-                                  <Badge ml={1.5} variant="subtle" fontSize="2xs" borderRadius="full">{report.changed_files.length}</Badge>
-                                </Tab>
-                                <Tab>
-                                  Gaps
-                                  <Badge ml={1.5} variant="subtle" fontSize="2xs" borderRadius="full" colorScheme={report.coverage.gaps.length ? 'orange' : 'green'}>
-                                    {report.coverage.gaps.length}
-                                  </Badge>
-                                </Tab>
-                              </TabList>
-                              <TabPanels>
-                                <TabPanel p={3} pt={1}>
-                                  <ImpactCanvas report={report} onOpenElement={openElement} />
-                                </TabPanel>
-                                <TabPanel p={3} pt={1}>
-                                  <Flex gap={2} mb={3} direction={{ base: 'column', md: 'row' }} align={{ base: 'stretch', md: 'center' }}>
-                                    <InputGroup size="sm" flex="1">
-                                      <InputLeftElement pointerEvents="none">
-                                        <SearchIcon color="gray.500" />
-                                      </InputLeftElement>
-                                      <Input placeholder="Filter files or elements…" value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} />
-                                    </InputGroup>
-                                    <HStack spacing={2}>
-                                      <Select size="sm" maxW="140px" value={fileChangeFilter} onChange={(event) => setFileChangeFilter(event.target.value as FileChangeFilter)}>
-                                        <option value="all">All changes</option>
-                                        <option value="added">Added</option>
-                                        <option value="modified">Modified</option>
-                                        <option value="deleted">Deleted</option>
-                                      </Select>
-                                      <SegmentedControl<ChangeView>
-                                        ariaLabel="Change view"
-                                        value={changeView}
-                                        onChange={setChangeView}
-                                        options={[
-                                          { value: 'files', label: 'Files' },
-                                          { value: 'elements', label: 'Elements' },
-                                        ]}
-                                      />
-                                    </HStack>
-                                  </Flex>
-                                  <Box maxH="460px" overflowY="auto" pr={1}>
-                                    {changeView === 'files' ? (
-                                      <ChangedFilesTree files={report.changed_files} query={fileQuery} changeFilter={fileChangeFilter} />
-                                    ) : (
-                                      <VStack align="stretch" spacing={3}>
-                                        {report.changed.length > 0 && (
-                                          <Box>
-                                            <Box px={2} mb={1}>
-                                              <MicroLabel>Changed architecture</MicroLabel>
-                                            </Box>
-                                            {report.changed
-                                              .filter((element) => !fileQuery.trim() || element.name.toLowerCase().includes(fileQuery.trim().toLowerCase()))
-                                              .map((element) => (
-                                                <Button
-                                                  key={element.ref}
-                                                  variant="ghost"
-                                                  size="sm"
-                                                  justifyContent="flex-start"
-                                                  px={2}
-                                                  w="full"
-                                                  fontWeight="normal"
-                                                  onClick={() => element.element_id && openElement(element.element_id)}
-                                                  isDisabled={!element.element_id}
-                                                >
-                                                  <Box w={2} h={2} borderRadius="sm" bg="green.400" mr={2} flexShrink={0} />
-                                                  <Text fontSize="sm" isTruncated>
-                                                    {element.name}
-                                                  </Text>
-                                                </Button>
-                                              ))}
-                                          </Box>
-                                        )}
-                                        {report.unmapped.length > 0 && (
-                                          <Box>
-                                            <Box px={2} mb={1}>
-                                              <MicroLabel>Needs binding</MicroLabel>
-                                            </Box>
-                                            {report.unmapped
-                                              .filter((file) => !fileQuery.trim() || file.toLowerCase().includes(fileQuery.trim().toLowerCase()))
-                                              .map((file) => (
-                                                <HStack key={file} px={2} py={1} spacing={2} minW={0}>
-                                                  <Box w={2} h={2} borderRadius="sm" bg="orange.400" flexShrink={0} />
-                                                  <Code fontSize="xs" color="gray.300" isTruncated>
-                                                    {file}
-                                                  </Code>
-                                                </HStack>
-                                              ))}
-                                          </Box>
-                                        )}
-                                        {report.related.length > 0 && (
-                                          <Box>
-                                            <Box px={2} mb={1}>
-                                              <MicroLabel>Related context</MicroLabel>
-                                            </Box>
-                                            {report.related
-                                              .filter((element) => !fileQuery.trim() || element.name.toLowerCase().includes(fileQuery.trim().toLowerCase()))
-                                              .map((element) => (
-                                                <Button
-                                                  key={element.ref}
-                                                  variant="ghost"
-                                                  size="sm"
-                                                  justifyContent="flex-start"
-                                                  px={2}
-                                                  w="full"
-                                                  fontWeight="normal"
-                                                  onClick={() => element.element_id && openElement(element.element_id)}
-                                                  isDisabled={!element.element_id}
-                                                >
-                                                  <Box w={2} h={2} borderRadius="sm" bg="blue.400" mr={2} flexShrink={0} />
-                                                  <Text fontSize="sm" isTruncated>
-                                                    {element.name}
-                                                  </Text>
-                                                </Button>
-                                              ))}
-                                          </Box>
-                                        )}
-                                        {report.changed.length === 0 && report.unmapped.length === 0 && report.related.length === 0 && (
-                                          <Text fontSize="sm" color="gray.500" px={2} py={3}>
-                                            No changed files or architecture elements.
-                                          </Text>
-                                        )}
-                                      </VStack>
-                                    )}
-                                  </Box>
-                                </TabPanel>
-                                <TabPanel p={3} pt={1}>
-                                  <CoveragePanel coverage={report.coverage} />
-                                </TabPanel>
-                              </TabPanels>
-                            </Tabs>
-                          </Box>
-                        </VStack>
-                      )}
-
-                      {!report && !running && commits.length === 0 && (
-                        <Box {...panelStyle} p={6} textAlign="center">
-                          <Text fontSize="sm" color="gray.500">
-                            No commits found for this checkout. Check the branch name and reload status.
-                          </Text>
-                        </Box>
-                      )}
-                    </>
-                  )}
-                </VStack>
-              )}
-            </Box>
-          </Flex>
-        )}
-      </Flex>
+                {!report && !running && commits.length === 0 && (
+                  <Box px={4} py={6} textAlign="center">
+                    <Text fontSize="sm" color="gray.500">
+                      No commits found for this checkout. Check the branch name and reload status.
+                    </Text>
+                  </Box>
+                )}
+              </>
+            )}
+          </Box>
+        </Flex>
+      )}
 
       <AddRepositoryModal
         isOpen={addDisclosure.isOpen}
