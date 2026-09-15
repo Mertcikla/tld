@@ -50,14 +50,18 @@ import {
 } from '../api/client'
 import ImpactCanvas from '../components/ImpactCanvas'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { MarkdownPreview } from '../components/ViewMarkdownPanel/MarkdownPreview'
+import { markdownPanelBodySx } from '../components/ViewMarkdownPanel/styles'
 import { toast } from '../utils/toast'
 import { buildImpactFileTree, flattenImpactFileTree } from '../utils/impactFileTree'
+import { impactMarkdown } from '../utils/impactMarkdown'
 
 const SKILL_INSTALL_PATH = '~/.agents/skills/create-diagram-impact/SKILL.md'
 
 type RepoFilter = 'all' | 'ready' | 'setup'
 type ResultTab = 'architecture' | 'files' | 'coverage'
 type FileChangeFilter = 'all' | ImpactChangeType
+type ArchitectureView = 'diagram' | 'markdown'
 
 function coverageColor(coverage: ImpactCoverage): string {
   if (!coverage.applicable) return 'gray'
@@ -662,6 +666,7 @@ export default function Repositories() {
   const [branchDraft, setBranchDraft] = useState('')
   const [branchSaving, setBranchSaving] = useState(false)
   const [resultTab, setResultTab] = useState<ResultTab>('architecture')
+  const [architectureView, setArchitectureView] = useState<ArchitectureView>('diagram')
   const [showRangeCommits, setShowRangeCommits] = useState(true)
   const [changeView, setChangeView] = useState<ChangeView>('files')
   const [fileQuery, setFileQuery] = useState('')
@@ -822,6 +827,8 @@ export default function Repositories() {
       gaps: report.coverage.gaps.length,
     }
   }, [report])
+
+  const impactMarkdownText = useMemo(() => (report ? impactMarkdown(report) : ''), [report])
 
   const openElement = useCallback(
     async (elementId: number) => {
@@ -1442,7 +1449,48 @@ export default function Repositories() {
                         </TabList>
                         <TabPanels>
                           <TabPanel p={3}>
-                            <ImpactCanvas report={report} onOpenElement={openElement} />
+                            <Flex mb={3} align="center" justify="space-between" gap={3} wrap="wrap">
+                              <Box w="200px">
+                                <SegmentedControl<ArchitectureView>
+                                  ariaLabel="Architecture view"
+                                  value={architectureView}
+                                  onChange={setArchitectureView}
+                                  options={[
+                                    { value: 'diagram', label: 'Diagram' },
+                                    { value: 'markdown', label: 'Markdown' },
+                                  ]}
+                                />
+                              </Box>
+                              <Tooltip label="Copy the PR-comment markdown" placement="top">
+                                <Button
+                                  size="xs"
+                                  variant="ghost"
+                                  color="gray.400"
+                                  _hover={{ color: 'gray.100' }}
+                                  leftIcon={<CopyIcon />}
+                                  onClick={() => copyPath(impactMarkdownText, 'Markdown')}
+                                >
+                                  Copy as markdown
+                                </Button>
+                              </Tooltip>
+                            </Flex>
+                            {architectureView === 'markdown' ? (
+                              <Box
+                                h="460px"
+                                overflowY="auto"
+                                bg="var(--bg-canvas)"
+                                border="1px solid"
+                                borderColor="var(--border-main)"
+                                borderRadius="xl"
+                                sx={markdownPanelBodySx}
+                              >
+                                <Box p={4}>
+                                  <MarkdownPreview markdown={impactMarkdownText} />
+                                </Box>
+                              </Box>
+                            ) : (
+                              <ImpactCanvas report={report} onOpenElement={openElement} />
+                            )}
                           </TabPanel>
                           <TabPanel p={3}>
                             <Flex gap={2} mb={3} direction={{ base: 'column', md: 'row' }} align={{ base: 'stretch', md: 'center' }}>
