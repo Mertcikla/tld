@@ -236,9 +236,14 @@ func TestRenderImpactMermaidAndMarkdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	md := markdown.String()
-	for _, want := range []string{"## Architecture Impact", "**Changed**", "**Unmapped**", "```mermaid", "internal/risk/model.go"} {
+	for _, want := range []string{"## Architecture Impact", "```mermaid", "flowchart TD"} {
 		if !strings.Contains(md, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, md)
+		}
+	}
+	for _, unwanted := range []string{"**Changed**", "**Related**", "**Unmapped**"} {
+		if strings.Contains(md, unwanted) {
+			t.Fatalf("markdown should not contain %q:\n%s", unwanted, md)
 		}
 	}
 

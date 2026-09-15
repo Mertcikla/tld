@@ -80,6 +80,8 @@ function elementLine(element: ImpactElement): string {
 export function impactMarkdown(report: ImpactReport): string {
   const lines: string[] = []
   lines.push('## Architecture Impact', '')
+
+  lines.push('', '```mermaid', impactMermaid(report), '```')
   const summaryLine = coverageSummaryLine(report)
   if (summaryLine) lines.push(`**Coverage:** ${summaryLine}`, '')
   if (report.changed.length === 0 && report.candidates.length === 0 && report.unmapped.length === 0) {
@@ -87,28 +89,9 @@ export function impactMarkdown(report: ImpactReport): string {
     return lines.join('\n')
   }
 
-  lines.push('**Changed**', '')
-  if (report.changed.length === 0) {
-    lines.push('- _(none)_')
-  } else {
-    for (const element of report.changed) lines.push(elementLine(element))
-  }
-
   if (report.candidates.length > 0) {
-    lines.push('', '**Candidates** _(weak name matches)_', '')
+    lines.push('**Candidates** _(weak name matches)_', '')
     for (const element of report.candidates) lines.push(elementLine(element))
-  }
-
-  lines.push('', '**Related**', '')
-  if (report.related.length === 0) {
-    lines.push('- _(none)_')
-  } else {
-    for (const element of report.related) lines.push(`- ${element.name}`)
-  }
-
-  if (report.unmapped.length > 0) {
-    lines.push('', '**Unmapped**', '')
-    for (const file of report.unmapped) lines.push(`- \`${file}\``)
   }
 
   if (report.coverage.gaps.length > 0) {
@@ -135,6 +118,5 @@ export function impactMarkdown(report: ImpactReport): string {
     lines.push('', '_Dashed edges are observed in code but not declared in the architecture._')
   }
 
-  lines.push('', '```mermaid', impactMermaid(report), '```')
   return lines.join('\n')
 }

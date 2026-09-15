@@ -44,21 +44,7 @@ func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
 		_, _ = fmt.Fprintln(w, "No architecture-bound code changed.")
 		return nil
 	}
-	_, _ = fmt.Fprintln(w, "**Changed**")
-	_, _ = fmt.Fprintln(w)
-	if len(report.Changed) == 0 {
-		_, _ = fmt.Fprintln(w, "- _(none)_")
-	} else {
-		for _, element := range report.Changed {
-			_, _ = fmt.Fprintf(w, "- %s", element.Name)
-			if evidence := evidenceSummary(element.Evidence); evidence != "" {
-				_, _ = fmt.Fprintf(w, " — %s", evidence)
-			}
-			_, _ = fmt.Fprintln(w)
-		}
-	}
 	if len(report.Candidates) > 0 {
-		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintln(w, "**Candidates** _(weak name matches)_")
 		_, _ = fmt.Fprintln(w)
 		for _, element := range report.Candidates {
@@ -67,24 +53,6 @@ func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
 				_, _ = fmt.Fprintf(w, " — %s", evidence)
 			}
 			_, _ = fmt.Fprintln(w)
-		}
-	}
-	_, _ = fmt.Fprintln(w)
-	_, _ = fmt.Fprintln(w, "**Related**")
-	_, _ = fmt.Fprintln(w)
-	if len(report.Related) == 0 {
-		_, _ = fmt.Fprintln(w, "- _(none)_")
-	} else {
-		for _, element := range report.Related {
-			_, _ = fmt.Fprintf(w, "- %s\n", element.Name)
-		}
-	}
-	if len(report.Unmapped) > 0 {
-		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, "**Unmapped**")
-		_, _ = fmt.Fprintln(w)
-		for _, file := range report.Unmapped {
-			_, _ = fmt.Fprintf(w, "- `%s`\n", file)
 		}
 	}
 	if len(report.Coverage.Gaps) > 0 {

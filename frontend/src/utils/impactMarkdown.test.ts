@@ -68,9 +68,9 @@ describe('impactMarkdown', () => {
 
     expect(md).toContain('## Architecture Impact')
     expect(md).toContain('**Coverage:** 100% (high) — 2/2 source files owned; analysis is complete')
-    expect(md).toContain('- Core — src/a.go')
-    expect(md).toContain('**Unmapped**')
-    expect(md).toContain('- `src/loose.ts`')
+    expect(md).not.toContain('**Changed**')
+    expect(md).not.toContain('**Related**')
+    expect(md).not.toContain('**Unmapped**')
     expect(md).toContain('_Dashed edges are observed in code but not declared in the architecture._')
     expect(md).toContain('```mermaid')
     expect(md).toContain('flowchart TD')
