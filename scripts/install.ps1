@@ -64,10 +64,10 @@ if ([string]::IsNullOrWhiteSpace($env:INSTALL_DIR)) {
     $InstallDir = $env:INSTALL_DIR
 }
 
-$ReleasesUrl = "https://api.github.com/repos/$Repo/releases"
+$ReleasesUrl = "https://api.github.com/repos/$Repo/releases/latest"
 Write-Host "Finding latest stable tld release..."
 $Releases = Invoke-RestMethod -Uri $ReleasesUrl -Headers @{ "User-Agent" = "tld-installer" }
-$StableRelease = $Releases | Where-Object { $_.tag_name -notmatch "beta|alpha|rc" } | Select-Object -First 1
+$StableRelease = $Releases
 $Version = $StableRelease.tag_name
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -97,11 +97,35 @@ try {
     $Destination = Join-Path $InstallDir $Binary
 
     Write-Host "Installing to $Destination..."
-    Copy-Item -Path $ExtractedBinary.FullName -Destination $Destination -Force
+    & $ExtractedBinary.FullName version *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Downloaded binary failed validation" }
+    $Stage = Join-Path $InstallDir (".tld-update-" + [Guid]::NewGuid().ToString("N") + ".exe")
+    $Backup = "$Stage.old"
+    Copy-Item -LiteralPath $ExtractedBinary.FullName -Destination $Stage
+    try {
+        if (Test-Path -LiteralPath $Destination) {
+            Move-Item -LiteralPath $Destination -Destination $Backup
+        }
+        try {
+            Move-Item -LiteralPath $Stage -Destination $Destination
+        } catch {
+            if (Test-Path -LiteralPath $Backup) {
+                Move-Item -LiteralPath $Backup -Destination $Destination
+            }
+            throw
+        }
+    } finally {
+        Remove-Item -LiteralPath $Stage -Force -ErrorAction SilentlyContinue
+        # Running Windows processes can keep the old image locked until exit.
+        if (Test-Path -LiteralPath $Destination) {
+            Remove-Item -LiteralPath $Backup -Force -ErrorAction SilentlyContinue
+        }
+    }
 
     Add-TldPath -InstallDir $InstallDir
 
     & $Destination --help *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Installed binary failed validation" }
     Write-Host "Successfully installed! Run 'tld --help' to get started."
 
     if ($TldArgs.Count -gt 0) {
