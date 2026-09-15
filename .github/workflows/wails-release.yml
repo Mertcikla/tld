@@ -21,7 +21,7 @@ on:
           - all
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.inputs.release_tag || github.ref }}-${{ github.event.inputs.target || 'all' }}
   cancel-in-progress: true
 
 permissions:
@@ -81,6 +81,9 @@ jobs:
         with:
           p12-file-base64: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
           p12-password: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+
+      - name: Test desktop update transaction
+        run: go test ./cmd/tld-app
 
       - name: Build macOS Apps
         run: |
@@ -225,10 +228,28 @@ jobs:
           fi
           "$e2e_app/Contents/MacOS/tld" --desktop-update-e2e --desktop-update-asset "$(pwd)/$host_asset"
 
+      - name: Wait for CLI release publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Only the CLI workflow creates releases. Otherwise /latest can point
+          # installers at a desktop-only release with no CLI archive yet.
+          for attempt in {1..120}; do
+            echo "Waiting for CLI assets ($attempt/120)"
+            if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq 'tld_Linux_x86_64.tar.gz'; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "CLI release assets are not published for $RELEASE_TAG"
+          exit 1
+
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           files: |
             tld-desktop-macos-arm64.zip
             tld-desktop-macos-x64.zip
@@ -349,10 +370,28 @@ jobs:
             throw "Installed desktop app update e2e failed with code $($e2e.ExitCode)"
           }
 
+      - name: Wait for CLI release publication
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Only the CLI workflow creates releases. Otherwise /latest can point
+          # installers at a desktop-only release with no CLI archive yet.
+          for attempt in {1..120}; do
+            echo "Waiting for CLI assets ($attempt/120)"
+            if gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | grep -Fxq 'tld_Linux_x86_64.tar.gz'; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "CLI release assets are not published for $RELEASE_TAG"
+          exit 1
+
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           files: tld-desktop-windows-x64-installer.exe
           fail_on_unmatched_files: true
           overwrite_files: true
