@@ -74,6 +74,11 @@ func (s *impactService) ListRepositories(ctx context.Context, _ *connect.Request
 				if element, err := s.store.GetElement(ctx, id, api.WorkspaceIDFromCtx(ctx)); err == nil && element.GetName() != "" {
 					summary.Name = element.GetName()
 				}
+			} else {
+				// A checkout registered by the watcher may have no architecture
+				// element yet. Expose a watch-scoped ref so the UI can still
+				// inspect or unlink it instead of sending an empty reference.
+				summary.Ref = watchRepositoryRef(record.ID)
 			}
 			repositories = append(repositories, summary)
 		}
@@ -173,14 +178,28 @@ func (s *impactService) AddRepository(ctx context.Context, req *connect.Request[
 }
 
 func (s *impactService) UpdateRepository(ctx context.Context, req *connect.Request[diagv1.UpdateRepositoryRequest]) (*connect.Response[diagv1.UpdateRepositoryResponse], error) {
-	id, err := parseElementRef(req.Msg.GetRef())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
-	}
+	ref := strings.TrimSpace(req.Msg.GetRef())
 	branch := strings.TrimSpace(req.Msg.GetBranch())
 	path := strings.TrimSpace(req.Msg.GetPath())
 	if branch == "" && path == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("branch or path is required"))
+	}
+	if watchID, ok := parseWatchRepositoryRef(ref); ok {
+		if path != "" {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("checkout %s is not linked to an architecture element", ref))
+		}
+		if err := s.updateWatchRepositoryBranch(ctx, watchID, branch); err != nil {
+			return nil, err
+		}
+		summary, err := s.watchRepositorySummary(ctx, watchID)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return connect.NewResponse(&diagv1.UpdateRepositoryResponse{Repository: summary}), nil
+	}
+	id, err := parseElementRef(ref)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if branch != "" {
 		if err := s.store.UpdateElementBranch(ctx, id, branch); err != nil {
@@ -200,6 +219,19 @@ func (s *impactService) UpdateRepository(ctx context.Context, req *connect.Reque
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
 	return connect.NewResponse(&diagv1.UpdateRepositoryResponse{Repository: summary}), nil
+}
+
+func (s *impactService) updateWatchRepositoryBranch(ctx context.Context, id int64, branch string) error {
+	if s.watchStore == nil {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("local repository registry unavailable"))
+	}
+	if _, err := s.watchStore.Repository(ctx, id); err != nil {
+		return connect.NewError(connect.CodeNotFound, fmt.Errorf("repository %s not found", watchRepositoryRef(id)))
+	}
+	if _, err := s.watchStore.UpdateRepositoryBranch(ctx, id, branch); err != nil {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("update repository branch: %w", err))
+	}
+	return nil
 }
 
 // linkCheckout associates a local git checkout with an existing repository
@@ -245,7 +277,14 @@ func (s *impactService) linkCheckout(ctx context.Context, id int32, path, branch
 }
 
 func (s *impactService) RemoveRepository(ctx context.Context, req *connect.Request[diagv1.RemoveRepositoryRequest]) (*connect.Response[diagv1.RemoveRepositoryResponse], error) {
-	id, err := parseElementRef(req.Msg.GetRef())
+	ref := strings.TrimSpace(req.Msg.GetRef())
+	if watchID, ok := parseWatchRepositoryRef(ref); ok {
+		if err := s.removeWatchRepository(ctx, watchID); err != nil {
+			return nil, err
+		}
+		return connect.NewResponse(&diagv1.RemoveRepositoryResponse{}), nil
+	}
+	id, err := parseElementRef(ref)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -258,14 +297,39 @@ func (s *impactService) RemoveRepository(ctx context.Context, req *connect.Reque
 	return connect.NewResponse(&diagv1.RemoveRepositoryResponse{}), nil
 }
 
-func (s *impactService) GetRepositoryStatus(ctx context.Context, req *connect.Request[diagv1.GetRepositoryStatusRequest]) (*connect.Response[diagv1.GetRepositoryStatusResponse], error) {
-	id, err := parseElementRef(req.Msg.GetRef())
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+// removeWatchRepository deletes a watcher-registered checkout that is not
+// linked to an architecture element.
+func (s *impactService) removeWatchRepository(ctx context.Context, id int64) error {
+	if s.watchStore == nil {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("local repository registry unavailable"))
 	}
-	summary, err := s.repositorySummary(ctx, id)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeNotFound, err)
+	if _, err := s.watchStore.Repository(ctx, id); err != nil {
+		return connect.NewError(connect.CodeNotFound, fmt.Errorf("repository %s not found", watchRepositoryRef(id)))
+	}
+	if err := s.watchStore.DeleteRepository(ctx, id); err != nil {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("delete repository: %w", err))
+	}
+	return nil
+}
+
+func (s *impactService) GetRepositoryStatus(ctx context.Context, req *connect.Request[diagv1.GetRepositoryStatusRequest]) (*connect.Response[diagv1.GetRepositoryStatusResponse], error) {
+	ref := strings.TrimSpace(req.Msg.GetRef())
+	var summary *diagv1.Repository
+	if watchID, ok := parseWatchRepositoryRef(ref); ok {
+		recordSummary, err := s.watchRepositorySummary(ctx, watchID)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		summary = recordSummary
+	} else {
+		id, err := parseElementRef(ref)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		summary, err = s.repositorySummary(ctx, id)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
 	}
 	var commits []*diagv1.RepositoryCommit
 	if summary.GetLocalPath() != "" {
@@ -634,6 +698,34 @@ func (s *impactService) repositorySummary(ctx context.Context, id int32) (*diagv
 	return summary, nil
 }
 
+// watchRepositorySummary builds a repository summary from a watcher-registered
+// checkout that may not be linked to an architecture element.
+func (s *impactService) watchRepositorySummary(ctx context.Context, id int64) (*diagv1.Repository, error) {
+	if s.watchStore == nil {
+		return nil, fmt.Errorf("local repository registry unavailable")
+	}
+	record, err := s.watchStore.Repository(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("repository %s not found", watchRepositoryRef(id))
+	}
+	summary := &diagv1.Repository{
+		Ref:             watchRepositoryRef(record.ID),
+		Name:            record.DisplayName,
+		RemoteUrl:       record.RemoteURL.String,
+		Branch:          record.Branch.String,
+		LocalPath:       record.RepoRoot,
+		HeadCommit:      record.HeadCommit.String,
+		HasArchitecture: s.hasArchitecture(ctx, record.RemoteURL.String),
+	}
+	if record.RootElementID.Valid {
+		summary.ElementId = int32(record.RootElementID.Int64)
+		if element, err := s.store.GetElement(ctx, summary.ElementId, api.WorkspaceIDFromCtx(ctx)); err == nil && element.GetName() != "" {
+			summary.Name = element.GetName()
+		}
+	}
+	return summary, nil
+}
+
 func (s *impactService) watchRepositoryForElement(ctx context.Context, id int32) (watch.Repository, bool) {
 	if s.watchStore == nil {
 		return watch.Repository{}, false
@@ -880,6 +972,27 @@ func connectorKey(sourceID, targetID int32, label string) string {
 
 func elementRef(id int32) string {
 	return strconv.Itoa(int(id))
+}
+
+// watchRepositoryRefPrefix marks a ref that names a watcher-registered local
+// checkout rather than an architecture element. Unlinked checkouts have no
+// element id, so they need their own resolvable reference.
+const watchRepositoryRefPrefix = "watch:"
+
+func watchRepositoryRef(id int64) string {
+	return watchRepositoryRefPrefix + strconv.FormatInt(id, 10)
+}
+
+func parseWatchRepositoryRef(ref string) (int64, bool) {
+	value := strings.TrimSpace(ref)
+	if !strings.HasPrefix(value, watchRepositoryRefPrefix) {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(strings.TrimPrefix(value, watchRepositoryRefPrefix), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 func parseElementRef(ref string) (int32, error) {

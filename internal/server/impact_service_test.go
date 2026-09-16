@@ -294,6 +294,76 @@ func TestImpactServiceLinksCheckoutToExistingElement(t *testing.T) {
 		t.Fatalf("expected a linked local path: %+v", resp.Msg.GetRepository())
 	}
 }
+func TestImpactServiceUnlinkedWatchRepositoryIsManageable(t *testing.T) {
+	h := newImpactHarness(t)
+	repo := t.TempDir()
+	initImpactRepo(t, repo, map[string]string{"main.go": "package main\n"})
+	record, err := h.service.watchStore.EnsureRepository(h.ctx, watch.RepositoryInput{
+		RemoteURL:      "https://github.com/example/sample.git",
+		RepoRoot:       repo,
+		DisplayName:    "Scanned Repo",
+		Branch:         "main",
+		HeadCommit:     "deadbeef",
+		IdentityStatus: "known",
+	})
+	if err != nil {
+		t.Fatalf("EnsureRepository: %v", err)
+	}
+	ref := watchRepositoryRef(record.ID)
+
+	listed, err := h.service.ListRepositories(h.ctx, connect.NewRequest(&diagv1.ListRepositoriesRequest{}))
+	if err != nil {
+		t.Fatalf("ListRepositories: %v", err)
+	}
+	if len(listed.Msg.GetRepositories()) != 1 {
+		t.Fatalf("repositories = %+v, want 1", listed.Msg.GetRepositories())
+	}
+	summary := listed.Msg.GetRepositories()[0]
+	if summary.GetRef() != ref {
+		t.Fatalf("ref = %q, want %q", summary.GetRef(), ref)
+	}
+	if summary.GetElementId() != 0 {
+		t.Fatalf("element id = %d, want 0 for an unlinked checkout", summary.GetElementId())
+	}
+
+	updated, err := h.service.UpdateRepository(h.ctx, connect.NewRequest(&diagv1.UpdateRepositoryRequest{
+		Ref: ref, Branch: "develop",
+	}))
+	if err != nil {
+		t.Fatalf("UpdateRepository: %v", err)
+	}
+	if updated.Msg.GetRepository().GetBranch() != "develop" {
+		t.Fatalf("branch = %q, want develop", updated.Msg.GetRepository().GetBranch())
+	}
+	if _, err := h.service.UpdateRepository(h.ctx, connect.NewRequest(&diagv1.UpdateRepositoryRequest{
+		Ref: ref, Path: strPtr(repo),
+	})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("linking a checkout to a watch ref error = %v, want invalid argument", err)
+	}
+
+	status, err := h.service.GetRepositoryStatus(h.ctx, connect.NewRequest(&diagv1.GetRepositoryStatusRequest{Ref: ref}))
+	if err != nil {
+		t.Fatalf("GetRepositoryStatus: %v", err)
+	}
+	if status.Msg.GetRepository().GetLocalPath() == "" || len(status.Msg.GetCommits()) == 0 {
+		t.Fatalf("status = %+v, want local path and commits", status.Msg)
+	}
+
+	if _, err := h.service.RemoveRepository(h.ctx, connect.NewRequest(&diagv1.RemoveRepositoryRequest{Ref: ref})); err != nil {
+		t.Fatalf("RemoveRepository: %v", err)
+	}
+	listed, err = h.service.ListRepositories(h.ctx, connect.NewRequest(&diagv1.ListRepositoriesRequest{}))
+	if err != nil {
+		t.Fatalf("ListRepositories after remove: %v", err)
+	}
+	if len(listed.Msg.GetRepositories()) != 0 {
+		t.Fatalf("repositories after remove = %+v, want none", listed.Msg.GetRepositories())
+	}
+	if _, err := h.service.RemoveRepository(h.ctx, connect.NewRequest(&diagv1.RemoveRepositoryRequest{Ref: ref})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("removing again error = %v, want not found", err)
+	}
+}
+
 func TestImpactServiceListsUnlinkedRepositoryElement(t *testing.T) {
 	h := newImpactHarness(t)
 	h.addElement(t, "Legacy Repo", "repository", "https://github.com/example/legacy.git", "")
