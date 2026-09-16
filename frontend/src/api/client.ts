@@ -182,6 +182,7 @@ export interface ImpactElement {
   ref: string
   name: string
   kind: string
+  owner?: string
   element_id?: number
   change: ImpactChangeType
   evidence: string[]
@@ -860,6 +861,7 @@ function toImpactElement(raw: Record<string, unknown>): ImpactElement {
     ref: String(raw.ref ?? ''),
     name: String(raw.name ?? ''),
     kind: String(raw.kind ?? ''),
+    owner: typeof raw.owner === 'string' && raw.owner ? raw.owner : undefined,
     element_id: typeof raw.element_id === 'number' ? raw.element_id : undefined,
     change: impactChangeType(raw.change),
     evidence: Array.isArray(raw.evidence) ? raw.evidence.map(String) : [],

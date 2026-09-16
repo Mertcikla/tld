@@ -510,6 +510,7 @@ func impactRunElements(elements []watch.ImpactElement, ids map[string]int32, cha
 			Ref:      element.Ref,
 			Name:     element.Name,
 			Kind:     element.Kind,
+			Owner:    element.Owner,
 			Change:   impactChangeTypeString(element, changed),
 			Evidence: impactEvidenceStrings(element),
 		}

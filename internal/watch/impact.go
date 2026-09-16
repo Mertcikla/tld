@@ -34,6 +34,7 @@ type ImpactElement struct {
 	Ref      string           `json:"ref"`
 	Name     string           `json:"name"`
 	Kind     string           `json:"kind"`
+	Owner    string           `json:"owner,omitempty"`
 	Evidence []ImpactEvidence `json:"evidence,omitempty"`
 }
 
@@ -291,6 +292,7 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 			Ref:      ref,
 			Name:     element.Name,
 			Kind:     element.Kind,
+			Owner:    element.Owner,
 			Evidence: elementEvidence[ref],
 		}
 		if elementStrong[ref] {
@@ -355,7 +357,7 @@ func relatedImpact(opts ImpactOptions, changedRefs map[string]struct{}) ([]Impac
 			}
 			entry, ok := related[endpoint.ref]
 			if !ok {
-				entry = &ImpactElement{Ref: endpoint.ref, Name: element.Name, Kind: element.Kind}
+				entry = &ImpactElement{Ref: endpoint.ref, Name: element.Name, Kind: element.Kind, Owner: element.Owner}
 				related[endpoint.ref] = entry
 			}
 			entry.Evidence = append(entry.Evidence, ImpactEvidence{
@@ -422,7 +424,7 @@ func observedRelationshipEdges(opts ImpactOptions, changedRefs map[string]struct
 			}
 			entry, ok := related[endpoint]
 			if !ok {
-				entry = &ImpactElement{Ref: endpoint, Name: element.Name, Kind: element.Kind}
+				entry = &ImpactElement{Ref: endpoint, Name: element.Name, Kind: element.Kind, Owner: element.Owner}
 				related[endpoint] = entry
 			}
 			entry.Evidence = append(entry.Evidence, ImpactEvidence{

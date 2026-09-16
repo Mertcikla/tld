@@ -43,6 +43,7 @@ type ImpactRunElement struct {
 	Ref       string   `json:"ref"`
 	Name      string   `json:"name"`
 	Kind      string   `json:"kind"`
+	Owner     string   `json:"owner,omitempty"`
 	ElementID *int32   `json:"element_id,omitempty"`
 	Change    string   `json:"change,omitempty"`
 	Evidence  []string `json:"evidence,omitempty"`

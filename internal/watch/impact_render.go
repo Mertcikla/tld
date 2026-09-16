@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 )
 
@@ -34,6 +33,12 @@ func RenderImpactText(w io.Writer, report ImpactReport) error {
 
 // RenderImpactMarkdown writes a PR-comment friendly report with a Mermaid graph.
 func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
+	return RenderImpactMarkdownStyle(w, report, DiagramStyleFull)
+}
+
+// RenderImpactMarkdownStyle writes a PR-comment friendly report with a Mermaid
+// graph rendered in the requested diagram style.
+func RenderImpactMarkdownStyle(w io.Writer, report ImpactReport, style DiagramStyle) error {
 	_, _ = fmt.Fprintln(w, "## Architecture Impact")
 	_, _ = fmt.Fprintln(w)
 	if line := coverageSummaryLine(report.Coverage); line != "" {
@@ -84,7 +89,7 @@ func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "```mermaid")
-	if err := RenderImpactMermaid(w, report); err != nil {
+	if err := RenderImpactMermaidStyle(w, report, style); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintln(w, "```")
@@ -93,67 +98,18 @@ func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
 
 // RenderImpactMermaid writes the impacted architecture as a Mermaid flowchart.
 func RenderImpactMermaid(w io.Writer, report ImpactReport) error {
-	if report.Coverage.Applicable {
-		_, _ = fmt.Fprintf(w, "%%%% coverage: %d%% (%s)\n", report.Coverage.Percent, report.Coverage.Confidence)
-	}
-	_, _ = fmt.Fprintln(w, "flowchart TD")
-	ids := map[string]string{}
-	index := 0
-	idFor := func(ref, name string) string {
-		if id, ok := ids[ref]; ok {
-			return id
-		}
-		index++
-		id := fmt.Sprintf("n%d", index)
-		ids[ref] = id
-		label := strings.TrimSpace(name)
-		if label == "" {
-			label = ref
-		}
-		_, _ = fmt.Fprintf(w, "  %s[\"%s\"]\n", id, escapeMermaidLabel(label))
-		return id
-	}
+	return RenderImpactMermaidStyle(w, report, DiagramStyleFull)
+}
 
-	changedIDs := map[string]struct{}{}
-	for _, element := range report.Changed {
-		id := idFor(element.Ref, element.Name)
-		changedIDs[id] = struct{}{}
+// RenderImpactMermaidStyle writes the impacted architecture as a Mermaid
+// flowchart projected through the requested diagram style.
+func RenderImpactMermaidStyle(w io.Writer, report ImpactReport, style DiagramStyle) error {
+	code := BuildImpactDiagram(report, style).Code
+	if strings.TrimSpace(code) == "" {
+		return nil
 	}
-	for _, element := range report.Candidates {
-		idFor(element.Ref, element.Name)
-	}
-	for _, element := range report.Related {
-		idFor(element.Ref, element.Name)
-	}
-	for _, edge := range report.Edges {
-		sourceID, ok := ids[edge.SourceRef]
-		if !ok {
-			continue
-		}
-		targetID, ok := ids[edge.TargetRef]
-		if !ok {
-			continue
-		}
-		arrow := "-->"
-		if edge.Observed {
-			arrow = "-.->"
-		}
-		if strings.TrimSpace(edge.Label) != "" {
-			_, _ = fmt.Fprintf(w, "  %s %s|%s| %s\n", sourceID, arrow, escapeMermaidLabel(edge.Label), targetID)
-		} else {
-			_, _ = fmt.Fprintf(w, "  %s %s %s\n", sourceID, arrow, targetID)
-		}
-	}
-	if len(changedIDs) > 0 {
-		sortedIDs := make([]string, 0, len(changedIDs))
-		for id := range changedIDs {
-			sortedIDs = append(sortedIDs, id)
-		}
-		sort.Strings(sortedIDs)
-		_, _ = fmt.Fprintf(w, "  class %s changed\n", strings.Join(sortedIDs, ","))
-		_, _ = fmt.Fprintln(w, "  classDef changed fill:#fde68a,stroke:#b45309,stroke-width:2px,color:#78350f;")
-	}
-	return nil
+	_, err := fmt.Fprintln(w, code)
+	return err
 }
 
 func writeImpactSection(w io.Writer, title string, lines []string) {

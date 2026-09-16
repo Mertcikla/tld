@@ -44,7 +44,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { MarkdownPreview } from '../components/ViewMarkdownPanel/MarkdownPreview'
 import { markdownPanelBodySx } from '../components/ViewMarkdownPanel/styles'
 import { toast } from '../utils/toast'
-import { impactMarkdown } from '../utils/impactMarkdown'
+import { impactMarkdown, type ImpactDiagramStyle } from '../utils/impactMarkdown'
 
 const SKILL_INSTALL_PATH = '~/.agents/skills/create-diagram-impact/SKILL.md'
 
@@ -792,6 +792,7 @@ export default function Repositories() {
   const [branchDraft, setBranchDraft] = useState('')
   const [branchSaving, setBranchSaving] = useState(false)
   const [resultView, setResultView] = useState<ResultView>('diagram')
+  const [diagramStyle, setDiagramStyle] = useState<ImpactDiagramStyle>('full')
   const [filesOpen, setFilesOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<ImpactRepository | null>(null)
   const [removing, setRemoving] = useState(false)
@@ -925,7 +926,7 @@ export default function Repositories() {
   const baseCommit = useMemo(() => commits.find((commit) => commit.sha === base) ?? null, [commits, base])
   const headCommit = useMemo(() => commits.find((commit) => commit.sha === head) ?? null, [commits, head])
 
-  const impactMarkdownText = useMemo(() => (report ? impactMarkdown(report) : ''), [report])
+  const impactMarkdownText = useMemo(() => (report ? impactMarkdown(report, diagramStyle) : ''), [report, diagramStyle])
 
   const openElement = useCallback(
     async (elementId: number) => {
@@ -1452,6 +1453,25 @@ export default function Repositories() {
                           ]}
                         />
                       </Box>
+                      {resultView === 'markdown' && (
+                        <Tooltip label="Mermaid diagram style for the markdown and copy output" placement="top">
+                          <Select
+                            size="xs"
+                            w="190px"
+                            flexShrink={0}
+                            value={diagramStyle}
+                            onChange={(event) => setDiagramStyle(event.target.value as ImpactDiagramStyle)}
+                            aria-label="Diagram style"
+                            bg="whiteAlpha.100"
+                            borderColor="whiteAlpha.200"
+                          >
+                            <option value="full">Full context</option>
+                            <option value="bounded">Bounded neighborhood</option>
+                            <option value="lanes">Directional lanes</option>
+                            <option value="groups">Architectural groups</option>
+                          </Select>
+                        </Tooltip>
+                      )}
                       <Tooltip label="Copy the PR-comment markdown" placement="top">
                         <Button
                           size="xs"

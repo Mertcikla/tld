@@ -19,6 +19,7 @@ import (
 func NewImpactCmd(wdir *string) *cobra.Command {
 	var base string
 	var render string
+	var diagram string
 	var includeWorktree, evidence, rescan, suggestBindings, nameHeuristics bool
 	var dataDirFlag string
 	var embeddingProvider, embeddingEndpoint, embeddingModel string
@@ -118,11 +119,12 @@ owners for unmapped code. Nothing here mutates the architecture.`,
 			if formatFlag(cmd) == "json" {
 				return watchpkg.RenderImpactJSON(cmd.OutOrStdout(), report)
 			}
+			style := watchpkg.NormalizeDiagramStyle(diagram)
 			switch strings.ToLower(strings.TrimSpace(render)) {
 			case "markdown", "md":
-				return watchpkg.RenderImpactMarkdown(cmd.OutOrStdout(), report)
+				return watchpkg.RenderImpactMarkdownStyle(cmd.OutOrStdout(), report, style)
 			case "mermaid":
-				return watchpkg.RenderImpactMermaid(cmd.OutOrStdout(), report)
+				return watchpkg.RenderImpactMermaidStyle(cmd.OutOrStdout(), report, style)
 			default:
 				return watchpkg.RenderImpactText(cmd.OutOrStdout(), report)
 			}
@@ -131,6 +133,7 @@ owners for unmapped code. Nothing here mutates the architecture.`,
 
 	c.Flags().StringVar(&base, "base", "main", "git ref to diff against (uses the merge base)")
 	c.Flags().StringVar(&render, "render", "text", "output renderer: text, markdown, or mermaid")
+	c.Flags().StringVar(&diagram, "diagram", "full", "diagram style for markdown/mermaid: full, bounded, lanes, or groups")
 	c.Flags().BoolVar(&includeWorktree, "include-worktree", false, "also include uncommitted worktree changes")
 	c.Flags().BoolVar(&nameHeuristics, "name-heuristics", true, "derive weak candidate bindings from element names when no file path is set")
 	c.Flags().BoolVar(&evidence, "evidence", false, "detect observed implementation relationships (Tree-sitter/LSP)")
