@@ -36,12 +36,13 @@ import {
   Tooltip,
   useDisclosure,
 } from '@chakra-ui/react'
-import { AddIcon, ArrowUpDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon, SearchIcon, SmallCloseIcon } from '@chakra-ui/icons'
+import { AddIcon, ArrowUpDownIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon, SearchIcon, SmallCloseIcon } from '@chakra-ui/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   api,
   type ImpactCommit,
   type ImpactCoverage,
+  type ImpactFile,
   type ImpactReport,
   type ImpactRepository,
 } from '../api/client'
@@ -389,6 +390,252 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
           )}
         </>
       )}
+    </Box>
+  )
+}
+
+interface ImpactFileTreeNode {
+  name: string
+  path: string
+  depth: number
+  isDir: boolean
+  added: number
+  removed: number
+  change?: ImpactFile['change']
+  children: ImpactFileTreeNode[]
+}
+
+function buildImpactFileTree(files: ImpactFile[]): ImpactFileTreeNode[] {
+  const roots: ImpactFileTreeNode[] = []
+  const dirs = new Map<string, ImpactFileTreeNode>()
+
+  const ensureDir = (path: string, name: string, depth: number): ImpactFileTreeNode => {
+    const existing = dirs.get(path)
+    if (existing) return existing
+    const node: ImpactFileTreeNode = { name, path, depth, isDir: true, added: 0, removed: 0, children: [] }
+    dirs.set(path, node)
+    if (depth === 0) {
+      roots.push(node)
+    } else {
+      const parent = dirs.get(path.split('/').slice(0, -1).join('/'))
+      if (parent) parent.children.push(node)
+      else roots.push(node)
+    }
+    return node
+  }
+
+  for (const file of files) {
+    const parts = file.path.split('/').filter(Boolean)
+    if (parts.length === 0) continue
+    let parent: ImpactFileTreeNode | null = null
+    let prefix = ''
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      prefix = prefix ? `${prefix}/${parts[index]}` : parts[index]
+      parent = ensureDir(prefix, parts[index], index)
+    }
+    const node: ImpactFileTreeNode = {
+      name: parts[parts.length - 1],
+      path: file.path,
+      depth: parts.length - 1,
+      isDir: false,
+      added: file.added ?? 0,
+      removed: file.removed ?? 0,
+      change: file.change,
+      children: [],
+    }
+    if (parent) parent.children.push(node)
+    else roots.push(node)
+  }
+
+  const sortNodes = (nodes: ImpactFileTreeNode[]) => {
+    nodes.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+  }
+
+  const aggregate = (node: ImpactFileTreeNode): { added: number; removed: number } => {
+    if (!node.isDir) return { added: node.added, removed: node.removed }
+    let added = 0
+    let removed = 0
+    for (const child of node.children) {
+      const totals = aggregate(child)
+      added += totals.added
+      removed += totals.removed
+    }
+    node.added = added
+    node.removed = removed
+    sortNodes(node.children)
+    return { added, removed }
+  }
+  for (const root of roots) aggregate(root)
+  sortNodes(roots)
+  return roots
+}
+
+function fileStatusColor(change: ImpactFile['change'] | undefined): string {
+  switch (change) {
+    case 'added':
+      return 'green.400'
+    case 'deleted':
+      return 'red.400'
+    case 'modified':
+      return 'yellow.400'
+    default:
+      return 'gray.400'
+  }
+}
+
+function ImpactFilesPanel({ files }: { files: ImpactFile[] }) {
+  const [open, setOpen] = useState(true)
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const tree = useMemo(() => buildImpactFileTree(files), [files])
+  const totalAdded = useMemo(() => tree.reduce((sum, node) => sum + node.added, 0), [tree])
+  const totalRemoved = useMemo(() => tree.reduce((sum, node) => sum + node.removed, 0), [tree])
+
+  const toggleDir = (path: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(path)) next.delete(path)
+      else next.add(path)
+      return next
+    })
+  }
+
+  const renderNode = (node: ImpactFileTreeNode): ReactNode => {
+    const isCollapsed = node.isDir && collapsed.has(node.path)
+    const isSelected = !node.isDir && selectedPath === node.path
+    return (
+      <Box key={node.path}>
+        <Button
+          variant="ghost"
+          size="sm"
+          w="full"
+          px={2}
+          py={1}
+          h="auto"
+          minH="28px"
+          fontWeight="normal"
+          justifyContent="flex-start"
+          borderRadius="md"
+          bg={isSelected ? 'whiteAlpha.100' : 'transparent'}
+          _hover={{ bg: 'whiteAlpha.100' }}
+          onClick={() => {
+            if (node.isDir) toggleDir(node.path)
+            else setSelectedPath(node.path)
+          }}
+          title={node.path}
+        >
+          <HStack w="full" spacing={1.5} minW={0} align="center">
+            <Flex w={4} flexShrink={0} align="center" justify="center" ml={`${node.depth * 12}px`}>
+              {node.isDir ? (
+                isCollapsed ? <ChevronRightIcon boxSize={3} color="gray.500" /> : <ChevronDownIcon boxSize={3} color="gray.500" />
+              ) : (
+                <Box w={1.5} h={1.5} borderRadius="full" bg={fileStatusColor(node.change)} />
+              )}
+            </Flex>
+            <Text
+              fontSize="sm"
+              color={node.isDir ? 'gray.200' : 'gray.100'}
+              fontWeight={node.isDir ? 'semibold' : 'normal'}
+              isTruncated
+              flex="1"
+              textAlign="left"
+            >
+              {node.name}
+            </Text>
+            <HStack spacing={1.5} flexShrink={0} minW="72px" justify="flex-end" style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {node.added > 0 && (
+                <Text fontSize="xs" color="green.400">
+                  +{node.added}
+                </Text>
+              )}
+              {node.removed > 0 && (
+                <Text fontSize="xs" color="red.400">
+                  -{node.removed}
+                </Text>
+              )}
+              {node.added === 0 && node.removed === 0 && (
+                <Text fontSize="xs" color="gray.600">
+                  ·
+                </Text>
+              )}
+            </HStack>
+          </HStack>
+        </Button>
+        {node.isDir && !isCollapsed && node.children.map(renderNode)}
+      </Box>
+    )
+  }
+
+  if (!open) {
+    return (
+      <Box
+        flexShrink={0}
+        w="40px"
+        border="1px solid"
+        borderColor="var(--border-main)"
+        borderRadius="xl"
+        bg="var(--bg-panel)"
+        p={1.5}
+        alignSelf="stretch"
+        display="flex"
+        flexDir="column"
+        alignItems="center"
+        gap={2}
+      >
+        <IconButton aria-label="Expand files panel" icon={<ChevronRightIcon />} size="sm" variant="ghost" onClick={() => setOpen(true)} />
+        <Text fontSize="10px" color="gray.500" fontWeight="700" textTransform="uppercase" letterSpacing="0.08em" style={{ writingMode: 'vertical-rl' }}>
+          Files
+        </Text>
+      </Box>
+    )
+  }
+
+  return (
+    <Box
+      w={{ base: 'full', lg: '280px' }}
+      flexShrink={0}
+      minW={0}
+      border="1px solid"
+      borderColor="var(--border-main)"
+      borderRadius="xl"
+      bg="var(--bg-panel)"
+      display="flex"
+      flexDir="column"
+      minH={0}
+      maxH={{ base: '240px', lg: '460px' }}
+    >
+      <Flex align="center" gap={2} px={3} py={2} borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0} minW={0}>
+        <MicroLabel>Files</MicroLabel>
+        <Badge variant="subtle" fontSize="2xs" borderRadius="full">
+          {files.length}
+        </Badge>
+        <Box flex={1} />
+        <HStack spacing={1.5} flexShrink={0} style={{ fontVariantNumeric: 'tabular-nums' }}>
+          {totalAdded > 0 && (
+            <Text fontSize="xs" color="green.400">
+              +{totalAdded}
+            </Text>
+          )}
+          {totalRemoved > 0 && (
+            <Text fontSize="xs" color="red.400">
+              -{totalRemoved}
+            </Text>
+          )}
+        </HStack>
+        <IconButton aria-label="Collapse files panel" icon={<ChevronLeftIcon />} size="xs" variant="ghost" onClick={() => setOpen(false)} />
+      </Flex>
+      <Box overflowY="auto" p={1.5} minH={0}>
+        {tree.length === 0 ? (
+          <Text fontSize="sm" color="gray.500" px={2} py={3}>
+            No changed files.
+          </Text>
+        ) : (
+          tree.map(renderNode)
+        )}
+      </Box>
     </Box>
   )
 }
@@ -1269,48 +1516,53 @@ export default function Repositories() {
                         </TabList>
                         <TabPanels>
                           <TabPanel p={3}>
-                            <Flex mb={3} align="center" justify="space-between" gap={3} wrap="wrap">
-                              <Box w="200px">
-                                <SegmentedControl<ArchitectureView>
-                                  ariaLabel="Architecture view"
-                                  value={architectureView}
-                                  onChange={setArchitectureView}
-                                  options={[
-                                    { value: 'diagram', label: 'Diagram' },
-                                    { value: 'markdown', label: 'Markdown' },
-                                  ]}
-                                />
+                            <Flex gap={3} align="stretch" direction={{ base: 'column', lg: 'row' }}>
+                              <ImpactFilesPanel files={report.changed_files} />
+                              <Box flex={1} minW={0}>
+                                <Flex mb={3} align="center" justify="space-between" gap={3} wrap="wrap">
+                                  <Box w="200px">
+                                    <SegmentedControl<ArchitectureView>
+                                      ariaLabel="Architecture view"
+                                      value={architectureView}
+                                      onChange={setArchitectureView}
+                                      options={[
+                                        { value: 'diagram', label: 'Diagram' },
+                                        { value: 'markdown', label: 'Markdown' },
+                                      ]}
+                                    />
+                                  </Box>
+                                  <Tooltip label="Copy the PR-comment markdown" placement="top">
+                                    <Button
+                                      size="xs"
+                                      variant="ghost"
+                                      color="gray.400"
+                                      _hover={{ color: 'gray.100' }}
+                                      leftIcon={<CopyIcon />}
+                                      onClick={() => copyPath(impactMarkdownText, 'Markdown')}
+                                    >
+                                      Copy as markdown
+                                    </Button>
+                                  </Tooltip>
+                                </Flex>
+                                {architectureView === 'markdown' ? (
+                                  <Box
+                                    h="460px"
+                                    overflowY="auto"
+                                    bg="var(--bg-canvas)"
+                                    border="1px solid"
+                                    borderColor="var(--border-main)"
+                                    borderRadius="xl"
+                                    sx={markdownPanelBodySx}
+                                  >
+                                    <Box p={4}>
+                                      <MarkdownPreview markdown={impactMarkdownText} />
+                                    </Box>
+                                  </Box>
+                                ) : (
+                                  <ImpactCanvas report={report} onOpenElement={openElement} />
+                                )}
                               </Box>
-                              <Tooltip label="Copy the PR-comment markdown" placement="top">
-                                <Button
-                                  size="xs"
-                                  variant="ghost"
-                                  color="gray.400"
-                                  _hover={{ color: 'gray.100' }}
-                                  leftIcon={<CopyIcon />}
-                                  onClick={() => copyPath(impactMarkdownText, 'Markdown')}
-                                >
-                                  Copy as markdown
-                                </Button>
-                              </Tooltip>
                             </Flex>
-                            {architectureView === 'markdown' ? (
-                              <Box
-                                h="460px"
-                                overflowY="auto"
-                                bg="var(--bg-canvas)"
-                                border="1px solid"
-                                borderColor="var(--border-main)"
-                                borderRadius="xl"
-                                sx={markdownPanelBodySx}
-                              >
-                                <Box p={4}>
-                                  <MarkdownPreview markdown={impactMarkdownText} />
-                                </Box>
-                              </Box>
-                            ) : (
-                              <ImpactCanvas report={report} onOpenElement={openElement} />
-                            )}
                           </TabPanel>
                           <TabPanel p={3}>
                             <CoveragePanel coverage={report.coverage} />
