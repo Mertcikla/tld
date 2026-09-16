@@ -40,10 +40,8 @@ import { AddIcon, ArrowUpDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, 
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   api,
-  type ImpactChangeType,
   type ImpactCommit,
   type ImpactCoverage,
-  type ImpactFile,
   type ImpactReport,
   type ImpactRepository,
 } from '../api/client'
@@ -53,14 +51,12 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { MarkdownPreview } from '../components/ViewMarkdownPanel/MarkdownPreview'
 import { markdownPanelBodySx } from '../components/ViewMarkdownPanel/styles'
 import { toast } from '../utils/toast'
-import { buildImpactFileTree, flattenImpactFileTree } from '../utils/impactFileTree'
 import { impactMarkdown } from '../utils/impactMarkdown'
 
 const SKILL_INSTALL_PATH = '~/.agents/skills/create-diagram-impact/SKILL.md'
 
 type RepoFilter = 'all' | 'ready' | 'setup'
-type ResultTab = 'architecture' | 'files' | 'coverage'
-type FileChangeFilter = 'all' | ImpactChangeType
+type ResultTab = 'architecture' | 'coverage'
 type ArchitectureView = 'diagram' | 'markdown'
 
 function coverageColor(coverage: ImpactCoverage): string {
@@ -109,21 +105,6 @@ async function copyText(text: string): Promise<boolean> {
     return false
   }
 }
-
-function changeDotColor(change: ImpactChangeType | undefined): string {
-  switch (change) {
-    case 'added':
-      return 'green.400'
-    case 'deleted':
-      return 'red.400'
-    case 'modified':
-      return 'yellow.400'
-    default:
-      return 'gray.400'
-  }
-}
-
-type ChangeView = 'files' | 'elements'
 
 function SegmentedControl<T extends string>({
   options,
@@ -197,22 +178,6 @@ function RepoGlyph({ name, size = 'sm' }: { name: string; size?: 'sm' | 'lg' }) 
         {initial}
       </Text>
     </Flex>
-  )
-}
-
-function StatCell({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <Box px={4} py={2} minW={0} flex={1}>
-      <MicroLabel>{label}</MicroLabel>
-      <Text fontSize="md" fontWeight="semibold" color="gray.100" mt={0.5} isTruncated>
-        {value}
-      </Text>
-      {sub && (
-        <Text fontSize="xs" color="gray.500" isTruncated>
-          {sub}
-        </Text>
-      )}
-    </Box>
   )
 }
 
@@ -428,56 +393,6 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
   )
 }
 
-function ChangedFilesTree({ files, query, changeFilter }: { files: ImpactFile[]; query: string; changeFilter: FileChangeFilter }) {
-  const nodes = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const filtered = files.filter((file) => {
-      if (changeFilter !== 'all' && file.change !== changeFilter) return false
-      if (q && !file.path.toLowerCase().includes(q)) return false
-      return true
-    })
-    return flattenImpactFileTree(buildImpactFileTree(filtered))
-  }, [files, query, changeFilter])
-
-  if (nodes.length === 0) {
-    return (
-      <Text fontSize="sm" color="gray.500" px={2} py={3}>
-        No files match this filter.
-      </Text>
-    )
-  }
-
-  return (
-    <>
-      {nodes.map((node) => (
-        <HStack
-          key={`${node.isDir ? 'dir' : 'file'}:${node.path}`}
-          pl={2 + node.depth * 3}
-          pr={2}
-          py={0.5}
-          spacing={2}
-          minW={0}
-          borderRadius="sm"
-          _hover={{ bg: 'whiteAlpha.50' }}
-        >
-          <Box w={2} h={2} borderRadius="sm" bg={node.isDir ? 'gray.500' : changeDotColor(node.change)} flexShrink={0} />
-          <Text fontSize="sm" color={node.isDir ? 'gray.300' : 'gray.200'} isTruncated flex="1" title={node.path}>
-            {node.name}
-          </Text>
-          <HStack spacing={1.5} flexShrink={0} minW="56px" justify="flex-end" style={{ fontVariantNumeric: 'tabular-nums' }}>
-            <Text fontSize="xs" color={node.isDir ? 'gray.500' : 'green.400'} visibility={node.added > 0 ? 'visible' : 'hidden'}>
-              +{node.added}
-            </Text>
-            <Text fontSize="xs" color={node.isDir ? 'gray.500' : 'red.400'} visibility={node.removed > 0 ? 'visible' : 'hidden'}>
-              -{node.removed}
-            </Text>
-          </HStack>
-        </HStack>
-      ))}
-    </>
-  )
-}
-
 function CompareSide({
   label,
   dot,
@@ -667,9 +582,6 @@ export default function Repositories() {
   const [branchSaving, setBranchSaving] = useState(false)
   const [resultTab, setResultTab] = useState<ResultTab>('architecture')
   const [architectureView, setArchitectureView] = useState<ArchitectureView>('diagram')
-  const [changeView, setChangeView] = useState<ChangeView>('files')
-  const [fileQuery, setFileQuery] = useState('')
-  const [fileChangeFilter, setFileChangeFilter] = useState<FileChangeFilter>('all')
   const [pendingDelete, setPendingDelete] = useState<ImpactRepository | null>(null)
   const [removing, setRemoving] = useState(false)
   const addDisclosure = useDisclosure()
@@ -765,7 +677,6 @@ export default function Repositories() {
       return
     }
     setReport(null)
-    setFileQuery('')
     void reloadStatus(selectedRef)
   }, [selectedRef, reloadStatus])
 
@@ -808,19 +719,6 @@ export default function Repositories() {
 
   const baseCommit = useMemo(() => commits.find((commit) => commit.sha === base) ?? null, [commits, base])
   const headCommit = useMemo(() => commits.find((commit) => commit.sha === head) ?? null, [commits, head])
-
-  const reportStats = useMemo(() => {
-    if (!report) return null
-    const added = report.changed_files.reduce((sum, file) => sum + file.added, 0)
-    const removed = report.changed_files.reduce((sum, file) => sum + file.removed, 0)
-    return {
-      elements: report.changed.length,
-      files: report.changed_files.length,
-      added,
-      removed,
-      gaps: report.coverage.gaps.length,
-    }
-  }, [report])
 
   const impactMarkdownText = useMemo(() => (report ? impactMarkdown(report) : ''), [report])
 
@@ -1351,31 +1249,16 @@ export default function Repositories() {
 
                 {report && !running && (
                   <>
-                    {reportStats && (
-                      <Flex borderBottom="1px solid" borderColor="whiteAlpha.100" align="stretch">
-                        <StatCell label="Changed elements" value={String(reportStats.elements)} sub={`${report.related.length} related`} />
-                        <Box w="1px" alignSelf="stretch" bg="whiteAlpha.100" flexShrink={0} />
-                        <StatCell label="Changed files" value={String(reportStats.files)} sub={`+${reportStats.added} / -${reportStats.removed} lines`} />
-                        <Box w="1px" alignSelf="stretch" bg="whiteAlpha.100" flexShrink={0} />
-                        <StatCell label="Coverage" value={coverageLabel(report.coverage)} sub={`${report.coverage.anchored_elements}/${report.coverage.total_elements} bound`} />
-                        <Box w="1px" alignSelf="stretch" bg="whiteAlpha.100" flexShrink={0} />
-                        <StatCell label="Binding gaps" value={String(reportStats.gaps)} sub={reportStats.gaps === 0 ? 'Fully bound' : 'Needs attention'} />
-                      </Flex>
-                    )}
                     <Box px={4} py={3}>
                       <Tabs
                         size="sm"
                         variant="enclosed"
-                        index={resultTab === 'architecture' ? 0 : resultTab === 'files' ? 1 : 2}
-                        onChange={(index) => setResultTab(index === 0 ? 'architecture' : index === 1 ? 'files' : 'coverage')}
+                        index={resultTab === 'architecture' ? 0 : 1}
+                        onChange={(index) => setResultTab(index === 0 ? 'architecture' : 'coverage')}
                       >
                         <TabList>
                           <Tab>
                             Architecture
-                          </Tab>
-                          <Tab>
-                            Files
-                            <Badge ml={1.5} variant="subtle" fontSize="2xs" borderRadius="full">{report.changed_files.length}</Badge>
                           </Tab>
                           <Tab>
                             Gaps
@@ -1428,117 +1311,6 @@ export default function Repositories() {
                             ) : (
                               <ImpactCanvas report={report} onOpenElement={openElement} />
                             )}
-                          </TabPanel>
-                          <TabPanel p={3}>
-                            <Flex gap={2} mb={3} direction={{ base: 'column', md: 'row' }} align={{ base: 'stretch', md: 'center' }}>
-                              <InputGroup size="sm" flex="1">
-                                <InputLeftElement pointerEvents="none" color="gray.500">
-                                  <SearchIcon boxSize={3.5} />
-                                </InputLeftElement>
-                                <Input placeholder="Filter files or elements…" value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} variant="elevated" _placeholder={{ color: 'gray.600' }} />
-                              </InputGroup>
-                              <HStack spacing={2}>
-                                <Select size="sm" maxW="140px" value={fileChangeFilter} onChange={(event) => setFileChangeFilter(event.target.value as FileChangeFilter)}>
-                                  <option value="all">All changes</option>
-                                  <option value="added">Added</option>
-                                  <option value="modified">Modified</option>
-                                  <option value="deleted">Deleted</option>
-                                </Select>
-                                <SegmentedControl<ChangeView>
-                                  ariaLabel="Change view"
-                                  value={changeView}
-                                  onChange={setChangeView}
-                                  options={[
-                                    { value: 'files', label: 'Files' },
-                                    { value: 'elements', label: 'Elements' },
-                                  ]}
-                                />
-                              </HStack>
-                            </Flex>
-                            <Box maxH="460px" overflowY="auto" pr={1}>
-                              {changeView === 'files' ? (
-                                <ChangedFilesTree files={report.changed_files} query={fileQuery} changeFilter={fileChangeFilter} />
-                              ) : (
-                                <VStack align="stretch" spacing={3}>
-                                  {report.changed.length > 0 && (
-                                    <Box>
-                                      <Box px={2} mb={1}>
-                                        <MicroLabel>Changed architecture</MicroLabel>
-                                      </Box>
-                                      {report.changed
-                                        .filter((element) => !fileQuery.trim() || element.name.toLowerCase().includes(fileQuery.trim().toLowerCase()))
-                                        .map((element) => (
-                                          <Button
-                                            key={element.ref}
-                                            variant="ghost"
-                                            size="sm"
-                                            justifyContent="flex-start"
-                                            px={2}
-                                            w="full"
-                                            fontWeight="normal"
-                                            onClick={() => element.element_id && openElement(element.element_id)}
-                                            isDisabled={!element.element_id}
-                                          >
-                                            <Box w={2} h={2} borderRadius="sm" bg="green.400" mr={2} flexShrink={0} />
-                                            <Text fontSize="sm" isTruncated>
-                                              {element.name}
-                                            </Text>
-                                          </Button>
-                                        ))}
-                                    </Box>
-                                  )}
-                                  {report.unmapped.length > 0 && (
-                                    <Box>
-                                      <Box px={2} mb={1}>
-                                        <MicroLabel>Needs binding</MicroLabel>
-                                      </Box>
-                                      {report.unmapped
-                                        .filter((file) => !fileQuery.trim() || file.toLowerCase().includes(fileQuery.trim().toLowerCase()))
-                                        .map((file) => (
-                                          <HStack key={file} px={2} py={1} spacing={2} minW={0}>
-                                            <Box w={2} h={2} borderRadius="sm" bg="orange.400" flexShrink={0} />
-                                            <Code fontSize="xs" color="gray.300" isTruncated>
-                                              {file}
-                                            </Code>
-                                          </HStack>
-                                        ))}
-                                    </Box>
-                                  )}
-                                  {report.related.length > 0 && (
-                                    <Box>
-                                      <Box px={2} mb={1}>
-                                        <MicroLabel>Related context</MicroLabel>
-                                      </Box>
-                                      {report.related
-                                        .filter((element) => !fileQuery.trim() || element.name.toLowerCase().includes(fileQuery.trim().toLowerCase()))
-                                        .map((element) => (
-                                          <Button
-                                            key={element.ref}
-                                            variant="ghost"
-                                            size="sm"
-                                            justifyContent="flex-start"
-                                            px={2}
-                                            w="full"
-                                            fontWeight="normal"
-                                            onClick={() => element.element_id && openElement(element.element_id)}
-                                            isDisabled={!element.element_id}
-                                          >
-                                            <Box w={2} h={2} borderRadius="sm" bg="blue.400" mr={2} flexShrink={0} />
-                                            <Text fontSize="sm" isTruncated>
-                                              {element.name}
-                                            </Text>
-                                          </Button>
-                                        ))}
-                                    </Box>
-                                  )}
-                                  {report.changed.length === 0 && report.unmapped.length === 0 && report.related.length === 0 && (
-                                    <Text fontSize="sm" color="gray.500" px={2} py={3}>
-                                      No changed files or architecture elements.
-                                    </Text>
-                                  )}
-                                </VStack>
-                              )}
-                            </Box>
                           </TabPanel>
                           <TabPanel p={3}>
                             <CoveragePanel coverage={report.coverage} />
