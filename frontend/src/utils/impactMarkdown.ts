@@ -47,7 +47,7 @@ export function impactMermaid(report: ImpactReport): string {
   if (changedIDs.size > 0) {
     const sorted = Array.from(changedIDs).sort()
     lines.push(`  class ${sorted.join(',')} changed`)
-    lines.push('  classDef changed fill:#fde68a,stroke:#b45309,stroke-width:2px;')
+    lines.push('  classDef changed fill:#fde68a,stroke:#b45309,stroke-width:2px,color:#78350f;')
   }
   return lines.join('\n')
 }

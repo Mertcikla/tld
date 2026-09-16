@@ -151,7 +151,7 @@ func RenderImpactMermaid(w io.Writer, report ImpactReport) error {
 		}
 		sort.Strings(sortedIDs)
 		_, _ = fmt.Fprintf(w, "  class %s changed\n", strings.Join(sortedIDs, ","))
-		_, _ = fmt.Fprintln(w, "  classDef changed fill:#fde68a,stroke:#b45309,stroke-width:2px;")
+		_, _ = fmt.Fprintln(w, "  classDef changed fill:#fde68a,stroke:#b45309,stroke-width:2px,color:#78350f;")
 	}
 	return nil
 }
