@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   Badge,
   Box,
@@ -21,7 +21,6 @@ import {
   api,
   type ImpactCommit,
   type ImpactCommitDetails,
-  type ImpactRangeStats,
 } from '../api/client'
 import { toast } from '../utils/toast'
 import { GRAPH_LANE_COLORS, layoutCommitGraph, parseCommitRefs } from '../utils/commitGraph'
@@ -166,16 +165,12 @@ export default function CommitHistoryPanel({
   head,
   onSelectBase,
   onSelectHead,
-  onRun,
-  running,
 }: {
   path: string
   base: string
   head: string
   onSelectBase: (sha: string) => void
   onSelectHead: (sha: string) => void
-  onRun: () => void
-  running: boolean
 }) {
   const [history, setHistory] = useState<ImpactCommit[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -186,9 +181,6 @@ export default function CommitHistoryPanel({
   const [inspectedSha, setInspectedSha] = useState<string | null>(null)
   const [details, setDetails] = useState<ImpactCommitDetails | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
-  const [rangeStats, setRangeStats] = useState<ImpactRangeStats | null>(null)
-  const [rangeStatsLoading, setRangeStatsLoading] = useState(false)
-  const statsTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!path) return
@@ -221,29 +213,6 @@ export default function CommitHistoryPanel({
       )
       .finally(() => setDetailsLoading(false))
   }, [path, inspectedSha])
-
-  useEffect(() => {
-    if (statsTimer.current !== null) clearTimeout(statsTimer.current)
-    if (!path || !base || !head) {
-      setRangeStats(null)
-      return
-    }
-    if (base === head) {
-      setRangeStats({ commits: 0, files_changed: 0, added: 0, removed: 0 })
-      return
-    }
-    setRangeStatsLoading(true)
-    statsTimer.current = setTimeout(() => {
-      api.impact
-        .getRangeStats(path, base, head)
-        .then(setRangeStats)
-        .catch(() => setRangeStats(null))
-        .finally(() => setRangeStatsLoading(false))
-    }, 350)
-    return () => {
-      if (statsTimer.current !== null) clearTimeout(statsTimer.current)
-    }
-  }, [path, base, head])
 
   const layout = useMemo(() => layoutCommitGraph(history), [history])
   const railWidth = Math.max(1, layout.laneCount) * LANE_W + RAIL_PAD * 2
@@ -469,61 +438,6 @@ export default function CommitHistoryPanel({
           )}
         </Box>
       )}
-
-      <Flex px={4} py={2} gap={2} align="center" borderTop="1px solid" borderColor="whiteAlpha.100" wrap="wrap">
-        {base || head ? (
-          <HStack spacing={1.5} minW={0} wrap="wrap">
-            {base && (
-              <Badge variant="subtle" colorScheme="gray" borderRadius="full" px={2} py={0.5} fontSize="2xs">
-                BASE {base.slice(0, 7)}
-              </Badge>
-            )}
-            {head && (
-              <Badge variant="subtle" colorScheme="green" borderRadius="full" px={2} py={0.5} fontSize="2xs">
-                HEAD {head.slice(0, 7)}
-              </Badge>
-            )}
-            <Button
-                size="xs"
-                variant="ghost"
-                color="gray.500"
-                _hover={{ color: 'gray.200' }}
-                onClick={() => {
-                  onSelectBase('')
-                  onSelectHead('')
-                }}
-              >
-                Clear
-              </Button>
-          </HStack>
-        ) : (
-          <Text fontSize="xs" color="gray.600">
-            Pick base and head from the graph, or use the selects above.
-          </Text>
-        )}
-        <Box flex={1} />
-        {rangeStatsLoading ? (
-          <Spinner size="xs" color="var(--accent)" />
-        ) : (
-          rangeStats &&
-          base &&
-          head && (
-            <Text fontSize="xs" color="gray.500" whiteSpace="nowrap">
-              <Box as="span" color="gray.300" fontWeight="medium">
-                {rangeStats.commits}
-              </Box>{' '}
-              commits ·{' '}
-              <Box as="span" color="gray.300" fontWeight="medium">
-                {rangeStats.files_changed}
-              </Box>{' '}
-              files · <Box as="span" color="green.400">+{rangeStats.added}</Box> <Box as="span" color="red.400">−{rangeStats.removed}</Box>
-            </Text>
-          )
-        )}
-        <Button size="xs" colorScheme="blue" isLoading={running} isDisabled={!base} onClick={onRun}>
-          Run impact
-        </Button>
-      </Flex>
 
       {detailsLoading && !details && (
         <Flex py={4} align="center" justify="center" gap={2} color="gray.600" borderTop="1px solid" borderColor="whiteAlpha.100">

@@ -14,9 +14,6 @@ import {
   HStack,
   IconButton,
   Input,
-  InputGroup,
-  InputLeftElement,
-  InputRightElement,
   Modal,
   ModalBody,
   ModalContent,
@@ -26,17 +23,12 @@ import {
   Progress,
   Select,
   Spinner,
-  Tab,
-  TabList,
-  TabPanel,
-  TabPanels,
-  Tabs,
   Text,
   VStack,
   Tooltip,
   useDisclosure,
 } from '@chakra-ui/react'
-import { AddIcon, ArrowUpDownIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon, SearchIcon, SmallCloseIcon } from '@chakra-ui/icons'
+import { AddIcon, ArrowUpDownIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon } from '@chakra-ui/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   api,
@@ -57,8 +49,7 @@ import { impactMarkdown } from '../utils/impactMarkdown'
 const SKILL_INSTALL_PATH = '~/.agents/skills/create-diagram-impact/SKILL.md'
 
 type RepoFilter = 'all' | 'ready' | 'setup'
-type ResultTab = 'architecture' | 'coverage'
-type ArchitectureView = 'diagram' | 'markdown'
+type ResultView = 'diagram' | 'markdown' | 'gaps'
 
 function coverageColor(coverage: ImpactCoverage): string {
   if (!coverage.applicable) return 'gray'
@@ -487,7 +478,6 @@ function fileStatusColor(change: ImpactFile['change'] | undefined): string {
 }
 
 function ImpactFilesPanel({ files }: { files: ImpactFile[] }) {
-  const [open, setOpen] = useState(true)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const tree = useMemo(() => buildImpactFileTree(files), [files])
@@ -569,30 +559,6 @@ function ImpactFilesPanel({ files }: { files: ImpactFile[] }) {
     )
   }
 
-  if (!open) {
-    return (
-      <Box
-        flexShrink={0}
-        w="40px"
-        border="1px solid"
-        borderColor="var(--border-main)"
-        borderRadius="xl"
-        bg="var(--bg-panel)"
-        p={1.5}
-        alignSelf="stretch"
-        display="flex"
-        flexDir="column"
-        alignItems="center"
-        gap={2}
-      >
-        <IconButton aria-label="Expand files panel" icon={<ChevronRightIcon />} size="sm" variant="ghost" onClick={() => setOpen(true)} />
-        <Text fontSize="10px" color="gray.500" fontWeight="700" textTransform="uppercase" letterSpacing="0.08em" style={{ writingMode: 'vertical-rl' }}>
-          Files
-        </Text>
-      </Box>
-    )
-  }
-
   return (
     <Box
       w={{ base: 'full', lg: '280px' }}
@@ -625,7 +591,6 @@ function ImpactFilesPanel({ files }: { files: ImpactFile[] }) {
             </Text>
           )}
         </HStack>
-        <IconButton aria-label="Collapse files panel" icon={<ChevronLeftIcon />} size="xs" variant="ghost" onClick={() => setOpen(false)} />
       </Flex>
       <Box overflowY="auto" p={1.5} minH={0}>
         {tree.length === 0 ? (
@@ -815,7 +780,6 @@ export default function Repositories() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedRef, setSelectedRef] = useState<string | null>(() => searchParams.get('repo'))
-  const [sidebarQuery, setSidebarQuery] = useState('')
   const [repoFilter, setRepoFilter] = useState<RepoFilter>('all')
   const [status, setStatus] = useState<{ repository: ImpactRepository; commits: ImpactCommit[] } | null>(null)
   const [statusLoading, setStatusLoading] = useState(false)
@@ -827,8 +791,8 @@ export default function Repositories() {
   const [linking, setLinking] = useState(false)
   const [branchDraft, setBranchDraft] = useState('')
   const [branchSaving, setBranchSaving] = useState(false)
-  const [resultTab, setResultTab] = useState<ResultTab>('architecture')
-  const [architectureView, setArchitectureView] = useState<ArchitectureView>('diagram')
+  const [resultView, setResultView] = useState<ResultView>('diagram')
+  const [filesOpen, setFilesOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<ImpactRepository | null>(null)
   const [removing, setRemoving] = useState(false)
   const addDisclosure = useDisclosure()
@@ -940,21 +904,15 @@ export default function Repositories() {
   }, [effectiveRepo?.ref, effectiveRepo?.branch])
 
   const filteredRepos = useMemo(() => {
-    const q = sidebarQuery.trim().toLowerCase()
     return repositories.filter((repository) => {
       if (repoFilter !== 'all') {
         const statusValue = repoStatus(repository)
         if (repoFilter === 'ready' && statusValue !== 'ready') return false
         if (repoFilter === 'setup' && statusValue === 'ready') return false
       }
-      if (!q) return true
-      return (
-        repository.name.toLowerCase().includes(q) ||
-        repository.local_path.toLowerCase().includes(q) ||
-        repository.branch.toLowerCase().includes(q)
-      )
+      return true
     })
-  }, [repositories, sidebarQuery, repoFilter])
+  }, [repositories, repoFilter])
 
   const readyCount = useMemo(() => repositories.filter((repository) => repoStatus(repository) === 'ready').length, [repositories])
   const setupCount = repositories.length - readyCount
@@ -1054,7 +1012,7 @@ export default function Repositories() {
     try {
       const result = await api.impact.analyze({ path, base, head: head || 'HEAD' })
       setReport(result)
-      setResultTab('architecture')
+      setResultView('diagram')
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : 'Impact analysis failed')
     } finally {
@@ -1096,45 +1054,6 @@ export default function Repositories() {
 
   return (
     <Box h="full" bg="var(--bg-canvas)" display="flex" flexDir="column" overflow="hidden">
-      <Flex px={4} py={2.5} gap={3} align="center" borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
-        <InputGroup size="sm" maxW={{ base: 'none', md: '480px' }} w="full" flex={1} minW={0}>
-          <InputLeftElement pointerEvents="none" color="gray.500">
-            <SearchIcon boxSize={3.5} />
-          </InputLeftElement>
-          <Input
-            placeholder="Filter repositories…"
-            value={sidebarQuery}
-            onChange={(event) => setSidebarQuery(event.target.value)}
-            variant="elevated"
-            _placeholder={{ color: 'gray.600' }}
-          />
-          {sidebarQuery && (
-            <InputRightElement>
-              <IconButton
-                aria-label="Clear filter"
-                icon={<SmallCloseIcon />}
-                size="xs"
-                variant="ghost"
-                color="gray.500"
-                _hover={{ color: 'gray.200' }}
-                onClick={() => setSidebarQuery('')}
-              />
-            </InputRightElement>
-          )}
-        </InputGroup>
-        <Flex align="center" gap={2} flexShrink={0} ml={{ md: 'auto' }}>
-          <Box fontSize="xs" color="gray.500" whiteSpace="nowrap" display={{ base: 'none', sm: 'block' }}>
-            <Box as="span" color="gray.300" fontWeight="medium">
-              {repositories.length}
-            </Box>
-            {' '}linked
-          </Box>
-          <Button size="sm" colorScheme="blue" leftIcon={<AddIcon />} onClick={addDisclosure.onOpen}>
-            Add
-          </Button>
-        </Flex>
-      </Flex>
-
       {error && (
         <Alert status="error" borderRadius={0} flexShrink={0}>
           <AlertIcon />
@@ -1401,7 +1320,7 @@ export default function Repositories() {
                     <Text fontSize="xs" color="gray.700" mt={1}>
                       Try adjusting your filter
                     </Text>
-                    <Button size="xs" variant="ghost" mt={2} color="gray.500" onClick={() => { setSidebarQuery(''); setRepoFilter('all') }}>
+                    <Button size="xs" variant="ghost" mt={2} color="gray.500" onClick={() => setRepoFilter('all')}>
                       Clear filters
                     </Button>
                   </Box>
@@ -1441,6 +1360,14 @@ export default function Repositories() {
               </Box>
             ) : (
               <>
+                <CommitHistoryPanel
+                  path={localPath}
+                  base={base}
+                  head={head}
+                  onSelectBase={setBase}
+                  onSelectHead={setHead}
+                />
+
                 <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
                   <Flex px={4} h="40px" align="center" gap={2} borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
                     <Text fontSize="10px" color="gray.500" fontWeight="bold" textTransform="uppercase" flex={1} isTruncated>
@@ -1474,18 +1401,13 @@ export default function Repositories() {
                       </Tooltip>
                       <CompareSide label="Head" dot="green.400" value={head} commits={commits} selected={headCommit} onSelect={setHead} />
                     </Flex>
+                    <Flex justify="center" mt={3}>
+                      <Button size="sm" colorScheme="blue" isLoading={running} isDisabled={!base} onClick={() => void runImpact()}>
+                        Run impact
+                      </Button>
+                    </Flex>
                   </Box>
                 </Box>
-
-                <CommitHistoryPanel
-                  path={localPath}
-                  base={base}
-                  head={head}
-                  onSelectBase={setBase}
-                  onSelectHead={setHead}
-                  onRun={() => void runImpact()}
-                  running={running}
-                />
 
                 {running && (
                   <Flex py={8} align="center" justify="center" direction="column" gap={3} color="gray.600" borderBottom="1px solid" borderColor="whiteAlpha.100">
@@ -1495,82 +1417,84 @@ export default function Repositories() {
                 )}
 
                 {report && !running && (
-                  <>
+                  <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
+                    <Flex px={4} minH="40px" py={1} align="center" gap={2} wrap="wrap" borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
+                      <Text fontSize="10px" color="gray.500" fontWeight="bold" textTransform="uppercase" flexShrink={0}>
+                        Impact
+                      </Text>
+                      <Box flex={1} />
+                      {resultView !== 'gaps' && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          color={filesOpen ? 'white' : 'whiteAlpha.600'}
+                          bg={filesOpen ? 'whiteAlpha.100' : 'transparent'}
+                          _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
+                          onClick={() => setFilesOpen((current) => !current)}
+                          aria-pressed={filesOpen}
+                          flexShrink={0}
+                        >
+                          Files
+                          <Badge ml={1.5} variant="subtle" fontSize="2xs" borderRadius="full">
+                            {report.changed_files.length}
+                          </Badge>
+                        </Button>
+                      )}
+                      <Box w="280px" flexShrink={0}>
+                        <SegmentedControl<ResultView>
+                          ariaLabel="Impact view"
+                          value={resultView}
+                          onChange={setResultView}
+                          options={[
+                            { value: 'diagram', label: 'Diagram' },
+                            { value: 'markdown', label: 'Markdown' },
+                            { value: 'gaps', label: 'Gaps', count: report.coverage.gaps.length },
+                          ]}
+                        />
+                      </Box>
+                      <Tooltip label="Copy the PR-comment markdown" placement="top">
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          color="gray.400"
+                          _hover={{ color: 'gray.100' }}
+                          leftIcon={<CopyIcon />}
+                          onClick={() => copyPath(impactMarkdownText, 'Markdown')}
+                          flexShrink={0}
+                        >
+                          Copy as markdown
+                        </Button>
+                      </Tooltip>
+                    </Flex>
                     <Box px={4} py={3}>
-                      <Tabs
-                        size="sm"
-                        variant="enclosed"
-                        index={resultTab === 'architecture' ? 0 : 1}
-                        onChange={(index) => setResultTab(index === 0 ? 'architecture' : 'coverage')}
-                      >
-                        <TabList>
-                          <Tab>
-                            Architecture
-                          </Tab>
-                          <Tab>
-                            Gaps
-                            <Badge ml={1.5} variant="subtle" fontSize="2xs" borderRadius="full" colorScheme={report.coverage.gaps.length ? 'orange' : 'green'}>
-                              {report.coverage.gaps.length}
-                            </Badge>
-                          </Tab>
-                        </TabList>
-                        <TabPanels>
-                          <TabPanel p={3}>
-                            <Flex gap={3} align="stretch" direction={{ base: 'column', lg: 'row' }}>
-                              <ImpactFilesPanel files={report.changed_files} />
-                              <Box flex={1} minW={0}>
-                                <Flex mb={3} align="center" justify="space-between" gap={3} wrap="wrap">
-                                  <Box w="200px">
-                                    <SegmentedControl<ArchitectureView>
-                                      ariaLabel="Architecture view"
-                                      value={architectureView}
-                                      onChange={setArchitectureView}
-                                      options={[
-                                        { value: 'diagram', label: 'Diagram' },
-                                        { value: 'markdown', label: 'Markdown' },
-                                      ]}
-                                    />
-                                  </Box>
-                                  <Tooltip label="Copy the PR-comment markdown" placement="top">
-                                    <Button
-                                      size="xs"
-                                      variant="ghost"
-                                      color="gray.400"
-                                      _hover={{ color: 'gray.100' }}
-                                      leftIcon={<CopyIcon />}
-                                      onClick={() => copyPath(impactMarkdownText, 'Markdown')}
-                                    >
-                                      Copy as markdown
-                                    </Button>
-                                  </Tooltip>
-                                </Flex>
-                                {architectureView === 'markdown' ? (
-                                  <Box
-                                    h="460px"
-                                    overflowY="auto"
-                                    bg="var(--bg-canvas)"
-                                    border="1px solid"
-                                    borderColor="var(--border-main)"
-                                    borderRadius="xl"
-                                    sx={markdownPanelBodySx}
-                                  >
-                                    <Box p={4}>
-                                      <MarkdownPreview markdown={impactMarkdownText} />
-                                    </Box>
-                                  </Box>
-                                ) : (
-                                  <ImpactCanvas report={report} onOpenElement={openElement} />
-                                )}
+                      {resultView === 'gaps' ? (
+                        <CoveragePanel coverage={report.coverage} />
+                      ) : (
+                        <Flex gap={3} align="stretch" direction={{ base: 'column', lg: 'row' }}>
+                          {filesOpen && <ImpactFilesPanel files={report.changed_files} />}
+                          <Box flex={1} minW={0}>
+                            {resultView === 'markdown' ? (
+                              <Box
+                                h="460px"
+                                overflowY="auto"
+                                bg="var(--bg-canvas)"
+                                border="1px solid"
+                                borderColor="var(--border-main)"
+                                borderRadius="xl"
+                                sx={markdownPanelBodySx}
+                              >
+                                <Box p={4}>
+                                  <MarkdownPreview markdown={impactMarkdownText} />
+                                </Box>
                               </Box>
-                            </Flex>
-                          </TabPanel>
-                          <TabPanel p={3}>
-                            <CoveragePanel coverage={report.coverage} />
-                          </TabPanel>
-                        </TabPanels>
-                      </Tabs>
+                            ) : (
+                              <ImpactCanvas report={report} onOpenElement={openElement} />
+                            )}
+                          </Box>
+                        </Flex>
+                      )}
                     </Box>
-                  </>
+                  </Box>
                 )}
 
                 {!report && !running && commits.length === 0 && (
