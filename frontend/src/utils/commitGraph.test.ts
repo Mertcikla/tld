@@ -46,8 +46,8 @@ describe('layoutCommitGraph', () => {
     expect(layout.rows.map((row) => row.lane)).toEqual([0, 0, 0])
     expect(layout.laneCount).toBe(1)
     expect(layout.edges).toEqual([
-      { fromRow: 0, fromLane: 0, toRow: 1, toLane: 0 },
-      { fromRow: 1, fromLane: 0, toRow: 2, toLane: 0 },
+      { fromRow: 0, fromLane: 0, toRow: 1, toLane: 0, railLane: 0 },
+      { fromRow: 1, fromLane: 0, toRow: 2, toLane: 0, railLane: 0 },
     ])
   })
 
@@ -61,20 +61,20 @@ describe('layoutCommitGraph', () => {
     ])
     expect(layout.rows[0].lane).toBe(0)
     expect(layout.rows[0].isMerge).toBe(true)
-    // First parent inherits the merge lane; the fork takes a new lane, and
-    // the base continues on the fork lane after the join.
+    // First-parent rails remain reserved through the shared parent.
     expect(layout.rows[1].lane).toBe(1)
     expect(layout.rows[2].lane).toBe(0)
-    expect(layout.rows[3].lane).toBe(1)
+    expect(layout.rows[3].lane).toBe(0)
     expect(layout.laneCount).toBe(2)
-    // The main-line edge curves into the base on lane 1.
+    // Main stays on lane 0; the feature joins from its reserved rail.
     const join = layout.edges.find((edge) => edge.fromRow === 2)
-    expect(join).toMatchObject({ fromLane: 0, toRow: 3, toLane: 1 })
+    expect(join).toMatchObject({ fromLane: 0, toRow: 3, toLane: 0, railLane: 0 })
+    expect(layout.edges.find((edge) => edge.fromRow === 1)).toMatchObject({ fromLane: 1, toLane: 0, railLane: 1 })
   })
 
   it('emits a stub when the parent is outside the list', () => {
     const layout = layoutCommitGraph([commit('c2', ['c1'])])
-    expect(layout.edges).toEqual([{ fromRow: 0, fromLane: 0, toRow: null, toLane: 0 }])
+    expect(layout.edges).toEqual([{ fromRow: 0, fromLane: 0, toRow: null, toLane: 0, railLane: 0 }])
   })
 
   it('handles root commits without edges', () => {

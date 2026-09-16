@@ -6,6 +6,8 @@ export interface GraphEdge {
   /** Null when the parent is outside the loaded list: render a downward stub. */
   toRow: number | null
   toLane: number
+  /** Lane reserved for the branch while this edge is in flight. */
+  railLane: number
 }
 
 export interface GraphRow {
@@ -21,14 +23,14 @@ export interface CommitGraphLayout {
 }
 
 export const GRAPH_LANE_COLORS = [
-  'var(--accent)',
-  'green.400',
-  'orange.400',
-  'purple.400',
-  'cyan.400',
-  'yellow.400',
-  'pink.400',
-  'teal.400',
+  '#63B3ED',
+  '#68D391',
+  '#F6AD55',
+  '#B794F4',
+  '#4FD1C5',
+  '#F6E05E',
+  '#F687B3',
+  '#76E4F7',
 ]
 
 export interface ParsedCommitRefs {
@@ -89,6 +91,7 @@ export function layoutCommitGraph(commits: ImpactCommit[]): CommitGraphLayout {
   })
 
   const lanes: (string | null)[] = []
+  const rails: number[][] = []
   const takeLane = (sha: string): number => {
     const reserved = lanes.indexOf(sha)
     if (reserved >= 0) return reserved
@@ -105,29 +108,31 @@ export function layoutCommitGraph(commits: ImpactCommit[]): CommitGraphLayout {
     const reserved = lanes.indexOf(commit.sha)
     const lane = reserved >= 0 ? reserved : takeLane(commit.sha)
     rows[row].lane = lane
-    lanes[lane] = null
+    // A branch can reserve more than one incoming rail. Release every rail
+    // that arrives at this commit together so a live connection cannot be
+    // reused by an unrelated commit before it reaches its parent.
+    lanes.forEach((sha, index) => {
+      if (sha === commit.sha) lanes[index] = null
+    })
+    rails[row] = []
     commit.parents.forEach((parent, parentIndex) => {
-      if (lanes.includes(parent)) return
       if (parentIndex === 0) {
         lanes[lane] = parent
+        rails[row].push(lane)
       } else {
-        takeLane(parent)
+        rails[row].push(takeLane(parent))
       }
     })
-  })
-
-  const trailingLaneBySha = new Map<string, number>()
-  lanes.forEach((sha, lane) => {
-    if (sha !== null && !trailingLaneBySha.has(sha)) trailingLaneBySha.set(sha, lane)
   })
 
   const edges: GraphEdge[] = []
   commits.forEach((commit, row) => {
     const fromLane = rows[row].lane
-    commit.parents.forEach((parent) => {
+    commit.parents.forEach((parent, parentIndex) => {
       const toRow = indexBySha.get(parent) ?? null
-      const toLane = toRow !== null ? rows[toRow].lane : (trailingLaneBySha.get(parent) ?? fromLane)
-      edges.push({ fromRow: row, fromLane, toRow, toLane })
+      const railLane = rails[row][parentIndex]
+      const toLane = toRow !== null ? rows[toRow].lane : railLane
+      edges.push({ fromRow: row, fromLane, toRow, toLane, railLane })
     })
   })
 

@@ -261,6 +261,14 @@ export default function CommitHistoryPanel({
 
   const nodeY = (row: number) => row * ROW_H + ROW_H / 2
   const nodeX = (lane: number) => RAIL_PAD + lane * LANE_W + LANE_W / 2
+  const edgePath = (x1: number, y1: number, x2: number, y2: number, railX: number) => {
+    const distance = Math.abs(y2 - y1)
+    const bend = Math.min(ROW_H, distance / 2)
+    const direction = Math.sign(y2 - y1) || 1
+    const startY = y1 + direction * bend
+    const endY = y2 - direction * bend
+    return `M ${x1} ${y1} C ${x1} ${y1 + direction * bend / 2}, ${railX} ${y1 + direction * bend / 2}, ${railX} ${startY} L ${railX} ${endY} C ${railX} ${y2 - direction * bend / 2}, ${x2} ${y2 - direction * bend / 2}, ${x2} ${y2}`
+  }
 
   return (
     <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
@@ -328,16 +336,17 @@ export default function CommitHistoryPanel({
                   const x1 = nodeX(edge.fromLane)
                   const y1 = nodeY(edge.fromRow)
                   const x2 = nodeX(edge.toLane)
-                  const y2 = edge.toRow !== null ? nodeY(edge.toRow) : y1 + ROW_H * 0.9
-                  const color = laneColor(edge.fromLane)
-                  return edge.fromLane === edge.toLane ? (
-                    <line key={index} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={2} />
+                  const y2 = edge.toRow !== null ? nodeY(edge.toRow) : layout.rows.length * ROW_H
+                  const color = laneColor(edge.railLane)
+                  return x1 === x2 && x1 === nodeX(edge.railLane) ? (
+                    <line key={index} x1={x1} y1={y1} x2={x2} y2={y2} stroke={color} strokeWidth={2.5} strokeLinecap="round" />
                   ) : (
                     <path
                       key={index}
-                      d={`M ${x1} ${y1} C ${x1} ${(y1 + y2) / 2}, ${x2} ${(y1 + y2) / 2}, ${x2} ${y2}`}
+                      d={edgePath(x1, y1, x2, y2, nodeX(edge.railLane))}
                       stroke={color}
-                      strokeWidth={2}
+                      strokeWidth={2.5}
+                      strokeLinecap="round"
                       fill="none"
                     />
                   )
@@ -360,7 +369,7 @@ export default function CommitHistoryPanel({
                         cy={nodeY(index)}
                         r={9}
                         fill="none"
-                        stroke={row.commit.sha === base ? 'gray.400' : 'green.400'}
+                        stroke={row.commit.sha === base ? '#A0AEC0' : '#68D391'}
                         strokeWidth={1.5}
                       />
                     )}
