@@ -64,17 +64,31 @@ if ([string]::IsNullOrWhiteSpace($env:INSTALL_DIR)) {
     $InstallDir = $env:INSTALL_DIR
 }
 
-$ReleasesUrl = "https://api.github.com/repos/$Repo/releases/latest"
+$Filename = "tld_Windows_$Arch.zip"
+$ReleasesUrl = "https://api.github.com/repos/$Repo/releases?per_page=100"
 Write-Host "Finding latest stable tld release..."
 $Releases = Invoke-RestMethod -Uri $ReleasesUrl -Headers @{ "User-Agent" = "tld-installer" }
-$StableRelease = $Releases
+if ($Releases -isnot [System.Array]) { $Releases = @($Releases) }
+# Filter by tag (stable tags have no prerelease suffix) and require the wanted
+# asset, mirroring the in-place updater. Do not trust /latest alone.
+$StableRelease = $Releases | Where-Object {
+    $_.tag_name -and ($_.tag_name -notlike "*-*") -and (-not $_.draft) -and (-not $_.prerelease) -and
+    ($_.assets | Where-Object { $_.name -eq $Filename })
+} | Select-Object -First 1
+if (-not $StableRelease) {
+    # Fall back to tag-only filtering if flags are mis-set on the release.
+    $StableRelease = $Releases | Where-Object {
+        $_.tag_name -and ($_.tag_name -notlike "*-*") -and
+        ($_.assets | Where-Object { $_.name -eq $Filename })
+    } | Select-Object -First 1
+}
+if (-not $StableRelease) { throw "Could not find latest stable version with $Filename for $Repo" }
 $Version = $StableRelease.tag_name
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     throw "Could not find latest version for $Repo"
 }
 
-$Filename = "tld_Windows_$Arch.zip"
 $Url = "https://github.com/mertcikla/tld/releases/download/$Version/$Filename"
 $TempDir = Join-Path ([IO.Path]::GetTempPath()) ("tld-install-" + [Guid]::NewGuid().ToString("N"))
 $ZipPath = Join-Path $TempDir $Filename

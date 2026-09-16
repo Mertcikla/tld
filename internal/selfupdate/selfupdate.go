@@ -206,6 +206,28 @@ func IsNewer(current, latest string) bool {
 	return semver.Compare(latest, current) > 0
 }
 
+// BrewManagedDir reports the Homebrew prefix managing the current executable,
+// if any. Self-updating a brew-managed binary would desync `brew upgrade`.
+func BrewManagedDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		resolved = exe
+	}
+	lower := strings.ToLower(resolved)
+	switch {
+	case strings.Contains(lower, "/cellar/"),
+		strings.Contains(lower, "/home/linuxbrew/"),
+		strings.Contains(lower, "/opt/homebrew/"),
+		strings.Contains(lower, "/usr/local/cellar/"):
+		return resolved
+	}
+	return ""
+}
+
 func normalizeOptions(opts Options) Options {
 	if opts.Repo == "" {
 		opts.Repo = DefaultRepo

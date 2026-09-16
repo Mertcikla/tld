@@ -48,7 +48,9 @@ func StartupUpdateStatus(ctx context.Context, cfg *workspace.Config, progressWri
 		StatePath:      statePath,
 		ProgressWriter: progressWriter,
 	}
-	if cfg.Updates.Auto {
+	// Never auto-replace a Homebrew-managed binary; only notify.
+	auto := cfg.Updates.Auto && selfupdate.BrewManagedDir() == ""
+	if auto {
 		status, err := selfupdate.Install(ctx, opts)
 		if err != nil {
 			return nil, fmt.Sprintf("Automatic update failed: %v. Retry with tld version update.", err)

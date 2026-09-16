@@ -51,7 +51,20 @@ func TestShellInstallerPreservesExistingBinaryOnFailedDownload(t *testing.T) {
 			if err := file.Close(); err != nil {
 				t.Fatal(err)
 			}
-			curl := "#!/bin/sh\nfor arg do destination=\"$arg\"; done\nworkdir=$(dirname \"$destination\")\nmkdir \"$workdir/unexpected\"\nprintf keep > \"$workdir/unexpected/sentinel\"\ncp \"$TEST_ARCHIVE\" \"$destination\"\n"
+			curl := "#!/bin/sh\n" +
+				"# API lookup (stdout mode): return a hijacked prerelease first to prove\n" +
+				"# the installer filters prerelease tags and resolves stable.\n" +
+				"for arg do case \"$arg\" in *api.github.com*) printf '%s\\n' '{\"tag_name\":\"v9.9.9-beta.1\"}' '{\"tag_name\":\"v1.2.3\"}'; exit 0;; esac; done\n" +
+				"# Download mode: require the stable version in the download URL,\n" +
+				"# proving prerelease filtering, then copy the fixture archive to -o destination.\n" +
+				"url=\"\"; destination=\"\"; prev=\"\"\n" +
+				"for arg do\n" +
+				"  case \"$arg\" in *releases/download/*) url=\"$arg\";; esac\n" +
+				"  if [ \"$prev\" = \"-o\" ]; then destination=\"$arg\"; fi\n" +
+				"  prev=\"$arg\"\n" +
+				"done\n" +
+				"case \"$url\" in *v1.2.3*) ;; *) echo \"installer selected wrong version: $url\" >&2; exit 3;; esac\n" +
+				"workdir=$(dirname \"$destination\")\nmkdir \"$workdir/unexpected\"\nprintf keep > \"$workdir/unexpected/sentinel\"\ncp \"$TEST_ARCHIVE\" \"$destination\"\n"
 			if fail {
 				curl += "exit 22\n"
 			}

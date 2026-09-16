@@ -33,10 +33,20 @@ if [ -z "$INSTALL_DIR" ]; then
     fi
 fi
 
-# GitHub's latest endpoint excludes drafts and prereleases.
-VERSION="latest stable"
+# Resolve the latest stable release (tags without a prerelease suffix).
+# Do not trust /releases/latest alone: a mis-flagged prerelease would hijack fresh installs
+# while the in-place updater (which filters semver prereleases) stays on stable.
+VERSION=$(curl --retry 3 --connect-timeout 15 -LsSf -H "User-Agent: tld-installer" \
+  "https://api.github.com/repos/mertcikla/tld/releases?per_page=100" \
+  | grep -o '"tag_name": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -v -- "-" | head -n 1)
+
+if [ -z "$VERSION" ]; then
+    echo "Could not find latest stable version for mertcikla/tld" >&2
+    exit 1
+fi
+
 FILENAME="tld_${OS}_${ARCH}.tar.gz"
-URL="https://github.com/mertcikla/tld/releases/latest/download/$FILENAME"
+URL="https://github.com/mertcikla/tld/releases/download/$VERSION/$FILENAME"
 
 echo "Downloading $BINARY $VERSION for $OS/$ARCH..."
 
