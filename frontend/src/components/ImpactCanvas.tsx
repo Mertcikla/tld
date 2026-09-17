@@ -32,14 +32,14 @@ export default function ImpactCanvas({ report, onOpenElement }: Props) {
 
   if (loading) {
     return (
-      <Center h="460px">
+      <Center h={{ base: '460px', lg: '100%' }} minH="240px">
         <Spinner color="var(--accent)" />
       </Center>
     )
   }
   if (error || !filtered || elementIds.size === 0) {
     return (
-      <Center h="460px">
+      <Center h={{ base: '460px', lg: '100%' }} minH="240px">
         <Text fontSize="sm" color="gray.500">
           {elementIds.size === 0 ? 'No mapped elements to draw for this change.' : 'Architecture canvas unavailable.'}
         </Text>
@@ -50,7 +50,8 @@ export default function ImpactCanvas({ report, onOpenElement }: Props) {
   return (
     <Box
       position="relative"
-      h="460px"
+      h={{ base: '460px', lg: '100%' }}
+      minH="240px"
       bg="var(--bg-canvas)"
       overflow="hidden"
     >

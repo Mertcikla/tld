@@ -20,6 +20,11 @@ import {
   ModalFooter,
   ModalHeader,
   ModalOverlay,
+  Popover,
+  PopoverBody,
+  PopoverContent,
+  PopoverTrigger,
+  Portal,
   Progress,
   Select,
   Spinner,
@@ -50,7 +55,7 @@ import { impactMarkdown, type ImpactDiagramStyle } from '../utils/impactMarkdown
 const SKILL_INSTALL_PATH = '~/.agents/skills/create-diagram-impact/SKILL.md'
 
 type RepoFilter = 'all' | 'ready' | 'setup'
-type ResultView = 'diagram' | 'markdown' | 'gaps'
+type ResultView = 'diagram' | 'markdown'
 
 function coverageColor(coverage: ImpactCoverage): string {
   if (!coverage.applicable) return 'gray'
@@ -606,7 +611,8 @@ function ImpactFilesPanel({
         w="22px"
         flexShrink={0}
         minH={0}
-        maxH={{ base: '240px', lg: '460px' }}
+        h={{ base: 'auto', lg: '100%' }}
+        maxH={{ base: '240px', lg: 'none' }}
         borderBottom={{ base: '1px solid', lg: 'none' }}
         borderColor="whiteAlpha.100"
         direction={{ base: 'row', lg: 'column' }}
@@ -658,7 +664,8 @@ function ImpactFilesPanel({
       display="flex"
       flexDir="column"
       minH={0}
-      maxH={{ base: '240px', lg: '460px' }}
+      h={{ base: 'auto', lg: '100%' }}
+      maxH={{ base: '240px', lg: 'none' }}
     >
       <Flex
         align="center"
@@ -1475,7 +1482,7 @@ export default function Repositories() {
             </Box>
           )}
 
-          <Box flex={1} minW={0} minH={0} overflowY="auto">
+          <Box flex={1} minW={0} minH={0} overflowY="auto" display="flex" flexDir="column">
             {!effectiveRepo ? (
               <Flex h="100%" align="center" justify="center" direction="column" gap={2} color="gray.600" px={4} textAlign="center">
                 <Text fontSize="sm">Select a repository to inspect its status and run impact analysis.</Text>
@@ -1506,20 +1513,22 @@ export default function Repositories() {
               </Box>
             ) : (
               <>
-                <CommitHistoryPanel
-                  path={localPath}
-                  base={base}
-                  head={head}
-                  onSelectBase={setBase}
-                  onSelectHead={setHead}
-                  onPickCommit={pickCommit}
-                  collapsed={historyCollapsed}
-                  onToggleCollapsed={() => setHistoryCollapsed((current) => !current)}
-                  hint={selectionHint}
-                />
+                <Box flexShrink={0}>
+                  <CommitHistoryPanel
+                    path={localPath}
+                    base={base}
+                    head={head}
+                    onSelectBase={setBase}
+                    onSelectHead={setHead}
+                    onPickCommit={pickCommit}
+                    collapsed={historyCollapsed}
+                    onToggleCollapsed={() => setHistoryCollapsed((current) => !current)}
+                    hint={selectionHint}
+                  />
+                </Box>
 
                 {base && !head && (
-                  <Box borderBottom="1px solid" borderColor="whiteAlpha.100" bg="rgba(var(--accent-rgb), 0.06)" px={4} py={2.5}>
+                  <Box flexShrink={0} borderBottom="1px solid" borderColor="whiteAlpha.100" bg="rgba(var(--accent-rgb), 0.06)" px={4} py={2.5}>
                     <HStack spacing={2} align="center">
                       <Badge variant="subtle" colorScheme="gray" fontSize="xs" borderRadius="full" px={2}>
                         BASE {baseCommit?.short_sha}
@@ -1532,7 +1541,7 @@ export default function Repositories() {
                 )}
 
                 {baseCommit && headCommit && (
-                  <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
+                  <Box flexShrink={0} borderBottom="1px solid" borderColor="whiteAlpha.100">
                     <Flex
                       px={4}
                       h="40px"
@@ -1598,14 +1607,22 @@ export default function Repositories() {
                 )}
 
                 {running && (
-                  <Flex py={8} align="center" justify="center" direction="column" gap={3} color="gray.600" borderBottom="1px solid" borderColor="whiteAlpha.100">
+                  <Flex flexShrink={0} py={8} align="center" justify="center" direction="column" gap={3} color="gray.600" borderBottom="1px solid" borderColor="whiteAlpha.100">
                     <Spinner size="lg" color="var(--accent)" />
                     <Text fontSize="sm">Analyzing impact…</Text>
                   </Flex>
                 )}
 
                 {report && !running && (
-                  <Box borderBottom="1px solid" borderColor="whiteAlpha.100" ref={impactAnchorRef}>
+                  <Box
+                    borderBottom="1px solid"
+                    borderColor="whiteAlpha.100"
+                    ref={impactAnchorRef}
+                    display={{ base: 'block', lg: 'flex' }}
+                    flexDir="column"
+                    flex={{ base: 'none', lg: 1 }}
+                    minH={{ base: 'auto', lg: '420px' }}
+                  >
                     <Flex px={4} minH="40px" py={1} align="center" gap={2} wrap="wrap" borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
 
                       <Box flex={1} />
@@ -1617,7 +1634,6 @@ export default function Repositories() {
                           options={[
                             { value: 'diagram', label: 'Diagram' },
                             { value: 'markdown', label: 'Markdown' },
-                            { value: 'gaps', label: 'Gaps', count: report.coverage.gaps.length },
                           ]}
                         />
                       </Box>
@@ -1642,70 +1658,115 @@ export default function Repositories() {
                         </Tooltip>
                       )}
                     </Flex>
-                    <Box>
-                      {resultView === 'gaps' ? (
-                        <CoveragePanel coverage={report.coverage} />
-                      ) : (
-                        <Flex gap={0} align="stretch" direction={{ base: 'column', lg: 'row' }}>
-                          <ImpactFilesPanel files={report.changed_files} open={filesOpen} onToggle={() => setFilesOpen((current) => !current)} />
-                          <Box flex={1} minW={0}>
-                            {resultView === 'markdown' ? (
-                              <Box
-                                h="460px"
-                                overflowY="auto"
-                                sx={markdownPanelBodySx}
-                              >
-                                <Box px={4} py={2}>
-                                  <MarkdownPreview markdown={impactMarkdownText} />
-                                </Box>
+                    <Box
+                      flex={{ base: 'none', lg: 1 }}
+                      minH={0}
+                      display={{ base: 'block', lg: 'flex' }}
+                      flexDir="column"
+                    >
+                      <Flex gap={0} align="stretch" direction={{ base: 'column', lg: 'row' }} h={{ base: 'auto', lg: '100%' }}>
+                        <ImpactFilesPanel files={report.changed_files} open={filesOpen} onToggle={() => setFilesOpen((current) => !current)} />
+                        <Box flex={1} minW={0} minH={0}>
+                          {resultView === 'markdown' ? (
+                            <Box
+                              h={{ base: '460px', lg: '100%' }}
+                              overflowY="auto"
+                              sx={markdownPanelBodySx}
+                            >
+                              <Box px={4} py={2}>
+                                <MarkdownPreview markdown={impactMarkdownText} />
                               </Box>
-                            ) : (
-                              <ImpactCanvas report={report} onOpenElement={openElement} />
-                            )}
-                          </Box>
-                        </Flex>
-                      )}
+                            </Box>
+                          ) : (
+                            <ImpactCanvas report={report} onOpenElement={openElement} />
+                          )}
+                        </Box>
+                      </Flex>
                     </Box>
-                    <Flex
+                    <Grid
+                      flexShrink={0}
                       px={4}
                       py={3}
-                      justify="center"
-                      align="center"
-                      gap={2}
-                      wrap="wrap"
+                      templateColumns={{ base: '1fr', md: '1fr auto 1fr' }}
+                      alignItems="center"
+                      gap={3}
                       borderTop="1px solid"
                       borderColor="whiteAlpha.100"
                     >
-                      <Button
-                        {...accentOutlineCtaStyle}
-                        size="sm"
-                        px={5}
-                        fontSize="sm"
-                        fontWeight="semibold"
-                        borderRadius="lg"
-                        leftIcon={<RepeatIcon boxSize={3.5} />}
-                        onClick={startNewRun}
-                      >
-                        Run new
-                      </Button>
-                      <Button
-                        {...accentCtaStyle}
-                        size="sm"
-                        px={5}
-                        fontSize="sm"
-                        fontWeight="semibold"
-                        borderRadius="lg"
-                        leftIcon={<CopyIcon boxSize={3.5} />}
-                        onClick={() => copyPath(impactMarkdownText, 'Markdown')}
-                      >
-                        Copy as markdown
-                      </Button>
-                    </Flex>
+                      <Box minW={0} display="flex" justifyContent={{ base: 'center', md: 'flex-start' }}>
+                        <Popover placement="top-start" isLazy>
+                          <PopoverTrigger>
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              h="24px"
+                              px={2}
+                              color="gray.500"
+                              fontWeight="medium"
+                              title="Binding coverage and gaps"
+                              _hover={{ color: 'gray.200', bg: 'whiteAlpha.100' }}
+                              leftIcon={
+                                <Box
+                                  w="6px"
+                                  h="6px"
+                                  borderRadius="full"
+                                  bg={`${coverageColor(report.coverage)}.400`}
+                                  flexShrink={0}
+                                />
+                              }
+                            >
+                              {report.coverage.applicable ? `${report.coverage.percent}% covered` : 'No source changed'}
+                            </Button>
+                          </PopoverTrigger>
+                          <Portal>
+                            <PopoverContent
+                              bg="var(--bg-panel)"
+                              border="1px solid"
+                              borderColor="whiteAlpha.200"
+                              rounded="lg"
+                              shadow="panel-sm"
+                              w={{ base: 'calc(100vw - 32px)', sm: '360px' }}
+                            >
+                              <PopoverBody p={4}>
+                                <CoveragePanel coverage={report.coverage} />
+                              </PopoverBody>
+                            </PopoverContent>
+                          </Portal>
+                        </Popover>
+                      </Box>
+                      <HStack spacing={2} justify="center" flexShrink={0}>
+                        <Button
+                          {...accentOutlineCtaStyle}
+                          size="sm"
+                          px={5}
+                          fontSize="sm"
+                          fontWeight="semibold"
+                          borderRadius="lg"
+                          leftIcon={<RepeatIcon boxSize={3.5} />}
+                          onClick={startNewRun}
+                        >
+                          Run new
+                        </Button>
+                        <Button
+                          {...accentCtaStyle}
+                          size="sm"
+                          px={5}
+                          fontSize="sm"
+                          fontWeight="semibold"
+                          borderRadius="lg"
+                          leftIcon={<CopyIcon boxSize={3.5} />}
+                          onClick={() => copyPath(impactMarkdownText, 'Markdown')}
+                        >
+                          Copy as markdown
+                        </Button>
+                      </HStack>
+                      <Box display={{ base: 'none', md: 'block' }} />
+                    </Grid>
                   </Box>
                 )}
 
                 {!report && !running && commits.length === 0 && (
-                  <Box px={4} py={6} textAlign="center">
+                  <Box flexShrink={0} px={4} py={6} textAlign="center">
                     <Text fontSize="sm" color="gray.500">
                       No commits found for this checkout. Check the branch name and reload status.
                     </Text>
