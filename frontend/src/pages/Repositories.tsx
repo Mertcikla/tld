@@ -57,6 +57,20 @@ const SKILL_INSTALL_PATH = '~/.agents/skills/create-diagram-impact/SKILL.md'
 type RepoFilter = 'all' | 'ready' | 'setup'
 type ResultView = 'diagram' | 'markdown'
 
+const DIAGRAM_STYLE_OPTIONS: { value: ImpactDiagramStyle; label: string }[] = [
+  { value: 'full', label: 'Full' },
+  { value: 'bounded', label: 'Bounded' },
+  { value: 'lanes', label: 'Lanes' },
+  { value: 'groups', label: 'Groups' },
+]
+
+const DIAGRAM_STYLE_HINTS: Record<ImpactDiagramStyle, string> = {
+  full: 'Every impacted element and relationship.',
+  bounded: 'Impacted elements with their closest surrounding context.',
+  lanes: 'Layered by direction — incoming, touched, and outgoing.',
+  groups: 'Rolled up by owning architecture.',
+}
+
 function coverageColor(coverage: ImpactCoverage): string {
   if (!coverage.applicable) return 'gray'
   if (coverage.confidence === 'high') return 'green'
@@ -1638,25 +1652,6 @@ export default function Repositories() {
                         />
                       </Box>
                       <Box flex={1} />
-                      {resultView === 'markdown' && (
-                        <Tooltip label="Mermaid diagram style for the markdown and copy output" placement="top">
-                          <Select
-                            size="xs"
-                            w="190px"
-                            flexShrink={0}
-                            value={diagramStyle}
-                            onChange={(event) => setDiagramStyle(event.target.value as ImpactDiagramStyle)}
-                            aria-label="Diagram style"
-                            bg="whiteAlpha.100"
-                            borderColor="whiteAlpha.200"
-                          >
-                            <option value="full">Full context</option>
-                            <option value="bounded">Bounded neighborhood</option>
-                            <option value="lanes">Directional lanes</option>
-                            <option value="groups">Architectural groups</option>
-                          </Select>
-                        </Tooltip>
-                      )}
                     </Flex>
                     <Box
                       flex={{ base: 'none', lg: 1 }}
@@ -1668,13 +1663,34 @@ export default function Repositories() {
                         <ImpactFilesPanel files={report.changed_files} open={filesOpen} onToggle={() => setFilesOpen((current) => !current)} />
                         <Box flex={1} minW={0} minH={0}>
                           {resultView === 'markdown' ? (
-                            <Box
-                              h={{ base: '460px', lg: '100%' }}
-                              overflowY="auto"
-                              sx={markdownPanelBodySx}
-                            >
-                              <Box px={4} py={2}>
-                                <MarkdownPreview markdown={impactMarkdownText} />
+                            <Box h={{ base: '460px', lg: '100%' }} display="flex" flexDir="column" minH={0}>
+                              <Flex
+                                px={4}
+                                py={2.5}
+                                align="center"
+                                gap={3}
+                                flexWrap="wrap"
+                                borderBottom="1px solid"
+                                borderColor="whiteAlpha.100"
+                                flexShrink={0}
+                              >
+                                <MicroLabel>Diagram style</MicroLabel>
+                                <Box minW="300px" flex="0 1 380px">
+                                  <SegmentedControl<ImpactDiagramStyle>
+                                    ariaLabel="Mermaid diagram style"
+                                    value={diagramStyle}
+                                    onChange={setDiagramStyle}
+                                    options={DIAGRAM_STYLE_OPTIONS}
+                                  />
+                                </Box>
+                                <Text fontSize="xs" color="gray.500" flex="1" minW="180px">
+                                  {DIAGRAM_STYLE_HINTS[diagramStyle]}
+                                </Text>
+                              </Flex>
+                              <Box flex={1} minH={0} overflowY="auto" sx={markdownPanelBodySx}>
+                                <Box px={4} py={2}>
+                                  <MarkdownPreview markdown={impactMarkdownText} />
+                                </Box>
                               </Box>
                             </Box>
                           ) : (
