@@ -79,6 +79,7 @@ import {
   GetCommitDetailsResponseSchema,
   GetRangeStatsResponseSchema,
   AnalyzeImpactResponseSchema,
+  ListImpactRunsResponseSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/impact_service_pb'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset, isWailsApp } from '../config/runtime'
@@ -242,6 +243,14 @@ export interface ImpactReport {
   unmapped: string[]
   coverage: ImpactCoverage
   changed_files: ImpactFile[]
+}
+
+export interface ImpactRunSnapshot {
+  id: number
+  base: string
+  head: string
+  created_at: string
+  report: ImpactReport
 }
 
 export interface WatchLock {
@@ -935,6 +944,16 @@ function toImpactCoverage(raw: Record<string, unknown> | undefined): ImpactCover
         suggested_new_ref: String(item.suggested_new_ref ?? ''),
       }
     }),
+  }
+}
+
+export function toImpactRunSnapshot(raw: Record<string, unknown>): ImpactRunSnapshot {
+  return {
+    id: Number(raw.id ?? 0),
+    base: String(raw.base ?? ''),
+    head: String(raw.head ?? ''),
+    created_at: String(raw.created_at ?? ''),
+    report: toImpactReport((raw.report ?? {}) as Record<string, unknown>),
   }
 }
 
@@ -2340,6 +2359,21 @@ export const api = {
         const json = j<{ found: boolean; report?: Record<string, unknown> }>(GetLatestImpactResponseSchema, res)
         if (!json.found || !json.report) return null
         return toImpactReport(json.report)
+      }),
+
+    listRuns: (path: string, input?: { limit?: number; offset?: number }): Promise<{ runs: ImpactRunSnapshot[]; hasMore: boolean }> =>
+      rpc(async () => {
+        const res = await impactClient.listImpactRuns({
+          orgId: '',
+          path,
+          limit: input?.limit ?? 5,
+          offset: input?.offset ?? 0,
+        })
+        const json = j<{ runs: Record<string, unknown>[]; has_more: boolean }>(ListImpactRunsResponseSchema, res)
+        return {
+          runs: (json.runs ?? []).map(toImpactRunSnapshot),
+          hasMore: Boolean(json.has_more),
+        }
       }),
   },
 

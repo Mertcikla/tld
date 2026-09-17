@@ -528,6 +528,38 @@ func (s *impactService) GetLatestImpact(ctx context.Context, req *connect.Reques
 	}), nil
 }
 
+// ListImpactRuns returns persisted impact runs for a checkout, newest first,
+// so the UI can browse analysis history and reload a snapshot on demand.
+func (s *impactService) ListImpactRuns(ctx context.Context, req *connect.Request[diagv1.ListImpactRunsRequest]) (*connect.Response[diagv1.ListImpactRunsResponse], error) {
+	path := strings.TrimSpace(req.Msg.GetPath())
+	if path == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path is required"))
+	}
+	resp := &diagv1.ListImpactRunsResponse{}
+	if s.watchStore == nil {
+		return connect.NewResponse(resp), nil
+	}
+	repoRoot := path
+	if root, err := tldgit.RepoRoot(path); err == nil {
+		repoRoot = root
+	}
+	runs, hasMore, err := s.watchStore.ListImpactRuns(ctx, repoRoot, int(req.Msg.GetLimit()), int(req.Msg.GetOffset()))
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	for _, run := range runs {
+		resp.Runs = append(resp.Runs, &diagv1.ImpactRunSnapshot{
+			Id:        run.ID,
+			Base:      run.Base,
+			Head:      run.Head,
+			CreatedAt: run.CreatedAt,
+			Report:    s.protoImpactRun(run),
+		})
+	}
+	resp.HasMore = hasMore
+	return connect.NewResponse(resp), nil
+}
+
 // impactRun trims a deterministic report into the persisted snapshot shape,
 // resolving element and connector ids so a loaded run renders without the live
 // architecture.
@@ -861,6 +893,9 @@ func protoRunElements(elements []watch.ImpactRunElement) []*diagv1.ImpactElement
 func impactChangeTypeString(element watch.ImpactElement, changed map[string]tldgit.WorktreeChange) string {
 	added, deleted, other := 0, 0, 0
 	for _, evidence := range element.Evidence {
+		if evidence.Kind == "contains" {
+			continue
+		}
 		switch changed[evidence.Path] {
 		case tldgit.WorktreeAdded:
 			added++
@@ -897,6 +932,11 @@ func impactEvidenceStrings(element watch.ImpactElement) []string {
 	seen := map[string]struct{}{}
 	var out []string
 	for _, evidence := range element.Evidence {
+		// "contains" evidence trails ancestor rollup, not owned files, and is
+		// skipped so badges and markdown attribute files to their real owner.
+		if evidence.Kind == "contains" {
+			continue
+		}
 		// Prefer the changed file so persisted runs can attribute source detail
 		// back to the element; fall back to the binding detail when no file
 		// matched (for example observed relationships).

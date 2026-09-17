@@ -116,24 +116,25 @@ owners for unmapped code. Nothing here mutates the architecture.`,
 				report = watchpkg.AnalyzeImpact(opts)
 			}
 
-			if formatFlag(cmd) == "json" {
-				return watchpkg.RenderImpactJSON(cmd.OutOrStdout(), report)
-			}
-			style := watchpkg.NormalizeDiagramStyle(diagram)
-			switch strings.ToLower(strings.TrimSpace(render)) {
-			case "markdown", "md":
-				return watchpkg.RenderImpactMarkdownStyle(cmd.OutOrStdout(), report, style)
-			case "mermaid":
-				return watchpkg.RenderImpactMermaidStyle(cmd.OutOrStdout(), report, style)
-			default:
-				return watchpkg.RenderImpactText(cmd.OutOrStdout(), report)
-			}
+		if formatFlag(cmd) == "json" {
+			return watchpkg.RenderImpactJSON(cmd.OutOrStdout(), report)
+		}
+		switch strings.ToLower(strings.TrimSpace(render)) {
+		case "markdown", "md":
+			return watchpkg.RenderImpactMarkdown(cmd.OutOrStdout(), report)
+		case "mermaid":
+			return watchpkg.RenderImpactMermaid(cmd.OutOrStdout(), report)
+		default:
+			return watchpkg.RenderImpactText(cmd.OutOrStdout(), report)
+		}
 		},
 	}
 
 	c.Flags().StringVar(&base, "base", "main", "git ref to diff against (uses the merge base)")
 	c.Flags().StringVar(&render, "render", "text", "output renderer: text, markdown, or mermaid")
-	c.Flags().StringVar(&diagram, "diagram", "review", "diagram style for markdown/mermaid: review, full, bounded, lanes, or groups")
+	c.Flags().StringVar(&diagram, "diagram", "review", "deprecated: diagram styles were consolidated into a single reviewer view; this flag is ignored")
+	_ = c.Flags().MarkDeprecated("diagram", "diagram styles were consolidated into a single reviewer view; this flag is ignored")
+	_ = c.Flags().MarkHidden("diagram")
 	c.Flags().BoolVar(&includeWorktree, "include-worktree", false, "also include uncommitted worktree changes")
 	c.Flags().BoolVar(&nameHeuristics, "name-heuristics", true, "derive weak candidate bindings from element names when no file path is set")
 	c.Flags().BoolVar(&evidence, "evidence", false, "detect observed implementation relationships (Tree-sitter/LSP)")

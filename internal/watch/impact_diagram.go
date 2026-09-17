@@ -8,64 +8,55 @@ import (
 )
 
 // DiagramStyle selects how an impact report is projected onto a Mermaid graph.
-// The projection never changes the report; it only chooses which confirmed
-// context is drawn.
+//
+// Deprecated: diagram styles were consolidated into a single reviewer
+// projection (bounded selection, dependency lanes, compact change badges).
+// All values normalize to DiagramStyleReview and BuildImpactDiagram ignores
+// the style argument. The type and constructors are kept so existing callers
+// keep compiling.
 type DiagramStyle string
 
 const (
-	// DiagramStyleReview is the default projection for reviewing a change. It
-	// keeps the bounded selection so every node is an authored element, then
-	// annotates changed elements with the source files that touched them and
-	// their line deltas. The annotation is the only code-level detail; the graph
-	// itself is still derived entirely from the authored architecture.
+	// DiagramStyleReview is the single reviewer projection: the bounded
+	// selection grouped into dependency lanes, with changed elements carrying
+	// a compact change badge instead of file paths. Every node remains an
+	// authored element.
 	DiagramStyleReview DiagramStyle = "review"
-	// DiagramStyleFull draws every changed, candidate, and related element.
+	// Deprecated: maps to the single reviewer projection.
 	DiagramStyleFull DiagramStyle = "full"
-	// DiagramStyleBounded keeps changed elements and their most connected
-	// neighbors within a soft node/edge budget.
+	// Deprecated: maps to the single reviewer projection.
 	DiagramStyleBounded DiagramStyle = "bounded"
-	// DiagramStyleLanes is the bounded selection grouped into incoming, outgoing,
-	// and bidirectional dependency lanes.
+	// Deprecated: maps to the single reviewer projection.
 	DiagramStyleLanes DiagramStyle = "lanes"
-	// DiagramStyleGroups collapses the report into authored-owner buckets.
+	// Deprecated: maps to the single reviewer projection.
 	DiagramStyleGroups DiagramStyle = "groups"
 )
 
 const (
 	defaultDiagramNodeBudget = 10
 	defaultDiagramEdgeBudget = 16
-	// reviewDetailFileLimit caps how many source files are listed per element so
-	// a node label stays legible.
-	reviewDetailFileLimit = 3
 )
 
-// NormalizeDiagramStyle parses a user-supplied style, defaulting to review.
-func NormalizeDiagramStyle(value string) DiagramStyle {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case string(DiagramStyleFull), "all":
-		return DiagramStyleFull
-	case string(DiagramStyleBounded), "neighborhood":
-		return DiagramStyleBounded
-	case string(DiagramStyleLanes), "lane":
-		return DiagramStyleLanes
-	case string(DiagramStyleGroups), "grouped":
-		return DiagramStyleGroups
-	default:
-		return DiagramStyleReview
-	}
+// NormalizeDiagramStyle parses a user-supplied style.
+//
+// Deprecated: every input normalizes to DiagramStyleReview.
+func NormalizeDiagramStyle(_ string) DiagramStyle {
+	return DiagramStyleReview
 }
 
 // DiagramGroup summarizes one authored-owner bucket in a grouped diagram.
+//
+// Deprecated: the grouped projection was removed; this type is kept for
+// compatibility and is always empty.
 type DiagramGroup struct {
 	Name    string   `json:"name"`
 	Touched int      `json:"touched"`
 	Members []string `json:"members"`
 }
 
-// ImpactDiagram is a style-specific projection of an impact report. Nodes and
-// Edges are the subset actually drawn; OmittedNodes and OmittedEdges account for
-// the confirmed context the projection dropped. InternalEdges counts
-// relationships collapsed inside a group.
+// ImpactDiagram is the single reviewer projection of an impact report. Nodes
+// and Edges are the subset actually drawn; OmittedNodes and OmittedEdges
+// account for the confirmed context the projection dropped.
 type ImpactDiagram struct {
 	Style         DiagramStyle
 	Code          string
@@ -77,85 +68,54 @@ type ImpactDiagram struct {
 	InternalEdges int
 }
 
-// BuildImpactDiagram projects a report into the requested style. Candidates are
-// never promoted into confirmed context: bounded, lanes, and groups draw only
-// changed and related elements.
-func BuildImpactDiagram(report ImpactReport, style DiagramStyle) ImpactDiagram {
-	style = NormalizeDiagramStyle(string(style))
+// BuildImpactDiagram projects a report into the single reviewer diagram:
+// the bounded selection (changed elements plus their most connected
+// neighbors) grouped into dependency lanes. Candidates are never promoted
+// into confirmed context. The style argument is ignored and kept only for
+// compatibility.
+func BuildImpactDiagram(report ImpactReport, _ DiagramStyle) ImpactDiagram {
 	changedRefs := diagramRefSet(report.Changed)
-	switch style {
-	case DiagramStyleGroups:
-		nodes, edges, groups, internal, touched := groupedDiagram(report)
-		return ImpactDiagram{
-			Style:         style,
-			Code:          renderImpactDiagram(report, nodes, edges, touched, false, nil),
-			Nodes:         nodes,
-			Edges:         edges,
-			Groups:        groups,
-			InternalEdges: internal,
-		}
-	case DiagramStyleReview:
-		nodes, edges, omittedNodes, omittedEdges, detail := reviewDiagram(report, defaultDiagramNodeBudget, defaultDiagramEdgeBudget)
-		return ImpactDiagram{
-			Style:        style,
-			Code:         renderImpactDiagram(report, nodes, edges, changedRefs, false, detail),
-			Nodes:        nodes,
-			Edges:        edges,
-			OmittedNodes: omittedNodes,
-			OmittedEdges: omittedEdges,
-		}
-	case DiagramStyleBounded, DiagramStyleLanes:
-		nodes, edges, omittedNodes, omittedEdges := boundedDiagram(report, defaultDiagramNodeBudget, defaultDiagramEdgeBudget)
-		return ImpactDiagram{
-			Style:        style,
-			Code:         renderImpactDiagram(report, nodes, edges, changedRefs, style == DiagramStyleLanes, nil),
-			Nodes:        nodes,
-			Edges:        edges,
-			OmittedNodes: omittedNodes,
-			OmittedEdges: omittedEdges,
-		}
-	default:
-		nodes := fullDiagramNodes(report)
-		edges := validDiagramEdges(nodes, report.Edges)
-		return ImpactDiagram{
-			Style: DiagramStyleFull,
-			Code:  renderImpactDiagram(report, nodes, edges, changedRefs, false, nil),
-			Nodes: nodes,
-			Edges: edges,
-		}
+	nodes, edges, omittedNodes, omittedEdges := boundedDiagram(report, defaultDiagramNodeBudget, defaultDiagramEdgeBudget)
+	return ImpactDiagram{
+		Style:        DiagramStyleReview,
+		Code:         renderImpactDiagram(report, nodes, edges, changedRefs, true, changeBadges(report, nodes, changedRefs), omittedNodes, omittedEdges),
+		Nodes:        nodes,
+		Edges:        edges,
+		OmittedNodes: omittedNodes,
+		OmittedEdges: omittedEdges,
 	}
 }
 
-// reviewDiagram projects a report onto the bounded selection and computes a
-// per-changed-element annotation of the source files and line deltas that
-// caused it to be impacted. It never introduces synthetic code nodes; the
-// annotation simply makes the existing evidence legible on the diagram.
-func reviewDiagram(report ImpactReport, nodeBudget, edgeBudget int) (nodes []ImpactElement, edges []ImpactEdge, omittedNodes, omittedEdges int, detail map[string]string) {
-	nodes, edges, omittedNodes, omittedEdges = boundedDiagram(report, nodeBudget, edgeBudget)
-	changed := diagramRefSet(report.Changed)
+// changeBadges computes a compact change badge per changed element, e.g.
+// "3 files (+24 -5)". File paths and line deltas live in the report body and
+// side panels; the diagram carries only the aggregate so node labels stay
+// legible.
+func changeBadges(report ImpactReport, nodes []ImpactElement, changed map[string]struct{}) map[string]string {
 	stats := make(map[string]ChangedFile, len(report.ChangedFiles))
 	for _, file := range report.ChangedFiles {
 		stats[file.Path] = file
 	}
-	detail = map[string]string{}
+	out := map[string]string{}
 	for _, node := range nodes {
 		if _, ok := changed[node.Ref]; !ok {
 			continue
 		}
-		if line := reviewNodeDetail(node, stats); line != "" {
-			detail[node.Ref] = line
+		if badge := changeBadge(node, stats); badge != "" {
+			out[node.Ref] = badge
 		}
 	}
-	return nodes, edges, omittedNodes, omittedEdges, detail
+	return out
 }
 
-// reviewNodeDetail renders the changed source files for one element as a
-// multi-line label fragment. Line deltas are only shown when the change set
-// carried stats for that file.
-func reviewNodeDetail(node ImpactElement, stats map[string]ChangedFile) string {
+func changeBadge(node ImpactElement, stats map[string]ChangedFile) string {
 	seen := map[string]struct{}{}
 	paths := make([]string, 0, len(node.Evidence))
 	for _, evidence := range node.Evidence {
+		// "contains" evidence trails ancestor rollup, not owned files, and
+		// must not inflate the badge.
+		if evidence.Kind == "contains" {
+			continue
+		}
 		file := normalizeCodePath(evidence.Path)
 		if file == "" {
 			continue
@@ -169,31 +129,33 @@ func reviewNodeDetail(node ImpactElement, stats map[string]ChangedFile) string {
 	if len(paths) == 0 {
 		return ""
 	}
-	sort.Strings(paths)
-	extra := 0
-	if len(paths) > reviewDetailFileLimit {
-		extra = len(paths) - reviewDetailFileLimit
-		paths = paths[:reviewDetailFileLimit]
-	}
-	parts := make([]string, 0, reviewDetailFileLimit+1)
+	added, removed := 0, 0
+	uniformChange := ""
 	for _, file := range paths {
-		parts = append(parts, reviewFileDetail(file, stats[file]))
+		stat := stats[file]
+		added += stat.Added
+		removed += stat.Removed
+		change := strings.ToLower(strings.TrimSpace(stat.Change))
+		if uniformChange == "" {
+			uniformChange = change
+		} else if uniformChange != change {
+			uniformChange = "mixed"
+		}
 	}
-	if extra > 0 {
-		parts = append(parts, fmt.Sprintf("+%d more", extra))
+	files := "1 file"
+	if len(paths) > 1 {
+		files = fmt.Sprintf("%d files", len(paths))
 	}
-	return strings.Join(parts, "<br/>")
-}
-
-func reviewFileDetail(path string, file ChangedFile) string {
-	if file.Added == 0 && file.Removed == 0 {
-		return path
+	switch {
+	case added+removed > 0:
+		return fmt.Sprintf("%s (+%d -%d)", files, added, removed)
+	case uniformChange == "added":
+		return fmt.Sprintf("%s (added)", files)
+	case uniformChange == "deleted":
+		return fmt.Sprintf("%s (deleted)", files)
+	default:
+		return files
 	}
-	return fmt.Sprintf("%s (+%d -%d)", path, file.Added, file.Removed)
-}
-
-func fullDiagramNodes(report ImpactReport) []ImpactElement {
-	return uniqueDiagramNodes(append(append(append([]ImpactElement{}, report.Changed...), report.Candidates...), report.Related...))
 }
 
 // boundedDiagram keeps every changed element, ranks related neighbors by
@@ -374,109 +336,50 @@ func laneFor(ref string, changed map[string]struct{}, edges []ImpactEdge) string
 	}
 }
 
-// groupedDiagram collapses elements sharing an authored owner into one node.
-// Unowned elements remain ungrouped.
-func groupedDiagram(report ImpactReport) (nodes []ImpactElement, edges []ImpactEdge, groups []DiagramGroup, internalEdges int, touched map[string]struct{}) {
-	source := sortedDiagramNodes(append(append([]ImpactElement{}, report.Changed...), report.Related...))
-	changedRefs := diagramRefSet(report.Changed)
-	refToGroup := map[string]string{}
-	for _, node := range source {
-		refToGroup[node.Ref] = ownerGroupRef(node)
-	}
-
-	buckets := map[string][]ImpactElement{}
-	var bucketOrder []string
-	for _, node := range source {
-		ref := refToGroup[node.Ref]
-		if _, ok := buckets[ref]; !ok {
-			bucketOrder = append(bucketOrder, ref)
-		}
-		buckets[ref] = append(buckets[ref], node)
-	}
-	sort.Strings(bucketOrder)
-
-	touched = map[string]struct{}{}
-	for _, ref := range bucketOrder {
-		members := buckets[ref]
-		touchedCount := 0
-		for _, member := range members {
-			if _, ok := changedRefs[member.Ref]; ok {
-				touchedCount++
-			}
-		}
-		if touchedCount > 0 {
-			touched[ref] = struct{}{}
-		}
-		name := members[0].Name
-		if owner := strings.TrimSpace(members[0].Owner); owner != "" {
-			name = owner
-		}
-		groups = append(groups, DiagramGroup{Name: name, Touched: touchedCount, Members: diagramMemberNames(members)})
-		node := members[0]
-		node.Ref = ref
-		node.Name = fmt.Sprintf("%s (%d/%d touched)", name, touchedCount, len(members))
-		nodes = append(nodes, node)
-	}
-
-	type aggregate struct {
-		edge  ImpactEdge
-		count int
-	}
-	aggregated := map[string]*aggregate{}
-	var aggregateOrder []string
-	for _, edge := range uniqueDiagramEdges(validDiagramEdges(source, report.Edges)) {
-		sourceRef := refToGroup[edge.SourceRef]
-		targetRef := refToGroup[edge.TargetRef]
-		if sourceRef == targetRef {
-			internalEdges++
-			continue
-		}
-		key := sourceRef + "\x00" + targetRef + "\x00" + strconv.FormatBool(edge.Observed)
-		if existing, ok := aggregated[key]; ok {
-			existing.count++
-			continue
-		}
-		aggregated[key] = &aggregate{edge: ImpactEdge{SourceRef: sourceRef, TargetRef: targetRef, Observed: edge.Observed}, count: 1}
-		aggregateOrder = append(aggregateOrder, key)
-	}
-	sort.Strings(aggregateOrder)
-	for _, key := range aggregateOrder {
-		entry := aggregated[key]
-		origin := "declared"
-		if entry.edge.Observed {
-			origin = "observed"
-		}
-		entry.edge.Label = fmt.Sprintf("%d %s", entry.count, origin)
-		edges = append(edges, entry.edge)
-	}
-	return nodes, edges, groups, internalEdges, touched
-}
-
-func ownerGroupRef(node ImpactElement) string {
-	if owner := strings.TrimSpace(node.Owner); owner != "" {
-		return "owner:" + owner
-	}
-	return "element:" + node.Ref
-}
-
-func diagramMemberNames(members []ImpactElement) []string {
-	out := make([]string, 0, len(members))
-	for _, member := range members {
-		out = append(out, member.Name)
-	}
-	return out
-}
-
-// renderImpactDiagram writes the report header and the style-specific graph.
-// A non-nil detail map marks the review projection, which annotates changed
-// nodes and labels unlabelled observed edges.
-func renderImpactDiagram(report ImpactReport, nodes []ImpactElement, edges []ImpactEdge, changed map[string]struct{}, lanes bool, detail map[string]string) string {
-	lines := make([]string, 0, len(nodes)+len(edges)+4)
+// renderImpactDiagram writes the report header and the reviewer graph: the
+// bounded selection grouped into dependency lanes, with changed nodes
+// carrying a compact change badge. A non-nil detail map carries those badges
+// and marks unlabelled observed edges.
+func renderImpactDiagram(report ImpactReport, nodes []ImpactElement, edges []ImpactEdge, changed map[string]struct{}, lanes bool, detail map[string]string, omittedNodes, omittedEdges int) string {
+	lines := make([]string, 0, len(nodes)+len(edges)+5)
 	if report.Coverage.Applicable {
 		lines = append(lines, fmt.Sprintf("%%%% coverage: %d%% (%s)", report.Coverage.Percent, report.Coverage.Confidence))
 	}
+	if omitted := omittedDiagramLine(omittedNodes, omittedEdges); omitted != "" {
+		lines = append(lines, omitted)
+	}
 	lines = append(lines, renderImpactGraph(nodes, edges, changed, lanes, detail))
 	return strings.Join(lines, "\n")
+}
+
+// omittedDiagramLine accounts for confirmed context the budget dropped so
+// reviewers know the graph is trimmed. It is a Mermaid comment, invisible in
+// the rendered graph but present in the source.
+func omittedDiagramLine(omittedNodes, omittedEdges int) string {
+	if omittedNodes < 0 {
+		omittedNodes = 0
+	}
+	if omittedEdges < 0 {
+		omittedEdges = 0
+	}
+	if omittedNodes == 0 && omittedEdges == 0 {
+		return ""
+	}
+	parts := []string{}
+	if omittedNodes > 0 {
+		parts = append(parts, pluralizeDiagram(omittedNodes, "node"))
+	}
+	if omittedEdges > 0 {
+		parts = append(parts, pluralizeDiagram(omittedEdges, "edge"))
+	}
+	return "%% +" + strings.Join(parts, ", +") + " omitted"
+}
+
+func pluralizeDiagram(count int, unit string) string {
+	if count == 1 {
+		return fmt.Sprintf("%d %s", count, unit)
+	}
+	return fmt.Sprintf("%d %ss", count, unit)
 }
 
 func renderImpactGraph(nodes []ImpactElement, edges []ImpactEdge, changed map[string]struct{}, lanes bool, detail map[string]string) string {
@@ -540,12 +443,20 @@ func renderImpactGraph(nodes []ImpactElement, edges []ImpactEdge, changed map[st
 			continue
 		}
 		arrow := "-->"
-		if edge.Observed {
+		switch {
+		case edge.Observed:
 			arrow = "-.->"
+		case isContainmentEdge(edge):
+			arrow = "--o"
 		}
 		label := strings.TrimSpace(edge.Label)
-		if label == "" && detail != nil && edge.Observed {
-			label = "observed"
+		if label == "" && detail != nil {
+			switch {
+			case edge.Observed:
+				label = "observed"
+			case isContainmentEdge(edge):
+				label = "contains"
+			}
 		}
 		if label != "" {
 			lines = append(lines, fmt.Sprintf("  %s %s|%s| %s", sourceID, arrow, escapeMermaidLabel(label), targetID))
@@ -567,6 +478,14 @@ func renderImpactGraph(nodes []ImpactElement, edges []ImpactEdge, changed map[st
 			"  classDef changed fill:#fde68a,stroke:#b45309,stroke-width:2px,color:#78350f;")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// isContainmentEdge reports whether an edge represents folder containment
+// between bound elements (parent folder owns the child folder's path). The
+// check keys on the reserved "contains" label so containment survives the
+// persisted-run and proto shapes, which carry label and observed only.
+func isContainmentEdge(edge ImpactEdge) bool {
+	return !edge.Observed && strings.EqualFold(strings.TrimSpace(edge.Label), "contains")
 }
 
 func uniqueDiagramNodes(nodes []ImpactElement) []ImpactElement {

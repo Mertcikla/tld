@@ -2,13 +2,19 @@ import type { ImpactEdge, ImpactElement, ImpactFile, ImpactReport } from '../api
 
 // Mirrors internal/watch/impact_render.go and internal/watch/impact_diagram.go
 // so the PR-comment markdown and Mermaid diagram produced in the UI match
-// `tld impact --render markdown --diagram <style>`.
+// `tld impact --render markdown`.
+//
+// The diagram is a single reviewer projection: the bounded selection (changed
+// elements plus their most connected neighbors) grouped into dependency
+// lanes, with changed elements carrying a compact change badge instead of
+// file paths. Containment edges derived by the backend from nested folder
+// bindings render distinctly so folder hierarchies stay connected.
 
+/** Deprecated: diagram styles were consolidated into a single reviewer view. Kept for compatibility; values are ignored. */
 export type ImpactDiagramStyle = 'review' | 'full' | 'bounded' | 'lanes' | 'groups'
 
 const nodeBudget = 10
 const edgeBudget = 16
-const reviewFileLimit = 3
 
 export interface ImpactDiagramGroup {
   name: string
@@ -29,6 +35,10 @@ export interface ImpactDiagramData {
 
 function escapeMermaidLabel(value: string): string {
   return value.replace(/"/g, "'").replace(/\r?\n/g, ' ').trim()
+}
+
+export function isContainmentEdge(edge: ImpactEdge): boolean {
+  return !edge.observed && edge.label.trim().toLowerCase() === 'contains'
 }
 
 const nodeRefs = (nodes: ImpactElement[]): Set<string> => new Set(nodes.map((node) => node.ref))
@@ -120,74 +130,97 @@ export function laneFor(ref: string, changed: Set<string>, edges: ImpactEdge[]):
   return 'outgoing'
 }
 
-/** Review keeps the bounded selection and annotates each changed element with
- * the source files that touched it and their line deltas. Every node remains an
- * authored element; the annotation is the only code-level detail. */
-function reviewDiagram(report: ImpactReport): ReturnType<typeof boundedDiagram> & { detail: Map<string, string> } {
-  const graph = boundedDiagram(report)
-  const changed = new Set(report.changed.map((node) => node.ref))
-  const files = new Map(report.changed_files.map((file) => [file.path, file]))
-  const detail = new Map<string, string>()
-  for (const node of graph.nodes) {
-    if (!changed.has(node.ref)) continue
-    const annotation = reviewNodeDetail(node, files)
-    if (annotation) detail.set(node.ref, annotation)
+/** Compact change badge for a touched node, e.g. "3 files (+24 -5)". File
+ * paths live in the files panel and markdown body; the diagram carries only
+ * the aggregate so labels stay legible. */
+function changeBadge(node: ImpactElement, files: Map<string, ImpactFile>): string {
+  const paths = [...new Set((node.evidence ?? []).map((value) => (value ?? '').trim()).filter((value) => value.includes('/')))]
+  if (!paths.length) return ''
+  let added = 0
+  let removed = 0
+  let uniform: string | null = null
+  for (const path of paths) {
+    const file = files.get(path)
+    if (!file) {
+      uniform = uniform === null ? '' : uniform
+      continue
+    }
+    added += file.added
+    removed += file.removed
+    const change = file.change === 'added' ? 'added' : file.change === 'deleted' ? 'deleted' : 'modified'
+    if (uniform === null) uniform = change
+    else if (uniform !== change) uniform = 'mixed'
   }
-  return { ...graph, detail }
+  const count = paths.length === 1 ? '1 file' : `${paths.length} files`
+  if (added + removed > 0) return `${count} (+${added} -${removed})`
+  if (uniform === 'added') return `${count} (added)`
+  if (uniform === 'deleted') return `${count} (deleted)`
+  return count
 }
 
-function reviewNodeDetail(node: ImpactElement, files: Map<string, ImpactFile>): string {
-  const paths = [...new Set((node.evidence ?? []).map((value) => (value ?? '').trim()).filter(Boolean))].sort()
-  if (!paths.length) return ''
-  const shown = paths.slice(0, reviewFileLimit)
-  const parts = shown.map((path) => {
-    const file = files.get(path)
-    if (!file || (file.added === 0 && file.removed === 0)) return path
-    return `${path} (+${file.added} -${file.removed})`
-  })
-  if (paths.length > reviewFileLimit) parts.push(`+${paths.length - reviewFileLimit} more`)
-  return parts.join('<br/>')
+function changeBadges(report: ImpactReport, nodes: ImpactElement[]): Map<string, string> {
+  const changed = new Set(report.changed.map((node) => node.ref))
+  const files = new Map(report.changed_files.map((file) => [file.path, file]))
+  const badges = new Map<string, string>()
+  for (const node of nodes) {
+    if (!changed.has(node.ref)) continue
+    const badge = changeBadge(node, files)
+    if (badge) badges.set(node.ref, badge)
+  }
+  return badges
+}
+
+function pluralize(count: number, unit: string): string {
+  return count === 1 ? `1 ${unit}` : `${count} ${unit}s`
+}
+
+function omittedLine(omittedNodes: number, omittedEdges: number): string {
+  const parts: string[] = []
+  if (omittedNodes > 0) parts.push(pluralize(omittedNodes, 'node'))
+  if (omittedEdges > 0) parts.push(pluralize(omittedEdges, 'edge'))
+  if (!parts.length) return ''
+  return `%% +${parts.join(', +')} omitted`
 }
 
 function renderGraph(
   nodes: ImpactElement[],
   edges: ImpactEdge[],
   changed: Set<string>,
-  lanes: boolean,
-  detail?: Map<string, string>,
+  badges: Map<string, string>,
 ): string {
-  const lines: string[] = [lanes ? 'flowchart LR' : 'flowchart TD']
+  const lines: string[] = ['flowchart LR']
   const ids = new Map<string, string>()
   nodes.forEach((node, index) => ids.set(node.ref, `n${index + 1}`))
   const nodeLine = (node: ImpactElement) => {
     let label = escapeMermaidLabel((node.name ?? '').trim() || node.ref)
-    const annotation = (detail?.get(node.ref) ?? '').trim()
-    if (annotation) label += `<br/>${escapeMermaidLabel(annotation)}`
+    const badge = (badges.get(node.ref) ?? '').trim()
+    if (badge) label += `<br/>${escapeMermaidLabel(badge)}`
     return `  ${ids.get(node.ref)}["${label}"]`
   }
-  if (lanes) {
-    const laneOrder: { key: ReturnType<typeof laneFor>; title: string }[] = [
-      { key: 'incoming', title: 'Incoming context' },
-      { key: 'changed', title: 'Code touched' },
-      { key: 'outgoing', title: 'Outgoing context' },
-      { key: 'both', title: 'Bidirectional context' },
-    ]
-    for (const lane of laneOrder) {
-      const members = nodes.filter((node) => laneFor(node.ref, changed, edges) === lane.key)
-      if (!members.length) continue
-      lines.push(`  subgraph lane_${lane.key}["${lane.title}"]`, '    direction TB', ...members.map(nodeLine), '  end',
-        `  style lane_${lane.key} fill:#172234,stroke:#42536a,color:#cbd5e0`)
-    }
-  } else {
-    lines.push(...nodes.map(nodeLine))
+  const laneOrder: { key: ReturnType<typeof laneFor>; title: string }[] = [
+    { key: 'incoming', title: 'Incoming context' },
+    { key: 'changed', title: 'Code touched' },
+    { key: 'outgoing', title: 'Outgoing context' },
+    { key: 'both', title: 'Bidirectional context' },
+  ]
+  for (const lane of laneOrder) {
+    const members = nodes.filter((node) => laneFor(node.ref, changed, edges) === lane.key)
+    if (!members.length) continue
+    lines.push(`  subgraph lane_${lane.key}["${lane.title}"]`, '    direction TB', ...members.map(nodeLine), '  end',
+      `  style lane_${lane.key} fill:#172234,stroke:#42536a,color:#cbd5e0`)
   }
   for (const edge of edges) {
     const sourceID = ids.get(edge.source_ref)
     const targetID = ids.get(edge.target_ref)
     if (!sourceID || !targetID) continue
-    const arrow = edge.observed ? '-.->' : '-->'
+    let arrow = '-->'
+    if (edge.observed) arrow = '-.->'
+    else if (isContainmentEdge(edge)) arrow = '--o'
     let label = (edge.label ?? '').trim()
-    if (!label && detail && edge.observed) label = 'observed'
+    if (!label) {
+      if (edge.observed) label = 'observed'
+      else if (isContainmentEdge(edge)) label = 'contains'
+    }
     lines.push(label
       ? `  ${sourceID} ${arrow}|${escapeMermaidLabel(label)}| ${targetID}`
       : `  ${sourceID} ${arrow} ${targetID}`)
@@ -200,74 +233,34 @@ function renderGraph(
   return lines.join('\n')
 }
 
-function groupedDiagram(report: ImpactReport) {
-  const source = sortedNodes([...report.changed, ...report.related])
-  const changed = new Set(report.changed.map((node) => node.ref))
-  // Prefixes avoid collisions between an owner ref and an ungrouped element ref.
-  const groupRef = (node: ImpactElement) => node.owner?.trim() ? `owner:${node.owner.trim()}` : `element:${node.ref}`
-  const buckets = new Map<string, ImpactElement[]>()
-  for (const node of source) {
-    const ref = groupRef(node)
-    buckets.set(ref, [...(buckets.get(ref) ?? []), node])
-  }
-  const groups: ImpactDiagramGroup[] = []
-  const touchedGroups = new Set<string>()
-  const nodes = [...buckets.keys()].sort().map((ref) => {
-    const members = buckets.get(ref)!
-    const touched = members.filter((node) => changed.has(node.ref)).length
-    if (touched) touchedGroups.add(ref)
-    const name = members[0].owner?.trim() || members[0].name
-    groups.push({ name, touched, members: members.map((node) => node.name) })
-    return { ...members[0], ref, name: `${name} (${touched}/${members.length} touched)` }
-  })
-  const aggregated = new Map<string, { source_ref: string; target_ref: string; observed: boolean; count: number }>()
-  let internalEdges = 0
-  for (const edge of uniqueEdges(validEdges(source, report.edges))) {
-    const source_ref = groupRef(source.find((node) => node.ref === edge.source_ref)!)
-    const target_ref = groupRef(source.find((node) => node.ref === edge.target_ref)!)
-    if (source_ref === target_ref) { internalEdges++; continue }
-    const key = [source_ref, target_ref, edge.observed].join('\u0000')
-    const existing = aggregated.get(key)
-    if (existing) { existing.count += 1; continue }
-    aggregated.set(key, { source_ref, target_ref, observed: edge.observed, count: 1 })
-  }
-  const edges = uniqueEdges([...aggregated.values()].map(({ count, ...edge }) => ({
-    ...edge, label: `${count} ${edge.observed ? 'observed' : 'declared'}`,
-  })))
-  return { nodes, edges, groups, touchedGroups, internalEdges }
-}
-
-function fullDiagramNodes(report: ImpactReport): ImpactElement[] {
-  return uniqueNodes([...report.changed, ...report.candidates, ...report.related])
-}
-
 function withCoverage(report: ImpactReport, code: string): string {
   if (!report.coverage.applicable) return code
   return `%% coverage: ${report.coverage.percent}% (${report.coverage.confidence})\n${code}`
 }
 
-export function buildImpactDiagram(report: ImpactReport, style: ImpactDiagramStyle = 'review'): ImpactDiagramData {
-  const common = { omittedNodes: 0, omittedEdges: 0, groups: [] as ImpactDiagramGroup[], internalEdges: 0 }
-  if (style === 'groups') {
-    const graph = groupedDiagram(report)
-    return { ...common, style, nodes: graph.nodes, edges: graph.edges, groups: graph.groups, internalEdges: graph.internalEdges, code: withCoverage(report, renderGraph(graph.nodes, graph.edges, graph.touchedGroups, false)) }
+/** Builds the single reviewer diagram. The style argument is deprecated and ignored. */
+export function buildImpactDiagram(report: ImpactReport, _style?: ImpactDiagramStyle): ImpactDiagramData {
+  const graph = boundedDiagram(report)
+  const changed = new Set(report.changed.map((node) => node.ref))
+  const badges = changeBadges(report, graph.nodes)
+  const omitted = omittedLine(graph.omittedNodes, graph.omittedEdges)
+  const graphCode = renderGraph(graph.nodes, graph.edges, changed, badges)
+  const code = withCoverage(report, omitted ? `${omitted}\n${graphCode}` : graphCode)
+  return {
+    style: 'review',
+    nodes: graph.nodes,
+    edges: graph.edges,
+    omittedNodes: graph.omittedNodes,
+    omittedEdges: graph.omittedEdges,
+    groups: [],
+    internalEdges: 0,
+    code,
   }
-  if (style === 'review') {
-    const graph = reviewDiagram(report)
-    const changed = new Set(report.changed.map((node) => node.ref))
-    return { ...common, style, nodes: graph.nodes, edges: graph.edges, omittedNodes: graph.omittedNodes, omittedEdges: graph.omittedEdges, code: withCoverage(report, renderGraph(graph.nodes, graph.edges, changed, false, graph.detail)) }
-  }
-  if (style === 'bounded' || style === 'lanes') {
-    const graph = boundedDiagram(report)
-    return { ...common, style, ...graph, code: withCoverage(report, renderGraph(graph.nodes, graph.edges, new Set(report.changed.map((node) => node.ref)), style === 'lanes')) }
-  }
-  const nodes = fullDiagramNodes(report)
-  const edges = validEdges(nodes, report.edges)
-  return { ...common, style: 'full', nodes, edges, code: withCoverage(report, renderGraph(nodes, edges, new Set(report.changed.map((node) => node.ref)), false)) }
 }
 
-export function impactMermaid(report: ImpactReport, style: ImpactDiagramStyle = 'review'): string {
-  return buildImpactDiagram(report, style).code
+/** Renders the single reviewer diagram as Mermaid. The style argument is deprecated and ignored. */
+export function impactMermaid(report: ImpactReport, _style?: ImpactDiagramStyle): string {
+  return buildImpactDiagram(report).code
 }
 
 function coverageSummaryLine(report: ImpactReport): string {
@@ -297,16 +290,25 @@ function elementLine(element: ImpactElement): string {
   return evidence ? `- ${element.name} — ${evidence}` : `- ${element.name}`
 }
 
-export function impactMarkdown(report: ImpactReport, style: ImpactDiagramStyle = 'review'): string {
+/** Renders the PR-comment markdown with the single reviewer diagram. The style argument is deprecated and ignored. */
+export function impactMarkdown(report: ImpactReport, _style?: ImpactDiagramStyle): string {
   const lines: string[] = []
   lines.push('## Architecture Impact', '')
 
-  lines.push('', '```mermaid', impactMermaid(report, style), '```')
+  lines.push('', '```mermaid', impactMermaid(report), '```')
   const summaryLine = coverageSummaryLine(report)
   if (summaryLine) lines.push(`**Coverage:** ${summaryLine}`, '')
   if (report.changed.length === 0 && report.candidates.length === 0 && report.unmapped.length === 0) {
     lines.push('No architecture-bound code changed.')
     return lines.join('\n')
+  }
+
+  const diagram = buildImpactDiagram(report)
+  if (diagram.omittedNodes > 0 || diagram.omittedEdges > 0) {
+    const parts: string[] = []
+    if (diagram.omittedNodes > 0) parts.push(pluralize(diagram.omittedNodes, 'node'))
+    if (diagram.omittedEdges > 0) parts.push(pluralize(diagram.omittedEdges, 'edge'))
+    lines.push(`_Graph trimmed for readability: +${parts.join(', +')} omitted._`, '')
   }
 
   if (report.candidates.length > 0) {
@@ -337,8 +339,8 @@ export function impactMarkdown(report: ImpactReport, style: ImpactDiagramStyle =
   if (report.edges.some((edge) => edge.observed)) {
     lines.push('', '_Dashed edges are observed in code but not declared in the architecture._')
   }
-  if (style === 'review') {
-    lines.push('', '_Changed elements list the source files that touched them and their line deltas._')
+  if (report.edges.some(isContainmentEdge)) {
+    lines.push('', '_–o edges show folder containment between bound elements._')
   }
 
   return lines.join('\n')

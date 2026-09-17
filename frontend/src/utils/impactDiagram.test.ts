@@ -48,34 +48,37 @@ function busyReport(): ImpactReport {
 }
 
 describe('buildImpactDiagram', () => {
-  it('renders the full report unchanged, including candidates', () => {
+  it('renders the single reviewer projection and never promotes candidates', () => {
     const diagram = buildImpactDiagram(report({
       changed: [node('checkout')],
       candidates: [node('weak')],
       related: [node('payment')],
       edges: [edge('checkout', 'payment', true)],
-    }), 'full')
+    }))
 
-    expect(diagram.style).toBe('full')
+    expect(diagram.style).toBe('review')
     expect(diagram.omittedNodes).toBe(0)
     expect(diagram.omittedEdges).toBe(0)
-    expect(diagram.code).toContain('flowchart TD')
+    expect(diagram.groups).toEqual([])
+    expect(diagram.code).toContain('flowchart LR')
+    expect(diagram.code).toContain('subgraph lane_changed')
     expect(diagram.code).toContain('n1["checkout"]')
-    expect(diagram.code).toContain('n2["weak"]')
-    expect(diagram.code).toContain('n3["payment"]')
-    expect(diagram.code).toContain('n1 -.->|calls| n3')
+    expect(diagram.code).toContain('n2["payment"]')
+    expect(diagram.code).toContain('n1 -.->|calls| n2')
+    expect(diagram.code).not.toContain('weak')
+    expect(diagram.nodes.some((item) => item.ref === 'weak')).toBe(false)
     expect(diagram.code).toBe(impactMermaid(report({
       changed: [node('checkout')],
       candidates: [node('weak')],
       related: [node('payment')],
       edges: [edge('checkout', 'payment', true)],
-    }), 'full'))
+    })))
   })
 
-  it('preserves valid directed relationships and never promotes candidates', () => {
+  it('preserves valid directed relationships and ignores the deprecated style argument', () => {
     const fixture = { ...busyReport(), candidates: [node('weak')] }
     const before = JSON.stringify(fixture)
-    for (const style of ['review', 'bounded', 'lanes', 'groups'] as const) {
+    for (const style of ['review', 'bounded', 'lanes', 'groups', 'full'] as const) {
       const diagram = buildImpactDiagram(fixture, style)
       const refs = new Set(diagram.nodes.map((item) => item.ref))
       for (const relationship of diagram.edges) {
@@ -83,6 +86,7 @@ describe('buildImpactDiagram', () => {
         expect(refs.has(relationship.target_ref)).toBe(true)
       }
       expect(refs.has('weak')).toBe(false)
+      expect(diagram.code).toBe(buildImpactDiagram(fixture).code)
     }
     expect(JSON.stringify(fixture)).toBe(before)
   })
@@ -95,20 +99,10 @@ describe('buildImpactDiagram', () => {
       related: [...fixture.related].reverse(),
       edges: [...fixture.edges].reverse(),
     })
-    for (const style of ['review', 'bounded', 'lanes', 'groups'] as const) {
-      expect(buildImpactDiagram(shuffled, style)).toEqual(buildImpactDiagram(fixture, style))
-    }
+    expect(buildImpactDiagram(shuffled)).toEqual(buildImpactDiagram(fixture))
   })
 
-  it('defaults to the review projection with source annotations on changed nodes', () => {
-    const fixture = report({
-      changed: [node('core')],
-      related: [node('api')],
-      edges: [edge('core', 'api')],
-      changed_files: [],
-    })
-    expect(buildImpactDiagram(fixture).style).toBe('review')
-
+  it('badges changed nodes with aggregate change instead of file paths', () => {
     const annotated = report({
       changed: [{ ...node('core'), evidence: ['internal/core.go', 'internal/util.go'] }],
       related: [node('api')],
@@ -116,9 +110,18 @@ describe('buildImpactDiagram', () => {
       changed_files: [{ path: 'internal/core.go', change: 'modified', added: 12, removed: 3 }],
     })
     const diagram = buildImpactDiagram(annotated)
-    expect(diagram.code).toContain('n1["core<br/>internal/core.go (+12 -3)<br/>internal/util.go"]')
+    expect(diagram.code).toContain('n1["core<br/>2 files (+12 -3)"]')
     expect(diagram.code).toContain('n2["api"]')
     expect(diagram.code).toContain('n2 -.->|calls| n1')
+    expect(diagram.code).not.toContain('internal/core.go')
+  })
+
+  it('renders containment edges distinctly', () => {
+    const diagram = buildImpactDiagram(report({
+      changed: [node('backend'), node('checkout')],
+      edges: [{ source_ref: 'backend', target_ref: 'checkout', label: 'contains', observed: false }],
+    }))
+    expect(diagram.code).toContain('n1 --o|contains| n2')
   })
 
   it('ranks distinct changed neighbors before observed evidence, then stable refs', () => {
@@ -147,27 +150,27 @@ describe('buildImpactDiagram', () => {
 
   it('reduces a busy report to the node/edge budget and accounts for omissions', () => {
     const fixture = busyReport()
-    const diagram = buildImpactDiagram(fixture, 'bounded')
+    const diagram = buildImpactDiagram(fixture)
     expect(diagram.nodes).toHaveLength(10)
     expect(diagram.edges).toHaveLength(16)
     expect(diagram.omittedNodes).toBe(fixture.changed.length + fixture.related.length - 10)
     expect(diagram.omittedEdges).toBe(fixture.edges.length - 16)
+    expect(diagram.code).toContain('%% +')
+    expect(diagram.code).toContain('omitted')
     const touched = new Set(fixture.changed.map((item) => item.ref))
     for (const selected of diagram.nodes.filter((item) => !touched.has(item.ref))) {
       expect(diagram.edges.some((link) => link.source_ref === selected.ref || link.target_ref === selected.ref)).toBe(true)
     }
   })
 
-  it('drops disconnected related nodes in bounded/lanes but keeps changed nodes', () => {
+  it('drops disconnected related nodes but keeps changed nodes', () => {
     const fixture = report({ changed: [node('formatter')], related: [node('plugin')] })
-    for (const style of ['review', 'bounded', 'lanes'] as const) {
-      const diagram = buildImpactDiagram(fixture, style)
-      expect(diagram.nodes.some((item) => item.ref === 'formatter')).toBe(true)
-      expect(diagram.code).not.toContain('plugin')
-    }
+    const diagram = buildImpactDiagram(fixture)
+    expect(diagram.nodes.some((item) => item.ref === 'formatter')).toBe(true)
+    expect(diagram.code).not.toContain('plugin')
   })
 
-  it('classifies dependency roles and lays out lanes with exactly the bounded edges', () => {
+  it('classifies dependency roles and lays out lanes over the bounded selection', () => {
     const changed = new Set(['core'])
     const edges = [edge('in', 'core'), edge('core', 'out'), edge('both', 'core'), edge('core', 'both')]
     expect(laneFor('core', changed, edges)).toBe('changed')
@@ -175,37 +178,16 @@ describe('buildImpactDiagram', () => {
     expect(laneFor('out', changed, edges)).toBe('outgoing')
     expect(laneFor('both', changed, edges)).toBe('both')
     const fixture = report({ changed: [node('core')], related: [node('in'), node('out'), node('both')], edges })
-    const lanes = buildImpactDiagram(fixture, 'lanes')
-    expect(lanes.edges).toEqual(buildImpactDiagram(fixture, 'bounded').edges)
-    expect(lanes.code).toContain('flowchart LR')
-    for (const lane of ['incoming', 'changed', 'outgoing', 'both']) expect(lanes.code).toContain(`subgraph lane_${lane}`)
-  })
-
-  it('groups members by owner and preserves origin and direction on parallel relationships', () => {
-    const fixture = report({
-      changed: [node('a', 'Team')],
-      related: [node('b', 'Team'), node('external'), node('unowned')],
-      edges: [edge('a', 'b'), edge('a', 'external'), edge('b', 'external'), edge('a', 'external', true), edge('external', 'a')],
-    })
-    const grouped = buildImpactDiagram(fixture, 'groups')
-    expect(grouped.groups).toContainEqual({ name: 'Team', touched: 1, members: ['a', 'b'] })
-    expect(grouped.nodes.find((item) => item.ref === 'owner:Team')?.name).toBe('Team (1/2 touched)')
-    expect(grouped.nodes.some((item) => item.ref === 'element:unowned')).toBe(true)
-    expect(grouped.internalEdges).toBe(1)
-    expect(grouped.edges).toHaveLength(3)
-    expect(grouped.edges).toContainEqual({ source_ref: 'owner:Team', target_ref: 'element:external', observed: false, label: '2 declared' })
-    expect(grouped.edges).toContainEqual({ source_ref: 'owner:Team', target_ref: 'element:external', observed: true, label: '1 observed' })
-    expect(grouped.edges).toContainEqual({ source_ref: 'element:external', target_ref: 'owner:Team', observed: false, label: '1 declared' })
-    expect(grouped.code).toContain('-.->')
+    const diagram = buildImpactDiagram(fixture)
+    expect(diagram.code).toContain('flowchart LR')
+    for (const lane of ['incoming', 'changed', 'outgoing', 'both']) expect(diagram.code).toContain(`subgraph lane_${lane}`)
   })
 
   it('handles an empty report and ignores dangling endpoints', () => {
     const fixture = report({ edges: [edge('missing', 'also-missing')] })
-    for (const style of ['review', 'full', 'bounded', 'lanes', 'groups'] as const) {
-      const diagram = buildImpactDiagram(fixture, style)
-      expect(diagram.nodes).toEqual([])
-      expect(diagram.edges).toEqual([])
-      expect(diagram.code.toLowerCase()).not.toContain('undefined')
-    }
+    const diagram = buildImpactDiagram(fixture)
+    expect(diagram.nodes).toEqual([])
+    expect(diagram.edges).toEqual([])
+    expect(diagram.code.toLowerCase()).not.toContain('undefined')
   })
 })

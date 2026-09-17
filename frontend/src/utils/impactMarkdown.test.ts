@@ -43,20 +43,20 @@ describe('impactMermaid', () => {
           { source_ref: '2', target_ref: '1', label: '', observed: true },
         ],
       }),
-      'full',
     )
 
-    expect(code).toContain('flowchart TD')
+    expect(code).toContain('flowchart LR')
     expect(code).toContain('%% coverage: 100% (high)')
-    expect(code).toContain('n1["Core"]')
+    expect(code).toContain('subgraph lane_changed')
+    expect(code).toContain('n1["Core<br/>1 file"]')
     expect(code).toContain('n2["API"]')
     expect(code).toContain('n1 -->|calls| n2')
-    expect(code).toContain('n2 -.-> n1')
+    expect(code).toContain('n2 -.->|observed| n1')
     expect(code).toContain('class n1 changed')
     expect(code).toContain('classDef changed fill:#fde68a')
   })
 
-  it('defaults to review and annotates changed nodes with source detail', () => {
+  it('badges changed nodes with aggregate change instead of file paths', () => {
     const code = impactMermaid(
       report({
         changed: [
@@ -71,9 +71,24 @@ describe('impactMermaid', () => {
       }),
     )
 
-    expect(code).toContain('n1["Core<br/>internal/core.go (+12 -3)<br/>internal/util.go"]')
+    expect(code).toContain('n1["Core<br/>2 files (+12 -3)"]')
     expect(code).toContain('n2["API"]')
     expect(code).toContain('n2 -.->|observed| n1')
+    expect(code).not.toContain('internal/core.go')
+  })
+
+  it('renders folder containment with a distinct arrow', () => {
+    const code = impactMermaid(
+      report({
+        changed: [
+          { ref: '1', name: 'Backend', kind: 'component', change: 'modified', evidence: [] },
+          { ref: '2', name: 'Checkout', kind: 'component', change: 'modified', evidence: [] },
+        ],
+        edges: [{ source_ref: '1', target_ref: '2', label: 'contains', observed: false }],
+      }),
+    )
+
+    expect(code).toContain('n1 --o|contains| n2')
   })
 })
 
@@ -93,9 +108,32 @@ describe('impactMarkdown', () => {
     expect(md).not.toContain('**Related**')
     expect(md).not.toContain('**Unmapped**')
     expect(md).toContain('_Dashed edges are observed in code but not declared in the architecture._')
-    expect(md).toContain('_Changed elements list the source files that touched them and their line deltas._')
+    expect(md).not.toContain('list the source files that touched them')
     expect(md).toContain('```mermaid')
-    expect(md).toContain('flowchart TD')
+    expect(md).toContain('flowchart LR')
+  })
+
+  it('notes trimmed context and containment edges', () => {
+    const related = Array.from({ length: 20 }, (_, index) => ({
+      ref: `r${index + 1}`,
+      name: `R${index + 1}`,
+      kind: 'component',
+      change: 'modified' as const,
+      evidence: [] as string[],
+    }))
+    const md = impactMarkdown(
+      report({
+        changed: [{ ref: 'a', name: 'A', kind: 'component', change: 'modified', evidence: [] }],
+        related,
+        edges: [
+          ...related.map((node) => ({ source_ref: 'a', target_ref: node.ref, label: 'calls', observed: false })),
+          { source_ref: 'a', target_ref: 'child', label: 'contains', observed: false },
+        ],
+      }),
+    )
+
+    expect(md).toContain('_Graph trimmed for readability:')
+    expect(md).toContain('_–o edges show folder containment between bound elements._')
   })
 
   it('renders binding gap suggestions as tld commands', () => {

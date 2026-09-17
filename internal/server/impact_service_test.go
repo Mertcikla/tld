@@ -219,6 +219,70 @@ func TestImpactServicePersistsAndReloadsLatestRun(t *testing.T) {
 	}
 }
 
+func TestImpactServiceListsImpactRuns(t *testing.T) {
+	h := newImpactHarness(t)
+	repo := t.TempDir()
+	initImpactRepo(t, repo, map[string]string{"src/a.go": "package src\n"})
+	h.addRepository(t, repo, "Sample")
+	h.addElement(t, "Core", "component", "https://github.com/example/sample.git", "src/**")
+	impactSecondCommit(t, repo)
+
+	for i := 0; i < 3; i++ {
+		if _, err := h.service.AnalyzeImpact(h.ctx, connect.NewRequest(&diagv1.AnalyzeImpactRequest{
+			Path: repo, Base: "HEAD~1", Head: "HEAD",
+		})); err != nil {
+			t.Fatalf("AnalyzeImpact %d: %v", i, err)
+		}
+	}
+
+	page, err := h.service.ListImpactRuns(h.ctx, connect.NewRequest(&diagv1.ListImpactRunsRequest{Path: repo, Limit: 2}))
+	if err != nil {
+		t.Fatalf("ListImpactRuns: %v", err)
+	}
+	if len(page.Msg.GetRuns()) != 2 || !page.Msg.GetHasMore() {
+		t.Fatalf("first page = %d runs hasMore=%v, want 2/true", len(page.Msg.GetRuns()), page.Msg.GetHasMore())
+	}
+	if page.Msg.GetRuns()[0].GetId() <= page.Msg.GetRuns()[1].GetId() {
+		t.Fatalf("runs should be newest first: %+v", page.Msg.GetRuns())
+	}
+	for _, run := range page.Msg.GetRuns() {
+		if run.GetReport() == nil || len(run.GetReport().GetChanged()) != 1 {
+			t.Fatalf("snapshot should carry its full report: %+v", run)
+		}
+		if run.GetCreatedAt() == "" {
+			t.Fatalf("snapshot should carry created_at: %+v", run)
+		}
+	}
+
+	rest, err := h.service.ListImpactRuns(h.ctx, connect.NewRequest(&diagv1.ListImpactRunsRequest{Path: repo, Limit: 2, Offset: 2}))
+	if err != nil {
+		t.Fatalf("ListImpactRuns offset: %v", err)
+	}
+	if len(rest.Msg.GetRuns()) != 1 || rest.Msg.GetHasMore() {
+		t.Fatalf("second page = %d runs hasMore=%v, want 1/false", len(rest.Msg.GetRuns()), rest.Msg.GetHasMore())
+	}
+
+	all, err := h.service.ListImpactRuns(h.ctx, connect.NewRequest(&diagv1.ListImpactRunsRequest{Path: repo}))
+	if err != nil {
+		t.Fatalf("ListImpactRuns default limit: %v", err)
+	}
+	if len(all.Msg.GetRuns()) != 3 || all.Msg.GetHasMore() {
+		t.Fatalf("default page = %d runs hasMore=%v, want 3/false", len(all.Msg.GetRuns()), all.Msg.GetHasMore())
+	}
+
+	empty, err := h.service.ListImpactRuns(h.ctx, connect.NewRequest(&diagv1.ListImpactRunsRequest{Path: t.TempDir()}))
+	if err != nil {
+		t.Fatalf("ListImpactRuns unknown path: %v", err)
+	}
+	if len(empty.Msg.GetRuns()) != 0 || empty.Msg.GetHasMore() {
+		t.Fatalf("unknown path = %+v, want no runs", empty.Msg)
+	}
+
+	if _, err := h.service.ListImpactRuns(h.ctx, connect.NewRequest(&diagv1.ListImpactRunsRequest{})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("empty path error = %v, want invalid argument", err)
+	}
+}
+
 func TestImpactServiceLatestRunMissing(t *testing.T) {
 	h := newImpactHarness(t)
 	latest, err := h.service.GetLatestImpact(h.ctx, connect.NewRequest(&diagv1.GetLatestImpactRequest{Path: t.TempDir()}))

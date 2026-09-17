@@ -36,9 +36,10 @@ func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
 	return RenderImpactMarkdownStyle(w, report, DiagramStyleReview)
 }
 
-// RenderImpactMarkdownStyle writes a PR-comment friendly report with a Mermaid
-// graph rendered in the requested diagram style.
-func RenderImpactMarkdownStyle(w io.Writer, report ImpactReport, style DiagramStyle) error {
+// RenderImpactMarkdownStyle writes a PR-comment friendly report with the
+// single reviewer Mermaid diagram. The style argument is ignored and kept
+// only for compatibility.
+func RenderImpactMarkdownStyle(w io.Writer, report ImpactReport, _ DiagramStyle) error {
 	_, _ = fmt.Fprintln(w, "## Architecture Impact")
 	_, _ = fmt.Fprintln(w)
 	if line := coverageSummaryLine(report.Coverage); line != "" {
@@ -83,17 +84,29 @@ func RenderImpactMarkdownStyle(w io.Writer, report ImpactReport, style DiagramSt
 			}
 		}
 	}
+	diagram := BuildImpactDiagram(report, DiagramStyleReview)
+	if diagram.OmittedNodes > 0 || diagram.OmittedEdges > 0 {
+		parts := []string{}
+		if diagram.OmittedNodes > 0 {
+			parts = append(parts, pluralizeDiagram(diagram.OmittedNodes, "node"))
+		}
+		if diagram.OmittedEdges > 0 {
+			parts = append(parts, pluralizeDiagram(diagram.OmittedEdges, "edge"))
+		}
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintf(w, "_Graph trimmed for readability: +%s omitted._\n", strings.Join(parts, ", +"))
+	}
 	if hasObservedEdges(report.Edges) {
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintln(w, "_Dashed edges are observed in code but not declared in the architecture._")
 	}
-	if NormalizeDiagramStyle(string(style)) == DiagramStyleReview {
+	if hasContainmentEdge(report.Edges) {
 		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, "_Changed elements list the source files that touched them and their line deltas._")
+		_, _ = fmt.Fprintln(w, "_–o edges show folder containment between bound elements._")
 	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "```mermaid")
-	if err := RenderImpactMermaidStyle(w, report, style); err != nil {
+	if err := RenderImpactMermaidStyle(w, report, DiagramStyleReview); err != nil {
 		return err
 	}
 	_, _ = fmt.Fprintln(w, "```")
@@ -105,8 +118,9 @@ func RenderImpactMermaid(w io.Writer, report ImpactReport) error {
 	return RenderImpactMermaidStyle(w, report, DiagramStyleReview)
 }
 
-// RenderImpactMermaidStyle writes the impacted architecture as a Mermaid
-// flowchart projected through the requested diagram style.
+// RenderImpactMermaidStyle writes the impacted architecture as the single
+// reviewer Mermaid flowchart. The style argument is ignored and kept only
+// for compatibility.
 func RenderImpactMermaidStyle(w io.Writer, report ImpactReport, style DiagramStyle) error {
 	code := BuildImpactDiagram(report, style).Code
 	if strings.TrimSpace(code) == "" {
@@ -179,6 +193,15 @@ func coverageGapLines(gaps []CoverageGap, prefix string) []string {
 func hasObservedEdges(edges []ImpactEdge) bool {
 	for _, edge := range edges {
 		if edge.Observed {
+			return true
+		}
+	}
+	return false
+}
+
+func hasContainmentEdge(edges []ImpactEdge) bool {
+	for _, edge := range edges {
+		if isContainmentEdge(edge) {
 			return true
 		}
 	}

@@ -228,7 +228,7 @@ func TestRenderImpactMermaidAndMarkdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := mermaid.String()
-	if !strings.Contains(out, "flowchart TD") || !strings.Contains(out, "Checkout") || !strings.Contains(out, "Payment") {
+	if !strings.Contains(out, "flowchart LR") || !strings.Contains(out, "Checkout") || !strings.Contains(out, "Payment") {
 		t.Fatalf("unexpected mermaid:\n%s", out)
 	}
 
@@ -237,7 +237,7 @@ func TestRenderImpactMermaidAndMarkdown(t *testing.T) {
 		t.Fatal(err)
 	}
 	md := markdown.String()
-	for _, want := range []string{"## Architecture Impact", "```mermaid", "flowchart TD"} {
+	for _, want := range []string{"## Architecture Impact", "```mermaid", "flowchart LR"} {
 		if !strings.Contains(md, want) {
 			t.Fatalf("markdown missing %q:\n%s", want, md)
 		}

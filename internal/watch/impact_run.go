@@ -107,6 +107,46 @@ func (s *Store) LatestImpactRun(ctx context.Context, repoRoot string) (ImpactRun
 	return impactRunFromModel(row), true, nil
 }
 
+// impactRunListLimit bounds history pages so a long-lived checkout cannot
+// flood the UI with snapshots.
+const impactRunListLimit = 50
+
+// ListImpactRuns returns persisted runs for a repository checkout path,
+// newest first. It fetches one row beyond the page to report whether more
+// history exists. A non-positive limit defaults to 5.
+func (s *Store) ListImpactRuns(ctx context.Context, repoRoot string, limit, offset int) ([]ImpactRun, bool, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > impactRunListLimit {
+		limit = impactRunListLimit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	var rows []impactRunModel
+	err := s.bun.NewSelect().
+		Model(&rows).
+		Where("repo_root = ?", repoRoot).
+		Order("created_at DESC").
+		Order("id DESC").
+		Limit(limit + 1).
+		Offset(offset).
+		Scan(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+	runs := make([]ImpactRun, 0, len(rows))
+	for _, row := range rows {
+		runs = append(runs, impactRunFromModel(row))
+	}
+	return runs, hasMore, nil
+}
+
 func impactRunFromModel(row impactRunModel) ImpactRun {
 	run := ImpactRun{
 		ID:           row.ID,

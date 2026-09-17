@@ -31,7 +31,7 @@ func busyDiagramReport() ImpactReport {
 	return ImpactReport{Changed: changed, Related: related, Edges: edges}
 }
 
-func TestBuildImpactDiagramFullMatchesRenderer(t *testing.T) {
+func TestBuildImpactDiagramSingleReviewerProjection(t *testing.T) {
 	report := ImpactReport{
 		Coverage: Coverage{Applicable: true, Percent: 80, Confidence: "medium"},
 		Changed:  []ImpactElement{{Ref: "checkout", Name: "Checkout"}},
@@ -43,20 +43,33 @@ func TestBuildImpactDiagramFullMatchesRenderer(t *testing.T) {
 	}
 
 	diagram := BuildImpactDiagram(report, DiagramStyleFull)
-	if diagram.Style != DiagramStyleFull {
-		t.Fatalf("style = %q, want full", diagram.Style)
+	if diagram.Style != DiagramStyleReview {
+		t.Fatalf("style = %q, want review", diagram.Style)
 	}
 	if diagram.OmittedNodes != 0 || diagram.OmittedEdges != 0 {
-		t.Fatalf("full style omitted context: %+v", diagram)
+		t.Fatalf("small report should have no omissions: %+v", diagram)
 	}
-	for _, want := range []string{"%% coverage: 80% (medium)", "flowchart TD", `n1["Checkout"]`, `n2["Weak match"]`, `n3["Payment"]`, "n1 -.->|calls| n3", "class n1 changed"} {
+	for _, node := range diagram.Nodes {
+		if node.Ref == "weak" {
+			t.Fatalf("candidates must never be drawn: %+v", diagram.Nodes)
+		}
+	}
+	for _, want := range []string{
+		"%% coverage: 80% (medium)",
+		"flowchart LR",
+		`subgraph lane_changed["Code touched"]`,
+		`n1["Checkout"]`,
+		`n2["Payment"]`,
+		"n1 -.->|calls| n2",
+		"class n1 changed",
+	} {
 		if !strings.Contains(diagram.Code, want) {
-			t.Fatalf("full diagram missing %q:\n%s", want, diagram.Code)
+			t.Fatalf("reviewer diagram missing %q:\n%s", want, diagram.Code)
 		}
 	}
 
 	var rendered bytes.Buffer
-	if err := RenderImpactMermaidStyle(&rendered, report, DiagramStyleFull); err != nil {
+	if err := RenderImpactMermaidStyle(&rendered, report, DiagramStyleBounded); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimRight(rendered.String(), "\n"); got != diagram.Code {
@@ -70,19 +83,17 @@ func TestBuildImpactDiagramTransformsPreserveValidRelationships(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, style := range []DiagramStyle{DiagramStyleReview, DiagramStyleFull, DiagramStyleBounded, DiagramStyleLanes, DiagramStyleGroups} {
-		diagram := BuildImpactDiagram(report, style)
-		refs := map[string]struct{}{}
-		for _, node := range diagram.Nodes {
-			refs[node.Ref] = struct{}{}
+	diagram := BuildImpactDiagram(report, DiagramStyleReview)
+	refs := map[string]struct{}{}
+	for _, node := range diagram.Nodes {
+		refs[node.Ref] = struct{}{}
+	}
+	for _, edge := range diagram.Edges {
+		if _, ok := refs[edge.SourceRef]; !ok {
+			t.Fatalf("edge source %q is not drawn", edge.SourceRef)
 		}
-		for _, edge := range diagram.Edges {
-			if _, ok := refs[edge.SourceRef]; !ok {
-				t.Fatalf("%s: edge source %q is not drawn", style, edge.SourceRef)
-			}
-			if _, ok := refs[edge.TargetRef]; !ok {
-				t.Fatalf("%s: edge target %q is not drawn", style, edge.TargetRef)
-			}
+		if _, ok := refs[edge.TargetRef]; !ok {
+			t.Fatalf("edge target %q is not drawn", edge.TargetRef)
 		}
 	}
 	after, err := json.Marshal(report)
@@ -101,12 +112,10 @@ func TestBuildImpactDiagramIsOrderIndependent(t *testing.T) {
 		Related: reverseElements(report.Related),
 		Edges:   reverseEdges(report.Edges),
 	}
-	for _, style := range []DiagramStyle{DiagramStyleReview, DiagramStyleBounded, DiagramStyleLanes, DiagramStyleGroups} {
-		want := BuildImpactDiagram(report, style)
-		got := BuildImpactDiagram(shuffled, style)
-		if want.Code != got.Code {
-			t.Fatalf("%s: output depends on input order:\n%s\n---\n%s", style, want.Code, got.Code)
-		}
+	want := BuildImpactDiagram(report, DiagramStyleReview)
+	got := BuildImpactDiagram(shuffled, DiagramStyleLanes)
+	if want.Code != got.Code {
+		t.Fatalf("output depends on input order or style arg:\n%s\n---\n%s", want.Code, got.Code)
 	}
 }
 
@@ -159,7 +168,7 @@ func TestBoundedDiagramKeepsChangedAndMutualEdgesBeyondBudget(t *testing.T) {
 
 func TestBoundedDiagramReducesBusyReport(t *testing.T) {
 	report := busyDiagramReport()
-	diagram := BuildImpactDiagram(report, DiagramStyleBounded)
+	diagram := BuildImpactDiagram(report, DiagramStyleReview)
 	if len(diagram.Nodes) != 10 {
 		t.Fatalf("nodes = %d, want 10", len(diagram.Nodes))
 	}
@@ -171,6 +180,9 @@ func TestBoundedDiagramReducesBusyReport(t *testing.T) {
 	}
 	if want := len(report.Edges) - len(diagram.Edges); diagram.OmittedEdges != want {
 		t.Fatalf("omittedEdges = %d, want %d", diagram.OmittedEdges, want)
+	}
+	if !strings.Contains(diagram.Code, "%% +") || !strings.Contains(diagram.Code, "omitted") {
+		t.Fatalf("trimmed diagram should carry an omission comment:\n%s", diagram.Code)
 	}
 	touched := diagramRefSet(report.Changed)
 	for _, node := range diagram.Nodes {
@@ -188,18 +200,12 @@ func TestBuildImpactDiagramLeavesSparseChangedDisconnected(t *testing.T) {
 		Changed: []ImpactElement{{Ref: "formatter", Name: "Formatter"}},
 		Related: []ImpactElement{{Ref: "plugin", Name: "Plugin registry"}},
 	}
-	for _, style := range []DiagramStyle{DiagramStyleBounded, DiagramStyleLanes} {
-		diagram := BuildImpactDiagram(report, style)
-		if !strings.Contains(diagram.Code, "Formatter") {
-			t.Fatalf("%s: changed node missing:\n%s", style, diagram.Code)
-		}
-		if strings.Contains(diagram.Code, "Plugin registry") {
-			t.Fatalf("%s: disconnected related node should be dropped:\n%s", style, diagram.Code)
-		}
+	diagram := BuildImpactDiagram(report, DiagramStyleReview)
+	if !strings.Contains(diagram.Code, "Formatter") {
+		t.Fatalf("changed node missing:\n%s", diagram.Code)
 	}
-	grouped := BuildImpactDiagram(report, DiagramStyleGroups)
-	if !strings.Contains(grouped.Code, "Formatter") {
-		t.Fatalf("groups: changed node missing:\n%s", grouped.Code)
+	if strings.Contains(diagram.Code, "Plugin registry") {
+		t.Fatalf("disconnected related node should be dropped:\n%s", diagram.Code)
 	}
 }
 
@@ -219,7 +225,7 @@ func TestLaneForClassifiesRoles(t *testing.T) {
 	}
 }
 
-func TestBuildImpactDiagramLanesMatchBoundedSelection(t *testing.T) {
+func TestBuildImpactDiagramGroupsChangedByDirection(t *testing.T) {
 	report := ImpactReport{
 		Changed: []ImpactElement{diagramNode("core")},
 		Related: []ImpactElement{diagramNode("in"), diagramNode("out"), diagramNode("both")},
@@ -230,95 +236,40 @@ func TestBuildImpactDiagramLanesMatchBoundedSelection(t *testing.T) {
 			diagramEdge("core", "both", false),
 		},
 	}
-	lanes := BuildImpactDiagram(report, DiagramStyleLanes)
-	bounded := BuildImpactDiagram(report, DiagramStyleBounded)
-	if len(lanes.Edges) != len(bounded.Edges) {
-		t.Fatalf("lanes edges = %d, bounded edges = %d", len(lanes.Edges), len(bounded.Edges))
+	diagram := BuildImpactDiagram(report, DiagramStyleReview)
+	if !strings.HasPrefix(diagram.Code, "%% coverage:") && !strings.HasPrefix(diagram.Code, "flowchart LR") {
+		t.Fatalf("reviewer diagram should start with the header and a left-to-right graph:\n%s", diagram.Code)
 	}
-	if !strings.HasPrefix(lanes.Code, "flowchart LR") {
-		t.Fatalf("lanes diagram should be left-to-right:\n%s", lanes.Code)
+	if !strings.Contains(diagram.Code, "flowchart LR") {
+		t.Fatalf("reviewer diagram should be left-to-right:\n%s", diagram.Code)
 	}
 	for _, lane := range []string{"lane_incoming", "lane_changed", "lane_outgoing", "lane_both"} {
-		if !strings.Contains(lanes.Code, "subgraph "+lane) {
-			t.Fatalf("lanes diagram missing %s:\n%s", lane, lanes.Code)
+		if !strings.Contains(diagram.Code, "subgraph "+lane) {
+			t.Fatalf("reviewer diagram missing %s:\n%s", lane, diagram.Code)
 		}
 	}
-}
-
-func TestBuildImpactDiagramGroupsByOwner(t *testing.T) {
-	report := ImpactReport{
-		Changed: []ImpactElement{{Ref: "a", Name: "A", Owner: "Team"}},
-		Related: []ImpactElement{
-			{Ref: "b", Name: "B", Owner: "Team"},
-			{Ref: "external", Name: "External"},
-			{Ref: "unowned", Name: "Unowned"},
-		},
-		Edges: []ImpactEdge{
-			diagramEdge("a", "b", false),
-			diagramEdge("a", "external", false),
-			diagramEdge("b", "external", false),
-			diagramEdge("a", "external", true),
-			diagramEdge("external", "a", false),
-		},
-	}
-	diagram := BuildImpactDiagram(report, DiagramStyleGroups)
-	if diagram.InternalEdges != 1 {
-		t.Fatalf("internalEdges = %d, want 1", diagram.InternalEdges)
-	}
-	if len(diagram.Groups) != 3 {
-		t.Fatalf("groups = %+v, want 3 buckets", diagram.Groups)
-	}
-	assertGroup(t, diagram.Groups, "Team", 1, []string{"A", "B"})
-	if len(diagram.Nodes) != 3 {
-		t.Fatalf("nodes = %+v, want owner bucket + 2 ungrouped", diagram.Nodes)
-	}
-	if node := findDiagramNode(diagram.Nodes, "owner:Team"); node == nil || node.Name != "Team (1/2 touched)" {
-		t.Fatalf("owner node = %+v, want labelled touched count", node)
-	}
-	if findDiagramNode(diagram.Nodes, "element:unowned") == nil {
-		t.Fatalf("unowned element missing: %+v", diagram.Nodes)
-	}
-	assertEdgeLabel(t, diagram.Edges, "owner:Team", "element:external", false, "2 declared")
-	assertEdgeLabel(t, diagram.Edges, "owner:Team", "element:external", true, "1 observed")
-	assertEdgeLabel(t, diagram.Edges, "element:external", "owner:Team", false, "1 declared")
 }
 
 func TestBuildImpactDiagramHandlesEmptyAndDangling(t *testing.T) {
 	report := ImpactReport{Edges: []ImpactEdge{diagramEdge("missing", "also-missing", false)}}
-	for _, style := range []DiagramStyle{DiagramStyleReview, DiagramStyleFull, DiagramStyleBounded, DiagramStyleLanes, DiagramStyleGroups} {
-		diagram := BuildImpactDiagram(report, style)
-		if len(diagram.Nodes) != 0 || len(diagram.Edges) != 0 {
-			t.Fatalf("%s: expected empty diagram, got %+v", style, diagram)
-		}
-		if strings.Contains(strings.ToLower(diagram.Code), "undefined") {
-			t.Fatalf("%s: diagram contains undefined ids:\n%s", style, diagram.Code)
+	diagram := BuildImpactDiagram(report, DiagramStyleReview)
+	if len(diagram.Nodes) != 0 || len(diagram.Edges) != 0 {
+		t.Fatalf("expected empty diagram, got %+v", diagram)
+	}
+	if strings.Contains(strings.ToLower(diagram.Code), "undefined") {
+		t.Fatalf("diagram contains undefined ids:\n%s", diagram.Code)
+	}
+}
+
+func TestNormalizeDiagramStyleAlwaysReturnsReview(t *testing.T) {
+	for _, input := range []string{"", "review", "REVIEW", "full", "all", "BOUNDED", "neighborhood", "lanes", "lane", "groups", "grouped", " nope "} {
+		if got := NormalizeDiagramStyle(input); got != DiagramStyleReview {
+			t.Fatalf("NormalizeDiagramStyle(%q) = %q, want review", input, got)
 		}
 	}
 }
 
-func TestNormalizeDiagramStyle(t *testing.T) {
-	cases := map[string]DiagramStyle{
-		"":             DiagramStyleReview,
-		"review":       DiagramStyleReview,
-		"REVIEW":       DiagramStyleReview,
-		"full":         DiagramStyleFull,
-		"all":          DiagramStyleFull,
-		"BOUNDED":      DiagramStyleBounded,
-		"neighborhood": DiagramStyleBounded,
-		"lanes":        DiagramStyleLanes,
-		"lane":         DiagramStyleLanes,
-		"groups":       DiagramStyleGroups,
-		"grouped":      DiagramStyleGroups,
-		" nope ":       DiagramStyleReview,
-	}
-	for input, want := range cases {
-		if got := NormalizeDiagramStyle(input); got != want {
-			t.Fatalf("NormalizeDiagramStyle(%q) = %q, want %q", input, got, want)
-		}
-	}
-}
-
-func TestBuildImpactDiagramReviewAnnotatesChangedSources(t *testing.T) {
+func TestBuildImpactDiagramBadgesChangedNodes(t *testing.T) {
 	report := ImpactReport{
 		Changed: []ImpactElement{{
 			Ref:  "core",
@@ -343,19 +294,188 @@ func TestBuildImpactDiagramReviewAnnotatesChangedSources(t *testing.T) {
 		t.Fatalf("style = %q, want review", diagram.Style)
 	}
 	for _, want := range []string{
-		`n1["Core<br/>internal/core.go (+12 -3)<br/>internal/util.go"]`,
+		`n1["Core<br/>2 files (+12 -3)"]`,
 		`n2["API"]`,
 		"n2 -.->|observed| n1",
 	} {
 		if !strings.Contains(diagram.Code, want) {
-			t.Fatalf("review diagram missing %q:\n%s", want, diagram.Code)
+			t.Fatalf("reviewer diagram missing %q:\n%s", want, diagram.Code)
 		}
 	}
-	if strings.Contains(diagram.Code, `n2["API<br/>`) {
-		t.Fatalf("context node should not be annotated:\n%s", diagram.Code)
+	if strings.Contains(diagram.Code, "internal/core.go") {
+		t.Fatalf("diagram must not leak file paths into node labels:\n%s", diagram.Code)
 	}
-	if got := BuildImpactDiagram(report, DiagramStyleReview); got.Code != diagram.Code {
-		t.Fatalf("review diagram is not deterministic")
+	if strings.Contains(diagram.Code, `n2["API<br/>`) {
+		t.Fatalf("context node should not be badged:\n%s", diagram.Code)
+	}
+	if got := BuildImpactDiagram(report, DiagramStyleBounded); got.Code != diagram.Code {
+		t.Fatalf("reviewer diagram is not style-independent")
+	}
+}
+
+func TestChangeBadgeShapes(t *testing.T) {
+	stats := map[string]ChangedFile{
+		"solo.go": {Path: "solo.go", Change: "updated"},
+		"new.go":  {Path: "new.go", Change: "added"},
+	}
+	node := ImpactElement{Ref: "a", Name: "A", Evidence: []ImpactEvidence{{Path: "solo.go"}}}
+	if got := changeBadge(node, stats); got != "1 file" {
+		t.Fatalf("badge = %q, want %q", got, "1 file")
+	}
+	node = ImpactElement{Ref: "b", Name: "B", Evidence: []ImpactEvidence{{Path: "new.go"}}}
+	if got := changeBadge(node, stats); got != "1 file (added)" {
+		t.Fatalf("badge = %q, want %q", got, "1 file (added)")
+	}
+	node = ImpactElement{Ref: "c", Name: "C"}
+	if got := changeBadge(node, stats); got != "" {
+		t.Fatalf("badge = %q, want empty", got)
+	}
+}
+
+func TestAnalyzeImpactEmitsFolderContainment(t *testing.T) {
+	report := AnalyzeImpact(ImpactOptions{
+		RepoRoot: t.TempDir(),
+		Elements: map[string]*workspace.Element{
+			"backend":  {Name: "Backend", FilePath: "backend/**"},
+			"checkout": {Name: "Checkout", FilePath: "backend/checkout/**"},
+		},
+		ChangedFiles: map[string]tldgit.WorktreeChange{
+			"backend/checkout/service.go": tldgit.WorktreeUpdated,
+		},
+	})
+	if len(report.Changed) != 1 || report.Changed[0].Ref != "checkout" {
+		t.Fatalf("changed = %+v, want only the nested owner", report.Changed)
+	}
+	if len(report.Related) != 1 || report.Related[0].Ref != "backend" {
+		t.Fatalf("related = %+v, want the broader folder rolled up into context", report.Related)
+	}
+	foundContains := false
+	for _, evidence := range report.Related[0].Evidence {
+		if evidence.Kind == "contains" {
+			foundContains = true
+		}
+	}
+	if !foundContains {
+		t.Fatalf("rolled-up ancestor should carry contains evidence: %+v", report.Related[0])
+	}
+	found := false
+	for _, edge := range report.Edges {
+		if edge.SourceRef == "backend" && edge.TargetRef == "checkout" && edge.Label == "contains" && !edge.Observed {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing backend --contains--> checkout edge: %+v", report.Edges)
+	}
+	diagram := BuildImpactDiagram(report, DiagramStyleReview)
+	if !strings.Contains(diagram.Code, "--o|contains|") {
+		t.Fatalf("diagram should render containment distinctly:\n%s", diagram.Code)
+	}
+}
+
+func TestAnalyzeImpactContainmentKeepsDirectParentsOnly(t *testing.T) {
+	report := AnalyzeImpact(ImpactOptions{
+		RepoRoot: t.TempDir(),
+		Elements: map[string]*workspace.Element{
+			"root": {Name: "Root", FilePath: "backend/**"},
+			"mid":  {Name: "Mid", FilePath: "backend/mid/**"},
+			"leaf": {Name: "Leaf", FilePath: "backend/mid/leaf/**"},
+		},
+		ChangedFiles: map[string]tldgit.WorktreeChange{
+			"backend/mid/leaf/service.go": tldgit.WorktreeUpdated,
+		},
+	})
+	if len(report.Changed) != 1 || report.Changed[0].Ref != "leaf" {
+		t.Fatalf("changed = %+v, want only the deepest owner", report.Changed)
+	}
+	if len(report.Related) != 2 {
+		t.Fatalf("related = %+v, want both ancestors rolled up", report.Related)
+	}
+	var contains []ImpactEdge
+	for _, edge := range report.Edges {
+		if edge.Label == "contains" {
+			contains = append(contains, edge)
+		}
+	}
+	assertEdgeLabel(t, contains, "root", "mid", false, "contains")
+	assertEdgeLabel(t, contains, "mid", "leaf", false, "contains")
+	if len(contains) != 2 {
+		t.Fatalf("contains edges = %+v, want exactly root->mid and mid->leaf (no transitive root->leaf)", contains)
+	}
+}
+
+func TestAnalyzeImpactContainmentYieldsToDeclaredEdges(t *testing.T) {
+	report := AnalyzeImpact(ImpactOptions{
+		RepoRoot: t.TempDir(),
+		Elements: map[string]*workspace.Element{
+			"backend":  {Name: "Backend", FilePath: "backend/**"},
+			"checkout": {Name: "Checkout", FilePath: "backend/checkout/**"},
+		},
+		Connectors: map[string]*workspace.Connector{
+			"calls": {Source: "backend", Target: "checkout", Label: "calls"},
+		},
+		ChangedFiles: map[string]tldgit.WorktreeChange{
+			"backend/checkout/service.go": tldgit.WorktreeUpdated,
+		},
+	})
+	for _, edge := range report.Edges {
+		if edge.Label == "contains" {
+			t.Fatalf("declared edge should suppress containment: %+v", report.Edges)
+		}
+	}
+}
+
+func TestAnalyzeImpactNestingAttributesExclusiveFiles(t *testing.T) {
+	report := AnalyzeImpact(ImpactOptions{
+		RepoRoot: t.TempDir(),
+		Elements: map[string]*workspace.Element{
+			"backend":  {Name: "Backend", FilePath: "backend/**"},
+			"checkout": {Name: "Checkout", FilePath: "backend/checkout/**"},
+		},
+		ChangedFiles: map[string]tldgit.WorktreeChange{
+			"backend/other.go":            tldgit.WorktreeUpdated,
+			"backend/checkout/service.go": tldgit.WorktreeUpdated,
+		},
+		LineStats: map[string]tldgit.LineDiff{
+			"backend/other.go":            {Added: 4, Removed: 1},
+			"backend/checkout/service.go": {Added: 10, Removed: 2},
+		},
+	})
+	if len(report.Changed) != 2 {
+		t.Fatalf("changed = %+v, want both elements (each owns an exclusive file)", report.Changed)
+	}
+	badges := map[string]string{}
+	stats := map[string]ChangedFile{}
+	for _, file := range report.ChangedFiles {
+		stats[file.Path] = file
+	}
+	for _, node := range report.Changed {
+		badges[node.Ref] = changeBadge(node, stats)
+	}
+	if badges["backend"] != "1 file (+4 -1)" {
+		t.Fatalf("backend badge = %q, want exclusive file only", badges["backend"])
+	}
+	if badges["checkout"] != "1 file (+10 -2)" {
+		t.Fatalf("checkout badge = %q, want exclusive file only", badges["checkout"])
+	}
+}
+
+func TestAnalyzeImpactSameSpecificityTieStaysDuplicated(t *testing.T) {
+	report := AnalyzeImpact(ImpactOptions{
+		RepoRoot: t.TempDir(),
+		Elements: map[string]*workspace.Element{
+			"a": {Name: "A", FilePath: "backend/**"},
+			"b": {Name: "B", FilePath: "backend/**"},
+		},
+		ChangedFiles: map[string]tldgit.WorktreeChange{
+			"backend/service.go": tldgit.WorktreeUpdated,
+		},
+	})
+	if len(report.Changed) != 2 {
+		t.Fatalf("changed = %+v, want both elements: identical bindings are genuine overlap, not nesting", report.Changed)
+	}
+	if len(report.Related) != 0 {
+		t.Fatalf("related = %+v, want none", report.Related)
 	}
 }
 
@@ -381,20 +501,6 @@ func TestAnalyzeImpactPopulatesOwner(t *testing.T) {
 	}
 }
 
-func assertGroup(t *testing.T, groups []DiagramGroup, name string, touched int, members []string) {
-	t.Helper()
-	for _, group := range groups {
-		if group.Name != name {
-			continue
-		}
-		if group.Touched != touched || strings.Join(group.Members, ",") != strings.Join(members, ",") {
-			t.Fatalf("group %q = %+v, want touched %d members %v", name, group, touched, members)
-		}
-		return
-	}
-	t.Fatalf("group %q not found in %+v", name, groups)
-}
-
 func assertEdgeLabel(t *testing.T, edges []ImpactEdge, source, target string, observed bool, label string) {
 	t.Helper()
 	for _, edge := range edges {
@@ -414,15 +520,6 @@ func diagramRefs(nodes []ImpactElement) []string {
 		out = append(out, node.Ref)
 	}
 	return out
-}
-
-func findDiagramNode(nodes []ImpactElement, ref string) *ImpactElement {
-	for index := range nodes {
-		if nodes[index].Ref == ref {
-			return &nodes[index]
-		}
-	}
-	return nil
 }
 
 func hasDiagramEdge(edges []ImpactEdge, ref string) bool {

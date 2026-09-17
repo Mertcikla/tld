@@ -7,6 +7,7 @@ import {
   normalizeFrontendImportElements,
   protoElementToLibrary,
   protoPlacedElement,
+  toImpactRunSnapshot,
 } from './client'
 import { normalizeConnectorRouteStyle, normalizeLogoUrl, normalizeTechnologyConnectors } from './client-normalize'
 
@@ -117,6 +118,33 @@ describe('technology icon normalization', () => {
     ])
 
     expect(normalizeLogoUrl('', links)).toBe('')
+  })
+})
+
+describe('impact run snapshot mapping', () => {
+  it('maps snapshot identity and its full report with defaults', () => {
+    const snapshot = toImpactRunSnapshot({
+      id: 7,
+      base: 'main',
+      head: 'abc123',
+      created_at: '2026-09-17T10:00:00Z',
+      report: {
+        base: 'main',
+        head: 'abc123',
+        changed: [{ ref: '1', name: 'Core', kind: 'component' }],
+      },
+    })
+    expect(snapshot.id).toBe(7)
+    expect(snapshot.base).toBe('main')
+    expect(snapshot.head).toBe('abc123')
+    expect(snapshot.created_at).toBe('2026-09-17T10:00:00Z')
+    expect(snapshot.report.base).toBe('main')
+    expect(snapshot.report.changed).toHaveLength(1)
+    expect(snapshot.report.changed[0].name).toBe('Core')
+  })
+
+  it('defaults missing snapshot fields so history renders safely', () => {
+    expect(toImpactRunSnapshot({})).toMatchObject({ id: 0, base: '', head: '', created_at: '' })
   })
 })
 

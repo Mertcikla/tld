@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { ReactNode, UIEvent } from 'react'
 import {
   Alert,
   AlertIcon,
@@ -43,6 +43,7 @@ import {
   type ImpactFile,
   type ImpactReport,
   type ImpactRepository,
+  type ImpactRunSnapshot,
 } from '../api/client'
 import ImpactCanvas from '../components/ImpactCanvas'
 import CommitHistoryPanel from '../components/CommitGraph'
@@ -50,28 +51,12 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import { MarkdownPreview } from '../components/ViewMarkdownPanel/MarkdownPreview'
 import { markdownPanelBodySx } from '../components/ViewMarkdownPanel/styles'
 import { toast } from '../utils/toast'
-import { impactMarkdown, type ImpactDiagramStyle } from '../utils/impactMarkdown'
+import { impactMarkdown } from '../utils/impactMarkdown'
 
 const SKILL_INSTALL_PATH = '~/.agents/skills/create-diagram-impact/SKILL.md'
 
 type RepoFilter = 'all' | 'ready' | 'setup'
 type ResultView = 'diagram' | 'markdown'
-
-const DIAGRAM_STYLE_OPTIONS: { value: ImpactDiagramStyle; label: string }[] = [
-  { value: 'review', label: 'Review' },
-  { value: 'full', label: 'Full' },
-  { value: 'bounded', label: 'Bounded' },
-  { value: 'lanes', label: 'Lanes' },
-  { value: 'groups', label: 'Groups' },
-]
-
-const DIAGRAM_STYLE_HINTS: Record<ImpactDiagramStyle, string> = {
-  review: 'Impacted elements annotated with the source files and line deltas behind them.',
-  full: 'Every impacted element and relationship.',
-  bounded: 'Impacted elements with their closest surrounding context.',
-  lanes: 'Layered by direction — incoming, touched, and outgoing.',
-  groups: 'Rolled up by owning architecture.',
-}
 
 function coverageColor(coverage: ImpactCoverage): string {
   if (!coverage.applicable) return 'gray'
@@ -439,6 +424,142 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
             </VStack>
           )}
         </>
+      )}
+    </Box>
+  )
+}
+
+const SNAPSHOT_PAGE_SIZE = 5
+
+function shortCommitRef(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return '—'
+  return trimmed.length > 12 ? trimmed.slice(0, 12) : trimmed
+}
+
+function snapshotAge(createdAt: string): string {
+  const time = new Date(createdAt).getTime()
+  if (Number.isNaN(time)) return createdAt || ''
+  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000))
+  if (seconds < 60) return 'just now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 30) return `${days}d ago`
+  return new Date(time).toLocaleDateString()
+}
+
+function SnapshotsSection({
+  localPath,
+  refreshNonce,
+  onLoad,
+}: {
+  localPath: string
+  refreshNonce: number
+  onLoad: (report: ImpactReport) => void
+}) {
+  const [snapshots, setSnapshots] = useState<ImpactRunSnapshot[]>([])
+  const [hasMore, setHasMore] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadPage = useCallback(
+    async (offset: number, reset: boolean) => {
+      if (!localPath) return
+      if (reset) setLoading(true)
+      else setLoadingMore(true)
+      setError(null)
+      try {
+        const page = await api.impact.listRuns(localPath, { limit: SNAPSHOT_PAGE_SIZE, offset })
+        setSnapshots((current) => (reset ? page.runs : [...current, ...page.runs]))
+        setHasMore(page.hasMore)
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : 'Could not load snapshots')
+      } finally {
+        if (reset) setLoading(false)
+        else setLoadingMore(false)
+      }
+    },
+    [localPath],
+  )
+
+  useEffect(() => {
+    setSnapshots([])
+    setHasMore(false)
+    if (localPath) void loadPage(0, true)
+  }, [localPath, refreshNonce, loadPage])
+
+  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+    const target = event.currentTarget
+    if (loading || loadingMore || !hasMore) return
+    if (target.scrollHeight - target.scrollTop - target.clientHeight < 48) {
+      void loadPage(snapshots.length, false)
+    }
+  }
+
+  return (
+    <Box>
+      <MicroLabel>Snapshots</MicroLabel>
+      {loading ? (
+        <Flex align="center" gap={2} py={1}>
+          <Spinner size="xs" color="var(--accent)" />
+          <Text fontSize="xs" color="gray.500">
+            Loading snapshots…
+          </Text>
+        </Flex>
+      ) : error ? (
+        <Text fontSize="xs" color="red.300">
+          {error}
+        </Text>
+      ) : snapshots.length === 0 ? (
+        <Text fontSize="xs" color="gray.500">
+          No snapshots yet — run impact to save one.
+        </Text>
+      ) : (
+        <Box maxH="240px" overflowY="auto" onScroll={handleScroll} borderRadius="md">
+          <VStack align="stretch" spacing={1}>
+            {snapshots.map((snapshot) => (
+              <Box
+                key={snapshot.id}
+                as="button"
+                type="button"
+                textAlign="left"
+                px={2}
+                py={1.5}
+                borderRadius="md"
+                bg="whiteAlpha.50"
+                border="1px solid"
+                borderColor="whiteAlpha.100"
+                _hover={{ bg: 'whiteAlpha.100', borderColor: 'whiteAlpha.200' }}
+                onClick={() => onLoad(snapshot.report)}
+                title={`Load snapshot ${shortCommitRef(snapshot.base)}…${shortCommitRef(snapshot.head)}`}
+              >
+                <Flex align="center" gap={2} minW={0}>
+                  <Code fontSize="2xs" color="gray.300" isTruncated flex="1">
+                    {shortCommitRef(snapshot.base)} … {shortCommitRef(snapshot.head)}
+                  </Code>
+                  <HStack spacing={1} flexShrink={0}>
+                    <Box w="6px" h="6px" borderRadius="full" bg={`${coverageColor(snapshot.report.coverage)}.400`} />
+                    <Text fontSize="2xs" color="gray.400">
+                      {snapshot.report.coverage.applicable ? `${snapshot.report.coverage.percent}%` : '—'}
+                    </Text>
+                  </HStack>
+                </Flex>
+                <Text fontSize="2xs" color="gray.500" mt={0.5}>
+                  {snapshotAge(snapshot.created_at)} · {snapshot.report.changed.length} touched
+                </Text>
+              </Box>
+            ))}
+            {loadingMore && (
+              <Flex align="center" justify="center" py={1}>
+                <Spinner size="xs" color="var(--accent)" />
+              </Flex>
+            )}
+          </VStack>
+        </Box>
       )}
     </Box>
   )
@@ -923,13 +1044,13 @@ export default function Repositories() {
   const [branchDraft, setBranchDraft] = useState('')
   const [branchSaving, setBranchSaving] = useState(false)
   const [resultView, setResultView] = useState<ResultView>('diagram')
-  const [diagramStyle, setDiagramStyle] = useState<ImpactDiagramStyle>('review')
   const [filesOpen, setFilesOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<ImpactRepository | null>(null)
   const [removing, setRemoving] = useState(false)
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [compareCollapsed, setCompareCollapsed] = useState(false)
   const [focusResult, setFocusResult] = useState(false)
+  const [snapshotsNonce, setSnapshotsNonce] = useState(0)
   const addDisclosure = useDisclosure()
   const deleteDisclosure = useDisclosure()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -1101,7 +1222,7 @@ export default function Repositories() {
     return undefined
   }, [base, head])
 
-  const impactMarkdownText = useMemo(() => (report ? impactMarkdown(report, diagramStyle) : ''), [report, diagramStyle])
+  const impactMarkdownText = useMemo(() => (report ? impactMarkdown(report) : ''), [report])
 
   const openElement = useCallback(
     async (elementId: number) => {
@@ -1180,6 +1301,16 @@ export default function Repositories() {
     }
   }
 
+  const loadSnapshot = useCallback((snapshot: ImpactReport) => {
+    setReport(snapshot)
+    setBase(snapshot.base)
+    setHead(snapshot.head)
+    setResultView('diagram')
+    setFocusResult(true)
+    setHistoryCollapsed(true)
+    setCompareCollapsed(true)
+  }, [])
+
   const runImpact = async () => {
     const path = localPath || selected?.local_path
     if (!path || !base) return
@@ -1192,6 +1323,8 @@ export default function Repositories() {
       setFocusResult(true)
       setHistoryCollapsed(true)
       setCompareCollapsed(true)
+      // The analysis is persisted server-side; refresh the snapshot list.
+      setSnapshotsNonce((current) => current + 1)
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : 'Impact analysis failed')
     } finally {
@@ -1480,6 +1613,9 @@ export default function Repositories() {
                                 </Button>
                               )}
                             </HStack>
+                            {effectiveRepo.local_path ? (
+                              <SnapshotsSection localPath={effectiveRepo.local_path} refreshNonce={snapshotsNonce} onLoad={loadSnapshot} />
+                            ) : null}
                           </VStack>
                         </Box>
                       )}
@@ -1681,17 +1817,8 @@ export default function Repositories() {
                                 borderColor="whiteAlpha.100"
                                 flexShrink={0}
                               >
-                                <MicroLabel>Diagram style</MicroLabel>
-                                <Box minW="300px" flex="0 1 380px">
-                                  <SegmentedControl<ImpactDiagramStyle>
-                                    ariaLabel="Mermaid diagram style"
-                                    value={diagramStyle}
-                                    onChange={setDiagramStyle}
-                                    options={DIAGRAM_STYLE_OPTIONS}
-                                  />
-                                </Box>
                                 <Text fontSize="xs" color="gray.500" flex="1" minW="180px">
-                                  {DIAGRAM_STYLE_HINTS[diagramStyle]}
+                                  Touched code in context — layered by incoming, touched, and outgoing dependencies. Solid edges are declared relationships, dashed edges are observed in code, –o edges show folder containment.
                                 </Text>
                               </Flex>
                               <Box flex={1} minH={0} overflowY="auto" sx={markdownPanelBodySx}>

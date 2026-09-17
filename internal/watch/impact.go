@@ -40,14 +40,21 @@ type ImpactElement struct {
 
 // ImpactEdge is a relationship between two impacted elements. Declared edges
 // come from authored connectors; observed edges are inferred from code evidence
-// and must not be treated as architecture.
+// and must not be treated as architecture; containment edges connect a bound
+// parent folder to a bound nested folder so folder hierarchies render as
+// connected instead of isolated nodes.
 type ImpactEdge struct {
 	SourceRef string `json:"source_ref"`
 	TargetRef string `json:"target_ref"`
 	Label     string `json:"label,omitempty"`
-	Origin    string `json:"origin"` // "declared" or "observed"
+	Origin    string `json:"origin"` // "declared", "observed", or "contains"
 	Observed  bool   `json:"observed"`
 }
+
+// containmentEdgeLabel is reserved for folder-containment edges. It doubles
+// as the wire encoding: persisted runs and proto responses carry label and
+// observed only, so renderers key containment styling off this label.
+const containmentEdgeLabel = "contains"
 
 // ChangedFile is a file in the analyzed diff with its change type and line
 // counts. Change is one of added, updated, or deleted.
@@ -137,6 +144,23 @@ type BindingSuggestion struct {
 	ElementRef  string
 	ElementName string
 	Score       float64
+}
+
+// fileBindingMatch is one strong (path/glob) binding reaching a changed file,
+// ranked by specificity so nested folders resolve to a single owner.
+type fileBindingMatch struct {
+	binding CodeBinding
+	class   bindingClass
+	depth   int
+}
+
+// ancestorClaim records a broader folder binding that lost a file to a nested
+// winning folder. The ancestor rolls up into Related context instead of
+// lighting up as changed with a duplicate badge.
+type ancestorClaim struct {
+	ancestor string
+	winner   string
+	file     string
 }
 
 // ImpactOptions carries everything AnalyzeImpact needs. ChangedFiles is keyed by
@@ -233,40 +257,76 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 	sourceTotal, sourceBound, sourceWeak, nonSource := 0, 0, 0, 0
 	var sourceScore float64
 	var unmappedSource, weakSource []string
+	var ancestorRollup []ancestorClaim
 	for _, file := range files {
-		strongMatched, weakMatched := false, false
+		var matches []fileBindingMatch
+		weakMatched := false
 		bestClass, bestDepth, haveBinding := bindingClassFolder, 1, false
 		for _, binding := range bindings {
 			var ok bool
-			var kind string
 			switch {
 			case binding.Pattern != "":
 				ok = bindingPatternMatch(binding.Pattern, file)
-				kind = "path"
 				if ok {
-					strongMatched = true
 					class, depth := classifyBinding(binding)
+					matches = append(matches, fileBindingMatch{binding: binding, class: class, depth: depth})
 					if !haveBinding || class > bestClass || (class == bestClass && class == bindingClassFolder && depth > bestDepth) {
 						bestClass, bestDepth, haveBinding = class, depth, true
 					}
 				}
 			case binding.Name != "" && opts.IncludeNameHeuristics:
 				ok = namePathMatch(binding.Name, file)
-				kind = "name"
 				if ok {
 					weakMatched = true
+					addEvidence(binding.ElementRef, ImpactEvidence{
+						Level:    binding.Level,
+						Kind:     "name",
+						Path:     file,
+						Detail:   bindingDetail(binding),
+						Observed: false,
+					})
 				}
 			}
-			if !ok {
+		}
+		strongMatched := len(matches) > 0
+		// Each file is owned by its most specific binding(s). Broader folder
+		// bindings that also reach the file do not light up as changed; when
+		// they nest a winning folder they roll up into Related context below.
+		winnerFolders := map[string]string{}
+		for _, match := range matches {
+			if match.class != bestClass || (match.class == bindingClassFolder && match.depth != bestDepth) {
 				continue
 			}
-			addEvidence(binding.ElementRef, ImpactEvidence{
-				Level:    binding.Level,
-				Kind:     kind,
+			addEvidence(match.binding.ElementRef, ImpactEvidence{
+				Level:    match.binding.Level,
+				Kind:     "path",
 				Path:     file,
-				Detail:   bindingDetail(binding),
-				Observed: binding.Level == EvidenceStrong,
+				Detail:   bindingDetail(match.binding),
+				Observed: match.binding.Level == EvidenceStrong,
 			})
+			if match.class == bindingClassFolder {
+				if prefix := containmentFolderPrefix(match.binding.Pattern); !strings.ContainsAny(prefix, "*?[") {
+					winnerFolders[match.binding.ElementRef] = prefix
+				}
+			}
+		}
+		for _, match := range matches {
+			if match.class == bestClass && (match.class != bindingClassFolder || match.depth == bestDepth) {
+				continue
+			}
+			if match.class != bindingClassFolder {
+				continue
+			}
+			loserPrefix := containmentFolderPrefix(match.binding.Pattern)
+			if loserPrefix == "" || strings.ContainsAny(loserPrefix, "*?[") {
+				continue
+			}
+			for winnerRef, winnerPrefix := range winnerFolders {
+				if winnerRef != match.binding.ElementRef && isStrictFolderPrefix(loserPrefix, winnerPrefix) {
+					ancestorRollup = append(ancestorRollup, ancestorClaim{ancestor: match.binding.ElementRef, winner: winnerRef, file: file})
+					break
+				}
+			}
 		}
 		if !strongMatched && !weakMatched {
 			report.Unmapped = append(report.Unmapped, file)
@@ -313,10 +373,152 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 	report.Related, report.Edges = relatedImpact(opts, changedRefs)
 	observedRelated, observedEdges := observedRelationshipEdges(opts, changedRefs)
 	report.Related = mergeImpactElements(report.Related, observedRelated)
+	report.Related = mergeAncestorRelated(opts, report.Related, changedRefs, ancestorRollup)
 	report.Edges = append(report.Edges, observedEdges...)
+	report.Edges = withContainmentEdges(opts, report)
 
 	report.Coverage = buildCoverage(opts, sourceTotal, sourceBound, sourceScore, sourceWeak, nonSource, unmappedSource, weakSource)
 	return report
+}
+
+// mergeAncestorRelated folds broader folder bindings that lost their files to
+// a nested winner into Related context. The ancestor keeps a "contains"
+// evidence trail (excluded from change badges and ownership counts) so the
+// diagram can show the nesting instead of a duplicate changed node.
+func mergeAncestorRelated(opts ImpactOptions, related []ImpactElement, changedRefs map[string]struct{}, claims []ancestorClaim) []ImpactElement {
+	if len(claims) == 0 {
+		return related
+	}
+	seen := map[string]struct{}{}
+	byRef := map[string]*ImpactElement{}
+	var order []string
+	for _, claim := range claims {
+		if _, ok := changedRefs[claim.ancestor]; ok {
+			continue
+		}
+		element := opts.Elements[claim.ancestor]
+		if element == nil {
+			continue
+		}
+		key := claim.ancestor + "\x00" + claim.file + "\x00" + claim.winner
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		entry, ok := byRef[claim.ancestor]
+		if !ok {
+			entry = &ImpactElement{Ref: claim.ancestor, Name: element.Name, Kind: element.Kind, Owner: element.Owner}
+			byRef[claim.ancestor] = entry
+			order = append(order, claim.ancestor)
+		}
+		winnerName := claim.winner
+		if winner := opts.Elements[claim.winner]; winner != nil && strings.TrimSpace(winner.Name) != "" {
+			winnerName = winner.Name
+		}
+		entry.Evidence = append(entry.Evidence, ImpactEvidence{
+			Level:    EvidenceModerate,
+			Kind:     "contains",
+			Path:     claim.file,
+			Detail:   "contains " + winnerName,
+			Observed: false,
+		})
+	}
+	sort.Strings(order)
+	extra := make([]ImpactElement, 0, len(order))
+	for _, ref := range order {
+		extra = append(extra, *byRef[ref])
+	}
+	return mergeImpactElements(related, extra)
+}
+
+// withContainmentEdges connects bound parent folders to bound nested folders
+// among the impacted elements. Folder hierarchies otherwise render as
+// disconnected nodes when no authored connector links them. Only direct
+// parent/child pairs are emitted, and pairs already joined by a declared or
+// observed edge are left alone.
+func withContainmentEdges(opts ImpactOptions, report ImpactReport) []ImpactEdge {
+	relevant := map[string]struct{}{}
+	for _, element := range report.Changed {
+		relevant[element.Ref] = struct{}{}
+	}
+	for _, element := range report.Related {
+		relevant[element.Ref] = struct{}{}
+	}
+	folders := map[string]string{}
+	for _, binding := range DeriveBindings(opts.Elements, opts.RepoRoot, opts.RemoteURL) {
+		if _, ok := relevant[binding.ElementRef]; !ok {
+			continue
+		}
+		if binding.Pattern == "" || strings.TrimSpace(binding.Symbol) != "" {
+			continue
+		}
+		if class, _ := classifyBinding(binding); class != bindingClassFolder {
+			continue
+		}
+		prefix := containmentFolderPrefix(binding.Pattern)
+		if prefix == "" {
+			continue
+		}
+		folders[binding.ElementRef] = prefix
+	}
+	if len(folders) < 2 {
+		return report.Edges
+	}
+	connected := map[string]bool{}
+	for _, edge := range report.Edges {
+		connected[connectorPairKey(edge.SourceRef, edge.TargetRef)] = true
+		connected[connectorPairKey(edge.TargetRef, edge.SourceRef)] = true
+	}
+	refs := make([]string, 0, len(folders))
+	for ref := range folders {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+	var out []ImpactEdge
+	for _, parent := range refs {
+		for _, child := range refs {
+			if parent == child || !isStrictFolderPrefix(folders[parent], folders[child]) {
+				continue
+			}
+			if connected[connectorPairKey(parent, child)] {
+				continue
+			}
+			direct := true
+			for _, mid := range refs {
+				if mid == parent || mid == child {
+					continue
+				}
+				if isStrictFolderPrefix(folders[parent], folders[mid]) && isStrictFolderPrefix(folders[mid], folders[child]) {
+					direct = false
+					break
+				}
+			}
+			if !direct {
+				continue
+			}
+			out = append(out, ImpactEdge{SourceRef: parent, TargetRef: child, Label: containmentEdgeLabel, Origin: "contains"})
+		}
+	}
+	if len(out) == 0 {
+		return report.Edges
+	}
+	return uniqueDiagramEdges(append(report.Edges, out...))
+}
+
+// containmentFolderPrefix trims a folder binding pattern down to its folder
+// path, e.g. "src/api/**" -> "src/api".
+func containmentFolderPrefix(pattern string) string {
+	trimmed := strings.TrimSpace(filepathToSlash(pattern))
+	trimmed = strings.TrimSuffix(trimmed, "/**")
+	trimmed = strings.TrimSuffix(trimmed, "/")
+	return normalizeCodePath(trimmed)
+}
+
+func isStrictFolderPrefix(parent, child string) bool {
+	if parent == "" || child == "" || parent == child {
+		return false
+	}
+	return strings.HasPrefix(child, parent+"/")
 }
 
 func relatedImpact(opts ImpactOptions, changedRefs map[string]struct{}) ([]ImpactElement, []ImpactEdge) {
