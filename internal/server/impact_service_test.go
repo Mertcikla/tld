@@ -133,8 +133,13 @@ func TestImpactServiceAnalyzeImpact(t *testing.T) {
 	if len(resp.Msg.GetChanged()) != 1 || resp.Msg.GetChanged()[0].GetName() != "Core" {
 		t.Fatalf("changed = %+v, want Core", resp.Msg.GetChanged())
 	}
-	if resp.Msg.GetCoverage().GetPercent() != 100 || !resp.Msg.GetCoverage().GetComplete() {
-		t.Fatalf("coverage = %+v, want 100/complete", resp.Msg.GetCoverage())
+	// src/** is a top-level folder binding: every file is reached, but the
+	// specificity-weighted score should be well below a precise mapping.
+	if resp.Msg.GetCoverage().GetPercent() != 40 || resp.Msg.GetCoverage().GetConfidence() != "low" {
+		t.Fatalf("coverage = %+v, want 40/low for folder-only binding", resp.Msg.GetCoverage())
+	}
+	if !resp.Msg.GetCoverage().GetComplete() {
+		t.Fatalf("coverage = %+v, want complete (no unmapped files)", resp.Msg.GetCoverage())
 	}
 	if resp.Msg.GetChanged()[0].GetElementId() == 0 {
 		t.Fatalf("changed element should carry an element id: %+v", resp.Msg.GetChanged()[0])

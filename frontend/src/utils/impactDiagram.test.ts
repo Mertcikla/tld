@@ -69,13 +69,13 @@ describe('buildImpactDiagram', () => {
       candidates: [node('weak')],
       related: [node('payment')],
       edges: [edge('checkout', 'payment', true)],
-    })))
+    }), 'full'))
   })
 
   it('preserves valid directed relationships and never promotes candidates', () => {
     const fixture = { ...busyReport(), candidates: [node('weak')] }
     const before = JSON.stringify(fixture)
-    for (const style of ['bounded', 'lanes', 'groups'] as const) {
+    for (const style of ['review', 'bounded', 'lanes', 'groups'] as const) {
       const diagram = buildImpactDiagram(fixture, style)
       const refs = new Set(diagram.nodes.map((item) => item.ref))
       for (const relationship of diagram.edges) {
@@ -95,9 +95,30 @@ describe('buildImpactDiagram', () => {
       related: [...fixture.related].reverse(),
       edges: [...fixture.edges].reverse(),
     })
-    for (const style of ['bounded', 'lanes', 'groups'] as const) {
+    for (const style of ['review', 'bounded', 'lanes', 'groups'] as const) {
       expect(buildImpactDiagram(shuffled, style)).toEqual(buildImpactDiagram(fixture, style))
     }
+  })
+
+  it('defaults to the review projection with source annotations on changed nodes', () => {
+    const fixture = report({
+      changed: [node('core')],
+      related: [node('api')],
+      edges: [edge('core', 'api')],
+      changed_files: [],
+    })
+    expect(buildImpactDiagram(fixture).style).toBe('review')
+
+    const annotated = report({
+      changed: [{ ...node('core'), evidence: ['internal/core.go', 'internal/util.go'] }],
+      related: [node('api')],
+      edges: [edge('api', 'core', true)],
+      changed_files: [{ path: 'internal/core.go', change: 'modified', added: 12, removed: 3 }],
+    })
+    const diagram = buildImpactDiagram(annotated)
+    expect(diagram.code).toContain('n1["core<br/>internal/core.go (+12 -3)<br/>internal/util.go"]')
+    expect(diagram.code).toContain('n2["api"]')
+    expect(diagram.code).toContain('n2 -.->|calls| n1')
   })
 
   it('ranks distinct changed neighbors before observed evidence, then stable refs', () => {
@@ -139,7 +160,7 @@ describe('buildImpactDiagram', () => {
 
   it('drops disconnected related nodes in bounded/lanes but keeps changed nodes', () => {
     const fixture = report({ changed: [node('formatter')], related: [node('plugin')] })
-    for (const style of ['bounded', 'lanes'] as const) {
+    for (const style of ['review', 'bounded', 'lanes'] as const) {
       const diagram = buildImpactDiagram(fixture, style)
       expect(diagram.nodes.some((item) => item.ref === 'formatter')).toBe(true)
       expect(diagram.code).not.toContain('plugin')
@@ -180,7 +201,7 @@ describe('buildImpactDiagram', () => {
 
   it('handles an empty report and ignores dangling endpoints', () => {
     const fixture = report({ edges: [edge('missing', 'also-missing')] })
-    for (const style of ['full', 'bounded', 'lanes', 'groups'] as const) {
+    for (const style of ['review', 'full', 'bounded', 'lanes', 'groups'] as const) {
       const diagram = buildImpactDiagram(fixture, style)
       expect(diagram.nodes).toEqual([])
       expect(diagram.edges).toEqual([])

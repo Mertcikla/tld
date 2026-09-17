@@ -1,13 +1,14 @@
-import type { ImpactEdge, ImpactElement, ImpactReport } from '../api/client'
+import type { ImpactEdge, ImpactElement, ImpactFile, ImpactReport } from '../api/client'
 
 // Mirrors internal/watch/impact_render.go and internal/watch/impact_diagram.go
 // so the PR-comment markdown and Mermaid diagram produced in the UI match
 // `tld impact --render markdown --diagram <style>`.
 
-export type ImpactDiagramStyle = 'full' | 'bounded' | 'lanes' | 'groups'
+export type ImpactDiagramStyle = 'review' | 'full' | 'bounded' | 'lanes' | 'groups'
 
 const nodeBudget = 10
 const edgeBudget = 16
+const reviewFileLimit = 3
 
 export interface ImpactDiagramGroup {
   name: string
@@ -119,11 +120,51 @@ export function laneFor(ref: string, changed: Set<string>, edges: ImpactEdge[]):
   return 'outgoing'
 }
 
-function renderGraph(nodes: ImpactElement[], edges: ImpactEdge[], changed: Set<string>, lanes: boolean): string {
+/** Review keeps the bounded selection and annotates each changed element with
+ * the source files that touched it and their line deltas. Every node remains an
+ * authored element; the annotation is the only code-level detail. */
+function reviewDiagram(report: ImpactReport): ReturnType<typeof boundedDiagram> & { detail: Map<string, string> } {
+  const graph = boundedDiagram(report)
+  const changed = new Set(report.changed.map((node) => node.ref))
+  const files = new Map(report.changed_files.map((file) => [file.path, file]))
+  const detail = new Map<string, string>()
+  for (const node of graph.nodes) {
+    if (!changed.has(node.ref)) continue
+    const annotation = reviewNodeDetail(node, files)
+    if (annotation) detail.set(node.ref, annotation)
+  }
+  return { ...graph, detail }
+}
+
+function reviewNodeDetail(node: ImpactElement, files: Map<string, ImpactFile>): string {
+  const paths = [...new Set((node.evidence ?? []).map((value) => (value ?? '').trim()).filter(Boolean))].sort()
+  if (!paths.length) return ''
+  const shown = paths.slice(0, reviewFileLimit)
+  const parts = shown.map((path) => {
+    const file = files.get(path)
+    if (!file || (file.added === 0 && file.removed === 0)) return path
+    return `${path} (+${file.added} -${file.removed})`
+  })
+  if (paths.length > reviewFileLimit) parts.push(`+${paths.length - reviewFileLimit} more`)
+  return parts.join('<br/>')
+}
+
+function renderGraph(
+  nodes: ImpactElement[],
+  edges: ImpactEdge[],
+  changed: Set<string>,
+  lanes: boolean,
+  detail?: Map<string, string>,
+): string {
   const lines: string[] = [lanes ? 'flowchart LR' : 'flowchart TD']
   const ids = new Map<string, string>()
   nodes.forEach((node, index) => ids.set(node.ref, `n${index + 1}`))
-  const nodeLine = (node: ImpactElement) => `  ${ids.get(node.ref)}["${escapeMermaidLabel((node.name ?? '').trim() || node.ref)}"]`
+  const nodeLine = (node: ImpactElement) => {
+    let label = escapeMermaidLabel((node.name ?? '').trim() || node.ref)
+    const annotation = (detail?.get(node.ref) ?? '').trim()
+    if (annotation) label += `<br/>${escapeMermaidLabel(annotation)}`
+    return `  ${ids.get(node.ref)}["${label}"]`
+  }
   if (lanes) {
     const laneOrder: { key: ReturnType<typeof laneFor>; title: string }[] = [
       { key: 'incoming', title: 'Incoming context' },
@@ -145,8 +186,10 @@ function renderGraph(nodes: ImpactElement[], edges: ImpactEdge[], changed: Set<s
     const targetID = ids.get(edge.target_ref)
     if (!sourceID || !targetID) continue
     const arrow = edge.observed ? '-.->' : '-->'
-    lines.push((edge.label ?? '').trim()
-      ? `  ${sourceID} ${arrow}|${escapeMermaidLabel(edge.label)}| ${targetID}`
+    let label = (edge.label ?? '').trim()
+    if (!label && detail && edge.observed) label = 'observed'
+    lines.push(label
+      ? `  ${sourceID} ${arrow}|${escapeMermaidLabel(label)}| ${targetID}`
       : `  ${sourceID} ${arrow} ${targetID}`)
   }
   const changedIDs = nodes.filter((node) => changed.has(node.ref)).map((node) => ids.get(node.ref)!).sort()
@@ -203,11 +246,16 @@ function withCoverage(report: ImpactReport, code: string): string {
   return `%% coverage: ${report.coverage.percent}% (${report.coverage.confidence})\n${code}`
 }
 
-export function buildImpactDiagram(report: ImpactReport, style: ImpactDiagramStyle = 'full'): ImpactDiagramData {
+export function buildImpactDiagram(report: ImpactReport, style: ImpactDiagramStyle = 'review'): ImpactDiagramData {
   const common = { omittedNodes: 0, omittedEdges: 0, groups: [] as ImpactDiagramGroup[], internalEdges: 0 }
   if (style === 'groups') {
     const graph = groupedDiagram(report)
     return { ...common, style, nodes: graph.nodes, edges: graph.edges, groups: graph.groups, internalEdges: graph.internalEdges, code: withCoverage(report, renderGraph(graph.nodes, graph.edges, graph.touchedGroups, false)) }
+  }
+  if (style === 'review') {
+    const graph = reviewDiagram(report)
+    const changed = new Set(report.changed.map((node) => node.ref))
+    return { ...common, style, nodes: graph.nodes, edges: graph.edges, omittedNodes: graph.omittedNodes, omittedEdges: graph.omittedEdges, code: withCoverage(report, renderGraph(graph.nodes, graph.edges, changed, false, graph.detail)) }
   }
   if (style === 'bounded' || style === 'lanes') {
     const graph = boundedDiagram(report)
@@ -218,15 +266,17 @@ export function buildImpactDiagram(report: ImpactReport, style: ImpactDiagramSty
   return { ...common, style: 'full', nodes, edges, code: withCoverage(report, renderGraph(nodes, edges, new Set(report.changed.map((node) => node.ref)), false)) }
 }
 
-export function impactMermaid(report: ImpactReport, style: ImpactDiagramStyle = 'full'): string {
+export function impactMermaid(report: ImpactReport, style: ImpactDiagramStyle = 'review'): string {
   return buildImpactDiagram(report, style).code
 }
 
 function coverageSummaryLine(report: ImpactReport): string {
   const coverage = report.coverage
   if (!coverage.applicable) return 'No source code changed — nothing to reconcile.'
-  const status = coverage.complete ? 'analysis is complete' : 'analysis may be incomplete'
-  return `${coverage.percent}% (${coverage.confidence}) — ${coverage.bound_source_files}/${coverage.source_files} source files owned; ${status}`
+  let status = 'all changed source files are covered'
+  if (!coverage.complete) status = 'analysis may be incomplete'
+  else if (coverage.confidence === 'low') status = 'coverage is limited to broad bindings'
+  return `${coverage.percent}% (${coverage.confidence}) — ${coverage.bound_source_files}/${coverage.source_files} source files covered; ${status}`
 }
 
 function evidenceSummary(evidence: string[] | undefined): string {
@@ -247,7 +297,7 @@ function elementLine(element: ImpactElement): string {
   return evidence ? `- ${element.name} — ${evidence}` : `- ${element.name}`
 }
 
-export function impactMarkdown(report: ImpactReport, style: ImpactDiagramStyle = 'full'): string {
+export function impactMarkdown(report: ImpactReport, style: ImpactDiagramStyle = 'review'): string {
   const lines: string[] = []
   lines.push('## Architecture Impact', '')
 
@@ -286,6 +336,9 @@ export function impactMarkdown(report: ImpactReport, style: ImpactDiagramStyle =
 
   if (report.edges.some((edge) => edge.observed)) {
     lines.push('', '_Dashed edges are observed in code but not declared in the architecture._')
+  }
+  if (style === 'review') {
+    lines.push('', '_Changed elements list the source files that touched them and their line deltas._')
   }
 
   return lines.join('\n')

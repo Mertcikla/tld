@@ -231,9 +231,11 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 	}
 
 	sourceTotal, sourceBound, sourceWeak, nonSource := 0, 0, 0, 0
+	var sourceScore float64
 	var unmappedSource, weakSource []string
 	for _, file := range files {
 		strongMatched, weakMatched := false, false
+		bestClass, bestDepth, haveBinding := bindingClassFolder, 1, false
 		for _, binding := range bindings {
 			var ok bool
 			var kind string
@@ -243,6 +245,10 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 				kind = "path"
 				if ok {
 					strongMatched = true
+					class, depth := classifyBinding(binding)
+					if !haveBinding || class > bestClass || (class == bestClass && class == bindingClassFolder && depth > bestDepth) {
+						bestClass, bestDepth, haveBinding = class, depth, true
+					}
 				}
 			case binding.Name != "" && opts.IncludeNameHeuristics:
 				ok = namePathMatch(binding.Name, file)
@@ -270,6 +276,7 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 			switch {
 			case strongMatched:
 				sourceBound++
+				sourceScore += bindingWeight(bestClass, bestDepth)
 			case weakMatched:
 				sourceWeak++
 				weakSource = append(weakSource, file)
@@ -308,7 +315,7 @@ func AnalyzeImpact(opts ImpactOptions) ImpactReport {
 	report.Related = mergeImpactElements(report.Related, observedRelated)
 	report.Edges = append(report.Edges, observedEdges...)
 
-	report.Coverage = buildCoverage(opts, sourceTotal, sourceBound, sourceWeak, nonSource, unmappedSource, weakSource)
+	report.Coverage = buildCoverage(opts, sourceTotal, sourceBound, sourceScore, sourceWeak, nonSource, unmappedSource, weakSource)
 	return report
 }
 

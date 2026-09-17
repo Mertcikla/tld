@@ -133,7 +133,7 @@ owners for unmapped code. Nothing here mutates the architecture.`,
 
 	c.Flags().StringVar(&base, "base", "main", "git ref to diff against (uses the merge base)")
 	c.Flags().StringVar(&render, "render", "text", "output renderer: text, markdown, or mermaid")
-	c.Flags().StringVar(&diagram, "diagram", "full", "diagram style for markdown/mermaid: full, bounded, lanes, or groups")
+	c.Flags().StringVar(&diagram, "diagram", "review", "diagram style for markdown/mermaid: review, full, bounded, lanes, or groups")
 	c.Flags().BoolVar(&includeWorktree, "include-worktree", false, "also include uncommitted worktree changes")
 	c.Flags().BoolVar(&nameHeuristics, "name-heuristics", true, "derive weak candidate bindings from element names when no file path is set")
 	c.Flags().BoolVar(&evidence, "evidence", false, "detect observed implementation relationships (Tree-sitter/LSP)")

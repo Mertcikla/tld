@@ -897,9 +897,12 @@ func impactEvidenceStrings(element watch.ImpactElement) []string {
 	seen := map[string]struct{}{}
 	var out []string
 	for _, evidence := range element.Evidence {
-		value := strings.TrimSpace(evidence.Detail)
+		// Prefer the changed file so persisted runs can attribute source detail
+		// back to the element; fall back to the binding detail when no file
+		// matched (for example observed relationships).
+		value := strings.TrimSpace(evidence.Path)
 		if value == "" {
-			value = strings.TrimSpace(evidence.Path)
+			value = strings.TrimSpace(evidence.Detail)
 		}
 		if value == "" {
 			continue

@@ -33,7 +33,7 @@ func RenderImpactText(w io.Writer, report ImpactReport) error {
 
 // RenderImpactMarkdown writes a PR-comment friendly report with a Mermaid graph.
 func RenderImpactMarkdown(w io.Writer, report ImpactReport) error {
-	return RenderImpactMarkdownStyle(w, report, DiagramStyleFull)
+	return RenderImpactMarkdownStyle(w, report, DiagramStyleReview)
 }
 
 // RenderImpactMarkdownStyle writes a PR-comment friendly report with a Mermaid
@@ -87,6 +87,10 @@ func RenderImpactMarkdownStyle(w io.Writer, report ImpactReport, style DiagramSt
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintln(w, "_Dashed edges are observed in code but not declared in the architecture._")
 	}
+	if NormalizeDiagramStyle(string(style)) == DiagramStyleReview {
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "_Changed elements list the source files that touched them and their line deltas._")
+	}
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "```mermaid")
 	if err := RenderImpactMermaidStyle(w, report, style); err != nil {
@@ -98,7 +102,7 @@ func RenderImpactMarkdownStyle(w io.Writer, report ImpactReport, style DiagramSt
 
 // RenderImpactMermaid writes the impacted architecture as a Mermaid flowchart.
 func RenderImpactMermaid(w io.Writer, report ImpactReport) error {
-	return RenderImpactMermaidStyle(w, report, DiagramStyleFull)
+	return RenderImpactMermaidStyle(w, report, DiagramStyleReview)
 }
 
 // RenderImpactMermaidStyle writes the impacted architecture as a Mermaid
@@ -139,11 +143,14 @@ func coverageSummaryLine(coverage Coverage) string {
 	if !coverage.Applicable {
 		return "No source code changed — nothing to reconcile."
 	}
-	status := "analysis is complete"
-	if !coverage.Complete {
+	status := "all changed source files are covered"
+	switch {
+	case !coverage.Complete:
 		status = "analysis may be incomplete"
+	case coverage.Confidence == "low":
+		status = "coverage is limited to broad bindings"
 	}
-	return fmt.Sprintf("%d%% (%s) — %d/%d source files owned; %s",
+	return fmt.Sprintf("%d%% (%s) — %d/%d source files covered; %s",
 		coverage.Percent, coverage.Confidence, coverage.BoundSourceFiles, coverage.SourceFiles, status)
 }
 

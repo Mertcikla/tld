@@ -43,6 +43,7 @@ describe('impactMermaid', () => {
           { source_ref: '2', target_ref: '1', label: '', observed: true },
         ],
       }),
+      'full',
     )
 
     expect(code).toContain('flowchart TD')
@@ -53,6 +54,26 @@ describe('impactMermaid', () => {
     expect(code).toContain('n2 -.-> n1')
     expect(code).toContain('class n1 changed')
     expect(code).toContain('classDef changed fill:#fde68a')
+  })
+
+  it('defaults to review and annotates changed nodes with source detail', () => {
+    const code = impactMermaid(
+      report({
+        changed: [
+          { ref: '1', name: 'Core', kind: 'component', change: 'modified', evidence: ['internal/core.go', 'internal/util.go'] },
+        ],
+        related: [{ ref: '2', name: 'API', kind: 'component', change: 'modified', evidence: [] }],
+        edges: [{ source_ref: '2', target_ref: '1', label: '', observed: true }],
+        changed_files: [
+          { path: 'internal/core.go', change: 'modified', added: 12, removed: 3 },
+          { path: 'internal/util.go', change: 'modified', added: 0, removed: 0 },
+        ],
+      }),
+    )
+
+    expect(code).toContain('n1["Core<br/>internal/core.go (+12 -3)<br/>internal/util.go"]')
+    expect(code).toContain('n2["API"]')
+    expect(code).toContain('n2 -.->|observed| n1')
   })
 })
 
@@ -67,11 +88,12 @@ describe('impactMarkdown', () => {
     )
 
     expect(md).toContain('## Architecture Impact')
-    expect(md).toContain('**Coverage:** 100% (high) — 2/2 source files owned; analysis is complete')
+    expect(md).toContain('**Coverage:** 100% (high) — 2/2 source files covered; all changed source files are covered')
     expect(md).not.toContain('**Changed**')
     expect(md).not.toContain('**Related**')
     expect(md).not.toContain('**Unmapped**')
     expect(md).toContain('_Dashed edges are observed in code but not declared in the architecture._')
+    expect(md).toContain('_Changed elements list the source files that touched them and their line deltas._')
     expect(md).toContain('```mermaid')
     expect(md).toContain('flowchart TD')
   })

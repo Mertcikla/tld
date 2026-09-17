@@ -58,6 +58,7 @@ type RepoFilter = 'all' | 'ready' | 'setup'
 type ResultView = 'diagram' | 'markdown'
 
 const DIAGRAM_STYLE_OPTIONS: { value: ImpactDiagramStyle; label: string }[] = [
+  { value: 'review', label: 'Review' },
   { value: 'full', label: 'Full' },
   { value: 'bounded', label: 'Bounded' },
   { value: 'lanes', label: 'Lanes' },
@@ -65,6 +66,7 @@ const DIAGRAM_STYLE_OPTIONS: { value: ImpactDiagramStyle; label: string }[] = [
 ]
 
 const DIAGRAM_STYLE_HINTS: Record<ImpactDiagramStyle, string> = {
+  review: 'Impacted elements annotated with the source files and line deltas behind them.',
   full: 'Every impacted element and relationship.',
   bounded: 'Impacted elements with their closest surrounding context.',
   lanes: 'Layered by direction — incoming, touched, and outgoing.',
@@ -362,7 +364,7 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
             {coverageLabel(coverage)}
           </Badge>
           <Text fontSize="sm" color="gray.400">
-            {coverage.applicable ? `${coverage.bound_source_files}/${coverage.source_files} changed source files owned` : 'Nothing to reconcile'}
+            {coverage.applicable ? `${coverage.bound_source_files}/${coverage.source_files} changed source files covered` : 'Nothing to reconcile'}
           </Text>
         </HStack>
         <Text fontSize="xs" color="gray.500">
@@ -371,6 +373,11 @@ function CoveragePanel({ coverage }: { coverage: ImpactCoverage }) {
       </Flex>
       {coverage.applicable && (
         <Progress value={coverage.percent} size="sm" mt={3} borderRadius="full" colorScheme={coverageColor(coverage)} bg="whiteAlpha.100" />
+      )}
+      {coverage.applicable && coverage.confidence === 'low' && (
+        <Text fontSize="xs" color="gray.500" mt={2}>
+          Low confidence means the change maps only to broad bindings. Bind changed files to symbols or exact files to sharpen the diagram.
+        </Text>
       )}
       <HStack mt={2} spacing={4} fontSize="xs" color="gray.500" wrap="wrap">
         <Text>Weak: {coverage.weak_source_files}</Text>
@@ -916,7 +923,7 @@ export default function Repositories() {
   const [branchDraft, setBranchDraft] = useState('')
   const [branchSaving, setBranchSaving] = useState(false)
   const [resultView, setResultView] = useState<ResultView>('diagram')
-  const [diagramStyle, setDiagramStyle] = useState<ImpactDiagramStyle>('full')
+  const [diagramStyle, setDiagramStyle] = useState<ImpactDiagramStyle>('review')
   const [filesOpen, setFilesOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<ImpactRepository | null>(null)
   const [removing, setRemoving] = useState(false)

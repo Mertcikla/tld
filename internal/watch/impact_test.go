@@ -2,6 +2,7 @@ package watch
 
 import (
 	"bytes"
+	"math"
 	"strings"
 	"testing"
 
@@ -272,11 +273,42 @@ func TestAnalyzeImpactCoverageComplete(t *testing.T) {
 	if !report.Coverage.Applicable || !report.Coverage.Complete {
 		t.Fatalf("coverage = %+v, want applicable+complete", report.Coverage)
 	}
-	if report.Coverage.Percent != 100 || report.Coverage.Confidence != "high" {
-		t.Fatalf("coverage = %+v, want 100/high", report.Coverage)
-	}
 	if len(report.Coverage.Gaps) != 0 {
 		t.Fatalf("gaps = %+v, want none", report.Coverage.Gaps)
+	}
+	// Folder-level bindings reach every file but should not read as a precise,
+	// high-confidence mapping.
+	if report.Coverage.Confidence != "low" {
+		t.Fatalf("coverage = %+v, want low confidence for folder-only bindings", report.Coverage)
+	}
+	if report.Coverage.Percent >= 100 {
+		t.Fatalf("coverage = %+v, want specificity-weighted percent below 100", report.Coverage)
+	}
+}
+
+func TestAnalyzeImpactCoverageWeightsBindingSpecificity(t *testing.T) {
+	cases := []struct {
+		name    string
+		element workspace.Element
+		file    string
+		want    float64
+	}{
+		{"symbol", workspace.Element{Name: "Service", FilePath: "pkg/svc/service.go", Symbol: "Serve"}, "pkg/svc/service.go", 1},
+		{"file", workspace.Element{Name: "Handler", FilePath: "pkg/svc/handler.go"}, "pkg/svc/handler.go", 0.7},
+		{"top-level folder", workspace.Element{Name: "Pkg", FilePath: "pkg/**"}, "pkg/svc/service.go", 0.4},
+		{"nested folder", workspace.Element{Name: "Watch", FilePath: "internal/watch/**"}, "internal/watch/impact.go", 0.32},
+		{"deep folder", workspace.Element{Name: "Enrich", FilePath: "internal/watch/enrich/**"}, "internal/watch/enrich/facts.go", 0.256},
+	}
+	for _, tc := range cases {
+		element := tc.element
+		report := AnalyzeImpact(ImpactOptions{
+			RepoRoot:     t.TempDir(),
+			Elements:     map[string]*workspace.Element{"e": &element},
+			ChangedFiles: map[string]tldgit.WorktreeChange{tc.file: tldgit.WorktreeUpdated},
+		})
+		if math.Abs(report.Coverage.Score-tc.want) > 0.001 {
+			t.Fatalf("%s: score = %v, want %v (coverage=%+v)", tc.name, report.Coverage.Score, tc.want, report.Coverage)
+		}
 	}
 }
 

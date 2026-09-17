@@ -41,7 +41,80 @@ func isSourceFile(path string) bool {
 	return coverageSourceExt[strings.ToLower(filepath.Ext(normalized))]
 }
 
-func buildCoverage(opts ImpactOptions, sourceTotal, sourceBound, sourceWeak, nonSource int, unmappedSource, weakSource []string) Coverage {
+// bindingClass ranks how specifically a binding locates a change. Higher ranks
+// are more specific and therefore produce a more useful impact diagram.
+type bindingClass int
+
+const (
+	bindingClassFolder bindingClass = iota
+	bindingClassGlob
+	bindingClassFile
+	bindingClassSymbol
+)
+
+// classifyBinding describes a strong binding's specificity and, for folder
+// bindings, how deeply nested the folder is.
+func classifyBinding(binding CodeBinding) (bindingClass, int) {
+	pattern := strings.TrimSpace(filepathToSlash(binding.Pattern))
+	if pattern == "" {
+		return bindingClassFolder, 1
+	}
+	if isFolderBindingPattern(pattern) {
+		return bindingClassFolder, folderBindingDepth(pattern)
+	}
+	if strings.TrimSpace(binding.Symbol) != "" {
+		return bindingClassSymbol, 0
+	}
+	if strings.ContainsAny(pattern, "*?[") {
+		return bindingClassGlob, 0
+	}
+	return bindingClassFile, 0
+}
+
+func isFolderBindingPattern(pattern string) bool {
+	return strings.HasSuffix(pattern, "/**") || strings.HasSuffix(pattern, "/")
+}
+
+func folderBindingDepth(pattern string) int {
+	trimmed := strings.TrimSuffix(strings.TrimSuffix(pattern, "/**"), "/")
+	depth := 0
+	for _, segment := range strings.Split(trimmed, "/") {
+		if strings.TrimSpace(segment) != "" {
+			depth++
+		}
+	}
+	if depth < 1 {
+		return 1
+	}
+	return depth
+}
+
+// bindingWeight converts a binding class into a 0..1 coverage contribution.
+// Symbol-level ownership scores highest, then exact files, then file globs, then
+// folders; each extra folder level reduces the contribution further. The score
+// is meant to signal how precisely the diagram will describe the change, not
+// merely whether a file is reached by some binding.
+func bindingWeight(class bindingClass, depth int) float64 {
+	switch class {
+	case bindingClassSymbol:
+		return 1
+	case bindingClassFile:
+		return 0.7
+	case bindingClassGlob:
+		return 0.55
+	default:
+		if depth < 1 {
+			depth = 1
+		}
+		weight := 0.4 * math.Pow(0.8, float64(depth-1))
+		if weight < 0.1 {
+			return 0.1
+		}
+		return weight
+	}
+}
+
+func buildCoverage(opts ImpactOptions, sourceTotal, sourceBound int, sourceScore float64, sourceWeak, nonSource int, unmappedSource, weakSource []string) Coverage {
 	coverage := Coverage{
 		Applicable:       sourceTotal > 0,
 		SourceFiles:      sourceTotal,
@@ -62,7 +135,7 @@ func buildCoverage(opts ImpactOptions, sourceTotal, sourceBound, sourceWeak, non
 		coverage.Confidence = "none"
 		return coverage
 	}
-	coverage.Score = float64(sourceBound) / float64(sourceTotal)
+	coverage.Score = sourceScore / float64(sourceTotal)
 	coverage.Percent = int(math.Round(coverage.Score * 100))
 	switch {
 	case coverage.Score >= 0.95:

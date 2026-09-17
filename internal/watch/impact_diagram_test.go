@@ -56,7 +56,7 @@ func TestBuildImpactDiagramFullMatchesRenderer(t *testing.T) {
 	}
 
 	var rendered bytes.Buffer
-	if err := RenderImpactMermaid(&rendered, report); err != nil {
+	if err := RenderImpactMermaidStyle(&rendered, report, DiagramStyleFull); err != nil {
 		t.Fatal(err)
 	}
 	if got := strings.TrimRight(rendered.String(), "\n"); got != diagram.Code {
@@ -70,7 +70,7 @@ func TestBuildImpactDiagramTransformsPreserveValidRelationships(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, style := range []DiagramStyle{DiagramStyleFull, DiagramStyleBounded, DiagramStyleLanes, DiagramStyleGroups} {
+	for _, style := range []DiagramStyle{DiagramStyleReview, DiagramStyleFull, DiagramStyleBounded, DiagramStyleLanes, DiagramStyleGroups} {
 		diagram := BuildImpactDiagram(report, style)
 		refs := map[string]struct{}{}
 		for _, node := range diagram.Nodes {
@@ -101,7 +101,7 @@ func TestBuildImpactDiagramIsOrderIndependent(t *testing.T) {
 		Related: reverseElements(report.Related),
 		Edges:   reverseEdges(report.Edges),
 	}
-	for _, style := range []DiagramStyle{DiagramStyleBounded, DiagramStyleLanes, DiagramStyleGroups} {
+	for _, style := range []DiagramStyle{DiagramStyleReview, DiagramStyleBounded, DiagramStyleLanes, DiagramStyleGroups} {
 		want := BuildImpactDiagram(report, style)
 		got := BuildImpactDiagram(shuffled, style)
 		if want.Code != got.Code {
@@ -285,7 +285,7 @@ func TestBuildImpactDiagramGroupsByOwner(t *testing.T) {
 
 func TestBuildImpactDiagramHandlesEmptyAndDangling(t *testing.T) {
 	report := ImpactReport{Edges: []ImpactEdge{diagramEdge("missing", "also-missing", false)}}
-	for _, style := range []DiagramStyle{DiagramStyleFull, DiagramStyleBounded, DiagramStyleLanes, DiagramStyleGroups} {
+	for _, style := range []DiagramStyle{DiagramStyleReview, DiagramStyleFull, DiagramStyleBounded, DiagramStyleLanes, DiagramStyleGroups} {
 		diagram := BuildImpactDiagram(report, style)
 		if len(diagram.Nodes) != 0 || len(diagram.Edges) != 0 {
 			t.Fatalf("%s: expected empty diagram, got %+v", style, diagram)
@@ -298,20 +298,64 @@ func TestBuildImpactDiagramHandlesEmptyAndDangling(t *testing.T) {
 
 func TestNormalizeDiagramStyle(t *testing.T) {
 	cases := map[string]DiagramStyle{
-		"":             DiagramStyleFull,
+		"":             DiagramStyleReview,
+		"review":       DiagramStyleReview,
+		"REVIEW":       DiagramStyleReview,
 		"full":         DiagramStyleFull,
+		"all":          DiagramStyleFull,
 		"BOUNDED":      DiagramStyleBounded,
 		"neighborhood": DiagramStyleBounded,
 		"lanes":        DiagramStyleLanes,
 		"lane":         DiagramStyleLanes,
 		"groups":       DiagramStyleGroups,
 		"grouped":      DiagramStyleGroups,
-		" nope ":       DiagramStyleFull,
+		" nope ":       DiagramStyleReview,
 	}
 	for input, want := range cases {
 		if got := NormalizeDiagramStyle(input); got != want {
 			t.Fatalf("NormalizeDiagramStyle(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestBuildImpactDiagramReviewAnnotatesChangedSources(t *testing.T) {
+	report := ImpactReport{
+		Changed: []ImpactElement{{
+			Ref:  "core",
+			Name: "Core",
+			Evidence: []ImpactEvidence{
+				{Level: EvidenceStrong, Kind: "path", Path: "internal/core.go"},
+				{Level: EvidenceStrong, Kind: "path", Path: "internal/util.go"},
+			},
+		}},
+		Related: []ImpactElement{{Ref: "api", Name: "API"}},
+		Edges: []ImpactEdge{
+			{SourceRef: "core", TargetRef: "api"},
+			{SourceRef: "api", TargetRef: "core", Observed: true},
+		},
+		ChangedFiles: []ChangedFile{
+			{Path: "internal/core.go", Change: "updated", Added: 12, Removed: 3},
+			{Path: "internal/util.go", Change: "updated"},
+		},
+	}
+	diagram := BuildImpactDiagram(report, DiagramStyleReview)
+	if diagram.Style != DiagramStyleReview {
+		t.Fatalf("style = %q, want review", diagram.Style)
+	}
+	for _, want := range []string{
+		`n1["Core<br/>internal/core.go (+12 -3)<br/>internal/util.go"]`,
+		`n2["API"]`,
+		"n2 -.->|observed| n1",
+	} {
+		if !strings.Contains(diagram.Code, want) {
+			t.Fatalf("review diagram missing %q:\n%s", want, diagram.Code)
+		}
+	}
+	if strings.Contains(diagram.Code, `n2["API<br/>`) {
+		t.Fatalf("context node should not be annotated:\n%s", diagram.Code)
+	}
+	if got := BuildImpactDiagram(report, DiagramStyleReview); got.Code != diagram.Code {
+		t.Fatalf("review diagram is not deterministic")
 	}
 }
 

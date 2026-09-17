@@ -13,6 +13,12 @@ import (
 type DiagramStyle string
 
 const (
+	// DiagramStyleReview is the default projection for reviewing a change. It
+	// keeps the bounded selection so every node is an authored element, then
+	// annotates changed elements with the source files that touched them and
+	// their line deltas. The annotation is the only code-level detail; the graph
+	// itself is still derived entirely from the authored architecture.
+	DiagramStyleReview DiagramStyle = "review"
 	// DiagramStyleFull draws every changed, candidate, and related element.
 	DiagramStyleFull DiagramStyle = "full"
 	// DiagramStyleBounded keeps changed elements and their most connected
@@ -28,11 +34,16 @@ const (
 const (
 	defaultDiagramNodeBudget = 10
 	defaultDiagramEdgeBudget = 16
+	// reviewDetailFileLimit caps how many source files are listed per element so
+	// a node label stays legible.
+	reviewDetailFileLimit = 3
 )
 
-// NormalizeDiagramStyle parses a user-supplied style, defaulting to full.
+// NormalizeDiagramStyle parses a user-supplied style, defaulting to review.
 func NormalizeDiagramStyle(value string) DiagramStyle {
 	switch strings.ToLower(strings.TrimSpace(value)) {
+	case string(DiagramStyleFull), "all":
+		return DiagramStyleFull
 	case string(DiagramStyleBounded), "neighborhood":
 		return DiagramStyleBounded
 	case string(DiagramStyleLanes), "lane":
@@ -40,7 +51,7 @@ func NormalizeDiagramStyle(value string) DiagramStyle {
 	case string(DiagramStyleGroups), "grouped":
 		return DiagramStyleGroups
 	default:
-		return DiagramStyleFull
+		return DiagramStyleReview
 	}
 }
 
@@ -77,17 +88,27 @@ func BuildImpactDiagram(report ImpactReport, style DiagramStyle) ImpactDiagram {
 		nodes, edges, groups, internal, touched := groupedDiagram(report)
 		return ImpactDiagram{
 			Style:         style,
-			Code:          renderImpactDiagram(report, nodes, edges, touched, false),
+			Code:          renderImpactDiagram(report, nodes, edges, touched, false, nil),
 			Nodes:         nodes,
 			Edges:         edges,
 			Groups:        groups,
 			InternalEdges: internal,
 		}
+	case DiagramStyleReview:
+		nodes, edges, omittedNodes, omittedEdges, detail := reviewDiagram(report, defaultDiagramNodeBudget, defaultDiagramEdgeBudget)
+		return ImpactDiagram{
+			Style:        style,
+			Code:         renderImpactDiagram(report, nodes, edges, changedRefs, false, detail),
+			Nodes:        nodes,
+			Edges:        edges,
+			OmittedNodes: omittedNodes,
+			OmittedEdges: omittedEdges,
+		}
 	case DiagramStyleBounded, DiagramStyleLanes:
 		nodes, edges, omittedNodes, omittedEdges := boundedDiagram(report, defaultDiagramNodeBudget, defaultDiagramEdgeBudget)
 		return ImpactDiagram{
 			Style:        style,
-			Code:         renderImpactDiagram(report, nodes, edges, changedRefs, style == DiagramStyleLanes),
+			Code:         renderImpactDiagram(report, nodes, edges, changedRefs, style == DiagramStyleLanes, nil),
 			Nodes:        nodes,
 			Edges:        edges,
 			OmittedNodes: omittedNodes,
@@ -98,11 +119,77 @@ func BuildImpactDiagram(report ImpactReport, style DiagramStyle) ImpactDiagram {
 		edges := validDiagramEdges(nodes, report.Edges)
 		return ImpactDiagram{
 			Style: DiagramStyleFull,
-			Code:  renderImpactDiagram(report, nodes, edges, changedRefs, false),
+			Code:  renderImpactDiagram(report, nodes, edges, changedRefs, false, nil),
 			Nodes: nodes,
 			Edges: edges,
 		}
 	}
+}
+
+// reviewDiagram projects a report onto the bounded selection and computes a
+// per-changed-element annotation of the source files and line deltas that
+// caused it to be impacted. It never introduces synthetic code nodes; the
+// annotation simply makes the existing evidence legible on the diagram.
+func reviewDiagram(report ImpactReport, nodeBudget, edgeBudget int) (nodes []ImpactElement, edges []ImpactEdge, omittedNodes, omittedEdges int, detail map[string]string) {
+	nodes, edges, omittedNodes, omittedEdges = boundedDiagram(report, nodeBudget, edgeBudget)
+	changed := diagramRefSet(report.Changed)
+	stats := make(map[string]ChangedFile, len(report.ChangedFiles))
+	for _, file := range report.ChangedFiles {
+		stats[file.Path] = file
+	}
+	detail = map[string]string{}
+	for _, node := range nodes {
+		if _, ok := changed[node.Ref]; !ok {
+			continue
+		}
+		if line := reviewNodeDetail(node, stats); line != "" {
+			detail[node.Ref] = line
+		}
+	}
+	return nodes, edges, omittedNodes, omittedEdges, detail
+}
+
+// reviewNodeDetail renders the changed source files for one element as a
+// multi-line label fragment. Line deltas are only shown when the change set
+// carried stats for that file.
+func reviewNodeDetail(node ImpactElement, stats map[string]ChangedFile) string {
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, len(node.Evidence))
+	for _, evidence := range node.Evidence {
+		file := normalizeCodePath(evidence.Path)
+		if file == "" {
+			continue
+		}
+		if _, ok := seen[file]; ok {
+			continue
+		}
+		seen[file] = struct{}{}
+		paths = append(paths, file)
+	}
+	if len(paths) == 0 {
+		return ""
+	}
+	sort.Strings(paths)
+	extra := 0
+	if len(paths) > reviewDetailFileLimit {
+		extra = len(paths) - reviewDetailFileLimit
+		paths = paths[:reviewDetailFileLimit]
+	}
+	parts := make([]string, 0, reviewDetailFileLimit+1)
+	for _, file := range paths {
+		parts = append(parts, reviewFileDetail(file, stats[file]))
+	}
+	if extra > 0 {
+		parts = append(parts, fmt.Sprintf("+%d more", extra))
+	}
+	return strings.Join(parts, "<br/>")
+}
+
+func reviewFileDetail(path string, file ChangedFile) string {
+	if file.Added == 0 && file.Removed == 0 {
+		return path
+	}
+	return fmt.Sprintf("%s (+%d -%d)", path, file.Added, file.Removed)
 }
 
 func fullDiagramNodes(report ImpactReport) []ImpactElement {
@@ -381,16 +468,18 @@ func diagramMemberNames(members []ImpactElement) []string {
 }
 
 // renderImpactDiagram writes the report header and the style-specific graph.
-func renderImpactDiagram(report ImpactReport, nodes []ImpactElement, edges []ImpactEdge, changed map[string]struct{}, lanes bool) string {
+// A non-nil detail map marks the review projection, which annotates changed
+// nodes and labels unlabelled observed edges.
+func renderImpactDiagram(report ImpactReport, nodes []ImpactElement, edges []ImpactEdge, changed map[string]struct{}, lanes bool, detail map[string]string) string {
 	lines := make([]string, 0, len(nodes)+len(edges)+4)
 	if report.Coverage.Applicable {
 		lines = append(lines, fmt.Sprintf("%%%% coverage: %d%% (%s)", report.Coverage.Percent, report.Coverage.Confidence))
 	}
-	lines = append(lines, renderImpactGraph(nodes, edges, changed, lanes))
+	lines = append(lines, renderImpactGraph(nodes, edges, changed, lanes, detail))
 	return strings.Join(lines, "\n")
 }
 
-func renderImpactGraph(nodes []ImpactElement, edges []ImpactEdge, changed map[string]struct{}, lanes bool) string {
+func renderImpactGraph(nodes []ImpactElement, edges []ImpactEdge, changed map[string]struct{}, lanes bool, detail map[string]string) string {
 	lines := make([]string, 0, len(nodes)+len(edges)+8)
 	if lanes {
 		lines = append(lines, "flowchart LR")
@@ -405,6 +494,9 @@ func renderImpactGraph(nodes []ImpactElement, edges []ImpactEdge, changed map[st
 		label := strings.TrimSpace(node.Name)
 		if label == "" {
 			label = node.Ref
+		}
+		if annotation := strings.TrimSpace(detail[node.Ref]); annotation != "" {
+			label += "<br/>" + annotation
 		}
 		return fmt.Sprintf("  %s[\"%s\"]", ids[node.Ref], escapeMermaidLabel(label))
 	}
@@ -451,8 +543,12 @@ func renderImpactGraph(nodes []ImpactElement, edges []ImpactEdge, changed map[st
 		if edge.Observed {
 			arrow = "-.->"
 		}
-		if strings.TrimSpace(edge.Label) != "" {
-			lines = append(lines, fmt.Sprintf("  %s %s|%s| %s", sourceID, arrow, escapeMermaidLabel(edge.Label), targetID))
+		label := strings.TrimSpace(edge.Label)
+		if label == "" && detail != nil && edge.Observed {
+			label = "observed"
+		}
+		if label != "" {
+			lines = append(lines, fmt.Sprintf("  %s %s|%s| %s", sourceID, arrow, escapeMermaidLabel(label), targetID))
 		} else {
 			lines = append(lines, fmt.Sprintf("  %s %s %s", sourceID, arrow, targetID))
 		}
