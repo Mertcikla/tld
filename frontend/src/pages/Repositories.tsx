@@ -28,6 +28,7 @@ import {
   Tooltip,
   useDisclosure,
 } from '@chakra-ui/react'
+import type { ButtonProps } from '@chakra-ui/react'
 import { AddIcon, ArrowRightIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon } from '@chakra-ui/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
@@ -96,6 +97,38 @@ async function copyText(text: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+const accentCtaStyle: ButtonProps = {
+  bg: 'var(--accent)',
+  color: 'white',
+  border: '1px solid',
+  borderColor: 'rgba(var(--accent-rgb), 0.55)',
+  boxShadow: '0 0 22px rgba(var(--accent-rgb), 0.28)',
+  transition: 'transform 0.18s ease, filter 0.18s ease, box-shadow 0.18s ease',
+  _hover: {
+    bg: 'var(--accent)',
+    filter: 'brightness(1.08)',
+    transform: 'translateY(-1px)',
+    _disabled: { bg: 'var(--accent)', filter: 'none', transform: 'none' },
+  },
+  _active: { transform: 'translateY(0)', filter: 'brightness(0.92)' },
+  _disabled: { opacity: 0.4, boxShadow: 'none' },
+}
+
+const accentOutlineCtaStyle: ButtonProps = {
+  bg: 'rgba(var(--accent-rgb), 0.1)',
+  color: 'var(--accent)',
+  border: '1px solid',
+  borderColor: 'rgba(var(--accent-rgb), 0.4)',
+  transition: 'transform 0.18s ease, background 0.18s ease, border-color 0.18s ease',
+  _hover: {
+    bg: 'rgba(var(--accent-rgb), 0.18)',
+    color: 'var(--accent)',
+    borderColor: 'rgba(var(--accent-rgb), 0.6)',
+    transform: 'translateY(-1px)',
+  },
+  _active: { transform: 'translateY(0)', bg: 'rgba(var(--accent-rgb), 0.24)' },
 }
 
 function SegmentedControl<T extends string>({
@@ -1026,6 +1059,14 @@ export default function Repositories() {
     setFocusResult(false)
   }, [base, head])
 
+  const startNewRun = useCallback(() => {
+    setBase('')
+    setHead('')
+    setHistoryCollapsed(false)
+    setCompareCollapsed(false)
+    setFocusResult(false)
+  }, [])
+
   const selectionHint = useMemo(() => {
     if (!base) return 'Step 1 — pick the base commit'
     if (!head) return 'Step 2 — pick the head commit to compare'
@@ -1537,24 +1578,15 @@ export default function Repositories() {
                         </Flex>
                         <Flex justify="center" mt={4}>
                           <Button
-                            size="lg"
-                            h="52px"
-                            px={10}
-                            fontSize="md"
-                            fontWeight="extrabold"
-                            borderRadius="xl"
-                            leftIcon={<ArrowRightIcon boxSize={4} />}
-                            colorScheme="blue"
+                            {...accentCtaStyle}
+                            size="sm"
+                            px={5}
+                            fontSize="sm"
+                            fontWeight="semibold"
+                            borderRadius="lg"
+                            leftIcon={<ArrowRightIcon boxSize={3.5} />}
                             isLoading={running}
                             isDisabled={!baseCommit || !headCommit}
-                            boxShadow={baseCommit && headCommit ? '0 0 28px rgba(72, 130, 255, 0.35)' : 'none'}
-                            _hover={
-                              baseCommit && headCommit
-                                ? { transform: 'scale(1.04)', boxShadow: '0 0 36px rgba(72, 130, 255, 0.55)', _disabled: {} }
-                                : {}
-                            }
-                            _active={baseCommit && headCommit ? { transform: 'scale(0.97)' } : {}}
-                            transition="all 0.2s"
                             onClick={() => void runImpact()}
                           >
                             Run impact
@@ -1575,14 +1607,7 @@ export default function Repositories() {
                 {report && !running && (
                   <Box borderBottom="1px solid" borderColor="whiteAlpha.100" ref={impactAnchorRef}>
                     <Flex px={4} minH="40px" py={1} align="center" gap={2} wrap="wrap" borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
-                      <Text fontSize="10px" fontWeight="bold" textTransform="uppercase" flexShrink={0} color={focusResult ? 'var(--accent)' : 'gray.500'}>
-                        Impact
-                      </Text>
-                      {focusResult && (
-                        <Badge variant="subtle" colorScheme="blue" fontSize="2xs" borderRadius="full" px={2}>
-                          Latest result
-                        </Badge>
-                      )}
+
                       <Box flex={1} />
                       <Box w="280px" flexShrink={0}>
                         <SegmentedControl<ResultView>
@@ -1616,19 +1641,6 @@ export default function Repositories() {
                           </Select>
                         </Tooltip>
                       )}
-                      <Tooltip label="Copy the PR-comment markdown" placement="top">
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          color="gray.400"
-                          _hover={{ color: 'gray.100' }}
-                          leftIcon={<CopyIcon />}
-                          onClick={() => copyPath(impactMarkdownText, 'Markdown')}
-                          flexShrink={0}
-                        >
-                          Copy as markdown
-                        </Button>
-                      </Tooltip>
                     </Flex>
                     <Box>
                       {resultView === 'gaps' ? (
@@ -1654,6 +1666,41 @@ export default function Repositories() {
                         </Flex>
                       )}
                     </Box>
+                    <Flex
+                      px={4}
+                      py={3}
+                      justify="center"
+                      align="center"
+                      gap={2}
+                      wrap="wrap"
+                      borderTop="1px solid"
+                      borderColor="whiteAlpha.100"
+                    >
+                      <Button
+                        {...accentOutlineCtaStyle}
+                        size="sm"
+                        px={5}
+                        fontSize="sm"
+                        fontWeight="semibold"
+                        borderRadius="lg"
+                        leftIcon={<RepeatIcon boxSize={3.5} />}
+                        onClick={startNewRun}
+                      >
+                        Run new
+                      </Button>
+                      <Button
+                        {...accentCtaStyle}
+                        size="sm"
+                        px={5}
+                        fontSize="sm"
+                        fontWeight="semibold"
+                        borderRadius="lg"
+                        leftIcon={<CopyIcon boxSize={3.5} />}
+                        onClick={() => copyPath(impactMarkdownText, 'Markdown')}
+                      >
+                        Copy as markdown
+                      </Button>
+                    </Flex>
                   </Box>
                 )}
 
