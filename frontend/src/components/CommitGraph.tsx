@@ -165,12 +165,20 @@ export default function CommitHistoryPanel({
   head,
   onSelectBase,
   onSelectHead,
+  onPickCommit,
+  collapsed = false,
+  onToggleCollapsed,
+  hint,
 }: {
   path: string
   base: string
   head: string
   onSelectBase: (sha: string) => void
   onSelectHead: (sha: string) => void
+  onPickCommit?: (sha: string) => void
+  collapsed?: boolean
+  onToggleCollapsed?: () => void
+  hint?: string
 }) {
   const [history, setHistory] = useState<ImpactCommit[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
@@ -241,7 +249,20 @@ export default function CommitHistoryPanel({
 
   return (
     <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
-      <Flex px={4} h="40px" align="center" gap={2} borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
+      <Flex
+        px={4}
+        h="40px"
+        align="center"
+        gap={2}
+        borderBottom="1px solid"
+        borderColor="whiteAlpha.100"
+        flexShrink={0}
+        cursor={onToggleCollapsed ? 'pointer' : undefined}
+        userSelect={onToggleCollapsed ? 'none' : undefined}
+        _hover={onToggleCollapsed ? { bg: 'whiteAlpha.50' } : undefined}
+        onClick={onToggleCollapsed}
+        title={onToggleCollapsed ? (collapsed ? 'Show commit history' : 'Hide commit history') : undefined}
+      >
         <Text fontSize="10px" color="gray.500" fontWeight="bold" textTransform="uppercase" flexShrink={0}>
           Commit history
         </Text>
@@ -253,35 +274,45 @@ export default function CommitHistoryPanel({
             {' '}commits
           </Box>
         )}
+        {hint && (
+          <Text fontSize="xs" color="var(--accent)" fontWeight="medium" whiteSpace="nowrap" isTruncated>
+            {hint}
+          </Text>
+        )}
         <Box flex={1} />
-        <InputGroup size="xs" maxW="200px">
-          <InputLeftElement pointerEvents="none" color="gray.600">
-            <SearchIcon boxSize={3} />
-          </InputLeftElement>
-          <Input
-            placeholder="Filter…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            variant="filled"
-            bg="whiteAlpha.50"
-            _focus={{ bg: 'whiteAlpha.100' }}
-            borderRadius="md"
-            _placeholder={{ color: 'gray.600' }}
-          />
-          {query && (
-            <InputRightElement>
-              <IconButton aria-label="Clear commit filter" icon={<SmallCloseIcon />} size="xs" variant="ghost" color="gray.600" onClick={() => setQuery('')} />
-            </InputRightElement>
-          )}
-        </InputGroup>
+        {!collapsed && (
+          <Box onClick={(event) => event.stopPropagation()} maxW="200px" w="full" flexShrink={0}>
+            <InputGroup size="xs" maxW="200px">
+            <InputLeftElement pointerEvents="none" color="gray.600">
+              <SearchIcon boxSize={3} />
+            </InputLeftElement>
+            <Input
+              placeholder="Filter…"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              variant="filled"
+              bg="whiteAlpha.50"
+              _focus={{ bg: 'whiteAlpha.100' }}
+              borderRadius="md"
+              _placeholder={{ color: 'gray.600' }}
+            />
+            {query && (
+              <InputRightElement>
+                <IconButton aria-label="Clear commit filter" icon={<SmallCloseIcon />} size="xs" variant="ghost" color="gray.600" onClick={() => setQuery('')} />
+              </InputRightElement>
+            )}
+          </InputGroup>
+          </Box>
+        )}
       </Flex>
 
-      {historyLoading && history.length === 0 ? (
+      {!collapsed && historyLoading && history.length === 0 ? (
         <Flex py={8} align="center" justify="center" direction="column" gap={3} color="gray.600">
           <Spinner size="lg" color="var(--accent)" />
           <Text fontSize="sm">Loading commit history…</Text>
         </Flex>
-      ) : historyError && history.length === 0 ? (
+      ) : null}
+      {!collapsed && historyError && history.length === 0 ? (
         <Box px={4} py={6} textAlign="center">
           <Text fontSize="sm" color="gray.400">
             {historyError}
@@ -290,14 +321,16 @@ export default function CommitHistoryPanel({
             Retry
           </Button>
         </Box>
-      ) : history.length === 0 ? (
+      ) : null}
+      {!collapsed && history.length === 0 ? (
         <Box px={4} py={6} textAlign="center">
           <Text fontSize="sm" color="gray.500">
             No commits found for this checkout.
           </Text>
         </Box>
-      ) : (
-        <Box maxH="380px" overflowY="auto">
+      ) : null}
+      {!collapsed && (
+        <Box maxH="240px" overflowY="auto">
           <Flex align="stretch">
             <Box w={`${railWidth}px`} flexShrink={0} position="relative">
               <svg width={railWidth} height={layout.rows.length * ROW_H} style={{ display: 'block' }}>
@@ -369,7 +402,14 @@ export default function CommitHistoryPanel({
                     role="group"
                     transition="background 0.1s"
                     _hover={{ bg: isBase || isHead ? 'rgba(var(--accent-rgb), 0.16)' : 'whiteAlpha.50' }}
-                    onClick={() => setInspectedSha((current) => (current === commit.sha ? null : commit.sha))}
+                    onClick={() => {
+                      if (onPickCommit) {
+                        onPickCommit(commit.sha)
+                        return
+                      }
+                      setInspectedSha((current) => (current === commit.sha ? null : commit.sha))
+                    }}
+                    title={onPickCommit ? 'Click to select as base / head' : undefined}
                   >
                     <Box flex={1} minW={0}>
                       <HStack spacing={1.5} minW={0}>
@@ -383,7 +423,18 @@ export default function CommitHistoryPanel({
                             HEAD
                           </Badge>
                         )}
-                        <Code fontSize="xs" color="gray.300" flexShrink={0}>
+                        <Code
+                          fontSize="xs"
+                          color="gray.300"
+                          flexShrink={0}
+                          cursor="pointer"
+                          _hover={{ color: 'white' }}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setInspectedSha((current) => (current === commit.sha ? null : commit.sha))
+                          }}
+                          title="View commit details"
+                        >
                           {commit.short_sha}
                         </Code>
                         <Text fontSize="sm" color="gray.100" isTruncated flex={1} title={`${commit.subject} — ${[commit.author, commit.date].filter(Boolean).join(' · ')}`}>

@@ -28,7 +28,7 @@ import {
   Tooltip,
   useDisclosure,
 } from '@chakra-ui/react'
-import { AddIcon, ArrowUpDownIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon } from '@chakra-ui/icons'
+import { AddIcon, ArrowRightIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, CopyIcon, DeleteIcon, ExternalLinkIcon, RepeatIcon } from '@chakra-ui/icons'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   api,
@@ -477,7 +477,15 @@ function fileStatusColor(change: ImpactFile['change'] | undefined): string {
   }
 }
 
-function ImpactFilesPanel({ files }: { files: ImpactFile[] }) {
+function ImpactFilesPanel({
+  files,
+  open,
+  onToggle,
+}: {
+  files: ImpactFile[]
+  open: boolean
+  onToggle: () => void
+}) {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const tree = useMemo(() => buildImpactFileTree(files), [files])
@@ -559,21 +567,81 @@ function ImpactFilesPanel({ files }: { files: ImpactFile[] }) {
     )
   }
 
+  if (!open) {
+    return (
+      <Flex
+        w="22px"
+        flexShrink={0}
+        minH={0}
+        maxH={{ base: '240px', lg: '460px' }}
+        borderBottom={{ base: '1px solid', lg: 'none' }}
+        borderColor="whiteAlpha.100"
+        direction={{ base: 'row', lg: 'column' }}
+        align="center"
+        justify={{ base: 'flex-start', lg: 'center' }}
+        gap={2}
+        px={{ base: 2, lg: 0 }}
+        cursor="pointer"
+        userSelect="none"
+        bg="whiteAlpha.25"
+        _hover={{ bg: 'whiteAlpha.100' }}
+        transition="background 0.15s"
+        onClick={onToggle}
+        title="Show files"
+        aria-label="Show files"
+      >
+        <Text
+          fontSize="10px"
+          fontWeight="700"
+          color="gray.400"
+          textTransform="uppercase"
+          letterSpacing="0.08em"
+          whiteSpace="nowrap"
+          style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+        >
+          Files
+        </Text>
+        <Badge
+          variant="subtle"
+          fontSize="2xs"
+          borderRadius="full"
+          px={1}
+          flexShrink={0}
+          style={{ writingMode: 'horizontal-tb' }}
+        >
+          {files.length}
+        </Badge>
+      </Flex>
+    )
+  }
+
   return (
     <Box
       w={{ base: 'full', lg: '280px' }}
       flexShrink={0}
       minW={0}
-      border="1px solid"
-      borderColor="var(--border-main)"
-      borderRadius="xl"
-      bg="var(--bg-panel)"
+      borderBottom={{ base: '1px solid', lg: 'none' }}
+      borderColor="whiteAlpha.100"
       display="flex"
       flexDir="column"
       minH={0}
       maxH={{ base: '240px', lg: '460px' }}
     >
-      <Flex align="center" gap={2} px={3} py={2} borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0} minW={0}>
+      <Flex
+        align="center"
+        gap={2}
+        px={3}
+        py={2}
+        borderBottom="1px solid"
+        borderColor="whiteAlpha.100"
+        flexShrink={0}
+        minW={0}
+        cursor="pointer"
+        userSelect="none"
+        _hover={{ bg: 'whiteAlpha.50' }}
+        onClick={onToggle}
+        title={open ? 'Hide files' : 'Show files'}
+      >
         <MicroLabel>Files</MicroLabel>
         <Badge variant="subtle" fontSize="2xs" borderRadius="full">
           {files.length}
@@ -592,15 +660,17 @@ function ImpactFilesPanel({ files }: { files: ImpactFile[] }) {
           )}
         </HStack>
       </Flex>
-      <Box overflowY="auto" p={1.5} minH={0}>
-        {tree.length === 0 ? (
-          <Text fontSize="sm" color="gray.500" px={2} py={3}>
-            No changed files.
-          </Text>
-        ) : (
-          tree.map(renderNode)
-        )}
-      </Box>
+      {open && (
+        <Box overflowY="auto" p={1.5} minH={0}>
+          {tree.length === 0 ? (
+            <Text fontSize="sm" color="gray.500" px={2} py={3}>
+              No changed files.
+            </Text>
+          ) : (
+            tree.map(renderNode)
+          )}
+        </Box>
+      )}
     </Box>
   )
 }
@@ -796,10 +866,14 @@ export default function Repositories() {
   const [filesOpen, setFilesOpen] = useState(true)
   const [pendingDelete, setPendingDelete] = useState<ImpactRepository | null>(null)
   const [removing, setRemoving] = useState(false)
+  const [historyCollapsed, setHistoryCollapsed] = useState(false)
+  const [compareCollapsed, setCompareCollapsed] = useState(false)
+  const [focusResult, setFocusResult] = useState(false)
   const addDisclosure = useDisclosure()
   const deleteDisclosure = useDisclosure()
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const sidebarInitRef = useRef(false)
+  const impactAnchorRef = useRef<HTMLDivElement | null>(null)
 
   const selectRepo = useCallback(
     (ref: string | null) => {
@@ -863,16 +937,21 @@ export default function Repositories() {
       try {
         const result = await api.impact.getRepositoryStatus(ref)
         setStatus(result)
-        const commits = result.commits
         const path = result.repository?.local_path || ''
         const latest = path ? await api.impact.latest(path) : null
         setReport(latest)
+        setFocusResult(!!latest)
         if (latest) {
           setBase(latest.base)
           setHead(latest.head)
+          setHistoryCollapsed(true)
+          setCompareCollapsed(true)
         } else {
-          setHead((current) => current || commits[0]?.sha || 'HEAD')
-          setBase((current) => current || commits[1]?.sha || commits[0]?.sha || 'HEAD~1')
+          // Guided flow: start empty so the first click sets the base commit.
+          setBase('')
+          setHead('')
+          setHistoryCollapsed(false)
+          setCompareCollapsed(false)
         }
       } catch (statusError) {
         setError(statusError instanceof Error ? statusError.message : 'Could not load repository status')
@@ -901,6 +980,12 @@ export default function Repositories() {
   const localPath = effectiveRepo?.local_path || ''
 
   useEffect(() => {
+    if (focusResult && report) {
+      impactAnchorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [focusResult, report])
+
+  useEffect(() => {
     setBranchDraft(effectiveRepo?.branch ?? '')
   }, [effectiveRepo?.ref, effectiveRepo?.branch])
 
@@ -925,6 +1010,27 @@ export default function Repositories() {
 
   const baseCommit = useMemo(() => commits.find((commit) => commit.sha === base) ?? null, [commits, base])
   const headCommit = useMemo(() => commits.find((commit) => commit.sha === head) ?? null, [commits, head])
+
+  const pickCommit = useCallback((sha: string) => {
+    if (base && !head) {
+      if (sha === base) return
+      setHead(sha)
+      setCompareCollapsed(false)
+      return
+    }
+    // First click (or re-picking a base once both are set): start a fresh selection.
+    setBase(sha)
+    setHead('')
+    setHistoryCollapsed(false)
+    setCompareCollapsed(false)
+    setFocusResult(false)
+  }, [base, head])
+
+  const selectionHint = useMemo(() => {
+    if (!base) return 'Step 1 — pick the base commit'
+    if (!head) return 'Step 2 — pick the head commit to compare'
+    return undefined
+  }, [base, head])
 
   const impactMarkdownText = useMemo(() => (report ? impactMarkdown(report, diagramStyle) : ''), [report, diagramStyle])
 
@@ -1014,6 +1120,9 @@ export default function Repositories() {
       const result = await api.impact.analyze({ path, base, head: head || 'HEAD' })
       setReport(result)
       setResultView('diagram')
+      setFocusResult(true)
+      setHistoryCollapsed(true)
+      setCompareCollapsed(true)
     } catch (runError) {
       setError(runError instanceof Error ? runError.message : 'Impact analysis failed')
     } finally {
@@ -1025,11 +1134,6 @@ export default function Repositories() {
     void load()
     if (selectedRef) void reloadStatus(selectedRef)
   }, [load, reloadStatus, selectedRef])
-
-  const swapRange = () => {
-    setBase(head)
-    setHead(base)
-  }
 
   const applyPreset = (depth: number) => {
     if (commits.length === 0) return
@@ -1086,7 +1190,7 @@ export default function Repositories() {
             <Box
               w={{ base: 'full', lg: '60px' }}
               flexShrink={0}
-              borderRight={{ lg: '1px solid' }}
+              borderRight="1px solid"
               borderBottom={{ base: '1px solid', lg: 'none' }}
               borderColor="whiteAlpha.100"
               p={2}
@@ -1130,7 +1234,7 @@ export default function Repositories() {
               w={{ base: 'full', lg: '320px' }}
               display="flex"
               flexDir="column"
-              borderRight={{ lg: '1px solid' }}
+              borderRight="1px solid"
               borderBottom={{ base: '1px solid', lg: 'none' }}
               borderColor="whiteAlpha.100"
               flexShrink={0}
@@ -1367,48 +1471,99 @@ export default function Repositories() {
                   head={head}
                   onSelectBase={setBase}
                   onSelectHead={setHead}
+                  onPickCommit={pickCommit}
+                  collapsed={historyCollapsed}
+                  onToggleCollapsed={() => setHistoryCollapsed((current) => !current)}
+                  hint={selectionHint}
                 />
 
-                <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
-                  <Flex px={4} h="40px" align="center" gap={2} borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
-                    <Text fontSize="10px" color="gray.500" fontWeight="bold" textTransform="uppercase" flex={1} isTruncated>
-                      Compare
-                    </Text>
-                    {baseCommit && headCommit && (
+                {base && !head && (
+                  <Box borderBottom="1px solid" borderColor="whiteAlpha.100" bg="rgba(var(--accent-rgb), 0.06)" px={4} py={2.5}>
+                    <HStack spacing={2} align="center">
+                      <Badge variant="subtle" colorScheme="gray" fontSize="xs" borderRadius="full" px={2}>
+                        BASE {baseCommit?.short_sha}
+                      </Badge>
+                      <Text fontSize="sm" color="gray.300" flex="1" isTruncated>
+                        Step 2 of 2 — pick the head (target) commit to compare against
+                      </Text>
+                    </HStack>
+                  </Box>
+                )}
+
+                {baseCommit && headCommit && (
+                  <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
+                    <Flex
+                      px={4}
+                      h="40px"
+                      align="center"
+                      gap={2}
+                      borderBottom={compareCollapsed ? '1px solid' : 'none'}
+                      borderColor="whiteAlpha.100"
+                      flexShrink={0}
+                      cursor="pointer"
+                      userSelect="none"
+                      _hover={{ bg: 'whiteAlpha.50' }}
+                      onClick={() => setCompareCollapsed((current) => !current)}
+                      title={compareCollapsed ? 'Show compare controls' : 'Hide compare controls'}
+                    >
+                      <Text fontSize="10px" color="gray.500" fontWeight="bold" textTransform="uppercase" flex={1} isTruncated>
+                        Compare
+                      </Text>
                       <Code fontSize="xs" color="whiteAlpha.600" title={`${baseCommit.sha} compared with ${headCommit.sha}`}>
                         {baseCommit.short_sha} … {headCommit.short_sha}
                       </Code>
+                      {!compareCollapsed && ([['Latest', 1], ['Last 5', 4], ['Last 10', 9]] as const).map(([label, depth]) => (
+                        <Button
+                          key={label}
+                          size="xs"
+                          variant="ghost"
+                          color="whiteAlpha.600"
+                          _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            applyPreset(depth)
+                          }}
+                          isDisabled={commits.length === 0}
+                        >
+                          {label}
+                        </Button>
+                      ))}
+                    </Flex>
+                    {!compareCollapsed && (
+                      <Box px={4} py={3}>
+                        <Flex gap={3} align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }}>
+                          <CompareSide label="Base" dot="gray.400" value={base} commits={commits} selected={baseCommit} onSelect={setBase} />
+                          <CompareSide label="Head" dot="green.400" value={head} commits={commits} selected={headCommit} onSelect={setHead} />
+                        </Flex>
+                        <Flex justify="center" mt={4}>
+                          <Button
+                            size="lg"
+                            h="52px"
+                            px={10}
+                            fontSize="md"
+                            fontWeight="extrabold"
+                            borderRadius="xl"
+                            leftIcon={<ArrowRightIcon boxSize={4} />}
+                            colorScheme="blue"
+                            isLoading={running}
+                            isDisabled={!baseCommit || !headCommit}
+                            boxShadow={baseCommit && headCommit ? '0 0 28px rgba(72, 130, 255, 0.35)' : 'none'}
+                            _hover={
+                              baseCommit && headCommit
+                                ? { transform: 'scale(1.04)', boxShadow: '0 0 36px rgba(72, 130, 255, 0.55)', _disabled: {} }
+                                : {}
+                            }
+                            _active={baseCommit && headCommit ? { transform: 'scale(0.97)' } : {}}
+                            transition="all 0.2s"
+                            onClick={() => void runImpact()}
+                          >
+                            Run impact
+                          </Button>
+                        </Flex>
+                      </Box>
                     )}
-                    {([['Latest', 1], ['Last 5', 4], ['Last 10', 9]] as const).map(([label, depth]) => (
-                      <Button key={label} size="xs" variant="ghost" color="whiteAlpha.600" _hover={{ color: 'white', bg: 'whiteAlpha.100' }} onClick={() => applyPreset(depth)} isDisabled={commits.length === 0}>
-                        {label}
-                      </Button>
-                    ))}
-                  </Flex>
-                  <Box px={4} py={3}>
-                    <Flex gap={3} align={{ base: 'stretch', md: 'center' }} direction={{ base: 'column', md: 'row' }}>
-                      <CompareSide label="Base" dot="gray.400" value={base} commits={commits} selected={baseCommit} onSelect={setBase} />
-                      <Tooltip label="Swap base and head" placement="top">
-                        <IconButton
-                          aria-label="Swap base and head"
-                          icon={<ArrowUpDownIcon />}
-                          size="sm"
-                          variant="outline"
-                          borderRadius="full"
-                          onClick={swapRange}
-                          alignSelf="center"
-                          flexShrink={0}
-                        />
-                      </Tooltip>
-                      <CompareSide label="Head" dot="green.400" value={head} commits={commits} selected={headCommit} onSelect={setHead} />
-                    </Flex>
-                    <Flex justify="center" mt={3}>
-                      <Button size="sm" colorScheme="blue" isLoading={running} isDisabled={!base} onClick={() => void runImpact()}>
-                        Run impact
-                      </Button>
-                    </Flex>
                   </Box>
-                </Box>
+                )}
 
                 {running && (
                   <Flex py={8} align="center" justify="center" direction="column" gap={3} color="gray.600" borderBottom="1px solid" borderColor="whiteAlpha.100">
@@ -1418,29 +1573,17 @@ export default function Repositories() {
                 )}
 
                 {report && !running && (
-                  <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
+                  <Box borderBottom="1px solid" borderColor="whiteAlpha.100" ref={impactAnchorRef}>
                     <Flex px={4} minH="40px" py={1} align="center" gap={2} wrap="wrap" borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
-                      <Text fontSize="10px" color="gray.500" fontWeight="bold" textTransform="uppercase" flexShrink={0}>
+                      <Text fontSize="10px" fontWeight="bold" textTransform="uppercase" flexShrink={0} color={focusResult ? 'var(--accent)' : 'gray.500'}>
                         Impact
                       </Text>
-                      <Box flex={1} />
-                      {resultView !== 'gaps' && (
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          color={filesOpen ? 'white' : 'whiteAlpha.600'}
-                          bg={filesOpen ? 'whiteAlpha.100' : 'transparent'}
-                          _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
-                          onClick={() => setFilesOpen((current) => !current)}
-                          aria-pressed={filesOpen}
-                          flexShrink={0}
-                        >
-                          Files
-                          <Badge ml={1.5} variant="subtle" fontSize="2xs" borderRadius="full">
-                            {report.changed_files.length}
-                          </Badge>
-                        </Button>
+                      {focusResult && (
+                        <Badge variant="subtle" colorScheme="blue" fontSize="2xs" borderRadius="full" px={2}>
+                          Latest result
+                        </Badge>
                       )}
+                      <Box flex={1} />
                       <Box w="280px" flexShrink={0}>
                         <SegmentedControl<ResultView>
                           ariaLabel="Impact view"
@@ -1453,6 +1596,7 @@ export default function Repositories() {
                           ]}
                         />
                       </Box>
+                      <Box flex={1} />
                       {resultView === 'markdown' && (
                         <Tooltip label="Mermaid diagram style for the markdown and copy output" placement="top">
                           <Select
@@ -1486,24 +1630,20 @@ export default function Repositories() {
                         </Button>
                       </Tooltip>
                     </Flex>
-                    <Box px={4} py={3}>
+                    <Box>
                       {resultView === 'gaps' ? (
                         <CoveragePanel coverage={report.coverage} />
                       ) : (
-                        <Flex gap={3} align="stretch" direction={{ base: 'column', lg: 'row' }}>
-                          {filesOpen && <ImpactFilesPanel files={report.changed_files} />}
+                        <Flex gap={0} align="stretch" direction={{ base: 'column', lg: 'row' }}>
+                          <ImpactFilesPanel files={report.changed_files} open={filesOpen} onToggle={() => setFilesOpen((current) => !current)} />
                           <Box flex={1} minW={0}>
                             {resultView === 'markdown' ? (
                               <Box
                                 h="460px"
                                 overflowY="auto"
-                                bg="var(--bg-canvas)"
-                                border="1px solid"
-                                borderColor="var(--border-main)"
-                                borderRadius="xl"
                                 sx={markdownPanelBodySx}
                               >
-                                <Box p={4}>
+                                <Box px={4} py={2}>
                                   <MarkdownPreview markdown={impactMarkdownText} />
                                 </Box>
                               </Box>

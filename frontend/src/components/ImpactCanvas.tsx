@@ -32,14 +32,14 @@ export default function ImpactCanvas({ report, onOpenElement }: Props) {
 
   if (loading) {
     return (
-      <Center h="360px" bg="var(--bg-panel)" border="1px solid" borderColor="var(--border-main)" borderRadius="xl">
+      <Center h="460px">
         <Spinner color="var(--accent)" />
       </Center>
     )
   }
   if (error || !filtered || elementIds.size === 0) {
     return (
-      <Center h="200px" bg="var(--bg-panel)" border="1px solid" borderColor="var(--border-main)" borderRadius="xl">
+      <Center h="460px">
         <Text fontSize="sm" color="gray.500">
           {elementIds.size === 0 ? 'No mapped elements to draw for this change.' : 'Architecture canvas unavailable.'}
         </Text>
@@ -52,9 +52,6 @@ export default function ImpactCanvas({ report, onOpenElement }: Props) {
       position="relative"
       h="460px"
       bg="var(--bg-canvas)"
-      border="1px solid"
-      borderColor="var(--border-main)"
-      borderRadius="xl"
       overflow="hidden"
     >
       <ZUICanvas
