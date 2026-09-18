@@ -40,7 +40,7 @@ func TestInspectElementShowsDerivedChildrenAndRelatedConnectors(t *testing.T) {
 		"In owned view:",
 		"platform:api:db:reads",
 		"local_db:",
-		"no metadata id",
+		"present",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("inspect output missing %q:\n%s", want, stdout)
@@ -115,8 +115,9 @@ func TestInspectJSONIncludesSourceStates(t *testing.T) {
 func TestInspectLocalDBUsesDataDir(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := t.TempDir()
+	// Synchronous setup writes directly to dataDir's local DB.
+	t.Setenv("TLD_DATA_DIR", dataDir)
 	setupInspectWorkspace(t, dir)
-	cmd.MustRunCmd(t, dir, "apply", "--force", "--target", "local", "--data-dir", dataDir)
 
 	stdout, _, err := cmd.RunCmd(t, dir, "inspect", "api", "--data-dir", dataDir)
 	if err != nil {

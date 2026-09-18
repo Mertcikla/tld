@@ -64,7 +64,7 @@ func NewCheckCmd(wdir *string) *cobra.Command {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "      - %s\n", msg)
 				}
 				if strict {
-					term.Hint(cmd.OutOrStdout(), "use `tld apply` to sync diagram metadata")
+					term.Hint(cmd.OutOrStdout(), "run the matching add/update command to sync diagram metadata")
 				}
 			} else {
 				term.Success(cmd.OutOrStdout(), "Outdated Diagrams")

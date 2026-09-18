@@ -9,7 +9,6 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
@@ -48,65 +47,6 @@ func WriteMutation(w io.Writer, compact bool, command, action, ref string) error
 			},
 		},
 	})
-}
-
-func BuildPlanJSON(ws *workspace.Workspace, resp *diagv1.ApplyPlanResponse, warnings []planner.WarningGroup) planner.JSONOutput {
-	items, summary := planJSONItems(ws)
-	output := planner.JSONOutput{
-		Command: "plan",
-		Status:  "ok",
-		Summary: summary,
-		Items:   items,
-	}
-	if len(resp.GetConflicts()) > 0 {
-		output.Status = "conflict"
-		for _, conflict := range resp.GetConflicts() {
-			output.Items = append(output.Items, planner.JSONItem{
-				Ref:          conflict.GetRef(),
-				ResourceType: conflict.GetResourceType(),
-				Action:       "conflict",
-				Reason:       conflict.GetResolutionHint(),
-			})
-		}
-	}
-	for _, drift := range resp.GetDrift() {
-		output.Warnings = append(output.Warnings, fmt.Sprintf("%s %s: %s", drift.GetResourceType(), drift.GetRef(), drift.GetReason()))
-	}
-	for _, group := range warnings {
-		for _, violation := range group.Violations {
-			output.Warnings = append(output.Warnings, fmt.Sprintf("[%s] %s: %s", group.RuleCode, group.RuleName, violation))
-		}
-	}
-	return output
-}
-
-func BuildApplyJSON(ws *workspace.Workspace, resp *diagv1.ApplyPlanResponse, retries int) planner.JSONOutput {
-	items, summary := planJSONItems(ws)
-	output := planner.JSONOutput{
-		Command: "apply",
-		Status:  "ok",
-		Summary: summary,
-		Items:   items,
-		Retries: retries,
-	}
-	if len(resp.GetConflicts()) > 0 {
-		output.Status = "conflict"
-		for _, conflict := range resp.GetConflicts() {
-			output.Items = append(output.Items, planner.JSONItem{
-				Ref:          conflict.GetRef(),
-				ResourceType: conflict.GetResourceType(),
-				Action:       "conflict",
-				Reason:       conflict.GetResolutionHint(),
-			})
-		}
-	}
-	if len(resp.GetDrift()) > 0 {
-		output.Status = "error"
-		for _, drift := range resp.GetDrift() {
-			output.Errors = append(output.Errors, fmt.Sprintf("%s %s: %s", drift.GetResourceType(), drift.GetRef(), drift.GetReason()))
-		}
-	}
-	return output
 }
 
 func BuildStatusJSON(lockFile *workspace.LockFile, localModified, serverDrift bool, conflicts int, serverResp *diagv1.ApplyPlanResponse) planner.JSONOutput {
@@ -234,59 +174,6 @@ func normalizeDiffPath(rawPath, wdir, tempDir string) string {
 	return filepath.ToSlash(strings.TrimPrefix(rawPath, "/"))
 }
 
-func planJSONItems(ws *workspace.Workspace) ([]planner.JSONItem, map[string]int) {
-	items := make([]planner.JSONItem, 0, len(ws.Elements)+len(ws.Connectors))
-	summary := map[string]int{"created": 0, "updated": 0, "deleted": 0}
-	included := IncludedElementRefs(ws)
-	refs := make([]string, 0, len(included))
-	for ref := range included {
-		refs = append(refs, ref)
-	}
-	sort.Strings(refs)
-	for _, ref := range refs {
-		element := ws.Elements[ref]
-		action := resourceAction(ws.Meta, elementMeta(ws), ref)
-		summary[actionSummaryKey(action)]++
-		items = append(items, planner.JSONItem{Ref: ref, ResourceType: "element", Action: action, Name: element.Name})
-		if element.HasView {
-			viewAction := resourceAction(ws.Meta, viewMeta(ws), ref)
-			summary[actionSummaryKey(viewAction)]++
-			items = append(items, planner.JSONItem{Ref: ref, ResourceType: "view", Action: viewAction, Name: element.ViewLabel})
-		}
-	}
-	connectorRefs := make([]string, 0, len(ws.Connectors))
-	for ref, connector := range ws.Connectors {
-		if !included[connector.Source] || !included[connector.Target] {
-			continue
-		}
-		connectorRefs = append(connectorRefs, ref)
-	}
-	sort.Strings(connectorRefs)
-	for _, ref := range connectorRefs {
-		connector := ws.Connectors[ref]
-		action := resourceAction(ws.Meta, connectorMeta(ws), ref)
-		summary[actionSummaryKey(action)]++
-		items = append(items, planner.JSONItem{Ref: ref, ResourceType: "connector", Action: action, Name: connector.Label})
-	}
-	return items, summary
-}
-
-func resourceAction(meta *workspace.Meta, bucket map[string]*workspace.ResourceMetadata, ref string) string {
-	if meta != nil && bucket != nil {
-		if _, ok := bucket[ref]; ok {
-			return "update"
-		}
-	}
-	return "create"
-}
-
-func actionSummaryKey(action string) string {
-	if action == "update" {
-		return "updated"
-	}
-	return "created"
-}
-
 func statusLabel(localModified, serverDrift bool, conflicts int) string {
 	if serverDrift {
 		return "drifted"
@@ -302,25 +189,4 @@ func boolToInt(value bool) int {
 		return 1
 	}
 	return 0
-}
-
-func elementMeta(ws *workspace.Workspace) map[string]*workspace.ResourceMetadata {
-	if ws == nil || ws.Meta == nil {
-		return nil
-	}
-	return ws.Meta.Elements
-}
-
-func viewMeta(ws *workspace.Workspace) map[string]*workspace.ResourceMetadata {
-	if ws == nil || ws.Meta == nil {
-		return nil
-	}
-	return ws.Meta.Views
-}
-
-func connectorMeta(ws *workspace.Workspace) map[string]*workspace.ResourceMetadata {
-	if ws == nil || ws.Meta == nil {
-		return nil
-	}
-	return ws.Meta.Connectors
 }

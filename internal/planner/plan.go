@@ -231,6 +231,12 @@ func buildFromElements(ws *workspace.Workspace, recreateIDs bool) (*Plan, error)
 	return &Plan{Request: req, Model: "workspace", ViewNames: viewNames}, nil
 }
 
+// TechnologyLinksForElement maps a technology label + language to catalog links.
+// Exported for use by synchronous single-resource commands.
+func TechnologyLinksForElement(technology, language string) []*diagv1.TechnologyLink {
+	return technologyLinksForElement(technology, language)
+}
+
 func technologyLinksForElement(technology, language string) []*diagv1.TechnologyLink {
 	links := technologyLinksForLabel(technology)
 	if len(links) > 0 {

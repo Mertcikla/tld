@@ -68,7 +68,7 @@ in full detail with individual element and connector information.`,
 				viewCount := cmdutil.CountViews(ws)
 				term.Successf(cmd.OutOrStdout(), "Workspace valid: %d elements, %d views, %d connectors",
 					len(ws.Elements), viewCount, len(ws.Connectors))
-				term.Hint(cmd.OutOrStdout(), "Run 'tld plan' to see what would be applied.")
+				term.Hint(cmd.OutOrStdout(), "Commands apply immediately; run 'tld pull' to refresh YAML after frontend changes.")
 			} else {
 				term.Warnf(cmd.OutOrStdout(), "nothing to validate")
 			}

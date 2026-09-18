@@ -104,8 +104,7 @@ Subsystem inventory:
 ```
 
 6. Reuse shared elements in every relevant view and reconnect them, optionally with labels specific to that context.
-7. Run `tld validate`, read the output carefully, fix the model, and repeat until validation passes or only intentional exceptions remain.
-8. Run `tld plan` to see a summary of the workspace, if the resource counts do not match the initial goals set with the user, iterate. Use validation errors as a guide, look for overly-simplified views, or missing relationships.
+7. Run `tld validate`, read the output carefully, fix the model, and repeat until validation passes or only intentional exceptions remain. Every `tld add` / `tld connect` / `tld update` applies immediately to the server. If the resource counts do not match the initial goals set with the user, iterate. Use validation errors as a guide, look for overly-simplified views, or missing relationships.
 
 
 ## Modeling Guidance
@@ -118,13 +117,7 @@ Depth should match the user's goal, before handoff, validate that the diagram me
 
 ## Handoff
 
-Ask the user to run to apply pending changes: 
-
-```bash
-tld apply 
-```
-
-Then to view the diagram:
+Changes already applied to the server with every command. To view the diagram:
 
 ```bash
 tld serve --open

@@ -14,9 +14,9 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld/v2"
-	"github.com/mertcikla/tld/v2/cmd/apply"
 	"github.com/mertcikla/tld/v2/internal/client"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
+	"github.com/mertcikla/tld/v2/internal/exec"
 	"github.com/mertcikla/tld/v2/internal/localserver"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
@@ -34,23 +34,23 @@ func NewPullCmd(wdir *string) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "pull",
 		Short: "Pull the current server state into local YAML files",
-		Long: `Pull downloads the current diagram state from the server and overwrites
-local YAML files. Use this after making changes in the frontend UI.
+		Long: `Pull downloads the current diagram state from the server and refreshes
+the local YAML cache. Use this after making changes in the frontend UI.
 
-If you have local changes that haven't been applied yet, tld pull will warn
-you before overwriting them. Use --force to skip the prompt.`,
+If you have local hand-edits, tld pull will warn you before overwriting
+them. Use --force to skip the prompt.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ws, err := cmdutil.LoadWorkspace(*wdir)
 			if err != nil {
 				return err
 			}
 
-			resolvedTarget, err := apply.ResolveTarget(ws.Config, target)
-			if err != nil {
-				return err
-			}
+		resolvedTarget, err := exec.ResolveTarget(ws.Config, target)
+		if err != nil {
+			return err
+		}
 
-			if resolvedTarget == apply.TargetRemote {
+		if resolvedTarget == exec.TargetRemote {
 				if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
 					return err
 				}
@@ -87,8 +87,8 @@ you before overwriting them. Use --force to skip the prompt.`,
 				}
 			}
 
-			var exportResp *diagv1.ExportOrganizationResponse
-			if resolvedTarget == apply.TargetRemote {
+		var exportResp *diagv1.ExportOrganizationResponse
+		if resolvedTarget == exec.TargetRemote {
 				c := client.New(ws.Config.ServerURL, ws.Config.APIKey, false)
 				resp, err := c.ExportWorkspace(cmd.Context(), connect.NewRequest(&diagv1.ExportOrganizationRequest{
 					OrgId: ws.Config.WorkspaceID,

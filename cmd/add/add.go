@@ -4,11 +4,15 @@ import (
 	"fmt"
 	"strings"
 
+	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
+	"github.com/mertcikla/tld/v2/internal/exec"
+	"github.com/mertcikla/tld/v2/internal/planner"
 	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/api"
 	"github.com/spf13/cobra"
 )
 
@@ -26,6 +30,8 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 		diagramLabel    string
 		legacyViewLabel string
 		legacyWithView  bool
+		target          string
+		dataDir         string
 	)
 
 	c := &cobra.Command{
@@ -110,20 +116,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				return nil
 			}
-			if err := workspace.UpsertElement(*wdir, r, spec); err != nil {
-				if cmdutil.WantsJSON(*format) {
-					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "add", err)
-				}
-				return fmt.Errorf("upsert element: %w", err)
-			}
-			if cmdutil.WantsJSON(*format) {
-				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "add", "add", r)
-			}
-			term.Successf(cmd.OutOrStdout(), "add: %s", r)
-			if wasNormalized {
-				term.Infof(cmd.OutOrStdout(), "technology normalized: %q -> %q", technology, normalizedTechnology)
-			}
-			return nil
+			return runAdd(cmd, *wdir, *format, *compact, target, dataDir, r, spec, kind, placementParent, wasNormalized, technology, normalizedTechnology)
 		},
 	}
 
@@ -137,6 +130,8 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&parent, "parent", "root", "parent element ref or root")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
 	c.Flags().StringVar(&diagramLabel, "diagram-label", "", "optional label for the element's canonical diagram")
+	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, or remote")
+	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	c.Flags().BoolVar(&legacyWithView, "with-view", false, "deprecated")
 	c.Flags().StringVar(&legacyViewLabel, "view-label", "", "deprecated")
 	_ = c.Flags().MarkHidden("with-view")
@@ -149,6 +144,131 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 		return completion.ParentRefs(wdir)
 	})
 	return c
+}
+
+// runAdd writes the element to the server synchronously, then refreshes the
+// local YAML cache. Every invocation gets immediate server feedback.
+func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataDir, ref string, spec *workspace.Element, kind, placementParent string, wasNormalized bool, technology, normalizedTechnology string) error {
+	fail := func(err error) error {
+		if cmdutil.WantsJSON(format) {
+			return cmdutil.WriteCommandError(cmd.OutOrStdout(), compact, "add", err)
+		}
+		return err
+	}
+	ws, err := cmdutil.LoadWorkspace(wdir)
+	if err != nil {
+		return fail(err)
+	}
+	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
+	if err != nil {
+		return fail(err)
+	}
+	defer func() { _ = runner.Close() }()
+	if runner.Name() == exec.TargetRemote {
+		if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
+			return fail(err)
+		}
+	}
+
+	bypass := true
+	input := api.ElementInput{
+		Name:            spec.Name,
+		Description:     strptr(spec.Description),
+		Kind:            strptr(spec.Kind),
+		Technology:      strptr(spec.Technology),
+		URL:             strptr(spec.URL),
+		TechLinks:       planner.TechnologyLinksForElement(spec.Technology, ""),
+		BypassNoiseGate: &bypass,
+		HasView:         spec.HasView,
+		ViewLabel:       strptr(spec.ViewLabel),
+	}
+	ctx := cmd.Context()
+	var elementID int32
+	var updated bool
+	var savedElement *diagv1.Element
+	if meta := elementMeta(ws, ref); meta != nil {
+		updatedElement, err := runner.UpdateElement(ctx, int32(meta.ID), input)
+		if err != nil {
+			return fail(cmdutil.WithUnauthorizedHint("server update element failed", err))
+		}
+		elementID = updatedElement.GetId()
+		savedElement = updatedElement
+		updated = true
+	} else {
+		created, err := runner.CreateElement(ctx, input)
+		if err != nil {
+			return fail(cmdutil.WithUnauthorizedHint("server create element failed", err))
+		}
+		elementID = created.GetId()
+		savedElement = created
+	}
+
+	// Ensure placement in the parent view (creating the parent view when needed,
+	// mirroring the old planner's canonical-view promotion).
+	parentViewID, err := exec.ResolveParentViewID(ctx, runner, ws, wdir, placementParent)
+	if err != nil {
+		return fail(fmt.Errorf("resolve parent view: %w", err))
+	}
+	var px, py float64
+	if len(spec.Placements) > 0 {
+		px, py = spec.Placements[0].PositionX, spec.Placements[0].PositionY
+	}
+	if err := runner.AddPlacement(ctx, parentViewID, elementID, px, py); err != nil {
+		return fail(cmdutil.WithUnauthorizedHint("server place element failed", err))
+	}
+
+	// Refresh YAML cache (write-through).
+	if err := workspace.UpsertElement(wdir, ref, spec); err != nil {
+		return fail(fmt.Errorf("update YAML cache: %w", err))
+	}
+	// Promote the parent to a view in the cache when the server created one.
+	if placementParent != workspace.RootRef {
+		if parent, ok := ws.Elements[placementParent]; ok && parent != nil && !parent.HasView {
+			parent.HasView = true
+			_ = workspace.UpsertElement(wdir, placementParent, parent)
+		}
+		if err := exec.RecordViewMeta(wdir, placementParent, parentViewID); err != nil {
+			return fail(fmt.Errorf("update cache metadata: %w", err))
+		}
+	}
+	if err := exec.RecordElementMeta(wdir, ref, savedElement, 0, nil); err != nil {
+		return fail(fmt.Errorf("update cache metadata: %w", err))
+	}
+
+	if cmdutil.WantsJSON(format) {
+		action := "add"
+		if updated {
+			action = "update"
+		}
+		return cmdutil.WriteMutation(cmd.OutOrStdout(), compact, "add", action, ref)
+	}
+	if updated {
+		term.Successf(cmd.OutOrStdout(), "updated: %s (id=%d)", ref, elementID)
+	} else {
+		term.Successf(cmd.OutOrStdout(), "add: %s (id=%d)", ref, elementID)
+	}
+	if wasNormalized {
+		term.Infof(cmd.OutOrStdout(), "technology normalized: %q -> %q", technology, normalizedTechnology)
+	}
+	return nil
+}
+
+func elementMeta(ws *workspace.Workspace, ref string) *workspace.ResourceMetadata {
+	if ws == nil || ws.Meta == nil {
+		return nil
+	}
+	meta, ok := ws.Meta.Elements[ref]
+	if !ok || meta == nil || meta.ID == 0 {
+		return nil
+	}
+	return meta
+}
+
+func strptr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func validateKind(kind string) (string, error) {

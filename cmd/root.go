@@ -6,17 +6,14 @@ import (
 
 	"github.com/mertcikla/tld/v2/cmd/add"
 	"github.com/mertcikla/tld/v2/cmd/analyze"
-	"github.com/mertcikla/tld/v2/cmd/apply"
 	"github.com/mertcikla/tld/v2/cmd/check"
 	configcmd "github.com/mertcikla/tld/v2/cmd/config"
 	"github.com/mertcikla/tld/v2/cmd/connect"
-	"github.com/mertcikla/tld/v2/cmd/diff"
 	"github.com/mertcikla/tld/v2/cmd/export"
 	"github.com/mertcikla/tld/v2/cmd/initialize"
 	inspectcmd "github.com/mertcikla/tld/v2/cmd/inspect"
 	"github.com/mertcikla/tld/v2/cmd/login"
 	"github.com/mertcikla/tld/v2/cmd/mcp"
-	"github.com/mertcikla/tld/v2/cmd/plan"
 	"github.com/mertcikla/tld/v2/cmd/pull"
 	"github.com/mertcikla/tld/v2/cmd/remove"
 	"github.com/mertcikla/tld/v2/cmd/rename"
@@ -24,7 +21,6 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/serve"
 	"github.com/mertcikla/tld/v2/cmd/status"
 	"github.com/mertcikla/tld/v2/cmd/stop"
-	synccmd "github.com/mertcikla/tld/v2/cmd/sync"
 	techcmd "github.com/mertcikla/tld/v2/cmd/tech"
 	"github.com/mertcikla/tld/v2/cmd/update"
 	"github.com/mertcikla/tld/v2/cmd/validate"
@@ -68,8 +64,8 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 		Short: "tld -- tlDiagram CLI",
 		Long: `tld manages software architecture diagrams as code.
 
-Define your architecture in YAML, preview changes with 'tld plan',
-and apply them atomically with 'tld apply'.`,
+Every command applies immediately to the server and refreshes the local
+YAML cache. Use 'tld pull' to refresh the cache after frontend changes.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       version.Version,
@@ -123,12 +119,6 @@ and apply them atomically with 'tld apply'.`,
 	validateCmd := validate.NewValidateCmd(&wdir)
 	validateCmd.GroupID = secondaryGroup.ID
 
-	planCmd := plan.NewPlanCmd(&wdir)
-	planCmd.GroupID = secondaryGroup.ID
-
-	applyCmd := apply.NewApplyCmd(&wdir)
-	applyCmd.GroupID = secondaryGroup.ID
-
 	exportCmd := export.NewExportCmd(&wdir)
 	exportCmd.GroupID = secondaryGroup.ID
 
@@ -138,17 +128,11 @@ and apply them atomically with 'tld apply'.`,
 	statusCmd := status.NewStatusCmd()
 	statusCmd.GroupID = secondaryGroup.ID
 
-	syncCmd := synccmd.NewSyncCmd(&wdir)
-	syncCmd.GroupID = secondaryGroup.ID
-
 	viewsCmd := views.NewViewsCmd(&wdir)
 	viewsCmd.GroupID = secondaryGroup.ID
 
 	renderCmd := render.NewRenderCmd(&wdir)
 	renderCmd.GroupID = secondaryGroup.ID
-
-	diffCmd := diff.NewDiffCmd(&wdir)
-	diffCmd.GroupID = secondaryGroup.ID
 
 	inspectCmd := inspectcmd.NewInspectCmd(&wdir, &outputFormat, &compactJSON)
 	inspectCmd.GroupID = secondaryGroup.ID
@@ -184,15 +168,11 @@ and apply them atomically with 'tld apply'.`,
 		initCmd,
 		loginCmd,
 		validateCmd,
-		planCmd,
-		applyCmd,
 		exportCmd,
 		pullCmd,
 		statusCmd,
-		syncCmd,
 		viewsCmd,
 		renderCmd,
-		diffCmd,
 		inspectCmd,
 		addCmd,
 		connectCmd,
