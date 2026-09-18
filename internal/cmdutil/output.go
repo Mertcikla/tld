@@ -80,6 +80,37 @@ func BuildPlanJSON(ws *workspace.Workspace, resp *diagv1.ApplyPlanResponse, warn
 	return output
 }
 
+func BuildSyncJSON(command string, ws *workspace.Workspace, resp *diagv1.ApplyPlanResponse) planner.JSONOutput {
+	if command == "" {
+		command = "apply"
+	}
+	items, summary := planJSONItems(ws)
+	output := planner.JSONOutput{
+		Command: command,
+		Status:  "ok",
+		Summary: summary,
+		Items:   items,
+	}
+	if len(resp.GetConflicts()) > 0 {
+		output.Status = "conflict"
+		for _, conflict := range resp.GetConflicts() {
+			output.Items = append(output.Items, planner.JSONItem{
+				Ref:          conflict.GetRef(),
+				ResourceType: conflict.GetResourceType(),
+				Action:       "conflict",
+				Reason:       conflict.GetResolutionHint(),
+			})
+		}
+	}
+	if len(resp.GetDrift()) > 0 {
+		output.Status = "error"
+		for _, drift := range resp.GetDrift() {
+			output.Errors = append(output.Errors, fmt.Sprintf("%s %s: %s", drift.GetResourceType(), drift.GetRef(), drift.GetReason()))
+		}
+	}
+	return output
+}
+
 func BuildApplyJSON(ws *workspace.Workspace, resp *diagv1.ApplyPlanResponse, retries int) planner.JSONOutput {
 	items, summary := planJSONItems(ws)
 	output := planner.JSONOutput{

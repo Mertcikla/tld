@@ -277,10 +277,10 @@ func SeedElementWorkspace(t *testing.T, dir string) {
 		}
 		_ = os.Unsetenv("TLD_APPLY_TARGET")
 	}()
-	MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace")
-	MustRunCmd(t, dir, "add", "API", "--ref", "api", "--parent", "platform", "--kind", "service")
-	MustRunCmd(t, dir, "add", "DB", "--ref", "db", "--parent", "platform", "--kind", "database")
-	MustRunCmd(t, dir, "connect", "--from", "api", "--to", "db", "--label", "reads")
+	MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace", "--yaml-only")
+	MustRunCmd(t, dir, "add", "API", "--ref", "api", "--parent", "platform", "--kind", "service", "--yaml-only")
+	MustRunCmd(t, dir, "add", "DB", "--ref", "db", "--parent", "platform", "--kind", "database", "--yaml-only")
+	MustRunCmd(t, dir, "connect", "--from", "api", "--to", "db", "--label", "reads", "--yaml-only")
 	if err := os.Remove(filepath.Join(dir, ".tld.lock")); err != nil && !os.IsNotExist(err) {
 		t.Fatalf("remove seed lockfile: %v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mertcikla/tld/v2/cmd/crudsync"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/tech"
@@ -28,11 +29,19 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 		diagramLabel    string
 		legacyViewLabel string
 		legacyWithView  bool
+		yamlOnly        bool
+		target          string
+		dataDir         string
 	)
 
 	c := &cobra.Command{
 		Use:   "add <name>",
-		Short: "Add or update an element in elements.yaml",
+		Short: "Add or update an element (applies instantly)",
+		Long: `Add or update an element in elements.yaml and apply instantly.
+
+Writes YAML then applies synchronously with immediate feedback.
+Use --yaml-only to stage the YAML change without applying.
+Use --dry-run to preview without writing files.`,
 		Args:  cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {
@@ -120,14 +129,31 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				return fmt.Errorf("upsert element: %w", err)
 			}
-			if cmdutil.WantsJSON(*format) {
-				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "add", "add", r)
+			if yamlOnly {
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "add", "add", r)
+				}
+				term.Successf(cmd.OutOrStdout(), "add: %s", r)
+				term.Info(cmd.OutOrStdout(), "YAML only (--yaml-only): not applied.")
+				if wasNormalized {
+					term.Infof(cmd.OutOrStdout(), "technology normalized: %q -> %q", technology, normalizedTechnology)
+				}
+				return nil
 			}
-			term.Successf(cmd.OutOrStdout(), "add: %s", r)
-			if wasNormalized {
-				term.Infof(cmd.OutOrStdout(), "technology normalized: %q -> %q", technology, normalizedTechnology)
+			if !cmdutil.WantsJSON(*format) {
+				term.Successf(cmd.OutOrStdout(), "add: %s", r)
+				if wasNormalized {
+					term.Infof(cmd.OutOrStdout(), "technology normalized: %q -> %q", technology, normalizedTechnology)
+				}
 			}
-			return nil
+			_, err = crudsync.SyncAndReport(cmd, *wdir, crudsync.Options{
+				Target:  target,
+				DataDir: dataDir,
+				Command: "add",
+				Format:  *format,
+				Compact: *compact,
+			}, cmd.OutOrStdout())
+			return err
 		},
 	}
 
@@ -145,6 +171,9 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&diagramLabel, "diagram-label", "", "optional label for the element's canonical diagram")
 	c.Flags().BoolVar(&legacyWithView, "with-view", false, "deprecated")
 	c.Flags().StringVar(&legacyViewLabel, "view-label", "", "deprecated")
+	c.Flags().BoolVar(&yamlOnly, "yaml-only", false, "write YAML only without applying")
+	c.Flags().StringVar(&target, "target", "", "apply target: auto, local, or remote")
+	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	_ = c.Flags().MarkHidden("with-view")
 	_ = c.Flags().MarkHidden("view-label")
 

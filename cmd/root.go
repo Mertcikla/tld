@@ -70,8 +70,9 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 		Short: "tld -- tlDiagram CLI",
 		Long: `tld manages software architecture diagrams as code.
 
-Define your architecture in YAML, preview changes with 'tld plan',
-and apply them atomically with 'tld apply'.`,
+Define your architecture in YAML with 'tld add/connect/update/remove/rename/bind'.
+Changes apply instantly with immediate feedback. Use --yaml-only to stage
+YAML without applying. Legacy 'tld plan/apply' remain for backward compatibility.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       version.Version,
@@ -115,7 +116,7 @@ and apply them atomically with 'tld apply'.`,
 	updateCmd := update.NewUpdateCmd(&wdir, &outputFormat, &compactJSON)
 	updateCmd.GroupID = resourceGroup.ID
 
-	renameCmd := rename.NewRenameCmd(&wdir)
+	renameCmd := rename.NewRenameCmd(&wdir, &outputFormat, &compactJSON)
 	renameCmd.GroupID = resourceGroup.ID
 
 	// Secondary Commands

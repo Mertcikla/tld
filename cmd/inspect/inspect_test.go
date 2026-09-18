@@ -16,10 +16,10 @@ import (
 func setupInspectWorkspace(t *testing.T, dir string) {
 	t.Helper()
 	cmd.MustInitWorkspace(t, dir)
-	cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace")
-	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--parent", "platform", "--kind", "service")
-	cmd.MustRunCmd(t, dir, "add", "DB", "--ref", "db", "--parent", "platform", "--kind", "database")
-	cmd.MustRunCmd(t, dir, "connect", "--from", "api", "--to", "db", "--label", "reads")
+	cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace", "--yaml-only")
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--parent", "platform", "--kind", "service", "--yaml-only")
+	cmd.MustRunCmd(t, dir, "add", "DB", "--ref", "db", "--parent", "platform", "--kind", "database", "--yaml-only")
+	cmd.MustRunCmd(t, dir, "connect", "--from", "api", "--to", "db", "--label", "reads", "--yaml-only")
 }
 
 func TestInspectElementShowsDerivedChildrenAndRelatedConnectors(t *testing.T) {
@@ -130,7 +130,7 @@ func TestInspectLocalDBUsesDataDir(t *testing.T) {
 func TestInspectCloudUsesExportWithoutWriting(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
-	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service", "--yaml-only")
 	svc := &cmd.MockDiagramService{
 		ExportFunc: func(req *diagv1.ExportOrganizationRequest) (*diagv1.ExportOrganizationResponse, error) {
 			if req.OrgId != cmd.TestWorkspaceID {
@@ -157,7 +157,7 @@ func TestInspectCloudUsesExportWithoutWriting(t *testing.T) {
 func TestInspectCloudUnauthorizedIncludesHint(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
-	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service", "--yaml-only")
 	svc := &cmd.MockDiagramService{
 		ExportFunc: func(*diagv1.ExportOrganizationRequest) (*diagv1.ExportOrganizationResponse, error) {
 			return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("expired"))

@@ -26,8 +26,18 @@ func NewPlanCmd(wdir *string) *cobra.Command {
 
 	c := &cobra.Command{
 		Use:   "plan",
-		Short: "Show what would be applied",
+		Short: "Show what would be applied (legacy, hidden)",
+		Long: `Legacy: CRUD commands now apply instantly with immediate feedback.
+'tld plan' is kept for backward compatibility only.`,
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			wantsJSONEarly := false
+			if f := cmd.Root().PersistentFlags().Lookup("format"); f != nil {
+				wantsJSONEarly = cmdutil.WantsJSON(f.Value.String())
+			}
+			if !wantsJSONEarly {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Note: `tld plan` is legacy; CRUD commands now apply instantly.\n")
+			}
 			ws, err := cmdutil.LoadWorkspace(*wdir)
 			if err != nil {
 				return err

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mertcikla/tld/v2/cmd/crudsync"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/term"
@@ -23,11 +24,18 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 		style        string
 		url          string
 		legacyView   string
+		yamlOnly     bool
+		target       string
+		dataDir      string
 	)
 
 	c := &cobra.Command{
 		Use:   "connect",
-		Short: "Add a connector between two elements",
+		Short: "Add a connector between two elements (applies instantly)",
+		Long: `Add a connector between two elements and apply instantly.
+
+Use --yaml-only to stage the YAML change without applying.
+Use --dry-run to preview without writing files.`,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateConnectorRefs(from, to, legacyView); err != nil {
@@ -85,12 +93,27 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				return fmt.Errorf("append connector: %w", err)
 			}
-			if cmdutil.WantsJSON(*format) {
-				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "connect", "connect", fmt.Sprintf("%s:%s", from, to))
+			if yamlOnly {
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "connect", "connect", fmt.Sprintf("%s:%s", from, to))
+				}
+				term.Successf(cmd.OutOrStdout(), "ok")
+				term.Infof(cmd.OutOrStdout(), "connector view: %s", view)
+				term.Info(cmd.OutOrStdout(), "YAML only (--yaml-only): not applied.")
+				return nil
 			}
-			term.Successf(cmd.OutOrStdout(), "ok")
-			term.Infof(cmd.OutOrStdout(), "connector view: %s", view)
-			return nil
+			if !cmdutil.WantsJSON(*format) {
+				term.Successf(cmd.OutOrStdout(), "ok")
+				term.Infof(cmd.OutOrStdout(), "connector view: %s", view)
+			}
+			_, err = crudsync.SyncAndReport(cmd, *wdir, crudsync.Options{
+				Target:  target,
+				DataDir: dataDir,
+				Command: "connect",
+				Format:  *format,
+				Compact: *compact,
+			}, cmd.OutOrStdout())
+			return err
 		},
 	}
 
@@ -104,6 +127,9 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&url, "url", "", "external URL")
 	c.Flags().StringVar(&legacyView, "view", "", "explicit connector view ref (default: source element's view)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
+	c.Flags().BoolVar(&yamlOnly, "yaml-only", false, "write YAML only without applying")
+	c.Flags().StringVar(&target, "target", "", "apply target: auto, local, or remote")
+	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	_ = c.Flags().MarkHidden("style")
 	_ = c.MarkFlagRequired("from")
 	_ = c.MarkFlagRequired("to")

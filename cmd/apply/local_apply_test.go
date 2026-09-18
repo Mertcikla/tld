@@ -21,10 +21,10 @@ func TestCRUDManualApplyCreatesSQLiteAndPrunes(t *testing.T) {
 	t.Setenv("TLD_DATA_DIR", dataDir)
 	cmd.MustInitWorkspace(t, dir)
 
-	cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace")
-	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--parent", "platform", "--kind", "service")
-	cmd.MustRunCmd(t, dir, "add", "DB", "--ref", "db", "--parent", "platform", "--kind", "database")
-	cmd.MustRunCmd(t, dir, "connect", "--from", "api", "--to", "db", "--label", "reads")
+	cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace", "--yaml-only")
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--parent", "platform", "--kind", "service", "--yaml-only")
+	cmd.MustRunCmd(t, dir, "add", "DB", "--ref", "db", "--parent", "platform", "--kind", "database", "--yaml-only")
+	cmd.MustRunCmd(t, dir, "connect", "--from", "api", "--to", "db", "--label", "reads", "--yaml-only")
 	cmd.MustRunCmd(t, dir, "apply", "--force", "--target", "local", "--data-dir", dataDir)
 
 	db := openLocalDB(t, dataDir)
@@ -48,27 +48,43 @@ func TestCRUDManualApplyCreatesSQLiteAndPrunes(t *testing.T) {
 		t.Fatalf("lockfile metadata not updated: %+v", lockFile)
 	}
 
-	cmd.MustRunCmd(t, dir, "remove", "connector", "--view", "platform", "--from", "api", "--to", "db")
+	cmd.MustRunCmd(t, dir, "remove", "connector", "--view", "platform", "--from", "api", "--to", "db", "--yaml-only")
 	cmd.MustRunCmd(t, dir, "apply", "--force", "--target", "local", "--data-dir", dataDir)
 	assertCount(t, db, "connectors", 0)
 
-	cmd.MustRunCmd(t, dir, "remove", "element", "db")
+	cmd.MustRunCmd(t, dir, "remove", "element", "db", "--yaml-only")
 	cmd.MustRunCmd(t, dir, "apply", "--force", "--target", "local", "--data-dir", dataDir)
 	assertCount(t, db, "elements", 2)
 	assertCount(t, db, "views", 2)
 }
 
-func TestAddDoesNotAutoApplyLocalOrRemote(t *testing.T) {
+func TestAddAutoAppliesByDefaultAndYamlOnlyOptsOut(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := t.TempDir()
 	t.Setenv("TLD_DATA_DIR", dataDir)
 	t.Setenv("TLD_APPLY_TARGET", "local")
 	cmd.MustInitWorkspace(t, dir)
 
-	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+	// Default: synchronous auto-apply creates the local DB instantly.
+	stdout, _, err := cmd.RunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+	if err != nil {
+		t.Fatalf("add with auto-apply: %v", err)
+	}
+	if !strings.Contains(stdout, "applied:") {
+		t.Fatalf("expected immediate apply feedback, got %q", stdout)
+	}
+	if _, err := os.Stat(localserver.DatabasePath(dataDir)); err != nil {
+		t.Fatalf("add should auto-apply to local DB by default: %v", err)
+	}
 
-	if _, err := os.Stat(localserver.DatabasePath(dataDir)); !os.IsNotExist(err) {
-		t.Fatalf("add should not create local DB before apply, stat error: %v", err)
+	// Opt-out: --yaml-only leaves the DB untouched.
+	yamlDir := t.TempDir()
+	yamlDataDir := t.TempDir()
+	t.Setenv("TLD_DATA_DIR", yamlDataDir)
+	cmd.MustInitWorkspace(t, yamlDir)
+	cmd.MustRunCmd(t, yamlDir, "add", "API", "--ref", "api", "--kind", "service", "--yaml-only")
+	if _, err := os.Stat(localserver.DatabasePath(yamlDataDir)); !os.IsNotExist(err) {
+		t.Fatalf("add --yaml-only should not create local DB, stat error: %v", err)
 	}
 
 	svc := &cmd.MockDiagramService{}
@@ -77,12 +93,12 @@ func TestAddDoesNotAutoApplyLocalOrRemote(t *testing.T) {
 	cmd.MustInitWorkspace(t, remoteDir)
 	cmd.WriteConfig(t, remoteDir, serverURL, "remote-key")
 
-	cmd.MustRunCmd(t, remoteDir, "add", "API", "--ref", "api", "--kind", "service")
+	cmd.MustRunCmd(t, remoteDir, "add", "API", "--ref", "api", "--kind", "service", "--yaml-only")
 
 	svc.Mu.Lock()
 	defer svc.Mu.Unlock()
 	if svc.LastRequest != nil {
-		t.Fatal("add should only update YAML; expected no remote apply request")
+		t.Fatal("add --yaml-only should only update YAML; expected no remote apply request")
 	}
 }
 
@@ -122,7 +138,7 @@ func TestApplyLocalTargetUsesDataDirFlag(t *testing.T) {
 	t.Setenv("TLD_DATA_DIR", t.TempDir())
 	dataDir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
-	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service", "--yaml-only")
 
 	cmd.MustRunCmd(t, dir, "apply", "--force", "--target", "local", "--data-dir", dataDir)
 
@@ -138,7 +154,7 @@ func TestApplyLocalTargetPrintsServeCommandWhenServerIsStopped(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
-	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service", "--yaml-only")
 
 	stdout, _, err := cmd.RunCmd(t, dir, "apply", "--force", "--target", "local", "--data-dir", dataDir)
 	if err != nil {
@@ -156,7 +172,7 @@ func TestApplyLocalTargetPrintsRunningServerURL(t *testing.T) {
 	dir := t.TempDir()
 	dataDir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
-	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service", "--yaml-only")
 	if err := localserver.SaveProcessRegistry(localserver.ProcessRegistry{Processes: []localserver.ProcessRecord{
 		{Kind: localserver.ProcessKindServer, PID: os.Getpid(), DataDir: dataDir, Addr: "127.0.0.1:9999"},
 	}}); err != nil {

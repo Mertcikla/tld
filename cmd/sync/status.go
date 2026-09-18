@@ -95,7 +95,7 @@ any drift from manual changes in the frontend.`,
 							}
 						}
 						if len(serverResp.Msg.Conflicts) > 0 {
-							term.Label(cmd.OutOrStdout(), 15, "Server state", fmt.Sprintf("%d conflicts found (run 'tld pull' or 'tld apply' to resolve)", len(serverResp.Msg.Conflicts)))
+							term.Label(cmd.OutOrStdout(), 15, "Server state", fmt.Sprintf("%d conflicts found (run 'tld pull' to resolve)", len(serverResp.Msg.Conflicts)))
 						}
 					}
 				}
@@ -132,7 +132,7 @@ func printStatusHeader(out interface{ Write([]byte) (int, error) }, localModifie
 				term.Colorize(out, term.ColorYellow, "! MODIFIED"), conflicts)
 		} else {
 			_, _ = fmt.Fprintln(out, term.Colorize(out, term.ColorYellow, "! MODIFIED"),
-				"  local changes not pushed (run tld apply)")
+				"  local changes not applied (edit with CRUD commands without --yaml-only)")
 		}
 	default:
 		_, _ = fmt.Fprintln(out, term.Colorize(out, term.ColorGreen, "✓ IN SYNC"),

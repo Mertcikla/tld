@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mertcikla/tld/v2/cmd/crudsync"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/term"
@@ -15,14 +16,19 @@ import (
 // binding is what `tld impact` uses to map changes back to the architecture.
 func NewBindCmd(wdir, format *string, compact *bool) *cobra.Command {
 	var filePath, symbol string
+	var yamlOnly bool
+	var target string
+	var dataDir string
 
 	c := &cobra.Command{
 		Use:   "bind <ref>",
-		Short: "Bind an architecture element to the code it owns",
-		Long: `Attach a code path (and optionally a symbol) to an existing element.
+		Short: "Bind an architecture element to the code it owns (applies instantly)",
+		Long: `Attach a code path (and optionally a symbol) to an existing element and apply instantly.
 
 The binding is metadata used by 'tld impact' to reconcile code changes with the
-authored architecture. It never changes the element's place in the diagram.`,
+authored architecture. It never changes the element's place in the diagram.
+
+Use --yaml-only to stage the YAML change without applying.`,
 		Args: cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {
@@ -54,22 +60,45 @@ authored architecture. It never changes the element's place in the diagram.`,
 			if err := workspace.UpsertElement(*wdir, ref, spec); err != nil {
 				return fmt.Errorf("bind element: %w", err)
 			}
-			if cmdutil.WantsJSON(*format) {
-				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "bind", "bind", ref)
+			if yamlOnly {
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "bind", "bind", ref)
+				}
+				term.Successf(cmd.OutOrStdout(), "bind: %s", ref)
+				if filePath != "" {
+					term.Infof(cmd.OutOrStdout(), "file=%s", filePath)
+				}
+				if symbol != "" {
+					term.Infof(cmd.OutOrStdout(), "symbol=%s", symbol)
+				}
+				term.Info(cmd.OutOrStdout(), "YAML only (--yaml-only): not applied.")
+				return nil
 			}
-			term.Successf(cmd.OutOrStdout(), "bind: %s", ref)
-			if filePath != "" {
-				term.Infof(cmd.OutOrStdout(), "file=%s", filePath)
+			if !cmdutil.WantsJSON(*format) {
+				term.Successf(cmd.OutOrStdout(), "bind: %s", ref)
+				if filePath != "" {
+					term.Infof(cmd.OutOrStdout(), "file=%s", filePath)
+				}
+				if symbol != "" {
+					term.Infof(cmd.OutOrStdout(), "symbol=%s", symbol)
+				}
 			}
-			if symbol != "" {
-				term.Infof(cmd.OutOrStdout(), "symbol=%s", symbol)
-			}
-			return nil
+			_, err = crudsync.SyncAndReport(cmd, *wdir, crudsync.Options{
+				Target:  target,
+				DataDir: dataDir,
+				Command: "bind",
+				Format:  *format,
+				Compact: *compact,
+			}, cmd.OutOrStdout())
+			return err
 		},
 	}
 
 	c.Flags().StringVar(&filePath, "file", "", "code path or glob this element owns")
 	c.Flags().StringVar(&symbol, "symbol", "", "named code symbol within --file")
+	c.Flags().BoolVar(&yamlOnly, "yaml-only", false, "write YAML only without applying")
+	c.Flags().StringVar(&target, "target", "", "apply target: auto, local, or remote")
+	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	_ = c.RegisterFlagCompletionFunc("file", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return nil, cobra.ShellCompDirectiveDefault
 	})

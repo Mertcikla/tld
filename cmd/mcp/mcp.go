@@ -118,7 +118,7 @@ func errResult(err error) (*mcpsdk.CallToolResult, result, error) {
 func registerTools(server *mcpsdk.Server, cmd *cobra.Command, wdir *string, dataDir string) {
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_add",
-		Description: "Add or update an element in elements.yaml.",
+		Description: "Add or update an element (applies instantly with immediate feedback).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a addArgs) (*mcpsdk.CallToolResult, result, error) {
 		ref := a.Ref
 		if ref == "" {
@@ -160,7 +160,7 @@ func registerTools(server *mcpsdk.Server, cmd *cobra.Command, wdir *string, data
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_connect",
-		Description: "Add a connector between two elements in connectors.yaml.",
+		Description: "Add a connector between two elements (applies instantly).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a connectArgs) (*mcpsdk.CallToolResult, result, error) {
 		view := a.View
 		if view == "" {
@@ -200,7 +200,7 @@ func registerTools(server *mcpsdk.Server, cmd *cobra.Command, wdir *string, data
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_remove_element",
-		Description: "Remove an element from elements.yaml.",
+		Description: "Remove an element (applies instantly).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a removeElementArgs) (*mcpsdk.CallToolResult, result, error) {
 		if err := workspace.RemoveElement(*wdir, a.Ref); err != nil {
 			return errResult(fmt.Errorf("remove element: %w", err))
@@ -213,7 +213,7 @@ func registerTools(server *mcpsdk.Server, cmd *cobra.Command, wdir *string, data
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_remove_connector",
-		Description: "Remove matching connector(s) from connectors.yaml.",
+		Description: "Remove matching connector(s) (applies instantly).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a removeConnectorArgs) (*mcpsdk.CallToolResult, result, error) {
 		n, err := workspace.RemoveConnector(*wdir, a.View, a.From, a.To)
 		if err != nil {
@@ -229,7 +229,7 @@ func registerTools(server *mcpsdk.Server, cmd *cobra.Command, wdir *string, data
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_rename",
-		Description: "Rename an element; references in connectors and other diagrams are updated.",
+		Description: "Rename an element; references updated (applies instantly).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a renameArgs) (*mcpsdk.CallToolResult, result, error) {
 		if err := workspace.RenameElement(*wdir, a.From, a.To); err != nil {
 			return errResult(fmt.Errorf("rename element: %w", err))
@@ -242,7 +242,7 @@ func registerTools(server *mcpsdk.Server, cmd *cobra.Command, wdir *string, data
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_update_element",
-		Description: "Update an element field.",
+		Description: "Update an element field (applies instantly).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a updateElementArgs) (*mcpsdk.CallToolResult, result, error) {
 		if err := workspace.UpdateElementField(*wdir, a.Ref, a.Field, a.Value); err != nil {
 			return errResult(fmt.Errorf("update element: %w", err))
@@ -255,7 +255,7 @@ func registerTools(server *mcpsdk.Server, cmd *cobra.Command, wdir *string, data
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_update_connector",
-		Description: "Update a connector field.",
+		Description: "Update a connector field (applies instantly).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a updateConnectorArgs) (*mcpsdk.CallToolResult, result, error) {
 		if err := workspace.UpdateConnectorField(*wdir, a.Ref, a.Field, a.Value); err != nil {
 			return errResult(fmt.Errorf("update connector: %w", err))
@@ -360,7 +360,7 @@ func addPullTool(server *mcpsdk.Server, wdir *string) {
 func addPlanTool(server *mcpsdk.Server, wdir *string) {
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_plan",
-		Description: "Show what would be applied (server dry-run with conflict/drift detection).",
+		Description: "Legacy (backward compatibility): show what would be applied. CRUD tools already apply instantly.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a planArgs) (*mcpsdk.CallToolResult, result, error) {
 		c := plan.NewPlanCmd(wdir)
 		args := []string{}
@@ -383,7 +383,7 @@ func addPlanTool(server *mcpsdk.Server, wdir *string) {
 func addApplyTool(server *mcpsdk.Server, wdir *string) {
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_apply",
-		Description: "Apply pending workspace changes to tldiagram.com.",
+		Description: "Legacy (backward compatibility): apply pending YAML changes. CRUD tools already apply instantly.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a applyArgs) (*mcpsdk.CallToolResult, result, error) {
 		c := apply.NewApplyCmd(wdir)
 		args := []string{}

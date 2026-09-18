@@ -32,8 +32,14 @@ func NewApplyCmd(wdir *string) *cobra.Command {
 
 	c := &cobra.Command{
 		Use:   "apply",
-		Short: "Apply plan to the configured workspace target",
+		Short: "Apply plan to the configured workspace target (legacy, hidden)",
+		Long: `Legacy: CRUD commands (add, connect, update, remove, rename, bind) now apply instantly.
+'tld apply' is kept for backward compatibility only.`,
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !commandWantsJSON(cmd) {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Note: `tld apply` is legacy; CRUD commands now apply instantly.\n")
+			}
 			ws, err := cmdutil.LoadWorkspace(*wdir)
 			if err != nil {
 				if commandWantsJSON(cmd) {
@@ -251,6 +257,43 @@ func commandCompactJSON(cmd *cobra.Command) bool {
 
 type viewNameUpdater interface {
 	UpdateViewName(context.Context, int32, string) (*diagv1.View, error)
+}
+
+// Exported helpers shared by the synchronous CRUD apply path (cmd/crudsync).
+// They wrap the same logic used by the legacy `tld apply` command.
+
+// ApplyCanonicalRefs renames element refs to server canonical refs.
+func ApplyCanonicalRefs(wdir string, resp *diagv1.ApplyPlanResponse) ([]RefRename, error) {
+	renames, err := applyCanonicalRefs(wdir, resp)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RefRename, 0, len(renames))
+	for _, r := range renames {
+		out = append(out, RefRename{From: r.from, To: r.to})
+	}
+	return out, nil
+}
+
+// ApplyViewNames updates view display names via the runner when supported.
+func ApplyViewNames(ctx context.Context, runner Runner, ws *workspace.Workspace, plan *planner.Plan, resp *diagv1.ApplyPlanResponse) error {
+	return applyViewNames(ctx, runner, ws, plan, resp)
+}
+
+// UpdatePlanMetadataFromResponse fills workspace metadata from apply response.
+func UpdatePlanMetadataFromResponse(wdir string, meta *workspace.Meta, ws *workspace.Workspace, plan *planner.Plan, respMsg *diagv1.ApplyPlanResponse) error {
+	return updatePlanMetadataFromResponse(wdir, meta, ws, plan, respMsg)
+}
+
+// UpdateLockFileFromResponse refreshes the lock file from apply response.
+func UpdateLockFileFromResponse(wdir string, existingLock *workspace.LockFile, ws *workspace.Workspace, meta *workspace.Meta, respMsg *diagv1.ApplyPlanResponse) error {
+	return updateLockFileFromResponse(wdir, existingLock, ws, meta, respMsg)
+}
+
+// RefRename describes a server-driven ref rename.
+type RefRename struct {
+	From string
+	To   string
 }
 
 func applyViewNames(ctx context.Context, runner Runner, ws *workspace.Workspace, plan *planner.Plan, resp *diagv1.ApplyPlanResponse) error {
