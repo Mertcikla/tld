@@ -76,6 +76,9 @@ jobs:
           echo "TLD_BINARY=$(pwd)/${output}" >> "$GITHUB_ENV"
           echo "TLD_EXPECT_VERSION=${version}" >> "$GITHUB_ENV"
 
+      - name: Test self-update replacement on native OS
+        run: go test ./internal/selfupdate
+
       - name: Smoke test native binary
         shell: bash
         run: bash scripts/ci/smoke-binary.sh
@@ -148,9 +151,11 @@ jobs:
           image="ghcr.io/${GITHUB_REPOSITORY,,}"
           echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           docker tag tld:ci "${image}:${RELEASE_TAG}"
-          docker tag tld:ci "${image}:latest"
           docker push "${image}:${RELEASE_TAG}"
-          docker push "${image}:latest"
+          if [[ "${RELEASE_TAG}" != *-* ]]; then
+            docker tag tld:ci "${image}:latest"
+            docker push "${image}:latest"
+          fi
           digest=$(docker inspect --format='{{index .RepoDigests 0}}' "${image}:${RELEASE_TAG}")
           echo "image=${image}" >> "$GITHUB_OUTPUT"
           echo "digest=${digest#*@}" >> "$GITHUB_OUTPUT"

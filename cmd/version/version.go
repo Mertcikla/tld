@@ -36,6 +36,9 @@ func newUpdateCmd() *cobra.Command {
 		Short: "Update the tld CLI binary from GitHub releases",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if dir := selfupdate.BrewManagedDir(); dir != "" {
+				return fmt.Errorf("tld is managed by Homebrew (%s). Use `brew upgrade tld` to update", dir)
+			}
 			cfg, err := workspace.LoadGlobalConfig()
 			if err != nil {
 				return err

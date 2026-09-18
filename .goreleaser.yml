@@ -45,6 +45,8 @@ homebrew_casks:
       owner: Mertcikla
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    # Never publish prereleases (e.g. v2.3.4-beta.1) to the tap.
+    skip_upload: auto
     binaries:
       - tld
     homepage: "https://tldiagram.com"
@@ -53,6 +55,11 @@ homebrew_casks:
 
 checksum:
   name_template: 'checksums.txt'
+
+release:
+  # Tags like v2.3.4-beta.1 must not hijack /releases/latest or install scripts.
+  # auto marks any tag with a prerelease indicator (e.g. -beta, -rc) as a GitHub prerelease.
+  prerelease: auto
 
 snapshot:
   version_template: "{{ incpatch .Version }}-next"

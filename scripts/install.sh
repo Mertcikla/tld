@@ -33,43 +33,65 @@ if [ -z "$INSTALL_DIR" ]; then
     fi
 fi
 
-# Get the latest stable release version
-VERSION=$(curl -s "https://api.github.com/repos/Mertcikla/tld/releases" | grep '"tag_name":' | grep -vE "beta|alpha|rc" | head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')
+# Resolve the latest stable release (tags without a prerelease suffix).
+# Do not trust /releases/latest alone: a mis-flagged prerelease would hijack fresh installs
+# while the in-place updater (which filters semver prereleases) stays on stable.
+VERSION=$(curl --retry 3 --connect-timeout 15 -LsSf -H "User-Agent: tld-installer" \
+  "https://api.github.com/repos/mertcikla/tld/releases?per_page=100" \
+  | grep -o '"tag_name": *"[^"]*"' | sed -E 's/.*"([^"]+)".*/\1/' | grep -v -- "-" | head -n 1)
 
 if [ -z "$VERSION" ]; then
-    echo "Could not find latest version for Mertcikla/tld"
+    echo "Could not find latest stable version for mertcikla/tld" >&2
     exit 1
 fi
 
-# Construct the Download URL
 FILENAME="tld_${OS}_${ARCH}.tar.gz"
 URL="https://github.com/mertcikla/tld/releases/download/$VERSION/$FILENAME"
 
 echo "Downloading $BINARY $VERSION for $OS/$ARCH..."
 
 # Download and Install
-TMP_DIR=$(mktemp -d)
-curl -LsSf "$URL" -o "$TMP_DIR/$FILENAME"
-tar -xzf "$TMP_DIR/$FILENAME" -C "$TMP_DIR"
+TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tld-install.XXXXXX")
+readonly TMP_DIR
+cleanup() {
+    # Remove only the two files we create. Leave unexpected contents untouched.
+    rm -f -- "$TMP_DIR/$FILENAME" "$TMP_DIR/$BINARY"
+    rmdir -- "$TMP_DIR" 2>/dev/null || true
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+curl --retry 3 --connect-timeout 15 -LsSf "$URL" -o "$TMP_DIR/$FILENAME"
+# Stream only the executable into our own regular file; do not unpack paths,
+# symlinks, or other archive contents into the temporary directory.
+tar -xOzf "$TMP_DIR/$FILENAME" "$BINARY" > "$TMP_DIR/$BINARY"
 
-if [ ! -d "$INSTALL_DIR" ]; then
-    mkdir -p "$INSTALL_DIR" || true
-fi
+# Validate before touching the existing installation.
+chmod +x "$TMP_DIR/$BINARY"
+"$TMP_DIR/$BINARY" version
 
-if [ -w "$INSTALL_DIR" ]; then
-    echo "Installing to $INSTALL_DIR..."
-    mv "$TMP_DIR/$BINARY" "$INSTALL_DIR/$BINARY"
+install_binary() {
+    mkdir -p "$INSTALL_DIR"
+    stage=$(mktemp "$INSTALL_DIR/.tld-install.XXXXXX") || return 1
+    if cp "$TMP_DIR/$BINARY" "$stage" && chmod 755 "$stage" && mv -f "$stage" "$INSTALL_DIR/$BINARY"; then
+        return 0
+    fi
+    rm -f -- "$stage"
+    return 1
+}
+
+if [ -d "$INSTALL_DIR" ] && [ ! -w "$INSTALL_DIR" ]; then
+    # Stage on the destination filesystem before replacing a running binary.
+    sudo sh -c '
+      set -e
+      stage=$(mktemp "$2/.tld-install.XXXXXX")
+      cleanup_stage() { rm -f -- "$stage"; }
+      trap cleanup_stage EXIT
+      cp "$1" "$stage"
+      chmod 755 "$stage"
+      mv -f "$stage" "$2/tld"
+    ' sh "$TMP_DIR/$BINARY" "$INSTALL_DIR"
 else
-    echo "Installing to $INSTALL_DIR (requires sudo)..."
-    sudo mv "$TMP_DIR/$BINARY" "$INSTALL_DIR/$BINARY"
-fi
-
-# Cleanup and Verify
-rm -rf "$TMP_DIR"
-if [ -w "$INSTALL_DIR/$BINARY" ]; then
-    chmod +x "$INSTALL_DIR/$BINARY"
-else
-    sudo chmod +x "$INSTALL_DIR/$BINARY"
+    install_binary
 fi
 
 echo "Successfully installed! Run '$BINARY --help' to get started."
@@ -87,6 +109,7 @@ esac
 # Execute arguments if provided (e.g., 'serve')
 if [ $# -gt 0 ]; then
     echo "--------------------------------------------------"
-    echo "Executing: $BINARY $@"
+    echo "Executing: $BINARY $*"
+    cleanup
     exec "$INSTALL_DIR/$BINARY" "$@"
 fi

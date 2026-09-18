@@ -64,17 +64,31 @@ if ([string]::IsNullOrWhiteSpace($env:INSTALL_DIR)) {
     $InstallDir = $env:INSTALL_DIR
 }
 
-$ReleasesUrl = "https://api.github.com/repos/$Repo/releases"
+$Filename = "tld_Windows_$Arch.zip"
+$ReleasesUrl = "https://api.github.com/repos/$Repo/releases?per_page=100"
 Write-Host "Finding latest stable tld release..."
 $Releases = Invoke-RestMethod -Uri $ReleasesUrl -Headers @{ "User-Agent" = "tld-installer" }
-$StableRelease = $Releases | Where-Object { $_.tag_name -notmatch "beta|alpha|rc" } | Select-Object -First 1
+if ($Releases -isnot [System.Array]) { $Releases = @($Releases) }
+# Filter by tag (stable tags have no prerelease suffix) and require the wanted
+# asset, mirroring the in-place updater. Do not trust /latest alone.
+$StableRelease = $Releases | Where-Object {
+    $_.tag_name -and ($_.tag_name -notlike "*-*") -and (-not $_.draft) -and (-not $_.prerelease) -and
+    ($_.assets | Where-Object { $_.name -eq $Filename })
+} | Select-Object -First 1
+if (-not $StableRelease) {
+    # Fall back to tag-only filtering if flags are mis-set on the release.
+    $StableRelease = $Releases | Where-Object {
+        $_.tag_name -and ($_.tag_name -notlike "*-*") -and
+        ($_.assets | Where-Object { $_.name -eq $Filename })
+    } | Select-Object -First 1
+}
+if (-not $StableRelease) { throw "Could not find latest stable version with $Filename for $Repo" }
 $Version = $StableRelease.tag_name
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
     throw "Could not find latest version for $Repo"
 }
 
-$Filename = "tld_Windows_$Arch.zip"
 $Url = "https://github.com/mertcikla/tld/releases/download/$Version/$Filename"
 $TempDir = Join-Path ([IO.Path]::GetTempPath()) ("tld-install-" + [Guid]::NewGuid().ToString("N"))
 $ZipPath = Join-Path $TempDir $Filename
@@ -97,11 +111,35 @@ try {
     $Destination = Join-Path $InstallDir $Binary
 
     Write-Host "Installing to $Destination..."
-    Copy-Item -Path $ExtractedBinary.FullName -Destination $Destination -Force
+    & $ExtractedBinary.FullName version *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Downloaded binary failed validation" }
+    $Stage = Join-Path $InstallDir (".tld-update-" + [Guid]::NewGuid().ToString("N") + ".exe")
+    $Backup = "$Stage.old"
+    Copy-Item -LiteralPath $ExtractedBinary.FullName -Destination $Stage
+    try {
+        if (Test-Path -LiteralPath $Destination) {
+            Move-Item -LiteralPath $Destination -Destination $Backup
+        }
+        try {
+            Move-Item -LiteralPath $Stage -Destination $Destination
+        } catch {
+            if (Test-Path -LiteralPath $Backup) {
+                Move-Item -LiteralPath $Backup -Destination $Destination
+            }
+            throw
+        }
+    } finally {
+        Remove-Item -LiteralPath $Stage -Force -ErrorAction SilentlyContinue
+        # Running Windows processes can keep the old image locked until exit.
+        if (Test-Path -LiteralPath $Destination) {
+            Remove-Item -LiteralPath $Backup -Force -ErrorAction SilentlyContinue
+        }
+    }
 
     Add-TldPath -InstallDir $InstallDir
 
     & $Destination --help *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Installed binary failed validation" }
     Write-Host "Successfully installed! Run 'tld --help' to get started."
 
     if ($TldArgs.Count -gt 0) {
