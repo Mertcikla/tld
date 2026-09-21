@@ -6,15 +6,17 @@ import {
   Text,
   Link,
   HStack,
+  Divider,
 } from '@chakra-ui/react'
 import { useExperimental } from '../context/ExperimentalContext'
+import WatchControlPanel from '../components/watch/WatchControlPanel'
 
 export default function ExperimentalSettings({ compact = false }: { compact?: boolean }) {
   const { experimental, toggleExperimental } = useExperimental()
   const sectionGap = compact ? 4 : 6
 
   return (
-    <VStack align="start" spacing={sectionGap} maxW={compact ? '320px' : '480px'} w="full">
+    <VStack align="start" spacing={sectionGap} maxW={compact ? '320px' : '720px'} w="full">
       <Box w="full">
         <FormLabel mb={3} fontSize={compact ? 'xs' : 'sm'} textTransform="uppercase" letterSpacing="0.12em" color="gray.400">
           Experimental
@@ -41,7 +43,17 @@ export default function ExperimentalSettings({ compact = false }: { compact?: bo
             Docs
           </Link>
         </HStack>
+
+        {!experimental.watchEnabled && (
+          <Text mt={2} fontSize="xs" color="gray.500">
+            Enable Watch to configure repositories, start scanning, and tune pipeline settings.
+          </Text>
+        )}
       </Box>
+
+      <Divider borderColor="whiteAlpha.100" />
+
+      <WatchControlPanel enabled={experimental.watchEnabled} compact={compact} />
     </VStack>
   )
 }

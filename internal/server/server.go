@@ -35,6 +35,8 @@ type Options struct {
 	PublicURL                string
 	AllowedOrigins           []string
 	PopulateRerankerEndpoint string
+	Config                   *workspace.Config
+	Supervisor               *watch.Supervisor
 }
 
 func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, dataDir ...string) (*Server, error) {
@@ -70,7 +72,22 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	configurePopulateReranker(opts.PopulateRerankerEndpoint)
 
 	mux := http.NewServeMux()
-	watch.NewHandler(watchStore).Register(mux)
+	originCheck := func(r *http.Request) bool {
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true
+		}
+		return isAllowedCORSOrigin(origin, configuredCORSOrigins(opts))
+	}
+	watchHandler := watch.NewHandler(watchStore)
+	watchHandler.DataDir = opts.DataDir
+	watchHandler.Supervisor = opts.Supervisor
+	watchHandler.CheckOrigin = originCheck
+	if opts.Config != nil {
+		cfg := opts.Config
+		watchHandler.Config = func() *workspace.Config { return cfg }
+	}
+	watchHandler.Register(mux)
 	registerEditorHandlers(mux, watchStore)
 	registerDensityHandlers(mux, sqliteStore)
 	registerMergeHandlers(mux, sqliteStore)

@@ -6,11 +6,23 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+
+	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
 type Handler struct {
 	Store       *Store
 	Representer *Representer
+	// Config supplies the global config used as the base for effective
+	// per-repository settings resolution. May be nil.
+	Config func() *workspace.Config
+	// DataDir is the local data directory used when spawning watchers.
+	DataDir string
+	// Supervisor manages child watch processes started from the API. May be nil.
+	Supervisor *Supervisor
+	// CheckOrigin, when non-nil, is used to gate mutating endpoints (settings
+	// writes, watch start/stop, healthchecks). Nil disables the check.
+	CheckOrigin func(*http.Request) bool
 }
 
 func NewHandler(store *Store) *Handler {
@@ -21,6 +33,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/watch/ws", h.watchWebSocket)
 	mux.HandleFunc("GET /api/watch/status", h.status)
 	mux.HandleFunc("GET /api/watch/repositories", h.listRepositories)
+	mux.HandleFunc("POST /api/watch/repositories", h.addRepository)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/raw-graph/summary", h.rawGraphSummary)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/raw-graph/symbols", h.rawGraphSymbols)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/raw-graph/references", h.rawGraphReferences)
@@ -33,6 +46,16 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/watch/repositories/{id}/materialization", h.materialization)
 	mux.HandleFunc("GET /api/watch/repositories/{id}/versions", h.versions)
 	mux.HandleFunc("GET /api/watch/versions/{id}/diffs", h.versionDiffs)
+	mux.HandleFunc("GET /api/watch/settings/descriptors", h.settingsDescriptors)
+	mux.HandleFunc("GET /api/watch/repositories/{id}/settings", h.repositorySettings)
+	mux.HandleFunc("PUT /api/watch/repositories/{id}/settings", h.saveRepositorySettings)
+	mux.HandleFunc("DELETE /api/watch/repositories/{id}/settings", h.deleteRepositorySettings)
+	mux.HandleFunc("POST /api/watch/repositories/{id}/healthcheck/lsp", h.lspHealthcheck)
+	mux.HandleFunc("POST /api/watch/repositories/{id}/healthcheck/embedding", h.embeddingHealthcheck)
+	mux.HandleFunc("POST /api/watch/repositories/{id}/start", h.startWatch)
+	mux.HandleFunc("POST /api/watch/repositories/{id}/stop", h.stopWatch)
+	mux.HandleFunc("GET /api/watch/repositories/{id}/scan-progress", h.scanProgress)
+	mux.HandleFunc("GET /api/watch/processes", h.listProcesses)
 }
 
 func (h *Handler) cleanContext(w http.ResponseWriter, r *http.Request) {

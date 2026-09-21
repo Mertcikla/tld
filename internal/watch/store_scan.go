@@ -263,7 +263,14 @@ func (s *Store) EnsureRepository(ctx context.Context, input RepositoryInput) (Re
 	if err != nil {
 		return Repository{}, err
 	}
-	return s.Repository(ctx, row.ID)
+	created, err := s.Repository(ctx, row.ID)
+	if err != nil {
+		return Repository{}, err
+	}
+	if err := s.ensureRepositoryRootElement(ctx, created); err != nil {
+		return Repository{}, err
+	}
+	return created, nil
 }
 
 func (s *Store) Repository(ctx context.Context, id int64) (Repository, error) {

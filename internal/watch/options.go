@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -126,4 +127,35 @@ func parseDurationOrZero(value string) time.Duration {
 		return 0
 	}
 	return parsed
+}
+
+// ResolveRepositorySettings layers a stored per-repository override over either
+// the provided base values (when non-nil) or the global config. It is the
+// single resolution seam shared by watch and analyze so the CLI and the web UI
+// agree on effective settings.
+//
+// base may be nil; when set it is used as the starting point instead of
+// re-deriving from cfg, preserving any flag/override values the caller already
+// computed.
+func ResolveRepositorySettings(ctx context.Context, store *Store, cfg *workspace.Config, repositoryID int64, base *Settings, baseEmbedding *EmbeddingConfig) (Settings, EmbeddingConfig) {
+	var settings Settings
+	if base != nil {
+		settings = *base
+	} else {
+		settings = ResolveSettings(cfg, nil, "", "", "", 0, 0, 0, 0, 0)
+	}
+	var embedding EmbeddingConfig
+	if baseEmbedding != nil {
+		embedding = *baseEmbedding
+	} else {
+		embedding = ResolveEmbeddingConfig(cfg, "", "", "", 0, 0)
+	}
+	if store == nil || repositoryID <= 0 {
+		return NormalizeSettings(settings), NormalizeEmbeddingConfig(embedding)
+	}
+	override, found, err := store.RepositorySettings(ctx, repositoryID)
+	if err != nil || !found {
+		return NormalizeSettings(settings), NormalizeEmbeddingConfig(embedding)
+	}
+	return NormalizeSettings(override.Settings), NormalizeEmbeddingConfig(override.Embedding)
 }

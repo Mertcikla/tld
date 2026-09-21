@@ -31,6 +31,14 @@ export interface DesktopUpdateStatus {
   message?: string
 }
 
+export interface CLIRuntimeStatus {
+  available: boolean
+  path?: string
+  platform: string
+  installSupported: boolean
+  installHint?: string
+}
+
 type FileDropCallback = (x: number, y: number, paths: string[]) => void
 
 interface DesktopBridge {
@@ -41,6 +49,9 @@ interface DesktopBridge {
   OpenPath(path: string): Promise<void>
   CheckForUpdate(): Promise<DesktopUpdateStatus>
   InstallUpdate(): Promise<DesktopUpdateStatus>
+  CLIRuntimeStatus(): Promise<CLIRuntimeStatus>
+  WatchCommand(repoPath: string, extraArgs: string[]): Promise<string>
+  InstallCLI(): Promise<CLIRuntimeStatus>
 }
 
 declare global {
@@ -141,6 +152,28 @@ export async function installDesktopUpdate(): Promise<DesktopUpdateStatus> {
     throw new Error('Updates are managed by the Mac App Store')
   }
   return desktopBridge().InstallUpdate()
+}
+
+export async function getCLIRuntimeStatus(): Promise<CLIRuntimeStatus> {
+  if (!isWailsApp) {
+    throw new Error('CLI runtime status is only available in the desktop app')
+  }
+  return desktopBridge().CLIRuntimeStatus()
+}
+
+export async function installCLI(): Promise<CLIRuntimeStatus> {
+  if (!isWailsApp) {
+    throw new Error('CLI install is only available in the desktop app')
+  }
+  return desktopBridge().InstallCLI()
+}
+
+export async function getWatchCommand(repoPath: string, extraArgs: string[] = []): Promise<string> {
+  if (!isWailsApp) {
+    const suffix = extraArgs.length > 0 ? ` ${extraArgs.join(' ')}` : ''
+    return `tld watch ${repoPath}${suffix}`
+  }
+  return desktopBridge().WatchCommand(repoPath, extraArgs)
 }
 
 export function onFileDrop(callback: FileDropCallback): (() => void) | null {

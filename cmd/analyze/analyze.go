@@ -167,7 +167,7 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 			watchStore := watchpkg.NewStoreWithBun(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
 			runner := watchpkg.NewRunner(watchStore)
 			defer func() { _ = runner.Close() }()
-			once, err := runner.RunOnce(cmd.Context(), watchpkg.OneShotOptions{Path: absPath, Rescan: rescan, Embedding: embeddingCfg, Settings: settings, DataDir: dataDir, Progress: progress, Logger: logger, ConfirmAfterScan: confirmAnalyzeLSPProceed(cmd), Rules: rules})
+			once, err := runner.RunOnce(cmd.Context(), watchpkg.OneShotOptions{Path: absPath, Rescan: rescan, Embedding: embeddingCfg, Settings: settings, DataDir: dataDir, Progress: progress, Logger: logger, ConfirmAfterScan: confirmAnalyzeLSPProceed(cmd), Rules: rules, ApplyRepositorySettings: true})
 			if err != nil {
 				return fail("analyze.watch_pipeline.failed", err)
 			}

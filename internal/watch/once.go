@@ -22,6 +22,9 @@ type OneShotOptions struct {
 	Logger           EventLogger
 	ConfirmAfterScan func(context.Context, ScanResult) error
 	Rules            *ignore.Rules
+	// ApplyRepositorySettings layers any stored per-repository settings override
+	// over Settings/Embedding once the repository is known.
+	ApplyRepositorySettings bool
 }
 
 type OneShotResult struct {
@@ -88,12 +91,7 @@ func (p *WatchPipeline) Execute(ctx context.Context, opts OneShotOptions) (OneSh
 		opts.Path = "."
 	}
 	settings := NormalizeSettings(opts.Settings)
-	p.Scanner.Settings = settings
-	p.Scanner.Progress = opts.Progress
-	p.Scanner.Logger = opts.Logger
-	if opts.Rules != nil {
-		p.Scanner.Rules = opts.Rules
-	}
+	embedding := NormalizeEmbeddingConfig(opts.Embedding)
 
 	prepareStarted := time.Now()
 	logInfo(ctx, opts.Logger, "watch.prepare.started", "path", opts.Path)
@@ -117,24 +115,38 @@ func (p *WatchPipeline) Execute(ctx context.Context, opts OneShotOptions) (OneSh
 	progressFinish(opts.Progress)
 	logInfo(ctx, opts.Logger, "watch.prepare.completed", "elapsed", logElapsed(prepareStarted), "abs_path", absPath, "repo_root", repoRoot, "branch", gitStatus.Branch, "head", gitStatus.HeadCommit)
 
+	repoInput := RepositoryInput{
+		RemoteURL:    detectString(func() (string, error) { return tldgit.DetectRemoteURL(repoRoot) }),
+		RepoRoot:     repoRoot,
+		DisplayName:  filepath.Base(repoRoot),
+		Branch:       detectString(func() (string, error) { return tldgit.DetectBranch(repoRoot) }),
+		HeadCommit:   detectString(func() (string, error) { return tldgit.DetectHeadCommit(repoRoot) }),
+		SettingsHash: stableHash(settings),
+	}
+	preparedRepo, err := p.Store.EnsureRepository(ctx, repoInput)
+	if err != nil {
+		return OneShotResult{}, err
+	}
+	if opts.ApplyRepositorySettings {
+		resolvedSettings, resolvedEmbedding := ResolveRepositorySettings(ctx, p.Store, nil, preparedRepo.ID, &settings, &embedding)
+		settings = resolvedSettings
+		embedding = resolvedEmbedding
+		logInfo(ctx, opts.Logger, "watch.settings.repository_overrides.applied", "repository_id", preparedRepo.ID, "watcher", settings.Watcher, "embedding_provider", embedding.Provider)
+	}
+
+	p.Scanner.Settings = settings
+	p.Scanner.Progress = opts.Progress
+	p.Scanner.Logger = opts.Logger
+	if opts.Rules != nil {
+		p.Scanner.Rules = opts.Rules
+	}
+
 	scanStarted := time.Now()
 	logInfo(ctx, opts.Logger, "watch.scan.started", "repo_root", repoRoot, "rescan", opts.Rescan)
 
 	var scan ScanResult
 	if len(opts.Files) > 0 {
-		repoInput := RepositoryInput{
-			RemoteURL:    detectString(func() (string, error) { return tldgit.DetectRemoteURL(repoRoot) }),
-			RepoRoot:     repoRoot,
-			DisplayName:  filepath.Base(repoRoot),
-			Branch:       detectString(func() (string, error) { return tldgit.DetectBranch(repoRoot) }),
-			HeadCommit:   detectString(func() (string, error) { return tldgit.DetectHeadCommit(repoRoot) }),
-			SettingsHash: stableHash(settings),
-		}
-		repo, err := p.Store.EnsureRepository(ctx, repoInput)
-		if err != nil {
-			return OneShotResult{}, err
-		}
-		scan, err = p.Scanner.ScanFilesWithOptions(ctx, repo, opts.Files, ScanOptions{Force: opts.Rescan, DataDir: opts.DataDir, FocusFiles: opts.FocusFiles})
+		scan, err = p.Scanner.ScanFilesWithOptions(ctx, preparedRepo, opts.Files, ScanOptions{Force: opts.Rescan, DataDir: opts.DataDir, FocusFiles: opts.FocusFiles})
 		if err != nil {
 			logError(ctx, opts.Logger, "watch.scan.failed", err, "elapsed", logElapsed(scanStarted), "repo_root", repoRoot)
 			return OneShotResult{}, err
@@ -161,7 +173,7 @@ func (p *WatchPipeline) Execute(ctx context.Context, opts OneShotOptions) (OneSh
 	representStarted := time.Now()
 	logInfo(ctx, opts.Logger, "watch.representation.started", "repository_id", repo.ID)
 	rep, err := p.Representer.Represent(ctx, repo.ID, RepresentRequest{
-		Embedding:          opts.Embedding,
+		Embedding:          embedding,
 		Thresholds:         settings.Thresholds,
 		Visibility:         settings.Visibility,
 		Dependencies:       settings.Dependencies,

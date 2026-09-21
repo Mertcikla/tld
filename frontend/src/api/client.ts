@@ -246,6 +246,174 @@ export interface WatchDiff {
   removed_lines?: number
 }
 
+export interface WatchSettingsDescriptor {
+  key: string
+  value: string
+  source?: string
+  env?: string
+  description?: string
+  secret?: boolean
+}
+
+export type WatchVisibilityWeights = {
+  changed: number
+  selected: number
+  user_show: number
+  user_hide: number
+  high_signal_fact: number
+  relationship_proximity: number
+  dependency_fact: number
+  utility_noise: number
+  high_degree_noise: number
+}
+
+export interface WatchSettings {
+  languages: string[]
+  watcher: string
+  poll_interval: number
+  debounce: number
+  dependencies: { enabled: boolean }
+  thresholds: {
+    max_elements_per_view: number
+    max_connectors_per_view: number
+    max_incoming_per_element: number
+    max_outgoing_per_element: number
+    max_expanded_connectors_per_group: number
+  }
+  visibility: {
+    core_threshold_enabled: boolean
+    core_threshold: number
+    tier_multiplier: number
+    max_expansion_multiplier: number
+    weights: WatchVisibilityWeights
+  }
+  scale: {
+    strategy: string
+    max_tracked_files: number
+    max_limited_files: number
+    max_recent_files: number
+    max_caller_depth: number
+    max_blast_radius_hops: number
+  }
+  lsp: {
+    enabled: boolean
+    health_interval: number
+    memory_limit_bytes: number
+    commands?: Record<string, string>
+  }
+}
+
+export interface WatchEmbeddingConfig {
+  provider: string
+  endpoint?: string
+  endpoints?: string[]
+  model: string
+  dimension: number
+  runtime_path?: string
+  health_threshold?: number
+  timeout_seconds?: number
+  max_tokens?: number
+}
+
+export interface WatchRepositorySettings {
+  repository_id: number
+  settings: WatchSettings
+  embedding: WatchEmbeddingConfig
+  overridden: boolean
+  updated_at?: string
+  descriptors: WatchSettingsDescriptor[]
+}
+
+export interface WatchHealthcheckResponse {
+  ok: boolean
+  message?: string
+  lsp?: WatchLSPStatus
+  embedding?: {
+    provider: string
+    model: string
+    endpoint?: string
+    dimension: number
+    similarity: number
+  }
+}
+
+export interface WatchLSPServerStatus {
+  language: string
+  command?: string
+  command_source?: string
+  path?: string
+  state: string
+  pid?: number
+  server_name?: string
+  server_version?: string
+  definition: boolean
+  memory_bytes?: number
+  restart_count?: number
+  last_healthcheck?: string
+  last_error?: string
+}
+
+export interface WatchLSPStatus {
+  enabled: boolean
+  health_interval_seconds?: number
+  memory_limit_bytes?: number
+  memory_monitoring?: string
+  servers?: WatchLSPServerStatus[]
+  summary: {
+    requested: number
+    available: number
+    active: number
+    unavailable: number
+    failed: number
+    restarted: number
+    memory_limited: number
+  }
+}
+
+export interface WatchProcess {
+  repository_id: number
+  repo_root: string
+  pid: number
+  started_at: string
+  command: string
+}
+
+export interface WatchWatcherStatus {
+  repository_id: number
+  managed: boolean
+  process?: WatchProcess
+  live: boolean
+  paused: boolean
+}
+
+export interface WatchScanProgress {
+  repository_id: number
+  summary: {
+    repository_id: number
+    files: number
+    symbols: number
+    references: number
+    last_scan_status?: string
+    last_scan_started_at?: string
+    last_scan_finished_at?: string
+  }
+  representation: {
+    repository_id: number
+    raw_graph_hash?: string
+    filter_settings_hash?: string
+    representation_hash?: string
+    last_status?: string
+    last_started_at?: string
+    last_finished_at?: string
+    elements_created: number
+    elements_updated: number
+    connectors_created: number
+    connectors_updated: number
+    views_created: number
+  }
+  watcher: WatchWatcherStatus
+}
+
 export interface WorkspaceVersion {
   id: string
   version_id: string
@@ -1729,6 +1897,15 @@ export const api = {
       if (!res.ok) throw new Error(`Failed to load watch repositories: ${res.statusText}`)
       return res.json()
     },
+    addRepository: async (path: string): Promise<WatchRepository> => {
+      const res = await fetch(apiUrl('/watch/repositories'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      })
+      if (!res.ok) throw await responseError(res, 'Failed to add repository')
+      return res.json()
+    },
     versions: async (repositoryId: number): Promise<WatchVersion[]> => {
       const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/versions`))
       if (!res.ok) throw new Error(`Failed to load watch versions: ${res.statusText}`)
@@ -1752,6 +1929,64 @@ export const api = {
         body: JSON.stringify(input),
       })
       if (!res.ok) throw await responseError(res, 'Failed to clean watch context')
+      return res.json()
+    },
+    settingsDescriptors: async (): Promise<WatchSettingsDescriptor[]> => {
+      const res = await fetch(apiUrl('/watch/settings/descriptors'))
+      if (!res.ok) throw new Error(`Failed to load watch settings descriptors: ${res.statusText}`)
+      return res.json()
+    },
+    settings: async (repositoryId: number): Promise<WatchRepositorySettings> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/settings`))
+      if (!res.ok) throw await responseError(res, 'Failed to load watch settings')
+      return res.json()
+    },
+    saveSettings: async (repositoryId: number, input: { settings: WatchSettings; embedding: WatchEmbeddingConfig }): Promise<WatchRepositorySettings> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/settings`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      })
+      if (!res.ok) throw await responseError(res, 'Failed to save watch settings')
+      return res.json()
+    },
+    resetSettings: async (repositoryId: number): Promise<WatchRepositorySettings> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/settings`), { method: 'DELETE' })
+      if (!res.ok) throw await responseError(res, 'Failed to reset watch settings')
+      return res.json()
+    },
+    lspHealthcheck: async (repositoryId: number): Promise<WatchHealthcheckResponse> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/healthcheck/lsp`), { method: 'POST' })
+      if (!res.ok) throw await responseError(res, 'Failed to run LSP healthcheck')
+      return res.json()
+    },
+    embeddingHealthcheck: async (repositoryId: number): Promise<WatchHealthcheckResponse> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/healthcheck/embedding`), { method: 'POST' })
+      if (!res.ok) throw await responseError(res, 'Failed to run embedding healthcheck')
+      return res.json()
+    },
+    start: async (repositoryId: number, options?: { rescan?: boolean; verbose?: boolean }): Promise<WatchWatcherStatus> => {
+      const params = new URLSearchParams()
+      if (options?.rescan) params.set('rescan', 'true')
+      if (options?.verbose) params.set('verbose', 'true')
+      const suffix = params.toString() ? `?${params}` : ''
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/start${suffix}`), { method: 'POST' })
+      if (!res.ok) throw await responseError(res, 'Failed to start watch')
+      return res.json()
+    },
+    stop: async (repositoryId: number): Promise<{ repository_id: number; managed: boolean; stopped: boolean }> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/stop`), { method: 'POST' })
+      if (!res.ok) throw await responseError(res, 'Failed to stop watch')
+      return res.json()
+    },
+    scanProgress: async (repositoryId: number): Promise<WatchScanProgress> => {
+      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/scan-progress`))
+      if (!res.ok) throw await responseError(res, 'Failed to load scan progress')
+      return res.json()
+    },
+    processes: async (): Promise<WatchProcess[]> => {
+      const res = await fetch(apiUrl('/watch/processes'))
+      if (!res.ok) throw new Error(`Failed to load watch processes: ${res.statusText}`)
       return res.json()
     },
   },

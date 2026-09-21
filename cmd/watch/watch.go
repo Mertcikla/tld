@@ -267,7 +267,7 @@ func NewWatchCmd() *cobra.Command {
 			defer eventWG.Wait()
 			errCh := make(chan error, 1)
 			go func() {
-				_, runErr := watch.NewRunner(watchStore).Run(ctx, watch.RunnerOptions{Path: path, Rescan: rescan, Verbose: verbose, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir, Progress: progress, Logger: logger, Events: events, Ready: ready, ConfirmAfterScan: confirmWatchLSPProceed(cmd)})
+				_, runErr := watch.NewRunner(watchStore).Run(ctx, watch.RunnerOptions{Path: path, Rescan: rescan, Verbose: verbose, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir, Progress: progress, Logger: logger, Events: events, Ready: ready, ConfirmAfterScan: confirmWatchLSPProceed(cmd), ApplyRepositorySettings: true})
 				errCh <- runErr
 				events.Close()
 			}()
@@ -918,7 +918,7 @@ func runWatchDiff(cmd *cobra.Command, path string, opts watchDiffOptions) error 
 	watchStore := watch.NewStoreWithBun(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
 	runner := watch.NewRunner(watchStore)
 	defer func() { _ = runner.Close() }()
-	once, err := runner.RunOnce(cmd.Context(), watch.OneShotOptions{Path: path, Rescan: opts.Rescan, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir, Logger: logger})
+	once, err := runner.RunOnce(cmd.Context(), watch.OneShotOptions{Path: path, Rescan: opts.Rescan, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir, Logger: logger, ApplyRepositorySettings: true})
 	if err != nil {
 		return fail("watch.diff.pipeline.failed", err)
 	}

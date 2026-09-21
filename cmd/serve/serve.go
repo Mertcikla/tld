@@ -18,6 +18,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/localserver"
 	"github.com/mertcikla/tld/v2/internal/term"
+	"github.com/mertcikla/tld/v2/internal/watch"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -65,6 +66,9 @@ func runForeground(cmd *cobra.Command, host, port, dataDir, workspaceDir string,
 	opts := resolveServeOptions(cfg, host, port)
 	opts.Config = cfg
 	opts.WorkspaceDir = workspaceDir
+	supervisor := watch.NewSupervisor()
+	opts.Supervisor = supervisor
+	defer func() { _ = supervisor.Close() }()
 
 	app, err := localserver.Bootstrap(dataDir, opts)
 	if err != nil {

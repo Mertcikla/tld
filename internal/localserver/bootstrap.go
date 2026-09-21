@@ -13,6 +13,7 @@ import (
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/server"
 	"github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/internal/watch"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )
@@ -44,6 +45,9 @@ type ServeOptions struct {
 	WorkspaceDir   string
 	StaticFS       fs.FS
 	Config         *workspace.Config
+	// Supervisor, when set, enables starting/stopping watch child processes
+	// from the local API. Only the `tld serve` command wires this up.
+	Supervisor *watch.Supervisor
 }
 
 func envOrDefault(key, fallback string) string {
@@ -128,6 +132,8 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 		PublicURL:                publicURL,
 		AllowedOrigins:           allowedOrigins,
 		PopulateRerankerEndpoint: rerankerEndpoint,
+		Config:                   o.Config,
+		Supervisor:               o.Supervisor,
 	})
 	if err != nil {
 		return nil, err

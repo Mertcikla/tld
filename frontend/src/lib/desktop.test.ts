@@ -150,4 +150,47 @@ describe('desktop helpers', () => {
     expect(checkForUpdate).not.toHaveBeenCalled()
     expect(installUpdate).not.toHaveBeenCalled()
   })
+
+  it('reads CLI runtime status through the bridge in Wails mode', async () => {
+    const cliStatus = { available: true, path: '/usr/local/bin/tld', platform: 'darwin', installSupported: true, installHint: 'Installs the tld CLI.' }
+    const cliRuntimeStatus = vi.fn().mockResolvedValue(cliStatus)
+    installWindow({ __TLD_APP__: true, go: { main: { DesktopBridge: { CLIRuntimeStatus: cliRuntimeStatus } } } })
+    const { getCLIRuntimeStatus } = await import('./desktop')
+
+    await expect(getCLIRuntimeStatus()).resolves.toEqual(cliStatus)
+    expect(cliRuntimeStatus).toHaveBeenCalled()
+  })
+
+  it('installs the CLI through the bridge in Wails mode', async () => {
+    const cliStatus = { available: false, platform: 'darwin', installSupported: true, installHint: 'Installs the tld CLI.' }
+    const install = vi.fn().mockResolvedValue(cliStatus)
+    installWindow({ __TLD_APP__: true, go: { main: { DesktopBridge: { InstallCLI: install } } } })
+    const { installCLI } = await import('./desktop')
+
+    await expect(installCLI()).resolves.toEqual(cliStatus)
+    expect(install).toHaveBeenCalled()
+  })
+
+  it('builds the watch command through the bridge in Wails mode', async () => {
+    const watchCommand = vi.fn().mockResolvedValue('tld watch /repo')
+    installWindow({ __TLD_APP__: true, go: { main: { DesktopBridge: { WatchCommand: watchCommand } } } })
+    const { getWatchCommand } = await import('./desktop')
+
+    await expect(getWatchCommand('/repo', ['--rescan'])).resolves.toBe('tld watch /repo')
+    expect(watchCommand).toHaveBeenCalledWith('/repo', ['--rescan'])
+  })
+
+  it('builds a watch command fallback outside Wails mode', async () => {
+    installWindow()
+    const { getWatchCommand } = await import('./desktop')
+
+    await expect(getWatchCommand('/repo', ['--rescan'])).resolves.toBe('tld watch /repo --rescan')
+  })
+
+  it('rejects CLI status outside Wails mode', async () => {
+    installWindow()
+    const { getCLIRuntimeStatus } = await import('./desktop')
+
+    await expect(getCLIRuntimeStatus()).rejects.toThrow('desktop app')
+  })
 })
