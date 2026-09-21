@@ -21,14 +21,18 @@ var allWarningCodes = map[string]bool{
 func NewValidateCmd(wdir *string) *cobra.Command {
 	var strictness int
 	var verbose bool
+	var strict bool
 
 	c := &cobra.Command{
 		Use:   "validate [rule-code]",
-		Short: "Validate the workspace YAML files",
-		Long: `Validate the workspace YAML files for structural errors and architectural warnings.
+		Short: "Validate the workspace and check diagram freshness",
+		Long: `Validate the workspace YAML files for structural errors, verify that
+referenced symbols still exist in source files, and flag diagrams whose
+metadata is older than the file's last git commit.
 
 When called without arguments, validates the entire workspace and shows a summary
-of architectural warnings grouped by rule code.
+of architectural warnings grouped by rule code. Outdated diagrams are reported
+as warnings unless --strict is set.
 
 When called with a rule code (e.g. ARC002), shows only that rule's violations
 in full detail with individual element and connector information.`,
@@ -80,22 +84,41 @@ in full detail with individual element and connector information.`,
 				}
 			}
 
+			outdated := cmdutil.CheckOutdated(ws, repoCtx, rules)
+			if len(outdated) > 0 {
+				if strict {
+					term.Fail(cmd.OutOrStdout(), "Outdated diagrams:")
+				} else {
+					term.Warn(cmd.OutOrStdout(), "Outdated diagrams:")
+				}
+				for _, msg := range outdated {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    - %s\n", msg)
+				}
+				if strict {
+					term.Hint(cmd.OutOrStdout(), "run the matching add/update command to sync diagram metadata")
+				}
+			}
+
 			warnings := archwarnings.Analyze(ws)
 
 			if len(args) == 1 {
-				return printRuleViolations(cmd, args[0], warnings)
-			}
-
-			if len(warnings) > 0 {
+				if err := printRuleViolations(cmd, args[0], warnings); err != nil {
+					return err
+				}
+			} else if len(warnings) > 0 {
 				printWarningSummary(cmd, ws, warnings, verbose)
 			}
 
+			if strict && len(outdated) > 0 {
+				return fmt.Errorf("%d outdated diagram(s) detected", len(outdated))
+			}
 			return nil
 		},
 	}
 
 	c.Flags().IntVar(&strictness, "strictness", 0, "override validation strictness level [1-3]")
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "show full architectural warnings output")
+	c.Flags().BoolVar(&strict, "strict", false, "exit non-zero when outdated diagrams are detected")
 	return c
 }
 

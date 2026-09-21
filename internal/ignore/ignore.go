@@ -1,5 +1,5 @@
 // Package ignore provides rule-based filtering for excluded paths and symbols
-// used by tld analyze and tld check commands.
+// used by tld analyze and tld validate commands.
 package ignore
 
 import (

@@ -155,3 +155,137 @@ func TestValidateCmd_ShowsSuppressionGuidance(t *testing.T) {
 		t.Fatalf("expected suppression guidance in output, got:\n%s", stdout)
 	}
 }
+
+func withWorkingDir(t *testing.T, dir string) {
+	t.Helper()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+}
+
+// TestValidateCmd_AllChecksPass verifies validation, symbol verification, and
+// diagram freshness all pass for a synced workspace.
+func TestValidateCmd_AllChecksPass(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.InitGitRepo(t, dir, "service.go", "package main\nfunc Service() {}\n")
+	withWorkingDir(t, dir)
+	content := "service:\n  name: Service\n  kind: service\n  file_path: service.go\n  symbol: Service\n  placements: [ { parent: root } ]\n"
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := cmd.RunCmd(t, dir, "validate")
+	if err != nil {
+		t.Fatalf("validate: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Workspace valid") {
+		t.Fatalf("unexpected stdout: %s", stdout)
+	}
+	if strings.Contains(stdout, "Outdated diagrams") || strings.Contains(stderr, "Symbol verification errors") {
+		t.Fatalf("expected a clean validate, got:\nstdout: %s\nstderr: %s", stdout, stderr)
+	}
+}
+
+// TestValidateCmd_BrokenSymbol verifies symbol verification failures abort.
+func TestValidateCmd_BrokenSymbol(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.InitGitRepo(t, dir, "service.go", "package main\nfunc Service() {}\n")
+	withWorkingDir(t, dir)
+	content := "service:\n  name: Service\n  kind: service\n  file_path: service.go\n  symbol: Missing\n  placements: [ { parent: root } ]\n"
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, err := cmd.RunCmd(t, dir, "validate")
+	if err == nil {
+		t.Fatalf("expected symbol verification failure\nstderr: %s", stderr)
+	}
+	if !strings.Contains(stderr, "Validation errors") || !strings.Contains(stderr, `symbol "Missing" not found`) {
+		t.Fatalf("unexpected stderr: %s", stderr)
+	}
+}
+
+// TestValidateCmd_OutdatedWarn verifies stale diagram metadata is reported as a
+// warning without failing by default.
+func TestValidateCmd_OutdatedWarn(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.InitGitRepo(t, dir, "service.go", "package main\nfunc Service() {}\n")
+	withWorkingDir(t, dir)
+	content := "service:\n  name: Service\n  kind: service\n  file_path: service.go\n  symbol: Service\n  placements: [ { parent: root } ]\n\n_meta_elements:\n  service:\n    id: 1\n    updated_at: 2000-01-01T00:00:00Z\n"
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := cmd.RunCmd(t, dir, "validate")
+	if err != nil {
+		t.Fatalf("expected warning-only validate\nstdout: %s\nstderr: %s\nerr: %v", stdout, stderr, err)
+	}
+	if !strings.Contains(stdout, "Outdated diagrams") {
+		t.Fatalf("unexpected stdout: %s", stdout)
+	}
+}
+
+// TestValidateCmd_OutdatedStrict verifies --strict turns outdated diagrams into
+// a non-zero exit.
+func TestValidateCmd_OutdatedStrict(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.InitGitRepo(t, dir, "service.go", "package main\nfunc Service() {}\n")
+	withWorkingDir(t, dir)
+	content := "service:\n  name: Service\n  kind: service\n  file_path: service.go\n  symbol: Service\n  placements: [ { parent: root } ]\n\n_meta_elements:\n  service:\n    id: 1\n    updated_at: 2000-01-01T00:00:00Z\n"
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, err := cmd.RunCmd(t, dir, "validate", "--strict")
+	if err == nil {
+		t.Fatalf("expected strict validate failure\nstdout: %s\nstderr: %s", stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Outdated diagrams") {
+		t.Fatalf("unexpected stdout: %s", stdout)
+	}
+}
+
+func TestValidateCmd_SkipsForeignRepoSymbols(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+
+	content := `good:
+  name: Good Service
+  kind: service
+  file_path: cmd/init.go
+  symbol: newInitCmd
+  placements: [ { parent: root } ]
+foreign:
+  name: Foreign Service
+  kind: service
+  file_path: /tmp/foreign/foreign.go
+  symbol: doesNotExist
+  repo: https://example.com/other.git
+  placements: [ { parent: root } ]
+`
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(content), 0600); err != nil {
+		t.Fatalf("write elements.yaml: %v", err)
+	}
+
+	stdout, stderr, err := cmd.RunCmd(t, dir, "validate")
+	if err != nil {
+		t.Fatalf("validate: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "Workspace valid") {
+		t.Errorf("stdout %q does not contain validation success", stdout)
+	}
+	if strings.Contains(stderr, "Foreign Service") || strings.Contains(stderr, "doesNotExist") {
+		t.Errorf("stderr %q should not mention the foreign repo symbol", stderr)
+	}
+}

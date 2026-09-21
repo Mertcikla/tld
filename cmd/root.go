@@ -6,7 +6,6 @@ import (
 
 	"github.com/mertcikla/tld/v2/cmd/add"
 	"github.com/mertcikla/tld/v2/cmd/analyze"
-	"github.com/mertcikla/tld/v2/cmd/check"
 	configcmd "github.com/mertcikla/tld/v2/cmd/config"
 	"github.com/mertcikla/tld/v2/cmd/connect"
 	"github.com/mertcikla/tld/v2/cmd/export"
@@ -143,9 +142,6 @@ YAML cache. Use 'tld pull' to refresh the cache after frontend changes.`,
 	analyzeCmd := analyze.NewAnalyzeCmd(&wdir)
 	analyzeCmd.GroupID = secondaryGroup.ID
 
-	checkCmd := check.NewCheckCmd(&wdir)
-	checkCmd.GroupID = secondaryGroup.ID
-
 	configCmd := configcmd.NewConfigCmd()
 	configCmd.GroupID = secondaryGroup.ID
 
@@ -180,7 +176,6 @@ YAML cache. Use 'tld pull' to refresh the cache after frontend changes.`,
 		updateCmd,
 		renameCmd,
 		analyzeCmd,
-		checkCmd,
 		configCmd,
 		techCmd,
 		watchCmd,
