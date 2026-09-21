@@ -3,6 +3,7 @@ import type { TopMenuBarSlots } from '../slots'
 import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom"
 import {
   Box,
+  Button,
   Flex,
   HStack,
   IconButton,
@@ -193,8 +194,7 @@ export default function TopMenuBar({
             </Flex>
           </PopoverBody>
           <Flex
-            align="center"
-            justify="space-between"
+            direction="column"
             gap={3}
             px={4}
             py={3}
@@ -202,15 +202,36 @@ export default function TopMenuBar({
             borderColor="whiteAlpha.100"
             bg="rgba(var(--bg-main-rgb), 0.35)"
           >
-            <Box minW={0}>
-              <Text fontSize="xs" color="gray.300" fontWeight="500">
-                Help us improve
-              </Text>
-              <Text fontSize="xs" color="gray.500" noOfLines={1}>
-                Share an idea or report an issue.
-              </Text>
-            </Box>
-            <FeedbackButton />
+            <Button
+              size="sm"
+              variant="outline"
+              w="full"
+              borderRadius="lg"
+              borderColor="whiteAlpha.200"
+              color="gray.200"
+              fontWeight="600"
+              leftIcon={<SettingsIcon boxSize={3.5} />}
+              data-testid="topnav-advanced-settings"
+              onClick={() => {
+                appearancePopover.onClose()
+                navigate("/settings")
+              }}
+              _hover={{ bg: "whiteAlpha.100", borderColor: "whiteAlpha.300", color: "white" }}
+              _active={{ bg: "whiteAlpha.200" }}
+            >
+              Advanced
+            </Button>
+            <Flex align="center" justify="space-between" gap={3}>
+              <Box minW={0}>
+                <Text fontSize="xs" color="gray.300" fontWeight="500">
+                  Help us improve
+                </Text>
+                <Text fontSize="xs" color="gray.500" noOfLines={1}>
+                  Share an idea or report an issue.
+                </Text>
+              </Box>
+              <FeedbackButton />
+            </Flex>
           </Flex>
         </PopoverContent>
       </Portal>

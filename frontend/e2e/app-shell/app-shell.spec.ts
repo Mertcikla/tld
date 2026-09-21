@@ -57,6 +57,15 @@ test('appearance popover applies settings from the top bar', async ({ page }) =>
   await expect.poll(async () => page.evaluate(() => localStorage.getItem('diag:accent-color'))).toBe('#4fd1c5')
 })
 
+test('settings pane advanced button opens the settings page', async ({ page }) => {
+  await page.goto('/')
+
+  await openAppearance(page)
+  await page.getByTestId('topnav-advanced-settings').click()
+
+  await expect(page).toHaveURL(/\/settings\/profile$/)
+})
+
 test('settings api-key route falls back to appearance in local platform mode', async ({ page }) => {
   await page.goto('/settings/api-keys')
 
