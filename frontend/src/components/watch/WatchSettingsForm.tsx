@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import {
   Box,
+  Button,
   Checkbox,
   FormControl,
   FormLabel,
@@ -14,17 +16,19 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import type { WatchEmbeddingConfig, WatchSettings, WatchSettingsDescriptor } from '../../api/client'
+import { ChevronDownIcon } from '../Icons'
 import {
   EMBEDDING_PROVIDER_OPTIONS,
   SCALE_STRATEGY_OPTIONS,
   WATCHER_OPTIONS,
   WATCH_LANGUAGE_OPTIONS,
-  WATCH_SETTINGS_GROUPS,
   descriptorsByKey,
   durationSecondsToNanos,
   formatDurationNanos,
   nanosToDurationSeconds,
+  partitionWatchSettingsGroups,
   ungroupedDescriptors,
+  type WatchSettingsGroup,
 } from './watchSettings'
 
 type Props = {
@@ -37,6 +41,8 @@ type Props = {
 
 export default function WatchSettingsForm({ settings, embedding, descriptors, disabled, onChange }: Props) {
   const byKey = descriptorsByKey(descriptors)
+  const { primary, advanced } = partitionWatchSettingsGroups()
+  const ungrouped = ungroupedDescriptors(descriptors)
 
   const updateSettings = (patch: Partial<WatchSettings>) => {
     onChange({ settings: { ...settings, ...patch }, embedding })
@@ -45,44 +51,107 @@ export default function WatchSettingsForm({ settings, embedding, descriptors, di
     onChange({ settings, embedding: { ...embedding, ...patch } })
   }
 
+  const renderGroup = (group: WatchSettingsGroup) => (
+    <WatchSettingsGroupSection
+      key={group.id}
+      group={group}
+      byKey={byKey}
+      settings={settings}
+      embedding={embedding}
+      disabled={disabled}
+      onSettingsChange={updateSettings}
+      onEmbeddingChange={updateEmbedding}
+    />
+  )
+
   return (
     <VStack align="stretch" spacing={6} w="full">
-      {WATCH_SETTINGS_GROUPS.map((group) => (
-        <VStack key={group.id} align="stretch" spacing={3}>
-          <Box>
-            <Text fontSize="xs" fontWeight="semibold" textTransform="uppercase" letterSpacing="0.12em" color="gray.400">
-              {group.label}
-            </Text>
-            {group.description && (
-              <Text fontSize="xs" color="gray.500" mt={1}>
-                {group.description}
-              </Text>
-            )}
-          </Box>
-          <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
-            {group.keys.map((key) => (
-              <WatchSettingField
-                key={key}
-                settingKey={key}
-                description={byKey[key]?.description ?? ''}
-                settings={settings}
-                embedding={embedding}
-                disabled={disabled}
-                onSettingsChange={updateSettings}
-                onEmbeddingChange={updateEmbedding}
-              />
-            ))}
-          </SimpleGrid>
+      {primary.map(renderGroup)}
+      {(advanced.length > 0 || ungrouped.length > 0) && (
+        <AdvancedSettingsSection>
+          {advanced.map(renderGroup)}
+          <WatchUngroupedFields
+            descriptors={ungrouped}
+            settings={settings}
+            embedding={embedding}
+            disabled={disabled}
+            onSettingsChange={updateSettings}
+            onEmbeddingChange={updateEmbedding}
+          />
+        </AdvancedSettingsSection>
+      )}
+    </VStack>
+  )
+}
+
+type GroupSectionProps = {
+  group: WatchSettingsGroup
+  byKey: Record<string, WatchSettingsDescriptor>
+  settings: WatchSettings
+  embedding: WatchEmbeddingConfig
+  disabled?: boolean
+  onSettingsChange: (patch: Partial<WatchSettings>) => void
+  onEmbeddingChange: (patch: Partial<WatchEmbeddingConfig>) => void
+}
+
+function WatchSettingsGroupSection({ group, byKey, settings, embedding, disabled, onSettingsChange, onEmbeddingChange }: GroupSectionProps) {
+  return (
+    <VStack align="stretch" spacing={3}>
+      <Box>
+        <Text fontSize="xs" fontWeight="semibold" textTransform="uppercase" letterSpacing="0.12em" color="gray.400">
+          {group.label}
+        </Text>
+        {group.description && (
+          <Text fontSize="xs" color="gray.500" mt={1}>
+            {group.description}
+          </Text>
+        )}
+      </Box>
+      <SimpleGrid columns={{ base: 1, sm: 2 }} spacing={3}>
+        {group.keys.map((key) => (
+          <WatchSettingField
+            key={key}
+            settingKey={key}
+            description={byKey[key]?.description ?? ''}
+            settings={settings}
+            embedding={embedding}
+            disabled={disabled}
+            onSettingsChange={onSettingsChange}
+            onEmbeddingChange={onEmbeddingChange}
+          />
+        ))}
+      </SimpleGrid>
+    </VStack>
+  )
+}
+
+function AdvancedSettingsSection({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <VStack align="stretch" spacing={3}>
+      <Button
+        size="sm"
+        variant="ghost"
+        w="full"
+        px={2}
+        justifyContent="space-between"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        color="gray.400"
+        _hover={{ bg: 'whiteAlpha.50', color: 'gray.200' }}
+      >
+        <Text fontSize="xs" fontWeight="semibold" textTransform="uppercase" letterSpacing="0.12em">
+          Advanced
+        </Text>
+        <Box transform={open ? 'rotate(180deg)' : 'rotate(0deg)'} transition="transform 0.15s ease">
+          <ChevronDownIcon size={12} />
+        </Box>
+      </Button>
+      {open && (
+        <VStack align="stretch" spacing={6}>
+          {children}
         </VStack>
-      ))}
-      <WatchUngroupedFields
-        descriptors={ungroupedDescriptors(descriptors)}
-        settings={settings}
-        embedding={embedding}
-        disabled={disabled}
-        onSettingsChange={updateSettings}
-        onEmbeddingChange={updateEmbedding}
-      />
+      )}
     </VStack>
   )
 }

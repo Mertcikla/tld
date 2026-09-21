@@ -189,7 +189,7 @@ export default function TopMenuBar({
           <PopoverBody p={4} overflowY="auto" flex={1} minH={0}>
             <Flex direction="column" gap={5}>
               <AppearanceSettings compact />
-              <ExperimentalSettings compact />
+              <ExperimentalSettings compact surface="pane" />
               {isWailsApp && <UpdateSettings compact />}
             </Flex>
           </PopoverBody>

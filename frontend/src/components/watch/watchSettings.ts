@@ -15,6 +15,55 @@ export type WatchSettingsGroup = {
   label: string
   description?: string
   keys: string[]
+  // Advanced groups are hidden behind progressive disclosure on compact
+  // surfaces because they tune detail rather than day-to-day behavior.
+  advanced?: boolean
+}
+
+// Individual keys that belong to an otherwise primary group but are low-impact
+// detail settings. They are relocated into the Advanced disclosure.
+export const ADVANCED_WATCH_KEYS: ReadonlySet<string> = new Set([
+  'watch.poll_interval',
+  'watch.debounce',
+  'watch.scale.max_tracked_files',
+  'watch.scale.max_limited_files',
+  'watch.scale.max_recent_files',
+  'watch.scale.max_caller_depth',
+  'watch.scale.max_blast_radius_hops',
+  'watch.lsp.health_interval',
+  'watch.lsp.memory_limit_bytes',
+  'watch.embedding.dimension',
+  'watch.embedding.max_tokens',
+  'watch.embedding.health_threshold',
+  'watch.embedding.runtime_path',
+])
+
+export function isAdvancedWatchKey(key: string): boolean {
+  return ADVANCED_WATCH_KEYS.has(key) || key.startsWith('watch.lsp.commands.')
+}
+
+// Splits the flat registry into the primary settings shown by default and the
+// advanced settings tucked behind the disclosure. Primary groups keep their
+// identity; advanced keys pulled out of them become sibling groups so the
+// disclosure still reads as labelled sections.
+export function partitionWatchSettingsGroups(): { primary: WatchSettingsGroup[]; advanced: WatchSettingsGroup[] } {
+  const primary: WatchSettingsGroup[] = []
+  const advanced: WatchSettingsGroup[] = []
+  for (const group of WATCH_SETTINGS_GROUPS) {
+    if (group.advanced) {
+      advanced.push(group)
+      continue
+    }
+    const primaryKeys = group.keys.filter((key) => !isAdvancedWatchKey(key))
+    const advancedKeys = group.keys.filter(isAdvancedWatchKey)
+    if (primaryKeys.length > 0) {
+      primary.push({ ...group, keys: primaryKeys })
+    }
+    if (advancedKeys.length > 0) {
+      advanced.push({ ...group, id: `${group.id}-advanced`, keys: advancedKeys })
+    }
+  }
+  return { primary, advanced }
 }
 
 // Groups the flat watch.* config registry into labelled sections. Keys not
@@ -43,6 +92,7 @@ export const WATCH_SETTINGS_GROUPS: WatchSettingsGroup[] = [
     id: 'thresholds',
     label: 'Representation thresholds',
     description: 'Caps applied when materializing generated views.',
+    advanced: true,
     keys: [
       'watch.thresholds.max_elements_per_view',
       'watch.thresholds.max_connectors_per_view',
@@ -91,6 +141,7 @@ export const WATCH_SETTINGS_GROUPS: WatchSettingsGroup[] = [
   {
     id: 'visibility',
     label: 'Visibility weights',
+    advanced: true,
     keys: [
       'watch.visibility.core_threshold_enabled',
       'watch.visibility.core_threshold',
@@ -110,6 +161,7 @@ export const WATCH_SETTINGS_GROUPS: WatchSettingsGroup[] = [
   {
     id: 'layout',
     label: 'Layout',
+    advanced: true,
     keys: [
       'watch.layout.link_distance',
       'watch.layout.charge_strength',

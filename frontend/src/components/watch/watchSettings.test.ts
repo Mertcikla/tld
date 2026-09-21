@@ -4,7 +4,9 @@ import {
   descriptorsByKey,
   durationSecondsToNanos,
   formatDurationNanos,
+  isAdvancedWatchKey,
   nanosToDurationSeconds,
+  partitionWatchSettingsGroups,
   ungroupedDescriptors,
 } from './watchSettings'
 
@@ -40,5 +42,33 @@ describe('watchSettings helpers', () => {
     ])
     expect(byKey['watch.watcher'].description).toBe('watcher backend')
     expect(byKey['watch.debounce'].value).toBe('500ms')
+  })
+
+  it('classifies low-impact detail settings as advanced', () => {
+    expect(isAdvancedWatchKey('watch.debounce')).toBe(true)
+    expect(isAdvancedWatchKey('watch.lsp.commands.go')).toBe(true)
+    expect(isAdvancedWatchKey('watch.watcher')).toBe(false)
+    expect(isAdvancedWatchKey('watch.languages')).toBe(false)
+    expect(isAdvancedWatchKey('watch.embedding.provider')).toBe(false)
+  })
+
+  it('partitions groups without losing or duplicating keys', () => {
+    const { primary, advanced } = partitionWatchSettingsGroups()
+    const registryKeys = WATCH_SETTINGS_GROUPS.flatMap((group) => group.keys)
+    const partitionedKeys = [...primary, ...advanced].flatMap((group) => group.keys)
+
+    expect(partitionedKeys).toHaveLength(registryKeys.length)
+    expect(new Set(partitionedKeys)).toEqual(new Set(registryKeys))
+
+    const primaryKeys = primary.flatMap((group) => group.keys)
+    expect(primaryKeys).toContain('watch.watcher')
+    expect(primaryKeys).not.toContain('watch.debounce')
+    expect(primaryKeys).not.toContain('watch.visibility.weights.changed')
+
+    const advancedKeys = advanced.flatMap((group) => group.keys)
+    expect(advancedKeys).toContain('watch.debounce')
+    expect(advancedKeys).toContain('watch.visibility.weights.changed')
+    expect(advancedKeys).toContain('watch.layout.link_distance')
+    expect(advancedKeys).not.toContain('watch.watcher')
   })
 })

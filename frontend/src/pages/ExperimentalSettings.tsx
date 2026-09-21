@@ -11,9 +11,17 @@ import {
 import { useExperimental } from '../context/ExperimentalContext'
 import WatchControlPanel from '../components/watch/WatchControlPanel'
 
-export default function ExperimentalSettings({ compact = false }: { compact?: boolean }) {
+export interface ExperimentalSettingsProps {
+  compact?: boolean
+  // Which settings surface is rendering this section. Pane-only surfaces omit
+  // the full watch configuration, which lives on the settings page.
+  surface?: 'pane' | 'page'
+}
+
+export default function ExperimentalSettings({ compact = false, surface = 'page' }: ExperimentalSettingsProps) {
   const { experimental, toggleExperimental } = useExperimental()
   const sectionGap = compact ? 4 : 6
+  const showWatchPanel = surface === 'page'
 
   return (
     <VStack align="start" spacing={sectionGap} maxW={compact ? '320px' : '720px'} w="full">
@@ -51,9 +59,13 @@ export default function ExperimentalSettings({ compact = false }: { compact?: bo
         )}
       </Box>
 
-      <Divider borderColor="whiteAlpha.100" />
+      {showWatchPanel && (
+        <>
+          <Divider borderColor="whiteAlpha.100" />
 
-      <WatchControlPanel enabled={experimental.watchEnabled} compact={compact} />
+          <WatchControlPanel enabled={experimental.watchEnabled} compact={compact} />
+        </>
+      )}
     </VStack>
   )
 }
