@@ -68,9 +68,10 @@ func TestMCPAddAutoAppliesLocalSQLite(t *testing.T) {
 
 	db := openMCPTestDB(t, dataDir)
 	assertMCPCount(t, db, "SELECT COUNT(*) FROM elements", 1)
-	// Bootstrap root view plus the element's owned canonical diagram.
-	assertMCPCount(t, db, "SELECT COUNT(*) FROM views", 2)
-	assertMCPCount(t, db, "SELECT COUNT(*) FROM views WHERE owner_element_id IS NOT NULL", 1)
+	// Only the bootstrap root view: an element added at root has no diagram
+	// until another element is placed under it.
+	assertMCPCount(t, db, "SELECT COUNT(*) FROM views", 1)
+	assertMCPCount(t, db, "SELECT COUNT(*) FROM views WHERE owner_element_id IS NOT NULL", 0)
 }
 
 func openMCPTestDB(t *testing.T, dataDir string) *sql.DB {

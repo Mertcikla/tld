@@ -19,20 +19,18 @@ import (
 
 func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	var (
-		description     string
-		technology      string
-		dryRun          bool
-		url             string
-		positionX       float64
-		positionY       float64
-		ref             string
-		kind            string
-		parent          string
-		diagramLabel    string
-		legacyViewLabel string
-		legacyWithView  bool
-		target          string
-		dataDir         string
+		description  string
+		technology   string
+		dryRun       bool
+		url          string
+		positionX    float64
+		positionY    float64
+		ref          string
+		kind         string
+		parent       string
+		diagramLabel string
+		target       string
+		dataDir      string
 	)
 
 	c := &cobra.Command{
@@ -78,9 +76,6 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 					return fmt.Errorf("parent ref %q not found", placementParent)
 				}
 			}
-			if diagramLabel == "" {
-				diagramLabel = legacyViewLabel
-			}
 			normalizedTechnology, wasNormalized := normalizeTechnology(technology)
 			spec := &workspace.Element{
 				Name:        name,
@@ -88,7 +83,6 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				Description: description,
 				Technology:  normalizedTechnology,
 				URL:         url,
-				HasView:     legacyWithView,
 				ViewLabel:   diagramLabel,
 				Placements: []workspace.ViewPlacement{{
 					ParentRef: placementParent,
@@ -129,13 +123,9 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&ref, "ref", "", "override generated ref (default: slugified name)")
 	c.Flags().StringVar(&parent, "parent", "root", "parent element ref or root")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
-	c.Flags().StringVar(&diagramLabel, "diagram-label", "", "optional label for the element's canonical diagram")
+	c.Flags().StringVar(&diagramLabel, "diagram-label", "", "label for the diagram created when this element becomes a parent")
 	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
-	c.Flags().BoolVar(&legacyWithView, "with-view", false, "give the element its own canonical diagram (view)")
-	c.Flags().StringVar(&legacyViewLabel, "view-label", "", "deprecated: use --diagram-label")
-	_ = c.Flags().MarkHidden("with-view")
-	_ = c.Flags().MarkHidden("view-label")
 
 	_ = c.RegisterFlagCompletionFunc("ref", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return completion.ElementRefs(wdir)
@@ -206,21 +196,14 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 		return fail(cmdutil.WithUnauthorizedHint("server place element failed", err))
 	}
 
-	// Ensure the element's own canonical diagram when requested
-	// (mirrors the legacy --with-view behavior).
-	var ownedViewID int32
-	if spec.HasView {
-		ownedViewID, err = exec.EnsureElementView(ctx, runner, elementID, spec.Name, strptr(spec.ViewLabel))
-		if err != nil {
-			return fail(cmdutil.WithUnauthorizedHint("server create view failed", err))
-		}
-	}
+	// The element gets its own diagram only when another element is placed
+	// under it: ResolveParentViewID creates and records the parent's view.
 
 	// Refresh YAML cache (write-through).
 	if err := workspace.UpsertElement(wdir, ref, spec); err != nil {
 		return fail(fmt.Errorf("update YAML cache: %w", err))
 	}
-	if err := exec.RecordElementMeta(wdir, ref, savedElement, ownedViewID, nil); err != nil {
+	if err := exec.RecordElementMeta(wdir, ref, savedElement, 0, nil); err != nil {
 		return fail(fmt.Errorf("update cache metadata: %w", err))
 	}
 

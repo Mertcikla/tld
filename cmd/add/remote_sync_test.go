@@ -133,22 +133,38 @@ func TestEnsureElementIDDoesNotMaskServerErrors(t *testing.T) {
 	}
 }
 
-// TestSyncCommands_RemoteWithView verifies that --with-view creates the
-// element's owned diagram on the server and records it in the YAML cache.
-func TestSyncCommands_RemoteWithView(t *testing.T) {
+// TestSyncCommands_ParentGetsDiagramWhenChildAdded verifies that add by itself
+// creates no diagram, and that placing another element under it elevates the
+// parent: its diagram is created on the server (with the --diagram-label) and
+// recorded in the YAML cache.
+func TestSyncCommands_ParentGetsDiagramWhenChildAdded(t *testing.T) {
 	svc := &cmd.MockDiagramService{}
 	serverURL := cmd.NewMockServer(t, svc)
 
 	dir := t.TempDir()
 	cmd.SetupApplyWorkspace(t, dir, serverURL)
 
-	if _, _, err := cmd.RunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace", "--with-view", "--diagram-label", "System"); err != nil {
-		t.Fatalf("remote add with view: %v", err)
+	if _, _, err := cmd.RunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace", "--diagram-label", "System"); err != nil {
+		t.Fatalf("add platform: %v", err)
 	}
-
 	ws, err := workspace.Load(dir)
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
+	}
+	if ws.Elements["platform"].HasView {
+		t.Fatal("add must not create a diagram by default")
+	}
+	if ws.Meta.Views["platform"] != nil {
+		t.Fatalf("unexpected view metadata after plain add: %+v", ws.Meta.Views)
+	}
+
+	if _, _, err := cmd.RunCmd(t, dir, "add", "API", "--ref", "api", "--parent", "platform", "--kind", "service"); err != nil {
+		t.Fatalf("add api: %v", err)
+	}
+
+	ws, err = workspace.Load(dir)
+	if err != nil {
+		t.Fatalf("reload workspace: %v", err)
 	}
 	if ws.Elements["platform"] == nil || !ws.Elements["platform"].HasView {
 		t.Fatalf("expected has_view in YAML: %+v", ws.Elements["platform"])

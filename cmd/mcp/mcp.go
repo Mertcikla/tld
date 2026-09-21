@@ -31,7 +31,7 @@ type addArgs struct {
 	Parent      string  `json:"parent,omitempty" jsonschema:"parent element ref (default: root)"`
 	PositionX   float64 `json:"position_x,omitempty"`
 	PositionY   float64 `json:"position_y,omitempty"`
-	ViewLabel   string  `json:"view_label,omitempty"`
+	ViewLabel   string  `json:"view_label,omitempty" jsonschema:"label for the diagram created when this element becomes a parent"`
 }
 
 type connectArgs struct {
@@ -103,10 +103,10 @@ func errResult(err error) (*mcpsdk.CallToolResult, result, error) {
 func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string, compact *bool, dataDir string) {
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_add",
-		Description: "Add or update an element (applies immediately to the server). The element gets its own canonical diagram (view).",
+		Description: "Add or update an element (applies immediately to the server). Adding another element with parent=<ref> opens a drill-down diagram (view) for it.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a addArgs) (*mcpsdk.CallToolResult, result, error) {
 		c := add.NewAddCmd(wdir, format, compact)
-		args := []string{a.Name, "--with-view"}
+		args := []string{a.Name}
 		if a.Ref != "" {
 			args = append(args, "--ref", a.Ref)
 		}

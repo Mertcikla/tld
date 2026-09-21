@@ -139,7 +139,7 @@ func TestSyncCommands_UpdateClearsConnectorField(t *testing.T) {
 	dir := t.TempDir()
 	cmd.SetupApplyWorkspace(t, dir, serverURL)
 
-	cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace", "--with-view")
+	cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace")
 	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--parent", "platform")
 	cmd.MustRunCmd(t, dir, "add", "DB", "--ref", "db", "--parent", "platform")
 	cmd.MustRunCmd(t, dir, "connect", "--view", "platform", "--from", "api", "--to", "db", "--label", "reads", "--description", "read path")
@@ -219,7 +219,7 @@ func TestSyncCommands_UpdateConnectorRejectsDuplicateKey(t *testing.T) {
 	dir := t.TempDir()
 	cmd.SetupApplyWorkspace(t, dir, serverURL)
 
-	cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace", "--with-view")
+	cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace")
 	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--parent", "platform")
 	cmd.MustRunCmd(t, dir, "add", "DB", "--ref", "db", "--parent", "platform")
 	cmd.MustRunCmd(t, dir, "connect", "--view", "platform", "--from", "api", "--to", "db", "--label", "reads")
