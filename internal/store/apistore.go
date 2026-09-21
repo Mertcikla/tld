@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/layout"
 	"github.com/mertcikla/tld/v2/internal/tech"
-	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
 	"github.com/mertcikla/tld/v2/pkg/app"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -1184,59 +1183,6 @@ func (a *APIAdapter) planViewLayoutConnectors(ctx context.Context, viewID int64)
 		out = append(out, layout.Connector{Source: row.SourceElementID, Target: row.TargetElementID})
 	}
 	return out, nil
-}
-
-// PruneMissingCLIResources removes resources previously owned by CLI metadata
-// when they no longer appear in the current plan. It deliberately only acts on
-// IDs from the prior metadata snapshot so watch/imported resources are left
-// alone.
-func (a *APIAdapter) PruneMissingCLIResources(ctx context.Context, workspaceID uuid.UUID, previous *workspace.Meta, req *diagv1.ApplyPlanRequest) error {
-	if previous == nil {
-		return nil
-	}
-
-	plannedElements := map[workspace.ResourceID]bool{}
-	plannedViews := map[workspace.ResourceID]bool{}
-	plannedConnectors := map[workspace.ResourceID]bool{}
-	for _, element := range req.GetElements() {
-		if element.GetId() != 0 {
-			plannedElements[workspace.ResourceID(element.GetId())] = true
-		}
-		if element.GetHasView() && element.GetViewId() != 0 {
-			plannedViews[workspace.ResourceID(element.GetViewId())] = true
-		}
-	}
-	for _, connector := range req.GetConnectors() {
-		if connector.GetId() != 0 {
-			plannedConnectors[workspace.ResourceID(connector.GetId())] = true
-		}
-	}
-
-	for _, metadata := range previous.Connectors {
-		if metadata == nil || metadata.ID == 0 || plannedConnectors[metadata.ID] {
-			continue
-		}
-		if err := a.DeleteConnector(ctx, int32(metadata.ID), workspaceID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-	}
-	for _, metadata := range previous.Views {
-		if metadata == nil || metadata.ID == 0 || plannedViews[metadata.ID] {
-			continue
-		}
-		if err := a.DeleteView(ctx, int32(metadata.ID), workspaceID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-	}
-	for _, metadata := range previous.Elements {
-		if metadata == nil || metadata.ID == 0 || plannedElements[metadata.ID] {
-			continue
-		}
-		if err := a.DeleteElement(ctx, int32(metadata.ID), workspaceID); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-	}
-	return nil
 }
 
 func (a *APIAdapter) ListVersions(ctx context.Context, workspaceID uuid.UUID, limit int) ([]*diagv1.WorkspaceVersionInfo, error) {

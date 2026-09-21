@@ -114,13 +114,11 @@ func TestPullLocalTarget(t *testing.T) {
 
 	cmd.MustInitWorkspace(t, dir)
 
-	// 1. Add some elements to YAML workspace
+	// 1. Add some elements to the workspace (synchronous: writes to local
+	// sqlite and refreshes the YAML cache immediately)
 	cmd.MustRunCmd(t, dir, "add", "API Service", "--ref", "api", "--kind", "service")
 	cmd.MustRunCmd(t, dir, "add", "Database", "--ref", "db", "--kind", "database")
 	cmd.MustRunCmd(t, dir, "connect", "--from", "api", "--to", "db", "--label", "queries")
-
-	// 2. Apply to local sqlite target
-	cmd.MustRunCmd(t, dir, "apply", "--force", "--target", "local", "--data-dir", dataDir)
 
 	// 3. Remove YAML files to simulate missing local state
 	elementsPath := filepath.Join(dir, "elements.yaml")

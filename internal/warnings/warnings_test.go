@@ -1,14 +1,14 @@
-package planner_test
+package warnings_test
 
 import (
 	"strings"
 	"testing"
 
-	"github.com/mertcikla/tld/v2/internal/planner"
+	"github.com/mertcikla/tld/v2/internal/warnings"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
-func TestAnalyzePlan_TechnologyValidation(t *testing.T) {
+func TestAnalyze_TechnologyValidation(t *testing.T) {
 	tests := []struct {
 		name             string
 		level            int
@@ -100,10 +100,10 @@ func TestAnalyzePlan_TechnologyValidation(t *testing.T) {
 				},
 			}
 
-			warnings := planner.AnalyzePlan(ws)
+			archWarnings := warnings.Analyze(ws)
 			count := 0
 			found := false
-			for _, g := range warnings {
+			for _, g := range archWarnings {
 				count += len(g.Violations)
 				if g.RuleCode == tt.wantRuleCode && g.RuleName == tt.wantRuleName {
 					found = true
@@ -120,7 +120,7 @@ func TestAnalyzePlan_TechnologyValidation(t *testing.T) {
 	}
 }
 
-func TestAnalyzePlan_DeadEndDrilldownUsesOwnedViews(t *testing.T) {
+func TestAnalyze_DeadEndDrilldownUsesOwnedViews(t *testing.T) {
 	ws := &workspace.Workspace{
 		Elements: map[string]*workspace.Element{
 			"platform": {
@@ -135,9 +135,9 @@ func TestAnalyzePlan_DeadEndDrilldownUsesOwnedViews(t *testing.T) {
 		},
 	}
 
-	warnings := planner.AnalyzePlan(ws)
+	archWarnings := warnings.Analyze(ws)
 	found := false
-	for _, warning := range warnings {
+	for _, warning := range archWarnings {
 		if warning.RuleCode == "ARC006" {
 			found = true
 			break
@@ -145,11 +145,11 @@ func TestAnalyzePlan_DeadEndDrilldownUsesOwnedViews(t *testing.T) {
 	}
 
 	if !found {
-		t.Fatalf("expected ARC006 warning for owned view with no content, warnings=%+v", warnings)
+		t.Fatalf("expected ARC006 warning for owned view with no content, archWarnings=%+v", archWarnings)
 	}
 }
 
-func TestAnalyzePlan_ARC002ExemptsRootSingleSystemContext(t *testing.T) {
+func TestAnalyze_ARC002ExemptsRootSingleSystemContext(t *testing.T) {
 	ws := &workspace.Workspace{
 		Elements: map[string]*workspace.Element{
 			"catch2": {
@@ -164,15 +164,15 @@ func TestAnalyzePlan_ARC002ExemptsRootSingleSystemContext(t *testing.T) {
 		},
 	}
 
-	warnings := planner.AnalyzePlan(ws)
-	for _, warning := range warnings {
+	archWarnings := warnings.Analyze(ws)
+	for _, warning := range archWarnings {
 		if warning.RuleCode == "ARC002" || warning.RuleCode == "ARC005" {
 			t.Fatalf("expected %s to be exempt for root single-system context, got %+v", warning.RuleCode, warning)
 		}
 	}
 }
 
-func TestAnalyzePlan_ARC002StillFlagsNonRootIsolatedElement(t *testing.T) {
+func TestAnalyze_ARC002StillFlagsNonRootIsolatedElement(t *testing.T) {
 	ws := &workspace.Workspace{
 		Elements: map[string]*workspace.Element{
 			"platform": {
@@ -199,9 +199,9 @@ func TestAnalyzePlan_ARC002StillFlagsNonRootIsolatedElement(t *testing.T) {
 		},
 	}
 
-	warnings := planner.AnalyzePlan(ws)
+	archWarnings := warnings.Analyze(ws)
 	found := false
-	for _, warning := range warnings {
+	for _, warning := range archWarnings {
 		if warning.RuleCode != "ARC002" {
 			continue
 		}
@@ -212,6 +212,6 @@ func TestAnalyzePlan_ARC002StillFlagsNonRootIsolatedElement(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("expected ARC002 violation for isolated non-root element, warnings=%+v", warnings)
+		t.Fatalf("expected ARC002 violation for isolated non-root element, archWarnings=%+v", archWarnings)
 	}
 }

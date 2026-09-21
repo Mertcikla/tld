@@ -33,8 +33,10 @@ func TestMCPAddAutoAppliesLocalSQLite(t *testing.T) {
 	}
 
 	wdir := dir
+	format := "text"
+	compact := false
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "tld-test", Version: "test"}, nil)
-	registerTools(server, &cobra.Command{}, &wdir, dataDir)
+	registerTools(server, &cobra.Command{}, &wdir, &format, &compact, dataDir)
 	clientTransport, serverTransport := mcpsdk.NewInMemoryTransports()
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
 	if err != nil {
@@ -66,7 +68,10 @@ func TestMCPAddAutoAppliesLocalSQLite(t *testing.T) {
 
 	db := openMCPTestDB(t, dataDir)
 	assertMCPCount(t, db, "SELECT COUNT(*) FROM elements", 1)
-	assertMCPCount(t, db, "SELECT COUNT(*) FROM views", 2)
+	// Only the bootstrap root view: an element added at root has no diagram
+	// until another element is placed under it.
+	assertMCPCount(t, db, "SELECT COUNT(*) FROM views", 1)
+	assertMCPCount(t, db, "SELECT COUNT(*) FROM views WHERE owner_element_id IS NOT NULL", 0)
 }
 
 func openMCPTestDB(t *testing.T, dataDir string) *sql.DB {

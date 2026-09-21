@@ -7,7 +7,7 @@ import (
 
 	"github.com/mertcikla/tld/v2/cmd"
 
-	"github.com/mertcikla/tld/v2/internal/planner"
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
@@ -48,7 +48,7 @@ func TestViewsCmd_JSONOutput(t *testing.T) {
 		t.Fatalf("views --format json: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
 
-	var payload planner.JSONOutput
+	var payload cmdutil.JSONOutput
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		t.Fatalf("unmarshal json output: %v\nstdout=%s", err, stdout)
 	}

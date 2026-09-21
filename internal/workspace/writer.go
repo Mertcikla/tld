@@ -837,21 +837,19 @@ func RenameConnector(dir, oldRef, newRef string) error {
 	return nil
 }
 
-// UpdateConnectorField updates one field on a connector by its key.
-func UpdateConnectorField(dir, ref, field, value string) error {
-	ws, err := Load(dir)
-	if err != nil {
-		return err
+// ValidateConnectorFieldChange reports whether updating field=value on the
+// connector at ref is valid. It never mutates the workspace, so callers can
+// validate before touching server state.
+func ValidateConnectorFieldChange(ws *Workspace, ref, field, value string) error {
+	if ws == nil {
+		return fmt.Errorf("workspace is required")
 	}
-
-	c, ok := ws.Connectors[ref]
-	if !ok {
+	if _, ok := ws.Connectors[ref]; !ok {
 		return fmt.Errorf("connector %q not found", ref)
 	}
 	if !connectorScalarFields[field] {
 		return fmt.Errorf("unknown connector field %q; known fields: %s", field, strings.Join(ConnectorFieldNames(), ", "))
 	}
-
 	switch field {
 	case "view":
 		if err := ValidateParentRef(value); err != nil {
@@ -862,7 +860,6 @@ func UpdateConnectorField(dir, ref, field, value string) error {
 				return fmt.Errorf("view ref %q not found", value)
 			}
 		}
-		c.View = value
 	case "source":
 		if err := ValidateElementRef(value); err != nil {
 			return err
@@ -870,7 +867,6 @@ func UpdateConnectorField(dir, ref, field, value string) error {
 		if _, ok := ws.Elements[value]; !ok {
 			return fmt.Errorf("source element %q not found", value)
 		}
-		c.Source = value
 	case "target":
 		if err := ValidateElementRef(value); err != nil {
 			return err
@@ -878,30 +874,63 @@ func UpdateConnectorField(dir, ref, field, value string) error {
 		if _, ok := ws.Elements[value]; !ok {
 			return fmt.Errorf("target element %q not found", value)
 		}
-		c.Target = value
-	case "label":
-		c.Label = value
-	case "description":
-		c.Description = value
-	case "relationship":
-		c.Relationship = value
-	case "direction":
-		c.Direction = value
-	case "style":
-		c.Style = value
-	case "url":
-		c.URL = value
-	case "source_handle":
-		c.SourceHandle = value
-	case "target_handle":
-		c.TargetHandle = value
 	}
-
-	newKey := ConnectorKey(c)
-	if newKey != ref {
+	// Fields in the connector key (view/source/target/label) may move the
+	// entry; refuse a collision before either side is mutated.
+	renamed := *ws.Connectors[ref]
+	ApplyConnectorField(&renamed, field, value)
+	if newKey := ConnectorKey(&renamed); newKey != ref {
 		if _, exists := ws.Connectors[newKey]; exists {
 			return fmt.Errorf("connector %q already exists", newKey)
 		}
+	}
+	return nil
+}
+
+// ApplyConnectorField sets field=value on spec. Callers must validate first
+// with ValidateConnectorFieldChange.
+func ApplyConnectorField(spec *Connector, field, value string) {
+	switch field {
+	case "view":
+		spec.View = value
+	case "source":
+		spec.Source = value
+	case "target":
+		spec.Target = value
+	case "label":
+		spec.Label = value
+	case "description":
+		spec.Description = value
+	case "relationship":
+		spec.Relationship = value
+	case "direction":
+		spec.Direction = value
+	case "style":
+		spec.Style = value
+	case "url":
+		spec.URL = value
+	case "source_handle":
+		spec.SourceHandle = value
+	case "target_handle":
+		spec.TargetHandle = value
+	}
+}
+
+// UpdateConnectorField updates one field on a connector by its key.
+func UpdateConnectorField(dir, ref, field, value string) error {
+	ws, err := Load(dir)
+	if err != nil {
+		return err
+	}
+	if err := ValidateConnectorFieldChange(ws, ref, field, value); err != nil {
+		return err
+	}
+
+	c := ws.Connectors[ref]
+	ApplyConnectorField(c, field, value)
+
+	newKey := ConnectorKey(c)
+	if newKey != ref {
 		if ws.Meta != nil && ws.Meta.Connectors != nil {
 			if metadata, ok := ws.Meta.Connectors[ref]; ok {
 				ws.Meta.Connectors[newKey] = metadata

@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
-	"github.com/mertcikla/tld/v2/internal/planner"
 	"github.com/mertcikla/tld/v2/internal/term"
+	archwarnings "github.com/mertcikla/tld/v2/internal/warnings"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -21,14 +21,18 @@ var allWarningCodes = map[string]bool{
 func NewValidateCmd(wdir *string) *cobra.Command {
 	var strictness int
 	var verbose bool
+	var strict bool
 
 	c := &cobra.Command{
 		Use:   "validate [rule-code]",
-		Short: "Validate the workspace YAML files",
-		Long: `Validate the workspace YAML files for structural errors and architectural warnings.
+		Short: "Validate the workspace and check diagram freshness",
+		Long: `Validate the workspace YAML files for structural errors, verify that
+referenced symbols still exist in source files, and flag diagrams whose
+metadata is older than the file's last git commit.
 
 When called without arguments, validates the entire workspace and shows a summary
-of architectural warnings grouped by rule code.
+of architectural warnings grouped by rule code. Outdated diagrams are reported
+as warnings unless --strict is set.
 
 When called with a rule code (e.g. ARC002), shows only that rule's violations
 in full detail with individual element and connector information.`,
@@ -68,7 +72,7 @@ in full detail with individual element and connector information.`,
 				viewCount := cmdutil.CountViews(ws)
 				term.Successf(cmd.OutOrStdout(), "Workspace valid: %d elements, %d views, %d connectors",
 					len(ws.Elements), viewCount, len(ws.Connectors))
-				term.Hint(cmd.OutOrStdout(), "Run 'tld plan' to see what would be applied.")
+				term.Hint(cmd.OutOrStdout(), "Commands apply immediately; run 'tld pull' to refresh YAML after frontend changes.")
 			} else {
 				term.Warnf(cmd.OutOrStdout(), "nothing to validate")
 			}
@@ -80,26 +84,45 @@ in full detail with individual element and connector information.`,
 				}
 			}
 
-			warnings := planner.AnalyzePlan(ws)
-
-			if len(args) == 1 {
-				return printRuleViolations(cmd, args[0], warnings)
+			outdated := cmdutil.CheckOutdated(ws, repoCtx, rules)
+			if len(outdated) > 0 {
+				if strict {
+					term.Fail(cmd.OutOrStdout(), "Outdated diagrams:")
+				} else {
+					term.Warn(cmd.OutOrStdout(), "Outdated diagrams:")
+				}
+				for _, msg := range outdated {
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    - %s\n", msg)
+				}
+				if strict {
+					term.Hint(cmd.OutOrStdout(), "run the matching add/update command to sync diagram metadata")
+				}
 			}
 
-			if len(warnings) > 0 {
+			warnings := archwarnings.Analyze(ws)
+
+			if len(args) == 1 {
+				if err := printRuleViolations(cmd, args[0], warnings); err != nil {
+					return err
+				}
+			} else if len(warnings) > 0 {
 				printWarningSummary(cmd, ws, warnings, verbose)
 			}
 
+			if strict && len(outdated) > 0 {
+				return fmt.Errorf("%d outdated diagram(s) detected", len(outdated))
+			}
 			return nil
 		},
 	}
 
 	c.Flags().IntVar(&strictness, "strictness", 0, "override validation strictness level [1-3]")
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "show full architectural warnings output")
+	c.Flags().BoolVar(&strict, "strict", false, "exit non-zero when outdated diagrams are detected")
 	return c
 }
 
-func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings []planner.WarningGroup, verbose bool) {
+func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings []archwarnings.WarningGroup, verbose bool) {
 	level := ws.Config.Validation.Level
 	if level == 0 {
 		level = workspace.DefaultValidationLevel
@@ -122,7 +145,7 @@ func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings [
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "To suppress specific rule codes, use .tld.yaml: validation.exclude_rules: [ARC002]")
 }
 
-func printRuleViolations(cmd *cobra.Command, code string, warnings []planner.WarningGroup) error {
+func printRuleViolations(cmd *cobra.Command, code string, warnings []archwarnings.WarningGroup) error {
 	code = strings.ToUpper(strings.TrimSpace(code))
 
 	if !allWarningCodes[code] {

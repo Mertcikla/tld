@@ -70,23 +70,22 @@ func (s *MermaidService) ImportMermaidIntoView(ctx context.Context, req *connect
 	}
 	if !m.GetDryRun() {
 		content := result.Content
-		applyResp := &diagv1.ApplyPlanResponse{}
 		for _, placement := range content.GetPlacements() {
 			if containsInt32(result.Summary.GetImportedElementIds(), placement.GetElementId()) {
-				applyResp.CreatedPlacements = append(applyResp.CreatedPlacements, &diagv1.ElementPlacement{
-					ViewId:    placement.GetViewId(),
-					ElementId: placement.GetElementId(),
-					PositionX: placement.GetPositionX(),
-					PositionY: placement.GetPositionY(),
-				})
+				s.hooks().AfterWrite(ctx, workspaceID, "create", "placement", "", map[string]any{
+					"view_id":    placement.GetViewId(),
+					"element_id": placement.GetElementId(),
+				}, &diagv1.CreatePlacementResponse{Placement: placement})
 			}
 		}
 		for _, connector := range content.GetConnectors() {
 			if containsInt32(result.Summary.GetCreatedConnectorIds(), connector.GetId()) {
-				applyResp.CreatedConnectors = append(applyResp.CreatedConnectors, connector)
+				s.hooks().AfterWrite(ctx, workspaceID, "create", "connector", strconv.Itoa(int(connector.GetId())), map[string]any{
+					"view_id": connector.GetViewId(),
+					"label":   connector.GetLabel(),
+				}, &diagv1.CreateConnectorResponse{Connector: connector})
 			}
 		}
-		s.hooks().AfterApplyPlan(ctx, workspaceID, &diagv1.ApplyPlanRequest{OrgId: m.GetOrgId()}, applyResp)
 	}
 	return connect.NewResponse(result), nil
 }

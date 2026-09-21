@@ -345,8 +345,8 @@ func runInitWizard(cmd *cobra.Command, dir string) error {
 	term.Separator(cmd.OutOrStdout())
 	term.Info(cmd.OutOrStdout(), "Next steps:")
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "    1. tld analyze .      - extract symbols from your repo")
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "    2. tld plan           - preview what will be created")
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "    3. tld apply          - push to tlDiagram.com")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "    2. tld add <name>     - create an element (applies immediately)")
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "    3. tld pull           - refresh YAML after frontend changes")
 	return nil
 }
 

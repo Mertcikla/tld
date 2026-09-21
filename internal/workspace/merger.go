@@ -248,7 +248,7 @@ func mergeResourceValueNode(localNode *yaml.Node, serverItem any, ref string) (*
 	}
 	merged, hasConflict := mergeNodeValues(localNode, serverNode, "")
 	if hasConflict && merged.HeadComment == "" {
-		merged.HeadComment = fmt.Sprintf("CONFLICT: %q was modified both locally and on the server.\nResolve the marked values, then run `tld apply`.", ref)
+		merged.HeadComment = fmt.Sprintf("CONFLICT: %q was modified both locally and on the server.\nResolve the marked values, then run the matching add/update command to sync.", ref)
 	}
 	return merged, hasConflict, nil
 }
@@ -374,7 +374,7 @@ func placementSequenceKey(node *yaml.Node) string {
 }
 
 func conflictValueNode(fieldName, localValue, serverValue string) *yaml.Node {
-	comment := fmt.Sprintf("CONFLICT: '%s' was modified both locally and on the server.\nLocal:  %s\nServer: %s\nResolve by keeping one value, then run `tld apply`.", fieldName, localValue, serverValue)
+	comment := fmt.Sprintf("CONFLICT: '%s' was modified both locally and on the server.\nLocal:  %s\nServer: %s\nResolve by keeping one value, then run the matching add/update command to sync.", fieldName, localValue, serverValue)
 	return &yaml.Node{
 		Kind:        yaml.ScalarNode,
 		Tag:         "!!str",

@@ -42,7 +42,7 @@ Here are some examples that were generated using the agent skill.
 - **Mermaid Integration**: Easily sync your diagrams with mermaid blocks in a markdown file for portable viewing in any markdown viewer. [Link to docs](https://tldiagram.com/docs/ui/mermaid/)
 - **Bi-directional Sync**: (Experimental) Seamlessly sync changes between your local YAML files, the self-hosted web UI, and the cloud version at tlDiagram.com.
 - **Git diff visualization**: (Experimental) Sync and visualize the changes you or your agent are making live in diagram form. Inspect the dependencies and intervene when necessary.
-- **Diagrams as Code**: (Experimental) A git/terraform like workflow (`plan`/`apply`) to manage architectural evolution alongside your source code.
+- **Diagrams as Code**: (Experimental) Manage architectural evolution alongside your source code with synchronous `add`/`connect`/`update`/`remove` commands that apply immediately and keep local YAML in sync.
 - **Automated Codebase Analysis**: (Experimental) Built-in tree-sitter integration to automatically discover architecture components in Go, Java, Python, C++, and TypeScript (more soon™ (hopefully)).
 
 <p align="center">

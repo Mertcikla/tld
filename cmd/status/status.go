@@ -47,7 +47,7 @@ func NewStatusCmd() *cobra.Command {
 		Short: "Show running local tlDiagram processes",
 		Long: `Show running local tlDiagram processes registered by 'tld serve' and 'tld watch'.
 
-For workspace YAML sync state, use 'tld sync status'.`,
+To refresh the workspace YAML cache from the server, use 'tld pull'.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			reg, err := localserver.PruneProcessRegistry()
 			if err != nil {
