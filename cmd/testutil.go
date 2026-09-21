@@ -110,10 +110,12 @@ func InitGitRepo(t *testing.T, dir string, filename string, source string) {
 // single root view with ID 1.
 type MockDiagramService struct {
 	diagv1connect.UnimplementedWorkspaceServiceHandler
-	Mu                sync.Mutex
-	ExportFunc        func(*diagv1.ExportOrganizationRequest) (*diagv1.ExportOrganizationResponse, error)
-	ListElementsFunc  func(*diagv1.ListElementsRequest) ([]*diagv1.Element, error)
-	DeleteElementFunc func(*diagv1.DeleteElementRequest) (*diagv1.DeleteElementResponse, error)
+	Mu                  sync.Mutex
+	ExportFunc          func(*diagv1.ExportOrganizationRequest) (*diagv1.ExportOrganizationResponse, error)
+	ListElementsFunc    func(*diagv1.ListElementsRequest) ([]*diagv1.Element, error)
+	DeleteElementFunc   func(*diagv1.DeleteElementRequest) (*diagv1.DeleteElementResponse, error)
+	UpdateElementFunc   func(*diagv1.UpdateElementRequest) (*diagv1.UpdateElementResponse, error)
+	UpdateConnectorFunc func(*diagv1.UpdateConnectorRequest) (*diagv1.UpdateConnectorResponse, error)
 
 	nextID     int32
 	elements   map[int32]*diagv1.Element
@@ -197,6 +199,13 @@ func (m *MockDiagramService) GetElement(_ context.Context, req *connect.Request[
 }
 
 func (m *MockDiagramService) UpdateElement(_ context.Context, req *connect.Request[diagv1.UpdateElementRequest]) (*connect.Response[diagv1.UpdateElementResponse], error) {
+	if m.UpdateElementFunc != nil {
+		resp, err := m.UpdateElementFunc(req.Msg)
+		if err != nil {
+			return nil, err
+		}
+		return connect.NewResponse(resp), nil
+	}
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.initLocked()
@@ -306,6 +315,23 @@ func (m *MockDiagramService) ElementCount() int {
 	defer m.Mu.Unlock()
 	m.initLocked()
 	return len(m.elements)
+}
+
+// Element returns the element with the given ID, or nil when absent.
+func (m *MockDiagramService) Element(id int32) *diagv1.Element {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.initLocked()
+	return m.elements[id]
+}
+
+// RemoveElement deletes an element from the mock server without going through
+// the ConnectRPC handler, simulating an out-of-band deletion.
+func (m *MockDiagramService) RemoveElement(id int32) {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.initLocked()
+	delete(m.elements, id)
 }
 
 func (m *MockDiagramService) ListViews(_ context.Context, _ *connect.Request[diagv1.ListViewsRequest]) (*connect.Response[diagv1.ListViewsResponse], error) {
@@ -468,6 +494,13 @@ func (m *MockDiagramService) CreateConnector(_ context.Context, req *connect.Req
 }
 
 func (m *MockDiagramService) UpdateConnector(_ context.Context, req *connect.Request[diagv1.UpdateConnectorRequest]) (*connect.Response[diagv1.UpdateConnectorResponse], error) {
+	if m.UpdateConnectorFunc != nil {
+		resp, err := m.UpdateConnectorFunc(req.Msg)
+		if err != nil {
+			return nil, err
+		}
+		return connect.NewResponse(resp), nil
+	}
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.initLocked()

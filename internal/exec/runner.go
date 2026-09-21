@@ -2,6 +2,7 @@ package exec
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
@@ -127,11 +128,14 @@ func NewRunner(cfg workspace.Config, targetOverride, dataDirFlag string, debug b
 }
 
 // IsNotFound reports whether err is a NotFound from the remote workspace
-// service. Delete flows treat it as success so a retry after a partial
-// failure (server deleted, local cache not) can converge.
+// service or a missing store row. Delete flows treat it as success so a retry
+// after a partial failure (server deleted, local cache not) can converge.
 func IsNotFound(err error) bool {
 	var connErr *connect.Error
-	return errors.As(err, &connErr) && connErr.Code() == connect.CodeNotFound
+	if errors.As(err, &connErr) && connErr.Code() == connect.CodeNotFound {
+		return true
+	}
+	return errors.Is(err, sql.ErrNoRows)
 }
 
 // ---------- remote runner ----------

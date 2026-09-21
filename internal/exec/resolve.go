@@ -11,9 +11,9 @@ import (
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
 
-// errElementNotOnServer indicates the server list succeeded but the element was
+// ErrElementNotOnServer indicates the server list succeeded but the element was
 // not present, so callers may safely create it from the YAML spec.
-var errElementNotOnServer = errors.New("element not present on server")
+var ErrElementNotOnServer = errors.New("element not present on server")
 
 // ResolveElementID returns the server ID for an element ref, using YAML metadata
 // first and falling back to a server list+name match.
@@ -47,7 +47,7 @@ func ResolveElementID(ctx context.Context, runner Runner, ws *workspace.Workspac
 	if fallback != nil {
 		return fallback.GetId(), nil
 	}
-	return 0, fmt.Errorf("%w: element %q has no server ID; run `tld pull` to resync", errElementNotOnServer, ref)
+	return 0, fmt.Errorf("%w: element %q has no server ID; run `tld pull` to resync", ErrElementNotOnServer, ref)
 }
 
 // EnsureElementID returns the server ID for an element ref, creating the
@@ -60,7 +60,7 @@ func EnsureElementID(ctx context.Context, runner Runner, ws *workspace.Workspace
 	if err == nil {
 		return id, nil
 	}
-	if !errors.Is(err, errElementNotOnServer) {
+	if !errors.Is(err, ErrElementNotOnServer) {
 		return 0, err
 	}
 	el, ok := ws.Elements[ref]
@@ -140,7 +140,9 @@ func EnsureElementView(ctx context.Context, runner Runner, elementID int32, elem
 
 // ResolveParentViewID maps a YAML placement parent ref to a server view ID,
 // ensuring the parent element has a view (mirrors the legacy
-// canonical-view promotion). Missing elements are auto-created from YAML.
+// canonical-view promotion). Missing elements are auto-created from YAML, and
+// the created/promoted view is written back into the YAML cache so every
+// caller keeps has_view and view metadata in sync.
 func ResolveParentViewID(ctx context.Context, runner Runner, ws *workspace.Workspace, wdir, parentRef string) (int32, error) {
 	if parentRef == "" || parentRef == workspace.RootRef {
 		return RootViewID(ctx, runner)
@@ -163,7 +165,39 @@ func ResolveParentViewID(ctx context.Context, runner Runner, ws *workspace.Works
 			label = &parentEl.ViewLabel
 		}
 	}
-	return EnsureElementView(ctx, runner, parentID, name, label)
+	viewID, err := EnsureElementView(ctx, runner, parentID, name, label)
+	if err != nil {
+		return 0, err
+	}
+	if err := promoteElementView(wdir, parentRef, viewID); err != nil {
+		return 0, err
+	}
+	return viewID, nil
+}
+
+// promoteElementView records the server-owned view for an element ref in the
+// YAML cache, setting has_view on the element so the cache matches the server
+// after an implicit view creation.
+func promoteElementView(wdir, ref string, viewID int32) error {
+	ws, err := workspace.Load(wdir)
+	if err != nil {
+		return err
+	}
+	if el := ws.Elements[ref]; el != nil {
+		el.HasView = true
+	}
+	if ws.Meta == nil {
+		ws.Meta = &workspace.Meta{
+			Elements:   map[string]*workspace.ResourceMetadata{},
+			Views:      map[string]*workspace.ResourceMetadata{},
+			Connectors: map[string]*workspace.ResourceMetadata{},
+		}
+	}
+	if ws.Meta.Views == nil {
+		ws.Meta.Views = map[string]*workspace.ResourceMetadata{}
+	}
+	ws.Meta.Views[ref] = &workspace.ResourceMetadata{ID: workspace.ResourceID(viewID), UpdatedAt: time.Now()}
+	return persistCache(wdir, ws)
 }
 
 // RecordElementMeta stores element IDs in the workspace meta (plus the owned
@@ -192,27 +226,6 @@ func RecordElementMeta(wdir, ref string, element *diagv1.Element, ownedViewID in
 		}
 		ws.Meta.Views[ref] = &workspace.ResourceMetadata{ID: workspace.ResourceID(ownedViewID), UpdatedAt: viewUpdated}
 	}
-	return persistCache(wdir, ws)
-}
-
-// RecordViewMeta stores the owned-view ID for a ref (e.g. after promoting a
-// placement parent to a view) and persists the YAML cache + lockfile hash.
-func RecordViewMeta(wdir, ref string, viewID int32) error {
-	ws, err := workspace.Load(wdir)
-	if err != nil {
-		return err
-	}
-	if ws.Meta == nil {
-		ws.Meta = &workspace.Meta{
-			Elements:   map[string]*workspace.ResourceMetadata{},
-			Views:      map[string]*workspace.ResourceMetadata{},
-			Connectors: map[string]*workspace.ResourceMetadata{},
-		}
-	}
-	if ws.Meta.Views == nil {
-		ws.Meta.Views = map[string]*workspace.ResourceMetadata{}
-	}
-	ws.Meta.Views[ref] = &workspace.ResourceMetadata{ID: workspace.ResourceID(viewID), UpdatedAt: time.Now()}
 	return persistCache(wdir, ws)
 }
 

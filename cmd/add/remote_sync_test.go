@@ -169,3 +169,112 @@ func TestSyncCommands_RemoteWithView(t *testing.T) {
 		t.Fatalf("server view label = %q, want %q", view.GetLevelLabel(), "System")
 	}
 }
+
+// TestSyncCommands_AddDoesNotDuplicateWithoutMetadata verifies that add
+// self-heals missing cache metadata by matching the server element by
+// name+kind instead of creating a duplicate.
+func TestSyncCommands_AddDoesNotDuplicateWithoutMetadata(t *testing.T) {
+	svc := &cmd.MockDiagramService{}
+	serverURL := cmd.NewMockServer(t, svc)
+
+	dir := t.TempDir()
+	cmd.SetupApplyWorkspace(t, dir, serverURL)
+
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+	if n := svc.ElementCount(); n != 1 {
+		t.Fatalf("precondition: %d elements", n)
+	}
+
+	// Simulate hand-written YAML / lost cache metadata.
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	ws.Meta = nil
+	if err := workspace.Save(ws); err != nil {
+		t.Fatalf("save workspace: %v", err)
+	}
+	if err := os.Remove(filepath.Join(dir, ".tld.lock")); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("remove lockfile: %v", err)
+	}
+
+	stdout, _, err := cmd.RunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+	if err != nil {
+		t.Fatalf("add after metadata loss: %v", err)
+	}
+	if n := svc.ElementCount(); n != 1 {
+		t.Fatalf("server element count = %d, want 1 (duplicate created)", n)
+	}
+	if !strings.Contains(stdout, "updated: api") {
+		t.Fatalf("expected update feedback, got:\n%s", stdout)
+	}
+	ws, err = workspace.Load(dir)
+	if err != nil {
+		t.Fatalf("reload workspace: %v", err)
+	}
+	if meta := ws.Meta.Elements["api"]; meta == nil || meta.ID == 0 {
+		t.Fatalf("metadata not restored: %+v", ws.Meta.Elements)
+	}
+}
+
+// TestSyncCommands_AddRecreatesDeletedServerElement verifies that add
+// recreates the server element when the cached ID points at a deleted row.
+func TestSyncCommands_AddRecreatesDeletedServerElement(t *testing.T) {
+	svc := &cmd.MockDiagramService{}
+	serverURL := cmd.NewMockServer(t, svc)
+
+	dir := t.TempDir()
+	cmd.SetupApplyWorkspace(t, dir, serverURL)
+
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	oldID := int32(ws.Meta.Elements["api"].ID)
+
+	svc.RemoveElement(oldID)
+
+	if _, _, err := cmd.RunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service"); err != nil {
+		t.Fatalf("add after server deletion: %v", err)
+	}
+	if n := svc.ElementCount(); n != 1 {
+		t.Fatalf("server element count = %d, want 1", n)
+	}
+	ws, err = workspace.Load(dir)
+	if err != nil {
+		t.Fatalf("reload workspace: %v", err)
+	}
+	if newID := int32(ws.Meta.Elements["api"].ID); newID == oldID {
+		t.Fatalf("metadata still points at deleted element %d", oldID)
+	}
+}
+
+// TestSyncCommands_ConnectPromotesViewInYaml verifies that connect records the
+// implicitly created parent view in the YAML cache (has_view + view metadata).
+func TestSyncCommands_ConnectPromotesViewInYaml(t *testing.T) {
+	svc := &cmd.MockDiagramService{}
+	serverURL := cmd.NewMockServer(t, svc)
+
+	dir := t.TempDir()
+	cmd.SetupApplyWorkspace(t, dir, serverURL)
+
+	cmd.MustRunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace")
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+	cmd.MustRunCmd(t, dir, "connect", "--view", "platform", "--from", "api", "--to", "platform")
+
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if !ws.Elements["platform"].HasView {
+		t.Fatalf("has_view not promoted in YAML: %+v", ws.Elements["platform"])
+	}
+	meta := ws.Meta.Views["platform"]
+	if meta == nil || meta.ID == 0 {
+		t.Fatalf("view metadata missing: %+v", ws.Meta.Views)
+	}
+	if view := svc.View(int32(meta.ID)); view == nil {
+		t.Fatalf("server view %d not found", meta.ID)
+	}
+}

@@ -1,6 +1,8 @@
 package add
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -168,6 +170,9 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 		}
 	}
 
+	// add merges into the existing YAML spec (see workspace.UpsertElement), so
+	// empty values mean "keep the existing server value" here. Explicit
+	// clearing is available through `tld update element`.
 	bypass := true
 	input := api.ElementInput{
 		Name:            spec.Name,
@@ -181,25 +186,11 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 		ViewLabel:       strptr(spec.ViewLabel),
 	}
 	ctx := cmd.Context()
-	var elementID int32
-	var updated bool
-	var savedElement *diagv1.Element
-	if meta := elementMeta(ws, ref); meta != nil {
-		updatedElement, err := runner.UpdateElement(ctx, int32(meta.ID), input)
-		if err != nil {
-			return fail(cmdutil.WithUnauthorizedHint("server update element failed", err))
-		}
-		elementID = updatedElement.GetId()
-		savedElement = updatedElement
-		updated = true
-	} else {
-		created, err := runner.CreateElement(ctx, input)
-		if err != nil {
-			return fail(cmdutil.WithUnauthorizedHint("server create element failed", err))
-		}
-		elementID = created.GetId()
-		savedElement = created
+	savedElement, updated, err := upsertElement(ctx, runner, ws, ref, input)
+	if err != nil {
+		return fail(cmdutil.WithUnauthorizedHint("server upsert element failed", err))
 	}
+	elementID := savedElement.GetId()
 
 	// Ensure placement in the parent view (creating the parent view when needed,
 	// mirroring the legacy canonical-view promotion).
@@ -229,16 +220,6 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 	if err := workspace.UpsertElement(wdir, ref, spec); err != nil {
 		return fail(fmt.Errorf("update YAML cache: %w", err))
 	}
-	// Promote the parent to a view in the cache when the server created one.
-	if placementParent != workspace.RootRef {
-		if parent, ok := ws.Elements[placementParent]; ok && parent != nil && !parent.HasView {
-			parent.HasView = true
-			_ = workspace.UpsertElement(wdir, placementParent, parent)
-		}
-		if err := exec.RecordViewMeta(wdir, placementParent, parentViewID); err != nil {
-			return fail(fmt.Errorf("update cache metadata: %w", err))
-		}
-	}
 	if err := exec.RecordElementMeta(wdir, ref, savedElement, ownedViewID, nil); err != nil {
 		return fail(fmt.Errorf("update cache metadata: %w", err))
 	}
@@ -261,6 +242,46 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 	return nil
 }
 
+// upsertElement creates or updates the server element for ref. Cached metadata
+// is preferred, then the server is searched by name so hand-written YAML or a
+// lost lockfile does not create duplicate elements. A missing server copy is
+// recreated from the YAML spec so a partial failure converges on retry.
+func upsertElement(ctx context.Context, runner exec.Runner, ws *workspace.Workspace, ref string, input api.ElementInput) (*diagv1.Element, bool, error) {
+	id, err := resolveAddElementID(ctx, runner, ws, ref)
+	if errors.Is(err, exec.ErrElementNotOnServer) {
+		created, createErr := runner.CreateElement(ctx, input)
+		return created, false, createErr
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	updated, err := runner.UpdateElement(ctx, id, input)
+	if err == nil {
+		return updated, true, nil
+	}
+	if !exec.IsNotFound(err) {
+		return nil, false, err
+	}
+	// Server copy disappeared (e.g. deleted in the UI) while the local cache
+	// still holds its ID: recreate it so add self-heals.
+	created, createErr := runner.CreateElement(ctx, input)
+	return created, false, createErr
+}
+
+// resolveAddElementID finds an existing server element for the add upsert.
+// Cached metadata wins; otherwise the server is searched by name+kind. Refs
+// that are not in YAML yet, or have no server match, report
+// exec.ErrElementNotOnServer so the caller creates them.
+func resolveAddElementID(ctx context.Context, runner exec.Runner, ws *workspace.Workspace, ref string) (int32, error) {
+	if meta := elementMeta(ws, ref); meta != nil {
+		return int32(meta.ID), nil
+	}
+	if el, ok := ws.Elements[ref]; !ok || el == nil {
+		return 0, exec.ErrElementNotOnServer
+	}
+	return exec.ResolveElementID(ctx, runner, ws, ref)
+}
+
 func elementMeta(ws *workspace.Workspace, ref string) *workspace.ResourceMetadata {
 	if ws == nil || ws.Meta == nil {
 		return nil
@@ -271,7 +292,6 @@ func elementMeta(ws *workspace.Workspace, ref string) *workspace.ResourceMetadat
 	}
 	return meta
 }
-
 func strptr(s string) *string {
 	if s == "" {
 		return nil

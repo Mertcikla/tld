@@ -155,7 +155,7 @@ func (s *ImportService) importPlanResources(ctx context.Context, workspaceID uui
 			Tags:            cloneStringSlice(planned.GetTags()),
 			Repo:            planned.Repo,
 			Branch:          planned.Branch,
-			Language:         planned.Language,
+			Language:        planned.Language,
 			FilePath:        planned.FilePath,
 			BypassNoiseGate: planned.BypassNoiseGate,
 			HasView:         planned.GetHasView(),

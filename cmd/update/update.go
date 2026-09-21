@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
+	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/exec"
@@ -52,17 +53,41 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, field, value := args[0], args[1], args[2]
-			if err := workspace.UpdateElementField(*wdir, ref, field, value); err != nil {
-				if cmdutil.WantsJSON(*format) {
-					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "update element", err)
-				}
-				return fmt.Errorf("update element: %w", err)
-			}
-			if err := runUpdateElementServer(cmd, *wdir, target, dataDir, ref, field, value); err != nil {
+			fail := func(err error) error {
 				if cmdutil.WantsJSON(*format) {
 					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "update element", err)
 				}
 				return err
+			}
+			switch {
+			case field == "ref":
+				// Rename is a local-alias change; the server ID is unchanged.
+				if err := workspace.UpdateElementField(*wdir, ref, field, value); err != nil {
+					return fail(fmt.Errorf("update element: %w", err))
+				}
+				if err := renameElementMetadata(*wdir, ref, value); err != nil {
+					return fail(err)
+				}
+			case !serverSyncedElementFields(field):
+				// YAML-only metadata (owner, symbol, density, etc.).
+				if err := workspace.UpdateElementField(*wdir, ref, field, value); err != nil {
+					return fail(fmt.Errorf("update element: %w", err))
+				}
+			default:
+				// Server first: a failed server write must not leave the YAML
+				// cache claiming a change the server never saw.
+				updated, viewID, err := runUpdateElementServer(cmd.Context(), *wdir, target, dataDir, ref, field, value)
+				if err != nil {
+					return fail(err)
+				}
+				if err := workspace.UpdateElementField(*wdir, ref, field, value); err != nil {
+					return fail(fmt.Errorf("update YAML cache: %w", err))
+				}
+				if updated != nil {
+					if err := exec.RecordElementMeta(*wdir, ref, updated, viewID, nil); err != nil {
+						return fail(fmt.Errorf("update cache metadata: %w", err))
+					}
+				}
 			}
 			if cmdutil.WantsJSON(*format) {
 				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update element", "update", ref)
@@ -100,14 +125,20 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, field, value := args[0], args[1], args[2]
-			// Capture the pre-update spec for server ID resolution (the key may
-			// change when view/source/target/label are updated).
-			preWS, err := cmdutil.LoadWorkspace(*wdir)
-			if err != nil {
+			fail := func(err error) error {
 				if cmdutil.WantsJSON(*format) {
 					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "update connector", err)
 				}
 				return err
+			}
+			// Validate before touching server state; the desired spec is
+			// derived from the pre-update YAML so the key change is known.
+			preWS, err := cmdutil.LoadWorkspace(*wdir)
+			if err != nil {
+				return fail(err)
+			}
+			if err := workspace.ValidateConnectorFieldChange(preWS, ref, field, value); err != nil {
+				return fail(fmt.Errorf("update connector: %w", err))
 			}
 			preSpec := preWS.Connectors[ref]
 			var preID int32
@@ -116,17 +147,19 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 					preID = int32(m.ID)
 				}
 			}
-			if err := workspace.UpdateConnectorField(*wdir, ref, field, value); err != nil {
-				if cmdutil.WantsJSON(*format) {
-					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "update connector", err)
-				}
-				return fmt.Errorf("update connector: %w", err)
+			// Server first: a failed server write must not leave the YAML
+			// cache claiming a change the server never saw.
+			updated, newKey, err := runUpdateConnectorServer(cmd.Context(), preWS, *wdir, target, dataDir, ref, field, value, preSpec, preID)
+			if err != nil {
+				return fail(err)
 			}
-			if err := runUpdateConnectorServer(cmd, *wdir, target, dataDir, ref, field, value, preSpec, preID); err != nil {
-				if cmdutil.WantsJSON(*format) {
-					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "update connector", err)
+			if err := workspace.UpdateConnectorField(*wdir, ref, field, value); err != nil {
+				return fail(fmt.Errorf("update YAML cache: %w", err))
+			}
+			if updated != nil {
+				if err := exec.RecordConnectorMeta(*wdir, newKey, updated); err != nil {
+					return fail(fmt.Errorf("update cache metadata: %w", err))
 				}
-				return err
 			}
 			if cmdutil.WantsJSON(*format) {
 				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update connector", "update", ref)
@@ -152,81 +185,76 @@ func serverSyncedElementFields(field string) bool {
 	}
 }
 
-// runUpdateElementServer mirrors a YAML element field change to the server.
-// YAML-only metadata fields (owner, symbol, density, etc.) skip the server call.
-func runUpdateElementServer(cmd *cobra.Command, wdir, target, dataDir, ref, field, value string) error {
-	if field == "ref" {
-		// Rename is a local-alias change; the server ID is unchanged.
-		if err := workspace.RenameCurrentElementMetadata(wdir, ref, value); err != nil {
-			return fmt.Errorf("update rename metadata: %w", err)
-		}
-		if err := workspace.RenameCurrentViewMetadata(wdir, ref, value); err != nil {
-			return fmt.Errorf("update rename metadata: %w", err)
-		}
-		return nil
+// renameElementMetadata moves lockfile metadata after a local ref rename.
+func renameElementMetadata(wdir, ref, newRef string) error {
+	if err := workspace.RenameCurrentElementMetadata(wdir, ref, newRef); err != nil {
+		return fmt.Errorf("update rename metadata: %w", err)
 	}
-	if !serverSyncedElementFields(field) {
-		return nil
+	if err := workspace.RenameCurrentViewMetadata(wdir, ref, newRef); err != nil {
+		return fmt.Errorf("update rename metadata: %w", err)
 	}
+	return nil
+}
+
+// runUpdateElementServer mirrors a YAML element field change to the server and
+// returns the updated element plus its owned view ID (0 when none). It only
+// performs server calls: callers refresh the YAML cache afterwards.
+func runUpdateElementServer(ctx context.Context, wdir, target, dataDir, ref, field, value string) (*diagv1.Element, int32, error) {
 	ws, err := cmdutil.LoadWorkspace(wdir)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	el := ws.Elements[ref]
 	if el == nil {
-		return fmt.Errorf("element %q not found", ref)
+		return nil, 0, fmt.Errorf("element %q not found", ref)
 	}
 	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	defer func() { _ = runner.Close() }()
 	if runner.Name() == exec.TargetRemote {
 		if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
-			return err
+			return nil, 0, err
 		}
 	}
-	ctx := cmd.Context()
 	elementID, err := exec.EnsureElementID(ctx, runner, ws, wdir, ref)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	switch field {
 	case "view_label", "view_name":
 		// View display fields live on the owned view. ResolveParentViewID
-		// creates the view when the element has none.
+		// creates the view when the element has none and records it in the
+		// YAML cache.
 		viewID, err := exec.ResolveParentViewID(ctx, runner, ws, wdir, ref)
 		if err != nil {
-			return fmt.Errorf("ensure element view: %w", err)
-		}
-		// Keep the YAML cache in sync when the server had to create the view.
-		if !el.HasView {
-			el.HasView = true
-			if err := workspace.UpsertElement(wdir, ref, el); err != nil {
-				return fmt.Errorf("update YAML cache: %w", err)
-			}
+			return nil, 0, fmt.Errorf("ensure element view: %w", err)
 		}
 		name := el.ViewName
+		if field == "view_name" {
+			name = value
+		}
 		if name == "" {
 			name = el.Name
 		}
 		var label *string
 		if field == "view_label" {
-			label = &el.ViewLabel
+			label = &value
 		}
 		if _, err := runner.UpdateView(ctx, viewID, name, label); err != nil {
-			return cmdutil.WithUnauthorizedHint("server update view failed", err)
+			return nil, 0, cmdutil.WithUnauthorizedHint("server update view failed", err)
 		}
 		updatedElement, err := runner.GetElement(ctx, elementID)
 		if err != nil {
-			return cmdutil.WithUnauthorizedHint("server get element failed", err)
+			return nil, 0, cmdutil.WithUnauthorizedHint("server get element failed", err)
 		}
-		return exec.RecordElementMeta(wdir, ref, updatedElement, viewID, nil)
+		return updatedElement, viewID, nil
 	default:
 		bypass := true
 		existing, err := runner.GetElement(ctx, elementID)
 		if err != nil {
-			return cmdutil.WithUnauthorizedHint("server get element failed", err)
+			return nil, 0, cmdutil.WithUnauthorizedHint("server get element failed", err)
 		}
 		input := api.ElementInput{
 			Name:            existing.GetName(),
@@ -248,7 +276,7 @@ func runUpdateElementServer(cmd *cobra.Command, wdir, target, dataDir, ref, fiel
 		applyElementField(&input, el, field, value)
 		updated, err := runner.UpdateElement(ctx, elementID, input)
 		if err != nil {
-			return cmdutil.WithUnauthorizedHint("server update element failed", err)
+			return nil, 0, cmdutil.WithUnauthorizedHint("server update element failed", err)
 		}
 		var viewID int32
 		if ws.Meta != nil {
@@ -256,7 +284,7 @@ func runUpdateElementServer(cmd *cobra.Command, wdir, target, dataDir, ref, fiel
 				viewID = int32(m.ID)
 			}
 		}
-		return exec.RecordElementMeta(wdir, ref, updated, viewID, nil)
+		return updated, viewID, nil
 	}
 }
 
@@ -267,25 +295,20 @@ func optStrFromProto(s *string) *string {
 	return s
 }
 
-func strOrNil(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
-}
-
-func runCreateConnectorFromSpec(ctx context.Context, cmd *cobra.Command, ws *workspace.Workspace, runner exec.Runner, wdir string, spec *workspace.Connector) error {
+// runCreateConnectorFromSpec creates the connector described by spec on the
+// server when no cached ID exists (hand-written YAML).
+func runCreateConnectorFromSpec(ctx context.Context, ws *workspace.Workspace, runner exec.Runner, wdir string, spec *workspace.Connector) (*diagv1.Connector, error) {
 	sourceID, err := exec.EnsureElementID(ctx, runner, ws, wdir, spec.Source)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	targetID, err := exec.EnsureElementID(ctx, runner, ws, wdir, spec.Target)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	viewID, err := exec.ResolveParentViewID(ctx, runner, ws, wdir, spec.View)
 	if err != nil {
-		return fmt.Errorf("resolve connector view: %w", err)
+		return nil, fmt.Errorf("resolve connector view: %w", err)
 	}
 	direction := spec.Direction
 	if direction == "" {
@@ -299,46 +322,49 @@ func runCreateConnectorFromSpec(ctx context.Context, cmd *cobra.Command, ws *wor
 		ViewID:       viewID,
 		SourceID:     sourceID,
 		TargetID:     targetID,
-		Label:        strOrNil(spec.Label),
-		Description:  strOrNil(spec.Description),
-		Relationship: strOrNil(spec.Relationship),
+		Label:        &spec.Label,
+		Description:  &spec.Description,
+		Relationship: &spec.Relationship,
 		Direction:    direction,
 		Style:        style,
-		URL:          strOrNil(spec.URL),
-		SourceHandle: strOrNil(spec.SourceHandle),
-		TargetHandle: strOrNil(spec.TargetHandle),
+		URL:          &spec.URL,
+		SourceHandle: &spec.SourceHandle,
+		TargetHandle: &spec.TargetHandle,
 	})
 	if err != nil {
-		return cmdutil.WithUnauthorizedHint("server create connector failed", err)
+		return nil, cmdutil.WithUnauthorizedHint("server create connector failed", err)
 	}
-	return exec.RecordConnectorMeta(wdir, workspace.ConnectorKey(spec), created)
+	return created, nil
 }
 
+// applyElementField overrides the changed field on input. Values are set
+// explicitly, including empty strings, so clearing a field in YAML clears it on
+// the server instead of being treated as "leave unchanged".
 func applyElementField(input *api.ElementInput, el *workspace.Element, field, value string) {
 	switch field {
 	case "name":
-		input.Name = el.Name
+		input.Name = value
 	case "kind":
-		input.Kind = strOrNil(el.Kind)
+		input.Kind = &value
 	case "description":
-		input.Description = strOrNil(el.Description)
+		input.Description = &value
 	case "technology":
-		input.Technology = strOrNil(el.Technology)
-		input.TechLinks = tech.TechnologyLinksForElement(el.Technology, el.Language)
+		input.Technology = &value
+		input.TechLinks = tech.TechnologyLinksForElement(value, el.Language)
 	case "url":
-		input.URL = strOrNil(el.URL)
+		input.URL = &value
 	case "logo_url":
-		input.LogoURL = strOrNil(el.LogoURL)
+		input.LogoURL = &value
 	case "repo":
-		input.Repo = strOrNil(el.Repo)
+		input.Repo = &value
 	case "branch":
-		input.Branch = strOrNil(el.Branch)
+		input.Branch = &value
 	case "language":
-		input.Language = strOrNil(el.Language)
+		input.Language = &value
 	case "file_path":
-		input.FilePath = strOrNil(el.FilePath)
+		input.FilePath = &value
 	case "view_label":
-		input.ViewLabel = strOrNil(el.ViewLabel)
+		input.ViewLabel = &value
 	case "bypass_noise_gate":
 		if parsed, err := strconv.ParseBool(value); err == nil {
 			input.BypassNoiseGate = &parsed
@@ -346,60 +372,50 @@ func applyElementField(input *api.ElementInput, el *workspace.Element, field, va
 	}
 }
 
-// runUpdateConnectorServer mirrors a YAML connector field change to the server.
-func runUpdateConnectorServer(cmd *cobra.Command, wdir, target, dataDir, ref, field, value string, preSpec *workspace.Connector, preID int32) error {
-	ws, err := cmdutil.LoadWorkspace(wdir)
-	if err != nil {
-		return err
+// runUpdateConnectorServer mirrors a connector field change to the server. The
+// desired spec is derived from the pre-update YAML plus the field change so the
+// renamed YAML key is known before the local cache is written. It returns the
+// updated connector and its new key; callers refresh the YAML cache afterwards.
+func runUpdateConnectorServer(ctx context.Context, ws *workspace.Workspace, wdir, target, dataDir, ref, field, value string, preSpec *workspace.Connector, preID int32) (*diagv1.Connector, string, error) {
+	if preSpec == nil {
+		return nil, ref, fmt.Errorf("connector %q not found", ref)
 	}
-	// The YAML update may have renamed the key; find the current spec.
-	spec := ws.Connectors[ref]
-	currentKey := ref
-	if spec == nil {
-		if preSpec == nil {
-			return fmt.Errorf("connector %q not found", ref)
-		}
-		// Key changed: locate the moved entry via its deterministic new key.
-		newKey := renamedConnectorKey(preSpec, field, value)
-		moved, ok := ws.Connectors[newKey]
-		if !ok {
-			return fmt.Errorf("connector %q not found after update", ref)
-		}
-		spec = moved
-		currentKey = newKey
-	}
+	spec := *preSpec
+	workspace.ApplyConnectorField(&spec, field, value)
+	currentKey := workspace.ConnectorKey(&spec)
+
 	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
 	if err != nil {
-		return err
+		return nil, currentKey, err
 	}
 	defer func() { _ = runner.Close() }()
 	if runner.Name() == exec.TargetRemote {
 		if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
-			return err
+			return nil, currentKey, err
 		}
 	}
-	ctx := cmd.Context()
 	connectorID := preID
 	if connectorID == 0 && ws.Meta != nil {
-		if m, ok := ws.Meta.Connectors[currentKey]; ok && m != nil {
+		if m, ok := ws.Meta.Connectors[ref]; ok && m != nil {
 			connectorID = int32(m.ID)
 		}
 	}
 	if connectorID == 0 {
 		// No cached ID (hand-written YAML): fall back to create.
-		return runCreateConnectorFromSpec(ctx, cmd, ws, runner, wdir, spec)
+		created, err := runCreateConnectorFromSpec(ctx, ws, runner, wdir, &spec)
+		return created, currentKey, err
 	}
 	sourceID, err := exec.EnsureElementID(ctx, runner, ws, wdir, spec.Source)
 	if err != nil {
-		return err
+		return nil, currentKey, err
 	}
 	targetID, err := exec.EnsureElementID(ctx, runner, ws, wdir, spec.Target)
 	if err != nil {
-		return err
+		return nil, currentKey, err
 	}
 	viewID, err := exec.ResolveParentViewID(ctx, runner, ws, wdir, spec.View)
 	if err != nil {
-		return fmt.Errorf("resolve connector view: %w", err)
+		return nil, currentKey, fmt.Errorf("resolve connector view: %w", err)
 	}
 	direction := spec.Direction
 	if direction == "" {
@@ -413,35 +429,17 @@ func runUpdateConnectorServer(cmd *cobra.Command, wdir, target, dataDir, ref, fi
 		ViewID:       viewID,
 		SourceID:     sourceID,
 		TargetID:     targetID,
-		Label:        strOrNil(spec.Label),
-		Description:  strOrNil(spec.Description),
-		Relationship: strOrNil(spec.Relationship),
+		Label:        &spec.Label,
+		Description:  &spec.Description,
+		Relationship: &spec.Relationship,
 		Direction:    direction,
 		Style:        style,
-		URL:          strOrNil(spec.URL),
-		SourceHandle: strOrNil(spec.SourceHandle),
-		TargetHandle: strOrNil(spec.TargetHandle),
+		URL:          &spec.URL,
+		SourceHandle: &spec.SourceHandle,
+		TargetHandle: &spec.TargetHandle,
 	})
 	if err != nil {
-		return cmdutil.WithUnauthorizedHint("server update connector failed", err)
+		return nil, currentKey, cmdutil.WithUnauthorizedHint("server update connector failed", err)
 	}
-	return exec.RecordConnectorMeta(wdir, currentKey, updated)
-}
-
-// renamedConnectorKey computes the key a connector will have after a field
-// update, so callers can locate the moved YAML entry when the update renames
-// the key (view/source/target/label are part of the key).
-func renamedConnectorKey(pre *workspace.Connector, field, value string) string {
-	renamed := *pre
-	switch field {
-	case "view":
-		renamed.View = value
-	case "source":
-		renamed.Source = value
-	case "target":
-		renamed.Target = value
-	case "label":
-		renamed.Label = value
-	}
-	return workspace.ConnectorKey(&renamed)
+	return updated, currentKey, nil
 }
