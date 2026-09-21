@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	diagv1connect "buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/diag/v1/diagv1connect"
+	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld/v2"
@@ -44,7 +44,7 @@ type Runner interface {
 
 	ListViews(ctx context.Context) ([]*diagv1.View, error)
 	CreateView(ctx context.Context, ownerElementID *int32, name string, label *string) (*diagv1.View, error)
-	UpdateView(ctx context.Context, id int32, name string) (*diagv1.View, error)
+	UpdateView(ctx context.Context, id int32, name string, label *string) (*diagv1.View, error)
 	DeleteView(ctx context.Context, id int32) error
 
 	AddPlacement(ctx context.Context, viewID, elementID int32, x, y float64) error
@@ -264,12 +264,16 @@ func (r *remoteRunner) CreateView(ctx context.Context, ownerElementID *int32, na
 	return resp.Msg.GetView(), nil
 }
 
-func (r *remoteRunner) UpdateView(ctx context.Context, id int32, name string) (*diagv1.View, error) {
+func (r *remoteRunner) UpdateView(ctx context.Context, id int32, name string, label *string) (*diagv1.View, error) {
 	c := r.client()
-	resp, err := c.UpdateView(ctx, connect.NewRequest(&diagv1.UpdateViewRequest{
+	req := &diagv1.UpdateViewRequest{
 		ViewId: id,
 		Name:   name,
-	}))
+	}
+	if label != nil {
+		req.LevelLabel = label
+	}
+	resp, err := c.UpdateView(ctx, connect.NewRequest(req))
 	if err != nil {
 		return nil, err
 	}
@@ -355,8 +359,6 @@ func (r *remoteRunner) UpdateConnector(ctx context.Context, id int32, input api.
 		req.SourceElementId = &input.SourceID
 	}
 	if input.TargetID != 0 {
-		req.TargetHandle = input.TargetHandle
-		req.SourceElementId = &input.SourceID
 		req.TargetElementId = &input.TargetID
 	}
 	req.Label = input.Label
@@ -472,12 +474,16 @@ func (r *localRunner) CreateView(ctx context.Context, ownerElementID *int32, nam
 	return r.adapter.CreateView(r.ctx(ctx), uuid.Nil, ownerElementID, name, label, false)
 }
 
-func (r *localRunner) UpdateView(ctx context.Context, id int32, name string) (*diagv1.View, error) {
+func (r *localRunner) UpdateView(ctx context.Context, id int32, name string, label *string) (*diagv1.View, error) {
 	existing, err := r.adapter.GetView(r.ctx(ctx), id, uuid.Nil)
 	if err != nil {
 		return nil, err
 	}
-	return r.adapter.UpdateView(r.ctx(ctx), id, uuid.Nil, name, existing.Description, existing.LevelLabel, nil)
+	levelLabel := existing.LevelLabel
+	if label != nil {
+		levelLabel = label
+	}
+	return r.adapter.UpdateView(r.ctx(ctx), id, uuid.Nil, name, existing.Description, levelLabel, nil)
 }
 
 func (r *localRunner) DeleteView(ctx context.Context, id int32) error {

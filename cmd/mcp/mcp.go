@@ -15,7 +15,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/update"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/localserver"
-	"github.com/mertcikla/tld/v2/internal/planner"
+	archwarnings "github.com/mertcikla/tld/v2/internal/warnings"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
@@ -266,7 +266,7 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 				out += "  - " + warning.Error() + "\n"
 			}
 		}
-		warnings := planner.AnalyzePlan(ws)
+		warnings := archwarnings.Analyze(ws)
 		if len(warnings) > 0 {
 			out += "\nArchitectural warnings:\n"
 			for _, w := range warnings {

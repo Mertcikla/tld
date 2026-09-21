@@ -45,12 +45,12 @@ them. Use --force to skip the prompt.`,
 				return err
 			}
 
-		resolvedTarget, err := exec.ResolveTarget(ws.Config, target)
-		if err != nil {
-			return err
-		}
+			resolvedTarget, err := exec.ResolveTarget(ws.Config, target)
+			if err != nil {
+				return err
+			}
 
-		if resolvedTarget == exec.TargetRemote {
+			if resolvedTarget == exec.TargetRemote {
 				if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
 					return err
 				}
@@ -87,8 +87,8 @@ them. Use --force to skip the prompt.`,
 				}
 			}
 
-		var exportResp *diagv1.ExportOrganizationResponse
-		if resolvedTarget == exec.TargetRemote {
+			var exportResp *diagv1.ExportOrganizationResponse
+			if resolvedTarget == exec.TargetRemote {
 				c := client.New(ws.Config.ServerURL, ws.Config.APIKey, false)
 				resp, err := c.ExportWorkspace(cmd.Context(), connect.NewRequest(&diagv1.ExportOrganizationRequest{
 					OrgId: ws.Config.WorkspaceID,

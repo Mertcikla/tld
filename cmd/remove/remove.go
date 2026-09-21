@@ -97,7 +97,7 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 		},
 	}
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
-	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, or remote")
+	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	return c
 }
@@ -210,7 +210,7 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&to, "to", "", "target element ref (required)")
 	c.Flags().StringVar(&label, "label", "", "connector label")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
-	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, or remote")
+	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	_ = c.MarkFlagRequired("view")
 	_ = c.MarkFlagRequired("from")

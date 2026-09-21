@@ -1,4 +1,4 @@
-package planner
+package warnings
 
 import (
 	"fmt"
@@ -7,6 +7,9 @@ import (
 	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
+
+// syntheticRootViewRef is the ref used for the root-level (synthetic) view.
+const syntheticRootViewRef = "root"
 
 // WarningGroup represents a collection of similar architectural warnings.
 type WarningGroup struct {
@@ -329,9 +332,9 @@ type warningContext struct {
 	maxDepth        int
 }
 
-// AnalyzePlan evaluates the workspace against architectural best practices and
+// Analyze evaluates the workspace against architectural best practices and
 // returns grouped warnings based on the configured strictness level.
-func AnalyzePlan(ws *workspace.Workspace) []WarningGroup {
+func Analyze(ws *workspace.Workspace) []WarningGroup {
 	if ws == nil {
 		return nil
 	}

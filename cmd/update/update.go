@@ -9,7 +9,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/exec"
-	"github.com/mertcikla/tld/v2/internal/planner"
+	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
@@ -72,7 +72,7 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, or remote")
+	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	return c
 }
@@ -136,7 +136,7 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 			return nil
 		},
 	}
-	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, or remote")
+	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	return c
 }
@@ -207,7 +207,11 @@ func runUpdateElementServer(cmd *cobra.Command, wdir, target, dataDir, ref, fiel
 		if name == "" {
 			name = el.Name
 		}
-		if _, err := runner.UpdateView(ctx, viewID, name); err != nil {
+		var label *string
+		if field == "view_label" {
+			label = &el.ViewLabel
+		}
+		if _, err := runner.UpdateView(ctx, viewID, name, label); err != nil {
 			return cmdutil.WithUnauthorizedHint("server update view failed", err)
 		}
 		return exec.RecordElementMeta(wdir, ref, mustElement(ctx, runner, elementID), viewID, nil)
@@ -318,7 +322,7 @@ func applyElementField(input *api.ElementInput, el *workspace.Element, field, va
 		input.Description = strOrNil(el.Description)
 	case "technology":
 		input.Technology = strOrNil(el.Technology)
-		input.TechLinks = planner.TechnologyLinksForElement(el.Technology, el.Language)
+		input.TechLinks = tech.TechnologyLinksForElement(el.Technology, el.Language)
 	case "url":
 		input.URL = strOrNil(el.URL)
 	case "logo_url":

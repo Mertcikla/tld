@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
-	"github.com/mertcikla/tld/v2/internal/planner"
 	"github.com/mertcikla/tld/v2/internal/term"
+	archwarnings "github.com/mertcikla/tld/v2/internal/warnings"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -80,7 +80,7 @@ in full detail with individual element and connector information.`,
 				}
 			}
 
-			warnings := planner.AnalyzePlan(ws)
+			warnings := archwarnings.Analyze(ws)
 
 			if len(args) == 1 {
 				return printRuleViolations(cmd, args[0], warnings)
@@ -99,7 +99,7 @@ in full detail with individual element and connector information.`,
 	return c
 }
 
-func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings []planner.WarningGroup, verbose bool) {
+func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings []archwarnings.WarningGroup, verbose bool) {
 	level := ws.Config.Validation.Level
 	if level == 0 {
 		level = workspace.DefaultValidationLevel
@@ -122,7 +122,7 @@ func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings [
 	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "To suppress specific rule codes, use .tld.yaml: validation.exclude_rules: [ARC002]")
 }
 
-func printRuleViolations(cmd *cobra.Command, code string, warnings []planner.WarningGroup) error {
+func printRuleViolations(cmd *cobra.Command, code string, warnings []archwarnings.WarningGroup) error {
 	code = strings.ToUpper(strings.TrimSpace(code))
 
 	if !allWarningCodes[code] {

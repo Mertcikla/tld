@@ -110,8 +110,9 @@ func InitGitRepo(t *testing.T, dir string, filename string, source string) {
 // single root view with ID 1.
 type MockDiagramService struct {
 	diagv1connect.UnimplementedWorkspaceServiceHandler
-	Mu         sync.Mutex
-	ExportFunc func(*diagv1.ExportOrganizationRequest) (*diagv1.ExportOrganizationResponse, error)
+	Mu               sync.Mutex
+	ExportFunc       func(*diagv1.ExportOrganizationRequest) (*diagv1.ExportOrganizationResponse, error)
+	ListElementsFunc func(*diagv1.ListElementsRequest) ([]*diagv1.Element, error)
 
 	nextID     int32
 	elements   map[int32]*diagv1.Element
@@ -271,6 +272,13 @@ func (m *MockDiagramService) DeleteElement(_ context.Context, req *connect.Reque
 }
 
 func (m *MockDiagramService) ListElements(_ context.Context, req *connect.Request[diagv1.ListElementsRequest]) (*connect.Response[diagv1.ListElementsResponse], error) {
+	if m.ListElementsFunc != nil {
+		els, err := m.ListElementsFunc(req.Msg)
+		if err != nil {
+			return nil, err
+		}
+		return connect.NewResponse(&diagv1.ListElementsResponse{Elements: els}), nil
+	}
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.initLocked()
@@ -282,6 +290,14 @@ func (m *MockDiagramService) ListElements(_ context.Context, req *connect.Reques
 		out = append(out, el)
 	}
 	return connect.NewResponse(&diagv1.ListElementsResponse{Elements: out}), nil
+}
+
+// ElementCount returns the number of elements stored on the mock server.
+func (m *MockDiagramService) ElementCount() int {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.initLocked()
+	return len(m.elements)
 }
 
 func (m *MockDiagramService) ListViews(_ context.Context, _ *connect.Request[diagv1.ListViewsRequest]) (*connect.Response[diagv1.ListViewsResponse], error) {
@@ -331,8 +347,23 @@ func (m *MockDiagramService) UpdateView(_ context.Context, req *connect.Request[
 	if req.Msg.GetName() != "" {
 		v.Name = req.Msg.GetName()
 	}
+	if req.Msg.LevelLabel != nil {
+		v.LevelLabel = req.Msg.LevelLabel
+	}
+	if req.Msg.Description != nil {
+		v.Description = req.Msg.Description
+	}
 	v.UpdatedAt = timestamppb.Now()
 	return connect.NewResponse(&diagv1.UpdateViewResponse{View: v}), nil
+}
+
+// View returns the stored view by ID. It is a test helper for asserting
+// server-side view state after synchronous commands.
+func (m *MockDiagramService) View(id int32) *diagv1.View {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.initLocked()
+	return m.views[id]
 }
 
 func (m *MockDiagramService) DeleteView(_ context.Context, req *connect.Request[diagv1.DeleteViewRequest]) (*connect.Response[diagv1.DeleteViewResponse], error) {

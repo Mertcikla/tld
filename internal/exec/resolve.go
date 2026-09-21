@@ -2,6 +2,7 @@ package exec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,6 +10,10 @@ import (
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
+
+// errElementNotOnServer indicates the server list succeeded but the element was
+// not present, so callers may safely create it from the YAML spec.
+var errElementNotOnServer = errors.New("element not present on server")
 
 // ResolveElementID returns the server ID for an element ref, using YAML metadata
 // first and falling back to a server list+name match.
@@ -24,22 +29,39 @@ func ResolveElementID(ctx context.Context, runner Runner, ws *workspace.Workspac
 	}
 	els, err := runner.ListElements(ctx, el.Name)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("list elements: %w", err)
 	}
+	var fallback *diagv1.Element
 	for _, e := range els {
-		if e.GetName() == el.Name {
+		if e.GetName() != el.Name {
+			continue
+		}
+		// Prefer a kind match to disambiguate elements that share a name.
+		if el.Kind != "" && e.GetKind() == el.Kind {
 			return e.GetId(), nil
 		}
+		if fallback == nil {
+			fallback = e
+		}
 	}
-	return 0, fmt.Errorf("element %q has no server ID; run `tld pull` to resync", ref)
+	if fallback != nil {
+		return fallback.GetId(), nil
+	}
+	return 0, fmt.Errorf("%w: element %q has no server ID; run `tld pull` to resync", errElementNotOnServer, ref)
 }
 
 // EnsureElementID returns the server ID for an element ref, creating the
 // element on the server from the YAML spec when it has no cached ID yet.
 // This keeps hand-written YAML usable: commands self-heal missing server state.
+// Server errors are surfaced instead of masked with a create, so an unreachable
+// server does not produce duplicate resources.
 func EnsureElementID(ctx context.Context, runner Runner, ws *workspace.Workspace, wdir, ref string) (int32, error) {
-	if id, err := ResolveElementID(ctx, runner, ws, ref); err == nil {
+	id, err := ResolveElementID(ctx, runner, ws, ref)
+	if err == nil {
 		return id, nil
+	}
+	if !errors.Is(err, errElementNotOnServer) {
+		return 0, err
 	}
 	el, ok := ws.Elements[ref]
 	if !ok || el == nil {
@@ -117,7 +139,7 @@ func EnsureElementView(ctx context.Context, runner Runner, elementID int32, elem
 }
 
 // ResolveParentViewID maps a YAML placement parent ref to a server view ID,
-// ensuring the parent element has a view (mirrors the old planner's
+// ensuring the parent element has a view (mirrors the legacy
 // canonical-view promotion). Missing elements are auto-created from YAML.
 func ResolveParentViewID(ctx context.Context, runner Runner, ws *workspace.Workspace, wdir, parentRef string) (int32, error) {
 	if parentRef == "" || parentRef == workspace.RootRef {

@@ -97,7 +97,7 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&url, "url", "", "external URL")
 	c.Flags().StringVar(&legacyView, "view", "", "explicit connector view ref (default: source element's view)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
-	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, or remote")
+	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	_ = c.Flags().MarkHidden("style")
 	_ = c.MarkFlagRequired("from")

@@ -8,7 +8,6 @@ import (
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/exec"
-	"github.com/mertcikla/tld/v2/internal/planner"
 	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -116,7 +115,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				return nil
 			}
-			return runAdd(cmd, *wdir, *format, *compact, target, dataDir, r, spec, kind, placementParent, wasNormalized, technology, normalizedTechnology)
+			return runAdd(cmd, *wdir, *format, *compact, target, dataDir, r, spec, placementParent, wasNormalized, technology, normalizedTechnology)
 		},
 	}
 
@@ -130,7 +129,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&parent, "parent", "root", "parent element ref or root")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
 	c.Flags().StringVar(&diagramLabel, "diagram-label", "", "optional label for the element's canonical diagram")
-	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, or remote")
+	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	c.Flags().BoolVar(&legacyWithView, "with-view", false, "deprecated")
 	c.Flags().StringVar(&legacyViewLabel, "view-label", "", "deprecated")
@@ -148,7 +147,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 
 // runAdd writes the element to the server synchronously, then refreshes the
 // local YAML cache. Every invocation gets immediate server feedback.
-func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataDir, ref string, spec *workspace.Element, kind, placementParent string, wasNormalized bool, technology, normalizedTechnology string) error {
+func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataDir, ref string, spec *workspace.Element, placementParent string, wasNormalized bool, technology, normalizedTechnology string) error {
 	fail := func(err error) error {
 		if cmdutil.WantsJSON(format) {
 			return cmdutil.WriteCommandError(cmd.OutOrStdout(), compact, "add", err)
@@ -177,7 +176,7 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 		Kind:            strptr(spec.Kind),
 		Technology:      strptr(spec.Technology),
 		URL:             strptr(spec.URL),
-		TechLinks:       planner.TechnologyLinksForElement(spec.Technology, ""),
+		TechLinks:       tech.TechnologyLinksForElement(spec.Technology, ""),
 		BypassNoiseGate: &bypass,
 		HasView:         spec.HasView,
 		ViewLabel:       strptr(spec.ViewLabel),
@@ -204,7 +203,7 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 	}
 
 	// Ensure placement in the parent view (creating the parent view when needed,
-	// mirroring the old planner's canonical-view promotion).
+	// mirroring the legacy canonical-view promotion).
 	parentViewID, err := exec.ResolveParentViewID(ctx, runner, ws, wdir, placementParent)
 	if err != nil {
 		return fail(fmt.Errorf("resolve parent view: %w", err))

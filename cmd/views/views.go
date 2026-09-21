@@ -7,7 +7,6 @@ import (
 
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 
-	"github.com/mertcikla/tld/v2/internal/planner"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
@@ -46,7 +45,7 @@ func NewViewsCmd(wdir *string) *cobra.Command {
 					for _, validationErr := range errs {
 						messages = append(messages, validationErr.Error())
 					}
-					return cmdutil.WriteJSON(cmd.OutOrStdout(), cmd.Root().PersistentFlags().Lookup("compact").Value.String() == "true", planner.JSONOutput{
+					return cmdutil.WriteJSON(cmd.OutOrStdout(), cmd.Root().PersistentFlags().Lookup("compact").Value.String() == "true", cmdutil.JSONOutput{
 						Command: "views",
 						Status:  "error",
 						Errors:  messages,
@@ -176,18 +175,18 @@ func renderViewsTable(w io.Writer, rows []viewSummaryRow) {
 	}
 }
 
-func buildViewsJSONOutput(rows []viewSummaryRow) planner.JSONOutput {
+func buildViewsJSONOutput(rows []viewSummaryRow) cmdutil.JSONOutput {
 	ownedViews, maxDepth := summarizeViewMetrics(rows)
-	items := make([]planner.JSONItem, 0, len(rows))
+	items := make([]cmdutil.JSONItem, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, planner.JSONItem{
+		items = append(items, cmdutil.JSONItem{
 			Ref:          row.Ref,
 			ResourceType: "view",
 			Action:       "present",
 			Name:         row.OwnerName,
 		})
 	}
-	return planner.JSONOutput{
+	return cmdutil.JSONOutput{
 		Command: "views",
 		Status:  "ok",
 		Summary: map[string]int{
