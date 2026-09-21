@@ -110,9 +110,10 @@ func InitGitRepo(t *testing.T, dir string, filename string, source string) {
 // single root view with ID 1.
 type MockDiagramService struct {
 	diagv1connect.UnimplementedWorkspaceServiceHandler
-	Mu               sync.Mutex
-	ExportFunc       func(*diagv1.ExportOrganizationRequest) (*diagv1.ExportOrganizationResponse, error)
-	ListElementsFunc func(*diagv1.ListElementsRequest) ([]*diagv1.Element, error)
+	Mu                sync.Mutex
+	ExportFunc        func(*diagv1.ExportOrganizationRequest) (*diagv1.ExportOrganizationResponse, error)
+	ListElementsFunc  func(*diagv1.ListElementsRequest) ([]*diagv1.Element, error)
+	DeleteElementFunc func(*diagv1.DeleteElementRequest) (*diagv1.DeleteElementResponse, error)
 
 	nextID     int32
 	elements   map[int32]*diagv1.Element
@@ -245,6 +246,13 @@ func (m *MockDiagramService) UpdateElement(_ context.Context, req *connect.Reque
 }
 
 func (m *MockDiagramService) DeleteElement(_ context.Context, req *connect.Request[diagv1.DeleteElementRequest]) (*connect.Response[diagv1.DeleteElementResponse], error) {
+	if m.DeleteElementFunc != nil {
+		resp, err := m.DeleteElementFunc(req.Msg)
+		if err != nil {
+			return nil, err
+		}
+		return connect.NewResponse(resp), nil
+	}
 	m.Mu.Lock()
 	defer m.Mu.Unlock()
 	m.initLocked()
@@ -364,6 +372,15 @@ func (m *MockDiagramService) View(id int32) *diagv1.View {
 	defer m.Mu.Unlock()
 	m.initLocked()
 	return m.views[id]
+}
+
+// Connector returns the stored connector by ID. It is a test helper for
+// asserting server-side connector state after synchronous commands.
+func (m *MockDiagramService) Connector(id int32) *diagv1.Connector {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.initLocked()
+	return m.connectors[id]
 }
 
 func (m *MockDiagramService) DeleteView(_ context.Context, req *connect.Request[diagv1.DeleteViewRequest]) (*connect.Response[diagv1.DeleteViewResponse], error) {

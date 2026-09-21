@@ -103,10 +103,10 @@ func errResult(err error) (*mcpsdk.CallToolResult, result, error) {
 func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string, compact *bool, dataDir string) {
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_add",
-		Description: "Add or update an element (applies immediately to the server).",
+		Description: "Add or update an element (applies immediately to the server). The element gets its own canonical diagram (view).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a addArgs) (*mcpsdk.CallToolResult, result, error) {
 		c := add.NewAddCmd(wdir, format, compact)
-		args := []string{a.Name}
+		args := []string{a.Name, "--with-view"}
 		if a.Ref != "" {
 			args = append(args, "--ref", a.Ref)
 		}

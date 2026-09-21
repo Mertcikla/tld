@@ -132,3 +132,40 @@ func TestEnsureElementIDDoesNotMaskServerErrors(t *testing.T) {
 		t.Fatalf("server element count = %d, want 0 (must not auto-create on server error)", got)
 	}
 }
+
+// TestSyncCommands_RemoteWithView verifies that --with-view creates the
+// element's owned diagram on the server and records it in the YAML cache.
+func TestSyncCommands_RemoteWithView(t *testing.T) {
+	svc := &cmd.MockDiagramService{}
+	serverURL := cmd.NewMockServer(t, svc)
+
+	dir := t.TempDir()
+	cmd.SetupApplyWorkspace(t, dir, serverURL)
+
+	if _, _, err := cmd.RunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace", "--with-view", "--diagram-label", "System"); err != nil {
+		t.Fatalf("remote add with view: %v", err)
+	}
+
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatalf("load workspace: %v", err)
+	}
+	if ws.Elements["platform"] == nil || !ws.Elements["platform"].HasView {
+		t.Fatalf("expected has_view in YAML: %+v", ws.Elements["platform"])
+	}
+	elementID := int32(ws.Meta.Elements["platform"].ID)
+	viewMeta := ws.Meta.Views["platform"]
+	if viewMeta == nil || viewMeta.ID == 0 {
+		t.Fatalf("platform view meta missing: %+v", ws.Meta.Views)
+	}
+	view := svc.View(int32(viewMeta.ID))
+	if view == nil {
+		t.Fatalf("server view %d not found", viewMeta.ID)
+	}
+	if view.OwnerElementId == nil || *view.OwnerElementId != elementID {
+		t.Fatalf("server view owner = %v, want element %d", view.OwnerElementId, elementID)
+	}
+	if view.GetLevelLabel() != "System" {
+		t.Fatalf("server view label = %q, want %q", view.GetLevelLabel(), "System")
+	}
+}

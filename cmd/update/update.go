@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 
-	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/exec"
@@ -194,13 +193,17 @@ func runUpdateElementServer(cmd *cobra.Command, wdir, target, dataDir, ref, fiel
 	}
 	switch field {
 	case "view_label", "view_name":
-		// View display fields live on the owned view.
+		// View display fields live on the owned view. ResolveParentViewID
+		// creates the view when the element has none.
 		viewID, err := exec.ResolveParentViewID(ctx, runner, ws, wdir, ref)
 		if err != nil {
-			// No view yet: promote the element, then set the name.
-			viewID, err = exec.EnsureElementView(ctx, runner, elementID, el.Name, &el.ViewLabel)
-			if err != nil {
-				return fmt.Errorf("ensure element view: %w", err)
+			return fmt.Errorf("ensure element view: %w", err)
+		}
+		// Keep the YAML cache in sync when the server had to create the view.
+		if !el.HasView {
+			el.HasView = true
+			if err := workspace.UpsertElement(wdir, ref, el); err != nil {
+				return fmt.Errorf("update YAML cache: %w", err)
 			}
 		}
 		name := el.ViewName
@@ -214,7 +217,11 @@ func runUpdateElementServer(cmd *cobra.Command, wdir, target, dataDir, ref, fiel
 		if _, err := runner.UpdateView(ctx, viewID, name, label); err != nil {
 			return cmdutil.WithUnauthorizedHint("server update view failed", err)
 		}
-		return exec.RecordElementMeta(wdir, ref, mustElement(ctx, runner, elementID), viewID, nil)
+		updatedElement, err := runner.GetElement(ctx, elementID)
+		if err != nil {
+			return cmdutil.WithUnauthorizedHint("server get element failed", err)
+		}
+		return exec.RecordElementMeta(wdir, ref, updatedElement, viewID, nil)
 	default:
 		bypass := true
 		existing, err := runner.GetElement(ctx, elementID)
@@ -251,11 +258,6 @@ func runUpdateElementServer(cmd *cobra.Command, wdir, target, dataDir, ref, fiel
 		}
 		return exec.RecordElementMeta(wdir, ref, updated, viewID, nil)
 	}
-}
-
-func mustElement(ctx context.Context, runner exec.Runner, id int32) *diagv1.Element {
-	el, _ := runner.GetElement(ctx, id)
-	return el
 }
 
 func optStrFromProto(s *string) *string {
@@ -354,19 +356,18 @@ func runUpdateConnectorServer(cmd *cobra.Command, wdir, target, dataDir, ref, fi
 	spec := ws.Connectors[ref]
 	currentKey := ref
 	if spec == nil {
-		// Key changed: locate by matching the updated fields.
-		for key, c := range ws.Connectors {
-			if preSpec != nil && c.Source == preSpec.Source && c.Target == preSpec.Target {
-				spec = c
-				currentKey = key
-				break
-			}
+		if preSpec == nil {
+			return fmt.Errorf("connector %q not found", ref)
 		}
+		// Key changed: locate the moved entry via its deterministic new key.
+		newKey := renamedConnectorKey(preSpec, field, value)
+		moved, ok := ws.Connectors[newKey]
+		if !ok {
+			return fmt.Errorf("connector %q not found after update", ref)
+		}
+		spec = moved
+		currentKey = newKey
 	}
-	if spec == nil {
-		return fmt.Errorf("connector %q not found after update", ref)
-	}
-	_ = value
 	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
 	if err != nil {
 		return err
@@ -424,12 +425,23 @@ func runUpdateConnectorServer(cmd *cobra.Command, wdir, target, dataDir, ref, fi
 	if err != nil {
 		return cmdutil.WithUnauthorizedHint("server update connector failed", err)
 	}
-	// Move the meta entry when the key changed.
-	if currentKey != ref && ws.Meta != nil && ws.Meta.Connectors != nil {
-		if m, ok := ws.Meta.Connectors[ref]; ok {
-			ws.Meta.Connectors[currentKey] = m
-			delete(ws.Meta.Connectors, ref)
-		}
-	}
 	return exec.RecordConnectorMeta(wdir, currentKey, updated)
+}
+
+// renamedConnectorKey computes the key a connector will have after a field
+// update, so callers can locate the moved YAML entry when the update renames
+// the key (view/source/target/label are part of the key).
+func renamedConnectorKey(pre *workspace.Connector, field, value string) string {
+	renamed := *pre
+	switch field {
+	case "view":
+		renamed.View = value
+	case "source":
+		renamed.Source = value
+	case "target":
+		renamed.Target = value
+	case "label":
+		renamed.Label = value
+	}
+	return workspace.ConnectorKey(&renamed)
 }

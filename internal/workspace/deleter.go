@@ -19,11 +19,8 @@ func RemoveElement(dir, ref string) error {
 	if err != nil {
 		return err
 	}
-	if _, ok := ws.Elements[ref]; !ok {
-		return fmt.Errorf("element %q not found", ref)
-	}
-	if blockers := elementRemovalBlockers(ws, ref); len(blockers) > 0 {
-		return fmt.Errorf("element %q is still referenced:\n  - %s\nRemove or update these references first", ref, strings.Join(blockers, "\n  - "))
+	if err := CheckElementRemoval(ws, ref); err != nil {
+		return err
 	}
 	removed, err := filterYAMLMap(filepath.Join(dir, "elements.yaml"), func(k string, _ any) bool { return k != ref })
 	if err != nil {
@@ -36,6 +33,26 @@ func RemoveElement(dir, ref string) error {
 		return err
 	}
 	return DeleteCurrentViewMetadataEntries(dir, ref)
+}
+
+// CheckElementRemoval reports whether ref exists and is safe to remove from
+// elements.yaml. Commands call it before mutating server state so refusals
+// (missing element, blocking references) happen before anything is deleted.
+func CheckElementRemoval(ws *Workspace, ref string) error {
+	if _, ok := ws.Elements[ref]; !ok {
+		return fmt.Errorf("element %q not found", ref)
+	}
+	if blockers := elementRemovalBlockers(ws, ref); len(blockers) > 0 {
+		return fmt.Errorf("element %q is still referenced:\n  - %s\nRemove or update these references first", ref, strings.Join(blockers, "\n  - "))
+	}
+	return nil
+}
+
+// CheckConnectorRemoval mirrors the ambiguity refusal applied by
+// RemoveConnectorWithLabel so callers can validate before deleting server
+// state.
+func CheckConnectorRemoval(matchedKeys []string, label string) error {
+	return refuseAmbiguousConnectorRemoval(matchedKeys, label)
 }
 
 func elementRemovalBlockers(ws *Workspace, ref string) []string {

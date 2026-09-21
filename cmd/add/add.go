@@ -79,7 +79,6 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if diagramLabel == "" {
 				diagramLabel = legacyViewLabel
 			}
-			_ = legacyWithView
 			normalizedTechnology, wasNormalized := normalizeTechnology(technology)
 			spec := &workspace.Element{
 				Name:        name,
@@ -87,7 +86,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				Description: description,
 				Technology:  normalizedTechnology,
 				URL:         url,
-				HasView:     false,
+				HasView:     legacyWithView,
 				ViewLabel:   diagramLabel,
 				Placements: []workspace.ViewPlacement{{
 					ParentRef: placementParent,
@@ -131,8 +130,8 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&diagramLabel, "diagram-label", "", "optional label for the element's canonical diagram")
 	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
-	c.Flags().BoolVar(&legacyWithView, "with-view", false, "deprecated")
-	c.Flags().StringVar(&legacyViewLabel, "view-label", "", "deprecated")
+	c.Flags().BoolVar(&legacyWithView, "with-view", false, "give the element its own canonical diagram (view)")
+	c.Flags().StringVar(&legacyViewLabel, "view-label", "", "deprecated: use --diagram-label")
 	_ = c.Flags().MarkHidden("with-view")
 	_ = c.Flags().MarkHidden("view-label")
 
@@ -216,6 +215,16 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 		return fail(cmdutil.WithUnauthorizedHint("server place element failed", err))
 	}
 
+	// Ensure the element's own canonical diagram when requested
+	// (mirrors the legacy --with-view behavior).
+	var ownedViewID int32
+	if spec.HasView {
+		ownedViewID, err = exec.EnsureElementView(ctx, runner, elementID, spec.Name, strptr(spec.ViewLabel))
+		if err != nil {
+			return fail(cmdutil.WithUnauthorizedHint("server create view failed", err))
+		}
+	}
+
 	// Refresh YAML cache (write-through).
 	if err := workspace.UpsertElement(wdir, ref, spec); err != nil {
 		return fail(fmt.Errorf("update YAML cache: %w", err))
@@ -230,7 +239,7 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 			return fail(fmt.Errorf("update cache metadata: %w", err))
 		}
 	}
-	if err := exec.RecordElementMeta(wdir, ref, savedElement, 0, nil); err != nil {
+	if err := exec.RecordElementMeta(wdir, ref, savedElement, ownedViewID, nil); err != nil {
 		return fail(fmt.Errorf("update cache metadata: %w", err))
 	}
 

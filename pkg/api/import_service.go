@@ -54,7 +54,7 @@ func (s *ImportService) ImportResources(ctx context.Context, req *connect.Reques
 		}
 	}
 
-	viewID, err := s.importPlanResources(ctx, workspaceID, elements, m.GetConnectors())
+	viewID, err := s.importResourcesSafely(ctx, workspaceID, elements, m.GetConnectors())
 	if err != nil {
 		return nil, storeErr("import resources", err)
 	}
@@ -66,28 +66,82 @@ func (s *ImportService) ImportResources(ctx context.Context, req *connect.Reques
 	}), nil
 }
 
+// pendingWrite defers a realtime hook until the import commits, so rolled-back
+// work is never broadcast.
+type pendingWrite struct {
+	action   string
+	resource string
+	id       string
+	attrs    map[string]any
+	response any
+}
+
+func (s *ImportService) fireWrites(ctx context.Context, workspaceID uuid.UUID, writes []pendingWrite) {
+	for _, w := range writes {
+		s.hooks().AfterWrite(ctx, workspaceID, w.action, w.resource, w.id, w.attrs, w.response)
+	}
+}
+
+// importResourcesSafely applies the import inside a store transaction when the
+// store supports one, so a failure rolls back partial work. Stores that cannot
+// run transactions fall back to direct mutations.
+func (s *ImportService) importResourcesSafely(ctx context.Context, workspaceID uuid.UUID, elements []*diagv1.PlanElement, connectors []*diagv1.PlanConnector) (int32, error) {
+	if transactional, ok := s.Store.(TransactionalStore); ok {
+		var (
+			viewID int32
+			writes []pendingWrite
+		)
+		err := transactional.RunInTransaction(ctx, func(txCtx context.Context, txStore Store) error {
+			txService := *s
+			if txStore != nil {
+				txService.Store = txStore
+			}
+			var err error
+			viewID, writes, err = txService.importPlanResources(txCtx, workspaceID, elements, connectors)
+			return err
+		})
+		switch {
+		case err == nil:
+			s.fireWrites(ctx, workspaceID, writes)
+			return viewID, nil
+		case errors.Is(err, ErrUnimplemented):
+			// Store cannot run transactions; fall back to direct mutations.
+		default:
+			return 0, err
+		}
+	}
+	viewID, writes, err := s.importPlanResources(ctx, workspaceID, elements, connectors)
+	if err != nil {
+		return 0, err
+	}
+	s.fireWrites(ctx, workspaceID, writes)
+	return viewID, nil
+}
+
 // importPlanResources applies a declarative import using granular store
 // mutations (elements, owned views, placements, connectors), mirroring the
-// former ApplyPlan semantics but without the bulk plan operation.
-func (s *ImportService) importPlanResources(ctx context.Context, workspaceID uuid.UUID, elements []*diagv1.PlanElement, connectors []*diagv1.PlanConnector) (int32, error) {
+// former ApplyPlan semantics but without the bulk plan operation. Realtime
+// hooks are collected and fired by the caller after the import commits.
+func (s *ImportService) importPlanResources(ctx context.Context, workspaceID uuid.UUID, elements []*diagv1.PlanElement, connectors []*diagv1.PlanConnector) (int32, []pendingWrite, error) {
 	viewIDs := map[string]int32{}
 	elementIDs := map[string]int32{}
+	writes := make([]pendingWrite, 0, len(elements)+len(connectors))
 	var firstViewID int32
 
 	if planNeedsRootView(elements, connectors) {
 		rootID, err := s.rootViewID(ctx, workspaceID)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		viewIDs[rootViewRef] = rootID
 	}
 
 	for _, planned := range elements {
 		if strings.TrimSpace(planned.GetRef()) == "" {
-			return 0, fmt.Errorf("plan element ref is required")
+			return 0, nil, fmt.Errorf("plan element ref is required")
 		}
 		if strings.TrimSpace(planned.GetName()) == "" {
-			return 0, fmt.Errorf("plan element %q name is required", planned.GetRef())
+			return 0, nil, fmt.Errorf("plan element %q name is required", planned.GetRef())
 		}
 
 		input := ElementInput{
@@ -101,23 +155,23 @@ func (s *ImportService) importPlanResources(ctx context.Context, workspaceID uui
 			Tags:            cloneStringSlice(planned.GetTags()),
 			Repo:            planned.Repo,
 			Branch:          planned.Branch,
-			Language:        planned.Language,
+			Language:         planned.Language,
 			FilePath:        planned.FilePath,
 			BypassNoiseGate: planned.BypassNoiseGate,
 			HasView:         planned.GetHasView(),
 			ViewLabel:       planned.ViewLabel,
 		}
 
-		element, err := s.upsertImportedElement(ctx, workspaceID, planned, input)
+		element, err := s.upsertImportedElement(ctx, workspaceID, planned, input, &writes)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		elementIDs[planned.GetRef()] = element.GetId()
 
 		if planned.GetHasView() {
-			view, err := s.upsertImportedView(ctx, workspaceID, planned, element)
+			view, err := s.upsertImportedView(ctx, workspaceID, planned, element, &writes)
 			if err != nil {
-				return 0, err
+				return 0, nil, err
 			}
 			viewIDs[planned.GetRef()] = view.GetId()
 			if firstViewID == 0 {
@@ -126,26 +180,26 @@ func (s *ImportService) importPlanResources(ctx context.Context, workspaceID uui
 		}
 	}
 
-	records, err := s.addImportedPlacements(ctx, workspaceID, elements, elementIDs, viewIDs)
+	records, err := s.addImportedPlacements(ctx, workspaceID, elements, elementIDs, viewIDs, &writes)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	var firstPlacementViewID int32
 	if len(records) > 0 {
 		firstPlacementViewID = records[0].viewID
 	}
 
-	if err := s.addImportedConnectors(ctx, workspaceID, connectors, elementIDs, viewIDs); err != nil {
-		return 0, err
+	if err := s.addImportedConnectors(ctx, workspaceID, connectors, elementIDs, viewIDs, &writes); err != nil {
+		return 0, nil, err
 	}
 
 	if firstViewID != 0 {
-		return firstViewID, nil
+		return firstViewID, writes, nil
 	}
-	return firstPlacementViewID, nil
+	return firstPlacementViewID, writes, nil
 }
 
-func (s *ImportService) upsertImportedElement(ctx context.Context, workspaceID uuid.UUID, planned *diagv1.PlanElement, input ElementInput) (*diagv1.Element, error) {
+func (s *ImportService) upsertImportedElement(ctx context.Context, workspaceID uuid.UUID, planned *diagv1.PlanElement, input ElementInput, writes *[]pendingWrite) (*diagv1.Element, error) {
 	action := "create"
 	var (
 		element *diagv1.Element
@@ -164,13 +218,15 @@ func (s *ImportService) upsertImportedElement(ctx context.Context, workspaceID u
 	if err != nil {
 		return nil, err
 	}
-	s.hooks().AfterWrite(ctx, workspaceID, action, "element", fmt.Sprintf("%d", element.GetId()), map[string]any{
-		"name": element.GetName(),
-	}, elementResponse(action, element))
+	*writes = append(*writes, pendingWrite{
+		action: action, resource: "element", id: fmt.Sprintf("%d", element.GetId()),
+		attrs:    map[string]any{"name": element.GetName()},
+		response: elementResponse(action, element),
+	})
 	return element, nil
 }
 
-func (s *ImportService) upsertImportedView(ctx context.Context, workspaceID uuid.UUID, planned *diagv1.PlanElement, element *diagv1.Element) (*diagv1.View, error) {
+func (s *ImportService) upsertImportedView(ctx context.Context, workspaceID uuid.UUID, planned *diagv1.PlanElement, element *diagv1.Element, writes *[]pendingWrite) (*diagv1.View, error) {
 	viewName := firstNonEmpty(planned.GetName(), element.GetName())
 	action := "create"
 	var (
@@ -192,9 +248,11 @@ func (s *ImportService) upsertImportedView(ctx context.Context, workspaceID uuid
 	if err != nil {
 		return nil, err
 	}
-	s.hooks().AfterWrite(ctx, workspaceID, action, "view", fmt.Sprintf("%d", view.GetId()), map[string]any{
-		"name": view.GetName(),
-	}, viewResponse(action, view))
+	*writes = append(*writes, pendingWrite{
+		action: action, resource: "view", id: fmt.Sprintf("%d", view.GetId()),
+		attrs:    map[string]any{"name": view.GetName()},
+		response: viewResponse(action, view),
+	})
 	return view, nil
 }
 
@@ -204,7 +262,7 @@ type importPlacementRecord struct {
 	item      *diagv1.PlacedElement
 }
 
-func (s *ImportService) addImportedPlacements(ctx context.Context, workspaceID uuid.UUID, elements []*diagv1.PlanElement, elementIDs, viewIDs map[string]int32) ([]importPlacementRecord, error) {
+func (s *ImportService) addImportedPlacements(ctx context.Context, workspaceID uuid.UUID, elements []*diagv1.PlanElement, elementIDs, viewIDs map[string]int32, writes *[]pendingWrite) ([]importPlacementRecord, error) {
 	var records []importPlacementRecord
 	autoLayoutTargets := map[int32]map[int64]struct{}{}
 
@@ -240,10 +298,11 @@ func (s *ImportService) addImportedPlacements(ctx context.Context, workspaceID u
 		return nil, err
 	}
 	for _, record := range records {
-		s.hooks().AfterWrite(ctx, workspaceID, "create", "placement", "", map[string]any{
-			"view_id":    record.viewID,
-			"element_id": record.elementID,
-		}, &diagv1.CreatePlacementResponse{Placement: record.item})
+		*writes = append(*writes, pendingWrite{
+			action: "create", resource: "placement", id: "",
+			attrs:    map[string]any{"view_id": record.viewID, "element_id": record.elementID},
+			response: &diagv1.CreatePlacementResponse{Placement: record.item},
+		})
 	}
 	return records, nil
 }
@@ -294,7 +353,7 @@ func (s *ImportService) autoLayoutImports(ctx context.Context, workspaceID uuid.
 	return nil
 }
 
-func (s *ImportService) addImportedConnectors(ctx context.Context, workspaceID uuid.UUID, connectors []*diagv1.PlanConnector, elementIDs, viewIDs map[string]int32) error {
+func (s *ImportService) addImportedConnectors(ctx context.Context, workspaceID uuid.UUID, connectors []*diagv1.PlanConnector, elementIDs, viewIDs map[string]int32, writes *[]pendingWrite) error {
 	for _, planned := range connectors {
 		parentRef := planned.GetViewRef()
 		if parentRef == "" {
@@ -345,10 +404,11 @@ func (s *ImportService) addImportedConnectors(ctx context.Context, workspaceID u
 		if err != nil {
 			return err
 		}
-		s.hooks().AfterWrite(ctx, workspaceID, action, "connector", fmt.Sprintf("%d", connector.GetId()), map[string]any{
-			"view_id": viewID,
-			"label":   connector.GetLabel(),
-		}, connectorResponse(action, connector))
+		*writes = append(*writes, pendingWrite{
+			action: action, resource: "connector", id: fmt.Sprintf("%d", connector.GetId()),
+			attrs:    map[string]any{"view_id": viewID, "label": connector.GetLabel()},
+			response: connectorResponse(action, connector),
+		})
 	}
 	return nil
 }
