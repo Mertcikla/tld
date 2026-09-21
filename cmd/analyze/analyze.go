@@ -165,7 +165,9 @@ to elements.yaml and connectors.yaml. Manual YAML resources are preserved.`,
 			}
 			logger.InfoContext(cmd.Context(), "analyze.store_open.completed", "elapsed", time.Since(storeStarted).Round(time.Millisecond).String())
 			watchStore := watchpkg.NewStoreWithBun(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
-			once, err := watchpkg.NewRunner(watchStore).RunOnce(cmd.Context(), watchpkg.OneShotOptions{Path: absPath, Rescan: rescan, Embedding: embeddingCfg, Settings: settings, DataDir: dataDir, Progress: progress, Logger: logger, ConfirmAfterScan: confirmAnalyzeLSPProceed(cmd), Rules: rules})
+			runner := watchpkg.NewRunner(watchStore)
+			defer func() { _ = runner.Close() }()
+			once, err := runner.RunOnce(cmd.Context(), watchpkg.OneShotOptions{Path: absPath, Rescan: rescan, Embedding: embeddingCfg, Settings: settings, DataDir: dataDir, Progress: progress, Logger: logger, ConfirmAfterScan: confirmAnalyzeLSPProceed(cmd), Rules: rules})
 			if err != nil {
 				return fail("analyze.watch_pipeline.failed", err)
 			}

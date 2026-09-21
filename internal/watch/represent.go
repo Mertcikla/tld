@@ -227,6 +227,8 @@ func (r *Representer) Represent(ctx context.Context, repositoryID int64, req Rep
 		return result, err
 	}
 	progressAdvance(req.Progress, "Apply lock acquired")
+	stopApplyHeartbeat := r.Store.StartApplyLockHeartbeat(ctx, repositoryID, applyToken)
+	defer stopApplyHeartbeat()
 	defer func() {
 		_ = r.Store.ReleaseApplyLock(context.Background(), repositoryID, applyToken)
 	}()
@@ -333,6 +335,8 @@ func (r *Representer) RepresentArchitecture(ctx context.Context, repo Repository
 		return result, err
 	}
 	progressAdvance(progress, "Apply lock acquired")
+	stopApplyHeartbeat := r.Store.StartApplyLockHeartbeat(ctx, repo.ID, applyToken)
+	defer stopApplyHeartbeat()
 	defer func() {
 		_ = r.Store.ReleaseApplyLock(context.Background(), repo.ID, applyToken)
 	}()

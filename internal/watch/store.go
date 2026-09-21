@@ -1201,6 +1201,41 @@ func (s *Store) ReleaseApplyLock(ctx context.Context, repositoryID int64, token 
 	return err
 }
 
+// HeartbeatApplyLock refreshes the apply lock timestamp so long
+// materializations are not treated as stale and stolen by another writer.
+func (s *Store) HeartbeatApplyLock(ctx context.Context, repositoryID int64, token string) error {
+	_, err := s.execRaw(ctx, `UPDATE watch_apply_locks SET heartbeat_at = ? WHERE id = 1 AND repository_id = ? AND token = ? AND status = 'active'`, nowString(), repositoryID, token)
+	return err
+}
+
+// StartApplyLockHeartbeat refreshes the apply lock on an interval until the
+// returned stop function is called.
+func (s *Store) StartApplyLockHeartbeat(ctx context.Context, repositoryID int64, token string) func() {
+	heartbeatCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	done := make(chan struct{})
+	interval := LockHeartbeatTimeout / 3
+	if interval <= 0 {
+		interval = time.Second
+	}
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+				_ = s.HeartbeatApplyLock(heartbeatCtx, repositoryID, token)
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
 func (s *Store) EnsureGitTags(ctx context.Context) error {
 	return tagcolors.EnsureBun(ctx, s.bun, managedGitTags())
 }
@@ -2019,8 +2054,17 @@ func (s *Store) SaveWatchVersionResources(ctx context.Context, versionID, reposi
 	}
 	for _, item := range snapshots {
 		_, err := s.execRaw(ctx, `
-			INSERT OR REPLACE INTO watch_version_resources(version_id, owner_type, owner_key, resource_type, resource_id, language, resource_hash, summary, line_count, file_path, start_line, end_line)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			INSERT INTO watch_version_resources(version_id, owner_type, owner_key, resource_type, resource_id, language, resource_hash, summary, line_count, file_path, start_line, end_line)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(version_id, owner_type, owner_key, resource_type) DO UPDATE SET
+				resource_id = excluded.resource_id,
+				language = excluded.language,
+				resource_hash = excluded.resource_hash,
+				summary = excluded.summary,
+				line_count = excluded.line_count,
+				file_path = excluded.file_path,
+				start_line = excluded.start_line,
+				end_line = excluded.end_line`,
 			versionID, item.OwnerType, item.OwnerKey, item.ResourceType, item.ResourceID, nullString(item.Language), item.Hash, nullString(item.Summary), item.LineCount, nullString(item.FilePath), item.StartLine, item.EndLine)
 		if err != nil {
 			return err
@@ -2029,17 +2073,36 @@ func (s *Store) SaveWatchVersionResources(ctx context.Context, versionID, reposi
 	return nil
 }
 
+// ensureWatchVersionResourceRangeColumns patches databases created before the
+// range columns were folded into the migration. New databases already have the
+// columns, so the ALTER failures are expected and ignored.
 func (s *Store) ensureWatchVersionResourceRangeColumns(ctx context.Context) error {
-	for _, stmt := range []string{
-		`ALTER TABLE watch_version_resources ADD COLUMN file_path TEXT NULL`,
-		`ALTER TABLE watch_version_resources ADD COLUMN start_line INTEGER NOT NULL DEFAULT 0`,
-		`ALTER TABLE watch_version_resources ADD COLUMN end_line INTEGER NOT NULL DEFAULT 0`,
-	} {
-		if _, err := s.execRaw(ctx, stmt); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+	columns := []string{
+		`file_path TEXT NULL`,
+		`start_line INTEGER NOT NULL DEFAULT 0`,
+		`end_line INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, column := range columns {
+		var err error
+		if s.dialect == dbrepo.DialectPostgres {
+			_, err = s.execRaw(ctx, `ALTER TABLE watch_version_resources ADD COLUMN IF NOT EXISTS `+column)
+		} else {
+			_, err = s.execRaw(ctx, `ALTER TABLE watch_version_resources ADD COLUMN `+column)
+		}
+		if err != nil && !isDuplicateColumnError(err) {
 			return err
 		}
 	}
 	return nil
+}
+
+func isDuplicateColumnError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "duplicate column name") ||
+		strings.Contains(message, "already exists")
 }
 
 func (s *Store) gitLineDiffsAgainstHead(ctx context.Context, repositoryID int64) map[string]tldgit.LineDiff {

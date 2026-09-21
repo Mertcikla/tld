@@ -1332,6 +1332,9 @@ func (s *Store) CreateWatchVersion(ctx context.Context, repositoryID int64, comm
 	if err != nil {
 		return Version{}, err
 	}
+	if _, err := s.execRaw(ctx, `DELETE FROM watch_representation_diffs WHERE version_id = ?`, version.ID); err != nil {
+		return Version{}, err
+	}
 	for _, diff := range diffs {
 		_, err := s.execRaw(ctx, `
 			INSERT INTO watch_representation_diffs(version_id, owner_type, owner_key, change_type, before_hash, after_hash, resource_type, resource_id, summary, added_lines, removed_lines)

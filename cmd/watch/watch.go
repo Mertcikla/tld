@@ -245,7 +245,10 @@ func NewWatchCmd() *cobra.Command {
 					watchProgress.Stop()
 				}
 			}()
+			var eventWG sync.WaitGroup
+			eventWG.Add(1)
 			go func() {
+				defer eventWG.Done()
 				for event := range events.Out() {
 					logWatchRuntimeEvent(cmd.Context(), logger, event)
 					watch.BroadcastWatchEvent(event)
@@ -261,6 +264,7 @@ func NewWatchCmd() *cobra.Command {
 					}
 				}
 			}()
+			defer eventWG.Wait()
 			errCh := make(chan error, 1)
 			go func() {
 				_, runErr := watch.NewRunner(watchStore).Run(ctx, watch.RunnerOptions{Path: path, Rescan: rescan, Verbose: verbose, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir, Progress: progress, Logger: logger, Events: events, Ready: ready, ConfirmAfterScan: confirmWatchLSPProceed(cmd)})
@@ -654,6 +658,7 @@ func newScanCmd() *cobra.Command {
 			}
 			defer func() { _ = sqliteStore.Close() }()
 			scanner := watch.NewScanner(watch.NewStoreWithBun(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect()))
+			defer func() { _ = scanner.Close() }()
 			scanner.Settings = watchSettings
 			if !jsonOut {
 				scanner.Progress = newCLIProgress(cmd.ErrOrStderr())
@@ -732,6 +737,7 @@ func newRepresentCmd() *cobra.Command {
 			defer func() { _ = sqliteStore.Close() }()
 			watchStore := watch.NewStoreWithBun(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
 			scanner := watch.NewScanner(watchStore)
+			defer func() { _ = scanner.Close() }()
 			scanner.Settings = watchSettings
 			scanner.Progress = progress
 			scanResult, err := scanner.ScanWithOptions(cmd.Context(), path, watch.ScanOptions{Force: rescan, DataDir: dataDir})
@@ -910,7 +916,9 @@ func runWatchDiff(cmd *cobra.Command, path string, opts watchDiffOptions) error 
 	}
 	defer func() { _ = sqliteStore.Close() }()
 	watchStore := watch.NewStoreWithBun(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
-	once, err := watch.NewRunner(watchStore).RunOnce(cmd.Context(), watch.OneShotOptions{Path: path, Rescan: opts.Rescan, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir, Logger: logger})
+	runner := watch.NewRunner(watchStore)
+	defer func() { _ = runner.Close() }()
+	once, err := runner.RunOnce(cmd.Context(), watch.OneShotOptions{Path: path, Rescan: opts.Rescan, Embedding: embeddingCfg, Settings: watchSettings, DataDir: dataDir, Logger: logger})
 	if err != nil {
 		return fail("watch.diff.pipeline.failed", err)
 	}

@@ -78,12 +78,18 @@ type ServerStatus struct {
 type MultiLanguageResolver struct {
 	RootDir string
 
-	mu       sync.Mutex
-	cfg      ResolverConfig
-	sessions map[analyzer.Language]*Session
-	statuses map[analyzer.Language]*ServerStatus
-	opened   map[string]struct{}
-	contents map[string]string
+	mu          sync.Mutex
+	cfg         ResolverConfig
+	sessions    map[analyzer.Language]*Session
+	statuses    map[analyzer.Language]*ServerStatus
+	opened      map[string]struct{}
+	contents    map[string]string
+	contentMeta map[string]documentMeta
+}
+
+type documentMeta struct {
+	ModTime time.Time
+	Size    int64
 }
 
 func NewMultiLanguageResolver(rootDir string) *MultiLanguageResolver {
@@ -106,12 +112,13 @@ func NewMultiLanguageResolverWithConfig(rootDir string, cfg ResolverConfig) *Mul
 		cfg.MemoryLimitBytes = 4294967296
 	}
 	return &MultiLanguageResolver{
-		RootDir:  rootDir,
-		cfg:      cfg,
-		sessions: make(map[analyzer.Language]*Session),
-		statuses: make(map[analyzer.Language]*ServerStatus),
-		opened:   make(map[string]struct{}),
-		contents: make(map[string]string),
+		RootDir:     rootDir,
+		cfg:         cfg,
+		sessions:    make(map[analyzer.Language]*Session),
+		statuses:    make(map[analyzer.Language]*ServerStatus),
+		opened:      make(map[string]struct{}),
+		contents:    make(map[string]string),
+		contentMeta: make(map[string]documentMeta),
 	}
 }
 
@@ -535,30 +542,74 @@ func (r *MultiLanguageResolver) healthcheckLocked(ctx context.Context, language 
 
 func (r *MultiLanguageResolver) openDocument(ctx context.Context, session *Session, filePath string) error {
 	cleanPath := filepath.Clean(filePath)
+	info, statErr := os.Stat(cleanPath)
 	r.mu.Lock()
-	if _, ok := r.opened[cleanPath]; ok {
-		r.mu.Unlock()
+	previous, seen := r.contents[cleanPath]
+	meta, metaSeen := r.contentMeta[cleanPath]
+	_, opened := r.opened[cleanPath]
+	r.mu.Unlock()
+	if opened && seen && statErr == nil && metaSeen && meta.Size == info.Size() && meta.ModTime.Equal(info.ModTime()) {
 		return nil
 	}
-	content, ok := r.contents[cleanPath]
-	r.mu.Unlock()
-	if !ok {
-		data, err := os.ReadFile(cleanPath)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", cleanPath, err)
+	data, err := os.ReadFile(cleanPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", cleanPath, err)
+	}
+	content := string(data)
+	if opened && seen && previous == content {
+		if statErr == nil {
+			r.mu.Lock()
+			r.contentMeta[cleanPath] = documentMeta{ModTime: info.ModTime(), Size: info.Size()}
+			r.mu.Unlock()
 		}
-		content = string(data)
-		r.mu.Lock()
-		r.contents[cleanPath] = content
-		r.mu.Unlock()
+		return nil
+	}
+	if opened {
+		if err := session.CloseDocument(ctx, cleanPath); err != nil {
+			return fmt.Errorf("close %s in language server: %w", cleanPath, err)
+		}
 	}
 	if err := session.OpenDocument(ctx, cleanPath, content); err != nil {
 		return fmt.Errorf("open %s in language server: %w", cleanPath, err)
 	}
 	r.mu.Lock()
+	r.contents[cleanPath] = content
 	r.opened[cleanPath] = struct{}{}
+	if statErr == nil {
+		r.contentMeta[cleanPath] = documentMeta{ModTime: info.ModTime(), Size: info.Size()}
+	}
 	r.mu.Unlock()
 	return nil
+}
+
+// EvictDocuments closes every document opened on the language servers and
+// clears the cached contents. Long-running watch sessions call this at scan
+// boundaries so memory stays bounded and the next scan always resolves
+// against current file contents.
+func (r *MultiLanguageResolver) EvictDocuments(ctx context.Context) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	targets := make(map[*Session][]string)
+	for filePath := range r.opened {
+		language, ok := analyzer.DetectLanguage(filePath)
+		if !ok {
+			continue
+		}
+		if session := r.sessions[language]; session != nil {
+			targets[session] = append(targets[session], filePath)
+		}
+	}
+	r.opened = make(map[string]struct{})
+	r.contents = make(map[string]string)
+	r.contentMeta = make(map[string]documentMeta)
+	r.mu.Unlock()
+	for session, paths := range targets {
+		for _, filePath := range paths {
+			_ = session.CloseDocument(ctx, filePath)
+		}
+	}
 }
 
 // func (r *MultiLanguageResolver) restartAfterFailure(ctx context.Context, language analyzer.Language, reason string, err error) {
@@ -595,6 +646,8 @@ func (r *MultiLanguageResolver) restartLocked(ctx context.Context, language anal
 	for opened := range r.opened {
 		delete(r.opened, opened)
 	}
+	r.contents = make(map[string]string)
+	r.contentMeta = make(map[string]documentMeta)
 	status.State = StateFailed
 	if reason == "memory_limit_exceeded" {
 		status.State = StateMemoryLimited

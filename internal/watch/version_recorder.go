@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tldgit "github.com/mertcikla/tld/v2/internal/git"
+	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )
 
 type VersionRecordRequest struct {
@@ -53,7 +54,7 @@ func (v *VersionRecorder) RecordHead(ctx context.Context, req VersionRecordReque
 		description = "tld watch " + shortHash(req.Status.HeadCommit)
 	}
 	workspaceVersionID, err := v.Store.CreateWorkspaceVersion(ctx, req.Status.HeadCommit, "watch", nil, views, elements, connectors, &description, &req.RepresentationHash)
-	if err != nil && !strings.Contains(err.Error(), "constraint failed") {
+	if err != nil && !dbrepo.IsUniqueViolation(err) {
 		return VersionRecordResult{}, err
 	}
 	if err != nil {

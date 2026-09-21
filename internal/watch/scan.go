@@ -1503,10 +1503,14 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 			_, _, upsertErr := s.Store.UpsertFile(ctx, repositoryID, rel, languageName, blobHash, worktreeHash, info.Size(), info.ModTime().UnixNano(), "error", err)
 			if upsertErr != nil {
 				s.logScanFile(ctx, repositoryID, result, languageName, "error", started, upsertErr)
-			} else {
-				s.logScanFile(ctx, repositoryID, result, languageName, "error", started, err)
+				return result, upsertErr
 			}
-			return result, upsertErr
+			if clearErr := s.clearFileGraph(ctx, repositoryID, file.ID); clearErr != nil {
+				s.logScanFile(ctx, repositoryID, result, languageName, "error", started, clearErr)
+				return result, clearErr
+			}
+			s.logScanFile(ctx, repositoryID, result, languageName, "error", started, err)
+			return result, nil
 		}
 	}
 	symbols := watchSymbolsFromAnalyzer(repositoryID, file.ID, rel, languageName, data, extracted.Symbols)
@@ -1523,6 +1527,16 @@ func (s *Scanner) scanFile(ctx context.Context, workerAnalyzer analyzer.Service,
 	result.Refs = extracted.Refs
 	s.logScanFile(ctx, repositoryID, result, languageName, "parsed", started, nil)
 	return result, nil
+}
+
+func (s *Scanner) clearFileGraph(ctx context.Context, repositoryID, fileID int64) error {
+	if err := s.Store.ReplaceFileSymbolsWithMissingCandidates(ctx, repositoryID, fileID, nil, nil); err != nil {
+		return err
+	}
+	if err := s.Store.ReplaceReferencesForFiles(ctx, repositoryID, []int64{fileID}, nil); err != nil {
+		return err
+	}
+	return s.Store.ReplaceFactsForFile(ctx, repositoryID, fileID, nil)
 }
 
 func (s *Scanner) logScanFile(ctx context.Context, repositoryID int64, result scanFileResult, language, decision string, started time.Time, err error) {
@@ -2043,6 +2057,11 @@ func (s *Scanner) resolveReferences(ctx context.Context, repoRoot string, reposi
 				RawJSON:        string(raw),
 			})
 		}
+	}
+	if evictor, ok := resolver.(interface {
+		EvictDocuments(context.Context)
+	}); ok {
+		evictor.EvictDocuments(ctx)
 	}
 	return refs, "", nil
 }

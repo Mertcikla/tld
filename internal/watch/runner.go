@@ -59,6 +59,16 @@ func NewRunner(store *Store) *Runner {
 	}
 }
 
+// Close releases the runner's language-server sessions. Long-running callers
+// use Run, which closes automatically; one-shot callers that invoke RunOnce
+// directly must call Close to avoid orphaning language server processes.
+func (r *Runner) Close() error {
+	if r == nil || r.Scanner == nil {
+		return nil
+	}
+	return r.Scanner.Close()
+}
+
 func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, error) {
 	if r == nil || r.Store == nil {
 		return RunnerResult{}, fmt.Errorf("watch runner requires a store")
@@ -66,6 +76,7 @@ func (r *Runner) Run(ctx context.Context, opts RunnerOptions) (RunnerResult, err
 	if r.Scanner == nil {
 		r.Scanner = NewScanner(r.Store)
 	}
+	defer func() { _ = r.Scanner.Close() }()
 	r.Scanner.Progress = opts.Progress
 	r.Scanner.Logger = opts.Logger
 	if opts.Rules != nil {
