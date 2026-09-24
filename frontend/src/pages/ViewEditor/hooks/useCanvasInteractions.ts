@@ -1744,7 +1744,12 @@ export function useCanvasInteractions({
 
       event.preventDefault()
       event.stopPropagation()
-      target.setPointerCapture?.(event.pointerId)
+      try {
+        target.setPointerCapture?.(event.pointerId)
+      } catch {
+        // Synthetic touch pointers have no active browser pointer to capture.
+        // The document listeners below still track the drag in that case.
+      }
       stableOnStartHandleReconnect({
         edgeId,
         endpoint,
