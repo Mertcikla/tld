@@ -973,7 +973,7 @@ function ViewEditorInner({
   // stableOnConnectTo is wired after canvasInteractions is declared
   const stableOnConnectToRef = useRef<(targetElementId: number) => Promise<void>>(async () => { })
   const stableOnInteractionStartRef = useRef<(elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => void>(() => { })
-  const stableOnStartHandleReconnectRef = useRef<(args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number }) => void>(() => { })
+  const stableOnStartHandleReconnectRef = useRef<(args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number; pointerId: number }) => void>(() => { })
   const stableOnReconnectPickRef = useRef<(targetElementId: number) => Promise<boolean>>(async () => false)
 
   // ── Drawing engine ────────────────────────────────────────────────────────
@@ -1041,7 +1041,7 @@ function ViewEditorInner({
     stableOnConnectTo: useCallback(async (targetElementId: number) => {
       await stableOnConnectToRef.current(targetElementId)
     }, []),
-    stableOnStartHandleReconnect: useCallback((args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number }) => {
+    stableOnStartHandleReconnect: useCallback((args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number; pointerId: number }) => {
       stableOnStartHandleReconnectRef.current(args)
     }, []),
     stableOnRemoveElement: useCallback(async (id: number) => { await stableOnRemoveElementRef.current(id) }, []),

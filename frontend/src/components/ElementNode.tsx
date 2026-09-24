@@ -148,7 +148,7 @@ interface NodeData extends PlacedElement {
   onSelect: (obj: PlacedElement) => void
   onInteractionStart: (elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => void
   onConnectTo: (elementId: number) => void
-  onStartHandleReconnect?: (args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number }) => void
+  onStartHandleReconnect?: (args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number; pointerId: number }) => void
   onRemove: (elementId: number) => void
   onHoverZoom: (elementId: number, type: 'in' | 'out' | null) => void
   isZoomHovered: 'in' | 'out' | null
@@ -861,20 +861,6 @@ function ElementNode({ data, selected }: Props) {
                   pointerEvents="auto"
                   cursor="grab"
                   zIndex={4}
-                  onPointerDown={(e: React.PointerEvent) => {
-                    if (e.button !== 0) return
-                    e.preventDefault()
-                    e.stopPropagation()
-                    const candidate = reconnectCandidateByHandle.get(handleId)
-                    if (!candidate) return
-                    data.onStartHandleReconnect?.({
-                      edgeId: candidate.edgeId,
-                      endpoint: candidate.endpoint,
-                      handleId,
-                      clientX: e.clientX,
-                      clientY: e.clientY,
-                    })
-                  }}
                 />
               )}
             </Box>
