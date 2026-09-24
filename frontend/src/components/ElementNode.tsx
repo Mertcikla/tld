@@ -765,8 +765,8 @@ function ElementNode({ data, selected }: Props) {
       isConnectorHighlighted={!!data.isConnectorHighlighted}
       hasStack={hasChild}
       kind={data.kind}
-      minW="180px"
-      maxW="230px"
+      w="180px"
+      h="85px"
       cursor={bodyCursor}
       outline={isDraggedOver || versionColor ? '2px solid' : undefined}
       outlineColor={isDraggedOver ? 'var(--accent)' : versionColor}
@@ -967,8 +967,10 @@ function ElementNode({ data, selected }: Props) {
         type={data.kind ?? ''}
         technology={technologyText}
         logoUrl={undefined}
-        nameSize="xl"
-        minH="85px"
+        nameSize="18px"
+        nameNoOfLines={1}
+        h="100%"
+        overflow="hidden"
         pt={nodeLogoUrl ? 9 : 2}
         pb={2}
       />

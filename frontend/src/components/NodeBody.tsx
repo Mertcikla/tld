@@ -9,6 +9,7 @@ interface ElementBodyProps extends FlexProps {
   technology?: string
   logoUrl?: string
   nameSize?: string
+  nameNoOfLines?: number
   typeSize?: string
   techSize?: string
 }
@@ -20,6 +21,7 @@ export const ElementBody = ({
   technology,
   logoUrl,
   nameSize = 'sm',
+  nameNoOfLines = 2,
   typeSize = '2xs',
   techSize = 'xs',
   children,
@@ -62,7 +64,7 @@ export const ElementBody = ({
           <Text
             fontWeight="semibold"
             fontSize={nameSize}
-            noOfLines={2}
+            noOfLines={nameNoOfLines}
             textAlign={hasLogo ? 'left' : 'center'}
             color="gray.100"
             lineHeight={1.15}
