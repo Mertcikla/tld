@@ -11,7 +11,6 @@ import { getExpandThresholds } from './layoutEngine'
 import { pickEdgeLabelPosition, type ScreenRect } from './renderer'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
-import { isElementGroupTag } from '../../utils/elementGroups'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
@@ -104,7 +103,7 @@ function collectVisibleAnchorForNode(
   parentChildOffsetX: number,
   parentChildOffsetY: number,
 ): { selfDrawn: boolean; descendantDrawn: boolean } {
-  if (hiddenTags.size > 0 && node.tags.some((tag) => !isElementGroupTag(tag) && hiddenTags.has(tag))) {
+  if (hiddenTags.size > 0 && node.tags.some((tag) => hiddenTags.has(tag))) {
     return { selfDrawn: false, descendantDrawn: false }
   }
 

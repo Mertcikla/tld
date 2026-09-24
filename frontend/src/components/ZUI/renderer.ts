@@ -1,5 +1,5 @@
 import type { ViewLayer } from '../../types'
-import { elementGroupTagForLayer, isElementGroupTag } from '../../utils/elementGroups'
+import { elementGroupTagForLayer } from '../../utils/elementGroups'
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import type { SceneGraph, SceneNode } from './sceneGraph'
@@ -338,7 +338,7 @@ function pickNavigationHintPosition(
 }
 
 function isHiddenByTags(node: LayoutNode): boolean {
-  return currentHiddenTags.size > 0 && node.tags.some((tag) => !isElementGroupTag(tag) && currentHiddenTags.has(tag))
+  return currentHiddenTags.size > 0 && node.tags.some((tag) => currentHiddenTags.has(tag))
 }
 
 export interface ElementGroupBounds {
