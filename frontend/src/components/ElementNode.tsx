@@ -968,7 +968,7 @@ function ElementNode({ data, selected }: Props) {
         technology={technologyText}
         logoUrl={undefined}
         nameSize="18px"
-        nameNoOfLines={1}
+        nameNoOfLines={2}
         h="100%"
         overflow="hidden"
         pt={nodeLogoUrl ? 9 : 2}
