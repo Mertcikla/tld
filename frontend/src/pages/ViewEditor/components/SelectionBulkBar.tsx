@@ -15,6 +15,7 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import TagUpsert from '../../../components/TagUpsert'
+import { ColorPicker } from '../../../components/ViewExplorer/TagManager/ColorPicker'
 import { CopyIcon } from '@chakra-ui/icons'
 import { FitViewIcon, LayerIcon, MergeIcon, TagsIcon, TrashIcon } from '../../../components/Icons'
 import type { Tag } from '../../../types'
@@ -165,6 +166,7 @@ export default function SelectionBulkBar({
   onCopyMermaid,
 }: SelectionBulkBarProps) {
   const [isGroupOpen, setIsGroupOpen] = React.useState(false)
+  const [isGroupColorOpen, setIsGroupColorOpen] = React.useState(false)
   const [groupName, setGroupName] = React.useState('')
   const [groupColor, setGroupColor] = React.useState(defaultGroupColor)
 
@@ -275,16 +277,23 @@ export default function SelectionBulkBar({
                   />
                   <HStack justify="space-between">
                     <Text fontSize="xs" color="whiteAlpha.600">Background color</Text>
-                    <Input
-                      data-testid="selection-bulk-group-color"
-                      aria-label="Group background color"
-                      type="color"
-                      w="42px"
-                      h="28px"
-                      p="2px"
-                      value={groupColor}
-                      onChange={(event) => setGroupColor(event.target.value)}
-                    />
+                    <Popover isOpen={isGroupColorOpen} onClose={() => setIsGroupColorOpen(false)} placement="left" closeOnBlur>
+                      <PopoverTrigger>
+                        <Button
+                          data-testid="selection-bulk-group-color"
+                          aria-label="Choose group background color"
+                          size="xs"
+                          variant="ghost"
+                          onClick={() => setIsGroupColorOpen(true)}
+                        >
+                          <HStack spacing={1.5}>
+                            <Box w="14px" h="14px" rounded="full" bg={groupColor} />
+                            <Text fontSize="10px">{groupColor}</Text>
+                          </HStack>
+                        </Button>
+                      </PopoverTrigger>
+                      <ColorPicker onSelect={setGroupColor} onClose={() => setIsGroupColorOpen(false)} />
+                    </Popover>
                   </HStack>
                   <Button
                     data-testid="selection-bulk-group-create"

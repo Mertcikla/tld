@@ -28,7 +28,9 @@ vi.mock('@chakra-ui/react', async () => {
     PopoverBody: BoxLike,
     PopoverContent: BoxLike,
     PopoverTrigger: BoxLike,
+    PopoverArrow: BoxLike,
     Portal: BoxLike,
+    SimpleGrid: BoxLike,
     Text: BoxLike,
     Tooltip: BoxLike,
     VStack: BoxLike,
@@ -104,13 +106,20 @@ describe('SelectionBulkBar groups', () => {
     act(() => {
       renderer.root.findByProps({ 'data-testid': 'selection-bulk-group' }).props.onClick()
     })
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'selection-bulk-group-color' }).props.onClick()
+    })
+    act(() => {
+      renderer.root.findByProps({ bg: '#48BB78' }).props.onClick()
+    })
     const nameInput = renderer.root.findByProps({ 'data-testid': 'selection-bulk-group-name' })
     act(() => nameInput.props.onChange({ target: { value: 'Payments' } }))
     await act(async () => {
       await renderer.root.findByProps({ 'data-testid': 'selection-bulk-group-create' }).props.onClick()
     })
 
-    expect(onCreateGroup).toHaveBeenCalledWith('Payments', '#4299E1')
+    expect(onCreateGroup).toHaveBeenCalledWith('Payments', '#48BB78')
+    expect(renderer.root.findAllByProps({ type: 'color' })).toHaveLength(0)
   })
 })
 
