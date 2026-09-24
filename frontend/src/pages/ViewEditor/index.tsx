@@ -2961,6 +2961,8 @@ function ViewEditorInner({
     viewId,
   ])
 
+  const { startGroupDrag, moveGroupDrag, endGroupDrag } = canvas
+
   const groupBackgroundNodes = useMemo(() => layers.flatMap((layer) => {
     const groupTag = elementGroupTagForLayer(layer)
     if (!groupTag) return []
@@ -3005,9 +3007,9 @@ function ViewEditorInner({
             ? previous.filter((tag) => tag !== groupTag)
             : [...previous, groupTag])
         },
-        onGroupDragStart: () => canvas.startGroupDrag(memberNodes.map((node) => node.id)),
-        onGroupDragMove: (dx: number, dy: number) => canvas.moveGroupDrag(dx, dy),
-        onGroupDragEnd: () => canvas.endGroupDrag(),
+        onGroupDragStart: () => startGroupDrag(memberNodes.map((node) => node.id)),
+        onGroupDragMove: (dx: number, dy: number) => moveGroupDrag(dx, dy),
+        onGroupDragEnd: () => endGroupDrag(),
       },
       draggable: false,
       selectable: false,
@@ -3017,7 +3019,7 @@ function ViewEditorInner({
       zIndex: -1,
       style: { width, height, pointerEvents: 'none' },
     } as RFNode]
-  }), [canvas.endGroupDrag, canvas.moveGroupDrag, canvas.startGroupDrag, hiddenLayerTags, layers, rfNodes])
+  }), [endGroupDrag, hiddenLayerTags, layers, moveGroupDrag, rfNodes, startGroupDrag])
 
   const flowNodes = useMemo(() => {
     const baseNodes = liveContextNodes.length === 0
