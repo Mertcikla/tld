@@ -2951,7 +2951,6 @@ function ViewEditorInner({
       data: {
         label: layer.name,
         color: layer.color || '#4299E1',
-        memberCount: memberNodes.length,
         memberNodeIds: memberNodes.map((node) => node.id),
       },
       draggable: false,

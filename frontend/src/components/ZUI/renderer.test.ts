@@ -111,7 +111,6 @@ describe('Explore group backgrounds', () => {
         y: 162,
         width: 448,
         height: 258,
-        memberCount: 2,
       }),
     ])
 

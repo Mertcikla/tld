@@ -348,7 +348,6 @@ export interface ElementGroupBounds {
   y: number
   width: number
   height: number
-  memberCount: number
 }
 
 export function getElementGroupBounds(
@@ -392,7 +391,6 @@ export function getElementGroupBounds(
       y: top - paddingTop,
       width: right - left + paddingX * 2,
       height: bottom - top + paddingTop + paddingBottom,
-      memberCount: members.length,
     }]
   })
 }
@@ -431,10 +429,10 @@ function drawElementGroupBackgrounds(
       const badgeHeight = 20 / zoom
       const badgeLeft = x + 8 / zoom
       const badgeTop = y + 7 / zoom
-      const maxTextWidth = Math.max(0, bounds.width - 34 / zoom - padX * 2)
+      const maxTextWidth = Math.max(0, bounds.width - 16 / zoom - padX * 2 - 18 / zoom)
       ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`
       const textWidth = Math.min(ctx.measureText(bounds.layer.name).width, maxTextWidth)
-      const badgeWidth = Math.min(bounds.width - 16 / zoom, textWidth + 20 / zoom + padX * 2)
+      const badgeWidth = Math.min(bounds.width - 16 / zoom, textWidth + 18 / zoom + padX * 2)
       ctx.globalAlpha = 0.94
       ctx.fillStyle = '#171923'
       ctx.beginPath()
@@ -449,9 +447,6 @@ function drawElementGroupBackgrounds(
       ctx.textAlign = 'left'
       ctx.textBaseline = 'middle'
       ctx.fillText(bounds.layer.name, badgeLeft + padX + 10 / zoom, badgeTop + badgeHeight / 2, maxTextWidth)
-      ctx.fillStyle = 'rgba(255,255,255,0.68)'
-      ctx.textAlign = 'right'
-      ctx.fillText(String(bounds.memberCount), badgeLeft + badgeWidth - padX, badgeTop + badgeHeight / 2)
     }
     ctx.restore()
   }

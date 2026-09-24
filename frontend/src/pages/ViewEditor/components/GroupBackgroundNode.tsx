@@ -5,7 +5,6 @@ import type { NodeProps } from 'reactflow'
 export interface GroupBackgroundNodeData {
   label: string
   color: string
-  memberCount: number
   memberNodeIds: string[]
 }
 
@@ -40,9 +39,6 @@ const GroupBackgroundNode: React.FC<NodeProps<GroupBackgroundNodeData>> = React.
       <Box w="7px" h="7px" rounded="full" bg={data.color} flexShrink={0} />
       <Text fontSize="11px" fontWeight="700" noOfLines={1}>
         {data.label}
-      </Text>
-      <Text fontSize="10px" color="whiteAlpha.700" flexShrink={0}>
-        {data.memberCount}
       </Text>
     </HStack>
   </Box>
