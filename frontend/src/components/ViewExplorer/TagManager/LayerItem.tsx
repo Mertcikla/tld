@@ -168,7 +168,7 @@ export const LayerItem: React.FC<Props> = ({
 
             <VStack align="start" spacing={0} flex={1} minW={0}>
               <Text fontSize="xs" fontWeight="600" color="white" isTruncated>
-                {isElementGroup ? `group: ${layer.name}` : layer.name}
+                {isElementGroup ? `group:${layer.name}` : layer.name}
               </Text>
               <Text fontSize="10px" color="gray.500">
                 {isElementGroup ? `${tagCount} elements` : `${layer.tags.length} tags · ${tagCount} elements`}

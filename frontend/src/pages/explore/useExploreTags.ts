@@ -62,7 +62,7 @@ export function deriveExploreTagMetrics(data: ExploreData | null, layers: ViewLa
 }
 
 export function useExploreTags(data: ExploreData | null, sharedToken?: string): ExploreTagsState {
-  const [tagColors] = useState<Record<string, Tag>>({})
+  const [tagColors, setTagColors] = useState<Record<string, Tag>>({})
   const [layers, setLayers] = useState<ViewLayer[]>([])
   const [highlightedTags, setHighlightedTags] = useState<string[]>([])
   const [highlightColor, setHighlightColor] = useState('')
@@ -80,9 +80,10 @@ export function useExploreTags(data: ExploreData | null, sharedToken?: string): 
       .map((node) => node.id)
     const fetchTagData = async () => {
       try {
-        const diagramLayers = await Promise.all(
-          viewIds.map((id) => api.workspace.views.layers.list(id).catch(() => [])),
-        )
+        const [diagramLayers, colors] = await Promise.all([
+          Promise.all(viewIds.map((id) => api.workspace.views.layers.list(id).catch(() => []))),
+          api.workspace.orgs.tagColors.list().catch(() => ({} as Record<string, Tag>)),
+        ])
         if (!cancelled) {
           // Explore lays out nested diagrams too, so fetch their groups as well as root view layers.
           const seen = new Set<number>()
@@ -92,6 +93,7 @@ export function useExploreTags(data: ExploreData | null, sharedToken?: string): 
             return rootIds.has(layer.diagram_id) || isElementGroupLayer(layer)
           })
           setLayers(unique)
+          setTagColors(colors)
         }
       } catch {
         // Public shared pages do not expose layer metadata.

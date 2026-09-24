@@ -22,6 +22,7 @@ import {
 import { KbdHint } from './PanelUI'
 import { RedoSvg, UndoSvg } from './ViewDrawMenu'
 import { useViewEditorContext } from '../pages/ViewEditor/context'
+import { isElementGroupLayer } from '../utils/elementGroups'
 import type { Tag, ViewLayer } from '../types'
 
 const DENSITY_STOPS = [
@@ -446,7 +447,7 @@ function ViewFloatingMenu({
                         >
                           <Box w="10px" h="10px" rounded="full" bg={layer.color || 'gray.500'} flexShrink={0} />
                           <Text fontSize="xs" fontWeight="600" color="white" flex={1} isTruncated>
-                            {layer.name}
+                            {isElementGroupLayer(layer) ? `group:${layer.name}` : layer.name}
                           </Text>
                           <Text fontSize="10px" color="gray.600" flexShrink={0}>
                             {layerElementCounts[layer.id] ?? 0}
