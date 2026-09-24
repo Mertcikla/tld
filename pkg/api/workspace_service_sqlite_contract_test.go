@@ -422,6 +422,70 @@ func TestWorkspaceServiceSQLiteGetViewHonorsElementOverrideThreshold(t *testing.
 	}
 }
 
+func TestWorkspaceServiceSQLiteConnectorTagClearRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	orgID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	client := newSQLiteWorkspaceClient(t)
+
+	view, err := client.CreateView(ctx, connect.NewRequest(&diagv1.CreateViewRequest{
+		OrgId: orgID.String(),
+		Name:  "Tag Clear",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := client.CreateElement(ctx, connect.NewRequest(&diagv1.CreateElementRequest{Name: "Source"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := client.CreateElement(ctx, connect.NewRequest(&diagv1.CreateElementRequest{Name: "Target"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, elementID := range []int32{source.Msg.GetElement().GetId(), target.Msg.GetElement().GetId()} {
+		if _, err := client.CreatePlacement(ctx, connect.NewRequest(&diagv1.CreatePlacementRequest{
+			ViewId:    view.Msg.GetView().GetId(),
+			ElementId: elementID,
+		})); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	connector, err := client.CreateConnector(ctx, connect.NewRequest(&diagv1.CreateConnectorRequest{
+		ViewId:          view.Msg.GetView().GetId(),
+		SourceElementId: source.Msg.GetElement().GetId(),
+		TargetElementId: target.Msg.GetElement().GetId(),
+		Direction:       "forward",
+		Style:           "bezier",
+		Tags:            []string{"runtime"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectorID := connector.Msg.GetConnector().GetId()
+
+	withTags, err := client.UpdateConnector(ctx, connect.NewRequest(&diagv1.UpdateConnectorRequest{
+		ConnectorId: connectorID,
+		Tags:        []string{"critical", "edge"},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := withTags.Msg.GetConnector().GetTags(); len(got) != 2 || got[0] != "critical" || got[1] != "edge" {
+		t.Fatalf("connector tags = %#v, want [critical edge]", got)
+	}
+
+	cleared, err := client.UpdateConnector(ctx, connect.NewRequest(&diagv1.UpdateConnectorRequest{
+		ConnectorId: connectorID,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cleared.Msg.GetConnector().GetTags(); len(got) != 0 {
+		t.Fatalf("connector tags = %#v, want empty after clear", got)
+	}
+}
+
 func newSQLiteWorkspaceClient(t *testing.T) diagv1connect.WorkspaceServiceClient {
 	t.Helper()
 	_, client := newSQLiteWorkspaceClientWithStore(t)

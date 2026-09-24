@@ -4,7 +4,6 @@ import {
   Button,
   HStack,
   IconButton,
-  Input,
   Popover,
   PopoverBody,
   PopoverContent,
@@ -15,7 +14,7 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import TagUpsert from '../../../components/TagUpsert'
-import { ColorPicker } from '../../../components/ViewExplorer/TagManager/ColorPicker'
+import SearchCreateInput from '../../../components/SearchCreateInput'
 import { CopyIcon } from '@chakra-ui/icons'
 import { FitViewIcon, LayerIcon, MergeIcon, TagsIcon, TrashIcon } from '../../../components/Icons'
 import type { Tag } from '../../../types'
@@ -129,6 +128,7 @@ function ToolbarIconButton({
 export interface SelectionBulkBarProps {
   count: number
   availableTags: string[]
+  availableGroups?: string[]
   selectedTagCounts: Record<string, number>
   tagColors: Record<string, Tag>
   mergeOptions?: { id: number; name: string; kind?: string | null }[]
@@ -149,6 +149,7 @@ export interface SelectionBulkBarProps {
 export default function SelectionBulkBar({
   count,
   availableTags,
+  availableGroups = [],
   selectedTagCounts,
   tagColors,
   mergeOptions = [],
@@ -166,16 +167,14 @@ export default function SelectionBulkBar({
   onCopyMermaid,
 }: SelectionBulkBarProps) {
   const [isGroupOpen, setIsGroupOpen] = React.useState(false)
-  const [isGroupColorOpen, setIsGroupColorOpen] = React.useState(false)
   const [groupName, setGroupName] = React.useState('')
-  const [groupColor, setGroupColor] = React.useState(defaultGroupColor)
 
   if (count < 2) return null
 
-  const submitGroup = async () => {
-    const name = groupName.trim()
+  const submitGroup = async (candidate?: string) => {
+    const name = (candidate ?? groupName).trim()
     if (!name || !onCreateGroup || isCreatingGroup) return
-    await onCreateGroup(name, groupColor)
+    await onCreateGroup(name, defaultGroupColor)
     setGroupName('')
     setIsGroupOpen(false)
   }
@@ -243,7 +242,6 @@ export default function SelectionBulkBar({
               aria-label="Group selection"
               onClick={() => {
                 setGroupName('')
-                setGroupColor(defaultGroupColor)
                 setIsGroupOpen(true)
               }}
             >
@@ -266,45 +264,18 @@ export default function SelectionBulkBar({
               <PopoverBody p={3}>
                 <VStack align="stretch" spacing={3}>
                   <Text fontSize="xs" color="whiteAlpha.700" fontWeight="semibold">Create group</Text>
-                  <Input
-                    data-testid="selection-bulk-group-name"
-                    size="sm"
-                    placeholder="Group name"
+                  <SearchCreateInput
                     value={groupName}
-                    onChange={(event) => setGroupName(event.target.value)}
-                    onKeyDown={(event) => { if (event.key === 'Enter') void submitGroup() }}
+                    onChange={setGroupName}
+                    options={availableGroups}
+                    onSubmit={(value) => { void submitGroup(value) }}
+                    submitOnSelect
                     autoFocus
+                    inputTestId="selection-bulk-group-name"
+                    createOptionTestId="selection-bulk-group-create-option"
+                    existingOptionTestId="selection-bulk-group-existing-option"
+                    placeholder="Search or create group..."
                   />
-                  <HStack justify="space-between">
-                    <Text fontSize="xs" color="whiteAlpha.600">Background color</Text>
-                    <Popover isOpen={isGroupColorOpen} onClose={() => setIsGroupColorOpen(false)} placement="left" closeOnBlur>
-                      <PopoverTrigger>
-                        <Button
-                          data-testid="selection-bulk-group-color"
-                          aria-label="Choose group background color"
-                          size="xs"
-                          variant="ghost"
-                          onClick={() => setIsGroupColorOpen(true)}
-                        >
-                          <HStack spacing={1.5}>
-                            <Box w="14px" h="14px" rounded="full" bg={groupColor} />
-                            <Text fontSize="10px">{groupColor}</Text>
-                          </HStack>
-                        </Button>
-                      </PopoverTrigger>
-                      <ColorPicker onSelect={setGroupColor} onClose={() => setIsGroupColorOpen(false)} />
-                    </Popover>
-                  </HStack>
-                  <Button
-                    data-testid="selection-bulk-group-create"
-                    size="sm"
-                    colorScheme="blue"
-                    isDisabled={!groupName.trim() || isCreatingGroup}
-                    isLoading={isCreatingGroup}
-                    onClick={() => { void submitGroup() }}
-                  >
-                    Create group
-                  </Button>
                 </VStack>
               </PopoverBody>
             </PopoverContent>

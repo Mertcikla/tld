@@ -481,4 +481,41 @@ describe('ElementPanel bypass noise gate', () => {
       ],
     }))
   })
+
+  it('shows the element groups and removes the element from a group', async () => {
+    const groupTag = 'group:12345678-1234-4234-a234-123456789012'
+    const onSave = vi.fn()
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <ElementPanel
+          isOpen
+          autoSave
+          element={element({ tags: ['api', groupTag] })}
+          groups={[{ tag: groupTag, name: 'Payments', color: '#336699' }]}
+          onClose={vi.fn()}
+          onSave={onSave}
+          onVisibilityOverrideDeltaChange={vi.fn()}
+        />,
+      )
+      await Promise.resolve()
+    })
+
+    const chips = renderer!.root.findAll((node) => (
+      node.type === 'div' &&
+      node.props['data-testid'] === 'element-panel-group-chip'
+    ))
+    expect(chips).toHaveLength(1)
+    expect(chips[0].findAllByProps({ children: 'group:Payments' }).length).toBeGreaterThan(0)
+
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-group-remove' }).props.onClick()
+    })
+    await act(async () => {
+      vi.runAllTimers()
+      await Promise.resolve()
+    })
+
+    expect(apiMocks.updateElement).toHaveBeenLastCalledWith(10, expect.objectContaining({ tags: ['api'] }))
+  })
 })

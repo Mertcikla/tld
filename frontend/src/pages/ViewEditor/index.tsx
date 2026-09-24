@@ -146,6 +146,7 @@ import SelectionBulkBar from './components/SelectionBulkBar'
 import {
   createElementGroupTag,
   elementGroupTagForLayer,
+  isElementGroupLayer,
   isElementGroupTag,
   ELEMENT_GROUP_NODE_PREFIX,
 } from '../../utils/elementGroups'
@@ -406,6 +407,7 @@ function connectorUpdatePayload(connector: Connector) {
     url: connector.url ?? '',
     source_handle: connector.source_handle,
     target_handle: connector.target_handle,
+    tags: connector.tags ?? [],
   }
 }
 
@@ -867,13 +869,24 @@ function ViewEditorInner({
   const handleCreateLayer = useCallback(async (name: string, tags: string[], color: string) => {
     if (viewId === null) return
     try {
+      const trimmed = name.trim()
+      const existing = layers.find(
+        (layer) => !isElementGroupLayer(layer) && layer.name.trim().toLowerCase() === trimmed.toLowerCase(),
+      )
+      if (existing) {
+        const merged = { ...existing, tags: Array.from(new Set([...existing.tags, ...tags])) }
+        const updated = await api.workspace.views.layers.update(viewId, existing.id, merged)
+        clearEditHistory()
+        setLayers((previous) => previous.map((layer) => (layer.id === existing.id ? updated : layer)))
+        return
+      }
       const layer = await api.workspace.views.layers.create(viewId, { name, tags, color })
       clearEditHistory()
       setLayers(prev => [...prev, layer])
     } catch (e) {
       toast({ status: 'error', title: 'Failed to create layer', description: String(e) })
     }
-  }, [clearEditHistory, viewId, toast])
+  }, [clearEditHistory, layers, viewId, toast])
 
   const handleCreateTag = useCallback(async (tag: string, color?: string, description?: string) => {
     const name = tag.trim()
@@ -1972,9 +1985,26 @@ function ViewEditorInner({
     const tags = new Set<string>()
     viewElements.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t)) tags.add(t) }))
     allElements.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t)) tags.add(t) }))
+    connectors.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t)) tags.add(t) }))
     Object.keys(tagColors).forEach((t) => { if (!isElementGroupTag(t)) tags.add(t) })
     return Array.from(tags).sort((a, b) => a.localeCompare(b))
-  }, [allElements, tagColors, viewElements])
+  }, [allElements, connectors, tagColors, viewElements])
+
+  const availableGroups = useMemo(
+    () => layers
+      .filter((layer) => isElementGroupLayer(layer))
+      .map((layer) => layer.name.trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b)),
+    [layers],
+  )
+
+  const elementGroups = useMemo(
+    () => layers
+      .filter((layer) => isElementGroupLayer(layer))
+      .map((layer) => ({ tag: layer.tags[0], name: layer.name, color: layer.color ?? null })),
+    [layers],
+  )
 
   const defaultGroupColor = useMemo(() => pickUnusedColor([
     ...Object.values(tagColors).map((tag) => tag.color),
@@ -2388,53 +2418,68 @@ function ViewEditorInner({
     const label = name.trim()
     if (!label) return
 
-    const groupTag = createElementGroupTag()
     const beforeElements = selectedCanvasElementIds
       .map((elementId) => resolveElementForUpdate(elementId, selectedElement, allElements, viewElements))
       .filter((element): element is WorkspaceElement => element !== null)
     if (beforeElements.length === 0) return
 
+    const existingGroup = layers.find(
+      (layer) => isElementGroupLayer(layer) && layer.name.trim().toLowerCase() === label.toLowerCase(),
+    )
+    const groupTags = existingGroup ? existingGroup.tags : [createElementGroupTag()]
     const afterElements = beforeElements.map((element) => ({
       ...element,
-      tags: Array.from(new Set([...(element.tags ?? []), groupTag])),
+      tags: Array.from(new Set([...(element.tags ?? []), ...groupTags])),
     }))
     let createdLayer: import('../../types').ViewLayer | null = null
     setIsCreatingGroup(true)
 
     try {
-      createdLayer = await api.workspace.views.layers.create(viewId, {
-        name: label,
-        tags: [groupTag],
-        color,
-      })
+      if (!existingGroup) {
+        createdLayer = await api.workspace.views.layers.create(viewId, {
+          name: label,
+          tags: groupTags,
+          color,
+        })
+      }
       const savedElements = await Promise.all(afterElements.map((element) =>
         api.elements.update(element.id, elementUpdatePayload(element))
       ))
       savedElements.forEach(applyElementSaved)
       await refreshElements()
-      setLayers((previous) => [...previous.filter((layer) => !layer.tags.includes(groupTag)), createdLayer!])
+      if (createdLayer) {
+        const layer = createdLayer
+        setLayers((previous) => [...previous.filter((item) => !item.tags.includes(groupTags[0])), layer])
+      }
 
-      let currentLayer = createdLayer
       pushEditAction({
         undo: async () => {
-          await api.workspace.orgs.tagColors.delete(groupTag)
-          await api.workspace.views.layers.delete(viewId, currentLayer.id)
-          setLayers((previous) => previous.filter((layer) => layer.id !== currentLayer.id))
-          setTagColors((previous) => {
-            const next = { ...previous }
-            delete next[groupTag]
-            return next
-          })
+          if (createdLayer) {
+            await api.workspace.orgs.tagColors.delete(groupTags[0])
+            await api.workspace.views.layers.delete(viewId, createdLayer.id)
+            setLayers((previous) => previous.filter((layer) => layer.id !== createdLayer!.id))
+            setTagColors((previous) => {
+              const next = { ...previous }
+              delete next[groupTags[0]]
+              return next
+            })
+          }
+          const restored = await Promise.all(beforeElements.map((element) =>
+            api.elements.update(element.id, elementUpdatePayload(element))
+          ))
+          restored.forEach(applyElementSaved)
           await refreshElements()
         },
         redo: async () => {
-          const recreatedLayer = await api.workspace.views.layers.create(viewId, {
-            name: label,
-            tags: [groupTag],
-            color,
-          })
-          currentLayer = recreatedLayer
-          setLayers((previous) => [...previous.filter((layer) => !layer.tags.includes(groupTag)), recreatedLayer])
+          if (createdLayer) {
+            const recreatedLayer = await api.workspace.views.layers.create(viewId, {
+              name: label,
+              tags: groupTags,
+              color,
+            })
+            createdLayer = recreatedLayer
+            setLayers((previous) => [...previous.filter((layer) => !layer.tags.includes(groupTags[0])), recreatedLayer])
+          }
           const saved = await Promise.all(afterElements.map((element) =>
             api.elements.update(element.id, elementUpdatePayload(element))
           ))
@@ -2443,8 +2488,8 @@ function ViewEditorInner({
         },
       })
     } catch (error) {
-      await api.workspace.orgs.tagColors.delete(groupTag).catch(() => undefined)
       if (createdLayer) {
+        await api.workspace.orgs.tagColors.delete(groupTags[0]).catch(() => undefined)
         await api.workspace.views.layers.delete(viewId, createdLayer.id).catch(() => undefined)
         setLayers((previous) => previous.filter((layer) => layer.id !== createdLayer?.id))
       }
@@ -2457,10 +2502,12 @@ function ViewEditorInner({
     allElements,
     applyElementSaved,
     canEdit,
+    layers,
     pushEditAction,
     refreshElements,
     selectedCanvasElementIds,
     selectedElement,
+    setLayers,
     setTagColors,
     toast,
     viewElements,
@@ -4424,6 +4471,7 @@ function ViewEditorInner({
             <SelectionBulkBar
               count={drawingMode ? 0 : selectedCanvasElementIds.length}
               availableTags={availableTags}
+              availableGroups={availableGroups}
               selectedTagCounts={selectedCanvasTagCounts}
               tagColors={tagColors}
               defaultGroupColor={defaultGroupColor}
@@ -4590,6 +4638,7 @@ function ViewEditorInner({
           parentLinks={selectedElement ? (parentLinksMap[selectedElement.id] || EMPTY_LINKS) : EMPTY_LINKS}
           hasBackdrop={isMobileLayout}
           availableTags={availableTags}
+          groups={elementGroups}
           noFocusLock={!!pendingElement || !!textEditorState}
           elementPanelAfterContentSlot={resolvedElementPanelAfterContentSlot}
         />
@@ -4601,7 +4650,9 @@ function ViewEditorInner({
           orgId={''}
           onSave={handleConnectorPanelSave} autoSave
           onDelete={handleConnectorDeleteInPanel}
+          availableTags={availableTags}
           visibilityOverrideDelta={overrideDeltaFor('connector', selectedEdge?.id)}
+          onVisibilityOverrideDeltaChange={(id, delta) => handleVisibilityOverrideDeltaChange('connector', id, delta)}
           onPromoteVisibility={(id) => handleVisibilityOverride('connector', id, 'promote')}
           onDemoteVisibility={(id) => handleVisibilityOverride('connector', id, 'demote')}
           onResetVisibility={(id) => handleVisibilityOverride('connector', id, 'reset')}

@@ -38,6 +38,7 @@ interface Props {
   selectedElementTags?: string[]
   onToggleTagOnElement?: (tag: string) => void
   namingPopover?: { isOpen: boolean; defaultName: string }
+  availableNames?: string[]
   onConfirmNaming?: (name: string) => void
   onCloseNaming?: () => void
 }
@@ -60,6 +61,7 @@ export const LayerItem: React.FC<Props> = ({
   selectedElementTags,
   onToggleTagOnElement,
   namingPopover,
+  availableNames,
   onConfirmNaming,
   onCloseNaming,
 }) => {
@@ -139,7 +141,7 @@ export const LayerItem: React.FC<Props> = ({
                 onToggleActive()
               }}
             />
-            
+
             <Popover
               isOpen={isColorOpen}
               onClose={onColorClose}
@@ -166,7 +168,7 @@ export const LayerItem: React.FC<Props> = ({
 
             <VStack align="start" spacing={0} flex={1} minW={0}>
               <Text fontSize="xs" fontWeight="600" color="white" isTruncated>
-                {layer.name}
+                {isElementGroup ? `group: ${layer.name}` : layer.name}
               </Text>
               <Text fontSize="10px" color="gray.500">
                 {isElementGroup ? `${tagCount} elements` : `${layer.tags.length} tags · ${tagCount} elements`}
@@ -188,6 +190,7 @@ export const LayerItem: React.FC<Props> = ({
             onClose={onCloseNaming || (() => {})}
             onConfirm={onConfirmNaming}
             defaultName={namingPopover.defaultName}
+            availableNames={availableNames}
           />
         )}
       </Popover>

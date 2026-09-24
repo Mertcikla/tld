@@ -102,7 +102,7 @@ describe('SelectionBulkBar groups', () => {
     expect(renderer.root.findAllByProps({ 'data-testid': 'vieweditor-selection-bulk-bar' })).toHaveLength(0)
   })
 
-  it('allows a multi-element selection to be grouped with a palette color', async () => {
+  it('creates a group from the typed name', async () => {
     const onCreateGroup = vi.fn(async () => undefined)
     const renderer = renderBulkBar({ count: 2, onCreateGroup })
 
@@ -112,20 +112,35 @@ describe('SelectionBulkBar groups', () => {
     act(() => {
       renderer.root.findByProps({ 'data-testid': 'selection-bulk-group' }).props.onClick()
     })
-    act(() => {
-      renderer.root.findByProps({ 'data-testid': 'selection-bulk-group-color' }).props.onClick()
-    })
-    act(() => {
-      renderer.root.findByProps({ bg: '#48BB78' }).props.onClick()
-    })
     const nameInput = renderer.root.findByProps({ 'data-testid': 'selection-bulk-group-name' })
     act(() => nameInput.props.onChange({ target: { value: 'Payments' } }))
     await act(async () => {
-      await renderer.root.findByProps({ 'data-testid': 'selection-bulk-group-create' }).props.onClick()
+      renderer.root
+        .findByProps({ 'data-testid': 'selection-bulk-group-name' })
+        .props.onKeyDown({ key: 'Enter', preventDefault: vi.fn() })
     })
 
-    expect(onCreateGroup).toHaveBeenCalledWith('Payments', '#48BB78')
+    expect(onCreateGroup).toHaveBeenCalledWith('Payments', '#4299E1')
     expect(renderer.root.findAllByProps({ type: 'color' })).toHaveLength(0)
+  })
+
+  it('searches existing groups and joins the selected one', async () => {
+    const onCreateGroup = vi.fn(async () => undefined)
+    const renderer = renderBulkBar({ count: 2, onCreateGroup, availableGroups: ['Payments', 'Platform'] })
+
+    const nameInput = renderer.root.findByProps({ 'data-testid': 'selection-bulk-group-name' })
+    act(() => nameInput.props.onChange({ target: { value: 'Pay' } }))
+
+    const existing = renderer.root.findAll(
+      (node) => typeof node.type === 'string' && node.props['data-testid'] === 'selection-bulk-group-existing-option',
+    )
+    expect(existing).toHaveLength(1)
+
+    await act(async () => {
+      existing[0].props.onMouseDown({ preventDefault: vi.fn() })
+    })
+
+    expect(onCreateGroup).toHaveBeenCalledWith('Payments', '#4299E1')
   })
 })
 

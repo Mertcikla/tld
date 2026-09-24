@@ -459,6 +459,69 @@ func TestWorkspaceService_UpdateConnectorCanClearLabel(t *testing.T) {
 	}
 }
 
+func TestWorkspaceService_UpdateConnectorClearsTags(t *testing.T) {
+	existing := &diagv1.Connector{
+		Id: 7, ViewId: 3, SourceElementId: 4, TargetElementId: 5,
+		Direction: "forward", Style: "bezier", Tags: []string{"runtime"},
+	}
+	store := &contractStore{
+		getConnector: func(context.Context, int32, uuid.UUID) (*diagv1.Connector, error) {
+			return existing, nil
+		},
+		updateConnector: func(_ context.Context, id int32, _ uuid.UUID, input ConnectorInput) (*diagv1.Connector, error) {
+			if id != 7 {
+				t.Fatalf("connector id = %d, want 7", id)
+			}
+			if input.Tags == nil || len(input.Tags) != 0 {
+				t.Fatalf("connector tags = %#v, want non-nil empty slice to clear", input.Tags)
+			}
+			return &diagv1.Connector{
+				Id: id, ViewId: input.ViewID, SourceElementId: input.SourceID, TargetElementId: input.TargetID,
+				Direction: input.Direction, Style: input.Style, Tags: input.Tags,
+			}, nil
+		},
+	}
+	service := &WorkspaceService{Store: store, Hooks: &recordingHooks{}}
+
+	if _, err := service.UpdateConnector(context.Background(), connect.NewRequest(&diagv1.UpdateConnectorRequest{
+		ConnectorId: 7,
+	})); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkspaceService_UpdateConnectorForwardsTags(t *testing.T) {
+	existing := &diagv1.Connector{
+		Id: 7, ViewId: 3, SourceElementId: 4, TargetElementId: 5,
+		Direction: "forward", Style: "bezier", Tags: []string{"runtime"},
+	}
+	store := &contractStore{
+		getConnector: func(context.Context, int32, uuid.UUID) (*diagv1.Connector, error) {
+			return existing, nil
+		},
+		updateConnector: func(_ context.Context, id int32, _ uuid.UUID, input ConnectorInput) (*diagv1.Connector, error) {
+			if id != 7 {
+				t.Fatalf("connector id = %d, want 7", id)
+			}
+			if len(input.Tags) != 2 || input.Tags[0] != "critical" || input.Tags[1] != "edge" {
+				t.Fatalf("connector tags = %#v, want [critical edge]", input.Tags)
+			}
+			return &diagv1.Connector{
+				Id: id, ViewId: input.ViewID, SourceElementId: input.SourceID, TargetElementId: input.TargetID,
+				Direction: input.Direction, Style: input.Style, Tags: input.Tags,
+			}, nil
+		},
+	}
+	service := &WorkspaceService{Store: store, Hooks: &recordingHooks{}}
+
+	if _, err := service.UpdateConnector(context.Background(), connect.NewRequest(&diagv1.UpdateConnectorRequest{
+		ConnectorId: 7,
+		Tags:        []string{"critical", "edge"},
+	})); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkspaceService_UpdateConnectorNormalizesLegacyStoredStyle(t *testing.T) {
 	existing := &diagv1.Connector{
 		Id: 7, ViewId: 3, SourceElementId: 4, TargetElementId: 5,

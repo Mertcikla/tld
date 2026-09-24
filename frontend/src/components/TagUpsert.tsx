@@ -5,13 +5,17 @@ import { isElementGroupTag } from '../utils/elementGroups'
 interface Props {
   currentTags: string[]
   availableTags: string[]
+  groups?: { tag: string; name: string; color?: string | null }[]
   onAddTag: (tag: string) => void
   isReadOnly?: boolean
 }
 
+const GROUP_PREFIX = 'group:'
+
 export default function TagUpsert({
   currentTags,
   availableTags,
+  groups = [],
   onAddTag,
   isReadOnly = false,
 }: Props) {
@@ -19,29 +23,52 @@ export default function TagUpsert({
   const [activeIndex, setActiveIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const trimmed = query.trim()
+  const lower = trimmed.toLowerCase()
+  const isGroupQuery = lower.startsWith(GROUP_PREFIX)
+  const groupTerm = isGroupQuery ? lower.slice(GROUP_PREFIX.length).trim() : ''
+
   const filtered = (() => {
-    if (!query.trim()) return []
-    const q = query.toLowerCase()
+    if (!trimmed || isGroupQuery) return []
+    const q = lower
     return availableTags
       .filter((tag) => !isElementGroupTag(tag))
       .filter((t) => t.toLowerCase().includes(q) && !currentTags.includes(t))
       .slice(0, 8)
   })()
 
+  const groupMatches = isGroupQuery
+    ? groups
+      .filter((group) => !currentTags.includes(group.tag))
+      .filter((group) => (
+        !groupTerm
+        || group.name.toLowerCase().includes(groupTerm)
+        || group.tag.toLowerCase().includes(groupTerm)
+      ))
+      .slice(0, 8)
+    : []
+
   type ResultItem =
     | { kind: 'new'; label: string }
     | { kind: 'existing'; tag: string }
+    | { kind: 'group'; tag: string; name: string; color?: string | null }
 
   const results: ResultItem[] = []
-  
-  if (query.trim() && !isElementGroupTag(query.trim()) && !currentTags.includes(query.trim())) {
-    results.push({ kind: 'new', label: query.trim() })
+
+  if (!isGroupQuery && trimmed && !isElementGroupTag(trimmed) && !currentTags.includes(trimmed)) {
+    results.push({ kind: 'new', label: trimmed })
   }
-  
-  filtered.forEach(tag => {
-    if (tag.toLowerCase() !== query.trim().toLowerCase()) {
-      results.push({ kind: 'existing', tag })
-    }
+
+  if (!isGroupQuery) {
+    filtered.forEach(tag => {
+      if (tag.toLowerCase() !== lower) {
+        results.push({ kind: 'existing', tag })
+      }
+    })
+  }
+
+  groupMatches.forEach((group) => {
+    results.push({ kind: 'group', tag: group.tag, name: group.name, color: group.color })
   })
 
   useEffect(() => { setActiveIndex(0) }, [query])
@@ -62,8 +89,8 @@ export default function TagUpsert({
       e.preventDefault()
       if (results.length > 0) {
         confirm(activeIndex)
-      } else if (query.trim() && !currentTags.includes(query.trim())) {
-        onAddTag(query.trim())
+      } else if (!isGroupQuery && trimmed && !currentTags.includes(trimmed)) {
+        onAddTag(trimmed)
         setQuery('')
       }
       return 
@@ -87,7 +114,7 @@ export default function TagUpsert({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Search or create tag..."
+          placeholder={groups.length > 0 ? 'Search or create tag, or "group:"…' : 'Search or create tag...'}
           size="sm"
           bg="blackAlpha.300"
           border="1px solid"
@@ -117,7 +144,7 @@ export default function TagUpsert({
             <VStack spacing={0} align="stretch">
               {results.map((item, i) => (
                 <Box
-                  data-testid={item.kind === 'new' ? 'tag-upsert-create-option' : 'tag-upsert-existing-option'}
+                  data-testid={item.kind === 'new' ? 'tag-upsert-create-option' : item.kind === 'group' ? 'tag-upsert-group-option' : 'tag-upsert-existing-option'}
                   key={i}
                   px={3}
                   py={2}
@@ -131,6 +158,12 @@ export default function TagUpsert({
                     <HStack spacing={1.5}>
                       <Text fontSize="10px" color="var(--accent)" fontWeight="bold">+ Create</Text>
                       <Text fontSize="xs" color="white" noOfLines={1}>{item.label}</Text>
+                    </HStack>
+                  ) : item.kind === 'group' ? (
+                    <HStack spacing={1.5}>
+                      <Box w="7px" h="7px" rounded="full" bg={item.color ?? 'var(--accent)'} flexShrink={0} />
+                      <Text fontSize="xs" color="white" noOfLines={1}>{item.name}</Text>
+                      <Text fontSize="10px" color="whiteAlpha.500" flexShrink={0}>Group</Text>
                     </HStack>
                   ) : (
                     <Text fontSize="xs" color="gray.200" noOfLines={1}>{item.tag}</Text>

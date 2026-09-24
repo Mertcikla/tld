@@ -322,6 +322,7 @@ export interface ElementPanelProps extends ElementPanelSlots {
   parentLinks?: ViewConnector[]
   hasBackdrop?: boolean
   availableTags?: string[]
+  groups?: { tag: string; name: string; color?: string | null }[]
   noFocusLock?: boolean
   isInline?: boolean
   actions?: ReactNode
@@ -352,6 +353,7 @@ function ElementPanel({
   parentLinks = [],
   hasBackdrop = true,
   availableTags = [],
+  groups = [],
   noFocusLock,
   elementPanelAfterContentSlot,
   isInline = false,
@@ -1626,8 +1628,9 @@ function ElementPanel({
             <FormControl isDisabled={isReadOnly}>
               <FormLabel>Tags</FormLabel>
               <TagUpsert
-                currentTags={tags.filter((tag) => !isElementGroupTag(tag))}
+                currentTags={tags}
                 availableTags={availableTags}
+                groups={groups}
                 onAddTag={(tag) => {
                   if (!tags.includes(tag)) {
                     const nextTags = [...tags, tag]
@@ -1652,6 +1655,24 @@ function ElementPanel({
                     </Tag>
                   </WrapItem>
                 ))}
+                {tags.filter(isElementGroupTag).map((groupTag) => {
+                  const group = groups.find((entry) => entry.tag === groupTag)
+                  return (
+                    <WrapItem key={groupTag}>
+                      <Tag data-testid="element-panel-group-chip" size="sm" variant="subtle" bg="whiteAlpha.100" border="1px solid" borderColor="whiteAlpha.200">
+                        <Box w="7px" h="7px" rounded="full" bg={group?.color ?? 'var(--accent)'} mr={1.5} />
+                        <TagLabel color="white">{`group:${group?.name ?? 'Group'}`}</TagLabel>
+                        {!isReadOnly && (
+                          <TagCloseButton data-testid="element-panel-group-remove" onClick={() => {
+                            const nextTags = tags.filter((t) => t !== groupTag)
+                            setTags(nextTags)
+                            scheduleAutoSave({ tags: nextTags })
+                          }} />
+                        )}
+                      </Tag>
+                    </WrapItem>
+                  )
+                })}
               </Wrap>
             </FormControl>
             {showNoiseGateControls || (isEdit && canEdit && onMerge) ? (

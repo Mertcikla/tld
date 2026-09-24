@@ -157,6 +157,7 @@ export default function LayoutSection({ view, canEdit, onUnsupportedMutation, on
             direction: edge.direction || undefined,
             style: edge.style === 'default' ? 'bezier' : (edge.style || 'bezier'),
             url: edge.url || undefined,
+            tags: edge.tags ?? [],
           }))
         }
       }

@@ -158,6 +158,15 @@ export const TagManager: React.FC<Props> = ({
     }
   }
 
+  const availableGroupNames = React.useMemo(
+    () => layers
+      .filter((layer) => !isElementGroupLayer(layer))
+      .map((layer) => layer.name.trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b)),
+    [layers],
+  )
+
   const visibleTags = availableTags.filter((tag) => !isElementGroupTag(tag))
   const usedTags = visibleTags.filter(tag => (tagCounts[tag] || 0) > 0)
   const unusedTags = visibleTags.filter(tag => (tagCounts[tag] || 0) === 0)
@@ -291,6 +300,7 @@ export const TagManager: React.FC<Props> = ({
                             onDropTag={(dragged: string) => handleCreateGroup(tag, dragged, tag)}
                             onDropLayer={(draggedId: number) => handleCreateGroupFromLayer(tag, draggedId)}
                             namingPopover={namingPopover.targetTag === tag ? namingPopover : undefined}
+                            availableNames={availableGroupNames}
                             onConfirmNaming={handleConfirmNaming}
                             onCloseNaming={() => setNamingPopover(prev => ({ ...prev, isOpen: false, targetTag: null }))}
                             isVisible={!hiddenLayerTags.includes(tag)}
@@ -343,6 +353,7 @@ export const TagManager: React.FC<Props> = ({
                                 onDropTag={(dragged: string) => handleCreateGroup(tag, dragged, tag)}
                                 onDropLayer={(draggedId: number) => handleCreateGroupFromLayer(tag, draggedId)}
                                 namingPopover={namingPopover.targetTag === tag ? namingPopover : undefined}
+                                availableNames={availableGroupNames}
                                 onConfirmNaming={handleConfirmNaming}
                                 onCloseNaming={() => setNamingPopover(prev => ({ ...prev, isOpen: false, targetTag: null }))}
                                 onSetColor={(color) => onCreateTag(tag, color)}
@@ -379,6 +390,7 @@ export const TagManager: React.FC<Props> = ({
                 selectedElementTags={selectedElement?.tags}
                 onToggleTagOnElement={onToggleTagOnElement}
                 namingPopover={namingPopover.targetLayerId === layer.id ? namingPopover : undefined}
+                availableNames={availableGroupNames}
                 onConfirmNaming={handleConfirmNaming}
                 onCloseNaming={() => setNamingPopover(prev => ({ ...prev, isOpen: false, targetLayerId: null }))}
               />
@@ -402,6 +414,7 @@ export const TagManager: React.FC<Props> = ({
                             onDropTag={(dragged: string) => handleCreateGroup(tag, dragged, tag)}
                             onDropLayer={(draggedId: number) => handleCreateGroupFromLayer(tag, draggedId)}
                             namingPopover={namingPopover.targetTag === tag ? namingPopover : undefined}
+                            availableNames={availableGroupNames}
                             onConfirmNaming={handleConfirmNaming}
                             onCloseNaming={() => setNamingPopover(prev => ({ ...prev, isOpen: false, targetTag: null }))}
                             isVisible={!hiddenLayerTags.includes(tag)}
@@ -452,6 +465,7 @@ export const TagManager: React.FC<Props> = ({
                                 onDropTag={(dragged: string) => handleCreateGroup(tag, dragged, tag)}
                                 onDropLayer={(draggedId: number) => handleCreateGroupFromLayer(tag, draggedId)}
                                 namingPopover={namingPopover.targetTag === tag ? namingPopover : undefined}
+                                availableNames={availableGroupNames}
                                 onConfirmNaming={handleConfirmNaming}
                                 onCloseNaming={() => setNamingPopover(prev => ({ ...prev, isOpen: false, targetTag: null }))}
                                 onSetColor={(color) => onCreateTag(tag, color)}

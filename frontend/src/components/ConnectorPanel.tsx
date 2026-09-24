@@ -2,7 +2,6 @@ import { memo, useEffect, useRef, useState, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import type { ConnectorPanelSlots } from '../slots'
 import {
-  Badge,
   Box,
   Button,
   Divider,
@@ -11,6 +10,11 @@ import {
   HStack,
   SimpleGrid,
   Input,
+  Slider,
+  SliderFilledTrack,
+  SliderThumb,
+  SliderTrack,
+  Text,
   Textarea,
   Tag,
   TagCloseButton,
@@ -80,6 +84,7 @@ export interface ConnectorPanelProps extends ConnectorPanelSlots {
   autoSave?: boolean
   onDelete: (edgeId: number, ownerViewId?: number) => void
   visibilityOverrideDelta?: number
+  onVisibilityOverrideDeltaChange?: (id: number, delta: number) => Promise<void> | void
   onPromoteVisibility?: (id: number) => Promise<void> | void
   onDemoteVisibility?: (id: number) => Promise<void> | void
   onResetVisibility?: (id: number) => Promise<void> | void
@@ -127,13 +132,33 @@ const draftFromConnector = (connector: Connector): ConnectorDraft => ({
   tags: connector.tags ?? [],
 })
 
+const NOISE_GATE_STOPS = [
+  { value: -2, label: 'Quiet' },
+  { value: -1, label: 'Lean' },
+  { value: 0, label: 'Normal' },
+  { value: 1, label: 'Rich' },
+  { value: 2, label: 'Full' },
+] as const
+
+function clampNoiseGateLevel(level: number) {
+  return Math.max(-2, Math.min(2, level))
+}
+
+function noiseGateLevelFromVisibilityDelta(delta: number) {
+  return clampNoiseGateLevel(-delta)
+}
+
+function visibilityDeltaFromNoiseGateLevel(level: number) {
+  return -clampNoiseGateLevel(level)
+}
+
 /**
  * Name: Edit Connector Panel
  * Role: Opens when clicked on a connector and displays its fields, allowing for editing. Same as Edit Element Panel but for connectors.
  * Location: Right side of the screen on desktop. Overlays screen on mobile.
  * Aliases: Connector Properties, Connector Details.
  */
-function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = false, onDelete, visibilityOverrideDelta = 0, onPromoteVisibility, onDemoteVisibility, onResetVisibility, hasBackdrop = true, noFocusLock, availableTags = [], connectorPanelAfterContentSlot, isInline = false, actions }: ConnectorPanelProps) {
+function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = false, onDelete, visibilityOverrideDelta = 0, onVisibilityOverrideDeltaChange, onPromoteVisibility, onDemoteVisibility, onResetVisibility, hasBackdrop = true, noFocusLock, availableTags = [], connectorPanelAfterContentSlot, isInline = false, actions }: ConnectorPanelProps) {
   const { canEdit, viewId } = useViewEditorContext()
   const isReadOnly = !canEdit
   const autoSaveEdit = autoSave && !!connector && !isReadOnly
@@ -145,8 +170,46 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
   const [connectorType, setConnectorType] = useState('bezier')
   const [url, setUrl] = useState('')
   const [tags, setTags] = useState<string[]>([])
+  const [draftNoiseGateLevel, setDraftNoiseGateLevel] = useState(() => noiseGateLevelFromVisibilityDelta(visibilityOverrideDelta))
   const [loading, setLoading] = useState(false)
   const confirmDelete = useDisclosure()
+
+  useEffect(() => {
+    setDraftNoiseGateLevel(noiseGateLevelFromVisibilityDelta(visibilityOverrideDelta))
+  }, [connector?.id, visibilityOverrideDelta])
+
+  const handleNoiseGateChange = useCallback(async (nextLevel: number) => {
+    if (!connector) return
+
+    const nextDelta = visibilityDeltaFromNoiseGateLevel(nextLevel)
+    const currentDelta = visibilityDeltaFromNoiseGateLevel(noiseGateLevelFromVisibilityDelta(visibilityOverrideDelta))
+
+    try {
+      if (onVisibilityOverrideDeltaChange) {
+        await onVisibilityOverrideDeltaChange(connector.id, nextDelta)
+        return
+      }
+
+      if (nextDelta === currentDelta) return
+
+      let delta = currentDelta
+      while (delta < nextDelta) {
+        if (!onPromoteVisibility) break
+        await onPromoteVisibility(connector.id)
+        delta += 1
+      }
+      while (delta > nextDelta) {
+        if (!onDemoteVisibility) break
+        await onDemoteVisibility(connector.id)
+        delta -= 1
+      }
+      if (delta !== nextDelta && nextDelta === 0 && onResetVisibility) {
+        await onResetVisibility(connector.id)
+      }
+    } catch {
+      setDraftNoiseGateLevel(noiseGateLevelFromVisibilityDelta(visibilityOverrideDelta))
+    }
+  }, [connector, onDemoteVisibility, onPromoteVisibility, onResetVisibility, onVisibilityOverrideDeltaChange, visibilityOverrideDelta])
 
   const lastSavedFingerprintRef = useRef<string>('')
   const savingRef = useRef(false)
@@ -502,29 +565,61 @@ function ConnectorPanel({ isOpen, onClose, connector, orgId, onSave, autoSave = 
               </Wrap>
             </FormControl>
 
-            {connector && (onPromoteVisibility || onDemoteVisibility || onResetVisibility) && (
-              <Box borderTop="1px solid" borderColor="whiteAlpha.100" pt={2}>
-                <HStack justify="space-between" mb={2}>
-                  <FormLabel fontSize="xs" fontWeight="bold" color="gray.400" mb={0}>DENSITY</FormLabel>
-                  {visibilityOverrideDelta !== 0 && (
-                    <Badge colorScheme={visibilityOverrideDelta > 0 ? 'teal' : 'orange'} variant="subtle">
-                      {visibilityOverrideDelta > 0 ? `+${visibilityOverrideDelta}` : visibilityOverrideDelta}
-                    </Badge>
-                  )}
+            {connector && (onVisibilityOverrideDeltaChange || onPromoteVisibility || onDemoteVisibility || onResetVisibility) && (
+              <Box borderTop="1px solid" borderColor="whiteAlpha.100" pt={3}>
+                <FormLabel fontSize="sm" fontFamily="var(--chakra-fonts-heading)" mb={0.5}>
+                  Noise Gate
+                </FormLabel>
+                <HStack justify="space-between" align="flex-start" mb={2.5}>
+                  <Text fontSize="xs" color="gray.500">Choose when this connector starts appearing when filtering is enabled.</Text>
                 </HStack>
-                <HStack spacing={2}>
-                  <Button variant="subtle" size="sm" color="teal.200" _hover={{ bg: 'teal.900', color: 'teal.100' }} onClick={() => onPromoteVisibility?.(connector.id)} flex={1} isDisabled={isReadOnly}>
-                    Promote
-                  </Button>
-                  <Button variant="subtle" size="sm" color="orange.200" _hover={{ bg: 'orange.900', color: 'orange.100' }} onClick={() => onDemoteVisibility?.(connector.id)} flex={1} isDisabled={isReadOnly}>
-                    Demote
-                  </Button>
-                  {visibilityOverrideDelta !== 0 && (
-                    <Button variant="ghost" size="sm" onClick={() => onResetVisibility?.(connector.id)} isDisabled={isReadOnly}>
-                      Reset
-                    </Button>
-                  )}
-                </HStack>
+                <Box px={1} pt={1} pb={0.5}>
+                  <Slider
+                    aria-label="Connector noise gate"
+                    min={-2}
+                    max={2}
+                    step={1}
+                    value={draftNoiseGateLevel}
+                    onChange={setDraftNoiseGateLevel}
+                    onChangeEnd={(value) => {
+                      setDraftNoiseGateLevel(value)
+                      void handleNoiseGateChange(value)
+                    }}
+                    focusThumbOnChange={false}
+                    isDisabled={isReadOnly}
+                  >
+                    <SliderTrack h="4px" bg="whiteAlpha.200">
+                      <SliderFilledTrack bg="var(--accent)" />
+                    </SliderTrack>
+                    {NOISE_GATE_STOPS.map((stop) => (
+                      <Box
+                        key={stop.value}
+                        position="absolute"
+                        left={`${((stop.value + 2) / 4) * 100}%`}
+                        top="50%"
+                        transform="translate(-50%, -50%)"
+                        w={stop.value === draftNoiseGateLevel ? '6px' : '2px'}
+                        h={stop.value === draftNoiseGateLevel ? '6px' : '10px'}
+                        rounded="full"
+                        bg={draftNoiseGateLevel >= stop.value ? 'var(--accent)' : 'whiteAlpha.500'}
+                        pointerEvents="none"
+                      />
+                    ))}
+                    <SliderThumb boxSize="14px" bg="white" border="2px solid" borderColor="var(--accent)" />
+                  </Slider>
+                  <HStack justify="space-between" mt={2} px={0.5}>
+                    {NOISE_GATE_STOPS.map((stop) => (
+                      <Text
+                        key={stop.value}
+                        fontSize="9px"
+                        fontWeight={stop.value === draftNoiseGateLevel ? 'bold' : 'medium'}
+                        color={stop.value === draftNoiseGateLevel ? 'whiteAlpha.900' : 'whiteAlpha.500'}
+                      >
+                        {stop.label}
+                      </Text>
+                    ))}
+                  </HStack>
+                </Box>
               </Box>
             )}
 

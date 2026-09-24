@@ -1495,6 +1495,7 @@ export function useCanvasInteractions({
         direction: existingData?.direction ?? undefined,
         style: existingData?.style === 'default' ? 'bezier' : (existingData?.style ?? 'bezier'),
         url: existingData?.url ?? undefined, relationship: existingData?.relationship ?? undefined,
+        tags: existingData?.tags ?? [],
       })
       const connector = connectorToConnector(updated)
       upsertConnectorGraphSnapshot(connector)
