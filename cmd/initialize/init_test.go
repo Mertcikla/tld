@@ -23,7 +23,7 @@ func TestInitCmd_CreatesWorkspace(t *testing.T) {
 		t.Errorf("stdout %q does not contain 'Workspace initialized at'", stdout)
 	}
 
-	workspaceCfgPath := filepath.Join(dir, ".tld.yaml")
+	workspaceCfgPath := filepath.Join(dir, ".tld", ".tld.yaml")
 	data, err := os.ReadFile(workspaceCfgPath)
 	if err != nil {
 		t.Fatalf("read .tld.yaml from workspace: %v", err)
@@ -184,7 +184,7 @@ func TestInitCmd_WizardProducesValidYAML(t *testing.T) {
 		t.Fatalf("stdout missing next steps:\n%s", stdout)
 	}
 
-	configPath := filepath.Join(dir, ".tld.yaml")
+	configPath := filepath.Join(dir, ".tld", ".tld.yaml")
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("read .tld.yaml: %v", err)

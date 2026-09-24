@@ -27,6 +27,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/views"
 	watchcmd "github.com/mertcikla/tld/v2/cmd/watch"
 	"github.com/mertcikla/tld/v2/internal/completion"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -80,6 +81,14 @@ YAML cache. Use 'tld pull' to refresh the cache after frontend changes.`,
 	root.PersistentFlags().StringVarP(&wdir, "workspace", "w", defaultWdir, "workspace directory")
 	root.PersistentFlags().StringVar(&outputFormat, "format", "text", "output format: text or json")
 	root.PersistentFlags().BoolVar(&compactJSON, "compact", false, "compact JSON output (no whitespace)")
+
+	// Accept either a content root or a workspace directory for --workspace by
+	// resolving to the nested ".tld" directory when the root itself does not
+	// hold workspace files.
+	root.PersistentPreRunE = func(_ *cobra.Command, _ []string) error {
+		wdir = workspace.ResolveDir(wdir)
+		return nil
+	}
 
 	// Define groups
 	resourceGroup := &cobra.Group{

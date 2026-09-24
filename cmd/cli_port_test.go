@@ -54,7 +54,7 @@ func TestAddCmd_RefOverridesGeneratedSlug(t *testing.T) {
 		t.Fatalf("add: %v", err)
 	}
 
-	elements, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+	elements, err := os.ReadFile(filepath.Join(dir, ".tld", "elements.yaml"))
 	if err != nil {
 		t.Fatalf("read elements.yaml: %v", err)
 	}

@@ -12,6 +12,7 @@ import (
 
 // Load reads the workspace from dir. The global configuration is read from tld.yaml.
 func Load(dir string) (*Workspace, error) {
+	dir = ResolveDir(dir)
 	ws := &Workspace{
 		Dir:        dir,
 		Elements:   make(map[string]*Element),

@@ -460,7 +460,7 @@ func TestAnalyzeCmd_DryRunDoesNotWriteYAML(t *testing.T) {
 	cmd.MustInitWorkspace(t, dir)
 	repoDir := filepath.Join(dir, "app")
 	cmd.InitGitRepo(t, repoDir, "service.go", "package main\nfunc Service() {}\n")
-	before, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+	before, err := os.ReadFile(filepath.Join(dir, ".tld", "elements.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +469,7 @@ func TestAnalyzeCmd_DryRunDoesNotWriteYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("analyze --dry-run: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-	after, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+	after, err := os.ReadFile(filepath.Join(dir, ".tld", "elements.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

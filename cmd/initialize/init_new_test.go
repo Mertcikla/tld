@@ -54,6 +54,39 @@ func TestInitCmd_CreatesTldDirectory(t *testing.T) {
 	}
 }
 
+func TestInitCmd_DotArgCreatesTldDirectory(t *testing.T) {
+	dir := t.TempDir()
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
+
+	// `tld init .` must behave like `tld init`: nest the workspace in ".tld"
+	// and never scatter workspace files across the content root.
+	if _, _, err := cmd.RunCmd(t, ".", "init", "."); err != nil {
+		t.Fatalf("init .: %v", err)
+	}
+
+	tldDir := filepath.Join(dir, ".tld")
+	for _, f := range []string{"elements.yaml", "connectors.yaml", ".tld.yaml"} {
+		if _, err := os.Stat(filepath.Join(tldDir, f)); err != nil {
+			t.Errorf("%s was not created in .tld directory", f)
+		}
+	}
+	for _, f := range []string{"elements.yaml", "connectors.yaml", ".tld.yaml"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); !os.IsNotExist(err) {
+			t.Errorf("%s should not be created in the content root", f)
+		}
+	}
+}
+
 func TestInitCmd_CustomDirectory(t *testing.T) {
 	dir := t.TempDir()
 	configDir := t.TempDir()
@@ -72,15 +105,16 @@ func TestInitCmd_CustomDirectory(t *testing.T) {
 		t.Fatalf("custom directory %s was not created", customDir)
 	}
 
-	// Check if new-model YAML files were created in customDir/
+	// Check if new-model YAML files were created in customDir/.tld/
+	workspaceDir := filepath.Join(customDir, ".tld")
 	for _, f := range []string{"elements.yaml", "connectors.yaml"} {
-		if _, err := os.Stat(filepath.Join(customDir, f)); err != nil {
+		if _, err := os.Stat(filepath.Join(workspaceDir, f)); err != nil {
 			t.Errorf("%s was not created in custom directory", f)
 		}
 	}
 
 	for _, f := range []string{"diagrams.yaml", "objects.yaml", "edges.yaml", "links.yaml"} {
-		if _, err := os.Stat(filepath.Join(customDir, f)); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(workspaceDir, f)); !os.IsNotExist(err) {
 			t.Errorf("legacy file %s should not be created in custom directory", f)
 		}
 	}

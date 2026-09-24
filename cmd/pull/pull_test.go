@@ -121,8 +121,8 @@ func TestPullLocalTarget(t *testing.T) {
 	cmd.MustRunCmd(t, dir, "connect", "--from", "api", "--to", "db", "--label", "queries")
 
 	// 3. Remove YAML files to simulate missing local state
-	elementsPath := filepath.Join(dir, "elements.yaml")
-	connectorsPath := filepath.Join(dir, "connectors.yaml")
+	elementsPath := filepath.Join(dir, ".tld", "elements.yaml")
+	connectorsPath := filepath.Join(dir, ".tld", "connectors.yaml")
 	if err := os.Remove(elementsPath); err != nil {
 		t.Fatal(err)
 	}

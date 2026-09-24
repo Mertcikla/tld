@@ -51,7 +51,7 @@ func TestInspectElementShowsDerivedChildrenAndRelatedConnectors(t *testing.T) {
 func TestInspectAmbiguousRefRequiresType(t *testing.T) {
 	dir := t.TempDir()
 	setupInspectWorkspace(t, dir)
-	path := filepath.Join(dir, "elements.yaml")
+	path := filepath.Join(dir, ".tld", "elements.yaml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

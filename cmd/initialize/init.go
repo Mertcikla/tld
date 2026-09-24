@@ -196,6 +196,27 @@ func generateDefaultWorkspaceConfig(dir string) ([]byte, error) {
 	return yaml.Marshal(&config)
 }
 
+// resolveInitDir maps the optional positional argument to the workspace
+// directory. The argument is treated as a content root: the workspace is always
+// created in the conventional ".tld" subdirectory so that `tld init` and
+// `tld init .` behave identically and never scatter workspace files across a
+// project root. Paths that already name a workspace directory (".tld" or "tld")
+// or an existing workspace are used as-is.
+func resolveInitDir(args []string) string {
+	contentRoot := "."
+	if len(args) > 0 {
+		contentRoot = args[0]
+	}
+	switch filepath.Base(filepath.Clean(contentRoot)) {
+	case ".tld", "tld":
+		return contentRoot
+	}
+	if workspace.IsWorkspaceDir(contentRoot) {
+		return contentRoot
+	}
+	return filepath.Join(contentRoot, ".tld")
+}
+
 func NewInitCmd() *cobra.Command {
 	var wizard bool
 	cmd := &cobra.Command{
@@ -203,10 +224,7 @@ func NewInitCmd() *cobra.Command {
 		Short: "Initialize a new tld workspace",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			dir := ".tld"
-			if len(args) > 0 {
-				dir = args[0]
-			}
+			dir := resolveInitDir(args)
 
 			if err := os.MkdirAll(dir, 0750); err != nil {
 				return fmt.Errorf("create %s: %w", dir, err)

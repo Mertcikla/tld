@@ -14,7 +14,7 @@ func TestAddCmd_DryRunDoesNotMutateWorkspace(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
 
-	elementsPath := filepath.Join(dir, "elements.yaml")
+	elementsPath := filepath.Join(dir, ".tld", "elements.yaml")
 	before, err := os.ReadFile(elementsPath)
 	if err != nil {
 		t.Fatalf("read elements before: %v", err)

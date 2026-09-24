@@ -45,10 +45,10 @@ func TestExportCmd(t *testing.T) {
 	}
 
 	// Verify files
-	if _, err := os.Stat(filepath.Join(dir, "elements.yaml")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, ".tld", "elements.yaml")); os.IsNotExist(err) {
 		t.Error("elements.yaml not created")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "connectors.yaml")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, ".tld", "connectors.yaml")); os.IsNotExist(err) {
 		t.Error("connectors.yaml not created")
 	}
 }

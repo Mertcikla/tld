@@ -103,7 +103,7 @@ func TestConnectCmd_DryRunDoesNotMutateWorkspace(t *testing.T) {
 	dir := t.TempDir()
 	setupWorkspaceForLinks(t, dir)
 
-	connectorsPath := filepath.Join(dir, "connectors.yaml")
+	connectorsPath := filepath.Join(dir, ".tld", "connectors.yaml")
 	before, err := os.ReadFile(connectorsPath)
 	if err != nil {
 		t.Fatalf("read connectors before: %v", err)
