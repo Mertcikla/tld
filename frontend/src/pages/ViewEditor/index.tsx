@@ -2895,7 +2895,7 @@ function ViewEditorInner({
       draggable: !pending.preview,
       selectable: !pending.preview,
       zIndex: Z_ELEMENT_PENDING,
-      style: pending.preview ? { pointerEvents: 'none' } : undefined,
+      style: pending.preview ? { pointerEvents: 'none', visibility: 'visible' } : undefined,
       data: {
         id: -1,
         view_id: viewId,
