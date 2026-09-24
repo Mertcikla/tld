@@ -11,6 +11,7 @@ import type {
 import { resolveViewProxyGraph } from '../../../crossBranch/resolve'
 import { placedElementToLibraryElement } from '../../../store/useStore'
 import { canonicalNodePairKey } from '../pairKey'
+import { Z_CONTEXT_BOUNDARY, Z_CONTEXT_GROUP_ANCHOR, Z_CONTEXT_NODE } from '../../../utils/zOrder'
 import {
   buildContextSummaryForest,
   buildVisibleContextSummaryForest,
@@ -711,7 +712,7 @@ export function useViewContextNeighbours({
       selectable: false,
       draggable: false,
       connectable: false,
-      zIndex: 1,
+      zIndex: Z_CONTEXT_BOUNDARY,
       data: {
         width: boundaryW + totalInset * 2,
         height: boundaryH + totalInset * 2,
@@ -833,7 +834,7 @@ export function useViewContextNeighbours({
           selectable: false,
           draggable: true,
           connectable: false,
-          zIndex: isGroupAnchor && summaryNode.visibleChildIds.length > 0 ? 8 : 6,
+          zIndex: isGroupAnchor && summaryNode.visibleChildIds.length > 0 ? Z_CONTEXT_GROUP_ANCHOR : Z_CONTEXT_NODE,
           data: {
             element_id: summaryNode.elementId,
             name,

@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { BaseEdge, EdgeLabelRenderer, useStore, type EdgeProps } from 'reactflow'
 import { useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
+import { Z_CONNECTOR_LABEL } from '../utils/zOrder'
 
 function getIntersectionPoint(
   nx: number, ny: number, nw: number, nh: number,
@@ -119,6 +120,8 @@ function ProxyConnectorEdge({ id, source, target, selected, style }: EdgeProps) 
     ? (edge.data as { details: { count: number } }).details.count
     : 1
 
+  const labelZIndex = (edge?.data as { labelZIndex?: number } | undefined)?.labelZIndex ?? Z_CONNECTOR_LABEL
+
   return (
     <>
       <BaseEdge
@@ -139,7 +142,7 @@ function ProxyConnectorEdge({ id, source, target, selected, style }: EdgeProps) 
             transform: `translate(-50%, -50%) translate(${labelLayout.x}px, ${labelLayout.y}px)`,
             pointerEvents: 'none',
             opacity: style?.opacity,
-            zIndex: 2,
+            zIndex: labelZIndex,
           }}
         >
           <div

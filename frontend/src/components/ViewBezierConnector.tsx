@@ -3,6 +3,7 @@ import { BaseEdge, EdgeLabelRenderer, useStore, type ConnectionLineComponentProp
 import { measureEdgeLabel, useEdgeLabelLayout } from './ViewEditorEdgeLabelLayout'
 import type { ProxyConnectorDetails } from '../crossBranch/types'
 import { buildViewConnectorPath, handleSideForPosition, positionForHandleSide, routeStyleFromValue } from '../utils/connectorRoute'
+import { Z_CONNECTOR_LABEL } from '../utils/zOrder'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
   DEFAULT_TARGET_HANDLE_SIDE,
@@ -171,6 +172,7 @@ function ViewBezierConnector({
     dy: finalTargetY - finalSourceY,
   })
 
+  const labelZIndex = (data as { labelZIndex?: number } | undefined)?.labelZIndex ?? Z_CONNECTOR_LABEL
   const labelCenterY = labelLayout.y - ((proxyBadgeText || versionBadgeText) ? (stackHeight - labelHeight) / 2 : 0)
   const labelPath = fullText ? ` M ${labelLayout.x - labelWidth / 2},${labelCenterY} L ${labelLayout.x + labelWidth / 2},${labelCenterY}` : ''
   const combinedInteractionPath = `${interactionPath}${labelPath}`
@@ -205,7 +207,7 @@ function ViewBezierConnector({
               transform: `translate(-50%, -50%) translate(${labelLayout.x}px, ${labelLayout.y}px)`,
               pointerEvents: 'none',
               opacity: Number(labelStyle?.opacity ?? 1),
-              zIndex: 2,
+              zIndex: labelZIndex,
               display: 'flex',
               flexDirection: 'column',
               alignItems: 'center',

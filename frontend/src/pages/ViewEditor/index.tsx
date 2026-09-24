@@ -95,6 +95,15 @@ import {
   useViewContextNeighbours,
 } from './hooks/useViewContextNeighbours'
 import { canonicalNodePairKey } from './pairKey'
+import {
+  Z_CONNECTOR,
+  Z_CONNECTOR_ACTIVE,
+  Z_CONNECTOR_LABEL,
+  Z_CONNECTOR_LABEL_ACTIVE,
+  Z_ELEMENT,
+  Z_ELEMENT_ACTIVE,
+  Z_ELEMENT_PENDING,
+} from '../../utils/zOrder'
 import { vscodeBridge } from '../../lib/vscodeBridge'
 import { pickWritableMarkdownFile } from '../../lib/desktop'
 import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
@@ -693,6 +702,52 @@ function ViewEditorInner({
 
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
+  const [hoveredElementId, setHoveredElementId] = useState<string | null>(null)
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
+  const hoveredElementClearRef = useRef<number | null>(null)
+  const hoveredEdgeClearRef = useRef<number | null>(null)
+  const clearHoveredElement = useCallback(() => {
+    if (hoveredElementClearRef.current !== null) window.clearTimeout(hoveredElementClearRef.current)
+    hoveredElementClearRef.current = null
+    setHoveredElementId(null)
+  }, [])
+  const clearHoveredEdge = useCallback(() => {
+    if (hoveredEdgeClearRef.current !== null) window.clearTimeout(hoveredEdgeClearRef.current)
+    hoveredEdgeClearRef.current = null
+    setHoveredEdgeId(null)
+  }, [])
+  const scheduleClearHoveredElement = useCallback(() => {
+    if (hoveredElementClearRef.current !== null) window.clearTimeout(hoveredElementClearRef.current)
+    hoveredElementClearRef.current = window.setTimeout(() => {
+      hoveredElementClearRef.current = null
+      setHoveredElementId(null)
+    }, 60)
+  }, [])
+  const scheduleClearHoveredEdge = useCallback(() => {
+    if (hoveredEdgeClearRef.current !== null) window.clearTimeout(hoveredEdgeClearRef.current)
+    hoveredEdgeClearRef.current = window.setTimeout(() => {
+      hoveredEdgeClearRef.current = null
+      setHoveredEdgeId(null)
+    }, 60)
+  }, [])
+  const handleNodeMouseEnter = useCallback((_: React.MouseEvent, node: RFNode) => {
+    clearHoveredElement()
+    setHoveredElementId(node.id)
+  }, [clearHoveredElement])
+  const handleNodeMouseLeave = useCallback(() => {
+    scheduleClearHoveredElement()
+  }, [scheduleClearHoveredElement])
+  const handleEdgeMouseEnter = useCallback((_: React.MouseEvent, edge: RFEdge) => {
+    clearHoveredEdge()
+    setHoveredEdgeId(edge.id)
+  }, [clearHoveredEdge])
+  const handleEdgeMouseLeave = useCallback(() => {
+    scheduleClearHoveredEdge()
+  }, [scheduleClearHoveredEdge])
+  useEffect(() => () => {
+    if (hoveredElementClearRef.current !== null) window.clearTimeout(hoveredElementClearRef.current)
+    if (hoveredEdgeClearRef.current !== null) window.clearTimeout(hoveredEdgeClearRef.current)
+  }, [])
   const [selectedProxyConnectorDetails, setSelectedProxyConnectorDetails] = useState<ProxyConnectorDetails | null>(null)
   const [suppressedSelectedConnectorHandleHighlightId, setSuppressedSelectedConnectorHandleHighlightId] = useState<number | null>(null)
   const suppressSelectedConnectorHandleHighlight = selectedEdge !== null && suppressedSelectedConnectorHandleHighlightId === selectedEdge.id
@@ -2681,7 +2736,7 @@ function ViewEditorInner({
       dragging: pending.dragging,
       draggable: !pending.preview,
       selectable: !pending.preview,
-      zIndex: 2000,
+      zIndex: Z_ELEMENT_PENDING,
       style: pending.preview ? { pointerEvents: 'none' } : undefined,
       data: {
         id: -1,
@@ -2786,7 +2841,25 @@ function ViewEditorInner({
       }
     }
 
-    if (!hasNodeSel && !hasEdgeSel) return allNodes
+    const activeElementIds = new Set(selectedNodeIds)
+    if (hoveredElementId !== null) activeElementIds.add(hoveredElementId)
+
+    const applyZ = (node: RFNode): RFNode => {
+      if (node.id === PENDING_ELEMENT_NODE_ID || node.type !== 'elementNode') return node
+      const currentZ = node.zIndex ?? Z_ELEMENT
+      const targetZ = activeElementIds.has(node.id) ? Math.max(Z_ELEMENT_ACTIVE, currentZ) : currentZ
+      return targetZ === node.zIndex ? node : { ...node, zIndex: targetZ }
+    }
+
+    if (!hasNodeSel && !hasEdgeSel) {
+      let changed = false
+      const mapped = allNodes.map((n) => {
+        const next = applyZ(n)
+        if (next !== n) changed = true
+        return next
+      })
+      return changed ? mapped : allNodes
+    }
 
     const cache = fadedNodeCacheRef.current
     const isMultiNodeSelection = selectedCanvasElementCount > 1
@@ -2799,18 +2872,18 @@ function ViewEditorInner({
 
     return allNodes.map((n) => {
       if (n.id === PENDING_ELEMENT_NODE_ID) return n
-      const isHighlighted = selectedNodeIds.has(n.id) || selectedEdgeEndPoints.has(n.id) || neighborNodeIds.has(n.id)
-      if (isHighlighted) return withSelectionMeta(n)
+      const isHighlighted = selectedNodeIds.has(n.id) || selectedEdgeEndPoints.has(n.id) || neighborNodeIds.has(n.id) || n.id === hoveredElementId
+      if (isHighlighted) return applyZ(withSelectionMeta(n))
       const cached = cache.get(n)
-      if (cached) return cached
+      if (cached) return applyZ(cached)
       const faded: RFNode = {
         ...n,
         style: { ...n.style, opacity: (Number(n.style?.opacity ?? 1)) * 0.2 },
       }
       cache.set(n, faded)
-      return faded
+      return applyZ(faded)
     })
-  }, [liveContextNodes, rfNodes, pendingElementNode, contextConnectors, rfEdgesWithProxyBadges, selectedCanvasElementCount])
+  }, [liveContextNodes, rfNodes, pendingElementNode, contextConnectors, rfEdgesWithProxyBadges, selectedCanvasElementCount, hoveredElementId])
 
   const pendingPreviewEdges = useMemo((): RFEdge[] => {
     const pending = canvas.pendingElement
@@ -2884,15 +2957,46 @@ function ViewEditorInner({
     let hasEdgeSel = false
     for (const e of allEdges) { if (e.selected) { hasEdgeSel = true; break } }
 
-    if (!hasNodeSel && !hasEdgeSel) return allEdges
+    const activeElementIds = new Set(selectedNodeIds)
+    if (hoveredElementId !== null) activeElementIds.add(hoveredElementId)
+
+    const isEdgeActive = (e: RFEdge) => (
+      e.selected ||
+      (hoveredEdgeId !== null && e.id === hoveredEdgeId) ||
+      activeElementIds.has(e.source) ||
+      activeElementIds.has(e.target)
+    )
+
+    const applyZ = (e: RFEdge): RFEdge => {
+      if (e.id.startsWith('pending-element-edge-')) return e
+      const active = isEdgeActive(e)
+      const targetZ = active ? Z_CONNECTOR_ACTIVE : Z_CONNECTOR
+      const targetLabelZ = active ? Z_CONNECTOR_LABEL_ACTIVE : Z_CONNECTOR_LABEL
+      const currentLabelZ = (e.data as { labelZIndex?: number } | undefined)?.labelZIndex
+      if (e.zIndex === targetZ && currentLabelZ === targetLabelZ) return e
+      return { ...e, zIndex: targetZ, data: { ...(e.data ?? {}), labelZIndex: targetLabelZ } }
+    }
+
+    if (!hasNodeSel && !hasEdgeSel) {
+      let changed = false
+      const mapped = allEdges.map((e) => {
+        const next = applyZ(e)
+        if (next !== e) changed = true
+        return next
+      })
+      return changed ? mapped : allEdges
+    }
 
     const cache = fadedEdgeCacheRef.current
     return allEdges.map((e) => {
       if (e.id.startsWith('pending-element-edge-')) return e
-      const isHighlighted = e.selected || selectedNodeIds.has(e.source) || selectedNodeIds.has(e.target)
-      if (isHighlighted) return e
+      const isHighlighted = e.selected
+        || e.id === hoveredEdgeId
+        || activeElementIds.has(e.source)
+        || activeElementIds.has(e.target)
+      if (isHighlighted) return applyZ(e)
       const cached = cache.get(e)
-      if (cached) return cached
+      if (cached) return applyZ(cached)
       const multiplier = 0.2
       const faded: RFEdge = {
         ...e,
@@ -2903,9 +3007,9 @@ function ViewEditorInner({
         markerStart: fadeMarker(e.markerStart, multiplier),
       }
       cache.set(e, faded)
-      return faded
+      return applyZ(faded)
     })
-  }, [contextConnectors, rfEdgesWithProxyBadges, pendingPreviewEdges, liveContextNodes, rfNodes, pendingElementNode])
+  }, [contextConnectors, rfEdgesWithProxyBadges, pendingPreviewEdges, liveContextNodes, rfNodes, pendingElementNode, hoveredElementId, hoveredEdgeId])
 
   // Route onNodesChange: context node changes (dimensions, selection) go to
   // liveContextNodes state; main node changes go to the canvas handler.
@@ -3941,13 +4045,14 @@ function ViewEditorInner({
               onTouchMove={onTouchMove}
               onTouchEnd={onTouchEnd}
               sx={{
+                // NOTE: the edge label renderer intentionally has no z-index so it
+                // does not create a stacking context; each label carries its own
+                // z-index (see ViewBezierConnector / ProxyConnectorEdge) so labels
+                // can be interleaved with elements.
                 '.react-flow__nodes, .react-flow__edges, .react-flow__edgelabel-renderer': {
                   opacity: initialViewportReady ? 1 : 0,
                   pointerEvents: initialViewportReady ? undefined : 'none',
                   transition: initialViewportReady ? 'opacity 80ms ease-out' : 'none',
-                },
-                '.react-flow__edgelabel-renderer': {
-                  zIndex: 1002,
                 },
               }}
             >
@@ -3959,6 +4064,9 @@ function ViewEditorInner({
                 onNodeDragStart={onNodeDragStart} onNodeDrag={onNodeDrag} onNodeDragStop={onNodeDragStop}
                 onSelectionDragStart={onSelectionDragStart} onSelectionDrag={onSelectionDrag} onSelectionDragStop={onSelectionDragStop}
                 onEdgeClick={onEdgeClick} onEdgeContextMenu={onEdgeContextMenu}
+                onNodeMouseEnter={handleNodeMouseEnter} onNodeMouseLeave={handleNodeMouseLeave}
+                onEdgeMouseEnter={handleEdgeMouseEnter} onEdgeMouseLeave={handleEdgeMouseLeave}
+                elevateNodesOnSelect={false}
                 onPaneContextMenu={onPaneContextMenu} onPaneClick={onPaneClick}
                 onPaneMouseMove={handleRealtimePaneMouseMove}
                 onMoveStart={onMoveStart} onMove={handleRealtimeMove} onMoveEnd={onMoveEnd}
