@@ -281,6 +281,18 @@ type AutoSaveOverrides = {
   explicitLogoClear?: boolean
 }
 
+type SaveIfDirty = (overrides?: AutoSaveOverrides) => Promise<void>
+
+type PendingAutoSave = {
+  save: SaveIfDirty
+  overrides?: AutoSaveOverrides
+}
+
+type ElementAutoSaveState = {
+  saving: boolean
+  pending: PendingAutoSave | null
+}
+
 const NOISE_GATE_STOPS = [
   { value: -2, label: 'Quiet' },
   { value: -1, label: 'Lean' },
@@ -385,10 +397,11 @@ function ElementPanel({
   const typeInputRef = useRef<HTMLInputElement>(null)
   const techInputRef = useRef<HTMLInputElement>(null)
   const suppressTypeBlurRef = useRef(false)
-  const lastSavedFingerprintRef = useRef<string>('')
-  const savingRef = useRef(false)
-  const pendingSaveRef = useRef(false)
-  const pendingSaveOverridesRef = useRef<AutoSaveOverrides | undefined>(undefined)
+  const lastSavedFingerprintByElementRef = useRef(new Map<number, string>())
+  const autoSaveStateByElementRef = useRef(new Map<number, ElementAutoSaveState>())
+  const saveIfDirtyByElementRef = useRef(new Map<number, SaveIfDirty>())
+  const activeElementIdRef = useRef<number | null>(element?.id ?? null)
+  activeElementIdRef.current = element?.id ?? null
   const [techResultIndex, setTechResultIndex] = useState(-1)
   const confirmPermanentDelete = useDisclosure()
   const customTechnologyFileInputRef = useRef<HTMLInputElement>(null)
@@ -453,30 +466,30 @@ function ElementPanel({
         ? linksFromElement
         : (element.technology ? [{ type: 'custom', label: element.technology, is_primary_icon: false }] : [])
       setTechnologyConnectors(fallbackLinks)
-      lastSavedFingerprintRef.current = JSON.stringify(buildTechnologyFingerprintPayload(
+      lastSavedFingerprintByElementRef.current.set(element.id, JSON.stringify(buildTechnologyFingerprintPayload(
         element,
         fallbackLinks,
         element.kind ?? '',
-      ))
+      )))
 
       normalizeInitialTechnologyLinks(element)
         .then((initialLinks) => {
           if (cancelled) return
           setTechnologyConnectors(initialLinks)
-          lastSavedFingerprintRef.current = JSON.stringify(buildTechnologyFingerprintPayload(
+          lastSavedFingerprintByElementRef.current.set(element.id, JSON.stringify(buildTechnologyFingerprintPayload(
             element,
             initialLinks,
             element.kind ?? '',
-          ))
+          )))
         })
         .catch(() => {
           if (cancelled) return
           setTechnologyConnectors(fallbackLinks)
-          lastSavedFingerprintRef.current = JSON.stringify(buildTechnologyFingerprintPayload(
+          lastSavedFingerprintByElementRef.current.set(element.id, JSON.stringify(buildTechnologyFingerprintPayload(
             element,
             fallbackLinks,
             element.kind ?? '',
-          ))
+          )))
         })
     } else {
       initializedElementIdRef.current = null
@@ -493,7 +506,6 @@ function ElementPanel({
       setTags([])
       setBypassNoiseGate(false)
       setExplicitLogoClear(false)
-      lastSavedFingerprintRef.current = ''
     }
 
     return () => {
@@ -567,51 +579,66 @@ function ElementPanel({
     if (!autoSaveEdit || !element) return
     if (!name.trim()) return
 
-    if (savingRef.current) {
-      pendingSaveRef.current = true
-      pendingSaveOverridesRef.current = overrides ?? pendingSaveOverridesRef.current
+    let saveState = autoSaveStateByElementRef.current.get(element.id)
+    if (!saveState) {
+      saveState = { saving: false, pending: null }
+      autoSaveStateByElementRef.current.set(element.id, saveState)
+    }
+
+    if (saveState.saving) {
+      saveState.pending = { save: saveIfDirty, overrides }
       return
     }
 
-    savingRef.current = true
+    saveState.saving = true
     try {
       const { payload, fingerprint } = await buildPayloadAndFingerprint(overrides)
-      if (fingerprint === lastSavedFingerprintRef.current) return
+      if (fingerprint === lastSavedFingerprintByElementRef.current.get(element.id)) return
       const saved = await api.elements.update(element.id, payload)
-      lastSavedFingerprintRef.current = fingerprint
+      lastSavedFingerprintByElementRef.current.set(element.id, fingerprint)
       onSave(saved)
     } catch {
       // ignore
     } finally {
-      savingRef.current = false
-      if (pendingSaveRef.current) {
-        const pendingOverrides = pendingSaveOverridesRef.current
-        pendingSaveRef.current = false
-        pendingSaveOverridesRef.current = undefined
-        window.setTimeout(() => {
-          void saveIfDirtyRef.current?.(pendingOverrides)
-        }, AUTO_SAVE_DELAY_MS)
+      saveState.saving = false
+      if (saveState.pending) {
+        const pendingSave = saveState.pending
+        saveState.pending = null
+        void pendingSave.save(pendingSave.overrides)
       }
     }
   }, [autoSaveEdit, element, name, buildPayloadAndFingerprint, onSave])
+
+  if (element) {
+    // A delayed blur save must use this element's newest draft, even after selection changes.
+    saveIfDirtyByElementRef.current.set(element.id, saveIfDirty)
+  }
 
   const saveIfDirtyRef = useRef<((overrides?: AutoSaveOverrides) => Promise<void>) | null>(null)
   useEffect(() => { saveIfDirtyRef.current = saveIfDirty }, [saveIfDirty])
 
   const scheduleAutoSave = (overrides?: AutoSaveOverrides) => {
-    if (!autoSaveEdit) return
+    if (!autoSaveEdit || !element) return
+    const elementId = element.id
     window.setTimeout(() => {
-      void saveIfDirtyRef.current?.(overrides)
+      void saveIfDirtyByElementRef.current.get(elementId)?.(overrides)
     }, AUTO_SAVE_DELAY_MS)
   }
 
   useEffect(() => {
     if (!autoSaveEdit || !element) return
+    const elementId = element.id
+    const save = saveIfDirty
     const timer = window.setTimeout(() => {
-      void saveIfDirtyRef.current?.()
+      void save()
     }, AUTO_SAVE_DELAY_MS)
-    return () => window.clearTimeout(timer)
-  }, [autoSaveEdit, element, name, description, type, url, tags, technologyLinks, explicitLogoClear, bypassNoiseGate])
+    return () => {
+      // Keep the old element's debounce alive across selection changes so its edit is saved.
+      if (activeElementIdRef.current === elementId) {
+        window.clearTimeout(timer)
+      }
+    }
+  }, [autoSaveEdit, element, saveIfDirty])
 
   const handleClose = useCallback(async () => {
     if (autoSaveEdit) {

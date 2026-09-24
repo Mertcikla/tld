@@ -221,6 +221,65 @@ describe('ElementPanel bypass noise gate', () => {
     expect(renderer!.root.findAllByProps({ 'aria-label': 'Element noise gate' })).toHaveLength(0)
   })
 
+  it('keeps a blur-triggered autosave bound to the element that was edited', async () => {
+    const onSave = vi.fn()
+    const onClose = vi.fn()
+    const onVisibilityOverrideDeltaChange = vi.fn()
+    let renderer: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(
+        <ElementPanel
+          isOpen
+          autoSave
+          element={element({ id: 71, name: 'Source element' })}
+          onClose={onClose}
+          onSave={onSave}
+          onVisibilityOverrideDeltaChange={onVisibilityOverrideDeltaChange}
+        />,
+      )
+      await Promise.resolve()
+    })
+
+    apiMocks.updateElement.mockClear()
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-name-input' }).props.onChange({ target: { value: 'Edited source' } })
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-description-input' }).props.onChange({ target: { value: 'Source description' } })
+      await Promise.resolve()
+    })
+    await act(async () => {
+      renderer!.root.findByProps({ 'data-testid': 'element-panel-description-input' }).props.onBlur()
+    })
+
+    await act(async () => {
+      renderer!.update(
+        <ElementPanel
+          isOpen
+          autoSave
+          element={element({ id: 170, name: 'Target element', description: 'Target description' })}
+          onClose={onClose}
+          onSave={onSave}
+          onVisibilityOverrideDeltaChange={onVisibilityOverrideDeltaChange}
+        />,
+      )
+      await Promise.resolve()
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(150)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(apiMocks.updateElement).toHaveBeenCalledWith(71, expect.objectContaining({
+      name: 'Edited source',
+      description: 'Source description',
+    }))
+    expect(apiMocks.updateElement).not.toHaveBeenCalledWith(170, expect.objectContaining({
+      name: 'Edited source',
+      description: 'Source description',
+    }))
+  })
+
   it('creates a custom technology inline, attaches it, and autosaves the primary icon', async () => {
     const onSave = vi.fn()
     const fileInputClick = vi.fn()
