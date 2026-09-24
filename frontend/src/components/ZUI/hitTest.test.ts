@@ -152,9 +152,14 @@ describe('ZUI mouse pan buttons', () => {
 })
 
 describe('ZUI wheel gestures', () => {
-  it('zooms vertical smooth wheel input around the pointer instead of panning vertically', () => {
-    expect(shouldZoomZUIWheel(wheel({ deltaY: 6 }), false)).toBe(true)
-    expect(shouldZoomZUIWheel(wheel({ deltaY: 20.5 }), false)).toBe(true)
+  it('zooms notched pixel-mode and line-mode mouse wheels', () => {
+    expect(shouldZoomZUIWheel(wheel({ deltaY: 120 }), false)).toBe(true)
+    expect(shouldZoomZUIWheel(wheel({ deltaY: 3, deltaMode: 1 }), false)).toBe(true)
+  })
+
+  it('pans smooth vertical trackpad wheel input instead of zooming', () => {
+    expect(shouldZoomZUIWheel(wheel({ deltaY: 6 }), false)).toBe(false)
+    expect(shouldZoomZUIWheel(wheel({ deltaY: 20.5 }), false)).toBe(false)
   })
 
   it('keeps two-axis trackpad wheel gestures available for panning', () => {

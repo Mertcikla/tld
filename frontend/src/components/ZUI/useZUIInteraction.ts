@@ -142,7 +142,7 @@ export function shouldZoomZUIWheel(event: WheelDeltaLike, isRecentMultiTouch: bo
   if (event.ctrlKey) return true
   if (event.deltaMode !== 0) return true
   if (isRecentMultiTouch) return false
-  return event.deltaX === 0 && event.deltaY !== 0
+  return isNotchedWheelGesture(event)
 }
 
 function shouldUseMouseWheelZoomRate(event: WheelDeltaLike, isRecentMultiTouch: boolean): boolean {
@@ -437,10 +437,11 @@ export function useZUIInteraction(
       // Heuristic to distinguish between trackpad and physical mouse wheel:
       // 1. If ctrlKey is true, it's a pinch (trackpad) or Ctrl+Wheel. We always zoom.
       // 2. If deltaMode !== 0, it's a physical mouse wheel (DOM_DELTA_LINE/PAGE). We zoom.
-      // 3. Vertical wheel deltas zoom even when the device reports smooth pixel deltas.
-      // 4. Two-axis trackpad gestures pan.
-      // Track multi-touch wheel events (deltaX !== 0 indicates two-finger contact on trackpad)
-      if (e.deltaX !== 0) {
+      // 3. A notched pixel-mode mouse wheel (integer |deltaY| >= 20, deltaX 0) zooms.
+      // 4. Smooth pixel-mode trackpad scroll (fractional/small/vertical) pans.
+      // Any non-mouse-wheel input (trackpad scroll/pinch) marks recent multi-touch so
+      // follow-up momentum events keep panning instead of flipping into zoom.
+      if (!isNotchedWheelGesture(e)) {
         lastPanTimeRef.current = Date.now()
       }
 

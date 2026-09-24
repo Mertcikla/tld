@@ -160,7 +160,9 @@ export function shouldZoomViewEditorWheel(event: WheelDeltaLike, isRecentMultiTo
   if (event.ctrlKey) return false
   if (event.deltaMode !== 0) return true
   if (isRecentMultiTouch) return false
-  return event.deltaX === 0 && event.deltaY !== 0
+  // Only a notched pixel-mode mouse wheel zooms; smooth trackpad scroll is left
+  // to React Flow's panOnScroll so two-finger vertical swipes pan.
+  return isNotchedWheelGesture(event)
 }
 
 function shouldUseMouseWheelZoomRate(event: WheelDeltaLike, isRecentMultiTouch: boolean): boolean {
@@ -2349,7 +2351,7 @@ export function useCanvasInteractions({
 
   const onWheelCapture = useCallback((e: React.WheelEvent) => {
     if (touchStateRef.current.touches.size === 2) return
-    if (e.deltaX !== 0) touchStateRef.current.lastMultiTouchWheelTime = Date.now()
+    if (!isNotchedWheelGesture(e)) touchStateRef.current.lastMultiTouchWheelTime = Date.now()
     const isRecentMultiTouch = Date.now() - touchStateRef.current.lastMultiTouchWheelTime < 1000
     if (!shouldZoomViewEditorWheel(e, isRecentMultiTouch)) return
 
