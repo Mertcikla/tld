@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { useBreakpointValue } from '@chakra-ui/react'
 import { useTouchOnlyCanvasInput } from '../../hooks/useCanvasInputMode'
 import { shouldEnableCanvasWheelPan } from '../../utils/canvasInputMode'
-import type { ExploreData } from '../../types'
+import type { ExploreData, ViewLayer } from '../../types'
 import { api } from '../../api/client'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
@@ -51,6 +51,7 @@ interface Props {
   highlightedTags?: string[]
   highlightColor?: string
   hiddenTags?: string[]
+  groupLayers?: ViewLayer[]
   versionPreview?: WorkspaceVersionPreview | null
   versionFollowTarget?: WorkspaceVersionFollowTarget | null
   diffLens?: ExploreDiffLens | null
@@ -67,6 +68,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   highlightedTags,
   highlightColor,
   hiddenTags,
+  groupLayers = [],
   versionPreview,
   versionFollowTarget,
   diffLens,
@@ -172,6 +174,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     highlightedTags,
     highlightColor,
     hiddenTags,
+    groupLayers,
     versionPreview,
     versionFollowTarget,
     diffLens,

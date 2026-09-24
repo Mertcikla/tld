@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import { api } from '../../api/client'
 import type { ExploreData, Tag, ViewLayer } from '../../types'
+import { elementGroupTagForLayer, isElementGroupLayer, isElementGroupTag } from '../../utils/elementGroups'
 
 export interface ExploreTagsState {
   allTags: string[]
@@ -29,20 +30,25 @@ export function deriveExploreTagMetrics(data: ExploreData | null, layers: ViewLa
   const tagSet = new Set<string>()
   const tagCounts: Record<string, number> = {}
   Object.values(data.views).forEach((view) => {
-    (view?.placements ?? []).forEach((placement) => {
-      (placement.tags ?? []).forEach((tag) => {
-        tagSet.add(tag)
-        tagCounts[tag] = (tagCounts[tag] ?? 0) + 1
+      (view?.placements ?? []).forEach((placement) => {
+        (placement.tags ?? []).forEach((tag) => {
+          if (isElementGroupTag(tag)) return
+          tagSet.add(tag)
+          tagCounts[tag] = (tagCounts[tag] ?? 0) + 1
+        })
       })
-    })
   })
 
   const layerElementCounts: Record<number, number> = {}
   for (const layer of layers) {
     let count = 0
-    Object.values(data.views).forEach((view) => {
+    const viewsToCount = isElementGroupLayer(layer)
+      ? [data.views[String(layer.diagram_id)]].filter((view) => view !== undefined)
+      : Object.values(data.views)
+    const groupTag = elementGroupTagForLayer(layer)
+    viewsToCount.forEach((view) => {
       (view?.placements ?? []).forEach((placement) => {
-        if ((placement.tags ?? []).some((tag) => layer.tags.includes(tag))) count++
+        if ((placement.tags ?? []).some((tag) => groupTag ? tag === groupTag : layer.tags.includes(tag))) count++
       })
     })
     layerElementCounts[layer.id] = count
@@ -65,16 +71,26 @@ export function useExploreTags(data: ExploreData | null, sharedToken?: string): 
   useEffect(() => {
     if (!data || sharedToken) return
     let cancelled = false
-    const rootIds = (data.tree ?? []).map((node) => node.id)
+    const tree = data.tree ?? []
+    const rootIds = new Set(tree.filter((node) => !node.parent_view_id).map((node) => node.id))
+    const viewIds = tree
+      .filter((node) => rootIds.has(node.id) || (data.views[String(node.id)]?.placements ?? []).some((placement) =>
+        (placement.tags ?? []).some(isElementGroupTag)
+      ))
+      .map((node) => node.id)
     const fetchTagData = async () => {
       try {
         const diagramLayers = await Promise.all(
-          rootIds.map((id) => api.workspace.views.layers.list(id)),
+          viewIds.map((id) => api.workspace.views.layers.list(id).catch(() => [])),
         )
         if (!cancelled) {
-          // Layers are fetched from root diagrams only; dedupe protects the UI if an API response overlaps.
+          // Explore lays out nested diagrams too, so fetch their groups as well as root view layers.
           const seen = new Set<number>()
-          const unique = diagramLayers.flat().filter((layer) => seen.has(layer.id) ? false : (seen.add(layer.id), true))
+          const unique = diagramLayers.flat().filter((layer) => {
+            if (seen.has(layer.id)) return false
+            seen.add(layer.id)
+            return rootIds.has(layer.diagram_id) || isElementGroupLayer(layer)
+          })
           setLayers(unique)
         }
       } catch {

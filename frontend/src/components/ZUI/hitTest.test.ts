@@ -99,6 +99,16 @@ describe('ZUI node hit testing', () => {
     expect(hit?.node.id).toBe('bottom')
   })
 
+  it('keeps group members visible when their group background is hidden', () => {
+    const marker = 'group:12345678-1234-4234-a234-123456789012'
+    const member = node('member', 1, 0, 0, { tags: [marker] })
+    const view: ZUIViewState = { x: 0, y: 0, zoom: 1 }
+
+    const hit = hitTestZUIRenderedNode(20, 20, [group([member])], view, thresholds, new Set([marker]))
+
+    expect(hit?.node.id).toBe('member')
+  })
+
   it('uses rendered topmost order for overlapping nodes', () => {
     const bottom = node('bottom', 1, 0, 0)
     const top = node('top', 2, 0, 0)

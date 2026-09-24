@@ -36,20 +36,22 @@ function layer(id: number, tags: string[]): ViewLayer {
 
 describe('deriveExploreTagMetrics', () => {
   it('counts tags and layer membership across views', () => {
+    const groupTag = 'group:12345678-1234-4234-a234-123456789012'
     const data: ExploreData = {
       tree: [],
       navigations: [],
       views: {
-        1: { placements: [placed(1, ['api', 'core']), placed(2, ['core'])], connectors: [] },
-        2: { placements: [placed(3, ['infra'])], connectors: [] },
+        1: { placements: [placed(1, ['api', 'core', groupTag]), placed(2, ['core', groupTag])], connectors: [] },
+        2: { placements: [placed(3, ['infra', groupTag])], connectors: [] },
       },
     }
 
-    const metrics = deriveExploreTagMetrics(data, [layer(10, ['core', 'infra']), layer(11, ['missing'])])
+    const groupLayer = { ...layer(12, [groupTag]), diagram_id: 1 }
+    const metrics = deriveExploreTagMetrics(data, [layer(10, ['core', 'infra']), layer(11, ['missing']), groupLayer])
 
     expect(metrics.allTags).toEqual(['api', 'core', 'infra'])
     expect(metrics.tagCounts).toEqual({ api: 1, core: 2, infra: 1 })
-    expect(metrics.layerElementCounts).toEqual({ 10: 3, 11: 0 })
+    expect(metrics.layerElementCounts).toEqual({ 10: 3, 11: 0, 12: 2 })
   })
 
   it('returns empty metrics without explore data', () => {

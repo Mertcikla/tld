@@ -1,3 +1,5 @@
+import type { ViewLayer } from '../../types'
+import { elementGroupTagForLayer, isElementGroupTag } from '../../utils/elementGroups'
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import type { SceneGraph, SceneNode } from './sceneGraph'
@@ -137,6 +139,7 @@ export interface RenderContext {
   canvasH: number
   thresholds: { start: number; end: number }
   lowDetail: boolean
+  groupLayersByDiagram: Map<number, ViewLayer[]>
 }
 
 const imageCache = new Map<string, HTMLImageElement>()
@@ -335,7 +338,123 @@ function pickNavigationHintPosition(
 }
 
 function isHiddenByTags(node: LayoutNode): boolean {
-  return currentHiddenTags.size > 0 && node.tags.length > 0 && node.tags.some((t) => currentHiddenTags.has(t))
+  return currentHiddenTags.size > 0 && node.tags.some((tag) => !isElementGroupTag(tag) && currentHiddenTags.has(tag))
+}
+
+export interface ElementGroupBounds {
+  layer: ViewLayer
+  marker: string
+  x: number
+  y: number
+  width: number
+  height: number
+  memberCount: number
+}
+
+export function getElementGroupBounds(
+  layers: ViewLayer[],
+  nodes: SceneNode[],
+  diagramId: number,
+): ElementGroupBounds[] {
+  const layerByMarker = new Map<string, ViewLayer>()
+  for (const layer of layers) {
+    if (layer.diagram_id !== diagramId) continue
+    const marker = elementGroupTagForLayer(layer)
+    if (marker && !currentHiddenTags.has(marker)) layerByMarker.set(marker, layer)
+  }
+
+  const membersByMarker = new Map<string, SceneNode[]>()
+  for (const node of nodes) {
+    if (node.layout.diagramId !== diagramId || isHiddenByTags(node.layout)) continue
+    for (const tag of node.layout.tags) {
+      if (!layerByMarker.has(tag)) continue
+      const members = membersByMarker.get(tag) ?? []
+      members.push(node)
+      membersByMarker.set(tag, members)
+    }
+  }
+
+  return Array.from(layerByMarker.entries()).flatMap(([marker, layer]) => {
+    const members = membersByMarker.get(marker) ?? []
+    if (members.length === 0) return []
+
+    const paddingX = 24
+    const paddingTop = 38
+    const paddingBottom = 20
+    const left = Math.min(...members.map((node) => node.layout.worldX))
+    const top = Math.min(...members.map((node) => node.layout.worldY))
+    const right = Math.max(...members.map((node) => node.layout.worldX + node.layout.worldW))
+    const bottom = Math.max(...members.map((node) => node.layout.worldY + node.layout.worldH))
+    return [{
+      layer,
+      marker,
+      x: left - paddingX,
+      y: top - paddingTop,
+      width: right - left + paddingX * 2,
+      height: bottom - top + paddingTop + paddingBottom,
+      memberCount: members.length,
+    }]
+  })
+}
+
+function drawElementGroupBackgrounds(
+  ctx: CanvasRenderingContext2D,
+  layers: ViewLayer[],
+  nodes: SceneNode[],
+  diagramId: number,
+  effectiveZoom: number,
+  originX = 0,
+  originY = 0,
+  lowDetail = false,
+): void {
+  const zoom = Math.max(effectiveZoom, 0.0001)
+  for (const bounds of getElementGroupBounds(layers, nodes, diagramId)) {
+    const x = bounds.x - originX
+    const y = bounds.y - originY
+    const color = bounds.layer.color || '#4299E1'
+    const radius = 12 / zoom
+
+    ctx.save()
+    ctx.beginPath()
+    ctx.roundRect(x, y, bounds.width, bounds.height, radius)
+    ctx.fillStyle = color
+    ctx.globalAlpha = 0.09
+    ctx.fill()
+    ctx.globalAlpha = 0.58
+    ctx.strokeStyle = color
+    ctx.lineWidth = 1 / zoom
+    ctx.stroke()
+
+    if (!lowDetail && bounds.width * zoom >= 110) {
+      const fontSize = 12 / zoom
+      const padX = 8 / zoom
+      const badgeHeight = 20 / zoom
+      const badgeLeft = x + 8 / zoom
+      const badgeTop = y + 7 / zoom
+      const maxTextWidth = Math.max(0, bounds.width - 34 / zoom - padX * 2)
+      ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`
+      const textWidth = Math.min(ctx.measureText(bounds.layer.name).width, maxTextWidth)
+      const badgeWidth = Math.min(bounds.width - 16 / zoom, textWidth + 20 / zoom + padX * 2)
+      ctx.globalAlpha = 0.94
+      ctx.fillStyle = '#171923'
+      ctx.beginPath()
+      ctx.roundRect(badgeLeft, badgeTop, badgeWidth, badgeHeight, 4 / zoom)
+      ctx.fill()
+      ctx.globalAlpha = 1
+      ctx.fillStyle = color
+      ctx.beginPath()
+      ctx.arc(badgeLeft + padX + 3 / zoom, badgeTop + badgeHeight / 2, 3 / zoom, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = '#fff'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(bounds.layer.name, badgeLeft + padX + 10 / zoom, badgeTop + badgeHeight / 2, maxTextWidth)
+      ctx.fillStyle = 'rgba(255,255,255,0.68)'
+      ctx.textAlign = 'right'
+      ctx.fillText(String(bounds.memberCount), badgeLeft + badgeWidth - padX, badgeTop + badgeHeight / 2)
+    }
+    ctx.restore()
+  }
 }
 
 function drawNavigationHints(
@@ -1032,8 +1151,8 @@ function drawEdges(
       const targetSn = sceneNodeMap.get(edge.targetId)
 
       if (currentHiddenTags.size > 0) {
-        const srcHidden = node.tags.length > 0 && node.tags.some((t2) => currentHiddenTags.has(t2))
-        const tgtHidden = target.tags.length > 0 && target.tags.some((t2) => currentHiddenTags.has(t2))
+        const srcHidden = isHiddenByTags(node)
+        const tgtHidden = isHiddenByTags(target)
         if (srcHidden || tgtHidden) continue
       }
 
@@ -1330,6 +1449,18 @@ function drawNodeTree(
     ctx.translate(-node.layout.childOffsetX, -node.layout.childOffsetY)
 
     if (node.state.childAlpha > 0.2) {
+      if (node.layout.linkedDiagramId !== undefined) {
+        drawElementGroupBackgrounds(
+          ctx,
+          renderCtx.groupLayersByDiagram.get(node.layout.linkedDiagramId) ?? [],
+          node.children,
+          node.layout.linkedDiagramId,
+          childZoom,
+          0,
+          0,
+          renderCtx.lowDetail,
+        )
+      }
       drawEdges(ctx, node.children, node.state.childAlpha * 0.8, childZoom, renderCtx.thresholds, renderCtx.accent, renderCtx.labelBg, occupiedLabelRects, renderCtx.lowDetail)
     }
 
@@ -1392,6 +1523,17 @@ export function renderFrame(
     )
     ctx.setLineDash([])
     ctx.restore()
+
+    drawElementGroupBackgrounds(
+      ctx,
+      renderCtx.groupLayersByDiagram.get(group.layout.diagramId) ?? [],
+      group.nodes,
+      group.layout.diagramId,
+      renderView.zoom,
+      rebase.originX,
+      rebase.originY,
+      renderCtx.lowDetail,
+    )
 
     drawEdges(ctx, group.nodes, 0.7, renderView.zoom, renderCtx.thresholds, accent, renderCtx.labelBg, occupiedLabelRects, renderCtx.lowDetail, rebase.originX, rebase.originY)
 

@@ -1,5 +1,6 @@
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
 import { transitionT } from './layoutEngine'
+import { isElementGroupTag } from '../../utils/elementGroups'
 
 export interface ZUIHitTestNodeResult {
   node: LayoutNode
@@ -25,7 +26,7 @@ function cellKey(cx: number, cy: number): string {
 }
 
 function isHiddenByTags(node: LayoutNode, hiddenTags: ReadonlySet<string>): boolean {
-  return hiddenTags.size > 0 && node.tags.length > 0 && node.tags.some((tag) => hiddenTags.has(tag))
+  return hiddenTags.size > 0 && node.tags.some((tag) => !isElementGroupTag(tag) && hiddenTags.has(tag))
 }
 
 function getNodeSpatialIndex(nodes: LayoutNode[]): NodeSpatialIndex {
