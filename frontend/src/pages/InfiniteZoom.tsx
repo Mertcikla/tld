@@ -120,6 +120,10 @@ function ExplorePage({ sharedToken, shareSlot }: Props, ref?: Ref<InfiniteZoomHa
   }, [sharedToken])
 
   const noDiagrams = !data || (data.tree ?? []).length === 0
+  const goToEditor = useCallback(() => {
+    const root = (data?.tree ?? []).find((node) => node.parent_view_id === null) ?? data?.tree?.[0]
+    navigate(root ? `/views/${root.id}` : '/views?view=edit')
+  }, [data, navigate])
   if (!loading && (error || noDiagrams || !hasPlacements)) {
     return (
       <ExploreEmptyState
@@ -127,7 +131,7 @@ function ExplorePage({ sharedToken, shareSlot }: Props, ref?: Ref<InfiniteZoomHa
         sharedToken={sharedToken}
         error={error}
         onRetry={reload}
-        onGoToViews={() => navigate('/views')}
+        onGoToViews={goToEditor}
       />
     )
   }
