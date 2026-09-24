@@ -50,6 +50,7 @@ import { matchFontAwesomeTechnologyIconQuery } from '../utils/fontAwesomeIcon'
 import { ChevronDownIcon, ImageUploadIcon, ZoomInIcon, ZoomOutIcon } from './Icons'
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
+import { isElementGroupTag } from '../utils/elementGroups'
 import { openExternalUrl } from '../lib/desktop'
 
 import { useViewEditorContext } from '../pages/ViewEditor/context'
@@ -1625,7 +1626,7 @@ function ElementPanel({
             <FormControl isDisabled={isReadOnly}>
               <FormLabel>Tags</FormLabel>
               <TagUpsert
-                currentTags={tags}
+                currentTags={tags.filter((tag) => !isElementGroupTag(tag))}
                 availableTags={availableTags}
                 onAddTag={(tag) => {
                   if (!tags.includes(tag)) {
@@ -1637,7 +1638,7 @@ function ElementPanel({
                 isReadOnly={isReadOnly}
               />
               <Wrap mt={3}>
-                {tags.map((tag) => (
+                {tags.filter((tag) => !isElementGroupTag(tag)).map((tag) => (
                   <WrapItem key={tag}>
                     <Tag data-testid="element-panel-tag-chip" size="sm" variant="subtle" bg="whiteAlpha.100" border="1px solid" borderColor="whiteAlpha.200">
                       <TagLabel color="white">{tag}</TagLabel>

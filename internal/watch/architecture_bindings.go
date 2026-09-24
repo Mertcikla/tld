@@ -216,6 +216,9 @@ func architectureTargetTokens(target ArchitectureBindingTarget) []string {
 		}
 	}
 	for _, tag := range target.Tags {
+		if isElementGroupMarkerTag(tag) {
+			continue
+		}
 		for _, token := range architectureNameTokens(tag) {
 			set[token] = struct{}{}
 		}

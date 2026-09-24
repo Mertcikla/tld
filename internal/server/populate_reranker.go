@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -22,6 +23,7 @@ var populateRerankerEndpoint = ""
 var populateRerankerModel = "jina-reranker-v3"
 var populateRerankerHTTPClient = &http.Client{Timeout: 8 * time.Second}
 var populateRerankerObservedMetrics = newPopulateRerankerMetrics()
+var populateGroupMarkerTagPattern = regexp.MustCompile(`^group:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 const (
 	populateRerankerMaxDocumentRunes = 6000
@@ -377,7 +379,7 @@ func buildPopulateRerankDocument(ctx context.Context, db *sql.DB, repoID int64, 
 	if tags := populateTagSummary(cand.element.Tags); tags != "" {
 		appendPart("tags", tags)
 	}
-	if signals := watch.SemanticSignals(cand.element.Name, cand.kind(), derefString(cand.element.FilePath), string(cand.element.Tags)); len(signals) > 0 {
+	if signals := watch.SemanticSignals(cand.element.Name, cand.kind(), derefString(cand.element.FilePath), populateTagJSONWithoutGroups(cand.element.Tags)); len(signals) > 0 {
 		appendPart("responsibilities", strings.Join(signals, ", "))
 	}
 	childSummary, err := populateChildSummary(ctx, db, cand.element.ID)
@@ -603,9 +605,37 @@ func populateTagSummary(raw json.RawMessage) string {
 	}
 	var tags []string
 	if err := json.Unmarshal(raw, &tags); err == nil {
-		return strings.Join(compactPopulateStrings(tags...), ", ")
+		visible := tags[:0]
+		for _, tag := range tags {
+			if !isPopulateGroupMarkerTag(tag) {
+				visible = append(visible, tag)
+			}
+		}
+		return strings.Join(compactPopulateStrings(visible...), ", ")
 	}
 	return strings.TrimSpace(string(raw))
+}
+
+func populateTagJSONWithoutGroups(raw json.RawMessage) string {
+	var tags []string
+	if err := json.Unmarshal(raw, &tags); err != nil {
+		return string(raw)
+	}
+	visible := tags[:0]
+	for _, tag := range tags {
+		if !isPopulateGroupMarkerTag(tag) {
+			visible = append(visible, tag)
+		}
+	}
+	encoded, err := json.Marshal(visible)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func isPopulateGroupMarkerTag(tag string) bool {
+	return populateGroupMarkerTagPattern.MatchString(tag)
 }
 
 func clipPopulateRerankDocument(text string) string {

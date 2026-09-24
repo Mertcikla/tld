@@ -895,7 +895,13 @@ func decodeEmbeddingTags(raw string) []string {
 	if err := json.Unmarshal([]byte(raw), &tags); err != nil {
 		return nil
 	}
-	return tags
+	filtered := tags[:0]
+	for _, tag := range tags {
+		if !isElementGroupMarkerTag(tag) {
+			filtered = append(filtered, tag)
+		}
+	}
+	return filtered
 }
 
 func symbolCodeBody(repoRoot string, sym Symbol) string {

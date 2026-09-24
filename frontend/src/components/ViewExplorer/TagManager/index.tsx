@@ -24,6 +24,7 @@ import { LayerItem } from './LayerItem'
 import { ColorPicker } from './ColorPicker'
 import { pickUnusedColor } from '../utils'
 import { ChevronDownIcon } from '../../Icons'
+import { elementGroupTagForLayer, isElementGroupLayer, isElementGroupTag } from '../../../utils/elementGroups'
 
 interface Props {
   availableTags: string[]
@@ -111,7 +112,7 @@ export const TagManager: React.FC<Props> = ({
 
   const handleCreateGroupFromLayer = (targetTag: string, sourceLayerId: number) => {
     const layer = layers.find(l => l.id === sourceLayerId)
-    if (!layer) return
+    if (!layer || isElementGroupLayer(layer)) return
     setNamingPopover({
       isOpen: true,
       tags: Array.from(new Set([...layer.tags, targetTag])),
@@ -157,8 +158,9 @@ export const TagManager: React.FC<Props> = ({
     }
   }
 
-  const usedTags = availableTags.filter(tag => (tagCounts[tag] || 0) > 0)
-  const unusedTags = availableTags.filter(tag => (tagCounts[tag] || 0) === 0)
+  const visibleTags = availableTags.filter((tag) => !isElementGroupTag(tag))
+  const usedTags = visibleTags.filter(tag => (tagCounts[tag] || 0) > 0)
+  const unusedTags = visibleTags.filter(tag => (tagCounts[tag] || 0) === 0)
 
   return (
     <Box
@@ -361,6 +363,7 @@ export const TagManager: React.FC<Props> = ({
               <LayerItem
                 key={layer.id}
                 layer={layer}
+                isElementGroup={elementGroupTagForLayer(layer) !== null}
                 isActive={layer.tags.length === 0 || !layer.tags.some((t) => hiddenLayerTags.includes(t))}
                 isExpanded={expandedLayerIds.has(layer.id)}
                 tagCount={layerCounts[layer.id] || 0}

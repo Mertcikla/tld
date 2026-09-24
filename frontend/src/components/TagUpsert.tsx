@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Box, HStack, Input, Text, VStack } from '@chakra-ui/react'
+import { isElementGroupTag } from '../utils/elementGroups'
 
 interface Props {
   currentTags: string[]
@@ -22,6 +23,7 @@ export default function TagUpsert({
     if (!query.trim()) return []
     const q = query.toLowerCase()
     return availableTags
+      .filter((tag) => !isElementGroupTag(tag))
       .filter((t) => t.toLowerCase().includes(q) && !currentTags.includes(t))
       .slice(0, 8)
   })()
@@ -32,7 +34,7 @@ export default function TagUpsert({
 
   const results: ResultItem[] = []
   
-  if (query.trim() && !currentTags.includes(query.trim())) {
+  if (query.trim() && !isElementGroupTag(query.trim()) && !currentTags.includes(query.trim())) {
     results.push({ kind: 'new', label: query.trim() })
   }
   

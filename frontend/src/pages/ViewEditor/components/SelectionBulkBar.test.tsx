@@ -16,12 +16,14 @@ vi.mock('@chakra-ui/react', async () => {
     icon?: React.ReactNode
     onClick?: () => void
   }) => ReactModule.createElement('button', { ...props, onClick }, icon, children)
+  const InputLike = (props: Record<string, unknown>) => ReactModule.createElement('input', props)
 
   return {
     Box: BoxLike,
     Button: ButtonLike,
     HStack: BoxLike,
     IconButton: ButtonLike,
+    Input: InputLike,
     Popover: BoxLike,
     PopoverBody: BoxLike,
     PopoverContent: BoxLike,
@@ -88,6 +90,27 @@ describe('SelectionBulkBar bulk merge', () => {
     })
 
     expect(onMergeInto).toHaveBeenCalledWith(2)
+  })
+})
+
+describe('SelectionBulkBar groups', () => {
+  it('allows a single selected element to be grouped', async () => {
+    const onCreateGroup = vi.fn(async () => undefined)
+    const renderer = renderBulkBar({ count: 1, onCreateGroup })
+
+    expect(renderer.root.findByProps({ 'data-testid': 'selection-bulk-group' })).toBeTruthy()
+    expect(renderer.root.findAllByProps({ 'data-testid': 'selection-bulk-align-left' })).toHaveLength(0)
+
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'selection-bulk-group' }).props.onClick()
+    })
+    const nameInput = renderer.root.findByProps({ 'data-testid': 'selection-bulk-group-name' })
+    act(() => nameInput.props.onChange({ target: { value: 'Payments' } }))
+    await act(async () => {
+      await renderer.root.findByProps({ 'data-testid': 'selection-bulk-group-create' }).props.onClick()
+    })
+
+    expect(onCreateGroup).toHaveBeenCalledWith('Payments', '#4299E1')
   })
 })
 

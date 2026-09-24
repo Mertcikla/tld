@@ -1,4 +1,5 @@
 import type { Connector, DependencyConnector, LibraryElement, ViewTreeNode } from '../types'
+import { isElementGroupTag } from '../utils/elementGroups'
 
 export type InventoryType = 'all' | 'elements' | 'views' | 'connectors'
 export type InventoryObjectType = 'element' | 'view' | 'connector'
@@ -83,9 +84,10 @@ export function buildInventoryRows(
   })
 
   const elementRows = elements.map((element): InventoryRow => {
+    const visibleTags = element.tags.filter((tag) => !isElementGroupTag(tag))
     const connectorCount = connectorCountsByElement.get(element.id) ?? 0
     const qualityFlags = [
-      ...(element.tags.length === 0 ? ['untagged'] : []),
+      ...(visibleTags.length === 0 ? ['untagged'] : []),
       ...(!element.description ? ['missing description'] : []),
       ...(connectorCount === 0 ? ['unused element'] : []),
       ...(element.has_view ? ['has child view'] : []),
@@ -99,7 +101,7 @@ export function buildInventoryRows(
       element.repo,
       element.branch,
       element.file_path,
-      ...element.tags,
+      ...visibleTags,
     ]
     return {
       key: `element:${element.id}`,
@@ -107,7 +109,7 @@ export function buildInventoryRows(
       id: element.id,
       name: element.name,
       subtitle: [element.kind, element.technology].filter(Boolean).join(' / ') || 'element',
-      tags: element.tags,
+      tags: visibleTags,
       updatedAt: element.updated_at,
       typeLabel: element.kind || 'element',
       usageLabel: `${connectorCount} connectors${element.has_view ? ', child view' : ''}`,

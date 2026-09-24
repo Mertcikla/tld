@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -827,6 +828,9 @@ func normalizedElementTagsForHash(raw string) any {
 	managed := stringSet(managedEphemeralTags())
 	filtered := make([]string, 0, len(tags))
 	for _, tag := range tags {
+		if isElementGroupMarkerTag(tag) {
+			continue
+		}
 		if _, ok := managed[tag]; ok {
 			continue
 		}
@@ -834,6 +838,10 @@ func normalizedElementTagsForHash(raw string) any {
 	}
 	return filtered
 }
+
+var elementGroupMarkerTagPattern = regexp.MustCompile(`^group:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+func isElementGroupMarkerTag(tag string) bool { return elementGroupMarkerTagPattern.MatchString(tag) }
 
 func buildParameterList(ids []int64) (string, []any) {
 	args := make([]any, len(ids))
