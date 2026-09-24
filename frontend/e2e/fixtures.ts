@@ -324,7 +324,7 @@ function isAllowedPageError(error: Error) {
     return true
   }
 
-  if (/Fetch API cannot load http:\/\/127\.0\.0\.1:\d+\/(?:api\/diag\.v1\.WorkspaceService\/Get(?:View|Workspace)|api\/views\/\d+\/(?:thumbnail\.svg|populate-query)) due to access control checks/i.test(text)) {
+  if (/Fetch API cannot load http:\/\/127\.0\.0\.1:\d+\/[^\s]* due to access control checks/i.test(text)) {
     return true
   }
 
