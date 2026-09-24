@@ -28,7 +28,7 @@ tld models architecture as a hierarchy of **elements** and **connectors**.
 - An **element** is the node in the knowledge graph. It can represent a system, subsystem, service, module, class, database, external system, user, or any other entity relevant to the architecture.
 - A **view** is the canvas inside an element. Add children with `--parent <ref>` to create drill-downs. There is no separate "create view" command. View is used to group related elements, or to explain a subsystem in more detail.
 - A **connector** is the edges of the graph, describes a relationship between elements. The view is inferred from the elements' shared parent.
-- A **kind** is a broad role such as `system`, `container`, `component`, `database`, `external system`, or `person` omit if it doesn't fit any clear category. 
+- A **kind** is a broad role such as `system`, `container`, `component`, `database`, `person`, or `external`; omit it if it doesn't fit any clear category. `--kind` takes a single shell token, so quote multi-word kinds (e.g. `--kind "external system"`).
 - A **technology** is metadata. Prefer catalog names suggested by `tld tech suggest`.
 
 The goal is not to mirror folders. Build a navigable map of how control, data, ownership, and dependencies move through the system.
@@ -52,19 +52,6 @@ tld tech suggest "<technology name>"
 ```
 
 If the same real element appears in another view, reuse the same `--ref` with a different `--parent`. This creates another placement, not a duplicate element, and highly desired to truly show interaction. Add connectors with different labels in each view to show different relationships using `--view <optional-view-ref>`.
-
-## Working File
-
-Record all diagram commands in `./.tld/diagram.sh`:
-
-```bash
-#!/bin/bash
-set -e
-```
-
-Group commands by view or subsystem with short comments. Run each new block after adding it so mistakes stay small and the script remains an execution log.
-
-Do not manually edit `elements.yaml` or `connectors.yaml`. Use `tld remove element <ref>` or `tld remove connector ...` for corrections, then append the correction to `diagram.sh`.
 
 ## Workflow
 
@@ -117,10 +104,10 @@ Depth should match the user's goal, before handoff, validate that the diagram me
 
 ## Handoff
 
-Changes already applied to the server with every command. To view the diagram:
+To view the diagram:
 
 ```bash
 tld serve --open
 ```
 
-Use their feedback to if they want to add/remove some detail on sub-systems. Make adjustments to `diagram.sh`, run it, and validate again.
+Ask for feedback and add/remove some detail on sub-systems.
