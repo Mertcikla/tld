@@ -16,7 +16,7 @@ func TestMain(m *testing.M) {
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		panic(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "tld.yaml"), []byte("server_url: https://tldiagram.com\napi_key: \"\"\norg_id: \"\"\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "tld.global.yaml"), []byte("server_url: https://tldiagram.com\napi_key: \"\"\norg_id: \"\"\n"), 0600); err != nil {
 		panic(err)
 	}
 	if err := os.Setenv("TLD_CONFIG_DIR", configDir); err != nil {

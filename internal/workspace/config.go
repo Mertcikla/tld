@@ -26,13 +26,59 @@ func ConfigDir() (string, error) {
 	return filepath.Join(home, ".config", "tldiagram"), nil
 }
 
-// ConfigPath returns the path to the global configuration file.
+const (
+	// GlobalConfigName is the canonical filename for the global tld config.
+	GlobalConfigName = "tld.global.yaml"
+	// LegacyGlobalConfigName is the previous global config filename. It is
+	// still read for backwards compatibility but never written.
+	LegacyGlobalConfigName = "tld.yaml"
+)
+
+// ConfigPath returns the canonical path to the global configuration file.
 func ConfigPath() (string, error) {
 	dir, err := ConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "tld.yaml"), nil
+	return filepath.Join(dir, GlobalConfigName), nil
+}
+
+// LegacyConfigPath returns the legacy global configuration file path.
+func LegacyConfigPath() (string, error) {
+	dir, err := ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, LegacyGlobalConfigName), nil
+}
+
+// ExistingGlobalConfigPath returns the path to an existing global config file,
+// preferring the canonical tld.global.yaml and falling back to the legacy
+// tld.yaml. The boolean is false when neither file exists.
+func ExistingGlobalConfigPath() (string, bool) {
+	if path, err := ConfigPath(); err == nil {
+		if _, statErr := os.Stat(path); statErr == nil {
+			return path, true
+		}
+	}
+	if legacy, err := LegacyConfigPath(); err == nil {
+		if _, statErr := os.Stat(legacy); statErr == nil {
+			return legacy, true
+		}
+	}
+	path, _ := ConfigPath()
+	return path, false
+}
+
+// ResolveConfigPath returns the global configuration file to read from. The
+// canonical tld.global.yaml is preferred when present, falling back to the
+// legacy tld.yaml. When neither exists the canonical path is returned so new
+// files are created with the new name.
+func ResolveConfigPath() (string, error) {
+	if path, ok := ExistingGlobalConfigPath(); ok {
+		return path, nil
+	}
+	return ConfigPath()
 }
 
 // DataDir returns the default directory for server state, including the
@@ -338,15 +384,10 @@ func SaveGlobalConfig(cfg *Config) error {
 }
 
 // EnsureGlobalConfig ensures the global config file exists with full defaults.
+// An existing legacy tld.yaml satisfies the requirement and is left in place.
 func EnsureGlobalConfig() error {
-	path, err := ConfigPath()
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(path); err == nil {
+	if _, ok := ExistingGlobalConfigPath(); ok {
 		return nil
-	} else if !os.IsNotExist(err) {
-		return err
 	}
 	return SaveGlobalConfig(DefaultConfig())
 }

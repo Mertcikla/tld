@@ -36,15 +36,15 @@ func TestInitCmd_CreatesWorkspace(t *testing.T) {
 		t.Errorf(".tld.yaml missing default node_modules exclusion: %q", workspaceContent)
 	}
 
-	// Check tld.yaml was created globally
-	cfgPath := filepath.Join(configDir, "tld.yaml")
+	// Check tld.global.yaml was created globally
+	cfgPath := filepath.Join(configDir, "tld.global.yaml")
 	data, err = os.ReadFile(cfgPath)
 	if err != nil {
-		t.Fatalf("read tld.yaml from global config: %v", err)
+		t.Fatalf("read tld.global.yaml from global config: %v", err)
 	}
 	content := string(data)
 	if !strings.Contains(content, "server_url") || !strings.Contains(content, "api_key") || !strings.Contains(content, "org_id") {
-		t.Errorf("tld.yaml missing expected keys: %q", content)
+		t.Errorf("tld.global.yaml missing expected keys: %q", content)
 	}
 }
 

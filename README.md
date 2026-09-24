@@ -90,7 +90,7 @@ tld has native-desktop builds for macOS and windows. Look for tld-desktop binari
 
 `tld` designed to be run fully offline, behind a reverse-proxy or in your infrastructure or as a local development tool.
 
-Run `tld serve` to start a local SQLite-backed instance, or configure PostgreSQL in `~/.config/tldiagram/tld.yaml` or via env vars
+Run `tld serve` to start a local SQLite-backed instance, or configure PostgreSQL in `~/.config/tldiagram/tld.global.yaml` or via env vars
 
 ```bash
 export TLD_DB_DRIVER=postgres

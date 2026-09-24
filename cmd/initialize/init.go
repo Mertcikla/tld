@@ -270,9 +270,9 @@ func NewInitCmd() *cobra.Command {
 				return fmt.Errorf("create config dir: %w", err)
 			}
 
-			if _, err := os.Stat(cfgPath); err == nil {
+			if existing, ok := workspace.ExistingGlobalConfigPath(); ok {
 				term.Successf(cmd.OutOrStdout(), "Workspace initialized at %s", term.Path(cmd.OutOrStdout(), dir))
-				term.Infof(cmd.OutOrStdout(), "Global config already exists at %s", term.Path(cmd.OutOrStdout(), cfgPath))
+				term.Infof(cmd.OutOrStdout(), "Global config already exists at %s", term.Path(cmd.OutOrStdout(), existing))
 			} else {
 				if err := workspace.EnsureGlobalConfig(); err != nil {
 					return fmt.Errorf("ensure global config: %w", err)

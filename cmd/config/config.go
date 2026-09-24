@@ -14,7 +14,7 @@ func NewConfigCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Inspect and update the global tld configuration",
-		Long:  "Inspect and update the global tld.yaml configuration file.",
+		Long:  "Inspect and update the global tld.global.yaml configuration file.",
 	}
 	cmd.AddCommand(newPathCmd(), newListCmd(), newGetCmd(), newSetCmd(), newResetCmd(), newValidateCmd())
 	return cmd

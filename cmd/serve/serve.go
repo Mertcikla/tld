@@ -262,7 +262,7 @@ type serveStatus struct {
 }
 
 func printServeInfo(out io.Writer, url string, status serveStatus) {
-	cfgPath, _ := workspace.ConfigPath()
+	cfgPath, _ := workspace.ExistingGlobalConfigPath()
 	term.Label(out, 20, "Mode", printableMode(status.Mode))
 	if status.PID != nil {
 		term.Label(out, 20, "PID", fmt.Sprintf("%d", *status.PID))
@@ -459,7 +459,7 @@ Connection details are printed once the server is ready.
 Use 'tld stop' to shut it down.
 
 Host and port can be set via flags, the global config file
-(~/.config/tldiagram/tld.yaml under serve.host / serve.port),
+(~/.config/tldiagram/tld.global.yaml under serve.host / serve.port),
 or the TLD_ADDR / PORT environment variables.`,
 		RunE: runE,
 	}

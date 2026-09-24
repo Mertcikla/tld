@@ -19,7 +19,7 @@ func TestConfigCommandPathSetGetAndListRedactsSecrets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config path: %v", err)
 	}
-	if strings.TrimSpace(stdout) != filepath.Join(configDir, "tld.yaml") {
+	if strings.TrimSpace(stdout) != filepath.Join(configDir, "tld.global.yaml") {
 		t.Fatalf("config path = %q", stdout)
 	}
 
@@ -94,7 +94,7 @@ func TestConfigCommandEnvOverrideSource(t *testing.T) {
 	t.Setenv("PORT", "7777")
 	dir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(configDir, "tld.yaml"), []byte("serve:\n  port: \"8888\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "tld.global.yaml"), []byte("serve:\n  port: \"8888\"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -115,7 +115,7 @@ func TestConfigCommandResetRewritesDefaults(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)
 	dir := t.TempDir()
-	configPath := filepath.Join(configDir, "tld.yaml")
+	configPath := filepath.Join(configDir, "tld.global.yaml")
 
 	if err := os.WriteFile(configPath, []byte("server_url: https://example.invalid\napi_key: secret-value\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)

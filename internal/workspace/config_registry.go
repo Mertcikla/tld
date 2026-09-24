@@ -99,7 +99,7 @@ func SetGlobalConfigValue(key, value string) error {
 	if _, ok := ConfigDefinitionForKey(key); !ok {
 		return fmt.Errorf("unknown global config key %q", key)
 	}
-	path, err := ConfigPath()
+	path, err := ResolveConfigPath()
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,10 @@ func SaveGlobalConfigPreservingUnknown(cfg *Config, existingRoot *yaml.Node) err
 		return err
 	}
 	if existingRoot == nil {
-		existingRoot, _, _ = readConfigNode(path)
+		readPath, readErr := ResolveConfigPath()
+		if readErr == nil {
+			existingRoot, _, _ = readConfigNode(readPath)
+		}
 	}
 	root := configToYAMLNode(cfg, existingRoot)
 	data, err := yaml.Marshal(root)
@@ -428,7 +431,7 @@ var configDefinitions = []ConfigDefinition{
 }
 
 func loadGlobalConfigState(repair bool) (*GlobalConfigState, error) {
-	path, err := ConfigPath()
+	path, err := ResolveConfigPath()
 	if err != nil {
 		return &GlobalConfigState{Config: DefaultConfig(), File: DefaultConfig(), Values: buildConfigValues(DefaultConfig(), nil, nil)}, nil
 	}

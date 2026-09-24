@@ -15,7 +15,7 @@ func TestLoadGlobalConfigStateReportsEnvSourcesAndDoesNotRewriteExistingConfig(t
 	t.Setenv("TLD_CONFIG_DIR", configDir)
 	t.Setenv("TLD_API_KEY", "env-secret")
 
-	configPath := filepath.Join(configDir, "tld.yaml")
+	configPath := filepath.Join(configDir, "tld.global.yaml")
 	original := "server_url: http://file.example\nunknown_root: keep-me\n"
 	writeFile(t, configPath, original)
 
@@ -54,7 +54,7 @@ func TestLoadGlobalConfigStateReportsEnvSourcesAndDoesNotRewriteExistingConfig(t
 func TestSetGlobalConfigValuePreservesUnknownAndValidates(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)
-	configPath := filepath.Join(configDir, "tld.yaml")
+	configPath := filepath.Join(configDir, "tld.global.yaml")
 	writeFile(t, configPath, "server_url: https://tldiagram.com\nunknown_root: keep-me\nwatch:\n  unknown_watch: still-here\n")
 
 	if err := workspace.SetGlobalConfigValue("serve.port", "9000"); err != nil {
@@ -134,7 +134,7 @@ func TestWatchDependenciesEnabledConfigDefaultsAndOverrides(t *testing.T) {
 func TestWatchEmbeddingEndpointSupportsMultipleValues(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)
-	configPath := filepath.Join(configDir, "tld.yaml")
+	configPath := filepath.Join(configDir, "tld.global.yaml")
 	writeFile(t, configPath, `watch:
   embedding:
     provider: openai
@@ -169,7 +169,7 @@ func TestWatchEmbeddingEndpointSupportsMultipleValues(t *testing.T) {
 func TestEnsureGlobalConfigDoesNotRewriteExistingConfig(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)
-	configPath := filepath.Join(configDir, "tld.yaml")
+	configPath := filepath.Join(configDir, "tld.global.yaml")
 	original := "server_url: https://example.invalid\napi_key: existing-secret\norg_id: existing-org\nunknown_root: keep-me\n"
 	writeFile(t, configPath, original)
 
@@ -208,7 +208,7 @@ func TestResolveWatchLayoutConfigUsesEnvOverride(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)
 	t.Setenv("LAYOUT_LINK_DISTANCE", "222")
-	writeFile(t, filepath.Join(configDir, "tld.yaml"), "watch:\n  layout:\n    link_distance: 111\n")
+	writeFile(t, filepath.Join(configDir, "tld.global.yaml"), "watch:\n  layout:\n    link_distance: 111\n")
 
 	got := workspace.ResolveWatchLayoutConfig()
 	if got.LinkDistance != 222 {
@@ -245,7 +245,7 @@ func TestGlobalConfigLSPCommandOverrides(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)
 	t.Setenv("TLD_WATCH_LSP_GO_COMMAND", "/opt/bin/gopls -remote=auto")
-	writeFile(t, filepath.Join(configDir, "tld.yaml"), `watch:
+	writeFile(t, filepath.Join(configDir, "tld.global.yaml"), `watch:
   lsp:
     commands:
       python: pyright-langserver --stdio
@@ -272,7 +272,7 @@ func TestGlobalConfigLSPCommandOverrides(t *testing.T) {
 	if got := cfg.Watch.LSP.Commands["typescript"]; got != "typescript-language-server --stdio" {
 		t.Fatalf("TypeScript command = %q", got)
 	}
-	data, err := os.ReadFile(filepath.Join(configDir, "tld.yaml"))
+	data, err := os.ReadFile(filepath.Join(configDir, "tld.global.yaml"))
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestGlobalConfigLSPCommandOverrides(t *testing.T) {
 func TestGlobalConfigRejectsUnsupportedLSPCommandLanguage(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)
-	writeFile(t, filepath.Join(configDir, "tld.yaml"), `watch:
+	writeFile(t, filepath.Join(configDir, "tld.global.yaml"), `watch:
   lsp:
     commands:
       ruby: ruby-lsp
@@ -343,7 +343,7 @@ func TestGlobalConfigServeSelfHostedEnvOverrides(t *testing.T) {
 	t.Setenv("TLD_CONFIG_DIR", configDir)
 	t.Setenv("TLD_PUBLIC_URL", "https://app.example.com/")
 	t.Setenv("TLD_ALLOWED_ORIGINS", "https://admin.example.com, https://preview.example.com:8443")
-	writeFile(t, filepath.Join(configDir, "tld.yaml"), `serve:
+	writeFile(t, filepath.Join(configDir, "tld.global.yaml"), `serve:
   public_url: https://file.example.com
   allowed_origins:
     - https://file-admin.example.com
@@ -417,7 +417,7 @@ func TestSetGlobalConfigPopulateRerankerEndpointRejectsInvalidURL(t *testing.T) 
 func TestSetGlobalConfigSelfHostedValuesPreservesUnknownAndNormalizesPublicURL(t *testing.T) {
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)
-	configPath := filepath.Join(configDir, "tld.yaml")
+	configPath := filepath.Join(configDir, "tld.global.yaml")
 	writeFile(t, configPath, "serve:\n  host: 127.0.0.1\n  unknown_serve: keep-me\nunknown_root: keep-too\n")
 
 	if err := workspace.SetGlobalConfigValue("serve.public_url", "https://app.example.com/"); err != nil {
@@ -483,7 +483,7 @@ func TestGlobalConfigRejectsInvalidSelfHostedURLs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			configDir := t.TempDir()
 			t.Setenv("TLD_CONFIG_DIR", configDir)
-			writeFile(t, filepath.Join(configDir, "tld.yaml"), tt.content)
+			writeFile(t, filepath.Join(configDir, "tld.global.yaml"), tt.content)
 			if _, err := workspace.LoadGlobalConfig(); err == nil {
 				t.Fatal("expected invalid self-hosted config to fail")
 			}
@@ -514,5 +514,126 @@ func TestSetGlobalConfigLSPValue(t *testing.T) {
 
 	if err := workspace.SetGlobalConfigValue("watch.lsp.memory_limit_bytes", "0"); err == nil {
 		t.Fatal("expected invalid memory limit to fail")
+	}
+}
+
+func TestLoadGlobalConfigStateReadsLegacyConfig(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	writeFile(t, filepath.Join(configDir, "tld.yaml"), "server_url: https://legacy.example\napi_key: legacy-secret\nunknown_root: keep-me\n")
+
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if cfg.ServerURL != "https://legacy.example" {
+		t.Fatalf("ServerURL = %q, want legacy value", cfg.ServerURL)
+	}
+	if cfg.APIKey != "legacy-secret" {
+		t.Fatalf("APIKey = %q, want legacy value", cfg.APIKey)
+	}
+
+	path, err := workspace.ResolveConfigPath()
+	if err != nil {
+		t.Fatalf("ResolveConfigPath: %v", err)
+	}
+	if path != filepath.Join(configDir, "tld.yaml") {
+		t.Fatalf("ResolveConfigPath = %q, want legacy path", path)
+	}
+}
+
+func TestSetGlobalConfigValueWritesNewNameAndPreservesLegacy(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	legacyPath := filepath.Join(configDir, "tld.yaml")
+	original := "server_url: https://legacy.example\nunknown_root: keep-me\n"
+	writeFile(t, legacyPath, original)
+
+	if err := workspace.SetGlobalConfigValue("serve.port", "9000"); err != nil {
+		t.Fatalf("SetGlobalConfigValue: %v", err)
+	}
+
+	newPath := filepath.Join(configDir, "tld.global.yaml")
+	data, err := os.ReadFile(newPath)
+	if err != nil {
+		t.Fatalf("read new config: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "port:") || !strings.Contains(content, "9000") {
+		t.Fatalf("new config missing updated value:\n%s", content)
+	}
+	if !strings.Contains(content, "unknown_root: keep-me") {
+		t.Fatalf("new config did not preserve legacy unknown key:\n%s", content)
+	}
+
+	legacyData, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatalf("read legacy config: %v", err)
+	}
+	if string(legacyData) != original {
+		t.Fatalf("legacy config was modified:\n%s", legacyData)
+	}
+
+	path, err := workspace.ResolveConfigPath()
+	if err != nil {
+		t.Fatalf("ResolveConfigPath: %v", err)
+	}
+	if path != newPath {
+		t.Fatalf("ResolveConfigPath = %q, want canonical path", path)
+	}
+}
+
+func TestLoadGlobalConfigPrefersCanonicalOverLegacy(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	writeFile(t, filepath.Join(configDir, "tld.yaml"), "server_url: https://legacy.example\n")
+	writeFile(t, filepath.Join(configDir, "tld.global.yaml"), "server_url: https://canonical.example\n")
+
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("LoadGlobalConfig: %v", err)
+	}
+	if cfg.ServerURL != "https://canonical.example" {
+		t.Fatalf("ServerURL = %q, want canonical value", cfg.ServerURL)
+	}
+}
+
+func TestEnsureGlobalConfigDoesNotCreateCanonicalWhenLegacyExists(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	writeFile(t, filepath.Join(configDir, "tld.yaml"), "server_url: https://legacy.example\n")
+
+	if err := workspace.EnsureGlobalConfig(); err != nil {
+		t.Fatalf("EnsureGlobalConfig: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "tld.global.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("canonical config should not be created when legacy exists (err=%v)", err)
+	}
+}
+
+func TestEnsureGlobalConfigCreatesCanonicalWhenMissing(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+
+	if err := workspace.EnsureGlobalConfig(); err != nil {
+		t.Fatalf("EnsureGlobalConfig: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "tld.global.yaml")); err != nil {
+		t.Fatalf("canonical config was not created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(configDir, "tld.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("legacy config should not be created (err=%v)", err)
+	}
+}
+
+func TestExistingGlobalConfigPathReturnsLegacyWhenOnlyLegacy(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	legacyPath := filepath.Join(configDir, "tld.yaml")
+	writeFile(t, legacyPath, "server_url: https://legacy.example\n")
+
+	path, ok := workspace.ExistingGlobalConfigPath()
+	if !ok || path != legacyPath {
+		t.Fatalf("ExistingGlobalConfigPath = (%q, %v), want (%q, true)", path, ok, legacyPath)
 	}
 }

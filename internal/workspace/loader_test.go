@@ -26,7 +26,7 @@ func setupConfig(t *testing.T) string {
 	t.Helper()
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)
-	return filepath.Join(configDir, "tld.yaml")
+	return filepath.Join(configDir, "tld.global.yaml")
 }
 
 func minimalConfig() string {

@@ -597,8 +597,8 @@ func WriteConfig(t *testing.T, _, serverURL, apiKey string) {
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		t.Fatalf("mkdir config: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "tld.yaml"), []byte(cfg), 0600); err != nil {
-		t.Fatalf("write tld.yaml: %v", err)
+	if err := os.WriteFile(filepath.Join(configDir, "tld.global.yaml"), []byte(cfg), 0600); err != nil {
+		t.Fatalf("write tld.global.yaml: %v", err)
 	}
 }
 

@@ -26,7 +26,7 @@ func NewLoginCmd(_ *string) *cobra.Command {
 		Use:   "login",
 		Short: "Authenticate the CLI with a tlDiagram server",
 		Long: `Opens a browser window to log in to the tlDiagram server and
-authorise this CLI. The resulting API key is written to .tld.yaml.
+authorise this CLI. The resulting API key is written to tld.global.yaml.
 
 If a browser cannot be opened, you can navigate to the URL manually or
 enter the displayed code at <server>/app/device.`,
@@ -73,7 +73,7 @@ enter the displayed code at <server>/app/device.`,
 				return err
 			}
 
-			// Step 5: write tld.yaml.
+			// Step 5: write tld.global.yaml.
 			if err := writeConfig(serverURL, apiKey, workspaceID); err != nil {
 				return fmt.Errorf("write config: %w", err)
 			}
@@ -146,10 +146,16 @@ func deviceToken(ctx context.Context, serverURL, deviceCode string) (*diagv1.Dev
 	return res.Msg, nil
 }
 
-// writeConfig merges the auth credentials into the global tld.yaml,
-// preserving any existing keys not related to auth.
+// writeConfig merges the auth credentials into the global tld.global.yaml,
+// preserving any existing keys not related to auth. A legacy tld.yaml is read
+// for backwards compatibility and the merged result is written to the new name.
 func writeConfig(serverURL, apiKey, workspaceID string) error {
 	cfgPath, err := workspace.ConfigPath()
+	if err != nil {
+		return fmt.Errorf("get config path: %w", err)
+	}
+
+	readPath, err := workspace.ResolveConfigPath()
 	if err != nil {
 		return fmt.Errorf("get config path: %w", err)
 	}
@@ -160,7 +166,7 @@ func writeConfig(serverURL, apiKey, workspaceID string) error {
 
 	// Read existing config if present.
 	var node yaml.Node
-	if data, err := os.ReadFile(cfgPath); err == nil {
+	if data, err := os.ReadFile(readPath); err == nil {
 		if err := yaml.Unmarshal(data, &node); err != nil || node.Kind == 0 {
 			node = yaml.Node{}
 		}
