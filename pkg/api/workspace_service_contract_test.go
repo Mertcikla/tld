@@ -633,6 +633,7 @@ type contractStore struct {
 	updateElement           func(context.Context, int32, uuid.UUID, ElementInput) (*diagv1.Element, error)
 	getView                 func(context.Context, int32, uuid.UUID) (*diagv1.View, error)
 	getProjectedViewContent func(context.Context, int32, uuid.UUID, *int32) (*diagv1.ViewContent, error)
+	listViewLayers          func(context.Context, int32) ([]*diagv1.ViewLayer, error)
 	updateView              func(context.Context, int32, uuid.UUID, string, *string, *string, []string) (*diagv1.View, error)
 	listPlacements          func(context.Context, int32) ([]*diagv1.PlacedElement, error)
 	addPlacement            func(context.Context, int32, int32, float64, float64) (*diagv1.PlacedElement, error)
@@ -809,7 +810,10 @@ func (s *contractStore) ListElementNavigations(context.Context, uuid.UUID, int32
 func (s *contractStore) ListIncomingElementNavigations(context.Context, int32) ([]*diagv1.IncomingElementNavigationInfo, error) {
 	return nil, nil
 }
-func (s *contractStore) ListViewLayers(context.Context, int32) ([]*diagv1.ViewLayer, error) {
+func (s *contractStore) ListViewLayers(ctx context.Context, viewID int32) ([]*diagv1.ViewLayer, error) {
+	if s.listViewLayers != nil {
+		return s.listViewLayers(ctx, viewID)
+	}
 	return nil, nil
 }
 func (s *contractStore) ListAllViewLayers(context.Context, uuid.UUID) ([]*diagv1.ViewLayer, error) {

@@ -35,6 +35,42 @@ func TestMermaidServiceParseMermaid(t *testing.T) {
 	}
 }
 
+func TestMermaidServiceExportMermaidViewIncludesGroups(t *testing.T) {
+	t.Parallel()
+
+	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	groupTag := "group:11111111-2222-4333-8444-555555555555"
+	store := &contractStore{
+		getProjectedViewContent: func(context.Context, int32, uuid.UUID, *int32) (*diagv1.ViewContent, error) {
+			return &diagv1.ViewContent{Placements: []*diagv1.PlacedElement{
+				{ElementId: 1, Name: "API", Tags: []string{groupTag}},
+			}}, nil
+		},
+		listViewLayers: func(_ context.Context, viewID int32) ([]*diagv1.ViewLayer, error) {
+			if viewID != 42 {
+				t.Fatalf("view id = %d, want 42", viewID)
+			}
+			return []*diagv1.ViewLayer{{Id: 7, ViewId: viewID, Name: "Payments", Tags: []string{groupTag}, Color: "#336699"}}, nil
+		},
+	}
+	service := &MermaidService{Store: store}
+
+	resp, err := service.ExportMermaidView(context.Background(), connect.NewRequest(&diagv1.ExportMermaidViewRequest{
+		OrgId: workspaceID.String(), ViewId: 42, IncludeTldMetadata: true, MarkdownBlock: true,
+	}))
+	if err != nil {
+		t.Fatalf("ExportMermaidView() error = %v", err)
+	}
+	for _, want := range []string{`subgraph group_7["Payments"]`, `node_1["API"]`, "style group_7 fill:#33669926,stroke:#336699"} {
+		if !strings.Contains(resp.Msg.GetCode(), want) {
+			t.Errorf("export code missing %q:\n%s", want, resp.Msg.GetCode())
+		}
+	}
+	if !strings.Contains(resp.Msg.GetMarkdown(), "```mermaid\nflowchart LR") {
+		t.Fatalf("Markdown = %q, want wrapped Mermaid block", resp.Msg.GetMarkdown())
+	}
+}
+
 func TestMermaidServiceParseMermaidFontAwesomeNodeLabel(t *testing.T) {
 	t.Parallel()
 

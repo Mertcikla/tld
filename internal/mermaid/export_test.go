@@ -66,6 +66,62 @@ func TestExportViewWithAndWithoutMetadata(t *testing.T) {
 	}
 }
 
+func TestExportViewWithLayersEmitsGroupsAsColoredSubgraphs(t *testing.T) {
+	t.Parallel()
+
+	groupTag := "group:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	content := &diagv1.ViewContent{
+		Placements: []*diagv1.PlacedElement{
+			{ElementId: 3, Name: "Database"},
+			{ElementId: 2, Name: "Worker", Tags: []string{groupTag}},
+			{ElementId: 1, Name: "API", Tags: []string{"backend", groupTag}},
+		},
+		Connectors: []*diagv1.Connector{{Id: 9, SourceElementId: 1, TargetElementId: 3}},
+	}
+	layers := []*diagv1.ViewLayer{{Id: 7, Name: "Payments", Tags: []string{groupTag}, Color: "#336699"}}
+
+	got := ExportViewWithLayers(content, 42, true, layers)
+	for _, want := range []string{
+		`subgraph group_7["Payments"]`,
+		`    node_1["API"]`,
+		`    node_2["Worker"]`,
+		"  end",
+		"style group_7 fill:#33669926,stroke:#336699",
+		`  node_3["Database"]`,
+		"node_1 --> node_3",
+		"tags=backend",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ExportViewWithLayers() missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, groupTag) {
+		t.Fatalf("ExportViewWithLayers() leaked internal group marker:\n%s", got)
+	}
+	if strings.Index(got, `subgraph group_7["Payments"]`) > strings.Index(got, `  node_3["Database"]`) {
+		t.Fatalf("ungrouped node appeared before group block:\n%s", got)
+	}
+}
+
+func TestExportViewWithLayersUsesOneSubgraphForOverlappingMembership(t *testing.T) {
+	t.Parallel()
+
+	firstTag := "group:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
+	secondTag := "group:11111111-2222-4333-8444-555555555555"
+	content := &diagv1.ViewContent{Placements: []*diagv1.PlacedElement{
+		{ElementId: 1, Name: "Shared", Tags: []string{firstTag, secondTag}},
+	}}
+	layers := []*diagv1.ViewLayer{
+		{Id: 2, Name: "Second", Tags: []string{secondTag}, Color: "#222222"},
+		{Id: 1, Name: "First", Tags: []string{firstTag}, Color: "#111111"},
+	}
+
+	got := ExportViewWithLayers(content, 42, false, layers)
+	if !strings.Contains(got, `subgraph group_1["First"]`) || strings.Contains(got, `subgraph group_2["Second"]`) {
+		t.Fatalf("overlapping membership should be assigned deterministically to the lowest layer id:\n%s", got)
+	}
+}
+
 func TestExportedMetadataParsesBack(t *testing.T) {
 	t.Parallel()
 
