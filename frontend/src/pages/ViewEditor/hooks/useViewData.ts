@@ -50,7 +50,7 @@ interface ViewDataOptions {
   stableOnOpenCodePreview: (elementId: number) => void
   stableOnInteractionStart: (elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => void
   stableOnConnectTo: (targetElementId: number) => Promise<void>
-  stableOnStartHandleReconnect: (args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number }) => void
+  stableOnStartHandleReconnect: (args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number; pointerId: number }) => void
   stableOnRemoveElement: (elementId: number) => Promise<void>
   stableOnHoverZoom: (elementId: number, type: 'in' | 'out' | null) => void
   hoveredZoomRef: React.MutableRefObject<{ elementId: number | null; type: 'in' | 'out' | null } | null>

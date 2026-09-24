@@ -16,12 +16,34 @@ import {
   uniqueName,
 } from '../helpers/vieweditor'
 
+async function waitForStableLocator(
+  page: Parameters<typeof handleLocator>[0],
+  locator: ReturnType<typeof handleLocator>,
+) {
+  let previous = await locator.boundingBox()
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    }))
+    const next = await locator.boundingBox()
+    if (
+      previous && next &&
+      previous.x === next.x && previous.y === next.y &&
+      previous.width === next.width && previous.height === next.height
+    ) {
+      return
+    }
+    previous = next
+  }
+}
+
 async function dragLocatorToPoint(
   page: Parameters<typeof handleLocator>[0],
   locator: ReturnType<typeof handleLocator>,
   point: { x: number; y: number },
   useTouchOnMobile = false,
 ) {
+  await waitForStableLocator(page, locator)
   const start = await locatorCenter(locator)
   const isWebKit = await page.evaluate(() => (
     navigator.userAgent.includes('AppleWebKit') &&
@@ -75,6 +97,7 @@ async function dragLocatorToPointWithMidDragCheck(
   point: { x: number; y: number },
   check: () => Promise<void>,
 ) {
+  await waitForStableLocator(page, locator)
   const start = await locatorCenter(locator)
   await page.mouse.move(start.x, start.y)
   await page.mouse.down()

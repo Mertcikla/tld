@@ -973,7 +973,7 @@ function ViewEditorInner({
   // stableOnConnectTo is wired after canvasInteractions is declared
   const stableOnConnectToRef = useRef<(targetElementId: number) => Promise<void>>(async () => { })
   const stableOnInteractionStartRef = useRef<(elementId: number, options?: { sourceHandle?: string; clientX?: number; clientY?: number }) => void>(() => { })
-  const stableOnStartHandleReconnectRef = useRef<(args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number }) => void>(() => { })
+  const stableOnStartHandleReconnectRef = useRef<(args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number; pointerId: number }) => void>(() => { })
   const stableOnReconnectPickRef = useRef<(targetElementId: number) => Promise<boolean>>(async () => false)
 
   // ── Drawing engine ────────────────────────────────────────────────────────
@@ -1041,7 +1041,7 @@ function ViewEditorInner({
     stableOnConnectTo: useCallback(async (targetElementId: number) => {
       await stableOnConnectToRef.current(targetElementId)
     }, []),
-    stableOnStartHandleReconnect: useCallback((args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number }) => {
+    stableOnStartHandleReconnect: useCallback((args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number; pointerId: number }) => {
       stableOnStartHandleReconnectRef.current(args)
     }, []),
     stableOnRemoveElement: useCallback(async (id: number) => { await stableOnRemoveElementRef.current(id) }, []),
@@ -3062,10 +3062,13 @@ function ViewEditorInner({
     const activeElementIds = new Set(selectedNodeIds)
     if (hoveredElementId !== null) activeElementIds.add(hoveredElementId)
 
+    const activeNodeIds = new Set(activeElementIds)
+    for (const id of selectedEdgeEndPoints) activeNodeIds.add(id)
+
     const applyZ = (node: RFNode): RFNode => {
       if (node.id === PENDING_ELEMENT_NODE_ID || node.type !== 'elementNode') return node
       const currentZ = node.zIndex ?? Z_ELEMENT
-      const targetZ = activeElementIds.has(node.id) ? Math.max(Z_ELEMENT_ACTIVE, currentZ) : currentZ
+      const targetZ = activeNodeIds.has(node.id) ? Math.max(Z_ELEMENT_ACTIVE, currentZ) : currentZ
       return targetZ === node.zIndex ? node : { ...node, zIndex: targetZ }
     }
 

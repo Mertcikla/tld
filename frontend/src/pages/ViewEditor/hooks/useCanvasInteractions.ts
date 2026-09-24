@@ -270,6 +270,60 @@ function findNearestHandleTargetInCache(targets: HandleTarget[], clientX: number
   }
 }
 
+function findReconnectTargetAtPoint(clientX: number, clientY: number, excludedNodeId: string) {
+  const targets = elementsFromClientPoint(clientX, clientY)
+  if (!targets) return null
+
+  for (const target of targets) {
+    if (!isDomElement(target)) continue
+    const handle = target.closest('.react-flow__handle')
+    const nodeId = target.closest('.react-flow__node')?.getAttribute('data-id')
+    if (!nodeId || nodeId === excludedNodeId || !handle) continue
+    return { nodeId, handleId: handle.getAttribute('data-handleid') || handle.id || null }
+  }
+
+  for (const target of targets) {
+    if (!isDomElement(target)) continue
+    const nodeId = target.closest('.react-flow__node')?.getAttribute('data-id')
+    if (nodeId && nodeId !== excludedNodeId) return { nodeId, handleId: null }
+  }
+
+  let nearestHandle: { nodeId: string; handleId: string; distance: number } | null = null
+  for (const handle of document.querySelectorAll('.react-flow__handle')) {
+    if (!isDomElement(handle)) continue
+    const nodeId = handle.closest('.react-flow__node')?.getAttribute('data-id')
+    if (!nodeId || nodeId === excludedNodeId) continue
+    const rect = handle.getBoundingClientRect()
+    const distance = Math.hypot(clientX - (rect.left + rect.width / 2), clientY - (rect.top + rect.height / 2))
+    if (distance <= 36 && (!nearestHandle || distance < nearestHandle.distance)) {
+      nearestHandle = {
+        nodeId,
+        handleId: handle.getAttribute('data-handleid') || handle.id,
+        distance,
+      }
+    }
+  }
+
+  if (nearestHandle) return { nodeId: nearestHandle.nodeId, handleId: nearestHandle.handleId }
+
+  let nearestNode: { nodeId: string; distance: number } | null = null
+  for (const node of document.querySelectorAll('.react-flow__node')) {
+    if (!isDomElement(node)) continue
+    const nodeId = node.getAttribute('data-id')
+    if (!nodeId || nodeId === excludedNodeId) continue
+    const rect = node.getBoundingClientRect()
+    const dx = Math.max(rect.left - clientX, 0, clientX - rect.right)
+    const dy = Math.max(rect.top - clientY, 0, clientY - rect.bottom)
+    const distance = Math.hypot(dx, dy)
+    if (distance <= 36 && (!nearestNode || distance < nearestNode.distance)) {
+      nearestNode = { nodeId, distance }
+    }
+  }
+
+  if (nearestNode) return { nodeId: nearestNode.nodeId, handleId: null }
+  return null
+}
+
 function flattenViewTree(nodes: ViewTreeNode[]): ViewTreeNode[] {
   const out: ViewTreeNode[] = []
   const walk = (items: ViewTreeNode[]) => {
@@ -502,6 +556,7 @@ export function getPlacementPositionTimerKeys(timerKey: string, elementIds: numb
 type HandleReconnectDragState = {
   edgeId: string
   endpoint: 'source' | 'target'
+  pointerId: number
   fixedNodeId: string
   fixedHandle: string
   movingHandle: string
@@ -1577,7 +1632,7 @@ export function useCanvasInteractions({
   const onReconnectStart = useCallback(() => { isReconnectingRef.current = true }, [])
   const onReconnectEnd = useCallback(() => { isReconnectingRef.current = false }, [])
 
-  const stableOnStartHandleReconnect = useCallback((args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number }) => {
+  const stableOnStartHandleReconnect = useCallback((args: { edgeId: string; endpoint: 'source' | 'target'; handleId: string; clientX: number; clientY: number; pointerId: number }) => {
     if (!canEdit) return
     const edge = _rfEdgesRef.current.find((candidate) => candidate.id === args.edgeId)
     if (!edge) return
@@ -1605,6 +1660,7 @@ export function useCanvasInteractions({
     syncHandleReconnectDrag({
       edgeId: args.edgeId,
       endpoint: args.endpoint,
+      pointerId: args.pointerId,
       fixedNodeId,
       fixedHandle,
       movingHandle,
@@ -1613,6 +1669,7 @@ export function useCanvasInteractions({
     })
 
     const move = (event: PointerEvent) => {
+      if (event.pointerId !== args.pointerId) return
       const now = performance.now()
       if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
       connectorDragLastUpdateRef.current = now
@@ -1628,7 +1685,8 @@ export function useCanvasInteractions({
       })
     }
 
-    const up = async (_event: PointerEvent) => {
+    const up = async (event: PointerEvent) => {
+      if (event.pointerId !== args.pointerId) return
       const current = handleReconnectDragRef.current
       clearHandleReconnectListeners()
       handleReconnectDragRef.current = null
@@ -1640,21 +1698,25 @@ export function useCanvasInteractions({
       const oldConnector = _rfEdgesRef.current.find((candidate) => candidate.id === current.edgeId)
       if (!oldConnector) return
 
+      const releaseTarget = findReconnectTargetAtPoint(event.clientX, event.clientY, current.fixedNodeId)
+      const hoveredNodeId = releaseTarget?.nodeId
+      const hoveredHandleId = releaseTarget?.handleId ?? null
+
       let newConnection: Connection | null = null
 
-      if (current.hoveredNodeId && current.hoveredHandleId) {
+      if (hoveredNodeId) {
         newConnection = current.endpoint === 'source'
           ? {
-            source: current.hoveredNodeId,
-            sourceHandle: current.hoveredHandleId,
+            source: hoveredNodeId,
+            sourceHandle: hoveredHandleId,
             target: current.fixedNodeId,
             targetHandle: current.fixedHandle,
           }
           : {
             source: current.fixedNodeId,
             sourceHandle: current.fixedHandle,
-            target: current.hoveredNodeId,
-            targetHandle: current.hoveredHandleId,
+            target: hoveredNodeId,
+            targetHandle: hoveredHandleId,
           }
       }
 
@@ -1667,6 +1729,40 @@ export function useCanvasInteractions({
     document.addEventListener('pointerup', up)
     document.addEventListener('pointercancel', up)
   }, [canEdit, clearHandleReconnectListeners, performReconnect, _rfEdgesRef, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, suppressImmediatePaneClick, syncHandleReconnectDrag])
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.button !== 0) return
+      const target = elementsFromClientPoint(event.clientX, event.clientY)
+        ?.find((element) => isDomElement(element) && element.matches('.element-node-reconnect-zone'))
+      if (!isDomElement(target)) return
+
+      const edgeId = target.getAttribute('data-edge-id')
+      const endpoint = target.getAttribute('data-endpoint')
+      const handleId = target.getAttribute('data-handle-id')
+      if (!edgeId || (endpoint !== 'source' && endpoint !== 'target') || !handleId) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      try {
+        target.setPointerCapture?.(event.pointerId)
+      } catch {
+        // Synthetic touch pointers have no active browser pointer to capture.
+        // The document listeners below still track the drag in that case.
+      }
+      stableOnStartHandleReconnect({
+        edgeId,
+        endpoint,
+        handleId,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        pointerId: event.pointerId,
+      })
+    }
+
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [stableOnStartHandleReconnect])
 
   const stableOnReconnectPick = useCallback(async (targetElementId: number) => {
     const picking = reconnectPickingRef.current
