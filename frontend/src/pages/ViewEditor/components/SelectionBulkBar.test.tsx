@@ -96,12 +96,18 @@ describe('SelectionBulkBar bulk merge', () => {
 })
 
 describe('SelectionBulkBar groups', () => {
-  it('allows a single selected element to be grouped', async () => {
+  it('hides the selection toolbar when only one element is selected', () => {
+    const renderer = renderBulkBar({ count: 1, onCreateGroup: vi.fn(async () => undefined) })
+
+    expect(renderer.root.findAllByProps({ 'data-testid': 'vieweditor-selection-bulk-bar' })).toHaveLength(0)
+  })
+
+  it('allows a multi-element selection to be grouped with a palette color', async () => {
     const onCreateGroup = vi.fn(async () => undefined)
-    const renderer = renderBulkBar({ count: 1, onCreateGroup })
+    const renderer = renderBulkBar({ count: 2, onCreateGroup })
 
     expect(renderer.root.findByProps({ 'data-testid': 'selection-bulk-group' })).toBeTruthy()
-    expect(renderer.root.findAllByProps({ 'data-testid': 'selection-bulk-align-left' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'selection-bulk-align-left' })).toBeTruthy()
 
     act(() => {
       renderer.root.findByProps({ 'data-testid': 'selection-bulk-group' }).props.onClick()

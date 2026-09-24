@@ -170,7 +170,7 @@ export default function SelectionBulkBar({
   const [groupName, setGroupName] = React.useState('')
   const [groupColor, setGroupColor] = React.useState(defaultGroupColor)
 
-  if (count < 1) return null
+  if (count < 2) return null
 
   const submitGroup = async () => {
     const name = groupName.trim()
