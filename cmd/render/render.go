@@ -15,14 +15,22 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 	var (
 		format string
 		output string
+		view   string
 	)
 
 	c := &cobra.Command{
-		Use:   "render <view>",
+		Use:   "render [view]",
 		Short: "Render a workspace view to text output formats",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			view := normalizeViewRef(args[0])
+			target := strings.TrimSpace(view)
+			if len(args) == 1 {
+				target = args[0]
+			}
+			if strings.TrimSpace(target) == "" {
+				return fmt.Errorf("view is required: pass it as an argument or with --view")
+			}
+			viewRef := normalizeViewRef(target)
 			if !strings.EqualFold(format, "mermaid") {
 				return fmt.Errorf("unsupported --format %q (supported: mermaid)", format)
 			}
@@ -30,13 +38,13 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("load workspace: %w", err)
 			}
-			if view != workspace.RootRef {
-				if _, ok := ws.Elements[view]; !ok {
-					return fmt.Errorf("view %q not found", view)
+			if viewRef != workspace.RootRef {
+				if _, ok := ws.Elements[viewRef]; !ok {
+					return fmt.Errorf("view %q not found", viewRef)
 				}
 			}
 
-			content, err := renderMermaid(ws, view)
+			content, err := renderMermaid(ws, viewRef)
 			if err != nil {
 				return err
 			}
@@ -55,6 +63,7 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 
 	c.Flags().StringVar(&format, "format", "mermaid", "render output format")
 	c.Flags().StringVarP(&output, "output", "o", "", "write render output to file")
+	c.Flags().StringVar(&view, "view", "", "view ref to render (alternative to the positional argument)")
 	_ = c.RegisterFlagCompletionFunc("view", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return completion.ViewRefs(wdir)
 	})

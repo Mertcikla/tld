@@ -85,3 +85,30 @@ func TestRenderCmd_MissingViewFails(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestRenderCmd_ViewFlagMatchesPositional(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service")
+
+	stdout, _, err := cmd.RunCmd(t, dir, "render", "--view", "root")
+	if err != nil {
+		t.Fatalf("render --view: %v", err)
+	}
+	if !strings.Contains(stdout, "flowchart LR") {
+		t.Fatalf("expected mermaid header, got:\n%s", stdout)
+	}
+}
+
+func TestRenderCmd_RequiresView(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+
+	_, _, err := cmd.RunCmd(t, dir, "render")
+	if err == nil {
+		t.Fatal("expected error when no view is provided")
+	}
+	if !strings.Contains(err.Error(), "view is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

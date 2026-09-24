@@ -8,6 +8,10 @@ import (
 // WithWorkspaceDryRun clones the workspace into a temporary directory and
 // executes mutate against that clone.
 func WithWorkspaceDryRun(wdir string, mutate func(cloneDir string) error) error {
+	// An empty workspace dir means "current directory"; os.DirFS rejects it.
+	if wdir == "" {
+		wdir = "."
+	}
 	cloneDir, err := os.MkdirTemp("", "tld-dry-run-*")
 	if err != nil {
 		return fmt.Errorf("create dry-run workspace: %w", err)

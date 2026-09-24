@@ -51,7 +51,7 @@ func NewTechCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().IntVar(&limit, "limit", defaultLimit, "number of catalog entries to return")
+	cmd.Flags().IntVar(&limit, "limit", defaultLimit, fmt.Sprintf("number of catalog entries to return (1-%d)", maxLimit))
 	cmd.Flags().IntVar(&offset, "offset", 0, "zero-based catalog entry offset")
 	cmd.AddCommand(newSuggestCmd())
 	return cmd
@@ -84,7 +84,7 @@ func newSuggestCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().IntVar(&limit, "limit", 5, "maximum number of suggestions")
+	cmd.Flags().IntVar(&limit, "limit", 5, fmt.Sprintf("maximum number of suggestions (1-%d)", maxLimit))
 	return cmd
 }
 
