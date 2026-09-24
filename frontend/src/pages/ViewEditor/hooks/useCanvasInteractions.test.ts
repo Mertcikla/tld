@@ -282,14 +282,20 @@ describe('connector drag attach handle resolution', () => {
 })
 
 describe('viewport zoom helpers', () => {
-  it('zooms vertical smooth wheel input before React Flow can pan it', () => {
-    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 6 }), false)).toBe(true)
-    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 20.5 }), false)).toBe(true)
+  it('zooms notched pixel-mode and line-mode mouse wheels', () => {
+    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 120 }), false)).toBe(true)
+    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 3, deltaMode: 1 }), false)).toBe(true)
   })
 
-  it('keeps two-axis wheel gestures available for canvas panning', () => {
+  it('lets smooth vertical trackpad wheel input pan through React Flow', () => {
+    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 6 }), false)).toBe(false)
+    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 20.5 }), false)).toBe(false)
+  })
+
+  it('keeps two-axis wheel gestures and momentum available for canvas panning', () => {
     expect(shouldZoomViewEditorWheel(wheel({ deltaX: 8, deltaY: 20 }), false)).toBe(false)
     expect(shouldZoomViewEditorWheel(wheel({ deltaY: 6 }), true)).toBe(false)
+    expect(shouldZoomViewEditorWheel(wheel({ deltaY: 120 }), true)).toBe(false)
   })
 
   it('lets React Flow handle ctrl-wheel pinch gestures such as Firefox trackpad pinch', () => {

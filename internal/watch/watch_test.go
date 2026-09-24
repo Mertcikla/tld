@@ -4152,6 +4152,16 @@ func TestWatchElementHashIgnoresManagedGitTags(t *testing.T) {
 	if afterSemantic == before {
 		t.Fatalf("non-managed semantic tags should affect element hash")
 	}
+	if _, err := store.addElementTags(context.Background(), elementID, []string{"group:12345678-1234-1234-1234-123456789012"}); err != nil {
+		t.Fatal(err)
+	}
+	afterGroup, ok, err := store.WatchResourceHash(context.Background(), "element", elementID)
+	if err != nil || !ok {
+		t.Fatalf("expected element hash after group marker, ok=%v err=%v", ok, err)
+	}
+	if afterGroup != afterSemantic {
+		t.Fatalf("group markers should not affect element hash: semantic=%s group=%s", afterSemantic, afterGroup)
+	}
 }
 
 func TestRepresenterMaterializesBlastRadiusLowSignalSymbols(t *testing.T) {
@@ -4382,6 +4392,10 @@ func TestPopulateResourceEmbeddingsAreCachedSeparately(t *testing.T) {
 
 func TestEmbeddingSemanticSignalsUseCrossDomainTaxonomy(t *testing.T) {
 	signals := embeddingSemanticSignals("OrderController", "class", "src/orders/http/order_controller.ts", `["role:api"]`)
+	withGroupMarker := embeddingSemanticSignals("OrderController", "class", "src/orders/http/order_controller.ts", `["role:api","group:12345678-1234-1234-1234-123456789012"]`)
+	if !slices.Equal(signals, withGroupMarker) {
+		t.Fatalf("group marker changed semantic signals: without=%v with=%v", signals, withGroupMarker)
+	}
 
 	for _, want := range []string{"responsibility interface boundary", "intent request handling", "intent service endpoint"} {
 		if !containsEmbeddingSignal(signals, want) {

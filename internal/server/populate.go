@@ -507,7 +507,7 @@ func scorePopulateCandidates(query populateQuery, candidates []populateCandidate
 		if cand.element.Kind != nil {
 			kind = *cand.element.Kind
 		}
-		cand.lexicalPathScore = calculateLexicalPathScore(query.Base, query.ViewName, cand.element.Name, filePath+" "+kind+" "+string(cand.element.Tags))
+		cand.lexicalPathScore = calculateLexicalPathScore(query.Base, query.ViewName, cand.element.Name, filePath+" "+kind+" "+populateTagSummary(cand.element.Tags))
 		scorePopulateChildSupport(cand, query)
 		connectivityScore := 0.0
 		if connectedIDs[cand.element.ID] {

@@ -3,6 +3,7 @@ import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'reac
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
 import type { ExploreDiffLens } from '../../utils/exploreDiffLens'
+import type { ViewLayer } from '../../types'
 import type { ZUIViewportBounds } from '../../crossBranch/resolve'
 import {
   drawVisibleDirectProxyBadges,
@@ -91,6 +92,7 @@ interface UseZUIRenderLoopArgs {
   highlightedTags?: string[]
   highlightColor?: string
   hiddenTags?: string[]
+  groupLayers: ViewLayer[]
   versionPreview?: WorkspaceVersionPreview | null
   versionFollowTarget?: WorkspaceVersionFollowTarget | null
   diffLens?: ExploreDiffLens | null
@@ -112,6 +114,7 @@ export function useZUIRenderLoop({
   highlightedTags,
   highlightColor,
   hiddenTags,
+  groupLayers,
   versionPreview,
   versionFollowTarget,
   diffLens,
@@ -133,6 +136,12 @@ export function useZUIRenderLoop({
     needsRedrawRef.current = true
     requestFrameRef.current?.()
   }, [])
+
+  const groupLayersRef = useRef(groupLayers)
+  useEffect(() => {
+    groupLayersRef.current = groupLayers
+    invalidate()
+  }, [groupLayers, invalidate])
 
   useEffect(() => {
     const update = () => {
@@ -269,6 +278,12 @@ export function useZUIRenderLoop({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
       const theme = getThemeVars()
+      const groupLayersByDiagram = new Map<number, ViewLayer[]>()
+      for (const layer of groupLayersRef.current) {
+        const diagramLayers = groupLayersByDiagram.get(layer.diagram_id) ?? []
+        diagramLayers.push(layer)
+        groupLayersByDiagram.set(layer.diagram_id, diagramLayers)
+      }
       const renderCtx: RenderContext = {
         canvasBg: theme.canvasBg,
         nodeBg: theme.nodeBg,
@@ -278,6 +293,7 @@ export function useZUIRenderLoop({
         canvasH: h,
         thresholds,
         lowDetail,
+        groupLayersByDiagram,
       }
 
       const occupiedLabelRects = renderFrame(ctx, graph, renderCtx, currentView, transitionRebaseRef.current)

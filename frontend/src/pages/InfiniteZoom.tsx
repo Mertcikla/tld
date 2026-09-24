@@ -163,6 +163,7 @@ function ExplorePage({ sharedToken, shareSlot }: Props, ref?: Ref<InfiniteZoomHa
             highlightedTags={tags.highlightedTags}
             highlightColor={tags.highlightColor}
             hiddenTags={tags.hiddenTags}
+            groupLayers={tags.layers}
             versionPreview={versionPreview}
             versionFollowTarget={versionFollowTarget}
             diffLens={diffMode.diffLens}

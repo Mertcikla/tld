@@ -57,6 +57,20 @@ const connector = (id: number, tags: string[] = [], overrides: Partial<Connector
 const keys = (rows: ReturnType<typeof filterInventoryRows>) => rows.map((row) => row.key).sort()
 
 describe('inventoryData', () => {
+  it('keeps internal group markers out of inventory tags and search text', () => {
+    const rows = buildInventoryRows(
+      [element(1, 'API', ['payments', 'group:12345678-1234-4234-a234-123456789012'])],
+      [],
+      [],
+      {},
+    )
+    const row = rows[0]
+
+    expect(row.tags).toEqual(['payments'])
+    expect(row.searchableText).not.toContain('group:')
+    expect(filterInventoryRows(rows, { type: 'all', query: '12345678', tags: [], kind: '', qualities: [] })).toEqual([])
+  })
+
   it('builds rows with relationship labels and quality flags', () => {
     const rows = buildInventoryRows(
       [element(1, 'API', ['payments']), element(2, 'Database')],

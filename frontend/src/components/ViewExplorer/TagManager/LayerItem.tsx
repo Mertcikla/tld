@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import {
   Box,
+  Button,
   HStack,
   Text,
   VStack,
@@ -21,6 +22,7 @@ import { ColorPicker } from './ColorPicker'
 
 interface Props {
   layer: ViewLayer
+  isElementGroup?: boolean
   isActive: boolean
   isExpanded: boolean
   tagCount: number
@@ -36,12 +38,14 @@ interface Props {
   selectedElementTags?: string[]
   onToggleTagOnElement?: (tag: string) => void
   namingPopover?: { isOpen: boolean; defaultName: string }
+  availableNames?: string[]
   onConfirmNaming?: (name: string) => void
   onCloseNaming?: () => void
 }
 
 export const LayerItem: React.FC<Props> = ({
   layer,
+  isElementGroup = false,
   isActive,
   isExpanded,
   tagCount,
@@ -57,6 +61,7 @@ export const LayerItem: React.FC<Props> = ({
   selectedElementTags,
   onToggleTagOnElement,
   namingPopover,
+  availableNames,
   onConfirmNaming,
   onCloseNaming,
 }) => {
@@ -64,6 +69,7 @@ export const LayerItem: React.FC<Props> = ({
   const { isOpen: isColorOpen, onOpen: onColorOpen, onClose: onColorClose } = useDisclosure()
 
   const handleDragOver = (e: React.DragEvent) => {
+    if (isElementGroup) return
     if (e.dataTransfer.types.includes('application/diag-tag')) {
       e.preventDefault()
       e.dataTransfer.dropEffect = 'copy'
@@ -78,6 +84,7 @@ export const LayerItem: React.FC<Props> = ({
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setIsOver(false)
+    if (isElementGroup) return
     const tag = e.dataTransfer.getData('application/diag-tag')
     if (tag && !layer.tags.includes(tag)) {
       onAddTag(tag)
@@ -134,7 +141,7 @@ export const LayerItem: React.FC<Props> = ({
                 onToggleActive()
               }}
             />
-            
+
             <Popover
               isOpen={isColorOpen}
               onClose={onColorClose}
@@ -161,10 +168,10 @@ export const LayerItem: React.FC<Props> = ({
 
             <VStack align="start" spacing={0} flex={1} minW={0}>
               <Text fontSize="xs" fontWeight="600" color="white" isTruncated>
-                {layer.name}
+                {isElementGroup ? `group:${layer.name}` : layer.name}
               </Text>
               <Text fontSize="10px" color="gray.500">
-                {layer.tags.length} tags · {tagCount} elements
+                {isElementGroup ? `${tagCount} elements` : `${layer.tags.length} tags · ${tagCount} elements`}
               </Text>
             </VStack>
 
@@ -183,6 +190,7 @@ export const LayerItem: React.FC<Props> = ({
             onClose={onCloseNaming || (() => {})}
             onConfirm={onConfirmNaming}
             defaultName={namingPopover.defaultName}
+            availableNames={availableNames}
           />
         )}
       </Popover>
@@ -191,7 +199,23 @@ export const LayerItem: React.FC<Props> = ({
         <Box px={4} pb={3} pt={1}>
           <Flex align="flex-start" justify="space-between">
             <Wrap spacing={1.5} align="center" flex={1}>
-              {layer.tags.map((tag) => (
+              {isElementGroup && (
+                <Text fontSize="xs" color="gray.500" py={1}>
+                  Drag this group onto an element to add it.
+                </Text>
+              )}
+              {isElementGroup && layer.tags[0] && selectedElementTags?.includes(layer.tags[0]) && onToggleTagOnElement && (
+                <Button
+                  data-testid="tag-manager-group-remove-selected"
+                  size="xs"
+                  variant="ghost"
+                  color="whiteAlpha.700"
+                  onClick={() => onToggleTagOnElement(layer.tags[0])}
+                >
+                  Remove selected element
+                </Button>
+              )}
+              {!isElementGroup && layer.tags.map((tag) => (
                 <WrapItem key={tag}>
                   <TagItem
                     tag={tag}

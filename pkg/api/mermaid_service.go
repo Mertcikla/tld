@@ -32,6 +32,14 @@ func (s *MermaidService) hooks() WorkspaceHooks {
 	return s.Hooks
 }
 
+func (s *MermaidService) exportViewCode(ctx context.Context, viewID int32, content *diagv1.ViewContent, includeTldMetadata bool) (string, error) {
+	layers, err := s.Store.ListViewLayers(ctx, viewID)
+	if err != nil {
+		return "", storeErr("list view layers", err)
+	}
+	return mermaid.ExportViewWithLayers(content, viewID, includeTldMetadata, layers), nil
+}
+
 func (s *MermaidService) ParseMermaid(ctx context.Context, req *connect.Request[diagv1.ParseMermaidRequest]) (*connect.Response[diagv1.ParseMermaidResponse], error) {
 	parsed, err := mermaid.Parse(req.Msg.GetSource())
 	if err != nil {
@@ -107,7 +115,10 @@ func (s *MermaidService) ExportMermaidView(ctx context.Context, req *connect.Req
 	if err != nil {
 		return nil, storeErr("get view content", err)
 	}
-	code := mermaid.ExportView(content, viewID, m.GetIncludeTldMetadata())
+	code, err := s.exportViewCode(ctx, viewID, content, m.GetIncludeTldMetadata())
+	if err != nil {
+		return nil, err
+	}
 	resp := &diagv1.ExportMermaidViewResponse{Code: code}
 	if m.GetMarkdownBlock() {
 		resp.Markdown = mermaid.MermaidBlock(code)
@@ -136,7 +147,10 @@ func (s *MermaidService) InspectMermaidMarkdown(ctx context.Context, req *connec
 		if err != nil {
 			return nil, storeErr("get view content", err)
 		}
-		currentCode = mermaid.ExportView(content, viewID, true)
+		currentCode, err = s.exportViewCode(ctx, viewID, content, true)
+		if err != nil {
+			return nil, err
+		}
 	}
 	blocks := mermaid.FindMarkdownBlocks(m.GetMarkdown())
 	protoBlocks := make([]*diagv1.MermaidMarkdownBlockInfo, 0, len(blocks))
@@ -175,7 +189,10 @@ func (s *MermaidService) UpsertMermaidMarkdownBlock(ctx context.Context, req *co
 	if err != nil {
 		return nil, storeErr("get view content", err)
 	}
-	code := mermaid.ExportView(content, viewID, m.GetIncludeTldMetadata())
+	code, err := s.exportViewCode(ctx, viewID, content, m.GetIncludeTldMetadata())
+	if err != nil {
+		return nil, err
+	}
 	previousStatus := mermaid.SyncStatus(m.GetMarkdown(), viewID, code)
 	return connect.NewResponse(&diagv1.UpsertMermaidMarkdownBlockResponse{
 		Markdown:       mermaid.UpsertMarkdownBlock(m.GetMarkdown(), viewID, code),

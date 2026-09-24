@@ -5,6 +5,7 @@ import {
 } from '@chakra-ui/react'
 import { AddElementIcon as AddElementSvg } from './Icons'
 import { KbdHint } from './PanelUI'
+import { isElementGroupTag } from '../utils/elementGroups'
 // Inline the props interface to avoid circular dependency with the web variant
 // (vite.vscode.config.ts overrides ViewFloatingMenu.tsx → this file)
 interface ViewFloatingMenuProps {
@@ -91,6 +92,7 @@ export default function ViewFloatingMenu({
   markdownBusy = false,
   onMarkdownToggle,
 }: ViewFloatingMenuProps) {
+  const visibleTags = availableTags.filter((tag) => !isElementGroupTag(tag))
   const notesLabel = !hasMarkdown ? 'Notes' : markdownOpen ? 'Hide Notes' : 'Notes'
   const notesDisabled = markdownBusy || (!hasMarkdown && !canEdit)
 
@@ -250,7 +252,7 @@ export default function ViewFloatingMenu({
           </MenuButton>
         </Tooltip>
         <MenuList bg="var(--bg-panel)" borderColor="whiteAlpha.100" shadow="0 8px 32px rgba(0,0,0,0.5)" rounded="xl" py={2} maxH="300px" overflowY="auto">
-          {availableTags.length === 0 ? (
+          {visibleTags.length === 0 ? (
             <Box px={4} py={2}>
               <Text fontSize="xs" color="gray.500">No tags in workspace</Text>
             </Box>
@@ -261,7 +263,7 @@ export default function ViewFloatingMenu({
               value={activeTags}
               onChange={(val) => setActiveTags?.(val as string[])}
             >
-              {availableTags.map((tag) => (
+              {visibleTags.map((tag) => (
                 <MenuItemOption
                   key={tag}
                   value={tag}

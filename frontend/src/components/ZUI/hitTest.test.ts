@@ -99,6 +99,16 @@ describe('ZUI node hit testing', () => {
     expect(hit?.node.id).toBe('bottom')
   })
 
+  it('hides group members when their group tag is hidden', () => {
+    const marker = 'group:12345678-1234-4234-a234-123456789012'
+    const member = node('member', 1, 0, 0, { tags: [marker] })
+    const view: ZUIViewState = { x: 0, y: 0, zoom: 1 }
+
+    const hit = hitTestZUIRenderedNode(20, 20, [group([member])], view, thresholds, new Set([marker]))
+
+    expect(hit).toBeNull()
+  })
+
   it('uses rendered topmost order for overlapping nodes', () => {
     const bottom = node('bottom', 1, 0, 0)
     const top = node('top', 2, 0, 0)
@@ -142,9 +152,14 @@ describe('ZUI mouse pan buttons', () => {
 })
 
 describe('ZUI wheel gestures', () => {
-  it('zooms vertical smooth wheel input around the pointer instead of panning vertically', () => {
-    expect(shouldZoomZUIWheel(wheel({ deltaY: 6 }), false)).toBe(true)
-    expect(shouldZoomZUIWheel(wheel({ deltaY: 20.5 }), false)).toBe(true)
+  it('zooms notched pixel-mode and line-mode mouse wheels', () => {
+    expect(shouldZoomZUIWheel(wheel({ deltaY: 120 }), false)).toBe(true)
+    expect(shouldZoomZUIWheel(wheel({ deltaY: 3, deltaMode: 1 }), false)).toBe(true)
+  })
+
+  it('pans smooth vertical trackpad wheel input instead of zooming', () => {
+    expect(shouldZoomZUIWheel(wheel({ deltaY: 6 }), false)).toBe(false)
+    expect(shouldZoomZUIWheel(wheel({ deltaY: 20.5 }), false)).toBe(false)
   })
 
   it('keeps two-axis trackpad wheel gestures available for panning', () => {

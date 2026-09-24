@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html"
 	"math"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -15,7 +16,20 @@ type metadataEntry struct {
 	Value string
 }
 
+type exportGroup struct {
+	layer   *diagv1.ViewLayer
+	marker  string
+	members []*diagv1.PlacedElement
+}
+
+var elementGroupMarkerPattern = regexp.MustCompile(`^group:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+var mermaidGroupColorPattern = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+
 func ExportView(content *diagv1.ViewContent, viewID int32, includeTldMetadata bool) string {
+	return ExportViewWithLayers(content, viewID, includeTldMetadata, nil)
+}
+
+func ExportViewWithLayers(content *diagv1.ViewContent, viewID int32, includeTldMetadata bool, layers []*diagv1.ViewLayer) string {
 	if content == nil {
 		content = &diagv1.ViewContent{}
 	}
@@ -52,16 +66,31 @@ func ExportView(content *diagv1.ViewContent, viewID int32, includeTldMetadata bo
 		}
 	}
 
-	for _, placement := range placements {
-		ref := fmt.Sprintf("node_%d", placement.GetElementId())
-		nodeID := sanitizeMermaidID(ref)
-		lines = append(lines, fmt.Sprintf(`  %s["%s"]`, nodeID, escapeMermaidLabel(placement.GetName())))
-		if includeTldMetadata {
-			lines = append(lines, metadataComment("tld-element", "", elementMetadataEntries(placement, ref)))
+	groups, groupByElement := exportGroups(placements, layers)
+	for _, group := range groups {
+		groupID := fmt.Sprintf("group_%d", group.layer.GetId())
+		lines = append(lines, "", fmt.Sprintf(`  subgraph %s["%s"]`, groupID, escapeMermaidLabel(group.layer.GetName())))
+		for _, placement := range group.members {
+			lines = appendPlacement(lines, placement, includeTldMetadata, "    ")
+		}
+		lines = append(lines, "  end")
+		if color := strings.TrimSpace(group.layer.GetColor()); mermaidGroupColorPattern.MatchString(color) {
+			lines = append(lines, fmt.Sprintf("  style %s fill:%s26,stroke:%s", groupID, color, color))
 		}
 	}
+	for _, placement := range placements {
+		if _, grouped := groupByElement[placement.GetElementId()]; grouped {
+			continue
+		}
+		if len(groups) > 0 && len(lines) > 0 && lines[len(lines)-1] != "" {
+			lines = append(lines, "")
+		}
+		lines = appendPlacement(lines, placement, includeTldMetadata, "  ")
+	}
 	if len(placements) > 0 && len(connectors) > 0 {
-		lines = append(lines, "")
+		if len(lines) > 0 && lines[len(lines)-1] != "" {
+			lines = append(lines, "")
+		}
 	}
 	for _, connector := range connectors {
 		sourceRef := fmt.Sprintf("node_%d", connector.GetSourceElementId())
@@ -80,6 +109,49 @@ func ExportView(content *diagv1.ViewContent, viewID int32, includeTldMetadata bo
 	}
 
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func appendPlacement(lines []string, placement *diagv1.PlacedElement, includeTldMetadata bool, indent string) []string {
+	ref := fmt.Sprintf("node_%d", placement.GetElementId())
+	nodeID := sanitizeMermaidID(ref)
+	lines = append(lines, fmt.Sprintf(`%s%s["%s"]`, indent, nodeID, escapeMermaidLabel(placement.GetName())))
+	if includeTldMetadata {
+		lines = append(lines, indent+metadataComment("tld-element", "", elementMetadataEntries(placement, ref)))
+	}
+	return lines
+}
+
+func exportGroups(placements []*diagv1.PlacedElement, layers []*diagv1.ViewLayer) ([]exportGroup, map[int32]struct{}) {
+	orderedLayers := make([]*diagv1.ViewLayer, 0, len(layers))
+	for _, layer := range layers {
+		if layer != nil {
+			orderedLayers = append(orderedLayers, layer)
+		}
+	}
+	slices.SortFunc(orderedLayers, func(left, right *diagv1.ViewLayer) int {
+		return int(left.GetId() - right.GetId())
+	})
+	groupByElement := make(map[int32]struct{})
+	groups := make([]exportGroup, 0, len(orderedLayers))
+	for _, layer := range orderedLayers {
+		if len(layer.GetTags()) != 1 || !elementGroupMarkerPattern.MatchString(layer.GetTags()[0]) {
+			continue
+		}
+		group := exportGroup{layer: layer, marker: layer.GetTags()[0]}
+		for _, placement := range placements {
+			if _, alreadyGrouped := groupByElement[placement.GetElementId()]; alreadyGrouped {
+				continue
+			}
+			if slices.Contains(placement.GetTags(), group.marker) {
+				group.members = append(group.members, placement)
+				groupByElement[placement.GetElementId()] = struct{}{}
+			}
+		}
+		if len(group.members) > 0 {
+			groups = append(groups, group)
+		}
+	}
+	return groups, groupByElement
 }
 
 func ExportMarkdownBlock(content *diagv1.ViewContent, viewID int32, includeTldMetadata bool) string {
@@ -104,7 +176,13 @@ func elementMetadataEntries(element *diagv1.PlacedElement, ref string) []metadat
 	appendStringEntry("tech", element.GetTechnology())
 	appendStringEntry("url", element.GetUrl())
 	appendStringEntry("logo", element.GetLogoUrl())
-	if encoded := EncodeStringList(element.GetTags()); encoded != "" {
+	visibleTags := make([]string, 0, len(element.GetTags()))
+	for _, tag := range element.GetTags() {
+		if !elementGroupMarkerPattern.MatchString(tag) {
+			visibleTags = append(visibleTags, tag)
+		}
+	}
+	if encoded := EncodeStringList(visibleTags); encoded != "" {
 		entries = append(entries, metadataEntry{Key: "tags", Value: encoded})
 	}
 	if encoded := EncodeTechnologyLinks(element.GetTechnologyLinks()); encoded != "" {

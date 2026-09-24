@@ -425,6 +425,12 @@ func runUpdateConnectorServer(ctx context.Context, ws *workspace.Workspace, wdir
 	if style == "" {
 		style = "bezier"
 	}
+	// Connector tags are editor-only (not part of the YAML spec), so carry the
+	// server's existing tags through the update to avoid clearing them.
+	existing, err := runner.GetConnector(ctx, connectorID)
+	if err != nil {
+		return nil, currentKey, cmdutil.WithUnauthorizedHint("server get connector failed", err)
+	}
 	updated, err := runner.UpdateConnector(ctx, connectorID, api.ConnectorInput{
 		ViewID:       viewID,
 		SourceID:     sourceID,
@@ -437,6 +443,7 @@ func runUpdateConnectorServer(ctx context.Context, ws *workspace.Workspace, wdir
 		URL:          &spec.URL,
 		SourceHandle: &spec.SourceHandle,
 		TargetHandle: &spec.TargetHandle,
+		Tags:         existing.GetTags(),
 	})
 	if err != nil {
 		return nil, currentKey, cmdutil.WithUnauthorizedHint("server update connector failed", err)

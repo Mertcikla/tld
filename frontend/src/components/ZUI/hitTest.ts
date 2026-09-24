@@ -25,7 +25,7 @@ function cellKey(cx: number, cy: number): string {
 }
 
 function isHiddenByTags(node: LayoutNode, hiddenTags: ReadonlySet<string>): boolean {
-  return hiddenTags.size > 0 && node.tags.length > 0 && node.tags.some((tag) => hiddenTags.has(tag))
+  return hiddenTags.size > 0 && node.tags.some((tag) => hiddenTags.has(tag))
 }
 
 function getNodeSpatialIndex(nodes: LayoutNode[]): NodeSpatialIndex {

@@ -1119,12 +1119,17 @@ func (s *WorkspaceService) UpdateConnector(
 		return nil, err
 	}
 
+	tags := m.GetTags()
+	if tags == nil {
+		tags = []string{}
+	}
+
 	c, err := s.Store.UpdateConnector(ctx, connectorID, workspaceID, ConnectorInput{
 		ViewID: existing.ViewId, SourceID: sourceID, TargetID: targetID,
 		Label: label, Description: description,
 		Relationship: relationship, Direction: direction, Style: style,
 		URL: url, SourceHandle: sourceHandle, TargetHandle: targetHandle,
-		Tags: m.Tags,
+		Tags: tags,
 	})
 	if err != nil {
 		return nil, storeErr("update connector", err)

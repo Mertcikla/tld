@@ -1,5 +1,6 @@
 import { Box, Divider, Flex, HStack, Tag, Text, VStack } from '@chakra-ui/react'
 import { TYPE_COLORS, type PlacedElement, type Tag as TagType } from '../types'
+import { isElementGroupTag } from '../utils/elementGroups'
 
 interface Props {
     data: PlacedElement & { hasChildLink?: boolean }
@@ -10,6 +11,7 @@ interface Props {
 
 export default function NodeHoverCard({ data, anchorRect, tagColors }: Props) {
     const color = TYPE_COLORS[data.kind ?? ''] ?? 'gray'
+    const visibleTags = data.tags?.filter((tag) => !isElementGroupTag(tag)) ?? []
 
     // Position the card centred above the node using fixed coordinates so it
     // escapes React Flow's stacking context and always renders on top.
@@ -100,9 +102,9 @@ export default function NodeHoverCard({ data, anchorRect, tagColors }: Props) {
                 )}
 
                 {/* Tags */}
-                {data.tags && data.tags.length > 0 && (
+                {visibleTags.length > 0 && (
                     <HStack spacing={1} flexWrap="wrap">
-                        {data.tags.map((tag) => {
+                        {visibleTags.map((tag) => {
                             const tagColor = tagColors?.[tag]?.color
                             return (
                                 <Tag

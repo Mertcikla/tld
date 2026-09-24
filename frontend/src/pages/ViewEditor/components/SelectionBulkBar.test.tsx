@@ -16,17 +16,21 @@ vi.mock('@chakra-ui/react', async () => {
     icon?: React.ReactNode
     onClick?: () => void
   }) => ReactModule.createElement('button', { ...props, onClick }, icon, children)
+  const InputLike = (props: Record<string, unknown>) => ReactModule.createElement('input', props)
 
   return {
     Box: BoxLike,
     Button: ButtonLike,
     HStack: BoxLike,
     IconButton: ButtonLike,
+    Input: InputLike,
     Popover: BoxLike,
     PopoverBody: BoxLike,
     PopoverContent: BoxLike,
     PopoverTrigger: BoxLike,
+    PopoverArrow: BoxLike,
     Portal: BoxLike,
+    SimpleGrid: BoxLike,
     Text: BoxLike,
     Tooltip: BoxLike,
     VStack: BoxLike,
@@ -88,6 +92,55 @@ describe('SelectionBulkBar bulk merge', () => {
     })
 
     expect(onMergeInto).toHaveBeenCalledWith(2)
+  })
+})
+
+describe('SelectionBulkBar groups', () => {
+  it('hides the selection toolbar when only one element is selected', () => {
+    const renderer = renderBulkBar({ count: 1, onCreateGroup: vi.fn(async () => undefined) })
+
+    expect(renderer.root.findAllByProps({ 'data-testid': 'vieweditor-selection-bulk-bar' })).toHaveLength(0)
+  })
+
+  it('creates a group from the typed name', async () => {
+    const onCreateGroup = vi.fn(async () => undefined)
+    const renderer = renderBulkBar({ count: 2, onCreateGroup })
+
+    expect(renderer.root.findByProps({ 'data-testid': 'selection-bulk-group' })).toBeTruthy()
+    expect(renderer.root.findByProps({ 'data-testid': 'selection-bulk-align-left' })).toBeTruthy()
+
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'selection-bulk-group' }).props.onClick()
+    })
+    const nameInput = renderer.root.findByProps({ 'data-testid': 'selection-bulk-group-name' })
+    act(() => nameInput.props.onChange({ target: { value: 'Payments' } }))
+    await act(async () => {
+      renderer.root
+        .findByProps({ 'data-testid': 'selection-bulk-group-name' })
+        .props.onKeyDown({ key: 'Enter', preventDefault: vi.fn() })
+    })
+
+    expect(onCreateGroup).toHaveBeenCalledWith('Payments', '#4299E1')
+    expect(renderer.root.findAllByProps({ type: 'color' })).toHaveLength(0)
+  })
+
+  it('searches existing groups and joins the selected one', async () => {
+    const onCreateGroup = vi.fn(async () => undefined)
+    const renderer = renderBulkBar({ count: 2, onCreateGroup, availableGroups: ['Payments', 'Platform'] })
+
+    const nameInput = renderer.root.findByProps({ 'data-testid': 'selection-bulk-group-name' })
+    act(() => nameInput.props.onChange({ target: { value: 'Pay' } }))
+
+    const existing = renderer.root.findAll(
+      (node) => typeof node.type === 'string' && node.props['data-testid'] === 'selection-bulk-group-existing-option',
+    )
+    expect(existing).toHaveLength(1)
+
+    await act(async () => {
+      existing[0].props.onMouseDown({ preventDefault: vi.fn() })
+    })
+
+    expect(onCreateGroup).toHaveBeenCalledWith('Payments', '#4299E1')
   })
 })
 

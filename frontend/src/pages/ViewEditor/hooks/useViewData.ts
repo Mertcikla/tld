@@ -19,6 +19,14 @@ import {
 } from '../../../utils/edgeDistribution'
 import { buildViewContentLinks, useStore } from '../../../store/useStore'
 import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../../context/WorkspaceVersionContext'
+import {
+  Z_CONNECTOR,
+  Z_CONNECTOR_LABEL,
+  Z_ELEMENT,
+  Z_ELEMENT_INTERACTION_SOURCE,
+  Z_ELEMENT_LAYER_HIGHLIGHT,
+  Z_ELEMENT_VERSION_PULSE,
+} from '../../../utils/zOrder'
 
 interface ViewDataOptions {
   viewId: number | null
@@ -468,7 +476,13 @@ export function useViewData({
           : undefined
         const isDimmedByVersionPreview = versionActive && !versionChangeType
 
-        const newZIndex = versionPulseChangeType ? 20 : isLayerHighlighted ? 10 : interactionSourceId === obj.element_id ? 1000 : 0
+        const newZIndex = versionPulseChangeType
+          ? Z_ELEMENT_VERSION_PULSE
+          : isLayerHighlighted
+            ? Z_ELEMENT_LAYER_HIGHLIGHT
+            : interactionSourceId === obj.element_id
+              ? Z_ELEMENT_INTERACTION_SOURCE
+              : Z_ELEMENT
         const newStyle = isInactive
           ? HIDDEN_STYLE
           : isSoftFocused
@@ -615,7 +629,7 @@ export function useViewData({
         const isDimmedByVersionPreview = versionActive && !versionChangeType
         const edgeOpacity = isInactive || isDimmedByVersionPreview ? 0.1 : isSoftFocused ? 0.2 : 0.8
         const markerOpacity = isInactive || isDimmedByVersionPreview ? 0.1 : isSoftFocused ? 0.2 : 1
-        const newZIndex = selectedEdgeId !== null && edgeId === String(selectedEdgeId) ? 1000 : 100
+        const newZIndex = Z_CONNECTOR
         const pointerEvents = (isInactive || isSoftFocused) ? 'none' : 'auto'
         const labelBgOpacity = isInactive || isDimmedByVersionPreview ? 0.1 : isSoftFocused ? 0.2 : 0.95
 
@@ -663,6 +677,7 @@ export function useViewData({
             sourceHandleSlot: layout.sourceHandleSlot,
             targetHandleSlot: layout.targetHandleSlot,
             versionChangeType,
+            labelZIndex: Z_CONNECTOR_LABEL,
           },
 
           style: { stroke: 'var(--accent)', strokeWidth: 2, opacity: edgeOpacity, pointerEvents },
@@ -675,23 +690,7 @@ export function useViewData({
         }
       })
     })
-  }, [connectorLayouts, selectedEdgeId, activeTags, hiddenLayerTags, hoveredLayerTags, elementMap, setRfEdges, versionPreview])
-
-
-  // ── Boost z-index of selected connector ────────────────────────────────────────
-  useEffect(() => {
-    setRfEdges((prev) => {
-      let changed = false
-      const selectedId = selectedEdgeId !== null ? String(selectedEdgeId) : null
-      const next = prev.map((edge) => {
-        const nextZIndex = selectedId !== null && edge.id === selectedId ? 1000 : 100
-        if (edge.zIndex === nextZIndex) return edge
-        changed = true
-        return { ...edge, zIndex: nextZIndex }
-      })
-      return changed ? next : prev
-    })
-  }, [selectedEdgeId, setRfEdges])
+  }, [connectorLayouts, activeTags, hiddenLayerTags, hoveredLayerTags, elementMap, setRfEdges, versionPreview])
 
   return {
     // State

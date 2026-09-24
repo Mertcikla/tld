@@ -52,6 +52,7 @@ import type {
   Tag,
 } from '../../types'
 import ElementNode from '../../components/ElementNode'
+import GroupBackgroundNode from './components/GroupBackgroundNode'
 import ElementPanel from '../../components/ElementPanel'
 import ElementPanelCollaboration from '../../components/ElementPanelCollaboration'
 import MergeDialog from '../../components/MergeDialog'
@@ -95,6 +96,15 @@ import {
   useViewContextNeighbours,
 } from './hooks/useViewContextNeighbours'
 import { canonicalNodePairKey } from './pairKey'
+import {
+  Z_CONNECTOR,
+  Z_CONNECTOR_ACTIVE,
+  Z_CONNECTOR_LABEL,
+  Z_CONNECTOR_LABEL_ACTIVE,
+  Z_ELEMENT,
+  Z_ELEMENT_ACTIVE,
+  Z_ELEMENT_PENDING,
+} from '../../utils/zOrder'
 import { vscodeBridge } from '../../lib/vscodeBridge'
 import { pickWritableMarkdownFile } from '../../lib/desktop'
 import type { ExtensionToWebviewMessage } from '../../types/vscode-messages'
@@ -133,6 +143,13 @@ import {
   type ViewSelectionClipboardPayload,
 } from './clipboard'
 import SelectionBulkBar from './components/SelectionBulkBar'
+import {
+  createElementGroupTag,
+  elementGroupTagForLayer,
+  isElementGroupLayer,
+  isElementGroupTag,
+  ELEMENT_GROUP_NODE_PREFIX,
+} from '../../utils/elementGroups'
 import { overrideViewContentInSnapshot } from '../../crossBranch/graph'
 import { useCrossBranchContextSettings } from '../../crossBranch/settings'
 import { removeConnectorGraphSnapshot, removePlacementGraphSnapshot, upsertConnectorGraphSnapshot, upsertPlacementGraphSnapshot, useWorkspaceGraphSnapshot } from '../../crossBranch/store'
@@ -155,6 +172,7 @@ import { deriveViewNoiseGateEnabled } from './noiseGate'
 
 const nodeTypes = {
   elementNode: ElementNode,
+  groupBackgroundNode: GroupBackgroundNode,
   contextNeighborNode: ViewContextNeighborElement,
   ContextBoundaryElement: ContextBoundaryElement,
 }
@@ -389,6 +407,7 @@ function connectorUpdatePayload(connector: Connector) {
     url: connector.url ?? '',
     source_handle: connector.source_handle,
     target_handle: connector.target_handle,
+    tags: connector.tags ?? [],
   }
 }
 
@@ -693,6 +712,52 @@ function ViewEditorInner({
 
   const [selectedElement, setSelectedElement] = useState<WorkspaceElement | null>(null)
   const [selectedEdge, setSelectedEdge] = useState<Connector | null>(null)
+  const [hoveredElementId, setHoveredElementId] = useState<string | null>(null)
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null)
+  const hoveredElementClearRef = useRef<number | null>(null)
+  const hoveredEdgeClearRef = useRef<number | null>(null)
+  const clearHoveredElement = useCallback(() => {
+    if (hoveredElementClearRef.current !== null) window.clearTimeout(hoveredElementClearRef.current)
+    hoveredElementClearRef.current = null
+    setHoveredElementId(null)
+  }, [])
+  const clearHoveredEdge = useCallback(() => {
+    if (hoveredEdgeClearRef.current !== null) window.clearTimeout(hoveredEdgeClearRef.current)
+    hoveredEdgeClearRef.current = null
+    setHoveredEdgeId(null)
+  }, [])
+  const scheduleClearHoveredElement = useCallback(() => {
+    if (hoveredElementClearRef.current !== null) window.clearTimeout(hoveredElementClearRef.current)
+    hoveredElementClearRef.current = window.setTimeout(() => {
+      hoveredElementClearRef.current = null
+      setHoveredElementId(null)
+    }, 60)
+  }, [])
+  const scheduleClearHoveredEdge = useCallback(() => {
+    if (hoveredEdgeClearRef.current !== null) window.clearTimeout(hoveredEdgeClearRef.current)
+    hoveredEdgeClearRef.current = window.setTimeout(() => {
+      hoveredEdgeClearRef.current = null
+      setHoveredEdgeId(null)
+    }, 60)
+  }, [])
+  const handleNodeMouseEnter = useCallback((_: React.MouseEvent, node: RFNode) => {
+    clearHoveredElement()
+    setHoveredElementId(node.id)
+  }, [clearHoveredElement])
+  const handleNodeMouseLeave = useCallback(() => {
+    scheduleClearHoveredElement()
+  }, [scheduleClearHoveredElement])
+  const handleEdgeMouseEnter = useCallback((_: React.MouseEvent, edge: RFEdge) => {
+    clearHoveredEdge()
+    setHoveredEdgeId(edge.id)
+  }, [clearHoveredEdge])
+  const handleEdgeMouseLeave = useCallback(() => {
+    scheduleClearHoveredEdge()
+  }, [scheduleClearHoveredEdge])
+  useEffect(() => () => {
+    if (hoveredElementClearRef.current !== null) window.clearTimeout(hoveredElementClearRef.current)
+    if (hoveredEdgeClearRef.current !== null) window.clearTimeout(hoveredEdgeClearRef.current)
+  }, [])
   const [selectedProxyConnectorDetails, setSelectedProxyConnectorDetails] = useState<ProxyConnectorDetails | null>(null)
   const [suppressedSelectedConnectorHandleHighlightId, setSuppressedSelectedConnectorHandleHighlightId] = useState<number | null>(null)
   const suppressSelectedConnectorHandleHighlight = selectedEdge !== null && suppressedSelectedConnectorHandleHighlightId === selectedEdge.id
@@ -785,6 +850,7 @@ function ViewEditorInner({
   }, [])
 
   const [layers, setLayers] = useState<import('../../types').ViewLayer[]>([])
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false)
   const [hiddenLayerTags, setHiddenLayerTags] = useState<string[]>(() => demoOptions?.defaultHiddenLayerTags ?? [])
   const hiddenLayerTagsRef = useRef<string[]>([])
   hiddenLayerTagsRef.current = hiddenLayerTags
@@ -803,13 +869,24 @@ function ViewEditorInner({
   const handleCreateLayer = useCallback(async (name: string, tags: string[], color: string) => {
     if (viewId === null) return
     try {
+      const trimmed = name.trim()
+      const existing = layers.find(
+        (layer) => !isElementGroupLayer(layer) && layer.name.trim().toLowerCase() === trimmed.toLowerCase(),
+      )
+      if (existing) {
+        const merged = { ...existing, tags: Array.from(new Set([...existing.tags, ...tags])) }
+        const updated = await api.workspace.views.layers.update(viewId, existing.id, merged)
+        clearEditHistory()
+        setLayers((previous) => previous.map((layer) => (layer.id === existing.id ? updated : layer)))
+        return
+      }
       const layer = await api.workspace.views.layers.create(viewId, { name, tags, color })
       clearEditHistory()
       setLayers(prev => [...prev, layer])
     } catch (e) {
       toast({ status: 'error', title: 'Failed to create layer', description: String(e) })
     }
-  }, [clearEditHistory, viewId, toast])
+  }, [clearEditHistory, layers, viewId, toast])
 
   const handleCreateTag = useCallback(async (tag: string, color?: string, description?: string) => {
     const name = tag.trim()
@@ -836,14 +913,26 @@ function ViewEditorInner({
 
   const handleDeleteLayer = useCallback(async (layerId: number) => {
     if (viewId === null) return
+    const layer = layers.find((item) => item.id === layerId)
     try {
+      const groupTag = layer ? elementGroupTagForLayer(layer) : null
+      if (groupTag) {
+        await api.workspace.orgs.tagColors.delete(groupTag)
+        setHiddenLayerTags((previous) => previous.filter((tag) => tag !== groupTag))
+        setTagColors((prev) => {
+          const next = { ...prev }
+          delete next[groupTag]
+          return next
+        })
+      }
       await api.workspace.views.layers.delete(viewId, layerId)
       clearEditHistory()
       setLayers(prev => prev.filter(l => l.id !== layerId))
+      if (groupTag) await refreshElementsRef.current()
     } catch (e) {
       toast({ status: 'error', title: 'Failed to delete layer', description: String(e) })
     }
-  }, [clearEditHistory, viewId, toast])
+  }, [clearEditHistory, layers, viewId, toast])
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   const viewEditorCanvasRef = useRef<HTMLDivElement | null>(null)
@@ -1583,6 +1672,7 @@ function ViewEditorInner({
     selectedCanvasElements.forEach((element) => {
       const tags = element.tags ?? []
       tags.forEach((tag) => {
+        if (isElementGroupTag(tag)) return
         counts[tag] = (counts[tag] ?? 0) + 1
       })
     })
@@ -1893,11 +1983,33 @@ function ViewEditorInner({
 
   const availableTags = useMemo(() => {
     const tags = new Set<string>()
-    viewElements.forEach((o) => o.tags?.forEach((t: string) => tags.add(t)))
-    allElements.forEach((o) => o.tags?.forEach((t: string) => tags.add(t)))
-    Object.keys(tagColors).forEach((t) => tags.add(t))
+    viewElements.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t)) tags.add(t) }))
+    allElements.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t)) tags.add(t) }))
+    connectors.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t)) tags.add(t) }))
+    Object.keys(tagColors).forEach((t) => { if (!isElementGroupTag(t)) tags.add(t) })
     return Array.from(tags).sort((a, b) => a.localeCompare(b))
-  }, [allElements, tagColors, viewElements])
+  }, [allElements, connectors, tagColors, viewElements])
+
+  const availableGroups = useMemo(
+    () => layers
+      .filter((layer) => isElementGroupLayer(layer))
+      .map((layer) => layer.name.trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b)),
+    [layers],
+  )
+
+  const elementGroups = useMemo(
+    () => layers
+      .filter((layer) => isElementGroupLayer(layer))
+      .map((layer) => ({ tag: layer.tags[0], name: layer.name, color: layer.color ?? null })),
+    [layers],
+  )
+
+  const defaultGroupColor = useMemo(() => pickUnusedColor([
+    ...Object.values(tagColors).map((tag) => tag.color),
+    ...layers.map((layer) => layer.color).filter((color): color is string => !!color),
+  ]), [layers, tagColors])
 
   const effectiveWorkspaceSnapshot = useMemo(() => {
     if (viewId == null) return workspaceGraphSnapshot
@@ -2301,6 +2413,107 @@ function ViewEditorInner({
     viewElements,
   ])
 
+  const handleCreateGroup = useCallback(async (name: string, color: string) => {
+    if (!canEdit || viewId === null || selectedCanvasElementIds.length === 0) return
+    const label = name.trim()
+    if (!label) return
+
+    const beforeElements = selectedCanvasElementIds
+      .map((elementId) => resolveElementForUpdate(elementId, selectedElement, allElements, viewElements))
+      .filter((element): element is WorkspaceElement => element !== null)
+    if (beforeElements.length === 0) return
+
+    const existingGroup = layers.find(
+      (layer) => isElementGroupLayer(layer) && layer.name.trim().toLowerCase() === label.toLowerCase(),
+    )
+    const groupTags = existingGroup ? existingGroup.tags : [createElementGroupTag()]
+    const afterElements = beforeElements.map((element) => ({
+      ...element,
+      tags: Array.from(new Set([...(element.tags ?? []), ...groupTags])),
+    }))
+    let createdLayer: import('../../types').ViewLayer | null = null
+    setIsCreatingGroup(true)
+
+    try {
+      if (!existingGroup) {
+        createdLayer = await api.workspace.views.layers.create(viewId, {
+          name: label,
+          tags: groupTags,
+          color,
+        })
+      }
+      const savedElements = await Promise.all(afterElements.map((element) =>
+        api.elements.update(element.id, elementUpdatePayload(element))
+      ))
+      savedElements.forEach(applyElementSaved)
+      await refreshElements()
+      if (createdLayer) {
+        const layer = createdLayer
+        setLayers((previous) => [...previous.filter((item) => !item.tags.includes(groupTags[0])), layer])
+      }
+
+      pushEditAction({
+        undo: async () => {
+          if (createdLayer) {
+            await api.workspace.orgs.tagColors.delete(groupTags[0])
+            await api.workspace.views.layers.delete(viewId, createdLayer.id)
+            setLayers((previous) => previous.filter((layer) => layer.id !== createdLayer!.id))
+            setTagColors((previous) => {
+              const next = { ...previous }
+              delete next[groupTags[0]]
+              return next
+            })
+          }
+          const restored = await Promise.all(beforeElements.map((element) =>
+            api.elements.update(element.id, elementUpdatePayload(element))
+          ))
+          restored.forEach(applyElementSaved)
+          await refreshElements()
+        },
+        redo: async () => {
+          if (createdLayer) {
+            const recreatedLayer = await api.workspace.views.layers.create(viewId, {
+              name: label,
+              tags: groupTags,
+              color,
+            })
+            createdLayer = recreatedLayer
+            setLayers((previous) => [...previous.filter((layer) => !layer.tags.includes(groupTags[0])), recreatedLayer])
+          }
+          const saved = await Promise.all(afterElements.map((element) =>
+            api.elements.update(element.id, elementUpdatePayload(element))
+          ))
+          saved.forEach(applyElementSaved)
+          await refreshElements()
+        },
+      })
+    } catch (error) {
+      if (createdLayer) {
+        await api.workspace.orgs.tagColors.delete(groupTags[0]).catch(() => undefined)
+        await api.workspace.views.layers.delete(viewId, createdLayer.id).catch(() => undefined)
+        setLayers((previous) => previous.filter((layer) => layer.id !== createdLayer?.id))
+      }
+      await refreshElements()
+      toast({ status: 'error', title: 'Failed to create group', description: String(error) })
+    } finally {
+      setIsCreatingGroup(false)
+    }
+  }, [
+    allElements,
+    applyElementSaved,
+    canEdit,
+    layers,
+    pushEditAction,
+    refreshElements,
+    selectedCanvasElementIds,
+    selectedElement,
+    setLayers,
+    setTagColors,
+    toast,
+    viewElements,
+    viewId,
+  ])
+
   const pushConnectorEditAction = useCallback((before: Connector, after: Connector) => {
     if (connectorSnapshotsEqual(before, after)) return
     pushEditAction({
@@ -2681,8 +2894,8 @@ function ViewEditorInner({
       dragging: pending.dragging,
       draggable: !pending.preview,
       selectable: !pending.preview,
-      zIndex: 2000,
-      style: pending.preview ? { pointerEvents: 'none' } : undefined,
+      zIndex: Z_ELEMENT_PENDING,
+      style: pending.preview ? { pointerEvents: 'none', visibility: 'visible' } : undefined,
       data: {
         id: -1,
         view_id: viewId,
@@ -2748,12 +2961,72 @@ function ViewEditorInner({
     viewId,
   ])
 
+  const { startGroupDrag, moveGroupDrag, endGroupDrag } = canvas
+
+  const groupBackgroundNodes = useMemo(() => layers.flatMap((layer) => {
+    const groupTag = elementGroupTagForLayer(layer)
+    if (!groupTag) return []
+
+    const memberNodes = rfNodes.filter((node) =>
+      node.type === 'elementNode' && Array.isArray(node.data?.tags) && node.data.tags.includes(groupTag)
+    )
+    if (memberNodes.length === 0) return []
+
+    const paddingX = 22
+    const paddingTop = 40
+    const paddingBottom = 20
+    const rects = memberNodes.map((node) => {
+      const position = node.positionAbsolute ?? node.position
+      return {
+        left: position.x,
+        top: position.y,
+        right: position.x + (node.width ?? 180),
+        bottom: position.y + (node.height ?? 85),
+      }
+    })
+    const left = Math.min(...rects.map((rect) => rect.left))
+    const top = Math.min(...rects.map((rect) => rect.top))
+    const right = Math.max(...rects.map((rect) => rect.right))
+    const bottom = Math.max(...rects.map((rect) => rect.bottom))
+    const width = right - left + paddingX * 2
+    const height = bottom - top + paddingTop + paddingBottom
+
+    return [{
+      id: `${ELEMENT_GROUP_NODE_PREFIX}${layer.id}`,
+      type: 'groupBackgroundNode',
+      position: { x: left - paddingX, y: top - paddingTop },
+      width,
+      height,
+      data: {
+        label: layer.name,
+        color: layer.color || '#4299E1',
+        memberNodeIds: memberNodes.map((node) => node.id),
+        hidden: hiddenLayerTags.includes(groupTag),
+        onToggleVisibility: () => {
+          setHiddenLayerTags((previous) => previous.includes(groupTag)
+            ? previous.filter((tag) => tag !== groupTag)
+            : [...previous, groupTag])
+        },
+        onGroupDragStart: () => startGroupDrag(memberNodes.map((node) => node.id)),
+        onGroupDragMove: (dx: number, dy: number) => moveGroupDrag(dx, dy),
+        onGroupDragEnd: () => endGroupDrag(),
+      },
+      draggable: false,
+      selectable: false,
+      connectable: false,
+      focusable: false,
+      deletable: false,
+      zIndex: -1,
+      style: { width, height, pointerEvents: 'none' },
+    } as RFNode]
+  }), [endGroupDrag, hiddenLayerTags, layers, moveGroupDrag, rfNodes, startGroupDrag])
+
   const flowNodes = useMemo(() => {
     const baseNodes = liveContextNodes.length === 0
-      ? rfNodes
+      ? [...groupBackgroundNodes, ...rfNodes]
       : rfNodes.length === 0
         ? liveContextNodes
-        : [...liveContextNodes, ...rfNodes]
+        : [...groupBackgroundNodes, ...liveContextNodes, ...rfNodes]
     const allNodes = pendingElementNode ? [...baseNodes, pendingElementNode] : baseNodes
 
     let hasNodeSel = false
@@ -2786,7 +3059,25 @@ function ViewEditorInner({
       }
     }
 
-    if (!hasNodeSel && !hasEdgeSel) return allNodes
+    const activeElementIds = new Set(selectedNodeIds)
+    if (hoveredElementId !== null) activeElementIds.add(hoveredElementId)
+
+    const applyZ = (node: RFNode): RFNode => {
+      if (node.id === PENDING_ELEMENT_NODE_ID || node.type !== 'elementNode') return node
+      const currentZ = node.zIndex ?? Z_ELEMENT
+      const targetZ = activeElementIds.has(node.id) ? Math.max(Z_ELEMENT_ACTIVE, currentZ) : currentZ
+      return targetZ === node.zIndex ? node : { ...node, zIndex: targetZ }
+    }
+
+    if (!hasNodeSel && !hasEdgeSel) {
+      let changed = false
+      const mapped = allNodes.map((n) => {
+        const next = applyZ(n)
+        if (next !== n) changed = true
+        return next
+      })
+      return changed ? mapped : allNodes
+    }
 
     const cache = fadedNodeCacheRef.current
     const isMultiNodeSelection = selectedCanvasElementCount > 1
@@ -2799,18 +3090,22 @@ function ViewEditorInner({
 
     return allNodes.map((n) => {
       if (n.id === PENDING_ELEMENT_NODE_ID) return n
-      const isHighlighted = selectedNodeIds.has(n.id) || selectedEdgeEndPoints.has(n.id) || neighborNodeIds.has(n.id)
-      if (isHighlighted) return withSelectionMeta(n)
+      const groupMemberIsActive = n.type === 'groupBackgroundNode' &&
+        (n.data as { memberNodeIds?: string[] } | undefined)?.memberNodeIds?.some((id) =>
+          selectedNodeIds.has(id) || selectedEdgeEndPoints.has(id) || neighborNodeIds.has(id) || id === hoveredElementId
+        )
+      const isHighlighted = groupMemberIsActive || selectedNodeIds.has(n.id) || selectedEdgeEndPoints.has(n.id) || neighborNodeIds.has(n.id) || n.id === hoveredElementId
+      if (isHighlighted) return applyZ(withSelectionMeta(n))
       const cached = cache.get(n)
-      if (cached) return cached
+      if (cached) return applyZ(cached)
       const faded: RFNode = {
         ...n,
         style: { ...n.style, opacity: (Number(n.style?.opacity ?? 1)) * 0.2 },
       }
       cache.set(n, faded)
-      return faded
+      return applyZ(faded)
     })
-  }, [liveContextNodes, rfNodes, pendingElementNode, contextConnectors, rfEdgesWithProxyBadges, selectedCanvasElementCount])
+  }, [liveContextNodes, rfNodes, pendingElementNode, contextConnectors, rfEdgesWithProxyBadges, selectedCanvasElementCount, hoveredElementId, groupBackgroundNodes])
 
   const pendingPreviewEdges = useMemo((): RFEdge[] => {
     const pending = canvas.pendingElement
@@ -2884,15 +3179,46 @@ function ViewEditorInner({
     let hasEdgeSel = false
     for (const e of allEdges) { if (e.selected) { hasEdgeSel = true; break } }
 
-    if (!hasNodeSel && !hasEdgeSel) return allEdges
+    const activeElementIds = new Set(selectedNodeIds)
+    if (hoveredElementId !== null) activeElementIds.add(hoveredElementId)
+
+    const isEdgeActive = (e: RFEdge) => (
+      e.selected ||
+      (hoveredEdgeId !== null && e.id === hoveredEdgeId) ||
+      activeElementIds.has(e.source) ||
+      activeElementIds.has(e.target)
+    )
+
+    const applyZ = (e: RFEdge): RFEdge => {
+      if (e.id.startsWith('pending-element-edge-')) return e
+      const active = isEdgeActive(e)
+      const targetZ = active ? Z_CONNECTOR_ACTIVE : Z_CONNECTOR
+      const targetLabelZ = active ? Z_CONNECTOR_LABEL_ACTIVE : Z_CONNECTOR_LABEL
+      const currentLabelZ = (e.data as { labelZIndex?: number } | undefined)?.labelZIndex
+      if (e.zIndex === targetZ && currentLabelZ === targetLabelZ) return e
+      return { ...e, zIndex: targetZ, data: { ...(e.data ?? {}), labelZIndex: targetLabelZ } }
+    }
+
+    if (!hasNodeSel && !hasEdgeSel) {
+      let changed = false
+      const mapped = allEdges.map((e) => {
+        const next = applyZ(e)
+        if (next !== e) changed = true
+        return next
+      })
+      return changed ? mapped : allEdges
+    }
 
     const cache = fadedEdgeCacheRef.current
     return allEdges.map((e) => {
       if (e.id.startsWith('pending-element-edge-')) return e
-      const isHighlighted = e.selected || selectedNodeIds.has(e.source) || selectedNodeIds.has(e.target)
-      if (isHighlighted) return e
+      const isHighlighted = e.selected
+        || e.id === hoveredEdgeId
+        || activeElementIds.has(e.source)
+        || activeElementIds.has(e.target)
+      if (isHighlighted) return applyZ(e)
       const cached = cache.get(e)
-      if (cached) return cached
+      if (cached) return applyZ(cached)
       const multiplier = 0.2
       const faded: RFEdge = {
         ...e,
@@ -2903,16 +3229,20 @@ function ViewEditorInner({
         markerStart: fadeMarker(e.markerStart, multiplier),
       }
       cache.set(e, faded)
-      return faded
+      return applyZ(faded)
     })
-  }, [contextConnectors, rfEdgesWithProxyBadges, pendingPreviewEdges, liveContextNodes, rfNodes, pendingElementNode])
+  }, [contextConnectors, rfEdgesWithProxyBadges, pendingPreviewEdges, liveContextNodes, rfNodes, pendingElementNode, hoveredElementId, hoveredEdgeId])
 
   // Route onNodesChange: context node changes (dimensions, selection) go to
   // liveContextNodes state; main node changes go to the canvas handler.
   const { onNodesChange: canvasOnNodesChange } = canvas
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     const ctxChanges = changes.filter((c) => 'id' in c && contextNodeIdsRef.current.has((c as { id: string }).id))
-    const mainChanges = changes.filter((c) => !('id' in c) || !contextNodeIdsRef.current.has((c as { id: string }).id))
+    const mainChanges = changes.filter((c) => {
+      if (!('id' in c)) return true
+      const id = (c as { id: string }).id
+      return !contextNodeIdsRef.current.has(id) && !id.startsWith(ELEMENT_GROUP_NODE_PREFIX)
+    })
     if (ctxChanges.length > 0) {
       const currentContextNodes = liveContextNodesRef.current
       const bounds = getContextBoundaryBounds(currentContextNodes)
@@ -3941,13 +4271,14 @@ function ViewEditorInner({
               onTouchMove={onTouchMove}
               onTouchEnd={onTouchEnd}
               sx={{
+                // NOTE: the edge label renderer intentionally has no z-index so it
+                // does not create a stacking context; each label carries its own
+                // z-index (see ViewBezierConnector / ProxyConnectorEdge) so labels
+                // can be interleaved with elements.
                 '.react-flow__nodes, .react-flow__edges, .react-flow__edgelabel-renderer': {
                   opacity: initialViewportReady ? 1 : 0,
                   pointerEvents: initialViewportReady ? undefined : 'none',
                   transition: initialViewportReady ? 'opacity 80ms ease-out' : 'none',
-                },
-                '.react-flow__edgelabel-renderer': {
-                  zIndex: 1002,
                 },
               }}
             >
@@ -3959,6 +4290,9 @@ function ViewEditorInner({
                 onNodeDragStart={onNodeDragStart} onNodeDrag={onNodeDrag} onNodeDragStop={onNodeDragStop}
                 onSelectionDragStart={onSelectionDragStart} onSelectionDrag={onSelectionDrag} onSelectionDragStop={onSelectionDragStop}
                 onEdgeClick={onEdgeClick} onEdgeContextMenu={onEdgeContextMenu}
+                onNodeMouseEnter={handleNodeMouseEnter} onNodeMouseLeave={handleNodeMouseLeave}
+                onEdgeMouseEnter={handleEdgeMouseEnter} onEdgeMouseLeave={handleEdgeMouseLeave}
+                elevateNodesOnSelect={false}
                 onPaneContextMenu={onPaneContextMenu} onPaneClick={onPaneClick}
                 onPaneMouseMove={handleRealtimePaneMouseMove}
                 onMoveStart={onMoveStart} onMove={handleRealtimeMove} onMoveEnd={onMoveEnd}
@@ -4148,8 +4482,11 @@ function ViewEditorInner({
             <SelectionBulkBar
               count={drawingMode ? 0 : selectedCanvasElementIds.length}
               availableTags={availableTags}
+              availableGroups={availableGroups}
               selectedTagCounts={selectedCanvasTagCounts}
               tagColors={tagColors}
+              defaultGroupColor={defaultGroupColor}
+              isCreatingGroup={isCreatingGroup}
               mergeOptions={selectedCanvasMergeOptions}
               mergeLoadingId={bulkMergeLoadingId}
               onAlign={handleSelectionAlign}
@@ -4157,6 +4494,7 @@ function ViewEditorInner({
               onFitSelection={handleFitSelection}
               onAddTag={(tag) => { void handleBulkTagChange(tag, 'add') }}
               onRemoveTag={(tag) => { void handleBulkTagChange(tag, 'remove') }}
+              onCreateGroup={handleCreateGroup}
               onMergeInto={(survivorId) => { void handleBulkMergeInto(survivorId) }}
               onRemoveFromView={() => { void handleBulkRemoveFromView() }}
               onCopyMermaid={handleBulkCopyMermaid}
@@ -4311,6 +4649,7 @@ function ViewEditorInner({
           parentLinks={selectedElement ? (parentLinksMap[selectedElement.id] || EMPTY_LINKS) : EMPTY_LINKS}
           hasBackdrop={isMobileLayout}
           availableTags={availableTags}
+          groups={elementGroups}
           noFocusLock={!!pendingElement || !!textEditorState}
           elementPanelAfterContentSlot={resolvedElementPanelAfterContentSlot}
         />
@@ -4322,7 +4661,9 @@ function ViewEditorInner({
           orgId={''}
           onSave={handleConnectorPanelSave} autoSave
           onDelete={handleConnectorDeleteInPanel}
+          availableTags={availableTags}
           visibilityOverrideDelta={overrideDeltaFor('connector', selectedEdge?.id)}
+          onVisibilityOverrideDeltaChange={(id, delta) => handleVisibilityOverrideDeltaChange('connector', id, delta)}
           onPromoteVisibility={(id) => handleVisibilityOverride('connector', id, 'promote')}
           onDemoteVisibility={(id) => handleVisibilityOverride('connector', id, 'demote')}
           onResetVisibility={(id) => handleVisibilityOverride('connector', id, 'reset')}

@@ -82,6 +82,19 @@ describe('collectVisibleNodeAnchors', () => {
 
     expect(anchors.visibleAnchors.get(1)?.renderAlpha).toBeGreaterThanOrEqual(DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA)
   })
+
+  it('drops group member anchors when their group tag is hidden', () => {
+    const member = node('member', 1)
+    member.tags = ['group:12345678-1234-4234-a234-123456789012']
+    const anchors = collectVisibleNodeAnchors(
+      [{ nodes: [member] }],
+      { x: 0, y: 0, zoom: 5 },
+      1000,
+      ['group:12345678-1234-4234-a234-123456789012'],
+    )
+
+    expect(anchors.visibleAnchors.get(1)).toBeFalsy()
+  })
 })
 
 function anchor(partial: Partial<VisibleNodeAnchor>): VisibleNodeAnchor {

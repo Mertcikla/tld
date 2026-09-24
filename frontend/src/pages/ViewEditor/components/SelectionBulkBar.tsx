@@ -14,8 +14,9 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import TagUpsert from '../../../components/TagUpsert'
+import SearchCreateInput from '../../../components/SearchCreateInput'
 import { CopyIcon } from '@chakra-ui/icons'
-import { FitViewIcon, MergeIcon, TagsIcon, TrashIcon } from '../../../components/Icons'
+import { FitViewIcon, LayerIcon, MergeIcon, TagsIcon, TrashIcon } from '../../../components/Icons'
 import type { Tag } from '../../../types'
 import type { SelectionAlign, SelectionDistribute } from '../selection'
 
@@ -127,6 +128,7 @@ function ToolbarIconButton({
 export interface SelectionBulkBarProps {
   count: number
   availableTags: string[]
+  availableGroups?: string[]
   selectedTagCounts: Record<string, number>
   tagColors: Record<string, Tag>
   mergeOptions?: { id: number; name: string; kind?: string | null }[]
@@ -137,6 +139,9 @@ export interface SelectionBulkBarProps {
   onAddTag: (tag: string) => void
   onRemoveTag: (tag: string) => void
   onMergeInto?: (survivorId: number) => void
+  onCreateGroup?: (name: string, color: string) => Promise<void>
+  defaultGroupColor?: string
+  isCreatingGroup?: boolean
   onRemoveFromView: () => void
   onCopyMermaid?: () => void
 }
@@ -144,6 +149,7 @@ export interface SelectionBulkBarProps {
 export default function SelectionBulkBar({
   count,
   availableTags,
+  availableGroups = [],
   selectedTagCounts,
   tagColors,
   mergeOptions = [],
@@ -154,10 +160,24 @@ export default function SelectionBulkBar({
   onAddTag,
   onRemoveTag,
   onMergeInto,
+  onCreateGroup,
+  defaultGroupColor = '#4299E1',
+  isCreatingGroup = false,
   onRemoveFromView,
   onCopyMermaid,
 }: SelectionBulkBarProps) {
+  const [isGroupOpen, setIsGroupOpen] = React.useState(false)
+  const [groupName, setGroupName] = React.useState('')
+
   if (count < 2) return null
+
+  const submitGroup = async (candidate?: string) => {
+    const name = (candidate ?? groupName).trim()
+    if (!name || !onCreateGroup || isCreatingGroup) return
+    await onCreateGroup(name, defaultGroupColor)
+    setGroupName('')
+    setIsGroupOpen(false)
+  }
 
   const removableTags = Object.keys(selectedTagCounts)
     .filter((tag) => selectedTagCounts[tag] > 0)
@@ -188,24 +208,82 @@ export default function SelectionBulkBar({
 
       <Box w="1px" h="16px" bg="whiteAlpha.100" mx={0.5} />
 
-      {(['left', 'center', 'right', 'top', 'middle', 'bottom'] as const).map((align) => (
-        <ToolbarIconButton key={align} testId={`selection-bulk-align-${align}`} label={`Align ${align}`} onClick={() => onAlign(align)}>
-          <AlignIcon kind={align} />
-        </ToolbarIconButton>
-      ))}
+      {count > 1 && (
+        <>
+          {(['left', 'center', 'right', 'top', 'middle', 'bottom'] as const).map((align) => (
+            <ToolbarIconButton key={align} testId={`selection-bulk-align-${align}`} label={`Align ${align}`} onClick={() => onAlign(align)}>
+              <AlignIcon kind={align} />
+            </ToolbarIconButton>
+          ))}
 
-      <Box w="1px" h="16px" bg="whiteAlpha.100" mx={0.5} />
+          <Box w="1px" h="16px" bg="whiteAlpha.100" mx={0.5} />
 
-      <ToolbarIconButton testId="selection-bulk-distribute-horizontal" label="Distribute horizontal" onClick={() => onDistribute('horizontal')}>
-        <AlignIcon kind="horizontal" />
-      </ToolbarIconButton>
-      <ToolbarIconButton testId="selection-bulk-distribute-vertical" label="Distribute vertical" onClick={() => onDistribute('vertical')}>
-        <AlignIcon kind="vertical" />
-      </ToolbarIconButton>
+          <ToolbarIconButton testId="selection-bulk-distribute-horizontal" label="Distribute horizontal" onClick={() => onDistribute('horizontal')}>
+            <AlignIcon kind="horizontal" />
+          </ToolbarIconButton>
+          <ToolbarIconButton testId="selection-bulk-distribute-vertical" label="Distribute vertical" onClick={() => onDistribute('vertical')}>
+            <AlignIcon kind="vertical" />
+          </ToolbarIconButton>
 
-      <Box w="1px" h="16px" bg="whiteAlpha.100" mx={0.5} />
+          <Box w="1px" h="16px" bg="whiteAlpha.100" mx={0.5} />
+        </>
+      )}
 
-      <Popover placement="top" isLazy closeOnBlur>
+      {onCreateGroup && (
+        <Popover placement="top" isLazy closeOnBlur isOpen={isGroupOpen} onClose={() => setIsGroupOpen(false)}>
+          <PopoverTrigger>
+            <Button
+              data-testid="selection-bulk-group"
+              variant="ghost"
+              h="28px"
+              px={2.5}
+              color="gray.300"
+              _hover={{ bg: 'rgba(var(--accent-rgb), 0.12)', color: 'var(--accent)' }}
+              aria-label="Group selection"
+              onClick={() => {
+                setGroupName('')
+                setIsGroupOpen(true)
+              }}
+            >
+              <HStack spacing={1.5}>
+                <LayerIcon size={15} />
+                <Text fontSize="11px">Group</Text>
+              </HStack>
+            </Button>
+          </PopoverTrigger>
+          <Portal>
+            <PopoverContent
+              bg="var(--bg-panel)"
+              backdropFilter="blur(20px)"
+              borderColor="whiteAlpha.100"
+              boxShadow="0 18px 48px rgba(0,0,0,0.48)"
+              borderRadius="lg"
+              width="260px"
+              _focus={{ boxShadow: 'none' }}
+            >
+              <PopoverBody p={3}>
+                <VStack align="stretch" spacing={3}>
+                  <Text fontSize="xs" color="whiteAlpha.700" fontWeight="semibold">Create group</Text>
+                  <SearchCreateInput
+                    value={groupName}
+                    onChange={setGroupName}
+                    options={availableGroups}
+                    onSubmit={(value) => { void submitGroup(value) }}
+                    submitOnSelect
+                    autoFocus
+                    inputTestId="selection-bulk-group-name"
+                    createOptionTestId="selection-bulk-group-create-option"
+                    existingOptionTestId="selection-bulk-group-existing-option"
+                    placeholder="Search or create group..."
+                  />
+                </VStack>
+              </PopoverBody>
+            </PopoverContent>
+          </Portal>
+        </Popover>
+      )}
+
+      {count > 1 && <Popover placement="top" isLazy closeOnBlur>
         <PopoverTrigger>
           <Button
             data-testid="selection-bulk-tags"
@@ -256,9 +334,9 @@ export default function SelectionBulkBar({
             </PopoverBody>
           </PopoverContent>
         </Portal>
-      </Popover>
+      </Popover>}
 
-      {onMergeInto && mergeOptions.length >= 2 && (
+      {count > 1 && onMergeInto && mergeOptions.length >= 2 && (
         <Popover placement="top" isLazy closeOnBlur>
           <PopoverTrigger>
             <Button
@@ -322,7 +400,7 @@ export default function SelectionBulkBar({
         </Popover>
       )}
 
-      {onCopyMermaid && (
+      {count > 1 && onCopyMermaid && (
         <ToolbarIconButton testId="selection-bulk-copy-mermaid" label="Copy as Mermaid" onClick={onCopyMermaid}>
           <CopyIcon boxSize="14px" />
         </ToolbarIconButton>
@@ -330,9 +408,11 @@ export default function SelectionBulkBar({
       <ToolbarIconButton testId="selection-bulk-fit" label="Fit selection" onClick={onFitSelection}>
         <FitViewIcon size={16} />
       </ToolbarIconButton>
-      <ToolbarIconButton testId="selection-bulk-remove" label="Remove from view" onClick={onRemoveFromView} color="red.300">
-        <TrashIcon size={15} />
-      </ToolbarIconButton>
+      {count > 1 && (
+        <ToolbarIconButton testId="selection-bulk-remove" label="Remove from view" onClick={onRemoveFromView} color="red.300">
+          <TrashIcon size={15} />
+        </ToolbarIconButton>
+      )}
     </HStack>
   )
 }

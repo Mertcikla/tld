@@ -4,6 +4,7 @@ import { Box, Flex, Text, Tooltip, HStack, Button, Divider, Input, VStack, Porta
 import { LinkIcon } from '@chakra-ui/icons'
 
 import type { LibraryElement, PlacedElement, ViewConnector, Tag } from '../types'
+import { isElementGroupTag } from '../utils/elementGroups'
 import { ElementContainer } from './NodeContainer'
 import { ElementBody } from './NodeBody'
 import { resolveElementIconUrl } from '../utils/elementIcon'
@@ -765,8 +766,8 @@ function ElementNode({ data, selected }: Props) {
       isConnectorHighlighted={!!data.isConnectorHighlighted}
       hasStack={hasChild}
       kind={data.kind}
-      minW="180px"
-      maxW="230px"
+      w="180px"
+      h="85px"
       cursor={bodyCursor}
       outline={isDraggedOver || versionColor ? '2px solid' : undefined}
       outlineColor={isDraggedOver ? 'var(--accent)' : versionColor}
@@ -967,14 +968,16 @@ function ElementNode({ data, selected }: Props) {
         type={data.kind ?? ''}
         technology={technologyText}
         logoUrl={undefined}
-        nameSize="xl"
-        minH="85px"
+        nameSize="18px"
+        nameNoOfLines={2}
+        h="100%"
+        overflow="hidden"
         pt={nodeLogoUrl ? 9 : 2}
         pb={2}
       />
 
       {/* Tags Dots & Hover Overlay */}
-      {!isPending && data.tags && data.tags.length > 0 && (
+      {!isPending && data.tags?.some((tag) => !isElementGroupTag(tag)) && (
         <Box
           position="absolute"
           bottom="8px"
@@ -984,7 +987,7 @@ function ElementNode({ data, selected }: Props) {
         >
           {/* Tag Dots (up to 5) */}
           <HStack spacing={1} _groupHover={{ opacity: 0 }}>
-            {data.tags.slice(0, 5).map((tag, i) => (
+            {data.tags.filter((tag) => !isElementGroupTag(tag)).slice(0, 5).map((tag, i) => (
               <Box
                 key={i}
                 w="6px"
@@ -995,9 +998,9 @@ function ElementNode({ data, selected }: Props) {
                 transition="all 0.2s"
               />
             ))}
-            {data.tags.length > 5 && (
+            {data.tags.filter((tag) => !isElementGroupTag(tag)).length > 5 && (
               <Text fontSize="8px" fontWeight="bold" color="whiteAlpha.600" lineHeight={1}>
-                +{data.tags.length - 5}
+                +{data.tags.filter((tag) => !isElementGroupTag(tag)).length - 5}
               </Text>
             )}
           </HStack>
@@ -1017,7 +1020,7 @@ function ElementNode({ data, selected }: Props) {
             _groupHover={{ opacity: 1, visibility: 'visible', transform: 'scale(1) translate(0px, 0px)' }}
             pointerEvents="none"
           >
-            {data.tags.map((tag) => (
+            {data.tags.filter((tag) => !isElementGroupTag(tag)).map((tag) => (
               <Box
                 key={tag}
                 bg="var(--bg-panel)"

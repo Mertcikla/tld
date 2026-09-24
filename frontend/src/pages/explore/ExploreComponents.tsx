@@ -20,6 +20,7 @@ import type { Tag, ViewLayer } from '../../types'
 import CrossBranchControls from '../../components/CrossBranchControls'
 import ExplorePageOnboarding from '../../components/ExplorePageOnboarding'
 import { EyeIcon, EyeOffIcon, FitViewIcon as FitViewSvg, TagsIcon } from '../../components/Icons'
+import { isElementGroupLayer } from '../../utils/elementGroups'
 import type { ExploreDiffDetail, ExploreDiffLens, ExploreDiffTarget } from '../../utils/exploreDiffLens'
 
 export function ExploreEmptyState({
@@ -346,7 +347,7 @@ export function ExploreToolbar({
                         >
                           <Box w="10px" h="10px" rounded="full" bg={layer.color || 'gray.500'} flexShrink={0} />
                           <Text fontSize="xs" fontWeight="600" color="white" flex={1} isTruncated>
-                            {layer.name}
+                            {isElementGroupLayer(layer) ? `group:${layer.name}` : layer.name}
                           </Text>
                           <Text fontSize="10px" color="gray.600" flexShrink={0}>
                             {layerElementCounts[layer.id] ?? 0}

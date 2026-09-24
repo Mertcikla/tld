@@ -15,6 +15,7 @@ interface Props {
   onDropTag?: (draggedTag: string) => void
   onDropLayer?: (layerId: number) => void
   namingPopover?: { isOpen: boolean; defaultName: string }
+  availableNames?: string[]
   onConfirmNaming?: (name: string) => void
   onCloseNaming?: () => void
   onSetColor?: (color: string) => void
@@ -35,6 +36,7 @@ export const TagItem: React.FC<Props> = ({
   onDropTag,
   onDropLayer,
   namingPopover,
+  availableNames,
   onConfirmNaming,
   onCloseNaming,
   onSetColor,
@@ -242,6 +244,7 @@ export const TagItem: React.FC<Props> = ({
           onClose={onCloseNaming || (() => {})}
           onConfirm={onConfirmNaming}
           defaultName={namingPopover.defaultName}
+          availableNames={availableNames}
         />
       )}
     </Popover>

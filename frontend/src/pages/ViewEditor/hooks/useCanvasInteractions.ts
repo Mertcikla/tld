@@ -160,7 +160,9 @@ export function shouldZoomViewEditorWheel(event: WheelDeltaLike, isRecentMultiTo
   if (event.ctrlKey) return false
   if (event.deltaMode !== 0) return true
   if (isRecentMultiTouch) return false
-  return event.deltaX === 0 && event.deltaY !== 0
+  // Only a notched pixel-mode mouse wheel zooms; smooth trackpad scroll is left
+  // to React Flow's panOnScroll so two-finger vertical swipes pan.
+  return isNotchedWheelGesture(event)
 }
 
 function shouldUseMouseWheelZoomRate(event: WheelDeltaLike, isRecentMultiTouch: boolean): boolean {
@@ -1307,6 +1309,69 @@ export function useCanvasInteractions({
     commitDraggedElementPositions(`selection:${draggedElementNodes.map((candidate) => candidate.id).join(':')}`, draggedElementNodes)
   }, [commitDraggedElementPositions, rfNodesRef])
 
+  // ── Group badge drag (move all group members together) ──────────────────────
+  const groupDragMemberIdsRef = useRef<string[]>([])
+
+  const startGroupDrag = useCallback((memberNodeIds: string[]) => {
+    if (!canEdit || viewId === null) return
+    const memberIdSet = new Set(memberNodeIds)
+    const members = rfNodesRef.current.filter((candidate) =>
+      candidate.type === 'elementNode' && memberIdSet.has(candidate.id)
+    )
+    if (members.length === 0) return
+
+    groupDragMemberIdsRef.current = members.map((member) => member.id)
+    recordDragStartPositions(members)
+    setRfNodes((nodes) => {
+      let changed = false
+      const next = nodes.map((candidate) => {
+        const shouldSelect = candidate.type === 'elementNode' && memberIdSet.has(candidate.id)
+        if (candidate.selected === shouldSelect) return candidate
+        changed = true
+        return { ...candidate, selected: shouldSelect }
+      })
+      return changed ? next : nodes
+    })
+  }, [canEdit, viewId, rfNodesRef, recordDragStartPositions, setRfNodes])
+
+  const moveGroupDrag = useCallback((dx: number, dy: number) => {
+    const memberIds = groupDragMemberIdsRef.current
+    if (memberIds.length === 0) return
+    const memberIdSet = new Set(memberIds)
+    const startPositions = dragStartPositionsRef.current
+
+    memberIds.forEach((id) => {
+      const start = startPositions[id]
+      const elementId = parseNumericId(id)
+      if (!start || elementId === null) return
+      onElementPositionPreview?.(elementId, start.x + dx, start.y + dy)
+    })
+
+    setRfNodes((nodes) => {
+      let changed = false
+      const next = nodes.map((candidate) => {
+        if (!memberIdSet.has(candidate.id)) return candidate
+        const start = startPositions[candidate.id]
+        if (!start) return candidate
+        const x = start.x + dx
+        const y = start.y + dy
+        if (candidate.position.x === x && candidate.position.y === y) return candidate
+        changed = true
+        return { ...candidate, position: { x, y } }
+      })
+      return changed ? next : nodes
+    })
+  }, [onElementPositionPreview, setRfNodes])
+
+  const endGroupDrag = useCallback(() => {
+    const memberIds = groupDragMemberIdsRef.current
+    groupDragMemberIdsRef.current = []
+    if (memberIds.length === 0) return
+    const memberIdSet = new Set(memberIds)
+    const draggedNodes = rfNodesRef.current.filter((candidate) => memberIdSet.has(candidate.id))
+    commitDraggedElementPositions(`group:${memberIds.slice().sort().join(':')}`, draggedNodes)
+  }, [commitDraggedElementPositions, rfNodesRef])
+
   // ── Connections ────────────────────────────────────────────────────────────
   const onConnect: OnConnect = useCallback(async (params: Connection) => {
     if (!canEdit || isReconnectingRef.current) return
@@ -1495,6 +1560,7 @@ export function useCanvasInteractions({
         direction: existingData?.direction ?? undefined,
         style: existingData?.style === 'default' ? 'bezier' : (existingData?.style ?? 'bezier'),
         url: existingData?.url ?? undefined, relationship: existingData?.relationship ?? undefined,
+        tags: existingData?.tags ?? [],
       })
       const connector = connectorToConnector(updated)
       upsertConnectorGraphSnapshot(connector)
@@ -2285,7 +2351,7 @@ export function useCanvasInteractions({
 
   const onWheelCapture = useCallback((e: React.WheelEvent) => {
     if (touchStateRef.current.touches.size === 2) return
-    if (e.deltaX !== 0) touchStateRef.current.lastMultiTouchWheelTime = Date.now()
+    if (!isNotchedWheelGesture(e)) touchStateRef.current.lastMultiTouchWheelTime = Date.now()
     const isRecentMultiTouch = Date.now() - touchStateRef.current.lastMultiTouchWheelTime < 1000
     if (!shouldZoomViewEditorWheel(e, isRecentMultiTouch)) return
 
@@ -2349,6 +2415,9 @@ export function useCanvasInteractions({
     onSelectionDragStart,
     onSelectionDrag,
     onSelectionDragStop,
+    startGroupDrag,
+    moveGroupDrag,
+    endGroupDrag,
     onConnect,
     onConnectStart,
     onConnectEnd,

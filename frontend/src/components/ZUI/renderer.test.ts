@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import type { ViewLayer } from '../../types'
 import { createNodeScreenState, type SceneNode } from './sceneGraph'
-import { edgeLabelDrawRectFromCenter, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, shouldDrawConnectorDetailLabel } from './renderer'
+import { edgeLabelDrawRectFromCenter, getElementGroupBounds, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, setHiddenTags, shouldDrawConnectorDetailLabel } from './renderer'
 import type { LayoutNode } from './types'
 
 function layoutNode(id: string, elementId: number, children: LayoutNode[] = []): LayoutNode {
@@ -78,5 +79,43 @@ describe('edge label positioning', () => {
 
     expect(labelCenter).toEqual({ x: 100, y: 50 })
     expect(labelRect).toEqual({ x: 80, y: 40, width: 40, height: 20 })
+  })
+})
+
+describe('Explore group backgrounds', () => {
+  it('bounds every group member even when some nodes are outside the viewport', () => {
+    const marker = 'group:12345678-1234-4234-a234-123456789012'
+    const layer: ViewLayer = {
+      id: 9,
+      diagram_id: 1,
+      name: 'Payments',
+      tags: [marker],
+      color: '#4299E1',
+    }
+    const first = layoutNode('first', 1)
+    first.diagramId = 1
+    first.worldX = 100
+    first.worldY = 200
+    first.tags = [marker]
+    const second = layoutNode('second', 2)
+    second.diagramId = 1
+    second.worldX = 400
+    second.worldY = 300
+    second.tags = [marker]
+
+    setHiddenTags(new Set())
+    expect(getElementGroupBounds([layer], [sceneNode(first, { isVisible: true }), sceneNode(second, { isVisible: false })], 1)).toEqual([
+      expect.objectContaining({
+        marker,
+        x: 76,
+        y: 162,
+        width: 448,
+        height: 258,
+      }),
+    ])
+
+    setHiddenTags(new Set([marker]))
+    expect(getElementGroupBounds([layer], [sceneNode(first, { isVisible: true }), sceneNode(second, { isVisible: false })], 1)).toEqual([])
+    setHiddenTags(new Set())
   })
 })

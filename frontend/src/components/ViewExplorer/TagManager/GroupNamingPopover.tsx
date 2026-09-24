@@ -1,20 +1,21 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   PopoverContent,
   PopoverBody,
   PopoverArrow,
-  Input,
   Button,
   HStack,
   Text,
   VStack,
 } from '@chakra-ui/react'
+import SearchCreateInput from '../../SearchCreateInput'
 
 interface Props {
   isOpen: boolean
   onClose: () => void
   onConfirm: (name: string) => void | Promise<void>
   defaultName: string
+  availableNames?: string[]
   anchorEl?: HTMLElement | null
 }
 
@@ -23,30 +24,26 @@ export const GroupNamingPopover: React.FC<Props> = ({
   onClose,
   onConfirm,
   defaultName,
+  availableNames = [],
 }) => {
   const [name, setName] = useState(defaultName)
-  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (isOpen) {
       setName(defaultName)
-      // Focus after a short delay to ensure popover is rendered
-      setTimeout(() => inputRef.current?.focus(), 100)
     }
   }, [isOpen, defaultName])
 
-  const handleConfirm = async () => {
-    if (name.trim()) {
-      await onConfirm(name.trim())
+  const handleConfirm = async (candidate?: string) => {
+    const next = (candidate ?? name).trim()
+    if (next) {
+      await onConfirm(next)
       onClose()
     }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault()
-      void handleConfirm()
-    } else if (e.key === 'Escape') {
+    if (e.key === 'Escape') {
       onClose()
     }
   }
@@ -67,22 +64,23 @@ export const GroupNamingPopover: React.FC<Props> = ({
           <Text fontSize="10px" fontWeight="700" color="var(--accent)" textTransform="uppercase">
             New Tag Group
           </Text>
-          <HStack spacing={2}>
-            <Input
-              ref={inputRef}
-              size="xs"
+          <HStack spacing={2} align="flex-start">
+            <SearchCreateInput
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={setName}
+              options={availableNames}
+              onSubmit={(value) => { void handleConfirm(value) }}
+              submitOnSelect
+              autoFocus
+              inputTestId="group-naming-input"
+              createOptionTestId="group-naming-create-option"
+              existingOptionTestId="group-naming-existing-option"
               placeholder="Group name..."
-              bg="whiteAlpha.50"
-              borderColor="whiteAlpha.100"
-              color="white"
-              _focus={{ borderColor: 'var(--accent)' }}
             />
             <Button
               size="xs"
               colorScheme="blue"
-              onClick={handleConfirm}
+              onClick={() => { void handleConfirm() }}
               bg="var(--accent)"
               _hover={{ bg: 'var(--accent-hover)' }}
             >

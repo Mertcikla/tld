@@ -103,6 +103,7 @@ export async function removeCollisions(viewId: number) {
         direction: edge.direction || undefined,
         style: edge.style === 'default' ? 'bezier' : (edge.style || 'bezier'),
         url: edge.url || undefined,
+        tags: edge.tags ?? [],
       }))
     }
   }
