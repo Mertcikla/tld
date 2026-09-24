@@ -1628,7 +1628,7 @@ export function useCanvasInteractions({
       })
     }
 
-    const up = async (_event: PointerEvent) => {
+    const up = async (event: PointerEvent) => {
       const current = handleReconnectDragRef.current
       clearHandleReconnectListeners()
       handleReconnectDragRef.current = null
@@ -1640,21 +1640,26 @@ export function useCanvasInteractions({
       const oldConnector = _rfEdgesRef.current.find((candidate) => candidate.id === current.edgeId)
       if (!oldConnector) return
 
+      const releaseTargets = collectHandleTargets(current.fixedNodeId, { snapToCenterSlot: true })
+      const releaseHit = findNearestHandleTargetInCache(releaseTargets, event.clientX, event.clientY)
+      const hoveredNodeId = releaseHit.hoveredNodeId ?? current.hoveredNodeId
+      const hoveredHandleId = releaseHit.hoveredHandleId ?? current.hoveredHandleId
+
       let newConnection: Connection | null = null
 
-      if (current.hoveredNodeId && current.hoveredHandleId) {
+      if (hoveredNodeId && hoveredHandleId) {
         newConnection = current.endpoint === 'source'
           ? {
-            source: current.hoveredNodeId,
-            sourceHandle: current.hoveredHandleId,
+            source: hoveredNodeId,
+            sourceHandle: hoveredHandleId,
             target: current.fixedNodeId,
             targetHandle: current.fixedHandle,
           }
           : {
             source: current.fixedNodeId,
             sourceHandle: current.fixedHandle,
-            target: current.hoveredNodeId,
-            targetHandle: current.hoveredHandleId,
+            target: hoveredNodeId,
+            targetHandle: hoveredHandleId,
           }
       }
 
