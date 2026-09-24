@@ -2963,7 +2963,7 @@ function ViewEditorInner({
 
   const groupBackgroundNodes = useMemo(() => layers.flatMap((layer) => {
     const groupTag = elementGroupTagForLayer(layer)
-    if (!groupTag || hiddenLayerTags.includes(groupTag)) return []
+    if (!groupTag) return []
 
     const memberNodes = rfNodes.filter((node) =>
       node.type === 'elementNode' && Array.isArray(node.data?.tags) && node.data.tags.includes(groupTag)
@@ -2999,6 +2999,15 @@ function ViewEditorInner({
         label: layer.name,
         color: layer.color || '#4299E1',
         memberNodeIds: memberNodes.map((node) => node.id),
+        hidden: hiddenLayerTags.includes(groupTag),
+        onToggleVisibility: () => {
+          setHiddenLayerTags((previous) => previous.includes(groupTag)
+            ? previous.filter((tag) => tag !== groupTag)
+            : [...previous, groupTag])
+        },
+        onGroupDragStart: () => canvas.startGroupDrag(memberNodes.map((node) => node.id)),
+        onGroupDragMove: (dx: number, dy: number) => canvas.moveGroupDrag(dx, dy),
+        onGroupDragEnd: () => canvas.endGroupDrag(),
       },
       draggable: false,
       selectable: false,
@@ -3008,7 +3017,7 @@ function ViewEditorInner({
       zIndex: -1,
       style: { width, height, pointerEvents: 'none' },
     } as RFNode]
-  }), [hiddenLayerTags, layers, rfNodes])
+  }), [canvas.endGroupDrag, canvas.moveGroupDrag, canvas.startGroupDrag, hiddenLayerTags, layers, rfNodes])
 
   const flowNodes = useMemo(() => {
     const baseNodes = liveContextNodes.length === 0

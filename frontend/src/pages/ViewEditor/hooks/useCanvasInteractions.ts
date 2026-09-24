@@ -1307,6 +1307,69 @@ export function useCanvasInteractions({
     commitDraggedElementPositions(`selection:${draggedElementNodes.map((candidate) => candidate.id).join(':')}`, draggedElementNodes)
   }, [commitDraggedElementPositions, rfNodesRef])
 
+  // ── Group badge drag (move all group members together) ──────────────────────
+  const groupDragMemberIdsRef = useRef<string[]>([])
+
+  const startGroupDrag = useCallback((memberNodeIds: string[]) => {
+    if (!canEdit || viewId === null) return
+    const memberIdSet = new Set(memberNodeIds)
+    const members = rfNodesRef.current.filter((candidate) =>
+      candidate.type === 'elementNode' && memberIdSet.has(candidate.id)
+    )
+    if (members.length === 0) return
+
+    groupDragMemberIdsRef.current = members.map((member) => member.id)
+    recordDragStartPositions(members)
+    setRfNodes((nodes) => {
+      let changed = false
+      const next = nodes.map((candidate) => {
+        const shouldSelect = candidate.type === 'elementNode' && memberIdSet.has(candidate.id)
+        if (candidate.selected === shouldSelect) return candidate
+        changed = true
+        return { ...candidate, selected: shouldSelect }
+      })
+      return changed ? next : nodes
+    })
+  }, [canEdit, viewId, rfNodesRef, recordDragStartPositions, setRfNodes])
+
+  const moveGroupDrag = useCallback((dx: number, dy: number) => {
+    const memberIds = groupDragMemberIdsRef.current
+    if (memberIds.length === 0) return
+    const memberIdSet = new Set(memberIds)
+    const startPositions = dragStartPositionsRef.current
+
+    memberIds.forEach((id) => {
+      const start = startPositions[id]
+      const elementId = parseNumericId(id)
+      if (!start || elementId === null) return
+      onElementPositionPreview?.(elementId, start.x + dx, start.y + dy)
+    })
+
+    setRfNodes((nodes) => {
+      let changed = false
+      const next = nodes.map((candidate) => {
+        if (!memberIdSet.has(candidate.id)) return candidate
+        const start = startPositions[candidate.id]
+        if (!start) return candidate
+        const x = start.x + dx
+        const y = start.y + dy
+        if (candidate.position.x === x && candidate.position.y === y) return candidate
+        changed = true
+        return { ...candidate, position: { x, y } }
+      })
+      return changed ? next : nodes
+    })
+  }, [onElementPositionPreview, setRfNodes])
+
+  const endGroupDrag = useCallback(() => {
+    const memberIds = groupDragMemberIdsRef.current
+    groupDragMemberIdsRef.current = []
+    if (memberIds.length === 0) return
+    const memberIdSet = new Set(memberIds)
+    const draggedNodes = rfNodesRef.current.filter((candidate) => memberIdSet.has(candidate.id))
+    commitDraggedElementPositions(`group:${memberIds.slice().sort().join(':')}`, draggedNodes)
+  }, [commitDraggedElementPositions, rfNodesRef])
+
   // ── Connections ────────────────────────────────────────────────────────────
   const onConnect: OnConnect = useCallback(async (params: Connection) => {
     if (!canEdit || isReconnectingRef.current) return
@@ -2350,6 +2413,9 @@ export function useCanvasInteractions({
     onSelectionDragStart,
     onSelectionDrag,
     onSelectionDragStop,
+    startGroupDrag,
+    moveGroupDrag,
+    endGroupDrag,
     onConnect,
     onConnectStart,
     onConnectEnd,
