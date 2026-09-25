@@ -4193,10 +4193,10 @@ function ViewEditorInner({
                 zIndex={1200}
                 transition="left 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94)"
               >
-                <Tooltip label={libraryOpen ? 'Close element library' : 'Open element library'} placement="right" openDelay={300}>
+                <Tooltip label={libraryOpen ? 'Close element inventory' : 'Open element inventory'} placement="right" openDelay={300}>
                   <IconButton
                     data-testid="vieweditor-toggle-library"
-                    aria-label={libraryOpen ? 'Close element library' : 'Open element library'}
+                    aria-label={libraryOpen ? 'Close element inventory' : 'Open element inventory'}
                     icon={libraryOpen ? <ChevronLeftIcon size={16} strokeWidth={3.5} /> : <LibraryIcon size={18} />}
                     size="md"
                     transition="transform 0.15s ease"
@@ -4250,7 +4250,7 @@ function ViewEditorInner({
                   transition="all 0.15s ease"
                   onClick={() => { setIsExplorerOpen(true); setLibraryOpen(false) }}
                 />
-                <IconButton aria-label="Open element library" icon={<LibraryIcon />}
+                <IconButton aria-label="Open element inventory" icon={<LibraryIcon />}
                   size="md" variant="clay" colorScheme="gray" bg="var(--bg-panel)" color="gray.300"
                   border="1px solid rgba(255,255,255,0.08)"
                   _hover={{ bg: 'var(--bg-card-solid)', transform: 'scale(1.1)', color: 'white' }}

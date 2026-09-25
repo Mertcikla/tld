@@ -280,7 +280,7 @@ export async function openElementLibrary(page: Page) {
   if (await desktopToggle.isVisible().catch(() => false)) {
     await desktopToggle.click()
   } else {
-    await page.getByRole('button', { name: 'Open element library' }).click()
+    await page.getByRole('button', { name: 'Open element inventory' }).click()
   }
   await expect.poll(async () => await isPanelUsablyVisible(panel)).toBe(true)
   return panel
