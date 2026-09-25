@@ -4,6 +4,7 @@ import { SmallCloseIcon } from '@chakra-ui/icons'
 import { EyeIcon, EyeOffIcon } from '../../Icons'
 import { GroupNamingPopover } from './GroupNamingPopover'
 import { ColorPicker } from './ColorPicker'
+import { beginTagDrag, suppressNativeDragImage, tagDragMeta } from './tagDragGhostState'
 
 interface Props {
   tag: string
@@ -54,6 +55,8 @@ export const TagItem: React.FC<Props> = ({
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.setData('application/diag-tag', tag)
     e.dataTransfer.effectAllowed = 'copyMove'
+    suppressNativeDragImage(e)
+    beginTagDrag(tagDragMeta(tag, color, displayLabel), { x: e.clientX, y: e.clientY })
   }
 
   const handleDragOver = (e: React.DragEvent) => {

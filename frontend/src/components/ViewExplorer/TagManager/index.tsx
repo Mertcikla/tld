@@ -22,6 +22,7 @@ import { ViewLayer, LibraryElement, PlacedElement } from '../../../types'
 import { TagItem } from './TagItem'
 import { LayerItem } from './LayerItem'
 import { ColorPicker } from './ColorPicker'
+import { TagDragGhost } from './TagDragGhost'
 import { pickUnusedColor } from '../utils'
 import { ChevronDownIcon } from '../../Icons'
 import { elementGroupTagForLayer, isElementGroupLayer, isElementGroupTag } from '../../../utils/elementGroups'
@@ -168,18 +169,18 @@ export const TagManager: React.FC<Props> = ({
   )
 
   const visibleTags = availableTags.filter((tag) => !isElementGroupTag(tag))
-  const usedTags = visibleTags.filter(tag => (tagCounts[tag] || 0) > 0)
-  const emptyGroups = layers.filter((layer) => isElementGroupLayer(layer) && (layerCounts[layer.id] || 0) === 0)
-  const emptyGroupTags = emptyGroups.map((layer) => ({
+  const groupTags = layers.filter(isElementGroupLayer).map((layer) => ({
     tag: elementGroupTagForLayer(layer)!,
     label: `group:${layer.name}`,
     color: layer.color || '#A0AEC0',
+    count: layerCounts[layer.id] || 0,
   }))
-  const unusedTags = [
-    ...visibleTags.filter(tag => (tagCounts[tag] || 0) === 0).map((tag) => ({ tag, label: tag, color: tagColors[tag]?.color || '#A0AEC0' })),
-    ...emptyGroupTags,
+  const tagEntries = [
+    ...visibleTags.map((tag) => ({ tag, label: tag, color: tagColors[tag]?.color || '#A0AEC0', count: tagCounts[tag] || 0 })),
+    ...groupTags,
   ]
-  const emptyGroupTagSet = new Set(emptyGroupTags.map(({ tag }) => tag))
+  const usedTags = tagEntries.filter(({ count }) => count > 0)
+  const unusedTags = tagEntries.filter(({ count }) => count === 0)
 
   return (
     <Box
@@ -297,16 +298,17 @@ export const TagManager: React.FC<Props> = ({
                 <VStack align="stretch" spacing={2.5}>
                   {usedTags.length > 0 && (
                     <Wrap spacing={1}>
-                      {usedTags.map((tag) => (
+                      {usedTags.map(({ tag, label, color, count }) => (
                         <WrapItem key={tag}>
                           <TagItem
                             tag={tag}
-                            color={tagColors[tag]?.color || '#A0AEC0'}
+                            displayLabel={label}
+                            color={color}
                             description={tagColors[tag]?.description || null}
                             isAssigned={(selectedElement.tags || []).includes(tag)}
-                            tagCount={tagCounts[tag]}
+                            tagCount={count}
                             onToggle={() => onToggleTagOnElement(tag)}
-                            onHover={(active) => onHoverLayer(active ? [tag] : null, tagColors[tag]?.color)}
+                            onHover={(active) => onHoverLayer(active ? [tag] : null, color)}
                             onDropTag={(dragged: string) => handleCreateGroup(tag, dragged, tag)}
                             onDropLayer={(draggedId: number) => handleCreateGroupFromLayer(tag, draggedId)}
                             namingPopover={namingPopover.targetTag === tag ? namingPopover : undefined}
@@ -316,7 +318,7 @@ export const TagManager: React.FC<Props> = ({
                             isVisible={!hiddenLayerTags.includes(tag)}
                             onToggleVisibility={() => toggleTagVisibility(tag)}
                             onSetColor={(color) => onCreateTag(tag, color)}
-                            onSetDescription={(desc) => onCreateTag(tag, tagColors[tag]?.color, desc)}
+                            onSetDescription={(desc) => onCreateTag(tag, color, desc)}
                           />
                         </WrapItem>
                       ))}
@@ -381,7 +383,7 @@ export const TagManager: React.FC<Props> = ({
             )}
 
             {/* Layers (Groups) List */}
-            {layers.filter((layer) => !emptyGroupTagSet.has(elementGroupTagForLayer(layer) || '')).map((layer) => (
+            {layers.filter((layer) => !isElementGroupLayer(layer)).map((layer) => (
               <LayerItem
                 key={layer.id}
                 layer={layer}
@@ -414,14 +416,15 @@ export const TagManager: React.FC<Props> = ({
                 <VStack align="stretch" spacing={3}>
                   {usedTags.length > 0 && (
                     <Wrap spacing={2}>
-                      {usedTags.map((tag) => (
+                      {usedTags.map(({ tag, label, color, count }) => (
                         <WrapItem key={tag}>
                           <TagItem
                             tag={tag}
-                            color={tagColors[tag]?.color || '#A0AEC0'}
+                            displayLabel={label}
+                            color={color}
                             description={tagColors[tag]?.description || null}
-                            tagCount={tagCounts[tag]}
-                            onHover={(active) => onHoverLayer(active ? [tag] : null, tagColors[tag]?.color)}
+                            tagCount={count}
+                            onHover={(active) => onHoverLayer(active ? [tag] : null, color)}
                             onDropTag={(dragged: string) => handleCreateGroup(tag, dragged, tag)}
                             onDropLayer={(draggedId: number) => handleCreateGroupFromLayer(tag, draggedId)}
                             namingPopover={namingPopover.targetTag === tag ? namingPopover : undefined}
@@ -431,7 +434,7 @@ export const TagManager: React.FC<Props> = ({
                             isVisible={!hiddenLayerTags.includes(tag)}
                             onToggleVisibility={() => toggleTagVisibility(tag)}
                             onSetColor={(color) => onCreateTag(tag, color)}
-                            onSetDescription={(desc) => onCreateTag(tag, tagColors[tag]?.color, desc)}
+                            onSetDescription={(desc) => onCreateTag(tag, color, desc)}
                           />
                         </WrapItem>
                       ))}
@@ -496,6 +499,7 @@ export const TagManager: React.FC<Props> = ({
         </ScrollIndicatorWrapper>
       )}
 
+      <TagDragGhost />
     </Box>
   )
 }
