@@ -24,7 +24,7 @@ export { default as ElementPanel, type ElementPanelProps } from './components/El
 export { default as ElementPanelCollaboration } from './components/ElementPanelCollaboration'
 export { default as ConnectorPanel, type ConnectorPanelProps } from './components/ConnectorPanel'
 export { default as ConnectorPanelCollaboration } from './components/ConnectorPanelCollaboration'
-export { default as ElementLibrary } from './components/ElementLibrary'
+export { default as ElementLibrary } from './components/ElementInventory'
 export { default as TopMenuBar } from './components/TopMenuBar'
 export { default as TopMenuBarCollaboration, type CollaborationProps } from './components/TopMenuBarCollaboration'
 export { default as ViewFloatingMenu } from './components/ViewFloatingMenu'
