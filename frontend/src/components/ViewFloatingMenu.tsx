@@ -144,6 +144,11 @@ function ViewFloatingMenu({
   )
   const notesLabel = !hasMarkdown ? 'Notes' : markdownOpen ? 'Hide Notes' : 'Notes'
   const notesDisabled = markdownBusy || (!hasMarkdown && !canEdit)
+  // The VS Code webview has no cloud share/import/export surface, so the extras
+  // section (import, export, copy as mermaid, host slots) is hidden there.
+  const isVscode = typeof window !== 'undefined' && !!window.__TLD_VSCODE__
+  const showExtrasToggle = !hideExpandExtras && !isVscode
+  const extrasVisible = extrasOpen && !isVscode
 
   React.useEffect(() => {
     setDraftDensityLevel(densityLevel)
@@ -601,7 +606,7 @@ function ViewFloatingMenu({
           </>
         )}
 
-        {extrasOpen && (
+        {extrasVisible && (
           <>
             <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
             <HStack spacing={1} pl={1} pr={0.5}>
@@ -663,7 +668,7 @@ function ViewFloatingMenu({
           </>
         )}
 
-        {!hideExpandExtras && (
+        {showExtrasToggle && (
           <>
             <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
             <Button

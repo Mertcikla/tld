@@ -11,6 +11,9 @@ const overrides: Record<string, string> = {
     path.resolve(__dirname, 'src/config/runtime-vscode.ts'),
   [path.resolve(__dirname, 'src/components/CodePreviewPanel.tsx')]:
     path.resolve(__dirname, 'src/components/CodePreviewPanel-vscode.tsx'),
+  // Source links use the workspace file + LSP symbol picker instead of GitHub.
+  [path.resolve(__dirname, 'src/components/GitSourceLinker.tsx')]:
+    path.resolve(__dirname, 'src/components/LocalSourceLinker.tsx'),
 }
 
 const nodeModuleCandidates = [
