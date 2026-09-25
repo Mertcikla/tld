@@ -4,6 +4,16 @@ import type { Node as RFNode } from 'reactflow'
 const DEFAULT_NODE_WIDTH = 180
 const DEFAULT_NODE_HEIGHT = 80
 
+export const ELEMENT_NODE_WIDTH = 180
+export const ELEMENT_NODE_HEIGHT = 85
+
+const MARQUEE_SIZE_FACTOR_MIN = 0.5
+const MARQUEE_SIZE_FACTOR_MAX = 4
+const MARQUEE_ASPECT_MIN = 1
+const MARQUEE_ASPECT_MAX = 5
+
+export type RectLike = { x: number; y: number; width: number; height: number }
+
 export type SelectionAlign =
   | 'left'
   | 'center'
@@ -154,6 +164,36 @@ export function planSelectionAlignment(nodes: SelectionNode[], align: SelectionA
       }
     })
     .filter((update): update is SelectionNodeUpdate => update !== null)
+}
+
+export function isElementShapedMarqueeRect(rect: Pick<RectLike, 'width' | 'height'>): boolean {
+  if (!(rect.width > 0) || !(rect.height > 0)) return false
+  if (rect.width < ELEMENT_NODE_WIDTH * MARQUEE_SIZE_FACTOR_MIN) return false
+  if (rect.width > ELEMENT_NODE_WIDTH * MARQUEE_SIZE_FACTOR_MAX) return false
+  if (rect.height < ELEMENT_NODE_HEIGHT * MARQUEE_SIZE_FACTOR_MIN) return false
+  if (rect.height > ELEMENT_NODE_HEIGHT * MARQUEE_SIZE_FACTOR_MAX) return false
+  const aspect = rect.width / rect.height
+  return aspect >= MARQUEE_ASPECT_MIN && aspect <= MARQUEE_ASPECT_MAX
+}
+
+export function marqueeHitsElementRect(
+  rect: RectLike,
+  nodes: Array<SelectionNode & { style?: CSSProperties; selectable?: boolean }>,
+): boolean {
+  const left = rect.x
+  const top = rect.y
+  const right = rect.x + rect.width
+  const bottom = rect.y + rect.height
+
+  return nodes.some((node) => {
+    if (isNodeHidden(node)) return false
+    if (node.selectable === false) return false
+    const candidate = nodeRect(node)
+    if (!candidate) return false
+    const overlapX = Math.min(right, candidate.x + candidate.width) - Math.max(left, candidate.x)
+    const overlapY = Math.min(bottom, candidate.y + candidate.height) - Math.max(top, candidate.y)
+    return overlapX > 0 && overlapY > 0
+  })
 }
 
 export function planSelectionDistribution(nodes: SelectionNode[], direction: SelectionDistribute): SelectionNodeUpdate[] {

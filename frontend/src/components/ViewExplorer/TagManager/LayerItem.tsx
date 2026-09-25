@@ -19,6 +19,7 @@ import { EyeIcon, EyeOffIcon, ChevronDownIcon } from '../../Icons'
 import { ViewLayer } from '../../../types'
 import { TagItem } from './TagItem'
 import { ColorPicker } from './ColorPicker'
+import { beginTagDrag, layerDragMeta, suppressNativeDragImage } from './tagDragGhostState'
 
 interface Props {
   layer: ViewLayer
@@ -94,6 +95,8 @@ export const LayerItem: React.FC<Props> = ({
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.setData('application/diag-layer', String(layer.id))
     e.dataTransfer.effectAllowed = 'copyMove'
+    suppressNativeDragImage(e)
+    beginTagDrag(layerDragMeta(layer), { x: e.clientX, y: e.clientY }, { layerId: layer.id })
   }
 
   return (

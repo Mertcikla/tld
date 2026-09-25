@@ -62,7 +62,7 @@ test('builds parent and child views and navigates through editor controls', asyn
   await expect(page).toHaveURL(new RegExp(`/views/${diagram.id}$`))
 })
 
-test('places an existing imported element in another diagram and finds it from the library', async ({ page }) => {
+test('places an existing imported element in another diagram and finds it from the inventory', async ({ page }) => {
   await createAndLoadDiagramWithNodes(page, 0, 'Imported Placement Source')
   await page.getByTestId('vieweditor-toolbar-extras').click()
   await page.getByTestId('vieweditor-toolbar-import').click()

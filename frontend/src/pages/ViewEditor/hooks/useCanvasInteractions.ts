@@ -14,6 +14,7 @@ import {
   type OnConnectStartParams,
   type SelectionDragHandler,
   useReactFlow,
+  useStoreApi,
 } from 'reactflow'
 import { api } from '../../../api/client'
 import type {
@@ -29,6 +30,7 @@ import { parseNumericId } from '../../../utils/ids'
 import { connectorStyleForCreate, type ConnectorRouteStyle } from '../../../context/ConnectorStyleContext'
 import { routeStyleFromValue } from '../../../utils/connectorRoute'
 import { connectorToConnector, findClosestHandles, findClosestHandleToPoint } from '../utils'
+import { isElementShapedMarqueeRect, marqueeHitsElementRect } from '../selection'
 import { removePlacementGraphSnapshot, upsertConnectorGraphSnapshot, upsertPlacementGraphSnapshot } from '../../../crossBranch/store'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
@@ -143,6 +145,30 @@ export function resolveConnectorDragAttachHandles(
     sourceHandle: getLogicalHandleId(sourceHandleId, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE,
     targetHandle: getLogicalHandleId(targetHandleId, DEFAULT_TARGET_HANDLE_SIDE) ?? DEFAULT_TARGET_HANDLE_SIDE,
   }
+}
+
+export function resolveAltConnectorTarget(
+  sourceNodeId: string,
+  droppedNode: RFNode | null,
+  droppedHandleId: string | null,
+  flowPos: { x: number; y: number },
+  nodes: RFNode[],
+): { node: RFNode; handleId: string | null } | null {
+  const candidate = droppedNode && droppedNode.id !== sourceNodeId && droppedNode.id !== PENDING_ELEMENT_NODE_ID
+    ? droppedNode
+    : null
+  if (candidate) return { node: candidate, handleId: droppedHandleId }
+
+  const nearNode = nodes.find((node) => {
+    if (node.id === sourceNodeId) return false
+    if (node.id === PENDING_ELEMENT_NODE_ID) return false
+    if (node.type !== 'elementNode') return false
+    const cx = node.position.x + (node.width ?? 180) / 2
+    const cy = node.position.y + (node.height ?? 80) / 2
+    return Math.hypot(flowPos.x - cx, flowPos.y - cy) < CONNECTOR_SNAP_RADIUS
+  }) ?? null
+
+  return nearNode ? { node: nearNode, handleId: null } : null
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -566,6 +592,14 @@ type HandleReconnectDragState = {
   hoveredHandleId?: string
 }
 
+type AltConnectorDragState = {
+  sourceNodeId: string
+  sourceHandle: string
+  cursorPos: { x: number; y: number }
+  hoveredNodeId?: string
+  hoveredHandleId?: string | null
+}
+
 type InteractionStartOptions = {
   sourceHandle?: string
   clientX?: number
@@ -663,6 +697,7 @@ export function useCanvasInteractions({
   onConnectorCreatePreviewActiveChange,
 }: CanvasInteractionOptions) {
   const { screenToFlowPosition, setViewport, getViewport, zoomIn, zoomOut } = useReactFlow()
+  const rfStoreApi = useStoreApi()
   const updateElementPosition = useStore((state) => state.updateElementPosition)
   const removeElementPlacement = useStore((state) => state.removeElementPlacement)
   const upsertConnector = useStore((state) => state.upsertConnector)
@@ -680,12 +715,22 @@ export function useCanvasInteractions({
   const [isConnectorCreatePreviewActive, setConnectorCreatePreviewActive] = useState(false)
   const [connectorLongPressMenu, setConnectorLongPressMenu] = useState<{ edgeId: number; x: number; y: number } | null>(null)
   const isMovingRef = useRef(false)
+  const [altConnectorDrag, setAltConnectorDrag] = useState<AltConnectorDragState | null>(null)
+
+  const marqueeRectRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
+  useEffect(() => {
+    return rfStoreApi.subscribe((state) => {
+      if (state.userSelectionRect) marqueeRectRef.current = state.userSelectionRect
+    })
+  }, [rfStoreApi])
 
   interactionSourceIdRef.current = interactionSourceId
 
   const reconnectPickingRef = useRef<{ edgeId: number; endpoint: 'source' | 'target' } | null>(null)
   const handleReconnectDragRef = useRef<HandleReconnectDragState | null>(null)
   const handleReconnectListenersRef = useRef<{ move: (event: PointerEvent) => void; up: (event: PointerEvent) => void } | null>(null)
+  const altConnectorDragRef = useRef<AltConnectorDragState | null>(null)
+  const altConnectorListenersRef = useRef<{ move: (event: PointerEvent) => void; up: (event: PointerEvent) => void } | null>(null)
   const connectorDragPreviewListenersRef = useRef<{
     move: (event: PointerEvent) => void
     touchMove: (event: TouchEvent) => void
@@ -766,6 +811,45 @@ export function useCanvasInteractions({
     document.removeEventListener('pointercancel', listeners.up)
     handleReconnectListenersRef.current = null
   }, [])
+
+  const syncAltConnectorDrag = useCallback((next: AltConnectorDragState | null) => {
+    altConnectorDragRef.current = next
+    setAltConnectorDrag(next)
+  }, [])
+
+  const clearAltConnectorListeners = useCallback(() => {
+    const listeners = altConnectorListenersRef.current
+    if (!listeners) return
+    document.removeEventListener('pointermove', listeners.move)
+    document.removeEventListener('pointerup', listeners.up)
+    document.removeEventListener('pointercancel', listeners.up)
+    altConnectorListenersRef.current = null
+  }, [])
+
+  const updateAltConnectorTargetClass = useCallback((nodeId: string | null) => {
+    if (typeof document === 'undefined') return
+    const previous = document.querySelector('.react-flow__node.alt-connector-target')
+    if (previous) previous.classList.remove('alt-connector-target')
+    if (!nodeId) return
+    const escaped = typeof CSS !== 'undefined' && typeof CSS.escape === 'function' ? CSS.escape(nodeId) : nodeId
+    document.querySelector(`.react-flow__node[data-id="${escaped}"]`)?.classList.add('alt-connector-target')
+  }, [])
+
+  const swallowNextClick = useCallback(() => {
+    if (typeof document === 'undefined') return
+    const swallow = (event: MouseEvent) => {
+      event.stopPropagation()
+      event.preventDefault()
+    }
+    document.addEventListener('click', swallow, true)
+    setTimeout(() => document.removeEventListener('click', swallow, true), 0)
+  }, [])
+
+  const clearAltConnectorDrag = useCallback(() => {
+    clearAltConnectorListeners()
+    updateAltConnectorTargetClass(null)
+    syncAltConnectorDrag(null)
+  }, [clearAltConnectorListeners, syncAltConnectorDrag, updateAltConnectorTargetClass])
 
   const clearConnectorDragPreviewListeners = useCallback(() => {
     const listeners = connectorDragPreviewListenersRef.current
@@ -1364,6 +1448,41 @@ export function useCanvasInteractions({
     commitDraggedElementPositions(`selection:${draggedElementNodes.map((candidate) => candidate.id).join(':')}`, draggedElementNodes)
   }, [commitDraggedElementPositions, rfNodesRef])
 
+  // ── Empty marquee → create element in the middle ─────────────────────────────
+  const onSelectionStart = useCallback(() => {
+    marqueeRectRef.current = null
+  }, [])
+
+  const onSelectionEnd = useCallback((event: React.MouseEvent) => {
+    const rawRect = marqueeRectRef.current
+    marqueeRectRef.current = null
+    // React Flow also fires onSelectionEnd from onMouseLeave; only act on real releases.
+    if (event.type !== 'mouseup') return
+    if (!canEdit || viewId === null) return
+
+    if (!rawRect || rawRect.width <= 0 || rawRect.height <= 0) return
+
+    const viewport = getViewport()
+    if (viewport.zoom <= 0) return
+    const flowRect = {
+      x: (rawRect.x - viewport.x) / viewport.zoom,
+      y: (rawRect.y - viewport.y) / viewport.zoom,
+      width: rawRect.width / viewport.zoom,
+      height: rawRect.height / viewport.zoom,
+    }
+
+    if (!isElementShapedMarqueeRect(flowRect)) return
+    if (marqueeHitsElementRect(flowRect, getInteractionNodes())) return
+
+    const bounds = rfStoreApi.getState().domNode?.getBoundingClientRect()
+    if (!bounds) return
+    showAddingElementAt(
+      bounds.left + rawRect.x + rawRect.width / 2,
+      bounds.top + rawRect.y + rawRect.height / 2,
+      true,
+    )
+  }, [canEdit, getInteractionNodes, getViewport, rfStoreApi, showAddingElementAt, viewId])
+
   // ── Group badge drag (move all group members together) ──────────────────────
   const groupDragMemberIdsRef = useRef<string[]>([])
 
@@ -1594,6 +1713,140 @@ export function useCanvasInteractions({
       showAddingElementAt(clientX, clientY, true, 'connect', 'shiftKey' in event && event.shiftKey)
     }
   }, [canEdit, clearConnectorDragPreview, clearPendingConnectionRefs, createConnectorStyle, finalizeConnectorCreate, getInteractionNodes, onConnectorCreatePreviewActiveChange, onUnsupportedMutation, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, showAddingElementAt, suppressImmediatePaneClick, viewIdRef])
+
+  // ── Alt-drag to connect ─────────────────────────────────────────────────────
+  const startAltConnectorDrag = useCallback((sourceNode: RFNode, event: PointerEvent) => {
+    const sourceElementId = resolveElementIdFromNode(sourceNode)
+    if (sourceElementId === null) return
+
+    const flowPos = screenToFlowPositionRef.current({ x: event.clientX, y: event.clientY })
+    const { sourceHandle } = findClosestHandleToPoint(sourceNode, flowPos.x, flowPos.y)
+    const visualSourceHandle = getCenterVisualHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE) ?? sourceHandle
+    const pointerId = event.pointerId
+
+    syncAltConnectorDrag({
+      sourceNodeId: sourceNode.id,
+      sourceHandle: visualSourceHandle,
+      cursorPos: { x: event.clientX, y: event.clientY },
+      hoveredNodeId: undefined,
+      hoveredHandleId: null,
+    })
+
+    connectorDragLastUpdateRef.current = 0
+    let lastHoveredNodeId: string | null = null
+
+    const move = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return
+      if (!moveEvent.altKey) {
+        clearAltConnectorDrag()
+        return
+      }
+      const now = performance.now()
+      if (now - connectorDragLastUpdateRef.current < CONNECTOR_DRAG_UPDATE_INTERVAL_MS) return
+      connectorDragLastUpdateRef.current = now
+      const current = altConnectorDragRef.current
+      if (!current) return
+      const interactionNodes = getInteractionNodes()
+      const hit = getConnectorDropTargetAtPoint(moveEvent.clientX, moveEvent.clientY, interactionNodes)
+      const flowPos = screenToFlowPositionRef.current({ x: moveEvent.clientX, y: moveEvent.clientY })
+      const target = resolveAltConnectorTarget(
+        sourceNode.id,
+        hit?.droppedNode ?? null,
+        hit?.droppedHandleId ?? null,
+        flowPos,
+        interactionNodes,
+      )
+      syncAltConnectorDrag({
+        ...current,
+        cursorPos: { x: moveEvent.clientX, y: moveEvent.clientY },
+        hoveredNodeId: target?.node.id,
+        hoveredHandleId: target?.handleId ?? null,
+      })
+      if ((target?.node.id ?? null) !== lastHoveredNodeId) {
+        lastHoveredNodeId = target?.node.id ?? null
+        updateAltConnectorTargetClass(lastHoveredNodeId)
+      }
+    }
+
+    const up = (upEvent: PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) return
+      const current = altConnectorDragRef.current
+      clearAltConnectorDrag()
+      swallowNextClick()
+      if (!current || !upEvent.altKey || viewId === null) return
+
+      const interactionNodes = getInteractionNodes()
+      const sourceNodeCurrent = interactionNodes.find((node) => node.id === current.sourceNodeId)
+      if (!sourceNodeCurrent) return
+
+      const hit = getConnectorDropTargetAtPoint(upEvent.clientX, upEvent.clientY, interactionNodes)
+      const flowPos = screenToFlowPositionRef.current({ x: upEvent.clientX, y: upEvent.clientY })
+      const target = resolveAltConnectorTarget(
+        sourceNode.id,
+        hit?.droppedNode ?? null,
+        hit?.droppedHandleId ?? null,
+        flowPos,
+        interactionNodes,
+      )
+      if (!target) return
+
+      const targetElementId = resolveElementIdFromNode(target.node)
+      if (targetElementId === null || targetElementId === sourceElementId) return
+
+      let targetHandleId = target.handleId
+      if (targetHandleId === null) {
+        const closest = findClosestHandles(sourceNodeCurrent, target.node)
+        targetHandleId = getCenterVisualHandleId(closest.targetHandle, DEFAULT_TARGET_HANDLE_SIDE) ?? closest.targetHandle
+      }
+      const { sourceHandle: resolvedSourceHandle, targetHandle: resolvedTargetHandle } =
+        resolveConnectorDragAttachHandles(current.sourceHandle, targetHandleId)
+
+      api.workspace.connectors.create(viewId, {
+        source_element_id: sourceElementId,
+        target_element_id: targetElementId,
+        source_handle: resolvedSourceHandle,
+        target_handle: resolvedTargetHandle,
+        direction: 'forward',
+        style: createConnectorStyle,
+      }).then((connector) => {
+        const next = connectorToConnector(connector)
+        void finalizeConnectorCreate(next)
+        onUnsupportedMutation?.()
+      }).catch(() => { /* intentionally empty */ })
+    }
+
+    altConnectorListenersRef.current = { move, up }
+    document.addEventListener('pointermove', move)
+    document.addEventListener('pointerup', up)
+    document.addEventListener('pointercancel', up)
+  }, [clearAltConnectorDrag, createConnectorStyle, finalizeConnectorCreate, getInteractionNodes, onUnsupportedMutation, screenToFlowPositionRef, swallowNextClick, syncAltConnectorDrag, updateAltConnectorTargetClass, viewId])
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!canEdit || !event.altKey || event.button !== 0) return
+      if (event.pointerType === 'touch') return
+      const target = event.target
+      if (!isDomElement(target)) return
+      if (target.closest('.element-node-reconnect-zone')) return
+      const nodeElement = target.closest('.react-flow__node')
+      const nodeId = nodeElement?.getAttribute('data-id')
+      if (!nodeId) return
+      const node = getInteractionNodes().find((candidate) => candidate.id === nodeId)
+      if (!node || node.type !== 'elementNode') return
+
+      event.preventDefault()
+      event.stopPropagation()
+      startAltConnectorDrag(node, event)
+    }
+
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => document.removeEventListener('pointerdown', onPointerDown, true)
+  }, [canEdit, getInteractionNodes, startAltConnectorDrag])
+
+  useEffect(() => () => {
+    clearAltConnectorListeners()
+    updateAltConnectorTargetClass(null)
+  }, [clearAltConnectorListeners, updateAltConnectorTargetClass])
 
   // ── Reconnect ──────────────────────────────────────────────────────────────
   const performReconnect = useCallback(async (oldConnector: RFEdge, newConnection: Connection) => {
@@ -2134,6 +2387,7 @@ export function useCanvasInteractions({
         }
         reconnectPickingRef.current = null
         clearConnectionSourceRefs()
+        clearAltConnectorDrag()
         clickConnectModeRef.current = null
         setReconnectPicking(null)
         setConnectorLongPressMenu(null)
@@ -2372,7 +2626,7 @@ export function useCanvasInteractions({
     }
     window.addEventListener('keydown', handler, { capture: true })
     return () => window.removeEventListener('keydown', handler, { capture: true })
-  }, [canEdit, refreshGrid, selectedElement, selectedConnector, connectors, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted, onConnectorDeleted, onSelectionRemoveFromView, closeElementPanel, closeConnectorPanel, closeProxyConnectorPanel, clickConnectMode, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef, interactionSourceIdRef, multiConnectionSourceIdsRef, clearConnectionSourceRefs, onFitView, setGlobalSnapToGrid, snapToGrid, libraryOpen, openLibrary, toggleLibrary, toggleExplorer, toggleMarkdown, zoomIn, zoomOut])
+  }, [canEdit, refreshGrid, selectedElement, selectedConnector, connectors, viewId, stableOnRemoveElement, handleConnectorDeleted, handleElementPermanentlyDeleted, onConnectorDeleted, onSelectionRemoveFromView, closeElementPanel, closeConnectorPanel, closeProxyConnectorPanel, clickConnectMode, setClickConnectCursorPos, setSyncedClickConnectMode, setSyncedInteractionSourceId, viewIdRef, incomingLinksRef, treeDataRef, navigateRef, rfNodesRef, viewElementsRef, setLinksMap, showAddingElementAt, setSelectedElement, setSelectedEdge, containerRef, linksMapRef, interactionSourceIdRef, multiConnectionSourceIdsRef, clearConnectionSourceRefs, clearAltConnectorDrag, onFitView, setGlobalSnapToGrid, snapToGrid, libraryOpen, openLibrary, toggleLibrary, toggleExplorer, toggleMarkdown, zoomIn, zoomOut])
 
   // ── DnD handlers ──────────────────────────────────────────────────────────
   const onDragOver = useCallback((e: React.DragEvent) => {
@@ -2478,6 +2732,7 @@ export function useCanvasInteractions({
     clickConnectMode,
     clickConnectCursorPos,
     handleReconnectDrag,
+    altConnectorDrag,
     isConnectorCreatePreviewActive,
     interactionSourceId,
     setInteractionSourceId: setSyncedInteractionSourceId,
@@ -2511,6 +2766,8 @@ export function useCanvasInteractions({
     onSelectionDragStart,
     onSelectionDrag,
     onSelectionDragStop,
+    onSelectionStart,
+    onSelectionEnd,
     startGroupDrag,
     moveGroupDrag,
     endGroupDrag,

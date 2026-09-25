@@ -84,10 +84,10 @@ const DragHandle = () => (
 )
 
 /**
- * Name: Element Library
- * Role: Panel/drawer that displays the organization's element library and shows which are in the current view and which are not. Includes an add new element button.
+ * Name: Element Inventory
+ * Role: Panel/drawer that displays the organization's element inventory and shows which are in the current view and which are not. Includes an add new element button.
  * Location: Left side panel/drawer on desktop. Collapsed under a button on mobile.
- * Aliases: Element sidebar, Library panel.
+ * Aliases: Element sidebar, Inventory panel.
  */
 function ElementLibrary({
   existingElementIds,
@@ -357,7 +357,7 @@ function ElementLibrary({
           <Input
             data-testid="element-library-search"
             className="panel-search-input"
-            placeholder="Search catalog…"
+            placeholder="Search inventory…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
@@ -420,7 +420,7 @@ function ElementLibrary({
               </Box>
               <VStack align="start" spacing={0} flex={1}>
                 <Text fontWeight="semibold" fontSize="sm" color="white">New Element</Text>
-                <Text fontSize="10px" color="gray.500">Add to the catalog</Text>
+                <Text fontSize="10px" color="gray.500">Add to the inventory</Text>
               </VStack>
               <KbdHint>C</KbdHint>
             </Box>
@@ -611,7 +611,7 @@ function ElementLibrary({
       noFocusLock={noFocusLock || !isMobile}
       zIndex={1000}
     >
-      <PanelHeader title="Element Library" onClose={onClose} hasCloseButton={isMobile} />
+      <PanelHeader title="Element Inventory" onClose={onClose} hasCloseButton={isMobile} />
 
       <Box p={0} display="flex" flexDir="column" overflow="hidden" flex={1} minH={0}>
         {listContent}

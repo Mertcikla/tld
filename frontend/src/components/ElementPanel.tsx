@@ -1930,7 +1930,7 @@ function ElementPanel({
         onClose={confirmPermanentDelete.onClose}
         onConfirm={handlePermanentDelete}
         title="Delete Element"
-        body="This permanently deletes the element from the library and cannot be reverted."
+        body="This permanently deletes the element from the inventory and cannot be reverted."
         confirmLabel="Delete Permanently"
       />
     </>

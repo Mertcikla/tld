@@ -124,7 +124,7 @@ function ConnectorIdentityGrid({
       </Flex>
       <ConnectorEndpointText size={size}>{target}</ConnectorEndpointText>
       {actions && (
-        <HStack spacing={0.5} flexShrink={0}>
+        <HStack spacing={0.5} flexShrink={0} justify="flex-end">
           {actions}
         </HStack>
       )}
@@ -293,6 +293,8 @@ export default function ProxyConnectorPanel({
                       key={`${leaf.connector.id}-${idx}`}
                       px={2}
                       py={2}
+                      pb={navigationTarget ? 10 : 2}
+                      position="relative"
                       rounded="lg"
                       bg="whiteAlpha.50"
                       border="1px solid"
@@ -314,34 +316,6 @@ export default function ProxyConnectorPanel({
                           source={leaf.source.actualElementName}
                           target={leaf.target.actualElementName}
                           direction={leaf.connector.direction}
-                          actions={canEdit ? (
-                            <>
-                              <IconButton
-                                aria-label="Edit connector"
-                                icon={<DrawIcon size={13} />}
-                                size="xs"
-                                variant="ghost"
-                                color="blue.300"
-                                _hover={{ bg: 'blue.900', color: 'blue.100' }}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  onEdit?.(leaf.connector)
-                                }}
-                              />
-                              <IconButton
-                                aria-label="Delete connector"
-                                icon={<TrashIcon size={13} />}
-                                size="xs"
-                                variant="ghost"
-                                color="red.400"
-                                _hover={{ bg: 'red.900', color: 'red.100' }}
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  onDelete?.(leaf.connector.id, leaf.ownerViewId)
-                                }}
-                              />
-                            </>
-                          ) : undefined}
                         />
 
                         {/* Label / relationship */}
@@ -368,30 +342,58 @@ export default function ProxyConnectorPanel({
                           </Text>
                         )}
 
-                        {/* Navigation button */}
-                        {navigationTarget && (
-                          <Button
-                            size="xs"
-                            variant="clay"
-                            colorScheme="blue"
-                            color="blue.100"
-                            leftIcon={<NavigationIcon size={11} />}
-                            onClick={(e) => {
-                              e.preventDefault()
-                              e.stopPropagation()
-                              navigate(`/views/${navigationTarget.viewId}`)
-                              onClose()
-                            }}
-                            w="full"
-                            justifyContent="flex-start"
-                            h="26px"
-                            fontSize="11px"
-                            mt={0.5}
-                          >
-                            Open {navigationTarget.viewName}
-                          </Button>
-                        )}
                       </VStack>
+                      {/* Keep navigation available without taking a full row from the card content. */}
+                      {navigationTarget && (
+                        <Button
+                          size="xs"
+                          variant="clay"
+                          colorScheme="blue"
+                          color="blue.100"
+                          leftIcon={<NavigationIcon size={11} />}
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            navigate(`/views/${navigationTarget.viewId}`)
+                            onClose()
+                          }}
+                          position="absolute"
+                          bottom={2}
+                          left={2}
+                          h="26px"
+                          fontSize="11px"
+                        >
+                          Open {navigationTarget.viewName}
+                        </Button>
+                      )}
+                      {canEdit && (
+                        <HStack position="absolute" bottom={2} right={2} spacing={0.5}>
+                          <IconButton
+                            aria-label="Edit connector"
+                            icon={<DrawIcon size={13} />}
+                            size="xs"
+                            variant="ghost"
+                            color="blue.300"
+                            _hover={{ bg: 'blue.900', color: 'blue.100' }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onEdit?.(leaf.connector)
+                            }}
+                          />
+                          <IconButton
+                            aria-label="Delete connector"
+                            icon={<TrashIcon size={13} />}
+                            size="xs"
+                            variant="ghost"
+                            color="red.400"
+                            _hover={{ bg: 'red.900', color: 'red.100' }}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onDelete?.(leaf.connector.id, leaf.ownerViewId)
+                            }}
+                          />
+                        </HStack>
+                      )}
                     </Box>
                   )
                 })}

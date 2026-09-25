@@ -4,9 +4,11 @@ import { SmallCloseIcon } from '@chakra-ui/icons'
 import { EyeIcon, EyeOffIcon } from '../../Icons'
 import { GroupNamingPopover } from './GroupNamingPopover'
 import { ColorPicker } from './ColorPicker'
+import { beginTagDrag, getTagDragSource, setTagDragHoverTarget, suppressNativeDragImage, tagDragMeta } from './tagDragGhostState'
 
 interface Props {
   tag: string
+  displayLabel?: string
   color: string
   isAssigned?: boolean
   tagCount?: number
@@ -28,6 +30,7 @@ interface Props {
 
 export const TagItem: React.FC<Props> = ({
   tag,
+  displayLabel,
   color,
   isAssigned,
   tagCount = 0,
@@ -52,29 +55,35 @@ export const TagItem: React.FC<Props> = ({
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.setData('application/diag-tag', tag)
     e.dataTransfer.effectAllowed = 'copyMove'
+    suppressNativeDragImage(e)
+    beginTagDrag(tagDragMeta(tag, color, displayLabel), { x: e.clientX, y: e.clientY }, { tag })
   }
 
   const handleDragOver = (e: React.DragEvent) => {
     if (e.dataTransfer.types.includes('application/diag-tag') || e.dataTransfer.types.includes('application/diag-layer')) {
-      const draggedTag = e.dataTransfer.getData('application/diag-tag')
-      if (draggedTag !== tag) {
-        e.preventDefault()
-        e.dataTransfer.dropEffect = 'link'
-        setIsOver(true)
-      }
+      if (getTagDragSource().tag === tag) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'link'
+      setIsOver(true)
+      setTagDragHoverTarget({ name: displayLabel ?? tag, color })
     }
   }
 
   const handleDragLeave = () => {
     setIsOver(false)
+    setTagDragHoverTarget(null)
   }
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setIsOver(false)
+    setTagDragHoverTarget(null)
+    const source = getTagDragSource()
     const draggedTag = e.dataTransfer.getData('application/diag-tag')
     const draggedLayerId = e.dataTransfer.getData('application/diag-layer')
-    
+
+    if (source.tag === tag) return
+
     if (draggedTag && draggedTag !== tag) {
       onDropTag?.(draggedTag)
     } else if (draggedLayerId) {
@@ -205,7 +214,7 @@ export const TagItem: React.FC<Props> = ({
               textAlign="left"
             >
               <Text isTruncated>
-                {tag}
+                {displayLabel ?? tag}
                 {tagCount > 0 && (
                   <Box as="span" ml={1.5} opacity={0.6} fontWeight="normal">
                     {tagCount}

@@ -11,7 +11,7 @@ import {
 } from '../../helpers/vieweditor'
 
 
-test('searches the library and adds an existing catalog element to the canvas', async ({ page }) => {
+test('searches the inventory and adds an existing catalog element to the canvas', async ({ page }) => {
   const { diagram } = await createAndLoadDiagramWithNodes(page, 0, 'Library Add')
   const element = await createElement(page, { name: uniqueName('Library Reusable'), kind: 'service' })
   await page.reload()
@@ -73,7 +73,7 @@ test('dragging a library element to the canvas creates a placement', async ({ pa
   await expectPlacement(page, element.name, true, currentViewId(page))
 })
 
-test('new element action opens an inline creator from the library', async ({ page }) => {
+test('new element action opens an inline creator from the inventory', async ({ page }) => {
   await createAndLoadDiagramWithNodes(page, 0, 'Library New')
   const name = uniqueName('Library New Node')
 

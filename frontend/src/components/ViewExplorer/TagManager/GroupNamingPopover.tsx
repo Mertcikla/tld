@@ -3,8 +3,6 @@ import {
   PopoverContent,
   PopoverBody,
   PopoverArrow,
-  Button,
-  HStack,
   Text,
   VStack,
 } from '@chakra-ui/react'
@@ -64,29 +62,18 @@ export const GroupNamingPopover: React.FC<Props> = ({
           <Text fontSize="10px" fontWeight="700" color="var(--accent)" textTransform="uppercase">
             New Tag Group
           </Text>
-          <HStack spacing={2} align="flex-start">
-            <SearchCreateInput
-              value={name}
-              onChange={setName}
-              options={availableNames}
-              onSubmit={(value) => { void handleConfirm(value) }}
-              submitOnSelect
-              autoFocus
-              inputTestId="group-naming-input"
-              createOptionTestId="group-naming-create-option"
-              existingOptionTestId="group-naming-existing-option"
-              placeholder="Group name..."
-            />
-            <Button
-              size="xs"
-              colorScheme="blue"
-              onClick={() => { void handleConfirm() }}
-              bg="var(--accent)"
-              _hover={{ bg: 'var(--accent-hover)' }}
-            >
-              Create
-            </Button>
-          </HStack>
+          <SearchCreateInput
+            value={name}
+            onChange={setName}
+            options={availableNames}
+            onSubmit={(value) => { void handleConfirm(value) }}
+            submitOnSelect
+            autoFocus
+            inputTestId="group-naming-input"
+            createOptionTestId="group-naming-create-option"
+            existingOptionTestId="group-naming-existing-option"
+            placeholder="Group name..."
+          />
         </VStack>
       </PopoverBody>
     </PopoverContent>

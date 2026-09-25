@@ -10,6 +10,7 @@ import {
   getConnectorDeletionTarget,
   getPlacementPositionTimerKeys,
   pendingElementPositionFromFlowPoint,
+  resolveAltConnectorTarget,
   resolveConnectorDragAttachHandles,
   resolveConnectorDropTarget,
   shouldDisplayConnectorDragPlaceholder,
@@ -371,5 +372,37 @@ describe('connector drop target resolution', () => {
       droppedNode: node('2'),
       droppedHandleId: 'left-2',
     })
+  })
+})
+
+describe('alt-drag connector target resolution', () => {
+  it('uses the node and handle under the release point', () => {
+    expect(resolveAltConnectorTarget('1', node('2'), 'left-2', { x: 0, y: 0 }, [node('1'), node('2')]))
+      .toEqual({ node: node('2'), handleId: 'left-2' })
+  })
+
+  it('ignores the source node, pending node, and empty space', () => {
+    expect(resolveAltConnectorTarget('1', node('1'), null, { x: 0, y: 0 }, [node('1')])).toBeNull()
+    expect(resolveAltConnectorTarget('1', node(PENDING_ELEMENT_NODE_ID), null, { x: 0, y: 0 }, [node('1')])).toBeNull()
+    expect(resolveAltConnectorTarget('1', null, null, { x: 0, y: 0 }, [node('1')])).toBeNull()
+  })
+
+  it('snaps to the nearest element node within the connector radius', () => {
+    const nodes = [
+      node('1'),
+      node('2', { position: { x: 400, y: 0 }, width: 180, height: 80 }),
+    ]
+
+    expect(resolveAltConnectorTarget('1', null, null, { x: 470, y: 40 }, nodes))
+      .toEqual({ node: node('2', { position: { x: 400, y: 0 }, width: 180, height: 80 }), handleId: null })
+  })
+
+  it('ignores non-element nodes when snapping', () => {
+    const nodes = [
+      node('1'),
+      node('context-left', { type: 'contextNeighborNode', position: { x: 400, y: 0 }, width: 180, height: 80 }),
+    ]
+
+    expect(resolveAltConnectorTarget('1', null, null, { x: 470, y: 40 }, nodes)).toBeNull()
   })
 })
