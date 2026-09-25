@@ -6,17 +6,24 @@ import {
   beginTagDrag,
   endTagDrag,
   getTagDragPosition,
+  getTagDragSource,
   layerDragMeta,
+  setTagDragHoverTarget,
   suppressNativeDragImage,
   tagDragMeta,
   useTagDragGhost,
+  useTagDragHoverTarget,
 } from './tagDragGhostState'
 
 const GROUP_TAG = 'group:12345678-1234-4234-a234-123456789012'
 
 function Probe() {
   const meta = useTagDragGhost()
-  return React.createElement('div', { 'data-kind': meta?.kind ?? 'none' })
+  const hoverTarget = useTagDragHoverTarget()
+  return React.createElement('div', {
+    'data-kind': meta?.kind ?? 'none',
+    'data-hover': hoverTarget?.name ?? 'none',
+  })
 }
 
 describe('tagDragGhostState', () => {
@@ -67,6 +74,40 @@ describe('tagDragGhostState', () => {
       endTagDrag()
     })
     expect(renderer.root.findByType('div').props['data-kind']).toBe('none')
+  })
+
+  it('tracks a hover target for merging and clears it on begin/end', () => {
+    let renderer!: ReturnType<typeof create>
+    act(() => {
+      renderer = create(React.createElement(Probe))
+    })
+
+    act(() => {
+      beginTagDrag({ kind: 'tag', name: 'api', color: '#123456' })
+      setTagDragHoverTarget({ name: 'payments', color: '#abcdef' })
+    })
+    expect(renderer.root.findByType('div').props['data-hover']).toBe('payments')
+
+    act(() => {
+      setTagDragHoverTarget(null)
+    })
+    expect(renderer.root.findByType('div').props['data-hover']).toBe('none')
+
+    act(() => {
+      setTagDragHoverTarget({ name: 'payments', color: '#abcdef' })
+      endTagDrag()
+    })
+    expect(renderer.root.findByType('div').props['data-hover']).toBe('none')
+  })
+
+  it('tracks the drag source so a tag is not treated as its own drop target', () => {
+    expect(getTagDragSource()).toEqual({})
+
+    beginTagDrag({ kind: 'tag', name: 'api', color: '#123456' }, { x: 0, y: 0 }, { tag: 'api' })
+    expect(getTagDragSource()).toEqual({ tag: 'api' })
+
+    endTagDrag()
+    expect(getTagDragSource()).toEqual({})
   })
 
   it('suppresses the native drag image safely outside the DOM', () => {

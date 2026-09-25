@@ -12,12 +12,24 @@ export interface TagDragGhostMeta {
   detail?: string
 }
 
+export interface TagDragHoverTarget {
+  name: string
+  color: string
+}
+
+export interface TagDragSource {
+  tag?: string
+  layerId?: number
+}
+
 export const DEFAULT_TAG_COLOR = '#A0AEC0'
 
 const TRANSPARENT_PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'
 
 let meta: TagDragGhostMeta | null = null
+let hoverTarget: TagDragHoverTarget | null = null
+let source: TagDragSource = {}
 let position = { x: 0, y: 0 }
 const listeners = new Set<() => void>()
 
@@ -50,15 +62,29 @@ export function layerDragMeta(layer: Pick<ViewLayer, 'name' | 'color' | 'tags'>)
   }
 }
 
-export function beginTagDrag(next: TagDragGhostMeta, at?: { x: number; y: number }) {
+export function beginTagDrag(next: TagDragGhostMeta, at?: { x: number; y: number }, dragSource?: TagDragSource) {
   meta = next
+  hoverTarget = null
+  source = dragSource ?? {}
   if (at) position = { x: at.x, y: at.y }
   emit()
 }
 
 export function endTagDrag() {
-  if (!meta) return
+  if (!meta && !hoverTarget) return
   meta = null
+  hoverTarget = null
+  source = {}
+  emit()
+}
+
+export function getTagDragSource() {
+  return source
+}
+
+export function setTagDragHoverTarget(target: TagDragHoverTarget | null) {
+  if (hoverTarget?.name === target?.name && hoverTarget?.color === target?.color) return
+  hoverTarget = target
   emit()
 }
 
@@ -70,6 +96,14 @@ export function useTagDragGhost(): TagDragGhostMeta | null {
   return useSyncExternalStore(
     subscribe,
     () => meta,
+    () => null,
+  )
+}
+
+export function useTagDragHoverTarget(): TagDragHoverTarget | null {
+  return useSyncExternalStore(
+    subscribe,
+    () => hoverTarget,
     () => null,
   )
 }

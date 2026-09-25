@@ -96,7 +96,7 @@ export const LayerItem: React.FC<Props> = ({
     e.dataTransfer.setData('application/diag-layer', String(layer.id))
     e.dataTransfer.effectAllowed = 'copyMove'
     suppressNativeDragImage(e)
-    beginTagDrag(layerDragMeta(layer), { x: e.clientX, y: e.clientY })
+    beginTagDrag(layerDragMeta(layer), { x: e.clientX, y: e.clientY }, { layerId: layer.id })
   }
 
   return (
