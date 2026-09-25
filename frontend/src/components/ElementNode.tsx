@@ -509,37 +509,42 @@ function PendingElementLabelEditor({
           />
         </Portal>
       )}
-      {results.length > 0 && (
-        <Box
-          position="absolute"
-          left="calc(100% + 14px)"
-          top="50%"
-          transform="translateY(-50%)"
-          zIndex={1200}
-          bg="var(--bg-panel)"
-          border="1px solid"
-          borderColor="whiteAlpha.100"
-          rounded="xl"
-          shadow="0 8px 32px rgba(0,0,0,0.5)"
-          minW="220px"
-          maxW="340px"
-          w="max-content"
-          maxH="300px"
-          overflowY="auto"
-          pointerEvents="auto"
-        >
-          <ElementCreateSearchResults
-            results={results}
-            activeIndex={activeIndex}
-            busy={busy}
-            query={query}
-            existingElementIds={config.existingElementIds}
-            testIdPrefix="pending-element"
-            getSecondaryLabel={config.getSecondaryLabel}
-            onActiveIndexChange={setActiveIndex}
-            onConfirm={(idx) => { void confirm(idx) }}
-          />
-        </Box>
+      {inputRect && results.length > 0 && (
+        <Portal>
+          <Box
+            data-testid="pending-element-results"
+            position="fixed"
+            left={`${inputRect.left + inputRect.width + 14}px`}
+            top={`${inputRect.top + inputRect.height / 2}px`}
+            transform="translateY(-50%)"
+            zIndex={2401}
+            bg="var(--bg-panel)"
+            border="1px solid"
+            borderColor="whiteAlpha.100"
+            rounded="xl"
+            shadow="0 8px 32px rgba(0,0,0,0.5)"
+            minW="220px"
+            maxW="340px"
+            w="max-content"
+            maxH="300px"
+            overflowY="auto"
+            pointerEvents="auto"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <ElementCreateSearchResults
+              results={results}
+              activeIndex={activeIndex}
+              busy={busy}
+              query={query}
+              existingElementIds={config.existingElementIds}
+              testIdPrefix="pending-element"
+              getSecondaryLabel={config.getSecondaryLabel}
+              onActiveIndexChange={setActiveIndex}
+              onConfirm={(idx) => { void confirm(idx) }}
+            />
+          </Box>
+        </Portal>
       )}
     </Box>
   )
