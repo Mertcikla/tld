@@ -346,3 +346,14 @@ body {
     opacity: 0;
     pointer-events: none;
 }
+
+/* Alt-drag connector: ring the element currently under the cursor */
+.react-flow__node.alt-connector-target::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 14px;
+    border: 2px solid var(--accent);
+    box-shadow: 0 0 0 2px rgba(var(--accent-rgb), 0.25);
+    pointer-events: none;
+}

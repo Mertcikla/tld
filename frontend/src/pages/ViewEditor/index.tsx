@@ -4362,6 +4362,7 @@ function ViewEditorInner({
               clickConnectCursorPos={clickConnectCursorPos}
               connectorRouteStyle={previewConnectorStyle}
               handleReconnectDrag={canvas.handleReconnectDrag}
+              altConnectorDrag={canvas.altConnectorDrag}
               rfNodes={flowNodes}
             />
 
