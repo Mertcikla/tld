@@ -14,6 +14,7 @@ import {
   type OnConnectStartParams,
   type SelectionDragHandler,
   useReactFlow,
+  useStoreApi,
 } from 'reactflow'
 import { api } from '../../../api/client'
 import type {
@@ -29,6 +30,7 @@ import { parseNumericId } from '../../../utils/ids'
 import { connectorStyleForCreate, type ConnectorRouteStyle } from '../../../context/ConnectorStyleContext'
 import { routeStyleFromValue } from '../../../utils/connectorRoute'
 import { connectorToConnector, findClosestHandles, findClosestHandleToPoint } from '../utils'
+import { isElementShapedMarqueeRect, marqueeHitsElementRect } from '../selection'
 import { removePlacementGraphSnapshot, upsertConnectorGraphSnapshot, upsertPlacementGraphSnapshot } from '../../../crossBranch/store'
 import {
   DEFAULT_SOURCE_HANDLE_SIDE,
@@ -663,6 +665,7 @@ export function useCanvasInteractions({
   onConnectorCreatePreviewActiveChange,
 }: CanvasInteractionOptions) {
   const { screenToFlowPosition, setViewport, getViewport, zoomIn, zoomOut } = useReactFlow()
+  const rfStoreApi = useStoreApi()
   const updateElementPosition = useStore((state) => state.updateElementPosition)
   const removeElementPlacement = useStore((state) => state.removeElementPlacement)
   const upsertConnector = useStore((state) => state.upsertConnector)
@@ -680,6 +683,13 @@ export function useCanvasInteractions({
   const [isConnectorCreatePreviewActive, setConnectorCreatePreviewActive] = useState(false)
   const [connectorLongPressMenu, setConnectorLongPressMenu] = useState<{ edgeId: number; x: number; y: number } | null>(null)
   const isMovingRef = useRef(false)
+
+  const marqueeRectRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
+  useEffect(() => {
+    return rfStoreApi.subscribe((state) => {
+      if (state.userSelectionRect) marqueeRectRef.current = state.userSelectionRect
+    })
+  }, [rfStoreApi])
 
   interactionSourceIdRef.current = interactionSourceId
 
@@ -1363,6 +1373,41 @@ export function useCanvasInteractions({
     const draggedElementNodes = getDraggedSelectionElementNodes(nodes, rfNodesRef.current)
     commitDraggedElementPositions(`selection:${draggedElementNodes.map((candidate) => candidate.id).join(':')}`, draggedElementNodes)
   }, [commitDraggedElementPositions, rfNodesRef])
+
+  // ── Empty marquee → create element in the middle ─────────────────────────────
+  const onSelectionStart = useCallback(() => {
+    marqueeRectRef.current = null
+  }, [])
+
+  const onSelectionEnd = useCallback((event: React.MouseEvent) => {
+    const rawRect = marqueeRectRef.current
+    marqueeRectRef.current = null
+    // React Flow also fires onSelectionEnd from onMouseLeave; only act on real releases.
+    if (event.type !== 'mouseup') return
+    if (!canEdit || viewId === null) return
+
+    if (!rawRect || rawRect.width <= 0 || rawRect.height <= 0) return
+
+    const viewport = getViewport()
+    if (viewport.zoom <= 0) return
+    const flowRect = {
+      x: (rawRect.x - viewport.x) / viewport.zoom,
+      y: (rawRect.y - viewport.y) / viewport.zoom,
+      width: rawRect.width / viewport.zoom,
+      height: rawRect.height / viewport.zoom,
+    }
+
+    if (!isElementShapedMarqueeRect(flowRect)) return
+    if (marqueeHitsElementRect(flowRect, getInteractionNodes())) return
+
+    const bounds = rfStoreApi.getState().domNode?.getBoundingClientRect()
+    if (!bounds) return
+    showAddingElementAt(
+      bounds.left + rawRect.x + rawRect.width / 2,
+      bounds.top + rawRect.y + rawRect.height / 2,
+      true,
+    )
+  }, [canEdit, getInteractionNodes, getViewport, rfStoreApi, showAddingElementAt, viewId])
 
   // ── Group badge drag (move all group members together) ──────────────────────
   const groupDragMemberIdsRef = useRef<string[]>([])
@@ -2511,6 +2556,8 @@ export function useCanvasInteractions({
     onSelectionDragStart,
     onSelectionDrag,
     onSelectionDragStop,
+    onSelectionStart,
+    onSelectionEnd,
     startGroupDrag,
     moveGroupDrag,
     endGroupDrag,

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Node as RFNode } from 'reactflow'
 import {
+  isElementShapedMarqueeRect,
+  marqueeHitsElementRect,
   planSelectionAlignment,
   planSelectionDistribution,
   selectedElementIds,
@@ -95,5 +97,37 @@ describe('ViewEditor selection helpers', () => {
 
     expect(visibleElementSelectionRects(nodes, { x: 0, y: 0, zoom: 1, width: 250, height: 200 }).map((rect) => rect.elementId))
       .toEqual([2, 3])
+  })
+
+  it('accepts marquee rectangles roughly matching the element shape', () => {
+    expect(isElementShapedMarqueeRect({ width: 180, height: 85 })).toBe(true)
+    expect(isElementShapedMarqueeRect({ width: 90, height: 45 })).toBe(true)
+    expect(isElementShapedMarqueeRect({ width: 360, height: 170 })).toBe(true)
+  })
+
+  it('rejects marquee rectangles that are too small, too big, or the wrong aspect', () => {
+    expect(isElementShapedMarqueeRect({ width: 0, height: 0 })).toBe(false)
+    expect(isElementShapedMarqueeRect({ width: 40, height: 40 })).toBe(false)
+    expect(isElementShapedMarqueeRect({ width: 1400, height: 170 })).toBe(false)
+    expect(isElementShapedMarqueeRect({ width: 360, height: 45 })).toBe(false)
+    expect(isElementShapedMarqueeRect({ width: 100, height: 160 })).toBe(false)
+  })
+
+  it('detects when a marquee overlaps an element node', () => {
+    const element = node('1', 100, 100, 180, 85, false)
+
+    expect(marqueeHitsElementRect({ x: 150, y: 120, width: 50, height: 50 }, [element])).toBe(true)
+    expect(marqueeHitsElementRect({ x: 400, y: 400, width: 180, height: 85 }, [element])).toBe(false)
+    expect(marqueeHitsElementRect({ x: 280, y: 100, width: 50, height: 50 }, [element])).toBe(false)
+  })
+
+  it('ignores non-element, hidden, and non-selectable nodes when testing overlap', () => {
+    const nodes = [
+      node('context-left', 100, 100, 180, 85, false, 'contextNeighborNode'),
+      { ...node('2', 100, 100, 180, 85, false), style: { visibility: 'hidden' as const } },
+      { ...node('3', 100, 100, 180, 85, false), selectable: false },
+    ]
+
+    expect(marqueeHitsElementRect({ x: 100, y: 100, width: 180, height: 85 }, nodes)).toBe(false)
   })
 })
