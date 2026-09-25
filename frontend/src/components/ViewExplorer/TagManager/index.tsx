@@ -169,7 +169,17 @@ export const TagManager: React.FC<Props> = ({
 
   const visibleTags = availableTags.filter((tag) => !isElementGroupTag(tag))
   const usedTags = visibleTags.filter(tag => (tagCounts[tag] || 0) > 0)
-  const unusedTags = visibleTags.filter(tag => (tagCounts[tag] || 0) === 0)
+  const emptyGroups = layers.filter((layer) => isElementGroupLayer(layer) && (layerCounts[layer.id] || 0) === 0)
+  const emptyGroupTags = emptyGroups.map((layer) => ({
+    tag: elementGroupTagForLayer(layer)!,
+    label: `group:${layer.name}`,
+    color: layer.color || '#A0AEC0',
+  }))
+  const unusedTags = [
+    ...visibleTags.filter(tag => (tagCounts[tag] || 0) === 0).map((tag) => ({ tag, label: tag, color: tagColors[tag]?.color || '#A0AEC0' })),
+    ...emptyGroupTags,
+  ]
+  const emptyGroupTagSet = new Set(emptyGroupTags.map(({ tag }) => tag))
 
   return (
     <Box
@@ -340,16 +350,17 @@ export const TagManager: React.FC<Props> = ({
                       </HStack>
                       {!isUnusedCollapsed && (
                         <Wrap spacing={1} opacity={0.6}>
-                          {unusedTags.map((tag) => (
+                          {unusedTags.map(({ tag, label, color }) => (
                             <WrapItem key={tag}>
                               <TagItem
                                 tag={tag}
-                                color={tagColors[tag]?.color || '#A0AEC0'}
+                                displayLabel={label}
+                                color={color}
                                 description={tagColors[tag]?.description || null}
                                 isAssigned={(selectedElement.tags || []).includes(tag)}
                                 tagCount={tagCounts[tag]}
                                 onToggle={() => onToggleTagOnElement(tag)}
-                                onHover={(active) => onHoverLayer(active ? [tag] : null, tagColors[tag]?.color)}
+                                onHover={(active) => onHoverLayer(active ? [tag] : null, color)}
                                 onDropTag={(dragged: string) => handleCreateGroup(tag, dragged, tag)}
                                 onDropLayer={(draggedId: number) => handleCreateGroupFromLayer(tag, draggedId)}
                                 namingPopover={namingPopover.targetTag === tag ? namingPopover : undefined}
@@ -357,7 +368,7 @@ export const TagManager: React.FC<Props> = ({
                                 onConfirmNaming={handleConfirmNaming}
                                 onCloseNaming={() => setNamingPopover(prev => ({ ...prev, isOpen: false, targetTag: null }))}
                                 onSetColor={(color) => onCreateTag(tag, color)}
-                                onSetDescription={(desc) => onCreateTag(tag, tagColors[tag]?.color, desc)}
+                                onSetDescription={(desc) => onCreateTag(tag, color, desc)}
                               />
                             </WrapItem>
                           ))}
@@ -370,7 +381,7 @@ export const TagManager: React.FC<Props> = ({
             )}
 
             {/* Layers (Groups) List */}
-            {layers.map((layer) => (
+            {layers.filter((layer) => !emptyGroupTagSet.has(elementGroupTagForLayer(layer) || '')).map((layer) => (
               <LayerItem
                 key={layer.id}
                 layer={layer}
@@ -454,11 +465,12 @@ export const TagManager: React.FC<Props> = ({
                       </HStack>
                       {!isUnusedCollapsed && (
                         <Wrap spacing={2} opacity={0.6}>
-                          {unusedTags.map((tag) => (
+                          {unusedTags.map(({ tag, label, color }) => (
                             <WrapItem key={tag}>
                               <TagItem
                                 tag={tag}
-                                color={tagColors[tag]?.color || '#A0AEC0'}
+                                displayLabel={label}
+                                color={color}
                                 description={tagColors[tag]?.description || null}
                                 tagCount={tagCounts[tag]}
                                 onHover={(active) => onHoverLayer(active ? [tag] : null, tagColors[tag]?.color)}

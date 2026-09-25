@@ -7,6 +7,7 @@ import { ColorPicker } from './ColorPicker'
 
 interface Props {
   tag: string
+  displayLabel?: string
   color: string
   isAssigned?: boolean
   tagCount?: number
@@ -28,6 +29,7 @@ interface Props {
 
 export const TagItem: React.FC<Props> = ({
   tag,
+  displayLabel,
   color,
   isAssigned,
   tagCount = 0,
@@ -205,7 +207,7 @@ export const TagItem: React.FC<Props> = ({
               textAlign="left"
             >
               <Text isTruncated>
-                {tag}
+                {displayLabel ?? tag}
                 {tagCount > 0 && (
                   <Box as="span" ml={1.5} opacity={0.6} fontWeight="normal">
                     {tagCount}
