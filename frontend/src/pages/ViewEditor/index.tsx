@@ -2152,9 +2152,7 @@ function ViewEditorInner({
       })
       applyElementSaved(saved)
       pushElementEditAction(obj, saved)
-      if (selectedElement?.id === elementId) {
-        setSelectedElement(saved)
-      }
+      setSelectedElement((current) => current?.id === saved.id ? saved : current)
     } catch (err) {
       console.error('Failed to update tags:', err)
     }
@@ -2560,32 +2558,63 @@ function ViewEditorInner({
     })
   }, [publishRealtimeConnectorDelete, publishRealtimeConnectorUpsert, pushEditAction, refreshElements, removeStoreConnector, upsertStoreConnector])
 
-  const elementEditSessionRef = useRef<{ before: WorkspaceElement; after: WorkspaceElement | null } | null>(null)
-  const finalizeElementEditSession = useCallback(() => {
-    const session = elementEditSessionRef.current
-    elementEditSessionRef.current = null
-    if (session?.after) pushElementEditAction(session.before, session.after)
+  const elementEditSessionsRef = useRef(new Map<number, { before: WorkspaceElement; after: WorkspaceElement | null }>())
+  const selectedElementIdRef = useRef<number | null>(selectedElement?.id ?? null)
+  selectedElementIdRef.current = selectedElement?.id ?? null
+  const elementPanelOpenRef = useRef(elementPanel.isOpen)
+  elementPanelOpenRef.current = elementPanel.isOpen
+
+  const pushElementEditSession = useCallback((session: { before: WorkspaceElement; after: WorkspaceElement | null }) => {
+    if (session.after) pushElementEditAction(session.before, session.after)
   }, [pushElementEditAction])
 
-  useEffect(() => {
-    if (!elementPanel.isOpen || !selectedElement) return
-    const session = elementEditSessionRef.current
-    if (!session || session.before.id !== selectedElement.id) {
-      if (session?.after) pushElementEditAction(session.before, session.after)
-      elementEditSessionRef.current = { before: selectedElement, after: null }
+  const flushElementEditSession = useCallback((elementId: number) => {
+    const session = elementEditSessionsRef.current.get(elementId)
+    if (!session) return
+    elementEditSessionsRef.current.delete(elementId)
+    pushElementEditSession(session)
+  }, [pushElementEditSession])
+
+  const finalizeElementEditSession = useCallback(() => {
+    for (const elementId of Array.from(elementEditSessionsRef.current.keys())) {
+      flushElementEditSession(elementId)
     }
-  }, [elementPanel.isOpen, pushElementEditAction, selectedElement])
+  }, [flushElementEditSession])
+
+  useEffect(() => {
+    // Record any session whose element is no longer the active edit target now, so its
+    // undo entry stays ordered before actions that follow the selection change (e.g. bulk edits).
+    for (const [elementId, session] of Array.from(elementEditSessionsRef.current.entries())) {
+      if (elementPanel.isOpen && selectedElement?.id === elementId) continue
+      if (session.after) {
+        elementEditSessionsRef.current.delete(elementId)
+        pushElementEditSession(session)
+      }
+    }
+
+    if (!elementPanel.isOpen || !selectedElement) return
+    if (!elementEditSessionsRef.current.has(selectedElement.id)) {
+      elementEditSessionsRef.current.set(selectedElement.id, { before: selectedElement, after: null })
+    }
+  }, [elementPanel.isOpen, pushElementEditSession, selectedElement])
 
   const handleElementPanelSave = useCallback((saved: WorkspaceElement) => {
-    const session = elementEditSessionRef.current
-    if (!session || session.before.id !== saved.id) {
-      elementEditSessionRef.current = { before: selectedElement?.id === saved.id ? selectedElement : saved, after: saved }
-    } else {
+    const sessions = elementEditSessionsRef.current
+    const session = sessions.get(saved.id)
+    if (session) {
       session.after = saved
+    } else {
+      sessions.set(saved.id, { before: saved, after: saved })
     }
     applyElementSaved(saved)
-    setSelectedElement(saved)
-  }, [applyElementSaved, selectedElement])
+    setSelectedElement((current) => current?.id === saved.id ? saved : current)
+
+    // A debounced autosave can land after the user moved on (Tab switch, bulk select).
+    // Record it right away so it is not reordered against subsequent history actions.
+    if (!elementPanelOpenRef.current || selectedElementIdRef.current !== saved.id) {
+      flushElementEditSession(saved.id)
+    }
+  }, [applyElementSaved, flushElementEditSession])
 
   const handleElementPanelClose = useCallback(() => {
     finalizeElementEditSession()
@@ -2619,7 +2648,7 @@ function ViewEditorInner({
     upsertConnectorGraphSnapshot(connector)
     upsertStoreConnector(connector)
     publishRealtimeConnectorUpsert(connector)
-    setSelectedEdge(connector)
+    setSelectedEdge((current) => current?.id === connector.id ? connector : current)
   }, [publishRealtimeConnectorUpsert, selectedEdge, upsertStoreConnector])
 
   const handleConnectorPanelClose = useCallback(() => {
@@ -3450,7 +3479,7 @@ function ViewEditorInner({
     setSelectedElement(null)
     setSelectedEdge(null)
     setSelectedProxyConnectorDetails(null)
-    elementEditSessionRef.current = null
+    elementEditSessionsRef.current.clear()
     connectorEditSessionRef.current = null
     clearEditHistory()
     closeElementPanelRef.current()
@@ -4642,7 +4671,7 @@ function ViewEditorInner({
           onSave={handleElementPanelSave} autoSave
           onMerge={handleOpenMerge}
           onDelete={(elementId) => {
-            elementEditSessionRef.current = null
+            elementEditSessionsRef.current.delete(elementId)
             const placement = viewElements.find((item) => item.element_id === elementId)
             if (placement) pushPlacementRemoveAction(placement)
             handleElementDeleted(elementId)
