@@ -399,27 +399,30 @@ func (s *MermaidService) importIntoViewSafely(ctx context.Context, workspaceID u
 	if dryRun {
 		return s.importIntoView(ctx, workspaceID, viewID, parsed, center, true)
 	}
-	transactional, ok := s.Store.(TransactionalStore)
-	if !ok {
-		return nil, fmt.Errorf("atomic Mermaid import: %w", ErrUnimplemented)
-	}
-	var result *diagv1.ImportMermaidIntoViewResponse
-	err := transactional.RunInTransaction(ctx, func(txCtx context.Context, txStore Store) error {
-		txService := *s
-		if txStore != nil {
-			txService.Store = txStore
+	if transactional, ok := s.Store.(TransactionalStore); ok {
+		var result *diagv1.ImportMermaidIntoViewResponse
+		err := transactional.RunInTransaction(ctx, func(txCtx context.Context, txStore Store) error {
+			txService := *s
+			if txStore != nil {
+				txService.Store = txStore
+			}
+			var err error
+			result, err = txService.importIntoView(txCtx, workspaceID, viewID, parsed, center, false)
+			return err
+		})
+		switch {
+		case err == nil:
+			if result == nil {
+				return nil, errors.New("transactional Mermaid import returned no result")
+			}
+			return result, nil
+		case errors.Is(err, ErrUnimplemented):
+			// Store cannot run transactions; fall back to direct mutations.
+		default:
+			return nil, err
 		}
-		var err error
-		result, err = txService.importIntoView(txCtx, workspaceID, viewID, parsed, center, false)
-		return err
-	})
-	if err != nil {
-		return nil, err
 	}
-	if result == nil {
-		return nil, errors.New("transactional Mermaid import returned no result")
-	}
-	return result, nil
+	return s.importIntoView(ctx, workspaceID, viewID, parsed, center, false)
 }
 
 func markdownBlockToProto(block mermaid.MarkdownBlock, status diagv1.MermaidMarkdownSyncStatus) *diagv1.MermaidMarkdownBlockInfo {

@@ -430,6 +430,38 @@ func TestMermaidServiceFailedImportRollsBackPartialResources(t *testing.T) {
 	}
 }
 
+func TestMermaidServiceImportFallsBackWhenStoreLacksTransactions(t *testing.T) {
+	t.Parallel()
+
+	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+	createdElement := false
+	store := &contractStore{
+		runInTransaction: func(context.Context, func(context.Context, Store) error) error {
+			return ErrUnimplemented
+		},
+		createElement: func(_ context.Context, _ uuid.UUID, input ElementInput) (*diagv1.Element, error) {
+			createdElement = true
+			return &diagv1.Element{Id: 10, Name: input.Name}, nil
+		},
+	}
+	service := &MermaidService{Store: store}
+
+	resp, err := service.ImportMermaidIntoView(context.Background(), connect.NewRequest(&diagv1.ImportMermaidIntoViewRequest{
+		OrgId:  workspaceID.String(),
+		ViewId: 7,
+		Source: "flowchart LR\n  A[API]",
+	}))
+	if err != nil {
+		t.Fatalf("ImportMermaidIntoView() error = %v", err)
+	}
+	if !createdElement {
+		t.Fatal("fallback import did not create the element directly")
+	}
+	if got := resp.Msg.GetSummary().GetCreatedElementCount(); got != 1 {
+		t.Fatalf("created element count = %d, want 1", got)
+	}
+}
+
 func TestMermaidServiceDryRunCountsConnectorsBetweenNewElements(t *testing.T) {
 	t.Parallel()
 
