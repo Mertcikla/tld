@@ -124,7 +124,19 @@ $PB -c "Add :NSAppTransportSecurity dict" "$INFO_PLIST" 2>/dev/null || true
 $PB -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$INFO_PLIST" 2>/dev/null || true
 
 echo "==> Embedding provisioning profile"
+# Downloaded provisioning profiles carry com.apple.quarantine (and other
+# provenance metadata). App Store Connect rejects any package that contains
+# those attributes (error 91109), so strip them from the source before copying.
+xattr -c "$PROVISION_PROFILE" 2>/dev/null || true
 cp "$PROVISION_PROFILE" "$APP_BUNDLE/Contents/embedded.provisionprofile"
+
+echo "==> Removing extended attributes from app bundle"
+xattr -cr "$APP_BUNDLE"
+
+if xattr -lr "$APP_BUNDLE" 2>/dev/null | grep -q "com.apple.quarantine"; then
+	echo "quarantine attribute still present in $APP_BUNDLE" >&2
+	exit 1
+fi
 
 echo "==> Generating entitlements"
 mkdir -p "$(dirname "$ENTITLEMENTS_OUT")"
@@ -145,6 +157,17 @@ productbuild --component "$APP_BUNDLE" /Applications \
 
 echo "==> Verifying package signature"
 pkgutil --check-signature "$PKG"
+
+echo "==> Verifying package payload has no quarantine attributes"
+VERIFY_DIR="$(mktemp -d)"
+pkgutil --expand-full "$PKG" "$VERIFY_DIR/expanded" >/dev/null 2>&1 || true
+if xattr -lr "$VERIFY_DIR/expanded" 2>/dev/null | grep -q "com.apple.quarantine"; then
+	xattr -lr "$VERIFY_DIR/expanded" 2>/dev/null | grep "com.apple.quarantine" >&2
+	rm -rf "$VERIFY_DIR"
+	echo "quarantine attribute present in package payload; App Store Connect would reject it (91109)" >&2
+	exit 1
+fi
+rm -rf "$VERIFY_DIR"
 
 echo
 echo "Created $PKG"
