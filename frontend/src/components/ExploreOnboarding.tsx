@@ -4,7 +4,7 @@ import OnboardingHint from './OnboardingHint'
 const STORAGE_KEY = `explore_tutorial_v1_core`
 
 interface Props {
-   
+
   hasLinkedNodes: boolean
 }
 
@@ -193,12 +193,12 @@ function ZoomOutIllustration() {
 const STEPS = [
   {
     title: 'Navigate the Canvas',
-    body: 'Scroll to zoom in and out. Drag to pan. Your entire architecture is laid out on one infinite canvas.',
+    body: 'Scroll to zoom in and out. Drag to pan.',
     visual: 'pan' as const,
   },
   {
     title: 'Zoom In to Dive Deeper',
-    body: 'Nodes with a blue dot \u2022 have a linked sub-diagram. Zoom in on one - the view automatically transitions inside.',
+    body: 'Zoom in on a stacked element to view its details.',
     visual: 'zoom' as const,
   },
   {

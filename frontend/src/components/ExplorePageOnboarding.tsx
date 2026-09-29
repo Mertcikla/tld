@@ -4,7 +4,7 @@ import OnboardingHint from './OnboardingHint'
 const STORAGE_KEY = `explore_page_tutorial_v1_core`
 
 interface Props {
-   
+
   hasDiagrams: boolean
 }
 
@@ -170,7 +170,7 @@ function ZoomInIllustration() {
         <line x1="173" y1="70" x2="200" y2="56" stroke="#374151" strokeWidth="1.5" strokeDasharray="4,2" markerEnd="url(#ep-arr2)" />
       </g>
 
-      <text x="140" y="144" textAnchor="middle" fill="#2D3748" fontSize="8" fontFamily="system-ui,sans-serif">scroll to zoom · nodes with a blue dot have sub-diagrams</text>
+      <text x="140" y="144" textAnchor="middle" fill="#2D3748" fontSize="8" fontFamily="system-ui,sans-serif">scroll to zoom</text>
     </svg>
   )
 }
