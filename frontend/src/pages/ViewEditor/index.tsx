@@ -134,6 +134,7 @@ import { TEMPORARY_CONNECTOR_EDGE_STYLE, TEMPORARY_CONNECTOR_PATH_STYLE } from '
 import {
   VIEW_SELECTION_CLIPBOARD_MIME,
   buildViewSelectionClipboardPayload,
+  findViewSelectionMissingElementIds,
   findViewSelectionPasteConflicts,
   mapViewSelectionElementIds,
   parseViewSelectionClipboardPayload,
@@ -249,6 +250,31 @@ type PendingDuplicatePaste = {
   targetViewId: number
   pasteCenter: { x: number; y: number }
   conflictElementIds: number[]
+  missingElementIds: number[]
+}
+
+function duplicatePasteCopy(pending: PendingDuplicatePaste | null): { title: string; body: string; confirmLabel: string } {
+  if (!pending) return { title: '', body: '', confirmLabel: 'Create' }
+
+  const { missingElementIds, conflictElementIds } = pending
+  const missing = missingElementIds.length
+
+  if (missing > 0) {
+    const parts = [`${missing} selected element${missing === 1 ? '' : 's'} ${missing === 1 ? 'is' : 'are'} not in this workspace.`]
+    if (conflictElementIds.length > 0) {
+      const conflicts = conflictElementIds.length
+      parts.push(`${conflicts} other${conflicts === 1 ? '' : 's'} already exist in this view and will be duplicated.`)
+    }
+    parts.push(`Create ${missing === 1 ? 'it' : 'them'} as new element${missing === 1 ? '' : 's'}?`)
+    return { title: 'Create new elements?', body: parts.join(' '), confirmLabel: 'Create' }
+  }
+
+  const conflicts = conflictElementIds.length
+  return {
+    title: 'Duplicate existing elements?',
+    body: `${conflicts} pasted element${conflicts === 1 ? '' : 's'} already exist in this view. Duplicate the conflicts to create separate elements, or cancel to leave this view unchanged.`,
+    confirmLabel: 'Duplicate',
+  }
 }
 
 function cursorColorForUser(userId: string) {
@@ -4065,12 +4091,23 @@ function ViewEditorInner({
       const pasteCenter = getClipboardPasteCenter()
       const existingIds = new Set(viewElementsRef.current.map((element) => element.element_id))
       const conflictElementIds = findViewSelectionPasteConflicts(payload, existingIds)
-      if (conflictElementIds.length > 0) {
+
+      let workspaceElementIds = existingIds
+      try {
+        const workspaceElements = await api.elements.list({ limit: 0 })
+        workspaceElementIds = new Set(workspaceElements.map((element) => element.id))
+      } catch {
+        workspaceElementIds = existingIds
+      }
+      const missingElementIds = findViewSelectionMissingElementIds(payload, workspaceElementIds)
+
+      if (conflictElementIds.length > 0 || missingElementIds.length > 0) {
         setPendingDuplicatePaste({
           payload,
           targetViewId: currentViewId,
           pasteCenter,
           conflictElementIds,
+          missingElementIds,
         })
         duplicatePasteConfirm.onOpen()
         return
@@ -4134,7 +4171,7 @@ function ViewEditorInner({
       pending.payload,
       pending.targetViewId,
       pending.pasteCenter,
-      new Set(pending.conflictElementIds),
+      new Set([...pending.conflictElementIds, ...pending.missingElementIds]),
     )
   }, [duplicatePasteConfirm, pasteViewSelectionPayload, pendingDuplicatePaste])
 
@@ -4756,11 +4793,9 @@ function ViewEditorInner({
           isOpen={duplicatePasteConfirm.isOpen}
           onClose={handleCancelDuplicatePaste}
           onConfirm={handleConfirmDuplicatePaste}
-          title="Duplicate existing elements?"
-          body={pendingDuplicatePaste
-            ? `${pendingDuplicatePaste.conflictElementIds.length} pasted element${pendingDuplicatePaste.conflictElementIds.length === 1 ? '' : 's'} already exist in this view. Duplicate the conflicts to create separate elements, or cancel to leave this view unchanged.`
-            : ''}
-          confirmLabel="Duplicate"
+          title={duplicatePasteCopy(pendingDuplicatePaste).title}
+          body={duplicatePasteCopy(pendingDuplicatePaste).body}
+          confirmLabel={duplicatePasteCopy(pendingDuplicatePaste).confirmLabel}
           confirmColorScheme="blue"
           isLoading={isClipboardPasting}
         />
