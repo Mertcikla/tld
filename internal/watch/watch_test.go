@@ -2554,6 +2554,7 @@ func TestWatchDiffsMaterializeChangedPackageManifests(t *testing.T) {
 		diff := findDiffByOwner(diffs, "file", "file:"+path, "element", "updated")
 		if diff == nil {
 			t.Fatalf("expected changed manifest %s to produce updated file element diff, got %+v", path, diffs)
+			return
 		}
 		if diff.AddedLines == 0 || diff.RemovedLines == 0 {
 			t.Fatalf("expected accurate line delta for %s, got %+v", path, diff)
@@ -2608,6 +2609,7 @@ func TestWatchDiffsMaterializeChangedHiddenSymbolAsUpdated(t *testing.T) {
 	diff := findDiffByOwner(diffs, "symbol", ownerKey, "element", "updated")
 	if diff == nil {
 		t.Fatalf("expected changed hidden symbol to produce updated symbol element diff, got %+v", diffs)
+		return
 	}
 	if diff.AddedLines != 2 || diff.RemovedLines != 1 {
 		t.Fatalf("expected changed hidden symbol to report exact line diff, got %+v", diff)
@@ -2988,6 +2990,7 @@ func Beta() string {
 	alpha := findDiffByOwner(diffs, "symbol", "go:main.go:function:Alpha", "symbol", "updated")
 	if alpha == nil {
 		t.Fatalf("expected Alpha symbol diff, got %+v", diffs)
+		return
 	}
 	if alpha.AddedLines != 2 || alpha.RemovedLines != 1 {
 		t.Fatalf("expected Alpha to receive only its hunk lines, got %+v", alpha)
