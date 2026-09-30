@@ -308,6 +308,7 @@ func TestMermaidServiceImportPreservesTldMetadata(t *testing.T) {
 		createView: func(_ context.Context, _ uuid.UUID, ownerElementID *int32, _ string, label *string, _ bool) (*diagv1.View, error) {
 			if ownerElementID == nil {
 				t.Fatal("internal view owner element id = nil")
+				return nil, nil
 			}
 			createdViewOwner = *ownerElementID
 			createdViewLabel = derefString(label)

@@ -2998,6 +2998,7 @@ func Beta() string {
 	beta := findDiffByOwner(diffs, "symbol", "go:main.go:function:Beta", "symbol", "updated")
 	if beta == nil {
 		t.Fatalf("expected Beta symbol diff, got %+v", diffs)
+		return
 	}
 	if beta.AddedLines != 3 || beta.RemovedLines != 1 {
 		t.Fatalf("expected Beta to receive only its hunk lines, got %+v", beta)
