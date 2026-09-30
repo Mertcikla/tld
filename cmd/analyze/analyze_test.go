@@ -855,6 +855,7 @@ func TestAnalyzeCmd_PreservesManualEditsOnGeneratedElements(t *testing.T) {
 	fooElement := ws.Elements[fooRef]
 	if fooElement == nil {
 		t.Fatalf("fooElement not found after second analyze: %+v", ws.Elements)
+		return
 	}
 	if fooElement.Description != "This is my manual description" {
 		t.Fatalf("expected description 'This is my manual description', got %q", fooElement.Description)

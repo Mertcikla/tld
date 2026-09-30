@@ -177,6 +177,7 @@ func TestSyncCommands_ParentGetsDiagramWhenChildAdded(t *testing.T) {
 	view := svc.View(int32(viewMeta.ID))
 	if view == nil {
 		t.Fatalf("server view %d not found", viewMeta.ID)
+		return
 	}
 	if view.OwnerElementId == nil || *view.OwnerElementId != elementID {
 		t.Fatalf("server view owner = %v, want element %d", view.OwnerElementId, elementID)

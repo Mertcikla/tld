@@ -110,6 +110,7 @@ func TestAddCmd_ShowsNormalizedTechnology(t *testing.T) {
 	e := ws.Elements["catch2"]
 	if e == nil {
 		t.Fatal("missing catch2 element")
+		return
 	}
 	if strings.EqualFold(e.Technology, "C++14") {
 		t.Fatalf("expected normalized technology to differ from input, got %q", e.Technology)
