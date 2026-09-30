@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Connector, PlacedElement } from '../../types'
 import {
   buildViewSelectionClipboardPayload,
+  findViewSelectionMissingElementIds,
   findViewSelectionPasteConflicts,
   mapViewSelectionElementIds,
   parseViewSelectionClipboardPayload,
@@ -103,6 +104,19 @@ describe('ViewEditor clipboard helpers', () => {
 
     expect(payload).not.toBeNull()
     expect(findViewSelectionPasteConflicts(payload!, new Set([2, 3]))).toEqual([2])
+  })
+
+  it('detects elements that are missing from the target workspace', () => {
+    const payload = buildViewSelectionClipboardPayload(
+      10,
+      [placement(1, 100, 100), placement(2, 200, 100), placement(3, 300, 100)],
+      [],
+      [1, 2, 3],
+    )
+
+    expect(payload).not.toBeNull()
+    expect(findViewSelectionMissingElementIds(payload!, new Set([2, 3]))).toEqual([1])
+    expect(findViewSelectionMissingElementIds(payload!, new Set([1, 2, 3]))).toEqual([])
   })
 
   it('plans reuse and duplicate element id mappings', () => {

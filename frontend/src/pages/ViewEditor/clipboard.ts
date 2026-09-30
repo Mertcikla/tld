@@ -164,6 +164,15 @@ export function findViewSelectionPasteConflicts(
     .filter((elementId) => existingElementIds.has(elementId))
 }
 
+export function findViewSelectionMissingElementIds(
+  payload: ViewSelectionClipboardPayload,
+  existingElementIds: ReadonlySet<number>,
+): number[] {
+  return payload.elements
+    .map((element) => element.elementId)
+    .filter((elementId) => !existingElementIds.has(elementId))
+}
+
 export function mapViewSelectionElementIds(
   payload: ViewSelectionClipboardPayload,
   duplicatedElementIdsBySourceId: ReadonlyMap<number, number>,
