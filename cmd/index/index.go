@@ -48,8 +48,10 @@ func NewIndexCmd() *cobra.Command {
 		Use:   "index [path]",
 		Short: "Index a repository into the codeindex graph",
 		Long: `Index extracts code facts, edges, and chunks from a repository using the
-in-tree codeindex engine and publishes an immutable snapshot. With --watch the
-repository is re-indexed incrementally as files change.`,
+in-tree codeindex engine and publishes an immutable snapshot. It only builds the
+code graph; pass --materialize to additionally project candidate elements and
+connectors into a workspace view. With --watch the repository is re-indexed
+incrementally as files change.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.path = "."
@@ -62,7 +64,7 @@ repository is re-indexed incrementally as files change.`,
 	c.Flags().BoolVar(&opts.watch, "watch", false, "re-index incrementally as files change")
 	c.Flags().BoolVar(&opts.jsonOut, "json", false, "emit machine-readable JSON")
 	c.Flags().BoolVar(&opts.embed, "embed", false, "compute embeddings for the snapshot when an endpoint is configured")
-	c.Flags().BoolVar(&opts.materialize, "materialize", true, "materialize visible candidates into a workspace view")
+	c.Flags().BoolVar(&opts.materialize, "materialize", false, "also materialize candidates into a workspace view (opt-in)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
 	c.Flags().DurationVar(&opts.pollInterval, "poll-interval", 2*time.Second, "file change polling interval")
 	c.Flags().DurationVar(&opts.debounce, "debounce", 500*time.Millisecond, "delay used to batch file changes")

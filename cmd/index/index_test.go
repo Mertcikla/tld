@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+func TestMaterializeFlagDefaultsOff(t *testing.T) {
+	cmd := NewIndexCmd()
+	flag := cmd.Flags().Lookup("materialize")
+	if flag == nil {
+		t.Fatal("materialize flag missing")
+	}
+	if flag.DefValue != "false" {
+		t.Fatalf("materialize default = %q, want false", flag.DefValue)
+	}
+}
+
 func TestTreeSignatureChangesWithContent(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "a.go")
