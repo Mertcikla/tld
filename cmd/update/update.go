@@ -272,7 +272,7 @@ func resolveTagValue(current []string, value, mode string) string {
 func serverSyncedElementFields(field string) bool {
 	switch field {
 	case "name", "kind", "description", "technology", "url", "logo_url",
-		"repo", "branch", "language", "file_path", "view_label", "view_name",
+		"repo", "branch", "file_path", "view_label", "view_name",
 		"tags", "bypass_noise_gate":
 		return true
 	default:
@@ -457,8 +457,6 @@ func applyElementField(input *api.ElementInput, el *workspace.Element, field, va
 		input.Repo = &value
 	case "branch":
 		input.Branch = &value
-	case "language":
-		input.Language = &value
 	case "file_path":
 		input.FilePath = &value
 	case "view_label":

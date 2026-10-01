@@ -103,7 +103,7 @@ type Element struct {
 	LogoURL         string          `yaml:"logo_url,omitempty"`
 	Repo            string          `yaml:"repo,omitempty"`
 	Branch          string          `yaml:"branch,omitempty"`
-	Language        string          `yaml:"language,omitempty"`
+	Language        string          `yaml:"-"`
 	FilePath        string          `yaml:"file_path,omitempty"`
 	Symbol          string          `yaml:"symbol,omitempty"` // Named code symbol within FilePath (e.g. "MyFunc")
 	Tags            []string        `yaml:"tags,omitempty"`

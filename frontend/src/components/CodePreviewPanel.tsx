@@ -103,7 +103,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
     setIsPrivateRepo(false)
 
     const resolveAnchors = async (text: string) => {
-      const effectiveLanguage = element.language || detectLanguage(basePath)
+      const effectiveLanguage = detectLanguage(basePath)
       if (anchor.kind === 'symbol' && effectiveLanguage) {
         try {
           const parser = await getParser(effectiveLanguage as SupportedLanguage)
@@ -236,7 +236,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
   const getLanguageExtension = () => {
     const extensions = [customCodeTheme]
-    const effectiveLanguage = element?.language || detectLanguage(basePath)
+    const effectiveLanguage = detectLanguage(basePath)
     switch (effectiveLanguage) {
       case 'javascript':
       case 'typescript':

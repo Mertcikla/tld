@@ -326,7 +326,6 @@ func parseElementMetadata(pairs map[string]string, viewRef, label string) (*desi
 		Tags:            pairStringList(pairs, "tags"),
 		Repo:            pairString(pairs, "repo"),
 		Branch:          pairString(pairs, "branch"),
-		Language:        pairString(pairs, "lang"),
 		FilePath:        pairString(pairs, "file"),
 		BypassNoiseGate: pairBool(pairs, "bypass"),
 		HasView:         boolValue(pairBool(pairs, "hasView")),
@@ -395,7 +394,6 @@ func sameElementIdentity(a, b *desiredElement) bool {
 		a.LogoURL == b.LogoURL &&
 		a.Repo == b.Repo &&
 		a.Branch == b.Branch &&
-		a.Language == b.Language &&
 		a.FilePath == b.FilePath
 }
 

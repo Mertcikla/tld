@@ -29,7 +29,6 @@ var elementScalarFields = map[string]bool{
 	"logo_url":          true,
 	"repo":              true,
 	"branch":            true,
-	"language":          true,
 	"file_path":         true,
 	"symbol":            true,
 	"has_view":          true,
@@ -486,9 +485,6 @@ func mergeElementFields(ref string, existing, incoming *Element) (*Element, erro
 	}
 	if merged.Branch == "" {
 		merged.Branch = incoming.Branch
-	}
-	if merged.Language == "" {
-		merged.Language = incoming.Language
 	}
 	if merged.FilePath == "" {
 		merged.FilePath = incoming.FilePath

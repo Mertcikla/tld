@@ -22,7 +22,6 @@ type elementMetadata struct {
 	Repo            string
 	Branch          string
 	FilePath        string
-	Language        string
 	BypassNoiseGate *bool
 	HasView         *bool
 	ViewLabel       string
@@ -164,9 +163,6 @@ func ApplyTldMetadata(parsed *ParsedDiagram, metadata *tldMetadata) {
 		}
 		if item.FilePath != "" {
 			element.FilePath = &item.FilePath
-		}
-		if item.Language != "" {
-			element.Language = &item.Language
 		}
 		if item.BypassNoiseGate != nil {
 			element.BypassNoiseGate = item.BypassNoiseGate
@@ -330,7 +326,6 @@ func parseElementMetadata(pairs map[string]string) elementMetadata {
 		"repo":      &item.Repo,
 		"branch":    &item.Branch,
 		"file":      &item.FilePath,
-		"lang":      &item.Language,
 		"viewLabel": &item.ViewLabel,
 	}
 	for key, target := range stringKeys {
