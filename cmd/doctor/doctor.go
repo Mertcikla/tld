@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/codeindex/config"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
 	"github.com/mertcikla/tld/v2/internal/codeindex/tools"
@@ -31,7 +32,7 @@ func NewDoctorCmd() *cobra.Command {
 			cfg := configbridge.FromGlobal(global)
 			ctx := cmd.Context()
 			report := buildReport(ctx, cfg)
-			if asJSON {
+			if asJSON || cmdutil.WantsJSONFromCmd(cmd) {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
 				return enc.Encode(report)

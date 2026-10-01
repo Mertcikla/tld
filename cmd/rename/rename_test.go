@@ -1,6 +1,8 @@
 package rename_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -38,6 +40,32 @@ func TestRenameCmdCascadesElementReferences(t *testing.T) {
 	}
 	if connector.Source != "service-api" || connector.Target != "db" {
 		t.Fatalf("connector endpoints = %s -> %s, want service-api -> db", connector.Source, connector.Target)
+	}
+}
+
+func TestRenameCmdDryRunDoesNotMutate(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.SeedElementWorkspace(t, dir)
+
+	path := filepath.Join(dir, ".tld", "elements.yaml")
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, err := cmd.RunCmd(t, dir, "rename", "--from", "api", "--to", "renamed", "--dry-run")
+	if err != nil {
+		t.Fatalf("rename dry-run: %v", err)
+	}
+	if !strings.Contains(stdout, "dry-run") {
+		t.Fatalf("stdout = %q, want dry-run confirmation", stdout)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("elements.yaml changed during dry-run")
 	}
 }
 

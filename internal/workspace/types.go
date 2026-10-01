@@ -128,6 +128,7 @@ type Connector struct {
 	URL             string     `yaml:"url,omitempty"`
 	SourceHandle    string     `yaml:"source_handle,omitempty"`
 	TargetHandle    string     `yaml:"target_handle,omitempty"`
+	Tags            []string   `yaml:"tags,omitempty"`
 	VisibilityDelta int        `yaml:"visibility_delta,omitempty"`
 	ID              ResourceID `yaml:"id,omitempty"`
 	UpdatedAt       time.Time  `yaml:"updated_at,omitempty"`

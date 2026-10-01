@@ -54,8 +54,8 @@ To refresh the workspace YAML cache from the server, use 'tld pull'.`,
 				return err
 			}
 			items := buildRuntimeStatus(reg.Processes)
-			if cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
-				return writeRuntimeStatusJSON(cmd.OutOrStdout(), cmd.Root().PersistentFlags().Lookup("compact").Value.String() == "true", items)
+			if cmdutil.WantsJSONFromCmd(cmd) {
+				return writeRuntimeStatusJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), items)
 			}
 			printRuntimeStatus(cmd.OutOrStdout(), items)
 			return nil

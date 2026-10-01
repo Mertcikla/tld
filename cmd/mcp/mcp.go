@@ -28,6 +28,7 @@ type addArgs struct {
 	Description string  `json:"description,omitempty"`
 	Technology  string  `json:"technology,omitempty"`
 	URL         string  `json:"url,omitempty"`
+	Tags        string  `json:"tags,omitempty" jsonschema:"comma-separated tags"`
 	Parent      string  `json:"parent,omitempty" jsonschema:"parent element ref (default: root)"`
 	PositionX   float64 `json:"position_x,omitempty"`
 	PositionY   float64 `json:"position_y,omitempty"`
@@ -43,10 +44,11 @@ type connectArgs struct {
 	Relationship string `json:"relationship,omitempty"`
 	Direction    string `json:"direction,omitempty" jsonschema:"forward|backward|both|none"`
 	Style        string `json:"style,omitempty"`
-	URL          string `json:"url,omitempty"`
-}
+		URL          string `json:"url,omitempty"`
+		Tags         string `json:"tags,omitempty" jsonschema:"comma-separated tags"`
+	}
 
-type removeElementArgs struct {
+	type removeElementArgs struct {
 	Ref string `json:"ref" jsonschema:"element ref to remove"`
 }
 
@@ -122,6 +124,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		if a.URL != "" {
 			args = append(args, "--url", a.URL)
 		}
+		if a.Tags != "" {
+			args = append(args, "--tags", a.Tags)
+		}
 		if a.Parent != "" {
 			args = append(args, "--parent", a.Parent)
 		}
@@ -166,6 +171,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		}
 		if a.URL != "" {
 			args = append(args, "--url", a.URL)
+		}
+		if a.Tags != "" {
+			args = append(args, "--tags", a.Tags)
 		}
 		if dataDir != "" {
 			args = append(args, "--data-dir", dataDir)

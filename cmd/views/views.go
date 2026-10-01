@@ -33,19 +33,19 @@ func NewViewsCmd(wdir *string) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ws, err := cmdutil.LoadWorkspace(*wdir)
 			if err != nil {
-				if cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
-					return cmdutil.WriteCommandError(cmd.OutOrStdout(), cmd.Root().PersistentFlags().Lookup("compact").Value.String() == "true", "views", err)
+				if cmdutil.WantsJSONFromCmd(cmd) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), "views", err)
 				}
 				return err
 			}
 
 			if errs := ws.ValidateWithOpts(workspace.ValidationOptions{SkipSymbols: true}); len(errs) > 0 {
-				if cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
+				if cmdutil.WantsJSONFromCmd(cmd) {
 					messages := make([]string, 0, len(errs))
 					for _, validationErr := range errs {
 						messages = append(messages, validationErr.Error())
 					}
-					return cmdutil.WriteJSON(cmd.OutOrStdout(), cmd.Root().PersistentFlags().Lookup("compact").Value.String() == "true", cmdutil.JSONOutput{
+					return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{
 						Command: "views",
 						Status:  "error",
 						Errors:  messages,
@@ -63,8 +63,8 @@ func NewViewsCmd(wdir *string) *cobra.Command {
 			}
 
 			rows := summarizeViews(ws)
-			if cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
-				return cmdutil.WriteJSON(cmd.OutOrStdout(), cmd.Root().PersistentFlags().Lookup("compact").Value.String() == "true", buildViewsJSONOutput(rows))
+			if cmdutil.WantsJSONFromCmd(cmd) {
+				return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), buildViewsJSONOutput(rows))
 			}
 
 			renderViewsTable(cmd.OutOrStdout(), rows)

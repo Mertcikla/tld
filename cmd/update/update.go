@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
@@ -59,6 +60,36 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				return err
 			}
+			appendMode, _ := cmd.Flags().GetBool("append")
+			removeMode, _ := cmd.Flags().GetBool("remove")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			mode, err := tagUpdateMode(field, appendMode, removeMode)
+			if err != nil {
+				return fail(err)
+			}
+			if mode != "" {
+				preWS, err := cmdutil.LoadWorkspace(*wdir)
+				if err != nil {
+					return fail(err)
+				}
+				el := preWS.Elements[ref]
+				if el == nil {
+					return fail(fmt.Errorf("element %q not found", ref))
+				}
+				value = resolveTagValue(el.Tags, value, mode)
+			}
+			if dryRun {
+				if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
+					return workspace.UpdateElementField(cloneDir, ref, field, value)
+				}); err != nil {
+					return fail(fmt.Errorf("dry-run update element: %w", err))
+				}
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update element", "dry-run", ref)
+				}
+				term.Successf(cmd.OutOrStdout(), "dry-run: update %q: %s=%q", ref, field, value)
+				return nil
+			}
 			switch {
 			case field == "ref":
 				// Rename is a local-alias change; the server ID is unchanged.
@@ -98,6 +129,9 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 	}
 	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
+	c.Flags().Bool("append", false, "with tags: add to existing tags instead of replacing them")
+	c.Flags().Bool("remove", false, "with tags: remove the given tags")
+	c.Flags().Bool("dry-run", false, "preview the change without writing files or calling the server")
 	return c
 }
 
@@ -131,11 +165,37 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				return err
 			}
+			appendMode, _ := cmd.Flags().GetBool("append")
+			removeMode, _ := cmd.Flags().GetBool("remove")
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			mode, err := tagUpdateMode(field, appendMode, removeMode)
+			if err != nil {
+				return fail(err)
+			}
+			if dryRun {
+				if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
+					return workspace.UpdateConnectorField(cloneDir, ref, field, value)
+				}); err != nil {
+					return fail(fmt.Errorf("dry-run update connector: %w", err))
+				}
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update connector", "dry-run", ref)
+				}
+				term.Successf(cmd.OutOrStdout(), "dry-run: update %q: %s=%q", ref, field, value)
+				return nil
+			}
 			// Validate before touching server state; the desired spec is
 			// derived from the pre-update YAML so the key change is known.
 			preWS, err := cmdutil.LoadWorkspace(*wdir)
 			if err != nil {
 				return fail(err)
+			}
+			if mode != "" {
+				connector := preWS.Connectors[ref]
+				if connector == nil {
+					return fail(fmt.Errorf("connector %q not found", ref))
+				}
+				value = resolveTagValue(connector.Tags, value, mode)
 			}
 			if err := workspace.ValidateConnectorFieldChange(preWS, ref, field, value); err != nil {
 				return fail(fmt.Errorf("update connector: %w", err))
@@ -170,7 +230,42 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 	}
 	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
+	c.Flags().Bool("append", false, "with tags: add to existing tags instead of replacing them")
+	c.Flags().Bool("remove", false, "with tags: remove the given tags")
+	c.Flags().Bool("dry-run", false, "preview the change without writing files or calling the server")
 	return c
+}
+
+// tagUpdateMode validates the --append/--remove flags and returns "append",
+// "remove", or "" (plain replace). Flags are only valid for the tags field.
+func tagUpdateMode(field string, appendMode, removeMode bool) (string, error) {
+	if appendMode && removeMode {
+		return "", fmt.Errorf("--append and --remove are mutually exclusive")
+	}
+	if (appendMode || removeMode) && field != "tags" {
+		return "", fmt.Errorf("--append/--remove are only valid with the tags field")
+	}
+	switch {
+	case appendMode:
+		return "append", nil
+	case removeMode:
+		return "remove", nil
+	default:
+		return "", nil
+	}
+}
+
+// resolveTagValue rewrites a tags value string using the given mode against the
+// current tags so the existing field-update path can apply it verbatim.
+func resolveTagValue(current []string, value, mode string) string {
+	switch mode {
+	case "append":
+		return strings.Join(workspace.UnionTags(current, workspace.ParseTagList(value)), ",")
+	case "remove":
+		return strings.Join(workspace.SubtractTags(current, workspace.ParseTagList(value)), ",")
+	default:
+		return value
+	}
 }
 
 // serverSyncedElementFields are YAML element fields mirrored to the server.
@@ -178,7 +273,7 @@ func serverSyncedElementFields(field string) bool {
 	switch field {
 	case "name", "kind", "description", "technology", "url", "logo_url",
 		"repo", "branch", "language", "file_path", "view_label", "view_name",
-		"bypass_noise_gate":
+		"tags", "bypass_noise_gate":
 		return true
 	default:
 		return false
@@ -330,6 +425,7 @@ func runCreateConnectorFromSpec(ctx context.Context, ws *workspace.Workspace, ru
 		URL:          &spec.URL,
 		SourceHandle: &spec.SourceHandle,
 		TargetHandle: &spec.TargetHandle,
+		Tags:         spec.Tags,
 	})
 	if err != nil {
 		return nil, cmdutil.WithUnauthorizedHint("server create connector failed", err)
@@ -342,6 +438,8 @@ func runCreateConnectorFromSpec(ctx context.Context, ws *workspace.Workspace, ru
 // the server instead of being treated as "leave unchanged".
 func applyElementField(input *api.ElementInput, el *workspace.Element, field, value string) {
 	switch field {
+	case "tags":
+		input.Tags = workspace.ParseTagList(value)
 	case "name":
 		input.Name = value
 	case "kind":
@@ -425,11 +523,16 @@ func runUpdateConnectorServer(ctx context.Context, ws *workspace.Workspace, wdir
 	if style == "" {
 		style = "bezier"
 	}
-	// Connector tags are editor-only (not part of the YAML spec), so carry the
-	// server's existing tags through the update to avoid clearing them.
+	// Prefer the YAML-spec tags so `update connector ... tags` applies. When the
+	// YAML spec has no tags (hand-written or not yet pulled), carry the server's
+	// existing tags through to avoid clearing them on unrelated updates.
 	existing, err := runner.GetConnector(ctx, connectorID)
 	if err != nil {
 		return nil, currentKey, cmdutil.WithUnauthorizedHint("server get connector failed", err)
+	}
+	tags := existing.GetTags()
+	if spec.Tags != nil {
+		tags = spec.Tags
 	}
 	updated, err := runner.UpdateConnector(ctx, connectorID, api.ConnectorInput{
 		ViewID:       viewID,
@@ -443,7 +546,7 @@ func runUpdateConnectorServer(ctx context.Context, ws *workspace.Workspace, wdir
 		URL:          &spec.URL,
 		SourceHandle: &spec.SourceHandle,
 		TargetHandle: &spec.TargetHandle,
-		Tags:         existing.GetTags(),
+		Tags:         tags,
 	})
 	if err != nil {
 		return nil, currentKey, cmdutil.WithUnauthorizedHint("server update connector failed", err)

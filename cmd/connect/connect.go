@@ -24,6 +24,7 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 		direction    string
 		style        string
 		url          string
+		tags         string
 		legacyView   string
 		target       string
 		dataDir      string
@@ -66,6 +67,7 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 				Direction:    direction,
 				Style:        style,
 				URL:          url,
+				Tags:         workspace.ParseTagList(tags),
 			}
 			if dryRun {
 				if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
@@ -95,6 +97,7 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&direction, "direction", "forward", "forward|backward|both|none")
 	c.Flags().StringVar(&style, "style", "bezier", "bezier|straight|step|smoothstep")
 	c.Flags().StringVar(&url, "url", "", "external URL")
+	c.Flags().StringVar(&tags, "tags", "", "comma-separated tags")
 	c.Flags().StringVar(&legacyView, "view", "", "explicit connector view ref (default: source element's view)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
 	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
@@ -172,6 +175,7 @@ func runConnect(cmd *cobra.Command, wdir, format string, compact bool, target, d
 		Direction:    direction,
 		Style:        style,
 		URL:          optStr(spec.URL),
+		Tags:         spec.Tags,
 	})
 	if err != nil {
 		return fail(cmdutil.WithUnauthorizedHint("server create connector failed", err))
@@ -185,7 +189,7 @@ func runConnect(cmd *cobra.Command, wdir, format string, compact bool, target, d
 	if cmdutil.WantsJSON(format) {
 		return cmdutil.WriteMutation(cmd.OutOrStdout(), compact, "connect", "connect", fmt.Sprintf("%s:%s", from, to))
 	}
-	term.Successf(cmd.OutOrStdout(), "ok (id=%d)", created.GetId())
+	term.Successf(cmd.OutOrStdout(), "connect: %s -> %s (id=%d)", from, to, created.GetId())
 	term.Infof(cmd.OutOrStdout(), "connector view: %s", view)
 	return nil
 }

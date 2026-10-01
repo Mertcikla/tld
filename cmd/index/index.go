@@ -24,6 +24,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/project"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/codeindex/visibility"
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -89,6 +90,7 @@ type engine struct {
 
 func run(cmd *cobra.Command, opts options) error {
 	ctx := cmd.Context()
+	opts.jsonOut = opts.jsonOut || cmdutil.WantsJSONFromCmd(cmd)
 	root, err := filepath.Abs(opts.path)
 	if err != nil {
 		return err

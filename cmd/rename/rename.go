@@ -13,6 +13,7 @@ import (
 func NewRenameCmd(wdir *string) *cobra.Command {
 	var from string
 	var to string
+	var dryRun bool
 
 	c := &cobra.Command{
 		Use:   "rename",
@@ -21,15 +22,30 @@ func NewRenameCmd(wdir *string) *cobra.Command {
 			if from == "" || to == "" {
 				return fmt.Errorf("--from and --to are required")
 			}
+			if dryRun {
+				if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
+					return workspace.RenameElement(cloneDir, from, to)
+				}); err != nil {
+					if cmdutil.WantsJSONFromCmd(cmd) {
+						return cmdutil.WriteCommandError(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), "rename", err)
+					}
+					return fmt.Errorf("dry-run rename element: %w", err)
+				}
+				if cmdutil.WantsJSONFromCmd(cmd) {
+					return cmdutil.WriteMutation(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), "rename", "dry-run", fmt.Sprintf("%s -> %s", from, to))
+				}
+				term.Successf(cmd.OutOrStdout(), "dry-run: renamed %s → %s", from, to)
+				return nil
+			}
 			err := workspace.RenameElement(*wdir, from, to)
 			if err != nil {
-				if cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
-					return cmdutil.WriteCommandError(cmd.OutOrStdout(), cmd.Root().PersistentFlags().Lookup("compact").Value.String() == "true", "rename", err)
+				if cmdutil.WantsJSONFromCmd(cmd) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), "rename", err)
 				}
 				return fmt.Errorf("rename element: %w", err)
 			}
-			if cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
-				return cmdutil.WriteMutation(cmd.OutOrStdout(), cmd.Root().PersistentFlags().Lookup("compact").Value.String() == "true", "rename", "rename", fmt.Sprintf("%s -> %s", from, to))
+			if cmdutil.WantsJSONFromCmd(cmd) {
+				return cmdutil.WriteMutation(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), "rename", "rename", fmt.Sprintf("%s -> %s", from, to))
 			}
 			term.Successf(cmd.OutOrStdout(), "renamed %s → %s", from, to)
 			return nil
@@ -38,6 +54,7 @@ func NewRenameCmd(wdir *string) *cobra.Command {
 
 	c.Flags().StringVar(&from, "from", "", "current element ref (required)")
 	c.Flags().StringVar(&to, "to", "", "new element ref (required)")
+	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
 	_ = c.MarkFlagRequired("from")
 	_ = c.MarkFlagRequired("to")
 

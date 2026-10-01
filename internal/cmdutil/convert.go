@@ -140,6 +140,7 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 			URL:          e.GetUrl(),
 			SourceHandle: e.GetSourceHandle(),
 			TargetHandle: e.GetTargetHandle(),
+			Tags:         cloneStrings(e.GetTags()),
 		}
 		newWS.Meta.Connectors[key] = &workspace.ResourceMetadata{
 			ID:        workspace.ResourceID(e.Id),
