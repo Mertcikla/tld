@@ -122,12 +122,15 @@ func TestStageTrackerRotatesJokes(t *testing.T) {
 	}
 
 	now = now.Add(4 * time.Second)
-	tracker.Report("Discover", 1, 1, "")
+	tracker.Report("Discover", 1, 1, "internal/codeindex/indexer.go")
 	seen := map[string]bool{}
 	for i := 0; i < len(jokes); i++ {
 		active := activeNow()
-		if strings.Contains(active, "Discover") {
-			t.Fatalf("joke should replace the stage name on the active line:\n%q", active)
+		if !strings.Contains(active, "Discover") {
+			t.Fatalf("joke should leave the stage name on the active line:\n%q", active)
+		}
+		if strings.Contains(active, "internal/codeindex/indexer.go") {
+			t.Fatalf("joke should replace the file being processed on the active line:\n%q", active)
 		}
 		for _, joke := range jokes {
 			if strings.Contains(active, joke) {
@@ -135,7 +138,7 @@ func TestStageTrackerRotatesJokes(t *testing.T) {
 			}
 		}
 		now = now.Add(3 * time.Second)
-		tracker.Report("Discover", 1, 1, "")
+		tracker.Report("Discover", 1, 1, "internal/codeindex/indexer.go")
 	}
 	if len(seen) != len(jokes) {
 		t.Fatalf("expected every joke to rotate in, saw %v:\n%q", seen, out.String())

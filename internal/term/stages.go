@@ -74,7 +74,6 @@ type StageTracker struct {
 	jokes        []string
 	jokeInterval time.Duration
 	jokeStart    time.Time
-	jokeWidth    int
 	jokeRound    int
 
 	mu         sync.Mutex
@@ -120,7 +119,6 @@ func NewStageTracker(out io.Writer, stages []string, opts StageTrackerOptions) *
 			t.jokeInterval = defaultJokeInterval
 		}
 		t.jokeStart = t.now()
-		t.jokeWidth = t.computeJokeWidthLocked()
 		t.jokeRound = -1
 	}
 	for _, name := range stages {
@@ -326,14 +324,11 @@ func (t *StageTracker) renderActiveLocked() {
 }
 
 func (t *StageTracker) activeLineLocked(st *stageState, now time.Time) string {
-	label, isJoke := t.activeLabelLocked(st, now)
+	label := t.padNameLocked(st.name)
 	frame := t.spinnerFrameLocked(st, now)
 
 	plain := "  " + frame + " " + label
 	styled := "  " + Colorize(t.out, ColorCyan, frame) + " " + Colorize(t.out, ColorBold, label)
-	if isJoke {
-		styled = "  " + Colorize(t.out, ColorCyan, frame) + " " + Colorize(t.out, ColorYellow, label)
-	}
 
 	if st.total > 0 {
 		percent := int((float64(st.current) / float64(st.total)) * 100)
@@ -361,12 +356,16 @@ func (t *StageTracker) activeLineLocked(st *stageState, now time.Time) string {
 		}
 	}
 
-	if st.detail != "" {
+	if detail, isJoke := t.activeDetailLocked(st, now); detail != "" {
 		remaining := t.width - len([]rune(plain)) - 1
 		if remaining > 3 {
-			detail := truncateMiddle(st.detail, remaining)
+			detail = truncateMiddle(detail, remaining)
 			plain += " " + detail
-			styled += " " + Dim(t.out, detail)
+			if isJoke {
+				styled += " " + Colorize(t.out, ColorYellow, detail)
+			} else {
+				styled += " " + Dim(t.out, detail)
+			}
 		}
 	}
 
@@ -376,41 +375,14 @@ func (t *StageTracker) activeLineLocked(st *stageState, now time.Time) string {
 	return styled
 }
 
-// activeLabelLocked returns the padded label for the pinned active line. Once a
-// stage has run past the joke delay, a joke stands in for the stage name, padded
-// to a stable width so the counters that follow do not jump between jokes.
-func (t *StageTracker) activeLabelLocked(st *stageState, now time.Time) (string, bool) {
-	if len(t.jokes) == 0 || now.Sub(st.started) <= defaultJokeDelay {
-		return t.padNameLocked(st.name), false
+// activeDetailLocked returns the trailing detail for the pinned active line.
+// Once a stage has run past the joke delay, a joke stands in for the file being
+// processed, leaving the stage name in place.
+func (t *StageTracker) activeDetailLocked(st *stageState, now time.Time) (string, bool) {
+	if len(t.jokes) > 0 && now.Sub(st.started) > defaultJokeDelay {
+		return t.jokeLocked(now), true
 	}
-	joke := t.jokeLocked(now)
-	if r := []rune(joke); len(r) > t.jokeWidth {
-		joke = truncateEnd(joke, t.jokeWidth)
-	}
-	return fmt.Sprintf("%-*s", t.jokeWidth, joke), true
-}
-
-// computeJokeWidthLocked picks the width of the joke label column: the longest
-// joke, capped at half the terminal so progress counters still have room.
-func (t *StageTracker) computeJokeWidthLocked() int {
-	max := t.width / 2
-	if max < stageNameMinWidth {
-		max = stageNameMinWidth
-	}
-	width := 0
-	for _, joke := range t.jokes {
-		w := len([]rune(joke))
-		if w > max {
-			w = max
-		}
-		if w > width {
-			width = w
-		}
-	}
-	if width < stageNameMinWidth {
-		width = stageNameMinWidth
-	}
-	return width
+	return st.detail, false
 }
 
 // jokeLocked returns the joke for the current interval. The pool is reshuffled
