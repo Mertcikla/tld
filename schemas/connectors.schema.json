@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Mertcikla/tld/refs/heads/main/schemas/connectors.schema.json",
+  "title": "tld connectors.yaml",
+  "description": "Workspace connector (edge) definitions for the tld / tlDiagram CLI. The file is a list of connectors. Each connector lives in a view and links a source element to a target element. `view`, `source`, and `target` are required and are validated against elements.yaml by `tld validate`.",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/connector"
+  },
+  "$defs": {
+    "elementRef": {
+      "description": "Element reference matching a key in elements.yaml. Must start with a lowercase letter or digit and may contain lowercase letters, digits, dots, underscores, and hyphens. `root` is reserved and cannot be used here.",
+      "type": "string",
+      "pattern": "^(?!(?:root)$)[a-z0-9][a-z0-9._-]*$",
+      "examples": ["api-service", "postgres"]
+    },
+    "viewRef": {
+      "description": "View reference: either `root` for the top-level workspace view or the ref of an element that owns a child view (has_view: true).",
+      "type": "string",
+      "pattern": "^(?:root|[a-z0-9][a-z0-9._-]*)$",
+      "examples": ["root", "platform", "api-service"]
+    },
+    "tag": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "examples": ["runtime", "data-flow"]
+    },
+    "connector": {
+      "type": "object",
+      "description": "A directed edge between two elements within a view.",
+      "properties": {
+        "view": {
+          "$ref": "#/$defs/viewRef"
+        },
+        "source": {
+          "$ref": "#/$defs/elementRef",
+          "description": "Source element ref (tail of the edge)."
+        },
+        "target": {
+          "$ref": "#/$defs/elementRef",
+          "description": "Target element ref (head of the edge)."
+        },
+        "label": {
+          "type": "string",
+          "description": "Short text shown on the edge (e.g. action or payload name).",
+          "examples": ["reads", "HTTP", "Publishes event"]
+        },
+        "description": {
+          "type": "string",
+          "description": "Longer explanation of what flows across the connector."
+        },
+        "relationship": {
+          "type": "string",
+          "description": "Relationship/protocol category (e.g. SQL, HTTP, gRPC, pub/sub). Free-form; used for grouping and styling.",
+          "examples": ["SQL", "HTTP", "gRPC", "pub/sub"]
+        },
+        "direction": {
+          "type": "string",
+          "description": "Edge direction. Defaults to `forward` when omitted. `none` renders an undirected line.",
+          "enum": ["forward", "backward", "both", "none"],
+          "default": "forward"
+        },
+        "style": {
+          "type": "string",
+          "description": "Edge routing style. Defaults to `bezier` when omitted.",
+          "enum": ["bezier", "straight", "step", "smoothstep"],
+          "default": "bezier"
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "External link for the connector (e.g. a runbook or API docs)."
+        },
+        "source_handle": {
+          "type": "string",
+          "description": "Anchor on the source node the edge attaches to.",
+          "enum": ["top", "right", "bottom", "left"],
+          "examples": ["right", "bottom"]
+        },
+        "target_handle": {
+          "type": "string",
+          "description": "Anchor on the target node the edge attaches to.",
+          "enum": ["top", "right", "bottom", "left"],
+          "examples": ["left", "top"]
+        },
+        "tags": {
+          "type": "array",
+          "description": "Free-form labels used for filtering and visual grouping.",
+          "items": {
+            "$ref": "#/$defs/tag"
+          },
+          "uniqueItems": true
+        },
+        "visibility_delta": {
+          "type": "integer",
+          "description": "Density/noise-gate adjustment applied to this connector relative to its view."
+        },
+        "id": {
+          "type": "string",
+          "description": "Server-assigned resource id encoded as a Hashid. Managed by the CLI/server; safe to omit when hand-authoring. Present only when synced with a server.",
+          "examples": ["3xK9pQ2a"]
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "RFC 3339 timestamp of the last server update. Usually tracked in .tld.lock instead of inline."
+        }
+      },
+      "required": ["view", "source", "target"],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "view": "root",
+          "source": "api-service",
+          "target": "postgres",
+          "label": "reads",
+          "relationship": "SQL",
+          "direction": "forward",
+          "style": "smoothstep",
+          "source_handle": "right",
+          "target_handle": "left"
+        }
+      ]
+    }
+  }
+}

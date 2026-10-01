@@ -640,7 +640,38 @@ func normalizeResourceMetadataMapKeys(metadata map[string]*ResourceMetadata) {
 }
 
 func writeYAMLNode(path string, root *yaml.Node) error {
-	normalizeYAMLStyle(root)
+	return encodeYAMLWithSchemaHeader(path, root)
+}
+
+// ensureSchemaHeader guarantees that an existing node carries the
+// yaml-language-server schema directive as its head comment. Older files that
+// predate the schema, and files produced by readers that drop comments, get the
+// directive added on the next write. It returns true when a comment was set.
+func ensureSchemaHeader(node *yaml.Node, filename string) bool {
+	comment := schemaDirective(filepath.Base(filename))
+	if comment == "" || node == nil {
+		return false
+	}
+	if strings.Contains(node.HeadComment, "yaml-language-server") {
+		return false
+	}
+	if node.HeadComment != "" {
+		node.HeadComment = comment + "\n" + node.HeadComment
+	} else {
+		node.HeadComment = comment
+	}
+	return true
+}
+
+// encodeYAMLWithSchemaHeader encodes node to path, ensuring the schema directive
+// is present. Files that have a published schema get the comment prepended to
+// the document node so it remains the first line, even after merges.
+func encodeYAMLWithSchemaHeader(path string, node *yaml.Node) error {
+	normalizeYAMLStyle(node)
+	if ensureSchemaHeader(node, filepath.Base(path)) {
+		// Re-normalize so the injected head comment is emitted on its own line.
+		normalizeYAMLStyle(node)
+	}
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
@@ -649,7 +680,7 @@ func writeYAMLNode(path string, root *yaml.Node) error {
 
 	enc := yaml.NewEncoder(f)
 	enc.SetIndent(2)
-	if err := enc.Encode(root); err != nil {
+	if err := enc.Encode(node); err != nil {
 		return fmt.Errorf("encode %s: %w", path, err)
 	}
 	if err := f.Close(); err != nil {
@@ -683,19 +714,7 @@ func WriteFullYAMLList(path string, items any) error {
 	if err := node.Encode(items); err != nil {
 		return fmt.Errorf("encode items for %s: %w", path, err)
 	}
-	normalizeYAMLStyle(&node)
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	enc := yaml.NewEncoder(f)
-	enc.SetIndent(2)
-	if err := enc.Encode(&node); err != nil {
-		return fmt.Errorf("encode %s: %w", path, err)
-	}
-	return f.Close()
+	return encodeYAMLWithSchemaHeader(path, &node)
 }
 func WriteFullYAMLMap(path string, items any, meta map[string]*ResourceMetadata) error {
 	return WriteFullYAMLMapSections(path, items, []metadataSection{{name: "_meta", values: meta, persist: true}})
@@ -737,26 +756,7 @@ func WriteFullYAMLMapSections(path string, items any, sections []metadataSection
 	}
 
 	// 3. Write back to file with specific indentation
-	normalizeYAMLStyle(&node)
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
-	}
-	defer func() {
-		_ = f.Close()
-	}()
-
-	enc := yaml.NewEncoder(f)
-	enc.SetIndent(2)
-	if err := enc.Encode(&node); err != nil {
-		return fmt.Errorf("encode %s: %w", path, err)
-	}
-
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", path, err)
-	}
-
-	return nil
+	return encodeYAMLWithSchemaHeader(path, &node)
 }
 
 func useElementWorkspaceFiles(ws *Workspace) bool {

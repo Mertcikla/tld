@@ -396,3 +396,72 @@ func TestParseConnectorKey(t *testing.T) {
 		}
 	}
 }
+
+func firstLine(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return strings.SplitN(string(data), "\n", 2)[0]
+}
+
+func assertSchemaDirective(t *testing.T, path, wantURL string) {
+	t.Helper()
+	line := firstLine(t, path)
+	want := "# yaml-language-server: $schema=" + wantURL
+	if line != want {
+		t.Fatalf("%s first line = %q, want %q", filepath.Base(path), line, want)
+	}
+}
+
+// Saved workspaces must carry the yaml-language-server schema directive so
+// editors validate and autocomplete elements.yaml/connectors.yaml.
+func TestSaveWritesSchemaDirective(t *testing.T) {
+	dir := t.TempDir()
+	ws := &workspace.Workspace{
+		Dir:        dir,
+		Elements:   map[string]*workspace.Element{"api": {Name: "API", Kind: "service"}},
+		Connectors: map[string]*workspace.Connector{"root/api~db/reads": {View: "root", Source: "api", Target: "db", Label: "reads"}},
+	}
+	if err := workspace.Save(ws); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	assertSchemaDirective(t, filepath.Join(dir, "elements.yaml"), workspace.ElementsSchemaURL)
+	assertSchemaDirective(t, filepath.Join(dir, "connectors.yaml"), workspace.ConnectorsSchemaURL)
+}
+
+// Merging (used by `tld pull`) must add the directive to legacy files that
+// predate the schema, and must not duplicate it on subsequent merges.
+func TestMergeWorkspaceAddsSchemaDirective(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte("api:\n  name: API\n  kind: service\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte("[]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	emptyMeta := &workspace.Meta{
+		Elements:   map[string]*workspace.ResourceMetadata{},
+		Views:      map[string]*workspace.ResourceMetadata{},
+		Connectors: map[string]*workspace.ResourceMetadata{},
+	}
+	ws := &workspace.Workspace{
+		Dir:        dir,
+		Elements:   map[string]*workspace.Element{"api": {Name: "API", Kind: "service"}},
+		Connectors: map[string]*workspace.Connector{},
+		Meta:       emptyMeta,
+	}
+	for i := 0; i < 2; i++ {
+		if err := workspace.MergeWorkspace(dir, ws, emptyMeta, emptyMeta); err != nil {
+			t.Fatalf("MergeWorkspace: %v", err)
+		}
+		assertSchemaDirective(t, filepath.Join(dir, "elements.yaml"), workspace.ElementsSchemaURL)
+		assertSchemaDirective(t, filepath.Join(dir, "connectors.yaml"), workspace.ConnectorsSchemaURL)
+	}
+	// Ensure the directive appears exactly once, not duplicated across merges.
+	data, _ := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+	if got := strings.Count(string(data), "yaml-language-server"); got != 1 {
+		t.Fatalf("elements.yaml schema directive count = %d, want 1:\n%s", got, data)
+	}
+}

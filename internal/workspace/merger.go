@@ -192,20 +192,8 @@ func mergeYAMLMapWithMetadataSections(path string, serverItems any, serverMeta m
 
 	mapping.Content = newContent
 
-	// Write back
-	normalizeYAMLStyle(&root)
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	enc := yaml.NewEncoder(f)
-	enc.SetIndent(2)
-	if err := enc.Encode(&root); err != nil {
-		return fmt.Errorf("encode %s: %w", path, err)
-	}
-	return nil
+	// Write back, preserving/adding the yaml-language-server schema directive.
+	return encodeYAMLWithSchemaHeader(path, &root)
 }
 
 // connectorKeyFromNode returns the canonical key for an on-disk connector
