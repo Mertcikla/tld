@@ -15,6 +15,7 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	ci "github.com/mertcikla/tld/v2/internal/codeindex/config"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
 	"github.com/mertcikla/tld/v2/internal/codeindex/embed"
@@ -25,7 +26,6 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/project"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/codeindex/visibility"
-	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -161,6 +161,31 @@ const (
 	stageMaterialize = "Materialize view"
 )
 
+// indexJokes are rotated on the active stage line to keep long indexes
+// entertaining and to gently roast whatever codebase is being indexed.
+var indexJokes = []string{
+	"This function is so long it has its own time zone.",
+	"Found 0 tests and 47 \"temporary\" fixes. All permanent.",
+	"Cyclomatic complexity called; it needs a nap.",
+	"Someone named a variable data2_final_USE_THIS_one.",
+	"Copy-paste is clearly a design pattern here.",
+	"git blame suggests we all blame each other.",
+	"This abstraction has some abstraction issues.",
+	"Number of people who understand this module: 0.",
+	"Refactoring this would void the warranty.",
+	"Dead code detected, still awaiting its funeral.",
+	"The linter filed a restraining order.",
+	"Warning: comments say \"trust me\"; tests say nothing.",
+	"This file has seen things. Terrible things.",
+	"It compiles, therefore it is correct. Probably.",
+	"TODO: understand this code. TODO: never return.",
+	"The merge conflicts are load-bearing at this point.",
+	"Spaghetti detected. Forks everywhere, no fork().",
+	"Error handling: catch, log, and hope.",
+	"Global state: because namespacing is hard.",
+	"Whoever wrote this was a genius. A cursed genius.",
+}
+
 func displayStage(stage string) string {
 	if name, ok := indexStageDisplay[stage]; ok {
 		return name
@@ -176,7 +201,9 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 	if out == nil || e.opts.jsonOut {
 		out = io.Discard
 	}
-	tracker := term.NewStageTracker(out, indexStageOrder, term.StageTrackerOptions{})
+	tracker := term.NewStageTracker(out, indexStageOrder, term.StageTrackerOptions{
+		Jokes: indexJokes,
+	})
 	defer tracker.Finish()
 
 	lastStage := indexStageOrder[0]

@@ -101,6 +101,49 @@ func TestStageTrackerFailRendersError(t *testing.T) {
 	}
 }
 
+func TestStageTrackerRotatesJokes(t *testing.T) {
+	var out bytes.Buffer
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	jokes := []string{"joke-alpha", "joke-beta", "joke-gamma"}
+	tracker := NewStageTracker(&out, []string{"Discover"}, StageTrackerOptions{
+		ForceTerminal:    true,
+		DisableAnimation: true,
+		Throttle:         -1,
+		Width:            200,
+		Now:              func() time.Time { return now },
+		Jokes:            jokes,
+		JokeInterval:     3 * time.Second,
+	})
+
+	tracker.Begin("Discover")
+	seen := map[string]bool{}
+	for i := 0; i < len(jokes); i++ {
+		active := out.String()[strings.LastIndex(out.String(), "\r\033[K"):]
+		for _, joke := range jokes {
+			if strings.Contains(active, joke) {
+				seen[joke] = true
+			}
+		}
+		now = now.Add(3 * time.Second)
+		tracker.Report("Discover", 1, 1, "")
+	}
+	if len(seen) != len(jokes) {
+		t.Fatalf("expected every joke to rotate in, saw %v:\n%q", seen, out.String())
+	}
+}
+
+func TestStageTrackerNoJokesByDefault(t *testing.T) {
+	var out bytes.Buffer
+	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
+	tracker := testTracker(&out, []string{"Discover"}, true, &now)
+
+	tracker.Begin("Discover")
+	active := out.String()[strings.LastIndex(out.String(), "\r\033[K"):]
+	if strings.Contains(active, "joke") {
+		t.Fatalf("unexpected joke on active line:\n%q", active)
+	}
+}
+
 func TestStageTrackerMessageKeepsActivePinnedBelow(t *testing.T) {
 	var out bytes.Buffer
 	now := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
