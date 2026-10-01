@@ -78,6 +78,12 @@ import {
   AddCommentResponseSchema,
   ListReactionsResponseSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/collaboration_service_pb'
+import {
+  ChangeKind,
+  CodeFactService,
+  type Snapshot as CodeSnapshotProto,
+  type SnapshotDiff as SnapshotDiffProto,
+} from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset } from '../config/runtime'
 import {
@@ -141,6 +147,50 @@ export interface IndexedRepository {
   sources: number
 }
 
+export type SnapshotChangeKind = 'added' | 'removed' | 'modified' | 'unchanged'
+
+export interface CodeSnapshotProject {
+  root: string
+  language: string
+  configPath: string
+}
+
+// CodeSnapshot is one immutable indexed revision of a repository.
+export interface CodeSnapshot {
+  id: string
+  repositoryId: string
+  createdUnix: number
+  gitRevision: string
+  gitBranch: string
+  ingestionStatus: string
+  embeddingStatus: string
+  projects: CodeSnapshotProject[]
+  warnings: string[]
+}
+
+export interface SnapshotSourceChange {
+  path: string
+  change: SnapshotChangeKind
+  fromHash: string
+  toHash: string
+}
+
+export interface SnapshotDeltaCounts {
+  added: number
+  removed: number
+  modified: number
+}
+
+export interface SnapshotDiff {
+  fromSnapshotId: string
+  toSnapshotId: string
+  fromGitRevision: string
+  toGitRevision: string
+  sources: SnapshotSourceChange[]
+  facts: SnapshotDeltaCounts
+  edgeFacts: SnapshotDeltaCounts
+}
+
 export interface WorkspaceVersion {
   id: string
   version_id: string
@@ -197,6 +247,7 @@ const dependencyClient = createClient(DependencyService, transport)
 const importClient = createClient(ImportService, transport)
 const mermaidClient = createClient(MermaidService, transport)
 const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
+const codeIndexFactClient = createClient(CodeFactService, transport)
 const orgClient = createClient(OrgService, transport)
 const collaborationClient = createClient(CollaborationService, transport)
 
@@ -234,6 +285,62 @@ function mapWorkspaceVersion(version: WorkspaceVersionInfo): WorkspaceVersion {
     description: version.description,
     workspace_hash: version.workspaceHash,
     created_at: timestampToISOString(version.createdAt),
+  }
+}
+
+function mapSnapshotChangeKind(kind: ChangeKind): SnapshotChangeKind {
+  switch (kind) {
+    case ChangeKind.ADDED:
+      return 'added'
+    case ChangeKind.REMOVED:
+      return 'removed'
+    case ChangeKind.MODIFIED:
+      return 'modified'
+    default:
+      return 'unchanged'
+  }
+}
+
+function mapSnapshotDeltaCounts(delta?: { added: unknown[]; removed: unknown[]; modified: unknown[] }): SnapshotDeltaCounts {
+  return {
+    added: delta?.added?.length ?? 0,
+    removed: delta?.removed?.length ?? 0,
+    modified: delta?.modified?.length ?? 0,
+  }
+}
+
+export function mapCodeSnapshot(snapshot: CodeSnapshotProto): CodeSnapshot {
+  return {
+    id: snapshot.id,
+    repositoryId: snapshot.repositoryId,
+    createdUnix: Number(snapshot.createdUnix),
+    gitRevision: snapshot.gitRevision,
+    gitBranch: snapshot.gitBranch,
+    ingestionStatus: snapshot.ingestionStatus,
+    embeddingStatus: snapshot.embeddingStatus,
+    projects: snapshot.projects.map((project) => ({
+      root: project.root,
+      language: project.language,
+      configPath: project.configPath,
+    })),
+    warnings: [...snapshot.warnings],
+  }
+}
+
+export function mapSnapshotDiff(diff: SnapshotDiffProto): SnapshotDiff {
+  return {
+    fromSnapshotId: diff.fromSnapshotId,
+    toSnapshotId: diff.toSnapshotId,
+    fromGitRevision: diff.fromGitRevision,
+    toGitRevision: diff.toGitRevision,
+    sources: diff.sources.map((source) => ({
+      path: source.path,
+      change: mapSnapshotChangeKind(source.change),
+      fromHash: source.fromHash,
+      toHash: source.toHash,
+    })),
+    facts: mapSnapshotDeltaCounts(diff.facts),
+    edgeFacts: mapSnapshotDeltaCounts(diff.edgeFacts),
   }
 }
 
@@ -1637,6 +1744,20 @@ export const api = {
         sources: Number(repo.sources ?? 0),
       }))
     },
+    snapshots: (repositoryId: string): Promise<CodeSnapshot[]> =>
+      rpc(async () => {
+        const res = await codeIndexFactClient.listSnapshots({ id: repositoryId })
+        return (res.snapshots ?? []).map(mapCodeSnapshot)
+      }),
+    diff: (input: { fromSnapshotId: string; toSnapshotId: string }): Promise<SnapshotDiff> =>
+      rpc(async () => {
+        const res = await codeIndexFactClient.diffSnapshots({
+          fromSnapshotId: input.fromSnapshotId,
+          toSnapshotId: input.toSnapshotId,
+          sourcesOnly: false,
+        })
+        return mapSnapshotDiff(res)
+      }),
   },
 
   editor: {

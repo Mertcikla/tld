@@ -227,7 +227,7 @@ func legacySQLiteMigrationAlreadyApplied(ctx context.Context, db *bun.DB, commen
 func legacyPostgresMigrationAlreadyApplied(ctx context.Context, db *bun.DB, comment string) (bool, error) {
 	switch comment {
 	case "local_schema":
-		return postgresTablesExist(ctx, db, "elements", "views", "connectors", "watch_embedding_models")
+		return postgresTablesExist(ctx, db, "elements", "views", "connectors")
 	case "element_noise_gate_bypass":
 		return postgresColumnExists(ctx, db, "elements", "bypass_noise_gate")
 	default:

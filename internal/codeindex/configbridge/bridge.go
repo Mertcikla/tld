@@ -1,6 +1,5 @@
 // Package configbridge maps tld's global configuration onto the codeindex
-// engine config. The index.* section is authoritative; legacy watch.embedding.*
-// keys are used only as a fallback while they still exist (removed in Phase 4).
+// engine config. The index.* section is authoritative.
 package configbridge
 
 import (

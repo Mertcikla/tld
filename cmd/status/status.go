@@ -45,7 +45,7 @@ func NewStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show running local tlDiagram processes",
-		Long: `Show running local tlDiagram processes registered by 'tld serve' and 'tld watch'.
+		Long: `Show running local tlDiagram processes registered by 'tld serve'.
 
 To refresh the workspace YAML cache from the server, use 'tld pull'.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -199,8 +199,6 @@ func printableKind(kind string) string {
 	switch kind {
 	case localserver.ProcessKindServer:
 		return "Server"
-	case localserver.ProcessKindWatch:
-		return "Watch"
 	default:
 		return "Process"
 	}

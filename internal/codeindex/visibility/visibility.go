@@ -1,8 +1,8 @@
 // Package visibility scores projected codeindex elements and connectors to
-// decide which candidates are shown. It reproduces the intent of the legacy
-// watch filter (changed files, user overrides, high-signal infrastructure,
+// decide which candidates are shown. It reproduces the intent of the removed
+// analyzer filter (changed files, user overrides, high-signal infrastructure,
 // graph proximity, and noise penalties) but sources its inputs from the
-// codeindex projection and embeddings instead of the watch_* graph.
+// codeindex projection and embeddings.
 package visibility
 
 import (

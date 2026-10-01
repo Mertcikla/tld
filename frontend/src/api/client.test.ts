@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest'
+import { create } from '@bufbuild/protobuf'
 import type { PlanElement } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
+import {
+  ChangeKind,
+  CodeFactSchema,
+  EdgeFactSchema,
+  SnapshotDiffSchema,
+  SnapshotSchema,
+} from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb'
 import type { LibraryElement } from '../types'
 import {
   libraryElementToDependency,
+  mapCodeSnapshot,
+  mapSnapshotDiff,
   mapViewMarkdown,
   normalizeFrontendImportElements,
   protoElementToLibrary,
@@ -176,6 +186,58 @@ describe('markdown metadata mapping', () => {
       can_edit: false,
       git_state: 'deleted',
       repo_relative_path: 'docs/missing.md',
+    })
+  })
+})
+
+describe('codeindex snapshot mapping', () => {
+  it('maps snapshot metadata and defaults optional fields', () => {
+    const snapshot = create(SnapshotSchema, {
+      id: 'snap-1',
+      repositoryId: 'repo-1',
+      createdUnix: 100n,
+      gitRevision: 'abc',
+      gitBranch: 'main',
+      projects: [{ root: '/repo', language: 'go' }],
+      warnings: ['partial index'],
+    })
+
+    expect(mapCodeSnapshot(snapshot)).toEqual({
+      id: 'snap-1',
+      repositoryId: 'repo-1',
+      createdUnix: 100,
+      gitRevision: 'abc',
+      gitBranch: 'main',
+      ingestionStatus: '',
+      embeddingStatus: '',
+      projects: [{ root: '/repo', language: 'go', configPath: '' }],
+      warnings: ['partial index'],
+    })
+  })
+
+  it('maps diff source changes and fact deltas', () => {
+    const diff = create(SnapshotDiffSchema, {
+      fromSnapshotId: 'snap-1',
+      toSnapshotId: 'snap-2',
+      sources: [
+        { path: 'a.go', change: ChangeKind.MODIFIED, fromHash: 'h1', toHash: 'h2' },
+        { path: 'b.go', change: ChangeKind.ADDED },
+      ],
+      facts: { added: [create(CodeFactSchema)] },
+      edgeFacts: { removed: [create(EdgeFactSchema), create(EdgeFactSchema)] },
+    })
+
+    expect(mapSnapshotDiff(diff)).toEqual({
+      fromSnapshotId: 'snap-1',
+      toSnapshotId: 'snap-2',
+      fromGitRevision: '',
+      toGitRevision: '',
+      sources: [
+        { path: 'a.go', change: 'modified', fromHash: 'h1', toHash: 'h2' },
+        { path: 'b.go', change: 'added', fromHash: '', toHash: '' },
+      ],
+      facts: { added: 1, removed: 0, modified: 0 },
+      edgeFacts: { added: 0, removed: 2, modified: 0 },
     })
   })
 })

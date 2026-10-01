@@ -101,7 +101,7 @@ func WorkspaceConfigPath(dir string) string {
 }
 
 // Config holds all global tld configuration, merging server settings,
-// watch behaviors, and authentication.
+// index behaviors, and authentication.
 type Config struct {
 	ServerURL   string           `yaml:"server_url"`
 	APIKey      string           `yaml:"api_key"`

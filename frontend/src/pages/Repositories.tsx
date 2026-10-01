@@ -13,6 +13,7 @@ import {
   Grid,
   HStack,
   IconButton,
+  Select,
   Spinner,
   Text,
   Tooltip,
@@ -20,7 +21,7 @@ import {
 } from '@chakra-ui/react'
 import type { ButtonProps } from '@chakra-ui/react'
 import { CopyIcon, RepeatIcon } from '@chakra-ui/icons'
-import type { IndexedRepository } from '../api/client'
+import type { CodeSnapshot, IndexedRepository, SnapshotChangeKind, SnapshotDiff } from '../api/client'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
 
@@ -31,17 +32,6 @@ const FILTER_OPTIONS: { value: RepoFilter; label: string }[] = [
   { value: 'indexed', label: 'Indexed' },
   { value: 'empty', label: 'Not indexed' },
 ]
-
-const accentCtaStyle: ButtonProps = {
-  bg: 'var(--accent)',
-  color: 'white',
-  border: '1px solid',
-  borderColor: 'rgba(var(--accent-rgb), 0.55)',
-  boxShadow: '0 0 22px rgba(var(--accent-rgb), 0.28)',
-  transition: 'transform 0.18s ease, filter 0.18s ease',
-  _hover: { bg: 'var(--accent)', filter: 'brightness(1.08)', transform: 'translateY(-1px)' },
-  _active: { transform: 'translateY(0)', filter: 'brightness(0.92)' },
-}
 
 const accentOutlineStyle: ButtonProps = {
   bg: 'rgba(var(--accent-rgb), 0.1)',
@@ -168,12 +158,55 @@ function StatCard({ label, value }: { label: string; value: number }) {
   )
 }
 
+type DeltaTone = 'add' | 'remove' | 'modify' | 'neutral'
+
+const DELTA_TONE_COLOR: Record<DeltaTone, string> = {
+  add: 'green.300',
+  remove: 'red.300',
+  modify: 'yellow.300',
+  neutral: 'gray.200',
+}
+
+function DeltaStat({ label, value, tone }: { label: string; value: number; tone: DeltaTone }) {
+  return (
+    <Box px={3} py={2} border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" bg="whiteAlpha.50">
+      <Text fontSize="lg" fontWeight="700" fontFamily="mono" lineHeight="1.1" color={DELTA_TONE_COLOR[tone]}>
+        {value.toLocaleString()}
+      </Text>
+      <MicroLabel>{label}</MicroLabel>
+    </Box>
+  )
+}
+
+const CHANGE_META: Record<SnapshotChangeKind, { label: string; colorScheme: string }> = {
+  added: { label: 'A', colorScheme: 'green' },
+  removed: { label: 'D', colorScheme: 'red' },
+  modified: { label: 'M', colorScheme: 'yellow' },
+  unchanged: { label: '·', colorScheme: 'gray' },
+}
+
+function ChangeTag({ change }: { change: SnapshotChangeKind }) {
+  const meta = CHANGE_META[change]
+  return (
+    <Badge colorScheme={meta.colorScheme} variant="subtle" fontSize="2xs" borderRadius="sm" px={1.5} flexShrink={0} fontFamily="mono">
+      {meta.label}
+    </Badge>
+  )
+}
+
 export default function Repositories() {
   const [repositories, setRepositories] = useState<IndexedRepository[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<RepoFilter>('all')
   const [selectedId, setSelectedId] = useState<string>('')
+  const [snapshots, setSnapshots] = useState<CodeSnapshot[]>([])
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false)
+  const [snapshotsError, setSnapshotsError] = useState<string | null>(null)
+  const [baseSnapshotId, setBaseSnapshotId] = useState('')
+  const [diff, setDiff] = useState<SnapshotDiff | null>(null)
+  const [diffLoading, setDiffLoading] = useState(false)
+  const [diffError, setDiffError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -208,6 +241,60 @@ export default function Repositories() {
   }), [filter, repositories])
 
   const selected = repositories.find((repo) => repo.id === selectedId) ?? null
+  const selectedLatestSnapshotId = selected?.latestSnapshotId ?? ''
+  const latestSnapshotId = snapshots.length > 0 ? snapshots[snapshots.length - 1].id : ''
+
+  useEffect(() => {
+    if (!selectedId || !selectedLatestSnapshotId) {
+      setSnapshots([])
+      setSnapshotsError(null)
+      setBaseSnapshotId('')
+      return
+    }
+    let cancelled = false
+    setSnapshotsLoading(true)
+    setSnapshotsError(null)
+    api.repositories.snapshots(selectedId)
+      .then((next) => {
+        if (cancelled) return
+        setSnapshots(next)
+        setBaseSnapshotId(next.length >= 2 ? next[next.length - 2].id : '')
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setSnapshots([])
+        setBaseSnapshotId('')
+        setSnapshotsError(err instanceof Error ? err.message : 'Failed to load snapshot history')
+      })
+      .finally(() => {
+        if (!cancelled) setSnapshotsLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [selectedId, selectedLatestSnapshotId])
+
+  useEffect(() => {
+    if (!baseSnapshotId || !latestSnapshotId || baseSnapshotId === latestSnapshotId) {
+      setDiff(null)
+      setDiffError(null)
+      return
+    }
+    let cancelled = false
+    setDiffLoading(true)
+    setDiffError(null)
+    api.repositories.diff({ fromSnapshotId: baseSnapshotId, toSnapshotId: latestSnapshotId })
+      .then((next) => {
+        if (!cancelled) setDiff(next)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setDiff(null)
+        setDiffError(err instanceof Error ? err.message : 'Failed to load snapshot diff')
+      })
+      .finally(() => {
+        if (!cancelled) setDiffLoading(false)
+      })
+    return () => { cancelled = true }
+  }, [baseSnapshotId, latestSnapshotId])
 
   const copy = useCallback(async (text: string, label: string) => {
     const ok = await copyText(text)
@@ -374,6 +461,114 @@ export default function Repositories() {
                         </Flex>
                       </VStack>
                     </Box>
+
+                    <Box border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" overflow="hidden">
+                      <Flex px={4} py={2.5} borderBottom="1px solid" borderColor="whiteAlpha.100" align="center" gap={2}>
+                        <MicroLabel>History</MicroLabel>
+                        <Badge variant="subtle" colorScheme="purple" fontSize="2xs" borderRadius="full" px={2}>{snapshots.length}</Badge>
+                        <Box flex={1} />
+                        {snapshots.length >= 2 && (
+                          <HStack spacing={2}>
+                            <Text fontSize="xs" color="gray.500">Compare</Text>
+                            <Select
+                              size="xs"
+                              w="150px"
+                              value={baseSnapshotId}
+                              bg="whiteAlpha.100"
+                              borderColor="whiteAlpha.200"
+                              color="gray.200"
+                              onChange={(event) => setBaseSnapshotId(event.target.value)}
+                            >
+                              {snapshots.slice(0, -1).map((snapshot) => (
+                                <option key={snapshot.id} value={snapshot.id}>{shortId(snapshot.id)}</option>
+                              ))}
+                            </Select>
+                          </HStack>
+                        )}
+                      </Flex>
+                      {snapshotsLoading ? (
+                        <Flex px={4} py={4} align="center" gap={2} color="gray.500">
+                          <Spinner size="xs" />
+                          <Text fontSize="sm">Loading history…</Text>
+                        </Flex>
+                      ) : snapshotsError ? (
+                        <Box px={4} py={3}><Text fontSize="sm" color="red.300">{snapshotsError}</Text></Box>
+                      ) : snapshots.length === 0 ? (
+                        <Box px={4} py={3}><Text fontSize="sm" color="gray.500">No snapshots recorded.</Text></Box>
+                      ) : (
+                        <VStack align="stretch" spacing={0}>
+                          {[...snapshots].reverse().map((snapshot) => {
+                            const isLatest = snapshot.id === latestSnapshotId
+                            const isBase = snapshot.id === baseSnapshotId
+                            return (
+                              <Flex
+                                key={snapshot.id}
+                                px={4}
+                                py={2.5}
+                                align="center"
+                                gap={3}
+                                borderBottom="1px solid"
+                                borderColor="whiteAlpha.50"
+                                bg={isBase ? 'rgba(var(--accent-rgb), 0.08)' : 'transparent'}
+                                cursor={isLatest ? 'default' : 'pointer'}
+                                _hover={isLatest ? undefined : { bg: isBase ? 'rgba(var(--accent-rgb), 0.12)' : 'whiteAlpha.50' }}
+                                onClick={() => { if (!isLatest) setBaseSnapshotId(snapshot.id) }}
+                              >
+                                <Box w={2} h={2} borderRadius="full" flexShrink={0} bg={isLatest ? 'green.400' : isBase ? 'var(--accent)' : 'gray.500'} />
+                                <Code fontSize="xs" color="gray.300" flex={1} isTruncated title={snapshot.id}>{shortId(snapshot.id)}</Code>
+                                {snapshot.gitBranch && (
+                                  <Badge variant="subtle" colorScheme="blue" fontSize="2xs" borderRadius="full" px={2} flexShrink={0}>{snapshot.gitBranch}</Badge>
+                                )}
+                                {snapshot.warnings.length > 0 && (
+                                  <Tooltip label={snapshot.warnings.join('\n')} placement="top">
+                                    <Badge variant="subtle" colorScheme="orange" fontSize="2xs" borderRadius="full" px={2} flexShrink={0}>{snapshot.warnings.length} warn</Badge>
+                                  </Tooltip>
+                                )}
+                                {isLatest && <Badge variant="subtle" colorScheme="green" fontSize="2xs" borderRadius="full" px={2} flexShrink={0}>latest</Badge>}
+                                <Text fontSize="xs" color="gray.500" w="72px" textAlign="right" flexShrink={0}>{snapshotAge(snapshot.createdUnix)}</Text>
+                              </Flex>
+                            )
+                          })}
+                        </VStack>
+                      )}
+                    </Box>
+
+                    {baseSnapshotId && latestSnapshotId && baseSnapshotId !== latestSnapshotId && (
+                      <Box border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" overflow="hidden">
+                        <Flex px={4} py={2.5} borderBottom="1px solid" borderColor="whiteAlpha.100" align="center" gap={2}>
+                          <MicroLabel>Changes</MicroLabel>
+                          <Text fontSize="xs" color="gray.500">
+                            <Code fontSize="2xs">{shortId(baseSnapshotId)}</Code> → <Code fontSize="2xs">{shortId(latestSnapshotId)}</Code>
+                          </Text>
+                          <Box flex={1} />
+                          {diffLoading && <Spinner size="xs" color="gray.500" />}
+                        </Flex>
+                        {diffError ? (
+                          <Box px={4} py={3}><Text fontSize="sm" color="red.300">{diffError}</Text></Box>
+                        ) : diff ? (
+                          <Box px={4} py={3}>
+                            <Grid templateColumns={{ base: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }} gap={2} mb={3}>
+                              <DeltaStat label="Facts +" value={diff.facts.added} tone="add" />
+                              <DeltaStat label="Facts −" value={diff.facts.removed} tone="remove" />
+                              <DeltaStat label="Facts ~" value={diff.facts.modified} tone="modify" />
+                              <DeltaStat label="Sources" value={diff.sources.length} tone="neutral" />
+                            </Grid>
+                            {diff.sources.length > 0 ? (
+                              <VStack align="stretch" spacing={0} maxH="240px" overflowY="auto" borderTop="1px solid" borderColor="whiteAlpha.50">
+                                {diff.sources.map((change) => (
+                                  <Flex key={change.path} px={1} py={1.5} align="center" gap={2} borderBottom="1px solid" borderColor="whiteAlpha.50">
+                                    <ChangeTag change={change.change} />
+                                    <Text fontSize="xs" color="gray.300" fontFamily="mono" isTruncated title={change.path}>{change.path}</Text>
+                                  </Flex>
+                                ))}
+                              </VStack>
+                            ) : (
+                              <Text fontSize="sm" color="gray.500">No source changes between these snapshots.</Text>
+                            )}
+                          </Box>
+                        ) : null}
+                      </Box>
+                    )}
                   </>
                 ) : (
                   <Alert status="info" borderRadius="md" alignItems="flex-start">
@@ -407,10 +602,9 @@ export default function Repositories() {
                       {indexCommand}
                     </Code>
                     <IconButton aria-label="Copy index command" icon={<CopyIcon />} size="sm" variant="ghost" onClick={() => { void copy(indexCommand, 'Command') }} />
-                    <Button {...accentCtaStyle} size="sm">Re-index</Button>
                   </HStack>
                   <Text mt={2} fontSize="xs" color="gray.500">
-                    Indexing runs locally. Use the CLI or the <Code fontSize="2xs">--watch</Code> flag to keep the graph current.
+                    Indexing runs locally. Run this command, or add the <Code fontSize="2xs">--watch</Code> flag to keep the graph current.
                   </Text>
                 </Box>
 

@@ -25,7 +25,7 @@ func NewStopCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop local tlDiagram processes",
-		Long: `Stop local tlDiagram processes started by 'tld serve' or 'tld watch'.
+		Long: `Stop local tlDiagram processes started by 'tld serve'.
 
 Process state is read from the global tld process registry.
 Sends graceful stop requests and waits up to 10 seconds for shutdown.
@@ -114,8 +114,6 @@ func printableKind(kind string) string {
 	switch kind {
 	case localserver.ProcessKindServer:
 		return "Server"
-	case localserver.ProcessKindWatch:
-		return "Watch"
 	default:
 		return "Process"
 	}

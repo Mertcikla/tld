@@ -31,7 +31,7 @@ func TestStatusCmdReportsRegisteredProcesses(t *testing.T) {
 	}
 	if err := localserver.SaveProcessRegistry(localserver.ProcessRegistry{Processes: []localserver.ProcessRecord{
 		{Kind: localserver.ProcessKindServer, PID: os.Getpid(), DataDir: dataDir, Addr: "127.0.0.1:1", StartedAt: "2026-05-18T00:00:00Z"},
-		{Kind: localserver.ProcessKindWatch, PID: os.Getpid(), DataDir: dataDir, RepoRoot: "/repo", RepositoryID: 42},
+		{Kind: localserver.ProcessKindServer, PID: os.Getpid(), DataDir: dataDir, RepoRoot: "/repo", RepositoryID: 42},
 	}}); err != nil {
 		t.Fatalf("seed registry: %v", err)
 	}
@@ -40,7 +40,7 @@ func TestStatusCmdReportsRegisteredProcesses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 	}
-	for _, want := range []string{"Server:", "Watch:", "PID:", "URL:", "Ready:", "no", "Repo:", "/repo", "Repository ID:", "42", "DB size:"} {
+	for _, want := range []string{"Server:", "PID:", "URL:", "Ready:", "no", "Repo:", "/repo", "Repository ID:", "42", "DB size:"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("status output missing %q:\n%s", want, stdout)
 		}
