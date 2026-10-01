@@ -4,7 +4,6 @@ import {
   VStack,
   Checkbox,
   Text,
-  Link,
   HStack,
 } from '@chakra-ui/react'
 import { useExperimental } from '../context/ExperimentalContext'
@@ -24,22 +23,13 @@ export default function ExperimentalSettings({ compact = false }: { compact?: bo
           <Checkbox
             size="sm"
             colorScheme="blue"
-            isChecked={experimental.watchEnabled}
-            onChange={() => toggleExperimental('watchEnabled')}
+            isChecked={experimental.populateEnabled}
+            onChange={() => toggleExperimental('populateEnabled')}
           >
             <Text fontSize="sm" color="gray.200" userSelect="none">
-              Watch
+              Populate elements
             </Text>
           </Checkbox>
-          <Link
-            href="https://tldiagram.com/docs/tld/watch/"
-            isExternal
-            fontSize="xs"
-            color="blue.300"
-            _hover={{ color: 'blue.200', textDecoration: 'underline' }}
-          >
-            Docs
-          </Link>
         </HStack>
       </Box>
     </VStack>

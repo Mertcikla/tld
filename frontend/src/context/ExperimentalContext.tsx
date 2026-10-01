@@ -2,13 +2,13 @@
 import { createContext, useContext, useState, useMemo, type ReactNode } from 'react'
 
 export interface Experimental {
-  watchEnabled: boolean
+  populateEnabled: boolean
 }
 
 const EXPERIMENTAL_KEY = 'tld:experimental'
 
 const DEFAULT_EXPERIMENTAL: Experimental = {
-  watchEnabled: false,
+  populateEnabled: false,
 }
 
 interface ExperimentalContextValue {

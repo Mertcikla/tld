@@ -157,6 +157,18 @@ func TestPublishRoundTrip(t *testing.T) {
 		t.Fatalf("republish duplicated facts: %d want %d", len(again), len(g.Facts))
 	}
 
+	// ListRepositories summarizes the indexed repository and latest snapshot.
+	repos, err := st.ListRepositories(ctx)
+	if err != nil {
+		t.Fatalf("list repositories: %v", err)
+	}
+	if len(repos) != 1 || repos[0].Id != snap.RepositoryId {
+		t.Fatalf("repositories = %+v", repos)
+	}
+	if repos[0].LatestSnapshotId != snap.Id || repos[0].Facts != uint32(len(g.Facts)) || repos[0].Sources != uint32(len(snap.Sources)) {
+		t.Fatalf("repository summary = %+v", repos[0])
+	}
+
 	// Vector similarity ranks the fact whose embedding is closest to the query.
 	if len(facts) >= 2 {
 		profile := "test-profile"

@@ -6,10 +6,8 @@ import ExploreOnboarding from '../components/ExploreOnboarding'
 import MiniZoomOnboarding from '../components/MiniZoomOnboarding'
 import { ZUICanvas, type ZUICameraFrame, type ZUICanvasHandle } from '../components/ZUI'
 import { useCrossBranchContextSettings } from '../crossBranch/settings'
-import { useWorkspaceVersionPreview } from '../context/WorkspaceVersionContext'
-import { ExploreDiffPanel, ExploreEmptyState, ExploreToolbar, ExploreUnplacedDiffPanel } from './explore/ExploreComponents'
+import { ExploreEmptyState, ExploreToolbar } from './explore/ExploreComponents'
 import { useExploreData } from './explore/useExploreData'
-import { useExploreDiffMode } from './explore/useExploreDiffMode'
 import { useExploreTags } from './explore/useExploreTags'
 
 interface Props {
@@ -44,16 +42,6 @@ function ExplorePage({ sharedToken, shareSlot }: Props, ref?: Ref<InfiniteZoomHa
     setConnectorBudget: setCrossBranchConnectorBudget,
     setConnectorPriority: setCrossBranchConnectorPriority,
   } = useCrossBranchContextSettings(crossBranchSurface)
-  const { preview: versionPreview, followTarget: versionFollowTarget } = useWorkspaceVersionPreview()
-  const diffMode = useExploreDiffMode({
-    data,
-    sharedToken,
-    location,
-    navigate,
-    canvasReady,
-    zuiRef,
-  })
-
   const cameraProfile = useMemo(() => new URLSearchParams(location.search).get('profile'), [location.search])
   const isDetailToOverviewProfile = sharedToken && cameraProfile === 'detail-to-overview'
   const initialCameraFrame = useMemo<ZUICameraFrame | undefined>(() => {
@@ -164,34 +152,12 @@ function ExplorePage({ sharedToken, shareSlot }: Props, ref?: Ref<InfiniteZoomHa
             highlightColor={tags.highlightColor}
             hiddenTags={tags.hiddenTags}
             groupLayers={tags.layers}
-            versionPreview={versionPreview}
-            versionFollowTarget={versionFollowTarget}
-            diffLens={diffMode.diffLens}
             crossBranchSettings={crossBranchSettings}
             hoverLocked={isTagsOpen || isCrossBranchControlsOpen}
           />
 
           {!sharedToken && <ExploreOnboarding hasLinkedNodes={!!(data.navigations?.length > 0)} />}
           <MiniZoomOnboarding isVisible={showMiniOnboarding} onClose={dismissMiniOnboarding} />
-
-          {diffMode.diffVersionId > 0 && (
-            <ExploreDiffPanel
-              diffLens={diffMode.diffLens}
-              diffLoading={diffMode.diffLoading}
-              activeDiffTarget={diffMode.activeDiffTarget}
-              activeDiffTargetIndex={diffMode.activeDiffTargetIndex}
-              showContent={showContent}
-              onExit={diffMode.exitDiffMode}
-              onNavigate={diffMode.navigateDiffTarget}
-            />
-          )}
-
-          {diffMode.diffLens && (
-            <ExploreUnplacedDiffPanel
-              diffLens={diffMode.diffLens}
-              onOpenDiffSource={diffMode.openDiffSource}
-            />
-          )}
 
           <ExploreToolbar
             showContent={showContent}

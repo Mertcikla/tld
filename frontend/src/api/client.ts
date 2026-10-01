@@ -79,7 +79,7 @@ import {
   ListReactionsResponseSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/collaboration_service_pb'
 import { transport } from './transport'
-import { apiUrl, fetchApiAsset, isWailsApp } from '../config/runtime'
+import { apiUrl, fetchApiAsset } from '../config/runtime'
 import {
   normalizeConnectorRouteStyle,
   normalizeLogoUrl,
@@ -94,16 +94,6 @@ export {
 
 const localWorkspaceOrgId = '11111111-1111-1111-1111-111111111111'
 const orgIdOrLocal = (orgId?: string | null) => orgId || localWorkspaceOrgId
-
-export function watchWebSocketUrl(): string {
-  const baseUrl = isWailsApp ? window.__TLD_SERVER_URL__ : window.location.href
-  if (isWailsApp && !baseUrl) {
-    throw new Error('Desktop server URL is not configured')
-  }
-  const url = new URL(apiUrl('/watch/ws'), baseUrl)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  return url.toString()
-}
 
 async function responseError(res: Response, fallback: string): Promise<Error> {
   const body = await res.json().catch(() => null) as { error?: string; message?: string } | null
@@ -136,114 +126,19 @@ export interface DependenciesResponse {
   totalCount?: number
 }
 
-export interface WatchRepository {
-  id: number
-  remote_url: string | null
-  repo_root: string
-  display_name: string
-  branch: string | null
-  head_commit: string | null
-  identity_status: string
-}
-
-export interface WatchLock {
-  id: number
-  repository_id: number
-  pid: number
-  started_at: string
-  heartbeat_at: string
-  status: 'active' | 'paused' | 'stopping' | 'stale' | 'released' | string
-}
-
-export interface WatchStatus {
-  active: boolean
-  repository?: WatchRepository
-  lock?: WatchLock
-  connected_clients?: number
-}
-
-export interface WatchRepresentationSummary {
-  repository_id: number
-  raw_graph_hash?: string
-  filter_settings_hash?: string
-  representation_hash?: string
-  last_status?: string
-  last_started_at?: string
-  last_finished_at?: string
-  elements_created: number
-  elements_updated: number
-  connectors_created: number
-  connectors_updated: number
-  views_created: number
-  diffs?: WatchDiff[]
-}
-
-export interface WatchContextActionResponse {
-  repository_id: number
-  action: 'show' | 'hide' | 'clean' | string
-  policies_created: number
-  policies_updated: number
-  policies_deactivated: number
-  owners_affected: number
-  tier_before: number
-  tier_after: number
-  max_tier: number
-  elements_added: number
-  connectors_added: number
-  views_added: number
-  elements_removed: number
-  connectors_removed: number
-  views_removed: number
-  representation: {
-    repository_id: number
-    representation_run_id: number
-    filter_run_id: number
-    raw_graph_hash: string
-    filter_settings_hash: string
-    representation_hash: string
-  }
-  summary: WatchRepresentationSummary
-}
-
-export interface WatchEvent {
-  type: string
-  repository_id?: number
-  message?: string
-  at: string
-  data?: unknown
-  phase?: string
-  watcher_mode?: string
-  languages?: string[]
-  changed_files?: number
-  warnings?: string[]
-}
-
-export interface WatchVersion {
-  id: number
-  repository_id: number
-  commit_hash: string
-  commit_message?: string
-  parent_commit_hash?: string
-  branch?: string
-  representation_hash: string
-  workspace_version_id?: number
-  created_at: string
-}
-
-export interface WatchDiff {
-  id: number
-  version_id: number
-  owner_type: string
-  owner_key: string
-  change_type: string
-  before_hash?: string
-  after_hash?: string
-  resource_type?: string
-  resource_id?: number
-  language?: string
-  summary?: string
-  added_lines?: number
-  removed_lines?: number
+// IndexedRepository is a repository known to the in-process codeindex engine,
+// with a summary of its latest published snapshot.
+export interface IndexedRepository {
+  id: string
+  root: string
+  latestSnapshotId: string
+  latestCreatedUnix: number
+  gitRevision: string
+  gitBranch: string
+  facts: number
+  chunks: number
+  edges: number
+  sources: number
 }
 
 export interface WorkspaceVersion {
@@ -1717,42 +1612,30 @@ export const api = {
       }),
   },
 
-  watch: {
-    status: async (): Promise<WatchStatus> => {
-      const res = await fetch(apiUrl('/watch/status'))
-      if (!res.ok) throw new Error(`Failed to load watch status: ${res.statusText}`)
-      return res.json()
-    },
-    websocketUrl: watchWebSocketUrl,
-    repositories: async (): Promise<WatchRepository[]> => {
-      const res = await fetch(apiUrl('/watch/repositories'))
-      if (!res.ok) throw new Error(`Failed to load watch repositories: ${res.statusText}`)
-      return res.json()
-    },
-    versions: async (repositoryId: number): Promise<WatchVersion[]> => {
-      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/versions`))
-      if (!res.ok) throw new Error(`Failed to load watch versions: ${res.statusText}`)
-      return res.json()
-    },
-    diffs: async (versionId: number, filters?: { owner_type?: string; change_type?: string; resource_type?: string; language?: string }): Promise<WatchDiff[]> => {
-      const params = new URLSearchParams()
-      if (filters?.owner_type) params.set('owner_type', filters.owner_type)
-      if (filters?.change_type) params.set('change_type', filters.change_type)
-      if (filters?.resource_type) params.set('resource_type', filters.resource_type)
-      if (filters?.language) params.set('language', filters.language)
-      const suffix = params.toString() ? `?${params}` : ''
-      const res = await fetch(apiUrl(`/watch/versions/${versionId}/diffs${suffix}`))
-      if (!res.ok) throw new Error(`Failed to load watch diffs: ${res.statusText}`)
-      return res.json()
-    },
-    cleanContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
-      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/context/clean`), {
+  repositories: {
+    list: async (): Promise<IndexedRepository[]> => {
+      const res = await fetch(apiUrl('/codeindex.v1.RepositoryService/ListRepositories'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
+        headers: {
+          'Content-Type': 'application/json',
+          'Connect-Protocol-Version': '1',
+        },
+        body: '{}',
       })
-      if (!res.ok) throw await responseError(res, 'Failed to clean watch context')
-      return res.json()
+      if (!res.ok) throw await responseError(res, 'Failed to list repositories')
+      const json = await res.json() as { repositories?: Array<Record<string, unknown>> }
+      return (json.repositories ?? []).map((repo) => ({
+        id: String(repo.id ?? ''),
+        root: String(repo.root ?? ''),
+        latestSnapshotId: String(repo.latestSnapshotId ?? ''),
+        latestCreatedUnix: Number(repo.latestCreatedUnix ?? 0),
+        gitRevision: String(repo.gitRevision ?? ''),
+        gitBranch: String(repo.gitBranch ?? ''),
+        facts: Number(repo.facts ?? 0),
+        chunks: Number(repo.chunks ?? 0),
+        edges: Number(repo.edges ?? 0),
+        sources: Number(repo.sources ?? 0),
+      }))
     },
   },
 

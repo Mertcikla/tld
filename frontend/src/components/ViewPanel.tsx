@@ -382,7 +382,7 @@ function ViewPanel({
             </>
           )}
 
-          {canEdit && experimental.watchEnabled && (
+          {canEdit && experimental.populateEnabled && (
             <>
               <Divider borderColor="whiteAlpha.100" my={2} />
               <VStack align="stretch" spacing={3}>

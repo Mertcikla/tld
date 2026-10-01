@@ -164,27 +164,6 @@ export function setHiddenTags(tags: Set<string>): void {
   currentHiddenTags = tags
 }
 
-let currentVersionElementChanges: Map<number, string> = new Map()
-let currentVersionConnectorChanges: Map<number, string> = new Map()
-let currentVersionElementLineDeltas: Map<number, { added: number; removed: number }> = new Map()
-let currentDiffContextElementIds: Set<number> = new Set()
-let currentDiffContextConnectorIds: Set<number> = new Set()
-let currentDiffLensActive = false
-export function setVersionDiff(
-  elementChanges: Map<number, string>,
-  connectorChanges: Map<number, string>,
-  elementLineDeltas: Map<number, { added: number; removed: number }> = new Map(),
-  contextElementIds: Set<number> = new Set(),
-  contextConnectorIds: Set<number> = new Set(),
-  diffLensActive = false,
-): void {
-  currentVersionElementChanges = elementChanges
-  currentVersionConnectorChanges = connectorChanges
-  currentVersionElementLineDeltas = elementLineDeltas
-  currentDiffContextElementIds = contextElementIds
-  currentDiffContextConnectorIds = contextConnectorIds
-  currentDiffLensActive = diffLensActive
-}
 
 function getOrLoadImage(url: string | null): HTMLImageElement | null {
   if (!url) return null
@@ -940,66 +919,6 @@ function drawSceneNode(
     }
   }
 
-  if ((currentVersionElementChanges.size > 0 || currentVersionConnectorChanges.size > 0) && parentAlpha > 0.05) {
-    const change = currentVersionElementChanges.get(layout.elementId)
-    if (!change) {
-      ctx.save()
-      const isContext = currentDiffLensActive && currentDiffContextElementIds.has(layout.elementId)
-      ctx.globalAlpha = parentAlpha * (isContext ? 0.45 : 0.9)
-      ctx.fillStyle = canvasBg
-      traceShape()
-      ctx.fill()
-      if (isContext && drawScreenW > 40) {
-        ctx.globalAlpha = parentAlpha * 0.55
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)'
-        ctx.lineWidth = 1.5 / drawZoom
-        ctx.setLineDash([4 / drawZoom, 4 / drawZoom])
-        traceShape()
-        ctx.stroke()
-        ctx.setLineDash([])
-      }
-      ctx.restore()
-    } else {
-      const color = change === 'added' ? '#68d391' : change === 'deleted' ? '#fc8181' : '#f6e05e'
-      ctx.save()
-      ctx.globalAlpha = parentAlpha
-      ctx.shadowColor = color
-      ctx.shadowBlur = 8 / drawZoom
-      ctx.strokeStyle = color
-      ctx.lineWidth = 2.5 / drawZoom
-      traceShape()
-      ctx.stroke()
-      ctx.restore()
-    }
-  }
-
-  const delta = currentVersionElementLineDeltas.get(layout.elementId)
-  if (!renderCtx.lowDetail && delta && (delta.added > 0 || delta.removed > 0) && drawScreenW > 52 && parentAlpha > 0.05) {
-    const addText = delta.added > 0 ? `+${delta.added}` : ''
-    const removeText = delta.removed > 0 ? `-${delta.removed}` : ''
-    const badgeText = [addText, removeText].filter(Boolean).join(' ')
-    const fontSize = getClampedFontSize(12, 8, 13, drawZoom)
-    ctx.save()
-    ctx.globalAlpha = parentAlpha
-    ctx.font = `800 ${fontSize}px Inter, system-ui, sans-serif`
-    const textWidth = ctx.measureText(badgeText).width
-    const badgeW = textWidth + 12 / drawZoom
-    const badgeH = 20 / drawZoom
-    const badgeX = x + w - badgeW - 6 / drawZoom
-    const badgeY = y + h - badgeH - 6 / drawZoom
-    ctx.fillStyle = 'rgba(17, 24, 39, 0.9)'
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)'
-    ctx.lineWidth = 1 / drawZoom
-    ctx.beginPath()
-    ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 5 / drawZoom)
-    ctx.fill()
-    ctx.stroke()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = delta.added > 0 && delta.removed === 0 ? '#68d391' : delta.removed > 0 && delta.added === 0 ? '#fc8181' : '#e2e8f0'
-    ctx.fillText(badgeText, badgeX + badgeW / 2, badgeY + badgeH / 2)
-    ctx.restore()
-  }
 
   if (state.isLeafCapped) {
     ctx.restore()
@@ -1203,28 +1122,9 @@ function drawEdges(
       )
 
       ctx.save()
-      const edgeChange = currentVersionConnectorChanges.get(edge.id)
-      const versionPreviewActive = currentVersionElementChanges.size > 0 || currentVersionConnectorChanges.size > 0
-      const edgeContext = currentDiffLensActive && (
-        currentDiffContextConnectorIds.has(edge.id) ||
-        currentDiffContextElementIds.has(node.elementId) ||
-        currentDiffContextElementIds.has(target.elementId) ||
-        currentVersionElementChanges.has(node.elementId) ||
-        currentVersionElementChanges.has(target.elementId)
-      )
-      ctx.globalAlpha = versionPreviewActive && !edgeChange
-        ? edgeContext
-          ? Math.max(edgeAlpha * 0.28, 0.12 * endpointAlphaFactor)
-          : Math.max(edgeAlpha * 0.08, 0.04 * endpointAlphaFactor)
-        : connectorAlpha(edgeAlpha, CONNECTOR_MIN_ALPHA * endpointAlphaFactor)
-      ctx.strokeStyle = edgeChange === 'added'
-        ? '#68d391'
-        : edgeChange === 'deleted'
-          ? '#fc8181'
-          : edgeChange
-            ? '#f6e05e'
-            : accent
-      ctx.lineWidth = (edgeChange ? CONNECTOR_LINE_PX * 1.35 : CONNECTOR_LINE_PX) / zoom
+      ctx.globalAlpha = connectorAlpha(edgeAlpha, CONNECTOR_MIN_ALPHA * endpointAlphaFactor)
+      ctx.strokeStyle = accent
+      ctx.lineWidth = CONNECTOR_LINE_PX / zoom
 
       let midX = (sH.x + tH.x) / 2
       let midY = (sH.y + tH.y) / 2

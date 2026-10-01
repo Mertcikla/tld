@@ -157,7 +157,6 @@ import { removeConnectorGraphSnapshot, removePlacementGraphSnapshot, upsertConne
 import type { ProxyConnectorDetails } from '../../crossBranch/types'
 import { useDemoRevealViewport, type ViewEditorDemoOptions } from '../../demo/viewEditor'
 import { buildElementLibraryItems, useStore, placedElementToLibraryElement, resolveElementForUpdate } from '../../store/useStore'
-import { useWorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
 import {
   elementSelectionRects,
   planSelectionAlignment,
@@ -860,7 +859,6 @@ function ViewEditorInner({
   const activeTagsRef = useRef<string[]>([])
   activeTagsRef.current = activeTags
   const applyingRemoteVisibilityRef = useRef(false)
-  const { preview: versionPreview, followTarget: versionFollowTarget } = useWorkspaceVersionPreview()
   const [tagColors, setTagColors] = useState<Record<string, Tag>>({})
 
   useEffect(() => {
@@ -1031,8 +1029,6 @@ function ViewEditorInner({
     hoveredLayerTags,
     hoveredLayerColor,
     tagColors,
-    versionPreview,
-    versionFollowTarget,
     stableOnZoomIn: useCallback(async (id: number) => { await stableOnZoomInRef.current(id) }, []),
     stableOnZoomOut: useCallback(async (id: number) => { await stableOnZoomOutRef.current(id) }, []),
     stableOnNavigateToView: useCallback((id: number) => { stableOnNavigateToViewRef.current(id) }, []),

@@ -166,8 +166,6 @@ interface NodeData extends PlacedElement {
   reconnectCandidates?: readonly { handleId: string; edgeId: string; endpoint: 'source' | 'target'; selected: boolean }[]
   isConnectorHighlighted?: boolean
   isMultiSelected?: boolean
-  versionChangeType?: 'added' | 'updated' | 'deleted' | 'initialized'
-  versionLineDelta?: { added: number; removed: number }
   pendingCreate?: PendingElementCreateData
 }
 
@@ -749,13 +747,6 @@ function ElementNode({ data, selected }: Props) {
   const isCreateConnectMode = !!data.isCreateConnectMode
 
   const bodyCursor = isPending ? 'grab' : isSource ? 'crosshair' : isTarget ? 'cell' : 'pointer'
-  const versionColor = data.versionChangeType === 'added'
-    ? 'green.300'
-    : data.versionChangeType === 'deleted'
-      ? 'red.300'
-      : data.versionChangeType
-        ? 'yellow.300'
-        : undefined
 
   return (
     <ElementContainer
@@ -774,9 +765,9 @@ function ElementNode({ data, selected }: Props) {
       w="180px"
       h="85px"
       cursor={bodyCursor}
-      outline={isDraggedOver || versionColor ? '2px solid' : undefined}
-      outlineColor={isDraggedOver ? 'var(--accent)' : versionColor}
-      outlineOffset={isDraggedOver || versionColor ? '2px' : undefined}
+      outline={isDraggedOver ? '2px solid' : undefined}
+      outlineColor={isDraggedOver ? 'var(--accent)' : undefined}
+      outlineOffset={isDraggedOver ? '2px' : undefined}
       borderTopWidth={data.layerHighlightColor ? '2px' : undefined}
       borderTopColor={data.layerHighlightColor ?? undefined}
       onClick={handleBodyClick}
@@ -1034,7 +1025,7 @@ function ElementNode({ data, selected }: Props) {
       )}
 
       {/* Code Preview Icon/Link in Bottom Right Corner */}
-      {!isPending && !window.__TLD_VSCODE__ && ((data.repo || data.url) || data.versionLineDelta) && (
+      {!isPending && !window.__TLD_VSCODE__ && (data.repo || data.url) && (
         <HStack
           position="absolute"
           bottom="8px"
@@ -1043,26 +1034,6 @@ function ElementNode({ data, selected }: Props) {
           spacing={1}
           align="center"
         >
-          {data.versionLineDelta && (
-            <HStack
-              spacing={1}
-              h="18px"
-              px={1.5}
-              rounded="md"
-              bg="rgba(var(--bg-main-rgb), 0.86)"
-              border="1px solid"
-              borderColor="whiteAlpha.300"
-              boxShadow="0 4px 12px rgba(0,0,0,0.28)"
-              pointerEvents="none"
-            >
-              {data.versionLineDelta.added > 0 && (
-                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="green.300">+{data.versionLineDelta.added}</Text>
-              )}
-              {data.versionLineDelta.removed > 0 && (
-                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="red.300">-{data.versionLineDelta.removed}</Text>
-              )}
-            </HStack>
-          )}
           {(data.repo || data.url) && !window.__TLD_VSCODE__ && (
             <Tooltip
               label={
@@ -1112,26 +1083,6 @@ function ElementNode({ data, selected }: Props) {
           spacing={1}
           align="center"
         >
-          {data.versionLineDelta && (
-            <HStack
-              spacing={1}
-              h="18px"
-              px={1.5}
-              rounded="md"
-              bg="rgba(var(--bg-main-rgb), 0.86)"
-              border="1px solid"
-              borderColor="whiteAlpha.300"
-              boxShadow="0 4px 12px rgba(0,0,0,0.28)"
-              pointerEvents="none"
-            >
-              {data.versionLineDelta.added > 0 && (
-                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="green.300">+{data.versionLineDelta.added}</Text>
-              )}
-              {data.versionLineDelta.removed > 0 && (
-                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="red.300">-{data.versionLineDelta.removed}</Text>
-              )}
-            </HStack>
-          )}
           <VscodeCodePreview
             filePath={data.file_path}
             fallbackSymbolName={data.name}
@@ -1388,8 +1339,6 @@ function arePropsEqual(prev: Props, next: Props) {
     p.selectedHandleIds === n.selectedHandleIds &&
     p.reconnectCandidates === n.reconnectCandidates &&
     p.isConnectorHighlighted === n.isConnectorHighlighted &&
-    p.versionChangeType === n.versionChangeType &&
-    p.versionLineDelta === n.versionLineDelta &&
     p.parentViewId === n.parentViewId
   )
 }

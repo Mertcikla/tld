@@ -22,65 +22,11 @@ import {
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import { useEffect } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
-import type { ExploreDiffDetail } from '../../utils/exploreDiffLens'
 import type { HoveredItem } from './types'
 import type { PathItem } from './camera'
 
 const MAX_PROXY_HOVER_VIEW_LINKS = 5
 
-function diffColorScheme(change: string | undefined): 'green' | 'red' | 'yellow' | 'blue' {
-  if (change === 'added') return 'green'
-  if (change === 'deleted') return 'red'
-  if (change === 'initialized') return 'blue'
-  return 'yellow'
-}
-
-export function DiffDetailBlock({
-  detail,
-  onOpenSource,
-}: {
-  detail: ExploreDiffDetail | null
-  onOpenSource: (detail: ExploreDiffDetail) => void
-}) {
-  if (!detail) return null
-  const hasLines = detail.addedLines > 0 || detail.removedLines > 0
-  return (
-    <VStack align="stretch" spacing={2} mb={3}>
-      <HStack spacing={2} minW={0}>
-        <Badge colorScheme={diffColorScheme(detail.changeType)} variant="subtle" fontSize="2xs">
-          {detail.changeType}
-        </Badge>
-        {hasLines && (
-          <HStack spacing={1.5} fontSize="xs" fontFamily="mono">
-            {detail.addedLines > 0 && <Text color="green.300">+{detail.addedLines}</Text>}
-            {detail.removedLines > 0 && <Text color="red.300">-{detail.removedLines}</Text>}
-          </HStack>
-        )}
-      </HStack>
-      {detail.summary && (
-        <Text fontSize="xs" color="gray.200" noOfLines={3}>{detail.summary}</Text>
-      )}
-      {detail.sourcePath && (
-        <Text fontSize="11px" color="gray.500" fontFamily="mono" noOfLines={2}>{detail.sourcePath}</Text>
-      )}
-      {detail.sourcePath && (
-        <Button
-          size="xs"
-          variant="outline"
-          colorScheme="blue"
-          alignSelf="flex-start"
-          onClick={(event) => {
-            event.stopPropagation()
-            onOpenSource(detail)
-          }}
-        >
-          Open Source
-        </Button>
-      )}
-      <Divider borderColor="whiteAlpha.200" />
-    </VStack>
-  )
-}
 
 export function ZUIBreadcrumb({
   initialized,
@@ -153,15 +99,11 @@ export function ZUIHoverPopover({
   hoveredItem,
   hoveredScreenRect,
   isHoveredItemFullyVisible,
-  hoveredDiffDetail,
-  onOpenSource,
   onHoverLock,
 }: {
   hoveredItem: HoveredItem | null
   hoveredScreenRect: { sx: number; sy: number; sw: number; sh: number } | null
   isHoveredItemFullyVisible: boolean
-  hoveredDiffDetail: ExploreDiffDetail | null
-  onOpenSource: (detail: ExploreDiffDetail) => void
   onHoverLock: (locked: boolean) => void
 }) {
   const isOpen = isHoveredItemFullyVisible
@@ -222,7 +164,6 @@ export function ZUIHoverPopover({
               </PopoverHeader>
               <PopoverBody px={3} py={2.5}>
                 <VStack align="stretch" spacing={2}>
-                  <DiffDetailBlock detail={hoveredDiffDetail} onOpenSource={onOpenSource} />
                   {hoveredItem.data.technology && (
                     <Box>
                       <Text fontSize="11px" color="gray.300" noOfLines={1}>
@@ -283,7 +224,6 @@ export function ZUIHoverPopover({
               </PopoverHeader>
               <PopoverBody px={4} py={3}>
                 <VStack align="start" spacing={3}>
-                  <DiffDetailBlock detail={hoveredDiffDetail} onOpenSource={onOpenSource} />
                   <VStack align="start" spacing={1}>
                     <Text color="gray.400" fontSize="2xs" fontWeight="600" letterSpacing="wider">BETWEEN</Text>
                     <Text fontSize="xs" color="gray.200">

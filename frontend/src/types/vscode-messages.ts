@@ -41,15 +41,6 @@ export type WebviewToExtensionMessage =
   | { type: 'diagram-loaded'; diagramId: number; elements: LibraryElement[] }
   | { type: 'request-file-content'; requestId: string; filePath: string; startLine: number }
 
-// Watch event (extension → webview)
-export interface WatchEventDetail {
-  type: string
-  repository_id?: number
-  message?: string
-  at: string
-  data?: unknown
-}
-
 // Sync status payload
 export interface SyncStatusPayload {
   localChanges: number

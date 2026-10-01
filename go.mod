@@ -3,9 +3,9 @@ module github.com/mertcikla/tld/v2
 go 1.26.2
 
 require (
-	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.20.0-20260613195140-80aca3bd89aa.1
-	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.11-20260613195140-80aca3bd89aa.1
-	connectrpc.com/connect v1.20.0
+	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261001025305-f90b1fd4390d.1
+	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261001025305-f90b1fd4390d.2
+	connectrpc.com/connect v1.21.0
 	github.com/bmatcuk/doublestar/v4 v4.6.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
@@ -192,4 +192,3 @@ require (
 tool github.com/go-task/task/v3/cmd/task
 
 replace github.com/sugarme/tokenizer => github.com/clems4ever/tokenizer v0.0.0-20250926133620-9ddc80533c43
-

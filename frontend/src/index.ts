@@ -98,13 +98,6 @@ export { default as theme } from './theme'
 // ─── Contexts ────────────────────────────────────────────────────────────────
 export { ThemeProvider, useAccentColor, useTheme, initializeTheme } from './context/ThemeContext'
 export { HeaderProvider, useSetHeader, useHeader } from './components/HeaderContext'
-export {
-  WorkspaceVersionProvider,
-  buildWorkspaceVersionPreview,
-  useWorkspaceVersionPreview,
-  type WorkspaceVersionFollowTarget,
-  type WorkspaceVersionPreview,
-} from './context/WorkspaceVersionContext'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export * from './types'

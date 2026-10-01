@@ -40,7 +40,7 @@ describe('ExperimentalProvider', () => {
     })
 
     expect(controls).not.toBeNull()
-    expect(controls!.experimental.watchEnabled).toBe(false)
+    expect(controls!.experimental.populateEnabled).toBe(false)
   })
 
   it('toggles and persists experimental features', () => {
@@ -59,29 +59,29 @@ describe('ExperimentalProvider', () => {
       )
     })
 
-    expect(controls!.experimental.watchEnabled).toBe(false)
+    expect(controls!.experimental.populateEnabled).toBe(false)
 
     act(() => {
-      controls!.toggleExperimental('watchEnabled')
+      controls!.toggleExperimental('populateEnabled')
     })
 
-    expect(controls!.experimental.watchEnabled).toBe(true)
+    expect(controls!.experimental.populateEnabled).toBe(true)
     expect(globalThis.localStorage.getItem('tld:experimental')).toBe(
-      JSON.stringify({ watchEnabled: true }),
+      JSON.stringify({ populateEnabled: true }),
     )
 
     act(() => {
-      controls!.toggleExperimental('watchEnabled')
+      controls!.toggleExperimental('populateEnabled')
     })
 
-    expect(controls!.experimental.watchEnabled).toBe(false)
+    expect(controls!.experimental.populateEnabled).toBe(false)
     expect(globalThis.localStorage.getItem('tld:experimental')).toBe(
-      JSON.stringify({ watchEnabled: false }),
+      JSON.stringify({ populateEnabled: false }),
     )
   })
 
   it('loads experimental features from localStorage on init', () => {
-    globalThis.localStorage.setItem('tld:experimental', JSON.stringify({ watchEnabled: true }))
+    globalThis.localStorage.setItem('tld:experimental', JSON.stringify({ populateEnabled: true }))
 
     let controls: ExperimentalControls | null = null
 
@@ -98,6 +98,6 @@ describe('ExperimentalProvider', () => {
       )
     })
 
-    expect(controls!.experimental.watchEnabled).toBe(true)
+    expect(controls!.experimental.populateEnabled).toBe(true)
   })
 })

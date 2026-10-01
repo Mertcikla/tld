@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { api } from '../../api/client'
 import type { ExploreData } from '../../types'
 import { primeWorkspaceGraphSnapshot } from '../../crossBranch/store'
-import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../../components/WorkspacePanel'
 
 export interface ExploreDataState {
   data: ExploreData | null
@@ -37,15 +36,6 @@ export function useExploreData(sharedToken?: string): ExploreDataState {
   useEffect(() => {
     loadExploreData()
   }, [loadExploreData])
-
-  useEffect(() => {
-    if (sharedToken) return
-    const refresh = () => {
-      loadExploreData()
-    }
-    window.addEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
-    return () => window.removeEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
-  }, [loadExploreData, sharedToken])
 
   const hasPlacements = useMemo(() => {
     if (!data || !data.views) return false

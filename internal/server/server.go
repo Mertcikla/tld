@@ -61,6 +61,7 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 
 	mux := http.NewServeMux()
+	registerCodeIndexHandlers(mux, sqliteStore)
 	registerEditorHandlers(mux, sqliteStore)
 	registerDensityHandlers(mux, sqliteStore)
 	registerMergeHandlers(mux, sqliteStore)

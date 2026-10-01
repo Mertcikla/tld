@@ -1,5 +1,4 @@
 import {
-  Badge,
   Box,
   Button,
   Center,
@@ -21,7 +20,6 @@ import CrossBranchControls from '../../components/CrossBranchControls'
 import ExplorePageOnboarding from '../../components/ExplorePageOnboarding'
 import { EyeIcon, EyeOffIcon, FitViewIcon as FitViewSvg, TagsIcon } from '../../components/Icons'
 import { isElementGroupLayer } from '../../utils/elementGroups'
-import type { ExploreDiffDetail, ExploreDiffLens, ExploreDiffTarget } from '../../utils/exploreDiffLens'
 
 export function ExploreEmptyState({
   noDiagrams,
@@ -62,146 +60,6 @@ export function ExploreEmptyState({
       )}
       {!error && !noDiagrams && !sharedToken && <ExplorePageOnboarding hasDiagrams={!noDiagrams} />}
     </Center>
-  )
-}
-
-export function ExploreDiffPanel({
-  diffLens,
-  diffLoading,
-  activeDiffTarget,
-  activeDiffTargetIndex,
-  showContent,
-  onExit,
-  onNavigate,
-}: {
-  diffLens: ExploreDiffLens | null
-  diffLoading: boolean
-  activeDiffTarget: ExploreDiffTarget | null
-  activeDiffTargetIndex: number
-  showContent: boolean
-  onExit: () => void
-  onNavigate: (offset: number) => void
-}) {
-  return (
-    <Box
-      position="absolute"
-      top={4}
-      right={4}
-      zIndex={14}
-      className="glass"
-      borderRadius="lg"
-      px={3}
-      py={2.5}
-      w={{ base: 'calc(100vw - 32px)', md: '340px' }}
-      maxW="calc(100vw - 32px)"
-      pointerEvents="auto"
-      opacity={showContent ? 1 : 0}
-      transition="opacity 0.3s"
-    >
-      <VStack align="stretch" spacing={2}>
-        <HStack justify="space-between" spacing={3}>
-          <HStack spacing={2} minW={0}>
-            <Badge colorScheme="blue" variant="subtle">Diff map</Badge>
-            <Text fontSize="xs" color="gray.400" fontFamily="mono" flexShrink={0}>
-              +{diffLens?.totalAddedLines ?? 0} -{diffLens?.totalRemovedLines ?? 0}
-            </Text>
-          </HStack>
-          <Button size="xs" variant="ghost" color="gray.300" onClick={onExit}>
-            Exit
-          </Button>
-        </HStack>
-        <Text fontSize="xs" color="gray.200" noOfLines={1} minH="18px">
-          {diffLoading
-            ? 'Loading changed resources...'
-            : activeDiffTarget
-              ? `${activeDiffTargetIndex + 1} of ${diffLens?.orderedTargets.length ?? 0}: ${activeDiffTarget.label}`
-              : 'No placed changed resources'}
-        </Text>
-        <HStack spacing={2}>
-          <Button
-            size="xs"
-            variant="solid"
-            bg="whiteAlpha.200"
-            _hover={{ bg: 'whiteAlpha.300' }}
-            flex={1}
-            isDisabled={!diffLens?.orderedTargets.length}
-            onClick={() => onNavigate(-1)}
-          >
-            Previous
-          </Button>
-          <Button
-            size="xs"
-            variant="solid"
-            bg="whiteAlpha.200"
-            _hover={{ bg: 'whiteAlpha.300' }}
-            flex={1}
-            isDisabled={!diffLens?.orderedTargets.length}
-            onClick={() => onNavigate(1)}
-          >
-            Next
-          </Button>
-        </HStack>
-      </VStack>
-    </Box>
-  )
-}
-
-export function ExploreUnplacedDiffPanel({
-  diffLens,
-  onOpenDiffSource,
-}: {
-  diffLens: ExploreDiffLens
-  onOpenDiffSource: (detail: ExploreDiffDetail) => void
-}) {
-  if (diffLens.unplacedTargets.length === 0) return null
-  return (
-    <Box
-      position="absolute"
-      top={{ base: '150px', md: '132px' }}
-      right={4}
-      zIndex={13}
-      className="glass"
-      borderRadius="lg"
-      px={3}
-      py={3}
-      w={{ base: 'calc(100vw - 32px)', md: '340px' }}
-      maxH="260px"
-      overflowY="auto"
-      pointerEvents="auto"
-      data-zui-native-wheel="true"
-      sx={{ overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}
-    >
-      <VStack align="stretch" spacing={2}>
-        <Text fontSize="11px" color="gray.400" fontWeight="700" textTransform="uppercase">
-          Deleted or unplaced
-        </Text>
-        {diffLens.unplacedTargets.slice(0, 8).map((target) => (
-          <Box key={target.key} borderTop="1px solid" borderColor="whiteAlpha.100" pt={2}>
-            <HStack spacing={2} align="start">
-              <Badge colorScheme={target.changeType === 'deleted' ? 'red' : 'yellow'} variant="subtle" fontSize="9px">
-                {target.changeType}
-              </Badge>
-              <Box minW={0} flex={1}>
-                <Text fontSize="xs" color="gray.100" noOfLines={1}>{target.label}</Text>
-                {target.sourcePath && (
-                  <Text fontSize="10px" color="gray.500" fontFamily="mono" noOfLines={1}>{target.sourcePath}</Text>
-                )}
-              </Box>
-              {target.sourcePath && (
-                <Button size="xs" variant="ghost" color="var(--accent)" onClick={() => onOpenDiffSource(target)}>
-                  Open
-                </Button>
-              )}
-            </HStack>
-          </Box>
-        ))}
-        {diffLens.unplacedTargets.length > 8 && (
-          <Text fontSize="xs" color="gray.500">
-            +{diffLens.unplacedTargets.length - 8} more
-          </Text>
-        )}
-      </VStack>
-    </Box>
   )
 }
 
