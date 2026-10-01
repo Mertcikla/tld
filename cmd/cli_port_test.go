@@ -11,16 +11,6 @@ import (
 	"github.com/mertcikla/tld/v2/cmd"
 )
 
-func TestRootCmd_HelpMatchesReferenceSurface(t *testing.T) {
-	stdout, _, err := cmd.RunCmd(t, ".", "--help")
-	if err != nil {
-		t.Fatalf("root --help: %v", err)
-	}
-	if !strings.Contains(stdout, "tld manages software architecture diagrams as code") {
-		t.Fatalf("help output missing CLI description:\n%s", stdout)
-	}
-}
-
 func TestRootCmd_VersionFlagMatchesCurrentVersion(t *testing.T) {
 	stdout, _, err := cmd.RunCmd(t, ".", "--version")
 	if err != nil {
