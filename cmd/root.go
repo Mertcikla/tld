@@ -8,6 +8,7 @@ import (
 	configcmd "github.com/mertcikla/tld/v2/cmd/config"
 	"github.com/mertcikla/tld/v2/cmd/connect"
 	doctorcmd "github.com/mertcikla/tld/v2/cmd/doctor"
+	importcmd "github.com/mertcikla/tld/v2/cmd/import"
 	indexcmd "github.com/mertcikla/tld/v2/cmd/index"
 	"github.com/mertcikla/tld/v2/cmd/initialize"
 	inspectcmd "github.com/mertcikla/tld/v2/cmd/inspect"
@@ -121,6 +122,9 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 	connectCmd := connect.NewConnectCmd(&wdir, &outputFormat, &compactJSON)
 	connectCmd.GroupID = resourceGroup.ID
 
+	importCmd := importcmd.NewImportCmd(&wdir, &outputFormat, &compactJSON)
+	importCmd.GroupID = resourceGroup.ID
+
 	removeCmd := remove.NewRemoveCmd(&wdir, &outputFormat, &compactJSON)
 	removeCmd.GroupID = resourceGroup.ID
 
@@ -189,6 +193,7 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 	root.AddCommand(
 		addCmd,
 		connectCmd,
+		importCmd,
 		removeCmd,
 		updateCmd,
 		renameCmd,

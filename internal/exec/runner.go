@@ -57,6 +57,11 @@ type Runner interface {
 	UpdateConnector(ctx context.Context, id int32, input api.ConnectorInput) (*diagv1.Connector, error)
 	DeleteConnector(ctx context.Context, id int32) error
 	GetConnector(ctx context.Context, id int32) (*diagv1.Connector, error)
+	ListConnectors(ctx context.Context) ([]*diagv1.Connector, error)
+
+	// ApplyPlan atomically creates/updates a whole batch of elements, views,
+	// placements and connectors in a single transaction.
+	ApplyPlan(ctx context.Context, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error)
 }
 
 // ---------- target resolution (moved from cmd/apply) ----------
@@ -405,17 +410,37 @@ func (r *remoteRunner) DeleteConnector(ctx context.Context, id int32) error {
 }
 
 func (r *remoteRunner) GetConnector(ctx context.Context, id int32) (*diagv1.Connector, error) {
-	c := r.client()
-	resp, err := c.ListConnectors(ctx, connect.NewRequest(&diagv1.ListConnectorsRequest{}))
+	connectors, err := r.ListConnectors(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, conn := range resp.Msg.GetConnectors() {
+	for _, conn := range connectors {
 		if conn.GetId() == id {
 			return conn, nil
 		}
 	}
 	return nil, fmt.Errorf("connector %d not found", id)
+}
+
+func (r *remoteRunner) ListConnectors(ctx context.Context) ([]*diagv1.Connector, error) {
+	c := r.client()
+	resp, err := c.ListConnectors(ctx, connect.NewRequest(&diagv1.ListConnectorsRequest{}))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg.GetConnectors(), nil
+}
+
+func (r *remoteRunner) ApplyPlan(ctx context.Context, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
+	c := r.client()
+	if req.GetOrgId() == "" {
+		req.OrgId = r.orgID
+	}
+	resp, err := c.ApplyWorkspacePlan(ctx, connect.NewRequest(req))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg, nil
 }
 
 // ---------- local runner ----------
@@ -538,4 +563,25 @@ func (r *localRunner) DeleteConnector(ctx context.Context, id int32) error {
 
 func (r *localRunner) GetConnector(ctx context.Context, id int32) (*diagv1.Connector, error) {
 	return r.adapter.GetConnector(r.ctx(ctx), id, uuid.Nil)
+}
+
+func (r *localRunner) ListConnectors(ctx context.Context) ([]*diagv1.Connector, error) {
+	return r.adapter.ListAllConnectors(r.ctx(ctx), uuid.Nil)
+}
+
+// ApplyPlan runs the store-level plan inside a single SQLite transaction so a
+// mid-batch failure rolls the whole import back. The local adapter only
+// supports SQLite transactions; other dialects fall back to a direct apply.
+func (r *localRunner) ApplyPlan(ctx context.Context, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
+	c := r.ctx(ctx)
+	var resp *diagv1.ApplyPlanResponse
+	err := r.adapter.RunInTransaction(c, func(txCtx context.Context, txStore api.Store) error {
+		var applyErr error
+		resp, applyErr = txStore.ApplyPlan(txCtx, uuid.Nil, req)
+		return applyErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
