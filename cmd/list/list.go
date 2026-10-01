@@ -56,15 +56,17 @@ type connectorRow struct {
 }
 
 type viewRow struct {
-	Ref         string `json:"ref"`
-	Name        string `json:"name"`
-	Label       string `json:"label,omitempty"`
-	Parent      string `json:"parent,omitempty"`
-	Elements    int    `json:"direct_elements"`
-	ChildViews  int    `json:"child_views"`
-	Connectors  int    `json:"connectors"`
-	ID          int32  `json:"id,omitempty"`
-	Synthetic   bool   `json:"synthetic,omitempty"`
+	Ref        string `json:"ref"`
+	Name       string `json:"name"`
+	Label      string `json:"label,omitempty"`
+	Parent     string `json:"parent,omitempty"`
+	Depth      int    `json:"depth"`
+	Path       string `json:"path"`
+	Elements   int    `json:"direct_elements"`
+	ChildViews int    `json:"child_views"`
+	Connectors int    `json:"connectors"`
+	ID         int32  `json:"id,omitempty"`
+	Synthetic  bool   `json:"synthetic,omitempty"`
 }
 
 func newElementsCmd(wdir, format *string, compact *bool) *cobra.Command {
@@ -177,6 +179,7 @@ func newConnectorsCmd(wdir, format *string, compact *bool) *cobra.Command {
 func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	var search string
 	var parent string
+	var tree bool
 	c := &cobra.Command{
 		Use:   "views",
 		Short: "List views (diagrams)",
@@ -197,6 +200,9 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				filtered = append(filtered, row)
 			}
+			if tree {
+				sortViewTreeRows(filtered)
+			}
 			if cmdutil.WantsJSON(*format) {
 				items := make([]cmdutil.JSONItem, 0, len(filtered))
 				for _, row := range filtered {
@@ -212,10 +218,18 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			_, _ = fmt.Fprintln(w, "REF\tNAME\tLABEL\tPARENT\tELEMENTS\tCHILD VIEWS\tCONNECTORS\tID")
-			for _, row := range filtered {
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
-					row.Ref, row.Name, row.Label, row.Parent, row.Elements, row.ChildViews, row.Connectors, idString(row.ID))
+			if tree {
+				_, _ = fmt.Fprintln(w, "VIEW\tNAME\tDEPTH\tELEMENTS\tCHILD VIEWS\tCONNECTORS\tPATH")
+				for _, row := range filtered {
+					_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%s\n",
+						row.Ref, row.Name, row.Depth, row.Elements, row.ChildViews, row.Connectors, row.Path)
+				}
+			} else {
+				_, _ = fmt.Fprintln(w, "REF\tNAME\tLABEL\tPARENT\tELEMENTS\tCHILD VIEWS\tCONNECTORS\tID")
+				for _, row := range filtered {
+					_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
+						row.Ref, row.Name, row.Label, row.Parent, row.Elements, row.ChildViews, row.Connectors, idString(row.ID))
+				}
 			}
 			_ = w.Flush()
 			term.Infof(out, "%d of %d view(s)", len(filtered), len(rows))
@@ -224,6 +238,7 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	}
 	c.Flags().StringVar(&search, "search", "", "substring filter across ref, name, label, and parent")
 	c.Flags().StringVar(&parent, "parent", "", "only show views placed under this parent ref")
+	c.Flags().BoolVar(&tree, "tree", false, "show the derived view hierarchy with depth and path")
 	return c
 }
 
@@ -274,6 +289,17 @@ func buildViewRows(ws *workspace.Workspace) []viewRow {
 	childViews := map[string]int{}
 	parentOf := map[string]string{}
 	connectorsByView := map[string]int{}
+	adjacency := map[string]map[string]bool{}
+
+	registerView := func(parent, ref string) {
+		if parent == "" {
+			parent = "root"
+		}
+		if adjacency[parent] == nil {
+			adjacency[parent] = map[string]bool{}
+		}
+		adjacency[parent][ref] = true
+	}
 
 	for ref, el := range ws.Elements {
 		if el == nil {
@@ -284,6 +310,7 @@ func buildViewRows(ws *workspace.Workspace) []viewRow {
 			directElements["root"]++
 			if el.HasView {
 				childViews["root"]++
+				registerView("root", ref)
 			}
 			continue
 		}
@@ -295,6 +322,7 @@ func buildViewRows(ws *workspace.Workspace) []viewRow {
 			directElements[parent]++
 			if el.HasView {
 				childViews[parent]++
+				registerView(parent, ref)
 			}
 			if parentOf[ref] == "" {
 				parentOf[ref] = parent
@@ -312,14 +340,18 @@ func buildViewRows(ws *workspace.Workspace) []viewRow {
 		connectorsByView[view]++
 	}
 
+	depthByView, pathByView := buildViewPaths(adjacency)
+
 	rows := []viewRow{{
-		Ref:         "root",
-		Name:        "Workspace Root",
-		Elements:    directElements["root"],
-		ChildViews:  childViews["root"],
-		Connectors:  connectorsByView["root"],
-		ID:          metaID(ws, "views", "root"),
-		Synthetic:   true,
+		Ref:        "root",
+		Name:       "Workspace Root",
+		Depth:      0,
+		Path:       "root",
+		Elements:   directElements["root"],
+		ChildViews: childViews["root"],
+		Connectors: connectorsByView["root"],
+		ID:         metaID(ws, "views", "root"),
+		Synthetic:  true,
 	}}
 	for ref, el := range ws.Elements {
 		if el == nil || !el.HasView {
@@ -329,11 +361,21 @@ func buildViewRows(ws *workspace.Workspace) []viewRow {
 		if name == "" {
 			name = el.Name
 		}
+		depth, ok := depthByView[ref]
+		if !ok {
+			depth = -1
+		}
+		path := pathByView[ref]
+		if path == "" {
+			path = "unreachable"
+		}
 		rows = append(rows, viewRow{
 			Ref:        ref,
 			Name:       name,
 			Label:      el.ViewLabel,
 			Parent:     parentOf[ref],
+			Depth:      depth,
+			Path:       path,
 			Elements:   directElements[ref],
 			ChildViews: childViews[ref],
 			Connectors: connectorsByView[ref],
@@ -347,6 +389,51 @@ func buildViewRows(ws *workspace.Workspace) []viewRow {
 		return rows[i].Ref < rows[j].Ref
 	})
 	return rows
+}
+
+// buildViewPaths walks the view adjacency from the synthetic root and returns
+// each view's depth and "root/.../view" path.
+func buildViewPaths(adjacency map[string]map[string]bool) (map[string]int, map[string]string) {
+	depthByView := map[string]int{"root": 0}
+	pathByView := map[string]string{"root": "root"}
+	queue := []string{"root"}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		children := make([]string, 0, len(adjacency[current]))
+		for child := range adjacency[current] {
+			children = append(children, child)
+		}
+		sort.Strings(children)
+		for _, child := range children {
+			if _, seen := depthByView[child]; seen {
+				continue
+			}
+			depthByView[child] = depthByView[current] + 1
+			pathByView[child] = pathByView[current] + "/" + child
+			queue = append(queue, child)
+		}
+	}
+
+	return depthByView, pathByView
+}
+
+// sortViewTreeRows orders rows in hierarchy order: root first, then by depth,
+// path, and ref.
+func sortViewTreeRows(rows []viewRow) {
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Synthetic != rows[j].Synthetic {
+			return rows[i].Synthetic
+		}
+		if rows[i].Depth != rows[j].Depth {
+			return rows[i].Depth < rows[j].Depth
+		}
+		if rows[i].Path != rows[j].Path {
+			return rows[i].Path < rows[j].Path
+		}
+		return rows[i].Ref < rows[j].Ref
+	})
 }
 
 func metaID(ws *workspace.Workspace, kind, ref string) int32 {

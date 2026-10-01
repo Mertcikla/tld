@@ -26,7 +26,6 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/validate"
 	"github.com/mertcikla/tld/v2/cmd/version"
 	viewcmd "github.com/mertcikla/tld/v2/cmd/view"
-	"github.com/mertcikla/tld/v2/cmd/views"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
@@ -152,9 +151,6 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 	pullCmd.GroupID = syncGroup.ID
 
 	// Inspect & query commands
-	viewsCmd := views.NewViewsCmd(&wdir)
-	viewsCmd.GroupID = queryGroup.ID
-
 	renderCmd := render.NewRenderCmd(&wdir)
 	renderCmd.GroupID = queryGroup.ID
 
@@ -201,7 +197,6 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 		validateCmd,
 		loginCmd,
 		pullCmd,
-		viewsCmd,
 		renderCmd,
 		inspectCmd,
 		listCmd,
