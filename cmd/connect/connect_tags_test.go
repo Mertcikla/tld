@@ -18,7 +18,7 @@ func TestConnectCmdPersistsTags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector := ws.Connectors["platform:api:db:reads"]
+	connector := ws.Connectors["platform/api~db/reads"]
 	if connector == nil {
 		t.Fatalf("connector missing: %+v", ws.Connectors)
 	}

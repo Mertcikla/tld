@@ -57,7 +57,7 @@ func TestUpdateConnectorCmdSetsAndAppendsTags(t *testing.T) {
 	cmd.MustInitWorkspace(t, dir)
 	cmd.SeedElementWorkspace(t, dir)
 
-	key := "platform:api:db:reads"
+	key := "platform/api~db/reads"
 	cmd.MustRunCmd(t, dir, "update", "connector", key, "tags", "critical")
 	assertConnectorTags(t, dir, key, []string{"critical"})
 

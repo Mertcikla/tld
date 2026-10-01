@@ -271,13 +271,13 @@ func TestLoad_MalformedElementsYAML(t *testing.T) {
 func TestLoad_ConnectorsLoadedAndMetadata(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, setupConfig(t), minimalConfig())
-	writeFile(t, filepath.Join(dir, "connectors.yaml"), `system:api:db:reads:
+	writeFile(t, filepath.Join(dir, "connectors.yaml"), `system/api~db/reads:
   view: system
   source: api
   target: db
   label: reads
 _meta_connectors:
-  system:api:db:reads:
+  system/api~db/reads:
     id: 303
     updated_at: 2024-03-24T12:00:00Z
 `)
@@ -289,12 +289,12 @@ _meta_connectors:
 	if len(ws.Connectors) != 1 {
 		t.Fatalf("len(Connectors) = %d, want 1", len(ws.Connectors))
 	}
-	conn := ws.Connectors["system:api:db:reads"]
+	conn := ws.Connectors["system/api~db/reads"]
 	if conn == nil || conn.Source != "api" || conn.Target != "db" {
 		t.Fatalf("unexpected connector: %+v", conn)
 	}
-	if ws.Meta.Connectors["system:api:db:reads"].ID != 303 {
-		t.Fatalf("unexpected connector metadata: %+v", ws.Meta.Connectors["system:api:db:reads"])
+	if ws.Meta.Connectors["system/api~db/reads"].ID != 303 {
+		t.Fatalf("unexpected connector metadata: %+v", ws.Meta.Connectors["system/api~db/reads"])
 	}
 }
 
@@ -311,10 +311,10 @@ func TestLoad_ConnectorsListFormatLoadsInlineMetadata(t *testing.T) {
 	if len(ws.Connectors) != 1 {
 		t.Fatalf("len(Connectors) = %d, want 1", len(ws.Connectors))
 	}
-	if ws.Meta.Connectors["system:api:db:reads"].ID != 303 {
-		t.Fatalf("unexpected connector metadata: %+v", ws.Meta.Connectors["system:api:db:reads"])
+	if ws.Meta.Connectors["system/api~db/reads"].ID != 303 {
+		t.Fatalf("unexpected connector metadata: %+v", ws.Meta.Connectors["system/api~db/reads"])
 	}
-	if got := ws.Meta.Connectors["system:api:db:reads"].UpdatedAt.Format("2006-01-02T15:04:05Z07:00"); got != "2024-03-24T12:00:00Z" {
+	if got := ws.Meta.Connectors["system/api~db/reads"].UpdatedAt.Format("2006-01-02T15:04:05Z07:00"); got != "2024-03-24T12:00:00Z" {
 		t.Fatalf("unexpected connector updated_at: %s", got)
 	}
 }
@@ -327,9 +327,9 @@ func TestLoad_ConnectorMetadataFromLockFileCurrentConnectors(t *testing.T) {
 	if err := workspace.WriteLockFile(dir, &workspace.LockFile{
 		Version: "v1",
 		Metadata: &workspace.Meta{
-			Connectors: map[string]*workspace.ResourceMetadata{"system:api:db:reads": {ID: 404, UpdatedAt: time.Date(2024, 3, 24, 10, 0, 0, 0, time.UTC)}},
+			Connectors: map[string]*workspace.ResourceMetadata{"system/api~db/reads": {ID: 404, UpdatedAt: time.Date(2024, 3, 24, 10, 0, 0, 0, time.UTC)}},
 		},
-		CurrentConnectors: map[string]*workspace.ResourceMetadata{"system:api:db:reads": {ID: 505, UpdatedAt: time.Date(2024, 3, 24, 12, 0, 0, 0, time.UTC)}},
+		CurrentConnectors: map[string]*workspace.ResourceMetadata{"system/api~db/reads": {ID: 505, UpdatedAt: time.Date(2024, 3, 24, 12, 0, 0, 0, time.UTC)}},
 	}); err != nil {
 		t.Fatalf("WriteLockFile: %v", err)
 	}
@@ -338,10 +338,10 @@ func TestLoad_ConnectorMetadataFromLockFileCurrentConnectors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if ws.Meta.Connectors["system:api:db:reads"].ID != 505 {
-		t.Fatalf("expected current lockfile connector metadata to win, got %+v", ws.Meta.Connectors["system:api:db:reads"])
+	if ws.Meta.Connectors["system/api~db/reads"].ID != 505 {
+		t.Fatalf("expected current lockfile connector metadata to win, got %+v", ws.Meta.Connectors["system/api~db/reads"])
 	}
-	if got := ws.Meta.Connectors["system:api:db:reads"].UpdatedAt.Format("2006-01-02T15:04:05Z07:00"); got != "2024-03-24T12:00:00Z" {
+	if got := ws.Meta.Connectors["system/api~db/reads"].UpdatedAt.Format("2006-01-02T15:04:05Z07:00"); got != "2024-03-24T12:00:00Z" {
 		t.Fatalf("unexpected connector updated_at from current lockfile metadata: %s", got)
 	}
 }
@@ -357,6 +357,42 @@ func TestLoad_EmptyConnectorList(t *testing.T) {
 	}
 	if len(ws.Connectors) != 0 {
 		t.Fatalf("len(Connectors) = %d, want 0", len(ws.Connectors))
+	}
+}
+
+func TestLoad_MigratesLegacyConnectorKeys(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, setupConfig(t), minimalConfig())
+	writeFile(t, filepath.Join(dir, "connectors.yaml"), `'system:api:db:reads':
+  view: system
+  source: api
+  target: db
+  label: reads
+'action:devicedetail:action:':
+  view: action
+  source: devicedetail
+  target: action
+_meta_connectors:
+  'system:api:db:reads':
+    id: 303
+    updated_at: 2024-03-24T12:00:00Z
+`)
+
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(ws.Connectors) != 2 {
+		t.Fatalf("len(Connectors) = %d, want 2: %+v", len(ws.Connectors), ws.Connectors)
+	}
+	if ws.Connectors["system/api~db/reads"] == nil {
+		t.Fatalf("legacy labeled key was not migrated: %+v", ws.Connectors)
+	}
+	if ws.Connectors["action/devicedetail~action"] == nil {
+		t.Fatalf("legacy empty-label key was not migrated: %+v", ws.Connectors)
+	}
+	if ws.Meta.Connectors["system/api~db/reads"] == nil || ws.Meta.Connectors["system/api~db/reads"].ID != 303 {
+		t.Fatalf("legacy connector metadata was not migrated: %+v", ws.Meta.Connectors)
 	}
 }
 

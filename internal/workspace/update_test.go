@@ -75,7 +75,7 @@ _meta_views:
 	if err := workspace.WriteLockFile(dir, &workspace.LockFile{Version: "v1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`platform:platform:api:contains:
+	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`platform/platform~api/contains:
   view: platform
   source: platform
   target: api
@@ -129,20 +129,20 @@ api:
 
 func TestUpdateConnectorField_LabelRekeysConnector(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`system:web:api:calls:
+	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`system/web~api/calls:
   view: system
   source: web
   target: api
   label: calls
 _meta_connectors:
-  system:web:api:calls:
+  system/web~api/calls:
     id: c1
     updated_at: 2024-01-01T00:00:00Z
 `), 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := workspace.UpdateConnectorField(dir, "system:web:api:calls", "label", "reads"); err != nil {
+	if err := workspace.UpdateConnectorField(dir, "system/web~api/calls", "label", "reads"); err != nil {
 		t.Fatalf("UpdateConnectorField failed: %v", err)
 	}
 
@@ -161,12 +161,12 @@ _meta_connectors:
 
 func TestUpdateConnectorField_RekeyCollisionFails(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`system:web:api:calls:
+	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`system/web~api/calls:
   view: system
   source: web
   target: api
   label: calls
-system:web:api:reads:
+system/web~api/reads:
   view: system
   source: web
   target: api
@@ -175,18 +175,18 @@ system:web:api:reads:
 		t.Fatal(err)
 	}
 
-	err := workspace.UpdateConnectorField(dir, "system:web:api:calls", "label", "reads")
+	err := workspace.UpdateConnectorField(dir, "system/web~api/calls", "label", "reads")
 	if err == nil {
 		t.Fatal("expected connector collision error")
 	}
-	if !strings.Contains(err.Error(), `connector "system:web:api:reads" already exists`) {
+	if !strings.Contains(err.Error(), `connector "system/web~api/reads" already exists`) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
 func TestUpdateConnectorField_UnknownFieldFails(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`system:web:api:calls:
+	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`system/web~api/calls:
   view: system
   source: web
   target: api
@@ -195,7 +195,7 @@ func TestUpdateConnectorField_UnknownFieldFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := workspace.UpdateConnectorField(dir, "system:web:api:calls", "bogus", "value")
+	err := workspace.UpdateConnectorField(dir, "system/web~api/calls", "bogus", "value")
 	if err == nil {
 		t.Fatal("expected unknown field error")
 	}

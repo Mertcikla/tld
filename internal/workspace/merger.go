@@ -45,6 +45,7 @@ func MergeWorkspace(dir string, newWS *Workspace, lastSyncMeta *Meta, currentMet
 			combinedElementMetadata(newWS.Meta),
 			combinedElementMetadata(lastSyncMeta),
 			combinedElementMetadata(currentMeta),
+			nil,
 			elementMetaSections,
 		); err != nil {
 			return fmt.Errorf("merge elements: %w", err)
@@ -56,6 +57,7 @@ func MergeWorkspace(dir string, newWS *Workspace, lastSyncMeta *Meta, currentMet
 			connectorMeta,
 			lastSyncMeta.Connectors,
 			currentMeta.Connectors,
+			connectorKeyFromNode,
 			[]metadataSection{{name: "_meta_connectors", values: connectorMeta, persist: !storedConnectorMeta}},
 		); err != nil {
 			return fmt.Errorf("merge connectors: %w", err)
@@ -70,7 +72,7 @@ func MergeWorkspace(dir string, newWS *Workspace, lastSyncMeta *Meta, currentMet
 	return nil
 }
 
-func mergeYAMLMapWithMetadataSections(path string, serverItems any, serverMeta map[string]*ResourceMetadata, lastSyncMeta map[string]*ResourceMetadata, currentMeta map[string]*ResourceMetadata, sections []metadataSection) error {
+func mergeYAMLMapWithMetadataSections(path string, serverItems any, serverMeta map[string]*ResourceMetadata, lastSyncMeta map[string]*ResourceMetadata, currentMeta map[string]*ResourceMetadata, normalizeKey func(string, *yaml.Node) string, sections []metadataSection) error {
 	// Load existing file into a Node
 	var root yaml.Node
 	data, err := os.ReadFile(path)
@@ -104,6 +106,12 @@ func mergeYAMLMapWithMetadataSections(path string, serverItems any, serverMeta m
 		keyNode := mapping.Content[i]
 		valNode := mapping.Content[i+1]
 		key := keyNode.Value
+		if normalizeKey != nil {
+			if normalized := normalizeKey(key, valNode); normalized != key {
+				keyNode.Value = normalized
+				key = normalized
+			}
+		}
 
 		if isMetadataSectionKey(key, sections) {
 			continue
@@ -198,6 +206,19 @@ func mergeYAMLMapWithMetadataSections(path string, serverItems any, serverMeta m
 		return fmt.Errorf("encode %s: %w", path, err)
 	}
 	return nil
+}
+
+// connectorKeyFromNode returns the canonical key for an on-disk connector
+// entry, preferring the connector's own fields so hand-written or legacy keys
+// migrate to the same key the loader would compute.
+func connectorKeyFromNode(key string, value *yaml.Node) string {
+	if value != nil && value.Kind == yaml.MappingNode {
+		var connector Connector
+		if err := value.Decode(&connector); err == nil && (connector.View != "" || connector.Source != "" || connector.Target != "") {
+			return ConnectorKey(&connector)
+		}
+	}
+	return NormalizeConnectorKey(key)
 }
 
 func isMetadataSectionKey(key string, sections []metadataSection) bool {

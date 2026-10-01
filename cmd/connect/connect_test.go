@@ -41,7 +41,7 @@ func TestConnectCmd_AppendsConnector(t *testing.T) {
 	if len(connectors) != 1 {
 		t.Fatalf("len(connectors) = %d, want 1", len(connectors))
 	}
-	connector := connectors["platform:api:db:"]
+	connector := connectors["platform/api~db"]
 	if connector == nil || connector.View != "platform" || connector.Source != "api" || connector.Target != "db" {
 		t.Errorf("unexpected connector: %+v", connector)
 	}
@@ -69,7 +69,7 @@ func TestConnectCmd_RootElementsInferRootView(t *testing.T) {
 	if len(connectors) != 1 {
 		t.Fatalf("len(connectors) = %d, want 1", len(connectors))
 	}
-	connector := connectors["root:api:db:"]
+	connector := connectors["root/api~db"]
 	if connector == nil || connector.View != "root" {
 		t.Errorf("unexpected connector: %+v", connector)
 	}
@@ -144,7 +144,7 @@ func TestConnectCmd_ElementsInDifferentViewsSucceeds(t *testing.T) {
 		t.Fatalf("load workspace: %v", err)
 	}
 	connectors := ws.Connectors
-	connector := connectors["parent1:api:db:"]
+	connector := connectors["parent1/api~db"]
 	if connector == nil || connector.View != "parent1" {
 		t.Errorf("expected connector in source element view, got %+v", connector)
 	}
@@ -191,7 +191,7 @@ func TestConnectCmd_ElementsWithMultiplePlacementsSucceeds(t *testing.T) {
 		t.Fatalf("load workspace: %v", err)
 	}
 	connectors := ws.Connectors
-	connector := connectors["other:api:db:"]
+	connector := connectors["other/api~db"]
 	if connector == nil || connector.View != "other" {
 		t.Errorf("expected connector in 'other' view (shared parent), got %+v", connector)
 	}
@@ -239,7 +239,7 @@ func TestConnectCmd_DefaultsToSourceElementView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
-	if ws.Connectors["billing:api:db:"] == nil {
+	if ws.Connectors["billing/api~db"] == nil {
 		t.Fatalf("expected connector in billing view, connectors=%+v", ws.Connectors)
 	}
 }

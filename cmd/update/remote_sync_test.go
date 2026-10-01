@@ -26,7 +26,7 @@ func TestUpdateConnectorSourceChangeSyncsServer(t *testing.T) {
 	cmd.MustRunCmd(t, dir, "add", "Cache", "--ref", "cache", "--parent", "platform", "--kind", "database")
 	cmd.MustRunCmd(t, dir, "connect", "--from", "api", "--to", "db", "--label", "reads")
 
-	if _, _, err := cmd.RunCmd(t, dir, "update", "connector", "platform:api:db:reads", "source", "cache"); err != nil {
+	if _, _, err := cmd.RunCmd(t, dir, "update", "connector", "platform/api~db/reads", "source", "cache"); err != nil {
 		t.Fatalf("update connector source: %v", err)
 	}
 
@@ -34,11 +34,11 @@ func TestUpdateConnectorSourceChangeSyncsServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
-	if ws.Connectors["platform:cache:db:reads"] == nil || ws.Connectors["platform:cache:db:reads"].Source != "cache" {
+	if ws.Connectors["platform/cache~db/reads"] == nil || ws.Connectors["platform/cache~db/reads"].Source != "cache" {
 		t.Fatalf("renamed connector missing: %+v", ws.Connectors)
 	}
 	cacheID := int32(ws.Meta.Elements["cache"].ID)
-	connID := int32(ws.Meta.Connectors["platform:cache:db:reads"].ID)
+	connID := int32(ws.Meta.Connectors["platform/cache~db/reads"].ID)
 	serverConn := svc.Connector(connID)
 	if serverConn == nil {
 		t.Fatalf("server connector %d not found", connID)
@@ -148,12 +148,12 @@ func TestSyncCommands_UpdateClearsConnectorField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
-	connID := int32(ws.Meta.Connectors["platform:api:db:reads"].ID)
+	connID := int32(ws.Meta.Connectors["platform/api~db/reads"].ID)
 	if got := svc.Connector(connID).GetDescription(); got != "read path" {
 		t.Fatalf("precondition: server description = %q", got)
 	}
 
-	cmd.MustRunCmd(t, dir, "update", "connector", "platform:api:db:reads", "description", "")
+	cmd.MustRunCmd(t, dir, "update", "connector", "platform/api~db/reads", "description", "")
 
 	if got := svc.Connector(connID).GetDescription(); got != "" {
 		t.Fatalf("server description = %q, want cleared", got)
@@ -162,7 +162,7 @@ func TestSyncCommands_UpdateClearsConnectorField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload workspace: %v", err)
 	}
-	if c := ws.Connectors["platform:api:db:reads"]; c == nil || c.Description != "" {
+	if c := ws.Connectors["platform/api~db/reads"]; c == nil || c.Description != "" {
 		t.Fatalf("YAML connector = %+v, want cleared description", c)
 	}
 }
@@ -198,14 +198,14 @@ func TestSyncCommands_UpdateDoesNotTouchYamlOnServerFailure(t *testing.T) {
 	cmd.MustRunCmd(t, dir, "add", "DB", "--ref", "db", "--parent", "root")
 	cmd.MustRunCmd(t, dir, "connect", "--from", "api", "--to", "db", "--label", "reads")
 
-	if _, _, err := cmd.RunCmd(t, dir, "update", "connector", "root:api:db:reads", "label", "writes"); err == nil {
+	if _, _, err := cmd.RunCmd(t, dir, "update", "connector", "root/api~db/reads", "label", "writes"); err == nil {
 		t.Fatal("expected connector update to fail")
 	}
 	ws, err = workspace.Load(dir)
 	if err != nil {
 		t.Fatalf("reload workspace: %v", err)
 	}
-	if ws.Connectors["root:api:db:reads"] == nil {
+	if ws.Connectors["root/api~db/reads"] == nil {
 		t.Fatalf("connector key changed despite server failure: %+v", ws.Connectors)
 	}
 }
@@ -229,9 +229,9 @@ func TestSyncCommands_UpdateConnectorRejectsDuplicateKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load workspace: %v", err)
 	}
-	readsID := int32(ws.Meta.Connectors["platform:api:db:reads"].ID)
+	readsID := int32(ws.Meta.Connectors["platform/api~db/reads"].ID)
 
-	if _, _, err := cmd.RunCmd(t, dir, "update", "connector", "platform:api:db:reads", "label", "writes"); err == nil {
+	if _, _, err := cmd.RunCmd(t, dir, "update", "connector", "platform/api~db/reads", "label", "writes"); err == nil {
 		t.Fatal("expected duplicate-key update to fail")
 	}
 	if got := svc.Connector(readsID).GetLabel(); got != "reads" {
@@ -241,7 +241,7 @@ func TestSyncCommands_UpdateConnectorRejectsDuplicateKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload workspace: %v", err)
 	}
-	if ws.Connectors["platform:api:db:reads"] == nil {
+	if ws.Connectors["platform/api~db/reads"] == nil {
 		t.Fatalf("YAML key changed despite validation failure: %+v", ws.Connectors)
 	}
 }

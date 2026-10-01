@@ -129,7 +129,7 @@ func ElementRefsWithNames(wdir *string) (out []string, dir cobra.ShellCompDirect
 	return
 }
 
-// ConnectorKeys returns "view:from:to" keys for every local connector.
+// ConnectorKeys returns "view/source~target[/label]" keys for every local connector.
 func ConnectorKeys(wdir *string) (out []string, dir cobra.ShellCompDirective) {
 	dir = cobra.ShellCompDirectiveNoFileComp
 	defer func() { _ = recover() }()

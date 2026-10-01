@@ -70,7 +70,7 @@ type updateElementArgs struct {
 }
 
 type updateConnectorArgs struct {
-	Ref   string `json:"ref" jsonschema:"connector key e.g. view:source:target[:label]"`
+	Ref   string `json:"ref" jsonschema:"connector key e.g. view/source~target[/label]"`
 	Field string `json:"field"`
 	Value string `json:"value"`
 }

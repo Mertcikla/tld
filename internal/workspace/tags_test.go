@@ -81,10 +81,10 @@ func TestUpdateConnectorFieldTagsReplacesSequence(t *testing.T) {
 	dir := t.TempDir()
 	writeConnectorWorkspace(t, dir, "")
 
-	if err := workspace.UpdateConnectorField(dir, "system:web:api:calls", "tags", "critical, api"); err != nil {
+	if err := workspace.UpdateConnectorField(dir, "system/web~api/calls", "tags", "critical, api"); err != nil {
 		t.Fatalf("update connector tags: %v", err)
 	}
-	connector, err := loadConnector(dir, "system:web:api:calls")
+	connector, err := loadConnector(dir, "system/web~api/calls")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,10 +92,10 @@ func TestUpdateConnectorFieldTagsReplacesSequence(t *testing.T) {
 		t.Fatalf("tags = %v, want [critical api]", connector.Tags)
 	}
 
-	if err := workspace.UpdateConnectorField(dir, "system:web:api:calls", "tags", ""); err != nil {
+	if err := workspace.UpdateConnectorField(dir, "system/web~api/calls", "tags", ""); err != nil {
 		t.Fatalf("clear connector tags: %v", err)
 	}
-	connector, err = loadConnector(dir, "system:web:api:calls")
+	connector, err = loadConnector(dir, "system/web~api/calls")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,10 +108,10 @@ func TestUpdateConnectorFieldAppliesVisibilityDelta(t *testing.T) {
 	dir := t.TempDir()
 	writeConnectorWorkspace(t, dir, "")
 
-	if err := workspace.UpdateConnectorField(dir, "system:web:api:calls", "visibility_delta", "2"); err != nil {
+	if err := workspace.UpdateConnectorField(dir, "system/web~api/calls", "visibility_delta", "2"); err != nil {
 		t.Fatalf("update visibility_delta: %v", err)
 	}
-	connector, err := loadConnector(dir, "system:web:api:calls")
+	connector, err := loadConnector(dir, "system/web~api/calls")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func loadConnector(dir, ref string) (*workspace.Connector, error) {
 
 func writeConnectorWorkspace(t *testing.T, dir, tags string) {
 	t.Helper()
-	body := "system:web:api:calls:\n  view: system\n  source: web\n  target: api\n  label: calls\n"
+	body := "system/web~api/calls:\n  view: system\n  source: web\n  target: api\n  label: calls\n"
 	if tags != "" {
 		body += "  tags:\n"
 		for _, tag := range strings.Split(tags, ",") {

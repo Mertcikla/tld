@@ -23,12 +23,12 @@ func TestMergeWorkspace_WritesElementWorkspaceAndCleansLegacyFiles(t *testing.T)
 			"db":  {Name: "DB", Kind: "database", Placements: []workspace.ViewPlacement{{ParentRef: "api"}}},
 		},
 		Connectors: map[string]*workspace.Connector{
-			"api:api:db:reads": {View: "api", Source: "api", Target: "db", Label: "reads"},
+			"api/api~db/reads": {View: "api", Source: "api", Target: "db", Label: "reads"},
 		},
 		Meta: &workspace.Meta{
 			Elements:   map[string]*workspace.ResourceMetadata{"api": {ID: 1, UpdatedAt: time.Now()}},
 			Views:      map[string]*workspace.ResourceMetadata{"api": {ID: 2, UpdatedAt: time.Now()}},
-			Connectors: map[string]*workspace.ResourceMetadata{"api:api:db:reads": {ID: 3, UpdatedAt: time.Now()}},
+			Connectors: map[string]*workspace.ResourceMetadata{"api/api~db/reads": {ID: 3, UpdatedAt: time.Now()}},
 		},
 	}
 
@@ -51,6 +51,42 @@ func TestMergeWorkspace_WritesElementWorkspaceAndCleansLegacyFiles(t *testing.T)
 	}
 	if !strings.Contains(string(connectorsData), "_meta_connectors:") {
 		t.Fatalf("connector metadata missing:\n%s", connectorsData)
+	}
+}
+
+func TestMergeWorkspace_MigratesLegacyConnectorKeys(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`'platform:api:db:reads':
+  view: platform
+  source: api
+  target: db
+  label: reads
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	newWS := &workspace.Workspace{
+		Dir: dir,
+		Connectors: map[string]*workspace.Connector{
+			"platform/api~db/reads": {View: "platform", Source: "api", Target: "db", Label: "reads"},
+		},
+		Meta: &workspace.Meta{
+			Connectors: map[string]*workspace.ResourceMetadata{"platform/api~db/reads": {ID: 7, UpdatedAt: time.Now()}},
+		},
+	}
+
+	if err := workspace.MergeWorkspace(dir, newWS, &workspace.Meta{}, &workspace.Meta{}); err != nil {
+		t.Fatalf("MergeWorkspace: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "connectors.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "platform:api:db:reads") {
+		t.Fatalf("legacy connector key was not migrated:\n%s", text)
+	}
+	if !strings.Contains(text, "platform/api~db/reads") {
+		t.Fatalf("canonical connector key missing:\n%s", text)
 	}
 }
 

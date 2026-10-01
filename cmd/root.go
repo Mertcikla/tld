@@ -62,12 +62,9 @@ func Execute() {
 // binary and by tests to get a clean instance with no shared state.
 func NewRootCmd(options ...RootOption) *cobra.Command {
 	root := &cobra.Command{
-		Use:   "tld",
-		Short: "tld -- tlDiagram CLI",
-		Long: `tld manages software architecture diagrams as code.
-
-Every command applies immediately to the server and refreshes the local
-YAML cache. Use 'tld pull' to refresh the cache after frontend changes.`,
+		Use:           "tld",
+		Short:         "tld -- tlDiagram CLI",
+		Long:          `tld`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       version.Version,
@@ -97,11 +94,27 @@ YAML cache. Use 'tld pull' to refresh the cache after frontend changes.`,
 		ID:    "resource",
 		Title: "CRUD actions on resources:",
 	}
-	secondaryGroup := &cobra.Group{
-		ID:    "secondary",
-		Title: "Secondary actions:",
+	workspaceGroup := &cobra.Group{
+		ID:    "workspace",
+		Title: "Workspace:",
 	}
-	root.AddGroup(resourceGroup, secondaryGroup)
+	syncGroup := &cobra.Group{
+		ID:    "sync",
+		Title: "Sync & authentication:",
+	}
+	queryGroup := &cobra.Group{
+		ID:    "query",
+		Title: "Inspect & query:",
+	}
+	serverGroup := &cobra.Group{
+		ID:    "server",
+		Title: "Server & integrations:",
+	}
+	systemGroup := &cobra.Group{
+		ID:    "system",
+		Title: "Configuration & system:",
+	}
+	root.AddGroup(resourceGroup, workspaceGroup, syncGroup, queryGroup, serverGroup, systemGroup)
 
 	// CRUD Commands
 	addCmd := add.NewAddCmd(&wdir, &outputFormat, &compactJSON)
@@ -122,85 +135,89 @@ YAML cache. Use 'tld pull' to refresh the cache after frontend changes.`,
 	viewCmd := viewcmd.NewViewCmd(&wdir, &outputFormat, &compactJSON)
 	viewCmd.GroupID = resourceGroup.ID
 
-	// Secondary Commands
+	// Workspace commands
 	initCmd := initialize.NewInitCmd()
-	initCmd.GroupID = secondaryGroup.ID
-
-	loginCmd := login.NewLoginCmd(&wdir)
-	loginCmd.GroupID = secondaryGroup.ID
+	initCmd.GroupID = workspaceGroup.ID
 
 	validateCmd := validate.NewValidateCmd(&wdir)
-	validateCmd.GroupID = secondaryGroup.ID
-
-	exportCmd := export.NewExportCmd(&wdir)
-	exportCmd.GroupID = secondaryGroup.ID
-
-	pullCmd := pull.NewPullCmd(&wdir)
-	pullCmd.GroupID = secondaryGroup.ID
-
-	statusCmd := status.NewStatusCmd()
-	statusCmd.GroupID = secondaryGroup.ID
-
-	viewsCmd := views.NewViewsCmd(&wdir)
-	viewsCmd.GroupID = secondaryGroup.ID
-
-	renderCmd := render.NewRenderCmd(&wdir)
-	renderCmd.GroupID = secondaryGroup.ID
-
-	inspectCmd := inspectcmd.NewInspectCmd(&wdir, &outputFormat, &compactJSON)
-	inspectCmd.GroupID = secondaryGroup.ID
-
-	listCmd := listcmd.NewListCmd(&wdir, &outputFormat, &compactJSON)
-	listCmd.GroupID = secondaryGroup.ID
-
-	versionCmd := version.NewVersionCmd()
-	versionCmd.GroupID = secondaryGroup.ID
-
-	configCmd := configcmd.NewConfigCmd()
-	configCmd.GroupID = secondaryGroup.ID
-
-	techCmd := techcmd.NewTechCmd()
-	techCmd.GroupID = secondaryGroup.ID
-
-	doctorCmd := doctorcmd.NewDoctorCmd()
-	doctorCmd.GroupID = secondaryGroup.ID
+	validateCmd.GroupID = workspaceGroup.ID
 
 	indexCmd := indexcmd.NewIndexCmd()
-	indexCmd.GroupID = secondaryGroup.ID
+	indexCmd.GroupID = workspaceGroup.ID
 
+	// Sync & authentication commands
+	loginCmd := login.NewLoginCmd(&wdir)
+	loginCmd.GroupID = syncGroup.ID
+
+	exportCmd := export.NewExportCmd(&wdir)
+	exportCmd.GroupID = syncGroup.ID
+
+	pullCmd := pull.NewPullCmd(&wdir)
+	pullCmd.GroupID = syncGroup.ID
+
+	// Inspect & query commands
+	viewsCmd := views.NewViewsCmd(&wdir)
+	viewsCmd.GroupID = queryGroup.ID
+
+	renderCmd := render.NewRenderCmd(&wdir)
+	renderCmd.GroupID = queryGroup.ID
+
+	inspectCmd := inspectcmd.NewInspectCmd(&wdir, &outputFormat, &compactJSON)
+	inspectCmd.GroupID = queryGroup.ID
+
+	listCmd := listcmd.NewListCmd(&wdir, &outputFormat, &compactJSON)
+	listCmd.GroupID = queryGroup.ID
+
+	techCmd := techcmd.NewTechCmd()
+	techCmd.GroupID = queryGroup.ID
+
+	// Server & integration commands
 	serveCmd := serve.NewServeCmd(nil)
-	serveCmd.GroupID = secondaryGroup.ID
+	serveCmd.GroupID = serverGroup.ID
 
 	mcpCmd := mcp.NewMCPCmd(&wdir, &outputFormat, &compactJSON)
-	mcpCmd.GroupID = secondaryGroup.ID
+	mcpCmd.GroupID = serverGroup.ID
 
 	stopCmd := stop.NewStopCmd()
-	stopCmd.GroupID = secondaryGroup.ID
+	stopCmd.GroupID = serverGroup.ID
+
+	statusCmd := status.NewStatusCmd()
+	statusCmd.GroupID = serverGroup.ID
+
+	// Configuration & system commands
+	versionCmd := version.NewVersionCmd()
+	versionCmd.GroupID = systemGroup.ID
+
+	configCmd := configcmd.NewConfigCmd()
+	configCmd.GroupID = systemGroup.ID
+
+	doctorCmd := doctorcmd.NewDoctorCmd()
+	doctorCmd.GroupID = systemGroup.ID
 
 	root.AddCommand(
-		initCmd,
-		loginCmd,
-		validateCmd,
-		exportCmd,
-		pullCmd,
-		statusCmd,
-		viewsCmd,
-		renderCmd,
-		inspectCmd,
-		listCmd,
 		addCmd,
 		connectCmd,
 		removeCmd,
 		updateCmd,
 		renameCmd,
 		viewCmd,
-		configCmd,
+		initCmd,
+		validateCmd,
+		loginCmd,
+		exportCmd,
+		pullCmd,
+		viewsCmd,
+		renderCmd,
+		inspectCmd,
+		listCmd,
 		techCmd,
 		doctorCmd,
 		indexCmd,
 		serveCmd,
-		mcpCmd,
 		stopCmd,
+		statusCmd,
+		mcpCmd,
+		configCmd,
 		versionCmd,
 	)
 
@@ -210,7 +227,7 @@ YAML cache. Use 'tld pull' to refresh the cache after frontend changes.`,
 
 	for _, cmd := range root.Commands() {
 		if cmd.Name() == "completion" {
-			cmd.GroupID = secondaryGroup.ID
+			cmd.GroupID = systemGroup.ID
 			// Intercept no-argument completion calls to launch the interactive install wizard
 			cmd.RunE = func(c *cobra.Command, args []string) error {
 				if len(args) == 0 {
@@ -219,7 +236,7 @@ YAML cache. Use 'tld pull' to refresh the cache after frontend changes.`,
 				return nil
 			}
 		} else if cmd.Name() == "help" {
-			cmd.GroupID = secondaryGroup.ID
+			cmd.GroupID = systemGroup.ID
 		}
 	}
 

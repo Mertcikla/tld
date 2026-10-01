@@ -68,7 +68,7 @@ func TestRemoveElementCmd_ReferencedElementFails(t *testing.T) {
 	for _, want := range []string{
 		`element "platform" is still referenced`,
 		"elements.yaml[api].placements[0].parent",
-		"connectors.yaml[platform:api:db:reads].view",
+		"connectors.yaml[platform/api~db/reads].view",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Fatalf("error %q missing %q", msg, want)
@@ -122,7 +122,7 @@ func TestRemoveConnectorCmd_DryRunDoesNotDelete(t *testing.T) {
 	if loadErr != nil {
 		t.Fatal(loadErr)
 	}
-	if ws.Connectors["platform:api:db:reads"] == nil {
+	if ws.Connectors["platform/api~db/reads"] == nil {
 		t.Fatal("connector should remain after dry-run")
 	}
 }
@@ -141,7 +141,7 @@ func TestRemoveConnectorCmd_AmbiguousRequiresLabel(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected ambiguous connector removal to fail")
 	}
-	if !strings.Contains(err.Error(), "multiple connectors match") || !strings.Contains(err.Error(), "platform:api:db:reads") || !strings.Contains(err.Error(), "platform:api:db:writes") {
+	if !strings.Contains(err.Error(), "multiple connectors match") || !strings.Contains(err.Error(), "platform/api~db/reads") || !strings.Contains(err.Error(), "platform/api~db/writes") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -156,7 +156,7 @@ func TestRemoveConnectorCmd_AmbiguousRequiresLabel(t *testing.T) {
 	if loadErr != nil {
 		t.Fatal(loadErr)
 	}
-	if ws.Connectors["platform:api:db:reads"] != nil || ws.Connectors["platform:api:db:writes"] == nil {
+	if ws.Connectors["platform/api~db/reads"] != nil || ws.Connectors["platform/api~db/writes"] == nil {
 		t.Fatalf("unexpected connectors after delete: %+v", ws.Connectors)
 	}
 }

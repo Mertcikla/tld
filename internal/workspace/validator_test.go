@@ -138,7 +138,7 @@ func TestValidate_ConflictMarkers(t *testing.T) {
 	err := buildWorkspace(map[string]*workspace.Element{
 		"api": {Name: "<<< LOCAL", Kind: "service"},
 	}, map[string]*workspace.Connector{
-		"root:api:db:reads": {View: "root", Source: "api", Target: "db", Label: ">>> SERVER"},
+		"root/api~db/reads": {View: "root", Source: "api", Target: "db", Label: ">>> SERVER"},
 	}).Validate()
 	if !containsValidationMessage(err, "unresolved merge conflict") {
 		t.Fatalf("expected conflict marker error, got %v", err)
@@ -150,7 +150,7 @@ func TestValidate_RootPlacementsAndRootViewAreAllowed(t *testing.T) {
 		"api": {Name: "API", Kind: "service", Placements: []workspace.ViewPlacement{{ParentRef: "root"}}},
 		"db":  {Name: "DB", Kind: "database", Placements: []workspace.ViewPlacement{{ParentRef: "root"}}},
 	}, map[string]*workspace.Connector{
-		"root:api:db:reads": {View: "root", Source: "api", Target: "db", Label: "reads"},
+		"root/api~db/reads": {View: "root", Source: "api", Target: "db", Label: "reads"},
 	})
 	if errs := ws.Validate(); len(errs) != 0 {
 		t.Fatalf("expected valid workspace, got %v", errs)

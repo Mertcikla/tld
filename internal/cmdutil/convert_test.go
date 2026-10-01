@@ -63,7 +63,7 @@ func TestConvertExportResponsePreservesRefsAndInfersOwnedViews(t *testing.T) {
 		t.Fatalf("placement should target inferred owner view: %#v", db.Placements[0])
 	}
 
-	connectorRef := "api-service:api-service:database:reads"
+	connectorRef := "api-service/api-service~database/reads"
 	connector := got.Connectors[connectorRef]
 	if connector == nil {
 		t.Fatalf("connector was not imported under its current natural ref: %#v", got.Connectors)

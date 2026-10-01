@@ -38,7 +38,7 @@ func TestInspectElementShowsDerivedChildrenAndRelatedConnectors(t *testing.T) {
 		"Derived children:",
 		"api, db",
 		"In owned view:",
-		"platform:api:db:reads",
+		"platform/api~db/reads",
 		"local_db:",
 		"present",
 	} {
@@ -57,7 +57,7 @@ func TestInspectAmbiguousRefRequiresType(t *testing.T) {
 		t.Fatal(err)
 	}
 	data = append(data, []byte(`
-platform:api:db:reads:
+platform/api~db/reads:
   name: Ambiguous
   kind: service
   placements:
@@ -67,7 +67,7 @@ platform:api:db:reads:
 		t.Fatal(err)
 	}
 
-	stdout, _, err := cmd.RunCmd(t, dir, "inspect", "platform:api:db:reads")
+	stdout, _, err := cmd.RunCmd(t, dir, "inspect", "platform/api~db/reads")
 	if err != nil {
 		t.Fatalf("inspect ambiguous: %v", err)
 	}

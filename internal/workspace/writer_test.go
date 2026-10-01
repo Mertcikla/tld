@@ -289,7 +289,7 @@ func TestSave_WritesElementsAndConnectorsAndRemovesLegacyFiles(t *testing.T) {
 			},
 		},
 		Connectors: map[string]*workspace.Connector{
-			"api:api:db:reads": {View: "api", Source: "api", Target: "db", Label: "reads"},
+			"api/api~db/reads": {View: "api", Source: "api", Target: "db", Label: "reads"},
 		},
 		Meta: &workspace.Meta{
 			Elements: map[string]*workspace.ResourceMetadata{
@@ -299,7 +299,7 @@ func TestSave_WritesElementsAndConnectorsAndRemovesLegacyFiles(t *testing.T) {
 				"api": {ID: 2, UpdatedAt: time.Now()},
 			},
 			Connectors: map[string]*workspace.ResourceMetadata{
-				"api:api:db:reads": {ID: 3, UpdatedAt: time.Now()},
+				"api/api~db/reads": {ID: 3, UpdatedAt: time.Now()},
 			},
 		},
 	}
@@ -322,7 +322,7 @@ func TestSave_WritesElementsAndConnectorsAndRemovesLegacyFiles(t *testing.T) {
 	if lockFile.CurrentViews["api"] == nil || lockFile.CurrentViews["api"].ID != 2 {
 		t.Fatalf("lockfile current view metadata missing: %+v", lockFile.CurrentViews)
 	}
-	if lockFile.CurrentConnectors["api:api:db:reads"] == nil || lockFile.CurrentConnectors["api:api:db:reads"].ID != 3 {
+	if lockFile.CurrentConnectors["api/api~db/reads"] == nil || lockFile.CurrentConnectors["api/api~db/reads"].ID != 3 {
 		t.Fatalf("lockfile current connector metadata missing: %+v", lockFile.CurrentConnectors)
 	}
 	connectorsData, _ := os.ReadFile(filepath.Join(dir, "connectors.yaml"))
@@ -338,6 +338,61 @@ func TestSave_WritesElementsAndConnectorsAndRemovesLegacyFiles(t *testing.T) {
 	for _, legacyFile := range []string{"diagrams.yaml", "objects.yaml", "edges.yaml", "links.yaml"} {
 		if _, err := os.Stat(filepath.Join(dir, legacyFile)); !os.IsNotExist(err) {
 			t.Fatalf("expected %s to be removed, err=%v", legacyFile, err)
+		}
+	}
+}
+
+func TestConnectorKeyCanonicalFormat(t *testing.T) {
+	cases := []struct {
+		spec workspace.Connector
+		want string
+	}{
+		{workspace.Connector{View: "action", Source: "devicedetail", Target: "action"}, "action/devicedetail~action"},
+		{workspace.Connector{View: "system", Source: "web", Target: "api", Label: "reads"}, "system/web~api/reads"},
+	}
+	for _, tc := range cases {
+		if got := workspace.ConnectorKey(&tc.spec); got != tc.want {
+			t.Fatalf("ConnectorKey(%+v) = %q, want %q", tc.spec, got, tc.want)
+		}
+	}
+}
+
+func TestNormalizeConnectorKey(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"system:api:db:reads", "system/api~db/reads"},
+		{"action:devicedetail:action:", "action/devicedetail~action"},
+		{"system:api:db:", "system/api~db"},
+		{"system/api~db/reads", "system/api~db/reads"},
+		{"action/devicedetail~action", "action/devicedetail~action"},
+		{"system/api/db~reads", "system/api~db/reads"},
+		{"system/api/db", "system/api~db"},
+		{"system:api:db:label/with/slash", "system/api~db/label/with/slash"},
+		{"system:api:db:label~with~tilde", "system/api~db/label~with~tilde"},
+	}
+	for _, tc := range cases {
+		if got := workspace.NormalizeConnectorKey(tc.in); got != tc.want {
+			t.Fatalf("NormalizeConnectorKey(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestParseConnectorKey(t *testing.T) {
+	cases := []struct {
+		in                        string
+		view, source, target, lbl string
+		ok                        bool
+	}{
+		{"system/web~api/reads", "system", "web", "api", "reads", true},
+		{"action/devicedetail~action", "action", "devicedetail", "action", "", true},
+		{"system/api~db/a:b/c", "system", "api", "db", "a:b/c", true},
+		{"system/api~db/label~with~tilde", "system", "api", "db", "label~with~tilde", true},
+		{"not-a-key", "", "", "", "", false},
+	}
+	for _, tc := range cases {
+		view, source, target, label, ok := workspace.ParseConnectorKey(tc.in)
+		if ok != tc.ok || view != tc.view || source != tc.source || target != tc.target || label != tc.lbl {
+			t.Fatalf("ParseConnectorKey(%q) = (%q,%q,%q,%q,%v), want (%q,%q,%q,%q,%v)",
+				tc.in, view, source, target, label, ok, tc.view, tc.source, tc.target, tc.lbl, tc.ok)
 		}
 	}
 }

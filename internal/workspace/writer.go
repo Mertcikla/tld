@@ -524,8 +524,119 @@ func mergeElementFields(ref string, existing, incoming *Element) (*Element, erro
 	return &merged, nil
 }
 
+const (
+	// connectorRefSeparator separates view/source and target/label. It cannot
+	// appear in a resource ref (see refPattern), so the ref segments are
+	// unambiguous.
+	connectorRefSeparator = "/"
+	// connectorTargetSeparator separates source from target. Labels are free
+	// text and may contain either separator.
+	connectorTargetSeparator = "~"
+)
+
+func formatConnectorKey(view, source, target, label string) string {
+	key := view + connectorRefSeparator + source + connectorTargetSeparator + target
+	if label != "" {
+		key += connectorRefSeparator + label
+	}
+	return key
+}
+
+// ConnectorKey returns the canonical, human-readable YAML key for a connector:
+// view/source~target when there is no label, or view/source~target/label
+// otherwise.
 func ConnectorKey(spec *Connector) string {
-	return spec.View + ":" + spec.Source + ":" + spec.Target + ":" + spec.Label
+	return formatConnectorKey(spec.View, spec.Source, spec.Target, spec.Label)
+}
+
+// ParseConnectorKey splits a canonical connector key back into its fields. The
+// label may itself contain "/" or "~".
+func ParseConnectorKey(ref string) (view, source, target, label string, ok bool) {
+	targetSep := strings.Index(ref, connectorTargetSeparator)
+	if targetSep < 0 {
+		return "", "", "", "", false
+	}
+	viewSource := strings.Split(ref[:targetSep], connectorRefSeparator)
+	if len(viewSource) != 2 || viewSource[0] == "" || viewSource[1] == "" {
+		return "", "", "", "", false
+	}
+	remainder := ref[targetSep+1:]
+	if labelSep := strings.Index(remainder, connectorRefSeparator); labelSep >= 0 {
+		target = remainder[:labelSep]
+		label = remainder[labelSep+1:]
+	} else {
+		target = remainder
+	}
+	if target == "" {
+		return "", "", "", "", false
+	}
+	return viewSource[0], viewSource[1], target, label, true
+}
+
+// NormalizeConnectorKey upgrades connector keys written in older formats to the
+// canonical "view/source~target[/label]" form:
+//
+//	view:source:target:label   (legacy)
+//	view/source/target[~label] (intermediate)
+//
+// Keys that are already canonical are returned unchanged.
+func NormalizeConnectorKey(ref string) string {
+	if isCanonicalConnectorKey(ref) {
+		return ref
+	}
+	if strings.Contains(ref, ":") {
+		parts := strings.SplitN(ref, ":", 4)
+		if len(parts) >= 3 {
+			label := ""
+			if len(parts) == 4 {
+				label = parts[3]
+			}
+			return formatConnectorKey(parts[0], parts[1], parts[2], label)
+		}
+	}
+	head, label := ref, ""
+	if targetSep := strings.Index(ref, connectorTargetSeparator); targetSep >= 0 {
+		head, label = ref[:targetSep], ref[targetSep+1:]
+	}
+	if parts := strings.Split(head, connectorRefSeparator); len(parts) == 3 {
+		return formatConnectorKey(parts[0], parts[1], parts[2], label)
+	}
+	return ref
+}
+
+// isCanonicalConnectorKey reports whether ref already uses the
+// "view/source~target[/label]" form.
+func isCanonicalConnectorKey(ref string) bool {
+	targetSep := strings.Index(ref, connectorTargetSeparator)
+	if targetSep < 0 {
+		return false
+	}
+	return strings.Count(ref[:targetSep], connectorRefSeparator) == 1
+}
+
+func normalizeConnectorMapKeys(connectors map[string]*Connector) {
+	for ref, connector := range connectors {
+		if connector == nil {
+			continue
+		}
+		normalized := ConnectorKey(connector)
+		if normalized == ref {
+			continue
+		}
+		delete(connectors, ref)
+		connectors[normalized] = connector
+	}
+}
+
+func normalizeResourceMetadataMapKeys(metadata map[string]*ResourceMetadata) {
+	for ref, resourceMeta := range metadata {
+		normalized := NormalizeConnectorKey(ref)
+		if normalized == ref {
+			continue
+		}
+		delete(metadata, ref)
+		metadata[normalized] = resourceMeta
+	}
 }
 
 func writeYAMLNode(path string, root *yaml.Node) error {
