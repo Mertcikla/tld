@@ -8,7 +8,6 @@ import (
 	configcmd "github.com/mertcikla/tld/v2/cmd/config"
 	"github.com/mertcikla/tld/v2/cmd/connect"
 	doctorcmd "github.com/mertcikla/tld/v2/cmd/doctor"
-	"github.com/mertcikla/tld/v2/cmd/export"
 	indexcmd "github.com/mertcikla/tld/v2/cmd/index"
 	"github.com/mertcikla/tld/v2/cmd/initialize"
 	inspectcmd "github.com/mertcikla/tld/v2/cmd/inspect"
@@ -149,9 +148,6 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 	loginCmd := login.NewLoginCmd(&wdir)
 	loginCmd.GroupID = syncGroup.ID
 
-	exportCmd := export.NewExportCmd(&wdir)
-	exportCmd.GroupID = syncGroup.ID
-
 	pullCmd := pull.NewPullCmd(&wdir)
 	pullCmd.GroupID = syncGroup.ID
 
@@ -204,7 +200,6 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 		initCmd,
 		validateCmd,
 		loginCmd,
-		exportCmd,
 		pullCmd,
 		viewsCmd,
 		renderCmd,
