@@ -363,13 +363,15 @@ func (d *populateDeps) search(ctx context.Context, viewID int64, query string, l
 		return []populateElementResult{}, nil
 	}
 
-	repoName := ""
+	repoName, repoRoot := "", ""
 	if repo, repoErr := d.idx.Repository(ctx, repositoryID); repoErr == nil && repo != nil {
 		repoName = filepath.Base(repo.Root)
+		repoRoot = repo.Root
 	}
 	if _, err := materialize.ApplyScoped(ctx, d.ws, d.idx, scoped, materialize.ScopedOptions{
 		RepositoryID:   repositoryID,
 		RepositoryName: repoName,
+		RepositoryRoot: repoRoot,
 		SnapshotID:     snapshotID,
 		ViewID:         viewID,
 	}); err != nil {

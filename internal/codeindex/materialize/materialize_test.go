@@ -47,6 +47,24 @@ func fixture() project.Result {
 	}
 }
 
+func TestElementInputRecordsLineAnchorAndRoot(t *testing.T) {
+	el := project.Element{
+		Ref:      "fact|a.go|FACT_KIND_FUNCTION|A",
+		Name:     "A",
+		Kind:     pb.FactKind_FACT_KIND_FUNCTION,
+		FilePath: "a.go",
+		Language: "go",
+		Anchor:   &pb.SourceAnchor{Path: "a.go", StartLine: 4, EndLine: 5, SourceHash: "h"},
+	}
+	got := elementInput(el, Options{RepositoryID: "repo", RepositoryName: "demo", RepositoryRoot: "/repos/demo"}, true)
+	if got.FilePath == nil || *got.FilePath != "a.go#L5" {
+		t.Fatalf("file_path = %v, want a.go#L5 (1-based line)", got.FilePath)
+	}
+	if got.Repo == nil || *got.Repo != "/repos/demo" {
+		t.Fatalf("repo = %v, want /repos/demo", got.Repo)
+	}
+}
+
 func TestApplyIdempotent(t *testing.T) {
 	ctx := context.Background()
 	ws, idx := openStores(t)

@@ -83,6 +83,7 @@ type engine struct {
 	cfg      ci.Config
 	opts     options
 	repoName string
+	repoRoot string
 	out      io.Writer
 }
 
@@ -119,6 +120,7 @@ func run(cmd *cobra.Command, opts options) error {
 		cfg:      configbridge.FromGlobal(global),
 		opts:     opts,
 		repoName: filepath.Base(root),
+		repoRoot: root,
 		out:      cmd.OutOrStdout(),
 	}
 	if opts.embed {
@@ -249,6 +251,7 @@ func (e *engine) materializeSnapshot(ctx context.Context, snap *pb.Snapshot, g *
 	return materialize.Apply(ctx, e.ws, e.store, proj, decisions, materialize.Options{
 		RepositoryID:   snap.RepositoryId,
 		RepositoryName: e.repoName,
+		RepositoryRoot: e.repoRoot,
 		SnapshotID:     snap.Id,
 	})
 }

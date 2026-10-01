@@ -62,6 +62,15 @@ interface Props {
   hasBackdrop?: boolean
 }
 
+// Indexed repositories record their local root directory on the element's repo
+// field; GitHub-linked elements record an owner/repo slug instead.
+function isLocalRepoPath(repo: string | null | undefined): boolean {
+  const value = (repo ?? '').trim()
+  if (!value) return false
+  if (value.startsWith('/') || value.startsWith('\\\\')) return true
+  return /^[A-Za-z]:[\\/]/.test(value)
+}
+
 export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop = true }: Props) {
   const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
@@ -76,12 +85,14 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
   const filePath = element?.file_path || ''
   const { basePath, anchor } = useMemo(() => parseSourceLink(filePath), [filePath])
-  const repoSlug = element?.repo ? parseRepoSlug(element.repo) : ''
+  const localRepo = isLocalRepoPath(element?.repo)
+  const repoSlug = !localRepo && element?.repo ? parseRepoSlug(element.repo) : ''
   const anchorStartLine = anchor.kind === 'line' ? anchor.startLine : null
   const editorStartLine = resolvedStartLine ?? anchorStartLine
 
   useEffect(() => {
-    if (!isOpen || !element || !repoSlug || !basePath) return
+    if (!isOpen || !element || !basePath) return
+    if (!localRepo && !repoSlug) return
 
     let cancelled = false
     setLoading(true)
@@ -90,6 +101,42 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
     setResolvedStartLine(null)
     setResolvedEndLine(null)
     setIsPrivateRepo(false)
+
+    const resolveAnchors = async (text: string) => {
+      const effectiveLanguage = element.language || detectLanguage(basePath)
+      if (anchor.kind === 'symbol' && effectiveLanguage) {
+        try {
+          const parser = await getParser(effectiveLanguage as SupportedLanguage)
+          const tree = parser.parse(text)
+          const found = findSymbolByName(tree, effectiveLanguage as SupportedLanguage, anchor.symbolName, anchor.nodeType)
+          if (!cancelled && found) {
+            setResolvedStartLine(found.startLine)
+            setResolvedEndLine(found.endLine)
+          }
+        } catch {
+          // intentionally empty
+        }
+      } else if (anchor.kind === 'line' && !cancelled) {
+        setResolvedStartLine(anchor.startLine)
+        setResolvedEndLine(anchor.endLine)
+      }
+    }
+
+    if (localRepo) {
+      api.editor.source({ repo: element.repo, file_path: basePath })
+        .then(async ({ content }) => {
+          if (cancelled) return
+          setCode(content)
+          await resolveAnchors(content)
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+      return () => { cancelled = true }
+    }
 
     const branch = element.branch || 'main'
     const rawUrl = `https://raw.githubusercontent.com/${repoSlug}/refs/heads/${branch}/${basePath}`
@@ -120,20 +167,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
       if (cached) {
         if (!cancelled) setCode(cached)
         if (!cancelled) setLoading(false)
-        const effectiveLanguage = element.language || detectLanguage(basePath)
-        if (anchor.kind === 'symbol' && effectiveLanguage) {
-          getParser(effectiveLanguage as SupportedLanguage).then(async (parser) => {
-            const tree = parser.parse(cached)
-            const found = findSymbolByName(tree, effectiveLanguage as SupportedLanguage, anchor.symbolName, anchor.nodeType)
-            if (!cancelled && found) {
-              setResolvedStartLine(found.startLine)
-              setResolvedEndLine(found.endLine)
-            }
-          }).catch(() => {})
-        } else if (anchor.kind === 'line' && !cancelled) {
-          setResolvedStartLine(anchor.startLine)
-          setResolvedEndLine(anchor.endLine)
-        }
+        await resolveAnchors(cached)
         return
       }
 
@@ -144,26 +178,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
         if (cancelled) return
         githubCache.setContent(rawUrl, text)
         setCode(text)
-
-        const effectiveLanguage = element.language || detectLanguage(basePath)
-        if (anchor.kind === 'symbol' && effectiveLanguage) {
-          try {
-            const parser = await getParser(effectiveLanguage as SupportedLanguage)
-            const tree = parser.parse(text)
-            const found = findSymbolByName(tree, effectiveLanguage as SupportedLanguage, anchor.symbolName, anchor.nodeType)
-            if (!cancelled && found) {
-              setResolvedStartLine(found.startLine)
-              setResolvedEndLine(found.endLine)
-            }
-          } catch {
-            // intentionally empty
-          }
-        } else if (anchor.kind === 'line') {
-          if (!cancelled) {
-            setResolvedStartLine(anchor.startLine)
-            setResolvedEndLine(anchor.endLine)
-          }
-        }
+        await resolveAnchors(text)
       } catch (err: unknown) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err))
       } finally {
@@ -173,7 +188,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
     checkAndFetch()
     return () => { cancelled = true }
-  }, [isOpen, element, repoSlug, basePath, anchor])
+  }, [isOpen, element, repoSlug, basePath, anchor, localRepo])
 
   useEffect(() => {
     if (!code || !resolvedStartLine || !editorRef.current?.view) return
@@ -192,7 +207,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   }
   }, [code, resolvedStartLine, resolvedEndLine])
 
-  const githubUrl = element?.repo && basePath
+  const githubUrl = !localRepo && element?.repo && basePath
     ? `https://github.com/${repoSlug}/blob/${element.branch || 'main'}/${basePath}`
     + (editorStartLine ? `#L${editorStartLine}-L${resolvedEndLine ?? editorStartLine}` : '')
     : null

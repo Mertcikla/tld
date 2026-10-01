@@ -1,11 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,6 +18,8 @@ import (
 
 	"github.com/mertcikla/tld/v2/internal/store"
 )
+
+const maxSourcePreviewBytes = 1 << 20
 
 type openEditorRequest struct {
 	Editor   string `json:"editor"`
@@ -39,6 +43,50 @@ func registerEditorHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	})
+
+	mux.HandleFunc("POST /api/editor/source", func(w http.ResponseWriter, r *http.Request) {
+		var req openEditorRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
+			return
+		}
+		if strings.TrimSpace(req.FilePath) == "" {
+			writeJSONError(w, http.StatusBadRequest, "file_path is required")
+			return
+		}
+		target, err := resolveEditorPath(r.Context(), fetcher, req.Repo, req.FilePath)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		content, err := readSourceFile(target, maxSourcePreviewBytes)
+		if err != nil {
+			writeJSONError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"content": content, "path": target})
+	})
+}
+
+// readSourceFile returns a text file's contents for in-app preview, rejecting
+// binaries and files larger than maxBytes.
+func readSourceFile(path string, maxBytes int64) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(data)) > maxBytes {
+		return "", fmt.Errorf("file is too large to preview")
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return "", fmt.Errorf("binary file cannot be previewed")
+	}
+	return string(data), nil
 }
 
 func openInEditor(ctx context.Context, store repositoryFetcher, req openEditorRequest) error {

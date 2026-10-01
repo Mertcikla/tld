@@ -1779,5 +1779,20 @@ export const api = {
         throw await responseError(res, 'Failed to open editor')
       }
     },
+    source: async (input: { repo?: string | null; file_path: string }): Promise<{ content: string; path: string }> => {
+      const res = await fetch(apiUrl('/editor/source'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repo: input.repo ?? '',
+          file_path: input.file_path,
+        }),
+      })
+      if (!res.ok) {
+        throw await responseError(res, 'Failed to load source')
+      }
+      const json = await res.json() as { content?: string; path?: string }
+      return { content: json.content ?? '', path: json.path ?? '' }
+    },
   },
 }

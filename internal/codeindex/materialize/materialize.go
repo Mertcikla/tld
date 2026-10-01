@@ -28,6 +28,10 @@ type IndexStore interface {
 type Options struct {
 	RepositoryID   string
 	RepositoryName string
+	// RepositoryRoot is the absolute root directory of the indexed repository.
+	// It is recorded on each element's repo field so local source viewing and
+	// "open in editor" can resolve the file.
+	RepositoryRoot string
 	SnapshotID     string
 	ViewName       string
 }
@@ -170,6 +174,7 @@ func Apply(ctx context.Context, ws core.Store, idx IndexStore, proj project.Resu
 type ScopedOptions struct {
 	RepositoryID   string
 	RepositoryName string
+	RepositoryRoot string
 	SnapshotID     string
 	ViewID         int64
 }
@@ -183,7 +188,7 @@ func ApplyScoped(ctx context.Context, ws core.Store, idx IndexStore, proj projec
 		return Result{}, fmt.Errorf("scoped materialize requires a view")
 	}
 	res := Result{ViewID: opts.ViewID}
-	base := Options{RepositoryID: opts.RepositoryID, RepositoryName: opts.RepositoryName, SnapshotID: opts.SnapshotID}
+	base := Options{RepositoryID: opts.RepositoryID, RepositoryName: opts.RepositoryName, RepositoryRoot: opts.RepositoryRoot, SnapshotID: opts.SnapshotID}
 
 	existing, err := idx.MappingsByRepository(ctx, opts.RepositoryID)
 	if err != nil {
@@ -285,7 +290,10 @@ func elementInput(el project.Element, opts Options, visible bool) core.LibraryEl
 		BypassNoiseGate:    visible,
 		BypassNoiseGateSet: true,
 	}
-	repo := opts.RepositoryName
+	repo := opts.RepositoryRoot
+	if repo == "" {
+		repo = opts.RepositoryName
+	}
 	if repo == "" {
 		repo = el.Repository
 	}
@@ -294,6 +302,10 @@ func elementInput(el project.Element, opts Options, visible bool) core.LibraryEl
 	}
 	if el.FilePath != "" {
 		path := el.FilePath
+		// Anchors carry 0-based source lines; source links use 1-based lines.
+		if el.Anchor != nil && el.Anchor.Path != "" {
+			path = fmt.Sprintf("%s#L%d", el.FilePath, el.Anchor.StartLine+1)
+		}
 		input.FilePath = &path
 	}
 	if el.Language != "" {

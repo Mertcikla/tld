@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -99,4 +100,32 @@ func TestResolveEditorPath(t *testing.T) {
 			t.Fatal("expected error for escaping path, got nil")
 		}
 	})
+}
+
+func TestReadSourceFile(t *testing.T) {
+	dir := t.TempDir()
+	text := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(text, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readSourceFile(text, maxSourcePreviewBytes)
+	if err != nil || got != "package main\n" {
+		t.Fatalf("readSourceFile = %q, %v", got, err)
+	}
+
+	binary := filepath.Join(dir, "blob.bin")
+	if err := os.WriteFile(binary, []byte{0x00, 0x01, 0x02}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSourceFile(binary, maxSourcePreviewBytes); err == nil {
+		t.Fatal("expected binary file to be rejected")
+	}
+
+	large := filepath.Join(dir, "large.txt")
+	if err := os.WriteFile(large, []byte("abcd"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readSourceFile(large, 2); err == nil {
+		t.Fatal("expected oversized file to be rejected")
+	}
 }
