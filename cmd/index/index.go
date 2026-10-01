@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/codeindex/visibility"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -48,10 +50,13 @@ func NewIndexCmd() *cobra.Command {
 		Use:   "index [path]",
 		Short: "Index a repository into the codeindex graph",
 		Long: `Index extracts code facts, edges, and chunks from a repository using the
-in-tree codeindex engine and publishes an immutable snapshot. It only builds the
-code graph; pass --materialize to additionally project candidate elements and
-connectors into a workspace view. With --watch the repository is re-indexed
-incrementally as files change.`,
+in-tree codeindex engine and publishes an immutable snapshot.
+
+Embeddings are computed by default and require a running embedding server
+(start one with 'make embed-server'); pass --embed=false to publish a graph
+without vectors. Indexing only builds the code graph: pass --materialize to
+additionally project candidate elements and connectors into a workspace view.
+With --watch the repository is re-indexed incrementally as files change.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.path = "."
@@ -63,7 +68,7 @@ incrementally as files change.`,
 	}
 	c.Flags().BoolVar(&opts.watch, "watch", false, "re-index incrementally as files change")
 	c.Flags().BoolVar(&opts.jsonOut, "json", false, "emit machine-readable JSON")
-	c.Flags().BoolVar(&opts.embed, "embed", false, "compute embeddings for the snapshot when an endpoint is configured")
+	c.Flags().BoolVar(&opts.embed, "embed", true, "compute embeddings for the snapshot (requires a working embedding server)")
 	c.Flags().BoolVar(&opts.materialize, "materialize", false, "also materialize candidates into a workspace view (opt-in)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
 	c.Flags().DurationVar(&opts.pollInterval, "poll-interval", 2*time.Second, "file change polling interval")
@@ -78,6 +83,7 @@ type engine struct {
 	cfg      ci.Config
 	opts     options
 	repoName string
+	out      io.Writer
 }
 
 func run(cmd *cobra.Command, opts options) error {
@@ -113,6 +119,12 @@ func run(cmd *cobra.Command, opts options) error {
 		cfg:      configbridge.FromGlobal(global),
 		opts:     opts,
 		repoName: filepath.Base(root),
+		out:      cmd.OutOrStdout(),
+	}
+	if opts.embed {
+		if err := (embed.Client{Config: eng.cfg}).Health(ctx); err != nil {
+			return err
+		}
 	}
 	if opts.watch {
 		return eng.watch(ctx, cmd, root)
@@ -124,10 +136,55 @@ func run(cmd *cobra.Command, opts options) error {
 	return eng.print(cmd, snap, report, mres)
 }
 
+var indexStageDisplay = map[string]string{
+	"discover":      "Discover",
+	"tree-sitter":   "Parse sources",
+	"scip":          "Index symbols",
+	"relationships": "Relationships",
+	"infra":         "Infrastructure",
+	"verify":        "Verify",
+}
+
+var indexStageOrder = []string{
+	"Discover", "Parse sources", "Index symbols", "Relationships", "Infrastructure", "Verify",
+	"Publish snapshot", "Embeddings", "Materialize view",
+}
+
+const (
+	stagePublish     = "Publish snapshot"
+	stageEmbeddings  = "Embeddings"
+	stageMaterialize = "Materialize view"
+)
+
+func displayStage(stage string) string {
+	if name, ok := indexStageDisplay[stage]; ok {
+		return name
+	}
+	return stage
+}
+
 // buildAndPublish indexes root and publishes a snapshot. base, when non-nil,
 // enables incremental reuse of unchanged files. reused is true when nothing
 // changed and no new snapshot was written.
 func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer.IncrementalBase) (*pb.Snapshot, parity.Report, *materialize.Result, bool, error) {
+	out := e.out
+	if out == nil || e.opts.jsonOut {
+		out = io.Discard
+	}
+	tracker := term.NewStageTracker(out, indexStageOrder, term.StageTrackerOptions{})
+	defer tracker.Finish()
+
+	lastStage := indexStageOrder[0]
+	progress := func(update indexer.Progress) {
+		stage := displayStage(update.Stage)
+		if update.Total > 0 || update.Current > 0 || update.Detail != "" {
+			tracker.Report(stage, update.Current, update.Total, update.Detail)
+		} else {
+			tracker.Begin(stage)
+		}
+		lastStage = stage
+	}
+
 	pipeline := indexer.Pipeline{Config: e.cfg}
 	req := &pb.IndexRequest{Directory: root, Exclude: e.opts.exclude, Incremental: base != nil}
 
@@ -138,29 +195,42 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 		err   error
 	)
 	if base != nil {
-		snap, g, reuse, err = pipeline.BuildIncremental(ctx, req, nil, base)
+		snap, g, reuse, err = pipeline.BuildIncremental(ctx, req, progress, base)
 	} else {
-		snap, g, err = pipeline.Build(ctx, req, nil)
+		snap, g, err = pipeline.Build(ctx, req, progress)
 	}
 	if err != nil {
+		tracker.Fail(lastStage, err)
 		return nil, parity.Report{}, nil, false, err
 	}
 	if reuse {
 		return snap, parity.Report{}, nil, true, nil
 	}
+
+	tracker.Begin(stagePublish)
 	if err := e.store.Publish(ctx, root, snap, g); err != nil {
+		tracker.Fail(stagePublish, err)
 		return nil, parity.Report{}, nil, false, err
 	}
+
 	if e.opts.embed && e.cfg.Embedding.Endpoint != "" {
-		client := embed.Client{Config: e.cfg, Store: e.store}
+		tracker.Begin(stageEmbeddings)
+		client := embed.Client{Config: e.cfg, Store: e.store, Progress: func(current, total int, detail string) {
+			tracker.Report(stageEmbeddings, int64(current), int64(total), detail)
+		}}
 		if err := client.Embed(ctx, snap); err != nil {
-			return nil, parity.Report{}, nil, false, fmt.Errorf("embed: %w", err)
+			wrapped := fmt.Errorf("embed: %w", err)
+			tracker.Fail(stageEmbeddings, wrapped)
+			return nil, parity.Report{}, nil, false, wrapped
 		}
 	}
+
 	var mres *materialize.Result
 	if e.opts.materialize && e.ws != nil {
+		tracker.Begin(stageMaterialize)
 		res, err := e.materializeSnapshot(ctx, snap, g, changedFiles(base, snap))
 		if err != nil {
+			tracker.Fail(stageMaterialize, err)
 			return nil, parity.Report{}, nil, false, err
 		}
 		mres = &res

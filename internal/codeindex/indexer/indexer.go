@@ -18,6 +18,25 @@ import (
 
 type Pipeline struct{ Config config.Config }
 
+// Progress reports indexing progress. Stage names the active phase; Current and
+// Total are per-stage counters (zero when unknown); Detail is an optional item
+// such as the file or project currently being processed.
+type Progress struct {
+	Stage   string
+	Current int64
+	Total   int64
+	Detail  string
+}
+
+// ProgressFunc receives progress updates. It must be safe to call frequently.
+type ProgressFunc func(Progress)
+
+func emitProgress(progress ProgressFunc, p Progress) {
+	if progress != nil {
+		progress(p)
+	}
+}
+
 // IncrementalBase is a previously published snapshot made available to an
 // incremental build. Reuse is file-granular: facts, chunks, and edges for
 // sources whose content hash is unchanged are carried forward, and only changed
@@ -28,7 +47,7 @@ type IncrementalBase struct {
 	Sources  map[string]string
 }
 
-func (p Pipeline) Build(ctx context.Context, req *pb.IndexRequest, progress func(string)) (*pb.Snapshot, *graph.Graph, error) {
+func (p Pipeline) Build(ctx context.Context, req *pb.IndexRequest, progress ProgressFunc) (*pb.Snapshot, *graph.Graph, error) {
 	snap, g, _, err := p.build(ctx, req, progress, nil)
 	return snap, g, err
 }
@@ -36,11 +55,11 @@ func (p Pipeline) Build(ctx context.Context, req *pb.IndexRequest, progress func
 // BuildIncremental builds a snapshot reusing base where possible. reused is true
 // when nothing changed and the base snapshot was returned unchanged, in which
 // case the caller should not republish.
-func (p Pipeline) BuildIncremental(ctx context.Context, req *pb.IndexRequest, progress func(string), base *IncrementalBase) (*pb.Snapshot, *graph.Graph, bool, error) {
+func (p Pipeline) BuildIncremental(ctx context.Context, req *pb.IndexRequest, progress ProgressFunc, base *IncrementalBase) (*pb.Snapshot, *graph.Graph, bool, error) {
 	return p.build(ctx, req, progress, base)
 }
 
-func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress func(string), base *IncrementalBase) (*pb.Snapshot, *graph.Graph, bool, error) {
+func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress ProgressFunc, base *IncrementalBase) (*pb.Snapshot, *graph.Graph, bool, error) {
 	root, err := filepath.Abs(req.Directory)
 	if err != nil {
 		return nil, nil, false, err
@@ -49,9 +68,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress func
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if progress != nil {
-		progress("discover")
-	}
+	emitProgress(progress, Progress{Stage: "discover"})
 	projects, sources, err := Discover(ctx, root, req.ProjectRoots, req.Exclude)
 	if err != nil {
 		return nil, nil, false, err
@@ -128,27 +145,28 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress func
 			snap.GitBranch = branch
 		}
 	}
-	if progress != nil {
-		progress("tree-sitter")
-	}
-	var calls []callSite
+	var syntaxSources []*graph.Source
 	for _, f := range snap.Sources {
 		if kept[f.Path] {
 			continue
 		}
 		src := sources[f.Path]
-		if !isSyntaxFamily(languageFamily(src.Language)) {
+		if src == nil || !isSyntaxFamily(languageFamily(src.Language)) {
 			continue
 		}
+		syntaxSources = append(syntaxSources, src)
+	}
+	emitProgress(progress, Progress{Stage: "tree-sitter", Total: int64(len(syntaxSources))})
+	var calls []callSite
+	for i, src := range syntaxSources {
+		emitProgress(progress, Progress{Stage: "tree-sitter", Current: int64(i), Total: int64(len(syntaxSources)), Detail: src.Path})
 		sites, err := treeFacts(ctx, g, src)
 		if err != nil {
 			return nil, nil, false, err
 		}
 		calls = append(calls, sites...)
 	}
-	if progress != nil {
-		progress("scip")
-	}
+	emitProgress(progress, Progress{Stage: "tree-sitter", Current: int64(len(syntaxSources)), Total: int64(len(syntaxSources))})
 	tmp, err := os.MkdirTemp("", "codeindex-scip-")
 	if err != nil {
 		return nil, nil, false, err
@@ -164,10 +182,21 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress func
 			table.definitionSites[fact.SymbolKey] = fact.Anchor
 		}
 	}
+	totalProjects := 0
+	for _, pr := range projects {
+		if base != nil && !projectHasChange(pr, sources, base.Sources, kept) {
+			continue
+		}
+		totalProjects++
+	}
+	emitProgress(progress, Progress{Stage: "scip", Total: int64(totalProjects)})
+	projectIndex := 0
 	for i, pr := range projects {
 		if base != nil && !projectHasChange(pr, sources, base.Sources, kept) {
 			continue
 		}
+		emitProgress(progress, Progress{Stage: "scip", Current: int64(projectIndex), Total: int64(totalProjects), Detail: pr.Root})
+		projectIndex++
 		family := languageFamily(pr.Language)
 		scipBacked := !isSyntaxFamily(family)
 		projectDir := filepath.Join(root, filepath.FromSlash(pr.Root))
@@ -233,14 +262,10 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress func
 			_ = os.Remove(artifact)
 		}
 	}
-	if progress != nil {
-		progress("relationships")
-	}
+	emitProgress(progress, Progress{Stage: "relationships"})
 	table.apply(g)
 	deriveCalls(g, calls, table)
-	if progress != nil {
-		progress("infra")
-	}
+	emitProgress(progress, Progress{Stage: "infra"})
 	if e := addInfraFacts(ctx, g, root, base, carried); e != nil {
 		return nil, nil, false, e
 	}
@@ -266,9 +291,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress func
 			g.AdoptEdgeFact(edge, from, to, targetKey)
 		}
 	}
-	if progress != nil {
-		progress("verify")
-	}
+	emitProgress(progress, Progress{Stage: "verify"})
 	for _, f := range snap.Sources {
 		b, e := os.ReadFile(filepath.Join(root, filepath.FromSlash(f.Path)))
 		if e != nil || graph.Hash(b) != f.Hash {

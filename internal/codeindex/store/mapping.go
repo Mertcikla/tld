@@ -73,6 +73,22 @@ func (s *Store) MappingByLogicalKey(ctx context.Context, logicalKey string) (Res
 	return m, true, nil
 }
 
+// MappingByResource finds the mapping for a workspace resource of a given kind.
+// It is how a view is resolved back to the repository whose graph populated it.
+func (s *Store) MappingByResource(ctx context.Context, kind MappingKind, resourceID int64) (ResourceMapping, bool, error) {
+	var m ResourceMapping
+	err := s.bun.NewRaw(`SELECT logical_key, resource_type, resource_id, repository_id, snapshot_id
+		FROM codeindex_elements WHERE resource_type = ? AND resource_id = ?`, string(kind), resourceID).
+		Scan(ctx, &m.LogicalKey, &m.Kind, &m.ResourceID, &m.RepositoryID, &m.SnapshotID)
+	if err == sql.ErrNoRows {
+		return ResourceMapping{}, false, nil
+	}
+	if err != nil {
+		return ResourceMapping{}, false, err
+	}
+	return m, true, nil
+}
+
 // MappingsBySnapshot lists mappings recorded for a snapshot.
 func (s *Store) MappingsBySnapshot(ctx context.Context, snapshotID string) ([]ResourceMapping, error) {
 	rows, err := s.bun.QueryContext(ctx, `SELECT logical_key, resource_type, resource_id, repository_id, snapshot_id

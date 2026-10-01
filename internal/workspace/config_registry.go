@@ -276,7 +276,7 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "serve.data_dir", Env: []string{"TLD_DATA_DIR"}, Description: "Directory for local database and logs."},
 	{Key: "serve.public_url", Env: []string{"TLD_PUBLIC_URL"}, Description: "Public root URL for reverse-proxied self-hosted deployments."},
 	{Key: "serve.allowed_origins", Env: []string{"TLD_ALLOWED_ORIGINS"}, Description: "Additional comma-separated HTTP(S) origins allowed by local server CORS."},
-	{Key: "index.embedding.endpoint", Env: []string{"TLD_INDEX_EMBEDDING_ENDPOINT"}, Description: "OpenAI-compatible embeddings endpoint used by the codeindex engine (empty disables embeddings)."},
+	{Key: "index.embedding.endpoint", Env: []string{"TLD_INDEX_EMBEDDING_ENDPOINT"}, Description: "OpenAI-compatible embeddings endpoint used by the codeindex engine. Defaults to the local llama-server started by 'make embed-server'; set empty to disable embeddings."},
 	{Key: "index.embedding.model", Env: []string{"TLD_INDEX_EMBEDDING_MODEL"}, Description: "Embedding model name for the codeindex engine."},
 	{Key: "index.embedding.api_key", Env: []string{"TLD_INDEX_EMBEDDING_API_KEY"}, Description: "Bearer token for the codeindex embeddings endpoint.", Secret: true},
 	{Key: "index.embedding.task", Env: []string{"TLD_INDEX_EMBEDDING_TASK"}, Description: "Jina code-embedding task used for indexing: nl2code, code2code, code2nl, code2completion, or qa."},

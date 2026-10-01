@@ -166,6 +166,90 @@ func Apply(ctx context.Context, ws core.Store, idx IndexStore, proj project.Resu
 	return res, nil
 }
 
+// ScopedOptions configures a scoped apply into an existing view.
+type ScopedOptions struct {
+	RepositoryID   string
+	RepositoryName string
+	SnapshotID     string
+	ViewID         int64
+}
+
+// ApplyScoped upserts a candidate subset into an existing view without pruning
+// or adding placements. It backs populate: the matched facts are projected into
+// workspace resources so the caller can place them, while resources outside the
+// candidate set are left untouched.
+func ApplyScoped(ctx context.Context, ws core.Store, idx IndexStore, proj project.Result, opts ScopedOptions) (Result, error) {
+	if opts.ViewID == 0 {
+		return Result{}, fmt.Errorf("scoped materialize requires a view")
+	}
+	res := Result{ViewID: opts.ViewID}
+	base := Options{RepositoryID: opts.RepositoryID, RepositoryName: opts.RepositoryName, SnapshotID: opts.SnapshotID}
+
+	existing, err := idx.MappingsByRepository(ctx, opts.RepositoryID)
+	if err != nil {
+		return res, err
+	}
+	byKey := make(map[string]cstore.ResourceMapping, len(existing))
+	for _, m := range existing {
+		byKey[m.LogicalKey] = m
+	}
+
+	elemIDByRef := map[string]int64{}
+	var pending []cstore.ResourceMapping
+	for _, el := range proj.Elements {
+		input := elementInput(el, base, true)
+		var id int64
+		if m, ok := byKey[el.Ref]; ok && m.Kind == cstore.MappingElement {
+			if updated, err := ws.UpdateElement(ctx, m.ResourceID, input); err == nil {
+				id = updated.ID
+			}
+		}
+		if id == 0 {
+			created, err := ws.CreateElement(ctx, input)
+			if err != nil {
+				return res, fmt.Errorf("create element %q: %w", el.Ref, err)
+			}
+			id = created.ID
+		}
+		// Track the new resource in byKey so a repeated ref within this batch
+		// updates it instead of creating a duplicate element.
+		byKey[el.Ref] = cstore.ResourceMapping{LogicalKey: el.Ref, Kind: cstore.MappingElement, ResourceID: id, RepositoryID: opts.RepositoryID, SnapshotID: opts.SnapshotID}
+		elemIDByRef[el.Ref] = id
+		pending = append(pending, byKey[el.Ref])
+		res.Elements++
+	}
+
+	for _, c := range proj.Connectors {
+		fromID := elemIDByRef[c.FromRef]
+		toID := elemIDByRef[c.ToRef]
+		if fromID == 0 || toID == 0 {
+			continue
+		}
+		input := connectorInput(opts.ViewID, fromID, toID, c)
+		var id int64
+		if m, ok := byKey[c.Ref]; ok && m.Kind == cstore.MappingConnector {
+			if updated, err := ws.UpdateConnector(ctx, m.ResourceID, input); err == nil {
+				id = updated.ID
+			}
+		}
+		if id == 0 {
+			created, err := ws.CreateConnector(ctx, input)
+			if err != nil {
+				return res, fmt.Errorf("create connector %q: %w", c.Ref, err)
+			}
+			id = created.ID
+		}
+		byKey[c.Ref] = cstore.ResourceMapping{LogicalKey: c.Ref, Kind: cstore.MappingConnector, ResourceID: id, RepositoryID: opts.RepositoryID, SnapshotID: opts.SnapshotID}
+		pending = append(pending, byKey[c.Ref])
+		res.Connectors++
+	}
+
+	if err := idx.SaveMappings(ctx, pending); err != nil {
+		return res, err
+	}
+	return res, nil
+}
+
 func ensureView(ctx context.Context, ws core.Store, idx IndexStore, opts Options) (int64, bool, error) {
 	viewKey := "view|" + opts.RepositoryID
 	if m, ok, err := idx.MappingByLogicalKey(ctx, viewKey); err != nil {

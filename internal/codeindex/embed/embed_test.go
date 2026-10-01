@@ -98,3 +98,35 @@ func TestEndpointAndValidation(t *testing.T) {
 		t.Fatal("invalid dimensions accepted")
 	}
 }
+
+func TestHealthRequiresReachableServer(t *testing.T) {
+	if err := (Client{Config: config.Default()}).Health(context.Background()); err == nil {
+		t.Fatal("health should fail when embeddings are unconfigured")
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Input []string `json:"input"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		data := make([]map[string]any, len(req.Input))
+		for i := range data {
+			data[i] = map[string]any{"index": i, "embedding": []float32{1, 0}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Embedding.Endpoint = server.URL + "/v1"
+	cfg.Embedding.Model = "test"
+	cfg.Embedding.Dimensions = 2
+	if err := (Client{Config: cfg}).Health(context.Background()); err != nil {
+		t.Fatalf("health: %v", err)
+	}
+
+	cfg.Embedding.Dimensions = 3
+	if err := (Client{Config: cfg}).Health(context.Background()); err == nil {
+		t.Fatal("health should reject a dimension mismatch")
+	}
+}

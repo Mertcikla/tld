@@ -215,8 +215,11 @@ func DefaultConfig() *Config {
 		},
 		Index: IndexConfig{
 			Embedding: IndexEmbeddingConfig{
-				Task:      "nl2code",
-				BatchSize: 32,
+				Endpoint:   "http://127.0.0.1:8081/v1",
+				Model:      "jina-code-embeddings-0.5b",
+				Task:       "nl2code",
+				Dimensions: 896,
+				BatchSize:  32,
 			},
 			Tools: IndexToolsConfig{
 				SCIPGo:         "scip-go",

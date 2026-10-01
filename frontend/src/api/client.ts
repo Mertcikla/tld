@@ -1238,16 +1238,19 @@ export const api = {
           const json = await res.json() as { query: string; enriched_query?: string }
           return { query: json.query, enriched_query: json.enriched_query ?? json.query }
         },
-        search: async (id: number, q: string, limit: number): Promise<Array<LibraryElement & { similarity_score: number; match_kind?: string; match_reason?: string }>> => {
+        search: async (id: number, q: string, limit: number): Promise<Array<LibraryElement & { similarity_score: number; match_kind?: string; match_reason?: string; related_to?: string; via_kind?: string; placed?: boolean }>> => {
           const params = new URLSearchParams({ q, limit: String(limit) })
           const res = await fetch(apiUrl(`/views/${id}/populate?${params}`))
-          if (!res.ok) throw new Error('Failed to run similarity search')
-          const json = await res.json() as { results: Array<Record<string, unknown> & { similarity_score: number; match_kind?: string; match_reason?: string }> }
+          if (!res.ok) throw await responseError(res, 'Failed to run similarity search')
+          const json = await res.json() as { results: Array<Record<string, unknown> & { similarity_score: number; match_kind?: string; match_reason?: string; related_to?: string; via_kind?: string; placed?: boolean }> }
           return (json.results ?? []).map(r => ({
             ...protoElementToLibrary(r),
             similarity_score: r.similarity_score,
             match_kind: r.match_kind,
             match_reason: r.match_reason,
+            related_to: r.related_to,
+            via_kind: r.via_kind,
+            placed: Boolean(r.placed),
           }))
         },
       },

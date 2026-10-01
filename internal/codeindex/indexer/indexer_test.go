@@ -263,8 +263,8 @@ func TestSourceDriftPreventsSnapshot(t *testing.T) {
 	if e := os.WriteFile(file, []byte("package drift\nfunc A(){}\n"), 0600); e != nil {
 		t.Fatal(e)
 	}
-	_, _, e := (Pipeline{Config: config.Default()}).Build(context.Background(), &pb.IndexRequest{Directory: root}, func(stage string) {
-		if stage == "verify" {
+	_, _, e := (Pipeline{Config: config.Default()}).Build(context.Background(), &pb.IndexRequest{Directory: root}, func(update Progress) {
+		if update.Stage == "verify" {
 			_ = os.WriteFile(file, []byte("package drift\nfunc B(){}\n"), 0600)
 		}
 	})

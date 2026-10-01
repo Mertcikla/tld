@@ -44,11 +44,13 @@ type CodeIndexStore interface {
 	SaveEmbedding(ctx context.Context, embedding *pb.Embedding) error
 	SaveFactEmbedding(ctx context.Context, embedding *pb.Embedding) error
 	SimilarFacts(ctx context.Context, snapshotID, profile string, query []float32, limit int) ([]FactScore, error)
+	FactSimilarities(ctx context.Context, snapshotID, profile string, query []float32, factIDs []string) (map[string]float32, error)
 	LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph, error)
 	SnapshotSources(ctx context.Context, snapshotID string) (map[string]string, error)
 	Diff(ctx context.Context, fromID, toID string, sourcesOnly bool) (*pb.SnapshotDiff, error)
 	SaveMappings(ctx context.Context, mappings []ResourceMapping) error
 	MappingByLogicalKey(ctx context.Context, logicalKey string) (ResourceMapping, bool, error)
+	MappingByResource(ctx context.Context, kind MappingKind, resourceID int64) (ResourceMapping, bool, error)
 	MappingsBySnapshot(ctx context.Context, snapshotID string) ([]ResourceMapping, error)
 	MappingsByRepository(ctx context.Context, repositoryID string) ([]ResourceMapping, error)
 	DeleteMapping(ctx context.Context, logicalKey string) error

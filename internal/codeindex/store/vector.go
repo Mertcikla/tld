@@ -87,7 +87,7 @@ func (s *Store) SimilarFacts(ctx context.Context, snapshotID, profile string, qu
 		limit = 10
 	}
 	if err := s.EnsureVectorSchema(ctx); err == nil {
-		if scores, err := s.similarFactsIndexed(ctx, snapshotID, profile, query, limit); err == nil {
+		if scores, err := s.similarFactsIndexed(ctx, snapshotID, profile, query, limit); err == nil && len(scores) > 0 {
 			return scores, nil
 		}
 	}
@@ -174,6 +174,37 @@ func (s *Store) similarFactsFallback(ctx context.Context, snapshotID, profile st
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// FactSimilarities scores a specific set of facts against the query vector
+// using their stored embeddings. It backs populate, which ranks a bounded set
+// of vector-search hits and needs a numeric score for display.
+func (s *Store) FactSimilarities(ctx context.Context, snapshotID, profile string, query []float32, factIDs []string) (map[string]float32, error) {
+	out := make(map[string]float32, len(factIDs))
+	if len(factIDs) == 0 || len(query) == 0 {
+		return out, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(factIDs)), ",")
+	args := make([]any, 0, len(factIDs)+2)
+	for _, id := range factIDs {
+		args = append(args, id)
+	}
+	args = append(args, snapshotID, profile)
+	rows, err := s.bun.QueryContext(ctx, `SELECT fact_id, vector FROM codeindex_fact_embeddings
+		WHERE fact_id IN (`+placeholders+`) AND snapshot_id = ? AND profile = ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var factID string
+		var blob []byte
+		if err := rows.Scan(&factID, &blob); err != nil {
+			return nil, err
+		}
+		out[factID] = cosineSimilarity(query, decodeVector(blob))
+	}
+	return out, rows.Err()
 }
 
 func encodeVectorChecked(v []float32) ([]byte, error) {

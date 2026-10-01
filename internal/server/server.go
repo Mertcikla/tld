@@ -30,6 +30,7 @@ type Options struct {
 	WorkspaceDir   string
 	PublicURL      string
 	AllowedOrigins []string
+	Config         *workspace.Config
 }
 
 func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, dataDir ...string) (*Server, error) {
@@ -65,7 +66,7 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	registerEditorHandlers(mux, sqliteStore)
 	registerDensityHandlers(mux, sqliteStore)
 	registerMergeHandlers(mux, sqliteStore)
-	registerPopulateHandlers(mux, sqliteStore)
+	registerPopulateHandlers(mux, sqliteStore, opts.Config)
 	registerTagHandlers(mux, apiStore, workspaceID)
 
 	mux.HandleFunc("GET /api/ready", func(w http.ResponseWriter, r *http.Request) {

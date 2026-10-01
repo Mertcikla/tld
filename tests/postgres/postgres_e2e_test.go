@@ -49,7 +49,7 @@ func message() string { return "hello" }
 	run(t, src, nil, "git", "commit", "-q", "-m", "init")
 
 	env := postgresEnv(configDir, dsn)
-	indexOut := run(t, repoRoot, env, "go", "run", "./cmd/tld", "index", src, "--data-dir", dataDir, "--json")
+	indexOut := run(t, repoRoot, env, "go", "run", "./cmd/tld", "index", src, "--data-dir", dataDir, "--json", "--embed=false", "--materialize")
 	var result struct {
 		Snapshot struct {
 			Id string `json:"id"`

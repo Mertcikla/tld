@@ -31,6 +31,8 @@ type Client struct {
 	Config config.Config
 	HTTP   *http.Client
 	Store  Store
+	// Progress, when set, receives embedding counters (current, total, detail).
+	Progress func(current, total int, detail string)
 }
 
 // Profile names the embedding space produced by this configuration. It covers
@@ -41,6 +43,19 @@ func (c Client) Profile() string {
 	return graph.ID(c.Config.Embedding.Endpoint, c.Config.Embedding.Model, fmt.Sprint(c.Config.Embedding.Dimensions), fmt.Sprint(c.Config.Embedding.MaxInputChars), c.documentPrefix(), query)
 }
 func (c Client) Enabled() bool { return c.Config.Embedding.Endpoint != "" }
+
+func (c Client) report(current, total int, detail string) {
+	if c.Progress != nil {
+		c.Progress(current, total, detail)
+	}
+}
+
+func chunkPath(chunk *pb.Chunk) string {
+	if chunk != nil && chunk.Anchor != nil {
+		return chunk.Anchor.Path
+	}
+	return ""
+}
 
 // documentPrefix is the passage instruction prepended to indexed chunks. A
 // configured task takes precedence over the raw document_prefix.
@@ -101,6 +116,9 @@ func (c Client) Embed(ctx context.Context, snap *pb.Snapshot) error {
 	if e != nil {
 		return e
 	}
+	total := len(chunks)
+	processed := 0
+	c.report(0, total, "")
 	profile := c.Profile()
 	documentPrefix := c.documentPrefix()
 	pending := make([]*pb.Chunk, 0)
@@ -141,6 +159,8 @@ func (c Client) Embed(ctx context.Context, snap *pb.Snapshot) error {
 				return e
 			}
 			accumulate(chunk.FactId, cached)
+			processed++
+			c.report(processed, total, chunkPath(chunk))
 			continue
 		}
 		pending = append(pending, chunk)
@@ -166,6 +186,8 @@ func (c Client) Embed(ctx context.Context, snap *pb.Snapshot) error {
 				return e
 			}
 			accumulate(chunk.FactId, v)
+			processed++
+			c.report(processed, total, chunkPath(chunk))
 		}
 	}
 	for factID, sum := range factSum {
@@ -188,6 +210,27 @@ func (c Client) Embed(ctx context.Context, snap *pb.Snapshot) error {
 	snap.Warnings = nil
 	return c.Store.UpdateSnapshot(ctx, snap)
 }
+
+// Health verifies the configured embedding server responds with a vector of the
+// expected dimension. Indexing refuses to start when this fails so the graph is
+// never published without vectors.
+func (c Client) Health(ctx context.Context) error {
+	if !c.Enabled() {
+		return fmt.Errorf("embeddings are not configured: set index.embedding.endpoint and start a local server with 'make embed-server'")
+	}
+	vector, err := c.Query(ctx, "embedding health check")
+	if err != nil {
+		return fmt.Errorf("embedding server %s is unreachable: %w (start it with 'make embed-server')", c.Config.Embedding.Endpoint, err)
+	}
+	if len(vector) == 0 {
+		return fmt.Errorf("embedding server %s returned an empty vector", c.Config.Embedding.Endpoint)
+	}
+	if d := c.Config.Embedding.Dimensions; d > 0 && len(vector) != d {
+		return fmt.Errorf("embedding server %s returned %d dimensions, config expects %d", c.Config.Embedding.Endpoint, len(vector), d)
+	}
+	return nil
+}
+
 func (c Client) Query(ctx context.Context, text string) ([]float32, error) {
 	return c.QueryTask(ctx, text, "")
 }
@@ -223,7 +266,11 @@ func (c Client) request(ctx context.Context, input []string) ([][]float32, error
 	if !strings.HasSuffix(endpoint, "/embeddings") {
 		endpoint += "/embeddings"
 	}
-	body, _ := json.Marshal(map[string]any{"model": c.Config.Embedding.Model, "input": input, "dimensions": c.Config.Embedding.Dimensions})
+	payload := map[string]any{"model": c.Config.Embedding.Model, "input": input}
+	if c.Config.Embedding.Dimensions > 0 {
+		payload["dimensions"] = c.Config.Embedding.Dimensions
+	}
+	body, _ := json.Marshal(payload)
 	httpClient := c.HTTP
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 45 * time.Second}
@@ -264,8 +311,8 @@ func (c Client) request(ctx context.Context, input []string) ([][]float32, error
 					if item.Index < 0 || item.Index >= len(out) || out[item.Index] != nil {
 						return nil, fmt.Errorf("invalid embedding index")
 					}
-					if len(item.Embedding) != c.Config.Embedding.Dimensions {
-						return nil, fmt.Errorf("embedding dimensions mismatch")
+					if d := c.Config.Embedding.Dimensions; d > 0 && len(item.Embedding) != d {
+						return nil, fmt.Errorf("embedding dimensions mismatch: got %d, want %d", len(item.Embedding), d)
 					}
 					for _, n := range item.Embedding {
 						if math.IsNaN(float64(n)) || math.IsInf(float64(n), 0) {

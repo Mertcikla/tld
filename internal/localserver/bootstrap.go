@@ -125,6 +125,7 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 		WorkspaceDir:   o.WorkspaceDir,
 		PublicURL:      publicURL,
 		AllowedOrigins: allowedOrigins,
+		Config:         o.Config,
 	})
 	if err != nil {
 		return nil, err
