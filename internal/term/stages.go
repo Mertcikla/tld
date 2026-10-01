@@ -14,7 +14,9 @@ const (
 	stageAnimationTick  = 90 * time.Millisecond
 	stageNameMinWidth   = 12
 	stageNameMaxWidth   = 28
-	defaultJokeInterval = 3 * time.Second
+	defaultJokeInterval = 10 * time.Second
+	defaultJokeDelay    = 3 * time.Second
+	jokeReshuffleEvery  = 10
 )
 
 // StageStatus is the lifecycle state of a tracked stage.
@@ -72,6 +74,8 @@ type StageTracker struct {
 	jokes        []string
 	jokeInterval time.Duration
 	jokeStart    time.Time
+	jokeWidth    int
+	jokeRound    int
 
 	mu         sync.Mutex
 	order      []string
@@ -111,12 +115,13 @@ func NewStageTracker(out io.Writer, stages []string, opts StageTrackerOptions) *
 	t.animate = t.terminal && !opts.DisableAnimation
 	if len(opts.Jokes) > 0 {
 		t.jokes = append([]string(nil), opts.Jokes...)
-		rand.Shuffle(len(t.jokes), func(i, j int) { t.jokes[i], t.jokes[j] = t.jokes[j], t.jokes[i] })
 		t.jokeInterval = opts.JokeInterval
 		if t.jokeInterval <= 0 {
 			t.jokeInterval = defaultJokeInterval
 		}
 		t.jokeStart = t.now()
+		t.jokeWidth = t.computeJokeWidthLocked()
+		t.jokeRound = -1
 	}
 	for _, name := range stages {
 		t.addLocked(name)
@@ -321,11 +326,14 @@ func (t *StageTracker) renderActiveLocked() {
 }
 
 func (t *StageTracker) activeLineLocked(st *stageState, now time.Time) string {
-	pad := t.padNameLocked(st.name)
+	label, isJoke := t.activeLabelLocked(st, now)
 	frame := t.spinnerFrameLocked(st, now)
 
-	plain := "  " + frame + " " + pad
-	styled := "  " + Colorize(t.out, ColorCyan, frame) + " " + Colorize(t.out, ColorBold, pad)
+	plain := "  " + frame + " " + label
+	styled := "  " + Colorize(t.out, ColorCyan, frame) + " " + Colorize(t.out, ColorBold, label)
+	if isJoke {
+		styled = "  " + Colorize(t.out, ColorCyan, frame) + " " + Colorize(t.out, ColorYellow, label)
+	}
 
 	if st.total > 0 {
 		percent := int((float64(st.current) / float64(st.total)) * 100)
@@ -353,30 +361,12 @@ func (t *StageTracker) activeLineLocked(st *stageState, now time.Time) string {
 		}
 	}
 
-	joke := t.jokeLocked(now)
-	if r := []rune(joke); len(r) > t.width/2 {
-		joke = truncateEnd(joke, t.width/2)
-	}
-	jokeSpace := 0
-	if joke != "" {
-		jokeSpace = len([]rune(joke)) + 1
-	}
-
 	if st.detail != "" {
-		remaining := t.width - len([]rune(plain)) - jokeSpace - 1
+		remaining := t.width - len([]rune(plain)) - 1
 		if remaining > 3 {
 			detail := truncateMiddle(st.detail, remaining)
 			plain += " " + detail
 			styled += " " + Dim(t.out, detail)
-		}
-	}
-
-	if joke != "" {
-		remaining := t.width - len([]rune(plain)) - 1
-		if remaining > 3 {
-			joke = truncateEnd(joke, remaining)
-			plain += " " + joke
-			styled += " " + Colorize(t.out, ColorYellow, joke)
 		}
 	}
 
@@ -386,9 +376,46 @@ func (t *StageTracker) activeLineLocked(st *stageState, now time.Time) string {
 	return styled
 }
 
-// jokeLocked returns the joke for the current interval, cycling through a
-// shuffled list so the quips change every JokeInterval without repeating until
-// the list wraps.
+// activeLabelLocked returns the padded label for the pinned active line. Once a
+// stage has run past the joke delay, a joke stands in for the stage name, padded
+// to a stable width so the counters that follow do not jump between jokes.
+func (t *StageTracker) activeLabelLocked(st *stageState, now time.Time) (string, bool) {
+	if len(t.jokes) == 0 || now.Sub(st.started) <= defaultJokeDelay {
+		return t.padNameLocked(st.name), false
+	}
+	joke := t.jokeLocked(now)
+	if r := []rune(joke); len(r) > t.jokeWidth {
+		joke = truncateEnd(joke, t.jokeWidth)
+	}
+	return fmt.Sprintf("%-*s", t.jokeWidth, joke), true
+}
+
+// computeJokeWidthLocked picks the width of the joke label column: the longest
+// joke, capped at half the terminal so progress counters still have room.
+func (t *StageTracker) computeJokeWidthLocked() int {
+	max := t.width / 2
+	if max < stageNameMinWidth {
+		max = stageNameMinWidth
+	}
+	width := 0
+	for _, joke := range t.jokes {
+		w := len([]rune(joke))
+		if w > max {
+			w = max
+		}
+		if w > width {
+			width = w
+		}
+	}
+	if width < stageNameMinWidth {
+		width = stageNameMinWidth
+	}
+	return width
+}
+
+// jokeLocked returns the joke for the current interval. The pool is reshuffled
+// every jokeReshuffleEvery picks, so the order keeps changing instead of
+// repeating the same cycle.
 func (t *StageTracker) jokeLocked(now time.Time) string {
 	if len(t.jokes) == 0 || t.jokeInterval <= 0 {
 		return ""
@@ -397,7 +424,12 @@ func (t *StageTracker) jokeLocked(now time.Time) string {
 	if elapsed < 0 {
 		elapsed = 0
 	}
-	return t.jokes[int(elapsed/t.jokeInterval)%len(t.jokes)]
+	pick := int(elapsed / t.jokeInterval)
+	if round := pick / jokeReshuffleEvery; round != t.jokeRound {
+		t.jokeRound = round
+		rand.Shuffle(len(t.jokes), func(i, j int) { t.jokes[i], t.jokes[j] = t.jokes[j], t.jokes[i] })
+	}
+	return t.jokes[(pick%jokeReshuffleEvery)%len(t.jokes)]
 }
 
 func (t *StageTracker) lineLocked(st *stageState) string {

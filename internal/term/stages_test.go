@@ -116,9 +116,19 @@ func TestStageTrackerRotatesJokes(t *testing.T) {
 	})
 
 	tracker.Begin("Discover")
+	activeNow := func() string { return out.String()[strings.LastIndex(out.String(), "\r\033[K"):] }
+	if strings.Contains(activeNow(), "joke") {
+		t.Fatalf("jokes should wait until the stage runs past the delay:\n%q", activeNow())
+	}
+
+	now = now.Add(4 * time.Second)
+	tracker.Report("Discover", 1, 1, "")
 	seen := map[string]bool{}
 	for i := 0; i < len(jokes); i++ {
-		active := out.String()[strings.LastIndex(out.String(), "\r\033[K"):]
+		active := activeNow()
+		if strings.Contains(active, "Discover") {
+			t.Fatalf("joke should replace the stage name on the active line:\n%q", active)
+		}
 		for _, joke := range jokes {
 			if strings.Contains(active, joke) {
 				seen[joke] = true
