@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mertcikla/tld/v2/internal/analyzer"
+	"github.com/mertcikla/tld/v2/internal/codeindex/symbolcheck"
 )
 
 // ValidationError describes a single validation failure.
@@ -178,9 +178,9 @@ func (ws *Workspace) validateSymbols() []ValidationError {
 		if _, err := os.Stat(element.FilePath); err != nil {
 			continue // file not accessible locally skip
 		}
-		found, err := analyzer.HasSymbol(ctx, element.FilePath, element.Symbol)
+		found, err := symbolcheck.HasSymbol(ctx, element.FilePath, element.Symbol)
 		if err != nil {
-			if analyzer.IsUnsupportedLanguage(err) {
+			if symbolcheck.IsUnsupported(err) {
 				continue // language not supported skip silently
 			}
 			errs = append(errs, ValidationError{

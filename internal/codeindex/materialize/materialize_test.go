@@ -1,0 +1,170 @@
+package materialize
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/project"
+	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/internal/codeindex/visibility"
+	localstore "github.com/mertcikla/tld/v2/internal/store"
+)
+
+func openStores(t *testing.T) (*localstore.SQLiteStore, *cstore.Store) {
+	t.Helper()
+	sq, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = sq.Close() })
+	return sq, cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
+}
+
+func allVisible(proj project.Result) []visibility.Decision {
+	var ds []visibility.Decision
+	for _, e := range proj.Elements {
+		ds = append(ds, visibility.Decision{Ref: e.Ref, Kind: "element", Visible: true})
+	}
+	for _, c := range proj.Connectors {
+		ds = append(ds, visibility.Decision{Ref: c.Ref, Kind: "connector", Visible: true})
+	}
+	return ds
+}
+
+func fixture() project.Result {
+	return project.Result{
+		SnapshotID: "snap-1",
+		Elements: []project.Element{
+			{Ref: "fact|a.go|FACT_KIND_FUNCTION|A", Name: "A", Kind: pb.FactKind_FACT_KIND_FUNCTION, Repository: "repo", FilePath: "a.go", Language: "go"},
+			{Ref: "fact|b.go|FACT_KIND_FUNCTION|B", Name: "B", Kind: pb.FactKind_FACT_KIND_FUNCTION, Repository: "repo", FilePath: "b.go", Language: "go"},
+		},
+		Connectors: []project.Connector{
+			{Ref: "edge|CALLS|A|B", Kind: pb.EdgeKind_EDGE_KIND_CALLS, FromRef: "fact|a.go|FACT_KIND_FUNCTION|A", ToRef: "fact|b.go|FACT_KIND_FUNCTION|B", Weight: 1},
+		},
+	}
+}
+
+func TestApplyIdempotent(t *testing.T) {
+	ctx := context.Background()
+	ws, idx := openStores(t)
+	opts := Options{RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1"}
+	proj := fixture()
+
+	first, err := Apply(ctx, ws, idx, proj, allVisible(proj), opts)
+	if err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	if first.Elements != 2 || first.Connectors != 1 || first.ViewID == 0 {
+		t.Fatalf("first result = %+v", first)
+	}
+
+	second, err := Apply(ctx, ws, idx, proj, allVisible(proj), opts)
+	if err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	if second.ViewID != first.ViewID {
+		t.Fatalf("view changed across runs: %d -> %d", first.ViewID, second.ViewID)
+	}
+	if second.Elements != 2 || second.Connectors != 1 || second.Pruned != 0 {
+		t.Fatalf("second result = %+v", second)
+	}
+
+	placements, err := ws.Placements(ctx, first.ViewID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(placements) != 2 {
+		t.Fatalf("placements = %d, want 2", len(placements))
+	}
+	connectors, err := ws.Connectors(ctx, first.ViewID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(connectors) != 1 {
+		t.Fatalf("connectors = %d, want 1", len(connectors))
+	}
+	mappings, err := idx.MappingsByRepository(ctx, "repo-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2 elements + 1 connector + 1 view.
+	if len(mappings) != 4 {
+		t.Fatalf("mappings = %d, want 4 (%+v)", len(mappings), mappings)
+	}
+}
+
+func TestApplyVisibilityControlsNoiseGate(t *testing.T) {
+	ctx := context.Background()
+	ws, idx := openStores(t)
+	opts := Options{RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1"}
+	proj := fixture()
+	decisions := []visibility.Decision{
+		{Ref: "fact|a.go|FACT_KIND_FUNCTION|A", Kind: "element", Visible: true},
+		{Ref: "fact|b.go|FACT_KIND_FUNCTION|B", Kind: "element", Visible: false},
+	}
+
+	if _, err := Apply(ctx, ws, idx, proj, decisions, opts); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	aMapping, _, err := idx.MappingByLogicalKey(ctx, "fact|a.go|FACT_KIND_FUNCTION|A")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bMapping, _, err := idx.MappingByLogicalKey(ctx, "fact|b.go|FACT_KIND_FUNCTION|B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := ws.ElementByID(ctx, aMapping.ResourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ws.ElementByID(ctx, bMapping.ResourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.BypassNoiseGate {
+		t.Fatal("visible element should bypass the noise gate")
+	}
+	if b.BypassNoiseGate {
+		t.Fatal("hidden element should not bypass the noise gate")
+	}
+}
+
+func TestApplyPrunesStale(t *testing.T) {
+	ctx := context.Background()
+	ws, idx := openStores(t)
+	opts := Options{RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1"}
+	proj := fixture()
+
+	if _, err := Apply(ctx, ws, idx, proj, allVisible(proj), opts); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	bMapping, ok, err := idx.MappingByLogicalKey(ctx, "fact|b.go|FACT_KIND_FUNCTION|B")
+	if err != nil || !ok {
+		t.Fatalf("b mapping: ok=%v err=%v", ok, err)
+	}
+
+	// Second snapshot drops B entirely.
+	reduced := project.Result{SnapshotID: "snap-2", Elements: proj.Elements[:1]}
+	res, err := Apply(ctx, ws, idx, reduced, allVisible(reduced), opts)
+	if err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	// B and the A->B connector are both stale once B disappears.
+	if res.Pruned != 2 {
+		t.Fatalf("pruned = %d, want 2", res.Pruned)
+	}
+	if _, err := ws.ElementByID(ctx, bMapping.ResourceID); err == nil {
+		t.Fatal("pruned element still exists")
+	}
+	if _, ok, _ := idx.MappingByLogicalKey(ctx, "fact|b.go|FACT_KIND_FUNCTION|B"); ok {
+		t.Fatal("pruned mapping still present")
+	}
+	// The view mapping survives pruning.
+	if _, ok, _ := idx.MappingByLogicalKey(ctx, "view|repo-1"); !ok {
+		t.Fatal("view mapping was pruned")
+	}
+}

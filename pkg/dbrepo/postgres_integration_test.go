@@ -30,7 +30,7 @@ func TestOpenPostgresAppliesLocalMigrationsWhenConfigured(t *testing.T) {
 		t.Fatalf("Dialect = %q, want %q", handle.Dialect, dbrepo.DialectPostgres)
 	}
 	var count int
-	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM watch_embedding_models`).Scan(&count); err != nil {
+	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_facts`).Scan(&count); err != nil {
 		t.Fatalf("query migrated table: %v", err)
 	}
 }

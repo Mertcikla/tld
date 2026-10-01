@@ -249,107 +249,12 @@ func (s *SQLiteStore) ProjectedViewContent(ctx context.Context, viewID int64, de
 	return app.ProjectViewContent(placements, connectors, overrides, level, signals), nil
 }
 
-func (s *SQLiteStore) densitySignals(ctx context.Context, placements []app.PlacedElement, connectors []app.Connector) (app.DensitySignals, error) {
-	signals := app.EmptyDensitySignals()
-
-	elementIDs := make([]int64, 0, len(placements))
-	for _, placement := range placements {
-		elementIDs = append(elementIDs, placement.ElementID)
-	}
-	connectorIDs := make([]int64, 0, len(connectors))
-	for _, connector := range connectors {
-		connectorIDs = append(connectorIDs, connector.ID)
-	}
-
-	if err := s.loadFilterSignals(ctx, &signals, "element", elementIDs); err != nil {
-		return app.DensitySignals{}, err
-	}
-	if err := s.loadFilterSignals(ctx, &signals, "connector", connectorIDs); err != nil {
-		return app.DensitySignals{}, err
-	}
-	if err := s.loadArchitectureSignals(ctx, &signals, "element", elementIDs); err != nil {
-		return app.DensitySignals{}, err
-	}
-	if err := s.loadArchitectureSignals(ctx, &signals, "connector", connectorIDs); err != nil {
-		return app.DensitySignals{}, err
-	}
-
-	return signals, nil
-}
-
-func (s *SQLiteStore) loadFilterSignals(ctx context.Context, signals *app.DensitySignals, resourceType string, resourceIDs []int64) error {
-	return queryIDChunks(resourceIDs, 450, func(ids []int64) error {
-		var rows []struct {
-			ResourceType string   `bun:"resource_type"`
-			ResourceID   int64    `bun:"resource_id"`
-			Score        *float64 `bun:"score"`
-			Tier         *int     `bun:"tier"`
-		}
-		if err := s.legacy.BunDB().NewSelect().
-			TableExpr("watch_materialization AS wm").
-			ColumnExpr("wm.resource_type").
-			ColumnExpr("wm.resource_id").
-			ColumnExpr("MAX(wfd.score) AS score").
-			ColumnExpr("MIN(wfd.tier) AS tier").
-			Join("JOIN watch_filter_decisions AS wfd ON wfd.owner_type = wm.owner_type AND wfd.owner_key = wm.owner_key").
-			Where("wm.resource_type = ?", resourceType).
-			Where("wm.resource_id IN (?)", bun.List(ids)).
-			Group("wm.resource_type").
-			Group("wm.resource_id").
-			Scan(ctx, &rows); err != nil {
-			return err
-		}
-		for _, row := range rows {
-			key := app.DensitySignalKey{ResourceType: row.ResourceType, ResourceID: row.ResourceID}
-			if row.Score != nil {
-				signals.FilterScore[key] = *row.Score
-			}
-			if row.Tier != nil {
-				signals.FilterTier[key] = *row.Tier
-			}
-		}
-		return nil
-	})
-}
-
-func (s *SQLiteStore) loadArchitectureSignals(ctx context.Context, signals *app.DensitySignals, resourceType string, resourceIDs []int64) error {
-	return queryIDChunks(resourceIDs, 450, func(ids []int64) error {
-		var rows []struct {
-			ResourceType string   `bun:"target_resource_type"`
-			ResourceID   int64    `bun:"target_resource_id"`
-			Confidence   *float64 `bun:"confidence"`
-		}
-		if err := s.legacy.BunDB().NewSelect().
-			Table("watch_architecture_links").
-			Column("target_resource_type", "target_resource_id").
-			ColumnExpr("MAX(confidence) AS confidence").
-			Where("target_resource_type = ?", resourceType).
-			Where("target_resource_id IN (?)", bun.List(ids)).
-			Group("target_resource_type").
-			Group("target_resource_id").
-			Scan(ctx, &rows); err != nil {
-			return err
-		}
-		for _, row := range rows {
-			if row.Confidence != nil {
-				signals.ArchitectureConfidence[app.DensitySignalKey{ResourceType: row.ResourceType, ResourceID: row.ResourceID}] = *row.Confidence
-			}
-		}
-		return nil
-	})
-}
-
-func queryIDChunks(ids []int64, size int, fn func([]int64) error) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	for start := 0; start < len(ids); start += size {
-		end := min(start+size, len(ids))
-		if err := fn(ids[start:end]); err != nil {
-			return err
-		}
-	}
-	return nil
+// densitySignals returns the per-resource ranking signals used by the density
+// engine. The legacy watch filter/architecture signals were removed with the
+// watch pipeline; codeindex visibility now drives each generated element's
+// noise-gate bypass instead, so no extra signals are loaded here.
+func (s *SQLiteStore) densitySignals(context.Context, []app.PlacedElement, []app.Connector) (app.DensitySignals, error) {
+	return app.EmptyDensitySignals(), nil
 }
 
 func nowString() string {

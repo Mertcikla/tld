@@ -4,35 +4,33 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
-
-	"github.com/mertcikla/tld/v2/internal/watch"
 )
 
 type mockStore struct {
-	repos []watch.Repository
+	repos []repositoryRef
 	err   error
 }
 
-func (m *mockStore) Repositories(ctx context.Context) ([]watch.Repository, error) {
+func (m *mockStore) Repositories(ctx context.Context) ([]repositoryRef, error) {
 	return m.repos, m.err
 }
 
 func TestResolveEditorPath(t *testing.T) {
-	repos := []watch.Repository{
-		{RepoRoot: "/a/project1"},
-		{RepoRoot: "/b/project2"},
+	repos := []repositoryRef{
+		{Root: "/a/project1"},
+		{Root: "/b/project2"},
 	}
 	if filepath.Separator == '\\' {
-		repos = []watch.Repository{
-			{RepoRoot: "C:\\a\\project1"},
-			{RepoRoot: "C:\\b\\project2"},
+		repos = []repositoryRef{
+			{Root: "C:\\a\\project1"},
+			{Root: "C:\\b\\project2"},
 		}
 	}
 
 	store := &mockStore{repos: repos}
 
 	t.Run("absolute path inside repository", func(t *testing.T) {
-		path := filepath.Join(repos[0].RepoRoot, "src", "main.go")
+		path := filepath.Join(repos[0].Root, "src", "main.go")
 		got, err := resolveEditorPath(context.Background(), store, "", path)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -43,7 +41,7 @@ func TestResolveEditorPath(t *testing.T) {
 	})
 
 	t.Run("absolute path matching repository root exactly", func(t *testing.T) {
-		path := repos[1].RepoRoot
+		path := repos[1].Root
 		got, err := resolveEditorPath(context.Background(), store, "", path)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -76,7 +74,7 @@ func TestResolveEditorPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		expected := filepath.Join(repos[0].RepoRoot, "src", "main.go")
+		expected := filepath.Join(repos[0].Root, "src", "main.go")
 		if got != expected {
 			t.Errorf("got %q, want %q", got, expected)
 		}
@@ -84,11 +82,11 @@ func TestResolveEditorPath(t *testing.T) {
 
 	t.Run("relative path with multiple repos and explicit repo match", func(t *testing.T) {
 		path := "src/main.go"
-		got, err := resolveEditorPath(context.Background(), store, repos[1].RepoRoot, path)
+		got, err := resolveEditorPath(context.Background(), store, repos[1].Root, path)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		expected := filepath.Join(repos[1].RepoRoot, "src", "main.go")
+		expected := filepath.Join(repos[1].Root, "src", "main.go")
 		if got != expected {
 			t.Errorf("got %q, want %q", got, expected)
 		}

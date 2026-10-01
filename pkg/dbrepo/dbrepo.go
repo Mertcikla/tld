@@ -205,14 +205,10 @@ func legacySQLiteMigrationAlreadyApplied(ctx context.Context, db *bun.DB, commen
 	switch comment {
 	case "init":
 		return sqliteTablesExist(ctx, db, "elements", "views", "placements", "connectors", "view_layers", "tags")
-	case "watch_raw_code_graph":
-		return sqliteTablesExist(ctx, db, "watch_repositories", "watch_files", "watch_symbols", "watch_embeddings", "watch_materialization")
 	case "view_density_visibility_overrides":
 		return sqliteColumnExists(ctx, db, "views", "density_level", "view_visibility_overrides")
 	case "missing_fk_indexes":
 		return sqliteIndexesExist(ctx, db, "idx_view_layers_view_id", "idx_connectors_source_element_id", "idx_connectors_target_element_id")
-	case "watch_materialization_resource_lookup":
-		return sqliteIndexesExist(ctx, db, "idx_watch_materialization_resource_lookup")
 	case "view_connector_tags":
 		viewsTags, err := sqliteColumnExists(ctx, db, "views", "tags")
 		if err != nil || !viewsTags {

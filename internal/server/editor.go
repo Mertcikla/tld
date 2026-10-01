@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mertcikla/tld/v2/internal/watch"
+	"github.com/mertcikla/tld/v2/internal/store"
 )
 
 type openEditorRequest struct {
@@ -23,14 +24,15 @@ type openEditorRequest struct {
 	Line     int    `json:"line"`
 }
 
-func registerEditorHandlers(mux *http.ServeMux, store *watch.Store) {
+func registerEditorHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) {
+	fetcher := dbRepositoryFetcher{db: sqliteStore.DB()}
 	mux.HandleFunc("POST /api/editor/open", func(w http.ResponseWriter, r *http.Request) {
 		var req openEditorRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
-		if err := openInEditor(r.Context(), store, req); err != nil {
+		if err := openInEditor(r.Context(), fetcher, req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -39,7 +41,7 @@ func registerEditorHandlers(mux *http.ServeMux, store *watch.Store) {
 	})
 }
 
-func openInEditor(ctx context.Context, store *watch.Store, req openEditorRequest) error {
+func openInEditor(ctx context.Context, store repositoryFetcher, req openEditorRequest) error {
 	editor := strings.TrimSpace(strings.ToLower(req.Editor))
 	if editor != "zed" && editor != "vscode" {
 		return fmt.Errorf("unsupported editor %q", req.Editor)
@@ -80,8 +82,35 @@ func openInEditor(ctx context.Context, store *watch.Store, req openEditorRequest
 	return nil
 }
 
+// repositoryRef is the local worktree (and optional remote URL) a linked
+// repository resolves to for opening source files.
+type repositoryRef struct {
+	Root      string
+	RemoteURL string
+}
+
 type repositoryFetcher interface {
-	Repositories(ctx context.Context) ([]watch.Repository, error)
+	Repositories(ctx context.Context) ([]repositoryRef, error)
+}
+
+// dbRepositoryFetcher lists indexed repository roots from the codeindex store.
+type dbRepositoryFetcher struct{ db *sql.DB }
+
+func (f dbRepositoryFetcher) Repositories(ctx context.Context) ([]repositoryRef, error) {
+	rows, err := f.db.QueryContext(ctx, `SELECT root FROM codeindex_repositories WHERE root <> '' ORDER BY root`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []repositoryRef{}
+	for rows.Next() {
+		var root string
+		if err := rows.Scan(&root); err != nil {
+			return nil, err
+		}
+		out = append(out, repositoryRef{Root: root})
+	}
+	return out, rows.Err()
 }
 
 func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue string, filePath string) (string, error) {
@@ -98,7 +127,7 @@ func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue s
 	if filepath.IsAbs(cleanFile) {
 		cleanFile = filepath.Clean(cleanFile)
 		for _, repo := range repos {
-			root := filepath.Clean(repo.RepoRoot)
+			root := filepath.Clean(repo.Root)
 			if cleanFile == root || strings.HasPrefix(cleanFile, root+string(filepath.Separator)) {
 				return cleanFile, nil
 			}
@@ -128,7 +157,7 @@ func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue s
 		return "", errors.New("could not resolve the linked repository to a local worktree")
 	}
 
-	root := filepath.Clean(repo.RepoRoot)
+	root := filepath.Clean(repo.Root)
 	target := filepath.Clean(filepath.Join(root, relative))
 	if target != root && !strings.HasPrefix(target, root+string(filepath.Separator)) {
 		return "", errors.New("resolved file path escapes the watched repository")
@@ -136,13 +165,13 @@ func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue s
 	return target, nil
 }
 
-func matchRepository(repos []watch.Repository, value string) (watch.Repository, bool) {
+func matchRepository(repos []repositoryRef, value string) (repositoryRef, bool) {
 	needle := strings.TrimSpace(value)
 	needleSlug := githubSlug(needle)
 	for _, repo := range repos {
-		candidates := []string{repo.RepoRoot}
-		if repo.RemoteURL.Valid {
-			candidates = append(candidates, repo.RemoteURL.String)
+		candidates := []string{repo.Root}
+		if repo.RemoteURL != "" {
+			candidates = append(candidates, repo.RemoteURL)
 		}
 		for _, candidate := range candidates {
 			if strings.EqualFold(strings.TrimSpace(candidate), needle) {
@@ -153,7 +182,7 @@ func matchRepository(repos []watch.Repository, value string) (watch.Repository, 
 			}
 		}
 	}
-	return watch.Repository{}, false
+	return repositoryRef{}, false
 }
 
 func githubSlug(value string) string {

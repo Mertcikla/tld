@@ -56,11 +56,11 @@ func TestConfigCommandJSONAndValidation(t *testing.T) {
 	t.Setenv("TLD_CONFIG_DIR", configDir)
 	dir := t.TempDir()
 
-	if _, _, err := RunCmd(t, dir, "config", "set", "watch.languages", "go,typescript"); err != nil {
-		t.Fatalf("config set languages: %v", err)
+	if _, _, err := RunCmd(t, dir, "config", "set", "index.vector.backend", "pgvector"); err != nil {
+		t.Fatalf("config set index vector backend: %v", err)
 	}
 
-	stdout, _, err := RunCmd(t, dir, "--format", "json", "config", "get", "watch.languages")
+	stdout, _, err := RunCmd(t, dir, "--format", "json", "config", "get", "index.vector.backend")
 	if err != nil {
 		t.Fatalf("config get json: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestConfigCommandJSONAndValidation(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &value); err != nil {
 		t.Fatalf("unmarshal config value: %v\n%s", err, stdout)
 	}
-	if value.Key != "watch.languages" || value.Value != "go,typescript" || value.Source != workspace.ConfigSourceFile {
+	if value.Key != "index.vector.backend" || value.Value != "pgvector" || value.Source != workspace.ConfigSourceFile {
 		t.Fatalf("unexpected config value: %+v", value)
 	}
 

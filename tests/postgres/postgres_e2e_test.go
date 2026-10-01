@@ -16,7 +16,7 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 )
 
-func TestPostgresWatchAnalyzeE2E(t *testing.T) {
+func TestPostgresIndexE2E(t *testing.T) {
 	dsn := os.Getenv("TLD_TEST_POSTGRES_URL")
 	if dsn == "" {
 		t.Skip("TLD_TEST_POSTGRES_URL not set")
@@ -28,7 +28,6 @@ func TestPostgresWatchAnalyzeE2E(t *testing.T) {
 	src := filepath.Join(tmp, "repo")
 	dataDir := filepath.Join(tmp, "data")
 	configDir := filepath.Join(tmp, "config")
-	workspaceDir := filepath.Join(tmp, "workspace")
 	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -38,15 +37,6 @@ func TestPostgresWatchAnalyzeE2E(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(workspaceDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, filepath.Join(workspaceDir, ".tld.yaml"), `repositories:
-  test:
-    localDir: ../repo
-    config:
-      mode: upsert
-`)
 	writeFile(t, filepath.Join(src, "main.go"), `package main
 
 func main() { println(message()) }
@@ -59,40 +49,30 @@ func message() string { return "hello" }
 	run(t, src, nil, "git", "commit", "-q", "-m", "init")
 
 	env := postgresEnv(configDir, dsn)
-	scanOut := run(t, repoRoot, env, "go", "run", "./cmd/tld", "watch", "scan", src, "--data-dir", dataDir, "--language", "go", "--json")
-	if !strings.Contains(scanOut, `"files_parsed":1`) {
-		t.Fatalf("watch scan output did not include parsed file count:\n%s", scanOut)
+	indexOut := run(t, repoRoot, env, "go", "run", "./cmd/tld", "index", src, "--data-dir", dataDir, "--json")
+	var result struct {
+		Snapshot struct {
+			Id string `json:"id"`
+		} `json:"snapshot"`
+		Report struct {
+			Facts  int `json:"facts"`
+			Chunks int `json:"chunks"`
+		} `json:"report"`
 	}
-	analyzeOut := run(t, repoRoot, env, "go", "run", "./cmd/tld", "analyze", src,
-		"--workspace", workspaceDir,
-		"--data-dir", dataDir,
-		"--language", "go",
-		"--embedding-provider", "local-deterministic-test",
-		"--embedding-dimension", "8",
-		"--dry-run",
-		"--format", "json",
-		"--compact")
-	var analyze struct {
-		Representation struct {
-			EmbeddingsCreated int `json:"embeddings_created"`
-		} `json:"representation"`
+	if err := json.Unmarshal([]byte(indexOut), &result); err != nil {
+		t.Fatalf("parse index output: %v\n%s", err, indexOut)
 	}
-	if err := json.Unmarshal([]byte(analyzeOut), &analyze); err != nil {
-		t.Fatalf("parse analyze output: %v\n%s", err, analyzeOut)
-	}
-	if analyze.Representation.EmbeddingsCreated < 2 {
-		t.Fatalf("analyze embeddings_created = %d, want at least 2:\n%s", analyze.Representation.EmbeddingsCreated, analyzeOut)
+	if result.Snapshot.Id == "" || result.Report.Facts < 2 {
+		t.Fatalf("index result = %+v:\n%s", result, indexOut)
 	}
 
 	db := openPostgres(t, dsn)
 	defer func() { _ = db.Close() }()
-	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM watch_files`, 1)
-	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM watch_symbols`, 2)
-	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM watch_references`, 1)
-	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM watch_embeddings WHERE embedding IS NOT NULL`, 2)
+	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM codeindex_facts`, 2)
+	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM codeindex_chunks`, 1)
+	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM codeindex_snapshots`, 1)
 	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM elements`, 1)
 	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM views`, 1)
-	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM connectors`, 1)
 }
 
 func repositoryRoot(t *testing.T) string {

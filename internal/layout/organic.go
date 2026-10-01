@@ -7,8 +7,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"time"
-
-	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
 const (
@@ -20,13 +18,12 @@ const (
 	VelocityDecay = 0.6
 )
 
-// Tunable layout parameters — override via environment variables.
+// Tunable layout parameters for the organic layout.
 var (
-	layoutConfig    = workspace.ResolveWatchLayoutConfig()
-	LinkDistance    = layoutConfig.LinkDistance
-	ChargeStrength  = layoutConfig.ChargeStrength
-	CollideRadius   = layoutConfig.CollideRadius
-	GravityStrength = layoutConfig.GravityStrength
+	LinkDistance    = 100.0
+	ChargeStrength  = -400.0
+	CollideRadius   = 180.0
+	GravityStrength = 0.05
 )
 
 // Node is a positioned graph node. ID matches an element_id in the placements table.

@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httputil"
@@ -15,12 +14,9 @@ import (
 	"strings"
 
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/diag/v1/diagv1connect"
-	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/tech"
-	"github.com/mertcikla/tld/v2/internal/watch"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
@@ -30,11 +26,10 @@ type Server struct {
 }
 
 type Options struct {
-	DataDir                  string
-	WorkspaceDir             string
-	PublicURL                string
-	AllowedOrigins           []string
-	PopulateRerankerEndpoint string
+	DataDir        string
+	WorkspaceDir   string
+	PublicURL      string
+	AllowedOrigins []string
 }
 
 func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, dataDir ...string) (*Server, error) {
@@ -46,7 +41,6 @@ func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, da
 }
 
 func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, opts Options) (*Server, error) {
-	watchStore := watch.NewStoreWithBun(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
 	dataDirs := []string{}
 	if opts.DataDir != "" || opts.WorkspaceDir != "" {
 		dataDirs = append(dataDirs, opts.DataDir)
@@ -55,9 +49,8 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 		}
 	}
 	apiStore := store.NewAPIAdapter(sqliteStore, dataDirs...)
-	lockHooks := watchLockHooks{store: watchStore}
 	collabHub := api.NewCollaborationHub()
-	collabHooks := collaborationHooks{base: lockHooks, store: apiStore, hub: collabHub}
+	collabHooks := collaborationHooks{base: api.NopWorkspaceHooks{}, store: apiStore, hub: collabHub}
 	wsSvc := &api.WorkspaceService{Store: apiStore, Hooks: collabHooks}
 	orgSvc := &api.OrgService{Store: apiStore, Hooks: collabHooks}
 	depSvc := &api.DependencyService{Store: apiStore}
@@ -67,11 +60,8 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 
-	configurePopulateReranker(opts.PopulateRerankerEndpoint)
-
 	mux := http.NewServeMux()
-	watch.NewHandler(watchStore).Register(mux)
-	registerEditorHandlers(mux, watchStore)
+	registerEditorHandlers(mux, sqliteStore)
 	registerDensityHandlers(mux, sqliteStore)
 	registerMergeHandlers(mux, sqliteStore)
 	registerPopulateHandlers(mux, sqliteStore)
@@ -150,26 +140,6 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	})
 
 	return &Server{handler: localCORSMiddleware(handler, opts)}, nil
-}
-
-type watchLockHooks struct {
-	api.NopWorkspaceHooks
-	store *watch.Store
-}
-
-func (h watchLockHooks) CheckWrite(ctx context.Context, _ uuid.UUID, resourceType string) error {
-	if h.store == nil {
-		return nil
-	}
-	applying, err := h.store.ActiveApplyLock(ctx, watch.LockHeartbeatTimeout)
-	if err != nil || !applying {
-		return err
-	}
-	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("workspace is being updated by tld watch; retry editing %s shortly", resourceType))
-}
-
-func (h watchLockHooks) CheckApplyPlan(ctx context.Context, workspaceID uuid.UUID, _ *diagv1.ApplyPlanRequest) error {
-	return h.CheckWrite(ctx, workspaceID, "workspace")
 }
 
 func (s *Server) Routes() http.Handler {

@@ -5,10 +5,11 @@ import (
 	"os"
 
 	"github.com/mertcikla/tld/v2/cmd/add"
-	"github.com/mertcikla/tld/v2/cmd/analyze"
 	configcmd "github.com/mertcikla/tld/v2/cmd/config"
 	"github.com/mertcikla/tld/v2/cmd/connect"
+	doctorcmd "github.com/mertcikla/tld/v2/cmd/doctor"
 	"github.com/mertcikla/tld/v2/cmd/export"
+	indexcmd "github.com/mertcikla/tld/v2/cmd/index"
 	"github.com/mertcikla/tld/v2/cmd/initialize"
 	inspectcmd "github.com/mertcikla/tld/v2/cmd/inspect"
 	"github.com/mertcikla/tld/v2/cmd/login"
@@ -25,7 +26,6 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/validate"
 	"github.com/mertcikla/tld/v2/cmd/version"
 	"github.com/mertcikla/tld/v2/cmd/views"
-	watchcmd "github.com/mertcikla/tld/v2/cmd/watch"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
@@ -148,17 +148,17 @@ YAML cache. Use 'tld pull' to refresh the cache after frontend changes.`,
 	versionCmd := version.NewVersionCmd()
 	versionCmd.GroupID = secondaryGroup.ID
 
-	analyzeCmd := analyze.NewAnalyzeCmd(&wdir)
-	analyzeCmd.GroupID = secondaryGroup.ID
-
 	configCmd := configcmd.NewConfigCmd()
 	configCmd.GroupID = secondaryGroup.ID
 
 	techCmd := techcmd.NewTechCmd()
 	techCmd.GroupID = secondaryGroup.ID
 
-	watchCmd := watchcmd.NewWatchCmd()
-	watchCmd.GroupID = secondaryGroup.ID
+	doctorCmd := doctorcmd.NewDoctorCmd()
+	doctorCmd.GroupID = secondaryGroup.ID
+
+	indexCmd := indexcmd.NewIndexCmd()
+	indexCmd.GroupID = secondaryGroup.ID
 
 	serveCmd := serve.NewServeCmd(nil)
 	serveCmd.GroupID = secondaryGroup.ID
@@ -184,10 +184,10 @@ YAML cache. Use 'tld pull' to refresh the cache after frontend changes.`,
 		removeCmd,
 		updateCmd,
 		renameCmd,
-		analyzeCmd,
 		configCmd,
 		techCmd,
-		watchCmd,
+		doctorCmd,
+		indexCmd,
 		serveCmd,
 		mcpCmd,
 		stopCmd,
