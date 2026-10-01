@@ -194,19 +194,13 @@ func (d *populateDeps) resolveRepository(ctx context.Context, viewID int64) (str
 	}
 }
 
-// canonicalize collapses projection candidates that are the same declaration
-// (same anchor span) and merges their edges. This keeps populate from
-// materializing a declaration twice when both endpoints of an edge match the
-// query. Distinct declarations with the same name in different files are kept.
+// canonicalize keeps exactly one candidate per logical key (the same symbol)
+// and merges their edges. Refs are stable cross-snapshot identity, so this
+// removes genuine duplicates without collapsing distinct declarations that
+// merely share a name. It also de-dupes parallel edges by (from, to, kind).
 func canonicalize(p project.Result) project.Result {
 	identity := func(element project.Element) string {
-		if element.Anchor != nil {
-			return fmt.Sprintf("span:%s:%d:%d", element.Anchor.Path, element.Anchor.StartByte, element.Anchor.EndByte)
-		}
-		if element.SymbolKey != "" {
-			return "symbol:" + element.SymbolKey
-		}
-		return "named:" + strings.ToLower(project.KindLabel(element.Kind)) + ":" + strings.ToLower(element.Name) + ":" + element.FilePath
+		return element.Ref
 	}
 
 	primary := map[string]string{}

@@ -14,32 +14,26 @@ import (
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 )
 
-func TestCanonicalizeMergesDuplicateElementsAndEdges(t *testing.T) {
+func TestCanonicalizeDedupesSameLogicalKeyOnly(t *testing.T) {
 	projection := project.Result{
 		SnapshotID: "snap",
 		Elements: []project.Element{
-			{Ref: "r1", Name: "Hello", Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, FilePath: "main.go"},
-			{Ref: "r2", Name: "Hello", Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, FilePath: "main.go"},
-			{Ref: "r3", Name: "main", Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, FilePath: "main.go"},
+			{Ref: "fact|a.go|FUNCTION|Hello", Name: "Hello", Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, FilePath: "a.go"},
+			{Ref: "fact|a.go|FUNCTION|Hello", Name: "Hello", Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, FilePath: "a.go"},
+			{Ref: "fact|b.go|FUNCTION|Hello", Name: "Hello", Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, FilePath: "b.go"},
 		},
 		Connectors: []project.Connector{
-			{Ref: "e1", Kind: codeindexv1.EdgeKind_EDGE_KIND_CALLS, FromRef: "r3", ToRef: "r1"},
-			{Ref: "e2", Kind: codeindexv1.EdgeKind_EDGE_KIND_CALLS, FromRef: "r3", ToRef: "r2"},
-			{Ref: "e3", Kind: codeindexv1.EdgeKind_EDGE_KIND_REFERENCES, FromRef: "r3", ToRef: "r2"},
+			{Ref: "e1", Kind: codeindexv1.EdgeKind_EDGE_KIND_CALLS, FromRef: "fact|b.go|FUNCTION|Hello", ToRef: "fact|a.go|FUNCTION|Hello"},
+			{Ref: "e2", Kind: codeindexv1.EdgeKind_EDGE_KIND_CALLS, FromRef: "fact|b.go|FUNCTION|Hello", ToRef: "fact|a.go|FUNCTION|Hello"},
 		},
 	}
 
 	got := canonicalize(projection)
 	if len(got.Elements) != 2 {
-		t.Fatalf("elements = %d, want 2 (duplicate Hello merged): %+v", len(got.Elements), got.Elements)
+		t.Fatalf("elements = %d, want 2 (same logical key merged, same name kept): %+v", len(got.Elements), got.Elements)
 	}
-	if len(got.Connectors) != 2 {
-		t.Fatalf("connectors = %d, want 2 (parallel calls merged): %+v", len(got.Connectors), got.Connectors)
-	}
-	for _, connector := range got.Connectors {
-		if connector.ToRef != "r1" {
-			t.Fatalf("connector endpoint not remapped to merged element: %+v", connector)
-		}
+	if len(got.Connectors) != 1 {
+		t.Fatalf("connectors = %d, want 1 (parallel edges merged): %+v", len(got.Connectors), got.Connectors)
 	}
 }
 
