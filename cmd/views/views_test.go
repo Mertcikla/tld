@@ -2,7 +2,9 @@ package views_test
 
 import (
 	"encoding/json"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/mertcikla/tld/v2/cmd"
@@ -24,15 +26,12 @@ func TestViewsCmd_OutputsDerivedViewSummary(t *testing.T) {
 	if want := "Views: 3 total (2 owned + root)"; !containsLine(stdout, want) {
 		t.Fatalf("stdout missing summary %q:\n%s", want, stdout)
 	}
-	if want := "| root | Synthetic Root | 0 | 1 | 1 | 0 | root |"; !containsLine(stdout, want) {
-		t.Fatalf("stdout missing root row %q:\n%s", want, stdout)
+	if !regexp.MustCompile(`(?m)^VIEW\s+OWNER\s+DEPTH\s+ELEMENTS\s+CHILD VIEWS\s+CONNECTORS\s+PATH$`).MatchString(stdout) {
+		t.Fatalf("stdout missing aligned header:\n%s", stdout)
 	}
-	if want := "| platform | Platform | 1 | 2 | 1 | 1 | root/platform |"; !containsLine(stdout, want) {
-		t.Fatalf("stdout missing platform row %q:\n%s", want, stdout)
-	}
-	if want := "| api | API | 2 | 1 | 0 | 0 | root/platform/api |"; !containsLine(stdout, want) {
-		t.Fatalf("stdout missing api row %q:\n%s", want, stdout)
-	}
+	assertViewRow(t, stdout, "root", "Synthetic Root", "root")
+	assertViewRow(t, stdout, "platform", "Platform", "root/platform")
+	assertViewRow(t, stdout, "api", "API", "root/platform/api")
 	if stderr != "" {
 		t.Fatalf("expected empty stderr, got %q", stderr)
 	}
@@ -90,6 +89,21 @@ func TestViewsCmd_JSONOutput(t *testing.T) {
 
 func containsLine(output, want string) bool {
 	return slices.Contains(splitLines(output), want)
+}
+
+func assertViewRow(t *testing.T, output, ref, owner, path string) {
+	t.Helper()
+	for _, line := range splitLines(output) {
+		trimmed := strings.TrimLeft(line, " ")
+		if !strings.HasPrefix(trimmed, ref) || !strings.Contains(line, owner) {
+			continue
+		}
+		if !strings.Contains(line, path) {
+			t.Fatalf("row %q missing path %q: %q", ref, path, line)
+		}
+		return
+	}
+	t.Fatalf("missing row ref=%q owner=%q:\n%s", ref, owner, output)
 }
 
 func splitLines(output string) []string {

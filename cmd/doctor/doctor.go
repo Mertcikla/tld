@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
@@ -91,8 +92,9 @@ func checkEndpoint(ctx context.Context, endpoint string) endpointReport {
 
 func printReport(cmd *cobra.Command, r report) {
 	out := cmd.OutOrStdout()
-	printf := func(format string, args ...any) { _, _ = fmt.Fprintf(out, format, args...) }
-	printf("SCIP indexers:\n")
+	_, _ = fmt.Fprintln(out, "SCIP indexers:")
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "TOOL\tSTATUS\tDETAIL")
 	for _, s := range r.Tools {
 		status := "OK"
 		detail := s.Path
@@ -102,20 +104,24 @@ func printReport(cmd *cobra.Command, r report) {
 		} else if s.Version != "" {
 			detail = fmt.Sprintf("%s (%s)", s.Path, s.Version)
 		}
-		printf("  %-14s %-8s %s\n", s.Name, status, detail)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", s.Name, status, detail)
 	}
-	printf("Embedding endpoint:\n")
-	if r.Embedding.Endpoint == "" {
-		printf("  not configured\n")
-	} else if r.Embedding.Reachable {
-		printf("  OK       %s\n", r.Embedding.Endpoint)
-	} else {
-		printf("  UNREACHABLE %s: %s\n", r.Embedding.Endpoint, r.Embedding.Error)
+	_ = tw.Flush()
+
+	_, _ = fmt.Fprintln(out, "Embedding endpoint:")
+	switch {
+	case r.Embedding.Endpoint == "":
+		_, _ = fmt.Fprintln(out, "  not configured")
+	case r.Embedding.Reachable:
+		_, _ = fmt.Fprintf(out, "  OK          %s\n", r.Embedding.Endpoint)
+	default:
+		_, _ = fmt.Fprintf(out, "  UNREACHABLE %s: %s\n", r.Embedding.Endpoint, r.Embedding.Error)
 	}
+
 	if r.OK {
-		printf("\nAll prerequisites satisfied.\n")
+		_, _ = fmt.Fprintln(out, "\nAll prerequisites satisfied.")
 	} else {
-		printf("\nSome prerequisites are missing; indexing projects that need them will fail.\n")
+		_, _ = fmt.Fprintln(out, "\nSome prerequisites are missing; indexing projects that need them will fail.")
 	}
 }
 

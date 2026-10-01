@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"text/tabwriter"
 	"time"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -366,21 +367,23 @@ func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Repo
 		return enc.Encode(payload)
 	}
 	_, _ = fmt.Fprintf(out, "snapshot %s\n", snap.Id)
-	_, _ = fmt.Fprintf(out, "  repository %s\n", snap.RepositoryId)
+	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintf(tw, "repository\t%s\n", snap.RepositoryId)
 	if snap.GitRevision != "" {
-		_, _ = fmt.Fprintf(out, "  revision   %s\n", shortHash(snap.GitRevision))
+		_, _ = fmt.Fprintf(tw, "revision\t%s\n", shortHash(snap.GitRevision))
 	}
-	_, _ = fmt.Fprintf(out, "  sources    %d\n", report.Sources)
-	_, _ = fmt.Fprintf(out, "  projects   %d\n", report.Projects)
-	_, _ = fmt.Fprintf(out, "  facts      %d\n", report.Facts)
-	_, _ = fmt.Fprintf(out, "  chunks     %d\n", report.Chunks)
-	_, _ = fmt.Fprintf(out, "  edges      %d\n", report.Edges)
+	_, _ = fmt.Fprintf(tw, "sources\t%d\n", report.Sources)
+	_, _ = fmt.Fprintf(tw, "projects\t%d\n", report.Projects)
+	_, _ = fmt.Fprintf(tw, "facts\t%d\n", report.Facts)
+	_, _ = fmt.Fprintf(tw, "chunks\t%d\n", report.Chunks)
+	_, _ = fmt.Fprintf(tw, "edges\t%d\n", report.Edges)
 	if report.Warnings > 0 {
-		_, _ = fmt.Fprintf(out, "  warnings   %d\n", report.Warnings)
+		_, _ = fmt.Fprintf(tw, "warnings\t%d\n", report.Warnings)
 	}
 	if mres != nil {
-		_, _ = fmt.Fprintf(out, "  view       %d (%d elements, %d connectors, %d pruned)\n", mres.ViewID, mres.Elements, mres.Connectors, mres.Pruned)
+		_, _ = fmt.Fprintf(tw, "view\t%d (%d elements, %d connectors, %d pruned)\n", mres.ViewID, mres.Elements, mres.Connectors, mres.Pruned)
 	}
+	_ = tw.Flush()
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"text/tabwriter"
 
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 
@@ -168,11 +169,13 @@ func renderViewsTable(w io.Writer, rows []viewSummaryRow) {
 	_, _ = fmt.Fprintf(w, "Views: %d total (%d owned + root)\n", len(rows), ownedViews)
 	_, _ = fmt.Fprintf(w, "Max depth: %d\n", maxDepth)
 	term.Separator(w)
-	_, _ = fmt.Fprintln(w, "| View | Owner | Depth | Elements | Child Views | Connectors | Path |")
-	_, _ = fmt.Fprintln(w, "|------|-------|-------|----------|-------------|------------|------|")
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "VIEW\tOWNER\tDEPTH\tELEMENTS\tCHILD VIEWS\tCONNECTORS\tPATH")
 	for _, row := range rows {
-		_, _ = fmt.Fprintf(w, "| %s | %s | %d | %d | %d | %d | %s |\n", row.Ref, row.OwnerName, row.Depth, row.DirectElements, row.DirectChildViews, row.Connectors, row.Path)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%s\n",
+			row.Ref, row.OwnerName, row.Depth, row.DirectElements, row.DirectChildViews, row.Connectors, row.Path)
 	}
+	_ = tw.Flush()
 }
 
 func buildViewsJSONOutput(rows []viewSummaryRow) cmdutil.JSONOutput {
