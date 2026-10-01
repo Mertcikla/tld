@@ -64,7 +64,7 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "tld",
 		Short:         "tld -- tlDiagram CLI",
-		Long:          `tld`,
+		Long:          `tld CLI for managing and visualizing system architecture diagrams.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       version.Version,
