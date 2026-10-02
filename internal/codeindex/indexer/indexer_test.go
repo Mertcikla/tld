@@ -176,6 +176,53 @@ func TestTreeFactsCaptureImports(t *testing.T) {
 	}
 }
 
+func TestBuildAddsFileFactsAndChunks(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"main.go":      "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println() }\n",
+		"service.yaml": "apiVersion: v1\nkind: Service\nmetadata:\n  name: greeter\n",
+		"big.yaml":     strings.Repeat("key: value\n", 1500),
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap, g, err := (Pipeline{Config: config.Default()}).Build(context.Background(), &pb.IndexRequest{Directory: root}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap.IngestionStatus != "complete" {
+		t.Fatalf("status: %s", snap.IngestionStatus)
+	}
+	fileFacts := 0
+	for _, f := range g.Facts {
+		if f.Kind == pb.FactKind_FACT_KIND_IMPORT {
+			t.Fatalf("import fact was produced: %s", f.Name)
+		}
+		if f.Kind != pb.FactKind_FACT_KIND_FILE {
+			continue
+		}
+		fileFacts++
+		var text strings.Builder
+		for _, c := range g.Chunks {
+			if c.FactId == f.Id {
+				text.WriteString(c.Text)
+			}
+		}
+		want, rerr := os.ReadFile(filepath.Join(root, filepath.FromSlash(f.Name)))
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		if text.String() != string(want) {
+			t.Fatalf("file chunk text for %s does not reassemble the source", f.Name)
+		}
+	}
+	if fileFacts != len(files) {
+		t.Fatalf("file facts = %d, want %d", fileFacts, len(files))
+	}
+}
+
 func TestImportedSCIPRejectsStaleSource(t *testing.T) {
 	s := &graph.Source{Path: "a.go", Language: "go", Text: []byte("package a\n"), Hash: graph.Hash([]byte("package a\n"))}
 	g := graph.NewGraph("r", "s")

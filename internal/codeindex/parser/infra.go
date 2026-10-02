@@ -5,13 +5,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	goparser "go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -63,9 +60,6 @@ func Scan(ctx context.Context, root string, sources map[string]*graph.Source) ([
 		ext := filepath.Ext(rel)
 		if IsInfraSource(name, rel) {
 			out = append(out, scanInfraFile(path, rel, region(rel))...)
-		}
-		if ext == ".go" {
-			out = append(out, goImportFacts(path, rel, region(rel))...)
 		}
 		if isCodeExt(ext) {
 			out = append(out, codePatternFacts(path, rel, region(rel))...)
@@ -551,7 +545,6 @@ var patternRules = []struct {
 	group int
 }{
 	{pb.FactKind_FACT_KIND_ENV, regexp.MustCompile(`(?:os\.Getenv|process\.env\.|getenv\()\s*\(?["']?([A-Z][A-Z0-9_]+)`), 1},
-	{pb.FactKind_FACT_KIND_IMPORT, regexp.MustCompile(`(?:import\s+(?:.*?\s+from\s+)?|require\(|from\s+)["']([^"']+)["']`), 1},
 }
 
 func codePatternFacts(path, rel, subject string) []Fact {
@@ -560,9 +553,6 @@ func codePatternFacts(path, rel, subject string) []Fact {
 		return nil
 	}
 	var out []Fact
-	// Go imports are extracted precisely with go/parser; the generic import
-	// pattern would publish a duplicate fact for the same declaration.
-	goFile := filepath.Ext(path) == ".go"
 	scanner := bufio.NewScanner(bytes.NewReader(b))
 	scanner.Buffer(make([]byte, 4096), 2<<20)
 	line := 0
@@ -577,9 +567,6 @@ func codePatternFacts(path, rel, subject string) []Fact {
 			continue
 		}
 		for _, rule := range patternRules {
-			if goFile && rule.kind == pb.FactKind_FACT_KIND_IMPORT {
-				continue
-			}
 			for _, m := range rule.re.FindAllStringSubmatchIndex(code, -1) {
 				start, end := m[2*rule.group], m[2*rule.group+1]
 				if start < 0 || end < start {
@@ -632,34 +619,6 @@ func stripInlineComment(raw string) string {
 		}
 	}
 	return raw
-}
-
-func goImportFacts(path, rel, subject string) []Fact {
-	b, e := os.ReadFile(path)
-	if e != nil {
-		return nil
-	}
-	fset := token.NewFileSet()
-	file, _ := goparser.ParseFile(fset, path, b, goparser.ImportsOnly|goparser.AllErrors)
-	if file == nil {
-		return nil
-	}
-	lines := bytes.Split(b, []byte("\n"))
-	var out []Fact
-	for _, imp := range file.Imports {
-		value, e := strconv.Unquote(imp.Path.Value)
-		if e != nil {
-			continue
-		}
-		pos := fset.Position(imp.Path.Pos())
-		if pos.Line < 1 || pos.Line > len(lines) {
-			continue
-		}
-		f := mkInfra(pb.FactKind_FACT_KIND_IMPORT, subject, value, rel, pos.Line, strings.TrimSpace(string(lines[pos.Line-1])), "go-parser")
-		f.Column, f.EndLine, f.EndColumn = pos.Column, pos.Line, pos.Column+len(imp.Path.Value)
-		out = append(out, f)
-	}
-	return out
 }
 
 func bridgeFacts(in []Fact) []Fact {

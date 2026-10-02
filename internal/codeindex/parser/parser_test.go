@@ -179,18 +179,17 @@ func TestScanWorkspaceFacts(t *testing.T) {
 	}
 }
 
-func TestScanDoesNotDuplicateGoImports(t *testing.T) {
+func TestScanSkipsImportFacts(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println() }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	count := 0
-	for _, f := range scanDir(t, dir) {
-		if f.Kind == pb.FactKind_FACT_KIND_IMPORT && f.Object == "fmt" {
-			count++
-		}
+	if err := os.WriteFile(filepath.Join(dir, "app.ts"), []byte("import React from \"react\";\nrequire(\"lodash\");\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if count != 1 {
-		t.Fatalf("fmt import facts = %d, want 1", count)
+	for _, f := range scanDir(t, dir) {
+		if f.Kind == pb.FactKind_FACT_KIND_IMPORT {
+			t.Fatalf("unexpected import fact: %s %s", f.Subject, f.Object)
+		}
 	}
 }

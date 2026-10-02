@@ -269,6 +269,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	if e := addInfraFacts(ctx, g, root, base, carried); e != nil {
 		return nil, nil, false, e
 	}
+	addFileFacts(g)
 	if base != nil {
 		// Carry forward edges whose source fact was retained, remapping both
 		// endpoints to the new snapshot by stable logical identity.
