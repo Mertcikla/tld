@@ -81,6 +81,7 @@ import {
 import {
   ChangeKind,
   CodeFactService,
+  MapperService,
   type Snapshot as CodeSnapshotProto,
   type SnapshotDiff as SnapshotDiffProto,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb'
@@ -191,6 +192,25 @@ export interface SnapshotDiff {
   edgeFacts: SnapshotDeltaCounts
 }
 
+// RepositoryMapProgress reports coarse mapper pipeline progress.
+export interface RepositoryMapProgress {
+  stage: string
+  current: number
+  total: number
+  detail: string
+}
+
+// RepositoryMapResult summarizes a completed mapper run.
+export interface RepositoryMapResult {
+  runId: string
+  viewId: number
+  facts: number
+  clusters: number
+  bins: number
+  unclustered: number
+  weightedTightness: number
+}
+
 export interface WorkspaceVersion {
   id: string
   version_id: string
@@ -248,6 +268,7 @@ const importClient = createClient(ImportService, transport)
 const mermaidClient = createClient(MermaidService, transport)
 const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
 const codeIndexFactClient = createClient(CodeFactService, transport)
+const codeIndexMapperClient = createClient(MapperService, transport)
 const orgClient = createClient(OrgService, transport)
 const collaborationClient = createClient(CollaborationService, transport)
 
@@ -1761,6 +1782,41 @@ export const api = {
         })
         return mapSnapshotDiff(res)
       }),
+    map: async (
+      repositoryId: string,
+      handlers: { onProgress?: (progress: RepositoryMapProgress) => void } = {},
+    ): Promise<RepositoryMapResult> => {
+      try {
+        const stream = codeIndexMapperClient.mapRepository({ repositoryId })
+        let result: RepositoryMapResult | null = null
+        for await (const event of stream) {
+          if (event.event.case === 'progress') {
+            handlers.onProgress?.({
+              stage: event.event.value.stage,
+              current: event.event.value.current,
+              total: event.event.value.total,
+              detail: event.event.value.detail,
+            })
+          } else if (event.event.case === 'result') {
+            const mapped = event.event.value
+            result = {
+              runId: mapped.runId,
+              viewId: Number(mapped.viewId),
+              facts: mapped.facts,
+              clusters: mapped.clusters,
+              bins: mapped.bins,
+              unclustered: mapped.unclustered,
+              weightedTightness: mapped.weightedTightness,
+            }
+          }
+        }
+        if (!result) throw new Error('Map finished without a result')
+        return result
+      } catch (e) {
+        if (e instanceof ConnectError) throw new Error(e.message)
+        throw e
+      }
+    },
   },
 
   editor: {

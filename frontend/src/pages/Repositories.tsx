@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Alert,
   AlertIcon,
@@ -13,6 +14,7 @@ import {
   Grid,
   HStack,
   IconButton,
+  Progress,
   Select,
   Spinner,
   Text,
@@ -20,8 +22,8 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import type { ButtonProps } from '@chakra-ui/react'
-import { CopyIcon, RepeatIcon } from '@chakra-ui/icons'
-import type { CodeSnapshot, IndexedRepository, SnapshotChangeKind, SnapshotDiff } from '../api/client'
+import { CopyIcon } from '@chakra-ui/icons'
+import type { CodeSnapshot, IndexedRepository, RepositoryMapProgress, SnapshotChangeKind, SnapshotDiff } from '../api/client'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
 
@@ -52,6 +54,18 @@ function shortId(value: string): string {
   return trimmed.length > 12 ? trimmed.slice(0, 12) : trimmed
 }
 
+const SHOW_IDS_STORAGE_KEY = 'tld:repositories:showIds'
+
+function readShowIdsPreference(): boolean {
+  if (typeof localStorage === 'undefined') return false
+  return localStorage.getItem(SHOW_IDS_STORAGE_KEY) === 'true'
+}
+
+function writeShowIdsPreference(value: boolean) {
+  if (typeof localStorage === 'undefined') return
+  localStorage.setItem(SHOW_IDS_STORAGE_KEY, String(value))
+}
+
 function snapshotAge(unixSeconds: number): string {
   if (!unixSeconds) return 'never'
   const seconds = Math.max(0, Math.floor(Date.now() / 1000 - unixSeconds))
@@ -63,6 +77,10 @@ function snapshotAge(unixSeconds: number): string {
   const days = Math.floor(hours / 24)
   if (days < 30) return `${days}d ago`
   return new Date(unixSeconds * 1000).toLocaleDateString()
+}
+
+function snapshotOptionLabel(snapshot: CodeSnapshot, ordinal: number, showIds: boolean): string {
+  return showIds ? `#${ordinal} · ${shortId(snapshot.id)}` : `#${ordinal} · ${snapshotAge(snapshot.createdUnix)}`
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -185,6 +203,19 @@ const CHANGE_META: Record<SnapshotChangeKind, { label: string; colorScheme: stri
   unchanged: { label: '·', colorScheme: 'gray' },
 }
 
+const MAP_STAGE_LABELS: Record<string, string> = {
+  loading: 'Loading embeddings',
+  clustering: 'Clustering',
+  binning: 'Packing bins',
+  materializing: 'Materializing workspace',
+}
+
+function mapStageLabel(progress: RepositoryMapProgress): string {
+  const label = MAP_STAGE_LABELS[progress.stage] ?? progress.stage
+  if (progress.total > 0) return `${label} · ${progress.current}/${progress.total}`
+  return label
+}
+
 function ChangeTag({ change }: { change: SnapshotChangeKind }) {
   const meta = CHANGE_META[change]
   return (
@@ -207,6 +238,18 @@ export default function Repositories() {
   const [diff, setDiff] = useState<SnapshotDiff | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffError, setDiffError] = useState<string | null>(null)
+  const [mapping, setMapping] = useState(false)
+  const [mapProgress, setMapProgress] = useState<RepositoryMapProgress | null>(null)
+  const [mapError, setMapError] = useState<string | null>(null)
+  const [showIds, setShowIds] = useState(readShowIdsPreference)
+  const navigate = useNavigate()
+
+  const toggleShowIds = useCallback(() => {
+    setShowIds((current) => {
+      writeShowIdsPreference(!current)
+      return !current
+    })
+  }, [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -243,6 +286,10 @@ export default function Repositories() {
   const selected = repositories.find((repo) => repo.id === selectedId) ?? null
   const selectedLatestSnapshotId = selected?.latestSnapshotId ?? ''
   const latestSnapshotId = snapshots.length > 0 ? snapshots[snapshots.length - 1].id : ''
+  const snapshotOrdinal = (id: string): number | null => {
+    const index = snapshots.findIndex((snapshot) => snapshot.id === id)
+    return index === -1 ? null : index + 1
+  }
 
   useEffect(() => {
     if (!selectedId || !selectedLatestSnapshotId) {
@@ -301,6 +348,30 @@ export default function Repositories() {
     toast({ title: ok ? `${label} copied` : 'Copy failed — select the text manually', status: ok ? 'success' : 'warning', duration: 1800 })
   }, [])
 
+  const handleMap = useCallback(async () => {
+    if (!selected) return
+    setMapping(true)
+    setMapError(null)
+    setMapProgress(null)
+    try {
+      const result = await api.repositories.map(selected.id, { onProgress: setMapProgress })
+      toast({
+        title: 'Repository mapped',
+        description: `${result.clusters} clusters · ${result.bins} bins materialized`,
+        status: 'success',
+      })
+      await load()
+      if (result.viewId) navigate(`/views/${result.viewId}`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to map repository'
+      setMapError(message)
+      toast({ title: 'Mapping failed', description: message, status: 'error' })
+    } finally {
+      setMapping(false)
+      setMapProgress(null)
+    }
+  }, [load, navigate, selected])
+
   const indexCommand = selected ? `tld index "${selected.root}" --watch` : ''
 
   return (
@@ -312,19 +383,6 @@ export default function Repositories() {
           <Button size="xs" variant="outline" ml={2} onClick={() => { void load() }}>Retry</Button>
         </Alert>
       )}
-
-      <Flex px={4} py={3} align="center" gap={3} borderBottom="1px solid" borderColor="whiteAlpha.100" flexShrink={0}>
-        <Text fontSize="sm" fontWeight="700" color="gray.100" textTransform="uppercase" letterSpacing="0.06em">
-          Repositories
-        </Text>
-        <Badge variant="subtle" colorScheme="purple" fontSize="2xs" borderRadius="full" px={2}>
-          {repositories.length}
-        </Badge>
-        <Box flex={1} />
-        <Tooltip label="Reload repositories" placement="top">
-          <IconButton aria-label="Reload repositories" icon={<RepeatIcon />} size="sm" variant="ghost" color="gray.400" onClick={() => { void load() }} />
-        </Tooltip>
-      </Flex>
 
       {loading && repositories.length === 0 ? (
         <Center flex={1}>
@@ -380,17 +438,12 @@ export default function Repositories() {
                     <Flex px={4} py={2.5} align="center" gap={3}>
                       <Box position="relative" flexShrink={0}>
                         <RepoGlyph name={repoName(repo.root)} />
-                        <Box position="absolute" bottom={-1} right={-1} w={2.5} h={2.5} borderRadius="full" bg={indexed ? 'green.400' : 'gray.400'} border="2px solid" borderColor="var(--bg-canvas)" />
+                        <Box position="absolute" bottom={-1} right={-1} w={2.5} h={2.5} borderRadius="full" bg={indexed ? 'green.400' : 'gray.400'} border="2px solid" borderColor="var(--bg-canvas)" title={indexed ? 'Indexed' : 'Not indexed'} />
                       </Box>
                       <Box flex="1" minW={0}>
-                        <HStack spacing={2} minW={0}>
-                          <Text fontWeight="semibold" color="gray.100" fontSize="sm" isTruncated>
-                            {repoName(repo.root)}
-                          </Text>
-                          <Badge variant="subtle" colorScheme={indexed ? 'green' : 'gray'} fontSize="2xs" borderRadius="full" px={2} flexShrink={0}>
-                            {indexed ? 'Indexed' : 'Not indexed'}
-                          </Badge>
-                        </HStack>
+                        <Text fontWeight="semibold" color="gray.100" fontSize="sm" isTruncated>
+                          {repoName(repo.root)}
+                        </Text>
                         <Text fontSize="xs" color="gray.500" isTruncated title={repo.root}>
                           {repo.root}
                         </Text>
@@ -418,18 +471,42 @@ export default function Repositories() {
                 <HStack spacing={3} align="center">
                   <RepoGlyph name={repoName(selected.root)} size="lg" />
                   <Box minW={0} flex={1}>
-                    <HStack spacing={2}>
-                      <Text fontSize="lg" fontWeight="700" color="gray.50" isTruncated>{repoName(selected.root)}</Text>
-                      <Badge variant="subtle" colorScheme={isIndexed(selected) ? 'green' : 'gray'} fontSize="2xs" borderRadius="full" px={2}>
-                        {isIndexed(selected) ? 'Indexed' : 'Not indexed'}
-                      </Badge>
-                    </HStack>
+                    <Text fontSize="lg" fontWeight="700" color="gray.50" isTruncated>{repoName(selected.root)}</Text>
                     <HStack spacing={1} mt={1} minW={0}>
                       <Code fontSize="2xs" color="gray.400" isTruncated flex={1} title={selected.root}>{selected.root}</Code>
                       <IconButton aria-label="Copy root path" icon={<CopyIcon />} size="xs" variant="ghost" onClick={() => { void copy(selected.root, 'Path') }} />
                     </HStack>
                   </Box>
+                  <Tooltip label="Cluster embeddings and materialize a repository map" placement="top">
+                    <Button
+                      {...accentOutlineStyle}
+                      size="sm"
+                      data-testid="repositories-map"
+                      isLoading={mapping}
+                      loadingText="Mapping…"
+                      isDisabled={!isIndexed(selected)}
+                      onClick={() => { void handleMap() }}
+                    >
+                      Map
+                    </Button>
+                  </Tooltip>
                 </HStack>
+
+                {mapping && (
+                  <Box border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" px={4} py={3} bg="whiteAlpha.50">
+                    <Text fontSize="xs" color="gray.300" fontWeight="600" mb={2}>
+                      {mapProgress ? mapStageLabel(mapProgress) : 'Starting mapper…'}
+                    </Text>
+                    <Progress size="xs" isIndeterminate colorScheme="purple" borderRadius="full" />
+                  </Box>
+                )}
+
+                {mapError && !mapping && (
+                  <Alert status="error" borderRadius="md">
+                    <AlertIcon />
+                    <Text flex="1" fontSize="sm">{mapError}</Text>
+                  </Alert>
+                )}
 
                 {isIndexed(selected) ? (
                   <>
@@ -441,50 +518,71 @@ export default function Repositories() {
                     </Grid>
 
                     <Box border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" overflow="hidden">
-                      <Flex px={4} py={2.5} borderBottom="1px solid" borderColor="whiteAlpha.100" align="center">
+                      <Flex px={4} py={2.5} borderBottom="1px solid" borderColor="whiteAlpha.100" align="center" gap={2}>
                         <MicroLabel>Latest snapshot</MicroLabel>
                         <Box flex={1} />
                         <Text fontSize="xs" color="gray.500">{snapshotAge(selected.latestCreatedUnix)}</Text>
                       </Flex>
                       <VStack align="stretch" spacing={0}>
-                        <Flex px={4} py={2.5} align="center" gap={3} borderBottom="1px solid" borderColor="whiteAlpha.50">
-                          <Text fontSize="xs" color="gray.500" w="88px" flexShrink={0}>Snapshot</Text>
-                          <Code fontSize="xs" color="gray.300" flex={1} isTruncated>{shortId(selected.latestSnapshotId)}</Code>
-                          <IconButton aria-label="Copy snapshot id" icon={<CopyIcon />} size="xs" variant="ghost" onClick={() => { void copy(selected.latestSnapshotId, 'Snapshot id') }} />
-                        </Flex>
-                        <Flex px={4} py={2.5} align="center" gap={3}>
-                          <Text fontSize="xs" color="gray.500" w="88px" flexShrink={0}>Revision</Text>
-                          <Code fontSize="xs" color="gray.300" flex={1} isTruncated>{selected.gitRevision ? shortId(selected.gitRevision) : '—'}</Code>
-                          {selected.gitBranch && (
-                            <Badge variant="subtle" colorScheme="blue" fontSize="2xs" borderRadius="full" px={2}>{selected.gitBranch}</Badge>
-                          )}
-                        </Flex>
+                        {selected.gitBranch && (
+                          <Flex px={4} py={2.5} align="center" gap={3} borderBottom={showIds ? '1px solid' : undefined} borderColor="whiteAlpha.50">
+                            <Text fontSize="xs" color="gray.500" w="88px" flexShrink={0}>Branch</Text>
+                            <Text fontSize="xs" color="gray.300" flex={1} isTruncated>{selected.gitBranch}</Text>
+                          </Flex>
+                        )}
+                        {showIds && (
+                          <>
+                            <Flex px={4} py={2.5} align="center" gap={3} borderBottom="1px solid" borderColor="whiteAlpha.50">
+                              <Text fontSize="xs" color="gray.500" w="88px" flexShrink={0}>Snapshot</Text>
+                              <Code fontSize="xs" color="gray.300" flex={1} isTruncated>{shortId(selected.latestSnapshotId)}</Code>
+                              <IconButton aria-label="Copy snapshot id" icon={<CopyIcon />} size="xs" variant="ghost" onClick={() => { void copy(selected.latestSnapshotId, 'Snapshot id') }} />
+                            </Flex>
+                            <Flex px={4} py={2.5} align="center" gap={3}>
+                              <Text fontSize="xs" color="gray.500" w="88px" flexShrink={0}>Revision</Text>
+                              <Code fontSize="xs" color="gray.300" flex={1} isTruncated>{selected.gitRevision ? shortId(selected.gitRevision) : '—'}</Code>
+                              {selected.gitRevision && (
+                                <IconButton aria-label="Copy revision" icon={<CopyIcon />} size="xs" variant="ghost" onClick={() => { void copy(selected.gitRevision, 'Revision') }} />
+                              )}
+                            </Flex>
+                          </>
+                        )}
                       </VStack>
                     </Box>
 
                     <Box border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" overflow="hidden">
                       <Flex px={4} py={2.5} borderBottom="1px solid" borderColor="whiteAlpha.100" align="center" gap={2}>
-                        <MicroLabel>History</MicroLabel>
-                        <Badge variant="subtle" colorScheme="purple" fontSize="2xs" borderRadius="full" px={2}>{snapshots.length}</Badge>
+                        <MicroLabel>History · {snapshots.length}</MicroLabel>
                         <Box flex={1} />
                         {snapshots.length >= 2 && (
                           <HStack spacing={2}>
                             <Text fontSize="xs" color="gray.500">Compare</Text>
                             <Select
                               size="xs"
-                              w="150px"
+                              w="170px"
                               value={baseSnapshotId}
                               bg="whiteAlpha.100"
                               borderColor="whiteAlpha.200"
                               color="gray.200"
                               onChange={(event) => setBaseSnapshotId(event.target.value)}
                             >
-                              {snapshots.slice(0, -1).map((snapshot) => (
-                                <option key={snapshot.id} value={snapshot.id}>{shortId(snapshot.id)}</option>
+                              {snapshots.slice(0, -1).map((snapshot, index) => (
+                                <option key={snapshot.id} value={snapshot.id}>
+                                  {snapshotOptionLabel(snapshot, index + 1, showIds)}
+                                </option>
                               ))}
                             </Select>
                           </HStack>
                         )}
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          color="gray.500"
+                          fontWeight="600"
+                          aria-pressed={showIds}
+                          onClick={toggleShowIds}
+                        >
+                          {showIds ? 'Hide IDs' : 'Show IDs'}
+                        </Button>
                       </Flex>
                       {snapshotsLoading ? (
                         <Flex px={4} py={4} align="center" gap={2} color="gray.500">
@@ -497,7 +595,7 @@ export default function Repositories() {
                         <Box px={4} py={3}><Text fontSize="sm" color="gray.500">No snapshots recorded.</Text></Box>
                       ) : (
                         <VStack align="stretch" spacing={0}>
-                          {[...snapshots].reverse().map((snapshot) => {
+                          {[...snapshots].reverse().map((snapshot, index) => {
                             const isLatest = snapshot.id === latestSnapshotId
                             const isBase = snapshot.id === baseSnapshotId
                             return (
@@ -515,16 +613,22 @@ export default function Repositories() {
                                 onClick={() => { if (!isLatest) setBaseSnapshotId(snapshot.id) }}
                               >
                                 <Box w={2} h={2} borderRadius="full" flexShrink={0} bg={isLatest ? 'green.400' : isBase ? 'var(--accent)' : 'gray.500'} />
-                                <Code fontSize="xs" color="gray.300" flex={1} isTruncated title={snapshot.id}>{shortId(snapshot.id)}</Code>
+                                {showIds ? (
+                                  <Code fontSize="xs" color="gray.300" flex={1} isTruncated title={snapshot.id}>{shortId(snapshot.id)}</Code>
+                                ) : (
+                                  <Text fontSize="xs" color="gray.300" flex={1} isTruncated>Snapshot #{snapshots.length - index}</Text>
+                                )}
                                 {snapshot.gitBranch && (
-                                  <Badge variant="subtle" colorScheme="blue" fontSize="2xs" borderRadius="full" px={2} flexShrink={0}>{snapshot.gitBranch}</Badge>
+                                  <Text fontSize="xs" color="gray.400" flexShrink={0}>{snapshot.gitBranch}</Text>
                                 )}
                                 {snapshot.warnings.length > 0 && (
                                   <Tooltip label={snapshot.warnings.join('\n')} placement="top">
-                                    <Badge variant="subtle" colorScheme="orange" fontSize="2xs" borderRadius="full" px={2} flexShrink={0}>{snapshot.warnings.length} warn</Badge>
+                                    <Text fontSize="xs" color="orange.300" flexShrink={0}>
+                                      {snapshot.warnings.length} warning{snapshot.warnings.length === 1 ? '' : 's'}
+                                    </Text>
                                   </Tooltip>
                                 )}
-                                {isLatest && <Badge variant="subtle" colorScheme="green" fontSize="2xs" borderRadius="full" px={2} flexShrink={0}>latest</Badge>}
+                                {isLatest && <Text fontSize="xs" color="green.300" fontWeight="600" flexShrink={0}>latest</Text>}
                                 <Text fontSize="xs" color="gray.500" w="72px" textAlign="right" flexShrink={0}>{snapshotAge(snapshot.createdUnix)}</Text>
                               </Flex>
                             )
@@ -538,7 +642,13 @@ export default function Repositories() {
                         <Flex px={4} py={2.5} borderBottom="1px solid" borderColor="whiteAlpha.100" align="center" gap={2}>
                           <MicroLabel>Changes</MicroLabel>
                           <Text fontSize="xs" color="gray.500">
-                            <Code fontSize="2xs">{shortId(baseSnapshotId)}</Code> → <Code fontSize="2xs">{shortId(latestSnapshotId)}</Code>
+                            {showIds ? (
+                              <>
+                                <Code fontSize="2xs">{shortId(baseSnapshotId)}</Code> → <Code fontSize="2xs">{shortId(latestSnapshotId)}</Code>
+                              </>
+                            ) : (
+                              <>Snapshot #{snapshotOrdinal(baseSnapshotId) ?? '?'} → #{snapshotOrdinal(latestSnapshotId) ?? '?'}</>
+                            )}
                           </Text>
                           <Box flex={1} />
                           {diffLoading && <Spinner size="xs" color="gray.500" />}
