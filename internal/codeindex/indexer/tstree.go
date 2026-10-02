@@ -97,6 +97,16 @@ func grammarName(language string) string {
 		return "typescript"
 	case "tsx":
 		return "tsx"
+	case "csharp":
+		return "c_sharp"
+	case "c":
+		return "c"
+	case "cpp":
+		return "cpp"
+	case "dart":
+		return "dart"
+	case "php":
+		return "php"
 	default:
 		return ""
 	}

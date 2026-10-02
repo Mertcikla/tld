@@ -108,6 +108,117 @@ func TestSCIPSynthesizesDefinitionFact(t *testing.T) {
 	}
 }
 
+// TestSCIPSynthesizesDeclarationBodies verifies that definitions whose indexer
+// omits an enclosing range still capture the full declaration body via the
+// tree-sitter declaration resolver, for the languages whose SCIP indexers do
+// not populate enclosing ranges.
+func TestSCIPSynthesizesDeclarationBodies(t *testing.T) {
+	tests := []struct {
+		name, path, language, source, symbol, symbolName, marker string
+		kind                                                     scip.SymbolInformation_Kind
+	}{
+		{
+			name: "php", path: "src/greet.php", language: "php",
+			source:     "<?php\nfunction greet(): string {\n    return \"hi\";\n}\n",
+			symbol:     "scip-php composer fixture 0.0.0 src/greet.php/greet().",
+			symbolName: "greet", marker: "return \"hi\"",
+			kind: scip.SymbolInformation_Function,
+		},
+		{
+			name: "csharp", path: "src/Greeter.cs", language: "csharp",
+			source:     "class Greeter {\n    string render() {\n        return \"hi\";\n    }\n}\n",
+			symbol:     "scip-dotnet nuget fixture 0.0.0 src/Greeter.cs/Greeter#render().",
+			symbolName: "render", marker: "return \"hi\"",
+			kind: scip.SymbolInformation_Method,
+		},
+		{
+			name: "dart function", path: "lib/greet.dart", language: "dart",
+			source:     "String greet() {\n  return \"hi\";\n}\n",
+			symbol:     "scip-dart pub fixture 0.0.0 lib/greet.dart/greet().",
+			symbolName: "greet", marker: "return \"hi\"",
+			kind: scip.SymbolInformation_Function,
+		},
+		{
+			name: "dart method", path: "lib/greeter.dart", language: "dart",
+			source:     "class Greeter {\n  String render() {\n    return \"hi\";\n  }\n}\n",
+			symbol:     "scip-dart pub fixture 0.0.0 lib/greeter.dart/Greeter#render().",
+			symbolName: "render", marker: "return \"hi\"",
+			kind: scip.SymbolInformation_Method,
+		},
+		{
+			name: "dart arrow", path: "lib/arrow.dart", language: "dart",
+			source:     "String greet() => \"hi\";\n",
+			symbol:     "scip-dart pub fixture 0.0.0 lib/arrow.dart/greet().",
+			symbolName: "greet", marker: "=> \"hi\"",
+			kind: scip.SymbolInformation_Function,
+		},
+		{
+			name: "csharp expression body", path: "src/Express.cs", language: "csharp",
+			source:     "class Widget {\n    string Render() => \"hi\";\n}\n",
+			symbol:     "scip-dotnet nuget fixture 0.0.0 src/Express.cs/Widget#Render().",
+			symbolName: "Render", marker: "=> \"hi\"",
+			kind: scip.SymbolInformation_Method,
+		},
+		{
+			name: "cpp", path: "src/greet.cpp", language: "cpp",
+			source:     "int greet() {\n    return 1;\n}\n",
+			symbol:     "scip-clang . . src/greet.cpp/greet().",
+			symbolName: "greet", marker: "return 1",
+			kind: scip.SymbolInformation_Function,
+		},
+		{
+			name: "c", path: "src/greet.c", language: "c",
+			source:     "int greet(void) {\n    return 1;\n}\n",
+			symbol:     "scip-clang . . src/greet.c/greet().",
+			symbolName: "greet", marker: "return 1",
+			kind: scip.SymbolInformation_Function,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g, s := testSource(t, tt.path, tt.language, tt.source)
+			line, start, end := position(t, s.Text, tt.symbolName, 0)
+			idx := &scip.Index{
+				Metadata: &scip.Metadata{ToolInfo: &scip.ToolInfo{Name: "fixture", Version: "1"}},
+				Documents: []*scip.Document{{
+					RelativePath: tt.path,
+					Text:         tt.source,
+					Occurrences: []*scip.Occurrence{{
+						Range:       []int32{int32(line), int32(start), int32(end)},
+						Symbol:      tt.symbol,
+						SymbolRoles: int32(scip.SymbolRole_Definition),
+					}},
+					Symbols: []*scip.SymbolInformation{{
+						Symbol:      tt.symbol,
+						Kind:        tt.kind,
+						DisplayName: tt.symbolName,
+					}},
+				}},
+			}
+			if err := importSCIPReader(context.Background(), g, &pb.Project{Root: "."}, bytes.NewReader(marshalIndex(t, idx)), nil, false, true, newSymbols()); err != nil {
+				t.Fatal(err)
+			}
+			if len(g.Facts) != 1 {
+				t.Fatalf("facts: %d", len(g.Facts))
+			}
+			for _, f := range g.Facts {
+				if f.Name != tt.symbolName {
+					t.Fatalf("name: %q", f.Name)
+				}
+				if strings.TrimSpace(f.Code) == tt.symbolName {
+					t.Fatalf("captured only the symbol name: %q", f.Code)
+				}
+				if !strings.Contains(f.Code, tt.marker) {
+					t.Fatalf("captured code does not span the declaration body: %q", f.Code)
+				}
+			}
+			if len(g.Chunks) == 0 {
+				t.Fatal("synthesized fact produced no chunks")
+			}
+		})
+	}
+}
+
 // TestSCIPSkipsNonDeclarationKinds verifies that symbol kinds outside the
 // code-bearing declaration set are not synthesized as Facts.
 func TestSCIPSkipsNonDeclarationKinds(t *testing.T) {

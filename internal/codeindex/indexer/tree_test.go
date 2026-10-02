@@ -19,6 +19,10 @@ func TestTreeFactsOnlyCodeDeclarations(t *testing.T) {
 		{"a.ts", "typescript", "class Box { open() {} }\nconst make = () => 1;\nconst value = 2;\nfunction run(){ make(); }\n", map[string]pb.FactKind{"Box": pb.FactKind_FACT_KIND_CLASS, "open": pb.FactKind_FACT_KIND_METHOD, "make": pb.FactKind_FACT_KIND_FUNCTION, "run": pb.FactKind_FACT_KIND_FUNCTION}},
 		{"a.js", "javascript", "class Box { open() {} }\nconst make = (x) => x;\nconst value = 2;\nfunction run(){ make(1); }\n", map[string]pb.FactKind{"Box": pb.FactKind_FACT_KIND_CLASS, "open": pb.FactKind_FACT_KIND_METHOD, "make": pb.FactKind_FACT_KIND_FUNCTION, "run": pb.FactKind_FACT_KIND_FUNCTION}},
 		{"a.py", "python", "def top(): pass\nclass Box:\n    def open(self): pass\n    def __init__(self): pass\nhelper = 3\n", map[string]pb.FactKind{"top": pb.FactKind_FACT_KIND_FUNCTION, "Box": pb.FactKind_FACT_KIND_CLASS, "open": pb.FactKind_FACT_KIND_METHOD, "__init__": pb.FactKind_FACT_KIND_METHOD}},
+		{"a.php", "php", "<?php\nfunction top() {}\nclass Box { public function open() {} }\n", map[string]pb.FactKind{"top": pb.FactKind_FACT_KIND_FUNCTION, "Box": pb.FactKind_FACT_KIND_CLASS, "open": pb.FactKind_FACT_KIND_METHOD}},
+		{"a.cs", "csharp", "class Box { void Open() {} }\n", map[string]pb.FactKind{"Box": pb.FactKind_FACT_KIND_CLASS, "Open": pb.FactKind_FACT_KIND_METHOD}},
+		{"a.dart", "dart", "void main() {}\nclass Box { void open() {} }\n", map[string]pb.FactKind{"main": pb.FactKind_FACT_KIND_FUNCTION, "Box": pb.FactKind_FACT_KIND_CLASS, "open": pb.FactKind_FACT_KIND_METHOD}},
+		{"a.cpp", "cpp", "int run() { return 0; }\nclass Box { public: void open() {} };\n", map[string]pb.FactKind{"run": pb.FactKind_FACT_KIND_FUNCTION, "Box": pb.FactKind_FACT_KIND_CLASS, "open": pb.FactKind_FACT_KIND_METHOD}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {

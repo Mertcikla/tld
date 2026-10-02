@@ -106,6 +106,11 @@ func importSCIPReader(ctx context.Context, g *graph.Graph, project *pb.Project, 
 		default:
 			declaredEncoding = false
 		}
+		var declarations *declarationIndex
+		if scipBacked {
+			declarations = newDeclarationIndex(source)
+			defer declarations.Release()
+		}
 		for _, info := range d.GetSymbols() {
 			fromKey := symbolKey(info.GetSymbol(), path)
 			table.metadata[fromKey] = info
@@ -139,7 +144,7 @@ func importSCIPReader(ctx context.Context, g *graph.Graph, project *pb.Project, 
 			key := symbolKey(symbol, path)
 			if o.GetSymbolRoles()&int32(scip.SymbolRole_Definition) != 0 {
 				if scipBacked {
-					if fact := synthesizeFact(g, source, o, symbol, table.metadata[key], anchor, encoding, version); fact != nil {
+					if fact := synthesizeFact(g, source, o, symbol, table.metadata[key], anchor, encoding, version, declarations); fact != nil {
 						table.definitions[key] = fact.Id
 						table.definitionSites[key] = anchor
 					}
@@ -175,9 +180,11 @@ func importSCIPReader(ctx context.Context, g *graph.Graph, project *pb.Project, 
 // synthesizeFact creates a code Fact directly from a SCIP definition occurrence
 // for languages without a tree-sitter declaration extractor. The occurrence's
 // enclosing range, when the indexer provides it, bounds the full declaration;
-// otherwise the name range is all that is captured. FactKind comes from the
+// otherwise the tree-sitter declaration containing the name is used, so
+// languages whose indexers omit enclosing ranges still capture full
+// declarations rather than just symbol names. FactKind comes from the
 // indexer-provided symbol kind, falling back to the SCIP descriptor suffix.
-func synthesizeFact(g *graph.Graph, source *graph.Source, o *scip.Occurrence, symbol string, info *scip.SymbolInformation, occurrenceAnchor *pb.SourceAnchor, encoding, version string) *pb.CodeFact {
+func synthesizeFact(g *graph.Graph, source *graph.Source, o *scip.Occurrence, symbol string, info *scip.SymbolInformation, occurrenceAnchor *pb.SourceAnchor, encoding, version string, declarations *declarationIndex) *pb.CodeFact {
 	kind := factKindFromSCIP(info.GetKind())
 	if kind == pb.FactKind_FACT_KIND_UNSPECIFIED && info.GetKind() == scip.SymbolInformation_UnspecifiedKind {
 		kind = factKindFromSymbol(symbol)
@@ -194,6 +201,9 @@ func synthesizeFact(g *graph.Graph, source *graph.Source, o *scip.Occurrence, sy
 				start, end = s, e
 			}
 		}
+	}
+	if declStart, declEnd, ok := declarations.span(start, end); ok && declEnd-declStart > end-start {
+		start, end = declStart, declEnd
 	}
 	if end <= start || start < 0 || end > len(source.Text) {
 		return nil
