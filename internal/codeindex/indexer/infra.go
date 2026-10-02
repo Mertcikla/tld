@@ -31,7 +31,8 @@ func addInfraFacts(ctx context.Context, g *graph.Graph, root string, base *Incre
 			continue
 		}
 		language := src.Language
-		anchor := src.Anchor(byteOffset(src.Text, f.Line, f.Column, f.EndLine, f.EndColumn))
+		start, end := src.OffsetForLineColumn(f.Line, f.Column, f.EndLine, f.EndColumn)
+		anchor := src.Anchor(start, end)
 		key := graph.LogicalInfraKey(f.Kind, f.Subject, f.Object, f.Path)
 		if keptCarried[key] {
 			continue
@@ -63,35 +64,5 @@ func isInfraKind(kind pb.FactKind) bool {
 // captured source. When the end span is unspecified the start position is used
 // for both, so the anchor still points at the reporting line.
 func byteOffset(text []byte, line, column, endLine, endColumn int) (int, int) {
-	start := offsetOf(text, line, column)
-	end := start
-	if endLine > 0 && endColumn > 0 {
-		end = offsetOf(text, endLine, endColumn)
-	}
-	if end < start {
-		end = start
-	}
-	return start, end
-}
-
-func offsetOf(text []byte, line, column int) int {
-	if line <= 0 {
-		return 0
-	}
-	if column <= 0 {
-		column = 1
-	}
-	current := 1
-	offset := 0
-	for offset < len(text) && current < line {
-		if text[offset] == '\n' {
-			current++
-		}
-		offset++
-	}
-	offset += column - 1
-	if offset > len(text) {
-		offset = len(text)
-	}
-	return offset
+	return (&graph.Source{Text: text}).OffsetForLineColumn(line, column, endLine, endColumn)
 }

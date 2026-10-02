@@ -187,9 +187,9 @@ func synthesizeFact(g *graph.Graph, source *graph.Source, o *scip.Occurrence, sy
 	}
 	start, end := int(occurrenceAnchor.StartByte), int(occurrenceAnchor.EndByte)
 	if lr, ok := occurrenceEnclosingLineRange(o); ok {
-		s, err := graph.Offset(source.Text, lr.startLine, lr.startChar, encoding)
+		s, err := source.Offset(lr.startLine, lr.startChar, encoding)
 		if err == nil {
-			e, endErr := graph.Offset(source.Text, lr.endLine, lr.endChar, encoding)
+			e, endErr := source.Offset(lr.endLine, lr.endChar, encoding)
 			if endErr == nil && e >= s && e <= len(source.Text) {
 				start, end = s, e
 			}
@@ -459,11 +459,11 @@ func scipAnchorResilient(s *graph.Source, o *scip.Occurrence, enc string, declar
 }
 
 func anchorFromLineRange(s *graph.Source, lr lineRange, enc string) (*pb.SourceAnchor, error) {
-	start, err := graph.Offset(s.Text, lr.startLine, lr.startChar, enc)
+	start, err := s.Offset(lr.startLine, lr.startChar, enc)
 	if err != nil {
 		return nil, err
 	}
-	end, err := graph.Offset(s.Text, lr.endLine, lr.endChar, enc)
+	end, err := s.Offset(lr.endLine, lr.endChar, enc)
 	if err != nil {
 		return nil, err
 	}

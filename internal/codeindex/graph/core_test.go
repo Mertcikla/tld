@@ -91,3 +91,36 @@ func TestAnchorHalfOpen(t *testing.T) {
 		t.Fatalf("bad anchor: %+v", a)
 	}
 }
+
+func TestSourcePositionMatchesLinearScan(t *testing.T) {
+	text := []byte("package a\n\nfunc f() {\r\n\t// rocket\n}\n")
+	s := &Source{Path: "a.go", Text: text, Hash: Hash(text)}
+	for off := 0; off <= len(text); off++ {
+		line, col := uint32(0), uint32(0)
+		for i := 0; i < off; i++ {
+			if text[i] == '\n' {
+				line++
+				col = 0
+			} else {
+				col++
+			}
+		}
+		if gl, gc := s.Position(off); gl != line || gc != col {
+			t.Fatalf("Position(%d)=%d,%d want %d,%d", off, gl, gc, line, col)
+		}
+	}
+	if s.lines == nil {
+		t.Fatal("line index was not cached")
+	}
+	for line := 0; line < len(s.lines); line++ {
+		for col := 0; ; col++ {
+			off, err := s.Offset(line, col, "utf-8")
+			if err != nil {
+				break
+			}
+			if gl, gc := s.Position(off); int(gl) != line || int(gc) != col {
+				t.Fatalf("Offset(%d,%d)=%d round-trips to %d,%d", line, col, off, gl, gc)
+			}
+		}
+	}
+}

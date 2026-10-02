@@ -27,6 +27,10 @@ func RepositoryID(root string) string { return ID(filepath.Clean(root)) }
 type Source struct {
 	Path, Language, Hash string
 	Text                 []byte
+	// lines caches the byte offset of each line start so Position and Offset
+	// resolve anchors in O(log n) instead of rescanning (and copying) the
+	// source for every occurrence.
+	lines []int
 }
 
 func (s *Source) Anchor(start, end int) *pb.SourceAnchor {
@@ -39,50 +43,67 @@ func (s *Source) Anchor(start, end int) *pb.SourceAnchor {
 	if end < start {
 		end = start
 	}
-	sl, sc := Position(s.Text, start)
-	el, ec := Position(s.Text, end)
+	sl, sc := s.Position(start)
+	el, ec := s.Position(end)
 	return &pb.SourceAnchor{Path: s.Path, StartByte: uint32(start), EndByte: uint32(end), StartLine: sl, StartColumn: sc, EndLine: el, EndColumn: ec, SourceHash: s.Hash}
 }
-func Position(b []byte, off int) (uint32, uint32) {
-	if off > len(b) {
-		off = len(b)
+
+// lineStarts lazily indexes the first byte of every line in Text. Each entry
+// points at the byte following the preceding newline, so a source ending in a
+// newline gains a final entry equal to len(Text).
+func (s *Source) lineStarts() []int {
+	if s.lines == nil {
+		starts := make([]int, 1, 1+len(s.Text)/40)
+		for i, c := range s.Text {
+			if c == '\n' {
+				starts = append(starts, i+1)
+			}
+		}
+		s.lines = starts
+	}
+	return s.lines
+}
+
+// Position translates a byte offset into a 0-based line and byte column.
+func (s *Source) Position(off int) (uint32, uint32) {
+	if off > len(s.Text) {
+		off = len(s.Text)
 	}
 	if off < 0 {
 		off = 0
 	}
-	line, col := uint32(0), uint32(0)
-	for _, c := range b[:off] {
-		if c == '\n' {
-			line++
-			col = 0
+	starts := s.lineStarts()
+	lo, hi := 0, len(starts)
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if starts[mid] <= off {
+			lo = mid + 1
 		} else {
-			col++
+			hi = mid
 		}
 	}
-	return line, col
+	line := lo - 1
+	return uint32(line), uint32(off - starts[line])
 }
 
 // Offset translates a SCIP line/character pair into a UTF-8 byte offset.
-func Offset(b []byte, line, character int, encoding string) (int, error) {
+func (s *Source) Offset(line, character int, encoding string) (int, error) {
 	if line < 0 || character < 0 {
 		return 0, fmt.Errorf("negative position")
 	}
-	start := 0
-	for i := 0; i < line; i++ {
-		p := strings.IndexByte(string(b[start:]), '\n')
-		if p < 0 {
-			return 0, fmt.Errorf("line outside source")
-		}
-		start += p + 1
+	starts := s.lineStarts()
+	if line >= len(starts) {
+		return 0, fmt.Errorf("line outside source")
 	}
-	end := start
-	for end < len(b) && b[end] != '\n' {
-		end++
+	start := starts[line]
+	end := len(s.Text)
+	if line+1 < len(starts) {
+		end = starts[line+1] - 1
 	}
-	if end > start && b[end-1] == '\r' {
+	if end > start && s.Text[end-1] == '\r' {
 		end--
 	}
-	chunk := b[start:end]
+	chunk := s.Text[start:end]
 	switch strings.ToLower(encoding) {
 	case "utf-8", "utf8", "":
 		if character > len(chunk) {
@@ -116,6 +137,51 @@ func Offset(b []byte, line, character int, encoding string) (int, error) {
 	default:
 		return 0, fmt.Errorf("unsupported encoding %q", encoding)
 	}
+}
+
+// OffsetForLineColumn resolves a 1-based line/column span to byte offsets in the
+// source. It backs the infrastructure fact extractors.
+func (s *Source) OffsetForLineColumn(line, column, endLine, endColumn int) (int, int) {
+	start := s.columnOffset(line, column)
+	end := start
+	if endLine > 0 && endColumn > 0 {
+		end = s.columnOffset(endLine, endColumn)
+	}
+	if end < start {
+		end = start
+	}
+	return start, end
+}
+
+func (s *Source) columnOffset(line, column int) int {
+	if line <= 0 {
+		return 0
+	}
+	if column <= 0 {
+		column = 1
+	}
+	starts := s.lineStarts()
+	start := len(s.Text)
+	if line-1 < len(starts) {
+		start = starts[line-1]
+	}
+	offset := start + column - 1
+	if offset > len(s.Text) {
+		offset = len(s.Text)
+	}
+	return offset
+}
+
+// Position is a byte-slice convenience wrapper. Prefer Source.Position so the
+// line index is built once and reused across every anchor for a file.
+func Position(b []byte, off int) (uint32, uint32) {
+	return (&Source{Text: b}).Position(off)
+}
+
+// Offset is a byte-slice convenience wrapper. Prefer Source.Offset so the line
+// index is built once and reused across every anchor for a file.
+func Offset(b []byte, line, character int, encoding string) (int, error) {
+	return (&Source{Text: b}).Offset(line, character, encoding)
 }
 
 type Graph struct {
