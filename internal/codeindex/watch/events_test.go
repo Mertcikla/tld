@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 func TestIgnoredPaths(t *testing.T) {
@@ -54,5 +56,19 @@ func TestPollingFallbackStopsOnContext(t *testing.T) {
 	cancel()
 	if _, err := d.Next(ctx, "same", func(context.Context) (string, error) { return "same", nil }); err == nil {
 		t.Fatal("expected context error")
+	}
+}
+
+func TestSettleReportsDebouncing(t *testing.T) {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+	var states []string
+	d := &Detector{watcher: w, opts: Options{Debounce: time.Millisecond, MaxWait: time.Second, OnState: func(state string) { states = append(states, state) }}}
+	signature, err := d.settle(context.Background(), func(context.Context) (string, error) { return "changed", nil })
+	if err != nil || signature != "changed" || len(states) != 1 || states[0] != "debouncing" {
+		t.Fatalf("settle: %s %v states %v", signature, err, states)
 	}
 }

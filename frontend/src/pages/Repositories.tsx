@@ -12,6 +12,7 @@ import {
   Grid,
   HStack,
   IconButton,
+  Input,
   Progress,
   Select,
   Spinner,
@@ -32,6 +33,7 @@ import {
   type CompletedRepositoryMap,
   type IndexedRepository,
   type RepositoryGitHistory,
+  type RepositoryPullRequest,
   type RepositoryMapProgress,
   type SnapshotDiff,
   type RepositoryImpact as RepositoryImpactResult,
@@ -43,6 +45,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import RepositoryHistory from '../components/RepositoryHistory'
 import RepositoryChangeCanvas from '../components/RepositoryChangeCanvas'
 import RepositorySymbols from '../components/RepositorySymbols'
+import RepositoryWatcherPanel from '../components/RepositoryWatcherPanel'
 import {
   defaultRepositoryTargets,
   snapshotForTarget,
@@ -94,6 +97,26 @@ function Glyph({ name }: { name: string }) {
     </Center>
   )
 }
+function RepositoryModeIcon({ mode }: { mode: 'compare' | 'live' | 'pr' }) {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      {mode === 'compare' ? (
+        <>
+          <path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" />
+        </>
+      ) : mode === 'live' ? (
+        <path d="M2 12h4l3-8 6 16 3-8h4" />
+      ) : (
+        <>
+          <circle cx="6" cy="5" r="3" />
+          <circle cx="6" cy="19" r="3" />
+          <circle cx="18" cy="19" r="3" />
+          <path d="M6 8v8M18 16V9a4 4 0 0 0-4-4h-1m3-3-3 3 3 3" />
+        </>
+      )}
+    </svg>
+  )
+}
 function Label({ children }: { children: React.ReactNode }) {
   return (
     <Text
@@ -114,37 +137,6 @@ function ErrorMessage({ message }: { message: string }) {
       <Text fontSize="sm">{message}</Text>
     </Alert>
   ) : null
-}
-
-function watchBadgeProps(status: RepositoryWatchStatus | null): { label: string; scheme: string } {
-  if (!status || !status.running) return { label: 'Watcher inactive', scheme: 'gray' }
-  switch (status.state) {
-    case 'starting':
-    case 'watching':
-    case 'scanning':
-      return { label: status.state === 'scanning' ? 'Indexing' : 'Watching', scheme: 'green' }
-    case 'stopping':
-      return { label: 'Stopping', scheme: 'orange' }
-    case 'error':
-      return { label: 'Watcher error', scheme: 'red' }
-    default:
-      return { label: 'Watching', scheme: 'green' }
-  }
-}
-
-function watchDetail(status: RepositoryWatchStatus): string {
-  const parts: string[] = []
-  if (status.ownerKind) {
-    parts.push(status.ownerPid > 0 ? `${status.ownerKind} · pid ${status.ownerPid}` : status.ownerKind)
-  }
-  if (status.stage) parts.push(status.stage)
-  if (status.changedFiles > 0 || status.pendingFiles > 0) {
-    parts.push(`${status.changedFiles} changed${status.pendingFiles > 0 ? `, ${status.pendingFiles} pending` : ''}`)
-  }
-  if (status.lastScanUnix > 0) {
-    parts.push(`last scan ${new Date(status.lastScanUnix * 1000).toLocaleTimeString()}${status.lastScanMs > 0 ? ` (${status.lastScanMs} ms)` : ''}`)
-  }
-  return parts.join(' · ')
 }
 
 function FileTreeIcon({ directory, expanded, change }: { directory?: boolean; expanded?: boolean; change?: SnapshotSourceChange['change'] }) {
@@ -277,6 +269,7 @@ function CompareSide({
   includeImports,
   showIds,
   disabled,
+  locked = false,
   onChange,
   onMap,
 }: {
@@ -289,6 +282,7 @@ function CompareSide({
   includeImports: boolean
   showIds: boolean
   disabled: boolean
+  locked?: boolean
   onChange: (value: string) => void
   onMap: () => void
 }) {
@@ -335,7 +329,7 @@ function CompareSide({
         data-testid={`repositories-${side.toLowerCase()}-target`}
         size="sm"
         value={value}
-        isDisabled={disabled}
+        isDisabled={disabled || locked}
         onChange={(e) => onChange(e.target.value)}
       >
         <option value="">Select a target</option>
@@ -431,7 +425,10 @@ export default function Repositories() {
   const [live, setLive] = useState<LiveRepositoryImpact | null>(null)
   const [watch, setWatch] = useState<RepositoryWatchStatus | null>(null)
   const [watchBusy, setWatchBusy] = useState(false)
-  const [mode, setMode] = useState(() => params.get('mode') === 'live' ? 'live' : 'compare')
+  const [mode, setMode] = useState(() => params.get('mode') === 'live' || params.get('mode') === 'watch' ? 'live' : params.get('mode') === 'pr' ? 'pr' : 'compare')
+  const compareTargets = useRef<{ base: string; head: string; baseBranch: string; headBranch: string } | null>(null)
+  const [prInput, setPrInput] = useState('')
+  const [pullRequest, setPullRequest] = useState<RepositoryPullRequest | null>(null)
   const [selectedPath, setSelectedPath] = useState('')
   const [filesTab, setFilesTab] = useState<'files' | 'symbols'>('files')
   const liveVersion = useRef('')
@@ -493,7 +490,7 @@ export default function Repositories() {
         const next = new URLSearchParams(old)
         for (const [key, value] of Object.entries({
           repo: selectedId,
-          mode,
+          mode: mode === 'live' ? 'watch' : mode,
           base,
           head,
           branch,
@@ -522,7 +519,7 @@ export default function Repositories() {
     Promise.allSettled([
       api.repositories.snapshots(selectedId),
       api.repositories.maps(selectedId),
-      api.repositories.history(selectedId, branch, 0),
+      api.repositories.history(selectedId, mode === 'pr' && pullRequest ? pullRequest.headSha : branch, 0),
     ])
       .then(([snapshotResult, mapResult, historyResult]) => {
         if (stale) return
@@ -569,7 +566,7 @@ export default function Repositories() {
     return () => {
       stale = true
     }
-  }, [selectedId, branch, nonce])
+  }, [selectedId, branch, nonce, mode, pullRequest])
   useEffect(() => {
     setComparison(null); setSelectedPath(''); setFilesTab('files')
     setOperationError('')
@@ -619,8 +616,39 @@ export default function Repositories() {
     return () => { controller.abort(); clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', visibility) }
   }, [mode, selectedId, reload])
   const changeMode = (next: string) => {
+    if (next === mode) return
+    if (next === 'pr') {
+      compareTargets.current = { base, head, baseBranch, headBranch }
+      if (pullRequest) {
+        setBase(`commit:${pullRequest.baseSha}`); setHead(`commit:${pullRequest.headSha}`)
+        setBaseBranch(pullRequest.baseBranch); setHeadBranch(pullRequest.headBranch)
+      }
+    } else if (mode === 'pr' && compareTargets.current) {
+      const previous = compareTargets.current
+      setBase(previous.base); setHead(previous.head)
+      setBaseBranch(previous.baseBranch); setHeadBranch(previous.headBranch)
+      compareTargets.current = null
+    }
     operation.current?.abort(); operation.current = null
-    setBusy(false); setProgress(null); setOperationError(''); setSelectedPath(''); setFilesTab('files'); setMode(next)
+    setBusy(false); setProgress(null); setComparison(null); setOperationError(''); setSelectedPath(''); setFilesTab('files'); setMode(next)
+  }
+  const loadPullRequest = async () => {
+    if (!selectedId || !prInput.trim() || busy) return
+    const repositoryId = selectedId
+    const controller = new AbortController()
+    operation.current = controller
+    setBusy(true); setOperationError(''); setComparison(null); setPullRequest(null)
+    try {
+      const result = await api.repositories.pullRequest(repositoryId, prInput.trim(), controller.signal)
+      if (controller.signal.aborted || selectedRef.current !== repositoryId || operation.current !== controller) return
+      setPullRequest(result)
+      setBase(`commit:${result.baseSha}`); setHead(`commit:${result.headSha}`)
+      setBaseBranch(result.baseBranch); setHeadBranch(result.headBranch)
+    } catch (err) {
+      if (!controller.signal.aborted && selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not load pull request')
+    } finally {
+      if (operation.current === controller) { operation.current = null; setBusy(false) }
+    }
   }
   const changeRadius = async (radius: number) => {
     if (!shownImpact || busy) return
@@ -665,6 +693,29 @@ export default function Repositories() {
       setWatchBusy(false)
     }
   }
+  const restartWatch = async () => {
+    const repositoryId = selectedId
+    setWatchBusy(true); setOperationError('')
+    try {
+      const stopped = await api.repositories.stopWatch(repositoryId)
+      if (selectedRef.current !== repositoryId) return
+      setWatch(stopped)
+      const started = await api.repositories.startWatch(repositoryId, { embed: true, materialize: false })
+      if (selectedRef.current === repositoryId) setWatch(started)
+    } catch (err) {
+      if (selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not restart watcher')
+    } finally { setWatchBusy(false) }
+  }
+  const refreshWatch = async () => {
+    const repositoryId = selectedId
+    setWatchBusy(true); setOperationError('')
+    try {
+      const [status, result] = await Promise.all([api.repositories.watchStatus(repositoryId), api.repositories.liveImpact(repositoryId)])
+      if (selectedRef.current === repositoryId) { setWatch(status); setLive(result) }
+    } catch (err) {
+      if (selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not refresh watcher')
+    } finally { setWatchBusy(false) }
+  }
   const selectRepo = (id: string) => {
     if (id === selectedId) return
     operation.current?.abort()
@@ -674,6 +725,7 @@ export default function Repositories() {
     setSnapshots([])
     setMaps([])
     setLive(null)
+    setPullRequest(null); setPrInput(''); compareTargets.current = null
     setWatch(null)
     liveVersion.current = ''
     setHistory(null)
@@ -688,6 +740,7 @@ export default function Repositories() {
     setSelectedId(id)
   }
   const chooseTarget = (side: 'base' | 'head', value: string) => {
+    if (mode === 'pr') return
     const revision = (target: string) => target.startsWith('commit:') ? target.slice(7)
       : target === 'working_tree' ? history?.headSha : snapshotForTarget(target, snapshots)?.gitRevision
     const baseRevision = revision(side === 'base' ? value : base)
@@ -708,7 +761,7 @@ export default function Repositories() {
     }
   }
   const run = async (kind: 'base' | 'head' | 'compare') => {
-    if (!selected || busy) return
+    if (!selected || busy || (mode === 'pr' && !pullRequest)) return
     const repositoryId = selected.id
     const controller = new AbortController()
     operation.current = controller
@@ -974,6 +1027,42 @@ export default function Repositories() {
                 </Flex>
                 {!collapsed && repo.id === selectedId && (
                   <Box px={4} pb={3}>
+                    <VStack align="stretch" spacing={2} mb={4}>
+                  <Select
+                    aria-label="History branch"
+                    size="xs"
+                    w="full"
+                    value={branch}
+                    isDisabled={busy || mode === 'pr' || !history?.isGit}
+                    onChange={(e) => {
+                      setBranch(e.target.value)
+                    }}
+                  >
+                    <option value="">
+                      Current HEAD
+                      {history?.currentBranch
+                        ? ` · ${history.currentBranch}`
+                        : ''}
+                    </option>
+                    {branch &&
+                      !history?.branches.some((b) => b.name === branch) && (
+                        <option value={branch}>{branch}</option>
+                      )}
+                    {history?.branches.map((b) => (
+                      <option key={b.name} value={b.name}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    isDisabled={!currentViewId || busy}
+                    onClick={() => navigate(`/views/${currentViewId}`)}
+                  >
+                    Open map
+                  </Button>
+                    </VStack>
                     <Box mb={2}>
                       <Label>Snapshots · {snapshots.length}</Label>
                     </Box>
@@ -1149,62 +1238,30 @@ export default function Repositories() {
             {selected && (
               <>
                 <Flex
-                  px={4}
-                  py={2}
-                  h={{ base: 'auto', lg: '44px' }}
+                  px={2}
+                  py={0}
+                  h="44px"
                   flexShrink={0}
                   gap={3}
                   align="center"
+                  justify="center"
                   wrap="wrap"
                   borderBottom="1px solid"
                   borderColor="whiteAlpha.100"
                 >
-                  <Text fontSize="sm" fontWeight="semibold">
-                    {nameOf(selected.root)}
-                  </Text>
-                  <Box flex={1} />
-                  <Select
-                    aria-label="History branch"
-                    size="xs"
-                    w="200px"
-                    value={branch}
-                    isDisabled={busy || !history?.isGit}
-                    onChange={(e) => {
-                      setBranch(e.target.value)
-                    }}
-                  >
-                    <option value="">
-                      Current HEAD
-                      {history?.currentBranch
-                        ? ` · ${history.currentBranch}`
-                        : ''}
-                    </option>
-                    {branch &&
-                      !history?.branches.some((b) => b.name === branch) && (
-                        <option value={branch}>{branch}</option>
-                      )}
-                    {history?.branches.map((b) => (
-                      <option key={b.name} value={b.name}>
-                        {b.name}
-                      </option>
+                  <HStack spacing={0.5} p={0.5} bg="blackAlpha.200" border="1px solid" borderColor="whiteAlpha.50" borderRadius="lg" aria-label="Repository mode">
+                    {([['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review']] as const).map(([value, label]) => (
+                      <Button key={value} size="sm" variant="ghost" borderRadius="md" px={3} h="28px" minW="auto" leftIcon={<RepositoryModeIcon mode={value} />} iconSpacing={1.5} fontSize="11px" fontWeight="semibold" bg={mode === value ? 'var(--bg-element)' : 'transparent'} color={mode === value ? 'white' : 'gray.500'} _hover={{ bg: mode === value ? 'var(--bg-element)' : 'whiteAlpha.50' }} _active={{ bg: 'var(--bg-element)' }} transition="color 0.2s" data-testid={`repositories-${value}-tab`} aria-pressed={mode === value} onClick={() => changeMode(value)}>{label}</Button>
                     ))}
-                  </Select>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    isDisabled={!currentViewId || busy}
-                    onClick={() => navigate(`/views/${currentViewId}`)}
-                  >
-                    Open map
-                  </Button>
+                  </HStack>
                 </Flex>
-                {historyError && (
+                {mode !== 'live' && historyError && (
                   <Text p={3} fontSize="xs" color="orange.300">
                     {historyError} · Saved snapshots remain available.
                   </Text>
                 )}
                 <ErrorMessage message={dataError} />
-                <RepositoryHistory
+                {(mode === 'compare' || (mode === 'pr' && pullRequest)) && <RepositoryHistory
                   repositoryId={selectedId}
                   history={history}
                   base={
@@ -1217,9 +1274,9 @@ export default function Repositories() {
                       ? head.slice(7)
                       : snapshotForTarget(head, snapshots)?.gitRevision || ''
                   }
-                  disabled={busy}
+                  disabled={busy || mode === 'pr'}
                   onRange={(older, newer) => {
-                    if (busy) return
+                    if (busy || mode === 'pr') return
                     const context = branch || history?.currentBranch || ''
                     setBase(`commit:${older.sha}`)
                     setHead(`commit:${newer.sha}`)
@@ -1234,7 +1291,7 @@ export default function Repositories() {
                   onHead={(c) => {
                     if (!busy) chooseTarget('head', `commit:${c.sha}`)
                   }}
-                />
+                />}
                 <Flex
                   px={4}
                   h="40px"
@@ -1244,8 +1301,6 @@ export default function Repositories() {
                   borderBottom="1px solid"
                   borderColor="whiteAlpha.100"
                 >
-                  <Button size="xs" variant={mode === 'compare' ? 'solid' : 'ghost'} data-testid="repositories-compare-tab" aria-pressed={mode === 'compare'} onClick={() => changeMode('compare')}>Compare</Button>
-                  <Button size="xs" variant={mode === 'live' ? 'solid' : 'ghost'} data-testid="repositories-live-tab" aria-pressed={mode === 'live'} onClick={() => changeMode('live')}>Live changes</Button>
                   {shownImpact && (
                     <HStack
                       spacing={1}
@@ -1276,30 +1331,25 @@ export default function Repositories() {
                   )}
                   <Box flex={1} />
                   <Text fontSize="xs" color="gray.500">
-                    {mode === 'live' ? 'Current commit → pending changes' : 'Select snapshots or Git revisions'}
+                    {mode === 'live' ? 'Current commit → pending changes' : mode === 'pr' ? 'Base and head locked to the pull request' : 'Select snapshots or Git revisions'}
                   </Text>
                 </Flex>
                 {mode === 'live' && (
+                  <>
+                    <RepositoryWatcherPanel status={watch} repositoryRoot={selected.root} branch={watch?.gitBranch || live?.gitBranch || ''} revision={watch?.gitRevision || live?.gitRevision || ''} busy={watchBusy} onStart={() => void startWatch()} onStop={() => void stopWatch()} onRestart={() => void restartWatch()} onRefresh={() => void refreshWatch()} />
+                    <ErrorMessage message={live?.error || ''} />
+                  </>
+                )}
+                {mode === 'pr' && (
                   <Box p={4} borderBottom="1px solid" borderColor="whiteAlpha.100">
-                    <HStack mb={2} spacing={2} flexWrap="wrap">
-                      {(() => { const badge = watchBadgeProps(watch); return <Badge colorScheme={badge.scheme} data-testid="watch-state">{badge.label}</Badge> })()}
-                      <Text fontSize="xs">{watch?.gitBranch || live?.gitBranch || 'Detached HEAD'} · {short(watch?.gitRevision || live?.gitRevision || '')}</Text>
-                      <Box flex={1} />
-                      {watch?.running ? (
-                        <Button size="xs" variant="outline" isLoading={watchBusy} onClick={() => void stopWatch()} data-testid="watch-stop">Stop watcher</Button>
-                      ) : watch?.cliAvailable === false ? (
-                        <Tooltip label={watch.installHint || 'Install the tld CLI to start a watcher'}><Button size="xs" isDisabled data-testid="watch-start">Start watcher</Button></Tooltip>
-                      ) : (
-                        <Button size="xs" colorScheme="green" isLoading={watchBusy} onClick={() => void startWatch()} data-testid="watch-start">Start watcher</Button>
-                      )}
-                    </HStack>
-                    {watch && watchDetail(watch) && <Text mb={2} fontSize="xs" color="gray.400" data-testid="watch-detail">{watchDetail(watch)}</Text>}
-                    <Text fontSize="xs" color="gray.400">Base is the current commit. Head includes staged, unstaged, and non-ignored untracked files.</Text>
-                    {!watch?.running && <Text mt={2} fontSize="xs" color="gray.400">Run <Code>tld index {selected?.root} --watch</Code> to keep this diagram updated, or use Start watcher.</Text>}
-                    <ErrorMessage message={watch?.error || live?.error || ''} />
+                    <Flex as="form" gap={2} onSubmit={(event) => { event.preventDefault(); void loadPullRequest() }}>
+                      <Input size="sm" aria-label="Pull request number or URL" placeholder="PR number or GitHub URL" value={prInput} isDisabled={busy} onChange={(event) => setPrInput(event.target.value)} />
+                      <Button size="sm" type="submit" flexShrink={0} isLoading={busy && !pullRequest} isDisabled={busy || !prInput.trim()}>Load PR</Button>
+                    </Flex>
+                    {pullRequest && <Text mt={2} fontSize="sm"><a href={pullRequest.url} target="_blank" rel="noreferrer">{pullRequest.title}</a></Text>}
                   </Box>
                 )}
-                {mode === 'compare' && (
+                {(mode === 'compare' || (mode === 'pr' && pullRequest)) && (
                   <Box
                     p={4}
                     borderBottom="1px solid"
@@ -1319,6 +1369,7 @@ export default function Repositories() {
                         includeImports={includeImports}
                         showIds={showIds}
                         disabled={busy || dataLoading}
+                        locked={mode === 'pr'}
                         onChange={(value) => chooseTarget('base', value)}
                         onMap={() => void run('base')}
                       />
@@ -1332,6 +1383,7 @@ export default function Repositories() {
                         includeImports={includeImports}
                         showIds={showIds}
                         disabled={busy || dataLoading}
+                        locked={mode === 'pr'}
                         onChange={(value) => chooseTarget('head', value)}
                         onMap={() => void run('head')}
                       />

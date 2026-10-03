@@ -2,9 +2,12 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -149,4 +152,81 @@ func (s *codeIndexRepositoryService) GetCommitDetails(ctx context.Context, req *
 		result.Files = append(result.Files, &pb.CommitFileChange{Path: fields[2], Added: uint32(added), Removed: uint32(removed), Binary: fields[0] == "-"})
 	}
 	return connect.NewResponse(result), nil
+}
+
+// pullRequestNumber scopes URLs to the selected checkout's origin before invoking gh.
+func pullRequestNumber(input, remote string) (string, error) {
+	input = strings.TrimSpace(input)
+	if regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(input) {
+		return input, nil
+	}
+	if strings.HasPrefix(remote, "git@") {
+		remote = "https://" + strings.Replace(strings.TrimPrefix(remote, "git@"), ":", "/", 1)
+	}
+	origin, err := url.Parse(remote)
+	if err != nil {
+		return "", fmt.Errorf("invalid repository origin")
+	}
+	pr, err := url.Parse(input)
+	if err != nil || (pr.Scheme != "https" && pr.Scheme != "http") || !strings.EqualFold(pr.Host, origin.Host) {
+		return "", fmt.Errorf("enter a PR number or a URL from this repository")
+	}
+	prefix := strings.TrimSuffix(strings.TrimSuffix(origin.Path, "/"), ".git") + "/pull/"
+	if !strings.HasPrefix(pr.Path, prefix) {
+		return "", fmt.Errorf("PR URL belongs to another repository")
+	}
+	number := strings.TrimPrefix(pr.Path, prefix)
+	if !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(number) {
+		return "", fmt.Errorf("invalid PR number")
+	}
+	return number, nil
+}
+
+func (s *codeIndexRepositoryService) GetPullRequest(ctx context.Context, req *connect.Request[pb.GetPullRequestRequest]) (*connect.Response[pb.GetPullRequestResponse], error) {
+	repo, err := s.store.Repository(ctx, req.Msg.GetRepositoryId())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	remote, err := repositoryGit(ctx, repo.Root, "remote", "get-url", "origin")
+	if err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	remote = strings.TrimSpace(remote)
+	number, err := pullRequestNumber(req.Msg.GetPullRequest(), remote)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	cmd := exec.CommandContext(ctx, "gh", "pr", "view", number, "--repo", remote, "--json", "title,url,baseRefOid,headRefOid,baseRefName,headRefName")
+	cmd.Dir = repo.Root
+	raw, err := cmd.Output()
+	if err != nil {
+		message := "GitHub CLI (gh) is required and must be signed in to load a PR"
+		if exit, ok := err.(*exec.ExitError); ok {
+			message = strings.TrimSpace(string(exit.Stderr))
+		}
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%s", message))
+	}
+	var pr struct{ Title, URL, BaseRefOid, HeadRefOid, BaseRefName, HeadRefName string }
+	if err := json.Unmarshal(raw, &pr); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	validSHA := regexp.MustCompile(`^[0-9a-f]{40,64}$`)
+	if !validSHA.MatchString(pr.BaseRefOid) || !validSHA.MatchString(pr.HeadRefOid) {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("PR has no available base and head commits"))
+	}
+	// Fetch objects without changing the checkout or local branches.
+	if _, err := resolveRevision(ctx, repo.Root, pr.HeadRefOid); err != nil {
+		if _, err = repositoryGit(ctx, repo.Root, "fetch", "--no-tags", "origin", "refs/pull/"+number+"/head"); err != nil {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
+	}
+	if _, err := resolveRevision(ctx, repo.Root, pr.BaseRefOid); err != nil {
+		if _, err = repositoryGit(ctx, repo.Root, "fetch", "--no-tags", "origin", pr.BaseRefOid); err != nil {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
+	}
+	if _, err := resolveRevision(ctx, repo.Root, pr.HeadRefOid); err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(&pb.GetPullRequestResponse{Title: pr.Title, Url: pr.URL, BaseSha: pr.BaseRefOid, HeadSha: pr.HeadRefOid, BaseBranch: pr.BaseRefName, HeadBranch: pr.HeadRefName}), nil
 }

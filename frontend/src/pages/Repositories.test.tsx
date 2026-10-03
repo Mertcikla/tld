@@ -11,7 +11,7 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
   useSearchParams: () => [searchParamsMock(), setParamsMock],
 }))
-vi.mock('../components/RepositoryHistory', () => ({ default: () => null }))
+vi.mock('../components/RepositoryHistory', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', { ...props, 'data-testid': 'mock-history' }) }))
 
 vi.mock('../api/client', () => ({
   api: {
@@ -35,6 +35,7 @@ vi.mock('../api/client', () => ({
       ]),
       maps: vi.fn(async () => []),
       history: vi.fn(async () => ({ commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
+      pullRequest: vi.fn(async () => ({ title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseSha: 'pr-base', headSha: 'pr-head', baseBranch: 'main', headBranch: 'feature' })),
       fileSymbols: vi.fn(async () => []),
       diff: vi.fn(async () => null),
       compare: vi.fn(async () => ({
@@ -113,6 +114,7 @@ vi.mock('@chakra-ui/react', async () => {
     Grid: BoxLike,
     HStack: BoxLike,
     IconButton: ButtonLike,
+    Input: (props: Record<string, unknown>) => ReactModule.createElement('input', props),
     Progress: BoxLike,
     Select: BoxLike,
     Spinner: BoxLike,
@@ -130,6 +132,40 @@ describe('Repositories map action', () => {
     vi.clearAllMocks()
     searchParamsMock.mockReturnValue(new URLSearchParams())
     globalThis.localStorage ??= { getItem: () => null, setItem: () => {} } as unknown as Storage
+  })
+
+  it('hides history in Watch and keeps repository controls in the sidebar', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    const branchControl = renderer.root.findByProps({ 'aria-label': 'History branch' })
+    expect(branchControl.parent?.props.mb).toBe(4)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'mock-history' })).toHaveLength(1)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'mock-history' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.children).toBe('Watch')
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('locks PR targets, compares PR commits, and restores the manual comparison on exit', async () => {
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-pr-tab' }).props.onClick() })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-compare' })).toHaveLength(0)
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Pull request number or URL' }).props.onChange({ target: { value: '7' } }) })
+    await act(async () => { await renderer.root.findAll((node) => node.props.as === 'form')[0].props.onSubmit({ preventDefault: () => {} }) })
+    expect(api.repositories.pullRequest).toHaveBeenCalledWith('repo-1', '7', expect.any(AbortSignal))
+    const target = renderer.root.findByProps({ 'data-testid': 'repositories-base-target' })
+    expect(target.props.value).toBe('commit:pr-base')
+    expect(target.props.isDisabled).toBe(true)
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.disabled).toBe(true)
+    await act(async () => { target.props.onChange({ target: { value: 'working_tree' } }) })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('commit:pr-base')
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+    expect(api.repositories.compare).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: expect.objectContaining({ gitRevision: 'pr-base' }), head: expect.objectContaining({ gitRevision: 'pr-head' }) }))
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare-tab' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-0')
+    await act(async () => { renderer.unmount() })
   })
 
   it('runs the mapper for the selected head and stays on this page', async () => {
@@ -431,6 +467,27 @@ describe('Repositories map action', () => {
     expect(api.repositories.stopWatch).toHaveBeenCalledWith('repo-1')
     await act(async () => { renderer.unmount() })
     vi.useRealTimers()
+  })
+
+  it('restarts the watcher through UI controls and keeps the CLI fallback collapsed', async () => {
+    const { api } = await import('../api/client')
+    const current = await api.repositories.watchStatus('repo-1')
+    vi.mocked(api.repositories.watchStatus).mockResolvedValueOnce({ ...current, running: true, state: 'idle' })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
+    const panel = renderer.root.findByProps({ 'data-testid': 'repository-watcher' })
+    expect(panel.findAll((node) => node.props.as === 'details' && !node.props.open).length).toBeGreaterThan(0)
+    vi.mocked(api.repositories.stopWatch).mockClear()
+    vi.mocked(api.repositories.startWatch).mockClear()
+    await act(async () => { panel.findByProps({ 'data-testid': 'watch-restart' }).props.onClick() })
+    expect(api.repositories.stopWatch).toHaveBeenCalledWith('repo-1')
+    expect(api.repositories.startWatch).toHaveBeenCalledWith('repo-1', { embed: true, materialize: false })
+    expect(vi.mocked(api.repositories.stopWatch).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(api.repositories.startWatch).mock.invocationCallOrder[0])
+    vi.mocked(api.repositories.watchStatus).mockClear()
+    await act(async () => { panel.findByProps({ 'data-testid': 'watch-refresh' }).props.onClick() })
+    expect(api.repositories.watchStatus).toHaveBeenCalledWith('repo-1')
+    await act(async () => { renderer.unmount() })
   })
 
   it('ignores history and snapshot responses from a previously selected repository', async () => {

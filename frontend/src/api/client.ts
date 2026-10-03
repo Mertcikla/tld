@@ -296,6 +296,15 @@ export interface RepositoryCommit {
   refs: string[]
   body: string
 }
+export interface RepositoryPullRequest {
+  title: string
+  url: string
+  baseSha: string
+  headSha: string
+  baseBranch: string
+  headBranch: string
+}
+
 export interface RepositoryGitHistory {
   commits: RepositoryCommit[]
   branches: { name: string; sha: string }[]
@@ -1941,6 +1950,9 @@ export const api = {
     history: (repositoryId: string, branch = '', limit = 0): Promise<RepositoryGitHistory> => rpc(async () => {
       const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit })
       return { ...response, commits: response.commits.map((commit) => ({ ...commit, createdUnix: Number(commit.createdUnix) })) }
+    }),
+    pullRequest: (repositoryId: string, pullRequest: string, signal?: AbortSignal): Promise<RepositoryPullRequest> => rpc(async () => {
+      return codeIndexRepositoryClient.getPullRequest({ repositoryId, pullRequest }, { signal })
     }),
     commitDetails: (repositoryId: string, revision: string): Promise<RepositoryCommitDetails> => rpc(async () => {
       const response = await codeIndexRepositoryClient.getCommitDetails({ repositoryId, revision })

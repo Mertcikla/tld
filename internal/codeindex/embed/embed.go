@@ -33,6 +33,8 @@ type Client struct {
 	Store  Store
 	// Progress, when set, receives embedding counters (current, total, detail).
 	Progress func(current, total int, detail string)
+	// RequestState reports time spent awaiting the embedding service.
+	RequestState func(waiting bool)
 }
 
 // Profile names the embedding space produced by this configuration. It covers
@@ -259,6 +261,11 @@ func (c Client) QueryTask(ctx context.Context, text, task string) ([]float32, er
 	return v[0], nil
 }
 func (c Client) request(ctx context.Context, input []string) ([][]float32, error) {
+	if c.RequestState != nil {
+		c.RequestState(true)
+		defer c.RequestState(false)
+	}
+
 	for i, text := range input {
 		input[i] = c.fit(text)
 	}

@@ -449,8 +449,11 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 	}()
 
 	detector := watch.NewDetector(watch.Options{
-		Root:         root,
-		Exclude:      e.opts.exclude,
+		Root:    root,
+		Exclude: e.opts.exclude,
+		OnState: func(state string) {
+			persist(func(s *cstore.WatchState) { s.State = state; s.Stage = "" })
+		},
 		Debounce:     e.opts.debounce,
 		MaxWait:      2*e.opts.debounce + time.Second,
 		PollInterval: e.opts.pollInterval,
@@ -470,7 +473,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		if runCtx.Err() != nil {
 			return nil
 		}
-		persist(func(s *cstore.WatchState) { s.State = "watching" })
+		persist(func(s *cstore.WatchState) { s.State = "idle" })
 		_, err := detector.Next(runCtx, lastSignature, capture)
 		if runCtx.Err() != nil {
 			return nil
@@ -497,7 +500,15 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 			s.GitBranch, s.GitRevision = qs.Branch, qs.Revision
 		})
 		started := time.Now()
-		snap, report, mres, err := e.scanWatched(runCtx, root, qs, lastRevision)
+		snap, report, mres, err := e.scanWatched(runCtx, root, qs, lastRevision, func(stage string) {
+			mu.Lock()
+			unchanged := status.Stage == stage
+			mu.Unlock()
+			if unchanged {
+				return
+			}
+			persist(func(s *cstore.WatchState) { s.Stage = stage; s.State = "scanning" })
+		})
 		if err != nil {
 			persist(func(s *cstore.WatchState) { s.State = "error"; s.Error = err.Error() })
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "index error: %v\n", err)
@@ -514,7 +525,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		prev = snap
 		lastSignature, lastRevision = qs.Signature(), qs.Revision
 		persist(func(s *cstore.WatchState) {
-			s.State = "watching"
+			s.State = "idle"
 			s.Error = ""
 			s.Stage = ""
 			s.ChangedFiles = 0
@@ -528,20 +539,44 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 	}
 }
 
-func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.QuickState, previousRevision string) (*pb.Snapshot, parity.Report, *materialize.Result, error) {
+func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.QuickState, previousRevision string, onStage ...func(string)) (*pb.Snapshot, parity.Report, *materialize.Result, error) {
+	reportStage := func(stage string) {
+		for _, report := range onStage {
+			report(stage)
+		}
+	}
 	repoID := cgraph.RepositoryID(root)
-	ctx, release, err := e.store.AcquireLease(ctx, repoID)
-	if err != nil {
-		return nil, parity.Report{}, nil, err
+	reportStage("waiting-indexer")
+	var release func()
+	var err error
+	for {
+		var leased context.Context
+		leased, release, err = e.store.AcquireLease(ctx, repoID)
+		if !errors.Is(err, cstore.ErrBusy) {
+			if err != nil {
+				return nil, parity.Report{}, nil, err
+			}
+			ctx = leased
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, parity.Report{}, nil, ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
 	}
 	defer release()
+	reportStage("discover")
 	out := e.out
 	if e.opts.jsonOut {
 		out = io.Discard
 	}
 	tracker := term.NewStageTracker(out, indexStageOrder, term.StageTrackerOptions{Jokes: indexJokes})
 	defer tracker.Finish()
-	engine := ingest.Engine{Store: e.store, Config: e.cfg, Root: root, RepositoryID: repoID, Exclude: e.opts.exclude, Progress: func(p indexer.Progress) { tracker.Report(displayStage(p.Stage), p.Current, p.Total, p.Detail) }}
+	engine := ingest.Engine{Store: e.store, Config: e.cfg, Root: root, RepositoryID: repoID, Exclude: e.opts.exclude, Progress: func(p indexer.Progress) {
+		reportStage(p.Stage)
+		tracker.Report(displayStage(p.Stage), p.Current, p.Total, p.Detail)
+	}}
 	if previousRevision == "" {
 		if live, loadErr := e.store.Impact(ctx, repoID, "live"); loadErr == nil {
 			previousRevision = live.Diff.FromGitRevision
@@ -579,8 +614,15 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 		return nil, parity.Report{}, nil, err
 	}
 	if e.opts.embed {
+		reportStage("embedding")
 		tracker.Begin(stageEmbeddings)
-		client := embed.Client{Config: e.cfg, Store: e.store, Progress: func(current, total int, detail string) {
+		client := embed.Client{Config: e.cfg, Store: e.store, RequestState: func(waiting bool) {
+			if waiting {
+				reportStage("waiting-embedding")
+			} else {
+				reportStage("embedding")
+			}
+		}, Progress: func(current, total int, detail string) {
 			tracker.Report(stageEmbeddings, int64(current), int64(total), detail)
 		}}
 		if err = client.Embed(ctx, snap); err != nil {
@@ -589,6 +631,7 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	}
 	var mres *materialize.Result
 	if e.opts.materialize {
+		reportStage("materialize")
 		tracker.Begin(stageMaterialize)
 		incremental, err := engine.Base(ctx, base.Id)
 		if err != nil {
@@ -604,6 +647,7 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	if recorded, loadErr := e.store.Impact(ctx, repoID, "live"); loadErr == nil {
 		radius = recorded.Radius
 	}
+	reportStage("live-map")
 	tracker.Begin(stageChanges)
 	if _, err = impact.Save(ctx, e.ws, e.store, repoID, "live", base.Id, snap.Id, radius); err != nil {
 		return nil, parity.Report{}, nil, err

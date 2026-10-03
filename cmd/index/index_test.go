@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/codeindex/config"
@@ -60,9 +61,25 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 		t.Fatal(err)
 	}
 	initial := state.Revision
-	if _, _, _, err = eng.scanWatched(ctx, dir, state, ""); err != nil {
+	var stages []string
+	if _, _, _, err = eng.scanWatched(ctx, dir, state, "", func(stage string) { stages = append(stages, stage) }); err != nil {
 		t.Fatal(err)
 	}
+	if len(stages) < 3 || stages[0] != "waiting-indexer" || stages[len(stages)-1] != "live-map" {
+		t.Fatalf("watch stages: %v", stages)
+	}
+	_, release, err := idx.AcquireLease(ctx, graph.RepositoryID(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	_, _, _, err = eng.scanWatched(blocked, dir, state, "", func(stage string) {})
+	cancel()
+	release()
+	if err == nil {
+		t.Fatal("waiting scan ignored cancellation")
+	}
+
 	writeSource(t, dir, "a.go", "package a\nfunc Committed() {}\n")
 	testGit(t, dir, "add", "a.go")
 	writeSource(t, dir, "a.go", "package a\nfunc Pending() {}\n")

@@ -130,3 +130,16 @@ func TestHealthRequiresReachableServer(t *testing.T) {
 		t.Fatal("health should reject a dimension mismatch")
 	}
 }
+
+func TestRequestReportsWaitingOnError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusServiceUnavailable) }))
+	defer server.Close()
+	cfg := config.Default()
+	cfg.Embedding.Endpoint = server.URL
+	var states []bool
+	client := Client{Config: cfg, RequestState: func(waiting bool) { states = append(states, waiting) }}
+	_, err := client.request(context.Background(), []string{"code"})
+	if err == nil || len(states) != 2 || !states[0] || states[1] {
+		t.Fatalf("request error %v states %v", err, states)
+	}
+}

@@ -17,7 +17,9 @@ import (
 
 // Options configures the change detector.
 type Options struct {
-	Root string
+	// OnState reports idle and debouncing transitions on the detector goroutine.
+	OnState func(string)
+	Root    string
 	// Exclude lists repository-relative paths that must never trigger a scan.
 	Exclude []string
 	// Debounce is the quiet window events must settle for before a scan runs.
@@ -80,6 +82,7 @@ func (d *Detector) Close() error {
 
 // Next blocks until the Git signature differs from current or the context ends.
 func (d *Detector) Next(ctx context.Context, current string, capture CaptureFunc) (string, error) {
+	d.reportState("idle")
 	if !d.usingFS || d.watcher == nil {
 		return d.pollUntilChange(ctx, current, capture)
 	}
@@ -104,6 +107,7 @@ func (d *Detector) Next(ctx context.Context, current string, capture CaptureFunc
 			if signature != current {
 				return signature, nil
 			}
+			d.reportState("idle")
 		case <-d.watcher.Errors:
 			// Keep watching; the failsafe poll still detects changes.
 		case <-poll.C:
@@ -118,9 +122,16 @@ func (d *Detector) Next(ctx context.Context, current string, capture CaptureFunc
 	}
 }
 
+func (d *Detector) reportState(state string) {
+	if d.opts.OnState != nil {
+		d.opts.OnState(state)
+	}
+}
+
 // settle coalesces a burst of events into a single scan attempt once the tree
 // has been quiet for Debounce, or after MaxWait of continuous activity.
 func (d *Detector) settle(ctx context.Context, capture CaptureFunc) (string, error) {
+	d.reportState("debouncing")
 	quiet := time.NewTimer(d.opts.Debounce)
 	defer quiet.Stop()
 	deadline := time.NewTimer(d.opts.MaxWait)
