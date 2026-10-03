@@ -24,6 +24,7 @@ vi.mock('../api/client', () => ({
       }]),
       snapshots: vi.fn(async () => []),
       diff: vi.fn(async () => null),
+      delete: vi.fn(async () => {}),
       map: vi.fn(async (_repositoryId: string, handlers?: { onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void }) => {
         handlers?.onProgress?.({ stage: 'clustering', current: 1, total: 2, detail: 'grow' })
         return { runId: 'run-1', viewId: 5, facts: 4, clusters: 1, bins: 1, unclustered: 0, weightedTightness: 1 }
@@ -36,13 +37,14 @@ vi.mock('../utils/toast', () => ({ toast: vi.fn() }))
 
 vi.mock('@chakra-ui/icons', () => ({
   CopyIcon: () => null,
+  DeleteIcon: () => null,
   RepeatIcon: () => null,
 }))
 
 vi.mock('@chakra-ui/react', async () => {
   const ReactModule = await import('react')
-  type NodeProps = { children?: React.ReactNode; isOpen?: boolean }
-  const BoxLike = ({ children, isOpen, ...props }: NodeProps) => (isOpen === false ? null : ReactModule.createElement('div', props, children))
+  type NodeProps = { children?: React.ReactNode; isOpen?: boolean; leastDestructiveRef?: unknown }
+  const BoxLike = ({ children, isOpen, leastDestructiveRef: _leastDestructiveRef, ...props }: NodeProps) => (isOpen === false ? null : ReactModule.createElement('div', props, children))
   const ButtonLike = ({ children, onClick, isLoading, loadingText, isDisabled, ...props }: {
     children?: React.ReactNode
     onClick?: () => void
@@ -50,8 +52,21 @@ vi.mock('@chakra-ui/react', async () => {
     loadingText?: string
     isDisabled?: boolean
   }) => ReactModule.createElement('button', { ...props, disabled: isDisabled, onClick }, isLoading && loadingText ? loadingText : children)
+  const SwitchLike = ({ isChecked, onChange, isDisabled, size: _size, colorScheme: _colorScheme, ...props }: {
+    isChecked?: boolean
+    onChange?: React.ChangeEventHandler<HTMLInputElement>
+    isDisabled?: boolean
+    size?: string
+    colorScheme?: string
+  }) => ReactModule.createElement('input', { ...props, type: 'checkbox', checked: !!isChecked, disabled: isDisabled, onChange: onChange ?? (() => {}) })
   return {
     Alert: BoxLike,
+    AlertDialog: BoxLike,
+    AlertDialogBody: BoxLike,
+    AlertDialogContent: BoxLike,
+    AlertDialogFooter: BoxLike,
+    AlertDialogHeader: BoxLike,
+    AlertDialogOverlay: BoxLike,
     AlertIcon: BoxLike,
     Badge: BoxLike,
     Box: BoxLike,
@@ -66,6 +81,7 @@ vi.mock('@chakra-ui/react', async () => {
     Progress: BoxLike,
     Select: BoxLike,
     Spinner: BoxLike,
+    Switch: SwitchLike,
     Text: BoxLike,
     Tooltip: BoxLike,
     VStack: BoxLike,
@@ -91,5 +107,45 @@ describe('Repositories map action', () => {
     const { api } = await import('../api/client')
     expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ onProgress: expect.any(Function) }))
     expect(navigateMock).toHaveBeenCalledWith('/views/5')
+  })
+
+  it('passes the imports toggle through to the mapper', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.map).mockClear()
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<Repositories />)
+    })
+
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'repositories-include-imports' }).props.onChange({ target: { checked: true } })
+    })
+    await act(async () => {
+      await renderer.root.findByProps({ 'data-testid': 'repositories-map' }).props.onClick()
+    })
+
+    expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ includeImports: true }))
+  })
+
+  it('deletes a repository after confirmation, including materialized resources when toggled', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.delete).mockClear()
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<Repositories />)
+    })
+
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'repositories-delete-repo-1' }).props.onClick({ stopPropagation: () => {} })
+    })
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'repositories-delete-materialized' }).props.onChange({ target: { checked: true } })
+    })
+    await act(async () => {
+      await renderer.root.findByProps({ 'data-testid': 'confirm-dialog-confirm' }).props.onClick()
+    })
+
+    expect(api.repositories.delete).toHaveBeenCalledWith('repo-1', { deleteMaterialized: true })
+    expect(api.repositories.list).toHaveBeenCalled()
   })
 })

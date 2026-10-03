@@ -3,9 +3,58 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/uptrace/bun"
 )
+
+// DeleteRepository removes a repository, every snapshot it published, and all
+// snapshot-scoped records (sources, facts, chunks, edges, embeddings, analysis
+// runs and their groups), plus any resource mappings recorded for it. It does
+// not touch workspace resources materialized from the repository.
+func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error {
+	if strings.TrimSpace(repositoryID) == "" {
+		return fmt.Errorf("repository id is required")
+	}
+	snapshotScoped := []string{
+		"codeindex_embeddings",
+		"codeindex_fact_embeddings",
+		"codeindex_chunks",
+		"codeindex_edges",
+		"codeindex_facts",
+		"codeindex_sources",
+	}
+	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_group_members WHERE group_id IN (
+			SELECT id FROM codeindex_groups WHERE run_id IN (
+				SELECT id FROM codeindex_analysis_runs WHERE repository_id = ?))`, repositoryID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_groups WHERE run_id IN (
+			SELECT id FROM codeindex_analysis_runs WHERE repository_id = ?)`, repositoryID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_analysis_runs WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
+			return err
+		}
+		for _, table := range snapshotScoped {
+			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE snapshot_id IN (
+				SELECT id FROM codeindex_snapshots WHERE repository_id = ?)`, repositoryID).Exec(ctx); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_snapshots WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_elements WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewRaw(`DELETE FROM codeindex_repositories WHERE id = ?`, repositoryID).Exec(ctx)
+		return err
+	})
+}
 
 // ListRepositories returns every indexed repository with a summary of its
 // latest published snapshot.

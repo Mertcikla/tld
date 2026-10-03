@@ -152,7 +152,7 @@ export function buildInventoryRows(
     const sourceName = elementById.get(connector.source_element_id)?.name ?? `Element ${connector.source_element_id}`
     const targetName = elementById.get(connector.target_element_id)?.name ?? `Element ${connector.target_element_id}`
     const viewName = viewById.get(connector.view_id)?.name ?? `View ${connector.view_id}`
-    const name = connector.label || `${sourceName} -> ${targetName}`
+    const name = connector.label || ''
     const qualityFlags = [
       ...((connector.tags ?? []).length === 0 ? ['untagged'] : []),
       ...(!connector.description ? ['missing description'] : []),

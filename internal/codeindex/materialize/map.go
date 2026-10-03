@@ -3,6 +3,7 @@ package materialize
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
@@ -19,6 +20,26 @@ type MapInput struct {
 	RunID          string
 	Dataset        *mapper.Dataset
 	Bins           *mapper.BinningResult
+	// Edges are file-to-file dependencies resolved from symbol edges.
+	Edges []MapEdge
+	// Imports are external imports declared by the materialized files. They are
+	// only populated when the caller opts in.
+	Imports []MapImport
+}
+
+// MapEdge is a dependency between two file facts (the file facts themselves,
+// not the symbols). The connector direction is derived by de-duplicating and
+// merging opposite directions.
+type MapEdge struct {
+	FromFactID string
+	ToFactID   string
+	Weight     float64
+}
+
+// MapImport is one external import declared by a file fact.
+type MapImport struct {
+	FileFactID string
+	Import     string
 }
 
 // MapOptions configures a mapper materialization run.
@@ -31,10 +52,11 @@ type MapOptions struct {
 
 // MapResult summarizes what changed.
 type MapResult struct {
-	ViewID   int64
-	Elements int
-	Views    int
-	Pruned   int
+	ViewID     int64
+	Elements   int
+	Views      int
+	Connectors int
+	Pruned     int
 }
 
 const mapKeyPrefix = "map|"
@@ -63,17 +85,19 @@ func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput
 		return MapResult{}, err
 	}
 	m := &mapMaterializer{
-		ctx:          ctx,
-		ws:           ws,
-		input:        input,
-		opts:         opts,
-		byKey:        byKey,
-		kept:         map[string]bool{},
-		placed:       map[int64]map[int64]bool{},
-		position:     map[int64]int{},
-		naming:       naming,
-		clusterNames: clusterNames,
-		total:        countMapResources(input.Bins.Tree) + 1,
+		ctx:            ctx,
+		ws:             ws,
+		input:          input,
+		opts:           opts,
+		byKey:          byKey,
+		kept:           map[string]bool{},
+		placed:         map[int64]map[int64]bool{},
+		position:       map[int64]int{},
+		naming:         naming,
+		clusterNames:   clusterNames,
+		fileElementIDs: map[string]int64{},
+		fileChains:     map[string][]int64{},
+		total:          countMapResources(input.Bins.Tree) + 1,
 	}
 	rootKey := mapKeyPrefix + "view|" + input.RepositoryID
 	topKey := mapKeyPrefix + "top|" + input.RepositoryID
@@ -97,7 +121,13 @@ func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput
 	if err := m.place(workspaceRootID, topElementID); err != nil {
 		return MapResult{}, err
 	}
-	if err := m.materializeFolder(input.Bins.Tree, rootViewID); err != nil {
+	if err := m.materializeFolder(input.Bins.Tree, rootViewID, []int64{rootViewID}); err != nil {
+		return MapResult{}, err
+	}
+	if err := m.materializeConnectors(); err != nil {
+		return MapResult{}, err
+	}
+	if err := m.materializeImports(rootViewID); err != nil {
 		return MapResult{}, err
 	}
 	for key, mapping := range byKey {
@@ -109,6 +139,8 @@ func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput
 			_ = ws.DeleteView(ctx, mapping.ResourceID)
 		case cstore.MappingElement:
 			_ = ws.DeleteElement(ctx, mapping.ResourceID)
+		case cstore.MappingConnector:
+			_ = ws.DeleteConnector(ctx, mapping.ResourceID)
 		}
 		if err := idx.DeleteMapping(ctx, key); err != nil {
 			return m.result, err
@@ -122,23 +154,25 @@ func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput
 }
 
 type mapMaterializer struct {
-	ctx          context.Context
-	ws           core.Store
-	input        MapInput
-	opts         MapOptions
-	byKey        map[string]cstore.ResourceMapping
-	kept         map[string]bool
-	pending      []cstore.ResourceMapping
-	placed       map[int64]map[int64]bool
-	position     map[int64]int
-	naming       *mapper.NameIndex
-	clusterNames []string
-	result       MapResult
-	done         int
-	total        int
+	ctx            context.Context
+	ws             core.Store
+	input          MapInput
+	opts           MapOptions
+	byKey          map[string]cstore.ResourceMapping
+	kept           map[string]bool
+	pending        []cstore.ResourceMapping
+	placed         map[int64]map[int64]bool
+	position       map[int64]int
+	naming         *mapper.NameIndex
+	clusterNames   []string
+	fileElementIDs map[string]int64
+	fileChains     map[string][]int64
+	result         MapResult
+	done           int
+	total          int
 }
 
-func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64) error {
+func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64, chain []int64) error {
 	for _, child := range node.Children {
 		element, err := m.upsertElement(folderKey(m.input.RepositoryID, child.Path), m.folderElement(child))
 		if err != nil {
@@ -151,12 +185,12 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 		if err := m.place(viewID, element); err != nil {
 			return err
 		}
-		if err := m.materializeFolder(child, childViewID); err != nil {
+		if err := m.materializeFolder(child, childViewID, appendView(chain, childViewID)); err != nil {
 			return err
 		}
 	}
 	for binIndex, bin := range node.Bins {
-		name := m.binName(bin, binIndex)
+		name := m.binName(bin, node.Path)
 		element, err := m.upsertElement(binKey(m.input.RepositoryID, node.Path, binIndex), binElement(name, bin))
 		if err != nil {
 			return err
@@ -168,6 +202,7 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 		if err := m.place(viewID, element); err != nil {
 			return err
 		}
+		binChain := appendView(chain, binViewID)
 		for _, clusterIndex := range bin.Clusters {
 			if clusterIndex < 0 || clusterIndex >= len(m.input.Bins.Units) {
 				continue
@@ -186,17 +221,20 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 			if err := m.place(binViewID, clusterElementID); err != nil {
 				return err
 			}
+			clusterChain := appendView(binChain, clusterViewID)
 			for _, member := range unit.Members {
 				if member < 0 || member >= len(m.input.Dataset.Facts) {
 					continue
 				}
-				fileID, err := m.upsertElement(fileKey(m.input.RepositoryID, m.input.Dataset.Facts[member].ID), m.fileElement(member))
+				fact := m.input.Dataset.Facts[member]
+				fileID, err := m.upsertElement(fileKey(m.input.RepositoryID, fact.ID), m.fileElement(member))
 				if err != nil {
 					return err
 				}
 				if err := m.place(clusterViewID, fileID); err != nil {
 					return err
 				}
+				m.recordFile(fact.ID, fileID, clusterChain)
 			}
 		}
 	}
@@ -204,14 +242,252 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 		if member < 0 || member >= len(m.input.Dataset.Facts) {
 			continue
 		}
-		fileID, err := m.upsertElement(fileKey(m.input.RepositoryID, m.input.Dataset.Facts[member].ID), m.fileElement(member))
+		fact := m.input.Dataset.Facts[member]
+		fileID, err := m.upsertElement(fileKey(m.input.RepositoryID, fact.ID), m.fileElement(member))
 		if err != nil {
 			return err
 		}
 		if err := m.place(viewID, fileID); err != nil {
 			return err
 		}
+		m.recordFile(fact.ID, fileID, chain)
 	}
+	return nil
+}
+
+// recordFile remembers where a file element lives so file edges can be drawn in
+// the deepest view that contains both endpoints.
+func (m *mapMaterializer) recordFile(factID string, elementID int64, chain []int64) {
+	m.fileElementIDs[factID] = elementID
+	m.fileChains[factID] = append([]int64(nil), chain...)
+}
+
+// appendView returns a new chain with viewID appended, safe to reuse.
+func appendView(chain []int64, viewID int64) []int64 {
+	out := make([]int64, len(chain)+1)
+	copy(out, chain)
+	out[len(chain)] = viewID
+	return out
+}
+
+type mapEdgePair struct {
+	fromFact string
+	toFact   string
+	forward  bool
+	backward bool
+}
+
+// materializeConnectors draws one file-to-file connector per unordered file
+// pair, merging opposite directions into a bidirectional connector. Each
+// connector is owned by the deepest common ancestor view of the two files, but
+// the file elements are left where they were materialized: for cross-view edges
+// the endpoints stay off-view and the workspace surfaces them as off-view
+// elements rather than relocating them.
+func (m *mapMaterializer) materializeConnectors() error {
+	if len(m.input.Edges) == 0 {
+		return nil
+	}
+	for _, pair := range aggregateMapEdges(m.input.Edges) {
+		fromElement, okFrom := m.fileElementIDs[pair.fromFact]
+		toElement, okTo := m.fileElementIDs[pair.toFact]
+		if !okFrom || !okTo || fromElement == toElement {
+			continue
+		}
+		viewID := commonView(m.fileChains[pair.fromFact], m.fileChains[pair.toFact])
+		if viewID == 0 {
+			continue
+		}
+		direction := "forward"
+		switch {
+		case pair.forward && pair.backward:
+			direction = "both"
+		case pair.backward:
+			direction = "backward"
+		}
+		if err := m.upsertConnector(connectorKey(m.input.RepositoryID, pair.fromFact, pair.toFact), core.Connector{
+			ViewID:          viewID,
+			SourceElementID: fromElement,
+			TargetElementID: toElement,
+			Direction:       direction,
+			Style:           "bezier",
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// materializeImports materializes external imports under a single External
+// element: the External element owns a child view containing one element per
+// distinct import, and each importing file is connected to the imports it
+// declares. Imports and connectors are de-duplicated.
+func (m *mapMaterializer) materializeImports(rootViewID int64) error {
+	if len(m.input.Imports) == 0 {
+		return nil
+	}
+	containerID, err := m.upsertElement(externalKey(m.input.RepositoryID), core.LibraryElement{
+		Name:        "External",
+		Kind:        strPtr("external"),
+		Description: strPtr("External imports"),
+	})
+	if err != nil {
+		return err
+	}
+	externalViewID, err := m.upsertView(externalViewKey(m.input.RepositoryID), "External", "Map", &containerID)
+	if err != nil {
+		return err
+	}
+	if err := m.place(rootViewID, containerID); err != nil {
+		return err
+	}
+	containerChain := appendView([]int64{rootViewID}, externalViewID)
+
+	distinct := map[string]bool{}
+	for _, item := range m.input.Imports {
+		distinct[item.Import] = true
+	}
+	names := make([]string, 0, len(distinct))
+	for name := range distinct {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	importElements := make(map[string]int64, len(names))
+	for _, name := range names {
+		elementID, err := m.upsertElement(importKey(m.input.RepositoryID, name), core.LibraryElement{
+			Name: name,
+			Kind: strPtr("import"),
+		})
+		if err != nil {
+			return err
+		}
+		if err := m.place(externalViewID, elementID); err != nil {
+			return err
+		}
+		importElements[name] = elementID
+	}
+
+	seen := map[[2]string]bool{}
+	for _, item := range m.input.Imports {
+		fileElementID, ok := m.fileElementIDs[item.FileFactID]
+		if !ok {
+			continue
+		}
+		importElementID := importElements[item.Import]
+		if importElementID == 0 {
+			continue
+		}
+		key := [2]string{item.FileFactID, item.Import}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		viewID := commonView(m.fileChains[item.FileFactID], containerChain)
+		if viewID == 0 {
+			continue
+		}
+		if err := m.upsertConnector(importConnectorKey(m.input.RepositoryID, item.FileFactID, item.Import), core.Connector{
+			ViewID:          viewID,
+			SourceElementID: fileElementID,
+			TargetElementID: importElementID,
+			Direction:       "forward",
+			Style:           "bezier",
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// aggregateMapEdges de-duplicates file edges by unordered pair and records
+// whether each direction was observed.
+func aggregateMapEdges(edges []MapEdge) []mapEdgePair {
+	type acc struct {
+		forward  bool
+		backward bool
+	}
+	byPair := map[[2]string]*acc{}
+	for _, edge := range edges {
+		if edge.FromFactID == "" || edge.ToFactID == "" || edge.FromFactID == edge.ToFactID {
+			continue
+		}
+		a, b := edge.FromFactID, edge.ToFactID
+		forward := true
+		if a > b {
+			a, b = b, a
+			forward = false
+		}
+		entry := byPair[[2]string{a, b}]
+		if entry == nil {
+			entry = &acc{}
+			byPair[[2]string{a, b}] = entry
+		}
+		if forward {
+			entry.forward = true
+		} else {
+			entry.backward = true
+		}
+	}
+	keys := make([][2]string, 0, len(byPair))
+	for key := range byPair {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i][0] != keys[j][0] {
+			return keys[i][0] < keys[j][0]
+		}
+		return keys[i][1] < keys[j][1]
+	})
+	out := make([]mapEdgePair, 0, len(keys))
+	for _, key := range keys {
+		entry := byPair[key]
+		out = append(out, mapEdgePair{
+			fromFact: key[0],
+			toFact:   key[1],
+			forward:  entry.forward,
+			backward: entry.backward,
+		})
+	}
+	return out
+}
+
+// commonView returns the deepest view id shared by two root-to-leaf chains.
+func commonView(a, b []int64) int64 {
+	limit := len(a)
+	if len(b) < limit {
+		limit = len(b)
+	}
+	last := int64(0)
+	for i := 0; i < limit; i++ {
+		if a[i] != b[i] {
+			break
+		}
+		last = a[i]
+	}
+	return last
+}
+
+func (m *mapMaterializer) upsertConnector(logicalKey string, input core.Connector) error {
+	m.kept[logicalKey] = true
+	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingConnector {
+		if _, err := m.ws.UpdateConnector(m.ctx, mapping.ResourceID, input); err == nil {
+			m.result.Connectors++
+			m.advance("connector")
+			return nil
+		}
+	}
+	created, err := m.ws.CreateConnector(m.ctx, input)
+	if err != nil {
+		return fmt.Errorf("create map connector %q: %w", logicalKey, err)
+	}
+	m.pending = append(m.pending, cstore.ResourceMapping{
+		LogicalKey:   logicalKey,
+		Kind:         cstore.MappingConnector,
+		ResourceID:   created.ID,
+		RepositoryID: m.input.RepositoryID,
+		SnapshotID:   m.input.SnapshotID,
+	})
+	m.result.Connectors++
+	m.advance("connector")
 	return nil
 }
 
@@ -305,6 +581,9 @@ func (m *mapMaterializer) placementsFor(viewID int64) (map[int64]bool, error) {
 		existing[placement.ElementID] = true
 	}
 	m.placed[viewID] = existing
+	if _, ok := m.position[viewID]; !ok {
+		m.position[viewID] = len(list)
+	}
 	return existing, nil
 }
 
@@ -318,8 +597,14 @@ func (m *mapMaterializer) advance(detail string) {
 func (m *mapMaterializer) fileElement(member int) core.LibraryElement {
 	fact := m.input.Dataset.Facts[member]
 	kind := "file"
+	// File facts carry their path as the display name; show only the file name
+	// and keep the full path on FilePath for source linking.
+	name := fact.DisplayName
+	if fact.Path != "" {
+		name = folderName(fact.Path)
+	}
 	input := core.LibraryElement{
-		Name: fact.DisplayName,
+		Name: name,
 		Kind: &kind,
 	}
 	if fact.Path != "" {
@@ -405,9 +690,16 @@ func workspaceRootViewID(ctx context.Context, ws core.Store, exclude int64) (int
 	return view.ID, nil
 }
 
+// folderName is the last path segment of a folder or file path, so a child
+// nested under A/B is shown as C rather than A/B/C and a file as c.go rather
+// than src/deep/c.go.
 func folderName(path string) string {
 	if path == "." || path == "" {
 		return "root"
+	}
+	path = strings.ReplaceAll(path, "\\", "/")
+	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+		return path[idx+1:]
 	}
 	return path
 }
@@ -433,12 +725,14 @@ func (m *mapMaterializer) clusterName(index int) string {
 	}
 	if index >= 0 && index < len(m.input.Bins.Units) {
 		unit := m.input.Bins.Units[index]
-		if unit.Folder != "" {
-			return fmt.Sprintf("%s · %d files", unit.Folder, unit.Size)
+		if m.naming != nil {
+			if folder := m.naming.FallbackName(unit.Members); folder != "" {
+				return folderName(folder)
+			}
 		}
-		return fmt.Sprintf("cluster %d", unit.Rank)
+		return folderName(unit.Folder)
 	}
-	return fmt.Sprintf("cluster %d", index+1)
+	return "Other"
 }
 
 // membersUnderClusters returns every member fact of the given cluster indices.
@@ -535,11 +829,20 @@ func (m *mapMaterializer) namesUnderNode(node mapper.FolderNode) []string {
 	return names
 }
 
-// binName infers one name from all facts in the bin rather than joining the
-// names of its clusters.
-func (m *mapMaterializer) binName(bin mapper.Bin, index int) string {
-	fallback := fmt.Sprintf("Bin %d · %d files", index+1, bin.Size)
-	return m.inferName(m.membersUnderClusters(bin.Clusters), fallback)
+// binName infers one name from all the facts it groups. When no token qualifies
+// it falls back to the group's most common source folder, then its own folder.
+// It never emits developer terms or a size suffix.
+func (m *mapMaterializer) binName(bin mapper.Bin, folderPath string) string {
+	members := m.membersUnderClusters(bin.Clusters)
+	if m.naming != nil {
+		if name := m.naming.Name(members); name != "" {
+			return name
+		}
+		if folder := m.naming.FallbackName(members); folder != "" {
+			return folderName(folder)
+		}
+	}
+	return folderName(folderPath)
 }
 
 // folderElement names a folder after the single most distinctive token across
@@ -549,45 +852,46 @@ func (m *mapMaterializer) folderElement(node mapper.FolderNode) core.LibraryElem
 	element := folderElement(node)
 	if len(m.namesUnderNode(node)) > 1 {
 		element.Name = m.inferName(m.membersUnderNode(node), folderName(node.Path))
-		if element.Description != nil {
-			description := node.Path + " · " + *element.Description
-			element.Description = &description
-		}
 	}
 	return element
 }
 
 func folderElement(node mapper.FolderNode) core.LibraryElement {
 	kind := "folder"
+	description := fmt.Sprintf("%d files", node.Counts.Facts)
+	// Keep the full path in the description since the name is only the base dir.
+	if node.Path != "." && node.Path != "" {
+		description = node.Path + " · " + description
+	}
 	return core.LibraryElement{
 		Name:        folderName(node.Path),
 		Kind:        &kind,
-		Description: strPtr(fmt.Sprintf("%d facts · %d bins · %d clusters · %d standalone", node.Counts.Facts, node.Counts.Bins, node.Counts.Clusters, node.Counts.Standalone)),
+		Description: &description,
 	}
 }
 
 func binElement(name string, bin mapper.Bin) core.LibraryElement {
-	kind := "bin"
 	return core.LibraryElement{
 		Name:        name,
-		Kind:        &kind,
-		Description: strPtr(fmt.Sprintf("%d files · %d clusters", bin.Size, len(bin.Clusters))),
+		Kind:        strPtr(""),
+		Description: strPtr(fmt.Sprintf("%d files", bin.Size)),
 	}
 }
 
 func clusterElement(unit mapper.ClusterUnit, name string) core.LibraryElement {
-	kind := "cluster"
 	if name == "" {
-		name = fmt.Sprintf("cluster %d", unit.Rank)
+		name = "Other"
 	}
-	description := fmt.Sprintf("cluster %d · size %d · tightness %.3f", unit.Rank, unit.Size, unit.Tightness)
+	description := fmt.Sprintf("%d files", unit.Size)
 	if unit.Folder != "" {
-		description += " · folder: " + unit.Folder
+		description += " · " + unit.Folder
 	}
-	if len(unit.Spans) > 0 {
-		description += " · spans: " + strings.Join(unit.Spans, ", ")
+	if len(unit.Spans) > 1 {
+		description += " · " + strings.Join(unit.Spans, ", ")
 	}
-	return core.LibraryElement{Name: name, Kind: &kind, Description: &description}
+	// An explicit empty kind clears any previous "cluster" value on update:
+	// UpdateElement uses COALESCE, so a nil kind would keep the old value.
+	return core.LibraryElement{Name: name, Kind: strPtr(""), Description: &description}
 }
 
 func strPtr(value string) *string { return &value }
@@ -627,6 +931,26 @@ func clusterViewKey(repositoryID, path string, index, rank int) string {
 
 func fileKey(repositoryID, factID string) string {
 	return mapKeyPrefix + "fact|" + repositoryID + "|" + factID
+}
+
+func connectorKey(repositoryID, fromFactID, toFactID string) string {
+	return mapKeyPrefix + "conn|" + repositoryID + "|" + fromFactID + "|" + toFactID
+}
+
+func externalKey(repositoryID string) string {
+	return mapKeyPrefix + "external|" + repositoryID
+}
+
+func externalViewKey(repositoryID string) string {
+	return mapKeyPrefix + "externalview|" + repositoryID
+}
+
+func importKey(repositoryID, importPath string) string {
+	return mapKeyPrefix + "import|" + repositoryID + "|" + importPath
+}
+
+func importConnectorKey(repositoryID, fileFactID, importPath string) string {
+	return mapKeyPrefix + "importconn|" + repositoryID + "|" + fileFactID + "|" + importPath
 }
 
 func countMapResources(tree mapper.FolderNode) int {

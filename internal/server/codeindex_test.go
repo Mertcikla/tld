@@ -11,6 +11,8 @@ import (
 	"github.com/google/uuid"
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/internal/core"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
@@ -116,5 +118,66 @@ func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 	}
 	if got := len(facts.Msg.GetFacts()); got != 2 {
 		t.Fatalf("facts = %d, want 2", got)
+	}
+}
+
+func TestRepositoryServiceDeleteRepository(t *testing.T) {
+	workspaceID := uuid.New()
+	sqliteStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
+
+	root := "/repo-delete"
+	repoID := cgraph.RepositoryID(root)
+	snap := &codeindexv1.Snapshot{Id: "snap-del", RepositoryId: repoID, CreatedUnix: 100}
+	if err := idx.Publish(ctx, root, snap, cgraph.NewGraph(repoID, snap.Id)); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	view, err := sqliteStore.CreateView(ctx, "Repo Map", nil, nil)
+	if err != nil {
+		t.Fatalf("create view: %v", err)
+	}
+	element, err := sqliteStore.CreateElement(ctx, core.LibraryElement{Name: "Repo Root"})
+	if err != nil {
+		t.Fatalf("create element: %v", err)
+	}
+	if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{
+		{LogicalKey: "map|view|" + repoID, Kind: cstore.MappingView, ResourceID: view.ID, RepositoryID: repoID, SnapshotID: snap.Id},
+		{LogicalKey: "map|top|" + repoID, Kind: cstore.MappingElement, ResourceID: element.ID, RepositoryID: repoID, SnapshotID: snap.Id},
+	}); err != nil {
+		t.Fatalf("save mappings: %v", err)
+	}
+
+	ts := httptest.NewServer(routes)
+	defer ts.Close()
+	client := codeindexv1connect.NewRepositoryServiceClient(ts.Client(), ts.URL+"/api")
+
+	if _, err := client.DeleteRepository(ctx, connect.NewRequest(&codeindexv1.DeleteRepositoryRequest{})); err == nil {
+		t.Fatal("expected an error for a missing repository id")
+	}
+	if _, err := client.DeleteRepository(ctx, connect.NewRequest(&codeindexv1.DeleteRepositoryRequest{Id: "missing"})); connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("missing repository error = %v, want not found", err)
+	}
+
+	if _, err := client.DeleteRepository(ctx, connect.NewRequest(&codeindexv1.DeleteRepositoryRequest{Id: repoID, DeleteMaterialized: true})); err != nil {
+		t.Fatalf("DeleteRepository: %v", err)
+	}
+
+	if _, err := idx.Repository(ctx, repoID); err == nil {
+		t.Fatal("repository still resolves after delete")
+	}
+	if _, err := sqliteStore.ViewByID(ctx, view.ID); err == nil {
+		t.Fatal("materialized view still resolves after delete")
+	}
+	if _, err := sqliteStore.ElementByID(ctx, element.ID); err == nil {
+		t.Fatal("materialized element still resolves after delete")
+	}
+	mappings, err := idx.MappingsByRepository(ctx, repoID)
+	if err != nil {
+		t.Fatalf("mappings: %v", err)
+	}
+	if len(mappings) != 0 {
+		t.Fatalf("mappings remain: %d", len(mappings))
 	}
 }

@@ -17,14 +17,16 @@ import {
   Progress,
   Select,
   Spinner,
+  Switch,
   Text,
   Tooltip,
   VStack,
 } from '@chakra-ui/react'
 import type { ButtonProps } from '@chakra-ui/react'
-import { CopyIcon } from '@chakra-ui/icons'
+import { CopyIcon, DeleteIcon } from '@chakra-ui/icons'
 import type { CodeSnapshot, IndexedRepository, RepositoryMapProgress, SnapshotChangeKind, SnapshotDiff } from '../api/client'
 import { api } from '../api/client'
+import ConfirmDialog from '../components/ConfirmDialog'
 import { toast } from '../utils/toast'
 
 type RepoFilter = 'all' | 'indexed' | 'empty'
@@ -204,9 +206,9 @@ const CHANGE_META: Record<SnapshotChangeKind, { label: string; colorScheme: stri
 }
 
 const MAP_STAGE_LABELS: Record<string, string> = {
-  loading: 'Loading embeddings',
-  clustering: 'Clustering',
-  binning: 'Packing bins',
+  loading: 'Loading files',
+  clustering: 'Grouping',
+  binning: 'Organizing',
   materializing: 'Materializing workspace',
 }
 
@@ -241,7 +243,11 @@ export default function Repositories() {
   const [mapping, setMapping] = useState(false)
   const [mapProgress, setMapProgress] = useState<RepositoryMapProgress | null>(null)
   const [mapError, setMapError] = useState<string | null>(null)
+  const [includeImports, setIncludeImports] = useState(false)
   const [showIds, setShowIds] = useState(readShowIdsPreference)
+  const [repoToDelete, setRepoToDelete] = useState<IndexedRepository | null>(null)
+  const [deleteMaterialized, setDeleteMaterialized] = useState(false)
+  const [deletingRepo, setDeletingRepo] = useState(false)
   const navigate = useNavigate()
 
   const toggleShowIds = useCallback(() => {
@@ -354,10 +360,10 @@ export default function Repositories() {
     setMapError(null)
     setMapProgress(null)
     try {
-      const result = await api.repositories.map(selected.id, { onProgress: setMapProgress })
+      const result = await api.repositories.map(selected.id, { includeImports, onProgress: setMapProgress })
       toast({
         title: 'Repository mapped',
-        description: `${result.clusters} clusters · ${result.bins} bins materialized`,
+        description: `${result.facts} files materialized`,
         status: 'success',
       })
       await load()
@@ -370,7 +376,35 @@ export default function Repositories() {
       setMapping(false)
       setMapProgress(null)
     }
-  }, [load, navigate, selected])
+  }, [includeImports, load, navigate, selected])
+
+  const handleDelete = useCallback(async () => {
+    if (!repoToDelete) return
+    setDeletingRepo(true)
+    try {
+      await api.repositories.delete(repoToDelete.id, { deleteMaterialized })
+      toast({
+        title: 'Repository deleted',
+        description: repoName(repoToDelete.root),
+        status: 'success',
+      })
+      setSelectedId((current) => (current === repoToDelete.id ? '' : current))
+      setRepoToDelete(null)
+      setDeleteMaterialized(false)
+      await load()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete repository'
+      toast({ title: 'Delete failed', description: message, status: 'error' })
+    } finally {
+      setDeletingRepo(false)
+    }
+  }, [deleteMaterialized, load, repoToDelete])
+
+  const closeDeleteDialog = useCallback(() => {
+    if (deletingRepo) return
+    setRepoToDelete(null)
+    setDeleteMaterialized(false)
+  }, [deletingRepo])
 
   const indexCommand = selected ? `tld index "${selected.root}" --watch` : ''
 
@@ -427,6 +461,7 @@ export default function Repositories() {
                 return (
                   <Box
                     key={repo.id}
+                    role="group"
                     borderBottom="1px solid"
                     borderColor="whiteAlpha.50"
                     bg={active ? 'rgba(var(--accent-rgb), 0.08)' : 'transparent'}
@@ -448,6 +483,23 @@ export default function Repositories() {
                           {repo.root}
                         </Text>
                       </Box>
+                      <IconButton
+                        aria-label={`Delete ${repoName(repo.root)}`}
+                        data-testid={`repositories-delete-${repo.id}`}
+                        icon={<DeleteIcon />}
+                        size="xs"
+                        variant="ghost"
+                        color="gray.500"
+                        opacity={0}
+                        _groupHover={{ opacity: 1 }}
+                        _focusVisible={{ opacity: 1 }}
+                        _hover={{ color: 'red.300', bg: 'whiteAlpha.100' }}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          setRepoToDelete(repo)
+                          setDeleteMaterialized(false)
+                        }}
+                      />
                     </Flex>
                   </Box>
                 )
@@ -477,6 +529,25 @@ export default function Repositories() {
                       <IconButton aria-label="Copy root path" icon={<CopyIcon />} size="xs" variant="ghost" onClick={() => { void copy(selected.root, 'Path') }} />
                     </HStack>
                   </Box>
+                  <Tooltip label="Also materialize external imports and their connectors" placement="top">
+                    <HStack
+                      spacing={1.5}
+                      align="center"
+                      flexShrink={0}
+                      opacity={isIndexed(selected) ? 1 : 0.5}
+                      cursor={isIndexed(selected) ? 'pointer' : 'not-allowed'}
+                    >
+                      <Switch
+                        size="sm"
+                        colorScheme="purple"
+                        isChecked={includeImports}
+                        isDisabled={!isIndexed(selected)}
+                        data-testid="repositories-include-imports"
+                        onChange={(event) => setIncludeImports(event.target.checked)}
+                      />
+                      <Text fontSize="xs" color="gray.400" fontWeight="600">Imports</Text>
+                    </HStack>
+                  </Tooltip>
                   <Tooltip label="Cluster embeddings and materialize a repository map" placement="top">
                     <Button
                       {...accentOutlineStyle}
@@ -726,6 +797,34 @@ export default function Repositories() {
           </Box>
         </Flex>
       )}
+
+      <ConfirmDialog
+        isOpen={repoToDelete !== null}
+        onClose={closeDeleteDialog}
+        onConfirm={() => { void handleDelete() }}
+        title="Delete repository"
+        body={repoToDelete
+          ? `Delete "${repoName(repoToDelete.root)}"? This removes the repository and all of its indexed snapshots. This action cannot be undone.`
+          : ''}
+        confirmLabel="Delete"
+        confirmColorScheme="red"
+        isLoading={deletingRepo}
+      >
+        <HStack mt={4} spacing={2} align="flex-start">
+          <Switch
+            size="sm"
+            colorScheme="red"
+            data-testid="repositories-delete-materialized"
+            isChecked={deleteMaterialized}
+            isDisabled={deletingRepo}
+            onChange={(event) => setDeleteMaterialized(event.target.checked)}
+          />
+          <Box>
+            <Text fontSize="sm" color="gray.200">Also delete materialized workspace resources</Text>
+            <Text fontSize="xs" color="gray.500">Removes views, elements, and connectors created by Map for this repository.</Text>
+          </Box>
+        </HStack>
+      </ConfirmDialog>
     </Box>
   )
 }

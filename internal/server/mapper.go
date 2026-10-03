@@ -147,6 +147,18 @@ func (s *mapperService) MapRepository(ctx context.Context, req *connect.Request[
 	}
 
 	send(&codeindexv1.MapProgress{Stage: "materializing"})
+	fileEdges, err := s.idx.FileEdges(ctx, snapshotID)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	var imports []materialize.MapImport
+	if req.Msg.GetIncludeImports() {
+		fileImports, err := s.idx.FileImports(ctx, snapshotID)
+		if err != nil {
+			return connect.NewError(connect.CodeInternal, err)
+		}
+		imports = mapImports(fileImports)
+	}
 	mapResult, err := materialize.ApplyMap(ctx, s.ws, s.idx, materialize.MapInput{
 		RepositoryID:   repositoryID,
 		RepositoryName: repositoryName,
@@ -155,6 +167,8 @@ func (s *mapperService) MapRepository(ctx context.Context, req *connect.Request[
 		RunID:          runID,
 		Dataset:        dataset,
 		Bins:           bins,
+		Edges:          mapEdges(fileEdges),
+		Imports:        imports,
 	}, materialize.MapOptions{
 		Progress: func(current, total int, detail string) {
 			send(&codeindexv1.MapProgress{Stage: "materializing", Current: uint32(current), Total: uint32(total), Detail: detail})
@@ -189,6 +203,22 @@ func (s *mapperService) end(repositoryID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.running, repositoryID)
+}
+
+func mapEdges(edges []cstore.FileEdge) []materialize.MapEdge {
+	out := make([]materialize.MapEdge, 0, len(edges))
+	for _, edge := range edges {
+		out = append(out, materialize.MapEdge{FromFactID: edge.FromFactID, ToFactID: edge.ToFactID, Weight: edge.Weight})
+	}
+	return out
+}
+
+func mapImports(imports []cstore.FileImport) []materialize.MapImport {
+	out := make([]materialize.MapImport, 0, len(imports))
+	for _, item := range imports {
+		out = append(out, materialize.MapImport{FileFactID: item.FileFactID, Import: item.Import})
+	}
+	return out
 }
 
 // buildMapDataset mirrors the Rust loader: majority decoded dimension, stable

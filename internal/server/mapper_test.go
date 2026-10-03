@@ -30,6 +30,9 @@ func TestMapperServiceMapRepository(t *testing.T) {
 			Name: "file " + path, Language: "go", Anchor: &codeindexv1.SourceAnchor{Path: path},
 		}
 	}
+	graph.Facts["sym-a"] = &codeindexv1.CodeFact{Id: "sym-a", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/a.go"}}
+	graph.Facts["sym-c"] = &codeindexv1.CodeFact{Id: "sym-c", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/deep/c.go"}}
+	graph.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_CALLS, "sym-a", "sym-c", "", &codeindexv1.SourceAnchor{Path: "src/a.go"}, nil)
 	if err := idx.Publish(ctx, root, snap, graph); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
@@ -90,6 +93,75 @@ func TestMapperServiceMapRepository(t *testing.T) {
 	}
 	if analysisRuns != 1 || groups == 0 || members != 4 {
 		t.Fatalf("analysis runs=%d groups=%d members=%d", analysisRuns, groups, members)
+	}
+
+	var connectors int
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&connectors); err != nil {
+		t.Fatal(err)
+	}
+	if connectors != 1 {
+		t.Fatalf("connectors = %d, want 1 file-to-file edge", connectors)
+	}
+	var connectorEndpoints int
+	if err := sqliteStore.DB().QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM connectors c
+		JOIN elements s ON s.id = c.source_element_id
+		JOIN elements t ON t.id = c.target_element_id
+		WHERE s.name = 'a.go' AND t.name = 'c.go'`).Scan(&connectorEndpoints); err != nil {
+		t.Fatal(err)
+	}
+	if connectorEndpoints != 1 {
+		t.Fatalf("connector endpoints resolved = %d, want a.go -> deep/c.go", connectorEndpoints)
+	}
+}
+
+func TestMapperServiceMaterializesImports(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+
+	root := "/repo/demo"
+	repoID := cgraph.RepositoryID(root)
+	snap := &codeindexv1.Snapshot{Id: "snap-imports", RepositoryId: repoID, CreatedUnix: 100}
+	graph := cgraph.NewGraph(repoID, snap.Id)
+	graph.Facts["f1"] = &codeindexv1.CodeFact{Id: "f1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Name: "a.go", Anchor: &codeindexv1.SourceAnchor{Path: "src/a.go"}}
+	graph.Facts["f2"] = &codeindexv1.CodeFact{Id: "f2", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Name: "b.go", Anchor: &codeindexv1.SourceAnchor{Path: "src/b.go"}}
+	graph.Facts["s1"] = &codeindexv1.CodeFact{Id: "s1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/a.go"}, Imports: []string{"celery", "flask"}}
+	if err := idx.Publish(ctx, root, snap, graph); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	for _, id := range []string{"f1", "f2"} {
+		if err := idx.SaveFactEmbedding(ctx, &codeindexv1.Embedding{Id: "e" + id, FactId: id, SnapshotId: snap.Id, Profile: "p1", Dimensions: 3, Vector: []float32{1, 0, 0}}); err != nil {
+			t.Fatalf("save embedding %s: %v", id, err)
+		}
+	}
+
+	ts := httptest.NewServer(routes)
+	defer ts.Close()
+	client := codeindexv1connect.NewMapperServiceClient(ts.Client(), ts.URL+"/api")
+	stream, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID, IncludeImports: true}))
+	if err != nil {
+		t.Fatalf("map repository: %v", err)
+	}
+	for stream.Receive() {
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+
+	var connectors int
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&connectors); err != nil {
+		t.Fatal(err)
+	}
+	if connectors != 2 {
+		t.Fatalf("import connectors = %d, want 2", connectors)
+	}
+	var external int
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'External'`).Scan(&external); err != nil {
+		t.Fatal(err)
+	}
+	if external != 1 {
+		t.Fatalf("External elements = %d, want 1", external)
 	}
 }
 

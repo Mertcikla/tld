@@ -82,6 +82,7 @@ import {
   ChangeKind,
   CodeFactService,
   MapperService,
+  RepositoryService,
   type Snapshot as CodeSnapshotProto,
   type SnapshotDiff as SnapshotDiffProto,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb'
@@ -269,6 +270,7 @@ const mermaidClient = createClient(MermaidService, transport)
 const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
 const codeIndexFactClient = createClient(CodeFactService, transport)
 const codeIndexMapperClient = createClient(MapperService, transport)
+const codeIndexRepositoryClient = createClient(RepositoryService, transport)
 const orgClient = createClient(OrgService, transport)
 const collaborationClient = createClient(CollaborationService, transport)
 
@@ -1784,10 +1786,10 @@ export const api = {
       }),
     map: async (
       repositoryId: string,
-      handlers: { onProgress?: (progress: RepositoryMapProgress) => void } = {},
+      handlers: { includeImports?: boolean; onProgress?: (progress: RepositoryMapProgress) => void } = {},
     ): Promise<RepositoryMapResult> => {
       try {
-        const stream = codeIndexMapperClient.mapRepository({ repositoryId })
+        const stream = codeIndexMapperClient.mapRepository({ repositoryId, includeImports: handlers.includeImports ?? false })
         let result: RepositoryMapResult | null = null
         for await (const event of stream) {
           if (event.event.case === 'progress') {
@@ -1817,6 +1819,13 @@ export const api = {
         throw e
       }
     },
+    delete: (repositoryId: string, options: { deleteMaterialized?: boolean } = {}): Promise<void> =>
+      rpc(async () => {
+        await codeIndexRepositoryClient.deleteRepository({
+          id: repositoryId,
+          deleteMaterialized: options.deleteMaterialized ?? false,
+        })
+      }),
   },
 
   editor: {

@@ -182,7 +182,7 @@ describe('inventoryData', () => {
     expect(rows.find((row) => row.key === 'connector:20')?.qualityFlags).toEqual(expect.arrayContaining(['untagged', 'missing description', 'missing label']))
   })
 
-  it('flattens nested views and builds connector fallback labels for missing references', () => {
+  it('flattens nested views and leaves unlabeled connectors nameless', () => {
     const nestedViews = [
       view(1, 'Root', [], {
         children: [
@@ -204,7 +204,7 @@ describe('inventoryData', () => {
     )
 
     expect(rows.find((row) => row.key === 'connector:20')).toMatchObject({
-      name: 'Known Source -> Element 999',
+      name: '',
       subtitle: 'Known Source -> Element 999',
       viewName: 'View 999',
       usageLabel: 'View 999',

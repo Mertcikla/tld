@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -17,6 +18,7 @@ import (
 type codeIndexRepositoryService struct {
 	codeindexv1connect.UnimplementedRepositoryServiceHandler
 	store *cstore.Store
+	ws    *store.SQLiteStore
 }
 
 func (s *codeIndexRepositoryService) ListRepositories(ctx context.Context, _ *connect.Request[codeindexv1.ListRepositoriesRequest]) (*connect.Response[codeindexv1.ListRepositoriesResponse], error) {
@@ -25,6 +27,52 @@ func (s *codeIndexRepositoryService) ListRepositories(ctx context.Context, _ *co
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&codeindexv1.ListRepositoriesResponse{Repositories: repositories}), nil
+}
+
+func (s *codeIndexRepositoryService) DeleteRepository(ctx context.Context, req *connect.Request[codeindexv1.DeleteRepositoryRequest]) (*connect.Response[codeindexv1.DeleteRepositoryResponse], error) {
+	repositoryID := strings.TrimSpace(req.Msg.GetId())
+	if repositoryID == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository id is required"))
+	}
+	if _, err := s.store.Repository(ctx, repositoryID); err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	if req.Msg.GetDeleteMaterialized() {
+		if err := s.deleteMaterializedResources(ctx, repositoryID); err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	if err := s.store.DeleteRepository(ctx, repositoryID); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&codeindexv1.DeleteRepositoryResponse{}), nil
+}
+
+// deleteMaterializedResources removes the workspace views, elements, and
+// connectors created by the mapper for a repository. Mappings are left in place
+// so DeleteRepository can clear them with the rest of the repository's data.
+func (s *codeIndexRepositoryService) deleteMaterializedResources(ctx context.Context, repositoryID string) error {
+	mappings, err := s.store.MappingsByRepository(ctx, repositoryID)
+	if err != nil {
+		return err
+	}
+	for _, mapping := range mappings {
+		switch mapping.Kind {
+		case cstore.MappingView:
+			if err := s.ws.DeleteView(ctx, mapping.ResourceID); err != nil {
+				return err
+			}
+		case cstore.MappingElement:
+			if err := s.ws.DeleteElement(ctx, mapping.ResourceID); err != nil {
+				return err
+			}
+		case cstore.MappingConnector:
+			if err := s.ws.DeleteConnector(ctx, mapping.ResourceID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // codeIndexFactService serves an indexed repository's snapshots and immutable
@@ -210,7 +258,7 @@ func nextEdgeCursor(edges []*codeindexv1.EdgeFact, limit int) string {
 
 func registerCodeIndexHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) {
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
-	repoSvc := &codeIndexRepositoryService{store: idx}
+	repoSvc := &codeIndexRepositoryService{store: idx, ws: sqliteStore}
 	repoPath, repoHandler := codeindexv1connect.NewRepositoryServiceHandler(repoSvc)
 	mux.Handle("/api"+repoPath, http.StripPrefix("/api", repoHandler))
 

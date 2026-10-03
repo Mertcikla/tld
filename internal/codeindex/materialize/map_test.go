@@ -171,11 +171,10 @@ func TestApplyMapUsesInferredDomainNames(t *testing.T) {
 
 	counts := elementNameCounts(t, sqliteStore)
 	for name, want := range map[string]int{
-		"demo":     1, // top element
-		"auth":     3, // cluster + its bin + the aggregated "src" folder
-		"parse":    2, // cluster + its bin
-		"src/auth": 1, // single-cluster folders keep their path
-		"src/xml":  1,
+		"demo":  1, // top element
+		"auth":  4, // cluster + bin + aggregated "src" folder + "src/auth" base name
+		"parse": 2, // cluster + its bin
+		"xml":   1, // "src/xml" folder shows only its base name
 	} {
 		if counts[name] != want {
 			t.Fatalf("element name %q count = %d, want %d (all: %v)", name, counts[name], want, counts)
@@ -186,6 +185,213 @@ func TestApplyMapUsesInferredDomainNames(t *testing.T) {
 			t.Fatalf("element name %q still joins multiple names: %v", name, counts)
 		}
 	}
+}
+
+func TestApplyMapCreatesFileConnectors(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, err := store.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = sqliteStore.Close() }()
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+
+	root := "/repo/demo"
+	facts := []mapper.Fact{
+		{ID: "a1", Path: "src/auth/a.go", DisplayName: "AuthToken", Language: "go"},
+		{ID: "a2", Path: "src/auth/b.go", DisplayName: "AuthToken", Language: "go"},
+		{ID: "x1", Path: "src/xml/c.go", DisplayName: "ParseXml", Language: "go"},
+		{ID: "x2", Path: "src/xml/d.go", DisplayName: "ParseXml", Language: "go"},
+	}
+	vectors := [][]float64{{1, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 1, 0}}
+	dataset := &mapper.Dataset{Snapshot: "snap-1", Profile: "p1", Root: &root, Facts: facts, Vectors: vectors}
+	options := mapper.DefaultOptions()
+	pipeline, err := mapper.RunPipeline(dataset.Vectors, &options)
+	if err != nil {
+		t.Fatalf("run pipeline: %v", err)
+	}
+	binOptions := mapper.DefaultBinOptions()
+	binOptions.FolderPoolingThreshold = 2
+	bins, err := mapper.BuildBins(dataset, pipeline, &binOptions)
+	if err != nil {
+		t.Fatalf("build bins: %v", err)
+	}
+	result, err := ApplyMap(ctx, sqliteStore, idx, MapInput{
+		RepositoryID:   "repo-1",
+		RepositoryName: "demo",
+		RepositoryRoot: root,
+		SnapshotID:     "snap-1",
+		RunID:          "run-1",
+		Dataset:        dataset,
+		Bins:           bins,
+		Edges: []MapEdge{
+			{FromFactID: "a1", ToFactID: "x1"}, // duplicated below
+			{FromFactID: "a1", ToFactID: "x1"},
+			{FromFactID: "x1", ToFactID: "a1"}, // reverse merges into bidirectional
+			{FromFactID: "a2", ToFactID: "x2"}, // forward only
+			{FromFactID: "a2", ToFactID: "a2"}, // self edge dropped
+		},
+	}, MapOptions{})
+	if err != nil {
+		t.Fatalf("apply map: %v", err)
+	}
+	if result.Connectors != 2 {
+		t.Fatalf("connectors = %d, want 2 (deduped + merged)", result.Connectors)
+	}
+	rows, err := sqliteStore.DB().QueryContext(ctx, `SELECT direction, COUNT(*) FROM connectors GROUP BY direction ORDER BY direction`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	got := map[string]int{}
+	for rows.Next() {
+		var direction string
+		var count int
+		if err := rows.Scan(&direction, &count); err != nil {
+			t.Fatal(err)
+		}
+		got[direction] = count
+	}
+	if got["both"] != 1 || got["forward"] != 1 {
+		t.Fatalf("directions = %v, want both=1 forward=1", got)
+	}
+	// Cross-cluster endpoints stay off-view: they are not relocated into the
+	// connector's owner view.
+	var relocated int
+	if err := sqliteStore.DB().QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM connectors c
+		WHERE (SELECT COUNT(*) FROM placements p
+		       WHERE p.view_id = c.view_id AND p.element_id IN (c.source_element_id, c.target_element_id)) <> 0`).Scan(&relocated); err != nil {
+		t.Fatal(err)
+	}
+	if relocated != 0 {
+		t.Fatalf("%d connectors relocated endpoints into their view", relocated)
+	}
+}
+
+func TestApplyMapMaterializesImports(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, err := store.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = sqliteStore.Close() }()
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+
+	dataset, bins := twoClusterData(t)
+	result, err := ApplyMap(ctx, sqliteStore, idx, MapInput{
+		RepositoryID:   "repo-1",
+		RepositoryName: "demo",
+		RepositoryRoot: "/repo/demo",
+		SnapshotID:     "snap-1",
+		RunID:          "run-1",
+		Dataset:        dataset,
+		Bins:           bins,
+		Imports: []MapImport{
+			{FileFactID: "a1", Import: "flask"},
+			{FileFactID: "a1", Import: "celery"},
+			{FileFactID: "a1", Import: "flask"}, // duplicate, must be deduped
+			{FileFactID: "x1", Import: "flask"},
+		},
+	}, MapOptions{})
+	if err != nil {
+		t.Fatalf("apply map: %v", err)
+	}
+	if result.Connectors != 3 {
+		t.Fatalf("import connectors = %d, want 3 (deduped)", result.Connectors)
+	}
+	counts := elementNameCounts(t, sqliteStore)
+	if counts["External"] != 1 {
+		t.Fatalf("External element count = %d, want 1 (%v)", counts["External"], counts)
+	}
+	if counts["flask"] != 1 || counts["celery"] != 1 {
+		t.Fatalf("import elements not deduped: %v", counts)
+	}
+	var placedImports int
+	if err := sqliteStore.DB().QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM placements p
+		JOIN elements e ON e.id = p.element_id
+		JOIN views v ON v.id = p.view_id
+		WHERE v.name = 'External' AND e.name IN ('flask', 'celery')`).Scan(&placedImports); err != nil {
+		t.Fatal(err)
+	}
+	if placedImports != 2 {
+		t.Fatalf("imports placed in External view = %d, want 2", placedImports)
+	}
+	// Import connectors stay off-view.
+	var relocated int
+	if err := sqliteStore.DB().QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM connectors c
+		WHERE (SELECT COUNT(*) FROM placements p
+		       WHERE p.view_id = c.view_id AND p.element_id IN (c.source_element_id, c.target_element_id)) <> 0`).Scan(&relocated); err != nil {
+		t.Fatal(err)
+	}
+	if relocated != 0 {
+		t.Fatalf("%d connectors relocated endpoints into their view", relocated)
+	}
+}
+
+func TestApplyMapClearsLegacyGroupKinds(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, err := store.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = sqliteStore.Close() }()
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+
+	dataset, bins := twoClusterData(t)
+	input := MapInput{
+		RepositoryID:   "repo-1",
+		RepositoryName: "demo",
+		RepositoryRoot: "/repo/demo",
+		SnapshotID:     "snap-1",
+		RunID:          "run-1",
+		Dataset:        dataset,
+		Bins:           bins,
+	}
+	if _, err := ApplyMap(ctx, sqliteStore, idx, input, MapOptions{}); err != nil {
+		t.Fatalf("apply map: %v", err)
+	}
+	// Simulate elements materialized before groups stopped carrying a kind.
+	if _, err := sqliteStore.DB().ExecContext(ctx, `UPDATE elements SET kind = 'cluster' WHERE kind = '' OR kind IS NULL`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyMap(ctx, sqliteStore, idx, input, MapOptions{}); err != nil {
+		t.Fatalf("second apply map: %v", err)
+	}
+	var legacy int
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE kind IN ('bin', 'cluster')`).Scan(&legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy != 0 {
+		t.Fatalf("%d elements still carry bin/cluster kinds", legacy)
+	}
+}
+
+func twoClusterData(t *testing.T) (*mapper.Dataset, *mapper.BinningResult) {
+	t.Helper()
+	root := "/repo/demo"
+	facts := []mapper.Fact{
+		{ID: "a1", Path: "src/auth/a.go", DisplayName: "AuthToken", Language: "go"},
+		{ID: "a2", Path: "src/auth/b.go", DisplayName: "AuthToken", Language: "go"},
+		{ID: "x1", Path: "src/xml/c.go", DisplayName: "ParseXml", Language: "go"},
+		{ID: "x2", Path: "src/xml/d.go", DisplayName: "ParseXml", Language: "go"},
+	}
+	vectors := [][]float64{{1, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 1, 0}}
+	dataset := &mapper.Dataset{Snapshot: "snap-1", Profile: "p1", Root: &root, Facts: facts, Vectors: vectors}
+	options := mapper.DefaultOptions()
+	pipeline, err := mapper.RunPipeline(dataset.Vectors, &options)
+	if err != nil {
+		t.Fatalf("run pipeline: %v", err)
+	}
+	binOptions := mapper.DefaultBinOptions()
+	binOptions.FolderPoolingThreshold = 2
+	bins, err := mapper.BuildBins(dataset, pipeline, &binOptions)
+	if err != nil {
+		t.Fatalf("build bins: %v", err)
+	}
+	return dataset, bins
 }
 
 func elementNameCounts(t *testing.T, sqliteStore *store.SQLiteStore) map[string]int {

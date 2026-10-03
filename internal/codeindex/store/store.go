@@ -47,6 +47,8 @@ type CodeIndexStore interface {
 	FactSimilarities(ctx context.Context, snapshotID, profile string, query []float32, factIDs []string) (map[string]float32, error)
 	MajorityProfile(ctx context.Context, snapshotID string) (string, error)
 	FactEmbeddings(ctx context.Context, snapshotID, profile string, kind pb.FactKind) ([]FactVector, error)
+	FileEdges(ctx context.Context, snapshotID string) ([]FileEdge, error)
+	FileImports(ctx context.Context, snapshotID string) ([]FileImport, error)
 	SaveAnalysis(ctx context.Context, run AnalysisRun) error
 	LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph, error)
 	SnapshotSources(ctx context.Context, snapshotID string) (map[string]string, error)
