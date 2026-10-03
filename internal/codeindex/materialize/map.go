@@ -45,10 +45,17 @@ type MapImport struct {
 // MapOptions configures a mapper materialization run.
 type MapOptions struct {
 	ViewName string
+	// MaxConnectorsPerView caps how many rolled-up connectors are drawn in any
+	// one view, highest weight first, to keep dense views readable. Zero uses
+	// DefaultMaxConnectorsPerView.
+	MaxConnectorsPerView int
 	// Progress receives coarse (current, total, detail) updates while resources
 	// are created or updated. It may be nil.
 	Progress func(current, total int, detail string)
 }
+
+// DefaultMaxConnectorsPerView is the per-view connector budget when unset.
+const DefaultMaxConnectorsPerView = 40
 
 // MapResult summarizes what changed.
 type MapResult struct {
@@ -85,19 +92,21 @@ func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput
 		return MapResult{}, err
 	}
 	m := &mapMaterializer{
-		ctx:            ctx,
-		ws:             ws,
-		input:          input,
-		opts:           opts,
-		byKey:          byKey,
-		kept:           map[string]bool{},
-		placed:         map[int64]map[int64]bool{},
-		position:       map[int64]int{},
-		naming:         naming,
-		clusterNames:   clusterNames,
-		fileElementIDs: map[string]int64{},
-		fileChains:     map[string][]int64{},
-		total:          countMapResources(input.Bins.Tree) + 1,
+		ctx:             ctx,
+		ws:              ws,
+		input:           input,
+		opts:            opts,
+		byKey:           byKey,
+		kept:            map[string]bool{},
+		placed:          map[int64]map[int64]bool{},
+		position:        map[int64]int{},
+		naming:          naming,
+		clusterNames:    clusterNames,
+		fileElementIDs:  map[string]int64{},
+		fileChains:      map[string][]int64{},
+		fileElementPath: map[string][]int64{},
+		maxConnectors:   maxConnectorsPerView(opts),
+		total:           countMapResources(input.Bins.Tree) + 1,
 	}
 	rootKey := mapKeyPrefix + "view|" + input.RepositoryID
 	topKey := mapKeyPrefix + "top|" + input.RepositoryID
@@ -121,7 +130,7 @@ func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput
 	if err := m.place(workspaceRootID, topElementID); err != nil {
 		return MapResult{}, err
 	}
-	if err := m.materializeFolder(input.Bins.Tree, rootViewID, []int64{rootViewID}); err != nil {
+	if err := m.materializeFolder(input.Bins.Tree, rootViewID, []int64{rootViewID}, nil); err != nil {
 		return MapResult{}, err
 	}
 	if err := m.materializeConnectors(); err != nil {
@@ -154,25 +163,27 @@ func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput
 }
 
 type mapMaterializer struct {
-	ctx            context.Context
-	ws             core.Store
-	input          MapInput
-	opts           MapOptions
-	byKey          map[string]cstore.ResourceMapping
-	kept           map[string]bool
-	pending        []cstore.ResourceMapping
-	placed         map[int64]map[int64]bool
-	position       map[int64]int
-	naming         *mapper.NameIndex
-	clusterNames   []string
-	fileElementIDs map[string]int64
-	fileChains     map[string][]int64
-	result         MapResult
-	done           int
-	total          int
+	ctx             context.Context
+	ws              core.Store
+	input           MapInput
+	opts            MapOptions
+	byKey           map[string]cstore.ResourceMapping
+	kept            map[string]bool
+	pending         []cstore.ResourceMapping
+	placed          map[int64]map[int64]bool
+	position        map[int64]int
+	naming          *mapper.NameIndex
+	clusterNames    []string
+	fileElementIDs  map[string]int64
+	fileChains      map[string][]int64
+	fileElementPath map[string][]int64
+	maxConnectors   int
+	result          MapResult
+	done            int
+	total           int
 }
 
-func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64, chain []int64) error {
+func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64, chain, elementPath []int64) error {
 	for _, child := range node.Children {
 		element, err := m.upsertElement(folderKey(m.input.RepositoryID, child.Path), m.folderElement(child))
 		if err != nil {
@@ -185,7 +196,7 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 		if err := m.place(viewID, element); err != nil {
 			return err
 		}
-		if err := m.materializeFolder(child, childViewID, appendView(chain, childViewID)); err != nil {
+		if err := m.materializeFolder(child, childViewID, appendView(chain, childViewID), appendElem(elementPath, element)); err != nil {
 			return err
 		}
 	}
@@ -202,7 +213,8 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 		if err := m.place(viewID, element); err != nil {
 			return err
 		}
-		binChain := appendView(chain, binViewID)
+		binViews := chain
+		binElems := appendElem(elementPath, element)
 		for _, clusterIndex := range bin.Clusters {
 			if clusterIndex < 0 || clusterIndex >= len(m.input.Bins.Units) {
 				continue
@@ -221,7 +233,8 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 			if err := m.place(binViewID, clusterElementID); err != nil {
 				return err
 			}
-			clusterChain := appendView(binChain, clusterViewID)
+			clusterViews := appendView(binViews, binViewID)
+			clusterElems := appendElem(binElems, clusterElementID)
 			for _, member := range unit.Members {
 				if member < 0 || member >= len(m.input.Dataset.Facts) {
 					continue
@@ -234,7 +247,7 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 				if err := m.place(clusterViewID, fileID); err != nil {
 					return err
 				}
-				m.recordFile(fact.ID, fileID, clusterChain)
+				m.recordFile(fact.ID, fileID, appendView(clusterViews, clusterViewID), appendElem(clusterElems, fileID))
 			}
 		}
 	}
@@ -250,16 +263,19 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 		if err := m.place(viewID, fileID); err != nil {
 			return err
 		}
-		m.recordFile(fact.ID, fileID, chain)
+		m.recordFile(fact.ID, fileID, chain, appendElem(elementPath, fileID))
 	}
 	return nil
 }
 
-// recordFile remembers where a file element lives so file edges can be drawn in
-// the deepest view that contains both endpoints.
-func (m *mapMaterializer) recordFile(factID string, elementID int64, chain []int64) {
+// recordFile remembers where a file element sits: the chain of view ids from the
+// map root to the view holding the file, and the element placed in each of those
+// views that contains the file. Edge roll-up uses the first level where two
+// files' elements differ.
+func (m *mapMaterializer) recordFile(factID string, elementID int64, views, elements []int64) {
 	m.fileElementIDs[factID] = elementID
-	m.fileChains[factID] = append([]int64(nil), chain...)
+	m.fileChains[factID] = append([]int64(nil), views...)
+	m.fileElementPath[factID] = append([]int64(nil), elements...)
 }
 
 // appendView returns a new chain with viewID appended, safe to reuse.
@@ -270,48 +286,132 @@ func appendView(chain []int64, viewID int64) []int64 {
 	return out
 }
 
-type mapEdgePair struct {
-	fromFact string
-	toFact   string
+// appendElem returns a new chain with elementID appended, safe to reuse.
+func appendElem(chain []int64, elementID int64) []int64 {
+	out := make([]int64, len(chain)+1)
+	copy(out, chain)
+	out[len(chain)] = elementID
+	return out
+}
+
+func maxConnectorsPerView(opts MapOptions) int {
+	if opts.MaxConnectorsPerView > 0 {
+		return opts.MaxConnectorsPerView
+	}
+	return DefaultMaxConnectorsPerView
+}
+
+type elementEdgeKey struct {
+	viewID int64
+	a      int64
+	b      int64
+}
+
+type elementEdge struct {
+	viewID   int64
+	a        int64
+	b        int64
+	weight   float64
 	forward  bool
 	backward bool
 }
 
-// materializeConnectors draws one file-to-file connector per unordered file
-// pair, merging opposite directions into a bidirectional connector. Each
-// connector is owned by the deepest common ancestor view of the two files, but
-// the file elements are left where they were materialized: for cross-view edges
-// the endpoints stay off-view and the workspace surfaces them as off-view
-// elements rather than relocating them.
+// materializeConnectors rolls file-level dependencies up the map hierarchy.
+// Every edge is drawn at the deepest view where the two files fall under
+// different visible child elements, connecting those two elements. Edges are
+// aggregated per element pair (weight = number of underlying file edges,
+// opposite directions merged) and each view is capped to its heaviest
+// connectors, so dense views stay readable and internal edges never clutter a
+// higher level.
 func (m *mapMaterializer) materializeConnectors() error {
 	if len(m.input.Edges) == 0 {
 		return nil
 	}
-	for _, pair := range aggregateMapEdges(m.input.Edges) {
-		fromElement, okFrom := m.fileElementIDs[pair.fromFact]
-		toElement, okTo := m.fileElementIDs[pair.toFact]
-		if !okFrom || !okTo || fromElement == toElement {
+	grouped := map[elementEdgeKey]*elementEdge{}
+	for _, edge := range m.input.Edges {
+		if edge.FromFactID == "" || edge.ToFactID == "" || edge.FromFactID == edge.ToFactID {
 			continue
 		}
-		viewID := commonView(m.fileChains[pair.fromFact], m.fileChains[pair.toFact])
-		if viewID == 0 {
+		fromViews, fromElems := m.fileChains[edge.FromFactID], m.fileElementPath[edge.FromFactID]
+		toElems := m.fileElementPath[edge.ToFactID]
+		if len(fromElems) == 0 || len(toElems) == 0 {
 			continue
 		}
-		direction := "forward"
-		switch {
-		case pair.forward && pair.backward:
-			direction = "both"
-		case pair.backward:
-			direction = "backward"
+		index := -1
+		limit := min(len(fromElems), len(toElems))
+		for i := 0; i < limit; i++ {
+			if fromElems[i] != toElems[i] {
+				index = i
+				break
+			}
 		}
-		if err := m.upsertConnector(connectorKey(m.input.RepositoryID, pair.fromFact, pair.toFact), core.Connector{
-			ViewID:          viewID,
-			SourceElementID: fromElement,
-			TargetElementID: toElement,
-			Direction:       direction,
-			Style:           "bezier",
-		}); err != nil {
-			return err
+		if index < 0 {
+			continue
+		}
+		a, b := fromElems[index], toElems[index]
+		forward := true
+		if a > b {
+			a, b = b, a
+			forward = false
+		}
+		key := elementEdgeKey{viewID: fromViews[index], a: a, b: b}
+		entry := grouped[key]
+		if entry == nil {
+			entry = &elementEdge{viewID: key.viewID, a: a, b: b}
+			grouped[key] = entry
+		}
+		if forward {
+			entry.forward = true
+		} else {
+			entry.backward = true
+		}
+		weight := edge.Weight
+		if weight <= 0 {
+			weight = 1
+		}
+		entry.weight += weight
+	}
+	byView := map[int64][]*elementEdge{}
+	for _, entry := range grouped {
+		byView[entry.viewID] = append(byView[entry.viewID], entry)
+	}
+	views := make([]int64, 0, len(byView))
+	for viewID := range byView {
+		views = append(views, viewID)
+	}
+	sort.Slice(views, func(i, j int) bool { return views[i] < views[j] })
+	for _, viewID := range views {
+		entries := byView[viewID]
+		sort.Slice(entries, func(i, j int) bool {
+			if entries[i].weight != entries[j].weight {
+				return entries[i].weight > entries[j].weight
+			}
+			if entries[i].a != entries[j].a {
+				return entries[i].a < entries[j].a
+			}
+			return entries[i].b < entries[j].b
+		})
+		limit := m.maxConnectors
+		if limit <= 0 || limit > len(entries) {
+			limit = len(entries)
+		}
+		for _, entry := range entries[:limit] {
+			direction := "forward"
+			switch {
+			case entry.forward && entry.backward:
+				direction = "both"
+			case entry.backward:
+				direction = "backward"
+			}
+			if err := m.upsertConnector(elementConnectorKey(m.input.RepositoryID, entry.viewID, entry.a, entry.b), core.Connector{
+				ViewID:          entry.viewID,
+				SourceElementID: entry.a,
+				TargetElementID: entry.b,
+				Direction:       direction,
+				Style:           "bezier",
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -396,58 +496,6 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 		}
 	}
 	return nil
-}
-
-// aggregateMapEdges de-duplicates file edges by unordered pair and records
-// whether each direction was observed.
-func aggregateMapEdges(edges []MapEdge) []mapEdgePair {
-	type acc struct {
-		forward  bool
-		backward bool
-	}
-	byPair := map[[2]string]*acc{}
-	for _, edge := range edges {
-		if edge.FromFactID == "" || edge.ToFactID == "" || edge.FromFactID == edge.ToFactID {
-			continue
-		}
-		a, b := edge.FromFactID, edge.ToFactID
-		forward := true
-		if a > b {
-			a, b = b, a
-			forward = false
-		}
-		entry := byPair[[2]string{a, b}]
-		if entry == nil {
-			entry = &acc{}
-			byPair[[2]string{a, b}] = entry
-		}
-		if forward {
-			entry.forward = true
-		} else {
-			entry.backward = true
-		}
-	}
-	keys := make([][2]string, 0, len(byPair))
-	for key := range byPair {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i][0] != keys[j][0] {
-			return keys[i][0] < keys[j][0]
-		}
-		return keys[i][1] < keys[j][1]
-	})
-	out := make([]mapEdgePair, 0, len(keys))
-	for _, key := range keys {
-		entry := byPair[key]
-		out = append(out, mapEdgePair{
-			fromFact: key[0],
-			toFact:   key[1],
-			forward:  entry.forward,
-			backward: entry.backward,
-		})
-	}
-	return out
 }
 
 // commonView returns the deepest view id shared by two root-to-leaf chains.
@@ -933,8 +981,8 @@ func fileKey(repositoryID, factID string) string {
 	return mapKeyPrefix + "fact|" + repositoryID + "|" + factID
 }
 
-func connectorKey(repositoryID, fromFactID, toFactID string) string {
-	return mapKeyPrefix + "conn|" + repositoryID + "|" + fromFactID + "|" + toFactID
+func elementConnectorKey(repositoryID string, viewID, a, b int64) string {
+	return fmt.Sprintf("%sconn|%s|%d|%d|%d", mapKeyPrefix, repositoryID, viewID, a, b)
 }
 
 func externalKey(repositoryID string) string {

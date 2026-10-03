@@ -235,37 +235,103 @@ func TestApplyMapCreatesFileConnectors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply map: %v", err)
 	}
-	if result.Connectors != 2 {
-		t.Fatalf("connectors = %d, want 2 (deduped + merged)", result.Connectors)
+	// Both cross-group file edges roll up to a single connector between the two
+	// visible folder elements, with opposite directions merged.
+	if result.Connectors != 1 {
+		t.Fatalf("connectors = %d, want 1 (rolled up between groups)", result.Connectors)
 	}
-	rows, err := sqliteStore.DB().QueryContext(ctx, `SELECT direction, COUNT(*) FROM connectors GROUP BY direction ORDER BY direction`)
-	if err != nil {
+	var direction string
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT direction FROM connectors LIMIT 1`).Scan(&direction); err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = rows.Close() }()
-	got := map[string]int{}
-	for rows.Next() {
-		var direction string
-		var count int
-		if err := rows.Scan(&direction, &count); err != nil {
-			t.Fatal(err)
-		}
-		got[direction] = count
+	if direction != "both" {
+		t.Fatalf("direction = %q, want both", direction)
 	}
-	if got["both"] != 1 || got["forward"] != 1 {
-		t.Fatalf("directions = %v, want both=1 forward=1", got)
+	var source, target string
+	if err := sqliteStore.DB().QueryRowContext(ctx, `
+		SELECT s.name, t.name FROM connectors c
+		JOIN elements s ON s.id = c.source_element_id
+		JOIN elements t ON t.id = c.target_element_id LIMIT 1`).Scan(&source, &target); err != nil {
+		t.Fatal(err)
 	}
-	// Cross-cluster endpoints stay off-view: they are not relocated into the
-	// connector's owner view.
-	var relocated int
+	if source != "auth" || target != "xml" {
+		t.Fatalf("connector endpoints = %q -> %q, want auth -> xml", source, target)
+	}
+	// Rolled-up endpoints are visible children of the connector's view.
+	var visible int
 	if err := sqliteStore.DB().QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM connectors c
 		WHERE (SELECT COUNT(*) FROM placements p
-		       WHERE p.view_id = c.view_id AND p.element_id IN (c.source_element_id, c.target_element_id)) <> 0`).Scan(&relocated); err != nil {
+		       WHERE p.view_id = c.view_id AND p.element_id IN (c.source_element_id, c.target_element_id)) = 2`).Scan(&visible); err != nil {
 		t.Fatal(err)
 	}
-	if relocated != 0 {
-		t.Fatalf("%d connectors relocated endpoints into their view", relocated)
+	if visible != result.Connectors {
+		t.Fatalf("%d of %d connectors lack both endpoints in their view", result.Connectors-visible, result.Connectors)
+	}
+}
+
+func TestApplyMapCapsConnectorsPerView(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, err := store.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = sqliteStore.Close() }()
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+
+	root := "/repo/demo"
+	ids := []string{"a1", "a2", "b1", "b2", "c1", "c2"}
+	vectors := [][]float64{
+		{1, 0, 0}, {1, 0, 0},
+		{0, 1, 0}, {0, 1, 0},
+		{0, 0, 1}, {0, 0, 1},
+	}
+	facts := make([]mapper.Fact, len(ids))
+	for i, id := range ids {
+		facts[i] = mapper.Fact{ID: id, Path: "src/" + id + ".go", DisplayName: id, Language: "go"}
+	}
+	dataset := &mapper.Dataset{Snapshot: "snap-1", Profile: "p1", Root: &root, Facts: facts, Vectors: vectors}
+	options := mapper.DefaultOptions()
+	pipeline, err := mapper.RunPipeline(dataset.Vectors, &options)
+	if err != nil {
+		t.Fatalf("run pipeline: %v", err)
+	}
+	if len(pipeline.Domains) != 3 {
+		t.Fatalf("domains = %d, want 3", len(pipeline.Domains))
+	}
+	binOptions := mapper.DefaultBinOptions()
+	bins, err := mapper.BuildBins(dataset, pipeline, &binOptions)
+	if err != nil {
+		t.Fatalf("build bins: %v", err)
+	}
+	// Three group pairs at the same (bin) view.
+	edges := []MapEdge{
+		{FromFactID: "a1", ToFactID: "b1"},
+		{FromFactID: "a1", ToFactID: "c1"},
+		{FromFactID: "b1", ToFactID: "c1"},
+	}
+	result, err := ApplyMap(ctx, sqliteStore, idx, MapInput{
+		RepositoryID:   "repo-1",
+		RepositoryName: "demo",
+		RepositoryRoot: root,
+		SnapshotID:     "snap-1",
+		RunID:          "run-1",
+		Dataset:        dataset,
+		Bins:           bins,
+		Edges:          edges,
+	}, MapOptions{MaxConnectorsPerView: 2})
+	if err != nil {
+		t.Fatalf("apply map: %v", err)
+	}
+	if result.Connectors != 2 {
+		t.Fatalf("connectors = %d, want 2 (capped per view)", result.Connectors)
+	}
+	var rows int
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 2 {
+		t.Fatalf("connector rows = %d, want 2", rows)
 	}
 }
 
