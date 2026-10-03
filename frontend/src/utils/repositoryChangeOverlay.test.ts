@@ -32,6 +32,20 @@ describe('repository change overlays', () => {
     expect(base.groups[0].nodes[0].changeOverlay).toBeUndefined()
     expect(annotated.groups[0].nodes[0].description).toBe('Existing description')
   })
+  it('places added files in the pipeline-selected base view at the computed position', () => {
+    const target: RepositoryImpact = { ...impact, viewId: 1, nodes: [node('a.go', 'modified'), { ...node('new.go', 'added'), x: 300, y: 120 }] }
+    const scene = repositoryChangeOverlay(workspace, target, '/repo')
+    expect(scene.data.tree.map((tree) => tree.id)).toEqual([1])
+    const added = scene.data.views[1].placements.find((element) => element.file_path === 'new.go')!
+    expect(added).toMatchObject({ view_id: 1, position_x: 300, position_y: 120 })
+    expect(scene.overlays[added.element_id].change).toBe('added')
+  })
+  it('falls back to a transient view when the selected view is unavailable', () => {
+    const target: RepositoryImpact = { ...impact, viewId: 42, nodes: [...impact.nodes, { ...node('new.go', 'added'), x: 300, y: 120 }] }
+    const scene = repositoryChangeOverlay(workspace, target, '/repo')
+    expect(scene.data.tree.map((tree) => tree.id)).toEqual([1, -1])
+    expect(scene.data.views[-1].placements.find((element) => element.file_path === 'new.go')).toMatchObject({ view_id: -1, position_x: 0, position_y: 0 })
+  })
   it('clears annotations on a clean comparison while retaining the existing map', () => {
     const scene = repositoryChangeOverlay(workspace, { ...impact, nodes: [], edges: [], diff: { ...impact.diff, sources: [] } }, '/repo')
     expect(scene.data.tree.map((tree) => tree.id)).toEqual([1])

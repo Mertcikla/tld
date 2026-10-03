@@ -120,6 +120,119 @@ func TestImpactRadiusAndScopedMaterialization(t *testing.T) {
 }
 func stringPtr(s string) *string { return &s }
 
+func TestImpactPlacesAddedFilesInClosestView(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	view, err := ws.CreateView(ctx, "Pkg", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	element, err := ws.CreateElement(ctx, core.LibraryElement{Name: "a.go", FilePath: stringPtr("pkg/a.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, view.ID, element.ID, 10, 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{{LogicalKey: "map|pkg|a", Kind: cstore.MappingElement, ResourceID: element.ID, RepositoryID: "repo", SnapshotID: "head"}}); err != nil {
+		t.Fatal(err)
+	}
+	publish := func(id string, paths []string) {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
+		g := graph.NewGraph("repo", id)
+		for _, p := range paths {
+			text := "func Stable() {}"
+			src := &graph.Source{Path: p, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[p] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: p, Hash: src.Hash, Size: uint64(len(src.Text))})
+			g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+		}
+		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("base", []string{"pkg/a.go"})
+	publish("head", []string{"pkg/a.go", "pkg/new.go", "pkg/other.go"})
+	diagram, err := Save(ctx, ws, idx, "repo", "live", "base", "head", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagram.ViewId != view.ID {
+		t.Fatalf("added files not placed in closest view: got %d want %d", diagram.ViewId, view.ID)
+	}
+	formed := map[string]*pb.ImpactNode{}
+	for _, node := range diagram.Nodes {
+		formed[node.Path] = node
+	}
+	if _, ok := formed["pkg/new.go"]; !ok {
+		t.Fatalf("added node missing: %+v", diagram.Nodes)
+	}
+	if node := formed["pkg/other.go"]; node == nil || node.X != overlaySpacingX || node.Y != 0 {
+		t.Fatalf("added node not laid out: %+v", node)
+	}
+}
+
+func TestImpactFallsBackToAncestorFolderView(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	// The map owns a folder view for internal/codeindex but no file is placed
+	// directly in internal/ or internal/codeindex.
+	folderView, err := ws.CreateView(ctx, "codeindex", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusterView, err := ws.CreateView(ctx, "Compose", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootFile, err := ws.CreateElement(ctx, core.LibraryElement{Name: "docker-compose.yml", FilePath: stringPtr("docker-compose.yml")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, clusterView.ID, rootFile.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{
+		{LogicalKey: "map|folderview|repo|internal/codeindex", Kind: cstore.MappingView, ResourceID: folderView.ID, RepositoryID: "repo", SnapshotID: "head"},
+		{LogicalKey: "map|fact|repo|docker-compose", Kind: cstore.MappingElement, ResourceID: rootFile.ID, RepositoryID: "repo", SnapshotID: "head"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	publish := func(id string, paths []string) {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
+		g := graph.NewGraph("repo", id)
+		for _, p := range paths {
+			text := "func Stable() {}"
+			src := &graph.Source{Path: p, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[p] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: p, Hash: src.Hash, Size: uint64(len(src.Text))})
+			g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+		}
+		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("base", []string{"docker-compose.yml"})
+	publish("head", []string{"docker-compose.yml", "internal/codeindex/impact/placement.go"})
+	diagram, err := Save(ctx, ws, idx, "repo", "live", "base", "head", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagram.ViewId != folderView.ID {
+		t.Fatalf("added file fell to %d, want ancestor folder view %d", diagram.ViewId, folderView.ID)
+	}
+}
+
 func TestRetireLegacyMaterializationPreservesSharedResources(t *testing.T) {
 	ctx := context.Background()
 	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
