@@ -75,17 +75,39 @@ func (m *watchManager) cliAvailable() bool {
 }
 
 // start launches a detached child and waits for its control record to appear.
+// It reserves the repository slot under the manager lock so concurrent starts
+// cannot both spawn, reaps dead children first, and refuses when a live
+// watcher (managed or external) already owns the repository.
 func (m *watchManager) start(ctx context.Context, st cstore.WatchState, embed, materialize bool) (cstore.WatchState, error) {
 	exe, err := m.resolveCLI()
 	if err != nil {
 		return cstore.WatchState{}, err
 	}
+	m.reap()
 	m.mu.Lock()
 	if existing, ok := m.children[st.RepositoryID]; ok && existing.running() {
 		m.mu.Unlock()
 		return cstore.WatchState{}, fmt.Errorf("a watcher is already running for this repository (pid %d)", existing.pid)
 	}
+	// Reserve the slot so a concurrent start cannot slip through before the
+	// child publishes its claim.
+	reservation := &watchChild{repositoryID: st.RepositoryID, repoRoot: st.RepoRoot, done: make(chan struct{})}
+	m.children[st.RepositoryID] = reservation
 	m.mu.Unlock()
+
+	release := func() {
+		m.mu.Lock()
+		if m.children[st.RepositoryID] == reservation {
+			delete(m.children, st.RepositoryID)
+		}
+		m.mu.Unlock()
+	}
+
+	// A live watcher not managed by us must not be duplicated.
+	if existing, ok, err := m.idx.WatchState(ctx, st.RepositoryID); err == nil && ok && existing.Live(time.Now()) {
+		release()
+		return cstore.WatchState{}, fmt.Errorf("a watcher is already running for this repository (pid %d)", existing.OwnerPID)
+	}
 
 	args := []string{"index", st.RepoRoot, "--watch", "--watch-owner", "server"}
 	if m.dataDir != "" {
@@ -105,6 +127,7 @@ func (m *watchManager) start(ctx context.Context, st cstore.WatchState, embed, m
 	cmd.SysProcAttr = getSysProcAttr()
 	if err := cmd.Start(); err != nil {
 		cancel()
+		release()
 		return cstore.WatchState{}, fmt.Errorf("start watcher: %w", err)
 	}
 	child := &watchChild{repositoryID: st.RepositoryID, repoRoot: st.RepoRoot, pid: cmd.Process.Pid, cancel: cancel, done: make(chan struct{})}
@@ -116,43 +139,98 @@ func (m *watchManager) start(ctx context.Context, st cstore.WatchState, embed, m
 		close(child.done)
 	}()
 
-	// Wait briefly for the child to publish its own control record so the
-	// returned status reflects the running watcher rather than our seed.
-	deadline := time.Now().Add(3 * time.Second)
+	// Wait for the child to publish its own live control record so the returned
+	// status reflects the running watcher rather than our seed.
+	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		select {
 		case <-child.done:
+			release()
 			return cstore.WatchState{}, fmt.Errorf("watcher exited immediately; run `tld index %s --watch` to see why", st.RepoRoot)
 		case <-time.After(50 * time.Millisecond):
 		}
-		if current, ok, err := m.idx.WatchState(ctx, st.RepositoryID); err == nil && ok && current.Fresh(time.Now()) {
+		if current, ok, err := m.idx.WatchState(ctx, st.RepositoryID); err == nil && ok && current.Live(time.Now()) && current.OwnerPID == child.pid {
 			return current, nil
 		}
 	}
-	return st, nil
+	// The child is alive but never claimed a live record (e.g. it lost a race).
+	release()
+	cancel()
+	return cstore.WatchState{}, fmt.Errorf("watcher did not claim the repository; it may be indexing under another owner")
 }
 
-// stop terminates a managed child. Cooperative stop of any external watcher is
-// handled by the shared control record and RequestWatchStop.
-func (m *watchManager) stop(repositoryID string) {
+// reap drops entries whose process has exited.
+func (m *watchManager) reap() {
 	m.mu.Lock()
-	child, ok := m.children[repositoryID]
-	if ok {
+	defer m.mu.Unlock()
+	for id, child := range m.children {
+		if !child.running() {
+			delete(m.children, id)
+		}
+	}
+}
+
+// stop terminates a managed child and cooperatively stops any external watcher.
+// When an external process owns the record, it is signalled directly once it
+// has had a chance to honor the cooperative stop, so a non-cooperative or
+// legacy watcher can never stay stuck.
+func (m *watchManager) stop(ctx context.Context, repositoryID string) {
+	m.reap()
+	m.mu.Lock()
+	child, managed := m.children[repositoryID]
+	if managed {
 		delete(m.children, repositoryID)
 	}
 	m.mu.Unlock()
-	if !ok {
+
+	if managed {
+		if child.cancel != nil {
+			child.cancel()
+		}
+		if m.waitChild(child, 5*time.Second) {
+			return
+		}
+	}
+
+	// External or unresponsive watcher: give it a moment to observe the stop
+	// flag, then terminate the recorded process and clear the row.
+	st, ok, err := m.idx.WatchState(ctx, repositoryID)
+	if err != nil || !ok {
 		return
 	}
-	if child.cancel != nil {
-		child.cancel()
+	if st.Live(time.Now()) && st.OwnerPID > 0 {
+		deadline := time.Now().Add(cstore.WatchStopDeadline)
+		for time.Now().Before(deadline) {
+			if current, ok, err := m.idx.WatchState(ctx, repositoryID); err != nil || !ok || !current.Live(time.Now()) {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if current, ok, err := m.idx.WatchState(ctx, repositoryID); err == nil && ok && current.Live(time.Now()) && current.OwnerPID > 0 {
+			if proc, err := os.FindProcess(current.OwnerPID); err == nil {
+				_ = proc.Kill()
+			}
+		}
 	}
+	_ = m.idx.ForceClearWatchState(ctx, repositoryID)
+}
+
+func (m *watchManager) waitChild(child *watchChild, timeout time.Duration) bool {
 	select {
 	case <-child.done:
-	case <-time.After(5 * time.Second):
+		return true
+	case <-time.After(timeout):
+	}
+	if child.pid > 0 {
 		if proc, err := os.FindProcess(child.pid); err == nil {
 			_ = proc.Kill()
 		}
+	}
+	select {
+	case <-child.done:
+		return true
+	case <-time.After(time.Second):
+		return false
 	}
 }
 
@@ -179,6 +257,9 @@ func (m *watchManager) Close() error {
 		if child.cancel != nil {
 			child.cancel()
 		}
+	}
+	for _, child := range children {
+		m.waitChild(child, 5*time.Second)
 	}
 	return nil
 }
@@ -211,14 +292,13 @@ func (s *watchService) StartWatch(ctx context.Context, req *connect.Request[code
 	if strings.TrimSpace(repo.Root) == "" {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("repository has no local path"))
 	}
-	if existing, ok, err := s.idx.WatchState(ctx, repositoryID); err == nil && ok && existing.Fresh(time.Now()) {
-		if !existing.StopRequested {
-			return nil, connect.NewError(connect.CodeAlreadyExists, fmt.Errorf("a watcher is already running for this repository"))
-		}
+	// Reset any stale record so a crashed watcher cannot block a fresh start.
+	if existing, ok, err := s.idx.WatchState(ctx, repositoryID); err == nil && ok && !existing.Live(time.Now()) {
+		_ = s.idx.ForceClearWatchState(ctx, repositoryID)
 	}
 	st := cstore.WatchState{RepositoryID: repositoryID, RepoRoot: repo.Root, OwnerKind: "server", State: "starting", StartedUnix: time.Now().Unix()}
 	if _, err := s.manager.start(ctx, st, req.Msg.GetEmbed(), req.Msg.GetMaterialize()); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+		return nil, connect.NewError(connect.CodeAlreadyExists, err)
 	}
 	return connect.NewResponse(s.status(ctx, repositoryID)), nil
 }
@@ -231,7 +311,7 @@ func (s *watchService) StopWatch(ctx context.Context, req *connect.Request[codei
 	if err := s.idx.RequestWatchStop(ctx, repositoryID); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	s.manager.stop(repositoryID)
+	s.manager.stop(ctx, repositoryID)
 	return connect.NewResponse(s.status(ctx, repositoryID)), nil
 }
 
@@ -244,6 +324,8 @@ func (s *watchService) GetWatchStatus(ctx context.Context, req *connect.Request[
 }
 
 func (s *watchService) ListWatches(ctx context.Context, _ *connect.Request[codeindexv1.ListWatchesRequest]) (*connect.Response[codeindexv1.ListWatchesResponse], error) {
+	s.manager.reap()
+	_ = s.idx.ReapStaleWatchStates(ctx)
 	states, err := s.idx.ListWatchStates(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
@@ -260,6 +342,11 @@ func (s *watchService) status(ctx context.Context, repositoryID string) *codeind
 	if err != nil {
 		ok = false
 	}
+	if ok && !st.Live(time.Now()) {
+		_ = s.idx.ForceClearWatchState(ctx, repositoryID)
+		st.State = "stopped"
+		st.StopRequested = false
+	}
 	return s.statusFor(st, ok)
 }
 
@@ -268,9 +355,10 @@ func (s *watchService) statusFor(st cstore.WatchState, found bool) *codeindexv1.
 }
 
 func buildWatchStatus(st cstore.WatchState, found, managed, cliAvailable bool) *codeindexv1.WatchStatus {
+	live := found && st.Live(time.Now())
 	status := &codeindexv1.WatchStatus{
 		RepositoryId:       st.RepositoryID,
-		Running:            found && st.Fresh(time.Now()),
+		Running:            live,
 		Managed:            managed,
 		State:              watchStateLabel(st, found),
 		Stage:              st.Stage,
@@ -287,7 +375,7 @@ func buildWatchStatus(st cstore.WatchState, found, managed, cliAvailable bool) *
 		LastScanUnix:       st.LastScanUnix,
 		LastScanMs:         st.LastScanMS,
 		HeartbeatUnix:      st.HeartbeatUnix,
-		StopRequested:      st.StopRequested,
+		StopRequested:      st.StopRequested && live,
 		PollIntervalMs:     st.PollIntervalMS,
 		DebounceMs:         st.DebounceMS,
 		Error:              st.Error,
@@ -300,7 +388,7 @@ func buildWatchStatus(st cstore.WatchState, found, managed, cliAvailable bool) *
 }
 
 func watchStateLabel(st cstore.WatchState, found bool) string {
-	if !found || !st.Fresh(time.Now()) {
+	if !found || !st.Live(time.Now()) {
 		return "stopped"
 	}
 	if st.StopRequested {

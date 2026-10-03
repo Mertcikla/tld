@@ -75,6 +75,7 @@ repository's watcher. With no path or --all, lists every watcher.`,
 			defer func() { _ = sq.Close() }()
 			out := cmd.OutOrStdout()
 			if all || len(args) == 0 {
+				_ = idx.ReapStaleWatchStates(ctx)
 				states, err := idx.ListWatchStates(ctx)
 				if err != nil {
 					return err
@@ -98,9 +99,15 @@ repository's watcher. With no path or --all, lists every watcher.`,
 			if err != nil {
 				return err
 			}
-			st, ok, err := idx.WatchState(ctx, cgraph.RepositoryID(root))
+			repoID := cgraph.RepositoryID(root)
+			st, ok, err := idx.WatchState(ctx, repoID)
 			if err != nil {
 				return err
+			}
+			if ok && !st.Live(time.Now()) {
+				_ = idx.ForceClearWatchState(ctx, repoID)
+				st.State = "stopped"
+				st.StopRequested = false
 			}
 			if !ok {
 				if jsonOut {
@@ -150,26 +157,37 @@ control record.`,
 			if err != nil {
 				return err
 			}
-			if !ok || !st.Fresh(time.Now()) {
+			if !ok || !st.Live(time.Now()) {
+				_ = idx.ForceClearWatchState(ctx, repoID)
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "no running watcher for %s\n", root)
 				return nil
 			}
 			if err := idx.RequestWatchStop(ctx, repoID); err != nil {
 				return err
 			}
-			deadline := time.Now().Add(10 * time.Second)
+			stopped := func() bool {
+				current, ok, err := idx.WatchState(ctx, repoID)
+				return err == nil && (!ok || !current.Live(time.Now()))
+			}
+			deadline := time.Now().Add(cstore.WatchStopDeadline + 5*time.Second)
 			for time.Now().Before(deadline) {
 				time.Sleep(200 * time.Millisecond)
-				current, ok, err := idx.WatchState(ctx, repoID)
-				if err != nil {
-					return err
-				}
-				if !ok || !current.Fresh(time.Now()) {
+				if stopped() {
+					_ = idx.ForceClearWatchState(ctx, repoID)
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watcher stopped for %s\n", root)
 					return nil
 				}
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "stop requested for %s (pid %d); it will exit shortly\n", root, st.OwnerPID)
+			// The watcher is not cooperating (e.g. an old binary that ignores the
+			// stop flag). Terminate the recorded process and clear the record so
+			// the repository is never left stuck.
+			if st.OwnerPID > 0 {
+				if proc, err := os.FindProcess(st.OwnerPID); err == nil {
+					_ = proc.Kill()
+				}
+			}
+			_ = idx.ForceClearWatchState(ctx, repoID)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watcher for %s did not stop; terminated pid %d\n", root, st.OwnerPID)
 			return nil
 		},
 	}
@@ -212,7 +230,7 @@ func printWatchStatus(out io.Writer, st cstore.WatchState) error {
 }
 
 func displayWatchState(st cstore.WatchState) string {
-	if !st.Fresh(time.Now()) {
+	if !st.Live(time.Now()) {
 		return "stopped"
 	}
 	if st.StopRequested {
@@ -269,7 +287,37 @@ func runDetached(cmd *cobra.Command, opts options) error {
 	if err := child.Start(); err != nil {
 		return fmt.Errorf("start background watcher: %w", err)
 	}
+	pid := child.Process.Pid
+
+	// Verify the child actually claimed the repository. A child that loses the
+	// claim race exits, and reporting success would be misleading.
+	repoID := cgraph.RepositoryID(root)
+	ctx := cmd.Context()
+	sq, idx, _, err := openIndexStore(ctx, opts.dataDir)
+	if err != nil {
+		_ = child.Process.Kill()
+		return err
+	}
+	defer func() { _ = sq.Close() }()
+	deadline := time.Now().Add(5 * time.Second)
+	claimed := false
+	for time.Now().Before(deadline) && ctx.Err() == nil {
+		if st, ok, err := idx.WatchState(ctx, repoID); err == nil && ok && st.Live(time.Now()) && st.OwnerPID == pid {
+			claimed = true
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	if !claimed {
+		if reapErr := child.Process.Kill(); reapErr != nil {
+			_ = child.Wait()
+		}
+		return fmt.Errorf("background watcher for %s did not start (another watcher may already be running)", root)
+	}
 	_ = child.Process.Release()
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "started background watcher for %s (pid %d)\n", root, child.Process.Pid)
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "started background watcher for %s (pid %d)\n", root, pid)
 	return nil
 }

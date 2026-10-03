@@ -23,7 +23,6 @@ import {
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
-  CopyIcon,
   DeleteIcon,
   RepeatIcon,
 } from '@chakra-ui/icons'
@@ -722,14 +721,6 @@ export default function Repositories() {
     }
   }
   const currentViewId = maps[0]?.result.viewId
-  const copy = async (value: string) => {
-    try {
-      await navigator.clipboard.writeText(value)
-      toast({ title: 'Copied', status: 'success' })
-    } catch {
-      toast({ title: 'Copy failed', status: 'warning' })
-    }
-  }
   const handleDelete = async () => {
     if (!repoToDelete) return
     setDeletingRepo(true)
@@ -944,43 +935,6 @@ export default function Repositories() {
                 </Flex>
                 {!collapsed && repo.id === selectedId && (
                   <Box px={4} pb={3}>
-                    <HStack
-                      mb={2}
-                      sx={{
-                        '&:hover > .repository-copy, &:focus-within > .repository-copy':
-                          {
-                            opacity: 1,
-                            pointerEvents: 'auto',
-                          },
-                        '@media (hover: none)': {
-                          '> .repository-copy': {
-                            opacity: 1,
-                            pointerEvents: 'auto',
-                          },
-                        },
-                      }}
-                    >
-                      <Code
-                        fontSize="2xs"
-                        isTruncated
-                        flex={1}
-                        title={repo.root}
-                        bg="transparent"
-                        p={0}
-                      >
-                        {repo.root}
-                      </Code>
-                      <IconButton
-                        aria-label="Copy local path"
-                        className="repository-copy"
-                        opacity={0}
-                        pointerEvents="none"
-                        icon={<CopyIcon />}
-                        size="xs"
-                        variant="ghost"
-                        onClick={() => void copy(repo.root)}
-                      />
-                    </HStack>
                     <Box mb={2}>
                       <Label>Snapshots · {snapshots.length}</Label>
                     </Box>

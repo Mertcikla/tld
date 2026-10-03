@@ -33,7 +33,10 @@ func TestLeaseAndImpactDeletion(t *testing.T) {
 	if err := idx.SaveImpact(ctx, &pb.ImpactDiagram{RepositoryId: "repo", ComparisonKey: "live", ViewId: 5}); err != nil {
 		t.Fatal(err)
 	}
-	if err := idx.WatchHeartbeat(ctx, "repo", "main", "abc", "retry", true); err != nil {
+	if err := idx.UpsertWatchState(ctx, WatchState{
+		RepositoryID: "repo", OwnerKind: "cli", OwnerID: "owner", State: "watching",
+		Error: "retry", GitBranch: "main", GitRevision: "abc",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	live, err := idx.LiveImpact(ctx, "repo")

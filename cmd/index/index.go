@@ -399,12 +399,17 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		}
 		status.RepositoryID = repoID
 		status.OwnerID = ownerID
+		status.OwnerPID = os.Getpid()
 		snapshot := status
 		mu.Unlock()
-		snapshot.HeartbeatUnix = time.Now().Unix()
 		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
-		_ = e.store.UpsertWatchState(writeCtx, snapshot)
+		if err := e.store.WatchHeartbeat(writeCtx, snapshot); errors.Is(err, cstore.ErrWatchOwnershipLost) {
+			// Another watcher took over this repository. Exit so two watchers
+			// never index concurrently.
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "another watcher took over %s; exiting\n", root)
+			cancelRun()
+		}
 	}
 
 	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
@@ -412,13 +417,23 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 	heartbeatDone := make(chan struct{})
 	go func() {
 		defer close(heartbeatDone)
-		ticker := time.NewTicker(5 * time.Second)
+		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
+		stoppingSince := time.Time{}
 		for {
 			if requested, err := e.store.WatchStopRequested(heartbeatCtx, repoID); err == nil && requested {
-				persist(func(s *cstore.WatchState) { s.State = "stopping" })
-				cancelRun()
-				return
+				if stoppingSince.IsZero() {
+					stoppingSince = time.Now()
+					persist(func(s *cstore.WatchState) { s.State = "stopping" })
+				}
+				// Escalate if the scan loop does not stop promptly, so a stop can
+				// never leave the watcher stuck.
+				if time.Since(stoppingSince) > cstore.WatchStopDeadline {
+					cancelRun()
+					return
+				}
+			} else {
+				stoppingSince = time.Time{}
 			}
 			persist(nil)
 			select {

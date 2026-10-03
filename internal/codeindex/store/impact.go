@@ -39,16 +39,6 @@ func (s *Store) Impact(ctx context.Context, repositoryID, key string) (*pb.Impac
 	return diagram, nil
 }
 
-func (s *Store) WatchHeartbeat(ctx context.Context, repositoryID, branch, revision, message string, running bool) error {
-	stamp := int64(0)
-	if running {
-		stamp = time.Now().Unix()
-	}
-	_, err := s.bun.NewRaw(`INSERT INTO codeindex_watch_state (repository_id, heartbeat_unix, error, git_branch, git_revision) VALUES (?, ?, ?, ?, ?)
- ON CONFLICT(repository_id) DO UPDATE SET heartbeat_unix = excluded.heartbeat_unix, error = excluded.error, git_branch = excluded.git_branch, git_revision = excluded.git_revision`, repositoryID, stamp, message, branch, revision).Exec(ctx)
-	return err
-}
-
 func (s *Store) LiveImpact(ctx context.Context, repositoryID string) (*pb.LiveImpact, error) {
 	result := &pb.LiveImpact{}
 	diagram, err := s.Impact(ctx, repositoryID, "live")
@@ -56,12 +46,16 @@ func (s *Store) LiveImpact(ctx context.Context, repositoryID string) (*pb.LiveIm
 		return nil, err
 	}
 	result.Diagram = diagram
-	var heartbeat int64
-	err = s.bun.NewRaw(`SELECT heartbeat_unix, error, git_branch, git_revision FROM codeindex_watch_state WHERE repository_id = ?`, repositoryID).Scan(ctx, &heartbeat, &result.Error, &result.GitBranch, &result.GitRevision)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	state, ok, err := s.WatchState(ctx, repositoryID)
+	if err != nil {
 		return nil, err
 	}
-	result.Watching = heartbeat > time.Now().Add(-30*time.Second).Unix()
+	if ok {
+		result.Error = state.Error
+		result.GitBranch = state.GitBranch
+		result.GitRevision = state.GitRevision
+		result.Watching = state.Live(time.Now())
+	}
 	return result, nil
 }
 

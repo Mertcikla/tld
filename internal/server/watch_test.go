@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -64,25 +65,62 @@ func TestWatchStatusShowsStoppedWhenNoRecord(t *testing.T) {
 	}
 }
 
-func TestWatchStopCreatesRecordAndRequestsStop(t *testing.T) {
+func TestWatchStatusReapsDeadOwnerWithFreshHeartbeat(t *testing.T) {
 	ctx := context.Background()
 	ws, routes := newTestServer(t, uuid.New(), nil)
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
 	repoID := graph.RepositoryID("/repo")
-	if err := idx.UpsertWatchState(ctx, cstore.WatchState{RepositoryID: repoID, OwnerKind: "cli", State: "watching", RepoRoot: "/repo"}); err != nil {
+	// A fresh heartbeat whose owning process does not exist must not read as
+	// running; status reads reap it so the UI never shows a phantom watcher.
+	if err := idx.UpsertWatchState(ctx, cstore.WatchState{
+		RepositoryID: repoID, OwnerKind: "cli", OwnerID: "dead", OwnerPID: 1 << 30,
+		State: "scanning", Stage: "tree-sitter", RepoRoot: "/repo",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
 	client := codeindexv1connect.NewWatchServiceClient(ts.Client(), ts.URL+"/api")
-	if _, err := client.StopWatch(ctx, connect.NewRequest(&pb.StopWatchRequest{RepositoryId: repoID})); err != nil {
-		t.Fatal(err)
-	}
-	requested, err := idx.WatchStopRequested(ctx, repoID)
+	status, err := client.GetWatchStatus(ctx, connect.NewRequest(&pb.GetWatchStatusRequest{RepositoryId: repoID}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !requested {
-		t.Fatal("stop was not recorded")
+	if status.Msg.GetRunning() || status.Msg.GetState() != "stopped" {
+		t.Fatalf("dead owner reported running: %+v", status.Msg)
+	}
+	state, ok, err := idx.WatchState(ctx, repoID)
+	if err != nil || !ok {
+		t.Fatalf("state: %v %v", ok, err)
+	}
+	if state.State != "stopped" || state.HeartbeatUnix != 0 {
+		t.Fatalf("dead owner not reaped: %+v", state)
+	}
+}
+
+func TestWatchStopStopsAndClearsRecord(t *testing.T) {
+	ctx := context.Background()
+	ws, routes := newTestServer(t, uuid.New(), nil)
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	repoID := graph.RepositoryID("/repo")
+	// A watcher with no live pid (an impossible pid) is treated as stale.
+	if err := idx.UpsertWatchState(ctx, cstore.WatchState{RepositoryID: repoID, OwnerKind: "cli", OwnerID: "owner", OwnerPID: 1 << 30, State: "watching", RepoRoot: "/repo"}); err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(routes)
+	defer ts.Close()
+	client := codeindexv1connect.NewWatchServiceClient(ts.Client(), ts.URL+"/api")
+	status, err := client.StopWatch(ctx, connect.NewRequest(&pb.StopWatchRequest{RepositoryId: repoID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Msg.GetRunning() || status.Msg.GetStopRequested() {
+		t.Fatalf("stop left the watcher running: %+v", status.Msg)
+	}
+	state, ok, err := idx.WatchState(ctx, repoID)
+	if err != nil || !ok {
+		t.Fatalf("state: %v %v", ok, err)
+	}
+	if state.Live(time.Now()) || state.StopRequested {
+		t.Fatalf("record not cleared: %+v", state)
 	}
 }
