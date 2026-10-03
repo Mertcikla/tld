@@ -12,7 +12,6 @@ import {
   Grid,
   HStack,
   IconButton,
-  Input,
   Progress,
   Select,
   Spinner,
@@ -34,6 +33,7 @@ import {
   type IndexedRepository,
   type RepositoryGitHistory,
   type RepositoryPullRequest,
+  type OpenRepositoryPullRequest,
   type RepositoryMapProgress,
   type SnapshotDiff,
   type RepositoryImpact as RepositoryImpactResult,
@@ -46,6 +46,7 @@ import RepositoryHistory from '../components/RepositoryHistory'
 import RepositoryChangeCanvas from '../components/RepositoryChangeCanvas'
 import RepositorySymbols from '../components/RepositorySymbols'
 import RepositoryWatcherPanel from '../components/RepositoryWatcherPanel'
+import RepositoryPullRequestPanel from '../components/RepositoryPullRequestPanel'
 import {
   defaultRepositoryTargets,
   snapshotForTarget,
@@ -427,6 +428,10 @@ export default function Repositories() {
   const [watchBusy, setWatchBusy] = useState(false)
   const [mode, setMode] = useState(() => params.get('mode') === 'live' || params.get('mode') === 'watch' ? 'live' : params.get('mode') === 'pr' ? 'pr' : 'compare')
   const compareTargets = useRef<{ base: string; head: string; baseBranch: string; headBranch: string } | null>(null)
+  const [openPullRequests, setOpenPullRequests] = useState<OpenRepositoryPullRequest[] | null>(null)
+  const [prListLoading, setPrListLoading] = useState(false)
+  const [prListError, setPrListError] = useState('')
+  const prListOperation = useRef<AbortController | null>(null)
   const [prInput, setPrInput] = useState('')
   const [pullRequest, setPullRequest] = useState<RepositoryPullRequest | null>(null)
   const [selectedPath, setSelectedPath] = useState('')
@@ -617,6 +622,7 @@ export default function Repositories() {
   }, [mode, selectedId, reload])
   const changeMode = (next: string) => {
     if (next === mode) return
+    setPrListLoading(false)
     if (next === 'pr') {
       compareTargets.current = { base, head, baseBranch, headBranch }
       if (pullRequest) {
@@ -632,14 +638,32 @@ export default function Repositories() {
     operation.current?.abort(); operation.current = null
     setBusy(false); setProgress(null); setComparison(null); setOperationError(''); setSelectedPath(''); setFilesTab('files'); setMode(next)
   }
-  const loadPullRequest = async () => {
-    if (!selectedId || !prInput.trim() || busy) return
+  useEffect(() => {
+    return () => { prListOperation.current?.abort(); prListOperation.current = null }
+  }, [selectedId, mode])
+  const loadOpenPullRequests = async () => {
+    prListOperation.current?.abort()
+    const controller = new AbortController()
+    prListOperation.current = controller
+    const repositoryId = selectedId
+    setPrListLoading(true); setPrListError('')
+    try {
+      const items = await api.repositories.openPullRequests(repositoryId, controller.signal)
+      if (!controller.signal.aborted && selectedRef.current === repositoryId) setOpenPullRequests(items)
+    } catch (err) {
+      if (!controller.signal.aborted && selectedRef.current === repositoryId) setPrListError(err instanceof Error ? err.message : 'Could not load open PRs')
+    } finally {
+      if (prListOperation.current === controller) { prListOperation.current = null; setPrListLoading(false) }
+    }
+  }
+  const loadPullRequest = async (input = prInput) => {
+    if (!selectedId || !input.trim() || busy) return
     const repositoryId = selectedId
     const controller = new AbortController()
     operation.current = controller
     setBusy(true); setOperationError(''); setComparison(null); setPullRequest(null)
     try {
-      const result = await api.repositories.pullRequest(repositoryId, prInput.trim(), controller.signal)
+      const result = await api.repositories.pullRequest(repositoryId, input.trim(), controller.signal)
       if (controller.signal.aborted || selectedRef.current !== repositoryId || operation.current !== controller) return
       setPullRequest(result)
       setBase(`commit:${result.baseSha}`); setHead(`commit:${result.headSha}`)
@@ -726,6 +750,7 @@ export default function Repositories() {
     setMaps([])
     setLive(null)
     setPullRequest(null); setPrInput(''); compareTargets.current = null
+    setOpenPullRequests(null); setPrListLoading(false); setPrListError('')
     setWatch(null)
     liveVersion.current = ''
     setHistory(null)
@@ -1261,6 +1286,21 @@ export default function Repositories() {
                   </Text>
                 )}
                 <ErrorMessage message={dataError} />
+                {mode === 'pr' && (
+                  <RepositoryPullRequestPanel
+                    repositoryUrl={history?.repositoryUrl}
+                    input={prInput}
+                    requests={openPullRequests}
+                    selected={pullRequest}
+                    busy={busy}
+                    loading={prListLoading}
+                    error={prListError}
+                    onInput={setPrInput}
+                    onSelect={(value) => { setPrInput(value); if (value) void loadPullRequest(value) }}
+                    onLoad={() => void loadPullRequest()}
+                    onRefresh={() => void loadOpenPullRequests()}
+                  />
+                )}
                 {(mode === 'compare' || (mode === 'pr' && pullRequest)) && <RepositoryHistory
                   repositoryId={selectedId}
                   history={history}
@@ -1292,7 +1332,7 @@ export default function Repositories() {
                     if (!busy) chooseTarget('head', `commit:${c.sha}`)
                   }}
                 />}
-                <Flex
+                {(mode !== 'pr' || shownImpact) && <Flex
                   px={4}
                   h="40px"
                   align="center"
@@ -1331,23 +1371,14 @@ export default function Repositories() {
                   )}
                   <Box flex={1} />
                   <Text fontSize="xs" color="gray.500">
-                    {mode === 'live' ? 'Current commit → pending changes' : mode === 'pr' ? 'Base and head locked to the pull request' : 'Select snapshots or Git revisions'}
+                    {mode === 'live' ? 'Current commit → pending changes' : mode === 'compare' ? 'Select snapshots or Git revisions' : ''}
                   </Text>
-                </Flex>
+                </Flex>}
                 {mode === 'live' && (
                   <>
                     <RepositoryWatcherPanel status={watch} repositoryRoot={selected.root} branch={watch?.gitBranch || live?.gitBranch || ''} revision={watch?.gitRevision || live?.gitRevision || ''} busy={watchBusy} onStart={() => void startWatch()} onStop={() => void stopWatch()} onRestart={() => void restartWatch()} onRefresh={() => void refreshWatch()} />
                     <ErrorMessage message={live?.error || ''} />
                   </>
-                )}
-                {mode === 'pr' && (
-                  <Box p={4} borderBottom="1px solid" borderColor="whiteAlpha.100">
-                    <Flex as="form" gap={2} onSubmit={(event) => { event.preventDefault(); void loadPullRequest() }}>
-                      <Input size="sm" aria-label="Pull request number or URL" placeholder="PR number or GitHub URL" value={prInput} isDisabled={busy} onChange={(event) => setPrInput(event.target.value)} />
-                      <Button size="sm" type="submit" flexShrink={0} isLoading={busy && !pullRequest} isDisabled={busy || !prInput.trim()}>Load PR</Button>
-                    </Flex>
-                    {pullRequest && <Text mt={2} fontSize="sm"><a href={pullRequest.url} target="_blank" rel="noreferrer">{pullRequest.title}</a></Text>}
-                  </Box>
                 )}
                 {(mode === 'compare' || (mode === 'pr' && pullRequest)) && (
                   <Box
@@ -1471,12 +1502,12 @@ export default function Repositories() {
                       <FileTree files={diff.sources} onSelect={setSelectedPath} diagram={shownImpact!} repositoryRoot={selected.root} />
                     ) : (
                       <Text px={3} fontSize="xs" color="gray.500">
-                        Compare maps to see changed source files.
+                        {mode === 'pr' && !pullRequest ? 'Choose a PR to see its changed files.' : 'Compare maps to see changed source files.'}
                       </Text>
                     )}
                     </Box>
                   </Box>
-                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} selectedPath={selectedPath} repositoryRoot={selected.root} />
+                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} selectedPath={selectedPath} repositoryRoot={selected.root} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
                 </Flex>
               </>
             )}

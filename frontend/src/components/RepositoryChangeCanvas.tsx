@@ -7,8 +7,8 @@ import { repositoryChangeOverlay, REPOSITORY_CHANGE_TAG } from '../utils/reposit
 
 const colors = { added: '#48bb78', removed: '#fc8181', modified: '#ecc94b', unchanged: '#718096' }
 const crossBranchSettings = { enabled: false, depth: 1, connectorBudget: 50, connectorPriority: 'external' as const }
-export default function RepositoryChangeCanvas({ diagram, selectedPath, repositoryRoot }: {
-  diagram: ImpactDiagram | null; selectedPath: string; repositoryRoot: string
+export default function RepositoryChangeCanvas({ diagram, selectedPath, repositoryRoot, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.' }: {
+  diagram: ImpactDiagram | null; selectedPath: string; repositoryRoot: string; emptyMessage?: string
 }) {
   const canvas = useRef<ZUICanvasHandle>(null)
   const [workspace, setWorkspace] = useState<ExploreData | null>(null)
@@ -30,7 +30,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, reposito
   useEffect(focusSelected, [focusSelected])
   return (
     <Flex direction="column" flex={1} minW={0} minH="400px" data-testid="repository-change-overlay">
-      {!diagram ? <Text p={6} fontSize="sm" color="gray.400">Select Base and Head, then compare to overlay changes on the map.</Text> : <Flex flex={1} minH={0} direction="column">
+      {!diagram ? <Text p={6} fontSize="sm" color="gray.400">{emptyMessage}</Text> : <Flex flex={1} minH={0} direction="column">
         {error && <Text p={3} color="red.300">{error}</Text>}
         {!diagram.nodes.length && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
         <Box minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">

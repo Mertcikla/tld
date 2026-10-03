@@ -55,3 +55,49 @@ func TestRepositoryPullRequestDoesNotChangeCheckout(t *testing.T) {
 		t.Fatalf("cross-repository PR: %v", err)
 	}
 }
+
+func TestRepositoryBrowserURL(t *testing.T) {
+	for remote, want := range map[string]string{
+		"git@github.com:Mertcikla/tld.git":                              "https://github.com/Mertcikla/tld",
+		"ssh://git@github.com/Mertcikla/tld.git":                        "https://github.com/Mertcikla/tld",
+		"https://user:secret@github.com/Mertcikla/tld.git?token=secret": "https://github.com/Mertcikla/tld",
+		"/tmp/local.git":        "",
+		"file:///tmp/local.git": "",
+		"javascript:alert(1)":   "",
+	} {
+		if got := repositoryBrowserURL(remote); got != want {
+			t.Errorf("%s: %q != %q", remote, got, want)
+		}
+	}
+}
+
+func TestRepositoryListsOpenPullRequests(t *testing.T) {
+	s, root, initial, repoID := prepareFixture(t)
+	testGit(t, root, "remote", "add", "origin", "git@github.com:test/demo.git")
+	bin := t.TempDir()
+	script := `#!/bin/sh
+[ "$1" = "pr" ] && [ "$2" = "list" ] && [ "$5" = "--state" ] && [ "$6" = "open" ] || exit 1
+cat <<'JSON'
+[{"number":7,"title":"Feature","url":"https://github.com/test/demo/pull/7","baseRefName":"main","headRefName":"feature"}]
+JSON
+`
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	svc := &codeIndexRepositoryService{store: s.idx}
+	history, err := svc.GetGitHistory(context.Background(), connect.NewRequest(&pb.GetGitHistoryRequest{RepositoryId: repoID}))
+	if err != nil || history.Msg.RepositoryUrl != "https://github.com/test/demo" {
+		t.Fatalf("repository URL: %v %v", history, err)
+	}
+	result, err := svc.ListPullRequests(context.Background(), connect.NewRequest(&pb.ListPullRequestsRequest{RepositoryId: repoID}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Msg.PullRequests) != 1 || result.Msg.PullRequests[0].Number != 7 || result.Msg.PullRequests[0].HeadBranch != "feature" {
+		t.Fatalf("open PRs: %+v", result.Msg)
+	}
+	if current := strings.TrimSpace(testGit(t, root, "rev-parse", "HEAD")); current != initial {
+		t.Fatal("checkout changed")
+	}
+}

@@ -78,6 +78,8 @@ func (s *codeIndexRepositoryService) GetGitHistory(ctx context.Context, req *con
 		return connect.NewResponse(result), nil
 	}
 	result.IsGit = true
+	remote, _ := repositoryGit(ctx, repo.Root, "remote", "get-url", "origin")
+	result.RepositoryUrl = repositoryBrowserURL(remote)
 	branch, _ := repositoryGit(ctx, repo.Root, "symbolic-ref", "--quiet", "--short", "HEAD")
 	result.CurrentBranch = strings.TrimSpace(branch)
 	head, _ := repositoryGit(ctx, repo.Root, "rev-parse", "--verify", "HEAD")
@@ -154,17 +156,50 @@ func (s *codeIndexRepositoryService) GetCommitDetails(ctx context.Context, req *
 	return connect.NewResponse(result), nil
 }
 
+// repositoryBrowserURL converts Git origins to safe browser links without credentials.
+func repositoryBrowserURL(remote string) string {
+	remote = strings.TrimSpace(remote)
+	if strings.HasPrefix(remote, "git@") {
+		remote = "https://" + strings.Replace(strings.TrimPrefix(remote, "git@"), ":", "/", 1)
+	}
+	parsed, err := url.Parse(remote)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	switch parsed.Scheme {
+	case "https", "http", "ssh", "git":
+	default:
+		return ""
+	}
+	path := strings.TrimSuffix(strings.TrimSuffix(parsed.Path, "/"), ".git")
+	if len(strings.Split(strings.Trim(path, "/"), "/")) != 2 {
+		return ""
+	}
+	return (&url.URL{Scheme: "https", Host: parsed.Host, Path: path}).String()
+}
+
+func repositoryGitHub(ctx context.Context, root string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Dir = root
+	raw, err := cmd.Output()
+	if err != nil {
+		message := "GitHub CLI (gh) is required and must be signed in to load PRs"
+		if exit, ok := err.(*exec.ExitError); ok {
+			message = strings.TrimSpace(string(exit.Stderr))
+		}
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%s", message))
+	}
+	return raw, nil
+}
+
 // pullRequestNumber scopes URLs to the selected checkout's origin before invoking gh.
 func pullRequestNumber(input, remote string) (string, error) {
 	input = strings.TrimSpace(input)
 	if regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(input) {
 		return input, nil
 	}
-	if strings.HasPrefix(remote, "git@") {
-		remote = "https://" + strings.Replace(strings.TrimPrefix(remote, "git@"), ":", "/", 1)
-	}
-	origin, err := url.Parse(remote)
-	if err != nil {
+	origin, err := url.Parse(repositoryBrowserURL(remote))
+	if err != nil || origin.Host == "" {
 		return "", fmt.Errorf("invalid repository origin")
 	}
 	pr, err := url.Parse(input)
@@ -196,15 +231,9 @@ func (s *codeIndexRepositoryService) GetPullRequest(ctx context.Context, req *co
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	cmd := exec.CommandContext(ctx, "gh", "pr", "view", number, "--repo", remote, "--json", "title,url,baseRefOid,headRefOid,baseRefName,headRefName")
-	cmd.Dir = repo.Root
-	raw, err := cmd.Output()
+	raw, err := repositoryGitHub(ctx, repo.Root, "pr", "view", number, "--repo", remote, "--json", "title,url,baseRefOid,headRefOid,baseRefName,headRefName")
 	if err != nil {
-		message := "GitHub CLI (gh) is required and must be signed in to load a PR"
-		if exit, ok := err.(*exec.ExitError); ok {
-			message = strings.TrimSpace(string(exit.Stderr))
-		}
-		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%s", message))
+		return nil, err
 	}
 	var pr struct{ Title, URL, BaseRefOid, HeadRefOid, BaseRefName, HeadRefName string }
 	if err := json.Unmarshal(raw, &pr); err != nil {
@@ -229,4 +258,31 @@ func (s *codeIndexRepositoryService) GetPullRequest(ctx context.Context, req *co
 		return nil, err
 	}
 	return connect.NewResponse(&pb.GetPullRequestResponse{Title: pr.Title, Url: pr.URL, BaseSha: pr.BaseRefOid, HeadSha: pr.HeadRefOid, BaseBranch: pr.BaseRefName, HeadBranch: pr.HeadRefName}), nil
+}
+
+func (s *codeIndexRepositoryService) ListPullRequests(ctx context.Context, req *connect.Request[pb.ListPullRequestsRequest]) (*connect.Response[pb.ListPullRequestsResponse], error) {
+	repo, err := s.store.Repository(ctx, req.Msg.GetRepositoryId())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	remote, err := repositoryGit(ctx, repo.Root, "remote", "get-url", "origin")
+	if err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	raw, err := repositoryGitHub(ctx, repo.Root, "pr", "list", "--repo", strings.TrimSpace(remote), "--state", "open", "--limit", "1000", "--json", "number,title,url,baseRefName,headRefName")
+	if err != nil {
+		return nil, err
+	}
+	var prs []struct {
+		Number                               uint32
+		Title, URL, BaseRefName, HeadRefName string
+	}
+	if err := json.Unmarshal(raw, &prs); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	result := &pb.ListPullRequestsResponse{}
+	for _, pr := range prs {
+		result.PullRequests = append(result.PullRequests, &pb.OpenPullRequest{Number: pr.Number, Title: pr.Title, Url: pr.URL, BaseBranch: pr.BaseRefName, HeadBranch: pr.HeadRefName})
+	}
+	return connect.NewResponse(result), nil
 }

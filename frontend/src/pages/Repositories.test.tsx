@@ -34,7 +34,8 @@ vi.mock('../api/client', () => ({
         { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', commitMessage: 'feat: snapshot message', ingestionStatus: 'complete', embeddingStatus: 'complete', projects: [], warnings: [] },
       ]),
       maps: vi.fn(async () => []),
-      history: vi.fn(async () => ({ commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
+      history: vi.fn(async () => ({ repositoryUrl: 'https://github.com/test/demo', commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
+      openPullRequests: vi.fn(async () => [{ number: 7, title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseBranch: 'main', headBranch: 'feature' }]),
       pullRequest: vi.fn(async () => ({ title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseSha: 'pr-base', headSha: 'pr-head', baseBranch: 'main', headBranch: 'feature' })),
       fileSymbols: vi.fn(async () => []),
       diff: vi.fn(async () => null),
@@ -165,6 +166,37 @@ describe('Repositories map action', () => {
     expect(api.repositories.compare).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: expect.objectContaining({ gitRevision: 'pr-base' }), head: expect.objectContaining({ gitRevision: 'pr-head' }) }))
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare-tab' }).props.onClick() })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-0')
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('shows the origin URL and loads open PRs for selection', async () => {
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-pr-tab' }).props.onClick() })
+    expect(renderer.root.findAllByProps({ href: 'https://github.com/test/demo' }).length).toBeGreaterThan(0)
+    const load = renderer.root.findAll((node) => node.type === 'button' && node.props['aria-label'] === 'Load open PRs')[0]
+    await act(async () => { await load.props.onClick() })
+    expect(api.repositories.openPullRequests).toHaveBeenCalledWith('repo-1', expect.any(AbortSignal))
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Open pull requests' }).props.onChange({ target: { value: '7' } }) })
+    expect(api.repositories.pullRequest).toHaveBeenCalledWith('repo-1', '7', expect.any(AbortSignal))
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('commit:pr-head')
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.isDisabled).toBe(true)
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('shows an empty open PR list and reports GitHub errors', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.openPullRequests).mockResolvedValueOnce([])
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-pr-tab' }).props.onClick() })
+    const load = () => renderer.root.findAll((node) => node.type === 'button' && node.props['aria-label'] === 'Load open PRs')[0]
+    await act(async () => { await load().props.onClick() })
+    expect(renderer.root.findAll((node) => node.type === 'div' && node.children.includes('No open pull requests.')).length).toBeGreaterThan(0)
+    vi.mocked(api.repositories.openPullRequests).mockRejectedValueOnce(new Error('GitHub unavailable'))
+    await act(async () => { await load().props.onClick() })
+    expect(renderer.root.findAll((node) => node.type === 'div' && node.children.includes('GitHub unavailable')).length).toBeGreaterThan(0)
     await act(async () => { renderer.unmount() })
   })
 

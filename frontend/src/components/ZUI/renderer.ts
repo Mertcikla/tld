@@ -930,14 +930,34 @@ function drawSceneNode(
     ctx.setLineDash(change.change === 'removed' ? [5 / drawZoom, 3 / drawZoom] : [])
     traceShape()
     ctx.stroke()
-    if (drawScreenW > 70 && !renderCtx.lowDetail) {
-      const text = change.change === 'unchanged' ? 'Context' : `${change.change}  +${change.linesAdded ?? 0} −${change.linesRemoved ?? 0}`
-      ctx.font = '10px sans-serif'
-      ctx.fillStyle = nodeBg
-      ctx.fillRect(x + 4, y + h - 17, w - 8, 14)
-      ctx.fillStyle = color
+    if (change.change !== 'unchanged' && drawScreenW > 70 && !renderCtx.lowDetail) {
+      const plus = `+${change.linesAdded ?? 0}`
+      const minus = `\u2212${change.linesRemoved ?? 0}`
+      const badgePad = 6 / drawZoom
+      const padX = 6 / drawZoom
+      const gap = 5 / drawZoom
+      const badgeH = 16 / drawZoom
+      ctx.font = `600 ${10 / drawZoom}px Inter, system-ui, sans-serif`
+      const plusW = ctx.measureText(plus).width
+      const minusW = ctx.measureText(minus).width
+      const badgeW = Math.min(plusW + gap + minusW + padX * 2, w - badgePad * 2)
+      const badgeX = x
+      const badgeY = y + h + badgePad
+      ctx.setLineDash([])
+      ctx.beginPath()
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 5 / drawZoom)
+      ctx.fillStyle = portalTintColor(color, 0.22)
+      ctx.fill()
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1.5 / drawZoom
+      ctx.stroke()
       ctx.textAlign = 'left'
-      ctx.fillText(text, x + 8, y + h - 6, w - 16)
+      ctx.textBaseline = 'middle'
+      const textY = badgeY + badgeH / 2 + 0.5 / drawZoom
+      ctx.fillStyle = '#48bb78'
+      ctx.fillText(plus, badgeX + padX, textY)
+      ctx.fillStyle = '#fc8181'
+      ctx.fillText(minus, badgeX + padX + plusW + gap, textY)
     }
     ctx.restore()
   }
