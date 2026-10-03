@@ -38,6 +38,18 @@ func captureInputs(ctx context.Context, root string, cfg config.Config, req *pb.
 	return fingerprintInputs(ctx, root, cfg, req, projects, sources)
 }
 
+// commitSubject returns the subject line of HEAD in root. It returns "" when
+// root is not a Git repository or has no commits, so snapshot capture never
+// fails and non-Git workspaces simply leave the field empty.
+func commitSubject(ctx context.Context, root string) string {
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "log", "-1", "--format=%s")
+	raw, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
 func fingerprintInputs(ctx context.Context, root string, cfg config.Config, req *pb.IndexRequest, projects []*pb.Project, sources map[string]*graph.Source) (fingerprint, revision, branch, provenance string, err error) {
 	parts := []string{ConfigurationHash(cfg, req)}
 	artifactRoots := make([]string, 0, len(req.ScipArtifacts))

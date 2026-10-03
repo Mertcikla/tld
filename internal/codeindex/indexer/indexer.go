@@ -113,6 +113,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	snap.Provenance = provenance
 	snap.GitRevision = revision
 	snap.GitBranch = branch
+	snap.CommitMessage = commitSubject(ctx, root)
 	snap.ToolVersions = map[string]string{
 		"gotreesitter": "0.15.2",
 	}

@@ -138,3 +138,26 @@ export function layoutCommitGraph(commits: RepositoryCommit[]): CommitGraphLayou
 
   return { rows, edges, laneCount: lanes.length }
 }
+
+/** Route edges along their reserved rail, rounding only the right-angle turns. */
+export function commitGraphPath(edge: GraphEdge, rowCount: number, rowHeight = 36): string {
+  const x = (lane: number) => 18 + lane * 18
+  const x1 = x(edge.fromLane), x2 = x(edge.toLane), rail = x(edge.railLane)
+  const y1 = edge.fromRow * rowHeight + rowHeight / 2
+  const y2 = edge.toRow === null ? rowCount * rowHeight : edge.toRow * rowHeight + rowHeight / 2
+  const radius = Math.min(6, (y2 - y1) / 2)
+  let path = `M ${x1} ${y1}`
+  if (x1 !== rail) {
+    const direction = Math.sign(rail - x1)
+    const r = Math.min(radius, Math.abs(rail - x1))
+    path += ` H ${rail - direction * r} Q ${rail} ${y1} ${rail} ${y1 + r}`
+  }
+  if (x2 !== rail) {
+    const direction = Math.sign(x2 - rail)
+    const r = Math.min(radius, Math.abs(x2 - rail))
+    path += ` V ${y2 - r} Q ${rail} ${y2} ${rail + direction * r} ${y2} H ${x2}`
+  } else {
+    path += ` V ${y2}`
+  }
+  return path
+}

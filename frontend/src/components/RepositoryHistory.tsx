@@ -17,7 +17,7 @@ import {
   type RepositoryCommitDetails,
   type RepositoryGitHistory,
 } from '../api/client'
-import { GRAPH_LANE_COLORS, layoutCommitGraph } from '../utils/commitGraph'
+import { GRAPH_LANE_COLORS, layoutCommitGraph, commitGraphPath } from '../utils/commitGraph'
 
 export default function RepositoryHistory({
   repositoryId,
@@ -28,7 +28,8 @@ export default function RepositoryHistory({
   onToggle,
   onBase,
   onHead,
-  onMore,
+  onRange,
+  disabled = false,
 }: {
   repositoryId: string
   history: RepositoryGitHistory | null
@@ -38,9 +39,11 @@ export default function RepositoryHistory({
   onToggle: () => void
   onBase: (commit: RepositoryCommit) => void
   onHead: (commit: RepositoryCommit) => void
-  onMore: () => void
+  onRange: (base: RepositoryCommit, head: RepositoryCommit) => void
+  disabled?: boolean
 }) {
   const [query, setQuery] = useState('')
+  const [pendingCommit, setPendingCommit] = useState('')
   const [inspected, setInspected] = useState('')
   const [details, setDetails] = useState<RepositoryCommitDetails | null>(null)
   const [error, setError] = useState('')
@@ -49,6 +52,23 @@ export default function RepositoryHistory({
     () => layoutCommitGraph(history?.commits ?? []),
     [history],
   )
+  useEffect(() => { setPendingCommit('') }, [repositoryId, history])
+  const baseIndex = layout.rows.findIndex((row) => row.commit.sha === base)
+  const headIndex = layout.rows.findIndex((row) => row.commit.sha === head)
+  const inRange = (index: number) => baseIndex >= 0 && headIndex >= 0 && index >= headIndex && index <= baseIndex
+  const selectCommit = (commit: RepositoryCommit) => {
+    if (disabled) return
+    const pending = layout.rows.find((row) => row.commit.sha === pendingCommit)?.commit
+    if (!pending) {
+      setPendingCommit(commit.sha)
+      onRange(commit, commit)
+    } else {
+      const firstIndex = layout.rows.findIndex((row) => row.commit.sha === pending.sha)
+      const secondIndex = layout.rows.findIndex((row) => row.commit.sha === commit.sha)
+      onRange(firstIndex >= secondIndex ? pending : commit, firstIndex >= secondIndex ? commit : pending)
+      setPendingCommit('')
+    }
+  }
   useEffect(() => {
     setInspected('')
     setQuery('')
@@ -127,6 +147,8 @@ export default function RepositoryHistory({
           <Flex maxH="240px" overflowY="auto">
             <Box
               flexShrink={0}
+              borderRight="1px solid"
+              borderColor="whiteAlpha.200"
               w={`${Math.max(44, layout.laneCount * 18 + 28)}px`}
             >
               <svg
@@ -134,25 +156,18 @@ export default function RepositoryHistory({
                 width="100%"
                 height={layout.rows.length * rowHeight}
               >
-                {layout.edges.map((edge, i) => {
-                  const x1 = x(edge.fromLane),
-                    x2 = x(edge.toLane),
-                    rail = x(edge.railLane)
-                  const y1 = y(edge.fromRow),
-                    y2 =
-                      edge.toRow === null
-                        ? layout.rows.length * rowHeight
-                        : y(edge.toRow)
-                  return (
-                    <path
-                      key={i}
-                      d={`M ${x1} ${y1} C ${rail} ${y1 + 18}, ${rail} ${y2 - 18}, ${x2} ${y2}`}
-                      stroke={color(edge.railLane)}
-                      strokeWidth={2}
-                      fill="none"
-                    />
-                  )
-                })}
+                {layout.rows.map((row, i) => inRange(i) && (
+                  <rect key={row.commit.sha} x={0} y={i * rowHeight} width="100%" height={rowHeight} fill="rgba(var(--accent-rgb), 0.12)" />
+                ))}
+                {layout.edges.map((edge, i) => (
+                  <path
+                    key={i}
+                    d={commitGraphPath(edge, layout.rows.length, rowHeight)}
+                    stroke={color(edge.railLane)}
+                    strokeWidth={2}
+                    fill="none"
+                  />
+                ))}
                 {layout.rows.map((row, i) => (
                   <g key={row.commit.sha}>
                     <circle
@@ -177,10 +192,26 @@ export default function RepositoryHistory({
               </svg>
             </Box>
             <VStack spacing={0} flex={1} minW={0} align="stretch">
-              {layout.rows.map(({ commit }) => (
+              {layout.rows.map(({ commit }, index) => (
                 <Flex
                   key={commit.sha}
+                  role="group"
+                  aria-label={`Select commit ${commit.sha.slice(0, 7)}`}
+                  aria-disabled={disabled}
+                  data-testid={`commit-row-${commit.sha}`}
+                  tabIndex={disabled ? -1 : 0}
+                  cursor={disabled ? 'default' : 'pointer'}
+                  onClick={() => selectCommit(commit)}
+                  onKeyDown={(event) => {
+                    if (event.target !== event.currentTarget) return
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      selectCommit(commit)
+                    }
+                  }}
+                  _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '-2px' }}
                   h={`${rowHeight}px`}
+                  flexShrink={0}
                   px={2}
                   align="center"
                   gap={2}
@@ -204,7 +235,7 @@ export default function RepositoryHistory({
                       : 0.3
                   }
                   bg={
-                    commit.sha === base || commit.sha === head
+                    inRange(index)
                       ? 'rgba(var(--accent-rgb), 0.12)'
                       : undefined
                   }
@@ -214,9 +245,10 @@ export default function RepositoryHistory({
                     size="xs"
                     fontFamily="mono"
                     color="gray.300"
-                    onClick={() =>
+                    onClick={(event) => {
+                      event.stopPropagation()
                       setInspected(inspected === commit.sha ? '' : commit.sha)
-                    }
+                    }}
                     aria-label={`Inspect ${commit.sha.slice(0, 7)}`}
                   >
                     {commit.sha.slice(0, 7)}
@@ -260,7 +292,13 @@ export default function RepositoryHistory({
                     pointerEvents={commit.sha === base ? 'auto' : 'none'}
                     aria-pressed={commit.sha === base}
                     _focusVisible={{ opacity: 1, pointerEvents: 'auto' }}
-                    onClick={() => onBase(commit)}
+                    isDisabled={disabled || (headIndex >= 0 && index < headIndex)}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (disabled || (headIndex >= 0 && index < headIndex)) return
+                      setPendingCommit('')
+                      onBase(commit)
+                    }}
                     aria-label={`Set ${commit.sha.slice(0, 7)} as base`}
                   >
                     Base
@@ -274,7 +312,13 @@ export default function RepositoryHistory({
                     pointerEvents={commit.sha === head ? 'auto' : 'none'}
                     aria-pressed={commit.sha === head}
                     _focusVisible={{ opacity: 1, pointerEvents: 'auto' }}
-                    onClick={() => onHead(commit)}
+                    isDisabled={disabled || (baseIndex >= 0 && index > baseIndex)}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      if (disabled || (baseIndex >= 0 && index > baseIndex)) return
+                      setPendingCommit('')
+                      onHead(commit)
+                    }}
                     aria-label={`Set ${commit.sha.slice(0, 7)} as head`}
                   >
                     Head
@@ -283,11 +327,6 @@ export default function RepositoryHistory({
               ))}
             </VStack>
           </Flex>
-          {history?.hasMore && (
-            <Button size="xs" variant="ghost" m={2} onClick={onMore}>
-              Load more commits
-            </Button>
-          )}
           {inspected && (
             <Box p={4} bg="whiteAlpha.50">
               <Flex gap={3} align="center">

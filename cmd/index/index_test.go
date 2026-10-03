@@ -88,6 +88,9 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	if base.GitBranch != "main" || base.Provenance != "commit" {
 		t.Fatalf("commit metadata: %+v", base)
 	}
+	if base.CommitMessage != "partial commit" {
+		t.Fatalf("commit message = %q, want %q", base.CommitMessage, "partial commit")
+	}
 	content, err := idx.Source(ctx, base.Sources[0].Hash)
 	if err != nil {
 		t.Fatal(err)

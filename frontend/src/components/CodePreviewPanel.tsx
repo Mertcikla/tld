@@ -17,9 +17,8 @@ import { findSymbolByName, getParser, detectLanguage, type SupportedLanguage } f
 import { githubCache } from '../utils/githubCache'
 import { getGithubRepoVisibility } from '../utils/githubApi'
 import { parseRepoSlug } from '../utils/url'
-import { useSourceEditor } from '../utils/sourceEditor'
+import OpenInEditorButton from './OpenInEditorButton'
 import { parseSourceLink } from '../utils/sourceLinks'
-import { toast } from '../utils/toast'
 import { openExternalUrl } from '../lib/desktop'
 import type { PlacedElement } from '../types'
 
@@ -78,8 +77,6 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   const [resolvedStartLine, setResolvedStartLine] = useState<number | null>(null)
   const [resolvedEndLine, setResolvedEndLine] = useState<number | null>(null)
   const [isPrivateRepo, setIsPrivateRepo] = useState(false)
-  const [openingEditor, setOpeningEditor] = useState(false)
-  const { editor: sourceEditor } = useSourceEditor()
 
   const editorRef = useRef<ReactCodeMirrorRef>(null)
 
@@ -212,27 +209,6 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
     + (editorStartLine ? `#L${editorStartLine}-L${resolvedEndLine ?? editorStartLine}` : '')
     : null
 
-  const handleOpenInEditor = async () => {
-    if (!basePath) return
-    setOpeningEditor(true)
-    try {
-      await api.editor.open({
-        editor: sourceEditor,
-        repo: element?.repo ?? '',
-        file_path: basePath,
-        line: editorStartLine,
-      })
-    } catch (err) {
-      toast({
-        title: 'Failed to open editor',
-        description: err instanceof Error ? err.message : String(err),
-        status: 'error',
-        duration: 4000,
-      })
-    } finally {
-      setOpeningEditor(false)
-    }
-  }
 
   const getLanguageExtension = () => {
     const extensions = [customCodeTheme]
@@ -357,38 +333,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
             </Tooltip>
           )}
           {basePath && (
-            <Tooltip label={`Open in ${sourceEditor === 'zed' ? 'Zed' : 'VS Code'}`} placement="bottom">
-              <Button
-                aria-label={`Open in ${sourceEditor === 'zed' ? 'Zed' : 'VS Code'}`}
-                leftIcon={<ExternalLinkIcon w="12px" h="12px" />}
-                size="xs"
-                variant="outline"
-                color="whiteAlpha.700"
-                borderColor="whiteAlpha.200"
-                h="24px"
-                px={2.5}
-                fontSize="11px"
-                fontWeight="600"
-                bg="whiteAlpha.50"
-                isLoading={openingEditor}
-                onClick={handleOpenInEditor}
-                _hover={{
-                  color: 'white',
-                  bg: 'whiteAlpha.100',
-                  borderColor: 'whiteAlpha.400',
-                  textDecoration: 'none',
-                  transform: 'translateY(-0.5px)',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                }}
-                _active={{
-                  bg: 'whiteAlpha.200',
-                  transform: 'translateY(0)',
-                }}
-                transition="all 0.1s"
-              >
-                Open in Editor
-              </Button>
-            </Tooltip>
+            <OpenInEditorButton repo={element?.repo ?? ''} filePath={basePath} line={editorStartLine} />
           )}
           <CloseButton
             data-testid="code-preview-close"

@@ -42,6 +42,7 @@ import {
 import ConfirmDialog from '../components/ConfirmDialog'
 import RepositoryHistory from '../components/RepositoryHistory'
 import RepositoryChangeCanvas from '../components/RepositoryChangeCanvas'
+import RepositorySymbols from '../components/RepositorySymbols'
 import {
   defaultRepositoryTargets,
   snapshotForTarget,
@@ -146,87 +147,122 @@ function watchDetail(status: RepositoryWatchStatus): string {
   return parts.join(' · ')
 }
 
-function FileTree({ files, onSelect }: { files: SnapshotSourceChange[]; onSelect: (path: string) => void }) {
+function FileTreeIcon({ directory, expanded, change }: { directory?: boolean; expanded?: boolean; change?: SnapshotSourceChange['change'] }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flexShrink: 0 }}>
+      {directory ? expanded ? (
+        <>
+          <path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v2" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+          <path d="M3 8h18l-2 12H5a2 2 0 0 1-2-2V8Z" fill="currentColor" fillOpacity="0.25" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+        </>
+      ) : (
+        <path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" fill="currentColor" fillOpacity="0.25" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      ) : (
+        <g stroke={change === 'added' ? '#a6e22e' : change === 'removed' ? '#ff656d' : '#ffb340'} strokeWidth="2.5">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          {change === 'added' ? <path d="M8 12h8M12 8v8" /> : change === 'removed' ? <path d="M8 12h8" /> : <circle cx="12" cy="12" r="1.5" fill="#ffb340" />}
+        </g>
+      )}
+    </svg>
+  )
+}
+
+function FileTree({ files, onSelect, diagram, repositoryRoot }: { files: SnapshotSourceChange[]; onSelect: (path: string) => void; diagram: RepositoryImpactResult; repositoryRoot: string }) {
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set())
   const [closed, setClosed] = useState<Set<string>>(new Set())
   const entries = useMemo(() => {
-    const folders = new Set<string>()
-    const rows: {
-      path: string
-      directory: boolean
-      linesAdded?: number
-      linesRemoved?: number
-    }[] = []
-    for (const file of [...files].sort((a, b) =>
-      a.path.localeCompare(b.path),
-    )) {
-      const parts = file.path.split('/')
-      for (let i = 1; i < parts.length; i++) {
-        const folder = parts.slice(0, i).join('/')
-        if (!folders.has(folder)) {
-          folders.add(folder)
-          rows.push({ path: folder, directory: true })
+    type Entry = { name: string; path: string; children: Map<string, Entry>; file?: SnapshotSourceChange }
+    const root: Entry = { name: '', path: '', children: new Map() }
+    for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
+      let parent = root
+      for (const name of file.path.split('/')) {
+        let entry = parent.children.get(name)
+        if (!entry) {
+          entry = { name, path: parent.path ? `${parent.path}/${name}` : name, children: new Map() }
+          parent.children.set(name, entry)
         }
+        parent = entry
       }
-      rows.push({ path: file.path, directory: false, linesAdded: file.linesAdded, linesRemoved: file.linesRemoved })
+      parent.file = file
     }
-    return rows
+    return root.children
   }, [files])
-  return (
-    <Box p={2} overflowY="auto" maxH={{ base: '220px', lg: 'none' }}>
-      {!files.length && (
-        <Text p={3} fontSize="sm" color="gray.500">
-          No source changes.
-        </Text>
-      )}
-      {entries
-        .filter(
-          (entry) =>
-            ![...closed].some((folder) => entry.path.startsWith(`${folder}/`)),
-        )
-        .map((entry) => (
+
+  function renderEntries(children: typeof entries): React.ReactNode {
+    return [...children.values()].map((initial) => {
+      let entry = initial
+      let label = entry.name
+      while (!entry.file && entry.children.size === 1) {
+        const child = [...entry.children.values()][0]
+        if (child.file) break
+        label += `/${child.name}`
+        entry = child
+      }
+      const { path, file } = entry
+      const directory = !file
+      const expanded = directory ? !closed.has(path) : expandedFiles.has(path)
+      return (
+        <Box key={path}>
           <Flex
-            key={entry.path}
-            pl={`${(entry.path.split('/').length - 1) * 12 + 4 + (entry.directory ? 0 : 24)}px`}
-            py={0.5}
-            minH="22px"
-            align="center"
+            as="button"
+            type="button"
+            w="full"
+            minW={0}
+            minH="28px"
+            py={1}
             gap={2}
+            align="center"
+            textAlign="left"
+            color={directory ? '#90918e' : '#c4c4bf'}
+            _hover={{ bg: 'whiteAlpha.50' }}
+            _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '-2px' }}
+            aria-label={directory ? `${expanded ? 'Collapse' : 'Expand'} ${path}` : path}
+            aria-expanded={expanded}
+            title={path}
+            onClick={() => {
+              if (!directory) {
+                onSelect(path)
+                setExpandedFiles((old) => {
+                  const next = new Set(old)
+                  if (next.has(path)) next.delete(path)
+                  else next.add(path)
+                  return next
+                })
+                return
+              }
+              setClosed((old) => {
+                const next = new Set(old)
+                if (next.has(path)) next.delete(path)
+                else next.add(path)
+                return next
+              })
+            }}
           >
-            {entry.directory ? (
-              <Button
-                variant="ghost"
-                size="xs"
-                h="18px"
-                p={0}
-                minW="16px"
-                aria-label={`${closed.has(entry.path) ? 'Expand' : 'Collapse'} ${entry.path}`}
-                onClick={() =>
-                  setClosed((old) => {
-                    const next = new Set(old)
-                    if (next.has(entry.path)) next.delete(entry.path)
-                    else next.add(entry.path)
-                    return next
-                  })
-                }
-              >
-                {closed.has(entry.path) ? (
-                  <ChevronRightIcon />
-                ) : (
-                  <ChevronLeftIcon transform="rotate(-90deg)" />
-                )}
-              </Button>
-            ) : null}
-            <Text as={entry.directory ? 'span' : 'button'} onClick={() => { if (!entry.directory) onSelect(entry.path) }} flex={1} minW={0} fontSize="xs" lineHeight="18px" color="gray.300" textAlign="left" isTruncated title={entry.path}>
-              {entry.path.split('/').pop()}
-            </Text>
-            {!entry.directory && entry.linesAdded !== undefined && entry.linesRemoved !== undefined && (
-              <HStack spacing={1.5} flexShrink={0} fontSize="10px" lineHeight="18px" fontFamily="mono" aria-label={`${entry.linesAdded} lines added, ${entry.linesRemoved} lines removed`}>
-                <Text color="green.300">+{entry.linesAdded}</Text>
-                <Text color="red.300">−{entry.linesRemoved}</Text>
+            <FileTreeIcon directory={directory} expanded={expanded} change={file?.change} />
+            <Text as="span" flex={1} minW={0} fontSize="sm" lineHeight="20px" isTruncated>{label}</Text>
+            {file && file.linesAdded !== undefined && file.linesRemoved !== undefined && (
+              <HStack as="span" spacing={1} flexShrink={0} fontSize="xs" lineHeight="20px" aria-label={`${file.linesAdded} lines added, ${file.linesRemoved} lines removed`}>
+                <Text as="span" color="#a6e22e">+{file.linesAdded}</Text>
+                <Text as="span" color="#ff656d">−{file.linesRemoved}</Text>
               </HStack>
             )}
           </Flex>
-        ))}
+          {expanded && (
+            <Box ml="8px" pl="15px" borderLeft="1px solid" borderColor="whiteAlpha.200">
+              {directory ? renderEntries(entry.children) : <RepositorySymbols inline repositoryRoot={repositoryRoot} path={path} diagram={diagram} />}
+            </Box>
+          )}
+        </Box>
+      )
+    })
+  }
+
+  return (
+    <Box px={3} pb={3} overflowY="auto" maxH={{ base: '220px', lg: 'none' }}>
+      {!files.length && (
+        <Text p={3} fontSize="sm" color="gray.500">No source changes.</Text>
+      )}
+      {renderEntries(entries)}
     </Box>
   )
 }
@@ -314,13 +350,9 @@ function CompareSide({
         <optgroup label="Saved snapshots">
           {[...snapshots].reverse().map((s) => (
             <option key={s.id} value={`snapshot:${s.id}`}>
-              {short(s.gitRevision)} · {s.gitBranch || 'detached / non-Git'} ·{' '}
-              {s.provenance === 'working_tree'
-                ? 'local contents'
-                : s.provenance === 'commit'
-                  ? 'commit'
-                  : 'unknown provenance'}{' '}
-              · {age(s.createdUnix)}
+              {short(s.gitRevision)} · {s.gitBranch || 'detached / non-Git'}
+              {s.commitMessage ? ` · ${s.commitMessage}` : ''} ·{' '}
+              {age(s.createdUnix)}
               {showIds ? ` · ${short(s.id)}` : ''}
             </option>
           ))}
@@ -382,7 +414,6 @@ export default function Repositories() {
   const [branch, setBranch] = useState(() => params.get('branch') || '')
   const [collapsed, setCollapsed] = useState(false)
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
-  const [compareCollapsed, setCompareCollapsed] = useState(false)
   const [showIds] = useState(readShowIds)
   const [includeImports, setIncludeImports] = useState(false)
   const [snapshots, setSnapshots] = useState<CodeSnapshot[]>([])
@@ -402,11 +433,11 @@ export default function Repositories() {
   const [watchBusy, setWatchBusy] = useState(false)
   const [mode, setMode] = useState(() => params.get('mode') === 'live' ? 'live' : 'compare')
   const [selectedPath, setSelectedPath] = useState('')
+  const [filesTab, setFilesTab] = useState<'files' | 'symbols'>('files')
   const liveVersion = useRef('')
   const shownImpact = mode === 'live' ? live?.diagram ?? null : comparison
   const diff: SnapshotDiff | null = shownImpact?.diff ?? null
   const [nonce, setNonce] = useState(0)
-  const [limit, setLimit] = useState(50)
   const [repoToDelete, setRepoToDelete] = useState<IndexedRepository | null>(
     null,
   )
@@ -491,7 +522,7 @@ export default function Repositories() {
     Promise.allSettled([
       api.repositories.snapshots(selectedId),
       api.repositories.maps(selectedId),
-      api.repositories.history(selectedId, branch, limit),
+      api.repositories.history(selectedId, branch, 0),
     ])
       .then(([snapshotResult, mapResult, historyResult]) => {
         if (stale) return
@@ -538,9 +569,9 @@ export default function Repositories() {
     return () => {
       stale = true
     }
-  }, [selectedId, branch, limit, nonce])
+  }, [selectedId, branch, nonce])
   useEffect(() => {
-    setComparison(null); setSelectedPath('')
+    setComparison(null); setSelectedPath(''); setFilesTab('files')
     setOperationError('')
   }, [selectedId, base, head])
   useEffect(
@@ -589,16 +620,17 @@ export default function Repositories() {
   }, [mode, selectedId, reload])
   const changeMode = (next: string) => {
     operation.current?.abort(); operation.current = null
-    setBusy(false); setProgress(null); setOperationError(''); setSelectedPath(''); setMode(next)
+    setBusy(false); setProgress(null); setOperationError(''); setSelectedPath(''); setFilesTab('files'); setMode(next)
   }
   const changeRadius = async (radius: number) => {
     if (!shownImpact || busy) return
+    const nextRadius = Math.min(radius, 3)
     const repositoryId = selectedId
     const key = shownImpact.comparisonKey
     const controller = new AbortController()
     operation.current = controller; setBusy(true); setOperationError('')
     try {
-      const result = await api.repositories.impactRadius(repositoryId, key, radius, controller.signal)
+      const result = await api.repositories.impactRadius(repositoryId, key, nextRadius, controller.signal)
       if (!controller.signal.aborted && selectedRef.current === repositoryId && operation.current === controller) {
         if (mode === 'live') setLive((old) => old ? { ...old, diagram: result } : old)
         else setComparison(result)
@@ -650,13 +682,20 @@ export default function Repositories() {
     setBranch('')
     setBaseBranch('')
     setHeadBranch('')
-    setLimit(50)
-    setComparison(null); setSelectedPath('')
+    setComparison(null); setSelectedPath(''); setFilesTab('files')
     initialized.current = ''
     restored.current = { base: '', head: '' }
     setSelectedId(id)
   }
   const chooseTarget = (side: 'base' | 'head', value: string) => {
+    const revision = (target: string) => target.startsWith('commit:') ? target.slice(7)
+      : target === 'working_tree' ? history?.headSha : snapshotForTarget(target, snapshots)?.gitRevision
+    const baseRevision = revision(side === 'base' ? value : base)
+    const headRevision = revision(side === 'head' ? value : head)
+    const baseIndex = history?.commits.findIndex((commit) => commit.sha === baseRevision) ?? -1
+    const headIndex = history?.commits.findIndex((commit) => commit.sha === headRevision) ?? -1
+    if (baseIndex >= 0 && headIndex >= 0 && baseIndex < headIndex) return
+
     const context = value.startsWith('commit:')
       ? branch || history?.currentBranch || ''
       : ''
@@ -676,7 +715,7 @@ export default function Repositories() {
     setBusy(true)
     setOperationError('')
     setProgress(null)
-    setComparison(null); setSelectedPath('')
+    setComparison(null); setSelectedPath(''); setFilesTab('files')
     const isActive = () =>
       !controller.signal.aborted &&
       selectedRef.current === repositoryId &&
@@ -982,7 +1021,7 @@ export default function Repositories() {
                               color="gray.300"
                               flex={1}
                               isTruncated
-                              title={s.gitBranch}
+                              title={s.gitBranch || short(s.gitRevision)}
                             >
                               {s.gitBranch || 'No captured branch'}
                             </Text>
@@ -1030,6 +1069,17 @@ export default function Repositories() {
                               }}
                             />
                           </Flex>
+                          {s.commitMessage && (
+                            <Text
+                              fontSize="xs"
+                              color="gray.200"
+                              mt={1}
+                              isTruncated
+                              title={s.commitMessage}
+                            >
+                              {s.commitMessage}
+                            </Text>
+                          )}
                           {s.statistics ? (
                             <Text fontSize="10px" color="gray.400" mt={1}>
                               {s.statistics.facts.toLocaleString()} facts ·{' '}
@@ -1121,7 +1171,6 @@ export default function Repositories() {
                     isDisabled={busy || !history?.isGit}
                     onChange={(e) => {
                       setBranch(e.target.value)
-                      setLimit(50)
                     }}
                   >
                     <option value="">
@@ -1168,6 +1217,15 @@ export default function Repositories() {
                       ? head.slice(7)
                       : snapshotForTarget(head, snapshots)?.gitRevision || ''
                   }
+                  disabled={busy}
+                  onRange={(older, newer) => {
+                    if (busy) return
+                    const context = branch || history?.currentBranch || ''
+                    setBase(`commit:${older.sha}`)
+                    setHead(`commit:${newer.sha}`)
+                    setBaseBranch(context)
+                    setHeadBranch(context)
+                  }}
                   collapsed={historyCollapsed}
                   onToggle={() => setHistoryCollapsed(!historyCollapsed)}
                   onBase={(c) => {
@@ -1176,7 +1234,6 @@ export default function Repositories() {
                   onHead={(c) => {
                     if (!busy) chooseTarget('head', `commit:${c.sha}`)
                   }}
-                  onMore={() => setLimit((n) => n + 50)}
                 />
                 <Flex
                   px={4}
@@ -1189,14 +1246,34 @@ export default function Repositories() {
                 >
                   <Button size="xs" variant={mode === 'compare' ? 'solid' : 'ghost'} data-testid="repositories-compare-tab" aria-pressed={mode === 'compare'} onClick={() => changeMode('compare')}>Compare</Button>
                   <Button size="xs" variant={mode === 'live' ? 'solid' : 'ghost'} data-testid="repositories-live-tab" aria-pressed={mode === 'live'} onClick={() => changeMode('live')}>Live changes</Button>
-                  <Button
-                    size="xs"
-                    variant="ghost"
-                    aria-expanded={!compareCollapsed}
-                    onClick={() => setCompareCollapsed(!compareCollapsed)}
-                  >
-                    {compareCollapsed ? 'Expand' : 'Collapse'}
-                  </Button>
+                  {shownImpact && (
+                    <HStack
+                      spacing={1}
+                      align="center"
+                      data-testid="repositories-radius"
+                    >
+                      <Text fontSize="xs" color="gray.500">
+                        Radius
+                      </Text>
+                      {Array.from(
+                        { length: Math.min(3, shownImpact.maxRadius) + 1 },
+                        (_, r) => (
+                          <Button
+                            key={r}
+                            data-testid={`repositories-radius-${r}`}
+                            size="xs"
+                            variant={shownImpact.radius === r ? 'solid' : 'ghost'}
+                            isDisabled={busy}
+                            onClick={() => {
+                              if (r !== shownImpact.radius) void changeRadius(r)
+                            }}
+                          >
+                            {r}
+                          </Button>
+                        ),
+                      )}
+                    </HStack>
+                  )}
                   <Box flex={1} />
                   <Text fontSize="xs" color="gray.500">
                     {mode === 'live' ? 'Current commit → pending changes' : 'Select snapshots or Git revisions'}
@@ -1222,7 +1299,7 @@ export default function Repositories() {
                     <ErrorMessage message={watch?.error || live?.error || ''} />
                   </Box>
                 )}
-                {mode === 'compare' && !compareCollapsed && (
+                {mode === 'compare' && (
                   <Box
                     p={4}
                     borderBottom="1px solid"
@@ -1317,35 +1394,7 @@ export default function Repositories() {
                   </Box>
                 )}
                 <ErrorMessage message={operationError} />
-                {diff && (
-                  <Grid
-                    px={4}
-                    py={3}
-                    templateColumns="repeat(4, 1fr)"
-                    gap={2}
-                    borderBottom="1px solid"
-                    borderColor="whiteAlpha.100"
-                  >
-                    {[
-                      ['Sources', diff.sources.length],
-                      ['Facts added', diff.facts.added],
-                      ['Facts removed', diff.facts.removed],
-                      ['Facts modified', diff.facts.modified],
-                    ].map(([label, count]) => (
-                      <Box
-                        key={label}
-                        p={2}
-                        bg="whiteAlpha.50"
-                        borderRadius="md"
-                      >
-                        <Text fontSize="lg" fontFamily="mono">
-                          {count}
-                        </Text>
-                        <Label>{label}</Label>
-                      </Box>
-                    ))}
-                  </Grid>
-                )}
+
                 <Flex
                   flex={1}
                   minH="260px"
@@ -1353,24 +1402,29 @@ export default function Repositories() {
                 >
                   <Box
                     w={{ base: 'full', lg: '280px' }}
+                    position="relative"
                     flexShrink={0}
                     borderRight="1px solid"
                     borderBottom={{ base: '1px solid', lg: 'none' }}
                     borderColor="whiteAlpha.100"
                   >
-                    <Flex p={3} gap={2}>
-                      <Label>Files</Label>
-                      <Badge fontSize="2xs">{diff?.sources.length ?? 0}</Badge>
+                    <Flex p={2} gap={1} role="tablist" aria-label="Repository details">
+                      <Button size="xs" role="tab" aria-selected={filesTab === 'files'} variant={filesTab === 'files' ? 'solid' : 'ghost'} onClick={() => setFilesTab('files')}>Files <Badge ml={2} fontSize="2xs">{diff?.sources.length ?? 0}</Badge></Button>
+                      <Button size="xs" role="tab" aria-selected={filesTab === 'symbols'} variant={filesTab === 'symbols' ? 'solid' : 'ghost'} onClick={() => setFilesTab('symbols')}>Symbols <Badge ml={2} fontSize="2xs" aria-label="Changed symbols count">{diff ? diff.facts.added + diff.facts.removed + diff.facts.modified : 0}</Badge></Button>
                     </Flex>
-                    {diff ? (
-                      <FileTree files={diff.sources} onSelect={setSelectedPath} />
+                    <Box position={{ base: 'relative', lg: 'absolute' }} top={{ lg: '40px' }} bottom={{ lg: 0 }} w="full" overflowY="auto">
+                    {filesTab === 'symbols' ? (
+                      <RepositorySymbols key={`${selectedId}:${selectedPath}:${diff?.fromSnapshotId}:${diff?.toSnapshotId}`} repositoryRoot={selected.root} path={selectedPath} diagram={shownImpact} />
+                    ) : diff ? (
+                      <FileTree files={diff.sources} onSelect={setSelectedPath} diagram={shownImpact!} repositoryRoot={selected.root} />
                     ) : (
                       <Text px={3} fontSize="xs" color="gray.500">
                         Compare maps to see changed source files.
                       </Text>
                     )}
+                    </Box>
                   </Box>
-                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} busy={busy} selectedPath={selectedPath} onRadius={(radius) => void changeRadius(radius)} repositoryRoot={selected.root} />
+                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} selectedPath={selectedPath} repositoryRoot={selected.root} />
                 </Flex>
               </>
             )}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RepositoryCommit } from '../api/client'
-import { layoutCommitGraph, parseCommitRefs } from './commitGraph'
+import { layoutCommitGraph, parseCommitRefs, commitGraphPath } from './commitGraph'
 
 function commit(sha: string, parents: string[] = [], refs: string[] = []): RepositoryCommit {
   return {
@@ -80,5 +80,17 @@ describe('layoutCommitGraph', () => {
     const layout = layoutCommitGraph([commit('c1')])
     expect(layout.edges).toEqual([])
     expect(layout.laneCount).toBe(1)
+  })
+})
+
+describe('commitGraphPath', () => {
+  it('uses a straight rail for linear history and missing parents', () => {
+    expect(commitGraphPath({ fromRow: 0, fromLane: 0, toRow: 1, toLane: 0, railLane: 0 }, 2)).toBe('M 18 18 V 54')
+    expect(commitGraphPath({ fromRow: 0, fromLane: 0, toRow: null, toLane: 0, railLane: 0 }, 2)).toBe('M 18 18 V 72')
+  })
+
+  it('turns horizontally onto and off the reserved branch rail', () => {
+    expect(commitGraphPath({ fromRow: 0, fromLane: 0, toRow: 3, toLane: 0, railLane: 1 }, 4)).toBe('M 18 18 H 30 Q 36 18 36 24 V 120 Q 36 126 30 126 H 18')
+    expect(commitGraphPath({ fromRow: 1, fromLane: 1, toRow: 2, toLane: 0, railLane: 1 }, 3)).toBe('M 36 54 V 84 Q 36 90 30 90 H 18')
   })
 })

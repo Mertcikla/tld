@@ -235,6 +235,8 @@ func legacySQLiteMigrationAlreadyApplied(ctx context.Context, db *bun.DB, commen
 		return sqliteTablesExist(ctx, db, "codeindex_snapshot_facts", "codeindex_snapshot_chunks", "codeindex_snapshot_edges")
 	case "watch_stop_deadline":
 		return sqliteColumnExists(ctx, db, "codeindex_watch_state", "stop_requested_unix")
+	case "snapshot_commit_message":
+		return sqliteColumnExists(ctx, db, "codeindex_snapshots", "commit_message")
 	default:
 		return false, nil
 	}
@@ -270,6 +272,8 @@ func legacyPostgresMigrationAlreadyApplied(ctx context.Context, db *bun.DB, comm
 		return postgresTablesExist(ctx, db, "codeindex_snapshot_facts", "codeindex_snapshot_chunks", "codeindex_snapshot_edges")
 	case "watch_stop_deadline":
 		return postgresColumnExists(ctx, db, "codeindex_watch_state", "stop_requested_unix")
+	case "snapshot_commit_message":
+		return postgresColumnExists(ctx, db, "codeindex_snapshots", "commit_message")
 	default:
 		return false, nil
 	}

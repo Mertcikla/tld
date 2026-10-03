@@ -1,4 +1,6 @@
 import React from 'react'
+import { create as createMessage } from '@bufbuild/protobuf'
+import { CodeFactSchema } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb'
 import { act, create } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Repositories from './Repositories'
@@ -13,6 +15,7 @@ vi.mock('../components/RepositoryHistory', () => ({ default: () => null }))
 
 vi.mock('../api/client', () => ({
   api: {
+    editor: { open: vi.fn(async () => {}) },
     repositories: {
       list: vi.fn(async () => [{
         id: 'repo-1',
@@ -28,10 +31,11 @@ vi.mock('../api/client', () => ({
       }]),
       snapshots: vi.fn(async () => [
         { id: 'snap-0', repositoryId: 'repo-1', createdUnix: 90, gitRevision: 'old', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-0', ingestionStatus: 'complete', embeddingStatus: 'complete', projects: [], warnings: [] },
-        { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', ingestionStatus: 'complete', embeddingStatus: 'complete', projects: [], warnings: [] },
+        { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', commitMessage: 'feat: snapshot message', ingestionStatus: 'complete', embeddingStatus: 'complete', projects: [], warnings: [] },
       ]),
       maps: vi.fn(async () => []),
       history: vi.fn(async () => ({ commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
+      fileSymbols: vi.fn(async () => []),
       diff: vi.fn(async () => null),
       compare: vi.fn(async () => ({
         repositoryId: 'repo-1', comparisonKey: 'pair', viewId: 9, version: 'v1', radius: 0, maxRadius: 2,
@@ -61,9 +65,11 @@ vi.mock('../api/client', () => ({
 vi.mock('../components/RepositoryChangeCanvas', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', { ...props, 'data-testid': 'mock-impact' }) }))
 
 vi.mock('../utils/toast', () => ({ toast: vi.fn() }))
+vi.mock('../utils/sourceEditor', () => ({ useSourceEditor: () => ({ editor: 'zed' }) }))
 
 vi.mock('@chakra-ui/icons', () => ({
   CopyIcon: () => null,
+  ExternalLinkIcon: () => null,
   DeleteIcon: () => null,
   RepeatIcon: () => null,
   ChevronLeftIcon: () => null,
@@ -200,6 +206,13 @@ describe('Repositories map action', () => {
 
     expect(api.repositories.deleteSnapshot).toHaveBeenCalledWith('snap-1')
   })
+  it('shows the commit message in the snapshot panel', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    const messages = renderer.root.findAll((node) => node.props.children === 'feat: snapshot message')
+    expect(messages.length).toBeGreaterThan(0)
+    renderer.unmount()
+  })
   it('compares selected targets without running full map materialization', async () => {
     const { api } = await import('../api/client')
     let renderer!: ReturnType<typeof create>
@@ -224,6 +237,94 @@ describe('Repositories map action', () => {
     expect(counts.findAll((node) => node.children.filter((child) => typeof child === 'string').join('') === '+12').length).toBeGreaterThan(0)
     expect(counts.findAll((node) => node.children.filter((child) => typeof child === 'string').join('') === '−3').length).toBeGreaterThan(0)
     renderer.unmount()
+  })
+
+  it('compacts folder chains, preserves branches, and selects files after expanding', async () => {
+    const { api } = await import('../api/client')
+    const result = await api.repositories.compare('repo-1', { base: {}, head: {} })
+    vi.mocked(api.repositories.compare).mockResolvedValueOnce({ ...result, diff: { ...result.diff, sources: [
+      { path: 'frontend/src/pages/Repositories.tsx', change: 'modified', fromHash: 'old', toHash: 'new', linesAdded: 2, linesRemoved: 39 },
+      { path: 'internal/mapper/math.go', change: 'modified', fromHash: 'old', toHash: 'new', linesAdded: 1, linesRemoved: 1 },
+      { path: 'internal/store/apistore.go', change: 'modified', fromHash: 'old', toHash: 'new', linesAdded: 1, linesRemoved: 0 },
+    ] } })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+    const folder = (label: string) => renderer.root.findAllByProps({ 'aria-label': label }).find((node) => node.props.onClick)!
+    expect(folder('Collapse frontend/src/pages').props['aria-expanded']).toBe(true)
+    expect(folder('Collapse internal')).toBeDefined()
+    expect(folder('Collapse internal/mapper')).toBeDefined()
+    expect(folder('Collapse internal/store')).toBeDefined()
+
+    act(() => { folder('Collapse frontend/src/pages').props.onClick() })
+    expect(renderer.root.findAllByProps({ 'aria-label': 'frontend/src/pages/Repositories.tsx' })).toHaveLength(0)
+    expect(folder('Collapse internal/store')).toBeDefined()
+    act(() => { folder('Expand frontend/src/pages').props.onClick() })
+    act(() => { folder('frontend/src/pages/Repositories.tsx').props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.selectedPath).toBe('frontend/src/pages/Repositories.tsx')
+    expect(api.repositories.fileSymbols).not.toHaveBeenCalled()
+    expect(renderer.root.findAllByProps({ role: 'tab' }).find((node) => node.children.includes('Symbols '))?.props['aria-selected']).toBe(false)
+    act(() => { renderer.root.findAllByProps({ role: 'tab' }).find((node) => node.props.onClick && node.children.includes('Files '))!.props.onClick() })
+    expect(renderer.root.findAllByProps({ 'aria-label': '1 lines added, 0 lines removed' }).length).toBeGreaterThan(0)
+    renderer.unmount()
+  })
+
+  it('shows only changed symbols for the selected file', async () => {
+    const { api } = await import('../api/client')
+    const result = await api.repositories.compare('repo-1', { base: {}, head: {} })
+    const changed = createMessage(CodeFactSchema, { id: 'changed', logicalKey: 'changed', name: 'Changed', anchor: { path: 'src/file.go', startLine: 20 } })
+    const other = createMessage(CodeFactSchema, { id: 'other', name: 'Other file', anchor: { path: 'src/other.go' } })
+    vi.mocked(api.repositories.compare).mockResolvedValueOnce({ ...result, diff: { ...result.diff,
+      sources: [{ path: 'src/file.go', change: 'modified', fromHash: 'old', toHash: 'new' }],
+      facts: { added: 1, removed: 2, modified: 2 },
+      factDetails: { added: [], removed: [], modified: [changed, other] },
+    } })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+    await act(async () => { renderer.root.findAllByProps({ 'aria-label': 'src/file.go' }).find((node) => node.props.onClick)!.props.onClick() })
+    expect(renderer.root.findAllByProps({ 'aria-label': 'Changed symbols count' }).some((node) => node.children.includes('5'))).toBe(true)
+    const symbols = renderer.root.findByProps({ 'data-testid': 'repository-symbols' })
+    const rows = symbols.findAll((node) => node.type === 'div' && node.props['data-symbol-change'])
+    expect(rows.map((node) => node.props['data-symbol-change'])).toEqual(['modified'])
+    expect(renderer.root.findAllByProps({ role: 'tab' }).find((node) => node.children.includes('Files '))?.props['aria-selected']).toBe(true)
+    const fileRow = renderer.root.findAllByProps({ 'aria-label': 'src/file.go' }).find((node) => node.props.onClick)!
+    expect(fileRow.props['aria-expanded']).toBe(true)
+    expect(rows[0].findAll((node) => node.children.includes('Changed')).length).toBeGreaterThan(0)
+    expect(api.repositories.fileSymbols).not.toHaveBeenCalled()
+    expect(symbols.findAll((node) => node.children.includes('Other file'))).toHaveLength(0)
+    expect(symbols.findAll((node) => node.props.as === 'details')).toHaveLength(0)
+    const editorButton = rows[0].findAllByType('button').find((node) => node.props['aria-label'] === 'Open in Zed')!
+    await act(async () => { await editorButton.props.onClick() })
+    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/file.go', line: 20 })
+    act(() => { fileRow.props.onClick() })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repository-symbols' })).toHaveLength(0)
+    expect(fileRow.props['aria-expanded']).toBe(false)
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('groups all changed symbols by file when opening Symbols without selecting a file', async () => {
+    const { api } = await import('../api/client')
+    const result = await api.repositories.compare('repo-1', { base: {}, head: {} })
+    const added = createMessage(CodeFactSchema, { id: 'added', name: 'Added', anchor: { path: 'src/b.go', startLine: 3 } })
+    const removed = createMessage(CodeFactSchema, { id: 'removed', name: 'Removed', anchor: { path: 'src/a.go', startLine: 7 } })
+    const modified = createMessage(CodeFactSchema, { id: 'modified', name: 'Modified', anchor: { path: 'src/b.go', startLine: 8 } })
+    vi.mocked(api.repositories.compare).mockResolvedValueOnce({ ...result, diff: { ...result.diff,
+      factDetails: { added: [added], removed: [removed], modified: [modified] },
+    } })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+    act(() => { renderer.root.findAllByProps({ role: 'tab' }).find((node) => node.props.onClick && node.children.includes('Symbols '))!.props.onClick() })
+    const symbols = renderer.root.findByProps({ 'data-testid': 'repository-symbols' })
+    const groups = symbols.findAll((node) => node.type === 'div' && node.props['data-symbol-file'])
+    expect(groups.map((node) => node.props['data-symbol-file'])).toEqual(['src/a.go', 'src/b.go'])
+    expect(groups[1].findAll((node) => node.type === 'div' && node.props['data-symbol-change']).map((node) => node.props['data-symbol-change'])).toEqual(['added', 'modified'])
+    expect(api.repositories.fileSymbols).not.toHaveBeenCalled()
+    const editorButton = groups[0].findAllByType('button').find((node) => node.props['aria-label'] === 'Open in Zed')!
+    await act(async () => { await editorButton.props.onClick() })
+    expect(api.editor.open).toHaveBeenCalledWith({ editor: 'zed', repo: '/repo/demo', file_path: 'src/a.go', line: 7 })
+    await act(async () => { renderer.unmount() })
   })
 
   it('changes base and head independently and maps local working contents', async () => {
@@ -254,7 +355,7 @@ describe('Repositories map action', () => {
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-1')
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
     await act(async () => { renderer.root.findByProps({ 'aria-label': 'History branch' }).props.onChange({ target: { value: 'main' } }) })
-    expect(api.repositories.history).toHaveBeenCalledWith('repo-1', 'main', 50)
+    expect(api.repositories.history).toHaveBeenCalledWith('repo-1', 'main', 0)
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
   })
 
@@ -286,7 +387,7 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.root.findByProps({ 'aria-label': 'Select other' }).props.onClick() })
     await act(async () => { finish(result) })
     expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram).toBeNull()
-    expect(api.repositories.history).toHaveBeenLastCalledWith('repo-2', '', 50)
+    expect(api.repositories.history).toHaveBeenLastCalledWith('repo-2', '', 0)
     renderer.unmount()
   })
 
@@ -303,7 +404,7 @@ describe('Repositories map action', () => {
     expect(api.repositories.liveImpact).toHaveBeenCalledWith('repo-1', expect.any(AbortSignal))
     expect(api.repositories.compare).not.toHaveBeenCalled()
     expect(api.repositories.map).not.toHaveBeenCalled()
-    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.onRadius(1) })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-radius-1' }).props.onClick() })
     expect(api.repositories.impactRadius).toHaveBeenCalledWith('repo-1', 'live', 1, expect.any(AbortSignal))
     expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram.radius).toBe(1)
     await act(async () => { renderer.unmount() })

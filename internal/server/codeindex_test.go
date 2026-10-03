@@ -128,6 +128,39 @@ func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 	}
 }
 
+func TestListSnapshotsExcludesWorkingTree(t *testing.T) {
+	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	ctx := context.Background()
+
+	root := "/repo-snapshots"
+	repoID := cgraph.RepositoryID(root)
+	saved := &codeindexv1.Snapshot{Id: "saved", RepositoryId: repoID, CreatedUnix: 100, Provenance: "commit", CommitMessage: "feat: add thing"}
+	if err := idx.Publish(ctx, root, saved, cgraph.NewGraph(repoID, saved.Id)); err != nil {
+		t.Fatalf("publish saved: %v", err)
+	}
+	live := &codeindexv1.Snapshot{Id: "live", RepositoryId: repoID, CreatedUnix: 200, Provenance: "working_tree", CommitMessage: "feat: add thing"}
+	if err := idx.PublishHistorical(ctx, root, live, cgraph.NewGraph(repoID, live.Id)); err != nil {
+		t.Fatalf("publish live: %v", err)
+	}
+
+	ts := httptest.NewServer(routes)
+	defer ts.Close()
+	client := codeindexv1connect.NewCodeFactServiceClient(ts.Client(), ts.URL+"/api")
+
+	snaps, err := client.ListSnapshots(ctx, connect.NewRequest(&codeindexv1.RepositoryID{Id: repoID}))
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	got := snaps.Msg.GetSnapshots()
+	if len(got) != 1 || got[0].GetId() != saved.Id {
+		t.Fatalf("snapshots = %+v, want only %s", got, saved.Id)
+	}
+	if got[0].GetCommitMessage() != saved.CommitMessage {
+		t.Fatalf("commit message = %q, want %q", got[0].GetCommitMessage(), saved.CommitMessage)
+	}
+}
+
 func TestRepositoryServiceDeleteRepository(t *testing.T) {
 	workspaceID := uuid.New()
 	sqliteStore, routes := newTestServer(t, workspaceID, nil)

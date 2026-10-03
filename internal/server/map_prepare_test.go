@@ -233,12 +233,26 @@ func TestRepositoryGitHistoryAndDetails(t *testing.T) {
 	if !strings.Contains(strings.Join(history.Msg.Commits[0].Refs, ","), "v1") {
 		t.Fatalf("missing tag: %+v", history.Msg.Commits[0])
 	}
+	history, err = svc.GetGitHistory(ctx, connect.NewRequest(&pb.GetGitHistoryRequest{RepositoryId: repoID}))
+	if err != nil || history.Msg.HasMore || len(history.Msg.Commits) != 2 {
+		t.Fatalf("full history: %+v: %v", history, err)
+	}
 	detail, err := svc.GetCommitDetails(ctx, connect.NewRequest(&pb.GetCommitDetailsRequest{RepositoryId: repoID, Revision: feature}))
 	if err != nil || detail.Msg.Commit.Sha != feature || len(detail.Msg.Files) != 1 || detail.Msg.Files[0].Path != "feature.go" || detail.Msg.Files[0].Added != 2 {
 		t.Fatalf("details: %+v: %v", detail, err)
 	}
 	if _, err := svc.GetCommitDetails(ctx, connect.NewRequest(&pb.GetCommitDetailsRequest{RepositoryId: repoID, Revision: "--all"})); err == nil {
 		t.Fatal("accepted invalid revision")
+	}
+}
+
+func TestReadCommitsWithoutLimit(t *testing.T) {
+	root, _ := gitFixture(t)
+	testGit(t, root, "commit", "--allow-empty", "-m", "second")
+	head := strings.TrimSpace(testGit(t, root, "rev-parse", "HEAD"))
+	commits, err := readCommits(context.Background(), root, head, 0)
+	if err != nil || len(commits) != 2 {
+		t.Fatalf("unlimited history: %d commits: %v", len(commits), err)
 	}
 }
 

@@ -93,8 +93,8 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 	warnings, _ := marshalJSON(snap.Warnings)
 	tools, _ := marshalJSON(snap.ToolVersions)
 	_, err := tx.NewRaw(`INSERT INTO codeindex_snapshots
-		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, embedding_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, capture_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, embedding_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, capture_order)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			repository_id = excluded.repository_id,
 			git_revision = excluded.git_revision,
@@ -105,9 +105,10 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 			projects_json = excluded.projects_json,
 			warnings_json = excluded.warnings_json,
 			tool_versions_json = excluded.tool_versions_json,
-        provenance = excluded.provenance, content_fingerprint = excluded.content_fingerprint`,
+        provenance = excluded.provenance, content_fingerprint = excluded.content_fingerprint,
+        commit_message = excluded.commit_message`,
 		snap.Id, snap.RepositoryId, snap.CreatedUnix, snap.GitRevision, snap.GitBranch,
-		snap.IngestionStatus, snap.EmbeddingStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, time.Now().UnixNano()).Exec(ctx)
+		snap.IngestionStatus, snap.EmbeddingStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, snap.CommitMessage, time.Now().UnixNano()).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("upsert snapshot: %w", err)
 	}
@@ -242,9 +243,9 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 		gitRevision, gitBranch                       string
 		ingestion, embedding, configHash, repository string
 	)
-	err := s.bun.NewRaw(`SELECT repository_id, created_unix, git_revision, git_branch, ingestion_status, embedding_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint
+	err := s.bun.NewRaw(`SELECT repository_id, created_unix, git_revision, git_branch, ingestion_status, embedding_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message
 		FROM codeindex_snapshots WHERE id = ?`, id).
-		Scan(ctx, &repository, &createdUnix, &gitRevision, &gitBranch, &ingestion, &embedding, &configHash, &projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint)
+		Scan(ctx, &repository, &createdUnix, &gitRevision, &gitBranch, &ingestion, &embedding, &configHash, &projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +299,7 @@ func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snaps
 	rows, err := s.bun.QueryContext(ctx, `SELECT
 		id, repository_id, created_unix, git_revision, git_branch,
 		ingestion_status, embedding_status, config_hash,
-		projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint,
+		projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message,
 		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = codeindex_snapshots.id),
 		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = codeindex_snapshots.id),
 		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = codeindex_snapshots.id),
@@ -322,7 +323,7 @@ func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snaps
 		if err := rows.Scan(
 			&snap.Id, &snap.RepositoryId, &createdUnix, &snap.GitRevision, &snap.GitBranch,
 			&snap.IngestionStatus, &snap.EmbeddingStatus, &snap.ConfigHash,
-			&projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint,
+			&projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage,
 			&snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources, &snap.Statistics.Chunks,
 		); err != nil {
 			return nil, err

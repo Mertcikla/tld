@@ -171,7 +171,18 @@ func (s *codeIndexFactService) ListSnapshots(ctx context.Context, req *connect.R
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return connect.NewResponse(&codeindexv1.ListSnapshotsResponse{Snapshots: snapshots}), nil
+	// Working-tree snapshots capture the transient checkout state and are not
+	// saved points users can return to, so they are excluded from the saved
+	// snapshot list. They remain addressable by id through the working_tree
+	// comparison target and the live change overlay.
+	saved := make([]*codeindexv1.Snapshot, 0, len(snapshots))
+	for _, snap := range snapshots {
+		if snap.GetProvenance() == "working_tree" {
+			continue
+		}
+		saved = append(saved, snap)
+	}
+	return connect.NewResponse(&codeindexv1.ListSnapshotsResponse{Snapshots: saved}), nil
 }
 
 func (s *codeIndexFactService) GetRepository(ctx context.Context, req *connect.Request[codeindexv1.RepositoryID]) (*connect.Response[codeindexv1.Repository], error) {

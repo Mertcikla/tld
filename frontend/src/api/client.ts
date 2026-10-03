@@ -173,6 +173,7 @@ export interface CodeSnapshot {
   warnings: string[]
   provenance?: string
   contentFingerprint?: string
+  commitMessage?: string
   statistics?: { facts: number; edges: number; sources: number; chunks: number }
 }
 
@@ -498,6 +499,7 @@ export function mapCodeSnapshot(snapshot: CodeSnapshotProto): CodeSnapshot {
     warnings: [...snapshot.warnings],
     provenance: snapshot.provenance,
     contentFingerprint: snapshot.contentFingerprint,
+    commitMessage: snapshot.commitMessage,
     ...(snapshot.statistics ? { statistics: {
       facts: snapshot.statistics.facts,
       edges: snapshot.statistics.edges,
@@ -1922,11 +1924,21 @@ export const api = {
   },
 
   repositories: {
+    fileSymbols: (repositoryId: string, snapshotId: string, path: string, signal?: AbortSignal): Promise<CodeFact[]> => rpc(async () => {
+      const facts: CodeFact[] = []
+      let pageToken = ''
+      do {
+        const page = await codeIndexFactClient.listFacts({ repositoryId, snapshotId, pathPrefix: path, pageSize: 500, pageToken }, { signal })
+        facts.push(...page.facts.filter((fact) => fact.anchor?.path === path))
+        pageToken = page.nextPageToken
+      } while (pageToken)
+      return facts
+    }),
     list: (): Promise<IndexedRepository[]> => rpc(async () => {
       const response = await codeIndexRepositoryClient.listRepositories({})
       return response.repositories.map((repo) => ({ ...repo, latestCreatedUnix: Number(repo.latestCreatedUnix) }))
     }),
-    history: (repositoryId: string, branch = '', limit = 50): Promise<RepositoryGitHistory> => rpc(async () => {
+    history: (repositoryId: string, branch = '', limit = 0): Promise<RepositoryGitHistory> => rpc(async () => {
       const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit })
       return { ...response, commits: response.commits.map((commit) => ({ ...commit, createdUnix: Number(commit.createdUnix) })) }
     }),

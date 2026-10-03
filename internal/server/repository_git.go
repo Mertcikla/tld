@@ -35,7 +35,12 @@ func resolveRevision(ctx context.Context, root, revision string) (string, error)
 const commitFormat = "--format=%H%x00%s%x00%an%x00%ae%x00%at%x00%P%x00%D%x00%B%x00"
 
 func readCommits(ctx context.Context, root, sha string, limit int) ([]*pb.GitCommit, error) {
-	raw, err := repositoryGit(ctx, root, "log", "--topo-order", "-n", strconv.Itoa(limit), commitFormat, sha, "--")
+	args := []string{"log", "--topo-order"}
+	if limit > 0 {
+		args = append(args, "-n", strconv.Itoa(limit))
+	}
+	args = append(args, commitFormat, sha, "--")
+	raw, err := repositoryGit(ctx, root, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -95,17 +100,18 @@ func (s *codeIndexRepositoryService) GetGitHistory(ctx context.Context, req *con
 		}
 	}
 	limit := int(req.Msg.GetLimit())
-	if limit <= 0 {
-		limit = 50
-	}
 	if limit > 1000 {
 		limit = 1000
 	}
-	result.Commits, err = readCommits(ctx, repo.Root, target, limit+1)
+	readLimit := 0
+	if limit > 0 {
+		readLimit = limit + 1
+	}
+	result.Commits, err = readCommits(ctx, repo.Root, target, readLimit)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	result.HasMore = len(result.Commits) > limit
+	result.HasMore = limit > 0 && len(result.Commits) > limit
 	if result.HasMore {
 		result.Commits = result.Commits[:limit]
 	}

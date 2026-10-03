@@ -214,6 +214,7 @@ describe('codeindex snapshot mapping', () => {
       warnings: ['partial index'],
       provenance: '',
       contentFingerprint: '',
+      commitMessage: '',
     })
     snapshot.statistics = { $typeName: 'codeindex.v1.SnapshotStatistics', facts: 100, edges: 20, sources: 5, chunks: 150 }
     expect(mapCodeSnapshot(snapshot).statistics).toEqual({ facts: 100, edges: 20, sources: 5, chunks: 150 })
