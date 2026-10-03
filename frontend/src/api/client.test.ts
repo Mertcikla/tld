@@ -224,7 +224,7 @@ describe('codeindex snapshot mapping', () => {
       fromSnapshotId: 'snap-1',
       toSnapshotId: 'snap-2',
       sources: [
-        { path: 'a.go', change: ChangeKind.MODIFIED, fromHash: 'h1', toHash: 'h2' },
+        { path: 'a.go', change: ChangeKind.MODIFIED, fromHash: 'h1', toHash: 'h2', linesAdded: 12, linesRemoved: 3 },
         { path: 'b.go', change: ChangeKind.ADDED },
       ],
       facts: { added: [create(CodeFactSchema)] },
@@ -237,10 +237,11 @@ describe('codeindex snapshot mapping', () => {
       fromGitRevision: '',
       toGitRevision: '',
       sources: [
-        { path: 'a.go', change: 'modified', fromHash: 'h1', toHash: 'h2' },
-        { path: 'b.go', change: 'added', fromHash: '', toHash: '' },
+        { path: 'a.go', change: 'modified', fromHash: 'h1', toHash: 'h2', linesAdded: 12, linesRemoved: 3 },
+        { path: 'b.go', change: 'added', fromHash: '', toHash: '', linesAdded: undefined, linesRemoved: undefined },
       ],
       facts: { added: 1, removed: 0, modified: 0 },
+      factDetails: { added: diff.facts!.added, removed: [], modified: [] },
       edgeFacts: { added: 0, removed: 2, modified: 0 },
     })
   })

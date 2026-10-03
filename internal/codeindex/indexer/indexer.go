@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -42,9 +43,8 @@ func emitProgress(progress ProgressFunc, p Progress) {
 }
 
 // IncrementalBase is a previously published snapshot made available to an
-// incremental build. Reuse is file-granular: facts, chunks, and edges for
-// sources whose content hash is unchanged are carried forward, and only changed
-// projects re-run their indexer.
+// incremental build. Unchanged syntax extraction and compatible SCIP artifacts
+// are reused; symbol bindings are recomputed from current project inputs.
 type IncrementalBase struct {
 	Graph    *graph.Graph
 	Snapshot *pb.Snapshot
@@ -73,11 +73,15 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 		return nil, nil, false, err
 	}
 	emitProgress(progress, Progress{Stage: "discover"})
-	before, revision, branch, provenance, err := captureInputs(ctx, root, p.Config, req)
+	var baseSources map[string]*graph.Source
+	if base != nil && base.Snapshot.ConfigHash == ConfigurationHash(p.Config, req) {
+		baseSources = base.Graph.Sources
+	}
+	projects, sources, err := discover(ctx, root, req.ProjectRoots, req.Exclude, baseSources)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	projects, sources, err := Discover(ctx, root, req.ProjectRoots, req.Exclude)
+	before, revision, branch, provenance, err := fingerprintInputs(ctx, root, p.Config, req, projects, sources)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -98,39 +102,9 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 			}
 		}
 	}
-	if base != nil && base.Snapshot.ContentFingerprint == before && len(kept) == len(sources) && !anyBaseSourceRemoved(sources, base.Sources) {
+	if base != nil && ToolchainCompatible(ctx, p.Config, root, base.Snapshot, req.ScipArtifacts) && base.Snapshot.ContentFingerprint == before && len(kept) == len(sources) && !anyBaseSourceRemoved(sources, base.Sources) {
 		// Nothing changed; reuse the published snapshot verbatim.
 		return base.Snapshot, base.Graph, true, nil
-	}
-
-	// Carry forward facts and chunks for unchanged sources.
-	carried := map[string]string{}
-	type parentLink struct{ factID, parentID string }
-	parentLinks := make([]parentLink, 0)
-	if base != nil {
-		for _, f := range base.Graph.Facts {
-			if f.Anchor == nil || !kept[f.Anchor.Path] {
-				continue
-			}
-			nf := g.AdoptFact(f)
-			if nf == nil {
-				continue
-			}
-			carried[f.Id] = nf.Id
-			if f.ParentFactId != "" {
-				parentLinks = append(parentLinks, parentLink{nf.Id, f.ParentFactId})
-			}
-		}
-		for _, link := range parentLinks {
-			if parentID, ok := carried[link.parentID]; ok {
-				g.Facts[link.factID].ParentFactId = parentID
-			}
-		}
-		for _, c := range base.Graph.Chunks {
-			if factID, ok := carried[c.FactId]; ok {
-				g.AdoptChunk(c, factID)
-			}
-		}
 	}
 
 	snap := &pb.Snapshot{Id: snapshot, RepositoryId: repo, CreatedUnix: time.Now().Unix(), Projects: projects, IngestionStatus: "staging", EmbeddingStatus: "disabled"}
@@ -142,20 +116,12 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	snap.ToolVersions = map[string]string{
 		"gotreesitter": "0.15.2",
 	}
-	if base != nil && base.Snapshot != nil {
-		for name, version := range base.Snapshot.ToolVersions {
-			snap.ToolVersions[name] = version
-		}
-	}
 	for _, s := range sources {
 		snap.Sources = append(snap.Sources, &pb.SourceFile{Path: s.Path, Hash: s.Hash, Size: uint64(len(s.Text))})
 	}
 	sort.Slice(snap.Sources, func(i, j int) bool { return snap.Sources[i].Path < snap.Sources[j].Path })
 	var syntaxSources []*graph.Source
 	for _, f := range snap.Sources {
-		if kept[f.Path] {
-			continue
-		}
 		src := sources[f.Path]
 		if src == nil || !isSyntaxFamily(languageFamily(src.Language)) {
 			continue
@@ -166,7 +132,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	var calls []callSite
 	for i, src := range syntaxSources {
 		emitProgress(progress, Progress{Stage: "tree-sitter", Current: int64(i), Total: int64(len(syntaxSources)), Detail: src.Path})
-		sites, err := treeFacts(ctx, g, src)
+		sites, err := syntaxFacts(ctx, g, src)
 		if err != nil {
 			return nil, nil, false, err
 		}
@@ -179,36 +145,45 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 	table := newSymbols()
-	// Seed definitions from carried facts so references in changed files resolve
-	// to facts retained from the base snapshot.
-	for _, factID := range carried {
-		fact := g.Facts[factID]
-		if fact != nil && fact.SymbolKey != "" {
-			table.definitions[fact.SymbolKey] = factID
-			table.definitionSites[fact.SymbolKey] = fact.Anchor
-		}
+	// Reindex every project in a changed language family to cover cross-project
+	// bindings. Other families reuse their SCIP artifacts. Configuration inputs
+	// conservatively invalidate all families.
+	familyFingerprints, err := symbolInputs(root, projects, sources, snap.ConfigHash)
+	if err != nil {
+		return nil, nil, false, err
 	}
-	totalProjects := 0
-	for _, pr := range projects {
-		if base != nil && !projectHasChange(pr, sources, base.Sources, kept) {
-			continue
-		}
-		totalProjects++
-	}
+	totalProjects := len(projects)
 	emitProgress(progress, Progress{Stage: "scip", Total: int64(totalProjects)})
 	projectIndex := 0
 	for i, pr := range projects {
-		if base != nil && !projectHasChange(pr, sources, base.Sources, kept) {
-			continue
-		}
 		emitProgress(progress, Progress{Stage: "scip", Current: int64(projectIndex), Total: int64(totalProjects), Detail: pr.Root})
 		projectIndex++
 		family := languageFamily(pr.Language)
 		scipBacked := !isSyntaxFamily(family)
 		projectDir := filepath.Join(root, filepath.FromSlash(pr.Root))
+		projectKey := family + "|" + pr.Root
+		fingerprint := familyFingerprints[family]
+		if base != nil && req.ScipArtifacts[pr.Root] == "" {
+			if cached, ok := base.Graph.ProjectArtifacts[projectKey]; ok && cached.Fingerprint == fingerprint {
+				spec, e := indexerForFamily(family, p.Config)
+				if e != nil {
+					return nil, nil, false, e
+				}
+				version := toolVersion(ctx, spec.executable(p.Config, indexerContext{projectDir: projectDir, root: root}), spec.versionArgs)
+				if version == base.Snapshot.ToolVersions[spec.name] {
+					snap.ToolVersions[spec.name] = version
+					hashes := projectHashes(pr, sources)
+					if err := importSCIPReader(ctx, g, pr, bytes.NewReader(cached.Data), hashes, false, scipBacked, table); err != nil {
+						return nil, nil, false, err
+					}
+					g.ProjectArtifacts[projectKey] = cached
+					continue
+				}
+			}
+		}
 		artifact := req.ScipArtifacts[pr.Root]
 		strict := artifact != ""
-		hashes := map[string]string{}
+		var hashes map[string]string
 		preExisting := false
 		if artifact == "" {
 			spec, err := indexerForFamily(family, p.Config)
@@ -242,28 +217,25 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 				}
 			}
 		}
-		prefix := strings.Trim(pr.Root, "/") + "/"
-		for path, src := range sources {
-			if pr.Root == "." {
-				hashes[path] = src.Hash
-			} else if strings.HasPrefix(path, prefix) {
-				hashes[strings.TrimPrefix(path, prefix)] = src.Hash
-			}
-		}
+		hashes = projectHashes(pr, sources)
 		if strict {
 			hashes, err = verifySCIPManifest(artifact, pr.Root, sources)
 			if err != nil {
 				return nil, nil, false, err
 			}
 		}
-		if base != nil {
-			table.skip = kept
-		}
 		if err := importSCIP(ctx, g, pr, artifact, hashes, strict, scipBacked, table); err != nil {
 			table.skip = nil
 			return nil, nil, false, fmt.Errorf("import %s: %w", artifact, err)
 		}
 		table.skip = nil
+		if !strict {
+			data, err := os.ReadFile(artifact)
+			if err != nil {
+				return nil, nil, false, err
+			}
+			g.ProjectArtifacts[projectKey] = graph.ProjectArtifact{Fingerprint: fingerprint, Data: data}
+		}
 		if !strict && !preExisting && artifact != "" && strings.HasPrefix(artifact, projectDir+string(filepath.Separator)) {
 			_ = os.Remove(artifact)
 		}
@@ -272,40 +244,16 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	table.apply(g)
 	deriveCalls(g, calls, table)
 	emitProgress(progress, Progress{Stage: "infra"})
-	if e := addInfraFacts(ctx, g, root, base, carried); e != nil {
+	if e := addInfraFacts(ctx, g, root); e != nil {
 		return nil, nil, false, e
 	}
 	addFileFacts(g)
-	if base != nil {
-		// Carry forward edges whose source fact was retained, remapping both
-		// endpoints to the new snapshot by stable logical identity.
-		logicalNew := g.FactsByLogicalKey()
-		for _, edge := range base.Graph.EdgeFacts {
-			from, ok := carried[edge.FromFactId]
-			if !ok {
-				continue
-			}
-			to := ""
-			targetKey := edge.TargetSymbolKey
-			if edge.ToFactId != "" {
-				if bf := base.Graph.Facts[edge.ToFactId]; bf != nil {
-					if nf := logicalNew[bf.LogicalKey]; nf != nil {
-						to = nf.Id
-						targetKey = ""
-					}
-				}
-			}
-			g.AdoptEdgeFact(edge, from, to, targetKey)
-		}
-	}
 	emitProgress(progress, Progress{Stage: "verify"})
-	for _, f := range snap.Sources {
-		b, e := os.ReadFile(filepath.Join(root, filepath.FromSlash(f.Path)))
-		if e != nil || graph.Hash(b) != f.Hash {
-			return nil, nil, false, fmt.Errorf("source changed during indexing: %s", f.Path)
-		}
+	afterProjects, afterSources, err := discover(ctx, root, req.ProjectRoots, req.Exclude, sources)
+	if err != nil {
+		return nil, nil, false, err
 	}
-	after, _, _, _, err := captureInputs(ctx, root, p.Config, req)
+	after, _, _, _, err := fingerprintInputs(ctx, root, p.Config, req, afterProjects, afterSources)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -325,35 +273,6 @@ func anyBaseSourceRemoved(sources map[string]*graph.Source, baseSources map[stri
 		}
 	}
 	return false
-}
-
-// projectHasChange reports whether a project gained, lost, or modified any
-// source, requiring its indexer to run.
-func projectHasChange(project *pb.Project, sources map[string]*graph.Source, baseSources map[string]string, kept map[string]bool) bool {
-	root := strings.Trim(project.Root, "/")
-	for path := range sources {
-		if underRoot(path, root) && !kept[path] {
-			return true
-		}
-	}
-	for path := range baseSources {
-		if !underRoot(path, root) {
-			continue
-		}
-		if _, ok := sources[path]; !ok {
-			return true
-		}
-	}
-	return false
-}
-
-// underRoot reports whether a repository-relative path lies inside a project
-// root; "." covers the repository root.
-func underRoot(path, root string) bool {
-	if root == "" || root == "." {
-		return true
-	}
-	return path == root || strings.HasPrefix(path, root+"/")
 }
 
 // toolVersion probes an indexer for its version, tolerating tools whose version

@@ -35,10 +35,13 @@ import {
   type RepositoryGitHistory,
   type RepositoryMapProgress,
   type SnapshotDiff,
+  type RepositoryImpact as RepositoryImpactResult,
+  type LiveRepositoryImpact,
   type SnapshotSourceChange,
 } from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
 import RepositoryHistory from '../components/RepositoryHistory'
+import RepositoryChangeCanvas from '../components/RepositoryChangeCanvas'
 import {
   defaultRepositoryTargets,
   snapshotForTarget,
@@ -111,14 +114,15 @@ function ErrorMessage({ message }: { message: string }) {
   ) : null
 }
 
-function FileTree({ files }: { files: SnapshotSourceChange[] }) {
+function FileTree({ files, onSelect }: { files: SnapshotSourceChange[]; onSelect: (path: string) => void }) {
   const [closed, setClosed] = useState<Set<string>>(new Set())
   const entries = useMemo(() => {
     const folders = new Set<string>()
     const rows: {
       path: string
       directory: boolean
-      change?: SnapshotSourceChange['change']
+      linesAdded?: number
+      linesRemoved?: number
     }[] = []
     for (const file of [...files].sort((a, b) =>
       a.path.localeCompare(b.path),
@@ -131,7 +135,7 @@ function FileTree({ files }: { files: SnapshotSourceChange[] }) {
           rows.push({ path: folder, directory: true })
         }
       }
-      rows.push({ path: file.path, directory: false, change: file.change })
+      rows.push({ path: file.path, directory: false, linesAdded: file.linesAdded, linesRemoved: file.linesRemoved })
     }
     return rows
   }, [files])
@@ -150,8 +154,9 @@ function FileTree({ files }: { files: SnapshotSourceChange[] }) {
         .map((entry) => (
           <Flex
             key={entry.path}
-            pl={`${(entry.path.split('/').length - 1) * 12 + 4}px`}
-            py={1.5}
+            pl={`${(entry.path.split('/').length - 1) * 12 + 4 + (entry.directory ? 0 : 24)}px`}
+            py={0.5}
+            minH="22px"
             align="center"
             gap={2}
           >
@@ -159,6 +164,7 @@ function FileTree({ files }: { files: SnapshotSourceChange[] }) {
               <Button
                 variant="ghost"
                 size="xs"
+                h="18px"
                 p={0}
                 minW="16px"
                 aria-label={`${closed.has(entry.path) ? 'Expand' : 'Collapse'} ${entry.path}`}
@@ -177,27 +183,16 @@ function FileTree({ files }: { files: SnapshotSourceChange[] }) {
                   <ChevronLeftIcon transform="rotate(-90deg)" />
                 )}
               </Button>
-            ) : (
-              <Badge
-                fontSize="2xs"
-                colorScheme={
-                  entry.change === 'added'
-                    ? 'green'
-                    : entry.change === 'removed'
-                      ? 'red'
-                      : 'yellow'
-                }
-              >
-                {entry.change === 'added'
-                  ? 'A'
-                  : entry.change === 'removed'
-                    ? 'D'
-                    : 'M'}
-              </Badge>
-            )}
-            <Text fontSize="xs" color="gray.300" isTruncated title={entry.path}>
+            ) : null}
+            <Text as={entry.directory ? 'span' : 'button'} onClick={() => { if (!entry.directory) onSelect(entry.path) }} flex={1} minW={0} fontSize="xs" lineHeight="18px" color="gray.300" textAlign="left" isTruncated title={entry.path}>
               {entry.path.split('/').pop()}
             </Text>
+            {!entry.directory && entry.linesAdded !== undefined && entry.linesRemoved !== undefined && (
+              <HStack spacing={1.5} flexShrink={0} fontSize="10px" lineHeight="18px" fontFamily="mono" aria-label={`${entry.linesAdded} lines added, ${entry.linesRemoved} lines removed`}>
+                <Text color="green.300">+{entry.linesAdded}</Text>
+                <Text color="red.300">−{entry.linesRemoved}</Text>
+              </HStack>
+            )}
           </Flex>
         ))}
     </Box>
@@ -369,7 +364,13 @@ export default function Repositories() {
   const [operationError, setOperationError] = useState('')
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<RepositoryMapProgress | null>(null)
-  const [diff, setDiff] = useState<SnapshotDiff | null>(null)
+  const [comparison, setComparison] = useState<RepositoryImpactResult | null>(null)
+  const [live, setLive] = useState<LiveRepositoryImpact | null>(null)
+  const [mode, setMode] = useState(() => params.get('mode') === 'live' ? 'live' : 'compare')
+  const [selectedPath, setSelectedPath] = useState('')
+  const liveVersion = useRef('')
+  const shownImpact = mode === 'live' ? live?.diagram ?? null : comparison
+  const diff: SnapshotDiff | null = shownImpact?.diff ?? null
   const [nonce, setNonce] = useState(0)
   const [limit, setLimit] = useState(50)
   const [repoToDelete, setRepoToDelete] = useState<IndexedRepository | null>(
@@ -409,6 +410,7 @@ export default function Repositories() {
         const next = new URLSearchParams(old)
         for (const [key, value] of Object.entries({
           repo: selectedId,
+          mode,
           base,
           head,
           branch,
@@ -422,7 +424,7 @@ export default function Repositories() {
       },
       { replace: true },
     )
-  }, [selectedId, base, head, branch, baseBranch, headBranch, setParams])
+  }, [selectedId, base, head, branch, baseBranch, headBranch, mode, setParams])
   useEffect(() => {
     let stale = false
     setDataError('')
@@ -486,15 +488,69 @@ export default function Repositories() {
     }
   }, [selectedId, branch, limit, nonce])
   useEffect(() => {
-    setDiff(null)
+    setComparison(null); setSelectedPath('')
     setOperationError('')
-  }, [selectedId, base, head, includeImports])
+  }, [selectedId, base, head])
   useEffect(
     () => () => {
       operation.current?.abort()
     },
     [],
   )
+  useEffect(() => {
+    if (mode !== 'live' || !selectedId) return
+    const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout>
+    let fetching = false
+    const poll = async () => {
+      if (controller.signal.aborted || fetching) return
+      if (typeof document !== 'undefined' && document.hidden) return
+      fetching = true
+      try {
+        if (!operation.current) {
+          const result = await api.repositories.liveImpact(selectedId, controller.signal)
+          if (!controller.signal.aborted && !operation.current) {
+            setLive((old) => ({ ...result, diagram: result.diagram?.version === old?.diagram?.version ? old?.diagram ?? null : result.diagram }))
+            setOperationError('')
+            if (result.diagram && result.diagram.version !== liveVersion.current) {
+              liveVersion.current = result.diagram.version
+              setNonce((n) => n + 1)
+              void reload()
+            }
+          }
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) setOperationError(err instanceof Error ? err.message : 'Could not load live changes')
+      } finally {
+        fetching = false
+        if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 2000)
+      }
+    }
+    const visibility = () => { if (!document.hidden) { clearTimeout(timer); void poll() } }
+    void poll()
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', visibility)
+    return () => { controller.abort(); clearTimeout(timer); if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', visibility) }
+  }, [mode, selectedId, reload])
+  const changeMode = (next: string) => {
+    operation.current?.abort(); operation.current = null
+    setBusy(false); setProgress(null); setOperationError(''); setSelectedPath(''); setMode(next)
+  }
+  const changeRadius = async (radius: number) => {
+    if (!shownImpact || busy) return
+    const repositoryId = selectedId
+    const key = shownImpact.comparisonKey
+    const controller = new AbortController()
+    operation.current = controller; setBusy(true); setOperationError('')
+    try {
+      const result = await api.repositories.impactRadius(repositoryId, key, radius, controller.signal)
+      if (!controller.signal.aborted && selectedRef.current === repositoryId && operation.current === controller) {
+        if (mode === 'live') setLive((old) => old ? { ...old, diagram: result } : old)
+        else setComparison(result)
+      }
+    } catch (err) {
+      if (!controller.signal.aborted && selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not update blast radius')
+    } finally { if (operation.current === controller) { operation.current = null; setBusy(false) } }
+  }
   const selectRepo = (id: string) => {
     if (id === selectedId) return
     operation.current?.abort()
@@ -503,6 +559,8 @@ export default function Repositories() {
     setProgress(null)
     setSnapshots([])
     setMaps([])
+    setLive(null)
+    liveVersion.current = ''
     setHistory(null)
     setBase('')
     setHead('')
@@ -510,7 +568,7 @@ export default function Repositories() {
     setBaseBranch('')
     setHeadBranch('')
     setLimit(50)
-    setDiff(null)
+    setComparison(null); setSelectedPath('')
     initialized.current = ''
     restored.current = { base: '', head: '' }
     setSelectedId(id)
@@ -535,7 +593,7 @@ export default function Repositories() {
     setBusy(true)
     setOperationError('')
     setProgress(null)
-    setDiff(null)
+    setComparison(null); setSelectedPath('')
     const isActive = () =>
       !controller.signal.aborted &&
       selectedRef.current === repositoryId &&
@@ -551,20 +609,11 @@ export default function Repositories() {
       })
     try {
       if (kind === 'compare') {
-        const from = await map(base, baseBranch)
-        if (!isActive()) return
-        const to =
-          base === head && base !== 'working_tree'
-            ? from
-            : await map(head, headBranch)
-        if (!isActive()) return
-        if (!from.snapshotId || !to.snapshotId)
-          throw new Error('Map completed without a resolved snapshot')
-        const result = await api.repositories.diff({
-          fromSnapshotId: from.snapshotId,
-          toSnapshotId: to.snapshotId,
+        const result = await api.repositories.compare(repositoryId, {
+          base: targetMapOptions(base, baseBranch), head: targetMapOptions(head, headBranch),
+          signal: controller.signal, onProgress: (next) => { if (isActive()) setProgress(next) },
         })
-        if (isActive()) setDiff(result)
+        if (isActive()) setComparison(result)
       } else {
         await map(
           kind === 'base' ? base : head,
@@ -976,20 +1025,30 @@ export default function Repositories() {
                   borderBottom="1px solid"
                   borderColor="whiteAlpha.100"
                 >
+                  <Button size="xs" variant={mode === 'compare' ? 'solid' : 'ghost'} data-testid="repositories-compare-tab" aria-pressed={mode === 'compare'} onClick={() => changeMode('compare')}>Compare</Button>
+                  <Button size="xs" variant={mode === 'live' ? 'solid' : 'ghost'} data-testid="repositories-live-tab" aria-pressed={mode === 'live'} onClick={() => changeMode('live')}>Live changes</Button>
                   <Button
                     size="xs"
                     variant="ghost"
                     aria-expanded={!compareCollapsed}
                     onClick={() => setCompareCollapsed(!compareCollapsed)}
                   >
-                    Compare
+                    {compareCollapsed ? 'Expand' : 'Collapse'}
                   </Button>
                   <Box flex={1} />
                   <Text fontSize="xs" color="gray.500">
-                    Select snapshots or Git revisions
+                    {mode === 'live' ? 'Current commit → pending changes' : 'Select snapshots or Git revisions'}
                   </Text>
                 </Flex>
-                {!compareCollapsed && (
+                {mode === 'live' && (
+                  <Box p={4} borderBottom="1px solid" borderColor="whiteAlpha.100">
+                    <HStack mb={2}><Badge colorScheme={live?.watching ? 'green' : 'gray'}>{live?.watching ? 'Watching' : 'Watcher inactive'}</Badge><Text fontSize="xs">{live?.gitBranch || 'Detached HEAD'} · {short(live?.gitRevision || '')}</Text></HStack>
+                    <Text fontSize="xs" color="gray.400">Base is the current commit. Head includes staged, unstaged, and non-ignored untracked files.</Text>
+                    {!live?.watching && <Text mt={2} fontSize="xs" color="gray.400">Run <Code>tld index {selected?.root} --watch</Code> to keep this diagram updated.</Text>}
+                    <ErrorMessage message={live?.error || ''} />
+                  </Box>
+                )}
+                {mode === 'compare' && !compareCollapsed && (
                   <Box
                     p={4}
                     borderBottom="1px solid"
@@ -1036,7 +1095,7 @@ export default function Repositories() {
                           onChange={(e) => setIncludeImports(e.target.checked)}
                         />
                         <Text fontSize="xs" color="gray.400">
-                          Include external imports
+                          Include external imports in full maps
                         </Text>
                       </HStack>
                       <Box flex={1} />
@@ -1045,7 +1104,7 @@ export default function Repositories() {
                         size="sm"
                         data-testid="repositories-compare"
                         isLoading={busy}
-                        loadingText="Preparing maps…"
+                        loadingText="Comparing…"
                         isDisabled={!base || !head || dataLoading}
                         onClick={() => void run('compare')}
                       >
@@ -1130,29 +1189,14 @@ export default function Repositories() {
                       <Badge fontSize="2xs">{diff?.sources.length ?? 0}</Badge>
                     </Flex>
                     {diff ? (
-                      <FileTree files={diff.sources} />
+                      <FileTree files={diff.sources} onSelect={setSelectedPath} />
                     ) : (
                       <Text px={3} fontSize="xs" color="gray.500">
                         Compare maps to see changed source files.
                       </Text>
                     )}
                   </Box>
-                  <Center flex={1} p={6} minH="260px">
-                    <VStack maxW="440px" textAlign="center" spacing={3}>
-                      <Badge colorScheme="gray">Not implemented yet</Badge>
-                      <Text fontSize="sm" fontWeight="semibold">
-                        Architecture impact analysis and comparison diagram
-                      </Text>
-                      <Text fontSize="sm" color="gray.500">
-                        Map prepares recorded snapshots. Their source changes
-                        are available here; architecture analysis and diagram
-                        rendering will be added later.
-                      </Text>
-                      <Button size="xs" variant="outline" isDisabled>
-                        Export architecture report
-                      </Button>
-                    </VStack>
-                  </Center>
+                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} busy={busy} selectedPath={selectedPath} onRadius={(radius) => void changeRadius(radius)} repositoryRoot={selected.root} />
                 </Flex>
               </>
             )}

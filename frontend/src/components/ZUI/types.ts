@@ -40,6 +40,7 @@ export interface ZUITestInteraction {
  * local coords into the node's own NODE_W × NODE_H world footprint.
  */
 export interface LayoutNode {
+  changeOverlay?: ZUIChangeOverlay
   // ── Identity ────────────────────────────────────────────────────
   /** Unique stable id: "d{diagramId}-o{elementId}" */
   id: string
@@ -98,6 +99,15 @@ export interface LayoutNode {
     targetHandle: string | null
     type: string
   }>
+}
+
+/** Transient repository comparison annotations; never workspace resources. */
+export interface ZUIChangeOverlay {
+  change: 'added' | 'removed' | 'modified' | 'unchanged'
+  path: string
+  linesAdded?: number
+  linesRemoved?: number
+  symbols: string[]
 }
 
 /** Top-level group wrapping one root diagram. */

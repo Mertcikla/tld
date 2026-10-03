@@ -27,6 +27,9 @@ func RepositoryID(root string) string { return ID(filepath.Clean(root)) }
 type Source struct {
 	Path, Language, Hash string
 	Text                 []byte
+	InputBlob            string
+	Dirty                bool
+	SyntaxCache          string
 	// lines caches the byte offset of each line start so Position and Offset
 	// resolve anchors in O(log n) instead of rescanning (and copying) the
 	// source for every occurrence.
@@ -184,17 +187,23 @@ func Offset(b []byte, line, character int, encoding string) (int, error) {
 	return (&Source{Text: b}).Offset(line, character, encoding)
 }
 
+type ProjectArtifact struct {
+	Fingerprint string
+	Data        []byte
+}
+
 type Graph struct {
-	RepositoryID string
-	SnapshotID   string
-	Sources      map[string]*Source
-	Facts        map[string]*pb.CodeFact
-	Chunks       map[string]*pb.Chunk
-	EdgeFacts    map[string]*pb.EdgeFact
+	ProjectArtifacts map[string]ProjectArtifact
+	RepositoryID     string
+	SnapshotID       string
+	Sources          map[string]*Source
+	Facts            map[string]*pb.CodeFact
+	Chunks           map[string]*pb.Chunk
+	EdgeFacts        map[string]*pb.EdgeFact
 }
 
 func NewGraph(repo, snapshot string) *Graph {
-	return &Graph{RepositoryID: repo, SnapshotID: snapshot, Sources: map[string]*Source{}, Facts: map[string]*pb.CodeFact{}, Chunks: map[string]*pb.Chunk{}, EdgeFacts: map[string]*pb.EdgeFact{}}
+	return &Graph{ProjectArtifacts: map[string]ProjectArtifact{}, RepositoryID: repo, SnapshotID: snapshot, Sources: map[string]*Source{}, Facts: map[string]*pb.CodeFact{}, Chunks: map[string]*pb.Chunk{}, EdgeFacts: map[string]*pb.EdgeFact{}}
 }
 func (g *Graph) AddFact(kind pb.FactKind, name, language string, anchor *pb.SourceAnchor, code, signature string, evidence *pb.Evidence) *pb.CodeFact {
 	id := ID(g.SnapshotID, "fact", anchor.Path, fmt.Sprint(anchor.StartByte), fmt.Sprint(anchor.EndByte), kind.String(), name)

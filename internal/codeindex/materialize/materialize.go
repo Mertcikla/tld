@@ -149,7 +149,7 @@ func Apply(ctx context.Context, ws core.Store, idx IndexStore, proj project.Resu
 
 	// Prune resources that no longer appear, but never the view itself.
 	for key, m := range byKey {
-		if m.Kind == cstore.MappingView || kept[key] {
+		if m.Kind == cstore.MappingView || kept[key] || strings.HasPrefix(key, "impact|") || strings.HasPrefix(key, "map|") {
 			continue
 		}
 		switch m.Kind {

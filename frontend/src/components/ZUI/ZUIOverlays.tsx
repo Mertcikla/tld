@@ -312,6 +312,14 @@ export function ZUIHoverPopover({
               </PopoverHeader>
               <PopoverBody px={3} py={2.5}>
                 <VStack align="stretch" spacing={2}>
+                  {hoveredItem.data.changeOverlay && (
+                    <Box data-testid="zui-change-details">
+                      <Text fontSize="11px" fontWeight="semibold">{hoveredItem.data.changeOverlay.change} · {hoveredItem.data.changeOverlay.path}</Text>
+                      {hoveredItem.data.changeOverlay.linesAdded !== undefined && <HStack spacing={2} fontSize="11px"><Text color="green.300">+{hoveredItem.data.changeOverlay.linesAdded}</Text><Text color="red.300">−{hoveredItem.data.changeOverlay.linesRemoved ?? 0}</Text></HStack>}
+                      {hoveredItem.data.changeOverlay.symbols.slice(0, 6).map((symbol, i) => <Text key={i} fontSize="11px" color="gray.300">{symbol}</Text>)}
+                      {hoveredItem.data.changeOverlay.symbols.length > 6 && <Text fontSize="11px" color="gray.400">+{hoveredItem.data.changeOverlay.symbols.length - 6} more changed symbols</Text>}
+                    </Box>
+                  )}
                   {hoveredItem.data.technology && (
                     <Box>
                       <Text fontSize="11px" color="gray.300" noOfLines={1}>
@@ -335,7 +343,8 @@ export function ZUIHoverPopover({
                   )}
                   <Divider borderColor="whiteAlpha.100" />
                   <Button
-                    as={RouterLink}
+                    as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
+                    isDisabled={hoveredItem.data.diagramId < 0}
                     to={hoveredItem.data.isPortal
                       ? `/views/${hoveredItem.data.linkedDiagramId}`
                       : `/views/${hoveredItem.data.diagramId}?element=${hoveredItem.data.elementId}`}
@@ -397,7 +406,8 @@ export function ZUIHoverPopover({
                     {hoveredItem.data.details.ownerViewIds.slice(0, MAX_PROXY_HOVER_VIEW_LINKS).map((ownerViewId, index) => (
                       <Button
                         key={`${ownerViewId}-${index}`}
-                        as={RouterLink}
+                        as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
+                    isDisabled={hoveredItem.data.diagramId < 0}
                         to={`/views/${ownerViewId}`}
                         size="xs"
                         colorScheme="gray"
@@ -419,7 +429,8 @@ export function ZUIHoverPopover({
                   <Divider borderColor="whiteAlpha.200" />
                   <HStack width="full" spacing={2}>
                     <Button
-                      as={RouterLink}
+                      as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
+                    isDisabled={hoveredItem.data.diagramId < 0}
                       to={`/views/${hoveredItem.data.details!.connectors[0]?.source.anchorViewId ?? hoveredItem.data.diagramId}?element=${hoveredItem.data.sourceObjId}`}
                       size="xs"
                       colorScheme="gray"
@@ -431,7 +442,8 @@ export function ZUIHoverPopover({
                       Open Source
                     </Button>
                     <Button
-                      as={RouterLink}
+                      as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
+                    isDisabled={hoveredItem.data.diagramId < 0}
                       to={`/views/${hoveredItem.data.details!.connectors[0]?.target.anchorViewId ?? hoveredItem.data.diagramId}?element=${hoveredItem.data.targetObjId}`}
                       size="xs"
                       colorScheme="teal"
@@ -470,7 +482,8 @@ export function ZUIHoverPopover({
                   {hoveredItem.data.isPortalConn ? (
                     <>
                       <Button
-                        as={RouterLink}
+                        as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
+                    isDisabled={hoveredItem.data.diagramId < 0}
                         to={`/views/${hoveredItem.data.diagramId}`}
                         size="xs"
                         colorScheme="gray"
@@ -482,7 +495,8 @@ export function ZUIHoverPopover({
                         Open {hoveredItem.data.sourceId}
                       </Button>
                       <Button
-                        as={RouterLink}
+                        as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
+                    isDisabled={hoveredItem.data.diagramId < 0}
                         to={`/views/${hoveredItem.data.targetDiagId}`}
                         size="xs"
                         colorScheme="teal"
@@ -497,7 +511,8 @@ export function ZUIHoverPopover({
                   ) : (
                     <>
                       <Button
-                        as={RouterLink}
+                        as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
+                    isDisabled={hoveredItem.data.diagramId < 0}
                         to={`/views/${hoveredItem.data.diagramId}?element=${hoveredItem.data.sourceObjId}`}
                         size="xs"
                         colorScheme="gray"
@@ -509,7 +524,8 @@ export function ZUIHoverPopover({
                         Go to {hoveredItem.data.sourceId}
                       </Button>
                       <Button
-                        as={RouterLink}
+                        as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
+                    isDisabled={hoveredItem.data.diagramId < 0}
                         to={`/views/${hoveredItem.data.diagramId}?element=${hoveredItem.data.targetObjId}`}
                         size="xs"
                         colorScheme="teal"
@@ -551,7 +567,8 @@ export function ZUIHoverPopover({
                   </Text>
                   <Divider borderColor="whiteAlpha.200" />
                   <Button
-                    as={RouterLink}
+                    as={hoveredItem.data.diagramId > 0 ? RouterLink : undefined}
+                    isDisabled={hoveredItem.data.diagramId < 0}
                     to={`/views/${hoveredItem.data.diagramId}`}
                     size="xs"
                     colorScheme="teal"

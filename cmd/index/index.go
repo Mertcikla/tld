@@ -2,14 +2,14 @@ package index
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"sync"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -19,8 +19,11 @@ import (
 	ci "github.com/mertcikla/tld/v2/internal/codeindex/config"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
 	"github.com/mertcikla/tld/v2/internal/codeindex/embed"
+	"github.com/mertcikla/tld/v2/internal/codeindex/gitstate"
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
+	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	"github.com/mertcikla/tld/v2/internal/codeindex/parity"
 	"github.com/mertcikla/tld/v2/internal/codeindex/project"
@@ -56,9 +59,16 @@ in-tree codeindex engine and publishes an immutable snapshot.
 
 Embeddings are computed by default and require a running embedding server
 (start one with 'make embed-server'); pass --embed=false to publish a graph
-without vectors. Indexing only builds the code graph: pass --materialize to
-additionally project candidate elements and connectors into a workspace view.
-With --watch the repository is re-indexed incrementally as files change.`,
+without vectors. For a one-time index, pass --materialize to additionally
+project candidate elements and connectors into a workspace view.
+
+With --watch, Git's current commit is the Base and the combined staged,
+unstaged, and nonignored untracked files are the Head. Git changes trigger
+incremental indexing after a debounce. Each new commit gets an immutable
+snapshot from its committed contents. Watch always saves an affected-file
+change overlay, available in Repositories > Live changes; --materialize also
+updates the full map. Compare maps can compare commits or saved snapshots.
+The blast-radius slider adds existing unchanged elements by dependency hops.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.path = "."
@@ -68,12 +78,12 @@ With --watch the repository is re-indexed incrementally as files change.`,
 			return run(cmd, opts)
 		},
 	}
-	c.Flags().BoolVar(&opts.watch, "watch", false, "re-index incrementally as files change")
+	c.Flags().BoolVar(&opts.watch, "watch", false, "watch Git changes and update the live change overlay")
 	c.Flags().BoolVar(&opts.jsonOut, "json", false, "emit machine-readable JSON")
 	c.Flags().BoolVar(&opts.embed, "embed", true, "compute embeddings for the snapshot (requires a working embedding server)")
 	c.Flags().BoolVar(&opts.materialize, "materialize", false, "also materialize candidates into a workspace view (opt-in)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
-	c.Flags().DurationVar(&opts.pollInterval, "poll-interval", 2*time.Second, "file change polling interval")
+	c.Flags().DurationVar(&opts.pollInterval, "poll-interval", 2*time.Second, "Git change polling interval")
 	c.Flags().DurationVar(&opts.debounce, "debounce", 500*time.Millisecond, "delay used to batch file changes")
 	c.Flags().StringArrayVar(&opts.exclude, "exclude", nil, "repository-relative path to exclude (repeatable)")
 	return c
@@ -100,6 +110,13 @@ func run(cmd *cobra.Command, opts options) error {
 		return fmt.Errorf("index: %s is not a directory", opts.path)
 	}
 
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	if opts.pollInterval <= 0 || opts.debounce < 0 {
+		return fmt.Errorf("poll interval must be positive and debounce nonnegative")
+	}
 	global, err := workspace.LoadGlobalConfig()
 	if err != nil {
 		return err
@@ -132,8 +149,16 @@ func run(cmd *cobra.Command, opts options) error {
 		}
 	}
 	if opts.watch {
+		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		cmd.SetContext(ctx)
 		return eng.watch(ctx, cmd, root)
 	}
+	ctx, release, err := eng.store.AcquireLease(ctx, cgraph.RepositoryID(root))
+	if err != nil {
+		return err
+	}
+	defer release()
 	snap, report, mres, _, err := eng.buildAndPublish(ctx, root, nil)
 	if err != nil {
 		return err
@@ -153,12 +178,14 @@ var indexStageDisplay = map[string]string{
 var indexStageOrder = []string{
 	"Discover", "Parse sources", "Index symbols", "Relationships", "Infrastructure", "Verify",
 	"Publish snapshot", "Embeddings", "Materialize view",
+	"Save change overlay",
 }
 
 const (
 	stagePublish     = "Publish snapshot"
 	stageEmbeddings  = "Embeddings"
 	stageMaterialize = "Materialize view"
+	stageChanges     = "Save change overlay"
 )
 
 // indexJokes are rotated on the active stage line to keep long indexes
@@ -305,83 +332,187 @@ func changedFiles(base *indexer.IncrementalBase, snap *pb.Snapshot) map[string]b
 	return out
 }
 
-func (e *engine) loadBase(ctx context.Context, repoID string) *indexer.IncrementalBase {
-	latest, err := e.store.Latest(ctx, repoID)
-	if err != nil || latest == "" {
-		return nil
-	}
-	snap, err := e.store.Snapshot(ctx, latest)
-	if err != nil {
-		return nil
-	}
-	g, err := e.store.LoadGraph(ctx, latest)
-	if err != nil {
-		return nil
-	}
-	sources, err := e.store.SnapshotSources(ctx, latest)
-	if err != nil {
-		return nil
-	}
-	return &indexer.IncrementalBase{Graph: g, Snapshot: snap, Sources: sources}
-}
-
+// watch polls Git state and dirty content, never directory mtimes. Failed
+// captures remain pending and are retried without waiting for another edit.
 func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) error {
+	if _, err := gitstate.Run(ctx, root, "rev-parse", "--git-dir"); err != nil {
+		return fmt.Errorf("watch requires a Git repository: %w", err)
+	}
 	repoID := cgraph.RepositoryID(root)
-	base := e.loadBase(ctx, repoID)
-	snap, report, mres, reused, err := e.buildAndPublish(ctx, root, base)
-	if err != nil {
-		return err
-	}
-	if !reused {
-		if err := e.print(cmd, snap, report, mres); err != nil {
-			return err
-		}
-	}
-	sig, err := treeSignature(root)
-	if err != nil {
-		return err
-	}
-	prev := snap
-
-	ticker := time.NewTicker(e.opts.pollInterval)
-	defer ticker.Stop()
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watching %s for changes (poll %s)\n", root, e.opts.pollInterval)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-		}
-		next, err := treeSignature(root)
+	heartbeatCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	var mu sync.Mutex
+	branch, revision, message := "", "", ""
+	updateStatus := func(state gitstate.State, err error) {
+		mu.Lock()
+		branch, revision, message = state.Branch, state.Revision, ""
 		if err != nil {
-			return err
+			message = err.Error()
 		}
-		if next == sig {
-			continue
+		mu.Unlock()
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			mu.Lock()
+			b, r, m := branch, revision, message
+			mu.Unlock()
+			_ = e.store.WatchHeartbeat(heartbeatCtx, repoID, b, r, m, true)
+			select {
+			case <-heartbeatCtx.Done():
+				return
+			case <-ticker.C:
+			}
 		}
-		select {
-		case <-ctx.Done():
+	}()
+	defer func() {
+		stop()
+		<-done
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		_ = e.store.WatchHeartbeat(cleanup, repoID, branch, revision, message, false)
+	}()
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watching %s for Git changes (poll %s)\n", root, e.opts.pollInterval)
+	lastSignature, lastRevision := "", ""
+	var prev *pb.Snapshot
+	for {
+		if ctx.Err() != nil {
 			return nil
-		case <-time.After(e.opts.debounce):
 		}
-		sig = next
-		base = e.loadBase(ctx, repoID)
-		snap, report, mres, reused, err = e.buildAndPublish(ctx, root, base)
+		state, err := gitstate.Capture(ctx, root)
+		if err == nil && state.Signature != lastSignature {
+			// Read again after the debounce, restarting whenever inputs change.
+			for {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(e.opts.debounce):
+				}
+				next, captureErr := gitstate.Capture(ctx, root)
+				if captureErr != nil {
+					err = captureErr
+					break
+				}
+				if next.Signature == state.Signature {
+					break
+				}
+				state = next
+			}
+			if err == nil {
+				var snap *pb.Snapshot
+				var report parity.Report
+				var mres *materialize.Result
+				snap, report, mres, err = e.scanWatched(ctx, root, state, lastRevision)
+				if err == nil {
+					if prev == nil || prev.Id != snap.Id {
+						if prev != nil {
+							e.printDiff(cmd, prev.Id, snap.Id)
+						}
+						if err = e.print(cmd, snap, report, mres); err != nil {
+							return err
+						}
+					}
+					prev = snap
+					lastSignature, lastRevision = state.Signature, state.Revision
+				}
+			}
+		}
+		updateStatus(state, err)
 		if err != nil {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "index error: %v\n", err)
-			continue
 		}
-		if reused {
-			continue
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(e.opts.pollInterval):
 		}
-		if prev != nil {
-			e.printDiff(cmd, prev.Id, snap.Id)
-		}
-		if err := e.print(cmd, snap, report, mres); err != nil {
-			return err
-		}
-		prev = snap
 	}
+}
+
+func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.State, previousRevision string) (*pb.Snapshot, parity.Report, *materialize.Result, error) {
+	repoID := cgraph.RepositoryID(root)
+	ctx, release, err := e.store.AcquireLease(ctx, repoID)
+	if err != nil {
+		return nil, parity.Report{}, nil, err
+	}
+	defer release()
+	out := e.out
+	if e.opts.jsonOut {
+		out = io.Discard
+	}
+	tracker := term.NewStageTracker(out, indexStageOrder, term.StageTrackerOptions{Jokes: indexJokes})
+	defer tracker.Finish()
+	engine := ingest.Engine{Store: e.store, Config: e.cfg, Root: root, RepositoryID: repoID, Exclude: e.opts.exclude, Progress: func(p indexer.Progress) { tracker.Report(displayStage(p.Stage), p.Current, p.Total, p.Detail) }}
+	if previousRevision == "" {
+		if live, loadErr := e.store.Impact(ctx, repoID, "live"); loadErr == nil {
+			previousRevision = live.Diff.FromGitRevision
+		}
+	}
+	commits, err := gitstate.Commits(ctx, root, previousRevision, state.Revision)
+	if err != nil {
+		return nil, parity.Report{}, nil, err
+	}
+	for _, revision := range commits {
+		if _, err = engine.Prepare(ctx, &pb.ComparisonTarget{GitRevision: revision, GitBranch: state.Branch}); err != nil {
+			return nil, parity.Report{}, nil, err
+		}
+	}
+	base, err := engine.Prepare(ctx, &pb.ComparisonTarget{GitRevision: state.Revision, GitBranch: state.Branch})
+	if err != nil {
+		return nil, parity.Report{}, nil, err
+	}
+	snap, err := engine.Prepare(ctx, &pb.ComparisonTarget{WorkingTree: true})
+	if err != nil {
+		return nil, parity.Report{}, nil, err
+	}
+	after, err := gitstate.Capture(ctx, root)
+	if err != nil {
+		return nil, parity.Report{}, nil, err
+	}
+	if after.Signature != state.Signature {
+		return nil, parity.Report{}, nil, fmt.Errorf("git inputs changed during indexing; retrying")
+	}
+	if err = e.store.AdvanceLatest(ctx, repoID, snap.Id); err != nil {
+		return nil, parity.Report{}, nil, err
+	}
+	g, err := e.store.LoadGraph(ctx, snap.Id)
+	if err != nil {
+		return nil, parity.Report{}, nil, err
+	}
+	if e.opts.embed {
+		tracker.Begin(stageEmbeddings)
+		client := embed.Client{Config: e.cfg, Store: e.store, Progress: func(current, total int, detail string) {
+			tracker.Report(stageEmbeddings, int64(current), int64(total), detail)
+		}}
+		if err = client.Embed(ctx, snap); err != nil {
+			return nil, parity.Report{}, nil, err
+		}
+	}
+	var mres *materialize.Result
+	if e.opts.materialize {
+		tracker.Begin(stageMaterialize)
+		incremental, err := engine.Base(ctx, base.Id)
+		if err != nil {
+			return nil, parity.Report{}, nil, err
+		}
+		result, err := e.materializeSnapshot(ctx, snap, g, changedFiles(incremental, snap))
+		if err != nil {
+			return nil, parity.Report{}, nil, err
+		}
+		mres = &result
+	}
+	radius := uint32(0)
+	if recorded, loadErr := e.store.Impact(ctx, repoID, "live"); loadErr == nil {
+		radius = recorded.Radius
+	}
+	tracker.Begin(stageChanges)
+	if _, err = impact.Save(ctx, e.ws, e.store, repoID, "live", base.Id, snap.Id, radius); err != nil {
+		return nil, parity.Report{}, nil, err
+	}
+	return snap, parity.Summarize(snap, g), mres, nil
 }
 
 func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Report, mres *materialize.Result) error {
@@ -427,32 +558,6 @@ func (e *engine) printDiff(cmd *cobra.Command, fromID, toID string) {
 	modified := len(diff.Facts.Modified)
 	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "changed: %d sources, +%d -%d ~%d facts\n",
 		len(diff.Sources), added, removed, modified)
-}
-
-func treeSignature(root string) (string, error) {
-	h := sha256.New()
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return nil
-		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "node_modules", "vendor", "dist", "build", ".tld":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		_, _ = fmt.Fprintf(h, "%s|%d|%d\n", path, info.Size(), info.ModTime().UnixNano())
-		return nil
-	})
-	if err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func shortHash(s string) string {

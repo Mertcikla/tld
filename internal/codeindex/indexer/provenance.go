@@ -35,7 +35,23 @@ func captureInputs(ctx context.Context, root string, cfg config.Config, req *pb.
 	if err != nil {
 		return "", "", "", "", err
 	}
+	return fingerprintInputs(ctx, root, cfg, req, projects, sources)
+}
+
+func fingerprintInputs(ctx context.Context, root string, cfg config.Config, req *pb.IndexRequest, projects []*pb.Project, sources map[string]*graph.Source) (fingerprint, revision, branch, provenance string, err error) {
 	parts := []string{ConfigurationHash(cfg, req)}
+	artifactRoots := make([]string, 0, len(req.ScipArtifacts))
+	for key := range req.ScipArtifacts {
+		artifactRoots = append(artifactRoots, key)
+	}
+	sort.Strings(artifactRoots)
+	for _, key := range artifactRoots {
+		raw, e := os.ReadFile(req.ScipArtifacts[key])
+		if e != nil {
+			return "", "", "", "", e
+		}
+		parts = append(parts, key, graph.Hash(raw))
+	}
 	paths := make([]string, 0, len(sources))
 	for path := range sources {
 		paths = append(paths, path)

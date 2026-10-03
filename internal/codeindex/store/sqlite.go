@@ -40,7 +40,7 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 			repoID, root, snap.Id, now, now, advanceLatest).Exec(ctx); err != nil {
 			return fmt.Errorf("upsert repository: %w", err)
 		}
-		for _, table := range []string{"codeindex_sources", "codeindex_facts", "codeindex_chunks", "codeindex_edges"} {
+		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_facts", "codeindex_chunks", "codeindex_edges"} {
 			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?", snap.Id).Exec(ctx); err != nil {
 				return fmt.Errorf("clear %s: %w", table, err)
 			}
@@ -91,15 +91,25 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 }
 
 func saveSources(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph) error {
+	if g != nil {
+		for key, artifact := range g.ProjectArtifacts {
+			if _, err := tx.NewRaw(`INSERT INTO codeindex_project_artifacts (snapshot_id, project_key, fingerprint, data) VALUES (?, ?, ?, ?)`, snap.Id, key, artifact.Fingerprint, artifact.Data).Exec(ctx); err != nil {
+				return err
+			}
+		}
+	}
 	for _, src := range snap.Sources {
 		var content []byte
+		var language, blob, cache string
+		var dirty bool
 		if g != nil {
 			if s := g.Sources[src.Path]; s != nil {
 				content = s.Text
+				language, blob, cache, dirty = s.Language, s.InputBlob, s.SyntaxCache, s.Dirty
 			}
 		}
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_sources (snapshot_id, path, hash, size, content)
-			VALUES (?, ?, ?, ?, ?)`, snap.Id, src.Path, src.Hash, src.Size, content).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO codeindex_sources (snapshot_id, path, hash, size, content, language, input_blob, dirty, syntax_cache)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, snap.Id, src.Path, src.Hash, src.Size, content, language, blob, dirty, cache).Exec(ctx); err != nil {
 			return fmt.Errorf("insert source %s: %w", src.Path, err)
 		}
 	}

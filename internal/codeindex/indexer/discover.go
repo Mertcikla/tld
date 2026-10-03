@@ -2,21 +2,26 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/tld/v2/internal/codeindex/gitstate"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/parser"
 )
 
 func Discover(ctx context.Context, root string, overrides, excludes []string) ([]*pb.Project, map[string]*graph.Source, error) {
+	return discover(ctx, root, overrides, excludes, nil)
+}
+
+func discover(ctx context.Context, root string, overrides, excludes []string, base map[string]*graph.Source) ([]*pb.Project, map[string]*graph.Source, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, nil, err
@@ -34,12 +39,28 @@ func Discover(ctx context.Context, root string, overrides, excludes []string) ([
 	}
 	var projects []*pb.Project
 	sources := map[string]*graph.Source{}
-	ignore := func(rel string) bool {
-		c := exec.CommandContext(ctx, "git", "check-ignore", "-q", "--", rel)
-		c.Dir = root
-		return c.Run() == nil
+	state := gitstate.State{}
+	isGit := false
+	if _, e := gitstate.Run(ctx, root, "rev-parse", "--git-dir"); e == nil {
+		isGit = true
+		state, err = gitstate.Capture(ctx, root)
+		if err != nil {
+			// Discovery also supports unborn repositories; watching requires a commit.
+			if _, headErr := gitstate.Resolve(ctx, root, "HEAD"); headErr == nil {
+				return nil, nil, err
+			}
+			listed, e := gitstate.Run(ctx, root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+			if e != nil {
+				return nil, nil, e
+			}
+			for _, path := range strings.Split(listed, "\x00") {
+				if path != "" {
+					state.Paths = append(state.Paths, path)
+				}
+			}
+		}
 	}
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+	visit := func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -58,45 +79,61 @@ func Discover(ctx context.Context, root string, overrides, excludes []string) ([
 			return nil
 		}
 		if d.IsDir() {
-			if parser.SkipDirs[d.Name()] || excluded(rel, excludes) || ignore(rel) {
+			if parser.SkipDirs[d.Name()] || excluded(rel, excludes) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if excluded(rel, excludes) || ignore(rel) || isTestSource(rel) {
+		for _, part := range strings.Split(rel, "/") {
+			if parser.SkipDirs[part] || part == ".tld" {
+				return nil
+			}
+		}
+		if excluded(rel, excludes) || isTestSource(rel) {
 			return nil
 		}
 		if lang := projectLanguage(d.Name()); lang != "" {
 			projects = append(projects, &pb.Project{Root: filepath.ToSlash(filepath.Dir(rel)), Language: lang, ConfigPath: rel})
 		}
 		lang := sourceLanguage(rel)
-		if lang == "" {
-			if !parser.IsInfraSource(d.Name(), rel) {
-				return nil
-			}
-			b, err := os.ReadFile(path)
-			if err != nil {
-				return err
-			}
-			if !utf8.Valid(b) || len(b) > 2<<20 {
-				return nil
-			}
-			sources[rel] = &graph.Source{Path: rel, Language: "", Text: b, Hash: graph.Hash(b)}
+		if lang == "" && !parser.IsInfraSource(d.Name(), rel) {
 			return nil
 		}
-		b, err := os.ReadFile(path)
+		if old := base[rel]; old != nil && isGit && old.InputBlob != "" && old.InputBlob == state.Blobs[rel] && !old.Dirty && !state.Dirty[rel] {
+			sources[rel] = &graph.Source{Path: rel, Language: old.Language, Text: old.Text, Hash: old.Hash, InputBlob: old.InputBlob, SyntaxCache: old.SyntaxCache}
+			return nil
+		}
+		raw, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		// Files that cannot be represented as UTF-8 or that exceed the size
-		// budget are skipped rather than failing the whole repository: a single
-		// stray binary asset should not block indexing.
-		if !utf8.Valid(b) || len(b) > 2<<20 {
+		if !utf8.Valid(raw) || len(raw) > 2<<20 {
 			return nil
 		}
-		sources[rel] = &graph.Source{Path: rel, Language: lang, Text: b, Hash: graph.Hash(b)}
+		src := &graph.Source{Path: rel, Language: lang, Text: raw, Hash: graph.Hash(raw), InputBlob: state.Blobs[rel], Dirty: state.Dirty[rel]}
+		if old := base[rel]; old != nil && old.Hash == src.Hash {
+			src.SyntaxCache = old.SyntaxCache
+		}
+		sources[rel] = src
 		return nil
-	})
+	}
+	if isGit {
+		for _, rel := range state.Paths {
+			path := filepath.Join(root, filepath.FromSlash(rel))
+			info, e := os.Lstat(path)
+			if errors.Is(e, os.ErrNotExist) {
+				continue
+			}
+			if e != nil {
+				return nil, nil, e
+			}
+			if e = visit(path, fs.FileInfoToDirEntry(info), nil); e != nil {
+				return nil, nil, e
+			}
+		}
+	} else {
+		err = filepath.WalkDir(root, visit)
+	}
 	if err != nil {
 		return nil, nil, err
 	}

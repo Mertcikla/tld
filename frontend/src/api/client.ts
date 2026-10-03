@@ -85,6 +85,8 @@ import {
   RepositoryService,
   type Snapshot as CodeSnapshotProto,
   type SnapshotDiff as SnapshotDiffProto,
+  type ImpactDiagram as ImpactDiagramProto,
+  type CodeFact,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset } from '../config/runtime'
@@ -178,6 +180,8 @@ export interface SnapshotSourceChange {
   change: SnapshotChangeKind
   fromHash: string
   toHash: string
+  linesAdded?: number
+  linesRemoved?: number
 }
 
 export interface SnapshotDeltaCounts {
@@ -194,6 +198,42 @@ export interface SnapshotDiff {
   sources: SnapshotSourceChange[]
   facts: SnapshotDeltaCounts
   edgeFacts: SnapshotDeltaCounts
+  factDetails?: ImpactSymbols
+}
+
+export interface ImpactSymbols {
+  added: CodeFact[]
+  removed: CodeFact[]
+  modified: CodeFact[]
+}
+export interface ImpactFileNode {
+  key: string
+  path: string
+  name: string
+  change: SnapshotSourceChange['change'] | 'unchanged'
+  context: boolean
+  elementId: number
+  symbols: ImpactSymbols
+  x: number
+  y: number
+}
+export interface RepositoryImpact {
+  repositoryId: string
+  comparisonKey: string
+  viewId: number
+  diff: SnapshotDiff
+  nodes: ImpactFileNode[]
+  edges: { fromKey: string; toKey: string; change: SnapshotSourceChange['change'] | 'unchanged'; weight: number }[]
+  radius: number
+  maxRadius: number
+  version: string
+}
+export interface LiveRepositoryImpact {
+  diagram: RepositoryImpact | null
+  watching: boolean
+  error: string
+  gitBranch: string
+  gitRevision: string
 }
 
 // RepositoryMapProgress reports coarse mapper pipeline progress.
@@ -412,9 +452,28 @@ export function mapSnapshotDiff(diff: SnapshotDiffProto): SnapshotDiff {
       change: mapSnapshotChangeKind(source.change),
       fromHash: source.fromHash,
       toHash: source.toHash,
+      linesAdded: source.linesAdded,
+      linesRemoved: source.linesRemoved,
     })),
     facts: mapSnapshotDeltaCounts(diff.facts),
+    factDetails: { added: diff.facts?.added ?? [], removed: diff.facts?.removed ?? [], modified: diff.facts?.modified ?? [] },
     edgeFacts: mapSnapshotDeltaCounts(diff.edgeFacts),
+  }
+}
+
+function mapImpact(diagram: ImpactDiagramProto): RepositoryImpact {
+  if (!diagram.diff) throw new Error('Impact diagram has no comparison')
+  const change = (kind: ChangeKind) => kind === ChangeKind.UNSPECIFIED ? 'unchanged' as const : mapSnapshotChangeKind(kind)
+  return {
+    repositoryId: diagram.repositoryId, comparisonKey: diagram.comparisonKey,
+    viewId: Number(diagram.viewId), diff: mapSnapshotDiff(diagram.diff),
+    radius: diagram.radius, maxRadius: diagram.maxRadius, version: diagram.version,
+    nodes: diagram.nodes.map((node) => ({
+      key: node.key, path: node.path, name: node.name, change: change(node.change),
+      context: node.context, elementId: Number(node.elementId), x: node.x, y: node.y,
+      symbols: { added: node.symbols?.added ?? [], removed: node.symbols?.removed ?? [], modified: node.symbols?.modified ?? [] },
+    })),
+    edges: diagram.edges.map((edge) => ({ ...edge, change: change(edge.change) })),
   }
 }
 
@@ -1871,6 +1930,26 @@ export const api = {
         throw e
       }
     },
+    compare: async (repositoryId: string, options: {
+      base: RepositoryMapOptions; head: RepositoryMapOptions; radius?: number
+      signal?: AbortSignal; onProgress?: (progress: RepositoryMapProgress) => void
+    }): Promise<RepositoryImpact> => {
+      const stream = codeIndexMapperClient.compareRepository({ repositoryId, base: options.base, head: options.head, radius: options.radius ?? 0 }, { signal: options.signal })
+      let result: RepositoryImpact | null = null
+      for await (const event of stream) {
+        if (event.event.case === 'progress') options.onProgress?.(event.event.value)
+        if (event.event.case === 'result') result = mapImpact(event.event.value)
+      }
+      if (!result) throw new Error('Comparison finished without a diagram')
+      return result
+    },
+    liveImpact: (repositoryId: string, signal?: AbortSignal): Promise<LiveRepositoryImpact> => rpc(async () => {
+      const result = await codeIndexMapperClient.getLiveImpact({ repositoryId }, { signal })
+      return { ...result, diagram: result.diagram ? mapImpact(result.diagram) : null }
+    }),
+    impactRadius: (repositoryId: string, comparisonKey: string, radius: number, signal?: AbortSignal): Promise<RepositoryImpact> => rpc(async () =>
+      mapImpact(await codeIndexMapperClient.setImpactRadius({ repositoryId, comparisonKey, radius }, { signal })),
+    ),
     delete: (repositoryId: string, options: { deleteMaterialized?: boolean } = {}): Promise<void> =>
       rpc(async () => {
         await codeIndexRepositoryClient.deleteRepository({

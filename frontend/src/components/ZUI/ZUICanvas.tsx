@@ -14,6 +14,8 @@ import { useZUICamera } from './useZUICamera'
 import { useZUIProxyConnectors } from './useZUIProxyConnectors'
 import { useZUIRenderLoop } from './useZUIRenderLoop'
 import { ZUIBreadcrumb, ZUIHoverPopover } from './ZUIOverlays'
+import { applyChangeOverlays } from './changeOverlay'
+import type { ZUIChangeOverlay } from './types'
 
 declare global {
   interface Window {
@@ -38,6 +40,8 @@ export interface ZUICameraFrame {
 }
 
 interface Props {
+  preserveCameraOnUpdate?: boolean
+  changeOverlays?: Record<number, ZUIChangeOverlay>
   data: ExploreData
   onReady?: () => void
   onZoom?: () => void
@@ -52,6 +56,8 @@ interface Props {
 }
 
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
+  preserveCameraOnUpdate = false,
+  changeOverlays,
   data,
   onReady,
   onZoom,
@@ -75,7 +81,10 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const debugViewport = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiCamera'), [])
   const debugTestState = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiTest'), [])
 
-  const layout = useMemo(() => computeLayout(data), [data])
+  const layout = useMemo(() => {
+    const base = computeLayout(data)
+    return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
+  }, [data, changeOverlays])
   const fittedLayoutRef = useRef(layout)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
 
@@ -208,6 +217,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     if (!initialized) return
     if (fittedLayoutRef.current === layout) return
     fittedLayoutRef.current = layout
+    if (preserveCameraOnUpdate) return
     const el = containerRef.current
     if (!el) return
     const w = el.offsetWidth
@@ -216,7 +226,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       setContainerSize({ w, h })
       fitInitialView(w, h)
     }
-  }, [fitInitialView, initialized, layout])
+  }, [fitInitialView, initialized, layout, preserveCameraOnUpdate])
 
   useEffect(() => {
     if (!debugViewport) return

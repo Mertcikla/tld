@@ -71,6 +71,11 @@ func (s *mapperService) MapRepository(ctx context.Context, req *connect.Request[
 		return connect.NewError(connect.CodeAlreadyExists, fmt.Errorf("a map is already running for this repository"))
 	}
 	defer s.end(repositoryID)
+	ctx, release, err := s.idx.AcquireLease(ctx, repositoryID)
+	if err != nil {
+		return impactError(err)
+	}
+	defer release()
 
 	send := func(progress *codeindexv1.MapProgress) {
 		_ = stream.Send(&codeindexv1.MapRepositoryEvent{Event: &codeindexv1.MapRepositoryEvent_Progress{Progress: progress}})

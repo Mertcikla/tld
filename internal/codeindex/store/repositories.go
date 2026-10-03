@@ -19,6 +19,7 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 		return fmt.Errorf("repository id is required")
 	}
 	snapshotScoped := []string{
+		"codeindex_project_artifacts",
 		"codeindex_embeddings",
 		"codeindex_fact_embeddings",
 		"codeindex_chunks",
@@ -41,6 +42,11 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_completed_maps WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
 			return err
+		}
+		for _, table := range []string{"codeindex_impacts", "codeindex_watch_state", "codeindex_leases"} {
+			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
+				return err
+			}
 		}
 		for _, table := range snapshotScoped {
 			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE snapshot_id IN (

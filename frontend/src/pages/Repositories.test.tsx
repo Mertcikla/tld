@@ -1,6 +1,6 @@
 import React from 'react'
 import { act, create } from 'react-test-renderer'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Repositories from './Repositories'
 
 const { navigateMock, searchParamsMock, setParamsMock } = vi.hoisted(() => ({ navigateMock: vi.fn(), searchParamsMock: vi.fn(), setParamsMock: vi.fn() }))
@@ -33,6 +33,12 @@ vi.mock('../api/client', () => ({
       maps: vi.fn(async () => []),
       history: vi.fn(async () => ({ commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
       diff: vi.fn(async () => null),
+      compare: vi.fn(async () => ({
+        repositoryId: 'repo-1', comparisonKey: 'pair', viewId: 9, version: 'v1', radius: 0, maxRadius: 2,
+        nodes: [], edges: [], diff: { fromSnapshotId: 'snap-0', toSnapshotId: 'snap-1', fromGitRevision: 'old', toGitRevision: 'abc', sources: [], facts: { added: 0, removed: 0, modified: 0 }, edgeFacts: { added: 0, removed: 0, modified: 0 } },
+      })),
+      liveImpact: vi.fn(async () => ({ diagram: null, watching: false, error: '', gitBranch: 'main', gitRevision: 'abc' })),
+      impactRadius: vi.fn(),
       delete: vi.fn(async () => {}),
       map: vi.fn(async (_repositoryId: string, handlers?: { onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void }) => {
         handlers?.onProgress?.({ stage: 'clustering', current: 1, total: 2, detail: 'grow' })
@@ -41,6 +47,8 @@ vi.mock('../api/client', () => ({
     },
   },
 }))
+
+vi.mock('../components/RepositoryChangeCanvas', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', { ...props, 'data-testid': 'mock-impact' }) }))
 
 vi.mock('../utils/toast', () => ({ toast: vi.fn() }))
 
@@ -100,6 +108,7 @@ vi.mock('@chakra-ui/react', async () => {
 })
 
 describe('Repositories map action', () => {
+  afterEach(() => { vi.useRealTimers() })
   beforeEach(() => {
     navigateMock.mockClear()
     vi.clearAllMocks()
@@ -162,17 +171,30 @@ describe('Repositories map action', () => {
     expect(api.repositories.delete).toHaveBeenCalledWith('repo-1', { deleteMaterialized: true })
     expect(api.repositories.list).toHaveBeenCalled()
   })
-  it('prepares both selected maps in order before comparing their resolved snapshot IDs', async () => {
+  it('compares selected targets without running full map materialization', async () => {
     const { api } = await import('../api/client')
-    vi.mocked(api.repositories.map)
-      .mockResolvedValueOnce({ snapshotId: 'resolved-base', runId: 'base-map', viewId: 5, facts: 1, clusters: 1, bins: 1, unclustered: 0, weightedTightness: 1 })
-      .mockResolvedValueOnce({ snapshotId: 'resolved-head', runId: 'head-map', viewId: 5, facts: 1, clusters: 1, bins: 1, unclustered: 0, weightedTightness: 1 })
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
-    expect(api.repositories.map).toHaveBeenNthCalledWith(1, 'repo-1', expect.objectContaining({ snapshotId: 'snap-0' }))
-    expect(api.repositories.map).toHaveBeenNthCalledWith(2, 'repo-1', expect.objectContaining({ snapshotId: 'snap-1' }))
-    expect(api.repositories.diff).toHaveBeenCalledWith({ fromSnapshotId: 'resolved-base', toSnapshotId: 'resolved-head' })
+    expect(api.repositories.compare).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: { snapshotId: 'snap-0' }, head: { snapshotId: 'snap-1' }, signal: expect.any(AbortSignal) }))
+    expect(api.repositories.map).not.toHaveBeenCalled()
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram.viewId).toBe(9)
+    renderer.unmount()
+  })
+
+  it('shows per-file insertion and deletion counts in the compact tree', async () => {
+    const { api } = await import('../api/client')
+    const result = await api.repositories.compare('repo-1', { base: { snapshotId: 'snap-0' }, head: { snapshotId: 'snap-1' } })
+    vi.mocked(api.repositories.compare).mockResolvedValueOnce({ ...result, diff: { ...result.diff, sources: [
+      { path: 'src/file.go', change: 'modified', fromHash: 'old', toHash: 'new', linesAdded: 12, linesRemoved: 3 },
+    ] } })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+    const counts = renderer.root.findAllByProps({ 'aria-label': '12 lines added, 3 lines removed' })[0]
+    expect(counts.findAll((node) => node.children.filter((child) => typeof child === 'string').join('') === '+12').length).toBeGreaterThan(0)
+    expect(counts.findAll((node) => node.children.filter((child) => typeof child === 'string').join('') === '−3').length).toBeGreaterThan(0)
+    renderer.unmount()
   })
 
   it('changes base and head independently and maps local working contents', async () => {
@@ -185,14 +207,14 @@ describe('Repositories map action', () => {
     expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ workingTree: true }))
   })
 
-  it('does not compare when preparing a map fails', async () => {
+  it('displays a failed comparison', async () => {
     const { api } = await import('../api/client')
-    vi.mocked(api.repositories.map).mockRejectedValueOnce(new Error('embedding service unavailable'))
+    vi.mocked(api.repositories.compare).mockRejectedValueOnce(new Error('comparison unavailable'))
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
     expect(api.repositories.diff).not.toHaveBeenCalled()
-    expect(renderer.root.findAll((node) => node.type === 'div' && node.children.includes('embedding service unavailable')).length).toBeGreaterThan(0)
+    expect(renderer.root.findAll((node) => node.type === 'div' && node.children.includes('comparison unavailable')).length).toBeGreaterThan(0)
   })
 
   it('restores targets from the URL and preserves them when browsing a branch', async () => {
@@ -207,33 +229,56 @@ describe('Repositories map action', () => {
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
   })
 
-  it('ignores a completed map when its operation was canceled', async () => {
+  it('ignores a comparison completed after cancellation', async () => {
     const { api } = await import('../api/client')
-    let finish!: (value: Awaited<ReturnType<typeof api.repositories.map>>) => void
-    vi.mocked(api.repositories.map).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    const result = await api.repositories.compare('repo-1', { base: {}, head: {} })
+    vi.mocked(api.repositories.compare).mockClear()
+    let finish!: (value: typeof result) => void
+    vi.mocked(api.repositories.compare).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
     act(() => { renderer.root.findAllByType('button').find((button) => button.children.includes('Cancel'))!.props.onClick() })
-    await act(async () => { finish({ snapshotId: 'cancelled', runId: 'map', viewId: 5, facts: 1, clusters: 1, bins: 1, unclustered: 0, weightedTightness: 1 }) })
-    expect(api.repositories.diff).not.toHaveBeenCalled()
-    expect(api.repositories.map).toHaveBeenCalledTimes(1)
+    await act(async () => { finish(result) })
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram).toBeNull()
+    renderer.unmount()
   })
 
-  it('ignores map completion after switching repositories', async () => {
+  it('ignores comparison completion after switching repositories', async () => {
     const { api } = await import('../api/client')
+    const result = await api.repositories.compare('repo-1', { base: {}, head: {} })
     const [first] = await api.repositories.list()
     vi.mocked(api.repositories.list).mockResolvedValueOnce([first, { ...first, id: 'repo-2', root: '/repo/other' }])
-    let finish!: (value: Awaited<ReturnType<typeof api.repositories.map>>) => void
-    vi.mocked(api.repositories.map).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
+    let finish!: (value: typeof result) => void
+    vi.mocked(api.repositories.compare).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'aria-label': 'Select other' }).props.onClick() })
-    await act(async () => { finish({ snapshotId: 'stale', runId: 'old-map', viewId: 5, facts: 1, clusters: 1, bins: 1, unclustered: 0, weightedTightness: 1 }) })
-    expect(api.repositories.diff).not.toHaveBeenCalled()
-    expect(api.repositories.map).toHaveBeenCalledTimes(1)
+    await act(async () => { finish(result) })
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram).toBeNull()
     expect(api.repositories.history).toHaveBeenLastCalledWith('repo-2', '', 50)
+    renderer.unmount()
+  })
+
+  it('loads live state without initiating maps and changes radius without reindexing', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    const diagram = await api.repositories.compare('repo-1', { base: {}, head: {} })
+    vi.mocked(api.repositories.compare).mockClear()
+    vi.mocked(api.repositories.liveImpact).mockResolvedValue({ diagram: { ...diagram, comparisonKey: 'live' }, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' })
+    vi.mocked(api.repositories.impactRadius).mockResolvedValue({ ...diagram, comparisonKey: 'live', radius: 1, version: 'v2' })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
+    expect(api.repositories.liveImpact).toHaveBeenCalledWith('repo-1', expect.any(AbortSignal))
+    expect(api.repositories.compare).not.toHaveBeenCalled()
+    expect(api.repositories.map).not.toHaveBeenCalled()
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.onRadius(1) })
+    expect(api.repositories.impactRadius).toHaveBeenCalledWith('repo-1', 'live', 1, expect.any(AbortSignal))
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram.radius).toBe(1)
+    await act(async () => { renderer.unmount() })
+    vi.useRealTimers()
   })
 
   it('ignores history and snapshot responses from a previously selected repository', async () => {

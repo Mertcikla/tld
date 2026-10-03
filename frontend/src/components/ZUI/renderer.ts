@@ -920,6 +920,28 @@ function drawSceneNode(
   }
 
 
+  if (layout.changeOverlay && parentAlpha > 0.05) {
+    const change = layout.changeOverlay
+    const color = { added: '#48bb78', removed: '#fc8181', modified: '#ecc94b', unchanged: '#718096' }[change.change]
+    ctx.save()
+    ctx.globalAlpha = parentAlpha
+    ctx.strokeStyle = color
+    ctx.lineWidth = 2.5 / drawZoom
+    ctx.setLineDash(change.change === 'removed' ? [5 / drawZoom, 3 / drawZoom] : [])
+    traceShape()
+    ctx.stroke()
+    if (drawScreenW > 70 && !renderCtx.lowDetail) {
+      const text = change.change === 'unchanged' ? 'Context' : `${change.change}  +${change.linesAdded ?? 0} −${change.linesRemoved ?? 0}`
+      ctx.font = '10px sans-serif'
+      ctx.fillStyle = nodeBg
+      ctx.fillRect(x + 4, y + h - 17, w - 8, 14)
+      ctx.fillStyle = color
+      ctx.textAlign = 'left'
+      ctx.fillText(text, x + 8, y + h - 6, w - 16)
+    }
+    ctx.restore()
+  }
+
   if (state.isLeafCapped) {
     ctx.restore()
   }

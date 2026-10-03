@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
@@ -17,6 +18,41 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 		return nil, err
 	}
 	g := graph.NewGraph(snap.RepositoryId, snap.Id)
+	rows, err := s.bun.QueryContext(ctx, `SELECT path, hash, content, language, input_blob, dirty, syntax_cache FROM codeindex_sources WHERE snapshot_id = ?`, snap.Id)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		src := &graph.Source{}
+		if err := rows.Scan(&src.Path, &src.Hash, &src.Text, &src.Language, &src.InputBlob, &src.Dirty, &src.SyntaxCache); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		g.Sources[src.Path] = src
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	rows, err = s.bun.QueryContext(ctx, `SELECT project_key, fingerprint, data FROM codeindex_project_artifacts WHERE snapshot_id = ?`, snap.Id)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var key string
+		var artifact graph.ProjectArtifact
+		if err := rows.Scan(&key, &artifact.Fingerprint, &artifact.Data); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		g.ProjectArtifacts[key] = artifact
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return nil, err
+	}
 	facts, err := s.Facts(ctx, snap.Id, pb.FactKind_FACT_KIND_UNSPECIFIED, "", "", graphLoadLimit)
 	if err != nil {
 		return nil, err
@@ -77,6 +113,9 @@ func (s *Store) Diff(ctx context.Context, fromID, toID string, sourcesOnly bool)
 		FromGitRevision: from.GitRevision,
 		ToGitRevision:   to.GitRevision,
 		Sources:         diffSources(from, to),
+	}
+	if err := s.sourceLineStats(ctx, diff.Sources); err != nil {
+		return nil, err
 	}
 	if sourcesOnly {
 		return diff, nil
@@ -159,11 +198,14 @@ func sameFact(a, b *pb.CodeFact) bool {
 		return false
 	}
 	if a.Anchor != nil {
-		if a.Anchor.Path != b.Anchor.Path || a.Anchor.StartByte != b.Anchor.StartByte || a.Anchor.EndByte != b.Anchor.EndByte {
+		if a.Anchor.Path != b.Anchor.Path {
 			return false
 		}
 	}
-	return graph.Hash([]byte(a.Code)) == graph.Hash([]byte(b.Code))
+	if a.Kind == pb.FactKind_FACT_KIND_FILE && a.Anchor != nil && a.Anchor.SourceHash != b.Anchor.SourceHash {
+		return false
+	}
+	return a.Documentation == b.Documentation && strings.Join(a.Imports, "\x00") == strings.Join(b.Imports, "\x00") && graph.Hash([]byte(a.Code)) == graph.Hash([]byte(b.Code))
 }
 
 func diffFacts(from, to []*pb.CodeFact) *pb.CodeFactDelta {
