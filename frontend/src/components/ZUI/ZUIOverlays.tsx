@@ -20,13 +20,33 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import { ExternalLinkIcon } from '@chakra-ui/icons'
-import { useEffect } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 import type { HoveredItem } from './types'
 import type { PathItem } from './camera'
 
 const MAX_PROXY_HOVER_VIEW_LINKS = 5
+const BREADCRUMB_MAX_LABEL_WIDTH = 200
+const BREADCRUMB_DESKTOP_RESERVE = 320
 
+function BreadcrumbItemIcon({ item }: { item: PathItem }) {
+  return (
+    <>
+      {item.type === 'group' && (
+        <Icon viewBox="0 0 24 24" boxSize={3} fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          <polyline points="9 22 9 12 15 12 15 22" />
+        </Icon>
+      )}
+      {item.isCircular && (
+        <Icon viewBox="0 0 24 24" boxSize={3.5} fill="none" stroke="currentColor" strokeWidth="3.5">
+          <path d="M20 4l-4 4 4 4" />
+          <path d="M16 8h-4a8 8 0 1 0 8 8" />
+        </Icon>
+      )}
+    </>
+  )
+}
 
 export function ZUIBreadcrumb({
   initialized,
@@ -39,59 +59,187 @@ export function ZUIBreadcrumb({
   currentPath: PathItem[]
   onZoomToPathItem: (item: PathItem) => void
 }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [overflowing, setOverflowing] = useState(false)
+  const [availableWidth, setAvailableWidth] = useState<number | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const measureRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return
+    const container = containerRef.current
+    const measure = measureRef.current
+    if (!container || !measure) return
+    const update = () => {
+      const maxWidth = Number.parseFloat(window.getComputedStyle(container).maxWidth)
+      const naturalWidth = measure.getBoundingClientRect().width
+      setAvailableWidth(Number.isFinite(maxWidth) ? maxWidth : null)
+      setOverflowing(Number.isFinite(maxWidth) && naturalWidth > maxWidth + 1)
+    }
+    update()
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', update)
+      return () => window.removeEventListener('resize', update)
+    }
+    const observer = new ResizeObserver(update)
+    observer.observe(container)
+    observer.observe(measure)
+    return () => observer.disconnect()
+  }, [currentPath, initialized, isMobileLayout])
+
   if (!initialized || currentPath.length === 0) return null
-  return (
-    <Box
-      data-testid="zui-breadcrumb"
-      position="absolute"
-      top={isMobileLayout ? '66px' : 4}
-      left={4}
-      zIndex={10}
-      className="glass"
-      borderRadius="lg"
-      px={3}
-      py={1.5}
-      pointerEvents="auto"
-    >
-      <Breadcrumb
-        spacing="8px"
-        separator={<Text color="whiteAlpha.400" fontSize="xs">/</Text>}
+
+  const lastIndex = currentPath.length - 1
+  const truncated = overflowing && currentPath.length > 2
+  const showMenu = truncated && menuOpen
+  const collapsedLabelMaxW = availableWidth !== null
+    ? Math.max(56, Math.floor((availableWidth - 88) / 2))
+    : BREADCRUMB_MAX_LABEL_WIDTH
+  const separator = <Text color="whiteAlpha.400" fontSize="xs">/</Text>
+
+  const renderLabel = (item: PathItem, maxLabelWidth = BREADCRUMB_MAX_LABEL_WIDTH) => (
+    <>
+      <BreadcrumbItemIcon item={item} />
+      <Text as="span" display="inline-block" isTruncated minW={0} maxW={`${maxLabelWidth}px`} verticalAlign="middle">
+        {item.label}
+      </Text>
+    </>
+  )
+
+  const renderCrumbLink = (item: PathItem, index: number, maxLabelWidth?: number) => {
+    const isLast = index === lastIndex
+    return (
+      <BreadcrumbLink
+        onClick={() => onZoomToPathItem(item)}
+        color={isLast ? 'var(--accent)' : 'gray.400'}
+        fontSize="xs"
+        fontWeight={isLast ? '600' : 'normal'}
+        _hover={{ color: 'var(--accent)', textDecoration: 'none' }}
+        display="flex"
+        alignItems="center"
+        gap={1.5}
+        minW={0}
       >
-        {currentPath.map((item, idx) => (
-          <BreadcrumbItem key={item.id} isCurrentPage={idx === currentPath.length - 1}>
-            <BreadcrumbLink
-              onClick={() => onZoomToPathItem(item)}
-              color={idx === currentPath.length - 1 ? 'var(--accent)' : 'gray.400'}
-              fontSize="xs"
-              fontWeight={idx === currentPath.length - 1 ? '600' : 'normal'}
-              _hover={{ color: 'var(--accent)', textDecoration: 'none' }}
-              display="flex"
-              alignItems="center"
-              gap={1.5}
+        {renderLabel(item, maxLabelWidth)}
+      </BreadcrumbLink>
+    )
+  }
+
+  return (
+    <>
+      <Box
+        ref={containerRef}
+        data-testid="zui-breadcrumb"
+        position="absolute"
+        top={isMobileLayout ? '66px' : 4}
+        left={4}
+        zIndex={10}
+        maxW={isMobileLayout ? 'calc(100vw - 32px)' : `max(160px, calc(50vw - ${BREADCRUMB_DESKTOP_RESERVE}px))`}
+        pointerEvents="auto"
+        onMouseEnter={() => setMenuOpen(true)}
+        onMouseLeave={() => setMenuOpen(false)}
+      >
+        <Box className="glass" borderRadius="lg" px={3} py={1.5} overflow="hidden" whiteSpace="nowrap">
+          <Breadcrumb spacing="8px" separator={separator}>
+            {truncated ? (
+              <>
+                <BreadcrumbItem minW={0}>{renderCrumbLink(currentPath[0], 0, collapsedLabelMaxW)}</BreadcrumbItem>
+                <BreadcrumbItem>
+                  <BreadcrumbLink
+                    aria-label="Show full path"
+                    onClick={() => setMenuOpen((open) => !open)}
+                    color="gray.500"
+                    fontSize="xs"
+                    _hover={{ color: 'var(--accent)', textDecoration: 'none' }}
+                  >
+                    …
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbItem isCurrentPage minW={0}>{renderCrumbLink(currentPath[lastIndex], lastIndex, collapsedLabelMaxW)}</BreadcrumbItem>
+              </>
+            ) : (
+              currentPath.map((item, idx) => (
+                <BreadcrumbItem key={item.id} isCurrentPage={idx === lastIndex}>
+                  {renderCrumbLink(item, idx)}
+                </BreadcrumbItem>
+              ))
+            )}
+          </Breadcrumb>
+          {currentPath[lastIndex]?.isCircular && (
+            <Text mt={1.5} color="var(--accent)" fontSize="2xs" fontWeight="500" letterSpacing="wide">
+              Recursive reference.
+            </Text>
+          )}
+        </Box>
+
+        {showMenu && (
+          <Box position="absolute" top="100%" left={0} pt={2} minW="220px" maxW="340px" zIndex={20}>
+            <Box
+              data-testid="zui-breadcrumb-menu"
+              className="glass"
+              border="1px solid"
+              borderColor="whiteAlpha.100"
+              borderRadius="lg"
+              boxShadow="0 12px 32px rgba(0,0,0,0.45)"
+              p={2}
+              maxH="60vh"
+              overflowY="auto"
             >
-              {item.type === 'group' && (
-                <Icon viewBox="0 0 24 24" boxSize={3} fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                  <polyline points="9 22 9 12 15 12 15 22" />
-                </Icon>
-              )}
-              {item.isCircular && (
-                <Icon viewBox="0 0 24 24" boxSize={3.5} fill="none" stroke="currentColor" strokeWidth="3.5">
-                  <path d="M20 4l-4 4 4 4" />
-                  <path d="M16 8h-4a8 8 0 1 0 8 8" />
-                </Icon>
-              )}
-              {item.label}
-            </BreadcrumbLink>
-          </BreadcrumbItem>
-        ))}
-      </Breadcrumb>
-      {currentPath[currentPath.length - 1]?.isCircular && (
-        <Text mt={1.5} color="var(--accent)" fontSize="2xs" fontWeight="500" letterSpacing="wide">
-          Recursive reference.
-        </Text>
-      )}
-    </Box>
+              <Box borderLeft="2px solid" borderColor="whiteAlpha.100" pl={1.5} ml={1}>
+                <VStack align="stretch" spacing={0.5}>
+                  {currentPath.map((item, idx) => {
+                    const isLast = idx === lastIndex
+                    return (
+                      <Box
+                        key={item.id}
+                        as="button"
+                        type="button"
+                        textAlign="left"
+                        display="flex"
+                        alignItems="center"
+                        gap={1.5}
+                        px={2}
+                        py={1}
+                        borderRadius="md"
+                        fontSize="xs"
+                        color={isLast ? 'var(--accent)' : 'gray.300'}
+                        fontWeight={isLast ? '600' : 'normal'}
+                        bg={isLast ? 'rgba(var(--accent-rgb), 0.08)' : 'transparent'}
+                        _hover={{ bg: 'whiteAlpha.100', color: 'white' }}
+                        onClick={() => onZoomToPathItem(item)}
+                      >
+                        {renderLabel(item)}
+                      </Box>
+                    )
+                  })}
+                </VStack>
+              </Box>
+            </Box>
+          </Box>
+        )}
+      </Box>
+
+      <Box
+        ref={measureRef}
+        position="fixed"
+        top="-10000px"
+        left={0}
+        visibility="hidden"
+        pointerEvents="none"
+        aria-hidden="true"
+        whiteSpace="nowrap"
+      >
+        <Breadcrumb spacing="8px" separator={separator}>
+          {currentPath.map((item) => (
+            <BreadcrumbItem key={item.id}>
+              <BreadcrumbLink display="flex" alignItems="center" gap={1.5} fontSize="xs">
+                {renderLabel(item)}
+              </BreadcrumbLink>
+            </BreadcrumbItem>
+          ))}
+        </Breadcrumb>
+      </Box>
+    </>
   )
 }
 
