@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 
@@ -65,72 +64,101 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 	})
 }
 
+// DeleteSnapshot removes one published snapshot and the records scoped to it
+// (sources, project artifacts, embeddings, analysis runs and their groups,
+// completed maps, and resource mappings). Facts, chunks, and edges are shared
+// across snapshots through membership tables, so only this snapshot's
+// membership is removed; entities no longer referenced by any snapshot are
+// garbage collected. When the deleted snapshot was the repository's latest, the
+// latest pointer moves to the newest remaining snapshot.
+func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
+	if strings.TrimSpace(snapshotID) == "" {
+		return fmt.Errorf("snapshot id is required")
+	}
+	var repositoryID string
+	if err := s.bun.NewRaw(`SELECT repository_id FROM codeindex_snapshots WHERE id = ?`, snapshotID).Scan(ctx, &repositoryID); err != nil {
+		return err
+	}
+	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_group_members WHERE group_id IN (
+			SELECT id FROM codeindex_groups WHERE snapshot_id = ?)`, snapshotID).Exec(ctx); err != nil {
+			return err
+		}
+		for _, table := range []string{
+			"codeindex_groups",
+			"codeindex_analysis_runs",
+			"codeindex_completed_maps",
+			"codeindex_embeddings",
+			"codeindex_fact_embeddings",
+			"codeindex_project_artifacts",
+			"codeindex_sources",
+			"codeindex_snapshot_facts",
+			"codeindex_snapshot_chunks",
+			"codeindex_snapshot_edges",
+			"codeindex_elements",
+		} {
+			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?", snapshotID).Exec(ctx); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_edges
+			WHERE repository_id = ? AND id NOT IN (SELECT edge_id FROM codeindex_snapshot_edges)`, repositoryID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_chunks
+			WHERE id NOT IN (SELECT chunk_id FROM codeindex_snapshot_chunks)
+			AND fact_id IN (SELECT id FROM codeindex_facts WHERE repository_id = ?)`, repositoryID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_facts
+			WHERE repository_id = ? AND id NOT IN (SELECT fact_id FROM codeindex_snapshot_facts)`, repositoryID).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_snapshots WHERE id = ?`, snapshotID).Exec(ctx); err != nil {
+			return err
+		}
+		_, err := tx.NewRaw(`UPDATE codeindex_repositories SET latest_snapshot_id = COALESCE(
+			(SELECT id FROM codeindex_snapshots WHERE repository_id = ?
+				ORDER BY created_unix DESC, capture_order DESC, id DESC LIMIT 1), '')
+			WHERE id = ? AND latest_snapshot_id = ?`, repositoryID, repositoryID, snapshotID).Exec(ctx)
+		return err
+	})
+}
+
 // ListRepositories returns every indexed repository with a summary of its
-// latest published snapshot.
+// latest published snapshot. It resolves the latest snapshot and its record
+// counts in a single query using the snapshot membership tables, matching the
+// counts reported by Snapshot.
 func (s *Store) ListRepositories(ctx context.Context) ([]*pb.RepositorySummary, error) {
-	rows, err := s.bun.QueryContext(ctx, `SELECT id, root, latest_snapshot_id FROM codeindex_repositories ORDER BY root, id`)
+	rows, err := s.bun.QueryContext(ctx, `SELECT
+		r.id, r.root, r.latest_snapshot_id,
+		COALESCE(s.created_unix, 0), COALESCE(s.git_revision, ''), COALESCE(s.git_branch, ''),
+		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = r.latest_snapshot_id),
+		(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = r.latest_snapshot_id),
+		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = r.latest_snapshot_id),
+		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = r.latest_snapshot_id)
+		FROM codeindex_repositories r
+		LEFT JOIN codeindex_snapshots s ON s.id = r.latest_snapshot_id
+		ORDER BY r.root, r.id`)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
-	type repoRow struct {
-		id     string
-		root   string
-		latest string
-	}
-	var repos []repoRow
+	out := make([]*pb.RepositorySummary, 0)
 	for rows.Next() {
-		var r repoRow
-		if err := rows.Scan(&r.id, &r.root, &r.latest); err != nil {
+		var summary pb.RepositorySummary
+		if err := rows.Scan(
+			&summary.Id, &summary.Root, &summary.LatestSnapshotId,
+			&summary.LatestCreatedUnix, &summary.GitRevision, &summary.GitBranch,
+			&summary.Facts, &summary.Chunks, &summary.Edges, &summary.Sources,
+		); err != nil {
 			return nil, err
 		}
-		repos = append(repos, r)
+		out = append(out, &summary)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-
-	out := make([]*pb.RepositorySummary, 0, len(repos))
-	for _, r := range repos {
-		summary := &pb.RepositorySummary{Id: r.id, Root: r.root, LatestSnapshotId: r.latest}
-		if r.latest != "" {
-			if err := s.fillSnapshotSummary(ctx, summary); err != nil {
-				return nil, err
-			}
-		}
-		out = append(out, summary)
-	}
 	return out, nil
-}
-
-func (s *Store) fillSnapshotSummary(ctx context.Context, summary *pb.RepositorySummary) error {
-	var created int64
-	var revision, branch string
-	err := s.bun.NewRaw(`SELECT created_unix, git_revision, git_branch FROM codeindex_snapshots WHERE id = ?`, summary.LatestSnapshotId).
-		Scan(ctx, &created, &revision, &branch)
-	if err != nil && err != sql.ErrNoRows {
-		return err
-	}
-	summary.LatestCreatedUnix = created
-	summary.GitRevision = revision
-	summary.GitBranch = branch
-
-	counts := []struct {
-		table string
-		dest  *uint32
-	}{
-		{"codeindex_facts", &summary.Facts},
-		{"codeindex_chunks", &summary.Chunks},
-		{"codeindex_edges", &summary.Edges},
-		{"codeindex_sources", &summary.Sources},
-	}
-	for _, c := range counts {
-		var n int64
-		if err := s.bun.NewRaw("SELECT COUNT(*) FROM "+c.table+" WHERE snapshot_id = ?", summary.LatestSnapshotId).Scan(ctx, &n); err != nil {
-			return err
-		}
-		*c.dest = uint32(n)
-	}
-	return nil
 }

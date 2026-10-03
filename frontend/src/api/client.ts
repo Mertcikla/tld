@@ -1947,6 +1947,10 @@ export const api = {
         const res = await codeIndexFactClient.listSnapshots({ id: repositoryId })
         return (res.snapshots ?? []).map(mapCodeSnapshot)
       }),
+    deleteSnapshot: (snapshotId: string): Promise<void> =>
+      rpc(async () => {
+        await codeIndexFactClient.deleteSnapshot({ snapshotId })
+      }),
     diff: (input: { fromSnapshotId: string; toSnapshotId: string }): Promise<SnapshotDiff> =>
       rpc(async () => {
         const res = await codeIndexFactClient.diffSnapshots({

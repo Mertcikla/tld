@@ -49,6 +49,7 @@ vi.mock('../api/client', () => ({
       stopWatch: vi.fn(async () => ({ running: false, state: 'stopped' })),
       impactRadius: vi.fn(),
       delete: vi.fn(async () => {}),
+      deleteSnapshot: vi.fn(async () => {}),
       map: vi.fn(async (_repositoryId: string, handlers?: { onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void }) => {
         handlers?.onProgress?.({ stage: 'clustering', current: 1, total: 2, detail: 'grow' })
         return { snapshotId: 'snap-1', runId: 'run-1', viewId: 5, facts: 4, clusters: 1, bins: 1, unclustered: 0, weightedTightness: 1 }
@@ -179,6 +180,25 @@ describe('Repositories map action', () => {
 
     expect(api.repositories.delete).toHaveBeenCalledWith('repo-1', { deleteMaterialized: true })
     expect(api.repositories.list).toHaveBeenCalled()
+  })
+  it('deletes a snapshot after confirmation', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.deleteSnapshot).mockClear()
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<Repositories />)
+    })
+
+    act(() => {
+      renderer.root
+        .findByProps({ 'data-testid': 'repositories-snapshot-delete-snap-1' })
+        .props.onClick({ stopPropagation: () => {} })
+    })
+    await act(async () => {
+      await renderer.root.findByProps({ 'data-testid': 'confirm-dialog-confirm' }).props.onClick()
+    })
+
+    expect(api.repositories.deleteSnapshot).toHaveBeenCalledWith('snap-1')
   })
   it('compares selected targets without running full map materialization', async () => {
     const { api } = await import('../api/client')
@@ -327,6 +347,41 @@ describe('Repositories map action', () => {
     await act(async () => { finish(saved) })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:other-snap-0')
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('snapshot:other-snap-1')
+  })
+
+  it('shows the five newest snapshots and loads more on demand', async () => {
+    const { api } = await import('../api/client')
+    const seven = Array.from({ length: 7 }, (_, index) => ({
+      id: `snap-${index}`,
+      repositoryId: 'repo-1',
+      createdUnix: 100 + index,
+      gitRevision: `rev-${index}`,
+      gitBranch: 'main',
+      ingestionStatus: 'complete',
+      embeddingStatus: 'complete',
+      projects: [],
+      warnings: [],
+      provenance: 'commit',
+      contentFingerprint: `fp-${index}`,
+    }))
+    vi.mocked(api.repositories.snapshots).mockResolvedValueOnce(seven)
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+
+    const visible = () => renderer.root
+      .findAll((node) => node.type === 'button' && typeof node.props['data-testid'] === 'string' && node.props['data-testid'].startsWith('repositories-snapshot-delete-'))
+      .map((node) => node.props['data-testid'] as string)
+    expect(visible()).toHaveLength(5)
+    expect(visible()).toContain('repositories-snapshot-delete-snap-6')
+    expect(visible()).not.toContain('repositories-snapshot-delete-snap-0')
+
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-load-more' }).props.onClick() })
+    expect(visible()).toHaveLength(7)
+    expect(visible()).toContain('repositories-snapshot-delete-snap-0')
+
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-show-less' }).props.onClick() })
+    expect(visible()).toHaveLength(5)
+    renderer.unmount()
   })
 
 })

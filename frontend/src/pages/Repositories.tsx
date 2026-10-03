@@ -56,6 +56,7 @@ const accentStyle = {
   _hover: { bg: 'var(--accent)', filter: 'brightness(1.08)' },
 }
 const showIdsKey = 'tld:repositories:showIds'
+const snapshotPageSize = 5
 function readShowIds() {
   try {
     return (
@@ -412,12 +413,27 @@ export default function Repositories() {
   )
   const [deleteMaterialized, setDeleteMaterialized] = useState(false)
   const [deletingRepo, setDeletingRepo] = useState(false)
+  const [snapshotToDelete, setSnapshotToDelete] = useState<CodeSnapshot | null>(
+    null,
+  )
+  const [deletingSnapshot, setDeletingSnapshot] = useState(false)
+  const [visibleSnapshots, setVisibleSnapshots] = useState(snapshotPageSize)
   const initialized = useRef('')
   const operation = useRef<AbortController | null>(null)
   const selectedRef = useRef(selectedId)
   selectedRef.current = selectedId
   const restored = useRef({ base, head })
   const selected = repositories.find((r) => r.id === selectedId)
+  const newestSnapshots = useMemo(() => [...snapshots].reverse(), [snapshots])
+  const visibleSnapshotList = useMemo(
+    () => newestSnapshots.slice(0, visibleSnapshots),
+    [newestSnapshots, visibleSnapshots],
+  )
+  const loadMoreSnapshots = () =>
+    setVisibleSnapshots((count) =>
+      Math.min(count + snapshotPageSize, snapshots.length),
+    )
+  const collapseSnapshots = () => setVisibleSnapshots(snapshotPageSize)
   const reload = useCallback(async () => {
     setLoading(true)
     setError('')
@@ -438,6 +454,9 @@ export default function Repositories() {
   useEffect(() => {
     void reload()
   }, [reload])
+  useEffect(() => {
+    setVisibleSnapshots(snapshotPageSize)
+  }, [selectedId])
   useEffect(() => {
     setParams(
       (old) => {
@@ -730,6 +749,26 @@ export default function Repositories() {
       setDeletingRepo(false)
     }
   }
+  const handleDeleteSnapshot = async () => {
+    if (!snapshotToDelete) return
+    setDeletingSnapshot(true)
+    try {
+      await api.repositories.deleteSnapshot(snapshotToDelete.id)
+      if (snapshotToDelete.id === base) setBase('')
+      if (snapshotToDelete.id === head) setHead('')
+      setSnapshotToDelete(null)
+      setNonce((n) => n + 1)
+      await reload()
+    } catch (err) {
+      toast({
+        title: 'Delete failed',
+        description: err instanceof Error ? err.message : '',
+        status: 'error',
+      })
+    } finally {
+      setDeletingSnapshot(false)
+    }
+  }
   return (
     <Box
       h="full"
@@ -817,11 +856,22 @@ export default function Repositories() {
                 borderColor="whiteAlpha.100"
               >
                 <Flex
+                  position="relative"
                   px={collapsed ? 0 : 4}
                   py={3}
                   align="center"
                   justify={collapsed ? 'center' : undefined}
                   gap={3}
+                  sx={{
+                    '&:hover > .repository-delete, &:focus-within > .repository-delete':
+                      { opacity: 1, pointerEvents: 'auto' },
+                    '@media (hover: none)': {
+                      '> .repository-delete': {
+                        opacity: 1,
+                        pointerEvents: 'auto',
+                      },
+                    },
+                  }}
                 >
                   <Button
                       p={0}
@@ -866,9 +916,22 @@ export default function Repositories() {
                       <IconButton
                         data-testid={`repositories-delete-${repo.id}`}
                         aria-label={`Delete ${nameOf(repo.root)}`}
-                        icon={<DeleteIcon />}
+                        className="repository-delete"
+                        icon={<DeleteIcon boxSize="12px" />}
+                        position="absolute"
+                        top="50%"
+                        right="6px"
+                        transform="translateY(-50%)"
                         size="xs"
                         variant="ghost"
+                        color="red.400"
+                        bg="var(--bg-element)"
+                        _hover={{ bg: 'var(--bg-element)' }}
+                        _active={{ bg: 'var(--bg-element)' }}
+                        borderRadius="md"
+                        opacity={0}
+                        pointerEvents="none"
+                        _focusVisible={{ opacity: 1, pointerEvents: 'auto' }}
                         isDisabled={busy}
                         onClick={(e) => {
                           e.stopPropagation()
@@ -928,7 +991,7 @@ export default function Repositories() {
                       </Text>
                     )}
                     <VStack align="stretch" spacing={1}>
-                      {[...snapshots].reverse().map((s) => (
+                      {visibleSnapshotList.map((s) => (
                         <Box
                           key={s.id}
                           title={
@@ -938,6 +1001,7 @@ export default function Repositories() {
                                 ? 'Working tree snapshot'
                                 : 'Unknown provenance'
                           }
+                          position="relative"
                           px={2}
                           py={1.5}
                           bg="whiteAlpha.50"
@@ -945,7 +1009,20 @@ export default function Repositories() {
                           border="1px solid"
                           borderColor="whiteAlpha.100"
                         >
-                          <Flex gap={2} align="center">
+                          <Flex
+                            gap={2}
+                            align="center"
+                            sx={{
+                              '&:hover > .snapshot-delete, &:focus-within > .snapshot-delete':
+                                { opacity: 1, pointerEvents: 'auto' },
+                              '@media (hover: none)': {
+                                '> .snapshot-delete': {
+                                  opacity: 1,
+                                  pointerEvents: 'auto',
+                                },
+                              },
+                            }}
+                          >
                             <Text
                               fontSize="xs"
                               color="gray.300"
@@ -970,6 +1047,34 @@ export default function Repositories() {
                                 {s.ingestionStatus || 'Incomplete'}
                               </Badge>
                             )}
+                            <IconButton
+                              aria-label={`Delete snapshot ${s.id}`}
+                              data-testid={`repositories-snapshot-delete-${s.id}`}
+                              className="snapshot-delete"
+                              icon={<DeleteIcon boxSize="12px" />}
+                              position="absolute"
+                              top="50%"
+                              right="6px"
+                              transform="translateY(-50%)"
+                              size="xs"
+                              variant="ghost"
+                              color="red.400"
+                              bg="var(--bg-element)"
+                              _hover={{ bg: 'var(--bg-element)' }}
+                              _active={{ bg: 'var(--bg-element)' }}
+                              borderRadius="md"
+                              opacity={0}
+                              pointerEvents="none"
+                              _focusVisible={{
+                                opacity: 1,
+                                pointerEvents: 'auto',
+                              }}
+                              isDisabled={deletingSnapshot}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                setSnapshotToDelete(s)
+                              }}
+                            />
                           </Flex>
                           {s.statistics ? (
                             <Text fontSize="10px" color="gray.400" mt={1}>
@@ -986,6 +1091,44 @@ export default function Repositories() {
                         </Box>
                       ))}
                     </VStack>
+                    {(visibleSnapshots < snapshots.length ||
+                      visibleSnapshots > snapshotPageSize) && (
+                      <HStack
+                        data-testid="repositories-snapshots-pagination"
+                        mt={2}
+                        spacing={2}
+                      >
+                        {visibleSnapshots > snapshotPageSize && (
+                          <Button
+                            data-testid="repositories-snapshots-show-less"
+                            size="xs"
+                            variant="ghost"
+                            flex={1}
+                            color="gray.400"
+                            onClick={collapseSnapshots}
+                          >
+                            Show newest {snapshotPageSize}
+                          </Button>
+                        )}
+                        {visibleSnapshots < snapshots.length && (
+                          <Button
+                            data-testid="repositories-snapshots-load-more"
+                            size="xs"
+                            variant="ghost"
+                            flex={1}
+                            color="gray.400"
+                            onClick={loadMoreSnapshots}
+                          >
+                            Load{' '}
+                            {Math.min(
+                              snapshotPageSize,
+                              snapshots.length - visibleSnapshots,
+                            )}{' '}
+                            more
+                          </Button>
+                        )}
+                      </HStack>
+                    )}
                   </Box>
                 )}
               </Box>
@@ -1316,6 +1459,22 @@ export default function Repositories() {
           </Box>
         </HStack>
       </ConfirmDialog>
+      <ConfirmDialog
+        isOpen={!!snapshotToDelete}
+        onClose={() => {
+          if (!deletingSnapshot) setSnapshotToDelete(null)
+        }}
+        onConfirm={() => void handleDeleteSnapshot()}
+        title="Delete snapshot"
+        body={
+          snapshotToDelete
+            ? `Delete the snapshot from "${snapshotToDelete.gitBranch || 'no captured branch'}" taken ${age(snapshotToDelete.createdUnix)}? This cannot be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        confirmColorScheme="red"
+        isLoading={deletingSnapshot}
+      />
     </Box>
   )
 }

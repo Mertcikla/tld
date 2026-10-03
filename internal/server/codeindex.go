@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -169,9 +171,6 @@ func (s *codeIndexFactService) ListSnapshots(ctx context.Context, req *connect.R
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	for _, snap := range snapshots {
-		snap.Sources = nil
-	}
 	return connect.NewResponse(&codeindexv1.ListSnapshotsResponse{Snapshots: snapshots}), nil
 }
 
@@ -193,6 +192,20 @@ func (s *codeIndexFactService) DiffSnapshots(ctx context.Context, req *connect.R
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(diff), nil
+}
+
+func (s *codeIndexFactService) DeleteSnapshot(ctx context.Context, req *connect.Request[codeindexv1.DeleteSnapshotRequest]) (*connect.Response[codeindexv1.DeleteSnapshotResponse], error) {
+	snapshotID := strings.TrimSpace(req.Msg.GetSnapshotId())
+	if snapshotID == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("snapshot_id is required"))
+	}
+	if err := s.store.DeleteSnapshot(ctx, snapshotID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("snapshot %s not found", snapshotID))
+		}
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&codeindexv1.DeleteSnapshotResponse{}), nil
 }
 
 func (s *codeIndexFactService) AggregateEdges(ctx context.Context, req *connect.Request[codeindexv1.EdgeFactFilter]) (*connect.Response[codeindexv1.EdgeAggregatePage], error) {

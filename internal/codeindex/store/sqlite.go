@@ -290,19 +290,51 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 	return &snap, nil
 }
 
-// Snapshots lists a repository's snapshots oldest first.
+// Snapshots lists a repository's snapshots oldest first. It loads every
+// snapshot's metadata, toolchain configuration, and record statistics in a
+// single query, but not its per-source manifest; call Snapshot for the full
+// record.
 func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snapshot, error) {
-	var ids []string
-	if err := s.bun.NewRaw(`SELECT id FROM codeindex_snapshots WHERE repository_id = ? ORDER BY created_unix, capture_order, id`, repositoryID).Scan(ctx, &ids); err != nil {
+	rows, err := s.bun.QueryContext(ctx, `SELECT
+		id, repository_id, created_unix, git_revision, git_branch,
+		ingestion_status, embedding_status, config_hash,
+		projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint,
+		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = codeindex_snapshots.id),
+		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = codeindex_snapshots.id),
+		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = codeindex_snapshots.id),
+		(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = codeindex_snapshots.id)
+		FROM codeindex_snapshots
+		WHERE repository_id = ?
+		ORDER BY created_unix, capture_order, id`, repositoryID)
+	if err != nil {
 		return nil, err
 	}
-	out := make([]*pb.Snapshot, 0, len(ids))
-	for _, id := range ids {
-		snap, err := s.Snapshot(ctx, id)
-		if err != nil {
+	defer func() { _ = rows.Close() }()
+
+	out := make([]*pb.Snapshot, 0)
+	for rows.Next() {
+		var (
+			snap                      pb.Snapshot
+			projects, warnings, tools string
+			createdUnix               int64
+		)
+		snap.Statistics = &pb.SnapshotStatistics{}
+		if err := rows.Scan(
+			&snap.Id, &snap.RepositoryId, &createdUnix, &snap.GitRevision, &snap.GitBranch,
+			&snap.IngestionStatus, &snap.EmbeddingStatus, &snap.ConfigHash,
+			&projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint,
+			&snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources, &snap.Statistics.Chunks,
+		); err != nil {
 			return nil, err
 		}
-		out = append(out, snap)
+		snap.CreatedUnix = createdUnix
+		_ = json.Unmarshal([]byte(projects), &snap.Projects)
+		_ = json.Unmarshal([]byte(warnings), &snap.Warnings)
+		_ = json.Unmarshal([]byte(tools), &snap.ToolVersions)
+		out = append(out, &snap)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
