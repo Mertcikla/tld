@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Alert,
   AlertIcon,
@@ -9,7 +8,6 @@ import {
   Button,
   Center,
   Code,
-  Divider,
   Flex,
   Grid,
   HStack,
@@ -22,806 +20,1157 @@ import {
   Tooltip,
   VStack,
 } from '@chakra-ui/react'
-import type { ButtonProps } from '@chakra-ui/react'
-import { CopyIcon, DeleteIcon } from '@chakra-ui/icons'
-import type { CodeSnapshot, IndexedRepository, RepositoryMapProgress, SnapshotChangeKind, SnapshotDiff } from '../api/client'
-import { api } from '../api/client'
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CopyIcon,
+  DeleteIcon,
+  RepeatIcon,
+} from '@chakra-ui/icons'
+import {
+  api,
+  type CodeSnapshot,
+  type CompletedRepositoryMap,
+  type IndexedRepository,
+  type RepositoryGitHistory,
+  type RepositoryMapProgress,
+  type SnapshotDiff,
+  type SnapshotSourceChange,
+} from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
+import RepositoryHistory from '../components/RepositoryHistory'
+import {
+  defaultRepositoryTargets,
+  snapshotForTarget,
+  targetMapOptions,
+} from '../utils/repositoryTargets'
 import { toast } from '../utils/toast'
 
-type RepoFilter = 'all' | 'indexed' | 'empty'
-
-const FILTER_OPTIONS: { value: RepoFilter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'indexed', label: 'Indexed' },
-  { value: 'empty', label: 'Not indexed' },
-]
-
-const accentOutlineStyle: ButtonProps = {
-  bg: 'rgba(var(--accent-rgb), 0.1)',
-  color: 'var(--accent)',
-  border: '1px solid',
-  borderColor: 'rgba(var(--accent-rgb), 0.4)',
-  _hover: { bg: 'rgba(var(--accent-rgb), 0.18)', borderColor: 'rgba(var(--accent-rgb), 0.6)' },
+const accentStyle = {
+  bg: 'var(--accent)',
+  color: 'white',
+  _hover: { bg: 'var(--accent)', filter: 'brightness(1.08)' },
 }
-
-function repoName(root: string): string {
-  const parts = root.split(/[/\\]/).filter(Boolean)
-  return parts[parts.length - 1] || root || 'repository'
-}
-
-function shortId(value: string): string {
-  const trimmed = value.trim()
-  if (!trimmed) return '—'
-  return trimmed.length > 12 ? trimmed.slice(0, 12) : trimmed
-}
-
-const SHOW_IDS_STORAGE_KEY = 'tld:repositories:showIds'
-
-function readShowIdsPreference(): boolean {
-  if (typeof localStorage === 'undefined') return false
-  return localStorage.getItem(SHOW_IDS_STORAGE_KEY) === 'true'
-}
-
-function writeShowIdsPreference(value: boolean) {
-  if (typeof localStorage === 'undefined') return
-  localStorage.setItem(SHOW_IDS_STORAGE_KEY, String(value))
-}
-
-function snapshotAge(unixSeconds: number): string {
-  if (!unixSeconds) return 'never'
-  const seconds = Math.max(0, Math.floor(Date.now() / 1000 - unixSeconds))
-  if (seconds < 60) return 'just now'
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}d ago`
-  return new Date(unixSeconds * 1000).toLocaleDateString()
-}
-
-function snapshotOptionLabel(snapshot: CodeSnapshot, ordinal: number, showIds: boolean): string {
-  return showIds ? `#${ordinal} · ${shortId(snapshot.id)}` : `#${ordinal} · ${snapshotAge(snapshot.createdUnix)}`
-}
-
-async function copyText(text: string): Promise<boolean> {
+const showIdsKey = 'tld:repositories:showIds'
+function readShowIds() {
   try {
-    await navigator.clipboard.writeText(text)
-    return true
+    return (
+      typeof localStorage !== 'undefined' &&
+      localStorage.getItem(showIdsKey) === 'true'
+    )
   } catch {
     return false
   }
 }
-
-function SegmentedControl<T extends string>({
-  options,
-  value,
-  onChange,
-}: {
-  options: { value: T; label: string; count?: number }[]
-  value: T
-  onChange: (value: T) => void
-}) {
+const nameOf = (root: string) =>
+  root.split(/[/\\]/).filter(Boolean).pop() || 'repository'
+const short = (id: string) => (id ? id.slice(0, 12) : '—')
+function age(unix: number) {
+  const minutes = Math.max(0, Math.floor((Date.now() / 1000 - unix) / 60))
+  return minutes < 1
+    ? 'just now'
+    : minutes < 60
+      ? `${minutes}m ago`
+      : minutes < 1440
+        ? `${Math.floor(minutes / 60)}h ago`
+        : `${Math.floor(minutes / 1440)}d ago`
+}
+function Glyph({ name }: { name: string }) {
   return (
-    <Box p={1} bg="whiteAlpha.50" borderRadius="xl">
-      <HStack spacing={1}>
-        {options.map((option) => {
-          const active = option.value === value
-          return (
-            <Box
-              key={option.value}
-              flex={1}
-              as="button"
-              type="button"
-              aria-pressed={active}
-              py={1.5}
-              px={2}
-              fontSize="10px"
-              fontWeight="800"
-              letterSpacing="0.08em"
-              textTransform="uppercase"
-              cursor="pointer"
-              bg={active ? 'whiteAlpha.200' : 'transparent'}
-              color={active ? 'white' : 'whiteAlpha.500'}
-              borderRadius="lg"
-              _hover={{ bg: active ? 'whiteAlpha.200' : 'whiteAlpha.100', color: 'white' }}
-              transition="all 0.2s"
-              onClick={() => onChange(option.value)}
-              whiteSpace="nowrap"
-            >
-              {option.label}
-              {typeof option.count === 'number' ? ` · ${option.count}` : ''}
-            </Box>
-          )
-        })}
-      </HStack>
-    </Box>
+    <Center
+      w="28px"
+      h="28px"
+      flexShrink={0}
+      bg="whiteAlpha.100"
+      borderRadius="md"
+      fontWeight="semibold"
+    >
+      {name[0]?.toUpperCase()}
+    </Center>
   )
 }
-
-function MicroLabel({ children }: { children: ReactNode }) {
+function Label({ children }: { children: React.ReactNode }) {
   return (
-    <Text fontSize="10px" fontWeight="700" color="gray.500" textTransform="uppercase" letterSpacing="0.08em">
+    <Text
+      fontSize="10px"
+      fontWeight="bold"
+      color="gray.500"
+      textTransform="uppercase"
+      letterSpacing="0.06em"
+    >
       {children}
     </Text>
   )
 }
+function ErrorMessage({ message }: { message: string }) {
+  return message ? (
+    <Alert status="error" borderRadius="md">
+      <AlertIcon />
+      <Text fontSize="sm">{message}</Text>
+    </Alert>
+  ) : null
+}
 
-function RepoGlyph({ name, size = 'sm' }: { name: string; size?: 'sm' | 'lg' }) {
-  const initial = name.trim() ? name.trim()[0].toUpperCase() : '?'
+function FileTree({ files }: { files: SnapshotSourceChange[] }) {
+  const [closed, setClosed] = useState<Set<string>>(new Set())
+  const entries = useMemo(() => {
+    const folders = new Set<string>()
+    const rows: {
+      path: string
+      directory: boolean
+      change?: SnapshotSourceChange['change']
+    }[] = []
+    for (const file of [...files].sort((a, b) =>
+      a.path.localeCompare(b.path),
+    )) {
+      const parts = file.path.split('/')
+      for (let i = 1; i < parts.length; i++) {
+        const folder = parts.slice(0, i).join('/')
+        if (!folders.has(folder)) {
+          folders.add(folder)
+          rows.push({ path: folder, directory: true })
+        }
+      }
+      rows.push({ path: file.path, directory: false, change: file.change })
+    }
+    return rows
+  }, [files])
   return (
-    <Flex
-      w={size === 'sm' ? '28px' : '48px'}
-      h={size === 'sm' ? '28px' : '48px'}
-      align="center"
-      justify="center"
-      flexShrink={0}
-      bg="whiteAlpha.100"
-      rounded="md"
+    <Box p={2} overflowY="auto" maxH={{ base: '220px', lg: 'none' }}>
+      {!files.length && (
+        <Text p={3} fontSize="sm" color="gray.500">
+          No source changes.
+        </Text>
+      )}
+      {entries
+        .filter(
+          (entry) =>
+            ![...closed].some((folder) => entry.path.startsWith(`${folder}/`)),
+        )
+        .map((entry) => (
+          <Flex
+            key={entry.path}
+            pl={`${(entry.path.split('/').length - 1) * 12 + 4}px`}
+            py={1.5}
+            align="center"
+            gap={2}
+          >
+            {entry.directory ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                p={0}
+                minW="16px"
+                aria-label={`${closed.has(entry.path) ? 'Expand' : 'Collapse'} ${entry.path}`}
+                onClick={() =>
+                  setClosed((old) => {
+                    const next = new Set(old)
+                    if (next.has(entry.path)) next.delete(entry.path)
+                    else next.add(entry.path)
+                    return next
+                  })
+                }
+              >
+                {closed.has(entry.path) ? (
+                  <ChevronRightIcon />
+                ) : (
+                  <ChevronLeftIcon transform="rotate(-90deg)" />
+                )}
+              </Button>
+            ) : (
+              <Badge
+                fontSize="2xs"
+                colorScheme={
+                  entry.change === 'added'
+                    ? 'green'
+                    : entry.change === 'removed'
+                      ? 'red'
+                      : 'yellow'
+                }
+              >
+                {entry.change === 'added'
+                  ? 'A'
+                  : entry.change === 'removed'
+                    ? 'D'
+                    : 'M'}
+              </Badge>
+            )}
+            <Text fontSize="xs" color="gray.300" isTruncated title={entry.path}>
+              {entry.path.split('/').pop()}
+            </Text>
+          </Flex>
+        ))}
+    </Box>
+  )
+}
+
+function CompareSide({
+  side,
+  value,
+  branch,
+  snapshots,
+  history,
+  maps,
+  includeImports,
+  showIds,
+  disabled,
+  onChange,
+  onMap,
+}: {
+  side: 'Base' | 'Head'
+  value: string
+  branch: string
+  snapshots: CodeSnapshot[]
+  history: RepositoryGitHistory | null
+  maps: CompletedRepositoryMap[]
+  includeImports: boolean
+  showIds: boolean
+  disabled: boolean
+  onChange: (value: string) => void
+  onMap: () => void
+}) {
+  const snapshot = snapshotForTarget(value, snapshots)
+  const mapped =
+    !!snapshot &&
+    maps.some(
+      (m) =>
+        m.result.snapshotId === snapshot?.id &&
+        m.includeImports === includeImports,
+    )
+  const known =
+    value === 'working_tree' ||
+    snapshots.some((s) => value === `snapshot:${s.id}`) ||
+    history?.commits.some((c) => value === `commit:${c.sha}`)
+  return (
+    <Box
+      flex={1}
+      minW={0}
+      p={3}
+      bg="whiteAlpha.50"
+      border="1px solid"
+      borderColor="whiteAlpha.100"
+      borderRadius="lg"
     >
-      <Text fontSize={size === 'sm' ? 'sm' : 'xl'} fontWeight="semibold" color="whiteAlpha.900">
-        {initial}
-      </Text>
-    </Flex>
-  )
-}
-
-function StatCard({ label, value }: { label: string; value: number }) {
-  return (
-    <Box px={4} py={3} border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" bg="whiteAlpha.50">
-      <Text fontSize="2xl" fontWeight="700" color="gray.100" fontFamily="mono" lineHeight="1.1">
-        {value.toLocaleString()}
-      </Text>
-      <MicroLabel>{label}</MicroLabel>
+      <HStack mb={2}>
+        <Box
+          w={2}
+          h={2}
+          borderRadius="full"
+          bg={side === 'Base' ? 'gray.400' : 'green.400'}
+        />
+        <Label>{side}</Label>
+        <Box flex={1} />
+        <Badge
+          colorScheme={mapped ? 'green' : snapshot ? 'blue' : 'gray'}
+          fontSize="2xs"
+        >
+          {mapped ? 'Mapped' : snapshot ? 'Indexed' : 'Not captured'}
+        </Badge>
+      </HStack>
+      <Select
+        aria-label={`${side} target`}
+        data-testid={`repositories-${side.toLowerCase()}-target`}
+        size="sm"
+        value={value}
+        isDisabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        <option value="">Select a target</option>
+        <option value="working_tree">Working tree · local contents</option>
+        {!known && value && (
+          <option value={value}>
+            {value.startsWith('commit:')
+              ? `Commit ${short(value.slice(7))}`
+              : value}
+          </option>
+        )}
+        <optgroup label="Saved snapshots">
+          {[...snapshots].reverse().map((s) => (
+            <option key={s.id} value={`snapshot:${s.id}`}>
+              {short(s.gitRevision)} · {s.gitBranch || 'detached / non-Git'} ·{' '}
+              {s.provenance === 'working_tree'
+                ? 'local contents'
+                : s.provenance === 'commit'
+                  ? 'commit'
+                  : 'unknown provenance'}{' '}
+              · {age(s.createdUnix)}
+              {showIds ? ` · ${short(s.id)}` : ''}
+            </option>
+          ))}
+        </optgroup>
+        <optgroup label="Commits">
+          {history?.commits.map((c) => (
+            <option key={c.sha} value={`commit:${c.sha}`}>
+              {c.sha.slice(0, 7)} · {c.subject}
+            </option>
+          ))}
+        </optgroup>
+      </Select>
+      <Flex mt={2} gap={2} align="center">
+        <Text fontSize="xs" color="gray.500" flex={1} isTruncated>
+          {value === 'working_tree'
+            ? 'Includes staged, unstaged, and untracked source files'
+            : snapshot
+              ? `${snapshot.gitBranch || 'No captured branch'} · ${snapshot.embeddingStatus || 'Embedding status unknown'}`
+              : branch
+                ? `Branch context: ${branch}`
+                : 'Exact committed revision'}
+        </Text>
+        <Button
+          size="xs"
+          variant="outline"
+          data-testid={
+            side === 'Head' ? 'repositories-map' : 'repositories-map-base'
+          }
+          isDisabled={disabled || !value}
+          onClick={onMap}
+        >
+          Map {side.toLowerCase()}
+        </Button>
+      </Flex>
+      {snapshot?.warnings.length ? (
+        <Tooltip label={snapshot.warnings.join('\n')}>
+          <Text fontSize="xs" color="orange.300" mt={1}>
+            {snapshot.warnings.length} indexing warning(s)
+          </Text>
+        </Tooltip>
+      ) : null}
     </Box>
-  )
-}
-
-type DeltaTone = 'add' | 'remove' | 'modify' | 'neutral'
-
-const DELTA_TONE_COLOR: Record<DeltaTone, string> = {
-  add: 'green.300',
-  remove: 'red.300',
-  modify: 'yellow.300',
-  neutral: 'gray.200',
-}
-
-function DeltaStat({ label, value, tone }: { label: string; value: number; tone: DeltaTone }) {
-  return (
-    <Box px={3} py={2} border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" bg="whiteAlpha.50">
-      <Text fontSize="lg" fontWeight="700" fontFamily="mono" lineHeight="1.1" color={DELTA_TONE_COLOR[tone]}>
-        {value.toLocaleString()}
-      </Text>
-      <MicroLabel>{label}</MicroLabel>
-    </Box>
-  )
-}
-
-const CHANGE_META: Record<SnapshotChangeKind, { label: string; colorScheme: string }> = {
-  added: { label: 'A', colorScheme: 'green' },
-  removed: { label: 'D', colorScheme: 'red' },
-  modified: { label: 'M', colorScheme: 'yellow' },
-  unchanged: { label: '·', colorScheme: 'gray' },
-}
-
-const MAP_STAGE_LABELS: Record<string, string> = {
-  loading: 'Loading files',
-  clustering: 'Grouping',
-  binning: 'Organizing',
-  materializing: 'Materializing workspace',
-}
-
-function mapStageLabel(progress: RepositoryMapProgress): string {
-  const label = MAP_STAGE_LABELS[progress.stage] ?? progress.stage
-  if (progress.total > 0) return `${label} · ${progress.current}/${progress.total}`
-  return label
-}
-
-function ChangeTag({ change }: { change: SnapshotChangeKind }) {
-  const meta = CHANGE_META[change]
-  return (
-    <Badge colorScheme={meta.colorScheme} variant="subtle" fontSize="2xs" borderRadius="sm" px={1.5} flexShrink={0} fontFamily="mono">
-      {meta.label}
-    </Badge>
   )
 }
 
 export default function Repositories() {
+  const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
   const [repositories, setRepositories] = useState<IndexedRepository[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [filter, setFilter] = useState<RepoFilter>('all')
-  const [selectedId, setSelectedId] = useState<string>('')
-  const [snapshots, setSnapshots] = useState<CodeSnapshot[]>([])
-  const [snapshotsLoading, setSnapshotsLoading] = useState(false)
-  const [snapshotsError, setSnapshotsError] = useState<string | null>(null)
-  const [baseSnapshotId, setBaseSnapshotId] = useState('')
-  const [diff, setDiff] = useState<SnapshotDiff | null>(null)
-  const [diffLoading, setDiffLoading] = useState(false)
-  const [diffError, setDiffError] = useState<string | null>(null)
-  const [mapping, setMapping] = useState(false)
-  const [mapProgress, setMapProgress] = useState<RepositoryMapProgress | null>(null)
-  const [mapError, setMapError] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState(() => params.get('repo') || '')
+  const [base, setBase] = useState(() => params.get('base') || '')
+  const [head, setHead] = useState(() => params.get('head') || '')
+  const [baseBranch, setBaseBranch] = useState(
+    () => params.get('baseBranch') || '',
+  )
+  const [headBranch, setHeadBranch] = useState(
+    () => params.get('headBranch') || '',
+  )
+  const [branch, setBranch] = useState(() => params.get('branch') || '')
+  const [collapsed, setCollapsed] = useState(false)
+  const [historyCollapsed, setHistoryCollapsed] = useState(false)
+  const [compareCollapsed, setCompareCollapsed] = useState(false)
+  const [showIds] = useState(readShowIds)
   const [includeImports, setIncludeImports] = useState(false)
-  const [showIds, setShowIds] = useState(readShowIdsPreference)
-  const [repoToDelete, setRepoToDelete] = useState<IndexedRepository | null>(null)
+  const [snapshots, setSnapshots] = useState<CodeSnapshot[]>([])
+  const [maps, setMaps] = useState<CompletedRepositoryMap[]>([])
+  const [history, setHistory] = useState<RepositoryGitHistory | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [dataLoading, setDataLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [dataError, setDataError] = useState('')
+  const [historyError, setHistoryError] = useState('')
+  const [operationError, setOperationError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState<RepositoryMapProgress | null>(null)
+  const [diff, setDiff] = useState<SnapshotDiff | null>(null)
+  const [nonce, setNonce] = useState(0)
+  const [limit, setLimit] = useState(50)
+  const [repoToDelete, setRepoToDelete] = useState<IndexedRepository | null>(
+    null,
+  )
   const [deleteMaterialized, setDeleteMaterialized] = useState(false)
   const [deletingRepo, setDeletingRepo] = useState(false)
-  const navigate = useNavigate()
-
-  const toggleShowIds = useCallback(() => {
-    setShowIds((current) => {
-      writeShowIdsPreference(!current)
-      return !current
-    })
-  }, [])
-
-  const load = useCallback(async () => {
+  const initialized = useRef('')
+  const operation = useRef<AbortController | null>(null)
+  const selectedRef = useRef(selectedId)
+  selectedRef.current = selectedId
+  const restored = useRef({ base, head })
+  const selected = repositories.find((r) => r.id === selectedId)
+  const reload = useCallback(async () => {
     setLoading(true)
-    setError(null)
+    setError('')
     try {
-      const next = await api.repositories.list()
-      setRepositories(next)
-      setSelectedId((current) => current || next[0]?.id || '')
+      const items = await api.repositories.list()
+      setRepositories(items)
+      setSelectedId((id) =>
+        items.some((r) => r.id === id) ? id : items[0]?.id || '',
+      )
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load repositories')
-      setRepositories([])
+      setError(
+        err instanceof Error ? err.message : 'Could not load repositories',
+      )
     } finally {
       setLoading(false)
     }
   }, [])
-
   useEffect(() => {
-    void load()
-  }, [load])
-
-  const isIndexed = (repo: IndexedRepository) => repo.latestSnapshotId !== ''
-  const filterCounts = useMemo(() => ({
-    all: repositories.length,
-    indexed: repositories.filter(isIndexed).length,
-    empty: repositories.filter((repo) => !isIndexed(repo)).length,
-  }), [repositories])
-
-  const filtered = useMemo(() => repositories.filter((repo) => {
-    if (filter === 'indexed') return isIndexed(repo)
-    if (filter === 'empty') return !isIndexed(repo)
-    return true
-  }), [filter, repositories])
-
-  const selected = repositories.find((repo) => repo.id === selectedId) ?? null
-  const selectedLatestSnapshotId = selected?.latestSnapshotId ?? ''
-  const latestSnapshotId = snapshots.length > 0 ? snapshots[snapshots.length - 1].id : ''
-  const snapshotOrdinal = (id: string): number | null => {
-    const index = snapshots.findIndex((snapshot) => snapshot.id === id)
-    return index === -1 ? null : index + 1
-  }
-
+    void reload()
+  }, [reload])
   useEffect(() => {
-    if (!selectedId || !selectedLatestSnapshotId) {
+    setParams(
+      (old) => {
+        const next = new URLSearchParams(old)
+        for (const [key, value] of Object.entries({
+          repo: selectedId,
+          base,
+          head,
+          branch,
+          baseBranch,
+          headBranch,
+        })) {
+          if (value) next.set(key, value)
+          else next.delete(key)
+        }
+        return next
+      },
+      { replace: true },
+    )
+  }, [selectedId, base, head, branch, baseBranch, headBranch, setParams])
+  useEffect(() => {
+    let stale = false
+    setDataError('')
+    setHistoryError('')
+    if (!selectedId) {
       setSnapshots([])
-      setSnapshotsError(null)
-      setBaseSnapshotId('')
+      setMaps([])
+      setHistory(null)
       return
     }
-    let cancelled = false
-    setSnapshotsLoading(true)
-    setSnapshotsError(null)
-    api.repositories.snapshots(selectedId)
-      .then((next) => {
-        if (cancelled) return
-        setSnapshots(next)
-        setBaseSnapshotId(next.length >= 2 ? next[next.length - 2].id : '')
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setSnapshots([])
-        setBaseSnapshotId('')
-        setSnapshotsError(err instanceof Error ? err.message : 'Failed to load snapshot history')
+    setDataLoading(true)
+    Promise.allSettled([
+      api.repositories.snapshots(selectedId),
+      api.repositories.maps(selectedId),
+      api.repositories.history(selectedId, branch, limit),
+    ])
+      .then(([snapshotResult, mapResult, historyResult]) => {
+        if (stale) return
+        const nextSnapshots =
+          snapshotResult.status === 'fulfilled' ? snapshotResult.value : []
+        const nextHistory =
+          historyResult.status === 'fulfilled' ? historyResult.value : null
+        setSnapshots(nextSnapshots)
+        setMaps(mapResult.status === 'fulfilled' ? mapResult.value : [])
+        setHistory(nextHistory)
+        if (
+          snapshotResult.status === 'rejected' ||
+          mapResult.status === 'rejected'
+        )
+          setDataError(
+            String(
+              snapshotResult.status === 'rejected'
+                ? snapshotResult.reason
+                : mapResult.status === 'rejected'
+                  ? mapResult.reason
+                  : '',
+            ),
+          )
+        if (historyResult.status === 'rejected')
+          setHistoryError(
+            historyResult.reason instanceof Error
+              ? historyResult.reason.message
+              : 'Git history unavailable',
+          )
+        if (initialized.current !== selectedId) {
+          initialized.current = selectedId
+          const defaults = defaultRepositoryTargets(nextSnapshots, nextHistory)
+          setBase(restored.current.base || defaults[0])
+          setHead(restored.current.head || defaults[1])
+          restored.current = { base: '', head: '' }
+          const context = branch || nextHistory?.currentBranch || ''
+          setBaseBranch((old) => old || context)
+          setHeadBranch((old) => old || context)
+        }
       })
       .finally(() => {
-        if (!cancelled) setSnapshotsLoading(false)
+        if (!stale) setDataLoading(false)
       })
-    return () => { cancelled = true }
-  }, [selectedId, selectedLatestSnapshotId])
-
+    return () => {
+      stale = true
+    }
+  }, [selectedId, branch, limit, nonce])
   useEffect(() => {
-    if (!baseSnapshotId || !latestSnapshotId || baseSnapshotId === latestSnapshotId) {
-      setDiff(null)
-      setDiffError(null)
-      return
+    setDiff(null)
+    setOperationError('')
+  }, [selectedId, base, head, includeImports])
+  useEffect(
+    () => () => {
+      operation.current?.abort()
+    },
+    [],
+  )
+  const selectRepo = (id: string) => {
+    if (id === selectedId) return
+    operation.current?.abort()
+    operation.current = null
+    setBusy(false)
+    setProgress(null)
+    setSnapshots([])
+    setMaps([])
+    setHistory(null)
+    setBase('')
+    setHead('')
+    setBranch('')
+    setBaseBranch('')
+    setHeadBranch('')
+    setLimit(50)
+    setDiff(null)
+    initialized.current = ''
+    restored.current = { base: '', head: '' }
+    setSelectedId(id)
+  }
+  const chooseTarget = (side: 'base' | 'head', value: string) => {
+    const context = value.startsWith('commit:')
+      ? branch || history?.currentBranch || ''
+      : ''
+    if (side === 'base') {
+      setBase(value)
+      setBaseBranch(context)
+    } else {
+      setHead(value)
+      setHeadBranch(context)
     }
-    let cancelled = false
-    setDiffLoading(true)
-    setDiffError(null)
-    api.repositories.diff({ fromSnapshotId: baseSnapshotId, toSnapshotId: latestSnapshotId })
-      .then((next) => {
-        if (!cancelled) setDiff(next)
+  }
+  const run = async (kind: 'base' | 'head' | 'compare') => {
+    if (!selected || busy) return
+    const repositoryId = selected.id
+    const controller = new AbortController()
+    operation.current = controller
+    setBusy(true)
+    setOperationError('')
+    setProgress(null)
+    setDiff(null)
+    const isActive = () =>
+      !controller.signal.aborted &&
+      selectedRef.current === repositoryId &&
+      operation.current === controller
+    const map = (target: string, context: string) =>
+      api.repositories.map(repositoryId, {
+        ...targetMapOptions(target, context),
+        includeImports,
+        signal: controller.signal,
+        onProgress: (next) => {
+          if (isActive()) setProgress(next)
+        },
       })
-      .catch((err) => {
-        if (cancelled) return
-        setDiff(null)
-        setDiffError(err instanceof Error ? err.message : 'Failed to load snapshot diff')
-      })
-      .finally(() => {
-        if (!cancelled) setDiffLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [baseSnapshotId, latestSnapshotId])
-
-  const copy = useCallback(async (text: string, label: string) => {
-    const ok = await copyText(text)
-    toast({ title: ok ? `${label} copied` : 'Copy failed — select the text manually', status: ok ? 'success' : 'warning', duration: 1800 })
-  }, [])
-
-  const handleMap = useCallback(async () => {
-    if (!selected) return
-    setMapping(true)
-    setMapError(null)
-    setMapProgress(null)
     try {
-      const result = await api.repositories.map(selected.id, { includeImports, onProgress: setMapProgress })
-      toast({
-        title: 'Repository mapped',
-        description: `${result.facts} files materialized`,
-        status: 'success',
-      })
-      await load()
-      if (result.viewId) navigate(`/views/${result.viewId}`)
+      if (kind === 'compare') {
+        const from = await map(base, baseBranch)
+        if (!isActive()) return
+        const to =
+          base === head && base !== 'working_tree'
+            ? from
+            : await map(head, headBranch)
+        if (!isActive()) return
+        if (!from.snapshotId || !to.snapshotId)
+          throw new Error('Map completed without a resolved snapshot')
+        const result = await api.repositories.diff({
+          fromSnapshotId: from.snapshotId,
+          toSnapshotId: to.snapshotId,
+        })
+        if (isActive()) setDiff(result)
+      } else {
+        await map(
+          kind === 'base' ? base : head,
+          kind === 'base' ? baseBranch : headBranch,
+        )
+        if (isActive()) toast({ title: 'Repository mapped', status: 'success' })
+      }
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to map repository'
-      setMapError(message)
-      toast({ title: 'Mapping failed', description: message, status: 'error' })
+      if (isActive())
+        setOperationError(err instanceof Error ? err.message : 'Mapping failed')
     } finally {
-      setMapping(false)
-      setMapProgress(null)
+      if (
+        selectedRef.current === repositoryId &&
+        operation.current === controller
+      ) {
+        setBusy(false)
+        setProgress(null)
+        operation.current = null
+        setNonce((n) => n + 1)
+        void reload()
+      }
     }
-  }, [includeImports, load, navigate, selected])
-
-  const handleDelete = useCallback(async () => {
+  }
+  const currentViewId = maps[0]?.result.viewId
+  const copy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      toast({ title: 'Copied', status: 'success' })
+    } catch {
+      toast({ title: 'Copy failed', status: 'warning' })
+    }
+  }
+  const handleDelete = async () => {
     if (!repoToDelete) return
     setDeletingRepo(true)
     try {
       await api.repositories.delete(repoToDelete.id, { deleteMaterialized })
-      toast({
-        title: 'Repository deleted',
-        description: repoName(repoToDelete.root),
-        status: 'success',
-      })
-      setSelectedId((current) => (current === repoToDelete.id ? '' : current))
+      if (repoToDelete.id === selectedId) selectRepo('')
       setRepoToDelete(null)
       setDeleteMaterialized(false)
-      await load()
+      await reload()
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to delete repository'
-      toast({ title: 'Delete failed', description: message, status: 'error' })
+      toast({
+        title: 'Delete failed',
+        description: err instanceof Error ? err.message : '',
+        status: 'error',
+      })
     } finally {
       setDeletingRepo(false)
     }
-  }, [deleteMaterialized, load, repoToDelete])
-
-  const closeDeleteDialog = useCallback(() => {
-    if (deletingRepo) return
-    setRepoToDelete(null)
-    setDeleteMaterialized(false)
-  }, [deletingRepo])
-
-  const indexCommand = selected ? `tld index "${selected.root}" --watch` : ''
-
+  }
   return (
-    <Box h="full" bg="var(--bg-canvas)" display="flex" flexDir="column" overflow="hidden">
-      {error && (
-        <Alert status="error" borderRadius={0} flexShrink={0}>
-          <AlertIcon />
-          <Text flex="1" fontSize="sm">{error}</Text>
-          <Button size="xs" variant="outline" ml={2} onClick={() => { void load() }}>Retry</Button>
-        </Alert>
-      )}
-
-      {loading && repositories.length === 0 ? (
+    <Box
+      h="full"
+      bg="var(--bg-canvas)"
+      display="flex"
+      flexDir="column"
+      overflow="hidden"
+    >
+      <ErrorMessage message={error} />
+      {loading && !repositories.length ? (
         <Center flex={1}>
-          <VStack spacing={3} color="gray.600">
-            <Spinner size="lg" color="var(--accent)" />
-            <Text fontSize="sm">Loading repositories…</Text>
+          <Spinner color="var(--accent)" />
+        </Center>
+      ) : !repositories.length ? (
+        <Center flex={1}>
+          <VStack p={4}>
+            <Text fontWeight="semibold">No repositories indexed yet</Text>
+            <Text fontSize="sm" color="gray.400">
+              Run <Code>tld index &lt;path&gt;</Code> to register a repository.
+            </Text>
+            <Button size="sm" onClick={() => void reload()}>
+              Reload
+            </Button>
           </VStack>
         </Center>
-      ) : repositories.length === 0 ? (
-        <Flex flex={1} align="center" justify="center" direction="column" gap={3} px={4} textAlign="center">
-          <RepoGlyph name="R" size="lg" />
-          <Text fontSize="md" fontWeight="semibold" color="gray.100">No repositories indexed yet</Text>
-          <Text fontSize="sm" color="gray.400" maxW="460px">
-            Run <Code fontSize="xs">tld index &lt;path&gt;</Code> to extract a code graph and materialize an indexed diagram.
-          </Text>
-        </Flex>
       ) : (
-        <Flex flex={1} minH={0} overflow="hidden" direction={{ base: 'column', lg: 'row' }}>
+        <Flex
+          flex={1}
+          minH={0}
+          direction={{ base: 'column', lg: 'row' }}
+          overflow="hidden"
+        >
           <Box
-            w={{ base: 'full', lg: '320px' }}
-            display="flex"
-            flexDir="column"
+            w={{ base: 'full', lg: collapsed ? '52px' : '320px' }}
+            maxH={{ base: collapsed ? '48px' : '32vh', lg: 'none' }}
+            overflowY="auto"
+            flexShrink={0}
             borderRight="1px solid"
             borderBottom={{ base: '1px solid', lg: 'none' }}
             borderColor="whiteAlpha.100"
-            flexShrink={0}
-            minH={0}
-            maxH={{ base: '40vh', lg: 'none' }}
-            overflow="hidden"
           >
-            <Box px={3} py={3} flexShrink={0}>
-              <SegmentedControl
-                options={FILTER_OPTIONS.map((option) => ({ ...option, count: filterCounts[option.value] }))}
-                value={filter}
-                onChange={setFilter}
+            <Flex px={3} h="40px" gap={2} align="center">
+              {!collapsed && (
+                <>
+                  <Label>Repositories</Label>
+                  <Box flex={1} />
+                </>
+              )}
+              <IconButton
+                size="xs"
+                variant="ghost"
+                aria-label={
+                  collapsed ? 'Expand repositories' : 'Collapse repositories'
+                }
+                icon={collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+                onClick={() => setCollapsed(!collapsed)}
               />
-            </Box>
-            <Box flex={1} minH={0} overflowY="auto">
-              {filtered.map((repo) => {
-                const active = repo.id === selectedId
-                const indexed = isIndexed(repo)
-                return (
-                  <Box
-                    key={repo.id}
-                    role="group"
-                    borderBottom="1px solid"
-                    borderColor="whiteAlpha.50"
-                    bg={active ? 'rgba(var(--accent-rgb), 0.08)' : 'transparent'}
-                    cursor="pointer"
-                    transition="background 0.1s"
-                    _hover={{ bg: active ? 'rgba(var(--accent-rgb), 0.12)' : 'whiteAlpha.50' }}
-                    onClick={() => setSelectedId(repo.id)}
+              {!collapsed && (
+                <IconButton
+                  aria-label="Reload repositories"
+                  size="xs"
+                  variant="ghost"
+                  icon={<RepeatIcon />}
+                  onClick={() => {
+                    void reload()
+                    setNonce((n) => n + 1)
+                  }}
+                />
+              )}
+            </Flex>
+            {repositories.map((repo) => (
+              <Box
+                key={repo.id}
+                role="group"
+                borderBottom="1px solid"
+                borderColor="whiteAlpha.100"
+              >
+                <Flex p={collapsed ? 2 : 4} py={3} align="center" gap={3}>
+                  <Button
+                    p={0}
+                    minW="28px"
+                    size="sm"
+                    variant="unstyled"
+                    aria-label={`Select ${nameOf(repo.root)}`}
+                    onClick={() => selectRepo(repo.id)}
                   >
-                    <Flex px={4} py={2.5} align="center" gap={3}>
-                      <Box position="relative" flexShrink={0}>
-                        <RepoGlyph name={repoName(repo.root)} />
-                        <Box position="absolute" bottom={-1} right={-1} w={2.5} h={2.5} borderRadius="full" bg={indexed ? 'green.400' : 'gray.400'} border="2px solid" borderColor="var(--bg-canvas)" title={indexed ? 'Indexed' : 'Not indexed'} />
-                      </Box>
-                      <Box flex="1" minW={0}>
-                        <Text fontWeight="semibold" color="gray.100" fontSize="sm" isTruncated>
-                          {repoName(repo.root)}
+                    <Glyph name={nameOf(repo.root)} />
+                  </Button>
+                  {!collapsed && (
+                    <>
+                      <Box
+                        flex={1}
+                        minW={0}
+                        onClick={() => selectRepo(repo.id)}
+                        cursor="pointer"
+                      >
+                        <Text fontSize="sm" fontWeight="semibold" isTruncated>
+                          {nameOf(repo.root)}
                         </Text>
-                        <Text fontSize="xs" color="gray.500" isTruncated title={repo.root}>
+                        <Text
+                          fontSize="xs"
+                          color="gray.500"
+                          isTruncated
+                          title={repo.root}
+                        >
                           {repo.root}
                         </Text>
+                        <Badge
+                          fontSize="2xs"
+                          colorScheme={repo.latestSnapshotId ? 'green' : 'gray'}
+                        >
+                          {repo.latestSnapshotId ? 'Indexed' : 'Not indexed'}
+                        </Badge>
                       </Box>
                       <IconButton
-                        aria-label={`Delete ${repoName(repo.root)}`}
                         data-testid={`repositories-delete-${repo.id}`}
+                        aria-label={`Delete ${nameOf(repo.root)}`}
                         icon={<DeleteIcon />}
                         size="xs"
                         variant="ghost"
-                        color="gray.500"
-                        opacity={0}
-                        _groupHover={{ opacity: 1 }}
-                        _focusVisible={{ opacity: 1 }}
-                        _hover={{ color: 'red.300', bg: 'whiteAlpha.100' }}
-                        onClick={(event) => {
-                          event.stopPropagation()
+                        isDisabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation()
                           setRepoToDelete(repo)
                           setDeleteMaterialized(false)
                         }}
                       />
+                    </>
+                  )}
+                </Flex>
+                {!collapsed && repo.id === selectedId && (
+                  <Box px={4} pb={3}>
+                    <HStack
+                      mb={2}
+                      sx={{
+                        '&:hover > .repository-copy, &:focus-within > .repository-copy':
+                          {
+                            opacity: 1,
+                            pointerEvents: 'auto',
+                          },
+                        '@media (hover: none)': {
+                          '> .repository-copy': {
+                            opacity: 1,
+                            pointerEvents: 'auto',
+                          },
+                        },
+                      }}
+                    >
+                      <Code
+                        fontSize="2xs"
+                        isTruncated
+                        flex={1}
+                        title={repo.root}
+                        bg="transparent"
+                        p={0}
+                      >
+                        {repo.root}
+                      </Code>
+                      <IconButton
+                        aria-label="Copy local path"
+                        className="repository-copy"
+                        opacity={0}
+                        pointerEvents="none"
+                        icon={<CopyIcon />}
+                        size="xs"
+                        variant="ghost"
+                        onClick={() => void copy(repo.root)}
+                      />
+                    </HStack>
+                    <Box mb={2}>
+                      <Label>Snapshots · {snapshots.length}</Label>
+                    </Box>
+                    {dataLoading && !snapshots.length && <Spinner size="xs" />}
+                    {!dataLoading && !snapshots.length && (
+                      <Text fontSize="xs" color="gray.500">
+                        No snapshots recorded.
+                      </Text>
+                    )}
+                    <VStack align="stretch" spacing={1}>
+                      {[...snapshots].reverse().map((s) => (
+                        <Box
+                          key={s.id}
+                          title={
+                            s.provenance === 'commit'
+                              ? 'Commit snapshot'
+                              : s.provenance === 'working_tree'
+                                ? 'Working tree snapshot'
+                                : 'Unknown provenance'
+                          }
+                          px={2}
+                          py={1.5}
+                          bg="whiteAlpha.50"
+                          borderRadius="md"
+                          border="1px solid"
+                          borderColor="whiteAlpha.100"
+                        >
+                          <Flex gap={2} align="center">
+                            <Text
+                              fontSize="xs"
+                              color="gray.300"
+                              flex={1}
+                              isTruncated
+                              title={s.gitBranch}
+                            >
+                              {s.gitBranch || 'No captured branch'}
+                            </Text>
+                            <Text
+                              fontSize="10px"
+                              color="gray.500"
+                              whiteSpace="nowrap"
+                              title={new Date(
+                                s.createdUnix * 1000,
+                              ).toLocaleString()}
+                            >
+                              {age(s.createdUnix)}
+                            </Text>
+                            {s.ingestionStatus !== 'complete' && (
+                              <Badge fontSize="2xs" colorScheme="orange">
+                                {s.ingestionStatus || 'Incomplete'}
+                              </Badge>
+                            )}
+                          </Flex>
+                          {s.statistics ? (
+                            <Text fontSize="10px" color="gray.400" mt={1}>
+                              {s.statistics.facts.toLocaleString()} facts ·{' '}
+                              {s.statistics.edges.toLocaleString()} edges ·{' '}
+                              {s.statistics.sources.toLocaleString()} files ·{' '}
+                              {s.statistics.chunks.toLocaleString()} chunks
+                            </Text>
+                          ) : (
+                            <Text fontSize="10px" color="gray.500" mt={1}>
+                              Statistics unavailable
+                            </Text>
+                          )}
+                        </Box>
+                      ))}
+                    </VStack>
+                  </Box>
+                )}
+              </Box>
+            ))}
+          </Box>
+          <Box
+            flex={1}
+            minW={0}
+            minH={0}
+            overflowY="auto"
+            display="flex"
+            flexDir="column"
+          >
+            {selected && (
+              <>
+                <Flex
+                  px={4}
+                  py={2}
+                  gap={3}
+                  align="center"
+                  wrap="wrap"
+                  borderBottom="1px solid"
+                  borderColor="whiteAlpha.100"
+                >
+                  <Text fontSize="sm" fontWeight="semibold">
+                    {nameOf(selected.root)}
+                  </Text>
+                  <Box flex={1} />
+                  <Select
+                    aria-label="History branch"
+                    size="xs"
+                    w="200px"
+                    value={branch}
+                    isDisabled={busy || !history?.isGit}
+                    onChange={(e) => {
+                      setBranch(e.target.value)
+                      setLimit(50)
+                    }}
+                  >
+                    <option value="">
+                      Current HEAD
+                      {history?.currentBranch
+                        ? ` · ${history.currentBranch}`
+                        : ''}
+                    </option>
+                    {branch &&
+                      !history?.branches.some((b) => b.name === branch) && (
+                        <option value={branch}>{branch}</option>
+                      )}
+                    {history?.branches.map((b) => (
+                      <option key={b.name} value={b.name}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    isDisabled={!currentViewId || busy}
+                    onClick={() => navigate(`/views/${currentViewId}`)}
+                  >
+                    Open map
+                  </Button>
+                </Flex>
+                {historyError && (
+                  <Text p={3} fontSize="xs" color="orange.300">
+                    {historyError} · Saved snapshots remain available.
+                  </Text>
+                )}
+                <ErrorMessage message={dataError} />
+                <RepositoryHistory
+                  repositoryId={selectedId}
+                  history={history}
+                  base={
+                    base.startsWith('commit:')
+                      ? base.slice(7)
+                      : snapshotForTarget(base, snapshots)?.gitRevision || ''
+                  }
+                  head={
+                    head.startsWith('commit:')
+                      ? head.slice(7)
+                      : snapshotForTarget(head, snapshots)?.gitRevision || ''
+                  }
+                  collapsed={historyCollapsed}
+                  onToggle={() => setHistoryCollapsed(!historyCollapsed)}
+                  onBase={(c) => {
+                    if (!busy) chooseTarget('base', `commit:${c.sha}`)
+                  }}
+                  onHead={(c) => {
+                    if (!busy) chooseTarget('head', `commit:${c.sha}`)
+                  }}
+                  onMore={() => setLimit((n) => n + 50)}
+                />
+                <Flex
+                  px={4}
+                  h="40px"
+                  align="center"
+                  gap={3}
+                  flexShrink={0}
+                  borderBottom="1px solid"
+                  borderColor="whiteAlpha.100"
+                >
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    aria-expanded={!compareCollapsed}
+                    onClick={() => setCompareCollapsed(!compareCollapsed)}
+                  >
+                    Compare
+                  </Button>
+                  <Box flex={1} />
+                  <Text fontSize="xs" color="gray.500">
+                    Select snapshots or Git revisions
+                  </Text>
+                </Flex>
+                {!compareCollapsed && (
+                  <Box
+                    p={4}
+                    borderBottom="1px solid"
+                    borderColor="whiteAlpha.100"
+                  >
+                    <Grid
+                      templateColumns={{ base: '1fr', md: '1fr 1fr' }}
+                      gap={3}
+                    >
+                      <CompareSide
+                        side="Base"
+                        value={base}
+                        branch={baseBranch}
+                        snapshots={snapshots}
+                        maps={maps}
+                        history={history}
+                        includeImports={includeImports}
+                        showIds={showIds}
+                        disabled={busy || dataLoading}
+                        onChange={(value) => chooseTarget('base', value)}
+                        onMap={() => void run('base')}
+                      />
+                      <CompareSide
+                        side="Head"
+                        value={head}
+                        branch={headBranch}
+                        snapshots={snapshots}
+                        maps={maps}
+                        history={history}
+                        includeImports={includeImports}
+                        showIds={showIds}
+                        disabled={busy || dataLoading}
+                        onChange={(value) => chooseTarget('head', value)}
+                        onMap={() => void run('head')}
+                      />
+                    </Grid>
+                    <Flex mt={3} gap={3} align="center" wrap="wrap">
+                      <HStack>
+                        <Switch
+                          size="sm"
+                          data-testid="repositories-include-imports"
+                          isDisabled={busy}
+                          isChecked={includeImports}
+                          onChange={(e) => setIncludeImports(e.target.checked)}
+                        />
+                        <Text fontSize="xs" color="gray.400">
+                          Include external imports
+                        </Text>
+                      </HStack>
+                      <Box flex={1} />
+                      <Button
+                        {...accentStyle}
+                        size="sm"
+                        data-testid="repositories-compare"
+                        isLoading={busy}
+                        loadingText="Preparing maps…"
+                        isDisabled={!base || !head || dataLoading}
+                        onClick={() => void run('compare')}
+                      >
+                        Compare maps
+                      </Button>
+                      {busy && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            operation.current?.abort()
+                          }}
+                        >
+                          Cancel
+                        </Button>
+                      )}
                     </Flex>
                   </Box>
-                )
-              })}
-              {filtered.length === 0 && (
-                <Box p={4}>
-                  <Text fontSize="sm" color="gray.500">No matching repositories</Text>
-                  <Button size="xs" variant="ghost" mt={2} color="gray.500" onClick={() => setFilter('all')}>Clear filters</Button>
-                </Box>
-              )}
-            </Box>
-          </Box>
-
-          <Box flex={1} minW={0} minH={0} overflowY="auto" px={4} py={4}>
-            {!selected ? (
-              <Center h="100%" color="gray.600">
-                <Text fontSize="sm">Select a repository to inspect its index.</Text>
-              </Center>
-            ) : (
-              <VStack align="stretch" spacing={5} maxW="760px">
-                <HStack spacing={3} align="center">
-                  <RepoGlyph name={repoName(selected.root)} size="lg" />
-                  <Box minW={0} flex={1}>
-                    <Text fontSize="lg" fontWeight="700" color="gray.50" isTruncated>{repoName(selected.root)}</Text>
-                    <HStack spacing={1} mt={1} minW={0}>
-                      <Code fontSize="2xs" color="gray.400" isTruncated flex={1} title={selected.root}>{selected.root}</Code>
-                      <IconButton aria-label="Copy root path" icon={<CopyIcon />} size="xs" variant="ghost" onClick={() => { void copy(selected.root, 'Path') }} />
-                    </HStack>
-                  </Box>
-                  <Tooltip label="Also materialize external imports and their connectors" placement="top">
-                    <HStack
-                      spacing={1.5}
-                      align="center"
-                      flexShrink={0}
-                      opacity={isIndexed(selected) ? 1 : 0.5}
-                      cursor={isIndexed(selected) ? 'pointer' : 'not-allowed'}
-                    >
-                      <Switch
-                        size="sm"
-                        colorScheme="purple"
-                        isChecked={includeImports}
-                        isDisabled={!isIndexed(selected)}
-                        data-testid="repositories-include-imports"
-                        onChange={(event) => setIncludeImports(event.target.checked)}
-                      />
-                      <Text fontSize="xs" color="gray.400" fontWeight="600">Imports</Text>
-                    </HStack>
-                  </Tooltip>
-                  <Tooltip label="Cluster embeddings and materialize a repository map" placement="top">
-                    <Button
-                      {...accentOutlineStyle}
-                      size="sm"
-                      data-testid="repositories-map"
-                      isLoading={mapping}
-                      loadingText="Mapping…"
-                      isDisabled={!isIndexed(selected)}
-                      onClick={() => { void handleMap() }}
-                    >
-                      Map
-                    </Button>
-                  </Tooltip>
-                </HStack>
-
-                {mapping && (
-                  <Box border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" px={4} py={3} bg="whiteAlpha.50">
-                    <Text fontSize="xs" color="gray.300" fontWeight="600" mb={2}>
-                      {mapProgress ? mapStageLabel(mapProgress) : 'Starting mapper…'}
+                )}
+                {busy && (
+                  <Box p={3}>
+                    <Text fontSize="xs" color="gray.400" mb={2}>
+                      {progress
+                        ? `${progress.stage} · ${progress.detail}${progress.total ? ` · ${progress.current}/${progress.total}` : ''}`
+                        : 'Preparing maps…'}
                     </Text>
-                    <Progress size="xs" isIndeterminate colorScheme="purple" borderRadius="full" />
+                    <Progress
+                      size="xs"
+                      isIndeterminate={!progress?.total}
+                      value={
+                        progress?.total
+                          ? (progress.current / progress.total) * 100
+                          : undefined
+                      }
+                    />
                   </Box>
                 )}
-
-                {mapError && !mapping && (
-                  <Alert status="error" borderRadius="md">
-                    <AlertIcon />
-                    <Text flex="1" fontSize="sm">{mapError}</Text>
-                  </Alert>
-                )}
-
-                {isIndexed(selected) ? (
-                  <>
-                    <Grid templateColumns={{ base: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }} gap={3}>
-                      <StatCard label="Facts" value={selected.facts} />
-                      <StatCard label="Chunks" value={selected.chunks} />
-                      <StatCard label="Edges" value={selected.edges} />
-                      <StatCard label="Sources" value={selected.sources} />
-                    </Grid>
-
-                    <Box border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" overflow="hidden">
-                      <Flex px={4} py={2.5} borderBottom="1px solid" borderColor="whiteAlpha.100" align="center" gap={2}>
-                        <MicroLabel>Latest snapshot</MicroLabel>
-                        <Box flex={1} />
-                        <Text fontSize="xs" color="gray.500">{snapshotAge(selected.latestCreatedUnix)}</Text>
-                      </Flex>
-                      <VStack align="stretch" spacing={0}>
-                        {selected.gitBranch && (
-                          <Flex px={4} py={2.5} align="center" gap={3} borderBottom={showIds ? '1px solid' : undefined} borderColor="whiteAlpha.50">
-                            <Text fontSize="xs" color="gray.500" w="88px" flexShrink={0}>Branch</Text>
-                            <Text fontSize="xs" color="gray.300" flex={1} isTruncated>{selected.gitBranch}</Text>
-                          </Flex>
-                        )}
-                        {showIds && (
-                          <>
-                            <Flex px={4} py={2.5} align="center" gap={3} borderBottom="1px solid" borderColor="whiteAlpha.50">
-                              <Text fontSize="xs" color="gray.500" w="88px" flexShrink={0}>Snapshot</Text>
-                              <Code fontSize="xs" color="gray.300" flex={1} isTruncated>{shortId(selected.latestSnapshotId)}</Code>
-                              <IconButton aria-label="Copy snapshot id" icon={<CopyIcon />} size="xs" variant="ghost" onClick={() => { void copy(selected.latestSnapshotId, 'Snapshot id') }} />
-                            </Flex>
-                            <Flex px={4} py={2.5} align="center" gap={3}>
-                              <Text fontSize="xs" color="gray.500" w="88px" flexShrink={0}>Revision</Text>
-                              <Code fontSize="xs" color="gray.300" flex={1} isTruncated>{selected.gitRevision ? shortId(selected.gitRevision) : '—'}</Code>
-                              {selected.gitRevision && (
-                                <IconButton aria-label="Copy revision" icon={<CopyIcon />} size="xs" variant="ghost" onClick={() => { void copy(selected.gitRevision, 'Revision') }} />
-                              )}
-                            </Flex>
-                          </>
-                        )}
-                      </VStack>
-                    </Box>
-
-                    <Box border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" overflow="hidden">
-                      <Flex px={4} py={2.5} borderBottom="1px solid" borderColor="whiteAlpha.100" align="center" gap={2}>
-                        <MicroLabel>History · {snapshots.length}</MicroLabel>
-                        <Box flex={1} />
-                        {snapshots.length >= 2 && (
-                          <HStack spacing={2}>
-                            <Text fontSize="xs" color="gray.500">Compare</Text>
-                            <Select
-                              size="xs"
-                              w="170px"
-                              value={baseSnapshotId}
-                              bg="whiteAlpha.100"
-                              borderColor="whiteAlpha.200"
-                              color="gray.200"
-                              onChange={(event) => setBaseSnapshotId(event.target.value)}
-                            >
-                              {snapshots.slice(0, -1).map((snapshot, index) => (
-                                <option key={snapshot.id} value={snapshot.id}>
-                                  {snapshotOptionLabel(snapshot, index + 1, showIds)}
-                                </option>
-                              ))}
-                            </Select>
-                          </HStack>
-                        )}
-                        <Button
-                          size="xs"
-                          variant="ghost"
-                          color="gray.500"
-                          fontWeight="600"
-                          aria-pressed={showIds}
-                          onClick={toggleShowIds}
-                        >
-                          {showIds ? 'Hide IDs' : 'Show IDs'}
-                        </Button>
-                      </Flex>
-                      {snapshotsLoading ? (
-                        <Flex px={4} py={4} align="center" gap={2} color="gray.500">
-                          <Spinner size="xs" />
-                          <Text fontSize="sm">Loading history…</Text>
-                        </Flex>
-                      ) : snapshotsError ? (
-                        <Box px={4} py={3}><Text fontSize="sm" color="red.300">{snapshotsError}</Text></Box>
-                      ) : snapshots.length === 0 ? (
-                        <Box px={4} py={3}><Text fontSize="sm" color="gray.500">No snapshots recorded.</Text></Box>
-                      ) : (
-                        <VStack align="stretch" spacing={0}>
-                          {[...snapshots].reverse().map((snapshot, index) => {
-                            const isLatest = snapshot.id === latestSnapshotId
-                            const isBase = snapshot.id === baseSnapshotId
-                            return (
-                              <Flex
-                                key={snapshot.id}
-                                px={4}
-                                py={2.5}
-                                align="center"
-                                gap={3}
-                                borderBottom="1px solid"
-                                borderColor="whiteAlpha.50"
-                                bg={isBase ? 'rgba(var(--accent-rgb), 0.08)' : 'transparent'}
-                                cursor={isLatest ? 'default' : 'pointer'}
-                                _hover={isLatest ? undefined : { bg: isBase ? 'rgba(var(--accent-rgb), 0.12)' : 'whiteAlpha.50' }}
-                                onClick={() => { if (!isLatest) setBaseSnapshotId(snapshot.id) }}
-                              >
-                                <Box w={2} h={2} borderRadius="full" flexShrink={0} bg={isLatest ? 'green.400' : isBase ? 'var(--accent)' : 'gray.500'} />
-                                {showIds ? (
-                                  <Code fontSize="xs" color="gray.300" flex={1} isTruncated title={snapshot.id}>{shortId(snapshot.id)}</Code>
-                                ) : (
-                                  <Text fontSize="xs" color="gray.300" flex={1} isTruncated>Snapshot #{snapshots.length - index}</Text>
-                                )}
-                                {snapshot.gitBranch && (
-                                  <Text fontSize="xs" color="gray.400" flexShrink={0}>{snapshot.gitBranch}</Text>
-                                )}
-                                {snapshot.warnings.length > 0 && (
-                                  <Tooltip label={snapshot.warnings.join('\n')} placement="top">
-                                    <Text fontSize="xs" color="orange.300" flexShrink={0}>
-                                      {snapshot.warnings.length} warning{snapshot.warnings.length === 1 ? '' : 's'}
-                                    </Text>
-                                  </Tooltip>
-                                )}
-                                {isLatest && <Text fontSize="xs" color="green.300" fontWeight="600" flexShrink={0}>latest</Text>}
-                                <Text fontSize="xs" color="gray.500" w="72px" textAlign="right" flexShrink={0}>{snapshotAge(snapshot.createdUnix)}</Text>
-                              </Flex>
-                            )
-                          })}
-                        </VStack>
-                      )}
-                    </Box>
-
-                    {baseSnapshotId && latestSnapshotId && baseSnapshotId !== latestSnapshotId && (
-                      <Box border="1px solid" borderColor="whiteAlpha.100" borderRadius="md" overflow="hidden">
-                        <Flex px={4} py={2.5} borderBottom="1px solid" borderColor="whiteAlpha.100" align="center" gap={2}>
-                          <MicroLabel>Changes</MicroLabel>
-                          <Text fontSize="xs" color="gray.500">
-                            {showIds ? (
-                              <>
-                                <Code fontSize="2xs">{shortId(baseSnapshotId)}</Code> → <Code fontSize="2xs">{shortId(latestSnapshotId)}</Code>
-                              </>
-                            ) : (
-                              <>Snapshot #{snapshotOrdinal(baseSnapshotId) ?? '?'} → #{snapshotOrdinal(latestSnapshotId) ?? '?'}</>
-                            )}
-                          </Text>
-                          <Box flex={1} />
-                          {diffLoading && <Spinner size="xs" color="gray.500" />}
-                        </Flex>
-                        {diffError ? (
-                          <Box px={4} py={3}><Text fontSize="sm" color="red.300">{diffError}</Text></Box>
-                        ) : diff ? (
-                          <Box px={4} py={3}>
-                            <Grid templateColumns={{ base: 'repeat(2, 1fr)', md: 'repeat(4, 1fr)' }} gap={2} mb={3}>
-                              <DeltaStat label="Facts +" value={diff.facts.added} tone="add" />
-                              <DeltaStat label="Facts −" value={diff.facts.removed} tone="remove" />
-                              <DeltaStat label="Facts ~" value={diff.facts.modified} tone="modify" />
-                              <DeltaStat label="Sources" value={diff.sources.length} tone="neutral" />
-                            </Grid>
-                            {diff.sources.length > 0 ? (
-                              <VStack align="stretch" spacing={0} maxH="240px" overflowY="auto" borderTop="1px solid" borderColor="whiteAlpha.50">
-                                {diff.sources.map((change) => (
-                                  <Flex key={change.path} px={1} py={1.5} align="center" gap={2} borderBottom="1px solid" borderColor="whiteAlpha.50">
-                                    <ChangeTag change={change.change} />
-                                    <Text fontSize="xs" color="gray.300" fontFamily="mono" isTruncated title={change.path}>{change.path}</Text>
-                                  </Flex>
-                                ))}
-                              </VStack>
-                            ) : (
-                              <Text fontSize="sm" color="gray.500">No source changes between these snapshots.</Text>
-                            )}
-                          </Box>
-                        ) : null}
+                <ErrorMessage message={operationError} />
+                {diff && (
+                  <Grid
+                    px={4}
+                    py={3}
+                    templateColumns="repeat(4, 1fr)"
+                    gap={2}
+                    borderBottom="1px solid"
+                    borderColor="whiteAlpha.100"
+                  >
+                    {[
+                      ['Sources', diff.sources.length],
+                      ['Facts added', diff.facts.added],
+                      ['Facts removed', diff.facts.removed],
+                      ['Facts modified', diff.facts.modified],
+                    ].map(([label, count]) => (
+                      <Box
+                        key={label}
+                        p={2}
+                        bg="whiteAlpha.50"
+                        borderRadius="md"
+                      >
+                        <Text fontSize="lg" fontFamily="mono">
+                          {count}
+                        </Text>
+                        <Label>{label}</Label>
                       </Box>
-                    )}
-                  </>
-                ) : (
-                  <Alert status="info" borderRadius="md" alignItems="flex-start">
-                    <AlertIcon />
-                    <Box>
-                      <Text fontSize="sm" fontWeight="semibold">This repository has no snapshot yet.</Text>
-                      <Text fontSize="sm" color="gray.400" mt={1}>
-                        Run the indexer to extract its code graph and materialize a diagram.
-                      </Text>
-                    </Box>
-                  </Alert>
+                    ))}
+                  </Grid>
                 )}
-
-                <Divider borderColor="whiteAlpha.100" />
-
-                <Box>
-                  <MicroLabel>Index command</MicroLabel>
-                  <HStack mt={2} spacing={2}>
-                    <Code
-                      display="block"
-                      whiteSpace="pre-wrap"
-                      flex={1}
-                      p={3}
-                      borderRadius="md"
-                      fontSize="xs"
-                      color="gray.200"
-                      bg="whiteAlpha.50"
-                      border="1px solid"
-                      borderColor="whiteAlpha.100"
-                    >
-                      {indexCommand}
-                    </Code>
-                    <IconButton aria-label="Copy index command" icon={<CopyIcon />} size="sm" variant="ghost" onClick={() => { void copy(indexCommand, 'Command') }} />
-                  </HStack>
-                  <Text mt={2} fontSize="xs" color="gray.500">
-                    Indexing runs locally. Run this command, or add the <Code fontSize="2xs">--watch</Code> flag to keep the graph current.
-                  </Text>
-                </Box>
-
-                <Button {...accentOutlineStyle} size="sm" alignSelf="flex-start" onClick={() => { void load() }}>
-                  Reload
-                </Button>
-              </VStack>
+                <Flex
+                  flex={1}
+                  minH="260px"
+                  direction={{ base: 'column', lg: 'row' }}
+                >
+                  <Box
+                    w={{ base: 'full', lg: '280px' }}
+                    flexShrink={0}
+                    borderRight="1px solid"
+                    borderBottom={{ base: '1px solid', lg: 'none' }}
+                    borderColor="whiteAlpha.100"
+                  >
+                    <Flex p={3} gap={2}>
+                      <Label>Files</Label>
+                      <Badge fontSize="2xs">{diff?.sources.length ?? 0}</Badge>
+                    </Flex>
+                    {diff ? (
+                      <FileTree files={diff.sources} />
+                    ) : (
+                      <Text px={3} fontSize="xs" color="gray.500">
+                        Compare maps to see changed source files.
+                      </Text>
+                    )}
+                  </Box>
+                  <Center flex={1} p={6} minH="260px">
+                    <VStack maxW="440px" textAlign="center" spacing={3}>
+                      <Badge colorScheme="gray">Not implemented yet</Badge>
+                      <Text fontSize="sm" fontWeight="semibold">
+                        Architecture impact analysis and comparison diagram
+                      </Text>
+                      <Text fontSize="sm" color="gray.500">
+                        Map prepares recorded snapshots. Their source changes
+                        are available here; architecture analysis and diagram
+                        rendering will be added later.
+                      </Text>
+                      <Button size="xs" variant="outline" isDisabled>
+                        Export architecture report
+                      </Button>
+                    </VStack>
+                  </Center>
+                </Flex>
+              </>
             )}
           </Box>
         </Flex>
       )}
-
       <ConfirmDialog
-        isOpen={repoToDelete !== null}
-        onClose={closeDeleteDialog}
-        onConfirm={() => { void handleDelete() }}
+        isOpen={!!repoToDelete}
+        onClose={() => {
+          if (!deletingRepo) setRepoToDelete(null)
+        }}
+        onConfirm={() => void handleDelete()}
         title="Delete repository"
-        body={repoToDelete
-          ? `Delete "${repoName(repoToDelete.root)}"? This removes the repository and all of its indexed snapshots. This action cannot be undone.`
-          : ''}
+        body={
+          repoToDelete
+            ? `Delete "${nameOf(repoToDelete.root)}" and all of its indexed snapshots? This cannot be undone.`
+            : ''
+        }
         confirmLabel="Delete"
         confirmColorScheme="red"
         isLoading={deletingRepo}
       >
-        <HStack mt={4} spacing={2} align="flex-start">
+        <HStack mt={4} align="flex-start">
           <Switch
             size="sm"
             colorScheme="red"
             data-testid="repositories-delete-materialized"
             isChecked={deleteMaterialized}
             isDisabled={deletingRepo}
-            onChange={(event) => setDeleteMaterialized(event.target.checked)}
+            onChange={(e) => setDeleteMaterialized(e.target.checked)}
           />
           <Box>
-            <Text fontSize="sm" color="gray.200">Also delete materialized workspace resources</Text>
-            <Text fontSize="xs" color="gray.500">Removes views, elements, and connectors created by Map for this repository.</Text>
+            <Text fontSize="sm">
+              Also delete materialized workspace resources
+            </Text>
+            <Text fontSize="xs" color="gray.500">
+              Removes views, elements, and connectors created by Map for this
+              repository.
+            </Text>
           </Box>
         </HStack>
       </ConfirmDialog>

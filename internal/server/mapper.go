@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -17,24 +18,29 @@ import (
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/mapper"
 	"github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
 // mapperService runs the deterministic embedding clustering/binning pipeline and
 // materializes its folder/bin/cluster hierarchy into the workspace.
 type mapperService struct {
 	codeindexv1connect.UnimplementedMapperServiceHandler
-	ws  *store.SQLiteStore
-	idx *cstore.Store
+	ws     *store.SQLiteStore
+	idx    *cstore.Store
+	config *workspace.Config
 
 	mu      sync.Mutex
 	running map[string]struct{}
 }
 
-func registerMapperHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) {
+func registerMapperHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, configs ...*workspace.Config) {
 	svc := &mapperService{
 		ws:      sqliteStore,
 		idx:     cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect()),
 		running: map[string]struct{}{},
+	}
+	if len(configs) > 0 {
+		svc.config = configs[0]
 	}
 	path, handler := codeindexv1connect.NewMapperServiceHandler(svc)
 	mux.Handle("/api"+path, http.StripPrefix("/api", handler))
@@ -45,6 +51,22 @@ func (s *mapperService) MapRepository(ctx context.Context, req *connect.Request[
 	if repositoryID == "" {
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository_id is required"))
 	}
+	req.Msg.RepositoryId = repositoryID
+	req.Msg.SnapshotId = strings.TrimSpace(req.Msg.SnapshotId)
+	req.Msg.GitRevision = strings.TrimSpace(req.Msg.GitRevision)
+	targets := 0
+	if req.Msg.SnapshotId != "" {
+		targets++
+	}
+	if req.Msg.GitRevision != "" {
+		targets++
+	}
+	if req.Msg.WorkingTree {
+		targets++
+	}
+	if targets > 1 {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("snapshot_id, git_revision, and working_tree are mutually exclusive"))
+	}
 	if !s.begin(repositoryID) {
 		return connect.NewError(connect.CodeAlreadyExists, fmt.Errorf("a map is already running for this repository"))
 	}
@@ -54,16 +76,13 @@ func (s *mapperService) MapRepository(ctx context.Context, req *connect.Request[
 		_ = stream.Send(&codeindexv1.MapRepositoryEvent{Event: &codeindexv1.MapRepositoryEvent_Progress{Progress: progress}})
 	}
 
-	snapshotID := strings.TrimSpace(req.Msg.GetSnapshotId())
-	if snapshotID == "" {
-		latest, err := s.idx.Latest(ctx, repositoryID)
-		if err != nil {
-			return connect.NewError(connect.CodeInternal, err)
-		}
-		if latest == "" {
-			return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("repository has no published snapshot"))
-		}
-		snapshotID = latest
+	snapshot, err := s.prepareSnapshot(ctx, req.Msg, send)
+	if err != nil {
+		return err
+	}
+	snapshotID := snapshot.Id
+	if err := s.ensureEmbeddings(ctx, snapshot, send); err != nil {
+		return err
 	}
 	profile := strings.TrimSpace(req.Msg.GetProfile())
 	if profile == "" {
@@ -77,6 +96,21 @@ func (s *mapperService) MapRepository(ctx context.Context, req *connect.Request[
 		profile = majority
 	}
 
+	options := mapper.DefaultOptions()
+	binOptions := mapper.DefaultBinOptions()
+	configBytes, _ := json.Marshal(mapOptionsParams(options, binOptions))
+	configHash := cgraph.ID("mapper-v1", string(configBytes), strconv.FormatBool(req.Msg.IncludeImports))
+	completed, err := s.idx.CompletedMaps(ctx, repositoryID)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	for _, record := range completed {
+		if record.Result.SnapshotId == snapshotID && record.Profile == profile && record.ConfigHash == configHash {
+			if _, err := s.ws.ViewByID(ctx, record.Result.ViewId); err == nil {
+				return stream.Send(&codeindexv1.MapRepositoryEvent{Event: &codeindexv1.MapRepositoryEvent_Result{Result: record.Result}})
+			}
+		}
+	}
 	send(&codeindexv1.MapProgress{Stage: "loading", Detail: "loading embeddings"})
 	factVectors, err := s.idx.FactEmbeddings(ctx, snapshotID, profile, codeindexv1.FactKind_FACT_KIND_FILE)
 	if err != nil {
@@ -88,15 +122,16 @@ func (s *mapperService) MapRepository(ctx context.Context, req *connect.Request[
 	}
 	send(&codeindexv1.MapProgress{Stage: "loading", Current: uint32(len(dataset.Facts)), Total: uint32(len(dataset.Facts)), Detail: "loaded"})
 
-	options := mapper.DefaultOptions()
 	pipeline, err := mapper.RunPipelineProgress(dataset.Vectors, &options, func(progress mapper.Progress) {
 		send(&codeindexv1.MapProgress{Stage: "clustering", Current: uint32(progress.Current), Total: uint32(progress.Total), Detail: progress.Detail})
 	})
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	send(&codeindexv1.MapProgress{Stage: "binning"})
-	binOptions := mapper.DefaultBinOptions()
 	bins, err := mapper.BuildBins(dataset, pipeline, &binOptions)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
@@ -110,7 +145,7 @@ func (s *mapperService) MapRepository(ctx context.Context, req *connect.Request[
 	if base := filepath.Base(repositoryRoot); repositoryRoot != "" && base != "." && base != "/" {
 		repositoryName = base
 	}
-	runID := cgraph.ID(repositoryID, snapshotID, "mapper")
+	runID := cgraph.ID(repositoryID, snapshotID, "mapper", profile, configHash)
 	domainNames, err := mapper.NameDomains(dataset, pipeline.Domains, mapper.DefaultNameOptions())
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
@@ -135,17 +170,10 @@ func (s *mapperService) MapRepository(ctx context.Context, req *connect.Request[
 			Members: members,
 		})
 	}
-	if err := s.idx.SaveAnalysis(ctx, cstore.AnalysisRun{
-		ID:           runID,
-		RepositoryID: repositoryID,
-		SnapshotID:   snapshotID,
-		Algorithm:    "mapper",
-		Params:       mapOptionsParams(options, binOptions),
-		Groups:       groups,
-	}); err != nil {
-		return connect.NewError(connect.CodeInternal, err)
-	}
 
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	send(&codeindexv1.MapProgress{Stage: "materializing"})
 	fileEdges, err := s.idx.FileEdges(ctx, snapshotID)
 	if err != nil {
@@ -178,15 +206,27 @@ func (s *mapperService) MapRepository(ctx context.Context, req *connect.Request[
 		return connect.NewError(connect.CodeInternal, err)
 	}
 
-	return stream.Send(&codeindexv1.MapRepositoryEvent{Event: &codeindexv1.MapRepositoryEvent_Result{Result: &codeindexv1.MapResult{
-		RunId:             runID,
-		ViewId:            mapResult.ViewID,
-		Facts:             uint32(len(dataset.Facts)),
-		Clusters:          uint32(len(pipeline.Domains)),
-		Bins:              uint32(len(bins.Sizes)),
-		Unclustered:       uint32(len(pipeline.Leftovers)),
+	result := &codeindexv1.MapResult{
+		RunId: runID, SnapshotId: snapshotID, ViewId: mapResult.ViewID,
+		Facts: uint32(len(dataset.Facts)), Clusters: uint32(len(pipeline.Domains)),
+		Bins: uint32(len(bins.Sizes)), Unclustered: uint32(len(pipeline.Leftovers)),
 		WeightedTightness: pipeline.Metrics.WeightedTightness,
-	}}})
+	}
+	if err := s.idx.SaveAnalysis(ctx, cstore.AnalysisRun{
+		ID:           runID,
+		RepositoryID: repositoryID,
+		SnapshotID:   snapshotID,
+		Algorithm:    "mapper",
+		Params:       mapOptionsParams(options, binOptions),
+		Groups:       groups,
+	}); err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+
+	if err := s.idx.SaveCompletedMap(ctx, repositoryID, &codeindexv1.CompletedMap{Result: result, Profile: profile, IncludeImports: req.Msg.IncludeImports, ConfigHash: configHash}); err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	return stream.Send(&codeindexv1.MapRepositoryEvent{Event: &codeindexv1.MapRepositoryEvent_Result{Result: result}})
 }
 
 func (s *mapperService) begin(repositoryID string) bool {
@@ -292,4 +332,15 @@ func mapOptionsParams(options mapper.Options, bins mapper.BinOptions) map[string
 		params["sweep_floor"] = strconv.FormatFloat(*options.SweepFloor, 'g', -1, 64)
 	}
 	return params
+}
+
+func (s *mapperService) ListMaps(ctx context.Context, req *connect.Request[codeindexv1.ListMapsRequest]) (*connect.Response[codeindexv1.ListMapsResponse], error) {
+	if _, err := s.idx.Repository(ctx, req.Msg.GetRepositoryId()); err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	maps, err := s.idx.CompletedMaps(ctx, req.Msg.GetRepositoryId())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	return connect.NewResponse(&codeindexv1.ListMapsResponse{Maps: maps}), nil
 }

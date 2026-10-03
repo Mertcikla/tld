@@ -39,6 +39,9 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_analysis_runs WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
 			return err
 		}
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_completed_maps WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
+			return err
+		}
 		for _, table := range snapshotScoped {
 			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE snapshot_id IN (
 				SELECT id FROM codeindex_snapshots WHERE repository_id = ?)`, repositoryID).Exec(ctx); err != nil {

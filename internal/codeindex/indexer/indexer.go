@@ -16,7 +16,11 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 )
 
-type Pipeline struct{ Config config.Config }
+type Pipeline struct {
+	Config config.Config
+	// RepositoryID preserves canonical identity when indexing a temporary checkout.
+	RepositoryID string
+}
 
 // Progress reports indexing progress. Stage names the active phase; Current and
 // Total are per-stage counters (zero when unknown); Detail is an optional item
@@ -69,11 +73,18 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 		return nil, nil, false, err
 	}
 	emitProgress(progress, Progress{Stage: "discover"})
+	before, revision, branch, provenance, err := captureInputs(ctx, root, p.Config, req)
+	if err != nil {
+		return nil, nil, false, err
+	}
 	projects, sources, err := Discover(ctx, root, req.ProjectRoots, req.Exclude)
 	if err != nil {
 		return nil, nil, false, err
 	}
-	repo := graph.RepositoryID(root)
+	repo := p.RepositoryID
+	if repo == "" {
+		repo = graph.RepositoryID(root)
+	}
 	snapshot := graph.ID(repo, fmt.Sprint(time.Now().UnixNano()))
 	g := graph.NewGraph(repo, snapshot)
 	g.Sources = sources
@@ -87,7 +98,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 			}
 		}
 	}
-	if base != nil && len(kept) == len(sources) && !anyBaseSourceRemoved(sources, base.Sources) {
+	if base != nil && base.Snapshot.ContentFingerprint == before && len(kept) == len(sources) && !anyBaseSourceRemoved(sources, base.Sources) {
 		// Nothing changed; reuse the published snapshot verbatim.
 		return base.Snapshot, base.Graph, true, nil
 	}
@@ -123,8 +134,11 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	}
 
 	snap := &pb.Snapshot{Id: snapshot, RepositoryId: repo, CreatedUnix: time.Now().Unix(), Projects: projects, IngestionStatus: "staging", EmbeddingStatus: "disabled"}
-	configBytes, _ := json.Marshal(p.Config)
-	snap.ConfigHash = graph.Hash(configBytes)
+	snap.ConfigHash = ConfigurationHash(p.Config, req)
+	snap.ContentFingerprint = before
+	snap.Provenance = provenance
+	snap.GitRevision = revision
+	snap.GitBranch = branch
 	snap.ToolVersions = map[string]string{
 		"gotreesitter": "0.15.2",
 	}
@@ -137,14 +151,6 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 		snap.Sources = append(snap.Sources, &pb.SourceFile{Path: s.Path, Hash: s.Hash, Size: uint64(len(s.Text))})
 	}
 	sort.Slice(snap.Sources, func(i, j int) bool { return snap.Sources[i].Path < snap.Sources[j].Path })
-	if b, e := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "HEAD").Output(); e == nil {
-		snap.GitRevision = strings.TrimSpace(string(b))
-	}
-	if b, e := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--abbrev-ref", "HEAD").Output(); e == nil {
-		if branch := strings.TrimSpace(string(b)); branch != "" && branch != "HEAD" {
-			snap.GitBranch = branch
-		}
-	}
 	var syntaxSources []*graph.Source
 	for _, f := range snap.Sources {
 		if kept[f.Path] {
@@ -298,6 +304,13 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 		if e != nil || graph.Hash(b) != f.Hash {
 			return nil, nil, false, fmt.Errorf("source changed during indexing: %s", f.Path)
 		}
+	}
+	after, _, _, _, err := captureInputs(ctx, root, p.Config, req)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if after != before {
+		return nil, nil, false, fmt.Errorf("repository inputs changed during indexing; retry")
 	}
 	snap.IngestionStatus = "complete"
 	return snap, g, false, nil

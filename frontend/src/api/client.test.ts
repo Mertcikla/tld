@@ -212,7 +212,11 @@ describe('codeindex snapshot mapping', () => {
       embeddingStatus: '',
       projects: [{ root: '/repo', language: 'go', configPath: '' }],
       warnings: ['partial index'],
+      provenance: '',
+      contentFingerprint: '',
     })
+    snapshot.statistics = { $typeName: 'codeindex.v1.SnapshotStatistics', facts: 100, edges: 20, sources: 5, chunks: 150 }
+    expect(mapCodeSnapshot(snapshot).statistics).toEqual({ facts: 100, edges: 20, sources: 5, chunks: 150 })
   })
 
   it('maps diff source changes and fact deltas', () => {

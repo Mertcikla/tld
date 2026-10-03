@@ -168,6 +168,9 @@ export interface CodeSnapshot {
   embeddingStatus: string
   projects: CodeSnapshotProject[]
   warnings: string[]
+  provenance?: string
+  contentFingerprint?: string
+  statistics?: { facts: number; edges: number; sources: number; chunks: number }
 }
 
 export interface SnapshotSourceChange {
@@ -203,6 +206,7 @@ export interface RepositoryMapProgress {
 
 // RepositoryMapResult summarizes a completed mapper run.
 export interface RepositoryMapResult {
+  snapshotId?: string
   runId: string
   viewId: number
   facts: number
@@ -210,6 +214,45 @@ export interface RepositoryMapResult {
   bins: number
   unclustered: number
   weightedTightness: number
+}
+
+export interface RepositoryCommit {
+  sha: string
+  subject: string
+  author: string
+  authorEmail: string
+  createdUnix: number
+  parents: string[]
+  refs: string[]
+  body: string
+}
+export interface RepositoryGitHistory {
+  commits: RepositoryCommit[]
+  branches: { name: string; sha: string }[]
+  headSha: string
+  currentBranch: string
+  hasMore: boolean
+  isGit: boolean
+}
+export interface RepositoryCommitDetails {
+  commit: RepositoryCommit | null
+  files: { path: string; added: number; removed: number; binary: boolean }[]
+}
+export interface CompletedRepositoryMap {
+  result: RepositoryMapResult
+  completedUnix: number
+  profile: string
+  includeImports: boolean
+  configHash: string
+}
+export interface RepositoryMapOptions {
+  snapshotId?: string
+  gitRevision?: string
+  workingTree?: boolean
+  gitBranch?: string
+  includeImports?: boolean
+  signal?: AbortSignal
+  onProgress?: (progress: RepositoryMapProgress) => void
 }
 
 export interface WorkspaceVersion {
@@ -347,6 +390,14 @@ export function mapCodeSnapshot(snapshot: CodeSnapshotProto): CodeSnapshot {
       configPath: project.configPath,
     })),
     warnings: [...snapshot.warnings],
+    provenance: snapshot.provenance,
+    contentFingerprint: snapshot.contentFingerprint,
+    ...(snapshot.statistics ? { statistics: {
+      facts: snapshot.statistics.facts,
+      edges: snapshot.statistics.edges,
+      sources: snapshot.statistics.sources,
+      chunks: snapshot.statistics.chunks,
+    } } : {}),
   }
 }
 
@@ -1746,30 +1797,26 @@ export const api = {
   },
 
   repositories: {
-    list: async (): Promise<IndexedRepository[]> => {
-      const res = await fetch(apiUrl('/codeindex.v1.RepositoryService/ListRepositories'), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Connect-Protocol-Version': '1',
-        },
-        body: '{}',
-      })
-      if (!res.ok) throw await responseError(res, 'Failed to list repositories')
-      const json = await res.json() as { repositories?: Array<Record<string, unknown>> }
-      return (json.repositories ?? []).map((repo) => ({
-        id: String(repo.id ?? ''),
-        root: String(repo.root ?? ''),
-        latestSnapshotId: String(repo.latestSnapshotId ?? ''),
-        latestCreatedUnix: Number(repo.latestCreatedUnix ?? 0),
-        gitRevision: String(repo.gitRevision ?? ''),
-        gitBranch: String(repo.gitBranch ?? ''),
-        facts: Number(repo.facts ?? 0),
-        chunks: Number(repo.chunks ?? 0),
-        edges: Number(repo.edges ?? 0),
-        sources: Number(repo.sources ?? 0),
+    list: (): Promise<IndexedRepository[]> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.listRepositories({})
+      return response.repositories.map((repo) => ({ ...repo, latestCreatedUnix: Number(repo.latestCreatedUnix) }))
+    }),
+    history: (repositoryId: string, branch = '', limit = 50): Promise<RepositoryGitHistory> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit })
+      return { ...response, commits: response.commits.map((commit) => ({ ...commit, createdUnix: Number(commit.createdUnix) })) }
+    }),
+    commitDetails: (repositoryId: string, revision: string): Promise<RepositoryCommitDetails> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getCommitDetails({ repositoryId, revision })
+      return { commit: response.commit ? { ...response.commit, createdUnix: Number(response.commit.createdUnix) } : null, files: response.files }
+    }),
+    maps: (repositoryId: string): Promise<CompletedRepositoryMap[]> => rpc(async () => {
+      const response = await codeIndexMapperClient.listMaps({ repositoryId })
+      return response.maps.filter((item) => !!item.result).map((item) => ({
+        completedUnix: Number(item.completedUnix), profile: item.profile,
+        includeImports: item.includeImports, configHash: item.configHash,
+        result: { ...item.result!, viewId: Number(item.result!.viewId) },
       }))
-    },
+    }),
     snapshots: (repositoryId: string): Promise<CodeSnapshot[]> =>
       rpc(async () => {
         const res = await codeIndexFactClient.listSnapshots({ id: repositoryId })
@@ -1786,10 +1833,14 @@ export const api = {
       }),
     map: async (
       repositoryId: string,
-      handlers: { includeImports?: boolean; onProgress?: (progress: RepositoryMapProgress) => void } = {},
+      handlers: RepositoryMapOptions = {},
     ): Promise<RepositoryMapResult> => {
       try {
-        const stream = codeIndexMapperClient.mapRepository({ repositoryId, includeImports: handlers.includeImports ?? false })
+        const stream = codeIndexMapperClient.mapRepository({
+          repositoryId, includeImports: handlers.includeImports ?? false,
+          snapshotId: handlers.snapshotId, gitRevision: handlers.gitRevision,
+          workingTree: handlers.workingTree, gitBranch: handlers.gitBranch,
+        }, { signal: handlers.signal })
         let result: RepositoryMapResult | null = null
         for await (const event of stream) {
           if (event.event.case === 'progress') {
@@ -1802,6 +1853,7 @@ export const api = {
           } else if (event.event.case === 'result') {
             const mapped = event.event.value
             result = {
+              snapshotId: mapped.snapshotId,
               runId: mapped.runId,
               viewId: Number(mapped.viewId),
               facts: mapped.facts,

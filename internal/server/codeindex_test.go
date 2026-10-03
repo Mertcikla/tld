@@ -82,6 +82,13 @@ func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 		if len(snap.GetSources()) != 0 {
 			t.Fatalf("snapshot %s sources should be omitted, got %d", snap.GetId(), len(snap.GetSources()))
 		}
+		expected := uint32(1)
+		if snap.Id == next.Id {
+			expected = 2
+		}
+		if snap.Statistics == nil || snap.Statistics.Facts != expected || snap.Statistics.Sources != expected || snap.Statistics.Edges != 0 || snap.Statistics.Chunks != 0 {
+			t.Fatalf("snapshot %s statistics: %+v", snap.Id, snap.Statistics)
+		}
 	}
 
 	repo, err := client.GetRepository(ctx, connect.NewRequest(&codeindexv1.RepositoryID{Id: repoID}))

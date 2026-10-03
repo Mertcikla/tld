@@ -19,13 +19,25 @@ func (s *Store) Publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 	if snap == nil || snap.Id == "" {
 		return fmt.Errorf("publish: snapshot id is required")
 	}
+	return s.publish(ctx, root, snap, g, true)
+}
+
+// PublishHistorical retains the live repository's latest pointer.
+func (s *Store) PublishHistorical(ctx context.Context, root string, snap *pb.Snapshot, g *graph.Graph) error {
+	return s.publish(ctx, root, snap, g, false)
+}
+
+func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *graph.Graph, advanceLatest bool) error {
+	if snap == nil || snap.Id == "" {
+		return fmt.Errorf("publish: snapshot id is required")
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	repoID := snap.RepositoryId
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewRaw(`INSERT INTO codeindex_repositories (id, root, latest_snapshot_id, created_at, updated_at)
 			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET root = excluded.root, latest_snapshot_id = excluded.latest_snapshot_id, updated_at = excluded.updated_at`,
-			repoID, root, snap.Id, now, now).Exec(ctx); err != nil {
+			ON CONFLICT(id) DO UPDATE SET root = excluded.root, latest_snapshot_id = CASE WHEN ? OR codeindex_repositories.latest_snapshot_id = '' THEN excluded.latest_snapshot_id ELSE codeindex_repositories.latest_snapshot_id END, updated_at = excluded.updated_at`,
+			repoID, root, snap.Id, now, now, advanceLatest).Exec(ctx); err != nil {
 			return fmt.Errorf("upsert repository: %w", err)
 		}
 		for _, table := range []string{"codeindex_sources", "codeindex_facts", "codeindex_chunks", "codeindex_edges"} {
@@ -57,8 +69,8 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 	warnings, _ := marshalJSON(snap.Warnings)
 	tools, _ := marshalJSON(snap.ToolVersions)
 	_, err := tx.NewRaw(`INSERT INTO codeindex_snapshots
-		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, embedding_status, config_hash, projects_json, warnings_json, tool_versions_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, embedding_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, capture_order)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			repository_id = excluded.repository_id,
 			git_revision = excluded.git_revision,
@@ -68,9 +80,10 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 			config_hash = excluded.config_hash,
 			projects_json = excluded.projects_json,
 			warnings_json = excluded.warnings_json,
-			tool_versions_json = excluded.tool_versions_json`,
+			tool_versions_json = excluded.tool_versions_json,
+        provenance = excluded.provenance, content_fingerprint = excluded.content_fingerprint`,
 		snap.Id, snap.RepositoryId, snap.CreatedUnix, snap.GitRevision, snap.GitBranch,
-		snap.IngestionStatus, snap.EmbeddingStatus, snap.ConfigHash, projects, warnings, tools).Exec(ctx)
+		snap.IngestionStatus, snap.EmbeddingStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, time.Now().UnixNano()).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("upsert snapshot: %w", err)
 	}
@@ -186,9 +199,9 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 		gitRevision, gitBranch                       string
 		ingestion, embedding, configHash, repository string
 	)
-	err := s.bun.NewRaw(`SELECT repository_id, created_unix, git_revision, git_branch, ingestion_status, embedding_status, config_hash, projects_json, warnings_json, tool_versions_json
+	err := s.bun.NewRaw(`SELECT repository_id, created_unix, git_revision, git_branch, ingestion_status, embedding_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint
 		FROM codeindex_snapshots WHERE id = ?`, id).
-		Scan(ctx, &repository, &createdUnix, &gitRevision, &gitBranch, &ingestion, &embedding, &configHash, &projects, &warnings, &tools)
+		Scan(ctx, &repository, &createdUnix, &gitRevision, &gitBranch, &ingestion, &embedding, &configHash, &projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint)
 	if err != nil {
 		return nil, err
 	}
@@ -216,13 +229,28 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 		}
 		snap.Sources = append(snap.Sources, &pb.SourceFile{Path: path, Hash: hash, Size: uint64(size)})
 	}
-	return &snap, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	snap.Statistics = &pb.SnapshotStatistics{}
+	if err := s.bun.NewRaw(`SELECT
+		(SELECT COUNT(*) FROM codeindex_facts WHERE snapshot_id = ?),
+		(SELECT COUNT(*) FROM codeindex_edges WHERE snapshot_id = ?),
+		(SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = ?),
+		(SELECT COUNT(*) FROM codeindex_chunks WHERE snapshot_id = ?)`, id, id, id, id).
+		Scan(ctx, &snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources, &snap.Statistics.Chunks); err != nil {
+		return nil, fmt.Errorf("load snapshot statistics: %w", err)
+	}
+	return &snap, nil
 }
 
 // Snapshots lists a repository's snapshots oldest first.
 func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snapshot, error) {
 	var ids []string
-	if err := s.bun.NewRaw(`SELECT id FROM codeindex_snapshots WHERE repository_id = ? ORDER BY created_unix, id`, repositoryID).Scan(ctx, &ids); err != nil {
+	if err := s.bun.NewRaw(`SELECT id FROM codeindex_snapshots WHERE repository_id = ? ORDER BY created_unix, capture_order, id`, repositoryID).Scan(ctx, &ids); err != nil {
 		return nil, err
 	}
 	out := make([]*pb.Snapshot, 0, len(ids))

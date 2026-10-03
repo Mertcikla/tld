@@ -203,6 +203,8 @@ func legacyMigrationAlreadyApplied(ctx context.Context, db *bun.DB, dialect Dial
 
 func legacySQLiteMigrationAlreadyApplied(ctx context.Context, db *bun.DB, comment string) (bool, error) {
 	switch comment {
+	case "repository_maps":
+		return sqliteColumnExists(ctx, db, "codeindex_snapshots", "capture_order", "codeindex_completed_maps")
 	case "init":
 		return sqliteTablesExist(ctx, db, "elements", "views", "placements", "connectors", "view_layers", "tags")
 	case "view_density_visibility_overrides":
@@ -226,6 +228,12 @@ func legacySQLiteMigrationAlreadyApplied(ctx context.Context, db *bun.DB, commen
 
 func legacyPostgresMigrationAlreadyApplied(ctx context.Context, db *bun.DB, comment string) (bool, error) {
 	switch comment {
+	case "repository_maps":
+		exists, err := postgresTablesExist(ctx, db, "codeindex_completed_maps")
+		if err != nil || !exists {
+			return exists, err
+		}
+		return postgresColumnExists(ctx, db, "codeindex_snapshots", "capture_order")
 	case "local_schema":
 		return postgresTablesExist(ctx, db, "elements", "views", "connectors")
 	case "element_noise_gate_bypass":
@@ -306,6 +314,8 @@ func sqliteTableInfoQuery(table string) (string, bool) {
 		return "PRAGMA table_info(connectors)", true
 	case "view_markdown_documents":
 		return "PRAGMA table_info(view_markdown_documents)", true
+	case "codeindex_snapshots":
+		return "PRAGMA table_info(codeindex_snapshots)", true
 	default:
 		return "", false
 	}

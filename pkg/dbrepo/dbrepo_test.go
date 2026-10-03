@@ -40,6 +40,14 @@ func TestOpenSQLiteAppliesLocalMigrations(t *testing.T) {
 	if count != expectedMigrations {
 		t.Fatalf("bun_migrations count = %d, want %d", count, expectedMigrations)
 	}
+
+	// Development databases may already record the former separate migration.
+	if _, err := handle.DB.ExecContext(ctx, `INSERT INTO bun_migrations (name, group_id) VALUES ('20261003000200', 2)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbrepo.ApplyEmbeddedMigrations(ctx, handle.Bun, assets.FS, "migrations", dbrepo.DialectSQLite); err != nil {
+		t.Fatalf("reapply consolidated migrations with previous history: %v", err)
+	}
 }
 
 func TestOpenSQLiteBootstrapsLegacyMigrationState(t *testing.T) {

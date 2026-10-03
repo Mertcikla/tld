@@ -81,6 +81,35 @@ func TestMapperServiceMapRepository(t *testing.T) {
 		t.Fatal("result has no run id")
 	}
 
+	maps, err := client.ListMaps(ctx, connect.NewRequest(&codeindexv1.ListMapsRequest{RepositoryId: repoID}))
+	if err != nil || len(maps.Msg.Maps) != 1 || maps.Msg.Maps[0].Result.SnapshotId != snap.Id {
+		t.Fatalf("completed maps: %+v: %v", maps, err)
+	}
+	reused, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID, SnapshotId: snap.Id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for reused.Receive() {
+		if reused.Msg().GetProgress() != nil {
+			t.Fatal("cached map unexpectedly reran pipeline")
+		}
+		if reused.Msg().GetResult().GetRunId() != result.RunId {
+			t.Fatal("cached map changed run")
+		}
+	}
+	if err := reused.Err(); err != nil {
+		t.Fatal(err)
+	}
+	invalid, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID, SnapshotId: snap.Id, WorkingTree: true}))
+	if err == nil {
+		for invalid.Receive() {
+		}
+		err = invalid.Err()
+	}
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("conflicting targets: %v", err)
+	}
+
 	var analysisRuns, groups, members int
 	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_analysis_runs WHERE repository_id = ?`, repoID).Scan(&analysisRuns); err != nil {
 		t.Fatal(err)

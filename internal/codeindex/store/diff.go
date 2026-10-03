@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"sort"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -65,6 +66,9 @@ func (s *Store) Diff(ctx context.Context, fromID, toID string, sourcesOnly bool)
 	to, err := s.Snapshot(ctx, toID)
 	if err != nil {
 		return nil, err
+	}
+	if from.RepositoryId != to.RepositoryId {
+		return nil, fmt.Errorf("snapshots must belong to the same repository")
 	}
 	diff := &pb.SnapshotDiff{
 		RepositoryId:    to.RepositoryId,
