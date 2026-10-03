@@ -39,6 +39,92 @@ type State struct {
 	Dirty                       map[string]bool
 }
 
+// QuickState is a lightweight change-detection snapshot that never reads file
+// contents. It reports HEAD, the branch, and the set of dirty or untracked
+// repository-relative paths so the watcher can decide whether work is needed
+// before paying for a full Capture.
+type QuickState struct {
+	Revision, Branch string
+	// Dirty maps every changed (tracked, staged, or untracked) path to true.
+	Dirty map[string]bool
+	// Paths is Dirty's keys sorted for deterministic signatures.
+	Paths []string
+	// StatusByPath holds the two-character porcelain code for each path.
+	StatusByPath map[string]string
+}
+
+// Signature derives a stable value that changes whenever HEAD, the branch, or
+// the dirty path set changes.
+func (q QuickState) Signature() string {
+	parts := []string{q.Revision, q.Branch}
+	parts = append(parts, q.Paths...)
+	return graph.ID(parts...)
+}
+
+// CaptureQuick captures Git's view of changed paths without reading any file
+// contents. It backs the watcher's poll loop and fsnotify fallback.
+func CaptureQuick(ctx context.Context, root string) (QuickState, error) {
+	qs := QuickState{Dirty: map[string]bool{}, StatusByPath: map[string]string{}}
+	revision, err := Resolve(ctx, root, "HEAD")
+	if err != nil {
+		return qs, fmt.Errorf("watch requires a Git repository with an existing commit: %w", err)
+	}
+	qs.Revision = revision
+	branch, _ := Run(ctx, root, "symbolic-ref", "--quiet", "--short", "HEAD")
+	qs.Branch = strings.TrimSpace(branch)
+	status, err := Run(ctx, root, "-c", "status.relativePaths=true", "status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=all", "--ignore-submodules=all", "--", ".")
+	if err != nil {
+		return qs, err
+	}
+	for _, record := range strings.Split(status, "\x00") {
+		if len(record) < 4 {
+			continue
+		}
+		code, path := record[:2], record[3:]
+		if strings.Contains(code, "U") || code == "AA" || code == "DD" {
+			return qs, fmt.Errorf("resolve merge conflicts before indexing: %s", path)
+		}
+		qs.Dirty[path] = true
+		qs.StatusByPath[path] = code
+	}
+	for path := range qs.Dirty {
+		qs.Paths = append(qs.Paths, path)
+	}
+	sort.Strings(qs.Paths)
+	return qs, nil
+}
+
+// PathChange is one entry of a name-status diff.
+type PathChange struct {
+	Path   string
+	Status byte
+}
+
+// NameStatus lists the paths that differ between the given tree-ish and the
+// working tree, including staged and unstaged edits but excluding untracked
+// files. Deleted paths are reported with Status 'D'.
+func NameStatus(ctx context.Context, root, base string) ([]PathChange, error) {
+	args := []string{"diff", "--name-status", "-z", "--no-renames"}
+	if base != "" {
+		args = append(args, "--end-of-options", base)
+	}
+	args = append(args, "--", ".")
+	raw, err := Run(ctx, root, args...)
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Split(raw, "\x00")
+	out := make([]PathChange, 0, len(fields)/2)
+	for i := 0; i+1 < len(fields); i += 2 {
+		status, path := strings.TrimSpace(fields[i]), fields[i+1]
+		if status == "" || path == "" {
+			continue
+		}
+		out = append(out, PathChange{Path: path, Status: status[0]})
+	}
+	return out, nil
+}
+
 func Capture(ctx context.Context, root string) (State, error) {
 	state := State{Blobs: map[string]string{}, Dirty: map[string]bool{}}
 	revision, err := Resolve(ctx, root, "HEAD")

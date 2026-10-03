@@ -118,15 +118,16 @@ func (s *Store) similarFactsIndexed(ctx context.Context, snapshotID, profile str
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	// Resolve index rows to snapshot-scoped fact ids, preserving rank order.
+	// Resolve index rows to fact ids that belong to the snapshot, preserving
+	// rank order.
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 	args := make([]any, 0, len(ids)+2)
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	args = append(args, snapshotID, profile)
-	rows, err := s.bun.QueryContext(ctx, `SELECT id, fact_id FROM codeindex_fact_embeddings
-		WHERE id IN (`+placeholders+`) AND snapshot_id = ? AND profile = ?`, args...)
+	args = append(args, profile, snapshotID)
+	rows, err := s.bun.QueryContext(ctx, `SELECT fe.id, fe.fact_id FROM codeindex_fact_embeddings fe
+		WHERE fe.id IN (`+placeholders+`) AND fe.profile = ? AND fe.fact_id IN (SELECT fact_id FROM codeindex_snapshot_facts WHERE snapshot_id = ?)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +153,8 @@ func (s *Store) similarFactsIndexed(ctx context.Context, snapshotID, profile str
 }
 
 func (s *Store) similarFactsFallback(ctx context.Context, snapshotID, profile string, query []float32, limit int) ([]FactScore, error) {
-	rows, err := s.bun.QueryContext(ctx, `SELECT fact_id, vector FROM codeindex_fact_embeddings WHERE snapshot_id = ? AND profile = ?`, snapshotID, profile)
+	rows, err := s.bun.QueryContext(ctx, `SELECT fe.fact_id, fe.vector FROM codeindex_fact_embeddings fe
+		WHERE fe.profile = ? AND fe.fact_id IN (SELECT fact_id FROM codeindex_snapshot_facts WHERE snapshot_id = ?)`, profile, snapshotID)
 	if err != nil {
 		return nil, err
 	}
@@ -189,9 +191,9 @@ func (s *Store) FactSimilarities(ctx context.Context, snapshotID, profile string
 	for _, id := range factIDs {
 		args = append(args, id)
 	}
-	args = append(args, snapshotID, profile)
-	rows, err := s.bun.QueryContext(ctx, `SELECT fact_id, vector FROM codeindex_fact_embeddings
-		WHERE fact_id IN (`+placeholders+`) AND snapshot_id = ? AND profile = ?`, args...)
+	args = append(args, profile)
+	rows, err := s.bun.QueryContext(ctx, `SELECT fe.fact_id, fe.vector FROM codeindex_fact_embeddings fe
+		WHERE fe.fact_id IN (`+placeholders+`) AND fe.profile = ?`, args...)
 	if err != nil {
 		return nil, err
 	}

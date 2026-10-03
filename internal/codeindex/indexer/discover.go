@@ -100,7 +100,7 @@ func discover(ctx context.Context, root string, overrides, excludes []string, ba
 			return nil
 		}
 		if old := base[rel]; old != nil && isGit && old.InputBlob != "" && old.InputBlob == state.Blobs[rel] && !old.Dirty && !state.Dirty[rel] {
-			sources[rel] = &graph.Source{Path: rel, Language: old.Language, Text: old.Text, Hash: old.Hash, InputBlob: old.InputBlob, SyntaxCache: old.SyntaxCache}
+			sources[rel] = &graph.Source{Path: rel, Language: old.Language, Text: old.Text, Hash: old.Hash, InputBlob: old.InputBlob, SyntaxCache: old.SyntaxCache, FileCache: old.FileCache}
 			return nil
 		}
 		raw, err := os.ReadFile(path)
@@ -111,8 +111,12 @@ func discover(ctx context.Context, root string, overrides, excludes []string, ba
 			return nil
 		}
 		src := &graph.Source{Path: rel, Language: lang, Text: raw, Hash: graph.Hash(raw), InputBlob: state.Blobs[rel], Dirty: state.Dirty[rel]}
-		if old := base[rel]; old != nil && old.Hash == src.Hash {
+		// Carry the previous syntax cache even when the content hash changed:
+		// syntaxFacts compares the cache's recorded file hash against the new
+		// one and reuses unchanged declarations symbol by symbol.
+		if old := base[rel]; old != nil {
 			src.SyntaxCache = old.SyntaxCache
+			src.FileCache = old.FileCache
 		}
 		sources[rel] = src
 		return nil

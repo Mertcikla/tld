@@ -3,6 +3,7 @@ package index
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	ci "github.com/mertcikla/tld/v2/internal/codeindex/config"
@@ -29,6 +31,8 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/project"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/codeindex/visibility"
+	"github.com/mertcikla/tld/v2/internal/codeindex/watch"
+	"github.com/mertcikla/tld/v2/internal/localserver"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -38,6 +42,8 @@ import (
 type options struct {
 	path         string
 	watch        bool
+	detach       bool
+	watchOwner   string
 	jsonOut      bool
 	embed        bool
 	materialize  bool
@@ -75,10 +81,16 @@ The blast-radius slider adds existing unchanged elements by dependency hops.`,
 			if len(args) == 1 {
 				opts.path = args[0]
 			}
+			if opts.watch && opts.detach {
+				return runDetached(cmd, opts)
+			}
 			return run(cmd, opts)
 		},
 	}
 	c.Flags().BoolVar(&opts.watch, "watch", false, "watch Git changes and update the live change overlay")
+	c.Flags().BoolVar(&opts.detach, "detach", false, "start the watcher in the background and return")
+	c.Flags().StringVar(&opts.watchOwner, "watch-owner", "cli", "internal: who started the watcher (cli or server)")
+	_ = c.Flags().MarkHidden("watch-owner")
 	c.Flags().BoolVar(&opts.jsonOut, "json", false, "emit machine-readable JSON")
 	c.Flags().BoolVar(&opts.embed, "embed", true, "compute embeddings for the snapshot (requires a working embedding server)")
 	c.Flags().BoolVar(&opts.materialize, "materialize", false, "also materialize candidates into a workspace view (opt-in)")
@@ -86,6 +98,7 @@ The blast-radius slider adds existing unchanged elements by dependency hops.`,
 	c.Flags().DurationVar(&opts.pollInterval, "poll-interval", 2*time.Second, "Git change polling interval")
 	c.Flags().DurationVar(&opts.debounce, "debounce", 500*time.Millisecond, "delay used to batch file changes")
 	c.Flags().StringArrayVar(&opts.exclude, "exclude", nil, "repository-relative path to exclude (repeatable)")
+	c.AddCommand(newStatusCmd(), newStopCmd())
 	return c
 }
 
@@ -96,6 +109,7 @@ type engine struct {
 	opts     options
 	repoName string
 	repoRoot string
+	dataDir  string
 	out      io.Writer
 }
 
@@ -141,6 +155,7 @@ func run(cmd *cobra.Command, opts options) error {
 		opts:     opts,
 		repoName: filepath.Base(root),
 		repoRoot: root,
+		dataDir:  dataDir,
 		out:      cmd.OutOrStdout(),
 	}
 	if opts.embed {
@@ -332,35 +347,80 @@ func changedFiles(base *indexer.IncrementalBase, snap *pb.Snapshot) map[string]b
 	return out
 }
 
-// watch polls Git state and dirty content, never directory mtimes. Failed
-// captures remain pending and are retried without waiting for another edit.
+// watch detects Git changes through fsnotify with a polling failsafe, coalesces
+// bursts with a quiet window, and cooperatively stops when the shared control
+// record requests it. Failed scans remain pending and are retried without
+// waiting for another edit.
 func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) error {
 	if _, err := gitstate.Run(ctx, root, "rev-parse", "--git-dir"); err != nil {
 		return fmt.Errorf("watch requires a Git repository: %w", err)
 	}
 	repoID := cgraph.RepositoryID(root)
-	heartbeatCtx, stop := context.WithCancel(ctx)
-	defer stop()
-	var mu sync.Mutex
-	branch, revision, message := "", "", ""
-	updateStatus := func(state gitstate.State, err error) {
-		mu.Lock()
-		branch, revision, message = state.Branch, state.Revision, ""
-		if err != nil {
-			message = err.Error()
-		}
-		mu.Unlock()
+	ownerID := uuid.NewString()
+	ownerKind := e.opts.watchOwner
+	if ownerKind == "" {
+		ownerKind = "cli"
 	}
-	done := make(chan struct{})
+	status := cstore.WatchState{
+		RepositoryID:   repoID,
+		OwnerKind:      ownerKind,
+		OwnerPID:       os.Getpid(),
+		OwnerID:        ownerID,
+		State:          "starting",
+		RepoRoot:       root,
+		StartedUnix:    time.Now().Unix(),
+		PollIntervalMS: e.opts.pollInterval.Milliseconds(),
+		DebounceMS:     e.opts.debounce.Milliseconds(),
+	}
+	if err := e.store.ClaimWatch(ctx, status); err != nil {
+		if errors.Is(err, cstore.ErrWatchActive) {
+			return fmt.Errorf("a watcher is already running for %s", root)
+		}
+		return err
+	}
+	_ = localserver.RegisterProcess(localserver.ProcessRecord{
+		Kind: localserver.ProcessKindWatch, PID: os.Getpid(), DataDir: e.dataDir, RepoRoot: root,
+	})
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		_ = e.store.ReleaseWatch(cleanup, repoID, ownerID)
+		_ = localserver.RemoveProcess(os.Getpid())
+	}()
+
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+
+	var mu sync.Mutex
+	persist := func(mutate func(*cstore.WatchState)) {
+		mu.Lock()
+		if mutate != nil {
+			mutate(&status)
+		}
+		status.RepositoryID = repoID
+		status.OwnerID = ownerID
+		snapshot := status
+		mu.Unlock()
+		snapshot.HeartbeatUnix = time.Now().Unix()
+		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		defer cancel()
+		_ = e.store.UpsertWatchState(writeCtx, snapshot)
+	}
+
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	defer stopHeartbeat()
+	heartbeatDone := make(chan struct{})
 	go func() {
-		defer close(done)
+		defer close(heartbeatDone)
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for {
-			mu.Lock()
-			b, r, m := branch, revision, message
-			mu.Unlock()
-			_ = e.store.WatchHeartbeat(heartbeatCtx, repoID, b, r, m, true)
+			if requested, err := e.store.WatchStopRequested(heartbeatCtx, repoID); err == nil && requested {
+				persist(func(s *cstore.WatchState) { s.State = "stopping" })
+				cancelRun()
+				return
+			}
+			persist(nil)
 			select {
 			case <-heartbeatCtx.Done():
 				return
@@ -369,70 +429,91 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		}
 	}()
 	defer func() {
-		stop()
-		<-done
-		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
-		defer cancel()
-		_ = e.store.WatchHeartbeat(cleanup, repoID, branch, revision, message, false)
+		stopHeartbeat()
+		<-heartbeatDone
 	}()
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watching %s for Git changes (poll %s)\n", root, e.opts.pollInterval)
+
+	detector := watch.NewDetector(watch.Options{
+		Root:         root,
+		Exclude:      e.opts.exclude,
+		Debounce:     e.opts.debounce,
+		MaxWait:      2*e.opts.debounce + time.Second,
+		PollInterval: e.opts.pollInterval,
+	})
+	defer func() { _ = detector.Close() }()
+	capture := func(captureCtx context.Context) (string, error) {
+		qs, err := gitstate.CaptureQuick(captureCtx, root)
+		if err != nil {
+			return "", err
+		}
+		return qs.Signature(), nil
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "watching %s for Git changes (debounce %s, poll %s)\n", root, e.opts.debounce, e.opts.pollInterval)
 	lastSignature, lastRevision := "", ""
 	var prev *pb.Snapshot
 	for {
-		if ctx.Err() != nil {
+		if runCtx.Err() != nil {
 			return nil
 		}
-		state, err := gitstate.Capture(ctx, root)
-		if err == nil && state.Signature != lastSignature {
-			// Read again after the debounce, restarting whenever inputs change.
-			for {
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-time.After(e.opts.debounce):
-				}
-				next, captureErr := gitstate.Capture(ctx, root)
-				if captureErr != nil {
-					err = captureErr
-					break
-				}
-				if next.Signature == state.Signature {
-					break
-				}
-				state = next
-			}
-			if err == nil {
-				var snap *pb.Snapshot
-				var report parity.Report
-				var mres *materialize.Result
-				snap, report, mres, err = e.scanWatched(ctx, root, state, lastRevision)
-				if err == nil {
-					if prev == nil || prev.Id != snap.Id {
-						if prev != nil {
-							e.printDiff(cmd, prev.Id, snap.Id)
-						}
-						if err = e.print(cmd, snap, report, mres); err != nil {
-							return err
-						}
-					}
-					prev = snap
-					lastSignature, lastRevision = state.Signature, state.Revision
-				}
-			}
+		persist(func(s *cstore.WatchState) { s.State = "watching" })
+		_, err := detector.Next(runCtx, lastSignature, capture)
+		if runCtx.Err() != nil {
+			return nil
 		}
-		updateStatus(state, err)
 		if err != nil {
+			persist(func(s *cstore.WatchState) { s.State = "error"; s.Error = err.Error() })
+			select {
+			case <-runCtx.Done():
+				return nil
+			case <-time.After(e.opts.pollInterval):
+			}
+			continue
+		}
+		qs, err := gitstate.CaptureQuick(runCtx, root)
+		if err != nil {
+			persist(func(s *cstore.WatchState) { s.State = "error"; s.Error = err.Error() })
+			continue
+		}
+		persist(func(s *cstore.WatchState) {
+			s.State = "scanning"
+			s.Stage = "discover"
+			s.ChangedFiles = len(qs.Paths)
+			s.PendingFiles = len(qs.Paths)
+			s.GitBranch, s.GitRevision = qs.Branch, qs.Revision
+		})
+		started := time.Now()
+		snap, report, mres, err := e.scanWatched(runCtx, root, qs, lastRevision)
+		if err != nil {
+			persist(func(s *cstore.WatchState) { s.State = "error"; s.Error = err.Error() })
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "index error: %v\n", err)
+			continue
 		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(e.opts.pollInterval):
+		if prev == nil || prev.Id != snap.Id {
+			if prev != nil {
+				e.printDiff(cmd, prev.Id, snap.Id)
+			}
+			if err = e.print(cmd, snap, report, mres); err != nil {
+				return err
+			}
 		}
+		prev = snap
+		lastSignature, lastRevision = qs.Signature(), qs.Revision
+		persist(func(s *cstore.WatchState) {
+			s.State = "watching"
+			s.Error = ""
+			s.Stage = ""
+			s.ChangedFiles = 0
+			s.PendingFiles = 0
+			s.LastScanUnix = time.Now().Unix()
+			s.LastScanMS = time.Since(started).Milliseconds()
+			s.SnapshotID = snap.Id
+			s.ContentFingerprint = snap.ContentFingerprint
+			s.GitBranch, s.GitRevision = qs.Branch, qs.Revision
+		})
 	}
 }
 
-func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.State, previousRevision string) (*pb.Snapshot, parity.Report, *materialize.Result, error) {
+func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.QuickState, previousRevision string) (*pb.Snapshot, parity.Report, *materialize.Result, error) {
 	repoID := cgraph.RepositoryID(root)
 	ctx, release, err := e.store.AcquireLease(ctx, repoID)
 	if err != nil {
@@ -468,11 +549,11 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.St
 	if err != nil {
 		return nil, parity.Report{}, nil, err
 	}
-	after, err := gitstate.Capture(ctx, root)
+	after, err := gitstate.CaptureQuick(ctx, root)
 	if err != nil {
 		return nil, parity.Report{}, nil, err
 	}
-	if after.Signature != state.Signature {
+	if after.Signature() != state.Signature() {
 		return nil, parity.Report{}, nil, fmt.Errorf("git inputs changed during indexing; retrying")
 	}
 	if err = e.store.AdvanceLatest(ctx, repoID, snap.Id); err != nil {

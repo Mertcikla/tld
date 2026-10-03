@@ -40,7 +40,7 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 			repoID, root, snap.Id, now, now, advanceLatest).Exec(ctx); err != nil {
 			return fmt.Errorf("upsert repository: %w", err)
 		}
-		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_facts", "codeindex_chunks", "codeindex_edges"} {
+		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_facts", "codeindex_chunks", "codeindex_edges", "codeindex_snapshot_facts", "codeindex_snapshot_chunks", "codeindex_snapshot_edges"} {
 			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?", snap.Id).Exec(ctx); err != nil {
 				return fmt.Errorf("clear %s: %w", table, err)
 			}
@@ -60,8 +60,32 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 		if err := saveEdges(ctx, tx, g); err != nil {
 			return err
 		}
+		if err := saveMembership(ctx, tx, snap, g); err != nil {
+			return err
+		}
 		return nil
 	})
+}
+
+// saveMembership records which entities belong to a snapshot. Membership is
+// small and lets reused entities be shared across snapshots.
+func saveMembership(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph) error {
+	for id := range g.Facts {
+		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_snapshot_facts (snapshot_id, fact_id) VALUES (?, ?)`, snap.Id, id).Exec(ctx); err != nil {
+			return fmt.Errorf("membership fact %s: %w", id, err)
+		}
+	}
+	for id := range g.Chunks {
+		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_snapshot_chunks (snapshot_id, chunk_id) VALUES (?, ?)`, snap.Id, id).Exec(ctx); err != nil {
+			return fmt.Errorf("membership chunk %s: %w", id, err)
+		}
+	}
+	for id := range g.EdgeFacts {
+		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_snapshot_edges (snapshot_id, edge_id) VALUES (?, ?)`, snap.Id, id).Exec(ctx); err != nil {
+			return fmt.Errorf("membership edge %s: %w", id, err)
+		}
+	}
+	return nil
 }
 
 func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
@@ -100,16 +124,16 @@ func saveSources(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Gra
 	}
 	for _, src := range snap.Sources {
 		var content []byte
-		var language, blob, cache string
+		var language, blob, cache, fileCache string
 		var dirty bool
 		if g != nil {
 			if s := g.Sources[src.Path]; s != nil {
 				content = s.Text
-				language, blob, cache, dirty = s.Language, s.InputBlob, s.SyntaxCache, s.Dirty
+				language, blob, cache, fileCache, dirty = s.Language, s.InputBlob, s.SyntaxCache, s.FileCache, s.Dirty
 			}
 		}
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_sources (snapshot_id, path, hash, size, content, language, input_blob, dirty, syntax_cache)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, snap.Id, src.Path, src.Hash, src.Size, content, language, blob, dirty, cache).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO codeindex_sources (snapshot_id, path, hash, size, content, language, input_blob, dirty, syntax_cache, file_cache)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, snap.Id, src.Path, src.Hash, src.Size, content, language, blob, dirty, cache, fileCache).Exec(ctx); err != nil {
 			return fmt.Errorf("insert source %s: %w", src.Path, err)
 		}
 	}
@@ -121,6 +145,9 @@ func saveFacts(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph
 		return nil
 	}
 	for _, f := range sortedFacts(g) {
+		if g.Reused[f.Id] {
+			continue
+		}
 		anchor, _ := marshalJSON(f.Anchor)
 		evidence, _ := marshalJSON(f.Evidence)
 		imports, _ := marshalJSON(f.Imports)
@@ -128,7 +155,7 @@ func saveFacts(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph
 		if f.Anchor != nil {
 			path = f.Anchor.Path
 		}
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_facts
+		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_facts
 			(id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, code, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			f.Id, f.RepositoryId, f.SnapshotId, f.Language, int(f.Kind), f.Name, f.QualifiedName, f.SymbolKey,
@@ -144,8 +171,11 @@ func saveChunks(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
 		return nil
 	}
 	for _, c := range sortedChunks(g) {
+		if g.Reused[c.Id] {
+			continue
+		}
 		anchor, _ := marshalJSON(c.Anchor)
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_chunks
+		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_chunks
 			(id, fact_id, snapshot_id, anchor_json, text, context, idx, total)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			c.Id, c.FactId, c.SnapshotId, anchor, c.Text, c.Context, c.Index, c.Total).Exec(ctx); err != nil {
@@ -160,9 +190,12 @@ func saveEdges(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
 		return nil
 	}
 	for _, e := range sortedEdges(g) {
+		if g.Reused[e.Id] {
+			continue
+		}
 		anchor, _ := marshalJSON(e.Anchor)
 		evidence, _ := marshalJSON(e.Evidence)
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_edges
+		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_edges
 			(id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, anchor_json, evidence_json)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			e.Id, e.RepositoryId, e.SnapshotId, int(e.Kind), e.FromFactId, e.ToFactId, e.TargetSymbolKey,
@@ -247,10 +280,10 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 	}
 	snap.Statistics = &pb.SnapshotStatistics{}
 	if err := s.bun.NewRaw(`SELECT
-		(SELECT COUNT(*) FROM codeindex_facts WHERE snapshot_id = ?),
-		(SELECT COUNT(*) FROM codeindex_edges WHERE snapshot_id = ?),
+		(SELECT COUNT(*) FROM codeindex_snapshot_facts WHERE snapshot_id = ?),
+		(SELECT COUNT(*) FROM codeindex_snapshot_edges WHERE snapshot_id = ?),
 		(SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = ?),
-		(SELECT COUNT(*) FROM codeindex_chunks WHERE snapshot_id = ?)`, id, id, id, id).
+		(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = ?)`, id, id, id, id).
 		Scan(ctx, &snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources, &snap.Statistics.Chunks); err != nil {
 		return nil, fmt.Errorf("load snapshot statistics: %w", err)
 	}
@@ -318,25 +351,33 @@ func (s *Store) Fact(ctx context.Context, id string) (*pb.CodeFact, error) {
 	return facts[0], nil
 }
 
-// Facts lists facts for a snapshot, optionally filtered by kind and path prefix.
+// Facts lists facts for a snapshot via membership, optionally filtered by kind
+// and path prefix.
 func (s *Store) Facts(ctx context.Context, snapshotID string, kind pb.FactKind, pathPrefix, after string, limit int) ([]*pb.CodeFact, error) {
-	query := `SELECT ` + factColumns + ` FROM codeindex_facts WHERE snapshot_id = ?`
+	query := `SELECT ` + factColumnsQualified + ` FROM codeindex_facts f JOIN codeindex_snapshot_facts m ON m.fact_id = f.id WHERE m.snapshot_id = ?`
 	args := []any{snapshotID}
 	if kind != pb.FactKind_FACT_KIND_UNSPECIFIED {
-		query += ` AND kind = ?`
+		query += ` AND f.kind = ?`
 		args = append(args, int(kind))
 	}
 	if pathPrefix != "" {
-		query += ` AND path LIKE ?`
+		query += ` AND f.path LIKE ?`
 		args = append(args, escapeLike(pathPrefix)+"%")
 	}
 	if after != "" {
-		query += ` AND id > ?`
+		query += ` AND f.id > ?`
 		args = append(args, after)
 	}
-	query += ` ORDER BY id LIMIT ?`
+	query += ` ORDER BY f.id LIMIT ?`
 	args = append(args, clampLimit(limit))
-	return s.scanFacts(ctx, query, args...)
+	facts, err := s.scanFacts(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range facts {
+		f.SnapshotId = snapshotID
+	}
+	return facts, nil
 }
 
 // FactVersions returns every snapshot's version of a logical fact, newest first.
@@ -357,25 +398,33 @@ func (s *Store) EdgeFact(ctx context.Context, id string) (*pb.EdgeFact, error) {
 	return edges[0], nil
 }
 
-// EdgeFacts lists edges for a snapshot, optionally filtered by kind and logical key.
+// EdgeFacts lists edges for a snapshot via membership, optionally filtered by
+// kind and logical key.
 func (s *Store) EdgeFacts(ctx context.Context, snapshotID string, kind pb.EdgeKind, logicalKey, after string, limit int) ([]*pb.EdgeFact, error) {
-	query := `SELECT ` + edgeColumns + ` FROM codeindex_edges WHERE snapshot_id = ?`
+	query := `SELECT ` + edgeColumnsQualified + ` FROM codeindex_edges e JOIN codeindex_snapshot_edges m ON m.edge_id = e.id WHERE m.snapshot_id = ?`
 	args := []any{snapshotID}
 	if kind != pb.EdgeKind_EDGE_KIND_UNSPECIFIED {
-		query += ` AND kind = ?`
+		query += ` AND e.kind = ?`
 		args = append(args, int(kind))
 	}
 	if logicalKey != "" {
-		query += ` AND logical_key = ?`
+		query += ` AND e.logical_key = ?`
 		args = append(args, logicalKey)
 	}
 	if after != "" {
-		query += ` AND id > ?`
+		query += ` AND e.id > ?`
 		args = append(args, after)
 	}
-	query += ` ORDER BY id LIMIT ?`
+	query += ` ORDER BY e.id LIMIT ?`
 	args = append(args, clampLimit(limit))
-	return s.scanEdges(ctx, query, args...)
+	edges, err := s.scanEdges(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range edges {
+		e.SnapshotId = snapshotID
+	}
+	return edges, nil
 }
 
 // EdgeVersions returns every snapshot's observation of a logical edge.
@@ -395,9 +444,16 @@ func (s *Store) Chunk(ctx context.Context, id string) (*pb.Chunk, error) {
 	return chunks[0], nil
 }
 
-// Chunks lists a snapshot's chunks.
+// Chunks lists a snapshot's chunks via membership.
 func (s *Store) Chunks(ctx context.Context, snapshotID string) ([]*pb.Chunk, error) {
-	return s.scanChunks(ctx, `SELECT `+chunkColumns+` FROM codeindex_chunks WHERE snapshot_id = ? ORDER BY id`, snapshotID)
+	chunks, err := s.scanChunks(ctx, `SELECT `+chunkColumnsQualified+` FROM codeindex_chunks c JOIN codeindex_snapshot_chunks m ON m.chunk_id = c.id WHERE m.snapshot_id = ? ORDER BY c.id`, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range chunks {
+		c.SnapshotId = snapshotID
+	}
+	return chunks, nil
 }
 
 // UpdateSnapshot updates mutable status fields on an existing snapshot.
@@ -444,7 +500,8 @@ func (s *Store) SaveEmbedding(ctx context.Context, e *pb.Embedding) error {
 	}
 	_, err := s.bun.NewRaw(`INSERT INTO codeindex_embeddings (id, chunk_id, fact_id, snapshot_id, profile, model, dimensions, input_hash, vector)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET vector = excluded.vector, dimensions = excluded.dimensions`,
+		ON CONFLICT(id) DO UPDATE SET vector = excluded.vector, dimensions = excluded.dimensions, snapshot_id = excluded.snapshot_id
+		WHERE codeindex_embeddings.input_hash <> excluded.input_hash`,
 		id, e.ChunkId, e.FactId, e.SnapshotId, e.Profile, e.Model, e.Dimensions, e.InputHash, encodeVector(e.Vector)).Exec(ctx)
 	return err
 }
@@ -457,9 +514,15 @@ func (s *Store) SaveFactEmbedding(ctx context.Context, e *pb.Embedding) error {
 	if id == "" {
 		id = graph.ID("fact-embedding", e.FactId, e.Profile)
 	}
+	// A reused fact's embedding is content-identical, so skip the vector rewrite
+	// and ANN update to keep incremental publishes cheap.
+	var existing string
+	if err := s.bun.NewRaw(`SELECT input_hash FROM codeindex_fact_embeddings WHERE id = ?`, id).Scan(ctx, &existing); err == nil && existing == e.InputHash {
+		return nil
+	}
 	if _, err := s.bun.NewRaw(`INSERT INTO codeindex_fact_embeddings (id, fact_id, snapshot_id, profile, model, dimensions, input_hash, vector)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET vector = excluded.vector, dimensions = excluded.dimensions`,
+		ON CONFLICT(id) DO UPDATE SET vector = excluded.vector, dimensions = excluded.dimensions, snapshot_id = excluded.snapshot_id`,
 		id, e.FactId, e.SnapshotId, e.Profile, e.Model, e.Dimensions, e.InputHash, encodeVector(e.Vector)).Exec(ctx); err != nil {
 		return err
 	}

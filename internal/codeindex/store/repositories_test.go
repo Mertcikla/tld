@@ -91,7 +91,7 @@ func TestDeleteRepositoryRemovesAllRepositoryRecords(t *testing.T) {
 		"codeindex_group_members": 0,
 	} {
 		var count int
-		if err := st.bun.NewRaw("SELECT COUNT(*) FROM " + table).Scan(ctx, &count); err != nil {
+		if err := st.bun.NewRaw("SELECT COUNT(*) FROM "+table).Scan(ctx, &count); err != nil {
 			t.Fatalf("count %s: %v", table, err)
 		}
 		if count != want {

@@ -13,37 +13,39 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 )
 
+// symbolInputs fingerprints each project independently. A change under one
+// project's root no longer invalidates every project in the same language
+// family, so only projects containing edited files rerun their indexer.
 func symbolInputs(root string, projects []*pb.Project, sources map[string]*graph.Source, configHash string) (map[string]string, error) {
-	families := map[string][]string{}
+	result := map[string]string{}
 	for _, pr := range projects {
-		families[languageFamily(pr.Language)] = nil
-	}
-	paths := make([]string, 0, len(sources))
-	for path := range sources {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	for _, path := range paths {
-		src := sources[path]
-		for family := range families {
-			if src.Language == "" || languageFamily(src.Language) == family || projectLanguage(filepath.Base(path)) != "" {
-				families[family] = append(families[family], path, src.Hash)
-			}
+		family := languageFamily(pr.Language)
+		key := family + "|" + pr.Root
+		prefix := strings.Trim(pr.Root, "/")
+		if prefix != "" && prefix != "." {
+			prefix += "/"
 		}
-	}
-	// Manifests such as pom.xml are not necessarily captured source files.
-	for _, pr := range projects {
+		var parts []string
+		for path, src := range sources {
+			underRoot := pr.Root == "." || pr.Root == "" || strings.HasPrefix(path, prefix)
+			if !underRoot {
+				continue
+			}
+			// A repository-root project owns only sources of its own language
+			// family; other languages are covered by their own projects.
+			if src.Language != "" && languageFamily(src.Language) != family {
+				continue
+			}
+			parts = append(parts, path, src.Hash)
+		}
+		sort.Strings(parts)
+		manifests := pr.ConfigPath
 		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(pr.ConfigPath)))
 		if err != nil {
 			return nil, err
 		}
-		for family := range families {
-			families[family] = append(families[family], pr.ConfigPath, graph.Hash(raw))
-		}
-	}
-	result := map[string]string{}
-	for family, parts := range families {
-		result[family] = graph.ID(append([]string{configHash, family}, parts...)...)
+		parts = append(parts, manifests, graph.Hash(raw))
+		result[key] = graph.ID(append([]string{configHash, key}, parts...)...)
 	}
 	return result, nil
 }

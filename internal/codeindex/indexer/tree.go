@@ -1,110 +1,13 @@
 package indexer
 
 import (
-	"context"
-	"fmt"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"unicode/utf8"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
-	"github.com/odvcencio/gotreesitter"
 )
-
-func treeFacts(ctx context.Context, g *graph.Graph, s *graph.Source) ([]callSite, error) {
-	lang := parserLanguage(s.Language)
-	if lang == nil {
-		return nil, nil
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	parser := gotreesitter.NewParser(lang)
-	var cancellationFlag uint32
-	parser.SetCancellationFlag(&cancellationFlag)
-	done := make(chan struct{})
-	if ctx.Done() != nil {
-		go func() {
-			select {
-			case <-ctx.Done():
-				atomic.StoreUint32(&cancellationFlag, 1)
-			case <-done:
-			}
-		}()
-	}
-	defer close(done)
-	tree, err := parser.Parse(s.Text)
-	if err != nil {
-		return nil, err
-	}
-	if tree == nil {
-		return nil, fmt.Errorf("parse canceled for %s", s.Path)
-	}
-	defer tree.Release()
-	imports := fileImports(wrapNode(tree.RootNode(), lang), s.Text)
-	var nodes []*tsNode
-	var calls []callSite
-	var walk func(*tsNode)
-	walk = func(n *tsNode) {
-		if n == nil {
-			return
-		}
-		if nodeFactKind(n, s.Text) != pb.FactKind_FACT_KIND_UNSPECIFIED {
-			nodes = append(nodes, n)
-		}
-		if site, ok := callSiteFor(n, s); ok {
-			calls = append(calls, site)
-		}
-		for i := 0; i < n.NamedChildCount(); i++ {
-			walk(n.NamedChild(i))
-		}
-	}
-	walk(wrapNode(tree.RootNode(), lang))
-	sort.Slice(nodes, func(i, j int) bool {
-		if nodes[i].StartByte() == nodes[j].StartByte() {
-			return nodes[i].EndByte() > nodes[j].EndByte()
-		}
-		return nodes[i].StartByte() < nodes[j].StartByte()
-	})
-	created := map[string]*pb.CodeFact{}
-	for _, n := range nodes {
-		start, end := attachedComments(s.Text, int(n.StartByte())), int(n.EndByte())
-		if end <= start || end > len(s.Text) {
-			continue
-		}
-		name := declarationName(n, s.Text)
-		if name == "" {
-			continue
-		}
-		kind := nodeFactKind(n, s.Text)
-		anchor := s.Anchor(start, end)
-		code := string(s.Text[start:end])
-		signature := signatureContext(s.Text, start, end, name)
-		f := g.AddFact(kind, name, s.Language, anchor, code, signature, &pb.Evidence{Producer: "tree-sitter", OriginalId: n.Kind(), OriginalRange: fmt.Sprintf("%d:%d", start, end), Anchor: anchor})
-		if len(imports) > 0 {
-			f.Imports = imports
-		}
-		created[fmt.Sprintf("%d:%d", n.StartByte(), n.EndByte())] = f
-		for parent := n.Parent(); parent != nil; parent = parent.Parent() {
-			if candidate := created[fmt.Sprintf("%d:%d", parent.StartByte(), parent.EndByte())]; candidate != nil {
-				f.ParentFactId = candidate.Id
-				break
-			}
-		}
-		context := signature
-		if f.ParentFactId != "" {
-			context = g.Facts[f.ParentFactId].Signature + "\n" + context
-		}
-		ranges := splitDeclaration(s, n, start, end, 4096, 8192)
-		for i, r := range ranges {
-			chunkAnchor := s.Anchor(r[0], r[1])
-			g.AddChunk(f.Id, chunkAnchor, string(s.Text[r[0]:r[1]]), context, uint32(i), uint32(len(ranges)))
-		}
-	}
-	return calls, nil
-}
 
 // callSiteFor records a call expression found during the declaration walk so
 // deriveCalls can resolve it against SCIP references without re-parsing.

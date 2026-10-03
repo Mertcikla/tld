@@ -18,13 +18,13 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 		return nil, err
 	}
 	g := graph.NewGraph(snap.RepositoryId, snap.Id)
-	rows, err := s.bun.QueryContext(ctx, `SELECT path, hash, content, language, input_blob, dirty, syntax_cache FROM codeindex_sources WHERE snapshot_id = ?`, snap.Id)
+	rows, err := s.bun.QueryContext(ctx, `SELECT path, hash, content, language, input_blob, dirty, syntax_cache, file_cache FROM codeindex_sources WHERE snapshot_id = ?`, snap.Id)
 	if err != nil {
 		return nil, err
 	}
 	for rows.Next() {
 		src := &graph.Source{}
-		if err := rows.Scan(&src.Path, &src.Hash, &src.Text, &src.Language, &src.InputBlob, &src.Dirty, &src.SyntaxCache); err != nil {
+		if err := rows.Scan(&src.Path, &src.Hash, &src.Text, &src.Language, &src.InputBlob, &src.Dirty, &src.SyntaxCache, &src.FileCache); err != nil {
 			_ = rows.Close()
 			return nil, err
 		}
@@ -120,11 +120,7 @@ func (s *Store) Diff(ctx context.Context, fromID, toID string, sourcesOnly bool)
 	if sourcesOnly {
 		return diff, nil
 	}
-	fromFacts, err := s.Facts(ctx, from.Id, pb.FactKind_FACT_KIND_UNSPECIFIED, "", "", graphLoadLimit)
-	if err != nil {
-		return nil, err
-	}
-	toFacts, err := s.Facts(ctx, to.Id, pb.FactKind_FACT_KIND_UNSPECIFIED, "", "", graphLoadLimit)
+	fromFacts, toFacts, err := s.diffFactsByMembership(ctx, from.Id, to.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -180,6 +176,101 @@ func diffSources(from, to *pb.Snapshot) []*pb.SourceChange {
 		changes = append(changes, change)
 	}
 	return changes
+}
+
+// diffFactsByMembership loads full facts for only the entities that differ
+// between two snapshots. Unchanged facts share an id under stable reuse, so
+// added and removed ids identify the delta and a shared logical key with
+// different ids identifies a modified declaration.
+func (s *Store) diffFactsByMembership(ctx context.Context, fromID, toID string) ([]*pb.CodeFact, []*pb.CodeFact, error) {
+	fromKey, err := s.factLogicalKeys(ctx, fromID)
+	if err != nil {
+		return nil, nil, err
+	}
+	toKey, err := s.factLogicalKeys(ctx, toID)
+	if err != nil {
+		return nil, nil, err
+	}
+	deltaIDs := map[string]bool{}
+	for id := range toKey {
+		if _, ok := fromKey[id]; !ok {
+			deltaIDs[id] = true
+		}
+	}
+	for id := range fromKey {
+		if _, ok := toKey[id]; !ok {
+			deltaIDs[id] = true
+		}
+	}
+	// A changed declaration has a new id but shares its logical key with the
+	// removed version; include the matching side so the diff pairs them.
+	fromByKey := map[string]string{}
+	for id, key := range fromKey {
+		fromByKey[key] = id
+	}
+	toByKey := map[string]string{}
+	for id, key := range toKey {
+		toByKey[key] = id
+	}
+	for key, fromFactID := range fromByKey {
+		if toFactID, ok := toByKey[key]; ok && toFactID != fromFactID {
+			deltaIDs[fromFactID] = true
+			deltaIDs[toFactID] = true
+		}
+	}
+	if len(deltaIDs) == 0 {
+		return nil, nil, nil
+	}
+	facts, err := s.factsByIDs(ctx, deltaIDs)
+	if err != nil {
+		return nil, nil, err
+	}
+	var fromFacts, toFacts []*pb.CodeFact
+	for id, fact := range facts {
+		if _, ok := fromKey[id]; ok {
+			fromFacts = append(fromFacts, fact)
+		}
+		if _, ok := toKey[id]; ok {
+			toFacts = append(toFacts, fact)
+		}
+	}
+	return fromFacts, toFacts, nil
+}
+
+// factLogicalKeys maps a snapshot's fact ids to their logical identity.
+func (s *Store) factLogicalKeys(ctx context.Context, snapshotID string) (map[string]string, error) {
+	rows, err := s.bun.QueryContext(ctx, `SELECT f.id, f.logical_key FROM codeindex_facts f JOIN codeindex_snapshot_facts m ON m.fact_id = f.id WHERE m.snapshot_id = ?`, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, key string
+		if err := rows.Scan(&id, &key); err != nil {
+			return nil, err
+		}
+		out[id] = key
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) factsByIDs(ctx context.Context, ids map[string]bool) (map[string]*pb.CodeFact, error) {
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids))
+	for id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	facts, err := s.scanFacts(ctx, `SELECT `+factColumns+` FROM codeindex_facts WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]*pb.CodeFact, len(facts))
+	for _, f := range facts {
+		out[f.Id] = f
+	}
+	return out, nil
 }
 
 func logicalFact(f *pb.CodeFact) string {

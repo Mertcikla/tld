@@ -30,6 +30,9 @@ type Source struct {
 	InputBlob            string
 	Dirty                bool
 	SyntaxCache          string
+	// FileCache stores this source's whole-file fact and chunks keyed by the
+	// content hash they were built from, so unchanged files are not re-chunked.
+	FileCache string
 	// lines caches the byte offset of each line start so Position and Offset
 	// resolve anchors in O(log n) instead of rescanning (and copying) the
 	// source for every occurrence.
@@ -200,10 +203,14 @@ type Graph struct {
 	Facts            map[string]*pb.CodeFact
 	Chunks           map[string]*pb.Chunk
 	EdgeFacts        map[string]*pb.EdgeFact
+	// Reused records entity ids whose content was carried over unchanged from a
+	// previous snapshot. Publishing can skip re-writing their immutable rows and
+	// only record membership.
+	Reused map[string]bool
 }
 
 func NewGraph(repo, snapshot string) *Graph {
-	return &Graph{ProjectArtifacts: map[string]ProjectArtifact{}, RepositoryID: repo, SnapshotID: snapshot, Sources: map[string]*Source{}, Facts: map[string]*pb.CodeFact{}, Chunks: map[string]*pb.Chunk{}, EdgeFacts: map[string]*pb.EdgeFact{}}
+	return &Graph{ProjectArtifacts: map[string]ProjectArtifact{}, RepositoryID: repo, SnapshotID: snapshot, Sources: map[string]*Source{}, Facts: map[string]*pb.CodeFact{}, Chunks: map[string]*pb.Chunk{}, EdgeFacts: map[string]*pb.EdgeFact{}, Reused: map[string]bool{}}
 }
 func (g *Graph) AddFact(kind pb.FactKind, name, language string, anchor *pb.SourceAnchor, code, signature string, evidence *pb.Evidence) *pb.CodeFact {
 	id := ID(g.SnapshotID, "fact", anchor.Path, fmt.Sprint(anchor.StartByte), fmt.Sprint(anchor.EndByte), kind.String(), name)
@@ -307,6 +314,50 @@ func (g *Graph) AdoptFact(f *pb.CodeFact) *pb.CodeFact {
 	}
 	g.Facts[id] = c
 	return c
+}
+
+// AdoptFactAnchored carries a fact into this graph at a new anchor, refreshing
+// its code and preserving its identity. The original id is retained so an
+// unchanged declaration keeps the same fact across snapshots, which lets the
+// publisher and embedding cache treat it as reusable.
+func (g *Graph) AdoptFactAnchored(f *pb.CodeFact, anchor *pb.SourceAnchor, code, signature string) *pb.CodeFact {
+	if f == nil || anchor == nil {
+		return nil
+	}
+	id := f.Id
+	if id == "" {
+		id = ID(g.SnapshotID, "fact", anchor.Path, fmt.Sprint(anchor.StartByte), fmt.Sprint(anchor.EndByte), f.Kind.String(), f.Name)
+	}
+	if existing := g.Facts[id]; existing != nil {
+		return existing
+	}
+	c := &pb.CodeFact{
+		Id: id, RepositoryId: g.RepositoryID, SnapshotId: g.SnapshotID,
+		Language: f.Language, Anchor: anchor, Kind: f.Kind, Name: f.Name,
+		QualifiedName: f.QualifiedName, SymbolKey: f.SymbolKey, Signature: signature,
+		Documentation: f.Documentation, Code: code, LogicalKey: f.LogicalKey,
+		Evidence: append([]*pb.Evidence(nil), f.Evidence...),
+		Imports:  append([]string(nil), f.Imports...),
+	}
+	g.Facts[id] = c
+	g.Reused[id] = true
+	return c
+}
+
+// AdoptChunkAnchored inserts an already re-anchored chunk, preserving its id so
+// unchanged chunks keep their identity across snapshots.
+func (g *Graph) AdoptChunkAnchored(c *pb.Chunk, factID string) *pb.Chunk {
+	if c == nil {
+		return nil
+	}
+	id := c.Id
+	if id == "" {
+		id = ID(g.SnapshotID, "chunk", factID, fmt.Sprint(c.Index))
+	}
+	n := &pb.Chunk{Id: id, FactId: factID, SnapshotId: g.SnapshotID, Anchor: c.Anchor, Text: c.Text, Context: c.Context, Index: c.Index, Total: c.Total}
+	g.Chunks[id] = n
+	g.Reused[id] = true
+	return n
 }
 
 // AdoptChunk re-keys a chunk into this graph under a (possibly remapped) Fact id.

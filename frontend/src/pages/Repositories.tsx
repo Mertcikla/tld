@@ -37,6 +37,7 @@ import {
   type SnapshotDiff,
   type RepositoryImpact as RepositoryImpactResult,
   type LiveRepositoryImpact,
+  type RepositoryWatchStatus,
   type SnapshotSourceChange,
 } from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -112,6 +113,37 @@ function ErrorMessage({ message }: { message: string }) {
       <Text fontSize="sm">{message}</Text>
     </Alert>
   ) : null
+}
+
+function watchBadgeProps(status: RepositoryWatchStatus | null): { label: string; scheme: string } {
+  if (!status || !status.running) return { label: 'Watcher inactive', scheme: 'gray' }
+  switch (status.state) {
+    case 'starting':
+    case 'watching':
+    case 'scanning':
+      return { label: status.state === 'scanning' ? 'Indexing' : 'Watching', scheme: 'green' }
+    case 'stopping':
+      return { label: 'Stopping', scheme: 'orange' }
+    case 'error':
+      return { label: 'Watcher error', scheme: 'red' }
+    default:
+      return { label: 'Watching', scheme: 'green' }
+  }
+}
+
+function watchDetail(status: RepositoryWatchStatus): string {
+  const parts: string[] = []
+  if (status.ownerKind) {
+    parts.push(status.ownerPid > 0 ? `${status.ownerKind} · pid ${status.ownerPid}` : status.ownerKind)
+  }
+  if (status.stage) parts.push(status.stage)
+  if (status.changedFiles > 0 || status.pendingFiles > 0) {
+    parts.push(`${status.changedFiles} changed${status.pendingFiles > 0 ? `, ${status.pendingFiles} pending` : ''}`)
+  }
+  if (status.lastScanUnix > 0) {
+    parts.push(`last scan ${new Date(status.lastScanUnix * 1000).toLocaleTimeString()}${status.lastScanMs > 0 ? ` (${status.lastScanMs} ms)` : ''}`)
+  }
+  return parts.join(' · ')
 }
 
 function FileTree({ files, onSelect }: { files: SnapshotSourceChange[]; onSelect: (path: string) => void }) {
@@ -366,6 +398,8 @@ export default function Repositories() {
   const [progress, setProgress] = useState<RepositoryMapProgress | null>(null)
   const [comparison, setComparison] = useState<RepositoryImpactResult | null>(null)
   const [live, setLive] = useState<LiveRepositoryImpact | null>(null)
+  const [watch, setWatch] = useState<RepositoryWatchStatus | null>(null)
+  const [watchBusy, setWatchBusy] = useState(false)
   const [mode, setMode] = useState(() => params.get('mode') === 'live' ? 'live' : 'compare')
   const [selectedPath, setSelectedPath] = useState('')
   const liveVersion = useRef('')
@@ -508,9 +542,13 @@ export default function Repositories() {
       fetching = true
       try {
         if (!operation.current) {
-          const result = await api.repositories.liveImpact(selectedId, controller.signal)
+          const [result, status] = await Promise.all([
+            api.repositories.liveImpact(selectedId, controller.signal),
+            api.repositories.watchStatus(selectedId, controller.signal).catch(() => null),
+          ])
           if (!controller.signal.aborted && !operation.current) {
             setLive((old) => ({ ...result, diagram: result.diagram?.version === old?.diagram?.version ? old?.diagram ?? null : result.diagram }))
+            if (status) setWatch(status)
             setOperationError('')
             if (result.diagram && result.diagram.version !== liveVersion.current) {
               liveVersion.current = result.diagram.version
@@ -551,6 +589,32 @@ export default function Repositories() {
       if (!controller.signal.aborted && selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not update blast radius')
     } finally { if (operation.current === controller) { operation.current = null; setBusy(false) } }
   }
+  const startWatch = async () => {
+    const repositoryId = selectedId
+    setWatchBusy(true)
+    setOperationError('')
+    try {
+      const status = await api.repositories.startWatch(repositoryId, { embed: true, materialize: false })
+      if (selectedRef.current === repositoryId) setWatch(status)
+    } catch (err) {
+      if (selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not start watcher')
+    } finally {
+      setWatchBusy(false)
+    }
+  }
+  const stopWatch = async () => {
+    const repositoryId = selectedId
+    setWatchBusy(true)
+    setOperationError('')
+    try {
+      const status = await api.repositories.stopWatch(repositoryId)
+      if (selectedRef.current === repositoryId) setWatch(status)
+    } catch (err) {
+      if (selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not stop watcher')
+    } finally {
+      setWatchBusy(false)
+    }
+  }
   const selectRepo = (id: string) => {
     if (id === selectedId) return
     operation.current?.abort()
@@ -560,6 +624,7 @@ export default function Repositories() {
     setSnapshots([])
     setMaps([])
     setLive(null)
+    setWatch(null)
     liveVersion.current = ''
     setHistory(null)
     setBase('')
@@ -1042,10 +1107,22 @@ export default function Repositories() {
                 </Flex>
                 {mode === 'live' && (
                   <Box p={4} borderBottom="1px solid" borderColor="whiteAlpha.100">
-                    <HStack mb={2}><Badge colorScheme={live?.watching ? 'green' : 'gray'}>{live?.watching ? 'Watching' : 'Watcher inactive'}</Badge><Text fontSize="xs">{live?.gitBranch || 'Detached HEAD'} · {short(live?.gitRevision || '')}</Text></HStack>
+                    <HStack mb={2} spacing={2} flexWrap="wrap">
+                      {(() => { const badge = watchBadgeProps(watch); return <Badge colorScheme={badge.scheme} data-testid="watch-state">{badge.label}</Badge> })()}
+                      <Text fontSize="xs">{watch?.gitBranch || live?.gitBranch || 'Detached HEAD'} · {short(watch?.gitRevision || live?.gitRevision || '')}</Text>
+                      <Box flex={1} />
+                      {watch?.running ? (
+                        <Button size="xs" variant="outline" isLoading={watchBusy} onClick={() => void stopWatch()} data-testid="watch-stop">Stop watcher</Button>
+                      ) : watch?.cliAvailable === false ? (
+                        <Tooltip label={watch.installHint || 'Install the tld CLI to start a watcher'}><Button size="xs" isDisabled data-testid="watch-start">Start watcher</Button></Tooltip>
+                      ) : (
+                        <Button size="xs" colorScheme="green" isLoading={watchBusy} onClick={() => void startWatch()} data-testid="watch-start">Start watcher</Button>
+                      )}
+                    </HStack>
+                    {watch && watchDetail(watch) && <Text mb={2} fontSize="xs" color="gray.400" data-testid="watch-detail">{watchDetail(watch)}</Text>}
                     <Text fontSize="xs" color="gray.400">Base is the current commit. Head includes staged, unstaged, and non-ignored untracked files.</Text>
-                    {!live?.watching && <Text mt={2} fontSize="xs" color="gray.400">Run <Code>tld index {selected?.root} --watch</Code> to keep this diagram updated.</Text>}
-                    <ErrorMessage message={live?.error || ''} />
+                    {!watch?.running && <Text mt={2} fontSize="xs" color="gray.400">Run <Code>tld index {selected?.root} --watch</Code> to keep this diagram updated, or use Start watcher.</Text>}
+                    <ErrorMessage message={watch?.error || live?.error || ''} />
                   </Box>
                 )}
                 {mode === 'compare' && !compareCollapsed && (

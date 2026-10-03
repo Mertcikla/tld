@@ -107,12 +107,14 @@ func runForeground(cmd *cobra.Command, host, port, dataDir, workspaceDir string,
 		<-sigs
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		_ = app.Shutdown(ctx)
 		_ = srv.Shutdown(ctx)
 	}()
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
+	_ = app.Shutdown(context.Background())
 	return nil
 }
 

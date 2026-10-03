@@ -83,6 +83,7 @@ import {
   CodeFactService,
   MapperService,
   RepositoryService,
+  WatchService,
   type Snapshot as CodeSnapshotProto,
   type SnapshotDiff as SnapshotDiffProto,
   type ImpactDiagram as ImpactDiagramProto,
@@ -236,6 +237,34 @@ export interface LiveRepositoryImpact {
   gitRevision: string
 }
 
+// WatchStatus is the exact, shared state of a repository's watcher.
+export interface RepositoryWatchStatus {
+  repositoryId: string
+  running: boolean
+  managed: boolean
+  state: string
+  stage: string
+  ownerKind: string
+  ownerPid: number
+  repoRoot: string
+  gitBranch: string
+  gitRevision: string
+  snapshotId: string
+  contentFingerprint: string
+  changedFiles: number
+  pendingFiles: number
+  startedUnix: number
+  lastScanUnix: number
+  lastScanMs: number
+  heartbeatUnix: number
+  stopRequested: boolean
+  pollIntervalMs: number
+  debounceMs: number
+  error: string
+  cliAvailable: boolean
+  installHint: string
+}
+
 // RepositoryMapProgress reports coarse mapper pipeline progress.
 export interface RepositoryMapProgress {
   stage: string
@@ -354,6 +383,7 @@ const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
 const codeIndexFactClient = createClient(CodeFactService, transport)
 const codeIndexMapperClient = createClient(MapperService, transport)
 const codeIndexRepositoryClient = createClient(RepositoryService, transport)
+const codeIndexWatchClient = createClient(WatchService, transport)
 const orgClient = createClient(OrgService, transport)
 const collaborationClient = createClient(CollaborationService, transport)
 
@@ -412,6 +442,42 @@ function mapSnapshotDeltaCounts(delta?: { added: unknown[]; removed: unknown[]; 
     added: delta?.added?.length ?? 0,
     removed: delta?.removed?.length ?? 0,
     modified: delta?.modified?.length ?? 0,
+  }
+}
+
+export function mapWatchStatus(status: {
+  repositoryId: string; running: boolean; managed: boolean; state: string; stage: string
+  ownerKind: string; ownerPid: bigint | number; repoRoot: string; gitBranch: string; gitRevision: string
+  snapshotId: string; contentFingerprint: string; changedFiles: number; pendingFiles: number
+  startedUnix: bigint | number; lastScanUnix: bigint | number; lastScanMs: bigint | number
+  heartbeatUnix: bigint | number; stopRequested: boolean; pollIntervalMs: bigint | number
+  debounceMs: bigint | number; error: string; cliAvailable: boolean; installHint: string
+}): RepositoryWatchStatus {
+  return {
+    repositoryId: status.repositoryId,
+    running: status.running,
+    managed: status.managed,
+    state: status.state,
+    stage: status.stage,
+    ownerKind: status.ownerKind,
+    ownerPid: Number(status.ownerPid),
+    repoRoot: status.repoRoot,
+    gitBranch: status.gitBranch,
+    gitRevision: status.gitRevision,
+    snapshotId: status.snapshotId,
+    contentFingerprint: status.contentFingerprint,
+    changedFiles: status.changedFiles,
+    pendingFiles: status.pendingFiles,
+    startedUnix: Number(status.startedUnix),
+    lastScanUnix: Number(status.lastScanUnix),
+    lastScanMs: Number(status.lastScanMs),
+    heartbeatUnix: Number(status.heartbeatUnix),
+    stopRequested: status.stopRequested,
+    pollIntervalMs: Number(status.pollIntervalMs),
+    debounceMs: Number(status.debounceMs),
+    error: status.error,
+    cliAvailable: status.cliAvailable,
+    installHint: status.installHint,
   }
 }
 
@@ -1946,6 +2012,22 @@ export const api = {
     liveImpact: (repositoryId: string, signal?: AbortSignal): Promise<LiveRepositoryImpact> => rpc(async () => {
       const result = await codeIndexMapperClient.getLiveImpact({ repositoryId }, { signal })
       return { ...result, diagram: result.diagram ? mapImpact(result.diagram) : null }
+    }),
+    watchStatus: (repositoryId: string, signal?: AbortSignal): Promise<RepositoryWatchStatus> => rpc(async () => {
+      const result = await codeIndexWatchClient.getWatchStatus({ repositoryId }, { signal })
+      return mapWatchStatus(result)
+    }),
+    startWatch: (repositoryId: string, options: { embed?: boolean; materialize?: boolean } = {}): Promise<RepositoryWatchStatus> => rpc(async () => {
+      const result = await codeIndexWatchClient.startWatch({
+        repositoryId,
+        embed: options.embed ?? true,
+        materialize: options.materialize ?? false,
+      })
+      return mapWatchStatus(result)
+    }),
+    stopWatch: (repositoryId: string): Promise<RepositoryWatchStatus> => rpc(async () => {
+      const result = await codeIndexWatchClient.stopWatch({ repositoryId })
+      return mapWatchStatus(result)
     }),
     impactRadius: (repositoryId: string, comparisonKey: string, radius: number, signal?: AbortSignal): Promise<RepositoryImpact> => rpc(async () =>
       mapImpact(await codeIndexMapperClient.setImpactRadius({ repositoryId, comparisonKey, radius }, { signal })),

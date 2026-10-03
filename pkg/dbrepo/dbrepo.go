@@ -223,6 +223,16 @@ func legacySQLiteMigrationAlreadyApplied(ctx context.Context, db *bun.DB, commen
 		return sqliteColumnExists(ctx, db, "elements", "bypass_noise_gate")
 	case "view_markdown_source_kind":
 		return sqliteColumnExists(ctx, db, "view_markdown_documents", "source_kind")
+	case "codeindex_incremental_watch":
+		control, err := sqliteColumnExists(ctx, db, "codeindex_watch_state", "owner_kind")
+		if err != nil || !control {
+			return control, err
+		}
+		cache, err := sqliteColumnExists(ctx, db, "codeindex_sources", "file_cache")
+		if err != nil || !cache {
+			return cache, err
+		}
+		return sqliteTablesExist(ctx, db, "codeindex_snapshot_facts", "codeindex_snapshot_chunks", "codeindex_snapshot_edges")
 	default:
 		return false, nil
 	}
@@ -246,6 +256,16 @@ func legacyPostgresMigrationAlreadyApplied(ctx context.Context, db *bun.DB, comm
 		return postgresTablesExist(ctx, db, "elements", "views", "connectors")
 	case "element_noise_gate_bypass":
 		return postgresColumnExists(ctx, db, "elements", "bypass_noise_gate")
+	case "codeindex_incremental_watch":
+		control, err := postgresColumnExists(ctx, db, "codeindex_watch_state", "owner_kind")
+		if err != nil || !control {
+			return control, err
+		}
+		cache, err := postgresColumnExists(ctx, db, "codeindex_sources", "file_cache")
+		if err != nil || !cache {
+			return cache, err
+		}
+		return postgresTablesExist(ctx, db, "codeindex_snapshot_facts", "codeindex_snapshot_chunks", "codeindex_snapshot_edges")
 	default:
 		return false, nil
 	}
@@ -326,6 +346,8 @@ func sqliteTableInfoQuery(table string) (string, bool) {
 		return "PRAGMA table_info(codeindex_sources)", true
 	case "codeindex_snapshots":
 		return "PRAGMA table_info(codeindex_snapshots)", true
+	case "codeindex_watch_state":
+		return "PRAGMA table_info(codeindex_watch_state)", true
 	default:
 		return "", false
 	}

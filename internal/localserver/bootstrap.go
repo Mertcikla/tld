@@ -26,6 +26,16 @@ type App struct {
 	InitializedData bool
 	Resources       ResourceCounts
 	Handler         http.Handler
+	shutdown        func(context.Context) error
+}
+
+// Shutdown stops background work owned by the server, such as supervised
+// watchers. It is safe to call more than once.
+func (a *App) Shutdown(ctx context.Context) error {
+	if a == nil || a.shutdown == nil {
+		return nil
+	}
+	return a.shutdown(ctx)
 }
 
 type ResourceCounts struct {
@@ -143,7 +153,8 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 			Elements:   elements,
 			Connectors: connectors,
 		},
-		Handler: srv.Routes(),
+		Handler:  srv.Routes(),
+		shutdown: srv.Shutdown,
 	}, nil
 }
 

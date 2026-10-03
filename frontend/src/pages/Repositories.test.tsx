@@ -38,6 +38,15 @@ vi.mock('../api/client', () => ({
         nodes: [], edges: [], diff: { fromSnapshotId: 'snap-0', toSnapshotId: 'snap-1', fromGitRevision: 'old', toGitRevision: 'abc', sources: [], facts: { added: 0, removed: 0, modified: 0 }, edgeFacts: { added: 0, removed: 0, modified: 0 } },
       })),
       liveImpact: vi.fn(async () => ({ diagram: null, watching: false, error: '', gitBranch: 'main', gitRevision: 'abc' })),
+      watchStatus: vi.fn(async () => ({
+        repositoryId: 'repo-1', running: false, managed: false, state: 'stopped', stage: '',
+        ownerKind: '', ownerPid: 0, repoRoot: '/repo/demo', gitBranch: 'main', gitRevision: 'abc',
+        snapshotId: '', contentFingerprint: '', changedFiles: 0, pendingFiles: 0,
+        startedUnix: 0, lastScanUnix: 0, lastScanMs: 0, heartbeatUnix: 0, stopRequested: false,
+        pollIntervalMs: 2000, debounceMs: 500, error: '', cliAvailable: true, installHint: '',
+      })),
+      startWatch: vi.fn(async () => ({ running: true, state: 'starting' })),
+      stopWatch: vi.fn(async () => ({ running: false, state: 'stopped' })),
       impactRadius: vi.fn(),
       delete: vi.fn(async () => {}),
       map: vi.fn(async (_repositoryId: string, handlers?: { onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void }) => {
@@ -277,6 +286,28 @@ describe('Repositories map action', () => {
     await act(async () => { await renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.onRadius(1) })
     expect(api.repositories.impactRadius).toHaveBeenCalledWith('repo-1', 'live', 1, expect.any(AbortSignal))
     expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram.radius).toBe(1)
+    await act(async () => { renderer.unmount() })
+    vi.useRealTimers()
+  })
+
+  it('starts and stops the watcher from the live panel', async () => {
+    vi.useFakeTimers()
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'watch-start' }).props.onClick() })
+    expect(api.repositories.startWatch).toHaveBeenCalledWith('repo-1', expect.objectContaining({ embed: true }))
+    vi.mocked(api.repositories.watchStatus).mockResolvedValue({
+      repositoryId: 'repo-1', running: true, managed: true, state: 'scanning', stage: 'tree-sitter',
+      ownerKind: 'server', ownerPid: 42, repoRoot: '/repo/demo', gitBranch: 'main', gitRevision: 'abc',
+      snapshotId: 'snap-1', contentFingerprint: 'fp', changedFiles: 2, pendingFiles: 1,
+      startedUnix: 1, lastScanUnix: 2, lastScanMs: 12, heartbeatUnix: 3, stopRequested: false,
+      pollIntervalMs: 2000, debounceMs: 500, error: '', cliAvailable: true, installHint: '',
+    })
+    await act(async () => { await Promise.resolve() })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'watch-stop' }).props.onClick() })
+    expect(api.repositories.stopWatch).toHaveBeenCalledWith('repo-1')
     await act(async () => { renderer.unmount() })
     vi.useRealTimers()
   })

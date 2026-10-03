@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"time"
 
 	tld "github.com/mertcikla/tld/v2"
 	cmdversion "github.com/mertcikla/tld/v2/cmd/version"
@@ -50,6 +51,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to start local server: %v", err)
 	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = app.Shutdown(ctx)
+	}()
 
 	listener, serverAddr, err := listenDesktopLocalServer(app.Addr)
 	if err != nil {

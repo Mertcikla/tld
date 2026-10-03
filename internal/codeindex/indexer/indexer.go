@@ -145,10 +145,10 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 	table := newSymbols()
-	// Reindex every project in a changed language family to cover cross-project
-	// bindings. Other families reuse their SCIP artifacts. Configuration inputs
-	// conservatively invalidate all families.
-	familyFingerprints, err := symbolInputs(root, projects, sources, snap.ConfigHash)
+	// Reindex only projects whose own inputs changed. Unchanged projects reuse
+	// their cached SCIP artifacts, and cross-project bindings are recomputed by
+	// table.apply against the current symbol table.
+	projectFingerprints, err := symbolInputs(root, projects, sources, snap.ConfigHash)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -162,7 +162,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 		scipBacked := !isSyntaxFamily(family)
 		projectDir := filepath.Join(root, filepath.FromSlash(pr.Root))
 		projectKey := family + "|" + pr.Root
-		fingerprint := familyFingerprints[family]
+		fingerprint := projectFingerprints[projectKey]
 		if base != nil && req.ScipArtifacts[pr.Root] == "" {
 			if cached, ok := base.Graph.ProjectArtifacts[projectKey]; ok && cached.Fingerprint == fingerprint {
 				spec, e := indexerForFamily(family, p.Config)

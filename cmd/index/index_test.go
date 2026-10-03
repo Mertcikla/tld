@@ -55,7 +55,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
 	out := &bytes.Buffer{}
 	eng := &engine{store: idx, ws: sq, cfg: config.Default(), opts: options{}, repoName: "fixture", repoRoot: dir, out: out}
-	state, err := gitstate.Capture(ctx, dir)
+	state, err := gitstate.CaptureQuick(ctx, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	testGit(t, dir, "add", "a.go")
 	writeSource(t, dir, "a.go", "package a\nfunc Pending() {}\n")
 	testGit(t, dir, "commit", "-m", "partial commit")
-	state, err = gitstate.Capture(ctx, dir)
+	state, err = gitstate.CaptureQuick(ctx, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 		t.Fatal("dirty contents leaked into commit")
 	}
 	testGit(t, dir, "restore", "a.go")
-	clean, err := gitstate.Capture(ctx, dir)
+	clean, err := gitstate.CaptureQuick(ctx, dir)
 	if err != nil {
 		t.Fatal(err)
 	}

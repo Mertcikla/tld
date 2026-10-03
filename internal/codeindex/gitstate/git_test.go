@@ -85,6 +85,54 @@ func TestCaptureGitChangesAndRepeatedEdits(t *testing.T) {
 		t.Fatal("revert differs from initial state")
 	}
 }
+func TestCaptureQuickDetectsChanges(t *testing.T) {
+	ctx := context.Background()
+	root := repo(t)
+	initial, err := CaptureQuick(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(initial.Paths) != 0 || initial.Revision == "" || initial.Branch != "main" {
+		t.Fatalf("initial quick state: %+v", initial)
+	}
+	put(t, root, "a.go", "package b\n")
+	put(t, root, "new.go", "package a\n")
+	changed, err := CaptureQuick(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Signature() == initial.Signature() {
+		t.Fatal("edit did not change the quick signature")
+	}
+	if !changed.Dirty["a.go"] || !changed.Dirty["new.go"] || len(changed.Paths) != 2 {
+		t.Fatalf("dirty paths: %+v", changed)
+	}
+	if changed.StatusByPath["new.go"] != "??" {
+		t.Fatalf("untracked status: %q", changed.StatusByPath["new.go"])
+	}
+}
+
+func TestNameStatusReportsWorkingChanges(t *testing.T) {
+	ctx := context.Background()
+	root := repo(t)
+	head := fixtureGit(t, root, "rev-parse", "HEAD")
+	put(t, root, "a.go", "package b\n")
+	if err := os.Remove(filepath.Join(root, ".gitignore")); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := NameStatus(ctx, root, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPath := map[string]byte{}
+	for _, change := range changes {
+		byPath[change.Path] = change.Status
+	}
+	if byPath["a.go"] != 'M' || byPath[".gitignore"] != 'D' {
+		t.Fatalf("name status: %+v", changes)
+	}
+}
+
 func TestCommitsIncludesBurstAndWorktreeCleanup(t *testing.T) {
 	ctx := context.Background()
 	root := repo(t)

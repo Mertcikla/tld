@@ -12,6 +12,7 @@ import (
 
 const (
 	ProcessKindServer = "server"
+	ProcessKindWatch  = "watch"
 )
 
 type ProcessRecord struct {

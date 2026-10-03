@@ -23,6 +23,7 @@ import (
 
 type Server struct {
 	handler http.Handler
+	watches *watchManager
 }
 
 type Options struct {
@@ -63,6 +64,7 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 
 	mux := http.NewServeMux()
 	registerCodeIndexHandlers(mux, sqliteStore)
+	watchManager := registerWatchHandlers(mux, sqliteStore, opts.DataDir, opts.Config)
 	registerMapperHandlers(mux, sqliteStore, opts.Config)
 	registerEditorHandlers(mux, sqliteStore)
 	registerDensityHandlers(mux, sqliteStore)
@@ -142,7 +144,7 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
 
-	return &Server{handler: localCORSMiddleware(handler, opts)}, nil
+	return &Server{handler: localCORSMiddleware(handler, opts), watches: watchManager}, nil
 }
 
 func (s *Server) Routes() http.Handler {
@@ -150,6 +152,9 @@ func (s *Server) Routes() http.Handler {
 }
 
 func (s *Server) Shutdown(context.Context) error {
+	if s.watches != nil {
+		return s.watches.Close()
+	}
 	return nil
 }
 
