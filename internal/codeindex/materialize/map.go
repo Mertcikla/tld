@@ -185,7 +185,7 @@ type mapMaterializer struct {
 
 func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64, chain, elementPath []int64) error {
 	for _, child := range node.Children {
-		element, err := m.upsertElement(folderKey(m.input.RepositoryID, child.Path), m.folderElement(child))
+		element, err := m.upsertElement(folderKey(m.input.RepositoryID, child.Path), folderElement(child))
 		if err != nil {
 			return err
 		}
@@ -802,81 +802,6 @@ func (m *mapMaterializer) membersUnderClusters(indices []int) []int {
 	return members
 }
 
-// membersUnderNode returns every member fact under a folder subtree, including
-// standalone facts.
-func (m *mapMaterializer) membersUnderNode(node mapper.FolderNode) []int {
-	seen := map[int]bool{}
-	members := make([]int, 0)
-	add := func(values []int) {
-		for _, value := range values {
-			if seen[value] {
-				continue
-			}
-			seen[value] = true
-			members = append(members, value)
-		}
-	}
-	for _, bin := range node.Bins {
-		add(m.membersUnderClusters(bin.Clusters))
-	}
-	add(node.Standalone)
-	for _, child := range node.Children {
-		add(m.membersUnderNode(child))
-	}
-	return members
-}
-
-// inferName returns the single inferred name for a member set, or the fallback
-// when no token qualifies. It never concatenates multiple tokens.
-func (m *mapMaterializer) inferName(members []int, fallback string) string {
-	if m.naming == nil || len(members) == 0 {
-		return fallback
-	}
-	if name := m.naming.Name(members); name != "" {
-		return name
-	}
-	return fallback
-}
-
-// namesUnderClusters returns the distinct inferred names for cluster indices,
-// used only to decide whether a folder aggregates more than one cluster.
-func (m *mapMaterializer) namesUnderClusters(indices []int) []string {
-	seen := map[string]bool{}
-	names := make([]string, 0, len(indices))
-	for _, index := range indices {
-		name := m.clusterName(index)
-		if name == "" || seen[name] {
-			continue
-		}
-		seen[name] = true
-		names = append(names, name)
-	}
-	return names
-}
-
-// namesUnderNode returns every distinct cluster name in a folder subtree.
-func (m *mapMaterializer) namesUnderNode(node mapper.FolderNode) []string {
-	seen := map[string]bool{}
-	names := make([]string, 0)
-	for _, bin := range node.Bins {
-		for _, name := range m.namesUnderClusters(bin.Clusters) {
-			if !seen[name] {
-				seen[name] = true
-				names = append(names, name)
-			}
-		}
-	}
-	for _, child := range node.Children {
-		for _, name := range m.namesUnderNode(child) {
-			if !seen[name] {
-				seen[name] = true
-				names = append(names, name)
-			}
-		}
-	}
-	return names
-}
-
 // binName infers one name from all the facts it groups. When no token qualifies
 // it falls back to the group's most common source folder, then its own folder.
 // It never emits developer terms or a size suffix.
@@ -893,17 +818,10 @@ func (m *mapMaterializer) binName(bin mapper.Bin, folderPath string) string {
 	return folderName(folderPath)
 }
 
-// folderElement names a folder after the single most distinctive token across
-// its subtree facts when it spans more than one cluster. Single-cluster folders
-// keep their path.
-func (m *mapMaterializer) folderElement(node mapper.FolderNode) core.LibraryElement {
-	element := folderElement(node)
-	if len(m.namesUnderNode(node)) > 1 {
-		element.Name = m.inferName(m.membersUnderNode(node), folderName(node.Path))
-	}
-	return element
-}
-
+// folderElement builds the element for a folder node. Folders always keep their
+// path segment as the name: they are structural containers, and inferred naming
+// (used by bins and clusters) would otherwise relabel a parent after a
+// distinctive child, for example internal becoming codeindex.
 func folderElement(node mapper.FolderNode) core.LibraryElement {
 	kind := "folder"
 	description := fmt.Sprintf("%d files", node.Counts.Facts)

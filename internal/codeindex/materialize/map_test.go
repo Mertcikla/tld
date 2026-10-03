@@ -128,7 +128,7 @@ func TestApplyMapNestsUnderWorkspaceRoot(t *testing.T) {
 	}
 }
 
-func TestApplyMapUsesInferredDomainNames(t *testing.T) {
+func TestApplyMapFoldersKeepPathNames(t *testing.T) {
 	ctx := context.Background()
 	sqliteStore, err := store.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
 	if err != nil {
@@ -172,9 +172,10 @@ func TestApplyMapUsesInferredDomainNames(t *testing.T) {
 	counts := elementNameCounts(t, sqliteStore)
 	for name, want := range map[string]int{
 		"demo":  1, // top element
-		"auth":  4, // cluster + bin + aggregated "src" folder + "src/auth" base name
+		"auth":  3, // cluster + bin + "src/auth" folder base name
 		"parse": 2, // cluster + its bin
-		"xml":   1, // "src/xml" folder shows only its base name
+		"xml":   1, // "src/xml" folder base name
+		"src":   1, // folder keeps its path name instead of an inferred token
 	} {
 		if counts[name] != want {
 			t.Fatalf("element name %q count = %d, want %d (all: %v)", name, counts[name], want, counts)
@@ -185,6 +186,81 @@ func TestApplyMapUsesInferredDomainNames(t *testing.T) {
 			t.Fatalf("element name %q still joins multiple names: %v", name, counts)
 		}
 	}
+}
+
+func TestApplyMapFolderKeepsNameWhenChildMatchesInferredToken(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, err := store.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = sqliteStore.Close() }()
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+
+	root := "/repo/tld"
+	// Production file facts carry the path as the display name. The dominant
+	// token under internal/ is codeindex, which must not relabel the internal
+	// folder after its child folder.
+	facts := []mapper.Fact{}
+	vectors := [][]float64{}
+	for _, path := range []string{
+		"internal/codeindex/a.go", "internal/codeindex/b.go", "internal/codeindex/c.go",
+		"internal/codeindex/d.go", "internal/codeindex/e.go", "internal/codeindex/f.go",
+	} {
+		facts = append(facts, mapper.Fact{ID: path, Path: path, DisplayName: path, Language: "go"})
+		vectors = append(vectors, []float64{1, 0, 0})
+	}
+	for _, path := range []string{"internal/mapper/g.go", "internal/mapper/h.go"} {
+		facts = append(facts, mapper.Fact{ID: path, Path: path, DisplayName: path, Language: "go"})
+		vectors = append(vectors, []float64{0, 1, 0})
+	}
+	for _, path := range []string{"frontend/i.ts", "frontend/j.ts", "frontend/k.ts", "frontend/l.ts"} {
+		facts = append(facts, mapper.Fact{ID: path, Path: path, DisplayName: path, Language: "ts"})
+		vectors = append(vectors, []float64{0, 0, 1})
+	}
+	dataset := &mapper.Dataset{Snapshot: "snap-1", Profile: "p1", Root: &root, Facts: facts, Vectors: vectors}
+	options := mapper.DefaultOptions()
+	pipeline, err := mapper.RunPipeline(dataset.Vectors, &options)
+	if err != nil {
+		t.Fatalf("run pipeline: %v", err)
+	}
+	binOptions := mapper.DefaultBinOptions()
+	binOptions.FolderPoolingThreshold = 2
+	bins, err := mapper.BuildBins(dataset, pipeline, &binOptions)
+	if err != nil {
+		t.Fatalf("build bins: %v", err)
+	}
+	if _, err := ApplyMap(ctx, sqliteStore, idx, MapInput{
+		RepositoryID:   "repo-1",
+		RepositoryName: "tld",
+		RepositoryRoot: root,
+		SnapshotID:     "snap-1",
+		RunID:          "run-1",
+		Dataset:        dataset,
+		Bins:           bins,
+	}, MapOptions{}); err != nil {
+		t.Fatalf("apply map: %v", err)
+	}
+
+	if got := elementNameForKey(t, ctx, sqliteStore, idx, "map|folder|repo-1|internal"); got != "internal" {
+		t.Fatalf("internal folder element name = %q, want internal", got)
+	}
+	if got := elementNameForKey(t, ctx, sqliteStore, idx, "map|folder|repo-1|internal/codeindex"); got != "codeindex" {
+		t.Fatalf("codeindex folder element name = %q, want codeindex", got)
+	}
+}
+
+func elementNameForKey(t *testing.T, ctx context.Context, sqliteStore *store.SQLiteStore, idx *cstore.Store, key string) string {
+	t.Helper()
+	mapping, ok, err := idx.MappingByLogicalKey(ctx, key)
+	if err != nil || !ok {
+		t.Fatalf("lookup mapping %q: ok=%v err=%v", key, ok, err)
+	}
+	var name string
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT name FROM elements WHERE id = ?`, mapping.ResourceID).Scan(&name); err != nil {
+		t.Fatalf("element name for %q: %v", key, err)
+	}
+	return name
 }
 
 func TestApplyMapCreatesFileConnectors(t *testing.T) {
