@@ -657,7 +657,16 @@ export default function Repositories() {
             borderBottom={{ base: '1px solid', lg: 'none' }}
             borderColor="whiteAlpha.100"
           >
-            <Flex px={3} h="40px" gap={2} align="center">
+            <Flex
+              px={collapsed ? 0 : 3}
+              h="44px"
+              flexShrink={0}
+              gap={2}
+              align="center"
+              justify={collapsed ? 'center' : undefined}
+              borderBottom="1px solid"
+              borderColor="whiteAlpha.100"
+            >
               {!collapsed && (
                 <>
                   <Label>Repositories</Label>
@@ -693,9 +702,19 @@ export default function Repositories() {
                 borderBottom="1px solid"
                 borderColor="whiteAlpha.100"
               >
-                <Flex p={collapsed ? 2 : 4} py={3} align="center" gap={3}>
+                <Flex
+                  px={collapsed ? 0 : 4}
+                  py={3}
+                  align="center"
+                  justify={collapsed ? 'center' : undefined}
+                  gap={3}
+                >
                   <Button
-                    p={0}
+                      p={0}
+                      h={collapsed ? '28px' : undefined}
+                      display="flex"
+                      alignItems="center"
+                      justifyContent="center"
                     minW="28px"
                     size="sm"
                     variant="unstyled"
@@ -871,6 +890,8 @@ export default function Repositories() {
                 <Flex
                   px={4}
                   py={2}
+                  h={{ base: 'auto', lg: '44px' }}
+                  flexShrink={0}
                   gap={3}
                   align="center"
                   wrap="wrap"
