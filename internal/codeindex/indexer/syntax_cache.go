@@ -7,6 +7,7 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"google.golang.org/protobuf/proto"
 )
 
 // syntaxCache is the per-source extraction cache. Version 3 stores one entry
@@ -98,7 +99,7 @@ func adoptCached(g *graph.Graph, src *graph.Source, cache syntaxCache) []callSit
 		}
 		for _, chunk := range entry.Chunks {
 			anchor := src.Anchor(int(chunk.Anchor.StartByte), int(chunk.Anchor.EndByte))
-			g.AdoptChunkAnchored(&pb.Chunk{FactId: fact.Id, Anchor: anchor, Text: chunk.Text, Context: chunk.Context, Index: chunk.Index, Total: chunk.Total}, fact.Id)
+			g.AdoptChunkAnchored(&pb.Chunk{Id: chunk.Id, FactId: fact.Id, Anchor: anchor, Text: chunk.Text, Context: chunk.Context, Index: chunk.Index, Total: chunk.Total}, fact.Id)
 		}
 	}
 	calls := make([]callSite, 0, len(cache.Calls))
@@ -193,14 +194,14 @@ func buildChunks(g *graph.Graph, src *graph.Source, fact *pb.CodeFact, decl decl
 }
 
 // rebuildChunkAnchors re-anchors the declaration's chunks onto their new source
-// positions, preserving each chunk's id. The text and context are unchanged
-// because the body hash matched.
+// positions, sharing its row only when all persisted metadata is unchanged.
+// The text and context are unchanged because the body hash matched.
 func rebuildChunkAnchors(g *graph.Graph, src *graph.Source, fact *pb.CodeFact, decl declExtraction, context string, previous []*pb.Chunk) []*pb.Chunk {
 	out := make([]*pb.Chunk, 0, len(decl.chunks))
 	for i, r := range decl.chunks {
 		anchor := src.Anchor(r[0], r[1])
 		chunk := &pb.Chunk{FactId: fact.Id, SnapshotId: g.SnapshotID, Anchor: anchor, Text: string(src.Text[r[0]:r[1]]), Context: context, Index: uint32(i), Total: uint32(len(decl.chunks))}
-		if i < len(previous) {
+		if i < len(previous) && previous[i].FactId == fact.Id && proto.Equal(previous[i].Anchor, anchor) && previous[i].Text == chunk.Text && previous[i].Context == context && previous[i].Index == chunk.Index && previous[i].Total == chunk.Total {
 			chunk.Id = previous[i].Id
 		}
 		out = append(out, g.AdoptChunkAnchored(chunk, fact.Id))

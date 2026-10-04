@@ -214,8 +214,8 @@ func TestMapperServiceMapConfigChangeReruns(t *testing.T) {
 		t.Fatal(err)
 	}
 	restored, restoredProgress := mapOnce()
-	if restored == nil || restored.RunId != third.RunId || restoredProgress != 0 {
-		t.Fatalf("reset did not reuse the matching global map: result=%+v progress=%d", restored, restoredProgress)
+	if restored == nil || restored.RunId != third.RunId || restoredProgress == 0 {
+		t.Fatalf("reset did not restore the matching global map: result=%+v progress=%d", restored, restoredProgress)
 	}
 }
 

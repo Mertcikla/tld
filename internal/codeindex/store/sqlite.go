@@ -14,7 +14,8 @@ import (
 )
 
 // Publish writes an immutable snapshot and its graph in one transaction. A
-// repeat publish of the same snapshot id replaces its rows (idempotent retry).
+// repeat publish replaces snapshot-scoped rows while preserving shared immutable
+// entities (idempotent retry).
 func (s *Store) Publish(ctx context.Context, root string, snap *pb.Snapshot, g *graph.Graph) error {
 	if snap == nil || snap.Id == "" {
 		return fmt.Errorf("publish: snapshot id is required")
@@ -40,7 +41,7 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 			repoID, root, snap.Id, now, now, advanceLatest).Exec(ctx); err != nil {
 			return fmt.Errorf("upsert repository: %w", err)
 		}
-		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_facts", "codeindex_chunks", "codeindex_edges", "codeindex_snapshot_facts", "codeindex_snapshot_chunks", "codeindex_snapshot_edges"} {
+		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_snapshot_facts", "codeindex_snapshot_chunks", "codeindex_snapshot_edges"} {
 			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?", snap.Id).Exec(ctx); err != nil {
 				return fmt.Errorf("clear %s: %w", table, err)
 			}
@@ -71,17 +72,17 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 // small and lets reused entities be shared across snapshots.
 func saveMembership(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph) error {
 	for id := range g.Facts {
-		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_snapshot_facts (snapshot_id, fact_id) VALUES (?, ?)`, snap.Id, id).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_facts (snapshot_id, fact_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, snap.Id, id).Exec(ctx); err != nil {
 			return fmt.Errorf("membership fact %s: %w", id, err)
 		}
 	}
 	for id := range g.Chunks {
-		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_snapshot_chunks (snapshot_id, chunk_id) VALUES (?, ?)`, snap.Id, id).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_chunks (snapshot_id, chunk_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, snap.Id, id).Exec(ctx); err != nil {
 			return fmt.Errorf("membership chunk %s: %w", id, err)
 		}
 	}
 	for id := range g.EdgeFacts {
-		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_snapshot_edges (snapshot_id, edge_id) VALUES (?, ?)`, snap.Id, id).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_edges (snapshot_id, edge_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, snap.Id, id).Exec(ctx); err != nil {
 			return fmt.Errorf("membership edge %s: %w", id, err)
 		}
 	}
@@ -155,9 +156,9 @@ func saveFacts(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph
 		if f.Anchor != nil {
 			path = f.Anchor.Path
 		}
-		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_facts
+		if _, err := tx.NewRaw(`INSERT INTO codeindex_facts
 			(id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, code, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 			f.Id, f.RepositoryId, f.SnapshotId, f.Language, int(f.Kind), f.Name, f.QualifiedName, f.SymbolKey,
 			f.Signature, f.Documentation, f.Code, f.ParentFactId, f.LogicalKey, path, anchor, evidence, imports).Exec(ctx); err != nil {
 			return fmt.Errorf("insert fact %s: %w", f.Id, err)
@@ -175,9 +176,9 @@ func saveChunks(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
 			continue
 		}
 		anchor, _ := marshalJSON(c.Anchor)
-		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_chunks
+		if _, err := tx.NewRaw(`INSERT INTO codeindex_chunks
 			(id, fact_id, snapshot_id, anchor_json, text, context, idx, total)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 			c.Id, c.FactId, c.SnapshotId, anchor, c.Text, c.Context, c.Index, c.Total).Exec(ctx); err != nil {
 			return fmt.Errorf("insert chunk %s: %w", c.Id, err)
 		}
@@ -195,9 +196,9 @@ func saveEdges(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
 		}
 		anchor, _ := marshalJSON(e.Anchor)
 		evidence, _ := marshalJSON(e.Evidence)
-		if _, err := tx.NewRaw(`INSERT OR IGNORE INTO codeindex_edges
+		if _, err := tx.NewRaw(`INSERT INTO codeindex_edges
 			(id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, anchor_json, evidence_json)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 			e.Id, e.RepositoryId, e.SnapshotId, int(e.Kind), e.FromFactId, e.ToFactId, e.TargetSymbolKey,
 			e.LogicalKey, e.Weight, anchor, evidence).Exec(ctx); err != nil {
 			return fmt.Errorf("insert edge %s: %w", e.Id, err)
@@ -236,11 +237,11 @@ func sortedEdges(g *graph.Graph) []*pb.EdgeFact {
 // Snapshot loads a published snapshot and its source manifest.
 func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 	var (
-		snap                                         pb.Snapshot
-		projects, warnings, tools          string
-		createdUnix                        int64
-		gitRevision, gitBranch             string
-		ingestion, configHash, repository  string
+		snap                              pb.Snapshot
+		projects, warnings, tools         string
+		createdUnix                       int64
+		gitRevision, gitBranch            string
+		ingestion, configHash, repository string
 	)
 	err := s.bun.NewRaw(`SELECT repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message
 		FROM codeindex_snapshots WHERE id = ?`, id).

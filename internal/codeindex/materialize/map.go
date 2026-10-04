@@ -87,6 +87,7 @@ type mapMaterializer struct {
 	mappingBuffers   []cstore.ResourceMapping
 	pendingPlaces    []pendingPlacement
 	placed           map[int64]map[int64]bool
+	desiredPlaces    map[int64]map[int64]bool
 	position         map[int64]int
 	fileElementIDs   map[string]int64
 	fileChains       map[string][]int64
@@ -162,6 +163,13 @@ func maxLeafConnectorsPerView(opts MapOptions) int {
 // view can be laid out as a graph instead of a grid. Elements that already have
 // a placement keep it.
 func (m *mapMaterializer) queuePlacement(viewID, elementID int64) error {
+	if m.desiredPlaces == nil {
+		m.desiredPlaces = map[int64]map[int64]bool{}
+	}
+	if m.desiredPlaces[viewID] == nil {
+		m.desiredPlaces[viewID] = map[int64]bool{}
+	}
+	m.desiredPlaces[viewID][elementID] = true
 	existing, err := m.placementsFor(viewID)
 	if err != nil {
 		return err
@@ -454,6 +462,7 @@ func (m *mapMaterializer) upsertConnector(logicalKey string, input core.Connecto
 	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingConnector {
 		if updated, err := m.ws.UpdateConnector(m.ctx, mapping.ResourceID, connectorSourceOnly(input)); err == nil {
 			id = updated.ID
+			m.recordMapping(logicalKey, cstore.MappingConnector, id)
 		}
 	}
 	if id == 0 {
@@ -539,6 +548,7 @@ func (m *mapMaterializer) upsertElement(logicalKey string, input core.LibraryEle
 	m.kept[logicalKey] = true
 	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingElement {
 		if updated, err := m.ws.UpdateElement(m.ctx, mapping.ResourceID, sourceOnly(input)); err == nil {
+			m.recordMapping(logicalKey, cstore.MappingElement, updated.ID)
 			m.result.Elements++
 			m.advance("element")
 			return updated.ID, nil
@@ -568,6 +578,7 @@ func (m *mapMaterializer) upsertView(logicalKey, name, label string, ownerElemen
 				// Preserve a user-renamed view: pass nil name/tags so the store
 				// keeps them, while refreshing the generated level label.
 				if _, err := m.ws.UpdateView(m.ctx, mapping.ResourceID, nil, nil, &label, nil); err == nil {
+					m.recordMapping(logicalKey, cstore.MappingView, mapping.ResourceID)
 					m.result.Views++
 					m.advance("view")
 					return mapping.ResourceID, nil
@@ -785,4 +796,10 @@ func externalViewKey(repositoryID string) string {
 
 func importKey(repositoryID, importPath string) string {
 	return mapKeyPrefix + "import|" + repositoryID + "|" + importPath
+}
+
+func (m *mapMaterializer) recordMapping(key string, kind cstore.MappingKind, id int64) {
+	m.mappingBuffers = append(m.mappingBuffers, cstore.ResourceMapping{
+		LogicalKey: key, Kind: kind, ResourceID: id, RepositoryID: m.input.RepositoryID, SnapshotID: m.input.SnapshotID,
+	})
 }

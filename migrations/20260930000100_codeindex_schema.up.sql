@@ -321,3 +321,8 @@ CREATE TABLE codeindex_repository_settings (
 -- Link workspace elements to indexed codeindex repositories.
 ALTER TABLE elements ADD COLUMN repository_id TEXT NULL;
 CREATE INDEX IF NOT EXISTS idx_elements_repository ON elements(repository_id);
+
+CREATE TABLE IF NOT EXISTS codeindex_active_maps (
+ repository_id TEXT PRIMARY KEY,
+ run_id TEXT NOT NULL REFERENCES codeindex_completed_maps(run_id) ON DELETE CASCADE
+);

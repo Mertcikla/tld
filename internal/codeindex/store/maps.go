@@ -2,10 +2,13 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/uptrace/bun"
 )
 
 func (s *Store) SaveCompletedMap(ctx context.Context, repositoryID string, mapped *pb.CompletedMap) error {
@@ -16,10 +19,17 @@ func (s *Store) SaveCompletedMap(ctx context.Context, repositoryID string, mappe
 	if mapped.CompletedUnix == 0 {
 		mapped.CompletedUnix = time.Now().Unix()
 	}
-	_, err = s.bun.NewRaw(`INSERT INTO codeindex_completed_maps (run_id, repository_id, snapshot_id, config_hash, completed_unix, result_json)
+	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		_, err := tx.NewRaw(`INSERT INTO codeindex_completed_maps (run_id, repository_id, snapshot_id, config_hash, completed_unix, result_json)
  VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(run_id) DO UPDATE SET completed_unix = excluded.completed_unix, result_json = excluded.result_json`,
-		mapped.Result.RunId, repositoryID, mapped.Result.SnapshotId, mapped.ConfigHash, mapped.CompletedUnix, string(raw)).Exec(ctx)
-	return err
+			mapped.Result.RunId, repositoryID, mapped.Result.SnapshotId, mapped.ConfigHash, mapped.CompletedUnix, string(raw)).Exec(ctx)
+		if err != nil {
+			return err
+		}
+		_, err = tx.NewRaw(`INSERT INTO codeindex_active_maps (repository_id, run_id) VALUES (?, ?)
+ ON CONFLICT(repository_id) DO UPDATE SET run_id = excluded.run_id`, repositoryID, mapped.Result.RunId).Exec(ctx)
+		return err
+	})
 }
 
 func (s *Store) CompletedMaps(ctx context.Context, repositoryID string) ([]*pb.CompletedMap, error) {
@@ -41,4 +51,30 @@ func (s *Store) CompletedMaps(ctx context.Context, repositoryID string) ([]*pb.C
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+// ActiveMap returns the run currently materialized in the repository's shared views.
+func (s *Store) ActiveMap(ctx context.Context, repositoryID string) (*pb.CompletedMap, error) {
+	item := &pb.CompletedMap{Result: &pb.MapResult{}}
+	var raw string
+	err := s.bun.QueryRowContext(ctx, `SELECT m.completed_unix, m.config_hash, m.result_json
+ FROM codeindex_completed_maps m JOIN codeindex_active_maps a ON a.run_id = m.run_id
+ WHERE a.repository_id = ?`, repositoryID).Scan(&item.CompletedUnix, &item.ConfigHash, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal([]byte(raw), item.Result); err != nil {
+		return nil, err
+	}
+	return item, nil
+}
+
+// InvalidateActiveMap clears the cache before workspace mutations, including runs
+// that fail partway through materialization.
+func (s *Store) InvalidateActiveMap(ctx context.Context, repositoryID string) error {
+	_, err := s.bun.NewRaw(`DELETE FROM codeindex_active_maps WHERE repository_id = ?`, repositoryID).Exec(ctx)
+	return err
 }

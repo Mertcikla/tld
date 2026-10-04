@@ -63,15 +63,13 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	}
 	configHash := deps.Options.ConfigHash()
 
-	completed, err := deps.Codeindex.CompletedMaps(ctx, repositoryID)
+	active, err := deps.Codeindex.ActiveMap(ctx, repositoryID)
 	if err != nil {
 		return nil, false, err
 	}
-	for _, record := range completed {
-		if record.Result.SnapshotId == snapshotID && record.ConfigHash == configHash {
-			if _, err := deps.Workspace.ViewByID(ctx, record.Result.ViewId); err == nil {
-				return record.Result, true, nil
-			}
+	if active != nil && active.Result.SnapshotId == snapshotID && active.ConfigHash == configHash {
+		if _, err := deps.Workspace.ViewByID(ctx, active.Result.ViewId); err == nil {
+			return active.Result, true, nil
 		}
 	}
 
@@ -139,6 +137,9 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 
 	runID := cgraph.ID(repositoryID, snapshotID, "community", configHash)
 	report("materializing", 0, 0, "")
+	if err := deps.Codeindex.InvalidateActiveMap(ctx, repositoryID); err != nil {
+		return nil, false, err
+	}
 	mapResult, err := materialize.ApplyGroupMap(ctx, deps.Workspace, deps.Codeindex, materialize.GroupMapInput{
 		RepositoryID:   repositoryID,
 		RepositoryName: repositoryName,

@@ -32,7 +32,7 @@ func TestSnapshotMembershipSharesReusedFacts(t *testing.T) {
 	g2 := graph.NewGraph(repo, "snap-2")
 	g2.Sources[src.Path] = src
 	a2 := g2.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(9, 22), "func A(){x}", "func A()", nil)
-	adopted := g2.AdoptFactAnchored(bFact, src.Anchor(23, 34), "func B(){}", "func B()")
+	adopted := g2.AdoptFactAnchored(bFact, bFact.Anchor, "func B(){}", "func B()")
 	if adopted.Id != bFact.Id {
 		t.Fatal("reused fact did not keep its id")
 	}

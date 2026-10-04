@@ -164,3 +164,33 @@ func TestCommitsIncludesBurstAndWorktreeCleanup(t *testing.T) {
 		t.Fatal("worktree leaked")
 	}
 }
+
+func TestCaptureQuickDetectsRepeatedDirtyEdits(t *testing.T) {
+	ctx := context.Background()
+	root := repo(t)
+	for _, path := range []string{"a.go", "untracked.go"} {
+		put(t, root, path, "package b\n")
+		before, err := CaptureQuick(ctx, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		info, err := os.Stat(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		put(t, root, path, "package c\n")
+		if err := os.Chtimes(filepath.Join(root, path), info.ModTime(), info.ModTime()); err != nil {
+			t.Fatal(err)
+		}
+		after, err := CaptureQuick(ctx, root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if before.StatusByPath[path] != after.StatusByPath[path] {
+			t.Fatal("fixture status changed")
+		}
+		if before.Signature() == after.Signature() {
+			t.Fatalf("repeated edit to %s was missed", path)
+		}
+	}
+}

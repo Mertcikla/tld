@@ -41,7 +41,7 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_completed_maps WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
 			return err
 		}
-		for _, table := range []string{"codeindex_impacts", "codeindex_watch_state", "codeindex_leases", "codeindex_repository_settings"} {
+		for _, table := range []string{"codeindex_active_maps", "codeindex_impacts", "codeindex_watch_state", "codeindex_leases", "codeindex_repository_settings"} {
 			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
 				return err
 			}
@@ -64,8 +64,8 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 }
 
 // DeleteSnapshot removes one published snapshot and the records scoped to it
-// (sources, project artifacts, analysis runs and their groups, completed maps,
-// and resource mappings). Facts, chunks, and edges are shared
+// (sources, project artifacts, analysis runs and their groups, and completed
+// maps). Resource ownership survives snapshot deletion. Facts, chunks, and edges are shared
 // across snapshots through membership tables, so only this snapshot's
 // membership is removed; entities no longer referenced by any snapshot are
 // garbage collected. When the deleted snapshot was the repository's latest, the
@@ -92,11 +92,13 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 			"codeindex_snapshot_facts",
 			"codeindex_snapshot_chunks",
 			"codeindex_snapshot_edges",
-			"codeindex_elements",
 		} {
 			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?", snapshotID).Exec(ctx); err != nil {
 				return err
 			}
+		}
+		if _, err := tx.NewRaw(`UPDATE codeindex_elements SET snapshot_id = '' WHERE snapshot_id = ?`, snapshotID).Exec(ctx); err != nil {
+			return err
 		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_edges
 			WHERE repository_id = ? AND id NOT IN (SELECT edge_id FROM codeindex_snapshot_edges)`, repositoryID).Exec(ctx); err != nil {

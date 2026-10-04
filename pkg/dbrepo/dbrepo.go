@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/dialect/sqlitedialect"
 	"github.com/uptrace/bun/driver/pgdriver"
@@ -128,6 +129,13 @@ func ApplyEmbeddedMigrations(ctx context.Context, db *bun.DB, migrations embed.F
 	)
 	if err := migrator.Init(ctx); err != nil {
 		return fmt.Errorf("init migrations: %w", err)
+	}
+	dbDialect := DialectSQLite
+	if db.Dialect().Name() == dialect.PG {
+		dbDialect = DialectPostgres
+	}
+	if err := bootstrapLegacyMigrationState(ctx, db, migrator, migrationsCollection.Sorted(), dbDialect); err != nil {
+		return err
 	}
 	if _, err := migrator.Migrate(ctx); err != nil {
 		return fmt.Errorf("apply migrations: %w", err)

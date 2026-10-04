@@ -19,6 +19,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	workspacecfg "github.com/mertcikla/tld/v2/internal/workspace"
@@ -542,34 +543,52 @@ func ptr[T any](value T) *T {
 	return &value
 }
 
-func TestPostgresSimilarFactsE2E(t *testing.T) {
+func TestPostgresSnapshotMembershipE2E(t *testing.T) {
 	dsn := requirePostgresDSN(t)
 	sq := openPostgresLocalStore(t, dsn)
 	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
 	ctx := context.Background()
-
-	const snapshotID = "snap-e2e"
-	const profile = "e2e"
-	for _, item := range []struct {
-		id  string
-		vec []float32
-	}{
-		{"a", []float32{1, 0, 0}},
-		{"b", []float32{0, 1, 0}},
-		{"c", []float32{0.8, 0.2, 0}},
-	} {
-		if err := idx.SaveFactEmbedding(ctx, &pb.Embedding{
-			FactId: item.id, SnapshotId: snapshotID, Profile: profile, Dimensions: 3, Vector: item.vec,
-		}); err != nil {
-			t.Fatalf("save fact embedding %s: %v", item.id, err)
+	src := &graph.Source{Path: "a.go", Hash: "hash", Text: []byte("func A() {}")}
+	first := graph.NewGraph("repo-membership", "snapshot-first")
+	first.Sources[src.Path] = src
+	fact := first.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(0, len(src.Text)), string(src.Text), "func A()", nil)
+	chunk := first.AddChunk(fact.Id, fact.Anchor, fact.Code, "", 0, 1)
+	edge := first.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, fact.Id, "", "external", fact.Anchor, nil)
+	second := graph.NewGraph(first.RepositoryID, "snapshot-second")
+	second.Sources[src.Path] = src
+	adopted := second.AdoptFactAnchored(fact, fact.Anchor, fact.Code, fact.Signature)
+	second.AdoptChunkAnchored(chunk, adopted.Id)
+	second.AdoptEdgeFact(edge, adopted.Id, "", "external")
+	for _, g := range []*graph.Graph{first, second} {
+		snap := &pb.Snapshot{Id: g.SnapshotID, RepositoryId: g.RepositoryID, Sources: []*pb.SourceFile{{Path: src.Path, Hash: src.Hash, Size: uint64(len(src.Text))}}}
+		for range 2 {
+			if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := idx.LoadGraph(ctx, snap.Id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(stored.Facts) != 1 || len(stored.Chunks) != 1 || len(stored.EdgeFacts) != 1 {
+				t.Fatalf("roundtrip counts: %d/%d/%d", len(stored.Facts), len(stored.Chunks), len(stored.EdgeFacts))
+			}
 		}
 	}
-
-	scores, err := idx.SimilarFacts(ctx, snapshotID, profile, []float32{1, 0, 0}, 2)
+	if err := idx.SaveCompletedMap(ctx, first.RepositoryID, &pb.CompletedMap{Result: &pb.MapResult{RunId: "membership-map", SnapshotId: first.SnapshotID}, ConfigHash: "cfg"}); err != nil {
+		t.Fatal(err)
+	}
+	active, err := idx.ActiveMap(ctx, first.RepositoryID)
+	if err != nil || active == nil || active.Result.RunId != "membership-map" {
+		t.Fatalf("active map: %+v %v", active, err)
+	}
+	if err := idx.DeleteSnapshot(ctx, first.SnapshotID); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := idx.LoadGraph(ctx, second.SnapshotID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scores) != 2 || scores[0].FactID != "a" || scores[1].FactID != "c" {
-		t.Fatalf("similar facts = %+v, want [a c]", scores)
+	if stored.Facts[fact.Id] == nil || stored.Chunks[chunk.Id] == nil {
+		t.Fatal("shared entities were lost")
 	}
 }

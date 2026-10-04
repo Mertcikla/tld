@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func ID(parts ...string) string {
@@ -316,16 +317,15 @@ func (g *Graph) AdoptFact(f *pb.CodeFact) *pb.CodeFact {
 	return c
 }
 
-// AdoptFactAnchored carries a fact into this graph at a new anchor, refreshing
-// its code and preserving its identity. The original id is retained so an
-// unchanged declaration keeps the same fact across snapshots, which lets the
-// publisher and incremental cache treat it as reusable.
+// AdoptFactAnchored shares an immutable row only when its source anchor and
+// content are unchanged; edited sources receive snapshot-specific identities.
 func (g *Graph) AdoptFactAnchored(f *pb.CodeFact, anchor *pb.SourceAnchor, code, signature string) *pb.CodeFact {
 	if f == nil || anchor == nil {
 		return nil
 	}
 	id := f.Id
-	if id == "" {
+	reused := id != "" && proto.Equal(f.Anchor, anchor) && f.Code == code && f.Signature == signature
+	if !reused {
 		id = ID(g.SnapshotID, "fact", anchor.Path, fmt.Sprint(anchor.StartByte), fmt.Sprint(anchor.EndByte), f.Kind.String(), f.Name)
 	}
 	if existing := g.Facts[id]; existing != nil {
@@ -340,7 +340,17 @@ func (g *Graph) AdoptFactAnchored(f *pb.CodeFact, anchor *pb.SourceAnchor, code,
 		Imports:  append([]string(nil), f.Imports...),
 	}
 	g.Facts[id] = c
-	g.Reused[id] = true
+	for i, evidence := range c.Evidence {
+		if evidence != nil && proto.Equal(evidence.Anchor, f.Anchor) {
+			updated := proto.Clone(evidence).(*pb.Evidence)
+			updated.Anchor = anchor
+			if updated.Producer == "tree-sitter" {
+				updated.OriginalRange = fmt.Sprintf("%d:%d", anchor.StartByte, anchor.EndByte)
+			}
+			c.Evidence[i] = updated
+		}
+	}
+	g.Reused[id] = reused
 	return c
 }
 
@@ -356,7 +366,7 @@ func (g *Graph) AdoptChunkAnchored(c *pb.Chunk, factID string) *pb.Chunk {
 	}
 	n := &pb.Chunk{Id: id, FactId: factID, SnapshotId: g.SnapshotID, Anchor: c.Anchor, Text: c.Text, Context: c.Context, Index: c.Index, Total: c.Total}
 	g.Chunks[id] = n
-	g.Reused[id] = true
+	g.Reused[id] = c.Id != ""
 	return n
 }
 

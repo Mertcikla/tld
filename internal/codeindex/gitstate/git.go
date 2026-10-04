@@ -39,10 +39,8 @@ type State struct {
 	Dirty                       map[string]bool
 }
 
-// QuickState is a lightweight change-detection snapshot that never reads file
-// contents. It reports HEAD, the branch, and the set of dirty or untracked
-// repository-relative paths so the watcher can decide whether work is needed
-// before paying for a full Capture.
+// QuickState reads only dirty paths to detect repeated edits without scanning
+// the complete repository.
 type QuickState struct {
 	Revision, Branch string
 	// Dirty maps every changed (tracked, staged, or untracked) path to true.
@@ -50,21 +48,24 @@ type QuickState struct {
 	// Paths is Dirty's keys sorted for deterministic signatures.
 	Paths []string
 	// StatusByPath holds the two-character porcelain code for each path.
-	StatusByPath map[string]string
+	StatusByPath  map[string]string
+	ContentHashes map[string]string
 }
 
 // Signature derives a stable value that changes whenever HEAD, the branch, or
-// the dirty path set changes.
+// dirty paths, their status, or their contents change.
 func (q QuickState) Signature() string {
 	parts := []string{q.Revision, q.Branch}
-	parts = append(parts, q.Paths...)
+	for _, path := range q.Paths {
+		parts = append(parts, path, q.StatusByPath[path], q.ContentHashes[path])
+	}
 	return graph.ID(parts...)
 }
 
-// CaptureQuick captures Git's view of changed paths without reading any file
-// contents. It backs the watcher's poll loop and fsnotify fallback.
+// CaptureQuick captures Git status and hashes only changed paths. It backs
+// the watcher's poll loop and fsnotify fallback.
 func CaptureQuick(ctx context.Context, root string) (QuickState, error) {
-	qs := QuickState{Dirty: map[string]bool{}, StatusByPath: map[string]string{}}
+	qs := QuickState{Dirty: map[string]bool{}, StatusByPath: map[string]string{}, ContentHashes: map[string]string{}}
 	revision, err := Resolve(ctx, root, "HEAD")
 	if err != nil {
 		return qs, fmt.Errorf("watch requires a Git repository with an existing commit: %w", err)
@@ -91,6 +92,36 @@ func CaptureQuick(ctx context.Context, root string) (QuickState, error) {
 		qs.Paths = append(qs.Paths, path)
 	}
 	sort.Strings(qs.Paths)
+	for _, path := range qs.Paths {
+		if err := ctx.Err(); err != nil {
+			return qs, err
+		}
+		full := filepath.Join(root, filepath.FromSlash(path))
+		info, err := os.Lstat(full)
+		if errors.Is(err, os.ErrNotExist) {
+			qs.ContentHashes[path] = "deleted"
+			continue
+		}
+		if err != nil {
+			return qs, err
+		}
+		switch {
+		case info.Mode().IsRegular():
+			raw, err := os.ReadFile(full)
+			if err != nil {
+				return qs, err
+			}
+			qs.ContentHashes[path] = graph.Hash(raw)
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(full)
+			if err != nil {
+				return qs, err
+			}
+			qs.ContentHashes[path] = graph.Hash([]byte(target))
+		default:
+			qs.ContentHashes[path] = info.Mode().String()
+		}
+	}
 	return qs, nil
 }
 

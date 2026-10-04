@@ -109,6 +109,9 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 	if err := m.materializeImports(rootViewID); err != nil {
 		return m.result, err
 	}
+	if err := m.pruneMapPlacements(); err != nil {
+		return m.result, err
+	}
 	if err := m.applyLayout(); err != nil {
 		return m.result, err
 	}
@@ -235,4 +238,33 @@ func SortGroups(groups []*community.Group) {
 	for _, group := range groups {
 		SortGroups(group.Children)
 	}
+}
+
+// pruneMapPlacements reconciles generated placements in surviving map views.
+// User-owned elements and views are outside this ownership boundary.
+func (m *mapMaterializer) pruneMapPlacements() error {
+	owned := map[int64]bool{}
+	for key, mapping := range m.byKey {
+		if strings.HasPrefix(key, mapKeyPrefix) && mapping.Kind == cstore.MappingElement {
+			owned[mapping.ResourceID] = true
+		}
+	}
+	for _, mapping := range m.mappingBuffers {
+		if !strings.HasPrefix(mapping.LogicalKey, mapKeyPrefix) || mapping.Kind != cstore.MappingView {
+			continue
+		}
+		placements, err := m.ws.ElementPlacements(m.ctx, mapping.ResourceID)
+		if err != nil {
+			return err
+		}
+		for _, placement := range placements {
+			if owned[placement.ElementID] && !m.desiredPlaces[mapping.ResourceID][placement.ElementID] {
+				if err := m.ws.DeletePlacement(m.ctx, mapping.ResourceID, placement.ElementID); err != nil {
+					return err
+				}
+				delete(m.placed[mapping.ResourceID], placement.ElementID)
+			}
+		}
+	}
+	return nil
 }

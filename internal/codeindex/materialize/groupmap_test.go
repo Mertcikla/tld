@@ -456,3 +456,68 @@ func TestApplyGroupMapAdjustsConnectorHandles(t *testing.T) {
 		t.Fatal("no connectors to inspect")
 	}
 }
+
+func TestGroupSplitRemovesObsoletePlacements(t *testing.T) {
+	ctx := context.Background()
+	ws, idx := openGroupMapStore(t)
+	input := GroupMapInput{RepositoryID: "repo-split", SnapshotID: "a", Files: groupMapFiles(), Groups: []*community.Group{{Key: "parent", Name: "parent", Files: 4, Members: []int{0, 1, 2, 3}}}}
+	if _, err := ApplyGroupMap(ctx, ws, idx, input, MapOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	parentID := viewIDByName(t, ws, "parent")
+	user, err := ws.CreateElement(ctx, core.LibraryElement{Name: "user-note"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, parentID, user.ID, 100, 200); err != nil {
+		t.Fatal(err)
+	}
+	input.SnapshotID = "b"
+	input.Groups = []*community.Group{{Key: "parent", Name: "parent", Files: 4, Children: []*community.Group{
+		{Key: "alpha", Name: "alpha", Files: 2, Members: []int{0, 1}},
+		{Key: "beta", Name: "beta", Files: 2, Members: []int{2, 3}},
+	}}}
+	if _, err := ApplyGroupMap(ctx, ws, idx, input, MapOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if viewIDByName(t, ws, "parent") != parentID {
+		t.Fatal("parent was recreated")
+	}
+	placements, err := ws.ElementPlacements(ctx, parentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(placements) != 3 {
+		t.Fatalf("parent retains obsolete file placements: %+v", placements)
+	}
+	userRetained := false
+	for _, placement := range placements {
+		if placement.ElementID == user.ID {
+			userRetained = true
+		}
+	}
+	if !userRetained {
+		t.Fatal("user placement was removed")
+	}
+	for _, name := range []string{"alpha", "beta"} {
+		placements, err := ws.ElementPlacements(ctx, viewIDByName(t, ws, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(placements) != 2 {
+			t.Fatalf("child %s placements = %d", name, len(placements))
+		}
+	}
+	// Merging the same parent back removes obsolete child placements as well.
+	input.Groups = []*community.Group{{Key: "parent", Name: "parent", Files: 4, Members: []int{0, 1, 2, 3}}}
+	if _, err := ApplyGroupMap(ctx, ws, idx, input, MapOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	placements, err = ws.ElementPlacements(ctx, parentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(placements) != 5 {
+		t.Fatalf("merged placements = %d", len(placements))
+	}
+}
