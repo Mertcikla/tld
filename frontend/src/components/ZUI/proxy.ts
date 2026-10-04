@@ -8,7 +8,7 @@ import {
 import type { WorkspaceGraphSnapshot } from '../../crossBranch/types'
 import type { LayoutNode, ZUIViewState, HoveredItem } from './types'
 import { getExpandThresholds } from './layoutEngine'
-import { pickEdgeLabelPosition, type ScreenRect } from './renderer'
+import { pickEdgeLabelPosition, ZUI_FONT_FAMILY, type ScreenRect } from './renderer'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { DEFAULT_MIN_CONNECTOR_ANCHOR_ALPHA } from '../../crossBranch/settings'
 import {
@@ -421,7 +421,7 @@ function drawFixedScreenProxyBadge(
   ctx.stroke()
   ctx.setLineDash([])
   ctx.fillStyle = 'white'
-  ctx.font = `${fontWeight} ${11 * dpr}px Inter, system-ui, sans-serif`
+  ctx.font = `${fontWeight} ${11 * dpr}px ${ZUI_FONT_FAMILY}`
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(label, centerX, centerY)
@@ -431,7 +431,7 @@ function drawFixedScreenProxyBadge(
 function measureProxyBadge(ctx: CanvasRenderingContext2D, label: string, zoom: number, fontWeight = 600) {
   ctx.save()
   ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.font = `${fontWeight} 11px Inter, system-ui, sans-serif`
+  ctx.font = `${fontWeight} 11px ${ZUI_FONT_FAMILY}`
   const textW = ctx.measureText(label).width
   ctx.restore()
 

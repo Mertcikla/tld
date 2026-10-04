@@ -65,6 +65,7 @@ export const ElementBody = ({
             fontWeight="semibold"
             fontSize={nameSize}
             noOfLines={nameNoOfLines}
+            wordBreak={nameNoOfLines === 1 ? 'break-all' : undefined}
             textAlign={hasLogo ? 'left' : 'center'}
             color="gray.100"
             lineHeight={1.15}

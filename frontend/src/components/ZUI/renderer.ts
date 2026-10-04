@@ -17,6 +17,8 @@ import {
   getVisualHandleIdForGroup,
 } from '../../utils/edgeDistribution'
 
+export const ZUI_FONT_FAMILY = "'Metrophobic', system-ui, -apple-system, sans-serif"
+
 const MIN_LABEL_PX = 12
 const MIN_DRAW_PX = 2
 const BADGE_THRESHOLD = 100
@@ -409,7 +411,7 @@ function drawElementGroupBackgrounds(
       const badgeLeft = x + 8 / zoom
       const badgeTop = y + 7 / zoom
       const maxTextWidth = Math.max(0, bounds.width - 16 / zoom - padX * 2 - 18 / zoom)
-      ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`
+      ctx.font = `600 ${fontSize}px ${ZUI_FONT_FAMILY}`
       const textWidth = Math.min(ctx.measureText(bounds.layer.name).width, maxTextWidth)
       const badgeWidth = Math.min(bounds.width - 16 / zoom, textWidth + 18 / zoom + padX * 2)
       ctx.globalAlpha = 0.94
@@ -451,7 +453,7 @@ function drawNavigationHints(
     ctx.save()
     ctx.setTransform(hint.matrix)
     ctx.globalAlpha = hint.alpha
-    ctx.font = `${hint.fontSize}px Inter, system-ui, sans-serif`
+    ctx.font = `${hint.fontSize}px ${ZUI_FONT_FAMILY}`
     ctx.fillStyle = hint.color
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
@@ -549,7 +551,7 @@ function drawGroupLabel(
   )) return
 
   ctx.save()
-  ctx.font = `600 ${14}px Inter, system-ui, sans-serif`
+  ctx.font = `600 ${14}px ${ZUI_FONT_FAMILY}`
 
   const text = group.label
   const textW = ctx.measureText(text).width
@@ -788,7 +790,7 @@ function drawSceneNode(
     if (screenFontSize >= 6) {
       ctx.save()
       ctx.globalAlpha = parentAlpha
-      ctx.font = `600 ${nameFontSize}px Inter, system-ui, sans-serif`
+      ctx.font = `600 ${nameFontSize}px ${ZUI_FONT_FAMILY}`
       ctx.fillStyle = '#f7fafc'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
@@ -811,7 +813,7 @@ function drawSceneNode(
       if (drawScreenW > BADGE_THRESHOLD) {
         const badgeFontSize = h * TYPE_FONT_TO_NODE_H
         if (badgeFontSize * drawZoom >= 5) {
-          ctx.font = `${badgeFontSize}px Inter, system-ui, sans-serif`
+          ctx.font = `${badgeFontSize}px ${ZUI_FONT_FAMILY}`
           ctx.fillStyle = '#a0aec0'
           const displayType = typeof layout.type === 'string' ? layout.type.toUpperCase() : 'UNKNOWN'
           ctx.fillText(displayType, x + w / 2, y + h * (0.62 + baseOffset))
@@ -831,7 +833,7 @@ function drawSceneNode(
       const hintText = hintPrefix + layout.linkedDiagramLabel + hintSuffix
 
       ctx.save()
-      ctx.font = `${hintFontSize}px Inter, system-ui, sans-serif`
+      ctx.font = `${hintFontSize}px ${ZUI_FONT_FAMILY}`
       const tw = ctx.measureText(hintText).width
       ctx.restore()
 
@@ -937,7 +939,7 @@ function drawSceneNode(
       const padX = 6 / drawZoom
       const gap = 5 / drawZoom
       const badgeH = 16 / drawZoom
-      ctx.font = `600 ${10 / drawZoom}px Inter, system-ui, sans-serif`
+      ctx.font = `600 ${10 / drawZoom}px ${ZUI_FONT_FAMILY}`
       const plusW = ctx.measureText(plus).width
       const minusW = ctx.measureText(minus).width
       const badgeW = Math.min(plusW + gap + minusW + padX * 2, w - badgePad * 2)
@@ -1313,7 +1315,7 @@ function drawEdges(
       if (!lowDetail && edge.label && shouldDrawConnectorDetailLabel(dir, visualSourceScreenW, visualTargetScreenW)) {
         const screenFontSize = 12
         const worldFontSize = screenFontSize / zoom
-        ctx.font = `${worldFontSize}px Inter, system-ui, sans-serif`
+        ctx.font = `${worldFontSize}px ${ZUI_FONT_FAMILY}`
         ctx.fillStyle = '#cbd5e0'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
