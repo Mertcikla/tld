@@ -319,6 +319,119 @@ func TestDiscoverProjectsMatchesFullDiscovery(t *testing.T) {
 	}
 }
 
+// TestDiscoverSetupPyOnlyProject ensures a legacy Python repository whose only
+// project marker is setup.py still registers a project (setup.py must not be
+// filtered out as a test source first).
+func TestDiscoverSetupPyOnlyProject(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"setup.py":         "from setuptools import setup\nsetup(name='demo')\n",
+		"demo/__init__.py": "def helper():\n    return 1\n",
+		"demo/main.py":     "from demo import helper\n\ndef run():\n    return helper()\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projects, sources, err := Discover(context.Background(), root, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("projects = %+v, want 1 (setup.py)", projects)
+	}
+	if Family(projects[0].GetLanguage()) != familyPython || projects[0].GetConfigPath() != "setup.py" {
+		t.Fatalf("project = %+v, want python via setup.py", projects[0])
+	}
+	if sources["demo/main.py"] == nil {
+		t.Fatalf("sources = %v, want demo/main.py captured", sources)
+	}
+}
+
+func TestDiscoverDotnetSolutionIndexesEachProject(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"App.slnx":        "<Solution></Solution>\n",
+		"src/A/A.csproj":  "<Project/>\n",
+		"src/A/AClass.cs": "namespace A { class AClass {} }\n",
+		"src/B/B.csproj":  "<Project/>\n",
+		"src/B/BClass.cs": "namespace B { class BClass {} }\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projects, _, err := Discover(context.Background(), root, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The .slnx is ignored; each .csproj becomes its own project root so a
+	// single broken or unsupported project cannot hide the others.
+	if len(projects) != 2 {
+		t.Fatalf("projects = %+v, want 2 csproj roots", projects)
+	}
+	roots := map[string]bool{}
+	for _, project := range projects {
+		if Family(project.GetLanguage()) != familyDotnet {
+			t.Fatalf("project %+v is not dotnet", project)
+		}
+		roots[project.GetRoot()] = true
+	}
+	if !roots["src/A"] || !roots["src/B"] {
+		t.Fatalf("roots = %v, want src/A and src/B", roots)
+	}
+}
+
+func TestSynthesizeJSTsConfig(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte("{}\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	js := filepath.Join(dir, "lib.js")
+	ts := filepath.Join(dir, "main.ts")
+	if err := os.WriteFile(js, []byte("const x = 1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ts, []byte("export const y = 1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := indexerContext{projectDir: dir, artifact: filepath.Join(t.TempDir(), "0.scip"), sourceFiles: []string{js, ts}}
+
+	path := synthesizeJSTsConfig(c, []string{"tsconfig.json"})
+	if path == "" {
+		t.Fatal("empty tsconfig with JS sources should synthesize a config")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"allowJs":true`) {
+		t.Fatalf("synthesized config = %s, want allowJs", raw)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "tsconfig.lib.json"), []byte(`{"include":["src"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := synthesizeJSTsConfig(c, []string{"tsconfig.lib.json"}); got != "" {
+		t.Fatalf("explicit include should not synthesize, got %q", got)
+	}
+
+	c.sourceFiles = []string{ts}
+	if got := synthesizeJSTsConfig(c, []string{"tsconfig.json"}); got != "" {
+		t.Fatalf("project without JS sources should not synthesize, got %q", got)
+	}
+}
+
 func TestDiscoverProjectsAllowsRepositoriesWithoutProjects(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("hello\n"), 0600); err != nil {

@@ -107,6 +107,8 @@ func grammarName(language string) string {
 		return "dart"
 	case "php":
 		return "php"
+	case "rust":
+		return "rust"
 	default:
 		return ""
 	}

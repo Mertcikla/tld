@@ -291,8 +291,12 @@ func TestPythonRequiresSemanticIndexer(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Tools.SCIPPython = "unavailable-scip-python"
-	if _, _, e := (Pipeline{Config: cfg}).Build(context.Background(), &pb.IndexRequest{Directory: root}, nil); e == nil {
-		t.Fatal("python indexing accepted without scip-python")
+	snap, _, e := (Pipeline{Config: cfg}).Build(context.Background(), &pb.IndexRequest{Directory: root}, nil)
+	if e != nil {
+		t.Fatalf("missing scip-python should degrade with a warning, got error: %v", e)
+	}
+	if !hasWarning(snap, "unavailable-scip-python") {
+		t.Fatalf("warnings = %v, want scip-python unavailable", snap.Warnings)
 	}
 }
 
@@ -392,8 +396,12 @@ func TestMissingToolAndMalformedSCIP(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Tools.SCIPGo = "unavailable-scip-go"
-	if _, _, e := (Pipeline{Config: cfg}).Build(context.Background(), &pb.IndexRequest{Directory: root}, nil); e == nil {
-		t.Fatal("missing tool accepted")
+	snap, _, e := (Pipeline{Config: cfg}).Build(context.Background(), &pb.IndexRequest{Directory: root}, nil)
+	if e != nil {
+		t.Fatalf("missing tool should degrade with a warning, got error: %v", e)
+	}
+	if !hasWarning(snap, "unavailable-scip-go") {
+		t.Fatalf("warnings = %v, want scip-go unavailable", snap.Warnings)
 	}
 	g := graph.NewGraph("r", "s")
 	if e := importSCIPReader(context.Background(), g, &pb.Project{Root: "."}, bytes.NewReader([]byte("bad protobuf")), nil, true, false, newSymbols()); e == nil {
@@ -422,8 +430,12 @@ func TestPrebuiltSCIPManifest(t *testing.T) {
 	}
 	request := &pb.IndexRequest{Directory: root, ScipArtifacts: map[string]string{".": artifact}}
 	pipeline := Pipeline{Config: config.Default()}
-	if _, _, e := pipeline.Build(context.Background(), request, nil); e == nil {
-		t.Fatal("unverified prebuilt SCIP accepted")
+	unverified, _, e := pipeline.Build(context.Background(), request, nil)
+	if e != nil {
+		t.Fatalf("unverified prebuilt SCIP should degrade with a warning, got error: %v", e)
+	}
+	if len(unverified.Warnings) == 0 {
+		t.Fatal("unverified prebuilt SCIP produced no warning")
 	}
 	manifest, _ := json.Marshal(map[string]string{"a.go": graph.Hash(source)})
 	if e := os.WriteFile(artifact+".manifest.json", manifest, 0600); e != nil {
@@ -435,5 +447,72 @@ func TestPrebuiltSCIPManifest(t *testing.T) {
 	}
 	if snap.IngestionStatus != "complete" || len(g.Facts) == 0 {
 		t.Fatal("prebuilt SCIP produced no facts")
+	}
+}
+
+func hasWarning(snap *pb.Snapshot, substring string) bool {
+	for _, warning := range snap.Warnings {
+		if strings.Contains(warning, substring) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestProjectFailureDoesNotAbortRepository proves a broken project only records
+// a warning: sibling projects still index and the snapshot still publishes.
+func TestProjectFailureDoesNotAbortRepository(t *testing.T) {
+	root := t.TempDir()
+	if e := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/ok\n\ngo 1.26\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "a.go"), []byte("package ok\nfunc A(){}\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "pyproject.toml"), []byte("[project]\nname = \"broken\"\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	if e := os.WriteFile(filepath.Join(root, "service.py"), []byte("def run():\n    return 1\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	// Stub scip-go with a metadata-only index so the Go project succeeds
+	// without depending on a real install; scip-python is made unavailable.
+	fixture := filepath.Join(t.TempDir(), "empty.scip")
+	data, e := proto.Marshal(&scip.Index{Metadata: &scip.Metadata{ToolInfo: &scip.ToolInfo{Name: "stub-scip", Version: "1.0"}}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = os.WriteFile(fixture, data, 0600); e != nil {
+		t.Fatal(e)
+	}
+	bin := filepath.Join(t.TempDir(), "scip-go")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"--version\" ]; then echo 'scip-go 1.0'; exit 0; fi\n" +
+		"prev=\"\"\n" +
+		"for a in \"$@\"; do\n" +
+		"  if [ \"$prev\" = \"--output\" ]; then cp \"" + fixture + "\" \"$a\"; fi\n" +
+		"  prev=\"$a\"\n" +
+		"done\n" +
+		"echo 'scip-go 1.0'\n"
+	if e = os.WriteFile(bin, []byte(script), 0700); e != nil {
+		t.Fatal(e)
+	}
+	cfg := config.Default()
+	cfg.Tools.SCIPGo = bin
+	cfg.Tools.SCIPPython = "unavailable-scip-python"
+	snap, g, e := (Pipeline{Config: cfg}).Build(context.Background(), &pb.IndexRequest{Directory: root}, nil)
+	if e != nil {
+		t.Fatalf("a failing sibling project must not abort the build: %v", e)
+	}
+	if !hasWarning(snap, "unavailable-scip-python") {
+		t.Fatalf("warnings = %v, want the python failure recorded", snap.Warnings)
+	}
+	for _, warning := range snap.Warnings {
+		if strings.Contains(warning, "scip-go") {
+			t.Fatalf("healthy go project was reported as failing: %v", snap.Warnings)
+		}
+	}
+	if len(g.Facts) == 0 {
+		t.Fatal("healthy project produced no facts")
 	}
 }

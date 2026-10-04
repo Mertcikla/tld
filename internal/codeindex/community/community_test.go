@@ -307,14 +307,37 @@ func TestGroupKeyStableAcrossEdgeChanges(t *testing.T) {
 	}
 }
 
+func TestGroupKeyDistinguishesHierarchyContainers(t *testing.T) {
+	files := []File{
+		{ID: "f0", Path: "a/one.go"},
+		{ID: "f1", Path: "a/two.go"},
+		{ID: "f2", Path: "b/one.go"},
+	}
+	// A chain of containers each holding a single child: all three share the
+	// same descendant set, so membership alone cannot key them apart.
+	grandparent := &Group{Children: []*Group{
+		{Children: []*Group{
+			{Members: []int{0, 1, 2}},
+		}},
+	}}
+	finalizeGroups([]*Group{grandparent}, files, DefaultOptions(), newLexicalIndex(files))
+	parent := grandparent.Children[0]
+	child := parent.Children[0]
+
+	keys := map[string]bool{grandparent.Key: true, parent.Key: true, child.Key: true}
+	if len(keys) != 3 {
+		t.Fatalf("hierarchy keys collide: grandparent=%s parent=%s child=%s", grandparent.Key, parent.Key, child.Key)
+	}
+}
+
 func TestFolderOf(t *testing.T) {
 	cases := map[string]string{
-		"a.go":               ".",
-		"src/a.go":           "src",
-		"src/deep/a.go":      "src/deep",
-		"src/../lib/a.go":    "lib",
-		`src\windows\a.go`:   "src/windows",
-		"../outside/a.go":    "../outside",
+		"a.go":                ".",
+		"src/a.go":            "src",
+		"src/deep/a.go":       "src/deep",
+		"src/../lib/a.go":     "lib",
+		`src\windows\a.go`:    "src/windows",
+		"../outside/a.go":     "../outside",
 		"/absolute/root/a.go": "absolute/root",
 	}
 	for input, want := range cases {

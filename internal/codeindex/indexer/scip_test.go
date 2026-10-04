@@ -363,3 +363,88 @@ func TestSCIPCallableReferenceEmitsCalls(t *testing.T) {
 		t.Fatalf("calls=%d references=%d", calls, references)
 	}
 }
+
+// TestApplyRustImplsFromSource covers rust-analyzer's missing
+// is_implementation relationships: tree-sitter finds the impl block and the
+// SCIP occurrences resolve the trait and type identifiers to facts.
+func TestApplyRustImplsFromSource(t *testing.T) {
+	text := "trait Greeter {}\nstruct English;\nimpl Greeter for English {}\n"
+	g, s := testSource(t, "src/lib.rs", "rust", text)
+	prefix := "rust-analyzer cargo fixture 0.1.0 "
+	english := g.AddFact(pb.FactKind_FACT_KIND_STRUCT, "English", "rust", &pb.SourceAnchor{Path: s.Path, StartByte: 17, EndByte: 24}, "", "", nil)
+	greeter := g.AddFact(pb.FactKind_FACT_KIND_INTERFACE, "Greeter", "rust", &pb.SourceAnchor{Path: s.Path, StartByte: 0, EndByte: 16}, "", "", nil)
+	traitAt := strings.LastIndex(text, "Greeter")
+	typeAt := strings.LastIndex(text, "English")
+
+	table := newSymbols()
+	table.definitions[prefix+"English#"] = english.Id
+	table.definitions[prefix+"Greeter#"] = greeter.Id
+	table.references = []occurrence{
+		{key: prefix + "Greeter#", anchor: &pb.SourceAnchor{Path: s.Path, StartByte: uint32(traitAt), EndByte: uint32(traitAt + len("Greeter"))}, scipBacked: true},
+		{key: prefix + "English#", anchor: &pb.SourceAnchor{Path: s.Path, StartByte: uint32(typeAt), EndByte: uint32(typeAt + len("English"))}, scipBacked: true},
+	}
+	table.applyRustImpls(g)
+
+	for _, e := range g.EdgeFacts {
+		if e.Kind == pb.EdgeKind_EDGE_KIND_IMPLEMENTS && e.FromFactId == english.Id && e.ToFactId == greeter.Id {
+			return
+		}
+	}
+	t.Fatal("no IMPLEMENTS edge derived from the impl block")
+}
+
+// TestApplyRustImplsExternalTrait covers a trait from another crate: the type is
+// local but the trait is unresolved, so the edge keeps the external symbol key.
+func TestApplyRustImplsExternalTrait(t *testing.T) {
+	text := "struct English;\nimpl Display for English {}\n"
+	g, s := testSource(t, "src/lib.rs", "rust", text)
+	prefix := "rust-analyzer cargo fixture 0.1.0 "
+	english := g.AddFact(pb.FactKind_FACT_KIND_STRUCT, "English", "rust", &pb.SourceAnchor{Path: s.Path, StartByte: 0, EndByte: 15}, "", "", nil)
+	traitAt := strings.LastIndex(text, "Display")
+	typeAt := strings.LastIndex(text, "English")
+
+	table := newSymbols()
+	table.definitions[prefix+"English#"] = english.Id
+	table.references = []occurrence{
+		{key: prefix + "Display#", anchor: &pb.SourceAnchor{Path: s.Path, StartByte: uint32(traitAt), EndByte: uint32(traitAt + len("Display"))}, scipBacked: true},
+		{key: prefix + "English#", anchor: &pb.SourceAnchor{Path: s.Path, StartByte: uint32(typeAt), EndByte: uint32(typeAt + len("English"))}, scipBacked: true},
+	}
+	table.applyRustImpls(g)
+
+	for _, e := range g.EdgeFacts {
+		if e.Kind == pb.EdgeKind_EDGE_KIND_IMPLEMENTS && e.FromFactId == english.Id && e.ToFactId == "" && e.TargetSymbolKey == prefix+"Display#" {
+			return
+		}
+	}
+	t.Fatal("no external IMPLEMENTS edge derived")
+}
+
+// TestSCIPApplyInfersCallsWithoutSymbolKind covers indexers such as scip-ruby
+// and scip-clang that omit SymbolInformation.Kind: a reference to a method fact
+// must still produce a CALLS edge.
+func TestSCIPApplyInfersCallsWithoutSymbolKind(t *testing.T) {
+	text := "def caller\n  helper\nend\n"
+	g, s := testSource(t, "a.rb", "ruby", text)
+	owner := g.AddFact(pb.FactKind_FACT_KIND_METHOD, "caller", "ruby", &pb.SourceAnchor{Path: s.Path, StartByte: 0, EndByte: 24}, text, "", nil)
+	def := g.AddFact(pb.FactKind_FACT_KIND_METHOD, "helper", "ruby", &pb.SourceAnchor{Path: s.Path, StartByte: 20, EndByte: 26}, "", "", nil)
+	sym := "scip-ruby . a.rb/helper()."
+	table := newSymbols()
+	table.definitions[sym] = def.Id
+	table.references = []occurrence{{
+		key:        sym,
+		anchor:     &pb.SourceAnchor{Path: s.Path, StartByte: 13, EndByte: 19},
+		version:    "1",
+		scipBacked: true,
+	}}
+	table.apply(g)
+
+	calls := 0
+	for _, e := range g.EdgeFacts {
+		if e.Kind == pb.EdgeKind_EDGE_KIND_CALLS && e.FromFactId == owner.Id && e.ToFactId == def.Id {
+			calls++
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 inferred from definition kind", calls)
+	}
+}

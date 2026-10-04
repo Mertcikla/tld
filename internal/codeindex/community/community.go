@@ -34,15 +34,15 @@ type Edge struct {
 // Children are nested subgroups. Files counts all descendant files, Internal
 // and External are edge weights wholly inside and crossing the group.
 type Group struct {
-	Key      string  `json:"key"`
-	Name     string  `json:"name"`
-	Source   string  `json:"source"`
+	Key      string   `json:"key"`
+	Name     string   `json:"name"`
+	Source   string   `json:"source"`
 	Members  []int    `json:"members"`
 	Children []*Group `json:"children,omitempty"`
-	Isolated bool    `json:"isolated,omitempty"`
-	Files    int     `json:"files"`
-	Internal float64 `json:"internal"`
-	External float64 `json:"external"`
+	Isolated bool     `json:"isolated,omitempty"`
+	Files    int      `json:"files"`
+	Internal float64  `json:"internal"`
+	External float64  `json:"external"`
 }
 
 // Metrics summarizes a grouping run.
@@ -502,25 +502,46 @@ func sortedCopy(values []int) []int {
 }
 
 // finalizeGroups computes keys, names, counts and returns descendant files.
+// The path encodes each group's position in the hierarchy so a parent whose
+// members were all moved into a single child does not collide with that child
+// (both would otherwise hash the same descendant set).
 func finalizeGroups(groups []*Group, files []File, opts Options, lex *lexicalIndex) {
-	for _, group := range groups {
-		finalizeGroup(group, files, opts, lex)
+	for i, group := range groups {
+		finalizeGroup(group, files, opts, lex, strconv.Itoa(i))
 	}
 }
 
-func finalizeGroup(group *Group, files []File, opts Options, lex *lexicalIndex) []int {
+func finalizeGroup(group *Group, files []File, opts Options, lex *lexicalIndex, path string) []int {
 	sort.Ints(group.Members)
 	descendants := append([]int(nil), group.Members...)
-	for _, child := range group.Children {
-		descendants = append(descendants, finalizeGroup(child, files, opts, lex)...)
+	for i, child := range group.Children {
+		descendants = append(descendants, finalizeGroup(child, files, opts, lex, path+"."+strconv.Itoa(i))...)
 	}
 	sort.Ints(descendants)
 	group.Files = len(descendants)
-	group.Key = groupKey(files, descendants)
+	group.Key = groupKeyHier(path, files, descendants)
 	group.Name, group.Source = nameGroup(descendants, files, opts, group.Isolated, lex)
 	return descendants
 }
 
+// groupKeyHier hashes a group's hierarchy position together with its descendant
+// members. The path disambiguates a container from a single child that holds the
+// same descendant set.
+func groupKeyHier(path string, files []File, members []int) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(path))
+	_, _ = hash.Write([]byte{0})
+	for _, member := range members {
+		if member < 0 || member >= len(files) {
+			continue
+		}
+		_, _ = hash.Write([]byte(files[member].ID))
+		_, _ = hash.Write([]byte{0})
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// groupKey is the membership-only hash used for deterministic placeholder names.
 func groupKey(files []File, members []int) string {
 	hash := sha256.New()
 	for _, member := range members {

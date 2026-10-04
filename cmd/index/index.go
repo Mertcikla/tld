@@ -114,6 +114,7 @@ type engine struct {
 	opts    options
 	dataDir string
 	out     io.Writer
+	errOut  io.Writer
 	// repoID is the stable logical repository identity resolved from the
 	// checkout's remote, so the same repository is one repository across
 	// checkouts and machines.
@@ -202,6 +203,7 @@ func run(cmd *cobra.Command, opts options) error {
 		opts:    opts,
 		dataDir: dataDir,
 		out:     cmd.OutOrStdout(),
+		errOut:  cmd.ErrOrStderr(),
 	}
 	_ = eng.store.BackfillRemoteKeys(ctx)
 	resolved, err := identity.Apply(ctx, eng.store, root, "", remoteSpec.WebURL, remoteSpec.WebURL != "")
@@ -334,18 +336,21 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 		tracker.Fail(lastStage, err)
 		return nil, parity.Report{}, nil, false, err
 	}
-	mapSnapshot := func() (*pb.MapResult, error) {
+	mapSnapshot := func() *pb.MapResult {
 		if !e.opts.mapGraph {
-			return nil, nil
+			return nil
 		}
-		return e.mapGraph(ctx, snap, tracker)
+		res, err := e.mapGraph(ctx, snap, tracker)
+		if err != nil {
+			// The snapshot is already published; a map failure is a warning,
+			// not a reason to discard a valid index.
+			e.warnf("map failed for %s: %v", root, err)
+			return nil
+		}
+		return res
 	}
 	if reuse {
-		mapRes, err := mapSnapshot()
-		if err != nil {
-			return nil, parity.Report{}, nil, false, err
-		}
-		return snap, parity.Report{}, mapRes, true, nil
+		return snap, parity.Report{}, mapSnapshot(), true, nil
 	}
 
 	tracker.Begin(stagePublish)
@@ -353,11 +358,16 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 		tracker.Fail(stagePublish, err)
 		return nil, parity.Report{}, nil, false, err
 	}
-	mapRes, err := mapSnapshot()
-	if err != nil {
-		return nil, parity.Report{}, nil, false, err
+	return snap, parity.Summarize(snap, g), mapSnapshot(), false, nil
+}
+
+// warnf writes a non-fatal warning to the command's stderr.
+func (e *engine) warnf(format string, args ...any) {
+	w := e.errOut
+	if w == nil {
+		w = os.Stderr
 	}
-	return snap, parity.Summarize(snap, g), mapRes, false, nil
+	_, _ = fmt.Fprintf(w, "warning: "+format+"\n", args...)
 }
 
 // mapGraph runs the graph mapping pipeline for a snapshot using global map
@@ -661,9 +671,10 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	}
 	var mapRes *pb.MapResult
 	if e.opts.mapGraph {
-		mapRes, err = e.mapGraph(ctx, snap, tracker)
-		if err != nil {
-			return nil, parity.Report{}, nil, err
+		if res, mapErr := e.mapGraph(ctx, snap, tracker); mapErr != nil {
+			e.warnf("map failed for %s: %v", root, mapErr)
+		} else {
+			mapRes = res
 		}
 	}
 	return snap, parity.Summarize(snap, g), mapRes, nil

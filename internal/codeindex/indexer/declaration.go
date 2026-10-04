@@ -1,10 +1,19 @@
 package indexer
 
 import (
+	"sync/atomic"
+	"time"
+
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/odvcencio/gotreesitter"
 )
+
+// declarationParseTimeout bounds the optional enclosing-declaration parse. Some
+// grammars' error recovery re-parses sub-ranges recursively and can blow up on a
+// single malformed file; the fallback is enrichment only, so a slow parse is
+// abandoned rather than allowed to stall or exhaust the index.
+const declarationParseTimeout = 3 * time.Second
 
 // declarationIndex resolves the full source span of the declaration enclosing a
 // SCIP definition occurrence for languages whose indexers omit an enclosing
@@ -17,6 +26,7 @@ type declarationIndex struct {
 	tree   *gotreesitter.Tree
 	root   *tsNode
 	tried  bool
+	failed bool
 }
 
 // newDeclarationIndex prepares a resolver for a source. The source is not parsed
@@ -28,18 +38,63 @@ func newDeclarationIndex(source *graph.Source) *declarationIndex {
 	return &declarationIndex{source: source, lang: parserLanguage(source.Language)}
 }
 
+// maxDeclarationParseFailures bounds how many pathological parses are attempted
+// before the grammar fallback is disabled for the rest of the process. Each
+// timeout leaks one parse goroutine that gotreesitter's recovery cannot
+// interrupt, so the cap keeps that leak small.
+const maxDeclarationParseFailures = 3
+
+var declarationParseFailures atomic.Int32
+
+// parseDeclarationTree parses a source under a hard deadline. gotreesitter's
+// error recovery creates a fresh parser without the timeout or cancellation
+// flag, so a single malformed file can spin indefinitely; running the parse in
+// its own goroutine lets the index abandon it and continue.
+func parseDeclarationTree(lang *gotreesitter.Language, text []byte) *gotreesitter.Tree {
+	if declarationParseFailures.Load() >= maxDeclarationParseFailures {
+		return nil
+	}
+	type parseResult struct {
+		tree *gotreesitter.Tree
+		err  error
+	}
+	done := make(chan parseResult, 1)
+	go func() {
+		parser := gotreesitter.NewParser(lang)
+		var cancellationFlag uint32
+		parser.SetCancellationFlag(&cancellationFlag)
+		timer := time.AfterFunc(declarationParseTimeout, func() {
+			atomic.StoreUint32(&cancellationFlag, 1)
+		})
+		tree, err := parser.Parse(text)
+		timer.Stop()
+		done <- parseResult{tree: tree, err: err}
+	}()
+	select {
+	case result := <-done:
+		if result.err != nil {
+			return nil
+		}
+		return result.tree
+	case <-time.After(declarationParseTimeout):
+		declarationParseFailures.Add(1)
+		return nil
+	}
+}
+
 // span returns the byte span of the smallest code-bearing declaration that
 // contains [start, end), widening Dart signatures to their adjacent body. ok is
 // false when the language has no grammar, the source does not parse, or no
 // enclosing declaration is found.
 func (d *declarationIndex) span(start, end int) (int, int, bool) {
-	if d == nil || d.lang == nil || start < 0 || end > len(d.source.Text) {
+	if d == nil || d.lang == nil || d.failed || start < 0 || end > len(d.source.Text) {
 		return 0, 0, false
 	}
 	if !d.tried {
 		d.tried = true
-		tree, err := gotreesitter.NewParser(d.lang).Parse(d.source.Text)
-		if err != nil || tree == nil {
+		tree := parseDeclarationTree(d.lang, d.source.Text)
+		if tree == nil {
+			d.failed = true
 			return 0, 0, false
 		}
 		d.tree = tree

@@ -186,11 +186,12 @@ func discover(ctx context.Context, root string, overrides, excludes []string, ba
 	for _, p := range best {
 		projects = append(projects, p)
 	}
-	// Whole-workspace indexers (a Gradle/Maven build, a .NET solution, a C/C++
-	// compilation database, a Rust workspace) already cover nested modules, so
-	// a project root nested inside another same-family root is not indexed
-	// separately.
-	workspaceFamilies := map[string]bool{familyJVM: true, familyDotnet: true, familyClang: true, familyRust: true}
+	// Whole-workspace indexers (a Gradle/Maven build, a C/C++ compilation
+	// database, a Rust workspace) already cover nested modules, so a project
+	// root nested inside another same-family root is not indexed separately.
+	// .NET is deliberately excluded: each project file is indexed on its own so
+	// an unsupported solution format or one broken project cannot hide the rest.
+	workspaceFamilies := map[string]bool{familyJVM: true, familyClang: true, familyRust: true}
 	roots := map[string][]string{}
 	for _, p := range projects {
 		if workspaceFamilies[languageFamily(p.Language)] {
@@ -236,7 +237,7 @@ func nestedRoot(root string, roots []string) bool {
 }
 
 var pythonTestNames = map[string]bool{
-	"conftest.py": true, "setup.py": true, "noop.py": true,
+	"conftest.py": true, "noop.py": true,
 }
 
 func isTestSource(path string) bool {

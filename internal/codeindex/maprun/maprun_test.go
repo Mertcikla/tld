@@ -7,6 +7,7 @@ import (
 
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/community"
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
@@ -176,5 +177,27 @@ func TestEdgeKindLabel(t *testing.T) {
 		if got := edgeKindLabel(kind); got != want {
 			t.Fatalf("edgeKindLabel(%v) = %q, want %q", kind, got, want)
 		}
+	}
+}
+
+// TestAnalysisGroupsNeverDuplicateIDs guards the persisted codeindex_groups
+// primary key: even a hierarchy with repeated group keys must emit unique ids.
+func TestAnalysisGroupsNeverDuplicateIDs(t *testing.T) {
+	files := []community.File{{ID: "f0"}, {ID: "f1"}}
+	groups := []*community.Group{
+		{Key: "same", Name: "parent", Files: 2, Children: []*community.Group{
+			{Key: "same", Name: "child", Files: 2, Members: []int{0, 1}},
+		}},
+	}
+	out := analysisGroups("run", groups, files)
+	if len(out) != 2 {
+		t.Fatalf("groups = %d, want 2", len(out))
+	}
+	seen := map[string]bool{}
+	for _, group := range out {
+		if seen[group.ID] {
+			t.Fatalf("duplicate group id %q", group.ID)
+		}
+		seen[group.ID] = true
 	}
 }

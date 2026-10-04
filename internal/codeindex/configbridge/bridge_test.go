@@ -22,3 +22,14 @@ func TestFromGlobalNilUsesDefaults(t *testing.T) {
 		t.Fatal("expected default tool path")
 	}
 }
+
+func TestFromGlobalEnvOverridesGlobal(t *testing.T) {
+	global := workspace.DefaultConfig()
+	global.Index.Tools.SCIPGo = "/opt/scip-go"
+	t.Setenv("CODEINDEX_SCIP_GO", "/env/scip-go")
+
+	cfg := FromGlobal(global)
+	if cfg.Tools.SCIPGo != "/env/scip-go" {
+		t.Fatalf("tool path = %q, want env override", cfg.Tools.SCIPGo)
+	}
+}

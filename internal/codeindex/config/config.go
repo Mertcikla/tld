@@ -71,16 +71,23 @@ func Load(path string) (Config, error) {
 			return c, err
 		}
 	}
+	c.ApplyEnv()
+	if c.Tools.TimeoutSeconds <= 0 {
+		c.Tools.TimeoutSeconds = 300
+	}
+	return c, nil
+}
+
+// ApplyEnv overlays the CODEINDEX_* environment variables onto the config so
+// they take precedence over file and global settings. It is used by the CLI's
+// config bridge as well as Load.
+func (c *Config) ApplyEnv() {
 	env := map[string]*string{"CODEINDEX_GRPC_ADDRESS": &c.GRPC.Address, "CODEINDEX_SURREAL_URL": &c.Surreal.URL, "CODEINDEX_SURREAL_NAMESPACE": &c.Surreal.Namespace, "CODEINDEX_SURREAL_DATABASE": &c.Surreal.Database, "CODEINDEX_SURREAL_USERNAME": &c.Surreal.Username, "CODEINDEX_SURREAL_PASSWORD": &c.Surreal.Password, "CODEINDEX_SCIP_GO": &c.Tools.SCIPGo, "CODEINDEX_SCIP_TYPESCRIPT": &c.Tools.SCIPTypeScript, "CODEINDEX_SCIP_PYTHON": &c.Tools.SCIPPython, "CODEINDEX_SCIP_DOTNET": &c.Tools.SCIPDotnet, "CODEINDEX_SCIP_CLANG": &c.Tools.SCIPClang, "CODEINDEX_SCIP_JAVA": &c.Tools.SCIPJava, "CODEINDEX_SCIP_DART": &c.Tools.SCIPDart, "CODEINDEX_SCIP_PHP": &c.Tools.SCIPPhp, "CODEINDEX_SCIP_RUBY": &c.Tools.SCIPRuby, "CODEINDEX_RUST_ANALYZER": &c.Tools.RustAnalyzer}
 	for name, p := range env {
 		if v, ok := os.LookupEnv(name); ok {
 			*p = v
 		}
 	}
-	if c.Tools.TimeoutSeconds <= 0 {
-		c.Tools.TimeoutSeconds = 300
-	}
-	return c, nil
 }
 func (c Config) ToolTimeout() time.Duration {
 	return time.Duration(c.Tools.TimeoutSeconds) * time.Second

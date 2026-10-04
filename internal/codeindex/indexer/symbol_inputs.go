@@ -81,7 +81,7 @@ func projectHashes(pr *pb.Project, sources map[string]*graph.Source) map[string]
 // ToolchainCompatible permits offline reuse of recorded graphs, but invalidates
 // caches when an installed extractor reports a different version.
 func ToolchainCompatible(ctx context.Context, cfg config.Config, root string, snap *pb.Snapshot, explicit map[string]string) bool {
-	if snap.ToolVersions["gotreesitter"] != "0.15.2" {
+	if snap.ToolVersions["gotreesitter"] != gotreesitterVersion() {
 		return false
 	}
 	for _, project := range snap.Projects {

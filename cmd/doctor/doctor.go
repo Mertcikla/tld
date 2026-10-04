@@ -44,19 +44,24 @@ func NewDoctorCmd() *cobra.Command {
 }
 
 type report struct {
-	Tools []tools.Status `json:"tools"`
-	OK    bool           `json:"ok"`
+	Tools    []tools.Status `json:"tools"`
+	OK       bool           `json:"ok"`
+	Outdated int            `json:"outdated"`
 }
 
 func buildReport(ctx context.Context, cfg config.Config) report {
 	toolStatuses := tools.Check(ctx, cfg)
 	ok := true
+	outdated := 0
 	for _, s := range toolStatuses {
 		if !s.Found {
 			ok = false
 		}
+		if s.BelowMinimum {
+			outdated++
+		}
 	}
-	return report{Tools: toolStatuses, OK: ok}
+	return report{Tools: toolStatuses, OK: ok, Outdated: outdated}
 }
 
 func printReport(cmd *cobra.Command, r report) {
@@ -67,20 +72,27 @@ func printReport(cmd *cobra.Command, r report) {
 	for _, s := range r.Tools {
 		status := "OK"
 		detail := s.Path
-		if !s.Found {
+		switch {
+		case !s.Found:
 			status = "MISSING"
 			detail = s.Error
-		} else if s.Version != "" {
+		case s.BelowMinimum:
+			status = "OUTDATED"
+			detail = fmt.Sprintf("%s (%s; tested with >= %s)", s.Path, s.Version, s.Minimum)
+		case s.Version != "":
 			detail = fmt.Sprintf("%s (%s)", s.Path, s.Version)
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", s.Name, status, detail)
 	}
 	_ = tw.Flush()
 
-	if r.OK {
-		_, _ = fmt.Fprintln(out, "\nAll prerequisites satisfied.")
-	} else {
+	switch {
+	case !r.OK:
 		_, _ = fmt.Fprintln(out, "\nSome prerequisites are missing; indexing projects that need them will fail.")
+	case r.Outdated > 0:
+		_, _ = fmt.Fprintf(out, "\n%d indexer(s) are older than the tested minimum; extraction may miss some relationships.\n", r.Outdated)
+	default:
+		_, _ = fmt.Fprintln(out, "\nAll prerequisites satisfied.")
 	}
 }
 

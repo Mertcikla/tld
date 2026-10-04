@@ -11,7 +11,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/modelcontextprotocol/go-sdk v1.5.0
-	github.com/odvcencio/gotreesitter v0.15.2
+	github.com/odvcencio/gotreesitter v0.20.9
 	github.com/sammcj/mermaid-check v0.0.4
 	github.com/scip-code/scip/bindings/go/scip v0.10.0
 	github.com/speps/go-hashids/v2 v2.0.1

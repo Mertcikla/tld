@@ -1,6 +1,7 @@
 package indexer
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -138,7 +139,7 @@ func projectLanguage(name string) string {
 		return "cpp"
 	}
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".sln", ".slnx", ".csproj":
+	case ".csproj":
 		return "csharp"
 	case ".vbproj":
 		return "visualbasic"
@@ -155,6 +156,10 @@ type indexerContext struct {
 	artifact   string
 	name       string
 	configPath string
+	// sourceFiles are absolute paths of the project's indexed sources. The web
+	// family uses them to synthesize a JavaScript-aware tsconfig when a
+	// repository ships only an empty tsconfig.json.
+	sourceFiles []string
 }
 
 // indexerSpec describes how to invoke one family's SCIP indexer.
@@ -304,10 +309,65 @@ func webIndexArgs(c indexerContext, configs []string) []string {
 	argv := []string{"index"}
 	if len(configs) == 0 {
 		argv = append(argv, "--infer-tsconfig")
+	} else if synth := synthesizeJSTsConfig(c, configs); synth != "" {
+		argv = append(argv, synth)
 	} else {
 		argv = append(argv, configs...)
 	}
 	return append(argv, "--cwd", c.projectDir, "--output", c.artifact)
+}
+
+// synthesizeJSTsConfig returns the path of a temporary tsconfig that enables
+// allowJs when a JavaScript project ships an empty tsconfig.json (no include,
+// files, references, or allowJs). Such a config makes scip-typescript index no
+// input files, leaving the JavaScript tree-sitter facts without any resolved
+// references or calls. It returns "" when the project's own configs already
+// describe their inputs, so normal TypeScript projects are untouched.
+func synthesizeJSTsConfig(c indexerContext, configs []string) string {
+	if len(c.sourceFiles) == 0 || len(c.sourceFiles) > 20000 {
+		return ""
+	}
+	jsSources := make([]string, 0, len(c.sourceFiles))
+	for _, file := range c.sourceFiles {
+		switch strings.ToLower(filepath.Ext(file)) {
+		case ".js", ".jsx", ".mjs", ".cjs":
+			jsSources = append(jsSources, file)
+		}
+	}
+	if len(jsSources) == 0 {
+		return ""
+	}
+	for _, cfg := range configs {
+		raw, err := os.ReadFile(filepath.Join(c.projectDir, cfg))
+		if err != nil {
+			return ""
+		}
+		text := string(raw)
+		for _, marker := range []string{"include", "files", "references", "allowJs"} {
+			if strings.Contains(text, `"`+marker+`"`) || strings.Contains(text, `'`+marker+`'`) {
+				return ""
+			}
+		}
+	}
+	files := append([]string(nil), c.sourceFiles...)
+	sort.Strings(files)
+	payload := map[string]any{
+		"compilerOptions": map[string]any{
+			"allowJs": true, "checkJs": false, "noEmit": true,
+			"module": "node16", "moduleResolution": "node16",
+			"target": "es2020", "types": []string{},
+		},
+		"files": files,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	path := c.artifact + ".tsconfig.json"
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return ""
+	}
+	return path
 }
 
 // webProjectConfigs lists the top-level tsconfig files in a project directory,

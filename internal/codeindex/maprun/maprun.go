@@ -312,8 +312,9 @@ func repositoryRemoteName(remote string) string {
 // each carrying its full descendant membership and stable key-derived id.
 func analysisGroups(runID string, groups []*community.Group, files []community.File) []cstore.AnalysisGroup {
 	out := make([]cstore.AnalysisGroup, 0, len(groups))
-	var walk func(group *community.Group)
-	walk = func(group *community.Group) {
+	seen := map[string]int{}
+	var walk func(group *community.Group, id string)
+	walk = func(group *community.Group, id string) {
 		members := make([]string, 0, group.Files)
 		var collect func(item *community.Group)
 		collect = func(item *community.Group) {
@@ -328,19 +329,26 @@ func analysisGroups(runID string, groups []*community.Group, files []community.F
 		}
 		collect(group)
 		sort.Strings(members)
+		// Guard against any residual key collision: the persisted group id is a
+		// primary key, so a repeat must never be emitted.
+		unique := id
+		if n := seen[id]; n > 0 {
+			unique = id + "#" + strconv.Itoa(n)
+		}
+		seen[id]++
 		out = append(out, cstore.AnalysisGroup{
-			ID:      runID + ":g:" + group.Key,
+			ID:      unique,
 			Label:   group.Name,
 			Kind:    codeindexv1.GroupKind_GROUP_KIND_COMMUNITY,
 			Members: members,
 		})
-		for _, child := range group.Children {
-			walk(child)
+		for i, child := range group.Children {
+			walk(child, id+"."+strconv.Itoa(i))
 		}
 	}
-	for _, group := range groups {
+	for i, group := range groups {
 		if group != nil {
-			walk(group)
+			walk(group, runID+":g:"+strconv.Itoa(i)+":"+group.Key)
 		}
 	}
 	return out

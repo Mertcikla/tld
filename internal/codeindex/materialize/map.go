@@ -752,7 +752,13 @@ func (m *mapMaterializer) placementsFor(viewID int64) (map[int64]bool, error) {
 func (m *mapMaterializer) advance(detail string) {
 	m.done++
 	if m.opts.Progress != nil && (m.done%25 == 0 || m.done >= m.total) {
-		m.opts.Progress(m.done, m.total, detail)
+		// Connector and layer work can push done past the precomputed resource
+		// budget; clamp so progress never reports current > total.
+		current := m.done
+		if current > m.total {
+			current = m.total
+		}
+		m.opts.Progress(current, m.total, detail)
 	}
 }
 

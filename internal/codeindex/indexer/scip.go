@@ -287,6 +287,16 @@ func scipCallableKind(kind scip.SymbolInformation_Kind) bool {
 	return false
 }
 
+// factKindCallable reports whether a published fact kind denotes a callable
+// declaration, used as a fallback when an indexer omits SymbolInformation.Kind.
+func factKindCallable(kind pb.FactKind) bool {
+	switch kind {
+	case pb.FactKind_FACT_KIND_FUNCTION, pb.FactKind_FACT_KIND_METHOD, pb.FactKind_FACT_KIND_CONSTRUCTOR:
+		return true
+	}
+	return false
+}
+
 // factKindFromSymbol is the fallback for indexers that omit SymbolInformation.Kind.
 // It reads the symbol descriptor suffix defined by the SCIP symbol grammar.
 func factKindFromSymbol(symbol string) pb.FactKind {
@@ -369,7 +379,16 @@ func (table *symbols) apply(g *graph.Graph) {
 		}
 		g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_REFERENCES, owner.Id, to, "", ref.anchor, &pb.Evidence{Producer: "scip", Version: ref.version, OriginalId: ref.key, Anchor: ref.anchor})
 		if ref.scipBacked {
+			callable := false
 			if info := table.metadata[ref.key]; info != nil && scipCallableKind(info.GetKind()) {
+				callable = true
+			} else if def := g.Facts[to]; def != nil && factKindCallable(def.Kind) {
+				// Some indexers omit SymbolInformation.Kind. Fall back to the
+				// referenced definition's fact kind so a reference to a
+				// function, method, or constructor still yields a call edge.
+				callable = true
+			}
+			if callable {
 				g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, owner.Id, to, "", ref.anchor, &pb.Evidence{Producer: "scip", Version: ref.version, OriginalId: ref.key, Anchor: ref.anchor, Derivation: "reference to callable symbol"})
 			}
 		}
@@ -390,6 +409,99 @@ func (table *symbols) apply(g *graph.Graph) {
 		}
 		g.AddEdgeFact(relation.kind, from, to, targetKey, anchor, &pb.Evidence{Producer: "scip", Version: relation.version, OriginalId: relation.fromKey + " -> " + relation.toKey, Anchor: anchor, Derivation: "symbol relationship"})
 	}
+	table.applyRustImpls(g)
+}
+
+// applyRustImpls derives IMPLEMENTS edges from Rust source. rust-analyzer emits
+// no is_implementation relationships, so the tree-sitter grammar locates each
+// "impl Trait for Type" block and the SCIP occurrences inside it resolve the
+// trait and type identifiers to facts.
+func (table *symbols) applyRustImpls(g *graph.Graph) {
+	lang := parserLanguage("rust")
+	if lang == nil {
+		return
+	}
+	refs := table.byPath()
+	for path, src := range g.Sources {
+		if src == nil || src.Language != "rust" {
+			continue
+		}
+		tree := parseDeclarationTree(lang, src.Text)
+		if tree == nil {
+			continue
+		}
+		root := wrapNode(tree.RootNode(), lang)
+		var walk func(*tsNode)
+		walk = func(n *tsNode) {
+			if n == nil {
+				return
+			}
+			if n.Kind() == "impl_item" {
+				table.rustImplEdge(g, refs[path], n)
+			}
+			for i := 0; i < n.NamedChildCount(); i++ {
+				walk(n.NamedChild(i))
+			}
+		}
+		walk(root)
+		tree.Release()
+	}
+}
+
+// rustImplEdge records one IMPLEMENTS edge for an impl_item node when both the
+// implementing type and the trait resolve to facts (the trait may be external).
+func (table *symbols) rustImplEdge(g *graph.Graph, refs []occurrence, impl *tsNode) {
+	traitNode := impl.ChildByFieldName("trait")
+	typeNode := impl.ChildByFieldName("type")
+	if traitNode == nil || typeNode == nil {
+		return
+	}
+	typeKey := rustSymbolInSpan(refs, int(typeNode.StartByte()), int(typeNode.EndByte()))
+	if typeKey == "" {
+		return
+	}
+	fromType := table.definitions[typeKey]
+	if fromType == "" {
+		return
+	}
+	fromFact := g.Facts[fromType]
+	if fromFact == nil || fromFact.Anchor == nil {
+		return
+	}
+	traitKey := rustSymbolInSpan(refs, int(traitNode.StartByte()), int(traitNode.EndByte()))
+	if traitKey == "" {
+		return
+	}
+	to := table.definitions[traitKey]
+	targetKey := ""
+	if to == "" {
+		// The trait lives in another crate; keep it as an external target.
+		targetKey = traitKey
+	}
+	g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_IMPLEMENTS, fromType, to, targetKey, fromFact.Anchor, &pb.Evidence{Producer: "scip", Derivation: "rust impl_item"})
+}
+
+// rustSymbolInSpan returns the symbol of the largest SCIP occurrence fully
+// contained in [start, end), which picks the type or trait identifier out of a
+// larger syntactic node such as a generic type.
+func rustSymbolInSpan(refs []occurrence, start, end int) string {
+	best := ""
+	bestLen := -1
+	for i := range refs {
+		a := refs[i].anchor
+		if a == nil {
+			continue
+		}
+		s, e := int(a.StartByte), int(a.EndByte)
+		if s < start || e > end || e <= s {
+			continue
+		}
+		if e-s > bestLen {
+			bestLen = e - s
+			best = refs[i].key
+		}
+	}
+	return best
 }
 func (table *symbols) byPath() map[string][]occurrence {
 	out := map[string][]occurrence{}
