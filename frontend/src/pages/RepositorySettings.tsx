@@ -267,7 +267,6 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
                 <Box key={`${map.result.runId}:${map.configHash}`} border="1px solid var(--border-main)" borderRadius="lg" p={3} minW={0}>
                   <Text fontSize="sm" fontWeight="medium">{new Date(map.completedUnix * 1000).toLocaleString()}</Text>
                   <Text fontSize="xs" color="gray.400" mt={1}>{map.result.clusters.toLocaleString()} groups · {map.result.facts.toLocaleString()} facts</Text>
-                  <Text fontSize="xs" color="gray.400" mt={1}>External imports {map.includeImports ? 'included' : 'excluded'}</Text>
                   <Box as="details" mt={3}>
                     <Text as="summary" fontSize="xs" color="gray.500" cursor="pointer">Snapshot ID</Text>
                     <Text fontSize="xs" fontFamily="mono" overflowWrap="anywhere" mt={1}>{map.result.snapshotId}</Text>

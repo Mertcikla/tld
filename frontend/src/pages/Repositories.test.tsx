@@ -255,24 +255,6 @@ describe('Repositories map action', () => {
     expect(navigateMock).not.toHaveBeenCalled()
   })
 
-  it('passes the imports toggle through to the mapper', async () => {
-    const { api } = await import('../api/client')
-    vi.mocked(api.repositories.map).mockClear()
-    let renderer!: ReturnType<typeof create>
-    await act(async () => {
-      renderer = create(<Repositories />)
-    })
-
-    act(() => {
-      renderer.root.findByProps({ 'data-testid': 'repositories-include-imports' }).props.onChange({ target: { checked: true } })
-    })
-    await act(async () => {
-      await renderer.root.findByProps({ 'data-testid': 'repositories-map' }).props.onClick()
-    })
-
-    expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ includeImports: true }))
-  })
-
   it('deletes a repository after confirmation, including materialized resources when toggled', async () => {
     const { api } = await import('../api/client')
     vi.mocked(api.repositories.delete).mockClear()

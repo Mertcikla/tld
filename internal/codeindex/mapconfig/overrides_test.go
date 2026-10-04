@@ -22,7 +22,7 @@ func TestRepositoryOverridesInheritAndValidate(t *testing.T) {
 	if effective.Grouping.MaxLeafFiles != 17 || effective.Grouping.Resolution != 1.7 || defaults.Grouping.MaxLeafFiles != 40 {
 		t.Fatalf("inheritance mutated defaults or lost override: defaults=%+v effective=%+v", defaults, effective)
 	}
-	if defaults.ConfigHash(false) == effective.ConfigHash(false) {
+	if defaults.ConfigHash() == effective.ConfigHash() {
 		t.Fatal("override did not change cache identity")
 	}
 	for _, invalid := range []*pb.RepositoryMapConfiguration{

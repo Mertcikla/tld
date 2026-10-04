@@ -367,7 +367,6 @@ export interface RepositoryCommitDetails {
 export interface CompletedRepositoryMap {
   result: RepositoryMapResult
   completedUnix: number
-  includeImports: boolean
   configHash: string
 }
 export interface RepositoryMapOptions {
@@ -375,7 +374,6 @@ export interface RepositoryMapOptions {
   gitRevision?: string
   workingTree?: boolean
   gitBranch?: string
-  includeImports?: boolean
   signal?: AbortSignal
   onProgress?: (progress: RepositoryMapProgress) => void
 }
@@ -2045,7 +2043,7 @@ export const api = {
       const response = await codeIndexMapperClient.listMaps({ repositoryId })
       return response.maps.filter((item) => !!item.result).map((item) => ({
         completedUnix: Number(item.completedUnix),
-        includeImports: item.includeImports, configHash: item.configHash,
+        configHash: item.configHash,
         result: { ...item.result!, viewId: Number(item.result!.viewId) },
       }))
     }),
@@ -2073,7 +2071,7 @@ export const api = {
     ): Promise<RepositoryMapResult> => {
       try {
         const stream = codeIndexMapperClient.mapRepository({
-          repositoryId, includeImports: handlers.includeImports ?? false,
+          repositoryId,
           snapshotId: handlers.snapshotId, gitRevision: handlers.gitRevision,
           workingTree: handlers.workingTree, gitBranch: handlers.gitBranch,
         }, { signal: handlers.signal })

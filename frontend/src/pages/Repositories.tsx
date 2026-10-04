@@ -283,7 +283,6 @@ function CompareSide({
   snapshots,
   history,
   maps,
-  includeImports,
   showIds,
   disabled,
   locked = false,
@@ -296,7 +295,6 @@ function CompareSide({
   snapshots: CodeSnapshot[]
   history: RepositoryGitHistory | null
   maps: CompletedRepositoryMap[]
-  includeImports: boolean
   showIds: boolean
   disabled: boolean
   locked?: boolean
@@ -306,11 +304,7 @@ function CompareSide({
   const snapshot = snapshotForTarget(value, snapshots)
   const mapped =
     !!snapshot &&
-    maps.some(
-      (m) =>
-        m.result.snapshotId === snapshot?.id &&
-        m.includeImports === includeImports,
-    )
+    maps.some((m) => m.result.snapshotId === snapshot?.id)
   const known =
     value === 'working_tree' ||
     snapshots.some((s) => value === `snapshot:${s.id}`) ||
@@ -427,7 +421,6 @@ export default function Repositories() {
   const [collapsed, setCollapsed] = useState(false)
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [showIds] = useState(readShowIds)
-  const [includeImports, setIncludeImports] = useState(false)
   const [snapshots, setSnapshots] = useState<CodeSnapshot[]>([])
   const [maps, setMaps] = useState<CompletedRepositoryMap[]>([])
   const [history, setHistory] = useState<RepositoryGitHistory | null>(null)
@@ -830,7 +823,6 @@ export default function Repositories() {
     const map = (target: string, context: string) =>
       api.repositories.map(repositoryId, {
         ...targetMapOptions(target, context),
-        includeImports,
         signal: controller.signal,
         onProgress: (next) => {
           if (isActive()) setProgress(next)
@@ -1661,7 +1653,6 @@ export default function Repositories() {
                         snapshots={snapshots}
                         maps={maps}
                         history={history}
-                        includeImports={includeImports}
                         showIds={showIds}
                         disabled={busy || dataLoading}
                         locked={mode === 'pr'}
@@ -1675,7 +1666,6 @@ export default function Repositories() {
                         snapshots={snapshots}
                         maps={maps}
                         history={history}
-                        includeImports={includeImports}
                         showIds={showIds}
                         disabled={busy || dataLoading}
                         locked={mode === 'pr'}
@@ -1684,18 +1674,6 @@ export default function Repositories() {
                       />
                     </Grid>
                     <Flex mt={3} gap={3} align="center" wrap="wrap">
-                      <HStack>
-                        <Switch
-                          size="sm"
-                          data-testid="repositories-include-imports"
-                          isDisabled={busy}
-                          isChecked={includeImports}
-                          onChange={(e) => setIncludeImports(e.target.checked)}
-                        />
-                        <Text fontSize="xs" color="gray.400">
-                          Include external imports in full maps
-                        </Text>
-                      </HStack>
                       <Box flex={1} />
                       <Button
                         {...accentStyle}

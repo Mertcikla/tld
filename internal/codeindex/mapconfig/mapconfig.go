@@ -83,9 +83,9 @@ func (o Options) Fingerprint() string {
 
 // ConfigHash identifies a completed map produced with these options. It must
 // change whenever a setting that affects map output changes so cached maps are
-// not reused across configurations.
-func (o Options) ConfigHash(includeImports bool) string {
-	return cgraph.ID("group-v3", strconv.FormatBool(includeImports), o.Fingerprint())
+// not reused across configurations. External imports are always part of a map.
+func (o Options) ConfigHash() string {
+	return cgraph.ID("group-v4", o.Fingerprint())
 }
 
 // MaterializeOptions builds the materialization options for these settings.

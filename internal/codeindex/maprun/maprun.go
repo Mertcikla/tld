@@ -31,11 +31,11 @@ type Deps struct {
 	Options   mapconfig.Options
 }
 
-// Request selects which snapshot to map.
+// Request selects which snapshot to map. External imports are always
+// materialized; there is no toggle.
 type Request struct {
-	RepositoryID   string
-	SnapshotID     string
-	IncludeImports bool
+	RepositoryID string
+	SnapshotID   string
 }
 
 // ProgressFunc receives coarse pipeline updates. It may be nil.
@@ -61,7 +61,7 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	if err != nil {
 		return nil, false, err
 	}
-	configHash := deps.Options.ConfigHash(req.IncludeImports)
+	configHash := deps.Options.ConfigHash()
 
 	completed, err := deps.Codeindex.CompletedMaps(ctx, repositoryID)
 	if err != nil {
@@ -83,12 +83,9 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	if len(facts) == 0 {
 		return nil, false, ErrNoFileFacts
 	}
-	var fileImports []cstore.FileImport
-	if req.IncludeImports {
-		fileImports, err = deps.Codeindex.FileImports(ctx, snapshotID)
-		if err != nil {
-			return nil, false, err
-		}
+	fileImports, err := deps.Codeindex.FileImports(ctx, snapshotID)
+	if err != nil {
+		return nil, false, err
 	}
 	fileEdges, err := deps.Codeindex.AggregatedFileEdges(ctx, snapshotID)
 	if err != nil {
@@ -185,9 +182,8 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 		return nil, false, err
 	}
 	if err := deps.Codeindex.SaveCompletedMap(ctx, repositoryID, &codeindexv1.CompletedMap{
-		Result:         result,
-		IncludeImports: req.IncludeImports,
-		ConfigHash:     configHash,
+		Result:     result,
+		ConfigHash: configHash,
 	}); err != nil {
 		return nil, false, err
 	}

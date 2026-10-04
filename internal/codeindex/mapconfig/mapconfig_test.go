@@ -76,11 +76,8 @@ func TestFromGlobalRepairsInvertedRootBounds(t *testing.T) {
 func TestConfigHashTracksEverySetting(t *testing.T) {
 	base := mapconfig.FromGlobal(workspace.DefaultConfig())
 	rebuilt := mapconfig.FromGlobal(workspace.DefaultConfig())
-	if base.ConfigHash(false) != rebuilt.ConfigHash(false) {
+	if base.ConfigHash() != rebuilt.ConfigHash() {
 		t.Fatal("config hash is not stable across rebuilds")
-	}
-	if base.ConfigHash(true) == base.ConfigHash(false) {
-		t.Fatal("config hash ignores include_imports")
 	}
 	mutations := map[string]func(*mapconfig.Options){
 		"resolution":         func(o *mapconfig.Options) { o.Grouping.Resolution += 0.5 },
@@ -96,7 +93,7 @@ func TestConfigHashTracksEverySetting(t *testing.T) {
 	for name, mutate := range mutations {
 		changed := base
 		mutate(&changed)
-		if base.ConfigHash(false) == changed.ConfigHash(false) {
+		if base.ConfigHash() == changed.ConfigHash() {
 			t.Fatalf("config hash ignores %s", name)
 		}
 	}

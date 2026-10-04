@@ -124,9 +124,8 @@ func (s *mapperService) mapWithCommunities(ctx context.Context, req *connect.Req
 		Codeindex: s.idx,
 		Options:   mapconfig.FromGlobal(s.config),
 	}, maprun.Request{
-		RepositoryID:   repositoryID,
-		SnapshotID:     snapshot.Id,
-		IncludeImports: req.Msg.GetIncludeImports(),
+		RepositoryID: repositoryID,
+		SnapshotID:   snapshot.Id,
 	}, func(stage string, current, total int, detail string) {
 		send(&codeindexv1.MapProgress{Stage: stage, Current: uint32(current), Total: uint32(total), Detail: detail})
 	})

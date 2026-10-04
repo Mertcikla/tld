@@ -237,7 +237,7 @@ func TestMapperServiceMaterializesImports(t *testing.T) {
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
 	client := codeindexv1connect.NewMapperServiceClient(ts.Client(), ts.URL+"/api")
-	stream, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID, IncludeImports: true}))
+	stream, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID}))
 	if err != nil {
 		t.Fatalf("map repository: %v", err)
 	}
