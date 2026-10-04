@@ -20,6 +20,7 @@ type LibraryElement struct {
 	TechnologyConnectors []TechnologyConnector `json:"technology_connectors"`
 	Tags                 []string              `json:"tags"`
 	Repo                 *string               `json:"repo,omitempty"`
+	RepositoryID         *string               `json:"repository_id,omitempty"`
 	Branch               *string               `json:"branch,omitempty"`
 	FilePath             *string               `json:"file_path,omitempty"`
 	Language             *string               `json:"language,omitempty"`
@@ -46,6 +47,7 @@ type PlacedElement struct {
 	TechnologyConnectors []TechnologyConnector `json:"technology_connectors"`
 	Tags                 []string              `json:"tags"`
 	Repo                 *string               `json:"repo,omitempty"`
+	RepositoryID         *string               `json:"repository_id,omitempty"`
 	Branch               *string               `json:"branch,omitempty"`
 	FilePath             *string               `json:"file_path,omitempty"`
 	Language             *string               `json:"language,omitempty"`
@@ -73,6 +75,7 @@ type DependencyElement struct {
 	TechnologyConnectors []TechnologyConnector `json:"technology_connectors"`
 	Tags                 []string              `json:"tags"`
 	Repo                 *string               `json:"repo,omitempty"`
+	RepositoryID         *string               `json:"repository_id,omitempty"`
 	Branch               *string               `json:"branch,omitempty"`
 	Language             *string               `json:"language,omitempty"`
 	FilePath             *string               `json:"file_path,omitempty"`
@@ -92,6 +95,7 @@ type PlanElement struct {
 	TechnologyLinks []TechnologyConnector `json:"technology_links"`
 	Tags            []string              `json:"tags"`
 	Repo            *string               `json:"repo"`
+	RepositoryID    *string               `json:"repository_id"`
 	Branch          *string               `json:"branch"`
 	Language        *string               `json:"language"`
 	FilePath        *string               `json:"file_path"`
@@ -188,6 +192,7 @@ func (s *Store) CreateElement(ctx context.Context, input LibraryElement) (Librar
 		TechnologyConnectors: jsonString(input.TechnologyConnectors, "[]"),
 		Tags:                 jsonString(input.Tags, "[]"),
 		Repo:                 input.Repo,
+		RepositoryID:         input.RepositoryID,
 		Branch:               input.Branch,
 		FilePath:             input.FilePath,
 		Language:             input.Language,
@@ -227,6 +232,7 @@ func (s *Store) UpdateElement(ctx context.Context, id int64, input LibraryElemen
 		Set("technology_connectors = COALESCE(?, technology_connectors)", technologyConnectors).
 		Set("tags = COALESCE(?, tags)", tags).
 		Set("repo = COALESCE(?, repo)", input.Repo).
+		Set("repository_id = COALESCE(?, repository_id)", input.RepositoryID).
 		Set("branch = COALESCE(?, branch)", input.Branch).
 		Set("file_path = COALESCE(?, file_path)", input.FilePath).
 		Set("language = COALESCE(?, language)", input.Language).

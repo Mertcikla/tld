@@ -67,6 +67,7 @@ import {
   targetMapOptions,
 } from '../utils/repositoryTargets'
 import { indexStageLabel } from '../utils/repositoryWatcher'
+import { invalidateIndexedRepositories, parseRepositoryAddInput } from '../utils/repositoryResolver'
 import { toast } from '../utils/toast'
 
 const accentStyle = {
@@ -460,6 +461,7 @@ export default function Repositories() {
     null,
   )
   const [deleteMaterialized, setDeleteMaterialized] = useState(false)
+  const [deleteClone, setDeleteClone] = useState(false)
   const [deletingRepo, setDeletingRepo] = useState(false)
   const [snapshotToDelete, setSnapshotToDelete] = useState<CodeSnapshot | null>(
     null,
@@ -495,6 +497,7 @@ export default function Repositories() {
     setError('')
     try {
       const items = await api.repositories.list()
+      invalidateIndexedRepositories()
       setRepositories(items)
       setSelectedId((id) =>
         items.some((r) => r.id === id) ? id : items[0]?.id || '',
@@ -868,10 +871,11 @@ export default function Repositories() {
     if (!repoToDelete) return
     setDeletingRepo(true)
     try {
-      await api.repositories.delete(repoToDelete.id, { deleteMaterialized })
+      await api.repositories.delete(repoToDelete.id, { deleteMaterialized, deleteClone })
       if (repoToDelete.id === selectedId) selectRepo('')
       setRepoToDelete(null)
       setDeleteMaterialized(false)
+      setDeleteClone(false)
       await reload()
     } catch (err) {
       toast({
@@ -904,24 +908,25 @@ export default function Repositories() {
     }
   }
   const handleAddRepository = async () => {
-    const path = addPath.trim()
-    if (!path) {
-      setAddError('Enter the path to a repository directory')
+    const value = addPath.trim()
+    if (!value) {
+      setAddError('Enter a repository path or URL')
       return
     }
     setAdding(true)
     setAddError('')
     setAddProgress(null)
     try {
-      const added = await api.repositories.add(path, {
-        onProgress: setAddProgress,
-      })
+      const added = await api.repositories.add(
+        parseRepositoryAddInput(value),
+        { onProgress: setAddProgress },
+      )
       setAddOpen(false)
       setAddPath('')
       setAddProgress(null)
       toast({
         title: 'Repository added',
-        description: added.root,
+        description: value,
         status: 'success',
       })
       await reload()
@@ -1257,10 +1262,10 @@ export default function Repositories() {
                     minW="28px"
                     size="sm"
                     variant="unstyled"
-                    aria-label={`Select ${nameOf(repo.root)}`}
+                    aria-label={`Select ${repo.name || nameOf(repo.root)}`}
                     onClick={() => selectRepo(repo.id)}
                   >
-                    <Glyph name={nameOf(repo.root)} />
+                    <Glyph name={repo.name || nameOf(repo.root)} />
                   </Button>
                   {!collapsed && (
                     <>
@@ -1271,20 +1276,22 @@ export default function Repositories() {
                         cursor="pointer"
                       >
                         <Text fontSize="sm" fontWeight="semibold" isTruncated>
-                          {nameOf(repo.root)}
+                          {repo.name || nameOf(repo.root)}
                         </Text>
                         <Text
                           fontSize="xs"
                           color="gray.500"
                           isTruncated
-                          title={repo.root}
+                          title={repo.remoteUrl || repo.root}
                         >
-                          {repo.root}
+                          {repo.remoteUrl
+                            ? repo.remoteUrl.replace(/^https?:\/\//, '')
+                            : repo.root}
                         </Text>
                       </Box>
                       <IconButton
                         data-testid={`repositories-settings-${repo.id}`}
-                        aria-label={`Settings for ${nameOf(repo.root)}`}
+                        aria-label={`Settings for ${repo.name || nameOf(repo.root)}`}
                         className="repository-settings"
                         icon={<SettingsIcon boxSize="12px" />}
                         position="absolute"
@@ -1373,7 +1380,7 @@ export default function Repositories() {
                       Add repository
                     </Text>
                     <Text fontSize="xs" color="gray.500" isTruncated>
-                      Index a local directory
+                      Index a local or remote repository
                     </Text>
                   </Box>
                 )}
@@ -1389,13 +1396,13 @@ export default function Repositories() {
                     <PopoverBody>
                       <FormControl>
                         <Text fontSize="sm" mb={2} color="gray.400">
-                          Index a local repository directory to explore and map
-                          it.
+                          Index a local repository directory or clone a remote
+                          repository (owner/repo or Git URL).
                         </Text>
                         <Input
                           autoFocus
                           size="sm"
-                          placeholder="/path/to/repository"
+                          placeholder="/path/to/repository or owner/repo"
                           value={addPath}
                           data-testid="repositories-add-path"
                           isDisabled={adding}
@@ -1514,7 +1521,7 @@ export default function Repositories() {
             flexDir="column"
           >
             {selected && (showRepositorySettings ? (
-              <RepositorySettings key={selected.id} repository={selected} snapshots={snapshots} maps={maps} history={history} busy={busy} dataError={dataError || historyError} onBack={() => setShowRepositorySettings(false)} onDelete={() => { setRepoToDelete(selected); setDeleteMaterialized(false) }} onUpdated={() => { setNonce(n => n + 1); void reload() }}>
+              <RepositorySettings key={selected.id} repository={selected} snapshots={snapshots} maps={maps} history={history} busy={busy} dataError={dataError || historyError} onBack={() => setShowRepositorySettings(false)} onDelete={() => { setRepoToDelete(selected); setDeleteMaterialized(false); setDeleteClone(selected.managed) }} onUpdated={() => { setNonce(n => n + 1); void reload() }}>
                 {repositoryDetails}
               </RepositorySettings>
             ) : (
@@ -1806,6 +1813,24 @@ export default function Repositories() {
             </Text>
           </Box>
         </HStack>
+        {repoToDelete?.managed && (
+          <HStack mt={3} align="flex-start">
+            <Switch
+              size="sm"
+              colorScheme="red"
+              data-testid="repositories-delete-clone"
+              isChecked={deleteClone}
+              isDisabled={deletingRepo}
+              onChange={(e) => setDeleteClone(e.target.checked)}
+            />
+            <Box>
+              <Text fontSize="sm">Also delete the cloned checkout</Text>
+              <Text fontSize="xs" color="gray.500">
+                Removes the tld-managed clone from the data directory.
+              </Text>
+            </Box>
+          </HStack>
+        )}
       </ConfirmDialog>
       <ConfirmDialog
         isOpen={!!snapshotToDelete}

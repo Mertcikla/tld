@@ -32,6 +32,7 @@ type Repository struct {
 	URL             string                 `yaml:"url,omitempty"`
 	LocalDir        string                 `yaml:"localDir,omitempty"`
 	Root            string                 `yaml:"root,omitempty"`
+	ID              string                 `yaml:"id,omitempty"` // matches a codeindex repository id when indexed
 	Config          *RepositoryConfig      `yaml:"config,omitempty"`
 	Exclude         []string               `yaml:"exclude,omitempty"`
 	WorkspaceSource *WorkspaceSourceConfig `yaml:"workspace_source,omitempty"`
@@ -102,6 +103,7 @@ type Element struct {
 	URL             string          `yaml:"url,omitempty"`
 	LogoURL         string          `yaml:"logo_url,omitempty"`
 	Repo            string          `yaml:"repo,omitempty"`
+	RepositoryID    string          `yaml:"repository_id,omitempty"` // links to a codeindex repository
 	Branch          string          `yaml:"branch,omitempty"`
 	Language        string          `yaml:"-"`
 	FilePath        string          `yaml:"file_path,omitempty"`

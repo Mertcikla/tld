@@ -35,6 +35,7 @@ export interface LibraryElement {
   technology_connectors: TechnologyConnector[]
   tags: string[]
   repo?: string | null
+  repository_id?: string | null
   branch?: string | null
   file_path?: string | null
   language?: string | null
@@ -79,6 +80,7 @@ export interface PlacedElement {
   technology_connectors: TechnologyConnector[]
   tags: string[]
   repo?: string | null
+  repository_id?: string | null
   branch?: string | null
   file_path?: string | null
   language?: string | null
@@ -221,6 +223,7 @@ export interface DependencyElement {
   technology_connectors: TechnologyConnector[]
   tags: string[]
   repo?: string | null
+  repository_id?: string | null
   branch?: string | null
   language?: string | null
   file_path?: string | null

@@ -116,6 +116,7 @@ type elementModel struct {
 	TechnologyConnectors string     `bun:"technology_connectors"`
 	Tags                 string     `bun:"tags"`
 	Repo                 *string    `bun:"repo"`
+	RepositoryID         *string    `bun:"repository_id"`
 	Branch               *string    `bun:"branch"`
 	FilePath             *string    `bun:"file_path"`
 	Language             *string    `bun:"language"`
@@ -289,6 +290,7 @@ func elementFromModel(row elementModel) LibraryElement {
 		TechnologyConnectors: parseTechnologyConnectors(row.TechnologyConnectors),
 		Tags:                 parseStrings(row.Tags),
 		Repo:                 row.Repo,
+		RepositoryID:         row.RepositoryID,
 		Branch:               row.Branch,
 		FilePath:             row.FilePath,
 		Language:             row.Language,

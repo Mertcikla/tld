@@ -3717,6 +3717,7 @@ function ViewEditorInner({
     kind: string | null
     description: string | null
     repo: string | null
+    repository_id: string | null
     branch: string | null
     file_path: string | null
     language: string | null

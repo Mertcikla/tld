@@ -5,8 +5,8 @@ import { api } from '../api/client'
 import { useSourceEditor } from '../utils/sourceEditor'
 import { toast } from '../utils/toast'
 
-export default function OpenInEditorButton({ repo, filePath, line, borderless = false }: {
-  repo: string; filePath: string; line?: number | null; borderless?: boolean
+export default function OpenInEditorButton({ repo, repositoryId, filePath, line, borderless = false }: {
+  repo: string; repositoryId?: string | null; filePath: string; line?: number | null; borderless?: boolean
 }) {
   const [openingEditor, setOpeningEditor] = useState(false)
   const { editor: sourceEditor } = useSourceEditor()
@@ -16,6 +16,7 @@ export default function OpenInEditorButton({ repo, filePath, line, borderless = 
     try {
       await api.editor.open({
         editor: sourceEditor,
+        repository_id: repositoryId,
         repo,
         file_path: filePath,
         line,

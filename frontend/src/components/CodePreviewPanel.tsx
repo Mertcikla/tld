@@ -18,6 +18,8 @@ import { githubCache } from '../utils/githubCache'
 import { getGithubRepoVisibility } from '../utils/githubApi'
 import { parseRepoSlug } from '../utils/url'
 import OpenInEditorButton from './OpenInEditorButton'
+import { listIndexedRepositories, resolveElementRepository } from '../utils/repositoryResolver'
+import type { IndexedRepository } from '../api/client'
 import { parseSourceLink } from '../utils/sourceLinks'
 import { openExternalUrl } from '../lib/desktop'
 import type { PlacedElement } from '../types'
@@ -77,6 +79,8 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   const [resolvedStartLine, setResolvedStartLine] = useState<number | null>(null)
   const [resolvedEndLine, setResolvedEndLine] = useState<number | null>(null)
   const [isPrivateRepo, setIsPrivateRepo] = useState(false)
+  // undefined while the indexed repository lookup is in flight.
+  const [indexedRepo, setIndexedRepo] = useState<IndexedRepository | null | undefined>(undefined)
 
   const editorRef = useRef<ReactCodeMirrorRef>(null)
 
@@ -88,8 +92,31 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   const editorStartLine = resolvedStartLine ?? anchorStartLine
 
   useEffect(() => {
+    const repositoryId = element?.repository_id ?? ''
+    const repoValue = element?.repo ?? ''
+    const filePathValue = element?.file_path ?? ''
+    if (!repositoryId && !repoValue) {
+      setIndexedRepo(null)
+      return
+    }
+    let cancelled = false
+    setIndexedRepo(undefined)
+    listIndexedRepositories()
+      .then((repos) => {
+        if (cancelled) return
+        setIndexedRepo(resolveElementRepository({ repository_id: repositoryId, repo: repoValue, file_path: filePathValue }, repos))
+      })
+      .catch(() => {
+        if (!cancelled) setIndexedRepo(null)
+      })
+    return () => { cancelled = true }
+  }, [element?.repository_id, element?.repo, element?.file_path])
+
+  useEffect(() => {
     if (!isOpen || !element || !basePath) return
-    if (!localRepo && !repoSlug) return
+    if (indexedRepo === undefined) return
+    const useIndexed = Boolean(indexedRepo)
+    if (!useIndexed && !localRepo && !repoSlug) return
 
     let cancelled = false
     setLoading(true)
@@ -119,8 +146,12 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
       }
     }
 
-    if (localRepo) {
-      api.editor.source({ repo: element.repo, file_path: basePath })
+    if (useIndexed || localRepo) {
+      api.editor.source({
+        repository_id: indexedRepo?.id ?? element.repository_id,
+        repo: indexedRepo?.root ?? element.repo,
+        file_path: basePath,
+      })
         .then(async ({ content }) => {
           if (cancelled) return
           setCode(content)
@@ -185,7 +216,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
     checkAndFetch()
     return () => { cancelled = true }
-  }, [isOpen, element, repoSlug, basePath, anchor, localRepo])
+  }, [isOpen, element, repoSlug, basePath, anchor, localRepo, indexedRepo])
 
   useEffect(() => {
     if (!code || !resolvedStartLine || !editorRef.current?.view) return
@@ -333,7 +364,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
             </Tooltip>
           )}
           {basePath && (
-            <OpenInEditorButton repo={element?.repo ?? ''} filePath={basePath} line={editorStartLine} />
+            <OpenInEditorButton repo={element?.repo ?? ''} repositoryId={element?.repository_id} filePath={basePath} line={editorStartLine} />
           )}
           <CloseButton
             data-testid="code-preview-close"

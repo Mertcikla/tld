@@ -8,6 +8,7 @@ import (
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/codeindex/community"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/store"
 )
 
@@ -197,8 +198,8 @@ func TestApplyGroupMapPrunesStaleGroups(t *testing.T) {
 	}
 	updated := GroupMapInput{
 		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
-		Files: files,
-		Groups:  []*community.Group{{Key: "two", Name: "two", Files: 2, Members: []int{1, 2}}},
+		Files:  files,
+		Groups: []*community.Group{{Key: "two", Name: "two", Files: 2, Members: []int{1, 2}}},
 	}
 	result, err := ApplyGroupMap(ctx, sqliteStore, idx, updated, MapOptions{})
 	if err != nil {
@@ -302,5 +303,82 @@ func TestApplyGroupMapMaterializesImports(t *testing.T) {
 	}
 	if placedImports != 2 {
 		t.Fatalf("imports placed in External view = %d, want 2", placedImports)
+	}
+}
+
+func TestApplyGroupMapPreservesUserEdits(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, idx := openGroupMapStore(t)
+	files := groupMapFiles()
+	groups := []*community.Group{
+		{Key: "alpha", Name: "alpha", Files: 4, Members: []int{0, 1, 2, 3}},
+	}
+	input := GroupMapInput{
+		RepositoryID:   "repo-1",
+		RepositoryName: "demo",
+		RepositoryRoot: "/repo/demo",
+		SnapshotID:     "snap-1",
+		Files:          files,
+		Groups:         groups,
+	}
+	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, input, MapOptions{}); err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+
+	var fileID int64
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT id FROM elements WHERE name = 'b.go'`).Scan(&fileID); err != nil {
+		t.Fatalf("find file element: %v", err)
+	}
+	if _, err := sqliteStore.UpdateElement(ctx, fileID, core.LibraryElement{Name: "renamed.go", Tags: []string{"keep"}}); err != nil {
+		t.Fatalf("user edit: %v", err)
+	}
+	userView, err := sqliteStore.CreateView(ctx, "My Diagram", nil, nil)
+	if err != nil {
+		t.Fatalf("create user view: %v", err)
+	}
+	if _, err := sqliteStore.AddPlacement(ctx, userView.ID, fileID, 5, 6); err != nil {
+		t.Fatalf("user placement: %v", err)
+	}
+	groupViewID := viewIDByName(t, sqliteStore, "alpha")
+	renamedView := "Renamed Alpha"
+	if _, err := sqliteStore.UpdateView(ctx, groupViewID, &renamedView, nil, nil, nil); err != nil {
+		t.Fatalf("rename view: %v", err)
+	}
+
+	// Re-materialize the same repository at a new snapshot.
+	input.SnapshotID = "snap-2"
+	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, input, MapOptions{}); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+
+	got, err := sqliteStore.ElementByID(ctx, fileID)
+	if err != nil {
+		t.Fatalf("element: %v", err)
+	}
+	if got.Name != "renamed.go" {
+		t.Fatalf("name = %q, want preserved renamed.go", got.Name)
+	}
+	if len(got.Tags) != 1 || got.Tags[0] != "keep" {
+		t.Fatalf("tags = %v, want preserved [keep]", got.Tags)
+	}
+	placements, err := sqliteStore.ListElementPlacements(ctx, fileID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, placement := range placements {
+		if placement.ViewID == userView.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("user placement was lost after re-materialization")
+	}
+	view, err := sqliteStore.ViewByID(ctx, groupViewID)
+	if err != nil {
+		t.Fatalf("view: %v", err)
+	}
+	if view.Name != renamedView {
+		t.Fatalf("view name = %q, want preserved %q", view.Name, renamedView)
 	}
 }

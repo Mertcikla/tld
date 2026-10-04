@@ -81,6 +81,7 @@ import {
 import {
   ChangeKind,
   CodeFactService,
+  FactKind,
   MapperService,
   RepositoryService,
   WatchService,
@@ -150,6 +151,9 @@ export interface IndexedRepository {
   chunks: number
   edges: number
   sources: number
+  remoteUrl: string
+  name: string
+  managed: boolean
 }
 
 export interface RepositoryMapConfiguration {
@@ -826,6 +830,7 @@ export function protoElementToLibrary(e: Record<string, unknown>): LibraryElemen
     technology_connectors: technologyConnectors,
     tags: (e.tags ?? []) as string[],
     repo: (e.repo ?? null) as string | null,
+    repository_id: (e.repository_id ?? e.repositoryId ?? null) as string | null,
     branch: (e.branch ?? null) as string | null,
     file_path: (e.file_path ?? null) as string | null,
     language: (e.language ?? null) as string | null,
@@ -850,6 +855,7 @@ export function libraryElementToDependency(element: LibraryElement): DependencyE
     tags: element.tags,
     bypass_noise_gate: element.bypass_noise_gate ?? false,
     repo: element.repo,
+    repository_id: element.repository_id,
     branch: element.branch,
     language: element.language,
     file_path: element.file_path,
@@ -875,6 +881,7 @@ export function protoPlacedElement(p: Record<string, unknown>): PlacedElement {
     technology_connectors: technologyConnectors,
     tags: (p.tags ?? []) as string[],
     repo: (p.repo ?? null) as string | null,
+    repository_id: (p.repository_id ?? p.repositoryId ?? null) as string | null,
     branch: (p.branch ?? null) as string | null,
     file_path: (p.file_path ?? null) as string | null,
     language: (p.language ?? null) as string | null,
@@ -1070,6 +1077,7 @@ export const api = {
           })),
           tags: data.tags ?? [],
           repo: data.repo ?? undefined,
+          repositoryId: data.repository_id ?? undefined,
           branch: data.branch ?? undefined,
           filePath: data.file_path ?? undefined,
           language: data.language ?? undefined,
@@ -1097,10 +1105,11 @@ export const api = {
             isPrimaryIcon: tl.is_primary_icon ?? false,
           })),
           tags: data.tags ?? [],
-          repo: data.repo ?? undefined,
-          branch: data.branch ?? undefined,
-          filePath: data.file_path ?? undefined,
-          language: data.language ?? undefined,
+          repo: data.repo === null ? '' : data.repo,
+          repositoryId: data.repository_id === null ? '' : data.repository_id,
+          branch: data.branch === null ? '' : data.branch,
+          filePath: data.file_path === null ? '' : data.file_path,
+          language: data.language === null ? '' : data.language,
           bypassNoiseGate: data.bypass_noise_gate,
         }
         const res = await workspaceClient.updateElement(request as Parameters<typeof workspaceClient.updateElement>[0])
@@ -1115,6 +1124,7 @@ export const api = {
       kind: string | null
       description: string | null
       repo: string | null
+      repository_id: string | null
       branch: string | null
       file_path: string | null
       language: string | null
@@ -1972,16 +1982,29 @@ export const api = {
       } while (pageToken)
       return facts
     }),
+    files: (repositoryId: string, snapshotId: string, signal?: AbortSignal): Promise<CodeFact[]> => rpc(async () => {
+      const facts: CodeFact[] = []
+      let pageToken = ''
+      do {
+        const page = await codeIndexFactClient.listFacts({ repositoryId, snapshotId, kind: FactKind.FILE, pageSize: 500, pageToken }, { signal })
+        facts.push(...page.facts)
+        pageToken = page.nextPageToken
+      } while (pageToken)
+      return facts
+    }),
     list: (): Promise<IndexedRepository[]> => rpc(async () => {
       const response = await codeIndexRepositoryClient.listRepositories({})
       return response.repositories.map((repo) => ({ ...repo, latestCreatedUnix: Number(repo.latestCreatedUnix) }))
     }),
     add: async (
-      path: string,
+      input: string | { path?: string; remoteUrl?: string },
       handlers: { signal?: AbortSignal; onProgress?: (progress: RepositoryIndexProgress) => void } = {},
     ): Promise<{ id: string; root: string; latestSnapshotId: string }> => {
       try {
-        const stream = codeIndexRepositoryClient.addRepository({ path }, { signal: handlers.signal })
+        const request = typeof input === 'string'
+          ? { path: input, remoteUrl: '' }
+          : { path: input.path ?? '', remoteUrl: input.remoteUrl ?? '' }
+        const stream = codeIndexRepositoryClient.addRepository(request, { signal: handlers.signal })
         let repository: { id: string; root: string; latestSnapshotId: string } | null = null
         for await (const event of stream) {
           if (event.event.case === 'progress') {
@@ -2119,22 +2142,24 @@ export const api = {
     impactRadius: (repositoryId: string, comparisonKey: string, radius: number, signal?: AbortSignal): Promise<RepositoryImpact> => rpc(async () =>
       mapImpact(await codeIndexMapperClient.setImpactRadius({ repositoryId, comparisonKey, radius }, { signal })),
     ),
-    delete: (repositoryId: string, options: { deleteMaterialized?: boolean } = {}): Promise<void> =>
+    delete: (repositoryId: string, options: { deleteMaterialized?: boolean; deleteClone?: boolean } = {}): Promise<void> =>
       rpc(async () => {
         await codeIndexRepositoryClient.deleteRepository({
           id: repositoryId,
           deleteMaterialized: options.deleteMaterialized ?? false,
+          deleteClone: options.deleteClone ?? false,
         })
       }),
   },
 
   editor: {
-    open: async (input: { editor: SourceEditor; repo?: string | null; file_path: string; line?: number | null }): Promise<void> => {
+    open: async (input: { editor: SourceEditor; repository_id?: string | null; repo?: string | null; file_path: string; line?: number | null }): Promise<void> => {
       const res = await fetch(apiUrl('/editor/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           editor: input.editor,
+          repository_id: input.repository_id ?? '',
           repo: input.repo ?? '',
           file_path: input.file_path,
           line: input.line ?? 0,
@@ -2144,11 +2169,12 @@ export const api = {
         throw await responseError(res, 'Failed to open editor')
       }
     },
-    source: async (input: { repo?: string | null; file_path: string }): Promise<{ content: string; path: string }> => {
+    source: async (input: { repository_id?: string | null; repo?: string | null; file_path: string }): Promise<{ content: string; path: string }> => {
       const res = await fetch(apiUrl('/editor/source'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          repository_id: input.repository_id ?? '',
           repo: input.repo ?? '',
           file_path: input.file_path,
         }),

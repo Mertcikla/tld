@@ -83,21 +83,21 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	if len(facts) == 0 {
 		return nil, false, ErrNoFileFacts
 	}
-	files := make([]community.File, 0, len(facts))
+	var fileImports []cstore.FileImport
+	if req.IncludeImports {
+		fileImports, err = deps.Codeindex.FileImports(ctx, snapshotID)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	fileEdges, err := deps.Codeindex.AggregatedFileEdges(ctx, snapshotID)
+	if err != nil {
+		return nil, false, err
+	}
+	files, mapEdges, imports := buildFileInputs(facts, fileEdges, fileImports)
+
 	indexOf := make(map[string]int, len(facts))
 	for i, fact := range facts {
-		path := ""
-		if fact.GetAnchor() != nil {
-			path = fact.GetAnchor().GetPath()
-		}
-		name := fact.GetName()
-		if name == "" {
-			name = fact.GetQualifiedName()
-		}
-		if name == "" {
-			name = fact.GetId()
-		}
-		files = append(files, community.File{ID: fact.GetId(), Path: path, DisplayName: name, Language: fact.GetLanguage()})
 		indexOf[fact.GetId()] = i
 	}
 	repositoryRoot := ""
@@ -106,19 +106,13 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	}
 	report("loading", len(facts), len(facts), "loaded")
 
-	fileEdges, err := deps.Codeindex.AggregatedFileEdges(ctx, snapshotID)
-	if err != nil {
-		return nil, false, err
-	}
 	communityEdges := make([]community.Edge, 0, len(fileEdges))
-	mapEdges := make([]materialize.MapEdge, 0, len(fileEdges))
 	for _, edge := range fileEdges {
 		from, fromOK := indexOf[edge.FromFactID]
 		to, toOK := indexOf[edge.ToFactID]
 		if fromOK && toOK {
 			communityEdges = append(communityEdges, community.Edge{A: from, B: to, Weight: edge.Weight})
 		}
-		mapEdges = append(mapEdges, materialize.MapEdge{FromFactID: edge.FromFactID, ToFactID: edge.ToFactID, Weight: edge.Weight})
 	}
 
 	report("grouping", 0, 0, "grouping dependencies")
@@ -138,14 +132,6 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	repositoryName := repositoryID
 	if base := filepath.Base(repositoryRoot); repositoryRoot != "" && base != "." && base != "/" {
 		repositoryName = base
-	}
-	var imports []materialize.MapImport
-	if req.IncludeImports {
-		fileImports, err := deps.Codeindex.FileImports(ctx, snapshotID)
-		if err != nil {
-			return nil, false, err
-		}
-		imports = mapImports(fileImports)
 	}
 
 	runID := cgraph.ID(repositoryID, snapshotID, "community", configHash)
@@ -208,12 +194,75 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	return result, false, nil
 }
 
-func mapImports(imports []cstore.FileImport) []materialize.MapImport {
-	out := make([]materialize.MapImport, 0, len(imports))
-	for _, item := range imports {
-		out = append(out, materialize.MapImport{FileFactID: item.FileFactID, Import: item.Import})
+// buildFileInputs projects a snapshot's file facts into community files plus
+// dependency and import references. It keys every reference by the fact's
+// cross-snapshot logical key rather than the snapshot-scoped fact id, so
+// re-materializing an updated snapshot upserts the same workspace resources and
+// preserves user edits and placements instead of recreating nodes.
+func buildFileInputs(facts []*codeindexv1.CodeFact, fileEdges []cstore.FileEdge, fileImports []cstore.FileImport) ([]community.File, []materialize.MapEdge, []materialize.MapImport) {
+	stableByID := make(map[string]string, len(facts))
+	files := make([]community.File, 0, len(facts))
+	for _, fact := range facts {
+		key := stableFactKey(fact)
+		stableByID[fact.GetId()] = key
+		path := ""
+		if fact.GetAnchor() != nil {
+			path = fact.GetAnchor().GetPath()
+		}
+		name := fact.GetName()
+		if name == "" {
+			name = fact.GetQualifiedName()
+		}
+		if name == "" {
+			name = fact.GetId()
+		}
+		files = append(files, community.File{ID: key, Path: path, DisplayName: name, Language: fact.GetLanguage()})
 	}
-	return out
+
+	edges := make([]materialize.MapEdge, 0, len(fileEdges))
+	for _, edge := range fileEdges {
+		edges = append(edges, materialize.MapEdge{
+			FromFactID: stableLookup(stableByID, edge.FromFactID),
+			ToFactID:   stableLookup(stableByID, edge.ToFactID),
+			Weight:     edge.Weight,
+		})
+	}
+
+	imports := make([]materialize.MapImport, 0, len(fileImports))
+	for _, item := range fileImports {
+		imports = append(imports, materialize.MapImport{
+			FileFactID: stableLookup(stableByID, item.FileFactID),
+			Import:     item.Import,
+		})
+	}
+	return files, edges, imports
+}
+
+// stableFactKey returns the cross-snapshot identity of a code fact, falling
+// back to the structural key for facts published before logical keys existed.
+func stableFactKey(fact *codeindexv1.CodeFact) string {
+	if key := fact.GetLogicalKey(); key != "" {
+		return key
+	}
+	path := ""
+	if anchor := fact.GetAnchor(); anchor != nil {
+		path = anchor.GetPath()
+	}
+	name := fact.GetName()
+	if name == "" {
+		name = fact.GetQualifiedName()
+	}
+	if name == "" {
+		name = fact.GetId()
+	}
+	return cgraph.LogicalFactKey(fact.GetKind(), name, path)
+}
+
+func stableLookup(stableByID map[string]string, factID string) string {
+	if key := stableByID[factID]; key != "" {
+		return key
+	}
+	return factID
 }
 
 // analysisGroups flattens a community hierarchy into persisted analysis groups,

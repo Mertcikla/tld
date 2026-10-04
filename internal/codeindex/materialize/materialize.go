@@ -97,7 +97,7 @@ func Apply(ctx context.Context, ws core.Store, idx IndexStore, proj project.Resu
 		input := elementInput(el, opts, visible(el.Ref))
 		var id int64
 		if m, ok := byKey[el.Ref]; ok && m.Kind == cstore.MappingElement {
-			if updated, err := ws.UpdateElement(ctx, m.ResourceID, input); err == nil {
+			if updated, err := ws.UpdateElement(ctx, m.ResourceID, sourceOnly(input)); err == nil {
 				id = updated.ID
 			}
 		}
@@ -131,7 +131,7 @@ func Apply(ctx context.Context, ws core.Store, idx IndexStore, proj project.Resu
 		input := connectorInput(viewID, fromID, toID, c)
 		var id int64
 		if m, ok := byKey[c.Ref]; ok && m.Kind == cstore.MappingConnector {
-			if updated, err := ws.UpdateConnector(ctx, m.ResourceID, input); err == nil {
+			if updated, err := ws.UpdateConnector(ctx, m.ResourceID, connectorSourceOnly(input)); err == nil {
 				id = updated.ID
 			}
 		}
@@ -205,7 +205,7 @@ func ApplyScoped(ctx context.Context, ws core.Store, idx IndexStore, proj projec
 		input := elementInput(el, base, true)
 		var id int64
 		if m, ok := byKey[el.Ref]; ok && m.Kind == cstore.MappingElement {
-			if updated, err := ws.UpdateElement(ctx, m.ResourceID, input); err == nil {
+			if updated, err := ws.UpdateElement(ctx, m.ResourceID, sourceOnly(input)); err == nil {
 				id = updated.ID
 			}
 		}
@@ -233,7 +233,7 @@ func ApplyScoped(ctx context.Context, ws core.Store, idx IndexStore, proj projec
 		input := connectorInput(opts.ViewID, fromID, toID, c)
 		var id int64
 		if m, ok := byKey[c.Ref]; ok && m.Kind == cstore.MappingConnector {
-			if updated, err := ws.UpdateConnector(ctx, m.ResourceID, input); err == nil {
+			if updated, err := ws.UpdateConnector(ctx, m.ResourceID, connectorSourceOnly(input)); err == nil {
 				id = updated.ID
 			}
 		}
@@ -282,6 +282,27 @@ func ensureView(ctx context.Context, ws core.Store, idx IndexStore, opts Options
 	return view.ID, true, nil
 }
 
+// sourceOnly strips user-owned presentation fields so re-materializing an
+// existing resource updates only its code-derived linkage. Name, description,
+// tags, technology, external links, and the logo stay as the user set them;
+// created resources still get the full generated input.
+func sourceOnly(input core.LibraryElement) core.LibraryElement {
+	input.Name = ""
+	input.Description = nil
+	input.Tags = nil
+	input.Technology = nil
+	input.URL = nil
+	input.LogoURL = nil
+	return input
+}
+
+// connectorSourceOnly keeps the code-derived relationship on an existing
+// connector while leaving the user's chosen route style untouched.
+func connectorSourceOnly(input core.Connector) core.Connector {
+	input.Style = ""
+	return input
+}
+
 func elementInput(el project.Element, opts Options, visible bool) core.LibraryElement {
 	kind := strings.ToLower(project.KindLabel(el.Kind))
 	input := core.LibraryElement{
@@ -299,6 +320,10 @@ func elementInput(el project.Element, opts Options, visible bool) core.LibraryEl
 	}
 	if repo != "" {
 		input.Repo = &repo
+	}
+	if opts.RepositoryID != "" {
+		repositoryID := opts.RepositoryID
+		input.RepositoryID = &repositoryID
 	}
 	if el.FilePath != "" {
 		path := el.FilePath

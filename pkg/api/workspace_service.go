@@ -502,7 +502,7 @@ func (s *WorkspaceService) GetWorkspace(
 				BypassNoiseGate: p.BypassNoiseGate,
 				Description:     p.Description, Technology: p.Technology,
 				Url: p.Url, LogoUrl: p.LogoUrl, TechnologyLinks: p.TechnologyLinks,
-				Repo: p.Repo, Branch: p.Branch, Language: p.Language, FilePath: p.FilePath,
+				Repo: p.Repo, RepositoryId: p.RepositoryId, Branch: p.Branch, Language: p.Language, FilePath: p.FilePath,
 			})
 		}
 		for _, c := range allConnectors {
@@ -723,6 +723,7 @@ func (s *WorkspaceService) CreateElement(
 		TechLinks:       techLinks,
 		Tags:            tags,
 		Repo:            OptStr(m.GetRepo()),
+		RepositoryID:    OptStr(m.GetRepositoryId()),
 		Branch:          OptStr(m.GetBranch()),
 		Language:        OptStr(m.GetLanguage()),
 		FilePath:        OptStr(m.GetFilePath()),
@@ -800,6 +801,7 @@ func (s *WorkspaceService) UpdateElement(
 		TechLinks:       techLinks,
 		Tags:            tags,
 		Repo:            m.Repo,
+		RepositoryID:    m.RepositoryId,
 		Branch:          m.Branch,
 		Language:        m.Language,
 		FilePath:        m.FilePath,

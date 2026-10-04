@@ -436,7 +436,7 @@ func commonView(a, b []int64) int64 {
 func (m *mapMaterializer) upsertConnector(logicalKey string, input core.Connector) error {
 	m.kept[logicalKey] = true
 	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingConnector {
-		if _, err := m.ws.UpdateConnector(m.ctx, mapping.ResourceID, input); err == nil {
+		if _, err := m.ws.UpdateConnector(m.ctx, mapping.ResourceID, connectorSourceOnly(input)); err == nil {
 			m.result.Connectors++
 			m.advance("connector")
 			return nil
@@ -461,7 +461,7 @@ func (m *mapMaterializer) upsertConnector(logicalKey string, input core.Connecto
 func (m *mapMaterializer) upsertElement(logicalKey string, input core.LibraryElement) (int64, error) {
 	m.kept[logicalKey] = true
 	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingElement {
-		if updated, err := m.ws.UpdateElement(m.ctx, mapping.ResourceID, input); err == nil {
+		if updated, err := m.ws.UpdateElement(m.ctx, mapping.ResourceID, sourceOnly(input)); err == nil {
 			m.result.Elements++
 			m.advance("element")
 			return updated.ID, nil
@@ -488,15 +488,20 @@ func (m *mapMaterializer) upsertView(logicalKey, name, label string, ownerElemen
 	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingView {
 		if node, err := m.ws.ViewByID(m.ctx, mapping.ResourceID); err == nil {
 			if ownerMatches(node.OwnerElementID, ownerElementID) {
-				if _, err := m.ws.UpdateView(m.ctx, mapping.ResourceID, &name, nil, &label, nil); err == nil {
+				// Preserve a user-renamed view: pass nil name/tags so the store
+				// keeps them, while refreshing the generated level label.
+				if _, err := m.ws.UpdateView(m.ctx, mapping.ResourceID, nil, nil, &label, nil); err == nil {
 					m.result.Views++
 					m.advance("view")
 					return mapping.ResourceID, nil
 				}
 			} else {
 				// The view's owner changed (e.g. a map view created before it
-				// was nested under the workspace root). Recreate it so the
-				// hierarchy is correct, then re-place its children.
+				// was nested under the workspace root). Keep the user's name,
+				// then recreate it so the hierarchy is correct.
+				if strings.TrimSpace(node.Name) != "" {
+					name = node.Name
+				}
 				_ = m.ws.DeleteView(m.ctx, mapping.ResourceID)
 			}
 		}
@@ -587,6 +592,10 @@ func (m *mapMaterializer) fileElement(member int) core.LibraryElement {
 	} else if m.input.RepositoryName != "" {
 		repo := m.input.RepositoryName
 		input.Repo = &repo
+	}
+	if m.input.RepositoryID != "" {
+		repositoryID := m.input.RepositoryID
+		input.RepositoryID = &repositoryID
 	}
 	return input
 }

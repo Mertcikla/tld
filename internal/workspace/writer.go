@@ -28,6 +28,7 @@ var elementScalarFields = map[string]bool{
 	"url":               true,
 	"logo_url":          true,
 	"repo":              true,
+	"repository_id":     true,
 	"branch":            true,
 	"file_path":         true,
 	"symbol":            true,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/uptrace/bun"
@@ -127,7 +128,7 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 // counts reported by Snapshot.
 func (s *Store) ListRepositories(ctx context.Context) ([]*pb.RepositorySummary, error) {
 	rows, err := s.bun.QueryContext(ctx, `SELECT
-		r.id, r.root, r.latest_snapshot_id,
+		r.id, r.root, r.latest_snapshot_id, r.remote_url, r.managed,
 		COALESCE(s.created_unix, 0), COALESCE(s.git_revision, ''), COALESCE(s.git_branch, ''),
 		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = r.latest_snapshot_id),
 		(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = r.latest_snapshot_id),
@@ -145,7 +146,7 @@ func (s *Store) ListRepositories(ctx context.Context) ([]*pb.RepositorySummary, 
 	for rows.Next() {
 		var summary pb.RepositorySummary
 		if err := rows.Scan(
-			&summary.Id, &summary.Root, &summary.LatestSnapshotId,
+			&summary.Id, &summary.Root, &summary.LatestSnapshotId, &summary.RemoteUrl, &summary.Managed,
 			&summary.LatestCreatedUnix, &summary.GitRevision, &summary.GitBranch,
 			&summary.Facts, &summary.Chunks, &summary.Edges, &summary.Sources,
 		); err != nil {
@@ -157,4 +158,46 @@ func (s *Store) ListRepositories(ctx context.Context) ([]*pb.RepositorySummary, 
 		return nil, err
 	}
 	return out, nil
+}
+
+// SetRepositoryOrigin records a repository's canonical remote URL and whether
+// tld owns the checkout.
+func (s *Store) SetRepositoryOrigin(ctx context.Context, repositoryID, remoteURL string, managed bool) error {
+	if strings.TrimSpace(repositoryID) == "" {
+		return nil
+	}
+	_, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_url = ?, managed = ?, updated_at = ? WHERE id = ?`,
+		remoteURL, managed, time.Now().UTC().Format(time.RFC3339), repositoryID).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("set repository origin: %w", err)
+	}
+	return nil
+}
+
+// SetRepositoryRemoteURL refreshes only the canonical remote URL, preserving
+// the managed flag.
+func (s *Store) SetRepositoryRemoteURL(ctx context.Context, repositoryID, remoteURL string) error {
+	if strings.TrimSpace(repositoryID) == "" {
+		return nil
+	}
+	_, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_url = ?, updated_at = ? WHERE id = ?`,
+		remoteURL, time.Now().UTC().Format(time.RFC3339), repositoryID).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("set repository remote url: %w", err)
+	}
+	return nil
+}
+
+// RepositoryOrigin returns a repository's canonical remote URL and whether tld
+// owns the checkout.
+func (s *Store) RepositoryOrigin(ctx context.Context, repositoryID string) (string, bool, error) {
+	var row struct {
+		RemoteURL string `bun:"remote_url"`
+		Managed   bool   `bun:"managed"`
+	}
+	err := s.bun.NewRaw(`SELECT remote_url, managed FROM codeindex_repositories WHERE id = ?`, repositoryID).Scan(ctx, &row)
+	if err != nil {
+		return "", false, fmt.Errorf("repository origin: %w", err)
+	}
+	return row.RemoteURL, row.Managed, nil
 }

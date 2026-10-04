@@ -95,6 +95,10 @@
           "type": "string",
           "description": "Repository identifier this element lives in (e.g. an owner/name slug)."
         },
+        "repository_id": {
+          "type": "string",
+          "description": "Identifier of the indexed codeindex repository this element is linked to. When set, `repo`/`file_path` are resolved against that repository's local checkout."
+        },
         "branch": {
           "type": "string",
           "description": "Repository branch associated with this element."

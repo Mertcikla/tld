@@ -49,19 +49,20 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 			kind = "element"
 		}
 		newWS.Elements[ref] = &workspace.Element{
-			Name:        e.Name,
-			Kind:        kind,
-			Description: e.GetDescription(),
-			Technology:  e.GetTechnology(),
-			URL:         e.GetUrl(),
-			LogoURL:     e.GetLogoUrl(),
-			Repo:        e.GetRepo(),
-			Branch:      e.GetBranch(),
-			Language:    e.GetLanguage(),
-			FilePath:    e.GetFilePath(),
-			Tags:        cloneStrings(e.GetTags()),
-			HasView:     e.GetHasView(),
-			ViewLabel:   strings.TrimSpace(e.GetViewLabel()),
+			Name:         e.Name,
+			Kind:         kind,
+			Description:  e.GetDescription(),
+			Technology:   e.GetTechnology(),
+			URL:          e.GetUrl(),
+			LogoURL:      e.GetLogoUrl(),
+			Repo:         e.GetRepo(),
+			RepositoryID: e.GetRepositoryId(),
+			Branch:       e.GetBranch(),
+			Language:     e.GetLanguage(),
+			FilePath:     e.GetFilePath(),
+			Tags:         cloneStrings(e.GetTags()),
+			HasView:      e.GetHasView(),
+			ViewLabel:    strings.TrimSpace(e.GetViewLabel()),
 		}
 		newWS.Meta.Elements[ref] = &workspace.ResourceMetadata{
 			ID:        workspace.ResourceID(e.Id),

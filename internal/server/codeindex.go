@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -17,7 +19,9 @@ import (
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
+	"github.com/mertcikla/tld/v2/internal/codeindex/remote"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
@@ -26,9 +30,10 @@ import (
 // codeindex engine to the UI.
 type codeIndexRepositoryService struct {
 	codeindexv1connect.UnimplementedRepositoryServiceHandler
-	store  *cstore.Store
-	ws     *store.SQLiteStore
-	config *workspace.Config
+	store   *cstore.Store
+	ws      *store.SQLiteStore
+	dataDir string
+	config  *workspace.Config
 }
 
 func (s *codeIndexRepositoryService) ListRepositories(ctx context.Context, _ *connect.Request[codeindexv1.ListRepositoriesRequest]) (*connect.Response[codeindexv1.ListRepositoriesResponse], error) {
@@ -36,21 +41,71 @@ func (s *codeIndexRepositoryService) ListRepositories(ctx context.Context, _ *co
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	for _, repository := range repositories {
+		if repository.GetRemoteUrl() == "" {
+			if remote := repolink.GitRemoteURL(ctx, repository.GetRoot()); remote != "" {
+				repository.RemoteUrl = remote
+				_ = s.store.SetRepositoryOrigin(ctx, repository.GetId(), remote, repository.GetManaged())
+			}
+		}
+		repository.Name = repositoryDisplayName(repository)
+	}
 	return connect.NewResponse(&codeindexv1.ListRepositoriesResponse{Repositories: repositories}), nil
 }
 
-// AddRepository indexes a local directory in-process and registers it as a
-// repository. Progress is streamed while the snapshot is built, then the
-// registered repository is sent once indexing completes.
+// repositoryDisplayName derives a short repository name from its remote path or
+// local root.
+func repositoryDisplayName(repository *codeindexv1.RepositorySummary) string {
+	if remote := repository.GetRemoteUrl(); remote != "" {
+		if parsed, err := url.Parse(remote); err == nil {
+			if name := path.Base(strings.TrimSuffix(parsed.Path, "/")); name != "" && name != "." && name != "/" {
+				return name
+			}
+		}
+	}
+	return filepath.Base(repository.GetRoot())
+}
+
+// AddRepository indexes a local directory or tld-managed clone in-process and
+// registers it as a repository. Progress is streamed while the snapshot is
+// built, then the registered repository is sent once indexing completes.
 func (s *codeIndexRepositoryService) AddRepository(ctx context.Context, req *connect.Request[codeindexv1.AddRepositoryRequest], stream *connect.ServerStream[codeindexv1.AddRepositoryEvent]) error {
 	path := strings.TrimSpace(req.Msg.GetPath())
-	if path == "" {
-		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path is required"))
+	remoteURL := strings.TrimSpace(req.Msg.GetRemoteUrl())
+	if path == "" && remoteURL == "" {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path or remote_url is required"))
 	}
-	root, err := resolveRepositoryRoot(path)
-	if err != nil {
-		return connect.NewError(connect.CodeInvalidArgument, err)
+	if path != "" && remoteURL != "" {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path and remote_url are mutually exclusive"))
 	}
+
+	var root string
+	var spec remote.Spec
+	if remoteURL != "" {
+		parsed, err := remote.Parse(remoteURL)
+		if err != nil {
+			return connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		spec = parsed
+		if s.dataDir == "" {
+			return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("remote repositories require a local data directory"))
+		}
+		root = remote.ManagedDir(s.dataDir, spec)
+		_ = stream.Send(&codeindexv1.AddRepositoryEvent{Event: &codeindexv1.AddRepositoryEvent_Progress{Progress: &codeindexv1.IndexProgress{
+			Stage:  "clone",
+			Detail: spec.WebURL,
+		}}})
+		if err := remote.Clone(ctx, spec, root); err != nil {
+			return connect.NewError(connect.CodeInternal, err)
+		}
+	} else {
+		resolved, err := resolveRepositoryRoot(path)
+		if err != nil {
+			return connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		root = resolved
+	}
+
 	repositoryID := cgraph.RepositoryID(root)
 	ctx, release, err := s.store.AcquireLease(ctx, repositoryID)
 	if err != nil {
@@ -74,6 +129,11 @@ func (s *codeIndexRepositoryService) AddRepository(ctx context.Context, req *con
 	}
 	if _, err := engine.Prepare(ctx, &codeindexv1.ComparisonTarget{WorkingTree: true}); err != nil {
 		return connect.NewError(connect.CodeInternal, err)
+	}
+	if remoteURL != "" {
+		if err := s.store.SetRepositoryOrigin(ctx, repositoryID, spec.WebURL, true); err != nil {
+			return connect.NewError(connect.CodeInternal, err)
+		}
 	}
 	repository, err := s.store.Repository(ctx, repositoryID)
 	if err != nil {
@@ -114,12 +174,27 @@ func (s *codeIndexRepositoryService) DeleteRepository(ctx context.Context, req *
 	if repositoryID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository id is required"))
 	}
-	if _, err := s.store.Repository(ctx, repositoryID); err != nil {
+	repository, err := s.store.Repository(ctx, repositoryID)
+	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
 	if req.Msg.GetDeleteMaterialized() {
 		if err := s.deleteMaterializedResources(ctx, repositoryID); err != nil {
 			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	if req.Msg.GetDeleteClone() {
+		_, managed, err := s.store.RepositoryOrigin(ctx, repositoryID)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, err)
+		}
+		if managed {
+			if s.dataDir == "" || !remote.IsManagedPath(s.dataDir, repository.Root) {
+				return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("repository checkout is not tld-managed"))
+			}
+			if err := os.RemoveAll(repository.Root); err != nil {
+				return nil, connect.NewError(connect.CodeInternal, fmt.Errorf("delete clone: %w", err))
+			}
 		}
 	}
 	if err := s.store.DeleteRepository(ctx, repositoryID); err != nil {
@@ -358,9 +433,9 @@ func nextEdgeCursor(edges []*codeindexv1.EdgeFact, limit int) string {
 	return ""
 }
 
-func registerCodeIndexHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, configs ...*workspace.Config) {
+func registerCodeIndexHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, dataDir string, configs ...*workspace.Config) {
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
-	repoSvc := &codeIndexRepositoryService{store: idx, ws: sqliteStore}
+	repoSvc := &codeIndexRepositoryService{store: idx, ws: sqliteStore, dataDir: dataDir}
 	if len(configs) > 0 {
 		repoSvc.config = configs[0]
 	}

@@ -16,16 +16,18 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/mertcikla/tld/v2/internal/store"
 )
 
 const maxSourcePreviewBytes = 1 << 20
 
 type openEditorRequest struct {
-	Editor   string `json:"editor"`
-	Repo     string `json:"repo"`
-	FilePath string `json:"file_path"`
-	Line     int    `json:"line"`
+	Editor       string `json:"editor"`
+	RepositoryID string `json:"repository_id"`
+	Repo         string `json:"repo"`
+	FilePath     string `json:"file_path"`
+	Line         int    `json:"line"`
 }
 
 func registerEditorHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) {
@@ -54,7 +56,7 @@ func registerEditorHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) 
 			writeJSONError(w, http.StatusBadRequest, "file_path is required")
 			return
 		}
-		target, err := resolveEditorPath(r.Context(), fetcher, req.Repo, req.FilePath)
+		target, err := resolveEditorPath(r.Context(), fetcher, req.RepositoryID, req.Repo, req.FilePath)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
@@ -98,7 +100,7 @@ func openInEditor(ctx context.Context, store repositoryFetcher, req openEditorRe
 		return errors.New("file_path is required")
 	}
 
-	target, err := resolveEditorPath(ctx, store, req.Repo, req.FilePath)
+	target, err := resolveEditorPath(ctx, store, req.RepositoryID, req.Repo, req.FilePath)
 	if err != nil {
 		return err
 	}
@@ -130,38 +132,35 @@ func openInEditor(ctx context.Context, store repositoryFetcher, req openEditorRe
 	return nil
 }
 
-// repositoryRef is the local worktree (and optional remote URL) a linked
-// repository resolves to for opening source files.
-type repositoryRef struct {
-	Root      string
-	RemoteURL string
-}
-
 type repositoryFetcher interface {
-	Repositories(ctx context.Context) ([]repositoryRef, error)
+	Repositories(ctx context.Context) ([]repolink.Repository, error)
 }
 
 // dbRepositoryFetcher lists indexed repository roots from the codeindex store.
 type dbRepositoryFetcher struct{ db *sql.DB }
 
-func (f dbRepositoryFetcher) Repositories(ctx context.Context) ([]repositoryRef, error) {
-	rows, err := f.db.QueryContext(ctx, `SELECT root FROM codeindex_repositories WHERE root <> '' ORDER BY root`)
+func (f dbRepositoryFetcher) Repositories(ctx context.Context) ([]repolink.Repository, error) {
+	rows, err := f.db.QueryContext(ctx, `SELECT id, root, remote_url FROM codeindex_repositories WHERE root <> '' ORDER BY root`)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := []repositoryRef{}
+	out := []repolink.Repository{}
 	for rows.Next() {
-		var root string
-		if err := rows.Scan(&root); err != nil {
+		var repo repolink.Repository
+		if err := rows.Scan(&repo.ID, &repo.Root, &repo.RemoteURL); err != nil {
 			return nil, err
 		}
-		out = append(out, repositoryRef{Root: root})
+		if repo.RemoteURL == "" {
+			repo.RemoteURL = repolink.GitRemoteURL(ctx, repo.Root)
+		}
+		repo.Name = filepath.Base(repo.Root)
+		out = append(out, repo)
 	}
 	return out, rows.Err()
 }
 
-func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue string, filePath string) (string, error) {
+func resolveEditorPath(ctx context.Context, store repositoryFetcher, repositoryID, repoValue, filePath string) (string, error) {
 	cleanFile := strings.TrimSpace(filePath)
 	if before, _, ok := strings.Cut(cleanFile, "#"); ok {
 		cleanFile = before
@@ -196,7 +195,7 @@ func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue s
 		return "", errors.New("no watched repositories are configured; add a repository in the Workspace panel before opening source files")
 	}
 
-	repo, ok := matchRepository(repos, repoValue)
+	repo, ok := repolink.Resolve(repositoryID, repoValue, relative, repos)
 	if !ok && len(repos) == 1 {
 		repo = repos[0]
 		ok = true
@@ -211,46 +210,6 @@ func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue s
 		return "", errors.New("resolved file path escapes the watched repository")
 	}
 	return target, nil
-}
-
-func matchRepository(repos []repositoryRef, value string) (repositoryRef, bool) {
-	needle := strings.TrimSpace(value)
-	needleSlug := githubSlug(needle)
-	for _, repo := range repos {
-		candidates := []string{repo.Root}
-		if repo.RemoteURL != "" {
-			candidates = append(candidates, repo.RemoteURL)
-		}
-		for _, candidate := range candidates {
-			if strings.EqualFold(strings.TrimSpace(candidate), needle) {
-				return repo, true
-			}
-			if needleSlug != "" && strings.EqualFold(githubSlug(candidate), needleSlug) {
-				return repo, true
-			}
-		}
-	}
-	return repositoryRef{}, false
-}
-
-func githubSlug(value string) string {
-	cleaned := strings.TrimSpace(value)
-	cleaned = strings.TrimSuffix(cleaned, ".git")
-	if after, ok := strings.CutPrefix(cleaned, "git@github.com:"); ok {
-		return strings.ToLower(after)
-	}
-	cleaned = strings.TrimPrefix(cleaned, "https://")
-	cleaned = strings.TrimPrefix(cleaned, "http://")
-	cleaned = strings.TrimPrefix(cleaned, "github.com/")
-	cleaned = strings.TrimPrefix(cleaned, "www.github.com/")
-	parts := strings.Split(cleaned, "/")
-	if len(parts) >= 2 && !strings.Contains(parts[0], ".") {
-		return strings.ToLower(parts[0] + "/" + parts[1])
-	}
-	if len(parts) >= 3 && strings.EqualFold(parts[0], "github.com") {
-		return strings.ToLower(parts[1] + "/" + parts[2])
-	}
-	return ""
 }
 
 func lookPath(name string) (string, error) {

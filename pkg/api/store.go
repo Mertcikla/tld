@@ -54,6 +54,7 @@ type ElementInput struct {
 	TechLinks       []*diagv1.TechnologyLink
 	Tags            []string
 	Repo            *string
+	RepositoryID    *string
 	Branch          *string
 	Language        *string
 	FilePath        *string

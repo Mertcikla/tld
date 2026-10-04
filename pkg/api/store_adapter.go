@@ -176,6 +176,7 @@ func (a *APIStore) CreateElement(ctx context.Context, workspaceID uuid.UUID, inp
 		TechnologyConnectors: techLinks,
 		Tags:                 input.Tags,
 		Repo:                 input.Repo,
+		RepositoryID:         input.RepositoryID,
 		Branch:               input.Branch,
 		Language:             input.Language,
 		FilePath:             input.FilePath,
@@ -201,6 +202,7 @@ func (a *APIStore) UpdateElement(ctx context.Context, id int32, workspaceID uuid
 		TechnologyConnectors: technologyLinksToConnectors(input.TechLinks),
 		Tags:                 input.Tags,
 		Repo:                 input.Repo,
+		RepositoryID:         input.RepositoryID,
 		Branch:               input.Branch,
 		Language:             input.Language,
 		FilePath:             input.FilePath,
@@ -1201,6 +1203,9 @@ func elementToProto(element app.LibraryElement, workspaceID uuid.UUID) *diagv1.E
 	if element.Repo != nil {
 		p.Repo = element.Repo
 	}
+	if element.RepositoryID != nil {
+		p.RepositoryId = element.RepositoryID
+	}
 	if element.Branch != nil {
 		p.Branch = element.Branch
 	}
@@ -1253,6 +1258,9 @@ func placedElementToProto(item app.PlacedElement) *diagv1.PlacedElement {
 	}
 	if item.Repo != nil {
 		p.Repo = item.Repo
+	}
+	if item.RepositoryID != nil {
+		p.RepositoryId = item.RepositoryID
 	}
 	if item.Branch != nil {
 		p.Branch = item.Branch

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"text/tabwriter"
@@ -30,6 +31,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	"github.com/mertcikla/tld/v2/internal/codeindex/parity"
 	"github.com/mertcikla/tld/v2/internal/codeindex/project"
+	"github.com/mertcikla/tld/v2/internal/codeindex/remote"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/codeindex/visibility"
 	"github.com/mertcikla/tld/v2/internal/codeindex/watch"
@@ -59,10 +61,14 @@ type options struct {
 func NewIndexCmd() *cobra.Command {
 	opts := options{}
 	c := &cobra.Command{
-		Use:   "index [path]",
+		Use:   "index [path|url]",
 		Short: "Index a repository into the codeindex graph",
 		Long: `Index extracts code facts, edges, and chunks from a repository using the
 in-tree codeindex engine and publishes an immutable snapshot.
+
+The target is a local directory or a remote URL (github.com/owner/repo,
+owner/repo, or a Git URL). Remote repositories are cloned into tld's data
+directory and treated as managed checkouts.
 
 For a one-time index, pass --materialize to additionally project candidate
 elements and connectors into a workspace view, or --map to group the
@@ -117,21 +123,34 @@ type engine struct {
 	out      io.Writer
 }
 
+// detectRemoteTarget reports whether the index target is a remote repository
+// reference. Explicit remote syntax always wins; owner/repo shorthand is only
+// treated as remote when no local directory matches.
+func detectRemoteTarget(raw string) (remote.Spec, bool, error) {
+	cleaned := strings.TrimSpace(raw)
+	if cleaned == "" {
+		return remote.Spec{}, false, nil
+	}
+	explicit := strings.Contains(cleaned, "://") || strings.HasPrefix(cleaned, "git@") ||
+		strings.HasPrefix(cleaned, "github.com/") || strings.HasSuffix(cleaned, ".git")
+	if !explicit {
+		if _, err := os.Stat(cleaned); err == nil {
+			return remote.Spec{}, false, nil
+		}
+	}
+	spec, err := remote.Parse(cleaned)
+	if err != nil {
+		if explicit {
+			return remote.Spec{}, false, err
+		}
+		return remote.Spec{}, false, nil
+	}
+	return spec, true, nil
+}
+
 func run(cmd *cobra.Command, opts options) error {
 	ctx := cmd.Context()
 	opts.jsonOut = opts.jsonOut || cmdutil.WantsJSONFromCmd(cmd)
-	root, err := filepath.Abs(opts.path)
-	if err != nil {
-		return err
-	}
-	if info, err := os.Stat(root); err != nil || !info.IsDir() {
-		return fmt.Errorf("index: %s is not a directory", opts.path)
-	}
-
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return err
-	}
 	if opts.pollInterval <= 0 || opts.debounce < 0 {
 		return fmt.Errorf("poll interval must be positive and debounce nonnegative")
 	}
@@ -146,6 +165,32 @@ func run(cmd *cobra.Command, opts options) error {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return err
 	}
+
+	var remoteSpec remote.Spec
+	root := ""
+	if spec, isRemote, err := detectRemoteTarget(opts.path); err != nil {
+		return err
+	} else if isRemote {
+		remoteSpec = spec
+		root = remote.ManagedDir(dataDir, spec)
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Cloning %s into %s\n", spec.WebURL, root)
+		if err := remote.Clone(ctx, spec, root); err != nil {
+			return err
+		}
+	} else {
+		root, err = filepath.Abs(opts.path)
+		if err != nil {
+			return err
+		}
+		if info, err := os.Stat(root); err != nil || !info.IsDir() {
+			return fmt.Errorf("index: %s is not a directory", opts.path)
+		}
+		root, err = filepath.EvalSymlinks(root)
+		if err != nil {
+			return err
+		}
+	}
+
 	sq, err := localstore.OpenLocal(ctx, global, dataDir, assets.FS)
 	if err != nil {
 		return err
@@ -162,6 +207,11 @@ func run(cmd *cobra.Command, opts options) error {
 		repoRoot: root,
 		dataDir:  dataDir,
 		out:      cmd.OutOrStdout(),
+	}
+	if remoteSpec.WebURL != "" {
+		if err := eng.store.SetRepositoryOrigin(ctx, cgraph.RepositoryID(root), remoteSpec.WebURL, true); err != nil {
+			return err
+		}
 	}
 	if opts.watch {
 		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)

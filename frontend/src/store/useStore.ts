@@ -191,6 +191,7 @@ export function placedElementToLibraryElement(element: PlacedElement): LibraryEl
     technology_connectors: element.technology_connectors,
     tags: element.tags,
     repo: element.repo,
+    repository_id: element.repository_id,
     branch: element.branch,
     file_path: element.file_path,
     language: element.language,

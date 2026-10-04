@@ -5,24 +5,26 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/mertcikla/tld/v2/internal/repolink"
 )
 
 type mockStore struct {
-	repos []repositoryRef
+	repos []repolink.Repository
 	err   error
 }
 
-func (m *mockStore) Repositories(ctx context.Context) ([]repositoryRef, error) {
+func (m *mockStore) Repositories(ctx context.Context) ([]repolink.Repository, error) {
 	return m.repos, m.err
 }
 
 func TestResolveEditorPath(t *testing.T) {
-	repos := []repositoryRef{
+	repos := []repolink.Repository{
 		{Root: "/a/project1"},
 		{Root: "/b/project2"},
 	}
 	if filepath.Separator == '\\' {
-		repos = []repositoryRef{
+		repos = []repolink.Repository{
 			{Root: "C:\\a\\project1"},
 			{Root: "C:\\b\\project2"},
 		}
@@ -32,7 +34,7 @@ func TestResolveEditorPath(t *testing.T) {
 
 	t.Run("absolute path inside repository", func(t *testing.T) {
 		path := filepath.Join(repos[0].Root, "src", "main.go")
-		got, err := resolveEditorPath(context.Background(), store, "", path)
+		got, err := resolveEditorPath(context.Background(), store, "", "", path)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -43,7 +45,7 @@ func TestResolveEditorPath(t *testing.T) {
 
 	t.Run("absolute path matching repository root exactly", func(t *testing.T) {
 		path := repos[1].Root
-		got, err := resolveEditorPath(context.Background(), store, "", path)
+		got, err := resolveEditorPath(context.Background(), store, "", "", path)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -58,7 +60,7 @@ func TestResolveEditorPath(t *testing.T) {
 			path = "C:\\Windows\\System32\\drivers\\etc\\hosts"
 		}
 
-		_, err := resolveEditorPath(context.Background(), store, "", path)
+		_, err := resolveEditorPath(context.Background(), store, "", "", path)
 		if err == nil {
 			t.Fatal("expected error for path outside repository, got nil")
 		}
@@ -71,7 +73,7 @@ func TestResolveEditorPath(t *testing.T) {
 	t.Run("relative path with single repo", func(t *testing.T) {
 		singleStore := &mockStore{repos: repos[:1]}
 		path := "src/main.go"
-		got, err := resolveEditorPath(context.Background(), singleStore, "", path)
+		got, err := resolveEditorPath(context.Background(), singleStore, "", "", path)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -83,7 +85,7 @@ func TestResolveEditorPath(t *testing.T) {
 
 	t.Run("relative path with multiple repos and explicit repo match", func(t *testing.T) {
 		path := "src/main.go"
-		got, err := resolveEditorPath(context.Background(), store, repos[1].Root, path)
+		got, err := resolveEditorPath(context.Background(), store, "", repos[1].Root, path)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -95,9 +97,53 @@ func TestResolveEditorPath(t *testing.T) {
 
 	t.Run("relative path escaping repository", func(t *testing.T) {
 		path := "../outside.go"
-		_, err := resolveEditorPath(context.Background(), store, "", path)
+		_, err := resolveEditorPath(context.Background(), store, "", "", path)
 		if err == nil {
 			t.Fatal("expected error for escaping path, got nil")
+		}
+	})
+}
+
+func TestResolveEditorPathByRepositoryReference(t *testing.T) {
+	repos := []repolink.Repository{
+		{ID: "repo-a", Root: "/a/project1", RemoteURL: "https://github.com/owner/alpha"},
+		{ID: "repo-b", Root: "/b/project2", RemoteURL: "https://github.com/owner/beta"},
+	}
+	store := &mockStore{repos: repos}
+
+	t.Run("explicit repository id", func(t *testing.T) {
+		got, err := resolveEditorPath(context.Background(), store, "repo-b", "", "src/main.go")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := filepath.Join("/b/project2", "src", "main.go"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("github slug resolves remote", func(t *testing.T) {
+		got, err := resolveEditorPath(context.Background(), store, "", "owner/beta", "src/main.go")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := filepath.Join("/b/project2", "src", "main.go"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("remote url resolves", func(t *testing.T) {
+		got, err := resolveEditorPath(context.Background(), store, "", "git@github.com:owner/alpha.git", "src/main.go")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := filepath.Join("/a/project1", "src", "main.go"); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("unknown reference with multiple repos fails", func(t *testing.T) {
+		if _, err := resolveEditorPath(context.Background(), store, "", "owner/missing", "src/main.go"); err == nil {
+			t.Fatal("expected error for unresolvable repository reference")
 		}
 	})
 }

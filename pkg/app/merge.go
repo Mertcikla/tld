@@ -10,12 +10,13 @@ import (
 )
 
 type MergeResolved struct {
-	Kind        *string `json:"kind,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Repo        *string `json:"repo,omitempty"`
-	Branch      *string `json:"branch,omitempty"`
-	FilePath    *string `json:"file_path,omitempty"`
-	Language    *string `json:"language,omitempty"`
+	Kind         *string `json:"kind,omitempty"`
+	Description  *string `json:"description,omitempty"`
+	Repo         *string `json:"repo,omitempty"`
+	RepositoryID *string `json:"repository_id,omitempty"`
+	Branch       *string `json:"branch,omitempty"`
+	FilePath     *string `json:"file_path,omitempty"`
+	Language     *string `json:"language,omitempty"`
 }
 
 type MergeResult struct {
@@ -117,6 +118,7 @@ func (s *Store) MergeElements(ctx context.Context, sourceID, survivorID int64, r
 			Set("technology_connectors = ?", jsonString(merged.TechnologyConnectors, "[]")).
 			Set("tags = ?", jsonString(merged.Tags, "[]")).
 			Set("repo = ?", merged.Repo).
+			Set("repository_id = ?", merged.RepositoryID).
 			Set("branch = ?", merged.Branch).
 			Set("file_path = ?", merged.FilePath).
 			Set("language = ?", merged.Language).
@@ -165,6 +167,9 @@ func mergeElementFields(survivor, source LibraryElement, resolved MergeResolved)
 	}
 	if resolved.Repo != nil {
 		merged.Repo = resolved.Repo
+	}
+	if resolved.RepositoryID != nil {
+		merged.RepositoryID = resolved.RepositoryID
 	}
 	if resolved.Branch != nil {
 		merged.Branch = resolved.Branch

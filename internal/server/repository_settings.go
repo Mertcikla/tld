@@ -13,6 +13,7 @@ import (
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
+	"github.com/mertcikla/tld/v2/internal/repolink"
 )
 
 func (s *codeIndexRepositoryService) GetRepositorySettings(ctx context.Context, req *connect.Request[pb.GetRepositorySettingsRequest]) (*connect.Response[pb.RepositorySettings], error) {
@@ -144,6 +145,9 @@ func (s *codeIndexRepositoryService) UpdateRepositoryRemote(ctx context.Context,
 	}
 	if err != nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	if remoteURL := repolink.GitRemoteURL(ctx, repo.Root); remoteURL != "" {
+		_ = s.store.SetRepositoryRemoteURL(ctx, repo.Id, remoteURL)
 	}
 	return s.GetRepositorySettings(ctx, connect.NewRequest(&pb.GetRepositorySettingsRequest{RepositoryId: repo.Id}))
 }

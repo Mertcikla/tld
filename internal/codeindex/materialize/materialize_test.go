@@ -7,9 +7,11 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/community"
 	"github.com/mertcikla/tld/v2/internal/codeindex/project"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/codeindex/visibility"
+	"github.com/mertcikla/tld/v2/internal/core"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 )
 
@@ -62,6 +64,24 @@ func TestElementInputRecordsLineAnchorAndRoot(t *testing.T) {
 	}
 	if got.Repo == nil || *got.Repo != "/repos/demo" {
 		t.Fatalf("repo = %v, want /repos/demo", got.Repo)
+	}
+	if got.RepositoryID == nil || *got.RepositoryID != "repo" {
+		t.Fatalf("repository_id = %v, want repo", got.RepositoryID)
+	}
+}
+
+func TestMapFileElementStampsRepositoryID(t *testing.T) {
+	m := &mapMaterializer{input: MapInput{
+		RepositoryID:   "repo-1",
+		RepositoryRoot: "/work/repo",
+		Files:          []community.File{{ID: "f1", Path: "src/main.go", DisplayName: "main.go"}},
+	}}
+	got := m.fileElement(0)
+	if got.RepositoryID == nil || *got.RepositoryID != "repo-1" {
+		t.Fatalf("repository_id = %v, want repo-1", got.RepositoryID)
+	}
+	if got.Repo == nil || *got.Repo != "/work/repo" {
+		t.Fatalf("repo = %v, want /work/repo", got.Repo)
 	}
 }
 
@@ -184,5 +204,92 @@ func TestApplyPrunesStale(t *testing.T) {
 	// The view mapping survives pruning.
 	if _, ok, _ := idx.MappingByLogicalKey(ctx, "view|repo-1"); !ok {
 		t.Fatal("view mapping was pruned")
+	}
+}
+
+func TestApplyPreservesUserEdits(t *testing.T) {
+	ctx := context.Background()
+	ws, idx := openStores(t)
+	opts := Options{RepositoryID: "repo-1", RepositoryName: "demo", RepositoryRoot: "/repo/demo", SnapshotID: "snap-1"}
+	proj := fixture()
+
+	first, err := Apply(ctx, ws, idx, proj, allVisible(proj), opts)
+	if err != nil {
+		t.Fatalf("first apply: %v", err)
+	}
+	mapping, _, err := idx.MappingByLogicalKey(ctx, "fact|a.go|FACT_KIND_FUNCTION|A")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The user renames the mapped element and places it in their own view.
+	if _, err := ws.UpdateElement(ctx, mapping.ResourceID, core.LibraryElement{Name: "My Label", Tags: []string{"mine"}}); err != nil {
+		t.Fatalf("user edit: %v", err)
+	}
+	userView, err := ws.CreateView(ctx, "My Diagram", nil, nil)
+	if err != nil {
+		t.Fatalf("create user view: %v", err)
+	}
+	if _, err := ws.AddPlacement(ctx, userView.ID, mapping.ResourceID, 12, 34); err != nil {
+		t.Fatalf("user placement: %v", err)
+	}
+	edgeMapping, _, err := idx.MappingByLogicalKey(ctx, "edge|CALLS|A|B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.UpdateConnector(ctx, edgeMapping.ResourceID, core.Connector{Style: "straight"}); err != nil {
+		t.Fatalf("user connector style: %v", err)
+	}
+
+	// A new snapshot changes the source anchor and re-materializes the same ref.
+	opts.SnapshotID = "snap-2"
+	updated := fixture()
+	for i := range updated.Elements {
+		if updated.Elements[i].Ref == "fact|a.go|FACT_KIND_FUNCTION|A" {
+			updated.Elements[i].Anchor = &pb.SourceAnchor{Path: "a.go", StartLine: 40, EndLine: 41, SourceHash: "h2"}
+		}
+	}
+	if _, err := Apply(ctx, ws, idx, updated, allVisible(updated), opts); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+
+	got, err := ws.ElementByID(ctx, mapping.ResourceID)
+	if err != nil {
+		t.Fatalf("element: %v", err)
+	}
+	if got.Name != "My Label" {
+		t.Fatalf("name = %q, want preserved %q", got.Name, "My Label")
+	}
+	if len(got.Tags) != 1 || got.Tags[0] != "mine" {
+		t.Fatalf("tags = %v, want preserved [mine]", got.Tags)
+	}
+	if got.FilePath == nil || *got.FilePath != "a.go#L41" {
+		t.Fatalf("file_path = %v, want updated a.go#L41", got.FilePath)
+	}
+	placements, err := ws.ListElementPlacements(ctx, mapping.ResourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, placement := range placements {
+		if placement.ViewID == userView.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("user placement was lost after re-materialization")
+	}
+	connectors, err := ws.Connectors(ctx, first.ViewID)
+	if err != nil {
+		t.Fatalf("connectors: %v", err)
+	}
+	style := ""
+	for _, connector := range connectors {
+		if connector.ID == edgeMapping.ResourceID {
+			style = connector.Style
+		}
+	}
+	if style != "straight" {
+		t.Fatalf("connector style = %q, want preserved straight", style)
 	}
 }

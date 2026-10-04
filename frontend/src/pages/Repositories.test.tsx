@@ -28,6 +28,9 @@ vi.mock('../api/client', () => ({
         chunks: 4,
         edges: 0,
         sources: 4,
+        remoteUrl: 'https://github.com/test/demo',
+        name: 'demo',
+        managed: false,
       }]),
       snapshots: vi.fn(async () => [
         { id: 'snap-0', repositoryId: 'repo-1', createdUnix: 90, gitRevision: 'old', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-0', ingestionStatus: 'complete', projects: [], warnings: [] },
@@ -290,7 +293,7 @@ describe('Repositories map action', () => {
       await renderer.root.findByProps({ 'data-testid': 'confirm-dialog-confirm' }).props.onClick()
     })
 
-    expect(api.repositories.delete).toHaveBeenCalledWith('repo-1', { deleteMaterialized: true })
+    expect(api.repositories.delete).toHaveBeenCalledWith('repo-1', { deleteMaterialized: true, deleteClone: false })
     expect(api.repositories.list).toHaveBeenCalled()
   })
   it('deletes a snapshot after confirmation', async () => {
@@ -351,10 +354,72 @@ describe('Repositories map action', () => {
     })
 
     expect(api.repositories.add).toHaveBeenCalledWith(
-      '/repo/new',
+      { path: '/repo/new' },
       expect.objectContaining({ onProgress: expect.any(Function) }),
     )
     expect(api.repositories.list).toHaveBeenCalled()
+    renderer.unmount()
+  })
+  it('adds a remote repository from the sidebar dialog', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.list).mockClear()
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<Repositories />)
+    })
+
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick()
+    })
+    act(() => {
+      renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-path' })
+        .props.onChange({ target: { value: 'facebook/react' } })
+    })
+    await act(async () => {
+      await renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-submit' })
+        .props.onClick()
+    })
+
+    expect(api.repositories.add).toHaveBeenCalledWith(
+      { remoteUrl: 'facebook/react' },
+      expect.objectContaining({ onProgress: expect.any(Function) }),
+    )
+    renderer.unmount()
+  })
+  it('deletes a managed clone when toggled', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([{
+      id: 'repo-1',
+      root: '/data/repositories/github.com-test-demo-1234abcd',
+      latestSnapshotId: 'snap-1',
+      latestCreatedUnix: 100,
+      gitRevision: 'abc',
+      gitBranch: 'main',
+      facts: 4,
+      chunks: 4,
+      edges: 0,
+      sources: 4,
+      remoteUrl: 'https://github.com/test/demo',
+      name: 'demo',
+      managed: true,
+    }])
+    vi.mocked(api.repositories.delete).mockClear()
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<Repositories />)
+    })
+
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'repositories-delete-repo-1' }).props.onClick({ stopPropagation: () => {} })
+    })
+    await act(async () => {
+      await renderer.root.findByProps({ 'data-testid': 'confirm-dialog-confirm' }).props.onClick()
+    })
+
+    expect(api.repositories.delete).toHaveBeenCalledWith('repo-1', { deleteMaterialized: false, deleteClone: true })
     renderer.unmount()
   })
   it('shows friendly indexing status while adding a repository', async () => {
@@ -588,7 +653,7 @@ describe('Repositories map action', () => {
     const { api } = await import('../api/client')
     const result = await api.repositories.compare('repo-1', { base: {}, head: {} })
     const [first] = await api.repositories.list()
-    vi.mocked(api.repositories.list).mockResolvedValueOnce([first, { ...first, id: 'repo-2', root: '/repo/other' }])
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([first, { ...first, id: 'repo-2', root: '/repo/other', remoteUrl: 'https://github.com/test/other', name: 'other' }])
     let finish!: (value: typeof result) => void
     vi.mocked(api.repositories.compare).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))
     let renderer!: ReturnType<typeof create>
@@ -668,7 +733,7 @@ describe('Repositories map action', () => {
     const { api } = await import('../api/client')
     const [first] = await api.repositories.list()
     const saved = await api.repositories.snapshots('repo-1')
-    vi.mocked(api.repositories.list).mockResolvedValueOnce([first, { ...first, id: 'repo-2', root: '/repo/other' }])
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([first, { ...first, id: 'repo-2', root: '/repo/other', remoteUrl: 'https://github.com/test/other', name: 'other' }])
     let finish!: (value: typeof saved) => void
     vi.mocked(api.repositories.snapshots)
       .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve }))

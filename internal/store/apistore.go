@@ -179,6 +179,7 @@ func (a *APIAdapter) CreateElement(ctx context.Context, _ uuid.UUID, input api.E
 		TechnologyConnectors: technologyLinksFromProto(input.TechLinks),
 		Tags:                 cloneStrings(input.Tags),
 		Repo:                 input.Repo,
+		RepositoryID:         input.RepositoryID,
 		Branch:               input.Branch,
 		Language:             input.Language,
 		FilePath:             input.FilePath,
@@ -204,6 +205,7 @@ func (a *APIAdapter) UpdateElement(ctx context.Context, id int32, _ uuid.UUID, i
 		TechnologyConnectors: technologyLinksFromProto(input.TechLinks),
 		Tags:                 cloneStrings(input.Tags),
 		Repo:                 input.Repo,
+		RepositoryID:         input.RepositoryID,
 		Branch:               input.Branch,
 		Language:             input.Language,
 		FilePath:             input.FilePath,
@@ -922,6 +924,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			TechLinks:       cloneTechLinks(planned.GetTechnologyLinks()),
 			Tags:            cloneStrings(planned.GetTags()),
 			Repo:            planned.Repo,
+			RepositoryID:    planned.RepositoryId,
 			Branch:          planned.Branch,
 			Language:        planned.Language,
 			FilePath:        planned.FilePath,
@@ -1417,6 +1420,9 @@ func elementToProto(element app.LibraryElement, workspaceID uuid.UUID) *diagv1.E
 	if element.Repo != nil {
 		p.Repo = element.Repo
 	}
+	if element.RepositoryID != nil {
+		p.RepositoryId = element.RepositoryID
+	}
 	if element.Branch != nil {
 		p.Branch = element.Branch
 	}
@@ -1472,6 +1478,9 @@ func placedElementToProto(item app.PlacedElement) *diagv1.PlacedElement {
 	}
 	if item.Repo != nil {
 		p.Repo = item.Repo
+	}
+	if item.RepositoryID != nil {
+		p.RepositoryId = item.RepositoryID
 	}
 	if item.Branch != nil {
 		p.Branch = item.Branch
