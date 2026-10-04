@@ -114,7 +114,7 @@ func (m *watchManager) start(ctx context.Context, st cstore.WatchState, material
 		args = append(args, "--data-dir", m.dataDir)
 	}
 	if materialize {
-		args = append(args, "--materialize")
+		args = append(args, "--map")
 	}
 	childCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	cmd := exec.CommandContext(childCtx, exe, args...)

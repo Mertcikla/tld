@@ -47,6 +47,7 @@ import {
   type RepositoryPullRequest,
   type OpenRepositoryPullRequest,
   type RepositoryIndexProgress,
+  type RepositoryIndexerCheck,
   type RepositoryMapProgress,
   type SnapshotDiff,
   type RepositoryImpact as RepositoryImpactResult,
@@ -463,6 +464,10 @@ export default function Repositories() {
   const [addOpen, setAddOpen] = useState(false)
   const [addPath, setAddPath] = useState('')
   const [addWatch, setAddWatch] = useState(false)
+  const [addMap, setAddMap] = useState(true)
+  const [addRequirements, setAddRequirements] =
+    useState<RepositoryIndexerCheck | null>(null)
+  const [checkingIndexers, setCheckingIndexers] = useState(false)
   const [adding, setAdding] = useState(false)
   const [addProgress, setAddProgress] = useState<RepositoryIndexProgress | null>(
     null,
@@ -899,25 +904,64 @@ export default function Repositories() {
       setDeletingSnapshot(false)
     }
   }
+  const missingIndexers = useMemo(
+    () => addRequirements?.indexers.filter((indexer) => !indexer.installed) ?? [],
+    [addRequirements],
+  )
+  const checkAddIndexers = async (): Promise<RepositoryIndexerCheck | null> => {
+    const value = addPath.trim()
+    if (!value) {
+      setAddError('Enter a repository path or URL')
+      return null
+    }
+    setCheckingIndexers(true)
+    setAddError('')
+    try {
+      const check = await api.repositories.checkIndexers(
+        parseRepositoryAddInput(value),
+      )
+      setAddRequirements(check)
+      return check
+    } catch (err) {
+      setAddRequirements(null)
+      setAddError(
+        err instanceof Error ? err.message : 'Could not check required indexers',
+      )
+      return null
+    } finally {
+      setCheckingIndexers(false)
+    }
+  }
   const handleAddRepository = async () => {
+    if (adding || checkingIndexers) return
     const value = addPath.trim()
     if (!value) {
       setAddError('Enter a repository path or URL')
       return
     }
+    if (missingIndexers.length > 0) {
+      await checkAddIndexers()
+      return
+    }
+    const check = addRequirements?.ready ? addRequirements : await checkAddIndexers()
+    if (!check?.ready) return
     setAdding(true)
     setAddError('')
     setAddProgress(null)
     try {
       const added = await api.repositories.add(
         parseRepositoryAddInput(value),
-        { onProgress: setAddProgress },
+        { materialize: addMap, onProgress: setAddProgress },
       )
       setAddOpen(false)
       setAddPath('')
       setAddProgress(null)
+      setAddRequirements(null)
+      setAddMap(true)
       toast({
-        title: 'Repository added',
+        title: addMap
+          ? 'Repository added and mapped'
+          : 'Repository added',
         description: value,
         status: 'success',
       })
@@ -925,7 +969,9 @@ export default function Repositories() {
       setSelectedId(added.id)
       if (addWatch) {
         try {
-          await api.repositories.startWatch(added.id)
+          await api.repositories.startWatch(added.id, {
+            materialize: addMap,
+          })
         } catch (err) {
           toast({
             title: 'Repository added without a watcher',
@@ -1320,13 +1366,14 @@ export default function Repositories() {
                 onOpen={() => {
                   setAddError('')
                   setAddProgress(null)
+                  setAddRequirements(null)
                 }}
                 onClose={() => {
                   if (!adding) setAddOpen(false)
                 }}
                 placement="right-start"
                 isLazy
-                closeOnBlur
+                closeOnBlur={!adding && !checkingIndexers}
                 returnFocusOnClose={false}
               >
                 <PopoverTrigger>
@@ -1398,13 +1445,17 @@ export default function Repositories() {
                           value={addPath}
                           data-testid="repositories-add-path"
                           isDisabled={adding}
-                          onChange={(e) => setAddPath(e.target.value)}
+                          onChange={(e) => {
+                            setAddPath(e.target.value)
+                            setAddRequirements(null)
+                            setAddError('')
+                          }}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') void handleAddRepository()
                           }}
                         />
                       </FormControl>
-                      {adding && (
+                      {(adding || checkingIndexers) && (
                         <Box
                           mt={3}
                           p={3}
@@ -1419,10 +1470,12 @@ export default function Repositories() {
                               fontWeight="semibold"
                               aria-live="polite"
                             >
-                              {indexStageLabel(addProgress?.stage || '') ||
-                                'Preparing index…'}
+                              {checkingIndexers
+                                ? 'Checking required indexers…'
+                                : indexStageLabel(addProgress?.stage || '') ||
+                                  'Preparing index…'}
                             </Text>
-                            {!!addProgress?.total && (
+                            {!!addProgress?.total && !checkingIndexers && (
                               <Text ml="auto" fontSize="xs" color="gray.400">
                                 {addProgress.current}/{addProgress.total}
                               </Text>
@@ -1432,7 +1485,9 @@ export default function Repositories() {
                             mt={2}
                             size="xs"
                             borderRadius="full"
-                            isIndeterminate={!addProgress?.total}
+                            isIndeterminate={
+                              checkingIndexers || !addProgress?.total
+                            }
                             value={
                               addProgress?.total
                                 ? (addProgress.current / addProgress.total) *
@@ -1440,7 +1495,7 @@ export default function Repositories() {
                                 : undefined
                             }
                           />
-                          {addProgress?.detail && (
+                          {addProgress?.detail && !checkingIndexers && (
                             <Text
                               mt={2}
                               fontSize="xs"
@@ -1459,7 +1514,71 @@ export default function Repositories() {
                           <Text fontSize="sm">{addError}</Text>
                         </Alert>
                       )}
+                      {missingIndexers.length > 0 && (
+                        <Alert
+                          status="warning"
+                          mt={3}
+                          borderRadius="md"
+                          alignItems="flex-start"
+                          data-testid="repositories-add-indexers"
+                        >
+                          <AlertIcon />
+                          <Box minW={0} flex={1}>
+                            <Text fontSize="sm" fontWeight="semibold">
+                              Install required indexers
+                            </Text>
+                            <Text fontSize="xs" mt={1} color="gray.600">
+                              This repository needs these tools before it can be
+                              indexed.
+                            </Text>
+                            <VStack
+                              mt={2}
+                              spacing={2}
+                              align="stretch"
+                              maxH="180px"
+                              overflowY="auto"
+                            >
+                              {missingIndexers.map((indexer) => (
+                                <Box key={indexer.tool}>
+                                  <Text fontSize="xs" fontWeight="semibold">
+                                    {indexer.tool}
+                                  </Text>
+                                  <Text
+                                    as="code"
+                                    display="block"
+                                    mt={0.5}
+                                    px={2}
+                                    py={1}
+                                    borderRadius="sm"
+                                    bg="blackAlpha.100"
+                                    fontSize="xs"
+                                    wordBreak="break-all"
+                                  >
+                                    {indexer.installHint}
+                                  </Text>
+                                </Box>
+                              ))}
+                            </VStack>
+                          </Box>
+                        </Alert>
+                      )}
                       <HStack mt={4} align="flex-start">
+                        <Switch
+                          size="sm"
+                          data-testid="repositories-add-map"
+                          isChecked={addMap}
+                          isDisabled={adding}
+                          onChange={(e) => setAddMap(e.target.checked)}
+                        />
+                        <Box>
+                          <Text fontSize="sm">Map into workspace</Text>
+                          <Text fontSize="xs" color="gray.500">
+                            Group this repository into a map view with components
+                            and dependencies.
+                          </Text>
+                        </Box>
+                      </HStack>
+                      <HStack mt={3} align="flex-start">
                         <Switch
                           size="sm"
                           data-testid="repositories-add-watch"
@@ -1489,11 +1608,25 @@ export default function Repositories() {
                       >
                         Cancel
                       </Button>
+                      {missingIndexers.length > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          data-testid="repositories-add-recheck"
+                          isLoading={checkingIndexers}
+                          onClick={() => void checkAddIndexers()}
+                        >
+                          Re-check
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         style={accentStyle}
                         data-testid="repositories-add-submit"
                         isLoading={adding}
+                        isDisabled={
+                          missingIndexers.length > 0 || checkingIndexers
+                        }
                         onClick={() => void handleAddRepository()}
                       >
                         Add repository

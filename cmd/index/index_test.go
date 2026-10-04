@@ -19,13 +19,6 @@ import (
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
-func TestMaterializeFlagDefaultsOff(t *testing.T) {
-	flag := NewIndexCmd().Flags().Lookup("materialize")
-	if flag == nil || flag.DefValue != "false" {
-		t.Fatal("materialize must default off")
-	}
-}
-
 func TestMapFlagDefaultsOff(t *testing.T) {
 	flag := NewIndexCmd().Flags().Lookup("map")
 	if flag == nil || flag.DefValue != "false" {
@@ -52,9 +45,9 @@ func TestIndexMapFlagMaterializesGraphMap(t *testing.T) {
 	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
 	eng := &engine{
 		store: idx, ws: sq, cfg: config.Default(), global: workspace.DefaultConfig(),
-		opts: options{mapGraph: true}, repoName: "fixture", repoRoot: dir, out: &bytes.Buffer{},
+		opts: options{mapGraph: true}, out: &bytes.Buffer{},
 	}
-	snap, _, _, mapRes, reused, err := eng.buildAndPublish(ctx, dir, nil)
+	snap, _, mapRes, reused, err := eng.buildAndPublish(ctx, dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,14 +92,14 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	defer func() { _ = sq.Close() }()
 	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
 	out := &bytes.Buffer{}
-	eng := &engine{store: idx, ws: sq, cfg: config.Default(), opts: options{}, repoName: "fixture", repoRoot: dir, out: out}
+	eng := &engine{store: idx, ws: sq, cfg: config.Default(), opts: options{}, out: out}
 	state, err := gitstate.CaptureQuick(ctx, dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	initial := state.Revision
 	var stages []string
-	if _, _, _, _, err = eng.scanWatched(ctx, dir, state, "", func(stage string) { stages = append(stages, stage) }); err != nil {
+	if _, _, _, err = eng.scanWatched(ctx, dir, state, "", func(stage string) { stages = append(stages, stage) }); err != nil {
 		t.Fatal(err)
 	}
 	if len(stages) < 3 || stages[0] != "waiting-indexer" || stages[len(stages)-1] != "live-map" {
@@ -117,7 +110,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 		t.Fatal(err)
 	}
 	blocked, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
-	_, _, _, _, err = eng.scanWatched(blocked, dir, state, "", func(stage string) {})
+	_, _, _, err = eng.scanWatched(blocked, dir, state, "", func(stage string) {})
 	cancel()
 	release()
 	if err == nil {
@@ -132,7 +125,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, err = eng.scanWatched(ctx, dir, state, initial); err != nil {
+	if _, _, _, err = eng.scanWatched(ctx, dir, state, initial); err != nil {
 		t.Fatal(err)
 	}
 	live, err := idx.Impact(ctx, graph.RepositoryID(dir), "live")
@@ -164,7 +157,7 @@ func TestWatchedPartialCommitAndRevert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, _, err = eng.scanWatched(ctx, dir, clean, state.Revision); err != nil {
+	if _, _, _, err = eng.scanWatched(ctx, dir, clean, state.Revision); err != nil {
 		t.Fatal(err)
 	}
 	empty, err := idx.Impact(ctx, graph.RepositoryID(dir), "live")

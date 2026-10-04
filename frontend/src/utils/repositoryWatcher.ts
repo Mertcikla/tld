@@ -1,6 +1,7 @@
 import type { RepositoryWatchStatus } from '../api/client'
 
 const indexStageLabels: Record<string, string> = {
+  clone: 'Cloning repository',
   discover: 'Discovering sources',
   'tree-sitter': 'Parsing sources',
   scip: 'Indexing symbols',
@@ -8,6 +9,10 @@ const indexStageLabels: Record<string, string> = {
   infra: 'Indexing infrastructure',
   verify: 'Verifying index',
   publish: 'Publishing snapshot',
+  map: 'Building map',
+  loading: 'Loading file graph',
+  grouping: 'Grouping components',
+  materializing: 'Materializing map',
 }
 
 // indexStageLabel maps a codeindex stage to a human-readable label.
@@ -24,7 +29,7 @@ export function watcherActivity(status: RepositoryWatchStatus | null): Activity 
   if (status.state === 'starting') return { label: 'Starting…', detail: 'Connecting to the repository and checking Git inputs.', step: 'listen', active: true }
   if (status.state === 'debouncing') return { label: 'Debouncing changes', detail: `Waiting ${status.debounceMs || 500} ms for edits to settle before indexing.`, step: 'listen', active: true }
   if (status.stage === 'waiting-indexer') return { label: 'Waiting for indexer', detail: 'Another indexing operation holds this repository. Pending changes will run when it finishes.', step: 'index', active: true }
-  if (status.stage === 'live-map' || status.stage === 'materialize') return { label: 'Updating live map', detail: 'Saving the diagram and change overlays.', step: 'map', active: true }
+  if (status.stage === 'live-map' || status.stage === 'materializing' || status.stage === 'grouping') return { label: 'Updating live map', detail: 'Saving the diagram and change overlays.', step: 'map', active: true }
   if (status.state === 'scanning') {
     return { label: indexStageLabel(status.stage) || 'Indexing changes', detail: 'Scanning code and updating the repository index.', step: 'index', active: true }
   }

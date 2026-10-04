@@ -2,9 +2,11 @@ package mapconfig_test
 
 import (
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/mertcikla/tld/v2/internal/codeindex/community"
+	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -96,5 +98,13 @@ func TestConfigHashTracksEverySetting(t *testing.T) {
 		if base.ConfigHash() == changed.ConfigHash() {
 			t.Fatalf("config hash ignores %s", name)
 		}
+	}
+}
+
+func TestConfigHashIsImportModeSpecific(t *testing.T) {
+	options := mapconfig.FromGlobal(workspace.DefaultConfig())
+	other := cgraph.ID("group-v5", strconv.FormatBool(!mapconfig.IncludeExternalImports), options.Fingerprint())
+	if options.ConfigHash() == other {
+		t.Fatal("config hash must differ across external-import modes")
 	}
 }

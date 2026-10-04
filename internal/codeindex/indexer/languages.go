@@ -55,6 +55,12 @@ func languageFamily(language string) string {
 	return language
 }
 
+// Family returns the indexer family for a project language, for callers that
+// need to map projects to required indexer tools.
+func Family(language string) string {
+	return languageFamily(language)
+}
+
 // isSyntaxFamily reports whether a family's Facts come from the tree-sitter
 // declaration walker. SCIP enriches those Facts with symbol metadata and
 // references; it does not synthesize them.

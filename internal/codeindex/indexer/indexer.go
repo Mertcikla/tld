@@ -78,7 +78,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	if base != nil && base.Snapshot.ConfigHash == ConfigurationHash(p.Config, req) {
 		baseSources = base.Graph.Sources
 	}
-	projects, sources, err := discover(ctx, root, req.ProjectRoots, req.Exclude, baseSources)
+	projects, sources, err := discover(ctx, root, req.ProjectRoots, req.Exclude, baseSources, false)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -264,7 +264,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	}
 	addFileFacts(g)
 	emitProgress(progress, Progress{Stage: "verify"})
-	afterProjects, afterSources, err := discover(ctx, root, req.ProjectRoots, req.Exclude, sources)
+	afterProjects, afterSources, err := discover(ctx, root, req.ProjectRoots, req.Exclude, sources, false)
 	if err != nil {
 		return nil, nil, false, err
 	}

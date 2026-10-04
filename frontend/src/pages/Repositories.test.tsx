@@ -32,6 +32,7 @@ vi.mock('../api/client', () => ({
         name: 'demo',
         managed: false,
       }]),
+      checkIndexers: vi.fn(async () => ({ ready: true, indexers: [] })),
       snapshots: vi.fn(async () => [
         { id: 'snap-0', repositoryId: 'repo-1', createdUnix: 90, gitRevision: 'old', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-0', ingestionStatus: 'complete', projects: [], warnings: [] },
         { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', commitMessage: 'feat: snapshot message', ingestionStatus: 'complete', projects: [], warnings: [] },
@@ -62,7 +63,7 @@ vi.mock('../api/client', () => ({
       impactRadius: vi.fn(),
       delete: vi.fn(async () => {}),
       deleteSnapshot: vi.fn(async () => {}),
-      add: vi.fn(async (_path: string, handlers?: { onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void }) => {
+      add: vi.fn(async (_path: string, handlers?: { onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void; materialize?: boolean }) => {
         handlers?.onProgress?.({ stage: 'tree-sitter', current: 1, total: 2, detail: 'parsing' })
         return { id: 'repo-2', root: '/repo/new', latestSnapshotId: 'snap-2' }
       }),
@@ -93,7 +94,7 @@ vi.mock('@chakra-ui/icons', () => ({
 
 vi.mock('@chakra-ui/react', async () => {
   const ReactModule = await import('react')
-  type NodeProps = { children?: React.ReactNode; isOpen?: boolean; leastDestructiveRef?: unknown }
+  type NodeProps = { children?: React.ReactNode; isOpen?: boolean; leastDestructiveRef?: unknown; closeOnBlur?: boolean }
   const BoxLike = ({ children, isOpen, leastDestructiveRef: _leastDestructiveRef, ...props }: NodeProps) => (isOpen === false ? null : ReactModule.createElement('div', props, children))
   const ButtonLike = ({ children, onClick, isLoading, loadingText, isDisabled, ...props }: {
     children?: React.ReactNode
@@ -139,9 +140,16 @@ vi.mock('@chakra-ui/react', async () => {
     ModalFooter: BoxLike,
     ModalHeader: BoxLike,
     ModalOverlay: BoxLike,
-    Popover: ({ children, isOpen }: NodeProps) => {
+    Popover: ({ children, isOpen, closeOnBlur }: NodeProps) => {
       const kids = ReactModule.Children.toArray(children)
-      return ReactModule.createElement('div', null, isOpen === false ? kids[0] : kids)
+      return ReactModule.createElement(
+        'div',
+        {
+          'data-testid': 'repositories-add-popover',
+          'data-close-on-blur': String(closeOnBlur ?? true),
+        },
+        isOpen === false ? kids[0] : kids,
+      )
     },
     PopoverArrow: () => null,
     PopoverBody: BoxLike,
@@ -335,9 +343,15 @@ describe('Repositories map action', () => {
         .props.onClick()
     })
 
+    expect(api.repositories.checkIndexers).toHaveBeenCalledWith({
+      path: '/repo/new',
+    })
     expect(api.repositories.add).toHaveBeenCalledWith(
       { path: '/repo/new' },
-      expect.objectContaining({ onProgress: expect.any(Function) }),
+      expect.objectContaining({
+        materialize: true,
+        onProgress: expect.any(Function),
+      }),
     )
     expect(api.repositories.list).toHaveBeenCalled()
     renderer.unmount()
@@ -364,10 +378,146 @@ describe('Repositories map action', () => {
         .props.onClick()
     })
 
+    expect(api.repositories.checkIndexers).toHaveBeenCalledWith({
+      remoteUrl: 'facebook/react',
+    })
     expect(api.repositories.add).toHaveBeenCalledWith(
       { remoteUrl: 'facebook/react' },
       expect.objectContaining({ onProgress: expect.any(Function) }),
     )
+    renderer.unmount()
+  })
+  it('blocks adding a repository until required indexers are installed', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({
+      ready: false,
+      indexers: [
+        {
+          family: 'dotnet',
+          tool: 'scip-dotnet',
+          languages: ['csharp'],
+          installed: false,
+          installHint: 'dotnet tool install --global scip-dotnet',
+        },
+      ],
+    })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<Repositories />)
+    })
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick()
+    })
+    act(() => {
+      renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-path' })
+        .props.onChange({ target: { value: '/repo/dotnet' } })
+    })
+    await act(async () => {
+      await renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-submit' })
+        .props.onClick()
+    })
+
+    expect(api.repositories.add).not.toHaveBeenCalled()
+    expect(
+      renderer.root.findAll((node) => node.props.children === 'scip-dotnet')
+        .length,
+    ).toBeGreaterThan(0)
+    expect(
+      renderer.root.findAll(
+        (node) =>
+          node.props.children === 'dotnet tool install --global scip-dotnet',
+      ).length,
+    ).toBeGreaterThan(0)
+    expect(
+      renderer.root
+        .findAll(
+          (node) =>
+            node.props['data-testid'] === 'repositories-add-submit',
+        )
+        .some(
+          (node) => node.props.disabled === true || node.props.isDisabled === true,
+        ),
+    ).toBe(true)
+
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({
+      ready: true,
+      indexers: [],
+    })
+    await act(async () => {
+      await renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-recheck' })
+        .props.onClick()
+    })
+    await act(async () => {
+      await renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-submit' })
+        .props.onClick()
+    })
+    expect(api.repositories.add).toHaveBeenCalledWith(
+      { path: '/repo/dotnet' },
+      expect.objectContaining({ materialize: true }),
+    )
+    renderer.unmount()
+  })
+  it('adds without mapping when the toggle is off', async () => {
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<Repositories />)
+    })
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick()
+    })
+    act(() => {
+      renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-path' })
+        .props.onChange({ target: { value: '/repo/new' } })
+    })
+    act(() => {
+      renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-map' })
+        .props.onChange({ target: { checked: false } })
+    })
+    await act(async () => {
+      await renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-submit' })
+        .props.onClick()
+    })
+    expect(api.repositories.add).toHaveBeenCalledWith(
+      { path: '/repo/new' },
+      expect.objectContaining({ materialize: false }),
+    )
+    renderer.unmount()
+  })
+  it('starts the watcher with the map choice', async () => {
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<Repositories />)
+    })
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick()
+    })
+    act(() => {
+      renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-path' })
+        .props.onChange({ target: { value: '/repo/new' } })
+    })
+    act(() => {
+      renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-watch' })
+        .props.onChange({ target: { checked: true } })
+    })
+    await act(async () => {
+      await renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-submit' })
+        .props.onClick()
+    })
+    expect(api.repositories.startWatch).toHaveBeenCalledWith('repo-2', {
+      materialize: true,
+    })
     renderer.unmount()
   })
   it('deletes a managed clone when toggled', async () => {
@@ -457,6 +607,55 @@ describe('Repositories map action', () => {
 
     await act(async () => {
       finish({ id: 'repo-2', root: '/repo/new', latestSnapshotId: 'snap-2' })
+    })
+    renderer.unmount()
+  })
+  it('keeps the add dialog open while checking indexers and indexing', async () => {
+    const { api } = await import('../api/client')
+    let finishCheck!: (value: { ready: boolean; indexers: never[] }) => void
+    vi.mocked(api.repositories.checkIndexers).mockImplementationOnce(
+      () => new Promise((resolve) => { finishCheck = resolve }),
+    )
+    let finishAdd!: (value: { id: string; root: string; latestSnapshotId: string }) => void
+    vi.mocked(api.repositories.add).mockImplementationOnce(
+      () => new Promise((resolve) => { finishAdd = resolve }),
+    )
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<Repositories />)
+    })
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick()
+    })
+    act(() => {
+      renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-path' })
+        .props.onChange({ target: { value: '/repo/new' } })
+    })
+    act(() => {
+      renderer.root
+        .findAll(
+          (node) => node.props['data-testid'] === 'repositories-add-submit',
+        )[0]
+        .props.onClick()
+    })
+
+    const closeOnBlur = () =>
+      renderer.root.findAll(
+        (node) => node.props['data-testid'] === 'repositories-add-popover',
+      )[0].props['data-close-on-blur']
+
+    expect(closeOnBlur()).toBe('false')
+
+    await act(async () => {
+      finishCheck({ ready: true, indexers: [] })
+      await Promise.resolve()
+    })
+    expect(closeOnBlur()).toBe('false')
+
+    await act(async () => {
+      finishAdd({ id: 'repo-2', root: '/repo/new', latestSnapshotId: 'snap-2' })
+      await Promise.resolve()
     })
     renderer.unmount()
   })

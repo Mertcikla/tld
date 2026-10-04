@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"google.golang.org/protobuf/proto"
@@ -218,7 +219,7 @@ func TestMapperServiceMapConfigChangeReruns(t *testing.T) {
 	}
 }
 
-func TestMapperServiceMaterializesImports(t *testing.T) {
+func TestMapperServiceMaterializesBoundedExternalImports(t *testing.T) {
 	ctx := context.Background()
 	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
@@ -247,12 +248,16 @@ func TestMapperServiceMaterializesImports(t *testing.T) {
 		t.Fatalf("stream: %v", err)
 	}
 
+	// External imports materialize as a single External container plus one
+	// element per distinct import. Importing components connect to the container,
+	// so the connector count stays bounded by the per-view budget rather than
+	// growing with files × imports.
 	var connectors int
 	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&connectors); err != nil {
 		t.Fatal(err)
 	}
-	if connectors != 2 {
-		t.Fatalf("import connectors = %d, want 2", connectors)
+	if connectors < 1 || connectors > materialize.DefaultMaxConnectorsPerView {
+		t.Fatalf("import connectors = %d, want between 1 and %d", connectors, materialize.DefaultMaxConnectorsPerView)
 	}
 	var external int
 	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'External'`).Scan(&external); err != nil {
@@ -260,6 +265,15 @@ func TestMapperServiceMaterializesImports(t *testing.T) {
 	}
 	if external != 1 {
 		t.Fatalf("External elements = %d, want 1", external)
+	}
+	for _, name := range []string{"celery", "flask"} {
+		var count int
+		if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = ?`, name).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("%s elements = %d, want 1", name, count)
+		}
 	}
 }
 

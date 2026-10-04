@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
@@ -14,6 +15,7 @@ import (
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
@@ -241,6 +243,134 @@ func TestRepositoryServiceAddRepository(t *testing.T) {
 	}
 	if len(snap.GetSources()) != 1 || snap.GetSources()[0].GetPath() != "a.go" {
 		t.Fatalf("snapshot sources = %+v", snap.GetSources())
+	}
+}
+
+func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
+	workspaceID := uuid.New()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.26\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	missingCfg := &workspace.Config{Index: workspace.IndexConfig{Tools: workspace.IndexToolsConfig{
+		SCIPGo: filepath.Join(t.TempDir(), "scip-go-does-not-exist"),
+	}}}
+	_, missingRoutes := newTestServerWithOptions(t, workspaceID, nil, Options{Config: missingCfg})
+	missingServer := httptest.NewServer(missingRoutes)
+	defer missingServer.Close()
+	missingClient := codeindexv1connect.NewRepositoryServiceClient(missingServer.Client(), missingServer.URL+"/api")
+
+	check, err := missingClient.CheckRepositoryIndexers(ctx, connect.NewRequest(&codeindexv1.CheckRepositoryIndexersRequest{Path: dir}))
+	if err != nil {
+		t.Fatalf("CheckRepositoryIndexers: %v", err)
+	}
+	if check.Msg.GetReady() {
+		t.Fatal("check should not be ready while scip-go is missing")
+	}
+	indexers := check.Msg.GetIndexers()
+	if len(indexers) != 1 {
+		t.Fatalf("indexers = %+v, want one", indexers)
+	}
+	if indexer := indexers[0]; indexer.GetFamily() != "go" || indexer.GetTool() != "scip-go" || indexer.GetInstalled() {
+		t.Fatalf("indexer = %+v, want a missing scip-go", indexer)
+	}
+	if !strings.Contains(indexers[0].GetInstallHint(), "scip-go") {
+		t.Fatalf("install hint = %q, want a scip-go install command", indexers[0].GetInstallHint())
+	}
+
+	stream, err := missingClient.AddRepository(ctx, connect.NewRequest(&codeindexv1.AddRepositoryRequest{Path: dir}))
+	if err == nil {
+		for stream.Receive() {
+		}
+		err = stream.Err()
+	}
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("AddRepository with missing indexer = %v, want failed precondition", err)
+	}
+
+	tool := filepath.Join(t.TempDir(), "scip-go")
+	if err := os.WriteFile(tool, []byte("#!/bin/sh\necho scip-go 0.1.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	readyCfg := &workspace.Config{Index: workspace.IndexConfig{Tools: workspace.IndexToolsConfig{SCIPGo: tool}}}
+	_, readyRoutes := newTestServerWithOptions(t, workspaceID, nil, Options{Config: readyCfg})
+	readyServer := httptest.NewServer(readyRoutes)
+	defer readyServer.Close()
+	readyClient := codeindexv1connect.NewRepositoryServiceClient(readyServer.Client(), readyServer.URL+"/api")
+
+	check, err = readyClient.CheckRepositoryIndexers(ctx, connect.NewRequest(&codeindexv1.CheckRepositoryIndexersRequest{Path: dir}))
+	if err != nil {
+		t.Fatalf("CheckRepositoryIndexers with tool: %v", err)
+	}
+	if !check.Msg.GetReady() {
+		t.Fatalf("check = %+v, want ready", check.Msg)
+	}
+	if indexers := check.Msg.GetIndexers(); len(indexers) != 1 || !indexers[0].GetInstalled() {
+		t.Fatalf("indexers = %+v, want installed scip-go", indexers)
+	}
+}
+
+func TestRepositoryServiceAddRepositoryMapsRepository(t *testing.T) {
+	workspaceID := uuid.New()
+	sqliteStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\nfunc A() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(routes)
+	defer ts.Close()
+	client := codeindexv1connect.NewRepositoryServiceClient(ts.Client(), ts.URL+"/api")
+
+	stream, err := client.AddRepository(ctx, connect.NewRequest(&codeindexv1.AddRepositoryRequest{Path: dir, Materialize: true}))
+	if err != nil {
+		t.Fatalf("AddRepository: %v", err)
+	}
+	stages := map[string]bool{}
+	var repository *codeindexv1.Repository
+	for stream.Receive() {
+		event := stream.Msg()
+		if progress := event.GetProgress(); progress != nil {
+			stages[progress.GetStage()] = true
+		}
+		if repo := event.GetRepository(); repo != nil {
+			repository = repo
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if repository == nil {
+		t.Fatal("stream ended without a repository")
+	}
+	if !stages["materializing"] {
+		t.Fatalf("stages = %+v, want a graph-map materializing stage", stages)
+	}
+	mappings, err := idx.MappingsByRepository(ctx, cgraph.RepositoryID(resolved))
+	if err != nil {
+		t.Fatalf("mappings: %v", err)
+	}
+	mapped := false
+	for _, mapping := range mappings {
+		if mapping.Kind != cstore.MappingView || !strings.HasPrefix(mapping.LogicalKey, "map|") {
+			continue
+		}
+		mapped = true
+		if _, err := sqliteStore.ViewByID(ctx, mapping.ResourceID); err != nil {
+			t.Fatalf("mapped view missing: %v", err)
+		}
+	}
+	if !mapped {
+		t.Fatalf("mappings = %+v, want a graph-map view", mappings)
 	}
 }
 

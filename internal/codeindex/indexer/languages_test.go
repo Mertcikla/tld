@@ -273,3 +273,62 @@ func TestNestedRoot(t *testing.T) {
 		t.Fatal("repository root must not be nested")
 	}
 }
+
+func TestDiscoverProjectsMatchesFullDiscovery(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":                 "module example.com/demo\n",
+		"main.go":                "package main\n",
+		"frontend/tsconfig.json": "{}",
+		"frontend/src/app.ts":    "export const app = 1\n",
+	}
+	for path, content := range files {
+		full := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projects, sources, err := Discover(context.Background(), root, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	light, err := DiscoverProjects(context.Background(), root, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(light) != len(projects) {
+		t.Fatalf("DiscoverProjects returned %d projects, full discovery %d", len(light), len(projects))
+	}
+	for i, project := range light {
+		if project.GetConfigPath() != projects[i].GetConfigPath() || project.GetLanguage() != projects[i].GetLanguage() {
+			t.Fatalf("project %d = %+v, want %+v", i, project, projects[i])
+		}
+	}
+	families := map[string]bool{}
+	for _, project := range light {
+		families[Family(project.GetLanguage())] = true
+	}
+	if !families[familyGo] || !families[familyWeb] {
+		t.Fatalf("families = %v, want go and web", families)
+	}
+	if len(sources) == 0 {
+		t.Fatal("full discovery should still collect sources")
+	}
+}
+
+func TestDiscoverProjectsAllowsRepositoriesWithoutProjects(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "notes.txt"), []byte("hello\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := DiscoverProjects(context.Background(), root, nil, nil)
+	if err != nil {
+		t.Fatalf("DiscoverProjects: %v", err)
+	}
+	if len(projects) != 0 {
+		t.Fatalf("projects = %+v, want none", projects)
+	}
+}

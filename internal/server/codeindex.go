@@ -19,8 +19,11 @@ import (
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
+	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
+	"github.com/mertcikla/tld/v2/internal/codeindex/maprun"
 	"github.com/mertcikla/tld/v2/internal/codeindex/remote"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/internal/codeindex/tools"
 	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -68,42 +71,26 @@ func repositoryDisplayName(repository *codeindexv1.RepositorySummary) string {
 
 // AddRepository indexes a local directory or tld-managed clone in-process and
 // registers it as a repository. Progress is streamed while the snapshot is
-// built, then the registered repository is sent once indexing completes.
+// built, then the registered repository is sent once indexing completes. When
+// materialize is set, the published snapshot is also projected into the
+// workspace before the repository is sent.
 func (s *codeIndexRepositoryService) AddRepository(ctx context.Context, req *connect.Request[codeindexv1.AddRepositoryRequest], stream *connect.ServerStream[codeindexv1.AddRepositoryEvent]) error {
-	path := strings.TrimSpace(req.Msg.GetPath())
-	remoteURL := strings.TrimSpace(req.Msg.GetRemoteUrl())
-	if path == "" && remoteURL == "" {
-		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path or remote_url is required"))
-	}
-	if path != "" && remoteURL != "" {
-		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path and remote_url are mutually exclusive"))
-	}
-
-	var root string
-	var spec remote.Spec
-	if remoteURL != "" {
-		parsed, err := remote.Parse(remoteURL)
-		if err != nil {
-			return connect.NewError(connect.CodeInvalidArgument, err)
-		}
-		spec = parsed
-		if s.dataDir == "" {
-			return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("remote repositories require a local data directory"))
-		}
-		root = remote.ManagedDir(s.dataDir, spec)
+	root, spec, err := s.resolveAddTarget(ctx, req.Msg.GetPath(), req.Msg.GetRemoteUrl(), func(spec remote.Spec) {
 		_ = stream.Send(&codeindexv1.AddRepositoryEvent{Event: &codeindexv1.AddRepositoryEvent_Progress{Progress: &codeindexv1.IndexProgress{
 			Stage:  "clone",
 			Detail: spec.WebURL,
 		}}})
-		if err := remote.Clone(ctx, spec, root); err != nil {
-			return connect.NewError(connect.CodeInternal, err)
-		}
-	} else {
-		resolved, err := resolveRepositoryRoot(path)
-		if err != nil {
-			return connect.NewError(connect.CodeInvalidArgument, err)
-		}
-		root = resolved
+	})
+	if err != nil {
+		return err
+	}
+
+	requirements, err := s.requiredIndexers(ctx, root)
+	if err != nil {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	if missing := missingTools(requirements); len(missing) > 0 {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("missing required indexers: %s; install them and try again", strings.Join(missing, ", ")))
 	}
 
 	repositoryID := cgraph.RepositoryID(root)
@@ -127,12 +114,26 @@ func (s *codeIndexRepositoryService) AddRepository(ctx context.Context, req *con
 			}}})
 		},
 	}
-	if _, err := engine.Prepare(ctx, &codeindexv1.ComparisonTarget{WorkingTree: true}); err != nil {
+	snapshot, err := engine.Prepare(ctx, &codeindexv1.ComparisonTarget{WorkingTree: true})
+	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
 	}
-	if remoteURL != "" {
+	if spec.WebURL != "" {
 		if err := s.store.SetRepositoryOrigin(ctx, repositoryID, spec.WebURL, true); err != nil {
 			return connect.NewError(connect.CodeInternal, err)
+		}
+	}
+	if req.Msg.GetMaterialize() {
+		_ = stream.Send(&codeindexv1.AddRepositoryEvent{Event: &codeindexv1.AddRepositoryEvent_Progress{Progress: &codeindexv1.IndexProgress{Stage: "map"}}})
+		if err := s.mapRepository(ctx, repositoryID, snapshot, func(stage string, current, total int, detail string) {
+			_ = stream.Send(&codeindexv1.AddRepositoryEvent{Event: &codeindexv1.AddRepositoryEvent_Progress{Progress: &codeindexv1.IndexProgress{
+				Stage:   stage,
+				Current: uint32(current),
+				Total:   uint32(total),
+				Detail:  detail,
+			}}})
+		}); err != nil {
+			return connect.NewError(connect.CodeInternal, fmt.Errorf("repository indexed, but mapping failed: %w", err))
 		}
 	}
 	repository, err := s.store.Repository(ctx, repositoryID)
@@ -140,6 +141,125 @@ func (s *codeIndexRepositoryService) AddRepository(ctx context.Context, req *con
 		return connect.NewError(connect.CodeInternal, err)
 	}
 	return stream.Send(&codeindexv1.AddRepositoryEvent{Event: &codeindexv1.AddRepositoryEvent_Repository{Repository: repository}})
+}
+
+// resolveAddTarget validates the mutually exclusive path/remote_url inputs and
+// resolves them to a local root, cloning remote references into tld-managed
+// storage. onClone, when set, runs just before the clone begins.
+func (s *codeIndexRepositoryService) resolveAddTarget(ctx context.Context, path, remoteURL string, onClone func(remote.Spec)) (string, remote.Spec, error) {
+	path = strings.TrimSpace(path)
+	remoteURL = strings.TrimSpace(remoteURL)
+	if path == "" && remoteURL == "" {
+		return "", remote.Spec{}, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path or remote_url is required"))
+	}
+	if path != "" && remoteURL != "" {
+		return "", remote.Spec{}, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path and remote_url are mutually exclusive"))
+	}
+	if remoteURL == "" {
+		resolved, err := resolveRepositoryRoot(path)
+		if err != nil {
+			return "", remote.Spec{}, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		return resolved, remote.Spec{}, nil
+	}
+	spec, err := remote.Parse(remoteURL)
+	if err != nil {
+		return "", remote.Spec{}, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	if s.dataDir == "" {
+		return "", remote.Spec{}, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("remote repositories require a local data directory"))
+	}
+	root := remote.ManagedDir(s.dataDir, spec)
+	if onClone != nil {
+		onClone(spec)
+	}
+	if err := remote.Clone(ctx, spec, root); err != nil {
+		return "", remote.Spec{}, connect.NewError(connect.CodeInternal, err)
+	}
+	return root, spec, nil
+}
+
+// CheckRepositoryIndexers inspects a repository's project markers and reports
+// the SCIP indexers indexing will require. Remote targets are cloned when
+// necessary so their project markers can be read.
+func (s *codeIndexRepositoryService) CheckRepositoryIndexers(ctx context.Context, req *connect.Request[codeindexv1.CheckRepositoryIndexersRequest]) (*connect.Response[codeindexv1.CheckRepositoryIndexersResponse], error) {
+	root, _, err := s.resolveAddTarget(ctx, req.Msg.GetPath(), req.Msg.GetRemoteUrl(), nil)
+	if err != nil {
+		return nil, err
+	}
+	requirements, err := s.requiredIndexers(ctx, root)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return connect.NewResponse(&codeindexv1.CheckRepositoryIndexersResponse{
+		Indexers: requirements,
+		Ready:    len(missingTools(requirements)) == 0,
+	}), nil
+}
+
+// requiredIndexers maps a repository's discovered projects to the external
+// indexers they need and probes each tool with the current configuration.
+func (s *codeIndexRepositoryService) requiredIndexers(ctx context.Context, root string) ([]*codeindexv1.IndexerRequirement, error) {
+	projects, err := indexer.DiscoverProjects(ctx, root, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	families := make([]string, 0, len(projects))
+	languages := make(map[string][]string, len(projects))
+	seen := make(map[string]bool, len(projects))
+	for _, p := range projects {
+		family := indexer.Family(p.GetLanguage())
+		if !seen[family] {
+			seen[family] = true
+			families = append(families, family)
+		}
+		languages[family] = append(languages[family], p.GetLanguage())
+	}
+	statuses := tools.CheckTools(ctx, configbridge.FromGlobal(s.config), tools.ForFamilies(families))
+	requirements := make([]*codeindexv1.IndexerRequirement, 0, len(statuses))
+	for _, status := range statuses {
+		requirements = append(requirements, &codeindexv1.IndexerRequirement{
+			Family:      status.Family,
+			Tool:        status.Name,
+			Languages:   languages[status.Family],
+			Installed:   status.Found,
+			InstallHint: status.InstallHint,
+		})
+	}
+	return requirements, nil
+}
+
+// missingTools lists the tool names among requirements that are not installed.
+func missingTools(requirements []*codeindexv1.IndexerRequirement) []string {
+	var missing []string
+	for _, requirement := range requirements {
+		if !requirement.GetInstalled() {
+			missing = append(missing, requirement.GetTool())
+		}
+	}
+	return missing
+}
+
+// mapRepository runs the graph mapping pipeline for a published snapshot,
+// materializing its dependency-graph community hierarchy into the workspace.
+// A snapshot with no file facts has nothing to group and is left unmapped.
+func (s *codeIndexRepositoryService) mapRepository(ctx context.Context, repositoryID string, snapshot *codeindexv1.Snapshot, onProgress func(stage string, current, total int, detail string)) error {
+	_, _, err := maprun.Run(ctx, maprun.Deps{
+		Workspace: s.ws,
+		Codeindex: s.store,
+		Options:   mapconfig.FromGlobal(s.config),
+	}, maprun.Request{
+		RepositoryID: repositoryID,
+		SnapshotID:   snapshot.GetId(),
+	}, func(stage string, current, total int, detail string) {
+		if onProgress != nil {
+			onProgress(stage, current, total, detail)
+		}
+	})
+	if errors.Is(err, maprun.ErrNoFileFacts) {
+		return nil
+	}
+	return err
 }
 
 // resolveRepositoryRoot canonicalizes a user-supplied path the same way the CLI

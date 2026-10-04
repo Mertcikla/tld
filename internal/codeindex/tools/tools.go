@@ -23,33 +23,56 @@ type Tool struct {
 	Family      string
 	Name        string
 	VersionArgs []string
+	// InstallHint is a copy-pasteable command that installs the tool, or a
+	// release page when no package manager install exists.
+	InstallHint string
 	path        func(config.Config) string
 }
 
 // All returns every indexer the pipeline knows how to invoke.
 func All() []Tool {
 	return []Tool{
-		{Family: "go", Name: "scip-go", VersionArgs: []string{"--version"}, path: func(c config.Config) string { return c.Tools.SCIPGo }},
-		{Family: "web", Name: "scip-typescript", VersionArgs: []string{"--version"}, path: func(c config.Config) string { return c.Tools.SCIPTypeScript }},
-		{Family: "python", Name: "scip-python", VersionArgs: []string{"--version"}, path: func(c config.Config) string { return c.Tools.SCIPPython }},
-		{Family: "dotnet", Name: "scip-dotnet", VersionArgs: []string{"--version"}, path: func(c config.Config) string { return c.Tools.SCIPDotnet }},
-		{Family: "clang", Name: "scip-clang", VersionArgs: []string{"--version"}, path: func(c config.Config) string { return c.Tools.SCIPClang }},
-		{Family: "jvm", Name: "scip-java", VersionArgs: []string{"--version"}, path: func(c config.Config) string { return c.Tools.SCIPJava }},
-		{Family: "dart", Name: "scip-dart", VersionArgs: []string{"--version"}, path: func(c config.Config) string { return c.Tools.SCIPDart }},
-		{Family: "php", Name: "scip-php", VersionArgs: []string{"--help"}, path: func(c config.Config) string { return c.Tools.SCIPPhp }},
-		{Family: "ruby", Name: "scip-ruby", VersionArgs: []string{"--version"}, path: func(c config.Config) string { return c.Tools.SCIPRuby }},
-		{Family: "rust", Name: "rust-analyzer", VersionArgs: []string{"--version"}, path: func(c config.Config) string { return c.Tools.RustAnalyzer }},
+		{Family: "go", Name: "scip-go", VersionArgs: []string{"--version"}, InstallHint: "go install github.com/scip-code/scip-go/cmd/scip-go@latest", path: func(c config.Config) string { return c.Tools.SCIPGo }},
+		{Family: "web", Name: "scip-typescript", VersionArgs: []string{"--version"}, InstallHint: "npm install -g @sourcegraph/scip-typescript", path: func(c config.Config) string { return c.Tools.SCIPTypeScript }},
+		{Family: "python", Name: "scip-python", VersionArgs: []string{"--version"}, InstallHint: "npm install -g @sourcegraph/scip-python", path: func(c config.Config) string { return c.Tools.SCIPPython }},
+		{Family: "dotnet", Name: "scip-dotnet", VersionArgs: []string{"--version"}, InstallHint: "dotnet tool install --global scip-dotnet", path: func(c config.Config) string { return c.Tools.SCIPDotnet }},
+		{Family: "clang", Name: "scip-clang", VersionArgs: []string{"--version"}, InstallHint: "download a release from https://github.com/sourcegraph/scip-clang/releases", path: func(c config.Config) string { return c.Tools.SCIPClang }},
+		{Family: "jvm", Name: "scip-java", VersionArgs: []string{"--version"}, InstallHint: "cs install scip-java", path: func(c config.Config) string { return c.Tools.SCIPJava }},
+		{Family: "dart", Name: "scip-dart", VersionArgs: []string{"--version"}, InstallHint: "dart pub global activate scip_dart", path: func(c config.Config) string { return c.Tools.SCIPDart }},
+		{Family: "php", Name: "scip-php", VersionArgs: []string{"--help"}, InstallHint: "composer global require davidrjenni/scip-php", path: func(c config.Config) string { return c.Tools.SCIPPhp }},
+		{Family: "ruby", Name: "scip-ruby", VersionArgs: []string{"--version"}, InstallHint: "gem install scip-ruby", path: func(c config.Config) string { return c.Tools.SCIPRuby }},
+		{Family: "rust", Name: "rust-analyzer", VersionArgs: []string{"--version"}, InstallHint: "rustup component add rust-analyzer", path: func(c config.Config) string { return c.Tools.RustAnalyzer }},
 	}
+}
+
+// ForFamilies returns the tools for the given indexer families in the stable
+// order of All. Unknown families are skipped.
+func ForFamilies(families []string) []Tool {
+	if len(families) == 0 {
+		return nil
+	}
+	wanted := make(map[string]bool, len(families))
+	for _, family := range families {
+		wanted[family] = true
+	}
+	out := make([]Tool, 0, len(families))
+	for _, tool := range All() {
+		if wanted[tool.Family] {
+			out = append(out, tool)
+		}
+	}
+	return out
 }
 
 // Status reports the resolution and version of one tool.
 type Status struct {
-	Family  string
-	Name    string
-	Path    string
-	Found   bool
-	Version string
-	Error   string
+	Family      string
+	Name        string
+	Path        string
+	Found       bool
+	Version     string
+	Error       string
+	InstallHint string
 }
 
 // Resolve returns the executable path for a tool. Paths containing a separator
@@ -75,9 +98,14 @@ func Resolve(t Tool, cfg config.Config) (string, error) {
 // Check probes every indexer with its version/help flag and returns the results
 // in stable family order. A probe that cannot run still yields a Status.
 func Check(ctx context.Context, cfg config.Config) []Status {
-	all := All()
-	out := make([]Status, 0, len(all))
-	for _, t := range all {
+	return CheckTools(ctx, cfg, All())
+}
+
+// CheckTools probes the selected tools, preserving their order. A probe that
+// cannot run still yields a Status.
+func CheckTools(ctx context.Context, cfg config.Config, selected []Tool) []Status {
+	out := make([]Status, 0, len(selected))
+	for _, t := range selected {
 		out = append(out, checkOne(ctx, t, cfg))
 	}
 	return out
@@ -95,7 +123,7 @@ func Missing(ctx context.Context, cfg config.Config) []Status {
 }
 
 func checkOne(ctx context.Context, t Tool, cfg config.Config) Status {
-	s := Status{Family: t.Family, Name: t.Name}
+	s := Status{Family: t.Family, Name: t.Name, InstallHint: t.InstallHint}
 	path, err := Resolve(t, cfg)
 	if err != nil {
 		s.Path = path

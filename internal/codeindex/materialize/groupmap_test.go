@@ -2,6 +2,7 @@ package materialize
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -277,8 +278,10 @@ func TestApplyGroupMapMaterializesImports(t *testing.T) {
 	if err != nil {
 		t.Fatalf("apply group map: %v", err)
 	}
-	if result.Connectors != 3 {
-		t.Fatalf("import connectors = %d, want 3 (deduped)", result.Connectors)
+	// Two top-level components import external packages, so imports roll up to
+	// one connector each instead of one per (file, import) pair.
+	if result.Connectors != 2 {
+		t.Fatalf("import connectors = %d, want 2 (one per importing component)", result.Connectors)
 	}
 	var external, flask, celery int
 	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'External'`).Scan(&external); err != nil {
@@ -303,6 +306,31 @@ func TestApplyGroupMapMaterializesImports(t *testing.T) {
 	}
 	if placedImports != 2 {
 		t.Fatalf("imports placed in External view = %d, want 2", placedImports)
+	}
+}
+
+func TestApplyGroupMapBoundsImportConnectors(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, idx := openGroupMapStore(t)
+	const components = 50
+	files := make([]community.File, 0, components)
+	groups := make([]*community.Group, 0, components)
+	imports := make([]MapImport, 0, components)
+	for i := 0; i < components; i++ {
+		id := fmt.Sprintf("id-%d", i)
+		files = append(files, community.File{ID: id, Path: fmt.Sprintf("pkg%d/a.go", i), DisplayName: "a.go", Language: "go"})
+		groups = append(groups, &community.Group{Key: fmt.Sprintf("g%d", i), Name: fmt.Sprintf("g%d", i), Files: 1, Members: []int{i}})
+		imports = append(imports, MapImport{FileFactID: id, Import: fmt.Sprintf("pkg-%d", i)})
+	}
+	result, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
+		Files: files, Groups: groups, Imports: imports,
+	}, MapOptions{MaxConnectorsPerView: 5, MaxLeafConnectorsPerView: 5})
+	if err != nil {
+		t.Fatalf("apply group map: %v", err)
+	}
+	if result.Connectors != 5 {
+		t.Fatalf("import connectors = %d, want 5 (capped by the view budget)", result.Connectors)
 	}
 }
 

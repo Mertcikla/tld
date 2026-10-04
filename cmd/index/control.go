@@ -264,8 +264,8 @@ func runDetached(cmd *cobra.Command, opts options) error {
 	if opts.dataDir != "" {
 		args = append(args, "--data-dir", opts.dataDir)
 	}
-	if opts.materialize {
-		args = append(args, "--materialize")
+	if opts.mapGraph {
+		args = append(args, "--map")
 	}
 	if opts.pollInterval > 0 {
 		args = append(args, "--poll-interval", opts.pollInterval.String())

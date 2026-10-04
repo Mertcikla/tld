@@ -31,8 +31,8 @@ type Deps struct {
 	Options   mapconfig.Options
 }
 
-// Request selects which snapshot to map. External imports are always
-// materialized; there is no toggle.
+// Request selects which snapshot to map. External imports are controlled by
+// mapconfig.IncludeExternalImports and are disabled for now.
 type Request struct {
 	RepositoryID string
 	SnapshotID   string
@@ -83,9 +83,15 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	if len(facts) == 0 {
 		return nil, false, ErrNoFileFacts
 	}
-	fileImports, err := deps.Codeindex.FileImports(ctx, snapshotID)
-	if err != nil {
-		return nil, false, err
+	// External imports are disabled pending a follow-up: their per-file
+	// connectors blow up dense maps. The conversion and materialization paths
+	// remain for a future opt-in (mapconfig.IncludeExternalImports).
+	var fileImports []cstore.FileImport
+	if mapconfig.IncludeExternalImports {
+		fileImports, err = deps.Codeindex.FileImports(ctx, snapshotID)
+		if err != nil {
+			return nil, false, err
+		}
 	}
 	fileEdges, err := deps.Codeindex.AggregatedFileEdges(ctx, snapshotID)
 	if err != nil {

@@ -79,8 +79,8 @@ func placeAddedFiles(ctx context.Context, ws core.Store, diagram *pb.ImpactDiagr
 	return nil
 }
 
-// folderViewPrefix keys a repository folder's map view (materialize.ApplyMap).
-// The remaining segment after the repository id is the folder path.
+// folderViewPrefix keys a repository folder's map view. The remaining segment
+// after the repository id is the folder path.
 const folderViewPrefix = "map|folderview|"
 
 // buildViewIndex tallies the workspace view that owns each directory's

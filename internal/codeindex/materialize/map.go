@@ -337,8 +337,9 @@ func (m *mapMaterializer) materializeConnectors() error {
 
 // materializeImports materializes external imports under a single External
 // element: the External element owns a child view containing one element per
-// distinct import, and each importing file is connected to the imports it
-// declares. Imports and connectors are de-duplicated.
+// distinct import. Importing top-level components are connected to the External
+// container (rather than one connector per file/import), so the connector count
+// stays bounded by the number of top-level components.
 func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 	if len(m.input.Imports) == 0 {
 		return nil
@@ -358,7 +359,6 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 	if err := m.queuePlacement(rootViewID, containerID); err != nil {
 		return err
 	}
-	containerChain := appendView([]int64{rootViewID}, externalViewID)
 
 	distinct := map[string]bool{}
 	for _, item := range m.input.Imports {
@@ -369,7 +369,6 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	importElements := make(map[string]int64, len(names))
 	for _, name := range names {
 		elementID, err := m.upsertElement(importKey(m.input.RepositoryID, name), core.LibraryElement{
 			Name: name,
@@ -381,56 +380,62 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 		if err := m.queuePlacement(externalViewID, elementID); err != nil {
 			return err
 		}
-		importElements[name] = elementID
 	}
 
+	// Aggregate unique (file, import) usages by the file's top-level component
+	// element. That element and the External container are both placed in the
+	// map root view, so the rolled-up connectors are visible and capped by the
+	// view's connector budget.
+	type componentEdges struct {
+		from   int64
+		weight float64
+	}
 	seen := map[[2]string]bool{}
+	grouped := map[int64]*componentEdges{}
 	for _, item := range m.input.Imports {
-		fileElementID, ok := m.fileElementIDs[item.FileFactID]
-		if !ok {
-			continue
-		}
-		importElementID := importElements[item.Import]
-		if importElementID == 0 {
-			continue
-		}
 		key := [2]string{item.FileFactID, item.Import}
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
-		viewID := commonView(m.fileChains[item.FileFactID], containerChain)
-		if viewID == 0 {
+		path := m.fileElementPath[item.FileFactID]
+		if len(path) < 2 {
 			continue
 		}
-		if err := m.upsertConnector(importConnectorKey(m.input.RepositoryID, item.FileFactID, item.Import), core.Connector{
-			ViewID:          viewID,
-			SourceElementID: fileElementID,
-			TargetElementID: importElementID,
+		entry := grouped[path[0]]
+		if entry == nil {
+			entry = &componentEdges{from: path[0]}
+			grouped[path[0]] = entry
+		}
+		entry.weight++
+	}
+	entries := make([]*componentEdges, 0, len(grouped))
+	for _, entry := range grouped {
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].weight != entries[j].weight {
+			return entries[i].weight > entries[j].weight
+		}
+		return entries[i].from < entries[j].from
+	})
+	limit := m.maxConnectors
+	if limit <= 0 || limit > len(entries) {
+		limit = len(entries)
+	}
+	for _, entry := range entries[:limit] {
+		if err := m.upsertConnector(elementConnectorKey(m.input.RepositoryID, rootViewID, entry.from, containerID), core.Connector{
+			ViewID:          rootViewID,
+			SourceElementID: entry.from,
+			TargetElementID: containerID,
 			Direction:       "forward",
 			Style:           "bezier",
 		}); err != nil {
 			return err
 		}
-		m.layoutEdges[viewID] = append(m.layoutEdges[viewID], layout.Connector{Source: fileElementID, Target: importElementID})
+		m.layoutEdges[rootViewID] = append(m.layoutEdges[rootViewID], layout.Connector{Source: entry.from, Target: containerID})
 	}
 	return nil
-}
-
-// commonView returns the deepest view id shared by two root-to-leaf chains.
-func commonView(a, b []int64) int64 {
-	limit := len(a)
-	if len(b) < limit {
-		limit = len(b)
-	}
-	last := int64(0)
-	for i := 0; i < limit; i++ {
-		if a[i] != b[i] {
-			break
-		}
-		last = a[i]
-	}
-	return last
 }
 
 func (m *mapMaterializer) upsertConnector(logicalKey string, input core.Connector) error {
@@ -708,8 +713,4 @@ func externalViewKey(repositoryID string) string {
 
 func importKey(repositoryID, importPath string) string {
 	return mapKeyPrefix + "import|" + repositoryID + "|" + importPath
-}
-
-func importConnectorKey(repositoryID, fileFactID, importPath string) string {
-	return mapKeyPrefix + "importconn|" + repositoryID + "|" + fileFactID + "|" + importPath
 }

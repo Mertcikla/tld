@@ -28,12 +28,9 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/maprun"
-	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	"github.com/mertcikla/tld/v2/internal/codeindex/parity"
-	"github.com/mertcikla/tld/v2/internal/codeindex/project"
 	"github.com/mertcikla/tld/v2/internal/codeindex/remote"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/codeindex/visibility"
 	"github.com/mertcikla/tld/v2/internal/codeindex/watch"
 	"github.com/mertcikla/tld/v2/internal/localserver"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
@@ -48,7 +45,6 @@ type options struct {
 	detach       bool
 	watchOwner   string
 	jsonOut      bool
-	materialize  bool
 	mapGraph     bool
 	dataDir      string
 	pollInterval time.Duration
@@ -70,20 +66,19 @@ The target is a local directory or a remote URL (github.com/owner/repo,
 owner/repo, or a Git URL). Remote repositories are cloned into tld's data
 directory and treated as managed checkouts.
 
-For a one-time index, pass --materialize to additionally project candidate
-elements and connectors into a workspace view, or --map to group the
-dependency graph into architectural components and materialize the map view.
-Map grouping and connector budgets inherit global map.* configuration, with
-per-repository overrides configurable on the repository settings page.
+For a one-time index, pass --map to group the dependency graph into
+architectural components and materialize the map view. Map grouping and
+connector budgets inherit global map.* configuration, with per-repository
+overrides configurable on the repository settings page.
 With --watch, --map refreshes the map after each scan.
 
 With --watch, Git's current commit is the Base and the combined staged,
 unstaged, and nonignored untracked files are the Head. Git changes trigger
 incremental indexing after a debounce. Each new commit gets an immutable
 snapshot from its committed contents. Watch always saves an affected-file
-change overlay, available in Repositories > Live changes; --materialize also
-updates the full map. Compare maps can compare commits or saved snapshots.
-The blast-radius slider adds existing unchanged elements by dependency hops.`,
+change overlay, available in Repositories > Live changes. Compare maps can
+compare commits or saved snapshots. The blast-radius slider adds existing
+unchanged elements by dependency hops.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			opts.path = "."
@@ -101,8 +96,7 @@ The blast-radius slider adds existing unchanged elements by dependency hops.`,
 	c.Flags().StringVar(&opts.watchOwner, "watch-owner", "cli", "internal: who started the watcher (cli or server)")
 	_ = c.Flags().MarkHidden("watch-owner")
 	c.Flags().BoolVar(&opts.jsonOut, "json", false, "emit machine-readable JSON")
-	c.Flags().BoolVar(&opts.materialize, "materialize", false, "also materialize candidates into a workspace view (opt-in)")
-	c.Flags().BoolVar(&opts.mapGraph, "map", false, "also group the dependency graph and materialize the map view (opt-in)")
+	c.Flags().BoolVar(&opts.mapGraph, "map", false, "group the dependency graph and materialize the map view (opt-in)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
 	c.Flags().DurationVar(&opts.pollInterval, "poll-interval", 2*time.Second, "Git change polling interval")
 	c.Flags().DurationVar(&opts.debounce, "debounce", 500*time.Millisecond, "delay used to batch file changes")
@@ -112,15 +106,13 @@ The blast-radius slider adds existing unchanged elements by dependency hops.`,
 }
 
 type engine struct {
-	store    *cstore.Store
-	ws       *localstore.SQLiteStore
-	cfg      ci.Config
-	global   *workspace.Config
-	opts     options
-	repoName string
-	repoRoot string
-	dataDir  string
-	out      io.Writer
+	store   *cstore.Store
+	ws      *localstore.SQLiteStore
+	cfg     ci.Config
+	global  *workspace.Config
+	opts    options
+	dataDir string
+	out     io.Writer
 }
 
 // detectRemoteTarget reports whether the index target is a remote repository
@@ -198,15 +190,13 @@ func run(cmd *cobra.Command, opts options) error {
 	defer func() { _ = sq.Close() }()
 
 	eng := &engine{
-		store:    cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect()),
-		ws:       sq,
-		cfg:      configbridge.FromGlobal(global),
-		global:   global,
-		opts:     opts,
-		repoName: filepath.Base(root),
-		repoRoot: root,
-		dataDir:  dataDir,
-		out:      cmd.OutOrStdout(),
+		store:   cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect()),
+		ws:      sq,
+		cfg:     configbridge.FromGlobal(global),
+		global:  global,
+		opts:    opts,
+		dataDir: dataDir,
+		out:     cmd.OutOrStdout(),
 	}
 	if remoteSpec.WebURL != "" {
 		if err := eng.store.SetRepositoryOrigin(ctx, cgraph.RepositoryID(root), remoteSpec.WebURL, true); err != nil {
@@ -224,11 +214,11 @@ func run(cmd *cobra.Command, opts options) error {
 		return err
 	}
 	defer release()
-	snap, report, mres, mapRes, _, err := eng.buildAndPublish(ctx, root, nil)
+	snap, report, mapRes, _, err := eng.buildAndPublish(ctx, root, nil)
 	if err != nil {
 		return err
 	}
-	return eng.print(cmd, snap, report, mres, mapRes)
+	return eng.print(cmd, snap, report, mapRes)
 }
 
 var indexStageDisplay = map[string]string{
@@ -242,15 +232,13 @@ var indexStageDisplay = map[string]string{
 
 var indexStageOrder = []string{
 	"Discover", "Parse sources", "Index symbols", "Relationships", "Infrastructure", "Verify",
-	"Publish snapshot", "Materialize view",
-	"Save change overlay", "Map graph",
+	"Publish snapshot", "Save change overlay", "Map graph",
 }
 
 const (
-	stagePublish     = "Publish snapshot"
-	stageMaterialize = "Materialize view"
-	stageChanges     = "Save change overlay"
-	stageMapGraph    = "Map graph"
+	stagePublish  = "Publish snapshot"
+	stageChanges  = "Save change overlay"
+	stageMapGraph = "Map graph"
 )
 
 // indexJokes are rotated on the active stage line to keep long indexes
@@ -291,7 +279,7 @@ func displayStage(stage string) string {
 // buildAndPublish indexes root and publishes a snapshot. base, when non-nil,
 // enables incremental reuse of unchanged files. reused is true when nothing
 // changed and no new snapshot was written.
-func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer.IncrementalBase) (*pb.Snapshot, parity.Report, *materialize.Result, *pb.MapResult, bool, error) {
+func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer.IncrementalBase) (*pb.Snapshot, parity.Report, *pb.MapResult, bool, error) {
 	out := e.out
 	if out == nil || e.opts.jsonOut {
 		out = io.Discard
@@ -328,7 +316,7 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 	}
 	if err != nil {
 		tracker.Fail(lastStage, err)
-		return nil, parity.Report{}, nil, nil, false, err
+		return nil, parity.Report{}, nil, false, err
 	}
 	mapSnapshot := func() (*pb.MapResult, error) {
 		if !e.opts.mapGraph {
@@ -339,32 +327,21 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 	if reuse {
 		mapRes, err := mapSnapshot()
 		if err != nil {
-			return nil, parity.Report{}, nil, nil, false, err
+			return nil, parity.Report{}, nil, false, err
 		}
-		return snap, parity.Report{}, nil, mapRes, true, nil
+		return snap, parity.Report{}, mapRes, true, nil
 	}
 
 	tracker.Begin(stagePublish)
 	if err := e.store.Publish(ctx, root, snap, g); err != nil {
 		tracker.Fail(stagePublish, err)
-		return nil, parity.Report{}, nil, nil, false, err
-	}
-
-	var mres *materialize.Result
-	if e.opts.materialize && e.ws != nil {
-		tracker.Begin(stageMaterialize)
-		res, err := e.materializeSnapshot(ctx, snap, g, changedFiles(base, snap))
-		if err != nil {
-			tracker.Fail(stageMaterialize, err)
-			return nil, parity.Report{}, nil, nil, false, err
-		}
-		mres = &res
+		return nil, parity.Report{}, nil, false, err
 	}
 	mapRes, err := mapSnapshot()
 	if err != nil {
-		return nil, parity.Report{}, nil, nil, false, err
+		return nil, parity.Report{}, nil, false, err
 	}
-	return snap, parity.Summarize(snap, g), mres, mapRes, false, nil
+	return snap, parity.Summarize(snap, g), mapRes, false, nil
 }
 
 // mapGraph runs the graph mapping pipeline for a snapshot using global map
@@ -386,38 +363,6 @@ func (e *engine) mapGraph(ctx context.Context, snap *pb.Snapshot, tracker *term.
 		return nil, err
 	}
 	return result, nil
-}
-
-// materializeSnapshot projects the snapshot and upserts every candidate into
-// the workspace. All candidates are materialized so identity mappings stay
-// stable; the visibility decision only controls each element's noise-gate
-// bypass, so hidden candidates are still ranked and capped by the density
-// engine rather than deleted.
-func (e *engine) materializeSnapshot(ctx context.Context, snap *pb.Snapshot, g *cgraph.Graph, changed map[string]bool) (materialize.Result, error) {
-	proj := project.Project(snap, g)
-	decisions := visibility.Compute(visibility.Input{Projection: proj, ChangedFiles: changed}, visibility.DefaultConfig())
-	return materialize.Apply(ctx, e.ws, e.store, proj, decisions, materialize.Options{
-		RepositoryID:   snap.RepositoryId,
-		RepositoryName: e.repoName,
-		RepositoryRoot: e.repoRoot,
-		SnapshotID:     snap.Id,
-	})
-}
-
-// changedFiles lists sources whose hash differs from the incremental base. A nil
-// base (cold start) yields an empty set: nothing is "changed", so visibility
-// falls back to high-signal and density-ranked candidates.
-func changedFiles(base *indexer.IncrementalBase, snap *pb.Snapshot) map[string]bool {
-	if base == nil {
-		return nil
-	}
-	out := map[string]bool{}
-	for _, s := range snap.Sources {
-		if h, ok := base.Sources[s.Path]; !ok || h != s.Hash {
-			out[s.Path] = true
-		}
-	}
-	return out
 }
 
 // watch detects Git changes through fsnotify with a polling failsafe, coalesces
@@ -573,7 +518,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 			s.GitBranch, s.GitRevision = qs.Branch, qs.Revision
 		})
 		started := time.Now()
-		snap, report, mres, mapRes, err := e.scanWatched(runCtx, root, qs, lastRevision, func(stage string) {
+		snap, report, mapRes, err := e.scanWatched(runCtx, root, qs, lastRevision, func(stage string) {
 			mu.Lock()
 			unchanged := status.Stage == stage
 			mu.Unlock()
@@ -591,7 +536,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 			if prev != nil {
 				e.printDiff(cmd, prev.Id, snap.Id)
 			}
-			if err = e.print(cmd, snap, report, mres, mapRes); err != nil {
+			if err = e.print(cmd, snap, report, mapRes); err != nil {
 				return err
 			}
 		}
@@ -612,7 +557,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 	}
 }
 
-func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.QuickState, previousRevision string, onStage ...func(string)) (*pb.Snapshot, parity.Report, *materialize.Result, *pb.MapResult, error) {
+func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.QuickState, previousRevision string, onStage ...func(string)) (*pb.Snapshot, parity.Report, *pb.MapResult, error) {
 	reportStage := func(stage string) {
 		for _, report := range onStage {
 			report(stage)
@@ -627,14 +572,14 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 		leased, release, err = e.store.AcquireLease(ctx, repoID)
 		if !errors.Is(err, cstore.ErrBusy) {
 			if err != nil {
-				return nil, parity.Report{}, nil, nil, err
+				return nil, parity.Report{}, nil, err
 			}
 			ctx = leased
 			break
 		}
 		select {
 		case <-ctx.Done():
-			return nil, parity.Report{}, nil, nil, ctx.Err()
+			return nil, parity.Report{}, nil, ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
@@ -657,48 +602,34 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	}
 	commits, err := gitstate.Commits(ctx, root, previousRevision, state.Revision)
 	if err != nil {
-		return nil, parity.Report{}, nil, nil, err
+		return nil, parity.Report{}, nil, err
 	}
 	for _, revision := range commits {
 		if _, err = engine.Prepare(ctx, &pb.ComparisonTarget{GitRevision: revision, GitBranch: state.Branch}); err != nil {
-			return nil, parity.Report{}, nil, nil, err
+			return nil, parity.Report{}, nil, err
 		}
 	}
 	base, err := engine.Prepare(ctx, &pb.ComparisonTarget{GitRevision: state.Revision, GitBranch: state.Branch})
 	if err != nil {
-		return nil, parity.Report{}, nil, nil, err
+		return nil, parity.Report{}, nil, err
 	}
 	snap, err := engine.Prepare(ctx, &pb.ComparisonTarget{WorkingTree: true})
 	if err != nil {
-		return nil, parity.Report{}, nil, nil, err
+		return nil, parity.Report{}, nil, err
 	}
 	after, err := gitstate.CaptureQuick(ctx, root)
 	if err != nil {
-		return nil, parity.Report{}, nil, nil, err
+		return nil, parity.Report{}, nil, err
 	}
 	if after.Signature() != state.Signature() {
-		return nil, parity.Report{}, nil, nil, fmt.Errorf("git inputs changed during indexing; retrying")
+		return nil, parity.Report{}, nil, fmt.Errorf("git inputs changed during indexing; retrying")
 	}
 	if err = e.store.AdvanceLatest(ctx, repoID, snap.Id); err != nil {
-		return nil, parity.Report{}, nil, nil, err
+		return nil, parity.Report{}, nil, err
 	}
 	g, err := e.store.LoadGraph(ctx, snap.Id)
 	if err != nil {
-		return nil, parity.Report{}, nil, nil, err
-	}
-	var mres *materialize.Result
-	if e.opts.materialize {
-		reportStage("materialize")
-		tracker.Begin(stageMaterialize)
-		incremental, err := engine.Base(ctx, base.Id)
-		if err != nil {
-			return nil, parity.Report{}, nil, nil, err
-		}
-		result, err := e.materializeSnapshot(ctx, snap, g, changedFiles(incremental, snap))
-		if err != nil {
-			return nil, parity.Report{}, nil, nil, err
-		}
-		mres = &result
+		return nil, parity.Report{}, nil, err
 	}
 	radius := uint32(0)
 	if recorded, loadErr := e.store.Impact(ctx, repoID, "live"); loadErr == nil {
@@ -707,27 +638,26 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	reportStage("live-map")
 	tracker.Begin(stageChanges)
 	if _, err = impact.Save(ctx, e.ws, e.store, repoID, "live", base.Id, snap.Id, radius); err != nil {
-		return nil, parity.Report{}, nil, nil, err
+		return nil, parity.Report{}, nil, err
 	}
 	var mapRes *pb.MapResult
 	if e.opts.mapGraph {
 		mapRes, err = e.mapGraph(ctx, snap, tracker)
 		if err != nil {
-			return nil, parity.Report{}, nil, nil, err
+			return nil, parity.Report{}, nil, err
 		}
 	}
-	return snap, parity.Summarize(snap, g), mres, mapRes, nil
+	return snap, parity.Summarize(snap, g), mapRes, nil
 }
 
-func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Report, mres *materialize.Result, mapRes *pb.MapResult) error {
+func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Report, mapRes *pb.MapResult) error {
 	out := cmd.OutOrStdout()
 	if e.opts.jsonOut {
 		payload := struct {
-			Snapshot     *pb.Snapshot        `json:"snapshot"`
-			Report       parity.Report       `json:"report"`
-			Materialized *materialize.Result `json:"materialized,omitempty"`
-			Map          *pb.MapResult       `json:"map,omitempty"`
-		}{Snapshot: snap, Report: report, Materialized: mres, Map: mapRes}
+			Snapshot *pb.Snapshot  `json:"snapshot"`
+			Report   parity.Report `json:"report"`
+			Map      *pb.MapResult `json:"map,omitempty"`
+		}{Snapshot: snap, Report: report, Map: mapRes}
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
 		return enc.Encode(payload)
@@ -745,9 +675,6 @@ func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Repo
 	_, _ = fmt.Fprintf(tw, "edges\t%d\n", report.Edges)
 	if report.Warnings > 0 {
 		_, _ = fmt.Fprintf(tw, "warnings\t%d\n", report.Warnings)
-	}
-	if mres != nil {
-		_, _ = fmt.Fprintf(tw, "view\t%d (%d elements, %d connectors, %d pruned)\n", mres.ViewID, mres.Elements, mres.Connectors, mres.Pruned)
 	}
 	if mapRes != nil {
 		_, _ = fmt.Fprintf(tw, "map\tview %d (%d components, %d groups, %d isolated, modularity %.2f)\n",

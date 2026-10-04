@@ -312,6 +312,23 @@ export interface RepositoryIndexProgress {
   detail: string
 }
 
+// RepositoryIndexerRequirement is one external SCIP indexer a repository needs
+// based on the project families discovered in it.
+export interface RepositoryIndexerRequirement {
+  family: string
+  tool: string
+  languages: string[]
+  installed: boolean
+  installHint: string
+}
+
+// RepositoryIndexerCheck is the result of inspecting a repository's required
+// indexers before indexing it.
+export interface RepositoryIndexerCheck {
+  indexers: RepositoryIndexerRequirement[]
+  ready: boolean
+}
+
 // RepositoryMapResult summarizes a completed mapper run.
 export interface RepositoryMapResult {
   snapshotId?: string
@@ -1994,14 +2011,38 @@ export const api = {
       const response = await codeIndexRepositoryClient.listRepositories({})
       return response.repositories.map((repo) => ({ ...repo, latestCreatedUnix: Number(repo.latestCreatedUnix) }))
     }),
-    add: async (
+    checkIndexers: async (
       input: string | { path?: string; remoteUrl?: string },
-      handlers: { signal?: AbortSignal; onProgress?: (progress: RepositoryIndexProgress) => void } = {},
-    ): Promise<{ id: string; root: string; latestSnapshotId: string }> => {
+      options: { signal?: AbortSignal } = {},
+    ): Promise<RepositoryIndexerCheck> => {
       try {
         const request = typeof input === 'string'
           ? { path: input, remoteUrl: '' }
           : { path: input.path ?? '', remoteUrl: input.remoteUrl ?? '' }
+        const response = await codeIndexRepositoryClient.checkRepositoryIndexers(request, { signal: options.signal })
+        return {
+          ready: response.ready,
+          indexers: response.indexers.map((item) => ({
+            family: item.family,
+            tool: item.tool,
+            languages: item.languages,
+            installed: item.installed,
+            installHint: item.installHint,
+          })),
+        }
+      } catch (e) {
+        if (e instanceof ConnectError) throw new Error(e.message)
+        throw e
+      }
+    },
+    add: async (
+      input: string | { path?: string; remoteUrl?: string },
+      handlers: { signal?: AbortSignal; onProgress?: (progress: RepositoryIndexProgress) => void; materialize?: boolean } = {},
+    ): Promise<{ id: string; root: string; latestSnapshotId: string }> => {
+      try {
+        const request = typeof input === 'string'
+          ? { path: input, remoteUrl: '', materialize: handlers.materialize ?? false }
+          : { path: input.path ?? '', remoteUrl: input.remoteUrl ?? '', materialize: handlers.materialize ?? false }
         const stream = codeIndexRepositoryClient.addRepository(request, { signal: handlers.signal })
         let repository: { id: string; root: string; latestSnapshotId: string } | null = null
         for await (const event of stream) {

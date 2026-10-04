@@ -18,10 +18,18 @@ import (
 )
 
 func Discover(ctx context.Context, root string, overrides, excludes []string) ([]*pb.Project, map[string]*graph.Source, error) {
-	return discover(ctx, root, overrides, excludes, nil)
+	return discover(ctx, root, overrides, excludes, nil, false)
 }
 
-func discover(ctx context.Context, root string, overrides, excludes []string, base map[string]*graph.Source) ([]*pb.Project, map[string]*graph.Source, error) {
+// DiscoverProjects reports the indexable projects in root without reading
+// source contents. It applies the same marker rules and deduplication as a full
+// index, so callers can map projects to required indexer tools before indexing.
+func DiscoverProjects(ctx context.Context, root string, overrides, excludes []string) ([]*pb.Project, error) {
+	projects, _, err := discover(ctx, root, overrides, excludes, nil, true)
+	return projects, err
+}
+
+func discover(ctx context.Context, root string, overrides, excludes []string, base map[string]*graph.Source, projectsOnly bool) ([]*pb.Project, map[string]*graph.Source, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, nil, err
@@ -94,6 +102,9 @@ func discover(ctx context.Context, root string, overrides, excludes []string, ba
 		}
 		if lang := projectLanguage(d.Name()); lang != "" {
 			projects = append(projects, &pb.Project{Root: filepath.ToSlash(filepath.Dir(rel)), Language: lang, ConfigPath: rel})
+		}
+		if projectsOnly {
+			return nil
 		}
 		lang := sourceLanguage(rel)
 		if lang == "" && !parser.IsInfraSource(d.Name(), rel) {
@@ -196,6 +207,9 @@ func discover(ctx context.Context, root string, overrides, excludes []string, ba
 	projects = kept
 	sort.Slice(projects, func(i, j int) bool { return projects[i].ConfigPath < projects[j].ConfigPath })
 	if len(projects) == 0 {
+		if projectsOnly {
+			return nil, nil, nil
+		}
 		if len(sources) == 0 {
 			return nil, nil, fmt.Errorf("no supported project found (Go, TypeScript/JavaScript, Python, C/C++, C#/Visual Basic, Dart, Java/Scala/Kotlin, PHP, Ruby, or Rust)")
 		}
