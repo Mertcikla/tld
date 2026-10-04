@@ -1,3 +1,50 @@
+-- Schema added after the codeindex baseline, squashed for cleanup.
+
+ALTER TABLE codeindex_snapshots ADD COLUMN provenance TEXT NOT NULL DEFAULT '';
+ALTER TABLE codeindex_snapshots ADD COLUMN content_fingerprint TEXT NOT NULL DEFAULT '';
+ALTER TABLE codeindex_snapshots ADD COLUMN capture_order BIGINT NOT NULL DEFAULT 0;
+CREATE INDEX idx_codeindex_snapshot_revision ON codeindex_snapshots(repository_id, git_revision, provenance, config_hash);
+CREATE TABLE codeindex_completed_maps (
+  run_id TEXT PRIMARY KEY,
+  repository_id TEXT NOT NULL,
+  snapshot_id TEXT NOT NULL,
+  include_imports BOOLEAN NOT NULL DEFAULT FALSE,
+  config_hash TEXT NOT NULL,
+  completed_unix BIGINT NOT NULL,
+  result_json TEXT NOT NULL
+);
+CREATE INDEX idx_codeindex_completed_maps_repository ON codeindex_completed_maps(repository_id, completed_unix);
+
+ALTER TABLE codeindex_sources ADD COLUMN language TEXT NOT NULL DEFAULT '';
+ALTER TABLE codeindex_sources ADD COLUMN input_blob TEXT NOT NULL DEFAULT '';
+ALTER TABLE codeindex_sources ADD COLUMN dirty BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE codeindex_sources ADD COLUMN syntax_cache TEXT NOT NULL DEFAULT '';
+CREATE TABLE codeindex_impacts (
+ repository_id TEXT NOT NULL,
+ comparison_key TEXT NOT NULL,
+ result_json TEXT NOT NULL,
+ PRIMARY KEY (repository_id, comparison_key)
+);
+CREATE TABLE codeindex_leases (
+ repository_id TEXT PRIMARY KEY,
+ owner TEXT NOT NULL,
+ expires_unix BIGINT NOT NULL
+);
+CREATE TABLE codeindex_watch_state (
+ repository_id TEXT PRIMARY KEY,
+ heartbeat_unix BIGINT NOT NULL DEFAULT 0,
+ error TEXT NOT NULL DEFAULT '',
+ git_branch TEXT NOT NULL DEFAULT '',
+ git_revision TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE codeindex_project_artifacts (
+ snapshot_id TEXT NOT NULL,
+ project_key TEXT NOT NULL,
+ fingerprint TEXT NOT NULL,
+ data BLOB NOT NULL,
+ PRIMARY KEY (snapshot_id, project_key)
+);
+
 -- Incremental watch support: shared watcher control, per-source extraction
 -- caches, and snapshot membership so the CLI and server can observe and
 -- cooperatively stop a watcher while an incremental publish writes only the
@@ -58,3 +105,12 @@ INSERT OR IGNORE INTO codeindex_snapshot_chunks (snapshot_id, chunk_id)
   SELECT snapshot_id, id FROM codeindex_chunks;
 INSERT OR IGNORE INTO codeindex_snapshot_edges (snapshot_id, edge_id)
   SELECT snapshot_id, id FROM codeindex_edges;
+
+-- Watch stop deadline: records when a stop was requested so controllers can
+-- escalate if a watcher does not honor it. Kept as its own migration because
+-- databases that applied the earlier watch-control migration do not have it.
+ALTER TABLE codeindex_watch_state ADD COLUMN stop_requested_unix BIGINT NOT NULL DEFAULT 0;
+
+-- Snapshot commit message: records the Git subject at the captured revision so
+-- the UI and CLI can label saved snapshots without a separate history lookup.
+ALTER TABLE codeindex_snapshots ADD COLUMN commit_message TEXT NOT NULL DEFAULT '';
