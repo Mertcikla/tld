@@ -1281,12 +1281,6 @@ export default function Repositories() {
                         >
                           {repo.root}
                         </Text>
-                        <Badge
-                          fontSize="2xs"
-                          colorScheme={repo.latestSnapshotId ? 'green' : 'gray'}
-                        >
-                          {repo.latestSnapshotId ? 'Indexed' : 'Not indexed'}
-                        </Badge>
                       </Box>
                       <IconButton
                         data-testid={`repositories-settings-${repo.id}`}

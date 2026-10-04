@@ -1,16 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { ArrowBackIcon, SettingsIcon } from '@chakra-ui/icons'
 import {
   Alert, AlertIcon, Badge, Box, Button, Flex, Grid, HStack,
   Input, Spinner, Switch, Text, VStack,
 } from '@chakra-ui/react'
 import {
   api, type CodeSnapshot, type CompletedRepositoryMap, type IndexedRepository,
-  type RepositoryGitHistory, type RepositoryMapConfiguration, type RepositoryRemote,
-  type RepositorySettings as Settings, type RepositoryWatchStatus,
+  type RepositoryGitHistory, type RepositoryMapConfiguration,
+  type RepositorySettings as Settings,
 } from '../api/client'
-import ConfirmDialog from '../components/ConfirmDialog'
-import RepositoryWatcherPanel from '../components/RepositoryWatcherPanel'
 
 const fields: { key: keyof RepositoryMapConfiguration; label: string; description: string; group: string }[] = [
   { key: 'resolution', label: 'Resolution', description: 'Higher values produce more, smaller groups.', group: 'Grouping' },
@@ -68,66 +67,14 @@ function InfoField({ label, value, mono = false }: { label: string; value: React
   )
 }
 
-function RemoteEditor({ remote, existing, disabled, onSave, onRemove, onCancel }: {
-  remote: RepositoryRemote
-  existing: boolean
-  disabled: boolean
-  onSave: (remote: RepositoryRemote) => Promise<void>
-  onRemove: (remote: RepositoryRemote) => void
-  onCancel?: () => void
-}) {
-  const [name, setName] = useState(remote.name)
-  const [fetch, setFetch] = useState(remote.fetchUrls.join('\n'))
-  const [push, setPush] = useState(remote.pushUrls.join('\n'))
-  const urls = (value: string) => value.split('\n').map(url => url.trim()).filter(Boolean)
-
-  return (
-    <Box border="1px solid var(--border-main)" borderRadius="lg" p={4} minW={0}>
-      <Flex align="center" justify="space-between" gap={3} mb={4}>
-        <Text as="h3" fontSize="sm" fontWeight="semibold" overflowWrap="anywhere">{existing ? remote.name : 'New remote'}</Text>
-        {existing && <Badge fontSize="2xs" textTransform="none">Git remote</Badge>}
-      </Flex>
-      {!existing && (
-        <Box mb={4}>
-          <Text as="label" htmlFor="remote-new-name" fontSize="sm">Remote name</Text>
-          <Input id="remote-new-name" size="sm" mt={1} maxW="240px" value={name} isDisabled={disabled} placeholder="origin" autoFocus onChange={event => setName(event.target.value)} />
-        </Box>
-      )}
-      <Grid templateColumns="repeat(auto-fit, minmax(min(100%, 240px), 1fr))" gap={4}>
-        <Box minW={0}>
-          <Text as="label" htmlFor={`remote-${remote.name}-fetch`} fontSize="sm">Fetch URLs</Text>
-          <Box as="textarea" id={`remote-${remote.name}-fetch`} aria-label={`Fetch URLs for ${remote.name || 'new remote'}`} aria-describedby={`remote-${remote.name}-fetch-help`} value={fetch} disabled={disabled} onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => setFetch(event.target.value)} rows={2} w="full" mt={1} p={2} bg="var(--bg-canvas)" border="1px solid var(--border-main)" borderRadius="md" fontSize="sm" fontFamily="mono" resize="vertical" _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '2px' }} _disabled={{ opacity: 0.4, cursor: 'not-allowed' }} />
-          <Text id={`remote-${remote.name}-fetch-help`} fontSize="xs" color="gray.400" mt={1}>One URL per line.</Text>
-        </Box>
-        <Box minW={0}>
-          <Text as="label" htmlFor={`remote-${remote.name}-push`} fontSize="sm">Push URLs <Box as="span" color="gray.500">(optional)</Box></Text>
-          <Box as="textarea" id={`remote-${remote.name}-push`} aria-label={`Push URLs for ${remote.name || 'new remote'}`} aria-describedby={`remote-${remote.name}-push-help`} value={push} disabled={disabled} onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => setPush(event.target.value)} rows={2} w="full" mt={1} p={2} bg="var(--bg-canvas)" border="1px solid var(--border-main)" borderRadius="md" fontSize="sm" fontFamily="mono" resize="vertical" _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '2px' }} _disabled={{ opacity: 0.4, cursor: 'not-allowed' }} />
-          <Text id={`remote-${remote.name}-push-help`} fontSize="xs" color="gray.400" mt={1}>Leave empty to use fetch URLs.</Text>
-        </Box>
-      </Grid>
-      <Flex mt={4} gap={2} wrap="wrap" justify="space-between">
-        {existing ? (
-          <Button size="sm" variant="ghost" colorScheme="red" isDisabled={disabled} onClick={() => onRemove(remote)}>Remove remote</Button>
-        ) : (
-          <Button size="sm" variant="ghost" isDisabled={disabled} onClick={onCancel}>Cancel</Button>
-        )}
-        <Button size="sm" variant="outline" isDisabled={disabled || !name.trim() || !urls(fetch).length} onClick={() => void onSave({ name: name.trim(), fetchUrls: urls(fetch), pushUrls: urls(push) })}>{existing ? 'Save remote' : 'Add remote'}</Button>
-      </Flex>
-    </Box>
-  )
-}
-
 export default function RepositorySettings({ repository, snapshots, maps, history, busy, dataError, onBack, onDelete, onUpdated, children }: Props) {
   const navigate = useNavigate()
   const [settings, setSettings] = useState<Settings | null>(null)
-  const [watch, setWatch] = useState<RepositoryWatchStatus | null>(null)
   const [draft, setDraft] = useState<Partial<Record<keyof RepositoryMapConfiguration, string>>>({})
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
-  const [addingRemote, setAddingRemote] = useState(false)
   const [loadNonce, setLoadNonce] = useState(0)
-  const [removeRemote, setRemoveRemote] = useState<RepositoryRemote | null>(null)
   const disabled = busy || saving
   const applySettings = (value: Settings) => {
     setSettings(value)
@@ -142,7 +89,6 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
     void api.repositories.settings(repository.id, controller.signal).then(value => {
       if (!controller.signal.aborted) applySettings(value)
     }).catch(err => { if (!controller.signal.aborted) setError(err instanceof Error ? err.message : 'Could not load repository settings') })
-    void api.repositories.watchStatus(repository.id).then(value => { if (!controller.signal.aborted) setWatch(value) }).catch(() => {})
     return () => controller.abort()
   }, [repository.id, loadNonce])
 
@@ -173,32 +119,6 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save map overrides') }
     finally { setSaving(false) }
   }
-  const updateRemote = async (remote: RepositoryRemote, remove = false) => {
-    setSaving(true)
-    setError('')
-    setMessage('')
-    try {
-      const updated = await api.repositories.updateRemote(repository.id, remote, remove)
-      // Remote edits must not discard unsaved map overrides.
-      setSettings(updated)
-      setAddingRemote(false)
-      setRemoveRemote(null)
-      setMessage(remove ? 'Remote removed.' : 'Remote saved to the local Git checkout.')
-      onUpdated()
-    } catch (err) { setError(err instanceof Error ? err.message : 'Could not update remote') }
-    finally { setSaving(false) }
-  }
-  const watchAction = async (action: 'start' | 'stop' | 'restart' | 'refresh') => {
-    setSaving(true)
-    setError('')
-    try {
-      if (action === 'stop' || action === 'restart') await api.repositories.stopWatch(repository.id)
-      if (action === 'start' || action === 'restart') await api.repositories.startWatch(repository.id, { materialize: false })
-      setWatch(await api.repositories.watchStatus(repository.id))
-      onUpdated()
-    } catch (err) { setError(err instanceof Error ? err.message : 'Could not update watcher') }
-    finally { setSaving(false) }
-  }
   const overrideCount = fields.filter(field => draft[field.key] !== undefined).length
   const hasMapChanges = !!settings && fields.some(field => draft[field.key] !== (
     settings.mapOverrides[field.key] === undefined ? undefined : String(settings.mapOverrides[field.key])
@@ -206,11 +126,21 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
 
   return (
     <VStack data-testid="repository-settings-page" align="stretch" spacing={5} p={{ base: 4, md: 6 }} pb={{ base: 'calc(var(--bottomnav-container-h, 0px) + env(safe-area-inset-bottom, 0px) + 24px)', md: 8 }} maxW="1100px" w="full" minW={0} mx="auto">
-      <Box>
-        <Button size="sm" variant="ghost" ml={-3} mb={4} onClick={onBack}>← Back to repository</Button>
-        <Text fontSize="xs" color="gray.400" mb={1}>{repository.root.split(/[/\\]/).filter(Boolean).pop()}</Text>
-        <Text as="h1" fontSize={{ base: 'xl', md: '2xl' }} fontWeight="semibold">Repository settings</Text>
-        <Text fontSize="sm" color="gray.400" mt={2} overflowWrap="anywhere">{repository.root}</Text>
+      <Box as="header" py={1}>
+        <HStack spacing={2} mb={5} minW={0}>
+          <Button size="sm" variant="ghost" color="gray.400" leftIcon={<ArrowBackIcon boxSize={3.5} />} ml={-3} flexShrink={0} onClick={onBack}>Back to repository</Button>
+          <Text aria-hidden="true" color="gray.600" fontSize="sm">/</Text>
+          <Text fontSize="sm" fontWeight="medium" color="gray.300" isTruncated title={repository.root.split(/[/\\]/).filter(Boolean).pop()}>{repository.root.split(/[/\\]/).filter(Boolean).pop()}</Text>
+        </HStack>
+        <Flex align="center" gap={{ base: 3, md: 4 }}>
+          <Flex aria-hidden="true" align="center" justify="center" w={{ base: 10, md: 12 }} h={{ base: 10, md: 12 }} flexShrink={0} bg="var(--bg-panel)" border="1px solid var(--border-main)" borderRadius="xl" color="var(--accent)">
+            <SettingsIcon boxSize={5} />
+          </Flex>
+          <Box minW={0}>
+            <Text as="h1" fontSize={{ base: 'xl', md: '2xl' }} fontWeight="semibold" lineHeight="short">Repository settings</Text>
+            <Text fontSize="xs" fontFamily="mono" color="gray.400" mt={2} overflowWrap="anywhere">{repository.root}</Text>
+          </Box>
+        </Flex>
       </Box>
 
       {error && <Alert status="error" role="alert" borderRadius="lg" fontSize="sm"><AlertIcon /><Box flex={1} minW={0} overflowWrap="anywhere">{error}</Box></Alert>}
@@ -235,6 +165,23 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
           </Grid>
         </Box>
         <Box borderTop="1px solid var(--border-main)" mt={5} pt={4}>
+          {!settings ? (
+            <Text fontSize="sm" color="gray.400">{error ? 'Settings unavailable.' : 'Loading remotes…'}</Text>
+          ) : !settings.isGit ? (
+            <Text fontSize="sm" color="gray.400">No Git checkout available.</Text>
+          ) : settings.remotes.length ? (
+            <Grid as="dl" templateColumns={fieldColumns} gap={4} data-testid="repository-remotes">
+              {settings.remotes.map(remote => (
+                <InfoField key={remote.name} label={remote.name} mono value={
+                  remote.fetchUrls.length ? remote.fetchUrls.map((url, index) => (
+                    <Box as="span" display="block" key={`${index}:${url}`}>{url}</Box>
+                  )) : 'No fetch URL configured.'
+                } />
+              ))}
+            </Grid>
+          ) : <Text fontSize="sm" color="gray.400">No remotes configured.</Text>}
+        </Box>
+        <Box borderTop="1px solid var(--border-main)" mt={5} pt={4}>
           <Text as="h3" fontSize="xs" color="gray.400" mb={3}>Index statistics</Text>
           <Grid templateColumns="repeat(auto-fit, minmax(100px, 1fr))" gap={3}>
             {[
@@ -247,20 +194,7 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
               </Box>
             ))}
           </Grid>
-          <Text fontSize="xs" color="gray.500" mt={3}>File, fact, edge and chunk counts are from the latest indexed snapshot.</Text>
         </Box>
-      </SettingsSection>
-
-      <SettingsSection title="Git remotes" description="Manage fetch and push URLs in this repository’s local Git checkout." action={settings?.isGit && !addingRemote && <Button size="sm" variant="outline" isDisabled={disabled} onClick={() => setAddingRemote(true)}>Add remote</Button>}>
-        {!settings ? (
-          <HStack color="gray.400" fontSize="sm">{!error && <Spinner size="sm" />}<Text>{error ? 'Settings unavailable.' : 'Loading remotes…'}</Text></HStack>
-        ) : settings.isGit ? (
-          <VStack align="stretch" spacing={3}>
-            {settings.remotes.map(remote => <RemoteEditor key={`${remote.name}:${remote.fetchUrls.join(',')}:${remote.pushUrls.join(',')}`} remote={remote} existing disabled={disabled} onSave={updateRemote} onRemove={setRemoveRemote} />)}
-            {!settings.remotes.length && !addingRemote && <Text fontSize="sm" color="gray.400" py={2}>No remotes configured. Add a remote to connect this checkout to a Git host.</Text>}
-            {addingRemote && <RemoteEditor remote={{ name: '', fetchUrls: [], pushUrls: [] }} existing={false} disabled={disabled} onSave={updateRemote} onRemove={setRemoveRemote} onCancel={() => setAddingRemote(false)} />}
-          </VStack>
-        ) : <Text fontSize="sm" color="gray.400">Remote management requires an available Git checkout.</Text>}
       </SettingsSection>
 
       <SettingsSection title="Map configuration" description="Customize how this repository is grouped and connected. Changes apply to new full maps." action={settings && <Badge colorScheme={overrideCount ? 'blue' : 'gray'} textTransform="none">{overrideCount ? `${overrideCount} ${overrideCount === 1 ? 'override' : 'overrides'}` : 'Using global defaults'}</Badge>}>
@@ -268,7 +202,6 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
           <HStack color="gray.400" fontSize="sm">{!error && <Spinner size="sm" />}<Text>{error ? 'Settings unavailable.' : 'Loading configuration…'}</Text></HStack>
         ) : (
           <>
-            <Text fontSize="xs" color="gray.400" mb={4}>Enable an override to set a repository value. Turn it off to inherit the current global default.</Text>
             <VStack align="stretch" spacing={5}>
               {['Grouping', 'Connection budgets'].map(group => (
                 <Box key={group}>
@@ -323,12 +256,6 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
         )}
       </SettingsSection>
 
-      <SettingsSection title="Watcher" description="Keep the index up to date as local files change.">
-        <Box mx={-4} mb={-4} sx={{ '> [data-testid="repository-watcher"]': { borderBottom: 0 } }}>
-          <RepositoryWatcherPanel status={watch} repositoryRoot={repository.root} branch={watch?.gitBranch || settings?.currentBranch || history?.currentBranch || ''} revision={watch?.gitRevision || settings?.headSha || history?.headSha || ''} busy={disabled} onStart={() => void watchAction('start')} onStop={() => void watchAction('stop')} onRestart={() => void watchAction('restart')} onRefresh={() => void watchAction('refresh')} />
-        </Box>
-      </SettingsSection>
-
       <Grid templateColumns="repeat(auto-fit, minmax(min(100%, 360px), 1fr))" gap={5} alignItems="start">
         <SettingsSection title="Snapshots" description="Saved indexes of this repository." action={<Badge sx={{ fontVariantNumeric: 'tabular-nums' }}>{snapshots.length}</Badge>}>
           <Box mx={-4} mb={-3}>{children}</Box>
@@ -362,7 +289,6 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
           <Button size="sm" colorScheme="red" variant="outline" data-testid={`repositories-delete-${repository.id}`} isDisabled={disabled} onClick={onDelete}>Delete repository</Button>
         </Flex>
       </Box>
-      <ConfirmDialog isOpen={!!removeRemote} onClose={() => { if (!saving) setRemoveRemote(null) }} onConfirm={() => { if (removeRemote) void updateRemote(removeRemote, true) }} title="Remove Git remote" body={`Remove remote "${removeRemote?.name}" and its remote-tracking branches from this local checkout?`} confirmLabel="Remove remote" confirmColorScheme="red" isLoading={saving} />
     </VStack>
   )
 }

@@ -77,6 +77,7 @@ vi.mock('../utils/toast', () => ({ toast: vi.fn() }))
 vi.mock('../utils/sourceEditor', () => ({ useSourceEditor: () => ({ editor: 'zed' }) }))
 
 vi.mock('@chakra-ui/icons', () => ({
+  ArrowBackIcon: () => null,
   AddIcon: () => null,
   CopyIcon: () => null,
   ExternalLinkIcon: () => null,
@@ -712,22 +713,24 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.unmount() })
   })
 
-  it('edits remotes without losing unsaved map overrides', async () => {
+  it('shows fetch remotes as read-only repository information without push URLs', async () => {
     const { api } = await import('../api/client')
     const initial = await api.repositories.settings('repo-1')
-    const remote = { name: 'origin', fetchUrls: ['https://example.com/repo.git'], pushUrls: [] }
-    const settings = { ...initial, isGit: true, remotes: [remote] }
-    vi.mocked(api.repositories.settings).mockResolvedValueOnce(settings)
-    vi.mocked(api.repositories.updateRemote).mockResolvedValueOnce({ ...settings, remotes: [{ ...remote, fetchUrls: ['git@example.com:repo.git'] }] })
+    const remote = { name: 'origin', fetchUrls: ['https://example.com/repo.git', 'git@example.com:repo.git'], pushUrls: ['ssh://example.com/push.git'] }
+    vi.mocked(api.repositories.settings).mockResolvedValueOnce({ ...initial, isGit: true, remotes: [remote] })
     searchParamsMock.mockReturnValue(new URLSearchParams('repo=repo-1&page=settings'))
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repository-override-resolution' }).props.onChange({ target: { checked: true } }) })
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repository-map-resolution' }).props.onChange({ target: { value: '1.9' } }) })
-    await act(async () => { renderer.root.findAll(node => node.props.as === 'textarea' && node.props['aria-label'] === 'Fetch URLs for origin')[0].props.onChange({ target: { value: 'git@example.com:repo.git' } }) })
-    await act(async () => { renderer.root.findAll(node => node.type === 'button' && node.props.children === 'Save remote')[0].props.onClick() })
-    expect(api.repositories.updateRemote).toHaveBeenCalledWith('repo-1', { name: 'origin', fetchUrls: ['git@example.com:repo.git'], pushUrls: [] }, false)
-    expect(renderer.root.findByProps({ 'data-testid': 'repository-map-resolution' }).props.value).toBe('1.9')
+    const remotes = renderer.root.findByProps({ 'data-testid': 'repository-remotes' })
+    expect(remotes.findAll(node => node.props.children === remote.fetchUrls[0]).length).toBeGreaterThan(0)
+    expect(remotes.findAll(node => node.props.children === remote.fetchUrls[1]).length).toBeGreaterThan(0)
+    let section = remotes.parent
+    while (section && section.props.as !== 'section') section = section.parent
+    expect(section?.findAll(node => node.props.children === 'Repository information').length).toBeGreaterThan(0)
+    expect(renderer.root.findAll(node => node.props.children === remote.pushUrls[0])).toHaveLength(0)
+    expect(remotes.findAll(node => ['input', 'textarea', 'button'].includes(String(node.type)))).toHaveLength(0)
+    expect(renderer.root.findAll(node => node.type === 'button' && ['Add remote', 'Save remote', 'Remove remote'].includes(node.props.children))).toHaveLength(0)
+    expect(api.repositories.updateRemote).not.toHaveBeenCalled()
     await act(async () => { renderer.unmount() })
   })
 
