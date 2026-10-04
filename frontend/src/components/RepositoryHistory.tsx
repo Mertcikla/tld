@@ -26,8 +26,6 @@ export default function RepositoryHistory({
   head,
   collapsed,
   onToggle,
-  onBase,
-  onHead,
   onRange,
   disabled = false,
 }: {
@@ -37,8 +35,6 @@ export default function RepositoryHistory({
   head: string
   collapsed: boolean
   onToggle: () => void
-  onBase: (commit: RepositoryCommit) => void
-  onHead: (commit: RepositoryCommit) => void
   onRange: (base: RepositoryCommit, head: RepositoryCommit) => void
   disabled?: boolean
 }) {
@@ -147,12 +143,14 @@ export default function RepositoryHistory({
           <Flex maxH="240px" overflowY="auto">
             <Box
               flexShrink={0}
+              h={`${layout.rows.length * rowHeight}px`}
               borderRight="1px solid"
               borderColor="whiteAlpha.200"
               w={`${Math.max(44, layout.laneCount * 18 + 28)}px`}
             >
               <svg
                 aria-label="Commit graph"
+                style={{ display: 'block' }}
                 width="100%"
                 height={layout.rows.length * rowHeight}
               >
@@ -217,15 +215,6 @@ export default function RepositoryHistory({
                   gap={2}
                   borderBottom="1px solid"
                   borderColor="whiteAlpha.50"
-                  sx={{
-                    '&:hover > .commit-target': {
-                      opacity: 1,
-                      pointerEvents: 'auto',
-                    },
-                    '@media (hover: none)': {
-                      '> .commit-target': { opacity: 1, pointerEvents: 'auto' },
-                    },
-                  }}
                   opacity={
                     [commit.sha, commit.subject, commit.author, ...commit.refs]
                       .join(' ')
@@ -284,45 +273,16 @@ export default function RepositoryHistory({
                     {commit.author} ·{' '}
                     {new Date(commit.createdUnix * 1000).toLocaleDateString()}
                   </Text>
-                  <Button
-                    className="commit-target"
-                    size="xs"
-                    variant={commit.sha === base ? 'solid' : 'ghost'}
-                    opacity={commit.sha === base ? 1 : 0}
-                    pointerEvents={commit.sha === base ? 'auto' : 'none'}
-                    aria-pressed={commit.sha === base}
-                    _focusVisible={{ opacity: 1, pointerEvents: 'auto' }}
-                    isDisabled={disabled || (headIndex >= 0 && index < headIndex)}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      if (disabled || (headIndex >= 0 && index < headIndex)) return
-                      setPendingCommit('')
-                      onBase(commit)
-                    }}
-                    aria-label={`Set ${commit.sha.slice(0, 7)} as base`}
-                  >
-                    Base
-                  </Button>
-                  <Button
-                    className="commit-target"
-                    size="xs"
-                    variant={commit.sha === head ? 'solid' : 'ghost'}
-                    colorScheme={commit.sha === head ? 'green' : undefined}
-                    opacity={commit.sha === head ? 1 : 0}
-                    pointerEvents={commit.sha === head ? 'auto' : 'none'}
-                    aria-pressed={commit.sha === head}
-                    _focusVisible={{ opacity: 1, pointerEvents: 'auto' }}
-                    isDisabled={disabled || (baseIndex >= 0 && index > baseIndex)}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      if (disabled || (baseIndex >= 0 && index > baseIndex)) return
-                      setPendingCommit('')
-                      onHead(commit)
-                    }}
-                    aria-label={`Set ${commit.sha.slice(0, 7)} as head`}
-                  >
-                    Head
-                  </Button>
+                  {(commit.sha === base || commit.sha === head) && (
+                    <HStack spacing={2} flexShrink={0}>
+                      {commit.sha === base && (
+                        <Text fontSize="xs" color="gray.400">Base</Text>
+                      )}
+                      {commit.sha === head && (
+                        <Text fontSize="xs" color="green.300">Head</Text>
+                      )}
+                    </HStack>
+                  )}
                 </Flex>
               ))}
             </VStack>

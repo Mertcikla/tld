@@ -18,10 +18,9 @@ const commits: RepositoryCommit[] = ['newer', 'middle', 'older', 'oldest'].map((
 const history: RepositoryGitHistory = { commits, branches: [], currentBranch: 'main', headSha: 'newer', isGit: true, hasMore: false }
 
 function renderHistory(base: string, head: string, onRange = vi.fn(), disabled = false) {
-  const onBase = vi.fn(), onHead = vi.fn()
   let renderer!: ReturnType<typeof create>
-  act(() => { renderer = create(<RepositoryHistory repositoryId="repo" history={history} base={base} head={head} collapsed={false} onToggle={() => {}} onBase={onBase} onHead={onHead} onRange={onRange} disabled={disabled} />) })
-  return { renderer, onBase, onHead, onRange }
+  act(() => { renderer = create(<RepositoryHistory repositoryId="repo" history={history} base={base} head={head} collapsed={false} onToggle={() => {}} onRange={onRange} disabled={disabled} />) })
+  return { renderer, onRange }
 }
 
 describe('RepositoryHistory selection', () => {
@@ -36,29 +35,21 @@ describe('RepositoryHistory selection', () => {
     }
   })
 
-  it('highlights the inclusive range in the rows and graph and adds the graph divider', () => {
+  it('highlights the inclusive range and extends the graph divider through the full history', () => {
     const { renderer } = renderHistory('older', 'newer')
     for (const sha of ['newer', 'middle', 'older']) expect(renderer.root.findByProps({ 'data-testid': `commit-row-${sha}` }).props.bg).toBe('rgba(var(--accent-rgb), 0.12)')
     expect(renderer.root.findByProps({ 'data-testid': 'commit-row-oldest' }).props.bg).toBeUndefined()
     expect(renderer.root.findByProps({ 'data-testid': 'commit-row-middle' }).props.flexShrink).toBe(0)
     expect(renderer.root.findAllByType('rect')).toHaveLength(3)
-    expect(renderer.root.findAllByProps({ borderRight: '1px solid' }).length).toBeGreaterThan(0)
+    expect(renderer.root.findAllByProps({ borderRight: '1px solid' })[0].props.h).toBe(`${commits.length * 36}px`)
     act(() => { renderer.unmount() })
   })
 
-  it('prevents reversed target selections and keeps target clicks from selecting the row', () => {
-    const { renderer, onBase, onHead, onRange } = renderHistory('older', 'middle')
-    const newerBase = renderer.root.findAllByType('button').find((node) => node.props['aria-label'] === 'Set newer as base')!
-    const olderHead = renderer.root.findAllByType('button').find((node) => node.props['aria-label'] === 'Set oldest as head')!
-    expect(newerBase.props.disabled).toBe(true)
-    expect(olderHead.props.disabled).toBe(true)
+  it('keeps inspect clicks from selecting the row', () => {
+    const { renderer, onRange } = renderHistory('older', 'middle')
+    const inspect = renderer.root.findAllByType('button').find((node) => node.props['aria-label'] === 'Inspect older')!
     const event = { stopPropagation: vi.fn() }
-    act(() => { newerBase.props.onClick(event); olderHead.props.onClick(event) })
-    expect(onBase).not.toHaveBeenCalled()
-    expect(onHead).not.toHaveBeenCalled()
-    const validBase = renderer.root.findAllByType('button').find((node) => node.props['aria-label'] === 'Set oldest as base')!
-    act(() => { validBase.props.onClick(event) })
-    expect(onBase).toHaveBeenCalledWith(commits[3])
+    act(() => { inspect.props.onClick(event) })
     expect(event.stopPropagation).toHaveBeenCalled()
     expect(onRange).not.toHaveBeenCalled()
     act(() => { renderer.unmount() })

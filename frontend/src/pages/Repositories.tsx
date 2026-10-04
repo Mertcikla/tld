@@ -23,7 +23,6 @@ import {
   PopoverTrigger,
   Portal,
   Progress,
-  Select,
   Spinner,
   Switch,
   Text,
@@ -58,6 +57,7 @@ import {
 import ConfirmDialog from '../components/ConfirmDialog'
 import RepositorySettings from './RepositorySettings'
 import RepositoryHistory from '../components/RepositoryHistory'
+import RepositoryTargetPicker from '../components/RepositoryTargetPicker'
 import RepositoryChangeCanvas from '../components/RepositoryChangeCanvas'
 import RepositorySymbols from '../components/RepositorySymbols'
 import RepositoryWatcherPanel from '../components/RepositoryWatcherPanel'
@@ -336,41 +336,27 @@ function CompareSide({
           {mapped ? 'Mapped' : snapshot ? 'Indexed' : 'Not captured'}
         </Badge>
       </HStack>
-      <Select
+      <RepositoryTargetPicker
         aria-label={`${side} target`}
         data-testid={`repositories-${side.toLowerCase()}-target`}
-        size="sm"
         value={value}
         isDisabled={disabled || locked}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        <option value="">Select a target</option>
-        <option value="working_tree">Working tree · local contents</option>
-        {!known && value && (
-          <option value={value}>
-            {value.startsWith('commit:')
-              ? `Commit ${short(value.slice(7))}`
-              : value}
-          </option>
-        )}
-        <optgroup label="Saved snapshots">
-          {[...snapshots].reverse().map((s) => (
-            <option key={s.id} value={`snapshot:${s.id}`}>
-              {short(s.gitRevision)} · {s.gitBranch || 'detached / non-Git'}
-              {s.commitMessage ? ` · ${s.commitMessage}` : ''} ·{' '}
-              {age(s.createdUnix)}
-              {showIds ? ` · ${short(s.id)}` : ''}
-            </option>
-          ))}
-        </optgroup>
-        <optgroup label="Commits">
-          {history?.commits.map((c) => (
-            <option key={c.sha} value={`commit:${c.sha}`}>
-              {c.sha.slice(0, 7)} · {c.subject}
-            </option>
-          ))}
-        </optgroup>
-      </Select>
+        onChange={onChange}
+        groups={[
+          { options: [
+            { value: '', label: 'Select a target' },
+            { value: 'working_tree', label: 'Working tree · local contents' },
+            ...(!known && value ? [{ value, label: value.startsWith('commit:') ? `Commit ${short(value.slice(7))}` : value }] : []),
+          ] },
+          { label: 'Saved snapshots', options: [...snapshots].reverse().map((s) => ({
+            value: `snapshot:${s.id}`,
+            label: `${short(s.gitRevision)} · ${s.gitBranch || 'detached / non-Git'}${s.commitMessage ? ` · ${s.commitMessage}` : ''} · ${age(s.createdUnix)}${showIds ? ` · ${short(s.id)}` : ''}`,
+          })) },
+          { label: 'Commits', options: (history?.commits ?? []).map((c) => ({
+            value: `commit:${c.sha}`, label: `${c.sha.slice(0, 7)} · ${c.subject}`,
+          })) },
+        ]}
+      />
       <Flex mt={2} gap={2} align="center">
         <Text fontSize="xs" color="gray.500" flex={1} isTruncated>
           {value === 'working_tree'
@@ -992,32 +978,17 @@ export default function Repositories() {
   const repositoryDetails = (
                   <Box px={4} pb={3}>
                     <VStack align="stretch" spacing={2} mb={4}>
-                  <Select
+                  <RepositoryTargetPicker
                     aria-label="History branch"
-                    size="xs"
-                    w="full"
                     value={branch}
                     isDisabled={busy || mode === 'pr' || !history?.isGit}
-                    onChange={(e) => {
-                      setBranch(e.target.value)
-                    }}
-                  >
-                    <option value="">
-                      Current HEAD
-                      {history?.currentBranch
-                        ? ` · ${history.currentBranch}`
-                        : ''}
-                    </option>
-                    {branch &&
-                      !history?.branches.some((b) => b.name === branch) && (
-                        <option value={branch}>{branch}</option>
-                      )}
-                    {history?.branches.map((b) => (
-                      <option key={b.name} value={b.name}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </Select>
+                    onChange={setBranch}
+                    groups={[{ options: [
+                      { value: '', label: `Current HEAD${history?.currentBranch ? ` · ${history.currentBranch}` : ''}` },
+                      ...(branch && !history?.branches.some((b) => b.name === branch) ? [{ value: branch, label: branch }] : []),
+                      ...(history?.branches ?? []).map((b) => ({ value: b.name, label: b.name })),
+                    ] }]}
+                  />
                   <Button
                     size="xs"
                     variant="outline"
@@ -1714,12 +1685,6 @@ export default function Repositories() {
                   }}
                   collapsed={historyCollapsed}
                   onToggle={() => setHistoryCollapsed(!historyCollapsed)}
-                  onBase={(c) => {
-                    if (!busy) chooseTarget('base', `commit:${c.sha}`)
-                  }}
-                  onHead={(c) => {
-                    if (!busy) chooseTarget('head', `commit:${c.sha}`)
-                  }}
                 />}
                 {(mode !== 'pr' || shownImpact) && <Flex
                   px={4}

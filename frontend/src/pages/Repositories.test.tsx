@@ -11,6 +11,7 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
   useSearchParams: () => [searchParamsMock(), setParamsMock],
 }))
+vi.mock('../components/RepositoryTargetPicker', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', props) }))
 vi.mock('../components/RepositoryHistory', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', { ...props, 'data-testid': 'mock-history' }) }))
 
 vi.mock('../api/client', () => ({
@@ -207,7 +208,7 @@ describe('Repositories map action', () => {
     expect(target.props.value).toBe('commit:pr-base')
     expect(target.props.isDisabled).toBe(true)
     expect(renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.disabled).toBe(true)
-    await act(async () => { target.props.onChange({ target: { value: 'working_tree' } }) })
+    await act(async () => { target.props.onChange('working_tree') })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('commit:pr-base')
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
     expect(api.repositories.compare).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: expect.objectContaining({ gitRevision: 'pr-base' }), head: expect.objectContaining({ gitRevision: 'pr-head' }) }))
@@ -785,7 +786,7 @@ describe('Repositories map action', () => {
     const { api } = await import('../api/client')
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.onChange({ target: { value: 'working_tree' } }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.onChange('working_tree') })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-0')
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-map' }).props.onClick() })
     expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ workingTree: true }))
@@ -809,7 +810,7 @@ describe('Repositories map action', () => {
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-1')
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
-    await act(async () => { renderer.root.findByProps({ 'aria-label': 'History branch' }).props.onChange({ target: { value: 'main' } }) })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'History branch' }).props.onChange('main') })
     expect(api.repositories.history).toHaveBeenCalledWith('repo-1', 'main', 0)
     await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
