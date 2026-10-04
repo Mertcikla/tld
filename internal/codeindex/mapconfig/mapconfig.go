@@ -22,6 +22,14 @@ type Options struct {
 	// enabling this stays bounded by the connector budget rather than emitting
 	// one connector per (file, import) pair.
 	IncludeExternalImports bool
+	// AnnotateConnectors writes relationship labels and tags on connectors.
+	AnnotateConnectors bool
+	// AnnotateTags writes language and test tags on elements.
+	AnnotateTags bool
+	// AnnotateTechnology writes catalog technology onto elements.
+	AnnotateTechnology bool
+	// GroupLayers creates a view layer per community group.
+	GroupLayers bool
 }
 
 // FromGlobal resolves global config into effective map options. Zero-valued
@@ -32,6 +40,10 @@ func FromGlobal(cfg *workspace.Config) Options {
 		Grouping:                 defaults,
 		MaxConnectorsPerView:     materialize.DefaultMaxConnectorsPerView,
 		MaxLeafConnectorsPerView: materialize.DefaultMaxLeafConnectorsPerView,
+		AnnotateConnectors:       true,
+		AnnotateTags:             true,
+		AnnotateTechnology:       true,
+		GroupLayers:              true,
 	}
 	if cfg == nil {
 		return out
@@ -67,6 +79,16 @@ func FromGlobal(cfg *workspace.Config) Options {
 	if cfg.Map.Budget.MaxLeafConnectorsPerView > 0 {
 		out.MaxLeafConnectorsPerView = cfg.Map.Budget.MaxLeafConnectorsPerView
 	}
+	applyBool := func(value *bool, target *bool) {
+		if value != nil {
+			*target = *value
+		}
+	}
+	applyBool(cfg.Map.Annotate.Connectors, &out.AnnotateConnectors)
+	applyBool(cfg.Map.Annotate.Tags, &out.AnnotateTags)
+	applyBool(cfg.Map.Annotate.Technology, &out.AnnotateTechnology)
+	applyBool(cfg.Map.Annotate.GroupLayers, &out.GroupLayers)
+
 	return out
 }
 
@@ -83,6 +105,10 @@ func (o Options) Fingerprint() string {
 		"max_leaf_files=" + strconv.Itoa(grouping.MaxLeafFiles),
 		"max_connectors_per_view=" + strconv.Itoa(o.MaxConnectorsPerView),
 		"max_leaf_connectors_per_view=" + strconv.Itoa(o.MaxLeafConnectorsPerView),
+		"annotate_connectors=" + strconv.FormatBool(o.AnnotateConnectors),
+		"annotate_tags=" + strconv.FormatBool(o.AnnotateTags),
+		"annotate_technology=" + strconv.FormatBool(o.AnnotateTechnology),
+		"group_layers=" + strconv.FormatBool(o.GroupLayers),
 	}, ",")
 }
 
@@ -90,7 +116,7 @@ func (o Options) Fingerprint() string {
 // change whenever a setting that affects map output changes so cached maps are
 // not reused across configurations.
 func (o Options) ConfigHash() string {
-	return cgraph.ID("group-v5", strconv.FormatBool(o.IncludeExternalImports), o.Fingerprint())
+	return cgraph.ID("group-v6", strconv.FormatBool(o.IncludeExternalImports), o.Fingerprint())
 }
 
 // MaterializeOptions builds the materialization options for these settings.
@@ -98,6 +124,11 @@ func (o Options) MaterializeOptions(progress func(current, total int, detail str
 	return materialize.MapOptions{
 		MaxConnectorsPerView:     o.MaxConnectorsPerView,
 		MaxLeafConnectorsPerView: o.MaxLeafConnectorsPerView,
+		IncludeExternalImports:   o.IncludeExternalImports,
+		AnnotateConnectors:       o.AnnotateConnectors,
+		AnnotateTags:             o.AnnotateTags,
+		AnnotateTechnology:       o.AnnotateTechnology,
+		GroupLayers:              o.GroupLayers,
 		Progress:                 progress,
 	}
 }

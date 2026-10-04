@@ -162,3 +162,19 @@ func TestRunRestoresHistoricalMapAndRetainsOwnership(t *testing.T) {
 		t.Fatalf("deleted active map: %+v %v", active, err)
 	}
 }
+
+func TestEdgeKindLabel(t *testing.T) {
+	cases := map[codeindexv1.EdgeKind]string{
+		codeindexv1.EdgeKind_EDGE_KIND_CALLS:           "calls",
+		codeindexv1.EdgeKind_EDGE_KIND_IMPLEMENTS:      "implements",
+		codeindexv1.EdgeKind_EDGE_KIND_TYPE_DEFINITION: "type definition",
+		// References dominate dependency graphs and stay unlabeled.
+		codeindexv1.EdgeKind_EDGE_KIND_REFERENCES:  "",
+		codeindexv1.EdgeKind_EDGE_KIND_UNSPECIFIED: "",
+	}
+	for kind, want := range cases {
+		if got := edgeKindLabel(kind); got != want {
+			t.Fatalf("edgeKindLabel(%v) = %q, want %q", kind, got, want)
+		}
+	}
+}

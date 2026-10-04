@@ -15,6 +15,7 @@ const (
 	MappingElement   MappingKind = "element"
 	MappingConnector MappingKind = "connector"
 	MappingView      MappingKind = "view"
+	MappingLayer     MappingKind = "layer"
 )
 
 // ResourceMapping binds a codeindex logical key to a materialized workspace

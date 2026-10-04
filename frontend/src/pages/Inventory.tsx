@@ -33,7 +33,7 @@ import {
 import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, DeleteIcon, EditIcon, SearchIcon, SmallCloseIcon, TriangleDownIcon, TriangleUpIcon } from '@chakra-ui/icons'
 import { ZoomInIcon } from '../components/Icons'
 import { api } from '../api/client'
-import { isElementGroupTag } from '../utils/elementGroups'
+import { isElementGroupTag, elementGroupTagForLayer } from '../utils/elementGroups'
 import { TYPE_COLORS } from '../types'
 import { resolveElementIconUrl } from '../utils/elementIcon'
 import ConnectorPanel from '../components/ConnectorPanel'
@@ -112,6 +112,7 @@ export default function Inventory() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [tagSearch, setTagSearch] = useState('')
   const [tagColorMap, setTagColorMap] = useState<Record<string, { color: string }>>({})
+  const [groupTagMeta, setGroupTagMeta] = useState<Record<string, { label: string; color: string }>>({})
   const [tagDeleteConfirm, setTagDeleteConfirm] = useState<{ tag: string; count: number } | null>(null)
   const [deletingTag, setDeletingTag] = useState<string | null>(null)
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false)
@@ -137,6 +138,10 @@ export default function Inventory() {
         api.workspace.orgs.tagColors.list().catch(() => ({})),
       ])
       const flatViews = flattenInventoryViews(gridData.views)
+      const layersPerView = await Promise.all(
+        flatViews.map((view) => api.workspace.views.layers.list(view.id).catch(() => [])),
+      )
+      const allLayers = layersPerView.flat()
       const nextCounts = Object.fromEntries(
         Object.entries(gridData.content).map(([viewId, content]) => [
           Number(viewId),
@@ -153,15 +158,24 @@ export default function Inventory() {
         })
       })
       const nextConnectors = dependencies.connectors.map(dependencyConnectorToConnector)
-      const tagSet = new Set<string>(Object.keys(fetchedTagColors).filter((tag) => !isElementGroupTag(tag)))
-      allElements.forEach((element) => element.tags.forEach((tag) => { if (!isElementGroupTag(tag)) tagSet.add(tag) }))
-      flatViews.forEach((view) => (view.tags ?? []).forEach((tag) => { if (!isElementGroupTag(tag)) tagSet.add(tag) }))
-      nextConnectors.forEach((connector) => (connector.tags ?? []).forEach((tag) => { if (!isElementGroupTag(tag)) tagSet.add(tag) }))
+      const nextGroupTagMeta: Record<string, { label: string; color: string }> = {}
+      allLayers.forEach((layer) => {
+        const groupTag = elementGroupTagForLayer(layer)
+        if (groupTag) {
+          nextGroupTagMeta[groupTag] = { label: `group:${layer.name}`, color: layer.color || '#A0AEC0' }
+        }
+      })
+      const tagSet = new Set<string>(Object.keys(fetchedTagColors))
+      allElements.forEach((element) => element.tags.forEach((tag) => tagSet.add(tag)))
+      flatViews.forEach((view) => (view.tags ?? []).forEach((tag) => tagSet.add(tag)))
+      nextConnectors.forEach((connector) => (connector.tags ?? []).forEach((tag) => tagSet.add(tag)))
+      allLayers.forEach((layer) => layer.tags.forEach((tag) => tagSet.add(tag)))
       setElements(allElements)
       setViews(flatViews)
       setConnectors(nextConnectors)
       setCountsByView(nextCounts)
       setPlacementByViewElement(nextPlacementLookup)
+      setGroupTagMeta(nextGroupTagMeta)
       setAvailableTags(Array.from(tagSet).sort((a, b) => a.localeCompare(b)))
       setTagColorMap(fetchedTagColors as Record<string, { color: string }>)
     } finally {
@@ -261,7 +275,7 @@ export default function Inventory() {
 
   const tagCounts = useMemo(() => {
     const counts: Record<string, number> = {}
-    rows.forEach((row) => row.tags.forEach((tag) => { counts[tag] = (counts[tag] ?? 0) + 1 }))
+    rows.forEach((row) => row.filterTags.forEach((tag) => { counts[tag] = (counts[tag] ?? 0) + 1 }))
     return counts
   }, [rows])
 
@@ -422,8 +436,12 @@ export default function Inventory() {
 
   const filteredAvailableTags = useMemo(() => {
     const normalized = tagSearch.trim().toLowerCase()
-    return availableTags.filter((tag) => !normalized || tag.toLowerCase().includes(normalized))
-  }, [availableTags, tagSearch])
+    if (!normalized) return availableTags
+    return availableTags.filter((tag) => {
+      const label = groupTagMeta[tag]?.label ?? tag
+      return tag.toLowerCase().includes(normalized) || label.toLowerCase().includes(normalized)
+    })
+  }, [availableTags, groupTagMeta, tagSearch])
   const visibleAvailableTags = filteredAvailableTags.slice(0, MAX_VISIBLE_FILTER_OPTIONS)
 
   const handleBulkAddTag = async (tag: string) => {
@@ -675,6 +693,10 @@ export default function Inventory() {
                   .map((tag) => {
                     const isActive = tagsFilter.includes(tag)
                     const count = tagCounts[tag] ?? 0
+                    const meta = groupTagMeta[tag]
+                    const label = meta?.label ?? tag
+                    const color = meta?.color ?? resolveTagColor(tag, tagColorMap)
+                    const isGroupTag = meta !== undefined
                     return (
                       <Box key={tag}>
                         <Flex
@@ -685,8 +707,8 @@ export default function Inventory() {
                           py={1}
                           borderRadius="md"
                           cursor="pointer"
-                          bg={isActive ? 'rgba(66, 153, 225, 0.12)' : 'transparent'}
-                          _hover={{ bg: isActive ? 'rgba(66, 153, 225, 0.18)' : 'whiteAlpha.50' }}
+                          bg={isActive ? `color-mix(in srgb, ${color} 14%, transparent)` : 'transparent'}
+                          _hover={{ bg: isActive ? `color-mix(in srgb, ${color} 20%, transparent)` : 'whiteAlpha.50' }}
                           onClick={() => toggleTagFilter(tag)}
                           userSelect="none"
                         >
@@ -694,19 +716,21 @@ export default function Inventory() {
                             w="6px"
                             h="6px"
                             borderRadius="full"
-                            bg={isActive ? 'blue.400' : 'gray.600'}
+                            bg={color}
+                            opacity={isActive ? 1 : 0.5}
                             mr={2}
                             flexShrink={0}
-                            transition="background 0.1s"
+                            transition="opacity 0.1s"
                           />
-                          <Text fontSize="xs" color={isActive ? 'blue.300' : 'gray.400'} flex={1} isTruncated>{tag}</Text>
-                          <Text fontSize="10px" color={count === 0 ? 'gray.700' : isActive ? 'blue.400' : 'gray.600'} fontWeight="bold" ml={1} _groupHover={{ display: 'none' }}>{count}</Text>
-                          <Popover
-                            placement="right-start"
-                            isOpen={tagDeleteConfirm?.tag === tag}
-                            onClose={() => setTagDeleteConfirm(null)}
-                            closeOnBlur
-                          >
+                          <Text fontSize="xs" color={isActive ? color : 'gray.400'} flex={1} isTruncated title={label !== tag ? tag : undefined}>{label}</Text>
+                          <Text fontSize="10px" color={count === 0 ? 'gray.700' : isActive ? color : 'gray.600'} fontWeight="bold" ml={1} _groupHover={{ display: isGroupTag ? 'block' : 'none' }}>{count}</Text>
+                          {!isGroupTag && (
+                            <Popover
+                              placement="right-start"
+                              isOpen={tagDeleteConfirm?.tag === tag}
+                              onClose={() => setTagDeleteConfirm(null)}
+                              closeOnBlur
+                            >
                             <Tooltip label={`Delete tag "${tag}"`} placement="right" openDelay={400}>
                               <Box>
                                 <PopoverTrigger>
@@ -768,6 +792,7 @@ export default function Inventory() {
                               </PopoverFooter>
                             </PopoverContent>
                           </Popover>
+                          )}
                         </Flex>
                       </Box>
                     )

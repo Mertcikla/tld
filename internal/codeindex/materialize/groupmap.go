@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mertcikla/tld/v2/internal/codeindex/community"
+	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/layout"
@@ -109,8 +110,10 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 	if err := m.materializeConnectors(); err != nil {
 		return m.result, err
 	}
-	if err := m.materializeImports(rootViewID); err != nil {
-		return m.result, err
+	if opts.IncludeExternalImports {
+		if err := m.materializeImports(rootViewID); err != nil {
+			return m.result, err
+		}
 	}
 	if err := m.pruneMapPlacements(); err != nil {
 		return m.result, err
@@ -129,8 +132,15 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 
 // materializeGroup creates the group element and view, recurses into children,
 // and places direct member files in the group's own view.
+//
+// A group layer only makes sense when it structures a view rather than
+// describing the whole view. The view already expresses a group whose contents
+// are entirely its own files or entirely nested subgroups, so a layer is only
+// created when the group mixes both: at least two loose member files alongside
+// at least one nested subgroup. The tag is applied to those loose files only,
+// leaving the subgroup nodes outside the background.
 func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64, chain, elementPath []int64) error {
-	elementID, err := m.upsertElement(groupElementKey(m.input.RepositoryID, group.Key), groupElement(group))
+	elementID, err := m.upsertElement(groupElementKey(m.input.RepositoryID, group.Key), m.groupElement(group))
 	if err != nil {
 		return err
 	}
@@ -141,6 +151,15 @@ func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64,
 	m.leafViews[groupViewID] = len(group.Children) == 0
 	if err := m.queuePlacement(viewID, elementID); err != nil {
 		return err
+	}
+	// Tag loose files only when nested subgroups share the view, so the group
+	// background encloses a proper subset of the view instead of everything.
+	groupTagValue := groupTag(m.input.RepositoryID, group.Key)
+	hasLayer := m.opts.GroupLayers && len(group.Members) >= 2 && len(group.Children) >= 1
+	if hasLayer {
+		if err := m.upsertLayer(groupLayerKey(m.input.RepositoryID, group.Key), groupViewID, group.Name, []string{groupTagValue}); err != nil {
+			return err
+		}
 	}
 	views := appendView(chain, groupViewID)
 	elements := appendElem(elementPath, elementID)
@@ -154,7 +173,11 @@ func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64,
 			continue
 		}
 		fact := m.input.Files[member]
-		fileID, err := m.upsertElement(fileKey(m.input.RepositoryID, fact.ID), m.fileElement(member))
+		fileInput := m.fileElement(member)
+		if hasLayer {
+			fileInput.Tags = unionTags(fileInput.Tags, []string{groupTagValue})
+		}
+		fileID, err := m.upsertElement(fileKey(m.input.RepositoryID, fact.ID), fileInput)
 		if err != nil {
 			return err
 		}
@@ -166,7 +189,24 @@ func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64,
 	return nil
 }
 
-func groupElement(group *community.Group) core.LibraryElement {
+// groupLanguages lists the distinct source languages in a group's subtree.
+func (m *mapMaterializer) groupLanguages(group *community.Group) []string {
+	var tags []string
+	for _, member := range collectGroupMembers(group) {
+		if member < 0 || member >= len(m.input.Files) {
+			continue
+		}
+		if tag := languageTag(m.input.Files[member].Language); tag != "" {
+			tags = append(tags, tag)
+		}
+	}
+	return tags
+}
+
+// groupElement builds the component element for a community group, adding
+// language/test tags and technology. The group layer tag is applied to the
+// group's contents, not to this node.
+func (m *mapMaterializer) groupElement(group *community.Group) core.LibraryElement {
 	kind := "component"
 	description := fmt.Sprintf("%d files", group.Files)
 	if group.Isolated {
@@ -174,7 +214,127 @@ func groupElement(group *community.Group) core.LibraryElement {
 	} else {
 		description += fmt.Sprintf(" · %.0f internal · %.0f external deps", group.Internal, group.External)
 	}
-	return core.LibraryElement{Name: group.Name, Kind: &kind, Description: &description}
+	input := core.LibraryElement{Name: group.Name, Kind: &kind, Description: &description}
+	if m.opts.AnnotateTags {
+		tags := distinctStrings(m.groupLanguages(group))
+		if group.Isolated {
+			tags = append(tags, "isolated")
+		}
+		if len(tags) > 0 {
+			input.Tags = tags
+		}
+	}
+	if m.opts.AnnotateTechnology {
+		if label, links := m.groupTechnology(group); label != "" || len(links) > 0 {
+			input.Technology = optionalStr(label)
+			input.TechnologyConnectors = links
+		}
+	}
+	return input
+}
+
+// groupTechnology picks the dominant source languages in a group's subtree and
+// derives catalog technology links from them.
+func (m *mapMaterializer) groupTechnology(group *community.Group) (string, []core.TechnologyConnector) {
+	counts := map[string]int{}
+	for _, member := range collectGroupMembers(group) {
+		if member < 0 || member >= len(m.input.Files) {
+			continue
+		}
+		if tag := languageTag(m.input.Files[member].Language); tag != "" {
+			counts[tag]++
+		}
+	}
+	if len(counts) == 0 {
+		return "", nil
+	}
+	ordered := make([]string, 0, len(counts))
+	for tag := range counts {
+		ordered = append(ordered, tag)
+	}
+	sort.Slice(ordered, func(i, j int) bool {
+		if counts[ordered[i]] != counts[ordered[j]] {
+			return counts[ordered[i]] > counts[ordered[j]]
+		}
+		return ordered[i] < ordered[j]
+	})
+	if len(ordered) > 3 {
+		ordered = ordered[:3]
+	}
+	var labels []string
+	var links []core.TechnologyConnector
+	for i, tag := range ordered {
+		label, languageLinks := languageTechnology(tag)
+		if label != "" {
+			labels = append(labels, label)
+		}
+		if i > 0 {
+			for index := range languageLinks {
+				languageLinks[index].IsPrimaryIcon = false
+			}
+		}
+		links = append(links, languageLinks...)
+	}
+	links = mergeTechnology(links, nil, 3)
+	if len(links) == 0 && len(labels) == 0 {
+		return "", nil
+	}
+	return strings.Join(labels, ", "), links
+}
+
+// collectGroupMembers flattens a group hierarchy into member file indices.
+func collectGroupMembers(group *community.Group) []int {
+	var out []int
+	var walk func(item *community.Group)
+	walk = func(item *community.Group) {
+		if item == nil {
+			return
+		}
+		out = append(out, item.Members...)
+		for _, child := range item.Children {
+			walk(child)
+		}
+	}
+	walk(group)
+	return out
+}
+
+// distinctStrings preserves order while dropping empty and duplicate values.
+func distinctStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+// groupTag derives the deterministic editor group tag for a community group.
+func groupTag(repositoryID, key string) string {
+	sum := cgraph.ID(repositoryID, "group", key)
+	return "group:" + formatUUID(sum)
+}
+
+// formatUUID renders a hex digest as an 8-4-4-4-12 UUID so the frontend's
+// element-group pattern recognizes it. The version (13th hex digit) and variant
+// (17th hex digit) nibbles are forced to RFC 4122 values because the frontend
+// pattern requires them; the digest otherwise carries no version bits.
+func formatUUID(hex string) string {
+	if len(hex) < 32 {
+		hex += strings.Repeat("0", 32-len(hex))
+	}
+	raw := []byte(hex[:32])
+	raw[12] = '4'
+	raw[16] = 'a'
+	return string(raw[0:8]) + "-" + string(raw[8:12]) + "-" + string(raw[12:16]) + "-" + string(raw[16:20]) + "-" + string(raw[20:32])
 }
 
 func groupElementKey(repositoryID, key string) string {
@@ -217,6 +377,8 @@ func (m *mapMaterializer) pruneMapResources() error {
 			_ = m.ws.DeleteElement(m.ctx, mapping.ResourceID)
 		case cstore.MappingConnector:
 			_ = m.ws.DeleteConnector(m.ctx, mapping.ResourceID)
+		case cstore.MappingLayer:
+			_ = m.ws.DeleteLayer(m.ctx, mapping.ResourceID)
 		}
 		if err := m.idx.DeleteMapping(m.ctx, key); err != nil {
 			return err

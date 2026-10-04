@@ -22,6 +22,22 @@ func TestFromGlobalFallsBackToEngineDefaults(t *testing.T) {
 		if opts.MaxLeafConnectorsPerView != materialize.DefaultMaxLeafConnectorsPerView {
 			t.Fatalf("max leaf connectors = %d, want %d", opts.MaxLeafConnectorsPerView, materialize.DefaultMaxLeafConnectorsPerView)
 		}
+		if !opts.AnnotateConnectors || !opts.AnnotateTags || !opts.AnnotateTechnology || !opts.GroupLayers {
+			t.Fatalf("annotation must default on: %+v", opts)
+		}
+	}
+}
+
+func TestFromGlobalHonorsAnnotationOptOut(t *testing.T) {
+	disabled := false
+	cfg := workspace.DefaultConfig()
+	cfg.Map.Annotate = workspace.MapAnnotateConfig{Connectors: &disabled, GroupLayers: &disabled}
+	opts := mapconfig.FromGlobal(cfg)
+	if opts.AnnotateConnectors || opts.GroupLayers {
+		t.Fatalf("annotation opt-out ignored: %+v", opts)
+	}
+	if !opts.AnnotateTags || !opts.AnnotateTechnology {
+		t.Fatalf("unset annotation flags must stay on: %+v", opts)
 	}
 }
 
@@ -80,15 +96,19 @@ func TestConfigHashTracksEverySetting(t *testing.T) {
 		t.Fatal("config hash is not stable across rebuilds")
 	}
 	mutations := map[string]func(*mapconfig.Options){
-		"resolution":         func(o *mapconfig.Options) { o.Grouping.Resolution += 0.5 },
-		"min_group_size":     func(o *mapconfig.Options) { o.Grouping.MinGroupSize++ },
-		"min_root_groups":    func(o *mapconfig.Options) { o.Grouping.MinRootGroups++ },
-		"max_root_groups":    func(o *mapconfig.Options) { o.Grouping.MaxRootGroups++ },
-		"max_children":       func(o *mapconfig.Options) { o.Grouping.MaxChildren++ },
-		"max_depth":          func(o *mapconfig.Options) { o.Grouping.MaxDepth++ },
-		"max_leaf_files":     func(o *mapconfig.Options) { o.Grouping.MaxLeafFiles++ },
-		"max_connectors":     func(o *mapconfig.Options) { o.MaxConnectorsPerView++ },
-		"max_leaf_connector": func(o *mapconfig.Options) { o.MaxLeafConnectorsPerView++ },
+		"resolution":          func(o *mapconfig.Options) { o.Grouping.Resolution += 0.5 },
+		"min_group_size":      func(o *mapconfig.Options) { o.Grouping.MinGroupSize++ },
+		"min_root_groups":     func(o *mapconfig.Options) { o.Grouping.MinRootGroups++ },
+		"max_root_groups":     func(o *mapconfig.Options) { o.Grouping.MaxRootGroups++ },
+		"max_children":        func(o *mapconfig.Options) { o.Grouping.MaxChildren++ },
+		"max_depth":           func(o *mapconfig.Options) { o.Grouping.MaxDepth++ },
+		"max_leaf_files":      func(o *mapconfig.Options) { o.Grouping.MaxLeafFiles++ },
+		"max_connectors":      func(o *mapconfig.Options) { o.MaxConnectorsPerView++ },
+		"max_leaf_connector":  func(o *mapconfig.Options) { o.MaxLeafConnectorsPerView++ },
+		"annotate_connectors": func(o *mapconfig.Options) { o.AnnotateConnectors = !o.AnnotateConnectors },
+		"annotate_tags":       func(o *mapconfig.Options) { o.AnnotateTags = !o.AnnotateTags },
+		"annotate_technology": func(o *mapconfig.Options) { o.AnnotateTechnology = !o.AnnotateTechnology },
+		"group_layers":        func(o *mapconfig.Options) { o.GroupLayers = !o.GroupLayers },
 	}
 	for name, mutate := range mutations {
 		changed := base

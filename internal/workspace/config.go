@@ -120,6 +120,17 @@ type Config struct {
 type MapConfig struct {
 	Grouping MapGroupingConfig `yaml:"grouping"`
 	Budget   MapBudgetConfig   `yaml:"budget"`
+	Annotate MapAnnotateConfig `yaml:"annotate"`
+}
+
+// MapAnnotateConfig controls generated enrichment on mapped resources. A nil
+// pointer means enabled, so enrichment is on by default and only opt-out needs
+// configuration.
+type MapAnnotateConfig struct {
+	Connectors  *bool `yaml:"connectors"`
+	Tags        *bool `yaml:"tags"`
+	Technology  *bool `yaml:"technology"`
+	GroupLayers *bool `yaml:"group_layers"`
 }
 
 // MapGroupingConfig controls the Louvain community hierarchy. Higher resolution

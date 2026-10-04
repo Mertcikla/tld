@@ -28,6 +28,7 @@ func sourceOnly(input core.LibraryElement) core.LibraryElement {
 	input.Description = nil
 	input.Tags = nil
 	input.Technology = nil
+	input.TechnologyConnectors = nil
 	input.URL = nil
 	input.LogoURL = nil
 	return input

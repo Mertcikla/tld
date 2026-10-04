@@ -58,8 +58,9 @@ const keys = (rows: ReturnType<typeof filterInventoryRows>) => rows.map((row) =>
 
 describe('inventoryData', () => {
   it('keeps internal group markers out of inventory tags and search text', () => {
+    const groupTag = 'group:12345678-1234-4234-a234-123456789012'
     const rows = buildInventoryRows(
-      [element(1, 'API', ['payments', 'group:12345678-1234-4234-a234-123456789012'])],
+      [element(1, 'API', ['payments', groupTag])],
       [],
       [],
       {},
@@ -67,8 +68,21 @@ describe('inventoryData', () => {
     const row = rows[0]
 
     expect(row.tags).toEqual(['payments'])
+    expect(row.filterTags).toEqual(['payments', groupTag])
     expect(row.searchableText).not.toContain('group:')
     expect(filterInventoryRows(rows, { type: 'all', query: '12345678', tags: [], kind: '', qualities: [] })).toEqual([])
+    expect(filterInventoryRows(rows, { type: 'all', query: '', tags: [groupTag], kind: '', qualities: [] }).map((r) => r.key)).toEqual(['element:1'])
+  })
+
+  it('filters elements by layer tags', () => {
+    const rows = buildInventoryRows(
+      [element(1, 'API', ['backend']), element(2, 'Worker', ['queue'])],
+      [],
+      [],
+      {},
+    )
+
+    expect(filterInventoryRows(rows, { type: 'all', query: '', tags: ['queue'], kind: '', qualities: [] }).map((r) => r.key)).toEqual(['element:2'])
   })
 
   it('builds rows with relationship labels and quality flags', () => {

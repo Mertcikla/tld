@@ -195,20 +195,6 @@ var warningRules = []warningRule{
 		},
 	},
 	{
-		Code:        "ARC101",
-		Name:        "Generic Labels",
-		Description: "Connector label is overly generic",
-		Mediation:   "Replace generic labels with domain-specific verbs like 'validates JWT' or 'SQL Query'.",
-		Level:       3,
-		Check: func(ctx *warningContext, rule warningRule) {
-			for connectorRef, connector := range ctx.ws.Connectors {
-				if connector != nil && isGenericLabel(connector.Label) {
-					ctx.addWarning(rule.Code, fmt.Sprintf("Connector %q in View %q (Label: %q)", connectorRef, normalizeWarningViewRef(connector.View), connector.Label))
-				}
-			}
-		},
-	},
-	{
 		Code:        "ARC102",
 		Name:        "Missing Tech",
 		Description: "No `technology` field",
@@ -504,9 +490,4 @@ func (ctx *warningContext) toSlice() []WarningGroup {
 func isGenericName(name string) bool {
 	lower := strings.ToLower(name)
 	return strings.Contains(lower, "module") || strings.Contains(lower, "stuff") || strings.Contains(lower, "thing")
-}
-
-func isGenericLabel(label string) bool {
-	lower := strings.ToLower(label)
-	return lower == "calls" || lower == "uses" || lower == "connects" || lower == "links" || lower == ""
 }

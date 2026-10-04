@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	assets "github.com/mertcikla/tld/v2"
@@ -13,6 +14,39 @@ import (
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/store"
 )
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func filterPrefix(values []string, prefix string) []string {
+	var out []string
+	for _, value := range values {
+		if strings.HasPrefix(value, prefix) {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func hasGroupLayer(layers []core.ViewLayer, name string) bool {
+	for _, layer := range layers {
+		if layer.Name != name {
+			continue
+		}
+		for _, tag := range layer.Tags {
+			if strings.HasPrefix(tag, "group:") {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func groupMapFiles() []community.File {
 	return []community.File{
@@ -275,7 +309,7 @@ func TestApplyGroupMapMaterializesImports(t *testing.T) {
 			{FileFactID: "id-a", Import: "flask"}, // duplicate, must be deduped
 			{FileFactID: "id-c", Import: "flask"},
 		},
-	}, MapOptions{})
+	}, MapOptions{IncludeExternalImports: true})
 	if err != nil {
 		t.Fatalf("apply group map: %v", err)
 	}
@@ -326,7 +360,7 @@ func TestApplyGroupMapBoundsImportConnectors(t *testing.T) {
 	result, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
 		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
 		Files: files, Groups: groups, Imports: imports,
-	}, MapOptions{MaxConnectorsPerView: 5, MaxLeafConnectorsPerView: 5})
+	}, MapOptions{MaxConnectorsPerView: 5, MaxLeafConnectorsPerView: 5, IncludeExternalImports: true})
 	if err != nil {
 		t.Fatalf("apply group map: %v", err)
 	}
@@ -409,6 +443,187 @@ func TestApplyGroupMapPreservesUserEdits(t *testing.T) {
 	}
 	if view.Name != renamedView {
 		t.Fatalf("view name = %q, want preserved %q", view.Name, renamedView)
+	}
+}
+
+func TestApplyGroupMapEnrichesGeneratedResources(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, idx := openGroupMapStore(t)
+	files := []community.File{
+		{ID: "id-a", Path: "src/alpha/a.go", DisplayName: "a.go", Language: "go"},
+		{ID: "id-b", Path: "src/alpha/b.ts", DisplayName: "b.ts", Language: "tsx"},
+		{ID: "id-c", Path: "src/alpha/nested/c.go", DisplayName: "c.go", Language: "go"},
+		{ID: "id-d", Path: "src/beta/d_test.go", DisplayName: "d_test.go", Language: "go"},
+	}
+	// alpha mixes two loose files with a nested subgroup, so its group layer
+	// structures the view. beta and the nested group are pure, so they get none.
+	groups := []*community.Group{
+		{Key: "alpha", Name: "alpha", Files: 3, Members: []int{0, 1}, Children: []*community.Group{
+			{Key: "alpha-child", Name: "alpha-child", Files: 1, Members: []int{2}},
+		}},
+		{Key: "beta", Name: "beta", Files: 1, Members: []int{3}},
+	}
+	result, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+		RepositoryID: "repo-1", RepositoryName: "demo", RepositoryRoot: "/repo/demo", SnapshotID: "snap-1",
+		Files: files, Groups: groups,
+		Edges: []MapEdge{{FromFactID: "id-a", ToFactID: "id-d", Weight: 3, Kind: "calls"}},
+	}, MapOptions{AnnotateConnectors: true, AnnotateTags: true, AnnotateTechnology: true, GroupLayers: true})
+	if err != nil {
+		t.Fatalf("apply group map: %v", err)
+	}
+
+	elementByName := func(name string) core.LibraryElement {
+		t.Helper()
+		var id int64
+		if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT id FROM elements WHERE name = ?`, name).Scan(&id); err != nil {
+			t.Fatalf("element %q: %v", name, err)
+		}
+		element, err := sqliteStore.ElementByID(ctx, id)
+		if err != nil {
+			t.Fatalf("element %q: %v", name, err)
+		}
+		return element
+	}
+
+	if file := elementByName("b.ts"); !containsString(file.Tags, "typescript") || file.Technology == nil || *file.Technology == "" {
+		t.Fatalf("b.ts = tags:%v technology:%v, want typescript + technology", file.Tags, file.Technology)
+	}
+	if file := elementByName("d_test.go"); !containsString(file.Tags, "test") {
+		t.Fatalf("d_test.go tags = %v, want test", file.Tags)
+	}
+
+	alpha := elementByName("alpha")
+	if !containsString(alpha.Tags, "go") || !containsString(alpha.Tags, "typescript") {
+		t.Fatalf("alpha tags = %v, want go and typescript", alpha.Tags)
+	}
+	if groupTags := filterPrefix(alpha.Tags, "group:"); len(groupTags) != 0 {
+		t.Fatalf("alpha group tags = %v, want none on the group node", alpha.Tags)
+	}
+	if alpha.Technology == nil || !strings.Contains(*alpha.Technology, "Go") {
+		t.Fatalf("alpha technology = %v, want Go", alpha.Technology)
+	}
+
+	// Only alpha's loose files share the group tag; the nested subgroup node and
+	// files in pure views stay outside the background.
+	alphaGroupTags := filterPrefix(elementByName("a.go").Tags, "group:")
+	if len(alphaGroupTags) != 1 {
+		t.Fatalf("a.go group tags = %v, want exactly one", alphaGroupTags)
+	}
+	if !containsString(elementByName("b.ts").Tags, alphaGroupTags[0]) {
+		t.Fatalf("b.ts tags = %v, want shared group tag %q", elementByName("b.ts").Tags, alphaGroupTags[0])
+	}
+	for _, name := range []string{"c.go", "d_test.go", "alpha-child"} {
+		if tags := filterPrefix(elementByName(name).Tags, "group:"); len(tags) != 0 {
+			t.Fatalf("%s group tags = %v, want none", name, tags)
+		}
+	}
+
+	var label, relationship sql.NullString
+	var tags string
+	if err := sqliteStore.DB().QueryRowContext(ctx,
+		`SELECT label, relationship, tags FROM connectors LIMIT 1`).Scan(&label, &relationship, &tags); err != nil {
+		t.Fatalf("connector: %v", err)
+	}
+	if !label.Valid || label.String != "calls" || !relationship.Valid || relationship.String != "calls" {
+		t.Fatalf("connector label/relationship = %v/%v, want calls", label, relationship)
+	}
+	if !strings.Contains(tags, "dependency") {
+		t.Fatalf("connector tags = %s, want dependency", tags)
+	}
+
+	rootLayers, err := sqliteStore.Layers(ctx, result.ViewID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasGroupLayer(rootLayers, "alpha") {
+		t.Fatalf("root layers = %+v, want no single-node group layer", rootLayers)
+	}
+	alphaLayers, err := sqliteStore.Layers(ctx, viewIDByName(t, sqliteStore, "alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasGroupLayer(alphaLayers, "alpha") {
+		t.Fatalf("alpha layers = %+v, want an alpha group layer over its loose files", alphaLayers)
+	}
+	if len(alphaLayers) != 1 {
+		t.Fatalf("alpha layers = %+v, want exactly one group layer", alphaLayers)
+	}
+	if childLayers, err := sqliteStore.Layers(ctx, viewIDByName(t, sqliteStore, "alpha-child")); err != nil {
+		t.Fatal(err)
+	} else if hasGroupLayer(childLayers, "alpha-child") {
+		t.Fatalf("alpha-child layers = %+v, want no group layer for a pure view", childLayers)
+	}
+}
+
+func TestApplyGroupMapAnnotatesImportMetadata(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, idx := openGroupMapStore(t)
+	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+		RepositoryID: "repo-1", SnapshotID: "snap-1", Files: groupMapFiles(),
+		Groups:  []*community.Group{{Key: "one", Name: "one", Files: 4, Members: []int{0, 1, 2, 3}}},
+		Imports: []MapImport{{FileFactID: "id-a", Import: "flask"}},
+	}, MapOptions{IncludeExternalImports: true, AnnotateConnectors: true, AnnotateTags: true}); err != nil {
+		t.Fatalf("apply group map: %v", err)
+	}
+
+	var externalTags, importTags string
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT tags FROM elements WHERE name = 'External'`).Scan(&externalTags); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT tags FROM elements WHERE name = 'flask'`).Scan(&importTags); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(externalTags, "external") || !strings.Contains(importTags, "external") {
+		t.Fatalf("external/import tags = %s/%s, want external", externalTags, importTags)
+	}
+
+	var label, relationship, tags string
+	if err := sqliteStore.DB().QueryRowContext(ctx,
+		`SELECT label, relationship, tags FROM connectors LIMIT 1`).Scan(&label, &relationship, &tags); err != nil {
+		t.Fatal(err)
+	}
+	if label != "imports" || relationship != "imports" || !strings.Contains(tags, "external") {
+		t.Fatalf("import connector = %q/%q/%s, want imports/imports/external", label, relationship, tags)
+	}
+}
+
+func TestApplyGroupMapPreservesUserConnectorLabel(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, idx := openGroupMapStore(t)
+	input := GroupMapInput{
+		RepositoryID: "repo-1", SnapshotID: "snap-1", Files: groupMapFiles(),
+		Groups: []*community.Group{
+			{Key: "alpha", Name: "alpha", Files: 2, Members: []int{0, 1}},
+			{Key: "beta", Name: "beta", Files: 2, Members: []int{2, 3}},
+		},
+		Edges: []MapEdge{{FromFactID: "id-a", ToFactID: "id-c", Weight: 1, Kind: "calls"}},
+	}
+	opts := MapOptions{AnnotateConnectors: true}
+	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, input, opts); err != nil {
+		t.Fatal(err)
+	}
+	var connectorID int64
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT id FROM connectors LIMIT 1`).Scan(&connectorID); err != nil {
+		t.Fatal(err)
+	}
+	custom := "validates JWT"
+	if _, err := sqliteStore.UpdateConnector(ctx, connectorID, core.Connector{Label: &custom}); err != nil {
+		t.Fatal(err)
+	}
+
+	input.SnapshotID = "snap-2"
+	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, input, opts); err != nil {
+		t.Fatal(err)
+	}
+	var label, relationship sql.NullString
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT label, relationship FROM connectors WHERE id = ?`, connectorID).Scan(&label, &relationship); err != nil {
+		t.Fatal(err)
+	}
+	if !label.Valid || label.String != custom {
+		t.Fatalf("label = %v, want preserved %q", label, custom)
+	}
+	if !relationship.Valid || relationship.String != "calls" {
+		t.Fatalf("relationship = %v, want generated calls", relationship)
 	}
 }
 

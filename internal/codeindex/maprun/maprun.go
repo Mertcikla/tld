@@ -236,6 +236,7 @@ func buildFileInputs(facts []*codeindexv1.CodeFact, fileEdges []cstore.FileEdge,
 			FromFactID: stableLookup(stableByID, edge.FromFactID),
 			ToFactID:   stableLookup(stableByID, edge.ToFactID),
 			Weight:     edge.Weight,
+			Kind:       edgeKindLabel(edge.Kind),
 		})
 	}
 
@@ -274,6 +275,23 @@ func stableLookup(stableByID map[string]string, factID string) string {
 		return key
 	}
 	return factID
+}
+
+// edgeKindLabel renders an edge kind as the human label materialized onto a
+// connector's relationship. References dominate most dependency graphs and
+// carry little information, and unknown kinds have no meaningful label, so both
+// return empty and leave the connector unlabeled.
+func edgeKindLabel(kind codeindexv1.EdgeKind) string {
+	switch kind {
+	case codeindexv1.EdgeKind_EDGE_KIND_CALLS:
+		return "calls"
+	case codeindexv1.EdgeKind_EDGE_KIND_IMPLEMENTS:
+		return "implements"
+	case codeindexv1.EdgeKind_EDGE_KIND_TYPE_DEFINITION:
+		return "type definition"
+	default:
+		return ""
+	}
 }
 
 // repositoryRemoteName derives a short display name from a canonical remote URL

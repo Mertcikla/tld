@@ -33,11 +33,13 @@ type MapInput struct {
 
 // MapEdge is a dependency between two file facts (the file facts themselves,
 // not the symbols). The connector direction is derived by de-duplicating and
-// merging opposite directions.
+// merging opposite directions. Kind is the dominant relationship label, used as
+// the connector's relationship and label.
 type MapEdge struct {
 	FromFactID string
 	ToFactID   string
 	Weight     float64
+	Kind       string
 }
 
 // MapImport is one external import declared by a file fact.
@@ -57,6 +59,20 @@ type MapOptions struct {
 	// dependency web reads as a hairball. Zero falls back to
 	// MaxConnectorsPerView.
 	MaxLeafConnectorsPerView int
+	// IncludeExternalImports materializes external imports under an External
+	// element and connects importing components to it.
+	IncludeExternalImports bool
+	// AnnotateConnectors writes the dominant relationship label and tags onto
+	// generated connectors.
+	AnnotateConnectors bool
+	// AnnotateTags writes language and test tags onto generated elements.
+	AnnotateTags bool
+	// AnnotateTechnology writes catalog technology links onto generated
+	// elements based on their source language.
+	AnnotateTechnology bool
+	// GroupLayers creates a view layer per community group so generated maps use
+	// the editor's colored group backgrounds and visibility toggles.
+	GroupLayers bool
 	// Progress receives coarse (current, total, detail) updates while resources
 	// are created or updated. It may be nil.
 	Progress func(current, total int, detail string)
@@ -250,6 +266,9 @@ type elementEdge struct {
 	weight   float64
 	forward  bool
 	backward bool
+	// kinds accumulates the relationship label weight for each underlying file
+	// edge so the rolled-up connector can carry a dominant relationship.
+	kinds map[string]float64
 }
 
 // materializeConnectors rolls file-level dependencies up the map hierarchy.
@@ -306,6 +325,12 @@ func (m *mapMaterializer) materializeConnectors() error {
 			weight = 1
 		}
 		entry.weight += weight
+		if edge.Kind != "" {
+			if entry.kinds == nil {
+				entry.kinds = map[string]float64{}
+			}
+			entry.kinds[edge.Kind] += weight
+		}
 	}
 	byView := map[int64][]*elementEdge{}
 	for _, entry := range grouped {
@@ -342,13 +367,20 @@ func (m *mapMaterializer) materializeConnectors() error {
 			case entry.backward:
 				direction = "backward"
 			}
-			if err := m.upsertConnector(elementConnectorKey(m.input.RepositoryID, entry.viewID, entry.a, entry.b), core.Connector{
+			input := core.Connector{
 				ViewID:          entry.viewID,
 				SourceElementID: entry.a,
 				TargetElementID: entry.b,
 				Direction:       direction,
 				Style:           "bezier",
-			}); err != nil {
+			}
+			if m.opts.AnnotateConnectors {
+				relationship := dominantKind(entry.kinds)
+				input.Label = optionalStr(relationship)
+				input.Relationship = optionalStr(relationship)
+				input.Tags = []string{"dependency"}
+			}
+			if err := m.upsertConnector(elementConnectorKey(m.input.RepositoryID, entry.viewID, entry.a, entry.b), input); err != nil {
 				return err
 			}
 			m.layoutEdges[entry.viewID] = append(m.layoutEdges[entry.viewID], layout.Connector{Source: entry.a, Target: entry.b})
@@ -366,11 +398,15 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 	if len(m.input.Imports) == 0 {
 		return nil
 	}
-	containerID, err := m.upsertElement(externalKey(m.input.RepositoryID), core.LibraryElement{
+	container := core.LibraryElement{
 		Name:        "External",
 		Kind:        strPtr("external"),
 		Description: strPtr("External imports"),
-	})
+	}
+	if m.opts.AnnotateTags {
+		container.Tags = []string{"external"}
+	}
+	containerID, err := m.upsertElement(externalKey(m.input.RepositoryID), container)
 	if err != nil {
 		return err
 	}
@@ -392,10 +428,17 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		elementID, err := m.upsertElement(importKey(m.input.RepositoryID, name), core.LibraryElement{
-			Name: name,
-			Kind: strPtr("import"),
-		})
+		importElement := core.LibraryElement{Name: name, Kind: strPtr("import")}
+		if m.opts.AnnotateTags {
+			importElement.Tags = []string{"external"}
+		}
+		if m.opts.AnnotateTechnology {
+			if label, links := importTechnology(name); label != "" || len(links) > 0 {
+				importElement.Technology = optionalStr(label)
+				importElement.TechnologyConnectors = links
+			}
+		}
+		elementID, err := m.upsertElement(importKey(m.input.RepositoryID, name), importElement)
 		if err != nil {
 			return err
 		}
@@ -446,13 +489,19 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 		limit = len(entries)
 	}
 	for _, entry := range entries[:limit] {
-		if err := m.upsertConnector(elementConnectorKey(m.input.RepositoryID, rootViewID, entry.from, containerID), core.Connector{
+		input := core.Connector{
 			ViewID:          rootViewID,
 			SourceElementID: entry.from,
 			TargetElementID: containerID,
 			Direction:       "forward",
 			Style:           "bezier",
-		}); err != nil {
+		}
+		if m.opts.AnnotateConnectors {
+			input.Label = optionalStr("imports")
+			input.Relationship = optionalStr("imports")
+			input.Tags = []string{"external"}
+		}
+		if err := m.upsertConnector(elementConnectorKey(m.input.RepositoryID, rootViewID, entry.from, containerID), input); err != nil {
 			return err
 		}
 		m.layoutEdges[rootViewID] = append(m.layoutEdges[rootViewID], layout.Connector{Source: entry.from, Target: containerID})
@@ -460,13 +509,38 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 	return nil
 }
 
+// connectorPatch merges generated relationship into an existing connector
+// without clobbering user presentation: a non-empty user label or relationship
+// wins, tags are unioned, and the user's route style is preserved. Code-derived
+// endpoints, view, and direction still update.
+func (m *mapMaterializer) connectorPatch(id int64, input core.Connector) (core.Connector, error) {
+	patch := connectorSourceOnly(input)
+	if input.Label == nil && input.Relationship == nil && len(input.Tags) == 0 {
+		return patch, nil
+	}
+	existing, err := m.ws.ConnectorByID(m.ctx, id)
+	if err != nil {
+		return patch, err
+	}
+	if existing.Label != nil && strings.TrimSpace(*existing.Label) != "" {
+		patch.Label = nil
+	}
+	if existing.Relationship != nil && strings.TrimSpace(*existing.Relationship) != "" {
+		patch.Relationship = nil
+	}
+	patch.Tags = unionTags(existing.Tags, input.Tags)
+	return patch, nil
+}
+
 func (m *mapMaterializer) upsertConnector(logicalKey string, input core.Connector) error {
 	m.kept[logicalKey] = true
 	id := int64(0)
 	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingConnector {
-		if updated, err := m.ws.UpdateConnector(m.ctx, mapping.ResourceID, connectorSourceOnly(input)); err == nil {
-			id = updated.ID
-			m.recordMapping(logicalKey, cstore.MappingConnector, id)
+		if patch, err := m.connectorPatch(mapping.ResourceID, input); err == nil {
+			if updated, err := m.ws.UpdateConnector(m.ctx, mapping.ResourceID, patch); err == nil {
+				id = updated.ID
+				m.recordMapping(logicalKey, cstore.MappingConnector, id)
+			}
 		}
 	}
 	if id == 0 {
@@ -548,10 +622,34 @@ func (m *mapMaterializer) adjustConnectorHandles() error {
 	return nil
 }
 
+// elementPatch merges generated tags and technology into an existing element
+// without clobbering user presentation: tags are unioned and technology is only
+// filled when the user has not set it.
+func (m *mapMaterializer) elementPatch(id int64, input core.LibraryElement) core.LibraryElement {
+	patch := sourceOnly(input)
+	if len(input.Tags) == 0 && input.Technology == nil && len(input.TechnologyConnectors) == 0 {
+		return patch
+	}
+	existing, err := m.ws.ElementByID(m.ctx, id)
+	if err != nil {
+		return patch
+	}
+	if len(input.Tags) > 0 {
+		patch.Tags = unionTags(existing.Tags, input.Tags)
+	}
+	if (existing.Technology == nil || strings.TrimSpace(*existing.Technology) == "") && input.Technology != nil {
+		patch.Technology = input.Technology
+	}
+	if len(existing.TechnologyConnectors) == 0 && len(input.TechnologyConnectors) > 0 {
+		patch.TechnologyConnectors = input.TechnologyConnectors
+	}
+	return patch
+}
+
 func (m *mapMaterializer) upsertElement(logicalKey string, input core.LibraryElement) (int64, error) {
 	m.kept[logicalKey] = true
 	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingElement {
-		if updated, err := m.ws.UpdateElement(m.ctx, mapping.ResourceID, sourceOnly(input)); err == nil {
+		if updated, err := m.ws.UpdateElement(m.ctx, mapping.ResourceID, m.elementPatch(mapping.ResourceID, input)); err == nil {
 			m.recordMapping(logicalKey, cstore.MappingElement, updated.ID)
 			m.result.Elements++
 			m.advance("element")
@@ -690,6 +788,24 @@ func (m *mapMaterializer) fileElement(member int) core.LibraryElement {
 		repositoryID := m.input.RepositoryID
 		input.RepositoryID = &repositoryID
 	}
+	if m.opts.AnnotateTags {
+		tags := make([]string, 0, 2)
+		if tag := languageTag(fact.Language); tag != "" {
+			tags = append(tags, tag)
+		}
+		if isTestPath(fact.Path) {
+			tags = append(tags, "test")
+		}
+		if len(tags) > 0 {
+			input.Tags = tags
+		}
+	}
+	if m.opts.AnnotateTechnology {
+		if label, links := languageTechnology(fact.Language); label != "" || len(links) > 0 {
+			input.Technology = optionalStr(label)
+			input.TechnologyConnectors = links
+		}
+	}
 	return input
 }
 
@@ -775,6 +891,50 @@ func folderName(path string) string {
 }
 
 func strPtr(value string) *string { return &value }
+
+// optionalStr returns nil for an empty value so generated fields fall back to
+// the store's fill-if-empty semantics.
+func optionalStr(value string) *string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return &value
+}
+
+// unionTags merges user-owned and generated tags, preserving order and
+// dropping duplicates. It returns nil when there is nothing to store.
+func unionTags(existing, generated []string) []string {
+	if len(existing) == 0 && len(generated) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(existing)+len(generated))
+	out := make([]string, 0, len(existing)+len(generated))
+	for _, group := range [][]string{existing, generated} {
+		for _, tag := range group {
+			tag = strings.TrimSpace(tag)
+			if tag == "" || seen[tag] {
+				continue
+			}
+			seen[tag] = true
+			out = append(out, tag)
+		}
+	}
+	return out
+}
+
+// dominantKind returns the highest-weight relationship label, ties broken
+// lexicographically so repeated runs produce the same connector.
+func dominantKind(kinds map[string]float64) string {
+	best := ""
+	bestWeight := -1.0
+	for kind, weight := range kinds {
+		if weight > bestWeight || (weight == bestWeight && (best == "" || kind < best)) {
+			best = kind
+			bestWeight = weight
+		}
+	}
+	return best
+}
 
 func gridPositionCols(index, cols int) (float64, float64) {
 	if cols < 1 {

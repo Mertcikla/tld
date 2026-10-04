@@ -186,6 +186,14 @@ func (s *SQLiteStore) Layers(ctx context.Context, viewID int64) ([]core.ViewLaye
 	return convertSlice(out, func(v app.ViewLayer) core.ViewLayer { return core.ViewLayer(v) }), nil
 }
 
+func (s *SQLiteStore) LayerByID(ctx context.Context, id int64) (core.ViewLayer, error) {
+	out, err := s.legacy.LayerByID(ctx, id)
+	if err != nil {
+		return core.ViewLayer{}, err
+	}
+	return core.ViewLayer(out), nil
+}
+
 func (s *SQLiteStore) CreateLayer(ctx context.Context, viewID int64, name string, tags []string, color *string) (core.ViewLayer, error) {
 	out, err := s.legacy.CreateLayer(ctx, viewID, name, tags, color)
 	if err != nil {
@@ -268,6 +276,14 @@ func (s *SQLiteStore) Connectors(ctx context.Context, viewID int64) ([]core.Conn
 		return nil, err
 	}
 	return convertSlice(out, func(v app.Connector) core.Connector { return core.Connector(v) }), nil
+}
+
+func (s *SQLiteStore) ConnectorByID(ctx context.Context, id int64) (core.Connector, error) {
+	out, err := s.legacy.ConnectorByID(ctx, id)
+	if err != nil {
+		return core.Connector{}, err
+	}
+	return core.Connector(out), nil
 }
 
 func (s *SQLiteStore) CreateConnector(ctx context.Context, input core.Connector) (core.Connector, error) {

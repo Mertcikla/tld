@@ -10,11 +10,13 @@ import (
 )
 
 // FileEdge is a dependency between two file facts, resolved from a symbol edge
-// whose endpoints live in those files.
+// whose endpoints live in those files. Kind is the dominant relationship when
+// several edge kinds were aggregated into this pair.
 type FileEdge struct {
 	FromFactID string
 	ToFactID   string
 	Weight     float64
+	Kind       pb.EdgeKind
 }
 
 // FileEdges resolves a snapshot's symbol-to-symbol edges to the file facts that
@@ -55,10 +57,12 @@ type FileImport struct {
 
 // AggregatedFileEdges returns one weighted file-to-file edge per pair, summing
 // every resolved symbol observation. When a snapshot stores no edge weights the
-// observation count is used instead, so grouping still sees real coupling.
+// observation count is used instead, so grouping still sees real coupling. The
+// dominant edge kind (highest summed weight, ties broken by kind order) is kept
+// so materialized connectors can carry a relationship label.
 func (s *Store) AggregatedFileEdges(ctx context.Context, snapshotID string) ([]FileEdge, error) {
 	rows, err := s.bun.QueryContext(ctx, `
-		SELECT ffrom.id, fto.id, COALESCE(SUM(e.weight), 0) AS total, COUNT(*) AS observations
+		SELECT ffrom.id, fto.id, e.kind, COALESCE(SUM(e.weight), 0) AS total, COUNT(*) AS observations
 		FROM codeindex_edges e
 		JOIN codeindex_facts sf ON sf.id = e.from_fact_id AND sf.snapshot_id = e.snapshot_id
 		JOIN codeindex_facts tf ON tf.id = e.to_fact_id AND tf.snapshot_id = e.snapshot_id
@@ -66,27 +70,68 @@ func (s *Store) AggregatedFileEdges(ctx context.Context, snapshotID string) ([]F
 		JOIN codeindex_facts fto ON fto.snapshot_id = e.snapshot_id AND fto.kind = ? AND fto.path = tf.path
 		WHERE e.snapshot_id = ?
 			AND sf.path <> '' AND tf.path <> '' AND sf.path <> tf.path
-		GROUP BY ffrom.id, fto.id
-		ORDER BY ffrom.id, fto.id`, int(pb.FactKind_FACT_KIND_FILE), int(pb.FactKind_FACT_KIND_FILE), snapshotID)
+		GROUP BY ffrom.id, fto.id, e.kind
+		ORDER BY ffrom.id, fto.id, e.kind`, int(pb.FactKind_FACT_KIND_FILE), int(pb.FactKind_FACT_KIND_FILE), snapshotID)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
-	out := []FileEdge{}
+	type pairKey struct{ from, to string }
+	type accumulator struct {
+		edge   FileEdge
+		weight float64
+		kinds  map[pb.EdgeKind]float64
+	}
+	acc := map[pairKey]*accumulator{}
+	order := []pairKey{}
 	for rows.Next() {
 		var from, to string
+		var kind int
 		var total float64
 		var observations int
-		if err := rows.Scan(&from, &to, &total, &observations); err != nil {
+		if err := rows.Scan(&from, &to, &kind, &total, &observations); err != nil {
 			return nil, err
 		}
-		weight := total
-		if weight <= 0 {
-			weight = float64(observations)
+		// Snapshots that store no edge weights fall back to the observation
+		// count per kind, so both the pair weight and the dominant kind stay
+		// meaningful.
+		effective := total
+		if effective <= 0 {
+			effective = float64(observations)
 		}
-		out = append(out, FileEdge{FromFactID: from, ToFactID: to, Weight: weight})
+		key := pairKey{from: from, to: to}
+		entry := acc[key]
+		if entry == nil {
+			entry = &accumulator{edge: FileEdge{FromFactID: from, ToFactID: to}, kinds: map[pb.EdgeKind]float64{}}
+			acc[key] = entry
+			order = append(order, key)
+		}
+		entry.weight += effective
+		entry.kinds[pb.EdgeKind(kind)] += effective
+	}
+	out := make([]FileEdge, 0, len(order))
+	for _, key := range order {
+		entry := acc[key]
+		edge := entry.edge
+		edge.Weight = entry.weight
+		edge.Kind = dominantEdgeKind(entry.kinds)
+		out = append(out, edge)
 	}
 	return out, rows.Err()
+}
+
+// dominantEdgeKind picks the kind with the highest accumulated weight. Ties are
+// broken by the lower kind value so the result is deterministic.
+func dominantEdgeKind(kinds map[pb.EdgeKind]float64) pb.EdgeKind {
+	best := pb.EdgeKind_EDGE_KIND_UNSPECIFIED
+	bestWeight := -1.0
+	for kind, weight := range kinds {
+		if weight > bestWeight || (weight == bestWeight && kind < best) {
+			best = kind
+			bestWeight = weight
+		}
+	}
+	return best
 }
 
 // AllFacts loads every fact of one kind for a snapshot, paging past the
