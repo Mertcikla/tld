@@ -364,7 +364,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
             </Tooltip>
           )}
           {basePath && (
-            <OpenInEditorButton repo={element?.repo ?? ''} repositoryId={element?.repository_id} filePath={basePath} line={editorStartLine} />
+            <OpenInEditorButton repo={element?.repo ?? ''} repositoryId={element?.repository_id} filePath={basePath} line={editorStartLine} branch={element?.branch} />
           )}
           <CloseButton
             data-testid="code-preview-close"

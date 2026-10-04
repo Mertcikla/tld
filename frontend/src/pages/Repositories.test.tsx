@@ -17,6 +17,7 @@ vi.mock('../components/RepositoryHistory', () => ({ default: (props: Record<stri
 vi.mock('../api/client', () => ({
   api: {
     editor: { open: vi.fn(async () => {}) },
+    system: { capabilities: vi.fn(async () => ({ editor: true, watch: true })) },
     repositories: {
       list: vi.fn(async () => [{
         id: 'repo-1',
@@ -192,6 +193,17 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
     expect(renderer.root.findAllByProps({ 'data-testid': 'mock-history' })).toHaveLength(0)
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.children).toBe('Watch')
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('hides the Watch tab and add-watch option when the server disables watching', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.system.capabilities).mockResolvedValueOnce({ watch: false, editor: false })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-live-tab' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-add-watch' })).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare-tab' })).toBeTruthy()
     await act(async () => { renderer.unmount() })
   })
 

@@ -424,6 +424,17 @@ export default function Repositories() {
   const [watch, setWatch] = useState<RepositoryWatchStatus | null>(null)
   const [watchBusy, setWatchBusy] = useState(false)
   const [mode, setMode] = useState(() => params.get('mode') === 'live' || params.get('mode') === 'watch' ? 'live' : params.get('mode') === 'pr' ? 'pr' : 'compare')
+  const [watchEnabled, setWatchEnabled] = useState(true)
+  // Self-hosted servers disable watching; hide the Watch tab entirely.
+  useEffect(() => {
+    let cancelled = false
+    void api.system.capabilities().then((caps) => {
+      if (cancelled) return
+      setWatchEnabled(caps.watch)
+      if (!caps.watch) setMode((current) => (current === 'live' ? 'compare' : current))
+    })
+    return () => { cancelled = true }
+  }, [])
   const compareTargets = useRef<{ base: string; head: string; baseBranch: string; headBranch: string } | null>(null)
   const [openPullRequests, setOpenPullRequests] = useState<OpenRepositoryPullRequest[] | null>(null)
   const [prListLoading, setPrListLoading] = useState(false)
@@ -1549,22 +1560,24 @@ export default function Repositories() {
                           </Text>
                         </Box>
                       </HStack>
-                      <HStack mt={3} align="flex-start">
-                        <Switch
-                          size="sm"
-                          data-testid="repositories-add-watch"
-                          isChecked={addWatch}
-                          isDisabled={adding}
-                          onChange={(e) => setAddWatch(e.target.checked)}
-                        />
-                        <Box>
-                          <Text fontSize="sm">Watch for changes</Text>
-                          <Text fontSize="xs" color="gray.500">
-                            Keep the repository updated as you work. Requires
-                            Git.
-                          </Text>
-                        </Box>
-                      </HStack>
+                      {watchEnabled && (
+                        <HStack mt={3} align="flex-start">
+                          <Switch
+                            size="sm"
+                            data-testid="repositories-add-watch"
+                            isChecked={addWatch}
+                            isDisabled={adding}
+                            onChange={(e) => setAddWatch(e.target.checked)}
+                          />
+                          <Box>
+                            <Text fontSize="sm">Watch for changes</Text>
+                            <Text fontSize="xs" color="gray.500">
+                              Keep the repository updated as you work. Requires
+                              Git.
+                            </Text>
+                          </Box>
+                        </HStack>
+                      )}
                     </PopoverBody>
                     <PopoverFooter
                       display="flex"
@@ -1635,7 +1648,7 @@ export default function Repositories() {
                   borderColor="whiteAlpha.100"
                 >
                   <HStack spacing={0.5} p={0.5} bg="blackAlpha.200" border="1px solid" borderColor="whiteAlpha.50" borderRadius="lg" aria-label="Repository mode">
-                    {([['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review']] as const).map(([value, label]) => (
+                    {([['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review']] as const).filter(([value]) => value !== 'live' || watchEnabled).map(([value, label]) => (
                       <Button key={value} size="sm" variant="ghost" borderRadius="md" px={3} h="28px" minW="auto" leftIcon={<RepositoryModeIcon mode={value} />} iconSpacing={1.5} fontSize="11px" fontWeight="semibold" bg={mode === value ? 'var(--bg-element)' : 'transparent'} color={mode === value ? 'white' : 'gray.500'} _hover={{ bg: mode === value ? 'var(--bg-element)' : 'whiteAlpha.50' }} _active={{ bg: 'var(--bg-element)' }} transition="color 0.2s" data-testid={`repositories-${value}-tab`} aria-pressed={mode === value} onClick={() => changeMode(value)}>{label}</Button>
                     ))}
                   </HStack>
