@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/mertcikla/tld/v2/internal/codeindex/config"
@@ -161,6 +162,9 @@ type indexerSpec struct {
 	// contains the artifact path; when false the tool writes index.scip into
 	// the working directory and the caller resolves it there.
 	args func(cfg config.Config, c indexerContext) (argv []string, explicitOutput bool, err error)
+	// fallbackArgs, when set, rebuilds a narrower argv the caller retries with
+	// after args fails, so an optional extra project cannot break indexing.
+	fallbackArgs func(cfg config.Config, c indexerContext) (argv []string, explicitOutput bool, err error)
 }
 
 // indexerForFamily returns the indexer spec for an indexer family.
@@ -181,12 +185,18 @@ func indexerForFamily(family string, cfg config.Config) (indexerSpec, error) {
 			versionArgs: []string{"--version"},
 			executable:  func(cfg config.Config, _ indexerContext) string { return cfg.Tools.SCIPTypeScript },
 			args: func(_ config.Config, c indexerContext) ([]string, bool, error) {
-				argv := []string{"index"}
-				if _, err := os.Stat(filepath.Join(c.projectDir, "tsconfig.json")); err != nil {
-					argv = append(argv, "--infer-tsconfig")
+				return webIndexArgs(c, webProjectConfigs(c.projectDir)), true, nil
+			},
+			fallbackArgs: func(_ config.Config, c indexerContext) ([]string, bool, error) {
+				configs := webProjectConfigs(c.projectDir)
+				if len(configs) <= 1 {
+					return nil, false, nil
 				}
-				argv = append(argv, "--cwd", c.projectDir, "--output", c.artifact)
-				return argv, true, nil
+				primary := filepath.Base(c.configPath)
+				if !strings.HasPrefix(primary, "tsconfig") || !strings.HasSuffix(primary, ".json") {
+					primary = "tsconfig.json"
+				}
+				return webIndexArgs(c, []string{primary}), true, nil
 			},
 		}, nil
 	case familyPython:
@@ -278,6 +288,41 @@ func indexerForFamily(family string, cfg config.Config) (indexerSpec, error) {
 		}, nil
 	}
 	return indexerSpec{}, fmt.Errorf("no SCIP indexer configured for project family %q", family)
+}
+
+// webIndexArgs builds a scip-typescript invocation. Passing every sibling
+// tsconfig unions file coverage: a project's primary tsconfig may deliberately
+// include only entry points and .d.ts files, with the application sources
+// covered by a second config such as tsconfig.lib.json.
+func webIndexArgs(c indexerContext, configs []string) []string {
+	argv := []string{"index"}
+	if len(configs) == 0 {
+		argv = append(argv, "--infer-tsconfig")
+	} else {
+		argv = append(argv, configs...)
+	}
+	return append(argv, "--cwd", c.projectDir, "--output", c.artifact)
+}
+
+// webProjectConfigs lists the top-level tsconfig files in a project directory,
+// sorted so indexer invocations and cache fingerprints stay deterministic.
+func webProjectConfigs(projectDir string) []string {
+	entries, err := os.ReadDir(projectDir)
+	if err != nil {
+		return nil
+	}
+	configs := make([]string, 0, 4)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "tsconfig") && strings.HasSuffix(name, ".json") {
+			configs = append(configs, name)
+		}
+	}
+	sort.Strings(configs)
+	return configs
 }
 
 // findCompilationDatabase locates a clang JSON compilation database for a

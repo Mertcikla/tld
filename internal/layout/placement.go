@@ -5,6 +5,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"time"
 )
 
 const (
@@ -61,11 +62,35 @@ func HasNoPreservedPlacements(placements []Placement, targets map[int64]struct{}
 }
 
 // OrganicPlacementLayout runs the force-directed layout on the target element
-// set, using only the connectors that exist between those targets.
+// set, using only the connectors that exist between those targets. Dependency
+// levels are applied afterwards for a directional reading.
 func OrganicPlacementLayout(targets map[int64]struct{}, connectors []Connector) map[int64]Placement {
+	// #nosec G404
+	return organicPlacementLayout(targets, connectors, uint64(time.Now().UnixNano()), true)
+}
+
+// DeterministicPlacementLayout is a reproducible layout for generated maps.
+// Dependency levels are skipped: on real repository graphs the layered columns
+// produced more edge crossings than the force layout alone.
+func DeterministicPlacementLayout(targets map[int64]struct{}, connectors []Connector) map[int64]Placement {
+	return organicPlacementLayout(targets, connectors, 1, false)
+}
+
+// DeterministicLayoutPlacements is LayoutPlacements for generated maps: when
+// every existing placement belongs to the new target set the whole view is laid
+// out with a fixed seed, otherwise new elements are placed incrementally next
+// to their neighbors and preserved positions are kept.
+func DeterministicLayoutPlacements(placements []Placement, targets map[int64]struct{}, connectors []Connector) map[int64]Placement {
+	if HasNoPreservedPlacements(placements, targets) {
+		return DeterministicPlacementLayout(targets, connectors)
+	}
+	return LayoutPlacements(placements, targets, connectors, false)
+}
+
+func organicPlacementLayout(targets map[int64]struct{}, connectors []Connector, seed uint64, directed bool) map[int64]Placement {
 	nodeByID := make(map[int64]*Node, len(targets))
 	nodes := make([]*Node, 0, len(targets))
-	for id := range targets {
+	for _, id := range SortedInt64Set(targets) {
 		n := &Node{ID: id}
 		nodeByID[id] = n
 		nodes = append(nodes, n)
@@ -80,8 +105,10 @@ func OrganicPlacementLayout(targets map[int64]struct{}, connectors []Connector) 
 		}
 	}
 
-	OrganicLayout(nodes, edges)
-	ApplyDirectedPlacementLevels(nodes, connectors, targets)
+	OrganicLayoutSeeded(nodes, edges, seed)
+	if directed {
+		ApplyDirectedPlacementLevels(nodes, connectors, targets)
+	}
 
 	out := make(map[int64]Placement, len(nodes))
 	for _, n := range nodes {
@@ -113,21 +140,98 @@ func ApplyDirectedPlacementLevels(nodes []*Node, connectors []Connector, targets
 	for _, n := range nodes {
 		nodesByLevel[level[n.ID]] = append(nodesByLevel[level[n.ID]], n)
 	}
-	nextCol := 0
-	for _, col := range sortedPlacementNodeLevels(nodesByLevel) {
+	levels := sortedPlacementNodeLevels(nodesByLevel)
+	for _, col := range levels {
 		group := nodesByLevel[col]
-		sort.Slice(group, func(i, j int) bool {
+		sort.SliceStable(group, func(i, j int) bool {
 			if group[i].Y == group[j].Y {
 				return group[i].ID < group[j].ID
 			}
 			return group[i].Y < group[j].Y
 		})
+	}
+	ReducePlacementCrossings(nodesByLevel, levels, connectors)
+	nextCol := 0
+	for _, col := range levels {
+		group := nodesByLevel[col]
 		for row, n := range group {
 			n.X = float64(nextCol+row/PlacementMaxRowsPerColumn) * PlacementGapX
 			n.Y = float64(row%PlacementMaxRowsPerColumn) * PlacementGapY
 		}
 		nextCol += max(1, (len(group)+PlacementMaxRowsPerColumn-1)/PlacementMaxRowsPerColumn)
 	}
+}
+
+// ReducePlacementCrossings reorders each level using the barycenter heuristic
+// (repeated alternating sweeps) so layered views do not read as a hairball.
+func ReducePlacementCrossings(byLevel map[int][]*Node, levels []int, connectors []Connector) {
+	const sweeps = 6
+	for sweep := 0; sweep < sweeps; sweep++ {
+		changed := false
+		for i := 1; i < len(levels); i++ {
+			if reorderByReference(byLevel[levels[i]], byLevel[levels[i-1]], connectors) {
+				changed = true
+			}
+		}
+		for i := len(levels) - 2; i >= 0; i-- {
+			if reorderByReference(byLevel[levels[i]], byLevel[levels[i+1]], connectors) {
+				changed = true
+			}
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+func reorderByReference(group, reference []*Node, connectors []Connector) bool {
+	if len(group) < 2 {
+		return false
+	}
+	refIndex := make(map[int64]int, len(reference))
+	for i, n := range reference {
+		refIndex[n.ID] = i
+	}
+	center := make(map[int64]float64, len(group))
+	for i, n := range group {
+		sum, count := 0.0, 0
+		for _, c := range connectors {
+			if c.Source == n.ID {
+				if p, ok := refIndex[c.Target]; ok {
+					sum += float64(p)
+					count++
+				}
+			}
+			if c.Target == n.ID {
+				if p, ok := refIndex[c.Source]; ok {
+					sum += float64(p)
+					count++
+				}
+			}
+		}
+		if count == 0 {
+			center[n.ID] = float64(i)
+		} else {
+			center[n.ID] = sum / float64(count)
+		}
+	}
+	reordered := append([]*Node(nil), group...)
+	sort.SliceStable(reordered, func(i, j int) bool {
+		left, right := center[reordered[i].ID], center[reordered[j].ID]
+		if left != right {
+			return left < right
+		}
+		return reordered[i].ID < reordered[j].ID
+	})
+	changed := false
+	for i := range reordered {
+		if reordered[i] != group[i] {
+			changed = true
+			break
+		}
+	}
+	copy(group, reordered)
+	return changed
 }
 
 func DirectedPlacementLevels(targets map[int64]struct{}, connectors []Connector) map[int64]int {

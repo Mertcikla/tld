@@ -66,7 +66,7 @@ func TestMapperServiceMapRepository(t *testing.T) {
 	if err := stream.Err(); err != nil {
 		t.Fatalf("stream: %v", err)
 	}
-	for _, stage := range []string{"loading", "clustering", "binning", "materializing"} {
+	for _, stage := range []string{"loading", "grouping", "materializing"} {
 		if !stages[stage] {
 			t.Fatalf("missing progress stage %q (got %v)", stage, stages)
 		}
@@ -114,13 +114,13 @@ func TestMapperServiceMapRepository(t *testing.T) {
 	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_analysis_runs WHERE repository_id = ?`, repoID).Scan(&analysisRuns); err != nil {
 		t.Fatal(err)
 	}
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_groups WHERE run_id = ?`, result.GetRunId()).Scan(&groups); err != nil {
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_groups WHERE run_id = ? AND kind = ?`, result.GetRunId(), codeindexv1.GroupKind_GROUP_KIND_COMMUNITY).Scan(&groups); err != nil {
 		t.Fatal(err)
 	}
 	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_group_members WHERE group_id IN (SELECT id FROM codeindex_groups WHERE run_id = ?)`, result.GetRunId()).Scan(&members); err != nil {
 		t.Fatal(err)
 	}
-	if analysisRuns != 1 || groups == 0 || members != 4 {
+	if analysisRuns != 1 || groups == 0 || members < 4 {
 		t.Fatalf("analysis runs=%d groups=%d members=%d", analysisRuns, groups, members)
 	}
 
@@ -194,7 +194,7 @@ func TestMapperServiceMaterializesImports(t *testing.T) {
 	}
 }
 
-func TestMapperServiceRequiresEmbeddings(t *testing.T) {
+func TestMapperServiceGraphGroupingNeedsNoEmbeddings(t *testing.T) {
 	ctx := context.Background()
 	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
@@ -213,12 +213,49 @@ func TestMapperServiceRequiresEmbeddings(t *testing.T) {
 	client := codeindexv1connect.NewMapperServiceClient(ts.Client(), ts.URL+"/api")
 
 	stream, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID}))
+	if err != nil {
+		t.Fatalf("map repository: %v", err)
+	}
+	var result *codeindexv1.MapResult
+	for stream.Receive() {
+		if mapped := stream.Msg().GetResult(); mapped != nil {
+			result = mapped
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if result == nil || result.GetViewId() == 0 || result.GetFacts() != 1 {
+		t.Fatalf("result = %+v, want a materialized map without embeddings", result)
+	}
+}
+
+func TestMapperServiceEmbeddingModeRequiresEmbeddings(t *testing.T) {
+	t.Setenv("TLD_MAP_GROUPING", "embedding")
+	ctx := context.Background()
+	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+
+	root := "/repo/embedding"
+	repoID := cgraph.RepositoryID(root)
+	snap := &codeindexv1.Snapshot{Id: "snap-embedding", RepositoryId: repoID, CreatedUnix: 100}
+	graph := cgraph.NewGraph(repoID, snap.Id)
+	graph.Facts["f1"] = &codeindexv1.CodeFact{Id: "f1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Anchor: &codeindexv1.SourceAnchor{Path: "a.go"}}
+	if err := idx.Publish(ctx, root, snap, graph); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	ts := httptest.NewServer(routes)
+	defer ts.Close()
+	client := codeindexv1connect.NewMapperServiceClient(ts.Client(), ts.URL+"/api")
+
+	stream, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID}))
 	if err == nil {
 		for stream.Receive() {
 		}
 		err = stream.Err()
 	}
 	if err == nil {
-		t.Fatal("expected an error when the snapshot has no embeddings")
+		t.Fatal("expected an error when embedding mode runs without embeddings")
 	}
 }

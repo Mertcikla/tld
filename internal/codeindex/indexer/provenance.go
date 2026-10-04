@@ -78,6 +78,16 @@ func fingerprintInputs(ctx context.Context, root string, cfg config.Config, req 
 			return "", "", "", "", fmt.Errorf("read project configuration: %w", readErr)
 		}
 		parts = append(parts, project.ConfigPath, graph.Hash(content))
+		if languageFamily(project.Language) == familyWeb {
+			projectDir := filepath.Join(root, filepath.FromSlash(project.Root))
+			for _, name := range webProjectConfigs(projectDir) {
+				extra, extraErr := os.ReadFile(filepath.Join(projectDir, name))
+				if extraErr != nil {
+					return "", "", "", "", fmt.Errorf("read project configuration: %w", extraErr)
+				}
+				parts = append(parts, "tsconfig:"+filepath.ToSlash(filepath.Join(project.Root, name)), graph.Hash(extra))
+			}
+		}
 	}
 	git := func(args ...string) (string, error) {
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)

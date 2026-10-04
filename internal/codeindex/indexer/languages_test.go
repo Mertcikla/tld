@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/config"
+	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 )
 
 func TestSourceLanguageAndFamily(t *testing.T) {
@@ -176,6 +178,84 @@ func TestWebIndexerInfersTsconfig(t *testing.T) {
 	}
 	if slices.Contains(argv, "--infer-tsconfig") {
 		t.Fatalf("tsconfig project should not infer: %v", argv)
+	}
+}
+
+func TestWebIndexerPassesAllTsconfigs(t *testing.T) {
+	cfg := config.Default()
+	spec, err := indexerForFamily(familyWeb, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	for _, name := range []string{"tsconfig.json", "tsconfig.lib.json", "tsconfig.node.json", "unrelated.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := indexerContext{projectDir: dir, artifact: "/tmp/out.scip", configPath: "frontend/tsconfig.json"}
+	argv, _, err := spec.args(cfg, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(argv, "--infer-tsconfig") {
+		t.Fatalf("tsconfig project should not infer: %v", argv)
+	}
+	for _, want := range []string{"tsconfig.json", "tsconfig.lib.json", "tsconfig.node.json"} {
+		if !slices.Contains(argv, want) {
+			t.Fatalf("argv %v lacks %s", argv, want)
+		}
+	}
+	if slices.Contains(argv, "unrelated.json") {
+		t.Fatalf("argv %v contains a non-tsconfig file", argv)
+	}
+
+	fallback, _, err := spec.fallbackArgs(cfg, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(fallback, "tsconfig.json") || slices.Contains(fallback, "tsconfig.lib.json") {
+		t.Fatalf("fallback should use the primary config only: %v", fallback)
+	}
+
+	single := t.TempDir()
+	if err := os.WriteFile(filepath.Join(single, "tsconfig.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if argv, ok, err := spec.fallbackArgs(cfg, indexerContext{projectDir: single, configPath: "tsconfig.json"}); err != nil || ok || len(argv) != 0 {
+		t.Fatalf("single-config project needs no fallback: argv=%v ok=%v err=%v", argv, ok, err)
+	}
+}
+
+func TestSymbolInputsTracksWebConfigs(t *testing.T) {
+	root := t.TempDir()
+	frontend := filepath.Join(root, "frontend")
+	if err := os.MkdirAll(filepath.Join(frontend, "src"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(frontend, "tsconfig.json"), []byte(`{"include":["src/main.tsx"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	libConfig := filepath.Join(frontend, "tsconfig.lib.json")
+	if err := os.WriteFile(libConfig, []byte(`{"include":["src"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	projects := []*pb.Project{{Root: "frontend", Language: "typescript", ConfigPath: "frontend/tsconfig.json"}}
+	sources := map[string]*graph.Source{"frontend/src/a.ts": {Path: "frontend/src/a.ts", Hash: "h1"}}
+
+	first, err := symbolInputs(root, projects, sources, "cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(libConfig, []byte(`{"include":["src","other"]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := symbolInputs(root, projects, sources, "cfg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first["web|frontend"] == second["web|frontend"] {
+		t.Fatal("changing tsconfig.lib.json did not invalidate the project fingerprint")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
+	"github.com/mertcikla/tld/v2/internal/layout"
 	"github.com/mertcikla/tld/v2/internal/mapper"
 )
 
@@ -49,6 +50,10 @@ type MapOptions struct {
 	// one view, highest weight first, to keep dense views readable. Zero uses
 	// DefaultMaxConnectorsPerView.
 	MaxConnectorsPerView int
+	// MaxLeafConnectorsPerView caps connectors in file-only views, where a dense
+	// dependency web reads as a hairball. Zero falls back to
+	// MaxConnectorsPerView.
+	MaxLeafConnectorsPerView int
 	// Progress receives coarse (current, total, detail) updates while resources
 	// are created or updated. It may be nil.
 	Progress func(current, total int, detail string)
@@ -56,6 +61,10 @@ type MapOptions struct {
 
 // DefaultMaxConnectorsPerView is the per-view connector budget when unset.
 const DefaultMaxConnectorsPerView = 40
+
+// DefaultMaxLeafConnectorsPerView keeps file-level views legible; a group's
+// internal coupling is summarized in its element description instead.
+const DefaultMaxLeafConnectorsPerView = 12
 
 // MapResult summarizes what changed.
 type MapResult struct {
@@ -94,6 +103,7 @@ func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput
 	m := &mapMaterializer{
 		ctx:             ctx,
 		ws:              ws,
+		idx:             idx,
 		input:           input,
 		opts:            opts,
 		byKey:           byKey,
@@ -105,7 +115,11 @@ func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput
 		fileElementIDs:  map[string]int64{},
 		fileChains:      map[string][]int64{},
 		fileElementPath: map[string][]int64{},
+		queued:          map[int64]map[int64]bool{},
+		layoutEdges:     map[int64][]layout.Connector{},
+		leafViews:       map[int64]bool{},
 		maxConnectors:   maxConnectorsPerView(opts),
+		maxLeaf:         maxLeafConnectorsPerView(opts),
 		total:           countMapResources(input.Bins.Tree) + 1,
 	}
 	rootKey := mapKeyPrefix + "view|" + input.RepositoryID
@@ -137,26 +151,12 @@ func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput
 		return MapResult{}, err
 	}
 	if err := m.materializeImports(rootViewID); err != nil {
-		return MapResult{}, err
+		return m.result, err
 	}
-	for key, mapping := range byKey {
-		if !strings.HasPrefix(key, mapKeyPrefix) || m.kept[key] {
-			continue
-		}
-		switch mapping.Kind {
-		case cstore.MappingView:
-			_ = ws.DeleteView(ctx, mapping.ResourceID)
-		case cstore.MappingElement:
-			_ = ws.DeleteElement(ctx, mapping.ResourceID)
-		case cstore.MappingConnector:
-			_ = ws.DeleteConnector(ctx, mapping.ResourceID)
-		}
-		if err := idx.DeleteMapping(ctx, key); err != nil {
-			return m.result, err
-		}
-		m.result.Pruned++
+	if err := m.applyLayout(); err != nil {
+		return m.result, err
 	}
-	if err := idx.SaveMappings(ctx, m.pending); err != nil {
+	if err := m.pruneMapResources(); err != nil {
 		return m.result, err
 	}
 	return m.result, nil
@@ -165,11 +165,13 @@ func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput
 type mapMaterializer struct {
 	ctx             context.Context
 	ws              core.Store
+	idx             IndexStore
 	input           MapInput
 	opts            MapOptions
 	byKey           map[string]cstore.ResourceMapping
 	kept            map[string]bool
-	pending         []cstore.ResourceMapping
+	mappingBuffers  []cstore.ResourceMapping
+	pendingPlaces   []pendingPlacement
 	placed          map[int64]map[int64]bool
 	position        map[int64]int
 	naming          *mapper.NameIndex
@@ -177,13 +179,26 @@ type mapMaterializer struct {
 	fileElementIDs  map[string]int64
 	fileChains      map[string][]int64
 	fileElementPath map[string][]int64
+	queued          map[int64]map[int64]bool
+	layoutEdges     map[int64][]layout.Connector
+	leafViews       map[int64]bool
 	maxConnectors   int
+	maxLeaf         int
 	result          MapResult
 	done            int
 	total           int
 }
 
+// pendingPlacement is an element awaiting layout. Placements are deferred until
+// connectors exist so generated maps are laid out instead of grid-placed.
+type pendingPlacement struct {
+	viewID    int64
+	elementID int64
+}
+
 func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64, chain, elementPath []int64) error {
+	// A view whose only content is files is laid out with the leaf budget.
+	m.leafViews[viewID] = len(node.Children) == 0 && len(node.Bins) == 0 && len(node.Standalone) > 0
 	for _, child := range node.Children {
 		element, err := m.upsertElement(folderKey(m.input.RepositoryID, child.Path), folderElement(child))
 		if err != nil {
@@ -193,7 +208,7 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 		if err != nil {
 			return err
 		}
-		if err := m.place(viewID, element); err != nil {
+		if err := m.queuePlacement(viewID, element); err != nil {
 			return err
 		}
 		if err := m.materializeFolder(child, childViewID, appendView(chain, childViewID), appendElem(elementPath, element)); err != nil {
@@ -210,7 +225,7 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 		if err != nil {
 			return err
 		}
-		if err := m.place(viewID, element); err != nil {
+		if err := m.queuePlacement(viewID, element); err != nil {
 			return err
 		}
 		binViews := chain
@@ -230,7 +245,8 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 			if err != nil {
 				return err
 			}
-			if err := m.place(binViewID, clusterElementID); err != nil {
+			m.leafViews[clusterViewID] = true
+			if err := m.queuePlacement(binViewID, clusterElementID); err != nil {
 				return err
 			}
 			clusterViews := appendView(binViews, binViewID)
@@ -244,7 +260,7 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 				if err != nil {
 					return err
 				}
-				if err := m.place(clusterViewID, fileID); err != nil {
+				if err := m.queuePlacement(clusterViewID, fileID); err != nil {
 					return err
 				}
 				m.recordFile(fact.ID, fileID, appendView(clusterViews, clusterViewID), appendElem(clusterElems, fileID))
@@ -260,7 +276,7 @@ func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64
 		if err != nil {
 			return err
 		}
-		if err := m.place(viewID, fileID); err != nil {
+		if err := m.queuePlacement(viewID, fileID); err != nil {
 			return err
 		}
 		m.recordFile(fact.ID, fileID, chain, appendElem(elementPath, fileID))
@@ -299,6 +315,80 @@ func maxConnectorsPerView(opts MapOptions) int {
 		return opts.MaxConnectorsPerView
 	}
 	return DefaultMaxConnectorsPerView
+}
+
+func maxLeafConnectorsPerView(opts MapOptions) int {
+	if opts.MaxLeafConnectorsPerView > 0 {
+		return opts.MaxLeafConnectorsPerView
+	}
+	return maxConnectorsPerView(opts)
+}
+
+// queuePlacement defers an element's placement until connectors exist so the
+// view can be laid out as a graph instead of a grid. Elements that already have
+// a placement keep it.
+func (m *mapMaterializer) queuePlacement(viewID, elementID int64) error {
+	existing, err := m.placementsFor(viewID)
+	if err != nil {
+		return err
+	}
+	if existing[elementID] {
+		return nil
+	}
+	existing[elementID] = true
+	if m.queued[viewID] == nil {
+		m.queued[viewID] = map[int64]bool{}
+	}
+	if m.queued[viewID][elementID] {
+		return nil
+	}
+	m.queued[viewID][elementID] = true
+	m.pendingPlaces = append(m.pendingPlaces, pendingPlacement{viewID: viewID, elementID: elementID})
+	return nil
+}
+
+// applyLayout positions every newly created element. Views whose every element
+// is new get a deterministic force-directed layout with directed levels; views
+// that keep existing elements only place the new ones next to their neighbors.
+func (m *mapMaterializer) applyLayout() error {
+	if len(m.pendingPlaces) == 0 {
+		return nil
+	}
+	byView := map[int64][]int64{}
+	for _, item := range m.pendingPlaces {
+		byView[item.viewID] = append(byView[item.viewID], item.elementID)
+	}
+	views := make([]int64, 0, len(byView))
+	for viewID := range byView {
+		views = append(views, viewID)
+	}
+	sort.Slice(views, func(i, j int) bool { return views[i] < views[j] })
+	for _, viewID := range views {
+		existing, err := m.ws.ElementPlacements(m.ctx, viewID)
+		if err != nil {
+			return err
+		}
+		placements := make([]layout.Placement, 0, len(existing))
+		for _, placement := range existing {
+			placements = append(placements, layout.Placement{ElementID: placement.ElementID, X: placement.PositionX, Y: placement.PositionY})
+		}
+		targets := make(map[int64]struct{}, len(byView[viewID]))
+		for _, elementID := range byView[viewID] {
+			targets[elementID] = struct{}{}
+		}
+		next := layout.DeterministicLayoutPlacements(placements, targets, m.layoutEdges[viewID])
+		for elementID := range targets {
+			position, ok := next[elementID]
+			if !ok {
+				continue
+			}
+			if _, err := m.ws.AddPlacement(m.ctx, viewID, elementID, position.X, position.Y); err != nil {
+				return fmt.Errorf("place map element %d in view %d: %w", elementID, viewID, err)
+			}
+		}
+		m.advance("layout")
+	}
+	return nil
 }
 
 type elementEdgeKey struct {
@@ -392,6 +482,9 @@ func (m *mapMaterializer) materializeConnectors() error {
 			return entries[i].b < entries[j].b
 		})
 		limit := m.maxConnectors
+		if m.leafViews[viewID] {
+			limit = m.maxLeaf
+		}
 		if limit <= 0 || limit > len(entries) {
 			limit = len(entries)
 		}
@@ -412,6 +505,7 @@ func (m *mapMaterializer) materializeConnectors() error {
 			}); err != nil {
 				return err
 			}
+			m.layoutEdges[entry.viewID] = append(m.layoutEdges[entry.viewID], layout.Connector{Source: entry.a, Target: entry.b})
 		}
 	}
 	return nil
@@ -437,7 +531,7 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 	if err != nil {
 		return err
 	}
-	if err := m.place(rootViewID, containerID); err != nil {
+	if err := m.queuePlacement(rootViewID, containerID); err != nil {
 		return err
 	}
 	containerChain := appendView([]int64{rootViewID}, externalViewID)
@@ -460,7 +554,7 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 		if err != nil {
 			return err
 		}
-		if err := m.place(externalViewID, elementID); err != nil {
+		if err := m.queuePlacement(externalViewID, elementID); err != nil {
 			return err
 		}
 		importElements[name] = elementID
@@ -494,6 +588,7 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 		}); err != nil {
 			return err
 		}
+		m.layoutEdges[viewID] = append(m.layoutEdges[viewID], layout.Connector{Source: fileElementID, Target: importElementID})
 	}
 	return nil
 }
@@ -527,7 +622,7 @@ func (m *mapMaterializer) upsertConnector(logicalKey string, input core.Connecto
 	if err != nil {
 		return fmt.Errorf("create map connector %q: %w", logicalKey, err)
 	}
-	m.pending = append(m.pending, cstore.ResourceMapping{
+	m.mappingBuffers = append(m.mappingBuffers, cstore.ResourceMapping{
 		LogicalKey:   logicalKey,
 		Kind:         cstore.MappingConnector,
 		ResourceID:   created.ID,
@@ -552,7 +647,7 @@ func (m *mapMaterializer) upsertElement(logicalKey string, input core.LibraryEle
 	if err != nil {
 		return 0, fmt.Errorf("create map element %q: %w", logicalKey, err)
 	}
-	m.pending = append(m.pending, cstore.ResourceMapping{
+	m.mappingBuffers = append(m.mappingBuffers, cstore.ResourceMapping{
 		LogicalKey:   logicalKey,
 		Kind:         cstore.MappingElement,
 		ResourceID:   created.ID,
@@ -586,7 +681,7 @@ func (m *mapMaterializer) upsertView(logicalKey, name, label string, ownerElemen
 	if err != nil {
 		return 0, fmt.Errorf("create map view %q: %w", logicalKey, err)
 	}
-	m.pending = append(m.pending, cstore.ResourceMapping{
+	m.mappingBuffers = append(m.mappingBuffers, cstore.ResourceMapping{
 		LogicalKey:   logicalKey,
 		Kind:         cstore.MappingView,
 		ResourceID:   view.ID,

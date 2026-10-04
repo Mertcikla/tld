@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -201,11 +202,24 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 			if err != nil {
 				return nil, nil, false, err
 			}
-			toolCtx, cancel := context.WithTimeout(ctx, p.Config.ToolTimeout())
-			cmd := exec.CommandContext(toolCtx, tool, argv...)
-			cmd.Dir = projectDir
-			out, e := cmd.CombinedOutput()
-			cancel()
+			runTool := func(args []string) ([]byte, error) {
+				toolCtx, cancel := context.WithTimeout(ctx, p.Config.ToolTimeout())
+				defer cancel()
+				cmd := exec.CommandContext(toolCtx, tool, args...)
+				cmd.Dir = projectDir
+				return cmd.CombinedOutput()
+			}
+			out, e := runTool(argv)
+			if e != nil && spec.fallbackArgs != nil {
+				// Extra projects are an enrichment; when one of them breaks the
+				// invocation, retry with the primary project only.
+				if fallback, fallbackExplicit, fallbackErr := spec.fallbackArgs(p.Config, c); fallbackErr == nil && len(fallback) > 0 && !slices.Equal(fallback, argv) {
+					_ = os.Remove(c.artifact)
+					if retryOut, retryErr := runTool(fallback); retryErr == nil {
+						explicit, out, e = fallbackExplicit, retryOut, nil
+					}
+				}
+			}
 			if e != nil {
 				return nil, nil, false, fmt.Errorf("%s failed in %s: %w: %s", spec.name, pr.Root, e, strings.TrimSpace(string(out)))
 			}

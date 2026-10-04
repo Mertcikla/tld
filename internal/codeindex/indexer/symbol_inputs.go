@@ -45,6 +45,18 @@ func symbolInputs(root string, projects []*pb.Project, sources map[string]*graph
 			return nil, err
 		}
 		parts = append(parts, manifests, graph.Hash(raw))
+		if family == familyWeb {
+			// scip-typescript indexes every sibling tsconfig, so all of them
+			// are project inputs even though only one was discovered.
+			projectDir := filepath.Join(root, filepath.FromSlash(pr.Root))
+			for _, name := range webProjectConfigs(projectDir) {
+				content, readErr := os.ReadFile(filepath.Join(projectDir, name))
+				if readErr != nil {
+					return nil, readErr
+				}
+				parts = append(parts, "tsconfig:"+name, graph.Hash(content))
+			}
+		}
 		result[key] = graph.ID(append([]string{configHash, key}, parts...)...)
 	}
 	return result, nil
