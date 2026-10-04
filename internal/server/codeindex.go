@@ -6,21 +6,29 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
+	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
+	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
+	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
 // codeIndexRepositoryService exposes the repositories indexed by the in-process
 // codeindex engine to the UI.
 type codeIndexRepositoryService struct {
 	codeindexv1connect.UnimplementedRepositoryServiceHandler
-	store *cstore.Store
-	ws    *store.SQLiteStore
+	store  *cstore.Store
+	ws     *store.SQLiteStore
+	config *workspace.Config
 }
 
 func (s *codeIndexRepositoryService) ListRepositories(ctx context.Context, _ *connect.Request[codeindexv1.ListRepositoriesRequest]) (*connect.Response[codeindexv1.ListRepositoriesResponse], error) {
@@ -29,6 +37,76 @@ func (s *codeIndexRepositoryService) ListRepositories(ctx context.Context, _ *co
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&codeindexv1.ListRepositoriesResponse{Repositories: repositories}), nil
+}
+
+// AddRepository indexes a local directory in-process and registers it as a
+// repository. Progress is streamed while the snapshot is built, then the
+// registered repository is sent once indexing completes.
+func (s *codeIndexRepositoryService) AddRepository(ctx context.Context, req *connect.Request[codeindexv1.AddRepositoryRequest], stream *connect.ServerStream[codeindexv1.AddRepositoryEvent]) error {
+	path := strings.TrimSpace(req.Msg.GetPath())
+	if path == "" {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("path is required"))
+	}
+	root, err := resolveRepositoryRoot(path)
+	if err != nil {
+		return connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	repositoryID := cgraph.RepositoryID(root)
+	ctx, release, err := s.store.AcquireLease(ctx, repositoryID)
+	if err != nil {
+		return impactError(err)
+	}
+	defer release()
+
+	engine := ingest.Engine{
+		Store:        s.store,
+		Config:       configbridge.FromGlobal(s.config),
+		Root:         root,
+		RepositoryID: repositoryID,
+		Progress: func(p indexer.Progress) {
+			_ = stream.Send(&codeindexv1.AddRepositoryEvent{Event: &codeindexv1.AddRepositoryEvent_Progress{Progress: &codeindexv1.IndexProgress{
+				Stage:   p.Stage,
+				Current: uint32(p.Current),
+				Total:   uint32(p.Total),
+				Detail:  p.Detail,
+			}}})
+		},
+	}
+	if _, err := engine.Prepare(ctx, &codeindexv1.ComparisonTarget{WorkingTree: true}); err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	repository, err := s.store.Repository(ctx, repositoryID)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	return stream.Send(&codeindexv1.AddRepositoryEvent{Event: &codeindexv1.AddRepositoryEvent_Repository{Repository: repository}})
+}
+
+// resolveRepositoryRoot canonicalizes a user-supplied path the same way the CLI
+// does: expand ~, make it absolute, require an existing directory, and resolve
+// symlinks so the repository id is stable.
+func resolveRepositoryRoot(path string) (string, error) {
+	expanded := path
+	if strings.HasPrefix(path, "~/") || path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		expanded = filepath.Join(home, strings.TrimPrefix(path, "~"))
+	}
+	root, err := filepath.Abs(expanded)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s is not a directory", path)
+	}
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	return resolved, nil
 }
 
 func (s *codeIndexRepositoryService) DeleteRepository(ctx context.Context, req *connect.Request[codeindexv1.DeleteRepositoryRequest]) (*connect.Response[codeindexv1.DeleteRepositoryResponse], error) {
@@ -280,9 +358,12 @@ func nextEdgeCursor(edges []*codeindexv1.EdgeFact, limit int) string {
 	return ""
 }
 
-func registerCodeIndexHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) {
+func registerCodeIndexHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, configs ...*workspace.Config) {
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
 	repoSvc := &codeIndexRepositoryService{store: idx, ws: sqliteStore}
+	if len(configs) > 0 {
+		repoSvc.config = configs[0]
+	}
 	repoPath, repoHandler := codeindexv1connect.NewRepositoryServiceHandler(repoSvc)
 	mux.Handle("/api"+repoPath, http.StripPrefix("/api", repoHandler))
 

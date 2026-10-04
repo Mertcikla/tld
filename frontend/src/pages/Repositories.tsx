@@ -7,11 +7,21 @@ import {
   Box,
   Button,
   Center,
-  Code,
   Flex,
+  FormControl,
   Grid,
   HStack,
   IconButton,
+  Input,
+  Popover,
+  PopoverArrow,
+  PopoverBody,
+  PopoverCloseButton,
+  PopoverContent,
+  PopoverFooter,
+  PopoverHeader,
+  PopoverTrigger,
+  Portal,
   Progress,
   Select,
   Spinner,
@@ -21,6 +31,7 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import {
+  AddIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   DeleteIcon,
@@ -34,6 +45,7 @@ import {
   type RepositoryGitHistory,
   type RepositoryPullRequest,
   type OpenRepositoryPullRequest,
+  type RepositoryIndexProgress,
   type RepositoryMapProgress,
   type SnapshotDiff,
   type RepositoryImpact as RepositoryImpactResult,
@@ -52,6 +64,7 @@ import {
   snapshotForTarget,
   targetMapOptions,
 } from '../utils/repositoryTargets'
+import { indexStageLabel } from '../utils/repositoryWatcher'
 import { toast } from '../utils/toast'
 
 const accentStyle = {
@@ -449,6 +462,14 @@ export default function Repositories() {
     null,
   )
   const [deletingSnapshot, setDeletingSnapshot] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
+  const [addPath, setAddPath] = useState('')
+  const [addWatch, setAddWatch] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [addProgress, setAddProgress] = useState<RepositoryIndexProgress | null>(
+    null,
+  )
+  const [addError, setAddError] = useState('')
   const [visibleSnapshots, setVisibleSnapshots] = useState(snapshotPageSize)
   const initialized = useRef('')
   const operation = useRef<AbortController | null>(null)
@@ -877,6 +898,49 @@ export default function Repositories() {
       setDeletingSnapshot(false)
     }
   }
+  const handleAddRepository = async () => {
+    const path = addPath.trim()
+    if (!path) {
+      setAddError('Enter the path to a repository directory')
+      return
+    }
+    setAdding(true)
+    setAddError('')
+    setAddProgress(null)
+    try {
+      const added = await api.repositories.add(path, {
+        onProgress: setAddProgress,
+      })
+      setAddOpen(false)
+      setAddPath('')
+      setAddProgress(null)
+      toast({
+        title: 'Repository added',
+        description: added.root,
+        status: 'success',
+      })
+      await reload()
+      setSelectedId(added.id)
+      if (addWatch) {
+        try {
+          await api.repositories.startWatch(added.id)
+        } catch (err) {
+          toast({
+            title: 'Repository added without a watcher',
+            description: err instanceof Error ? err.message : '',
+            status: 'warning',
+          })
+        }
+      }
+      setAddWatch(false)
+    } catch (err) {
+      setAddError(
+        err instanceof Error ? err.message : 'Could not add repository',
+      )
+    } finally {
+      setAdding(false)
+    }
+  }
   return (
     <Box
       h="full"
@@ -890,18 +954,6 @@ export default function Repositories() {
         <Center flex={1}>
           <Spinner color="var(--accent)" />
         </Center>
-      ) : !repositories.length ? (
-        <Center flex={1}>
-          <VStack p={4}>
-            <Text fontWeight="semibold">No repositories indexed yet</Text>
-            <Text fontSize="sm" color="gray.400">
-              Run <Code>tld index &lt;path&gt;</Code> to register a repository.
-            </Text>
-            <Button size="sm" onClick={() => void reload()}>
-              Reload
-            </Button>
-          </VStack>
-        </Center>
       ) : (
         <Flex
           flex={1}
@@ -911,8 +963,9 @@ export default function Repositories() {
         >
           <Box
             w={{ base: 'full', lg: collapsed ? '52px' : '320px' }}
-            maxH={{ base: collapsed ? '48px' : '32vh', lg: 'none' }}
-            overflowY="auto"
+            maxH={{ base: collapsed ? '96px' : '32vh', lg: 'none' }}
+            display="flex"
+            flexDir="column"
             flexShrink={0}
             borderRight="1px solid"
             borderBottom={{ base: '1px solid', lg: 'none' }}
@@ -956,6 +1009,7 @@ export default function Repositories() {
                 />
               )}
             </Flex>
+            <Box flex="0 1 auto" minH={0} overflowY="auto">
             {repositories.map((repo) => (
               <Box
                 key={repo.id}
@@ -1251,6 +1305,196 @@ export default function Repositories() {
                 )}
               </Box>
             ))}
+            </Box>
+            <Box flexShrink={0} borderTop="1px solid" borderColor="whiteAlpha.100">
+              <Popover
+                isOpen={addOpen}
+                onOpen={() => {
+                  setAddError('')
+                  setAddProgress(null)
+                }}
+                onClose={() => {
+                  if (!adding) setAddOpen(false)
+                }}
+                placement="right-start"
+                isLazy
+                closeOnBlur
+                returnFocusOnClose={false}
+              >
+                <PopoverTrigger>
+              <Flex
+                role="button"
+                tabIndex={0}
+                px={collapsed ? 0 : 4}
+                py={3}
+                align="center"
+                justify={collapsed ? 'center' : undefined}
+                gap={3}
+                cursor="pointer"
+                data-testid="repositories-add"
+                _hover={{ bg: 'whiteAlpha.50' }}
+                onClick={() => {
+                  setAddError('')
+                  setAddProgress(null)
+                  setAddOpen(true)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    setAddError('')
+                    setAddProgress(null)
+                    setAddOpen(true)
+                  }
+                }}
+              >
+                <Center
+                  w="28px"
+                  h="28px"
+                  flexShrink={0}
+                  border="1px dashed"
+                  borderColor="whiteAlpha.400"
+                  borderRadius="md"
+                  color="gray.400"
+                >
+                  <AddIcon boxSize="12px" />
+                </Center>
+                {!collapsed && (
+                  <Box flex={1} minW={0}>
+                    <Text fontSize="sm" fontWeight="semibold" color="gray.300">
+                      Add repository
+                    </Text>
+                    <Text fontSize="xs" color="gray.500" isTruncated>
+                      Index a local directory
+                    </Text>
+                  </Box>
+                )}
+              </Flex>
+                </PopoverTrigger>
+                <Portal>
+                  <PopoverContent w="320px" maxW="calc(100vw - 24px)">
+                    <PopoverArrow />
+                    <PopoverCloseButton isDisabled={adding} />
+                    <PopoverHeader fontWeight="semibold">
+                      Add repository
+                    </PopoverHeader>
+                    <PopoverBody>
+                      <FormControl>
+                        <Text fontSize="sm" mb={2} color="gray.400">
+                          Index a local repository directory to explore and map
+                          it.
+                        </Text>
+                        <Input
+                          autoFocus
+                          size="sm"
+                          placeholder="/path/to/repository"
+                          value={addPath}
+                          data-testid="repositories-add-path"
+                          isDisabled={adding}
+                          onChange={(e) => setAddPath(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') void handleAddRepository()
+                          }}
+                        />
+                      </FormControl>
+                      {adding && (
+                        <Box
+                          mt={3}
+                          p={3}
+                          borderRadius="md"
+                          bg="whiteAlpha.50"
+                          data-testid="repositories-add-status"
+                        >
+                          <HStack spacing={2}>
+                            <Spinner size="xs" color="var(--accent)" />
+                            <Text
+                              fontSize="sm"
+                              fontWeight="semibold"
+                              aria-live="polite"
+                            >
+                              {indexStageLabel(addProgress?.stage || '') ||
+                                'Preparing index…'}
+                            </Text>
+                            {!!addProgress?.total && (
+                              <Text ml="auto" fontSize="xs" color="gray.400">
+                                {addProgress.current}/{addProgress.total}
+                              </Text>
+                            )}
+                          </HStack>
+                          <Progress
+                            mt={2}
+                            size="xs"
+                            borderRadius="full"
+                            isIndeterminate={!addProgress?.total}
+                            value={
+                              addProgress?.total
+                                ? (addProgress.current / addProgress.total) *
+                                  100
+                                : undefined
+                            }
+                          />
+                          {addProgress?.detail && (
+                            <Text
+                              mt={2}
+                              fontSize="xs"
+                              color="gray.500"
+                              isTruncated
+                              title={addProgress.detail}
+                            >
+                              {addProgress.detail}
+                            </Text>
+                          )}
+                        </Box>
+                      )}
+                      {addError && (
+                        <Alert status="error" mt={3} borderRadius="md">
+                          <AlertIcon />
+                          <Text fontSize="sm">{addError}</Text>
+                        </Alert>
+                      )}
+                      <HStack mt={4} align="flex-start">
+                        <Switch
+                          size="sm"
+                          data-testid="repositories-add-watch"
+                          isChecked={addWatch}
+                          isDisabled={adding}
+                          onChange={(e) => setAddWatch(e.target.checked)}
+                        />
+                        <Box>
+                          <Text fontSize="sm">Watch for changes</Text>
+                          <Text fontSize="xs" color="gray.500">
+                            Keep the repository updated as you work. Requires
+                            Git.
+                          </Text>
+                        </Box>
+                      </HStack>
+                    </PopoverBody>
+                    <PopoverFooter
+                      display="flex"
+                      justifyContent="flex-end"
+                      gap={2}
+                    >
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        isDisabled={adding}
+                        onClick={() => setAddOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        style={accentStyle}
+                        data-testid="repositories-add-submit"
+                        isLoading={adding}
+                        onClick={() => void handleAddRepository()}
+                      >
+                        Add repository
+                      </Button>
+                    </PopoverFooter>
+                  </PopoverContent>
+                </Portal>
+              </Popover>
+            </Box>
           </Box>
           <Box
             flex={1}

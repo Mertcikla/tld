@@ -56,6 +56,10 @@ vi.mock('../api/client', () => ({
       impactRadius: vi.fn(),
       delete: vi.fn(async () => {}),
       deleteSnapshot: vi.fn(async () => {}),
+      add: vi.fn(async (_path: string, handlers?: { onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void }) => {
+        handlers?.onProgress?.({ stage: 'tree-sitter', current: 1, total: 2, detail: 'parsing' })
+        return { id: 'repo-2', root: '/repo/new', latestSnapshotId: 'snap-2' }
+      }),
       map: vi.fn(async (_repositoryId: string, handlers?: { onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void }) => {
         handlers?.onProgress?.({ stage: 'clustering', current: 1, total: 2, detail: 'grow' })
         return { snapshotId: 'snap-1', runId: 'run-1', viewId: 5, facts: 4, clusters: 1, bins: 1, unclustered: 0, weightedTightness: 1 }
@@ -70,6 +74,7 @@ vi.mock('../utils/toast', () => ({ toast: vi.fn() }))
 vi.mock('../utils/sourceEditor', () => ({ useSourceEditor: () => ({ editor: 'zed' }) }))
 
 vi.mock('@chakra-ui/icons', () => ({
+  AddIcon: () => null,
   CopyIcon: () => null,
   ExternalLinkIcon: () => null,
   DeleteIcon: () => null,
@@ -96,6 +101,8 @@ vi.mock('@chakra-ui/react', async () => {
     size?: string
     colorScheme?: string
   }) => ReactModule.createElement('input', { ...props, type: 'checkbox', checked: !!isChecked, disabled: isDisabled, onChange: onChange ?? (() => {}) })
+  const ModalLike = ({ children, isOpen, onClose: _onClose, isCentered: _isCentered, ...props }: NodeProps & { onClose?: () => void; isCentered?: boolean }) =>
+    isOpen === false ? null : ReactModule.createElement('div', props, children)
   return {
     Alert: BoxLike,
     AlertDialog: BoxLike,
@@ -112,10 +119,30 @@ vi.mock('@chakra-ui/react', async () => {
     Code: BoxLike,
     Divider: BoxLike,
     Flex: BoxLike,
+    FormControl: BoxLike,
     Grid: BoxLike,
     HStack: BoxLike,
     IconButton: ButtonLike,
     Input: (props: Record<string, unknown>) => ReactModule.createElement('input', props),
+    Modal: ModalLike,
+    ModalBody: BoxLike,
+    ModalCloseButton: BoxLike,
+    ModalContent: BoxLike,
+    ModalFooter: BoxLike,
+    ModalHeader: BoxLike,
+    ModalOverlay: BoxLike,
+    Popover: ({ children, isOpen }: NodeProps) => {
+      const kids = ReactModule.Children.toArray(children)
+      return ReactModule.createElement('div', null, isOpen === false ? kids[0] : kids)
+    },
+    PopoverArrow: () => null,
+    PopoverBody: BoxLike,
+    PopoverCloseButton: ({ children }: NodeProps) => ReactModule.createElement('div', null, children),
+    PopoverContent: BoxLike,
+    PopoverFooter: BoxLike,
+    PopoverHeader: BoxLike,
+    PopoverTrigger: ({ children }: NodeProps) => ReactModule.createElement('div', null, children),
+    Portal: ({ children }: NodeProps) => ReactModule.createElement('div', null, children),
     Progress: BoxLike,
     Select: BoxLike,
     Spinner: BoxLike,
@@ -273,6 +300,105 @@ describe('Repositories map action', () => {
     })
 
     expect(api.repositories.deleteSnapshot).toHaveBeenCalledWith('snap-1')
+  })
+  it('adds a repository from the sidebar dialog', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.list).mockClear()
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<Repositories />)
+    })
+
+    const addCell = () =>
+      renderer.root.findAll(
+        (node) =>
+          node.type === 'div' &&
+          node.props['data-testid'] === 'repositories-add',
+      )[0]
+
+    act(() => {
+      renderer.root.findByProps({ 'aria-label': 'Collapse repositories' }).props.onClick()
+    })
+    expect(addCell()).toBeTruthy()
+    act(() => {
+      renderer.root.findByProps({ 'aria-label': 'Expand repositories' }).props.onClick()
+    })
+    act(() => {
+      addCell().props.onClick()
+    })
+    act(() => {
+      renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-path' })
+        .props.onChange({ target: { value: '/repo/new' } })
+    })
+    await act(async () => {
+      await renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-submit' })
+        .props.onClick()
+    })
+
+    expect(api.repositories.add).toHaveBeenCalledWith(
+      '/repo/new',
+      expect.objectContaining({ onProgress: expect.any(Function) }),
+    )
+    expect(api.repositories.list).toHaveBeenCalled()
+    renderer.unmount()
+  })
+  it('shows friendly indexing status while adding a repository', async () => {
+    const { api } = await import('../api/client')
+    let finish!: (value: { id: string; root: string; latestSnapshotId: string }) => void
+    vi.mocked(api.repositories.add).mockImplementationOnce(
+      (_path, handlers) =>
+        new Promise((resolve) => {
+          handlers?.onProgress?.({
+            stage: 'tree-sitter',
+            current: 1,
+            total: 4,
+            detail: 'src/main.go',
+          })
+          finish = resolve
+        }),
+    )
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<Repositories />)
+    })
+    const addCell = () =>
+      renderer.root.findAll(
+        (node) =>
+          node.type === 'div' &&
+          node.props['data-testid'] === 'repositories-add',
+      )[0]
+    act(() => {
+      addCell().props.onClick()
+    })
+    act(() => {
+      renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-path' })
+        .props.onChange({ target: { value: '/repo/new' } })
+    })
+    await act(async () => {
+      renderer.root
+        .findByProps({ 'data-testid': 'repositories-add-submit' })
+        .props.onClick()
+    })
+
+    expect(
+      renderer.root.findByProps({ 'data-testid': 'repositories-add-status' }),
+    ).toBeTruthy()
+    expect(
+      renderer.root.findAll((node) => node.props.children === 'Parsing sources')
+        .length,
+    ).toBeGreaterThan(0)
+    expect(
+      renderer.root.findAll((node) => node.props.children === 'src/main.go')
+        .length,
+    ).toBeGreaterThan(0)
+
+    await act(async () => {
+      finish({ id: 'repo-2', root: '/repo/new', latestSnapshotId: 'snap-2' })
+    })
+    renderer.unmount()
   })
   it('shows the commit message in the snapshot panel', async () => {
     let renderer!: ReturnType<typeof create>

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
 func TestMapperServiceMapRepository(t *testing.T) {
@@ -137,6 +138,70 @@ func TestMapperServiceMapRepository(t *testing.T) {
 	}
 }
 
+func TestMapperServiceMapConfigChangeReruns(t *testing.T) {
+	ctx := context.Background()
+	cfg := workspace.DefaultConfig()
+	sqliteStore, routes := newTestServerWithOptions(t, uuid.New(), nil, Options{Config: cfg})
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+
+	root := "/repo/config"
+	repoID := cgraph.RepositoryID(root)
+	snap := &codeindexv1.Snapshot{Id: "snap-config", RepositoryId: repoID, CreatedUnix: 100}
+	graph := cgraph.NewGraph(repoID, snap.Id)
+	graph.Facts["f1"] = &codeindexv1.CodeFact{Id: "f1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Anchor: &codeindexv1.SourceAnchor{Path: "src/a.go"}}
+	graph.Facts["f2"] = &codeindexv1.CodeFact{Id: "f2", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Anchor: &codeindexv1.SourceAnchor{Path: "src/b.go"}}
+	graph.Facts["s1"] = &codeindexv1.CodeFact{Id: "s1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/a.go"}}
+	graph.Facts["s2"] = &codeindexv1.CodeFact{Id: "s2", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Anchor: &codeindexv1.SourceAnchor{Path: "src/b.go"}}
+	graph.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_CALLS, "s1", "s2", "", &codeindexv1.SourceAnchor{Path: "src/a.go"}, nil)
+	if err := idx.Publish(ctx, root, snap, graph); err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+
+	ts := httptest.NewServer(routes)
+	defer ts.Close()
+	client := codeindexv1connect.NewMapperServiceClient(ts.Client(), ts.URL+"/api")
+
+	mapOnce := func() (*codeindexv1.MapResult, int) {
+		stream, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID}))
+		if err != nil {
+			t.Fatalf("map: %v", err)
+		}
+		var result *codeindexv1.MapResult
+		progress := 0
+		for stream.Receive() {
+			if stream.Msg().GetProgress() != nil {
+				progress++
+			}
+			if mapped := stream.Msg().GetResult(); mapped != nil {
+				result = mapped
+			}
+		}
+		if err := stream.Err(); err != nil {
+			t.Fatalf("stream: %v", err)
+		}
+		return result, progress
+	}
+
+	first, firstProgress := mapOnce()
+	if first == nil || firstProgress == 0 {
+		t.Fatalf("first map = %+v progress=%d", first, firstProgress)
+	}
+
+	cfg.Map.Grouping.Resolution = 2.5
+	second, secondProgress := mapOnce()
+	if second == nil || second.RunId == first.RunId {
+		t.Fatalf("config change did not rerun: %+v vs %+v", first, second)
+	}
+	if secondProgress == 0 {
+		t.Fatal("expected progress events on config change")
+	}
+
+	third, thirdProgress := mapOnce()
+	if third == nil || third.RunId != second.RunId || thirdProgress != 0 {
+		t.Fatalf("cached rerun: result=%+v progress=%d", third, thirdProgress)
+	}
+}
+
 func TestMapperServiceMaterializesImports(t *testing.T) {
 	ctx := context.Background()
 	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
@@ -217,4 +282,3 @@ func TestMapperServiceGraphGroupingNeedsNoEmbeddings(t *testing.T) {
 		t.Fatalf("result = %+v, want a materialized map without embeddings", result)
 	}
 }
-

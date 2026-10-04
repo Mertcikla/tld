@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
@@ -158,6 +160,87 @@ func TestListSnapshotsExcludesWorkingTree(t *testing.T) {
 	}
 	if got[0].GetCommitMessage() != saved.CommitMessage {
 		t.Fatalf("commit message = %q, want %q", got[0].GetCommitMessage(), saved.CommitMessage)
+	}
+}
+
+func TestRepositoryServiceAddRepository(t *testing.T) {
+	workspaceID := uuid.New()
+	sqliteStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	ctx := context.Background()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\nfunc A() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ts := httptest.NewServer(routes)
+	defer ts.Close()
+	client := codeindexv1connect.NewRepositoryServiceClient(ts.Client(), ts.URL+"/api")
+
+	empty, err := client.AddRepository(ctx, connect.NewRequest(&codeindexv1.AddRepositoryRequest{}))
+	if err == nil {
+		for empty.Receive() {
+		}
+		err = empty.Err()
+	}
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("empty path error = %v, want invalid argument", err)
+	}
+	stream, err := client.AddRepository(ctx, connect.NewRequest(&codeindexv1.AddRepositoryRequest{Path: filepath.Join(dir, "missing")}))
+	if err == nil {
+		for stream.Receive() {
+		}
+		err = stream.Err()
+	}
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("missing directory error = %v, want invalid argument", err)
+	}
+
+	stream, err = client.AddRepository(ctx, connect.NewRequest(&codeindexv1.AddRepositoryRequest{Path: dir}))
+	if err != nil {
+		t.Fatalf("AddRepository: %v", err)
+	}
+	stages := map[string]bool{}
+	var repository *codeindexv1.Repository
+	for stream.Receive() {
+		event := stream.Msg()
+		if progress := event.GetProgress(); progress != nil {
+			stages[progress.GetStage()] = true
+		}
+		if repo := event.GetRepository(); repo != nil {
+			repository = repo
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	if repository == nil {
+		t.Fatal("stream ended without a repository")
+	}
+	repoID := cgraph.RepositoryID(resolved)
+	if repository.GetId() != repoID || repository.GetRoot() != resolved {
+		t.Fatalf("repository = %+v, want id %s root %s", repository, repoID, resolved)
+	}
+	if repository.GetLatestSnapshotId() == "" {
+		t.Fatal("repository has no latest snapshot")
+	}
+	if len(stages) == 0 {
+		t.Fatal("no indexing progress was streamed")
+	}
+	if _, err := idx.Repository(ctx, repoID); err != nil {
+		t.Fatalf("repository not registered: %v", err)
+	}
+	snap, err := idx.Snapshot(ctx, repository.GetLatestSnapshotId())
+	if err != nil {
+		t.Fatalf("snapshot not published: %v", err)
+	}
+	if len(snap.GetSources()) != 1 || snap.GetSources()[0].GetPath() != "a.go" {
+		t.Fatalf("snapshot sources = %+v", snap.GetSources())
 	}
 }
 

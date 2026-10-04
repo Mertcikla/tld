@@ -358,3 +358,50 @@ func TestExistingGlobalConfigPathReturnsLegacyWhenOnlyLegacy(t *testing.T) {
 		t.Fatalf("ExistingGlobalConfigPath = (%q, %v), want (%q, true)", path, ok, legacyPath)
 	}
 }
+
+func TestGlobalConfigMapSettingsRoundTripAndEnv(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	if err := workspace.SetGlobalConfigValue("map.grouping.resolution", "1.5"); err != nil {
+		t.Fatalf("set resolution: %v", err)
+	}
+	if err := workspace.SetGlobalConfigValue("map.budget.max_leaf_connectors_per_view", "7"); err != nil {
+		t.Fatalf("set budget: %v", err)
+	}
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Map.Grouping.Resolution != 1.5 || cfg.Map.Budget.MaxLeafConnectorsPerView != 7 {
+		t.Fatalf("map config = %+v", cfg.Map)
+	}
+	if cfg.Map.Grouping.MaxRootGroups != 20 || cfg.Map.Grouping.MaxDepth != 4 {
+		t.Fatalf("unset map keys lost defaults: %+v", cfg.Map.Grouping)
+	}
+
+	t.Setenv("TLD_MAP_GROUPING_MAX_ROOT_GROUPS", "9")
+	cfg, err = workspace.LoadGlobalConfig()
+	if err != nil {
+		t.Fatalf("load with env: %v", err)
+	}
+	if cfg.Map.Grouping.MaxRootGroups != 9 {
+		t.Fatalf("env override = %d, want 9", cfg.Map.Grouping.MaxRootGroups)
+	}
+}
+
+func TestGlobalConfigRejectsInvalidMapSettings(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", configDir)
+	t.Setenv("TLD_MAP_GROUPING_RESOLUTION", "0")
+	if _, err := workspace.LoadGlobalConfig(); err == nil {
+		t.Fatal("expected invalid resolution to fail")
+	} else if !strings.Contains(err.Error(), "map.grouping.resolution") {
+		t.Fatalf("error = %v", err)
+	}
+
+	t.Setenv("TLD_MAP_GROUPING_RESOLUTION", "1")
+	t.Setenv("TLD_MAP_GROUPING_MAX_ROOT_GROUPS", "2")
+	if _, err := workspace.LoadGlobalConfig(); err == nil {
+		t.Fatal("expected inverted root bounds to fail")
+	}
+}

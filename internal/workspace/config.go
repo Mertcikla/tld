@@ -111,8 +111,34 @@ type Config struct {
 	Validation  ValidationConfig `yaml:"validation"`
 	Serve       ServeConfig      `yaml:"serve"`
 	Index       IndexConfig      `yaml:"index"`
+	Map         MapConfig        `yaml:"map"`
 	Completion  CompletionConfig `yaml:"completion"`
 	Updates     UpdatesConfig    `yaml:"updates"`
+}
+
+// MapConfig configures the graph mapping pipeline.
+type MapConfig struct {
+	Grouping MapGroupingConfig `yaml:"grouping"`
+	Budget   MapBudgetConfig   `yaml:"budget"`
+}
+
+// MapGroupingConfig controls the Louvain community hierarchy. Higher resolution
+// values produce more, smaller communities; the root bounds and tree budgets
+// keep the resulting map readable.
+type MapGroupingConfig struct {
+	Resolution    float64 `yaml:"resolution"`
+	MinGroupSize  int     `yaml:"min_group_size"`
+	MinRootGroups int     `yaml:"min_root_groups"`
+	MaxRootGroups int     `yaml:"max_root_groups"`
+	MaxChildren   int     `yaml:"max_children"`
+	MaxDepth      int     `yaml:"max_depth"`
+	MaxLeafFiles  int     `yaml:"max_leaf_files"`
+}
+
+// MapBudgetConfig caps how many rolled-up connectors a map view may draw.
+type MapBudgetConfig struct {
+	MaxConnectorsPerView     int `yaml:"max_connectors_per_view"`
+	MaxLeafConnectorsPerView int `yaml:"max_leaf_connectors_per_view"`
 }
 
 // IndexConfig configures the in-tree codeindex engine and its external SCIP
@@ -204,6 +230,21 @@ func DefaultConfig() *Config {
 				SCIPRuby:       "scip-ruby",
 				RustAnalyzer:   "rust-analyzer",
 				TimeoutSeconds: 300,
+			},
+		},
+		Map: MapConfig{
+			Grouping: MapGroupingConfig{
+				Resolution:    1.0,
+				MinGroupSize:  2,
+				MinRootGroups: 3,
+				MaxRootGroups: 20,
+				MaxChildren:   8,
+				MaxDepth:      4,
+				MaxLeafFiles:  40,
+			},
+			Budget: MapBudgetConfig{
+				MaxConnectorsPerView:     40,
+				MaxLeafConnectorsPerView: 12,
 			},
 		},
 		Updates: UpdatesConfig{

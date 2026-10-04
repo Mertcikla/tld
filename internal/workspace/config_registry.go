@@ -200,6 +200,33 @@ func ValidateGlobalConfig(cfg *Config) ConfigValidationErrors {
 	if cfg.Index.Tools.TimeoutSeconds < 0 {
 		add("index.tools.timeout_seconds", "must be non-negative")
 	}
+	if cfg.Map.Grouping.Resolution <= 0 {
+		add("map.grouping.resolution", "must be positive")
+	}
+	if cfg.Map.Grouping.MinGroupSize < 1 {
+		add("map.grouping.min_group_size", "must be at least 1")
+	}
+	if cfg.Map.Grouping.MinRootGroups < 1 {
+		add("map.grouping.min_root_groups", "must be at least 1")
+	}
+	if cfg.Map.Grouping.MaxRootGroups < cfg.Map.Grouping.MinRootGroups {
+		add("map.grouping.max_root_groups", "must be at least min_root_groups")
+	}
+	if cfg.Map.Grouping.MaxChildren < 2 {
+		add("map.grouping.max_children", "must be at least 2")
+	}
+	if cfg.Map.Grouping.MaxDepth < 0 {
+		add("map.grouping.max_depth", "must be non-negative")
+	}
+	if cfg.Map.Grouping.MaxLeafFiles < 1 {
+		add("map.grouping.max_leaf_files", "must be at least 1")
+	}
+	if cfg.Map.Budget.MaxConnectorsPerView < 1 {
+		add("map.budget.max_connectors_per_view", "must be at least 1")
+	}
+	if cfg.Map.Budget.MaxLeafConnectorsPerView < 1 {
+		add("map.budget.max_leaf_connectors_per_view", "must be at least 1")
+	}
 	return errs
 }
 
@@ -270,6 +297,15 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "index.tools.scip_ruby", Env: []string{"TLD_INDEX_SCIP_RUBY"}, Description: "Path or name of the scip-ruby indexer."},
 	{Key: "index.tools.rust_analyzer", Env: []string{"TLD_INDEX_RUST_ANALYZER"}, Description: "Path or name of the rust-analyzer binary used for SCIP."},
 	{Key: "index.tools.timeout_seconds", Env: []string{"TLD_INDEX_TOOL_TIMEOUT_SECONDS"}, Description: "Per-indexer invocation timeout in seconds."},
+	{Key: "map.grouping.resolution", Env: []string{"TLD_MAP_GROUPING_RESOLUTION"}, Description: "Louvain resolution: higher values produce more, smaller communities."},
+	{Key: "map.grouping.min_group_size", Env: []string{"TLD_MAP_GROUPING_MIN_GROUP_SIZE"}, Description: "Merge leaf groups smaller than this into their strongest sibling."},
+	{Key: "map.grouping.min_root_groups", Env: []string{"TLD_MAP_GROUPING_MIN_ROOT_GROUPS"}, Description: "Minimum number of root components in a graph map."},
+	{Key: "map.grouping.max_root_groups", Env: []string{"TLD_MAP_GROUPING_MAX_ROOT_GROUPS"}, Description: "Maximum number of root components in a graph map."},
+	{Key: "map.grouping.max_children", Env: []string{"TLD_MAP_GROUPING_MAX_CHILDREN"}, Description: "Maximum fan-out of one map subdivision."},
+	{Key: "map.grouping.max_depth", Env: []string{"TLD_MAP_GROUPING_MAX_DEPTH"}, Description: "Maximum depth of the map group hierarchy."},
+	{Key: "map.grouping.max_leaf_files", Env: []string{"TLD_MAP_GROUPING_MAX_LEAF_FILES"}, Description: "Files per leaf view before the group is subdivided."},
+	{Key: "map.budget.max_connectors_per_view", Env: []string{"TLD_MAP_BUDGET_MAX_CONNECTORS_PER_VIEW"}, Description: "Maximum rolled-up connectors drawn in one map view."},
+	{Key: "map.budget.max_leaf_connectors_per_view", Env: []string{"TLD_MAP_BUDGET_MAX_LEAF_CONNECTORS_PER_VIEW"}, Description: "Maximum connectors drawn in a file-only map view."},
 	{Key: "completion.remote", Env: []string{"TLD_COMPLETION_REMOTE"}, Description: "Allow shell completion to query remote resources."},
 	{Key: "updates.auto", Env: []string{"TLD_UPDATES_AUTO"}, Description: "Automatically install available tld CLI updates during startup checks."},
 	{Key: "updates.check_interval", Env: []string{"TLD_UPDATES_CHECK_INTERVAL"}, Description: "Minimum time between GitHub update checks."},
@@ -379,6 +415,15 @@ func applyEnvOverridesDetailed(cfg *Config, root *yaml.Node) ([]ConfigValue, err
 		{"index.tools.scip_ruby", "TLD_INDEX_SCIP_RUBY"},
 		{"index.tools.rust_analyzer", "TLD_INDEX_RUST_ANALYZER"},
 		{"index.tools.timeout_seconds", "TLD_INDEX_TOOL_TIMEOUT_SECONDS"},
+		{"map.grouping.resolution", "TLD_MAP_GROUPING_RESOLUTION"},
+		{"map.grouping.min_group_size", "TLD_MAP_GROUPING_MIN_GROUP_SIZE"},
+		{"map.grouping.min_root_groups", "TLD_MAP_GROUPING_MIN_ROOT_GROUPS"},
+		{"map.grouping.max_root_groups", "TLD_MAP_GROUPING_MAX_ROOT_GROUPS"},
+		{"map.grouping.max_children", "TLD_MAP_GROUPING_MAX_CHILDREN"},
+		{"map.grouping.max_depth", "TLD_MAP_GROUPING_MAX_DEPTH"},
+		{"map.grouping.max_leaf_files", "TLD_MAP_GROUPING_MAX_LEAF_FILES"},
+		{"map.budget.max_connectors_per_view", "TLD_MAP_BUDGET_MAX_CONNECTORS_PER_VIEW"},
+		{"map.budget.max_leaf_connectors_per_view", "TLD_MAP_BUDGET_MAX_LEAF_CONNECTORS_PER_VIEW"},
 	} {
 		if err := apply(item.key, item.env, os.Getenv(item.env)); err != nil {
 			return nil, err
@@ -518,6 +563,60 @@ func setConfigValue(cfg *Config, key, value string) error {
 			return err
 		}
 		cfg.Index.Tools.TimeoutSeconds = v
+	case "map.grouping.resolution":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.Grouping.Resolution = v
+	case "map.grouping.min_group_size":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.Grouping.MinGroupSize = v
+	case "map.grouping.min_root_groups":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.Grouping.MinRootGroups = v
+	case "map.grouping.max_root_groups":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.Grouping.MaxRootGroups = v
+	case "map.grouping.max_children":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.Grouping.MaxChildren = v
+	case "map.grouping.max_depth":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.Grouping.MaxDepth = v
+	case "map.grouping.max_leaf_files":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.Grouping.MaxLeafFiles = v
+	case "map.budget.max_connectors_per_view":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.Budget.MaxConnectorsPerView = v
+	case "map.budget.max_leaf_connectors_per_view":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.Budget.MaxLeafConnectorsPerView = v
 	case "completion.remote":
 		v, err := parseBool(value)
 		if err != nil {
@@ -592,6 +691,24 @@ func getConfigValue(cfg *Config, key string) any {
 		return cfg.Index.Tools.RustAnalyzer
 	case "index.tools.timeout_seconds":
 		return cfg.Index.Tools.TimeoutSeconds
+	case "map.grouping.resolution":
+		return cfg.Map.Grouping.Resolution
+	case "map.grouping.min_group_size":
+		return cfg.Map.Grouping.MinGroupSize
+	case "map.grouping.min_root_groups":
+		return cfg.Map.Grouping.MinRootGroups
+	case "map.grouping.max_root_groups":
+		return cfg.Map.Grouping.MaxRootGroups
+	case "map.grouping.max_children":
+		return cfg.Map.Grouping.MaxChildren
+	case "map.grouping.max_depth":
+		return cfg.Map.Grouping.MaxDepth
+	case "map.grouping.max_leaf_files":
+		return cfg.Map.Grouping.MaxLeafFiles
+	case "map.budget.max_connectors_per_view":
+		return cfg.Map.Budget.MaxConnectorsPerView
+	case "map.budget.max_leaf_connectors_per_view":
+		return cfg.Map.Budget.MaxLeafConnectorsPerView
 	case "completion.remote":
 		return cfg.Completion.Remote
 	case "updates.auto":
@@ -660,9 +777,29 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	appendUnknownEntries(indexTools, mappingValueNode(mappingValueNode(existing, "index"), "tools"), setOf("scip_go", "scip_typescript", "scip_python", "scip_dotnet", "scip_clang", "scip_java", "scip_dart", "scip_php", "scip_ruby", "rust_analyzer", "timeout_seconds"))
 	addMap(indexNode, "tools", indexTools, "External SCIP indexer binaries resolved on PATH.")
 
-
 	appendUnknownEntries(indexNode, mappingValueNode(existing, "index"), setOf("tools"))
 	addMap(mapping, "index", indexNode, "In-tree codeindex engine settings.")
+
+	mapNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	mapGrouping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addScalar(mapGrouping, "resolution", cfg.Map.Grouping.Resolution, desc("map.grouping.resolution"))
+	addScalar(mapGrouping, "min_group_size", cfg.Map.Grouping.MinGroupSize, desc("map.grouping.min_group_size"))
+	addScalar(mapGrouping, "min_root_groups", cfg.Map.Grouping.MinRootGroups, desc("map.grouping.min_root_groups"))
+	addScalar(mapGrouping, "max_root_groups", cfg.Map.Grouping.MaxRootGroups, desc("map.grouping.max_root_groups"))
+	addScalar(mapGrouping, "max_children", cfg.Map.Grouping.MaxChildren, desc("map.grouping.max_children"))
+	addScalar(mapGrouping, "max_depth", cfg.Map.Grouping.MaxDepth, desc("map.grouping.max_depth"))
+	addScalar(mapGrouping, "max_leaf_files", cfg.Map.Grouping.MaxLeafFiles, desc("map.grouping.max_leaf_files"))
+	appendUnknownEntries(mapGrouping, mappingValueNode(mappingValueNode(existing, "map"), "grouping"), setOf("resolution", "min_group_size", "min_root_groups", "max_root_groups", "max_children", "max_depth", "max_leaf_files"))
+	addMap(mapNode, "grouping", mapGrouping, "Louvain grouping parameters for graph maps.")
+
+	mapBudget := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addScalar(mapBudget, "max_connectors_per_view", cfg.Map.Budget.MaxConnectorsPerView, desc("map.budget.max_connectors_per_view"))
+	addScalar(mapBudget, "max_leaf_connectors_per_view", cfg.Map.Budget.MaxLeafConnectorsPerView, desc("map.budget.max_leaf_connectors_per_view"))
+	appendUnknownEntries(mapBudget, mappingValueNode(mappingValueNode(existing, "map"), "budget"), setOf("max_connectors_per_view", "max_leaf_connectors_per_view"))
+	addMap(mapNode, "budget", mapBudget, "Connector drawing budgets for graph map views.")
+
+	appendUnknownEntries(mapNode, mappingValueNode(existing, "map"), setOf("grouping", "budget"))
+	addMap(mapping, "map", mapNode, "Graph map pipeline settings.")
 
 	completion := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	addScalar(completion, "remote", cfg.Completion.Remote, desc("completion.remote"))
@@ -675,7 +812,7 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	appendUnknownEntries(updates, mappingValueNode(existing, "updates"), setOf("auto", "check_interval"))
 	addMap(mapping, "updates", updates, "CLI update check settings.")
 
-	appendUnknownEntries(mapping, existing, setOf("server_url", "api_key", "org_id", "apply", "database", "validation", "serve", "index", "completion", "updates"))
+	appendUnknownEntries(mapping, existing, setOf("server_url", "api_key", "org_id", "apply", "database", "validation", "serve", "index", "map", "completion", "updates"))
 	return root
 }
 
@@ -793,6 +930,14 @@ func parseInt(value string) (int, error) {
 	v, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil {
 		return 0, fmt.Errorf("must be an integer")
+	}
+	return v, nil
+}
+
+func parseFloat(value string) (float64, error) {
+	v, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil {
+		return 0, fmt.Errorf("must be a number")
 	}
 	return v, nil
 }

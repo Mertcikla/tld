@@ -1,5 +1,20 @@
 import type { RepositoryWatchStatus } from '../api/client'
 
+const indexStageLabels: Record<string, string> = {
+  discover: 'Discovering sources',
+  'tree-sitter': 'Parsing sources',
+  scip: 'Indexing symbols',
+  relationships: 'Resolving relationships',
+  infra: 'Indexing infrastructure',
+  verify: 'Verifying index',
+  publish: 'Publishing snapshot',
+}
+
+// indexStageLabel maps a codeindex stage to a human-readable label.
+export function indexStageLabel(stage: string): string {
+  return indexStageLabels[stage] || ''
+}
+
 type Activity = { label: string; detail: string; step: string; active: boolean }
 export function watcherActivity(status: RepositoryWatchStatus | null): Activity {
   if (!status) return { label: 'Checking watcher…', detail: 'Loading the latest watcher status.', step: '', active: true }
@@ -11,8 +26,7 @@ export function watcherActivity(status: RepositoryWatchStatus | null): Activity 
   if (status.stage === 'waiting-indexer') return { label: 'Waiting for indexer', detail: 'Another indexing operation holds this repository. Pending changes will run when it finishes.', step: 'index', active: true }
   if (status.stage === 'live-map' || status.stage === 'materialize') return { label: 'Updating live map', detail: 'Saving the diagram and change overlays.', step: 'map', active: true }
   if (status.state === 'scanning') {
-    const stages: Record<string, string> = { discover: 'Discovering sources', 'tree-sitter': 'Parsing sources', scip: 'Indexing symbols', relationships: 'Resolving relationships', infra: 'Indexing infrastructure', verify: 'Verifying index', publish: 'Publishing snapshot' }
-    return { label: stages[status.stage] || 'Indexing changes', detail: 'Scanning code and updating the repository index.', step: 'index', active: true }
+    return { label: indexStageLabel(status.stage) || 'Indexing changes', detail: 'Scanning code and updating the repository index.', step: 'index', active: true }
   }
   return { label: 'Idle · watching for changes', detail: 'Listening for file edits and Git changes.', step: 'listen', active: false }
 }

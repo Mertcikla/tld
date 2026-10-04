@@ -273,6 +273,14 @@ export interface RepositoryMapProgress {
   detail: string
 }
 
+// RepositoryIndexProgress reports coarse indexing progress while adding a repository.
+export interface RepositoryIndexProgress {
+  stage: string
+  current: number
+  total: number
+  detail: string
+}
+
 // RepositoryMapResult summarizes a completed mapper run.
 export interface RepositoryMapResult {
   snapshotId?: string
@@ -1929,6 +1937,33 @@ export const api = {
       const response = await codeIndexRepositoryClient.listRepositories({})
       return response.repositories.map((repo) => ({ ...repo, latestCreatedUnix: Number(repo.latestCreatedUnix) }))
     }),
+    add: async (
+      path: string,
+      handlers: { signal?: AbortSignal; onProgress?: (progress: RepositoryIndexProgress) => void } = {},
+    ): Promise<{ id: string; root: string; latestSnapshotId: string }> => {
+      try {
+        const stream = codeIndexRepositoryClient.addRepository({ path }, { signal: handlers.signal })
+        let repository: { id: string; root: string; latestSnapshotId: string } | null = null
+        for await (const event of stream) {
+          if (event.event.case === 'progress') {
+            handlers.onProgress?.({
+              stage: event.event.value.stage,
+              current: event.event.value.current,
+              total: event.event.value.total,
+              detail: event.event.value.detail,
+            })
+          } else if (event.event.case === 'repository') {
+            const repo = event.event.value
+            repository = { id: repo.id, root: repo.root, latestSnapshotId: repo.latestSnapshotId }
+          }
+        }
+        if (!repository) throw new Error('Add repository finished without a repository')
+        return repository
+      } catch (e) {
+        if (e instanceof ConnectError) throw new Error(e.message)
+        throw e
+      }
+    },
     history: (repositoryId: string, branch = '', limit = 0): Promise<RepositoryGitHistory> => rpc(async () => {
       const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit })
       return { ...response, commits: response.commits.map((commit) => ({ ...commit, createdUnix: Number(commit.createdUnix) })) }

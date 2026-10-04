@@ -25,6 +25,8 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
+	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
+	"github.com/mertcikla/tld/v2/internal/codeindex/maprun"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	"github.com/mertcikla/tld/v2/internal/codeindex/parity"
 	"github.com/mertcikla/tld/v2/internal/codeindex/project"
@@ -45,6 +47,7 @@ type options struct {
 	watchOwner   string
 	jsonOut      bool
 	materialize  bool
+	mapGraph     bool
 	dataDir      string
 	pollInterval time.Duration
 	debounce     time.Duration
@@ -62,7 +65,10 @@ func NewIndexCmd() *cobra.Command {
 in-tree codeindex engine and publishes an immutable snapshot.
 
 For a one-time index, pass --materialize to additionally project candidate
-elements and connectors into a workspace view.
+elements and connectors into a workspace view, or --map to group the
+dependency graph into architectural components and materialize the map view.
+Map grouping and connector budgets come from the global map.* configuration.
+With --watch, --map refreshes the map after each scan.
 
 With --watch, Git's current commit is the Base and the combined staged,
 unstaged, and nonignored untracked files are the Head. Git changes trigger
@@ -89,6 +95,7 @@ The blast-radius slider adds existing unchanged elements by dependency hops.`,
 	_ = c.Flags().MarkHidden("watch-owner")
 	c.Flags().BoolVar(&opts.jsonOut, "json", false, "emit machine-readable JSON")
 	c.Flags().BoolVar(&opts.materialize, "materialize", false, "also materialize candidates into a workspace view (opt-in)")
+	c.Flags().BoolVar(&opts.mapGraph, "map", false, "also group the dependency graph and materialize the map view (opt-in)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
 	c.Flags().DurationVar(&opts.pollInterval, "poll-interval", 2*time.Second, "Git change polling interval")
 	c.Flags().DurationVar(&opts.debounce, "debounce", 500*time.Millisecond, "delay used to batch file changes")
@@ -101,6 +108,7 @@ type engine struct {
 	store    *cstore.Store
 	ws       *localstore.SQLiteStore
 	cfg      ci.Config
+	global   *workspace.Config
 	opts     options
 	repoName string
 	repoRoot string
@@ -147,6 +155,7 @@ func run(cmd *cobra.Command, opts options) error {
 		store:    cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect()),
 		ws:       sq,
 		cfg:      configbridge.FromGlobal(global),
+		global:   global,
 		opts:     opts,
 		repoName: filepath.Base(root),
 		repoRoot: root,
@@ -164,11 +173,11 @@ func run(cmd *cobra.Command, opts options) error {
 		return err
 	}
 	defer release()
-	snap, report, mres, _, err := eng.buildAndPublish(ctx, root, nil)
+	snap, report, mres, mapRes, _, err := eng.buildAndPublish(ctx, root, nil)
 	if err != nil {
 		return err
 	}
-	return eng.print(cmd, snap, report, mres)
+	return eng.print(cmd, snap, report, mres, mapRes)
 }
 
 var indexStageDisplay = map[string]string{
@@ -183,13 +192,14 @@ var indexStageDisplay = map[string]string{
 var indexStageOrder = []string{
 	"Discover", "Parse sources", "Index symbols", "Relationships", "Infrastructure", "Verify",
 	"Publish snapshot", "Materialize view",
-	"Save change overlay",
+	"Save change overlay", "Map graph",
 }
 
 const (
 	stagePublish     = "Publish snapshot"
 	stageMaterialize = "Materialize view"
 	stageChanges     = "Save change overlay"
+	stageMapGraph    = "Map graph"
 )
 
 // indexJokes are rotated on the active stage line to keep long indexes
@@ -230,7 +240,7 @@ func displayStage(stage string) string {
 // buildAndPublish indexes root and publishes a snapshot. base, when non-nil,
 // enables incremental reuse of unchanged files. reused is true when nothing
 // changed and no new snapshot was written.
-func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer.IncrementalBase) (*pb.Snapshot, parity.Report, *materialize.Result, bool, error) {
+func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer.IncrementalBase) (*pb.Snapshot, parity.Report, *materialize.Result, *pb.MapResult, bool, error) {
 	out := e.out
 	if out == nil || e.opts.jsonOut {
 		out = io.Discard
@@ -267,16 +277,26 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 	}
 	if err != nil {
 		tracker.Fail(lastStage, err)
-		return nil, parity.Report{}, nil, false, err
+		return nil, parity.Report{}, nil, nil, false, err
+	}
+	mapSnapshot := func() (*pb.MapResult, error) {
+		if !e.opts.mapGraph {
+			return nil, nil
+		}
+		return e.mapGraph(ctx, snap, tracker)
 	}
 	if reuse {
-		return snap, parity.Report{}, nil, true, nil
+		mapRes, err := mapSnapshot()
+		if err != nil {
+			return nil, parity.Report{}, nil, nil, false, err
+		}
+		return snap, parity.Report{}, nil, mapRes, true, nil
 	}
 
 	tracker.Begin(stagePublish)
 	if err := e.store.Publish(ctx, root, snap, g); err != nil {
 		tracker.Fail(stagePublish, err)
-		return nil, parity.Report{}, nil, false, err
+		return nil, parity.Report{}, nil, nil, false, err
 	}
 
 	var mres *materialize.Result
@@ -285,11 +305,36 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 		res, err := e.materializeSnapshot(ctx, snap, g, changedFiles(base, snap))
 		if err != nil {
 			tracker.Fail(stageMaterialize, err)
-			return nil, parity.Report{}, nil, false, err
+			return nil, parity.Report{}, nil, nil, false, err
 		}
 		mres = &res
 	}
-	return snap, parity.Summarize(snap, g), mres, false, nil
+	mapRes, err := mapSnapshot()
+	if err != nil {
+		return nil, parity.Report{}, nil, nil, false, err
+	}
+	return snap, parity.Summarize(snap, g), mres, mapRes, false, nil
+}
+
+// mapGraph runs the graph mapping pipeline for a snapshot using the global map
+// configuration and reports progress through the active stage tracker.
+func (e *engine) mapGraph(ctx context.Context, snap *pb.Snapshot, tracker *term.StageTracker) (*pb.MapResult, error) {
+	tracker.Begin(stageMapGraph)
+	result, _, err := maprun.Run(ctx, maprun.Deps{
+		Workspace: e.ws,
+		Codeindex: e.store,
+		Options:   mapconfig.FromGlobal(e.global),
+	}, maprun.Request{
+		RepositoryID: snap.RepositoryId,
+		SnapshotID:   snap.Id,
+	}, func(_ string, current, total int, detail string) {
+		tracker.Report(stageMapGraph, int64(current), int64(total), detail)
+	})
+	if err != nil {
+		tracker.Fail(stageMapGraph, err)
+		return nil, err
+	}
+	return result, nil
 }
 
 // materializeSnapshot projects the snapshot and upserts every candidate into
@@ -477,7 +522,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 			s.GitBranch, s.GitRevision = qs.Branch, qs.Revision
 		})
 		started := time.Now()
-		snap, report, mres, err := e.scanWatched(runCtx, root, qs, lastRevision, func(stage string) {
+		snap, report, mres, mapRes, err := e.scanWatched(runCtx, root, qs, lastRevision, func(stage string) {
 			mu.Lock()
 			unchanged := status.Stage == stage
 			mu.Unlock()
@@ -495,7 +540,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 			if prev != nil {
 				e.printDiff(cmd, prev.Id, snap.Id)
 			}
-			if err = e.print(cmd, snap, report, mres); err != nil {
+			if err = e.print(cmd, snap, report, mres, mapRes); err != nil {
 				return err
 			}
 		}
@@ -516,7 +561,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 	}
 }
 
-func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.QuickState, previousRevision string, onStage ...func(string)) (*pb.Snapshot, parity.Report, *materialize.Result, error) {
+func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.QuickState, previousRevision string, onStage ...func(string)) (*pb.Snapshot, parity.Report, *materialize.Result, *pb.MapResult, error) {
 	reportStage := func(stage string) {
 		for _, report := range onStage {
 			report(stage)
@@ -531,14 +576,14 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 		leased, release, err = e.store.AcquireLease(ctx, repoID)
 		if !errors.Is(err, cstore.ErrBusy) {
 			if err != nil {
-				return nil, parity.Report{}, nil, err
+				return nil, parity.Report{}, nil, nil, err
 			}
 			ctx = leased
 			break
 		}
 		select {
 		case <-ctx.Done():
-			return nil, parity.Report{}, nil, ctx.Err()
+			return nil, parity.Report{}, nil, nil, ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
@@ -561,34 +606,34 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	}
 	commits, err := gitstate.Commits(ctx, root, previousRevision, state.Revision)
 	if err != nil {
-		return nil, parity.Report{}, nil, err
+		return nil, parity.Report{}, nil, nil, err
 	}
 	for _, revision := range commits {
 		if _, err = engine.Prepare(ctx, &pb.ComparisonTarget{GitRevision: revision, GitBranch: state.Branch}); err != nil {
-			return nil, parity.Report{}, nil, err
+			return nil, parity.Report{}, nil, nil, err
 		}
 	}
 	base, err := engine.Prepare(ctx, &pb.ComparisonTarget{GitRevision: state.Revision, GitBranch: state.Branch})
 	if err != nil {
-		return nil, parity.Report{}, nil, err
+		return nil, parity.Report{}, nil, nil, err
 	}
 	snap, err := engine.Prepare(ctx, &pb.ComparisonTarget{WorkingTree: true})
 	if err != nil {
-		return nil, parity.Report{}, nil, err
+		return nil, parity.Report{}, nil, nil, err
 	}
 	after, err := gitstate.CaptureQuick(ctx, root)
 	if err != nil {
-		return nil, parity.Report{}, nil, err
+		return nil, parity.Report{}, nil, nil, err
 	}
 	if after.Signature() != state.Signature() {
-		return nil, parity.Report{}, nil, fmt.Errorf("git inputs changed during indexing; retrying")
+		return nil, parity.Report{}, nil, nil, fmt.Errorf("git inputs changed during indexing; retrying")
 	}
 	if err = e.store.AdvanceLatest(ctx, repoID, snap.Id); err != nil {
-		return nil, parity.Report{}, nil, err
+		return nil, parity.Report{}, nil, nil, err
 	}
 	g, err := e.store.LoadGraph(ctx, snap.Id)
 	if err != nil {
-		return nil, parity.Report{}, nil, err
+		return nil, parity.Report{}, nil, nil, err
 	}
 	var mres *materialize.Result
 	if e.opts.materialize {
@@ -596,11 +641,11 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 		tracker.Begin(stageMaterialize)
 		incremental, err := engine.Base(ctx, base.Id)
 		if err != nil {
-			return nil, parity.Report{}, nil, err
+			return nil, parity.Report{}, nil, nil, err
 		}
 		result, err := e.materializeSnapshot(ctx, snap, g, changedFiles(incremental, snap))
 		if err != nil {
-			return nil, parity.Report{}, nil, err
+			return nil, parity.Report{}, nil, nil, err
 		}
 		mres = &result
 	}
@@ -611,19 +656,27 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	reportStage("live-map")
 	tracker.Begin(stageChanges)
 	if _, err = impact.Save(ctx, e.ws, e.store, repoID, "live", base.Id, snap.Id, radius); err != nil {
-		return nil, parity.Report{}, nil, err
+		return nil, parity.Report{}, nil, nil, err
 	}
-	return snap, parity.Summarize(snap, g), mres, nil
+	var mapRes *pb.MapResult
+	if e.opts.mapGraph {
+		mapRes, err = e.mapGraph(ctx, snap, tracker)
+		if err != nil {
+			return nil, parity.Report{}, nil, nil, err
+		}
+	}
+	return snap, parity.Summarize(snap, g), mres, mapRes, nil
 }
 
-func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Report, mres *materialize.Result) error {
+func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Report, mres *materialize.Result, mapRes *pb.MapResult) error {
 	out := cmd.OutOrStdout()
 	if e.opts.jsonOut {
 		payload := struct {
 			Snapshot     *pb.Snapshot        `json:"snapshot"`
 			Report       parity.Report       `json:"report"`
 			Materialized *materialize.Result `json:"materialized,omitempty"`
-		}{Snapshot: snap, Report: report, Materialized: mres}
+			Map          *pb.MapResult       `json:"map,omitempty"`
+		}{Snapshot: snap, Report: report, Materialized: mres, Map: mapRes}
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
 		return enc.Encode(payload)
@@ -644,6 +697,10 @@ func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Repo
 	}
 	if mres != nil {
 		_, _ = fmt.Fprintf(tw, "view\t%d (%d elements, %d connectors, %d pruned)\n", mres.ViewID, mres.Elements, mres.Connectors, mres.Pruned)
+	}
+	if mapRes != nil {
+		_, _ = fmt.Fprintf(tw, "map\tview %d (%d components, %d groups, %d isolated, modularity %.2f)\n",
+			mapRes.GetViewId(), mapRes.GetClusters(), mapRes.GetBins(), mapRes.GetUnclustered(), mapRes.GetWeightedTightness())
 	}
 	_ = tw.Flush()
 	return nil
