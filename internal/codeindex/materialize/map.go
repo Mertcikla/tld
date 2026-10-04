@@ -77,28 +77,38 @@ type MapResult struct {
 const mapKeyPrefix = "map|"
 
 type mapMaterializer struct {
-	ctx             context.Context
-	ws              core.Store
-	idx             IndexStore
-	input           MapInput
-	opts            MapOptions
-	byKey           map[string]cstore.ResourceMapping
-	kept            map[string]bool
-	mappingBuffers  []cstore.ResourceMapping
-	pendingPlaces   []pendingPlacement
-	placed          map[int64]map[int64]bool
-	position        map[int64]int
-	fileElementIDs  map[string]int64
-	fileChains      map[string][]int64
-	fileElementPath map[string][]int64
-	queued          map[int64]map[int64]bool
-	layoutEdges     map[int64][]layout.Connector
-	leafViews       map[int64]bool
-	maxConnectors   int
-	maxLeaf         int
-	result          MapResult
-	done            int
-	total           int
+	ctx              context.Context
+	ws               core.Store
+	idx              IndexStore
+	input            MapInput
+	opts             MapOptions
+	byKey            map[string]cstore.ResourceMapping
+	kept             map[string]bool
+	mappingBuffers   []cstore.ResourceMapping
+	pendingPlaces    []pendingPlacement
+	placed           map[int64]map[int64]bool
+	position         map[int64]int
+	fileElementIDs   map[string]int64
+	fileChains       map[string][]int64
+	fileElementPath  map[string][]int64
+	queued           map[int64]map[int64]bool
+	layoutEdges      map[int64][]layout.Connector
+	placedConnectors []placedConnector
+	leafViews        map[int64]bool
+	maxConnectors    int
+	maxLeaf          int
+	result           MapResult
+	done             int
+	total            int
+}
+
+// placedConnector records a generated connector so its handles can be
+// re-attached to the nearest sides once the final layout is known.
+type placedConnector struct {
+	id     int64
+	viewID int64
+	source int64
+	target int64
 }
 
 // pendingPlacement is an element awaiting layout. Placements are deferred until
@@ -440,26 +450,88 @@ func (m *mapMaterializer) materializeImports(rootViewID int64) error {
 
 func (m *mapMaterializer) upsertConnector(logicalKey string, input core.Connector) error {
 	m.kept[logicalKey] = true
+	id := int64(0)
 	if mapping, ok := m.byKey[logicalKey]; ok && mapping.Kind == cstore.MappingConnector {
-		if _, err := m.ws.UpdateConnector(m.ctx, mapping.ResourceID, connectorSourceOnly(input)); err == nil {
-			m.result.Connectors++
-			m.advance("connector")
-			return nil
+		if updated, err := m.ws.UpdateConnector(m.ctx, mapping.ResourceID, connectorSourceOnly(input)); err == nil {
+			id = updated.ID
 		}
 	}
-	created, err := m.ws.CreateConnector(m.ctx, input)
-	if err != nil {
-		return fmt.Errorf("create map connector %q: %w", logicalKey, err)
+	if id == 0 {
+		created, err := m.ws.CreateConnector(m.ctx, input)
+		if err != nil {
+			return fmt.Errorf("create map connector %q: %w", logicalKey, err)
+		}
+		id = created.ID
+		m.mappingBuffers = append(m.mappingBuffers, cstore.ResourceMapping{
+			LogicalKey:   logicalKey,
+			Kind:         cstore.MappingConnector,
+			ResourceID:   created.ID,
+			RepositoryID: m.input.RepositoryID,
+			SnapshotID:   m.input.SnapshotID,
+		})
 	}
-	m.mappingBuffers = append(m.mappingBuffers, cstore.ResourceMapping{
-		LogicalKey:   logicalKey,
-		Kind:         cstore.MappingConnector,
-		ResourceID:   created.ID,
-		RepositoryID: m.input.RepositoryID,
-		SnapshotID:   m.input.SnapshotID,
+	m.placedConnectors = append(m.placedConnectors, placedConnector{
+		id:     id,
+		viewID: input.ViewID,
+		source: input.SourceElementID,
+		target: input.TargetElementID,
 	})
 	m.result.Connectors++
 	m.advance("connector")
+	return nil
+}
+
+// adjustConnectorHandles re-attaches each generated connector to the source and
+// target handle that yields the shortest anchor distance for the final layout,
+// mirroring the view editor's "Adjust Connectors" pass so map connectors do not
+// cross node bodies.
+func (m *mapMaterializer) adjustConnectorHandles() error {
+	if len(m.placedConnectors) == 0 {
+		return nil
+	}
+	positionsByView := map[int64]map[int64]layout.Placement{}
+	currentByView := map[int64]map[int64]core.Connector{}
+	for _, connector := range m.placedConnectors {
+		positions, ok := positionsByView[connector.viewID]
+		if !ok {
+			placements, err := m.ws.ElementPlacements(m.ctx, connector.viewID)
+			if err != nil {
+				return err
+			}
+			positions = make(map[int64]layout.Placement, len(placements))
+			for _, placement := range placements {
+				positions[placement.ElementID] = layout.Placement{ElementID: placement.ElementID, X: placement.PositionX, Y: placement.PositionY}
+			}
+			positionsByView[connector.viewID] = positions
+
+			existing, err := m.ws.Connectors(m.ctx, connector.viewID)
+			if err != nil {
+				return err
+			}
+			current := make(map[int64]core.Connector, len(existing))
+			for _, item := range existing {
+				current[item.ID] = item
+			}
+			currentByView[connector.viewID] = current
+		}
+		source, sourceOK := positions[connector.source]
+		target, targetOK := positions[connector.target]
+		if !sourceOK || !targetOK {
+			continue
+		}
+		sourceHandle, targetHandle := layout.ChooseConnectorHandles(source, target)
+		if existing, ok := currentByView[connector.viewID][connector.id]; ok &&
+			existing.SourceHandle != nil && *existing.SourceHandle == sourceHandle &&
+			existing.TargetHandle != nil && *existing.TargetHandle == targetHandle {
+			continue
+		}
+		if _, err := m.ws.UpdateConnector(m.ctx, connector.id, core.Connector{
+			SourceHandle: &sourceHandle,
+			TargetHandle: &targetHandle,
+		}); err != nil {
+			return fmt.Errorf("adjust connector %d handles: %w", connector.id, err)
+		}
+	}
 	return nil
 }
 

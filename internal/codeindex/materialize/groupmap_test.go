@@ -2,6 +2,7 @@ package materialize
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -408,5 +409,50 @@ func TestApplyGroupMapPreservesUserEdits(t *testing.T) {
 	}
 	if view.Name != renamedView {
 		t.Fatalf("view name = %q, want preserved %q", view.Name, renamedView)
+	}
+}
+
+func TestApplyGroupMapAdjustsConnectorHandles(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, idx := openGroupMapStore(t)
+	result, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+		RepositoryID:   "repo-1",
+		RepositoryName: "demo",
+		SnapshotID:     "snap-1",
+		Files:          groupMapFiles(),
+		Groups: []*community.Group{
+			{Key: "one", Name: "one", Files: 2, Members: []int{0, 1}},
+			{Key: "two", Name: "two", Files: 2, Members: []int{2, 3}},
+		},
+		Edges: []MapEdge{{FromFactID: "id-a", ToFactID: "id-c", Weight: 1}},
+	}, MapOptions{})
+	if err != nil {
+		t.Fatalf("apply group map: %v", err)
+	}
+	if result.Connectors == 0 {
+		t.Fatal("expected a cross-group connector")
+	}
+	rows, err := sqliteStore.DB().QueryContext(ctx, `SELECT source_handle, target_handle FROM connectors`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	valid := map[string]bool{"top": true, "bottom": true, "left": true, "right": true}
+	checked := 0
+	for rows.Next() {
+		var sourceHandle, targetHandle sql.NullString
+		if err := rows.Scan(&sourceHandle, &targetHandle); err != nil {
+			t.Fatal(err)
+		}
+		if !sourceHandle.Valid || !targetHandle.Valid || !valid[sourceHandle.String] || !valid[targetHandle.String] {
+			t.Fatalf("connector handles = %v/%v, want top/bottom/left/right", sourceHandle, targetHandle)
+		}
+		checked++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if checked == 0 {
+		t.Fatal("no connectors to inspect")
 	}
 }

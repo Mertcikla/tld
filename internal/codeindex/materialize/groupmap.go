@@ -112,6 +112,9 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 	if err := m.applyLayout(); err != nil {
 		return m.result, err
 	}
+	if err := m.adjustConnectorHandles(); err != nil {
+		return m.result, err
+	}
 	if err := m.pruneMapResources(); err != nil {
 		return m.result, err
 	}
