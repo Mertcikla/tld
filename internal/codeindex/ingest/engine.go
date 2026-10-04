@@ -96,15 +96,7 @@ func (e Engine) Prepare(ctx context.Context, target *pb.ComparisonTarget) (*pb.S
 		if err != nil {
 			return nil, err
 		}
-		if branch != "" {
-			tip, err := gitstate.Resolve(ctx, e.Root, branch)
-			if err != nil {
-				return nil, err
-			}
-			if _, err = gitstate.Run(ctx, e.Root, "merge-base", "--is-ancestor", revision, tip); err != nil {
-				return nil, fmt.Errorf("selected commit is not on branch %q", branch)
-			}
-		} else {
+		if branch == "" {
 			ref, _ := gitstate.Run(ctx, e.Root, "rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", target.GitRevision)
 			ref = strings.TrimSpace(ref)
 			if strings.HasPrefix(ref, "refs/heads/") {

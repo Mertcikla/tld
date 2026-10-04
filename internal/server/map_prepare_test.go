@@ -116,6 +116,40 @@ func TestPrepareBranchResolvesAndCapturesImmutableCommit(t *testing.T) {
 	}
 }
 
+func TestPrepareCommitAheadOfLocalBranchTip(t *testing.T) {
+	s, root, _, repoID := prepareFixture(t)
+	// Simulate PR review: the base branch advanced on the remote while the
+	// local branch stayed behind, so the selected commit is a descendant.
+	testGit(t, root, "checkout", "-b", "remote-main")
+	testGit(t, root, "commit", "--allow-empty", "-m", "remote advance")
+	ahead := strings.TrimSpace(testGit(t, root, "rev-parse", "HEAD"))
+	testGit(t, root, "checkout", "main")
+	snap, err := s.prepareSnapshot(context.Background(), &pb.MapRepositoryRequest{RepositoryId: repoID, GitRevision: ahead, GitBranch: "main"}, func(*pb.MapProgress) {})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if snap.Provenance != "commit" || snap.GitRevision != ahead || snap.GitBranch != "main" {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+}
+
+func TestPrepareCommitWithMissingLocalBranch(t *testing.T) {
+	s, root, _, repoID := prepareFixture(t)
+	// Simulate a fetched PR head: the commit exists but its branch ref does not.
+	testGit(t, root, "checkout", "-b", "pr-head")
+	testGit(t, root, "commit", "--allow-empty", "-m", "pr head")
+	head := strings.TrimSpace(testGit(t, root, "rev-parse", "HEAD"))
+	testGit(t, root, "checkout", "main")
+	testGit(t, root, "branch", "-D", "pr-head")
+	snap, err := s.prepareSnapshot(context.Background(), &pb.MapRepositoryRequest{RepositoryId: repoID, GitRevision: head, GitBranch: "feature"}, func(*pb.MapProgress) {})
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if snap.Provenance != "commit" || snap.GitRevision != head || snap.GitBranch != "feature" {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+}
+
 func TestPrepareWorkingTreeIncludesLocalContents(t *testing.T) {
 	s, root, sha, repoID := prepareFixture(t)
 	ctx := context.Background()
