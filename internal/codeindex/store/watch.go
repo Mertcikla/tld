@@ -5,8 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
-	"syscall"
 	"time"
 )
 
@@ -19,23 +17,6 @@ const WatchHeartbeatFreshWindow = 30 * time.Second
 // controller escalates to killing the owning process. It bounds "stuck in
 // stopping" states from crashed or non-cooperative watchers.
 const WatchStopDeadline = 15 * time.Second
-
-// PIDAlive reports whether a process with the given pid currently exists. Signal
-// 0 performs an existence check without delivering a signal.
-func PIDAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		// EPERM means the process exists but is owned by another user.
-		return errors.Is(err, syscall.EPERM)
-	}
-	return true
-}
 
 // WatchState is the shared control and status record for a repository's
 // watcher. The CLI and the server both read and write the same row so either

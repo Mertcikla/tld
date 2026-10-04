@@ -269,10 +269,15 @@ func runDetached(cmd *cobra.Command, opts options) error {
 	if err != nil {
 		return fmt.Errorf("resolve executable: %w", err)
 	}
-	args := []string{"index", root, "--watch", "--watch-owner", "cli"}
-	if opts.dataDir != "" {
-		args = append(args, "--data-dir", opts.dataDir)
+	// Resolve flags, environment and config before changing the child's cwd.
+	ctx := cmd.Context()
+	sq, idx, dataDir, err := openIndexStore(ctx, opts.dataDir)
+	if err != nil {
+		return err
 	}
+	defer func() { _ = sq.Close() }()
+	args := []string{"index", root, "--watch", "--watch-owner", "cli"}
+	args = append(args, "--data-dir", dataDir)
 	if opts.mapGraph {
 		args = append(args, "--map")
 	}
@@ -297,13 +302,6 @@ func runDetached(cmd *cobra.Command, opts options) error {
 
 	// Verify the child actually claimed the repository. A child that loses the
 	// claim race exits, and reporting success would be misleading.
-	ctx := cmd.Context()
-	sq, idx, _, err := openIndexStore(ctx, opts.dataDir)
-	if err != nil {
-		_ = child.Process.Kill()
-		return err
-	}
-	defer func() { _ = sq.Close() }()
 	repoID := watchKeyForRoot(root)
 	deadline := time.Now().Add(5 * time.Second)
 	claimed := false

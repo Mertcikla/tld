@@ -12,6 +12,20 @@ const impact: RepositoryImpact = { repositoryId: 'repo', comparisonKey: 'live', 
 const workspace: ExploreData = { tree: [view(1), view(2, 'Other repo'), view(9, 'repo impact · Live changes')], views: { 1: { placements: [placement(1, 'a.go'), placement(2, 'b.go')], connectors: [] }, 2: { placements: [placement(3, 'a.go', '/other')], connectors: [] }, 9: { placements: [placement(4, 'a.go')], connectors: [] } }, navigations: [] }
 
 describe('repository change overlays', () => {
+  it('retains remote-linked placements by repository ID, including clean comparisons', () => {
+    const remoteWorkspace: ExploreData = { ...workspace, tree: [view(1), view(2)], views: {
+      1: { placements: [{ ...placement(1, 'a.go', 'https://github.com/owner/repo'), repository_id: 'repo' }], connectors: [] },
+      2: { placements: [{ ...placement(3, 'a.go', '/repo'), repository_id: 'other' }], connectors: [] },
+    } }
+    const changed = { ...impact, nodes: [node('a.go', 'modified')] }
+    const scene = repositoryChangeOverlay(remoteWorkspace, changed, '/repo')
+    expect(scene.data.tree.map((tree) => tree.id)).toEqual([1])
+    expect(scene.data.views[1].placements[0]).toMatchObject({ element_id: 1, position_x: 42, position_y: 84 })
+    expect(scene.overlays[1]?.change).toBe('modified')
+    const clean = repositoryChangeOverlay(remoteWorkspace, { ...changed, nodes: [] }, '/repo')
+    expect(clean.data.tree.map((tree) => tree.id)).toEqual([1])
+    expect(clean.overlays).toEqual({})
+  })
   it('highlights existing placements without changing coordinates or workspace data', () => {
     const original = JSON.stringify(workspace)
     const scene = repositoryChangeOverlay(workspace, impact, '/repo/')

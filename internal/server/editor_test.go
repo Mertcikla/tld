@@ -2,12 +2,79 @@ package server
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
+	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"connectrpc.com/connect"
+	"github.com/google/uuid"
+	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/repolink"
 )
+
+func TestWorktreeSourceRPC(t *testing.T) {
+	sq, routes := newTestServerWithOptions(t, uuid.New(), nil, Options{PublicURL: "https://diagram.example.com"})
+	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("outside repository"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := idx.EnsureRepositoryIdentity(ctx, "repo", root, "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(routes)
+	defer server.Close()
+	client := codeindexv1connect.NewRepositoryServiceClient(server.Client(), server.URL+"/api")
+	for _, req := range []*codeindexv1.GetWorktreeSourceRequest{
+		{RepositoryId: "repo", FilePath: "main.go"},
+		{Repo: root, FilePath: "main.go"},
+		{RepositoryId: "repo", FilePath: filepath.Join(root, "main.go")},
+	} {
+		response, err := client.GetWorktreeSource(ctx, connect.NewRequest(req))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.Msg.Content != "package main\n" || response.Msg.Path != filepath.Join(root, "main.go") {
+			t.Fatalf("unexpected source: %+v", response.Msg)
+		}
+	}
+	for _, path := range []string{"", "../secret.txt", filepath.Join(outside, "secret.txt")} {
+		_, err := client.GetWorktreeSource(ctx, connect.NewRequest(&codeindexv1.GetWorktreeSourceRequest{RepositoryId: "repo", FilePath: path}))
+		if connect.CodeOf(err) != connect.CodeInvalidArgument {
+			t.Fatalf("path %q: expected invalid argument, got %v", path, err)
+		}
+	}
+	t.Run("symlink confinement", func(t *testing.T) {
+		for name, target := range map[string]string{"linked.go": filepath.Join(outside, "secret.txt"), "linked-dir": outside, "inside.go": "main.go"} {
+			if err := os.Symlink(target, filepath.Join(root, name)); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+		}
+		for _, path := range []string{"linked.go", "linked-dir/secret.txt"} {
+			_, err := client.GetWorktreeSource(ctx, connect.NewRequest(&codeindexv1.GetWorktreeSourceRequest{RepositoryId: "repo", FilePath: path}))
+			if err == nil {
+				t.Fatalf("source escaped through %s", path)
+			}
+		}
+		response, err := client.GetWorktreeSource(ctx, connect.NewRequest(&codeindexv1.GetWorktreeSourceRequest{RepositoryId: "repo", FilePath: "inside.go"}))
+		if err != nil || response.Msg.Content != "package main\n" {
+			t.Fatalf("internal symlink: %v", err)
+		}
+	})
+	recorder := httptest.NewRecorder()
+	routes.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/api/editor/source", nil))
+	if recorder.Code == http.StatusOK {
+		t.Fatal("legacy REST source endpoint is still registered")
+	}
+}
 
 type mockStore struct {
 	repos []repolink.Repository
@@ -154,7 +221,7 @@ func TestReadSourceFile(t *testing.T) {
 	if err := os.WriteFile(text, []byte("package main\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := readSourceFile(text, maxSourcePreviewBytes)
+	got, err := readSourceFile(dir, "main.go", maxSourcePreviewBytes)
 	if err != nil || got != "package main\n" {
 		t.Fatalf("readSourceFile = %q, %v", got, err)
 	}
@@ -163,7 +230,7 @@ func TestReadSourceFile(t *testing.T) {
 	if err := os.WriteFile(binary, []byte{0x00, 0x01, 0x02}, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readSourceFile(binary, maxSourcePreviewBytes); err == nil {
+	if _, err := readSourceFile(dir, "blob.bin", maxSourcePreviewBytes); err == nil {
 		t.Fatal("expected binary file to be rejected")
 	}
 
@@ -171,7 +238,7 @@ func TestReadSourceFile(t *testing.T) {
 	if err := os.WriteFile(large, []byte("abcd"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readSourceFile(large, 2); err == nil {
+	if _, err := readSourceFile(dir, "large.txt", 2); err == nil {
 		t.Fatal("expected oversized file to be rejected")
 	}
 }

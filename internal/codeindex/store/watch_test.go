@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+func TestPIDAlive(t *testing.T) {
+	if !PIDAlive(os.Getpid()) {
+		t.Fatal("current process must be alive")
+	}
+	for _, pid := range []int{-1, 0, 2147483647} {
+		if PIDAlive(pid) {
+			t.Fatalf("invalid or nonexistent pid %d reported alive", pid)
+		}
+	}
+}
+
 func TestWatchControlLifecycle(t *testing.T) {
 	ctx := context.Background()
 	idx, handle := openTestStore(t)

@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 
+	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"connectrpc.com/connect"
 	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/mertcikla/tld/v2/internal/store"
 )
@@ -52,34 +54,44 @@ func registerEditorHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, 
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	})
 
-	mux.HandleFunc("POST /api/editor/source", func(w http.ResponseWriter, r *http.Request) {
-		var req openEditorRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
-			return
+}
+
+func (s *codeIndexRepositoryService) GetWorktreeSource(ctx context.Context, req *connect.Request[codeindexv1.GetWorktreeSourceRequest]) (*connect.Response[codeindexv1.GetWorktreeSourceResponse], error) {
+	if strings.TrimSpace(req.Msg.GetFilePath()) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("file_path is required"))
+	}
+	fetcher := dbRepositoryFetcher{db: s.ws.DB()}
+	target, err := resolveEditorPath(ctx, fetcher, req.Msg.GetRepositoryId(), req.Msg.GetRepo(), req.Msg.GetFilePath())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	repos, err := fetcher.Repositories(ctx)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	for _, repo := range repos {
+		relative, err := filepath.Rel(repo.Root, target)
+		if err != nil || !filepath.IsLocal(relative) {
+			continue
 		}
-		if strings.TrimSpace(req.FilePath) == "" {
-			writeJSONError(w, http.StatusBadRequest, "file_path is required")
-			return
-		}
-		target, err := resolveEditorPath(r.Context(), fetcher, req.RepositoryID, req.Repo, req.FilePath)
+		content, err := readSourceFile(repo.Root, relative, maxSourcePreviewBytes)
 		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, err.Error())
-			return
+			return nil, connect.NewError(connect.CodeNotFound, err)
 		}
-		content, err := readSourceFile(target, maxSourcePreviewBytes)
-		if err != nil {
-			writeJSONError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		writeJSON(w, map[string]string{"content": content, "path": target})
-	})
+		return connect.NewResponse(&codeindexv1.GetWorktreeSourceResponse{Content: content, Path: target}), nil
+	}
+	return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("file_path must stay inside a registered repository"))
 }
 
 // readSourceFile returns a text file's contents for in-app preview, rejecting
-// binaries and files larger than maxBytes.
-func readSourceFile(path string, maxBytes int64) (string, error) {
-	file, err := os.Open(path)
+// symlink escapes, binaries and files larger than maxBytes.
+func readSourceFile(repositoryRoot, path string, maxBytes int64) (string, error) {
+	root, err := os.OpenRoot(repositoryRoot)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = root.Close() }()
+	file, err := root.Open(path)
 	if err != nil {
 		return "", err
 	}

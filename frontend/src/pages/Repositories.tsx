@@ -1555,8 +1555,8 @@ export default function Repositories() {
                         <Box>
                           <Text fontSize="sm">Map into workspace</Text>
                           <Text fontSize="xs" color="gray.500">
-                            Group this repository into a map view with components
-                            and dependencies.
+                              Create source backed tld workspace from the repository.
+                              Use it to quickstart your work and add to your diagrams.
                           </Text>
                         </Box>
                       </HStack>

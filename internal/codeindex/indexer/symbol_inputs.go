@@ -26,6 +26,7 @@ func symbolInputs(root string, projects []*pb.Project, sources map[string]*graph
 			prefix += "/"
 		}
 		var parts []string
+		var paths []string
 		for path, src := range sources {
 			underRoot := pr.Root == "." || pr.Root == "" || strings.HasPrefix(path, prefix)
 			if !underRoot {
@@ -36,9 +37,12 @@ func symbolInputs(root string, projects []*pb.Project, sources map[string]*graph
 			if src.Language != "" && languageFamily(src.Language) != family {
 				continue
 			}
-			parts = append(parts, path, src.Hash)
+			paths = append(paths, path)
 		}
-		sort.Strings(parts)
+		sort.Strings(paths)
+		for _, path := range paths {
+			parts = append(parts, path, sources[path].Hash)
+		}
 		manifests := pr.ConfigPath
 		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(pr.ConfigPath)))
 		if err != nil {

@@ -23,10 +23,10 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 	}
 	snapshotScoped := []string{
 		"codeindex_project_artifacts",
-		"codeindex_chunks",
-		"codeindex_edges",
-		"codeindex_facts",
 		"codeindex_sources",
+		"codeindex_snapshot_facts",
+		"codeindex_snapshot_chunks",
+		"codeindex_snapshot_edges",
 	}
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_group_members WHERE group_id IN (
@@ -52,6 +52,17 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 		for _, table := range snapshotScoped {
 			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE snapshot_id IN (
 				SELECT id FROM codeindex_snapshots WHERE repository_id = ?)`, repositoryID).Exec(ctx); err != nil {
+				return err
+			}
+		}
+		// Shared entities retain the snapshot_id of their first publication,
+		// which may no longer exist. Delete by repository ownership instead.
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_chunks WHERE fact_id IN (
+			SELECT id FROM codeindex_facts WHERE repository_id = ?)`, repositoryID).Exec(ctx); err != nil {
+			return err
+		}
+		for _, table := range []string{"codeindex_edges", "codeindex_facts"} {
+			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
 				return err
 			}
 		}

@@ -5,14 +5,62 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
+	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
 )
+
+func TestOpenSQLiteUpgradesLegacyVectorTable(t *testing.T) {
+	ctx := context.Background()
+	path := os.Getenv("TLD_TEST_LEGACY_VEC_DB")
+	if path == "" {
+		path = filepath.Join(t.TempDir(), "legacy.db")
+		db, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sqlitevec.Register(db); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, `CREATE VIRTUAL TABLE watch_embedding_vec USING vec(id)`); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		// Module registration is process-global. Upgrade in a fresh process so
+		// fixture creation cannot mask a missing registration in OpenSQLite.
+		exe, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		child := exec.Command(exe, "-test.run=^TestOpenSQLiteUpgradesLegacyVectorTable$")
+		child.Env = append(os.Environ(), "TLD_TEST_LEGACY_VEC_DB="+path)
+		if output, err := child.CombinedOutput(); err != nil {
+			t.Fatalf("upgrade: %v\n%s", err, output)
+		}
+		return
+	}
+	handle, err := dbrepo.OpenSQLite(ctx, dbrepo.DBOptions{SQLitePath: path, Migrations: assets.FS})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = handle.Close() }()
+	var count int
+	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('watch_embedding_vec', '_vec_watch_embedding_vec')`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("legacy vector tables remain: %d", count)
+	}
+}
 
 func TestOpenSQLiteAppliesLocalMigrations(t *testing.T) {
 	ctx := context.Background()

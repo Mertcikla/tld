@@ -14,7 +14,9 @@ export function repositoryChangeOverlay(workspace: ExploreData, impact: Reposito
   const sources = new Map(impact.diff.sources.map((source) => [source.path, source]))
   const matched = new Set<string>()
   const eligibleIds = new Set(impact.nodes.filter((node) => node.context).map((node) => node.elementId))
-  const belongs = (element: PlacedElement) => normalize(element.repo ?? '') === normalize(repositoryRoot) || eligibleIds.has(element.element_id)
+  const belongs = (element: PlacedElement) => element.repository_id
+    ? element.repository_id === impact.repositoryId
+    : normalize(element.repo ?? '') === normalize(repositoryRoot) || eligibleIds.has(element.element_id)
   const overlay = (file: RepositoryImpact['nodes'][number]): ZUIChangeOverlay => ({
     change: file.change, path: file.path,
     linesAdded: sources.get(file.path)?.linesAdded,

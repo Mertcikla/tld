@@ -8,9 +8,58 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/config"
+	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestDeleteRepositoryAfterDeletingOriginSnapshot(t *testing.T) {
+	ctx := context.Background()
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+	g := graph.NewGraph("repo", "s1")
+	g.Facts["fact"] = &pb.CodeFact{Id: "fact", RepositoryId: "repo", SnapshotId: "s1", Code: "retained code"}
+	g.Chunks["chunk"] = &pb.Chunk{Id: "chunk", FactId: "fact", SnapshotId: "s1", Text: "retained code"}
+	g.EdgeFacts["edge"] = &pb.EdgeFact{Id: "edge", RepositoryId: "repo", SnapshotId: "s1", FromFactId: "fact"}
+	for _, snap := range []*pb.Snapshot{{Id: "s1", RepositoryId: "repo", CreatedUnix: 1}, {Id: "s2", RepositoryId: "repo", CreatedUnix: 2}} {
+		if err := st.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other := graph.NewGraph("other", "s3")
+	other.Facts["other-fact"] = &pb.CodeFact{Id: "other-fact", RepositoryId: "other", SnapshotId: "s3"}
+	if err := st.Publish(ctx, "/other", &pb.Snapshot{Id: "s3", RepositoryId: "other"}, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteSnapshot(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteRepository(ctx, "repo"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Fact(ctx, "fact"); err == nil {
+		t.Fatal("deleted repository fact is still retrievable")
+	}
+	if _, err := st.Fact(ctx, "other-fact"); err != nil {
+		t.Fatalf("another repository was affected: %v", err)
+	}
+	for _, table := range []string{"codeindex_chunks", "codeindex_edges", "codeindex_snapshot_chunks", "codeindex_snapshot_edges"} {
+		var count int
+		if err := st.bun.NewRaw("SELECT COUNT(*) FROM "+table).Scan(ctx, &count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Errorf("%s retained %d rows", table, count)
+		}
+	}
+	var count int
+	if err := st.bun.NewRaw("SELECT COUNT(*) FROM codeindex_snapshot_facts WHERE snapshot_id = 's2'").Scan(ctx, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("deleted repository retained %d fact memberships", count)
+	}
+}
 
 func TestDeleteRepositoryRemovesAllRepositoryRecords(t *testing.T) {
 	ctx := context.Background()

@@ -2232,20 +2232,14 @@ export const api = {
       }
     },
     source: async (input: { repository_id?: string | null; repo?: string | null; file_path: string }): Promise<{ content: string; path: string }> => {
-      const res = await fetch(apiUrl('/editor/source'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          repository_id: input.repository_id ?? '',
+      return rpc(async () => {
+        const res = await codeIndexRepositoryClient.getWorktreeSource({
+          repositoryId: input.repository_id ?? '',
           repo: input.repo ?? '',
-          file_path: input.file_path,
-        }),
+          filePath: input.file_path,
+        })
+        return { content: res.content, path: res.path }
       })
-      if (!res.ok) {
-        throw await responseError(res, 'Failed to load source')
-      }
-      const json = await res.json() as { content?: string; path?: string }
-      return { content: json.content ?? '', path: json.path ?? '' }
     },
   },
 }
