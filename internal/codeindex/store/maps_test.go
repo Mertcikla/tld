@@ -17,7 +17,7 @@ func TestCompletedMapsSurviveNewMappingsAndDeleteWithRepository(t *testing.T) {
 		if err := idx.Publish(ctx, "/repo", snap, graph.NewGraph("repo", id)); err != nil {
 			t.Fatal(err)
 		}
-		if err := idx.SaveCompletedMap(ctx, "repo", &pb.CompletedMap{Result: &pb.MapResult{RunId: "run-" + id, SnapshotId: id, ViewId: 9, Facts: 3}, Profile: "p1", ConfigHash: "cfg", CompletedUnix: 10}); err != nil {
+		if err := idx.SaveCompletedMap(ctx, "repo", &pb.CompletedMap{Result: &pb.MapResult{RunId: "run-" + id, SnapshotId: id, ViewId: 9, Facts: 3}, ConfigHash: "cfg", CompletedUnix: 10}); err != nil {
 			t.Fatal(err)
 		}
 	}

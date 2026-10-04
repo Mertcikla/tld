@@ -31,8 +31,8 @@ func TestAnalysisPersistence(t *testing.T) {
 		Algorithm:    "mapper",
 		Params:       map[string]string{"neighbors": "10"},
 		Groups: []AnalysisGroup{
-			{ID: "g1", Label: "src", Kind: pb.GroupKind_GROUP_KIND_CLUSTER, Profile: "p1", Members: []string{"f1", "f2"}},
-			{ID: "g2", Label: "src/deep", Kind: pb.GroupKind_GROUP_KIND_CLUSTER, Profile: "p2", Members: []string{"f3"}},
+			{ID: "g1", Label: "src", Kind: pb.GroupKind_GROUP_KIND_CLUSTER, Members: []string{"f1", "f2"}},
+			{ID: "g2", Label: "src/deep", Kind: pb.GroupKind_GROUP_KIND_CLUSTER, Members: []string{"f3"}},
 		},
 	}
 	if err := st.SaveAnalysis(ctx, run); err != nil {

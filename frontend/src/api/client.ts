@@ -328,7 +328,6 @@ export interface RepositoryCommitDetails {
 export interface CompletedRepositoryMap {
   result: RepositoryMapResult
   completedUnix: number
-  profile: string
   includeImports: boolean
   configHash: string
 }
@@ -1948,7 +1947,7 @@ export const api = {
     maps: (repositoryId: string): Promise<CompletedRepositoryMap[]> => rpc(async () => {
       const response = await codeIndexMapperClient.listMaps({ repositoryId })
       return response.maps.filter((item) => !!item.result).map((item) => ({
-        completedUnix: Number(item.completedUnix), profile: item.profile,
+        completedUnix: Number(item.completedUnix),
         includeImports: item.includeImports, configHash: item.configHash,
         result: { ...item.result!, viewId: Number(item.result!.viewId) },
       }))

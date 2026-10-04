@@ -14,7 +14,6 @@ type AnalysisGroup struct {
 	ID      string
 	Label   string
 	Kind    pb.GroupKind
-	Profile string
 	Members []string
 }
 
@@ -54,8 +53,8 @@ func (s *Store) SaveAnalysis(ctx context.Context, run AnalysisRun) error {
 			return err
 		}
 		for _, group := range run.Groups {
-			if _, err := tx.NewRaw(`INSERT INTO codeindex_groups (id, run_id, snapshot_id, label, kind, profile, size)
-				VALUES (?, ?, ?, ?, ?, ?, ?)`, group.ID, run.ID, run.SnapshotID, group.Label, int(group.Kind), group.Profile, len(group.Members)).Exec(ctx); err != nil {
+			if _, err := tx.NewRaw(`INSERT INTO codeindex_groups (id, run_id, snapshot_id, label, kind, size)
+				VALUES (?, ?, ?, ?, ?, ?)`, group.ID, run.ID, run.SnapshotID, group.Label, int(group.Kind), len(group.Members)).Exec(ctx); err != nil {
 				return err
 			}
 			for _, member := range group.Members {

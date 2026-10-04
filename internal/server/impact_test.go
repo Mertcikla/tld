@@ -13,7 +13,7 @@ import (
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 )
 
-func TestCompareRepositoryNoEmbeddingsAndRadiusNoCheckout(t *testing.T) {
+func TestCompareRepositoryRadiusNoCheckout(t *testing.T) {
 	ctx := context.Background()
 	ws, routes := newTestServer(t, uuid.New(), nil)
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())

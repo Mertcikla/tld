@@ -137,7 +137,7 @@ func (s *mapperService) mapWithCommunities(ctx context.Context, req *connect.Req
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	for _, record := range completed {
-		if record.Result.SnapshotId == snapshotID && record.Profile == "" && record.ConfigHash == configHash {
+		if record.Result.SnapshotId == snapshotID && record.ConfigHash == configHash {
 			if _, err := s.ws.ViewByID(ctx, record.Result.ViewId); err == nil {
 				return record.Result, nil
 			}
@@ -272,7 +272,6 @@ func (s *mapperService) mapWithCommunities(ctx context.Context, req *connect.Req
 	}
 	if err := s.idx.SaveCompletedMap(ctx, repositoryID, &codeindexv1.CompletedMap{
 		Result:         result,
-		Profile:        "",
 		IncludeImports: req.Msg.GetIncludeImports(),
 		ConfigHash:     configHash,
 	}); err != nil {
@@ -305,7 +304,6 @@ func analysisGroups(runID string, groups []*community.Group, files []community.F
 			ID:      runID + ":g:" + group.Key,
 			Label:   group.Name,
 			Kind:    codeindexv1.GroupKind_GROUP_KIND_COMMUNITY,
-			Profile: "",
 			Members: members,
 		})
 		for _, child := range group.Children {

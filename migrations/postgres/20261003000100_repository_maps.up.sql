@@ -6,7 +6,6 @@ CREATE TABLE codeindex_completed_maps (
   run_id TEXT PRIMARY KEY,
   repository_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
-  profile TEXT NOT NULL,
   include_imports BOOLEAN NOT NULL DEFAULT FALSE,
   config_hash TEXT NOT NULL,
   completed_unix BIGINT NOT NULL,

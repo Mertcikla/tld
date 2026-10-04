@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS codeindex_snapshots (
   git_revision TEXT NOT NULL DEFAULT '',
   git_branch TEXT NOT NULL DEFAULT '',
   ingestion_status TEXT NOT NULL DEFAULT '',
-  embedding_status TEXT NOT NULL DEFAULT '',
   config_hash TEXT NOT NULL DEFAULT '',
   projects_json TEXT NOT NULL DEFAULT '[]',
   warnings_json TEXT NOT NULL DEFAULT '[]',
@@ -97,42 +96,6 @@ CREATE INDEX IF NOT EXISTS idx_codeindex_edges_logical ON codeindex_edges(snapsh
 CREATE INDEX IF NOT EXISTS idx_codeindex_edges_from ON codeindex_edges(from_fact_id);
 CREATE INDEX IF NOT EXISTS idx_codeindex_edges_to ON codeindex_edges(to_fact_id);
 
-CREATE TABLE IF NOT EXISTS codeindex_embeddings (
-  id TEXT PRIMARY KEY,
-  chunk_id TEXT NOT NULL DEFAULT '',
-  fact_id TEXT NOT NULL DEFAULT '',
-  snapshot_id TEXT NOT NULL,
-  profile TEXT NOT NULL DEFAULT '',
-  model TEXT NOT NULL DEFAULT '',
-  dimensions INTEGER NOT NULL DEFAULT 0,
-  input_hash TEXT NOT NULL DEFAULT '',
-  vector BLOB
-);
-
-CREATE INDEX IF NOT EXISTS idx_codeindex_embeddings_snapshot ON codeindex_embeddings(snapshot_id, profile);
-
-CREATE TABLE IF NOT EXISTS codeindex_fact_embeddings (
-  id TEXT PRIMARY KEY,
-  fact_id TEXT NOT NULL,
-  snapshot_id TEXT NOT NULL,
-  profile TEXT NOT NULL DEFAULT '',
-  model TEXT NOT NULL DEFAULT '',
-  dimensions INTEGER NOT NULL DEFAULT 0,
-  input_hash TEXT NOT NULL DEFAULT '',
-  vector BLOB
-);
-
-CREATE INDEX IF NOT EXISTS idx_codeindex_fact_embeddings_snapshot
-  ON codeindex_fact_embeddings(snapshot_id, profile);
-
-CREATE TABLE IF NOT EXISTS codeindex_embedding_cache (
-  key TEXT PRIMARY KEY,
-  profile TEXT NOT NULL DEFAULT '',
-  input_hash TEXT NOT NULL DEFAULT '',
-  dimensions INTEGER NOT NULL DEFAULT 0,
-  vector BLOB
-);
-
 CREATE TABLE IF NOT EXISTS codeindex_analysis_runs (
   id TEXT PRIMARY KEY,
   repository_id TEXT NOT NULL,
@@ -148,7 +111,6 @@ CREATE TABLE IF NOT EXISTS codeindex_groups (
   snapshot_id TEXT NOT NULL,
   label TEXT NOT NULL DEFAULT '',
   kind INTEGER NOT NULL DEFAULT 0,
-  profile TEXT NOT NULL DEFAULT '',
   size INTEGER NOT NULL DEFAULT 0
 );
 
