@@ -63,10 +63,11 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 
 	mux := http.NewServeMux()
+	selfHosted := isSelfHosted(opts)
 	registerCodeIndexHandlers(mux, sqliteStore, opts.DataDir, opts.Config)
-	watchManager := registerWatchHandlers(mux, sqliteStore, opts.DataDir, opts.Config)
+	watchManager := registerWatchHandlers(mux, sqliteStore, opts.DataDir, selfHosted, opts.Config)
 	registerMapperHandlers(mux, sqliteStore, opts.Config)
-	registerEditorHandlers(mux, sqliteStore)
+	registerEditorHandlers(mux, sqliteStore, selfHosted)
 	registerDensityHandlers(mux, sqliteStore)
 	registerMergeHandlers(mux, sqliteStore)
 	registerTagHandlers(mux, apiStore, workspaceID)
@@ -88,6 +89,14 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 				"views":      views,
 				"elements":   elements,
 				"connectors": connectors,
+			},
+			// Capabilities are disabled for reverse-proxied self-hosted
+			// deployments where the server is not the user's workstation:
+			// there is no local checkout for watching, and the server cannot
+			// open the caller's editor.
+			"capabilities": map[string]bool{
+				"watch":  !selfHosted,
+				"editor": !selfHosted,
 			},
 		})
 	})
@@ -181,6 +190,14 @@ func localCORSMiddleware(next http.Handler, opts Options) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isSelfHosted reports whether the server is running as a shared, reverse-proxied
+// deployment rather than the user's local workstation. Self-hosted servers
+// disable workstation-bound capabilities (watching a local checkout, opening the
+// caller's editor).
+func isSelfHosted(opts Options) bool {
+	return strings.TrimSpace(opts.PublicURL) != ""
 }
 
 func configuredCORSOrigins(opts Options) map[string]struct{} {

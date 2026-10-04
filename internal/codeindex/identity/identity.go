@@ -71,6 +71,15 @@ func Apply(ctx context.Context, idx *cstore.Store, root, explicitID, remoteURL s
 	}
 	resolved.Managed = managed
 	if err := idx.EnsureRepositoryIdentity(ctx, resolved.ID, resolved.Root, resolved.RemoteURL, resolved.RemoteKey, resolved.Managed); err != nil {
+		// Another checkout registered the same remote first (the unique
+		// remote_key index rejected the insert). Adopt the winning repository
+		// instead of failing the scan.
+		if resolved.RemoteKey != "" {
+			if id, ok, lookupErr := idx.RepositoryByRemoteKey(ctx, resolved.RemoteKey); lookupErr == nil && ok && id != "" {
+				resolved.ID = id
+				return resolved, nil
+			}
+		}
 		return Resolved{}, err
 	}
 	return resolved, nil

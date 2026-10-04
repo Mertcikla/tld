@@ -17,6 +17,7 @@ import (
 
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/localserver"
+	"github.com/mertcikla/tld/v2/internal/runtimeinfo"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
@@ -230,6 +231,9 @@ func reportStartupUpdate(ctx context.Context, out, progress io.Writer, cfg *work
 	updateStatus, updateNote := StartupUpdateStatus(ctx, cfg, progress)
 	if updateStatus != nil && updateStatus.UpdateAvailable {
 		term.Hint(out, fmt.Sprintf("Update available: %s -> %s", updateStatus.Current, updateStatus.Latest))
+		if updateNote == "" {
+			term.Hint(out, "Run 'tld version update' to update")
+		}
 	}
 	if updateNote != "" {
 		term.Hint(out, updateNote)
@@ -265,26 +269,34 @@ type serveStatus struct {
 
 func printServeInfo(out io.Writer, url string, status serveStatus) {
 	cfgPath, _ := workspace.ExistingGlobalConfigPath()
-	term.Label(out, 20, "Mode", printableMode(status.Mode))
+	term.Label(out, term.DefaultLabelWidth, "Mode", printableMode(status.Mode))
 	if status.PID != nil {
-		term.Label(out, 20, "PID", fmt.Sprintf("%d", *status.PID))
+		term.Label(out, term.DefaultLabelWidth, "PID", fmt.Sprintf("%d", *status.PID))
 	}
-	term.Label(out, 20, "Server status", dataStatus(status.InitializedData, status.DBDriver))
-	term.Label(out, 20, "Bind address", status.BindAddr)
-	if !status.InitializedData {
-		term.Label(out, 20, "Resource counts", fmt.Sprintf("%d views, %d elements, %d connectors", status.Resources.Views, status.Resources.Elements, status.Resources.Connectors))
-	}
+	term.Label(out, term.DefaultLabelWidth, "Server status", dataStatus(status.InitializedData, status.DBDriver))
+	term.Label(out, term.DefaultLabelWidth, "Bind address", status.BindAddr)
 	if status.Startup > 0 {
-		term.Label(out, 20, "Ready in", status.Startup.Round(time.Millisecond).String())
+		term.Label(out, term.DefaultLabelWidth, "Ready in", status.Startup.Round(time.Millisecond).String())
 	}
-	term.Label(out, 20, "DB", databaseLabel(out, status))
-	if status.DBPath != "" && normalizedDBDriver(status.DBDriver) == "sqlite" {
+	if !status.InitializedData {
+		term.Label(out, term.DefaultLabelWidth, "Resources", runtimeinfo.ResourceCounts{
+			Views:      status.Resources.Views,
+			Elements:   status.Resources.Elements,
+			Connectors: status.Resources.Connectors,
+		}.Format())
+	}
+	storage := runtimeinfo.Storage{
+		DBDriver: status.DBDriver,
+		DBPath:   status.DBPath,
+	}
+	if status.DBPath != "" && runtimeinfo.NormalizeDBDriver(status.DBDriver) == "sqlite" {
 		if info, err := os.Stat(status.DBPath); err == nil {
-			term.Label(out, 20, "DB size", humanBytes(info.Size()))
-			term.Label(out, 20, "DB last modified", info.ModTime().Format(time.RFC3339))
+			storage.DBSize = info.Size()
+			storage.DBModifiedAt = info.ModTime().Format(time.RFC3339)
 		}
 	}
-	term.Label(out, 20, "Config path", term.Path(out, cfgPath))
+	runtimeinfo.PrintStorage(out, storage)
+	term.Label(out, term.DefaultLabelWidth, "Config path", term.Path(out, cfgPath))
 	term.Separator(out)
 	_, _ = fmt.Fprintf(out, "  tlDiagram available at: %s\n", term.URL(out, url))
 	term.Separator(out)
@@ -296,7 +308,7 @@ func databaseWillBeInitialized(cfg *workspace.Config, dataDir string) bool {
 	if cfg != nil {
 		driver = cfg.Database.Driver
 	}
-	if normalizedDBDriver(driver) != "sqlite" {
+	if runtimeinfo.NormalizeDBDriver(driver) != "sqlite" {
 		return false
 	}
 	_, err := os.Stat(localserver.DatabasePath(dataDir))
@@ -304,34 +316,13 @@ func databaseWillBeInitialized(cfg *workspace.Config, dataDir string) bool {
 }
 
 func dataStatus(initialized bool, driver string) string {
-	if normalizedDBDriver(driver) == "postgres" {
+	if runtimeinfo.NormalizeDBDriver(driver) == "postgres" {
 		return "using postgres database"
 	}
 	if initialized {
 		return "initialized new local data"
 	}
 	return "using existing local data"
-}
-
-func databaseLabel(out io.Writer, status serveStatus) string {
-	switch normalizedDBDriver(status.DBDriver) {
-	case "postgres":
-		return "postgres"
-	default:
-		if status.DBPath == "" {
-			return "sqlite"
-		}
-		return term.Path(out, status.DBPath)
-	}
-}
-
-func normalizedDBDriver(driver string) string {
-	switch strings.ToLower(strings.TrimSpace(driver)) {
-	case "postgres", "postgresql":
-		return "postgres"
-	default:
-		return "sqlite"
-	}
 }
 
 func printableMode(mode string) string {
@@ -353,19 +344,6 @@ func formatWebappURL(url string, colorEnabled bool) string {
 		return url
 	}
 	return term.ColorGreen + term.ColorUnderline + url + term.ColorReset
-}
-
-func humanBytes(size int64) string {
-	const unit = 1024
-	if size < unit {
-		return fmt.Sprintf("%d B", size)
-	}
-	div, exp := int64(unit), 0
-	for n := size / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
 }
 
 type readyInfo struct {

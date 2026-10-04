@@ -21,6 +21,11 @@ func TestStatusCmdReportsNoRunningProcesses(t *testing.T) {
 	if !strings.Contains(stdout, "No tld processes running.") {
 		t.Fatalf("missing no-process output: %s", stdout)
 	}
+	for _, want := range []string{"Version:", "Config path:", "Data dir:", "DB:"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("status output missing %q:\n%s", want, stdout)
+		}
+	}
 }
 
 func TestStatusCmdReportsRegisteredProcesses(t *testing.T) {

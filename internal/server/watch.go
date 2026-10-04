@@ -265,20 +265,30 @@ func (m *watchManager) Close() error {
 // watchService exposes the manager over ConnectRPC.
 type watchService struct {
 	codeindexv1connect.UnimplementedWatchServiceHandler
-	idx     *cstore.Store
-	manager *watchManager
+	idx        *cstore.Store
+	manager    *watchManager
+	selfHosted bool
 }
 
-func registerWatchHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, dataDir string, configs ...*workspace.Config) *watchManager {
+func registerWatchHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, dataDir string, selfHosted bool, configs ...*workspace.Config) *watchManager {
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
 	manager := newWatchManager(dataDir, idx)
-	svc := &watchService{idx: idx, manager: manager}
+	svc := &watchService{idx: idx, manager: manager, selfHosted: selfHosted}
 	path, handler := codeindexv1connect.NewWatchServiceHandler(svc)
 	mux.Handle("/api"+path, http.StripPrefix("/api", handler))
 	return manager
 }
 
+// cliAvailable reports whether the watcher UI should be actionable. Self-hosted
+// servers never have the caller's checkout or CLI, so watching is disabled.
+func (s *watchService) cliAvailable() bool {
+	return !s.selfHosted && s.manager.cliAvailable()
+}
+
 func (s *watchService) StartWatch(ctx context.Context, req *connect.Request[codeindexv1.StartWatchRequest]) (*connect.Response[codeindexv1.WatchStatus], error) {
+	if s.selfHosted {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("watching is disabled for self-hosted deployments"))
+	}
 	repositoryID := strings.TrimSpace(req.Msg.GetRepositoryId())
 	if repositoryID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository_id is required"))
@@ -375,7 +385,7 @@ func (s *watchService) status(ctx context.Context, repositoryID, key string) *co
 }
 
 func (s *watchService) statusFor(st cstore.WatchState, found bool) *codeindexv1.WatchStatus {
-	return buildWatchStatus(st, found, s.manager.managed(st.RepositoryID), s.manager.cliAvailable())
+	return buildWatchStatus(st, found, s.manager.managed(st.RepositoryID), s.cliAvailable())
 }
 
 func buildWatchStatus(st cstore.WatchState, found, managed, cliAvailable bool) *codeindexv1.WatchStatus {

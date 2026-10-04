@@ -13,6 +13,9 @@ const (
 	StyleUnderlineGreenURL = ColorGreen + ColorUnderline
 )
 
+// DefaultLabelWidth is the shared left-column width for status-style labels.
+const DefaultLabelWidth = 16
+
 func Success(w io.Writer, msg string) {
 	_, _ = fmt.Fprintf(w, "%s\n", msg)
 }
@@ -94,7 +97,7 @@ func PrintLogo(w io.Writer, version string) {
     ░████ ░██ ░███████
 `
 	_, _ = fmt.Fprintln(w, logo)
-	Label(w, 20, "Version", version)
+	Label(w, DefaultLabelWidth, "Version", version)
 }
 
 // Separator prints a blank line.

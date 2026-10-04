@@ -30,9 +30,15 @@ type openEditorRequest struct {
 	Line         int    `json:"line"`
 }
 
-func registerEditorHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) {
+func registerEditorHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, selfHosted bool) {
 	fetcher := dbRepositoryFetcher{db: sqliteStore.DB()}
 	mux.HandleFunc("POST /api/editor/open", func(w http.ResponseWriter, r *http.Request) {
+		if selfHosted {
+			// The server cannot open the caller's editor in a self-hosted
+			// deployment; the UI falls back to opening the remote on GitHub.
+			writeJSONError(w, http.StatusConflict, "open-in-editor is unavailable for self-hosted deployments")
+			return
+		}
 		var req openEditorRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON")

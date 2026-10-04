@@ -283,8 +283,14 @@ func (s *Store) BackfillRemoteKeys(ctx context.Context) error {
 		if key == "" {
 			continue
 		}
+		// A different row already owns this remote; leave this one un-backfilled
+		// rather than violate the unique index. Resolvers still match it by
+		// normalizing remote_url.
+		if owner, ok, err := s.RepositoryByRemoteKey(ctx, key); err == nil && ok && owner != item.ID {
+			continue
+		}
 		if _, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_key = ? WHERE id = ?`, key, item.ID).Exec(ctx); err != nil {
-			return fmt.Errorf("backfill remote key for %s: %w", item.ID, err)
+			continue
 		}
 	}
 	return nil

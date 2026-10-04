@@ -266,9 +266,10 @@ func TestRepositoryByRemoteKeyReusesExistingIdentity(t *testing.T) {
 	if err != nil || !ok || id != "repo-a" {
 		t.Fatalf("resolve existing = %q ok=%v err=%v", id, ok, err)
 	}
-	// A second checkout registers under the same identity instead of a new row.
-	if err := st.EnsureRepositoryIdentity(ctx, "repo-b", "/home/b/proj", "https://github.com/owner/repo", "github.com/owner/repo", false); err != nil {
-		t.Fatalf("ensure second checkout: %v", err)
+	// The unique remote_key index prevents a second repository row for the same
+	// remote; callers adopt the existing id instead (see identity.Apply).
+	if err := st.EnsureRepositoryIdentity(ctx, "repo-b", "/home/b/proj", "https://github.com/owner/repo", "github.com/owner/repo", false); err == nil {
+		t.Fatal("expected the duplicate remote_key insert to be rejected")
 	}
 	id, ok, err = st.RepositoryByRemoteKey(ctx, "github.com/owner/repo")
 	if err != nil || !ok || id != "repo-a" {

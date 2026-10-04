@@ -287,3 +287,6 @@ CREATE TABLE IF NOT EXISTS codeindex_active_maps (
  repository_id TEXT PRIMARY KEY,
  run_id TEXT NOT NULL REFERENCES codeindex_completed_maps(run_id) ON DELETE CASCADE
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_codeindex_repositories_remote_key_unique
+  ON codeindex_repositories(remote_key) WHERE remote_key <> '';
