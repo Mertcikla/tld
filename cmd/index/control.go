@@ -264,9 +264,6 @@ func runDetached(cmd *cobra.Command, opts options) error {
 	if opts.dataDir != "" {
 		args = append(args, "--data-dir", opts.dataDir)
 	}
-	if !opts.embed {
-		args = append(args, "--embed=false")
-	}
 	if opts.materialize {
 		args = append(args, "--materialize")
 	}

@@ -115,25 +115,10 @@ type Config struct {
 	Updates     UpdatesConfig    `yaml:"updates"`
 }
 
-// IndexConfig configures the in-tree codeindex engine: embedding endpoint,
-// external SCIP indexers, and the vector backend.
+// IndexConfig configures the in-tree codeindex engine and its external SCIP
+// indexers.
 type IndexConfig struct {
-	Embedding IndexEmbeddingConfig `yaml:"embedding"`
-	Tools     IndexToolsConfig     `yaml:"tools"`
-	Vector    IndexVectorConfig    `yaml:"vector"`
-}
-
-// IndexEmbeddingConfig is the OpenAI-compatible chunk-embedding pipeline config.
-type IndexEmbeddingConfig struct {
-	Endpoint       string `yaml:"endpoint"`
-	Model          string `yaml:"model"`
-	APIKey         string `yaml:"api_key"`
-	Task           string `yaml:"task"`
-	DocumentPrefix string `yaml:"document_prefix"`
-	QueryPrefix    string `yaml:"query_prefix"`
-	Dimensions     int    `yaml:"dimensions"`
-	BatchSize      int    `yaml:"batch_size"`
-	MaxInputChars  int    `yaml:"max_input_chars"`
+	Tools IndexToolsConfig `yaml:"tools"`
 }
 
 // IndexToolsConfig overrides the external SCIP indexer binaries resolved on PATH.
@@ -149,13 +134,6 @@ type IndexToolsConfig struct {
 	SCIPRuby       string `yaml:"scip_ruby"`
 	RustAnalyzer   string `yaml:"rust_analyzer"`
 	TimeoutSeconds int    `yaml:"timeout_seconds"`
-}
-
-// IndexVectorConfig selects the vector index backend.
-type IndexVectorConfig struct {
-	// Backend is "sqlite-vec" (embedded) or "pgvector" (Postgres). Empty follows
-	// the database dialect.
-	Backend string `yaml:"backend"`
 }
 
 // ApplyConfig controls where CLI workspace plans are materialized.
@@ -214,13 +192,6 @@ func DefaultConfig() *Config {
 			Port: "8060",
 		},
 		Index: IndexConfig{
-			Embedding: IndexEmbeddingConfig{
-				Endpoint:   "http://127.0.0.1:8081/v1",
-				Model:      "jina-code-embeddings-0.5b",
-				Task:       "nl2code",
-				Dimensions: 896,
-				BatchSize:  32,
-			},
 			Tools: IndexToolsConfig{
 				SCIPGo:         "scip-go",
 				SCIPTypeScript: "scip-typescript",
@@ -234,7 +205,6 @@ func DefaultConfig() *Config {
 				RustAnalyzer:   "rust-analyzer",
 				TimeoutSeconds: 300,
 			},
-			Vector: IndexVectorConfig{Backend: "sqlite-vec"},
 		},
 		Updates: UpdatesConfig{
 			Auto:          false,

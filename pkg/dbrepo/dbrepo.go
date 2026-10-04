@@ -14,7 +14,6 @@ import (
 	"github.com/uptrace/bun/dialect/sqlitedialect"
 	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/migrate"
-	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
 )
 
@@ -78,10 +77,6 @@ func OpenSQLite(ctx context.Context, opts DBOptions) (*Handle, error) {
 	db, err := sql.Open("sqlite", opts.SQLitePath)
 	if err != nil {
 		return nil, err
-	}
-	if err := sqlitevec.Register(db); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("register sqlite-vec: %w", err)
 	}
 	configureSQLitePool(db)
 	if err := configureSQLite(ctx, db); err != nil {

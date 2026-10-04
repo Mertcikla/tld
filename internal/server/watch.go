@@ -78,7 +78,7 @@ func (m *watchManager) cliAvailable() bool {
 // It reserves the repository slot under the manager lock so concurrent starts
 // cannot both spawn, reaps dead children first, and refuses when a live
 // watcher (managed or external) already owns the repository.
-func (m *watchManager) start(ctx context.Context, st cstore.WatchState, embed, materialize bool) (cstore.WatchState, error) {
+func (m *watchManager) start(ctx context.Context, st cstore.WatchState, materialize bool) (cstore.WatchState, error) {
 	exe, err := m.resolveCLI()
 	if err != nil {
 		return cstore.WatchState{}, err
@@ -112,9 +112,6 @@ func (m *watchManager) start(ctx context.Context, st cstore.WatchState, embed, m
 	args := []string{"index", st.RepoRoot, "--watch", "--watch-owner", "server"}
 	if m.dataDir != "" {
 		args = append(args, "--data-dir", m.dataDir)
-	}
-	if !embed {
-		args = append(args, "--embed=false")
 	}
 	if materialize {
 		args = append(args, "--materialize")
@@ -297,7 +294,7 @@ func (s *watchService) StartWatch(ctx context.Context, req *connect.Request[code
 		_ = s.idx.ForceClearWatchState(ctx, repositoryID)
 	}
 	st := cstore.WatchState{RepositoryID: repositoryID, RepoRoot: repo.Root, OwnerKind: "server", State: "starting", StartedUnix: time.Now().Unix()}
-	if _, err := s.manager.start(ctx, st, req.Msg.GetEmbed(), req.Msg.GetMaterialize()); err != nil {
+	if _, err := s.manager.start(ctx, st, req.Msg.GetMaterialize()); err != nil {
 		return nil, connect.NewError(connect.CodeAlreadyExists, err)
 	}
 	return connect.NewResponse(s.status(ctx, repositoryID)), nil

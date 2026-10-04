@@ -365,7 +365,7 @@ function CompareSide({
           {value === 'working_tree'
             ? 'Includes staged, unstaged, and untracked source files'
             : snapshot
-              ? `${snapshot.gitBranch || 'No captured branch'} · ${snapshot.embeddingStatus || 'Embedding status unknown'}`
+              ? snapshot.gitBranch || 'No captured branch'
               : branch
                 ? `Branch context: ${branch}`
                 : 'Exact committed revision'}
@@ -696,7 +696,7 @@ export default function Repositories() {
     setWatchBusy(true)
     setOperationError('')
     try {
-      const status = await api.repositories.startWatch(repositoryId, { embed: true, materialize: false })
+      const status = await api.repositories.startWatch(repositoryId, { materialize: false })
       if (selectedRef.current === repositoryId) setWatch(status)
     } catch (err) {
       if (selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not start watcher')
@@ -724,7 +724,7 @@ export default function Repositories() {
       const stopped = await api.repositories.stopWatch(repositoryId)
       if (selectedRef.current !== repositoryId) return
       setWatch(stopped)
-      const started = await api.repositories.startWatch(repositoryId, { embed: true, materialize: false })
+      const started = await api.repositories.startWatch(repositoryId, { materialize: false })
       if (selectedRef.current === repositoryId) setWatch(started)
     } catch (err) {
       if (selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not restart watcher')

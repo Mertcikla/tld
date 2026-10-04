@@ -209,7 +209,6 @@ describe('codeindex snapshot mapping', () => {
       gitRevision: 'abc',
       gitBranch: 'main',
       ingestionStatus: '',
-      embeddingStatus: '',
       projects: [{ root: '/repo', language: 'go', configPath: '' }],
       warnings: ['partial index'],
       provenance: '',

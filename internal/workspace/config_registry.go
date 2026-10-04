@@ -197,23 +197,6 @@ func ValidateGlobalConfig(cfg *Config) ConfigValidationErrors {
 		add("updates.check_interval", "must be a positive duration such as 24h")
 	}
 
-	switch strings.ToLower(strings.TrimSpace(cfg.Index.Vector.Backend)) {
-	case "", "sqlite-vec", "pgvector":
-	default:
-		add("index.vector.backend", "must be sqlite-vec or pgvector")
-	}
-	if endpoint := strings.TrimSpace(cfg.Index.Embedding.Endpoint); endpoint != "" && !validHTTPURL(endpoint) {
-		add("index.embedding.endpoint", "must be a valid URL")
-	}
-	if cfg.Index.Embedding.Dimensions < 0 {
-		add("index.embedding.dimensions", "must be non-negative")
-	}
-	if cfg.Index.Embedding.BatchSize < 0 {
-		add("index.embedding.batch_size", "must be non-negative")
-	}
-	if cfg.Index.Embedding.MaxInputChars < 0 {
-		add("index.embedding.max_input_chars", "must be non-negative")
-	}
 	if cfg.Index.Tools.TimeoutSeconds < 0 {
 		add("index.tools.timeout_seconds", "must be non-negative")
 	}
@@ -276,16 +259,6 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "serve.data_dir", Env: []string{"TLD_DATA_DIR"}, Description: "Directory for local database and logs."},
 	{Key: "serve.public_url", Env: []string{"TLD_PUBLIC_URL"}, Description: "Public root URL for reverse-proxied self-hosted deployments."},
 	{Key: "serve.allowed_origins", Env: []string{"TLD_ALLOWED_ORIGINS"}, Description: "Additional comma-separated HTTP(S) origins allowed by local server CORS."},
-	{Key: "index.embedding.endpoint", Env: []string{"TLD_INDEX_EMBEDDING_ENDPOINT"}, Description: "OpenAI-compatible embeddings endpoint used by the codeindex engine. Defaults to the local llama-server started by 'make embed-server'; set empty to disable embeddings."},
-	{Key: "index.embedding.model", Env: []string{"TLD_INDEX_EMBEDDING_MODEL"}, Description: "Embedding model name for the codeindex engine."},
-	{Key: "index.embedding.api_key", Env: []string{"TLD_INDEX_EMBEDDING_API_KEY"}, Description: "Bearer token for the codeindex embeddings endpoint.", Secret: true},
-	{Key: "index.embedding.task", Env: []string{"TLD_INDEX_EMBEDDING_TASK"}, Description: "Jina code-embedding task used for indexing: nl2code, code2code, code2nl, code2completion, or qa."},
-	{Key: "index.embedding.document_prefix", Env: []string{"TLD_INDEX_EMBEDDING_DOCUMENT_PREFIX"}, Description: "Passage instruction prepended to indexed chunks when no task is set."},
-	{Key: "index.embedding.query_prefix", Env: []string{"TLD_INDEX_EMBEDDING_QUERY_PREFIX"}, Description: "Query instruction prepended to search text when no task is set."},
-	{Key: "index.embedding.dimensions", Env: []string{"TLD_INDEX_EMBEDDING_DIMENSIONS"}, Description: "Embedding vector dimension."},
-	{Key: "index.embedding.batch_size", Env: []string{"TLD_INDEX_EMBEDDING_BATCH_SIZE"}, Description: "Number of chunks embedded per request."},
-	{Key: "index.embedding.max_input_chars", Env: []string{"TLD_INDEX_EMBEDDING_MAX_INPUT_CHARS"}, Description: "Maximum characters of chunk text sent to the embedding model."},
-	{Key: "index.vector.backend", Env: []string{"TLD_INDEX_VECTOR_BACKEND"}, Description: "Vector index backend: sqlite-vec (embedded) or pgvector (Postgres)."},
 	{Key: "index.tools.scip_go", Env: []string{"TLD_INDEX_SCIP_GO"}, Description: "Path or name of the scip-go indexer."},
 	{Key: "index.tools.scip_typescript", Env: []string{"TLD_INDEX_SCIP_TYPESCRIPT"}, Description: "Path or name of the scip-typescript indexer."},
 	{Key: "index.tools.scip_python", Env: []string{"TLD_INDEX_SCIP_PYTHON"}, Description: "Path or name of the scip-python indexer."},
@@ -395,16 +368,6 @@ func applyEnvOverridesDetailed(cfg *Config, root *yaml.Node) ([]ConfigValue, err
 		{"serve.data_dir", "TLD_DATA_DIR"},
 		{"serve.public_url", "TLD_PUBLIC_URL"},
 		{"serve.allowed_origins", "TLD_ALLOWED_ORIGINS"},
-		{"index.embedding.endpoint", "TLD_INDEX_EMBEDDING_ENDPOINT"},
-		{"index.embedding.model", "TLD_INDEX_EMBEDDING_MODEL"},
-		{"index.embedding.api_key", "TLD_INDEX_EMBEDDING_API_KEY"},
-		{"index.embedding.task", "TLD_INDEX_EMBEDDING_TASK"},
-		{"index.embedding.document_prefix", "TLD_INDEX_EMBEDDING_DOCUMENT_PREFIX"},
-		{"index.embedding.query_prefix", "TLD_INDEX_EMBEDDING_QUERY_PREFIX"},
-		{"index.embedding.dimensions", "TLD_INDEX_EMBEDDING_DIMENSIONS"},
-		{"index.embedding.batch_size", "TLD_INDEX_EMBEDDING_BATCH_SIZE"},
-		{"index.embedding.max_input_chars", "TLD_INDEX_EMBEDDING_MAX_INPUT_CHARS"},
-		{"index.vector.backend", "TLD_INDEX_VECTOR_BACKEND"},
 		{"index.tools.scip_go", "TLD_INDEX_SCIP_GO"},
 		{"index.tools.scip_typescript", "TLD_INDEX_SCIP_TYPESCRIPT"},
 		{"index.tools.scip_python", "TLD_INDEX_SCIP_PYTHON"},
@@ -529,38 +492,6 @@ func setConfigValue(cfg *Config, key, value string) error {
 		cfg.Serve.PublicURL = normalizePublicURLValue(value)
 	case "serve.allowed_origins":
 		cfg.Serve.AllowedOrigins = parseStringList(value)
-	case "index.embedding.endpoint":
-		cfg.Index.Embedding.Endpoint = strings.TrimRight(strings.TrimSpace(value), "/")
-	case "index.embedding.model":
-		cfg.Index.Embedding.Model = strings.TrimSpace(value)
-	case "index.embedding.api_key":
-		cfg.Index.Embedding.APIKey = value
-	case "index.embedding.task":
-		cfg.Index.Embedding.Task = strings.TrimSpace(value)
-	case "index.embedding.document_prefix":
-		cfg.Index.Embedding.DocumentPrefix = value
-	case "index.embedding.query_prefix":
-		cfg.Index.Embedding.QueryPrefix = value
-	case "index.embedding.dimensions":
-		v, err := parseInt(value)
-		if err != nil {
-			return err
-		}
-		cfg.Index.Embedding.Dimensions = v
-	case "index.embedding.batch_size":
-		v, err := parseInt(value)
-		if err != nil {
-			return err
-		}
-		cfg.Index.Embedding.BatchSize = v
-	case "index.embedding.max_input_chars":
-		v, err := parseInt(value)
-		if err != nil {
-			return err
-		}
-		cfg.Index.Embedding.MaxInputChars = v
-	case "index.vector.backend":
-		cfg.Index.Vector.Backend = strings.ToLower(strings.TrimSpace(value))
 	case "index.tools.scip_go":
 		cfg.Index.Tools.SCIPGo = strings.TrimSpace(value)
 	case "index.tools.scip_typescript":
@@ -639,26 +570,6 @@ func getConfigValue(cfg *Config, key string) any {
 		return cfg.Serve.PublicURL
 	case "serve.allowed_origins":
 		return cfg.Serve.AllowedOrigins
-	case "index.embedding.endpoint":
-		return cfg.Index.Embedding.Endpoint
-	case "index.embedding.model":
-		return cfg.Index.Embedding.Model
-	case "index.embedding.api_key":
-		return cfg.Index.Embedding.APIKey
-	case "index.embedding.task":
-		return cfg.Index.Embedding.Task
-	case "index.embedding.document_prefix":
-		return cfg.Index.Embedding.DocumentPrefix
-	case "index.embedding.query_prefix":
-		return cfg.Index.Embedding.QueryPrefix
-	case "index.embedding.dimensions":
-		return cfg.Index.Embedding.Dimensions
-	case "index.embedding.batch_size":
-		return cfg.Index.Embedding.BatchSize
-	case "index.embedding.max_input_chars":
-		return cfg.Index.Embedding.MaxInputChars
-	case "index.vector.backend":
-		return cfg.Index.Vector.Backend
 	case "index.tools.scip_go":
 		return cfg.Index.Tools.SCIPGo
 	case "index.tools.scip_typescript":
@@ -734,19 +645,6 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	addMap(mapping, "serve", serve, "Local web server settings.")
 
 	indexNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	indexEmbedding := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	addScalar(indexEmbedding, "endpoint", cfg.Index.Embedding.Endpoint, desc("index.embedding.endpoint"))
-	addScalar(indexEmbedding, "model", cfg.Index.Embedding.Model, desc("index.embedding.model"))
-	addScalar(indexEmbedding, "api_key", cfg.Index.Embedding.APIKey, desc("index.embedding.api_key"))
-	addScalar(indexEmbedding, "task", cfg.Index.Embedding.Task, desc("index.embedding.task"))
-	addScalar(indexEmbedding, "document_prefix", cfg.Index.Embedding.DocumentPrefix, desc("index.embedding.document_prefix"))
-	addScalar(indexEmbedding, "query_prefix", cfg.Index.Embedding.QueryPrefix, desc("index.embedding.query_prefix"))
-	addScalar(indexEmbedding, "dimensions", cfg.Index.Embedding.Dimensions, desc("index.embedding.dimensions"))
-	addScalar(indexEmbedding, "batch_size", cfg.Index.Embedding.BatchSize, desc("index.embedding.batch_size"))
-	addScalar(indexEmbedding, "max_input_chars", cfg.Index.Embedding.MaxInputChars, desc("index.embedding.max_input_chars"))
-	appendUnknownEntries(indexEmbedding, mappingValueNode(mappingValueNode(existing, "index"), "embedding"), setOf("endpoint", "model", "api_key", "task", "document_prefix", "query_prefix", "dimensions", "batch_size", "max_input_chars"))
-	addMap(indexNode, "embedding", indexEmbedding, "OpenAI-compatible chunk-embedding settings for the codeindex engine.")
-
 	indexTools := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	addScalar(indexTools, "scip_go", cfg.Index.Tools.SCIPGo, desc("index.tools.scip_go"))
 	addScalar(indexTools, "scip_typescript", cfg.Index.Tools.SCIPTypeScript, desc("index.tools.scip_typescript"))
@@ -762,12 +660,8 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	appendUnknownEntries(indexTools, mappingValueNode(mappingValueNode(existing, "index"), "tools"), setOf("scip_go", "scip_typescript", "scip_python", "scip_dotnet", "scip_clang", "scip_java", "scip_dart", "scip_php", "scip_ruby", "rust_analyzer", "timeout_seconds"))
 	addMap(indexNode, "tools", indexTools, "External SCIP indexer binaries resolved on PATH.")
 
-	indexVector := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	addScalar(indexVector, "backend", cfg.Index.Vector.Backend, desc("index.vector.backend"))
-	appendUnknownEntries(indexVector, mappingValueNode(mappingValueNode(existing, "index"), "vector"), setOf("backend"))
-	addMap(indexNode, "vector", indexVector, "Vector index backend selection.")
 
-	appendUnknownEntries(indexNode, mappingValueNode(existing, "index"), setOf("embedding", "tools", "vector"))
+	appendUnknownEntries(indexNode, mappingValueNode(existing, "index"), setOf("tools"))
 	addMap(mapping, "index", indexNode, "In-tree codeindex engine settings.")
 
 	completion := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
@@ -908,8 +802,6 @@ func normalizeConfig(cfg *Config) {
 	for i, origin := range cfg.Serve.AllowedOrigins {
 		cfg.Serve.AllowedOrigins[i] = strings.TrimSpace(origin)
 	}
-	cfg.Index.Embedding.Endpoint = strings.TrimRight(strings.TrimSpace(cfg.Index.Embedding.Endpoint), "/")
-	cfg.Index.Vector.Backend = strings.ToLower(strings.TrimSpace(cfg.Index.Vector.Backend))
 }
 
 func normalizePublicURLValue(value string) string {

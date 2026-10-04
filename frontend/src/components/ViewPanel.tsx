@@ -22,8 +22,7 @@ import {
   WrapItem,
 } from '@chakra-ui/react'
 import { api } from '../api/client'
-import { toast } from '../utils/toast'
-import type { Connector, ViewTreeNode, LibraryElement, ViewMarkdownDocument } from '../types'
+import type { Connector, ViewTreeNode, ViewMarkdownDocument } from '../types'
 import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
 import LayoutSection from './LayoutSection'
@@ -33,7 +32,6 @@ import { ChevronDownIcon, ChevronRightIcon } from './Icons'
 
 import { useContext } from 'react'
 import { ViewEditorContext } from '../pages/ViewEditor/context'
-import { useExperimental } from '../context/ExperimentalContext'
 
 interface Props {
   isOpen: boolean
@@ -95,7 +93,6 @@ function ViewPanel({
   actions,
 }: Props) {
   const ctx = useContext(ViewEditorContext)
-  const { experimental } = useExperimental()
   const canEdit = canEditProp ?? ctx?.canEdit ?? true
   const isReadOnly = !canEdit
   const isMobile = useBreakpointValue({ base: true, md: false }) ?? false
@@ -105,18 +102,9 @@ function ViewPanel({
   const [tags, setTags] = useState<string[]>([])
   const [saving, setSaving] = useState(false)
 
-  // Populate similarity states
-  const [populateQuery, setPopulateQuery] = useState('')
-  const [populateLimit, setPopulateLimit] = useState(5)
-  const [populateResults, setPopulateResults] = useState<Array<LibraryElement & { similarity_score: number; match_kind?: string; match_reason?: string; related_to?: string; via_kind?: string; placed?: boolean }>>([])
-  const [selectedPopulateIds, setSelectedPopulateIds] = useState<number[]>([])
-  const [loadingPopulate, setLoadingPopulate] = useState(false)
-  const [searchedPopulate, setSearchedPopulate] = useState(false)
-  const [populateError, setPopulateError] = useState<string | null>(null)
   const [deleteManagedFile, setDeleteManagedFile] = useState(true)
   const [markdownAction, setMarkdownAction] = useState<'unlink' | null>(null)
   const [markdownOpen, setMarkdownOpen] = useState(!!markdown)
-  const [populateOpen, setPopulateOpen] = useState(false)
 
   useEffect(() => {
     if (view) {
@@ -126,22 +114,6 @@ function ViewPanel({
       setTags(view.tags || [])
       setDeleteManagedFile(true)
       setMarkdownOpen(!!markdown)
-
-      // Reset populate states when view opens or changes
-      setPopulateResults([])
-      setSelectedPopulateIds([])
-      setSearchedPopulate(false)
-      setPopulateError(null)
-
-      if (isOpen) {
-        api.workspace.views.populate.getQuery(view.id)
-          .then((q) => {
-            setPopulateQuery(q.enriched_query || q.query)
-          })
-          .catch(() => {
-            setPopulateQuery(view.name)
-          })
-      }
     }
   }, [view, isOpen, markdown])
 
@@ -154,26 +126,6 @@ function ViewPanel({
     return () => window.removeEventListener('keydown', handler)
   }, [isOpen, onClose])
 
-  const handleRunPopulate = async () => {
-    if (!view || !populateQuery.trim()) return
-    setLoadingPopulate(true)
-    setSearchedPopulate(true)
-    setPopulateError(null)
-    try {
-      const results = await api.workspace.views.populate.search(view.id, populateQuery, populateLimit)
-      setPopulateResults(results)
-      setSelectedPopulateIds(results.filter((r) => !r.placed).map((r) => r.id))
-    } catch (err) {
-      setPopulateResults([])
-      setSelectedPopulateIds([])
-      const message = err instanceof Error ? err.message : 'Failed to run similarity search'
-      setPopulateError(message)
-      toast({ title: message, status: 'error', duration: 5000 })
-    } finally {
-      setLoadingPopulate(false)
-    }
-  }
-
   const handleSave = async () => {
     if (isReadOnly || !view) return
     setSaving(true)
@@ -184,20 +136,6 @@ function ViewPanel({
         label: levelLabel,
         tags,
       })
-      // Add populated placements:
-      if (selectedPopulateIds.length > 0) {
-        for (let i = 0; i < selectedPopulateIds.length; i++) {
-          const id = selectedPopulateIds[i]
-          const posX = 100 + (i % 5) * 150
-          const posY = 100 + Math.floor(i / 5) * 120
-          try {
-            await api.workspace.views.placements.add(view.id, id, posX, posY)
-          } catch {
-            // ignore individual placement errors (e.g. if already exists in view)
-          }
-        }
-      }
-
       onSave({ ...view, name: updated.name, description, level_label: updated.label, tags: updated.tags })
       onClose()
     } catch {
@@ -381,165 +319,6 @@ function ViewPanel({
                         {dbOnlyNotes
                           ? 'Open Notes from the canvas toolbar to create a note.'
                           : 'Open Notes from the canvas toolbar to create or attach a markdown file.'}
-                      </Text>
-                    )}
-                  </VStack>
-                </Collapse>
-              </VStack>
-            </>
-          )}
-
-          {canEdit && experimental.populateEnabled && (
-            <>
-              <Divider borderColor="whiteAlpha.100" my={2} />
-              <VStack align="stretch" spacing={3}>
-                <HStack
-                  cursor="pointer"
-                  onClick={() => setPopulateOpen(v => !v)}
-                  justify="space-between"
-                  userSelect="none"
-                  _hover={{ color: 'whiteAlpha.900' }}
-                  transition="color 0.15s"
-                >
-                  <Text fontWeight="semibold" fontSize="sm" color="whiteAlpha.800">
-                    Populate Elements
-                  </Text>
-                  <Icon
-                    as={populateOpen ? ChevronDownIcon : ChevronRightIcon}
-                    boxSize={3.5}
-                    strokeWidth={3.5}
-                    color="whiteAlpha.500"
-                  />
-                </HStack>
-
-                <Collapse in={populateOpen} animateOpacity>
-                  <VStack align="stretch" spacing={3}>
-                    <Text fontSize="xs" color="gray.400">
-                      Find high-level scanned resources from your codebase and place them inside the view.
-                      Requires "tld analyze" with a configured embedding model provider.
-                    </Text>
-
-                    <FormControl>
-                      <FormLabel fontSize="xs" color="gray.400">Search Query</FormLabel>
-                      <Input
-                        size="sm"
-                        value={populateQuery}
-                        onChange={(e) => setPopulateQuery(e.target.value)}
-                        placeholder="Describe the architecture component..."
-                      />
-                    </FormControl>
-
-                    <HStack spacing={4} align="flex-end">
-                      <FormControl>
-                        <FormLabel fontSize="xs" color="gray.400">Limit (N)</FormLabel>
-                        <Input
-                          type="number"
-                          size="sm"
-                          value={populateLimit}
-                          onChange={(e) => setPopulateLimit(Math.max(1, parseInt(e.target.value) || 5))}
-                          min={1}
-                          max={50}
-                        />
-                      </FormControl>
-                      <Button
-                        size="sm"
-                        colorScheme="blue"
-                        onClick={handleRunPopulate}
-                        isLoading={loadingPopulate}
-                        px={5}
-                      >
-                        Find
-                      </Button>
-                    </HStack>
-
-                    {searchedPopulate && !loadingPopulate && populateResults.length > 0 && (
-                      <VStack align="stretch" spacing={2} mt={1}>
-                        <HStack spacing={1.5} fontSize="10px" color="gray.500">
-                          <Text>
-                            {populateResults.filter((result) => result.match_reason !== 'neighbor').length} match
-                            {populateResults.filter((result) => result.match_reason !== 'neighbor').length === 1 ? '' : 'es'}
-                          </Text>
-                          <Text>·</Text>
-                          <Text>{populateResults.filter((result) => result.match_reason === 'neighbor').length} connected</Text>
-                        </HStack>
-                        <VStack
-                          align="stretch"
-                          spacing={2.5}
-                          maxH="220px"
-                          overflowY="auto"
-                          p={3}
-                          bg="whiteAlpha.50"
-                          borderRadius="md"
-                          border="1px solid"
-                          borderColor="whiteAlpha.100"
-                        >
-                          {populateResults.map((result) => {
-                            const isNeighbor = result.match_reason === 'neighbor'
-                            return (
-                              <HStack key={result.id} justify="space-between" align="center">
-                                <Checkbox
-                                  size="sm"
-                                  isDisabled={result.placed}
-                                  isChecked={selectedPopulateIds.includes(result.id)}
-                                  onChange={(e) => {
-                                    if (e.target.checked) {
-                                      setSelectedPopulateIds([...selectedPopulateIds, result.id])
-                                    } else {
-                                      setSelectedPopulateIds(selectedPopulateIds.filter((id) => id !== result.id))
-                                    }
-                                  }}
-                                >
-                                  <VStack align="start" spacing={0} maxW="160px">
-                                    <HStack spacing={1.5} minW={0}>
-                                      <Text fontSize="xs" fontWeight="medium" color="white" isTruncated maxW="160px">
-                                        {result.name}
-                                      </Text>
-                                      {isNeighbor && (
-                                        <Text fontSize="9px" color="purple.300" flexShrink={0}>linked</Text>
-                                      )}
-                                      {result.placed && (
-                                        <Text fontSize="9px" color="green.300" flexShrink={0}>in view</Text>
-                                      )}
-                                    </HStack>
-                                    <Text fontSize="10px" color="gray.500" isTruncated maxW="160px">
-                                      {isNeighbor
-                                        ? `via ${result.via_kind || 'edge'} \u2192 ${result.related_to || 'match'}`
-                                        : [result.kind, result.file_path].filter(Boolean).join(' · ')}
-                                    </Text>
-                                  </VStack>
-                                </Checkbox>
-                                <HStack spacing={1.5}>
-                                  {result.technology && (
-                                    <Text fontSize="9px" color="gray.400" bg="whiteAlpha.100" px={1.5} py={0.5} borderRadius="sm">
-                                      {result.technology}
-                                    </Text>
-                                  )}
-                                  {isNeighbor ? (
-                                    <Text fontSize="9px" color="purple.300" bg="whiteAlpha.100" px={1.5} py={0.5} borderRadius="sm">
-                                      {result.via_kind || 'linked'}
-                                    </Text>
-                                  ) : (
-                                    <Text fontSize="10px" fontWeight="bold" color="blue.300">
-                                      {Math.round(result.similarity_score * 100)}
-                                    </Text>
-                                  )}
-                                </HStack>
-                              </HStack>
-                            )
-                          })}
-                        </VStack>
-                      </VStack>
-                    )}
-
-                    {searchedPopulate && !loadingPopulate && populateError && (
-                      <Text fontSize="xs" color="red.300" py={2} textAlign="center">
-                        {populateError}
-                      </Text>
-                    )}
-
-                    {searchedPopulate && !loadingPopulate && !populateError && populateResults.length === 0 && (
-                      <Text fontSize="xs" color="gray.500" py={2} textAlign="center">
-                        No similar elements found.
                       </Text>
                     )}
                   </VStack>

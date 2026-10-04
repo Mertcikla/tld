@@ -10,12 +10,10 @@ import { SharedInfiniteZoom } from './pages/InfiniteZoom'
 import Settings from './pages/Settings'
 import ProfileSettings from './pages/ProfileSettings'
 import AppearanceSettings from './pages/AppearanceSettings'
-import ExperimentalSettings from './pages/ExperimentalSettings'
 import UpdateSettings from './pages/UpdateSettings'
 import { HeaderProvider, useHeader } from './components/HeaderContext'
 import TopMenuBar from './components/TopMenuBar'
 import TopMenuBarCollaboration, { type CollaborationProps } from './components/TopMenuBarCollaboration'
-import { ExperimentalProvider } from './context/ExperimentalContext'
 import { ConnectorStyleProvider } from './context/ConnectorStyleContext'
 import { initializeTheme, ThemeProvider } from './context/ThemeContext'
 import { platform } from './platform/local'
@@ -101,7 +99,6 @@ export default function App() {
   }
 
   return (
-      <ExperimentalProvider>
       <ThemeProvider>
       <ConnectorStyleProvider>
         <Box h="var(--app-viewport-height)" bg="var(--bg-canvas)" overflow="hidden">
@@ -128,7 +125,6 @@ export default function App() {
                 {platform.getSettingsRoutes({ user: null })}
                 <Route path="profile" element={<ProfileSettings />} />
                 <Route path="appearance" element={<AppearanceSettings />} />
-                <Route path="experimental" element={<ExperimentalSettings />} />
                 <Route path="updates" element={isWailsApp && !isWailsAppStore ? <UpdateSettings /> : <Navigate to="/settings/appearance" replace />} />
               </Route>
             </Route>
@@ -138,6 +134,5 @@ export default function App() {
         </Box>
       </ConnectorStyleProvider>
       </ThemeProvider>
-    </ExperimentalProvider>
   )
 }

@@ -27,7 +27,7 @@ type fileFactCache struct {
 // addFileFacts publishes one FACT_KIND_FILE per discovered source and chunks the
 // file's whole content. Symbol facts capture declarations; these facts capture
 // the file as a unit so whole-file concepts (docs, markdown, config) get their
-// own embeddings. A per-source cache keeps unchanged files from being
+// own syntax extraction. A per-source cache keeps unchanged files from being
 // re-chunked on every incremental build.
 func addFileFacts(g *graph.Graph) {
 	paths := make([]string, 0, len(g.Sources))

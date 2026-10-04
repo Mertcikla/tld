@@ -10,7 +10,6 @@ import (
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/layout"
-	"github.com/mertcikla/tld/v2/internal/mapper"
 )
 
 // GroupMapInput is a dependency-graph grouping to materialize into a workspace.
@@ -19,7 +18,8 @@ type GroupMapInput struct {
 	RepositoryName string
 	RepositoryRoot string
 	SnapshotID     string
-	Dataset        *mapper.Dataset
+	// Files are the repository's file facts, indexed by group member.
+	Files []community.File
 	// Groups is the community hierarchy, outermost first.
 	Groups []*community.Group
 	// Edges are file-to-file dependencies resolved from symbol edges.
@@ -28,13 +28,13 @@ type GroupMapInput struct {
 	Imports []MapImport
 }
 
-// ApplyGroupMap materializes a community hierarchy into the workspace using the
-// same nested-view and connector-rollup rules as ApplyMap: one element and view
-// per group, direct member files placed in their group's view, and every edge
-// drawn at the deepest view where its endpoints fall under different children.
+// ApplyGroupMap materializes a community hierarchy into the workspace using
+// nested views: one element and view per group, direct member files placed in
+// their group's view, and every edge drawn at the deepest view where its
+// endpoints fall under different children.
 func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input GroupMapInput, opts MapOptions) (MapResult, error) {
-	if input.Dataset == nil {
-		return MapResult{}, fmt.Errorf("group map requires a dataset")
+	if len(input.Files) == 0 {
+		return MapResult{}, fmt.Errorf("group map requires file facts")
 	}
 	existing, err := idx.MappingsByRepository(ctx, input.RepositoryID)
 	if err != nil {
@@ -49,7 +49,7 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 		RepositoryName: input.RepositoryName,
 		RepositoryRoot: input.RepositoryRoot,
 		SnapshotID:     input.SnapshotID,
-		Dataset:        input.Dataset,
+		Files:          input.Files,
 		Edges:          input.Edges,
 		Imports:        input.Imports,
 	}
@@ -141,10 +141,10 @@ func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64,
 		}
 	}
 	for _, member := range group.Members {
-		if member < 0 || member >= len(m.input.Dataset.Facts) {
+		if member < 0 || member >= len(m.input.Files) {
 			continue
 		}
-		fact := m.input.Dataset.Facts[member]
+		fact := m.input.Files[member]
 		fileID, err := m.upsertElement(fileKey(m.input.RepositoryID, fact.ID), m.fileElement(member))
 		if err != nil {
 			return err

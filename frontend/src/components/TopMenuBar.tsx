@@ -22,7 +22,6 @@ import logoMarkUrl from "../assets/logo-mark.svg"
 import { useAccentColor } from "../context/ThemeContext"
 import { hexToRgba } from "../constants/colors"
 import AppearanceSettings from "../pages/AppearanceSettings"
-import ExperimentalSettings from "../pages/ExperimentalSettings"
 import UpdateSettings from "../pages/UpdateSettings"
 import { isWailsApp, isWailsMac, isWailsWindows } from "../config/runtime"
 import WindowsWindowControls from "./WindowsWindowControls"
@@ -197,7 +196,6 @@ export default function TopMenuBar({
           <PopoverBody p={4} overflowY="auto" flex={1} minH={0}>
             <Flex direction="column" gap={5}>
               <AppearanceSettings compact />
-              <ExperimentalSettings compact />
               {isWailsApp && <UpdateSettings compact />}
             </Flex>
           </PopoverBody>

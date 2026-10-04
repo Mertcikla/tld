@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/codeindex/config"
@@ -17,13 +15,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewDoctorCmd reports external indexer availability and embedding endpoint
-// reachability for the codeindex pipeline.
+// NewDoctorCmd reports external SCIP indexer availability for the codeindex
+// pipeline.
 func NewDoctorCmd() *cobra.Command {
 	var asJSON bool
 	c := &cobra.Command{
 		Use:   "doctor",
-		Short: "Check codeindex prerequisites (SCIP indexers and embedding endpoint)",
+		Short: "Check codeindex prerequisites (external SCIP indexers)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			global, err := workspace.LoadGlobalConfig()
@@ -31,8 +29,7 @@ func NewDoctorCmd() *cobra.Command {
 				return err
 			}
 			cfg := configbridge.FromGlobal(global)
-			ctx := cmd.Context()
-			report := buildReport(ctx, cfg)
+			report := buildReport(cmd.Context(), cfg)
 			if asJSON || cmdutil.WantsJSONFromCmd(cmd) {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
@@ -47,47 +44,19 @@ func NewDoctorCmd() *cobra.Command {
 }
 
 type report struct {
-	Tools     []tools.Status `json:"tools"`
-	Embedding endpointReport `json:"embedding"`
-	OK        bool           `json:"ok"`
-}
-
-type endpointReport struct {
-	Endpoint  string `json:"endpoint"`
-	Reachable bool   `json:"reachable"`
-	Error     string `json:"error,omitempty"`
+	Tools []tools.Status `json:"tools"`
+	OK    bool           `json:"ok"`
 }
 
 func buildReport(ctx context.Context, cfg config.Config) report {
 	toolStatuses := tools.Check(ctx, cfg)
-	emb := checkEndpoint(ctx, cfg.Embedding.Endpoint)
-	ok := emb.Reachable || cfg.Embedding.Endpoint == ""
+	ok := true
 	for _, s := range toolStatuses {
 		if !s.Found {
 			ok = false
 		}
 	}
-	return report{Tools: toolStatuses, Embedding: emb, OK: ok}
-}
-
-func checkEndpoint(ctx context.Context, endpoint string) endpointReport {
-	if endpoint == "" {
-		return endpointReport{Endpoint: "", Reachable: false, Error: "not configured"}
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return endpointReport{Endpoint: endpoint, Error: err.Error()}
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return endpointReport{Endpoint: endpoint, Error: err.Error()}
-	}
-	defer func() { _ = resp.Body.Close() }()
-	// Any HTTP response means the host is reachable; the exact status is
-	// irrelevant because the embeddings route is a POST.
-	return endpointReport{Endpoint: endpoint, Reachable: true}
+	return report{Tools: toolStatuses, OK: ok}
 }
 
 func printReport(cmd *cobra.Command, r report) {
@@ -107,16 +76,6 @@ func printReport(cmd *cobra.Command, r report) {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", s.Name, status, detail)
 	}
 	_ = tw.Flush()
-
-	_, _ = fmt.Fprintln(out, "Embedding endpoint:")
-	switch {
-	case r.Embedding.Endpoint == "":
-		_, _ = fmt.Fprintln(out, "  not configured")
-	case r.Embedding.Reachable:
-		_, _ = fmt.Fprintf(out, "  OK          %s\n", r.Embedding.Endpoint)
-	default:
-		_, _ = fmt.Fprintf(out, "  UNREACHABLE %s: %s\n", r.Embedding.Endpoint, r.Embedding.Error)
-	}
 
 	if r.OK {
 		_, _ = fmt.Fprintln(out, "\nAll prerequisites satisfied.")

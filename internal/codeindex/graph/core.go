@@ -319,7 +319,7 @@ func (g *Graph) AdoptFact(f *pb.CodeFact) *pb.CodeFact {
 // AdoptFactAnchored carries a fact into this graph at a new anchor, refreshing
 // its code and preserving its identity. The original id is retained so an
 // unchanged declaration keeps the same fact across snapshots, which lets the
-// publisher and embedding cache treat it as reusable.
+// publisher and incremental cache treat it as reusable.
 func (g *Graph) AdoptFactAnchored(f *pb.CodeFact, anchor *pb.SourceAnchor, code, signature string) *pb.CodeFact {
 	if f == nil || anchor == nil {
 		return nil

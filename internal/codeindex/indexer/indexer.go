@@ -108,7 +108,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 		return base.Snapshot, base.Graph, true, nil
 	}
 
-	snap := &pb.Snapshot{Id: snapshot, RepositoryId: repo, CreatedUnix: time.Now().Unix(), Projects: projects, IngestionStatus: "staging", EmbeddingStatus: "disabled"}
+	snap := &pb.Snapshot{Id: snapshot, RepositoryId: repo, CreatedUnix: time.Now().Unix(), Projects: projects, IngestionStatus: "staging"}
 	snap.ConfigHash = ConfigurationHash(p.Config, req)
 	snap.ContentFingerprint = before
 	snap.Provenance = provenance

@@ -231,7 +231,11 @@ func Build(files []File, edges []Edge, options Options) (*Result, error) {
 		roots = append(roots, isolatedGroups(files, isolated, opts)...)
 	}
 
-	finalizeGroups(roots, files, opts)
+	var lex *lexicalIndex
+	if opts.NameFallback == nil {
+		lex = newLexicalIndex(files)
+	}
+	finalizeGroups(roots, files, opts, lex)
 
 	result.Groups = roots
 	result.Metrics = measure(roots, g, files, activeMembers, n, mod, time.Since(started))
@@ -498,22 +502,22 @@ func sortedCopy(values []int) []int {
 }
 
 // finalizeGroups computes keys, names, counts and returns descendant files.
-func finalizeGroups(groups []*Group, files []File, opts Options) {
+func finalizeGroups(groups []*Group, files []File, opts Options, lex *lexicalIndex) {
 	for _, group := range groups {
-		finalizeGroup(group, files, opts)
+		finalizeGroup(group, files, opts, lex)
 	}
 }
 
-func finalizeGroup(group *Group, files []File, opts Options) []int {
+func finalizeGroup(group *Group, files []File, opts Options, lex *lexicalIndex) []int {
 	sort.Ints(group.Members)
 	descendants := append([]int(nil), group.Members...)
 	for _, child := range group.Children {
-		descendants = append(descendants, finalizeGroup(child, files, opts)...)
+		descendants = append(descendants, finalizeGroup(child, files, opts, lex)...)
 	}
 	sort.Ints(descendants)
 	group.Files = len(descendants)
 	group.Key = groupKey(files, descendants)
-	group.Name, group.Source = nameGroup(descendants, files, opts, group.Isolated)
+	group.Name, group.Source = nameGroup(descendants, files, opts, group.Isolated, lex)
 	return descendants
 }
 
@@ -531,10 +535,10 @@ func groupKey(files []File, members []int) string {
 
 // nameGroup chooses a deterministic, source-backed label: the dominant folder
 // when one folder covers most members, then the longest common folder prefix,
-// then the injected lexical fallback, then a key-derived placeholder. Generic
+// then a distinctive identifier token, then a key-derived placeholder. Generic
 // repository roots such as "internal" are skipped in favour of a distinctive
-// fallback so sibling groups do not share a meaningless label.
-func nameGroup(members []int, files []File, opts Options, isolated bool) (string, string) {
+// name so sibling groups do not share a meaningless label.
+func nameGroup(members []int, files []File, opts Options, isolated bool, lex *lexicalIndex) (string, string) {
 	if len(members) == 0 {
 		return "unmapped", "fallback"
 	}
@@ -574,6 +578,8 @@ func nameGroup(members []int, files []File, opts Options, isolated bool) (string
 		if name := strings.TrimSpace(opts.NameFallback(members)); name != "" {
 			return name, "lexical"
 		}
+	} else if name := lex.name(members); name != "" {
+		return name, "lexical"
 	}
 	if dominant != "" {
 		return dominant, "folder"

@@ -9,8 +9,6 @@ export function watcherActivity(status: RepositoryWatchStatus | null): Activity 
   if (status.state === 'starting') return { label: 'Starting…', detail: 'Connecting to the repository and checking Git inputs.', step: 'listen', active: true }
   if (status.state === 'debouncing') return { label: 'Debouncing changes', detail: `Waiting ${status.debounceMs || 500} ms for edits to settle before indexing.`, step: 'listen', active: true }
   if (status.stage === 'waiting-indexer') return { label: 'Waiting for indexer', detail: 'Another indexing operation holds this repository. Pending changes will run when it finishes.', step: 'index', active: true }
-  if (status.stage === 'waiting-embedding') return { label: 'Waiting for embedding service', detail: 'An embedding request is in flight.', step: 'embed', active: true }
-  if (status.stage === 'embedding') return { label: 'Embedding symbols', detail: 'Preparing and saving embeddings for indexed code.', step: 'embed', active: true }
   if (status.stage === 'live-map' || status.stage === 'materialize') return { label: 'Updating live map', detail: 'Saving the diagram and change overlays.', step: 'map', active: true }
   if (status.state === 'scanning') {
     const stages: Record<string, string> = { discover: 'Discovering sources', 'tree-sitter': 'Parsing sources', scip: 'Indexing symbols', relationships: 'Resolving relationships', infra: 'Indexing infrastructure', verify: 'Verifying index', publish: 'Publishing snapshot' }

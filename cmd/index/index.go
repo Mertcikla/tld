@@ -20,7 +20,6 @@ import (
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	ci "github.com/mertcikla/tld/v2/internal/codeindex/config"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
-	"github.com/mertcikla/tld/v2/internal/codeindex/embed"
 	"github.com/mertcikla/tld/v2/internal/codeindex/gitstate"
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
@@ -45,7 +44,6 @@ type options struct {
 	detach       bool
 	watchOwner   string
 	jsonOut      bool
-	embed        bool
 	materialize  bool
 	dataDir      string
 	pollInterval time.Duration
@@ -63,10 +61,8 @@ func NewIndexCmd() *cobra.Command {
 		Long: `Index extracts code facts, edges, and chunks from a repository using the
 in-tree codeindex engine and publishes an immutable snapshot.
 
-Embeddings are computed by default and require a running embedding server
-(start one with 'make embed-server'); pass --embed=false to publish a graph
-without vectors. For a one-time index, pass --materialize to additionally
-project candidate elements and connectors into a workspace view.
+For a one-time index, pass --materialize to additionally project candidate
+elements and connectors into a workspace view.
 
 With --watch, Git's current commit is the Base and the combined staged,
 unstaged, and nonignored untracked files are the Head. Git changes trigger
@@ -92,7 +88,6 @@ The blast-radius slider adds existing unchanged elements by dependency hops.`,
 	c.Flags().StringVar(&opts.watchOwner, "watch-owner", "cli", "internal: who started the watcher (cli or server)")
 	_ = c.Flags().MarkHidden("watch-owner")
 	c.Flags().BoolVar(&opts.jsonOut, "json", false, "emit machine-readable JSON")
-	c.Flags().BoolVar(&opts.embed, "embed", true, "compute embeddings for the snapshot (requires a working embedding server)")
 	c.Flags().BoolVar(&opts.materialize, "materialize", false, "also materialize candidates into a workspace view (opt-in)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
 	c.Flags().DurationVar(&opts.pollInterval, "poll-interval", 2*time.Second, "Git change polling interval")
@@ -158,11 +153,6 @@ func run(cmd *cobra.Command, opts options) error {
 		dataDir:  dataDir,
 		out:      cmd.OutOrStdout(),
 	}
-	if opts.embed {
-		if err := (embed.Client{Config: eng.cfg}).Health(ctx); err != nil {
-			return err
-		}
-	}
 	if opts.watch {
 		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -192,13 +182,12 @@ var indexStageDisplay = map[string]string{
 
 var indexStageOrder = []string{
 	"Discover", "Parse sources", "Index symbols", "Relationships", "Infrastructure", "Verify",
-	"Publish snapshot", "Embeddings", "Materialize view",
+	"Publish snapshot", "Materialize view",
 	"Save change overlay",
 }
 
 const (
 	stagePublish     = "Publish snapshot"
-	stageEmbeddings  = "Embeddings"
 	stageMaterialize = "Materialize view"
 	stageChanges     = "Save change overlay"
 )
@@ -288,18 +277,6 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 	if err := e.store.Publish(ctx, root, snap, g); err != nil {
 		tracker.Fail(stagePublish, err)
 		return nil, parity.Report{}, nil, false, err
-	}
-
-	if e.opts.embed && e.cfg.Embedding.Endpoint != "" {
-		tracker.Begin(stageEmbeddings)
-		client := embed.Client{Config: e.cfg, Store: e.store, Progress: func(current, total int, detail string) {
-			tracker.Report(stageEmbeddings, int64(current), int64(total), detail)
-		}}
-		if err := client.Embed(ctx, snap); err != nil {
-			wrapped := fmt.Errorf("embed: %w", err)
-			tracker.Fail(stageEmbeddings, wrapped)
-			return nil, parity.Report{}, nil, false, wrapped
-		}
 	}
 
 	var mres *materialize.Result
@@ -612,22 +589,6 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	g, err := e.store.LoadGraph(ctx, snap.Id)
 	if err != nil {
 		return nil, parity.Report{}, nil, err
-	}
-	if e.opts.embed {
-		reportStage("embedding")
-		tracker.Begin(stageEmbeddings)
-		client := embed.Client{Config: e.cfg, Store: e.store, RequestState: func(waiting bool) {
-			if waiting {
-				reportStage("waiting-embedding")
-			} else {
-				reportStage("embedding")
-			}
-		}, Progress: func(current, total int, detail string) {
-			tracker.Report(stageEmbeddings, int64(current), int64(total), detail)
-		}}
-		if err = client.Embed(ctx, snap); err != nil {
-			return nil, parity.Report{}, nil, err
-		}
 	}
 	var mres *materialize.Result
 	if e.opts.materialize {

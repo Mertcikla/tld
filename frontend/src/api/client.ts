@@ -168,7 +168,6 @@ export interface CodeSnapshot {
   gitRevision: string
   gitBranch: string
   ingestionStatus: string
-  embeddingStatus: string
   projects: CodeSnapshotProject[]
   warnings: string[]
   provenance?: string
@@ -508,7 +507,6 @@ export function mapCodeSnapshot(snapshot: CodeSnapshotProto): CodeSnapshot {
     gitRevision: snapshot.gitRevision,
     gitBranch: snapshot.gitBranch,
     ingestionStatus: snapshot.ingestionStatus,
-    embeddingStatus: snapshot.embeddingStatus,
     projects: snapshot.projects.map((project) => ({
       root: project.root,
       language: project.language,
@@ -1450,30 +1448,6 @@ export const api = {
         },
       },
 
-      populate: {
-        getQuery: async (id: number): Promise<{ query: string; enriched_query: string }> => {
-          const res = await fetch(apiUrl(`/views/${id}/populate-query`))
-          if (!res.ok) throw new Error('Failed to load populate query')
-          const json = await res.json() as { query: string; enriched_query?: string }
-          return { query: json.query, enriched_query: json.enriched_query ?? json.query }
-        },
-        search: async (id: number, q: string, limit: number): Promise<Array<LibraryElement & { similarity_score: number; match_kind?: string; match_reason?: string; related_to?: string; via_kind?: string; placed?: boolean }>> => {
-          const params = new URLSearchParams({ q, limit: String(limit) })
-          const res = await fetch(apiUrl(`/views/${id}/populate?${params}`))
-          if (!res.ok) throw await responseError(res, 'Failed to run similarity search')
-          const json = await res.json() as { results: Array<Record<string, unknown> & { similarity_score: number; match_kind?: string; match_reason?: string; related_to?: string; via_kind?: string; placed?: boolean }> }
-          return (json.results ?? []).map(r => ({
-            ...protoElementToLibrary(r),
-            similarity_score: r.similarity_score,
-            match_kind: r.match_kind,
-            match_reason: r.match_reason,
-            related_to: r.related_to,
-            via_kind: r.via_kind,
-            placed: Boolean(r.placed),
-          }))
-        },
-      },
-
       visibilityOverrides: {
         list: async (id: number): Promise<VisibilityOverride[]> => {
           const res = await fetch(apiUrl(`/views/${id}/visibility-overrides`))
@@ -2058,10 +2032,9 @@ export const api = {
       const result = await codeIndexWatchClient.getWatchStatus({ repositoryId }, { signal })
       return mapWatchStatus(result)
     }),
-    startWatch: (repositoryId: string, options: { embed?: boolean; materialize?: boolean } = {}): Promise<RepositoryWatchStatus> => rpc(async () => {
+    startWatch: (repositoryId: string, options: { materialize?: boolean } = {}): Promise<RepositoryWatchStatus> => rpc(async () => {
       const result = await codeIndexWatchClient.startWatch({
         repositoryId,
-        embed: options.embed ?? true,
         materialize: options.materialize ?? false,
       })
       return mapWatchStatus(result)

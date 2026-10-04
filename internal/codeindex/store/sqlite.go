@@ -93,14 +93,13 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 	warnings, _ := marshalJSON(snap.Warnings)
 	tools, _ := marshalJSON(snap.ToolVersions)
 	_, err := tx.NewRaw(`INSERT INTO codeindex_snapshots
-		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, embedding_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, capture_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, capture_order)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			repository_id = excluded.repository_id,
 			git_revision = excluded.git_revision,
 			git_branch = excluded.git_branch,
 			ingestion_status = excluded.ingestion_status,
-			embedding_status = excluded.embedding_status,
 			config_hash = excluded.config_hash,
 			projects_json = excluded.projects_json,
 			warnings_json = excluded.warnings_json,
@@ -108,7 +107,7 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
         provenance = excluded.provenance, content_fingerprint = excluded.content_fingerprint,
         commit_message = excluded.commit_message`,
 		snap.Id, snap.RepositoryId, snap.CreatedUnix, snap.GitRevision, snap.GitBranch,
-		snap.IngestionStatus, snap.EmbeddingStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, snap.CommitMessage, time.Now().UnixNano()).Exec(ctx)
+		snap.IngestionStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, snap.CommitMessage, time.Now().UnixNano()).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("upsert snapshot: %w", err)
 	}
@@ -238,14 +237,14 @@ func sortedEdges(g *graph.Graph) []*pb.EdgeFact {
 func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 	var (
 		snap                                         pb.Snapshot
-		projects, warnings, tools                    string
-		createdUnix                                  int64
-		gitRevision, gitBranch                       string
-		ingestion, embedding, configHash, repository string
+		projects, warnings, tools          string
+		createdUnix                        int64
+		gitRevision, gitBranch             string
+		ingestion, configHash, repository  string
 	)
-	err := s.bun.NewRaw(`SELECT repository_id, created_unix, git_revision, git_branch, ingestion_status, embedding_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message
+	err := s.bun.NewRaw(`SELECT repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message
 		FROM codeindex_snapshots WHERE id = ?`, id).
-		Scan(ctx, &repository, &createdUnix, &gitRevision, &gitBranch, &ingestion, &embedding, &configHash, &projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage)
+		Scan(ctx, &repository, &createdUnix, &gitRevision, &gitBranch, &ingestion, &configHash, &projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +254,6 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 	snap.GitRevision = gitRevision
 	snap.GitBranch = gitBranch
 	snap.IngestionStatus = ingestion
-	snap.EmbeddingStatus = embedding
 	snap.ConfigHash = configHash
 	_ = json.Unmarshal([]byte(projects), &snap.Projects)
 	_ = json.Unmarshal([]byte(warnings), &snap.Warnings)
@@ -298,7 +296,7 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snapshot, error) {
 	rows, err := s.bun.QueryContext(ctx, `SELECT
 		id, repository_id, created_unix, git_revision, git_branch,
-		ingestion_status, embedding_status, config_hash,
+		ingestion_status, config_hash,
 		projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message,
 		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = codeindex_snapshots.id),
 		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = codeindex_snapshots.id),
@@ -322,7 +320,7 @@ func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snaps
 		snap.Statistics = &pb.SnapshotStatistics{}
 		if err := rows.Scan(
 			&snap.Id, &snap.RepositoryId, &createdUnix, &snap.GitRevision, &snap.GitBranch,
-			&snap.IngestionStatus, &snap.EmbeddingStatus, &snap.ConfigHash,
+			&snap.IngestionStatus, &snap.ConfigHash,
 			&projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage,
 			&snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources, &snap.Statistics.Chunks,
 		); err != nil {
@@ -487,79 +485,6 @@ func (s *Store) Chunks(ctx context.Context, snapshotID string) ([]*pb.Chunk, err
 		c.SnapshotId = snapshotID
 	}
 	return chunks, nil
-}
-
-// UpdateSnapshot updates mutable status fields on an existing snapshot.
-func (s *Store) UpdateSnapshot(ctx context.Context, snap *pb.Snapshot) error {
-	warnings, _ := marshalJSON(snap.Warnings)
-	res, err := s.bun.NewRaw(`UPDATE codeindex_snapshots SET embedding_status = ?, warnings_json = ? WHERE id = ?`,
-		snap.EmbeddingStatus, warnings, snap.Id).Exec(ctx)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return notFound("snapshot", snap.Id)
-	}
-	return nil
-}
-
-func (s *Store) GetCachedEmbedding(ctx context.Context, key string) ([]float32, error) {
-	var blob []byte
-	err := s.bun.NewRaw(`SELECT vector FROM codeindex_embedding_cache WHERE key = ?`, key).Scan(ctx, &blob)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return decodeVector(blob), nil
-}
-
-func (s *Store) CacheEmbedding(ctx context.Context, key string, vector []float32) error {
-	_, err := s.bun.NewRaw(`INSERT INTO codeindex_embedding_cache (key, profile, input_hash, dimensions, vector)
-		VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT(key) DO UPDATE SET dimensions = excluded.dimensions, vector = excluded.vector`,
-		key, "", "", len(vector), encodeVector(vector)).Exec(ctx)
-	return err
-}
-
-func (s *Store) SaveEmbedding(ctx context.Context, e *pb.Embedding) error {
-	if e == nil {
-		return fmt.Errorf("save embedding: nil embedding")
-	}
-	id := e.Id
-	if id == "" {
-		id = graph.ID(e.ChunkId, e.Profile)
-	}
-	_, err := s.bun.NewRaw(`INSERT INTO codeindex_embeddings (id, chunk_id, fact_id, snapshot_id, profile, model, dimensions, input_hash, vector)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET vector = excluded.vector, dimensions = excluded.dimensions, snapshot_id = excluded.snapshot_id
-		WHERE codeindex_embeddings.input_hash <> excluded.input_hash`,
-		id, e.ChunkId, e.FactId, e.SnapshotId, e.Profile, e.Model, e.Dimensions, e.InputHash, encodeVector(e.Vector)).Exec(ctx)
-	return err
-}
-
-func (s *Store) SaveFactEmbedding(ctx context.Context, e *pb.Embedding) error {
-	if e == nil {
-		return fmt.Errorf("save fact embedding: nil embedding")
-	}
-	id := e.Id
-	if id == "" {
-		id = graph.ID("fact-embedding", e.FactId, e.Profile)
-	}
-	// A reused fact's embedding is content-identical, so skip the vector rewrite
-	// and ANN update to keep incremental publishes cheap.
-	var existing string
-	if err := s.bun.NewRaw(`SELECT input_hash FROM codeindex_fact_embeddings WHERE id = ?`, id).Scan(ctx, &existing); err == nil && existing == e.InputHash {
-		return nil
-	}
-	if _, err := s.bun.NewRaw(`INSERT INTO codeindex_fact_embeddings (id, fact_id, snapshot_id, profile, model, dimensions, input_hash, vector)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET vector = excluded.vector, dimensions = excluded.dimensions, snapshot_id = excluded.snapshot_id`,
-		id, e.FactId, e.SnapshotId, e.Profile, e.Model, e.Dimensions, e.InputHash, encodeVector(e.Vector)).Exec(ctx); err != nil {
-		return err
-	}
-	return s.indexFactVector(ctx, id, e)
 }
 
 func escapeLike(s string) string {

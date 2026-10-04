@@ -10,17 +10,15 @@ import (
 )
 
 // DeleteRepository removes a repository, every snapshot it published, and all
-// snapshot-scoped records (sources, facts, chunks, edges, embeddings, analysis
-// runs and their groups), plus any resource mappings recorded for it. It does
-// not touch workspace resources materialized from the repository.
+// snapshot-scoped records (sources, facts, chunks, edges, analysis runs and
+// their groups), plus any resource mappings recorded for it. It does not touch
+// workspace resources materialized from the repository.
 func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error {
 	if strings.TrimSpace(repositoryID) == "" {
 		return fmt.Errorf("repository id is required")
 	}
 	snapshotScoped := []string{
 		"codeindex_project_artifacts",
-		"codeindex_embeddings",
-		"codeindex_fact_embeddings",
 		"codeindex_chunks",
 		"codeindex_edges",
 		"codeindex_facts",
@@ -65,8 +63,8 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 }
 
 // DeleteSnapshot removes one published snapshot and the records scoped to it
-// (sources, project artifacts, embeddings, analysis runs and their groups,
-// completed maps, and resource mappings). Facts, chunks, and edges are shared
+// (sources, project artifacts, analysis runs and their groups, completed maps,
+// and resource mappings). Facts, chunks, and edges are shared
 // across snapshots through membership tables, so only this snapshot's
 // membership is removed; entities no longer referenced by any snapshot are
 // garbage collected. When the deleted snapshot was the repository's latest, the
@@ -88,8 +86,6 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 			"codeindex_groups",
 			"codeindex_analysis_runs",
 			"codeindex_completed_maps",
-			"codeindex_embeddings",
-			"codeindex_fact_embeddings",
 			"codeindex_project_artifacts",
 			"codeindex_sources",
 			"codeindex_snapshot_facts",

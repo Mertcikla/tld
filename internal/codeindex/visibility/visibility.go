@@ -2,7 +2,7 @@
 // decide which candidates are shown. It reproduces the intent of the removed
 // analyzer filter (changed files, user overrides, high-signal infrastructure,
 // graph proximity, and noise penalties) but sources its inputs from the
-// codeindex projection and embeddings.
+// codeindex projection.
 package visibility
 
 import (

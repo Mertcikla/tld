@@ -8,18 +8,16 @@ import (
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/codeindex/community"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/mapper"
 	"github.com/mertcikla/tld/v2/internal/store"
 )
 
-func groupMapDataset() *mapper.Dataset {
-	facts := []mapper.Fact{
+func groupMapFiles() []community.File {
+	return []community.File{
 		{ID: "id-a", Path: "src/alpha/a.go", DisplayName: "a.go", Language: "go"},
 		{ID: "id-b", Path: "src/alpha/b.go", DisplayName: "b.go", Language: "go"},
 		{ID: "id-c", Path: "src/beta/c.go", DisplayName: "c.go", Language: "go"},
 		{ID: "id-d", Path: "src/beta/d.go", DisplayName: "d.go", Language: "go"},
 	}
-	return &mapper.Dataset{Snapshot: "snap-1", Profile: "community", Facts: facts}
 }
 
 func openGroupMapStore(t *testing.T) (*store.SQLiteStore, *cstore.Store) {
@@ -46,7 +44,7 @@ func viewIDByName(t *testing.T, sqliteStore *store.SQLiteStore, name string) int
 func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 	ctx := context.Background()
 	sqliteStore, idx := openGroupMapStore(t)
-	dataset := groupMapDataset()
+	files := groupMapFiles()
 	groups := []*community.Group{
 		{
 			Key: "alpha", Name: "alpha", Files: 2, Members: []int{1},
@@ -60,7 +58,7 @@ func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 		RepositoryName: "demo",
 		RepositoryRoot: "/repo/demo",
 		SnapshotID:     "snap-1",
-		Dataset:        dataset,
+		Files:          files,
 		Groups:         groups,
 		Edges: []MapEdge{
 			{FromFactID: "id-a", ToFactID: "id-b", Weight: 2},
@@ -154,13 +152,13 @@ func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 func TestApplyGroupMapLeafConnectorBudget(t *testing.T) {
 	ctx := context.Background()
 	sqliteStore, idx := openGroupMapStore(t)
-	dataset := groupMapDataset()
+	files := groupMapFiles()
 	groups := []*community.Group{
 		{Key: "leaf", Name: "leaf", Files: 3, Members: []int{0, 1, 2}},
 	}
 	input := GroupMapInput{
 		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
-		Dataset: dataset, Groups: groups,
+		Files: files, Groups: groups,
 		Edges: []MapEdge{
 			{FromFactID: "id-a", ToFactID: "id-b", Weight: 3},
 			{FromFactID: "id-b", ToFactID: "id-c", Weight: 2},
@@ -186,20 +184,20 @@ func TestApplyGroupMapLeafConnectorBudget(t *testing.T) {
 func TestApplyGroupMapPrunesStaleGroups(t *testing.T) {
 	ctx := context.Background()
 	sqliteStore, idx := openGroupMapStore(t)
-	dataset := groupMapDataset()
+	files := groupMapFiles()
 	groups := []*community.Group{
 		{Key: "one", Name: "one", Files: 1, Members: []int{0}},
 	}
 	input := GroupMapInput{
 		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
-		Dataset: dataset, Groups: groups,
+		Files: files, Groups: groups,
 	}
 	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, input, MapOptions{}); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 	updated := GroupMapInput{
 		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
-		Dataset: dataset,
+		Files: files,
 		Groups:  []*community.Group{{Key: "two", Name: "two", Files: 2, Members: []int{1, 2}}},
 	}
 	result, err := ApplyGroupMap(ctx, sqliteStore, idx, updated, MapOptions{})
@@ -211,5 +209,98 @@ func TestApplyGroupMapPrunesStaleGroups(t *testing.T) {
 	}
 	if _, ok, err := idx.MappingByLogicalKey(ctx, groupElementKey("repo-1", "one")); err != nil || ok {
 		t.Fatalf("stale group mapping not pruned (ok=%v err=%v)", ok, err)
+	}
+}
+
+func TestApplyGroupMapNestsUnderWorkspaceRoot(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, idx := openGroupMapStore(t)
+	result, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+		RepositoryID:   "repo-1",
+		RepositoryName: "demo",
+		RepositoryRoot: "/repo/demo",
+		SnapshotID:     "snap-1",
+		Files:          groupMapFiles(),
+		Groups: []*community.Group{
+			{Key: "one", Name: "one", Files: 2, Members: []int{0, 1}},
+		},
+	}, MapOptions{})
+	if err != nil {
+		t.Fatalf("apply group map: %v", err)
+	}
+
+	var workspaceID int64
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT id FROM views WHERE name = 'Workspace' ORDER BY id LIMIT 1`).Scan(&workspaceID); err != nil {
+		t.Fatalf("find workspace root: %v", err)
+	}
+	var topPlacements int
+	if err := sqliteStore.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM placements p JOIN elements e ON e.id = p.element_id WHERE p.view_id = ? AND e.name = ?`,
+		workspaceID, "demo").Scan(&topPlacements); err != nil {
+		t.Fatal(err)
+	}
+	if topPlacements != 1 {
+		t.Fatalf("top element placements in workspace root = %d, want 1", topPlacements)
+	}
+	var ownerName string
+	if err := sqliteStore.DB().QueryRowContext(ctx,
+		`SELECT e.name FROM views v JOIN elements e ON e.id = v.owner_element_id WHERE v.id = ?`,
+		result.ViewID).Scan(&ownerName); err != nil {
+		t.Fatalf("map view owner: %v", err)
+	}
+	if ownerName != "demo" {
+		t.Fatalf("map view owner = %q, want demo", ownerName)
+	}
+}
+
+func TestApplyGroupMapMaterializesImports(t *testing.T) {
+	ctx := context.Background()
+	sqliteStore, idx := openGroupMapStore(t)
+	result, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+		RepositoryID:   "repo-1",
+		RepositoryName: "demo",
+		RepositoryRoot: "/repo/demo",
+		SnapshotID:     "snap-1",
+		Files:          groupMapFiles(),
+		Groups: []*community.Group{
+			{Key: "one", Name: "one", Files: 2, Members: []int{0, 1}},
+			{Key: "two", Name: "two", Files: 2, Members: []int{2, 3}},
+		},
+		Imports: []MapImport{
+			{FileFactID: "id-a", Import: "flask"},
+			{FileFactID: "id-a", Import: "celery"},
+			{FileFactID: "id-a", Import: "flask"}, // duplicate, must be deduped
+			{FileFactID: "id-c", Import: "flask"},
+		},
+	}, MapOptions{})
+	if err != nil {
+		t.Fatalf("apply group map: %v", err)
+	}
+	if result.Connectors != 3 {
+		t.Fatalf("import connectors = %d, want 3 (deduped)", result.Connectors)
+	}
+	var external, flask, celery int
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'External'`).Scan(&external); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'flask'`).Scan(&flask); err != nil {
+		t.Fatal(err)
+	}
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'celery'`).Scan(&celery); err != nil {
+		t.Fatal(err)
+	}
+	if external != 1 || flask != 1 || celery != 1 {
+		t.Fatalf("External=%d flask=%d celery=%d, want 1/1/1", external, flask, celery)
+	}
+	var placedImports int
+	if err := sqliteStore.DB().QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM placements p
+		JOIN elements e ON e.id = p.element_id
+		JOIN views v ON v.id = p.view_id
+		WHERE v.name = 'External' AND e.name IN ('flask', 'celery')`).Scan(&placedImports); err != nil {
+		t.Fatal(err)
+	}
+	if placedImports != 2 {
+		t.Fatalf("imports placed in External view = %d, want 2", placedImports)
 	}
 }

@@ -116,7 +116,7 @@ func TestPrepareBranchResolvesAndCapturesImmutableCommit(t *testing.T) {
 	}
 }
 
-func TestPrepareWorkingTreeIncludesLocalContentsAndCanRetry(t *testing.T) {
+func TestPrepareWorkingTreeIncludesLocalContents(t *testing.T) {
 	s, root, sha, repoID := prepareFixture(t)
 	ctx := context.Background()
 	send := func(*pb.MapProgress) {}
@@ -141,15 +141,8 @@ func TestPrepareWorkingTreeIncludesLocalContentsAndCanRetry(t *testing.T) {
 	if err != nil || changed.Id == snap.Id {
 		t.Fatalf("changed contents: %v", err)
 	}
-	if err := s.ensureEmbeddings(ctx, changed, send); err == nil {
-		t.Fatal("expected embedding configuration error")
-	}
 	if _, err := s.idx.Snapshot(ctx, changed.Id); err != nil {
-		t.Fatal("failed embedding discarded indexed snapshot")
-	}
-	records, err := s.idx.CompletedMaps(ctx, repoID)
-	if err != nil || len(records) != 0 {
-		t.Fatalf("failed map recorded as complete: %v", err)
+		t.Fatal("changed snapshot was not persisted")
 	}
 }
 

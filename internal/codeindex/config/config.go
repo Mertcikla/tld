@@ -2,8 +2,6 @@ package config
 
 import (
 	"os"
-	"strconv"
-	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -37,17 +35,6 @@ type Config struct {
 		RustAnalyzer   string `yaml:"rust_analyzer"`
 		TimeoutSeconds int    `yaml:"timeout_seconds"`
 	} `yaml:"tools"`
-	Embedding struct {
-		Endpoint       string `yaml:"endpoint"`
-		Model          string `yaml:"model"`
-		APIKey         string `yaml:"api_key"`
-		Dimensions     int    `yaml:"dimensions"`
-		BatchSize      int    `yaml:"batch_size"`
-		MaxInputChars  int    `yaml:"max_input_chars"`
-		Task           string `yaml:"task"`
-		DocumentPrefix string `yaml:"document_prefix"`
-		QueryPrefix    string `yaml:"query_prefix"`
-	} `yaml:"embedding"`
 }
 
 func Default() Config {
@@ -71,7 +58,6 @@ func Default() Config {
 	c.Tools.SCIPRuby = "scip-ruby"
 	c.Tools.RustAnalyzer = "rust-analyzer"
 	c.Tools.TimeoutSeconds = 300
-	c.Embedding.BatchSize = 32
 	return c
 }
 func Load(path string) (Config, error) {
@@ -85,33 +71,15 @@ func Load(path string) (Config, error) {
 			return c, err
 		}
 	}
-	env := map[string]*string{"CODEINDEX_GRPC_ADDRESS": &c.GRPC.Address, "CODEINDEX_SURREAL_URL": &c.Surreal.URL, "CODEINDEX_SURREAL_NAMESPACE": &c.Surreal.Namespace, "CODEINDEX_SURREAL_DATABASE": &c.Surreal.Database, "CODEINDEX_SURREAL_USERNAME": &c.Surreal.Username, "CODEINDEX_SURREAL_PASSWORD": &c.Surreal.Password, "CODEINDEX_SCIP_GO": &c.Tools.SCIPGo, "CODEINDEX_SCIP_TYPESCRIPT": &c.Tools.SCIPTypeScript, "CODEINDEX_SCIP_PYTHON": &c.Tools.SCIPPython, "CODEINDEX_SCIP_DOTNET": &c.Tools.SCIPDotnet, "CODEINDEX_SCIP_CLANG": &c.Tools.SCIPClang, "CODEINDEX_SCIP_JAVA": &c.Tools.SCIPJava, "CODEINDEX_SCIP_DART": &c.Tools.SCIPDart, "CODEINDEX_SCIP_PHP": &c.Tools.SCIPPhp, "CODEINDEX_SCIP_RUBY": &c.Tools.SCIPRuby, "CODEINDEX_RUST_ANALYZER": &c.Tools.RustAnalyzer, "CODEINDEX_EMBEDDING_ENDPOINT": &c.Embedding.Endpoint, "CODEINDEX_EMBEDDING_MODEL": &c.Embedding.Model, "CODEINDEX_EMBEDDING_API_KEY": &c.Embedding.APIKey, "CODEINDEX_EMBEDDING_TASK": &c.Embedding.Task, "CODEINDEX_EMBEDDING_DOCUMENT_PREFIX": &c.Embedding.DocumentPrefix, "CODEINDEX_EMBEDDING_QUERY_PREFIX": &c.Embedding.QueryPrefix}
+	env := map[string]*string{"CODEINDEX_GRPC_ADDRESS": &c.GRPC.Address, "CODEINDEX_SURREAL_URL": &c.Surreal.URL, "CODEINDEX_SURREAL_NAMESPACE": &c.Surreal.Namespace, "CODEINDEX_SURREAL_DATABASE": &c.Surreal.Database, "CODEINDEX_SURREAL_USERNAME": &c.Surreal.Username, "CODEINDEX_SURREAL_PASSWORD": &c.Surreal.Password, "CODEINDEX_SCIP_GO": &c.Tools.SCIPGo, "CODEINDEX_SCIP_TYPESCRIPT": &c.Tools.SCIPTypeScript, "CODEINDEX_SCIP_PYTHON": &c.Tools.SCIPPython, "CODEINDEX_SCIP_DOTNET": &c.Tools.SCIPDotnet, "CODEINDEX_SCIP_CLANG": &c.Tools.SCIPClang, "CODEINDEX_SCIP_JAVA": &c.Tools.SCIPJava, "CODEINDEX_SCIP_DART": &c.Tools.SCIPDart, "CODEINDEX_SCIP_PHP": &c.Tools.SCIPPhp, "CODEINDEX_SCIP_RUBY": &c.Tools.SCIPRuby, "CODEINDEX_RUST_ANALYZER": &c.Tools.RustAnalyzer}
 	for name, p := range env {
 		if v, ok := os.LookupEnv(name); ok {
 			*p = v
 		}
 	}
-	if v := os.Getenv("CODEINDEX_EMBEDDING_DIMENSIONS"); v != "" {
-		n, e := strconv.Atoi(v)
-		if e != nil {
-			return c, e
-		}
-		c.Embedding.Dimensions = n
-	}
-	if v := os.Getenv("CODEINDEX_EMBEDDING_MAX_INPUT_CHARS"); v != "" {
-		n, e := strconv.Atoi(v)
-		if e != nil {
-			return c, e
-		}
-		c.Embedding.MaxInputChars = n
-	}
 	if c.Tools.TimeoutSeconds <= 0 {
 		c.Tools.TimeoutSeconds = 300
 	}
-	if c.Embedding.BatchSize <= 0 {
-		c.Embedding.BatchSize = 32
-	}
-	c.Embedding.Endpoint = strings.TrimRight(c.Embedding.Endpoint, "/")
 	return c, nil
 }
 func (c Config) ToolTimeout() time.Duration {

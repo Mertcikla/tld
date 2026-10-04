@@ -45,13 +45,6 @@ func TestConfigureSQLiteDBEnablesBusyTimeoutAndWAL(t *testing.T) {
 	}
 }
 
-func TestOpenStoreRegistersSQLiteVecBeforeOpeningConnections(t *testing.T) {
-	store := openAppStore(t)
-	if _, err := store.DB().Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS test_vec USING vec(id)`); err != nil {
-		t.Fatalf("create sqlite-vec virtual table: %v", err)
-	}
-}
-
 func TestStoreElementsSearchPaginationAndViewMetadata(t *testing.T) {
 	store := openAppStore(t)
 	ctx := context.Background()

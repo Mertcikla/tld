@@ -11,7 +11,6 @@ import (
 
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
-	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
 )
 
@@ -96,9 +95,6 @@ func applySQLiteMigrationsWithoutTracking(t *testing.T, dbPath string) {
 		t.Fatal(err)
 	}
 	defer func() { _ = db.Close() }()
-	if err := sqlitevec.Register(db); err != nil {
-		t.Fatal(err)
-	}
 
 	entries, err := fs.ReadDir(assets.FS, "migrations")
 	if err != nil {

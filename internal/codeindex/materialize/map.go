@@ -6,21 +6,20 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mertcikla/tld/v2/internal/codeindex/community"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/layout"
-	"github.com/mertcikla/tld/v2/internal/mapper"
 )
 
-// MapInput is the mapper pipeline output to materialize into the workspace.
+// MapInput is the shared state the map materializer works against. Files are
+// the repository's file facts; Edges and Imports are resolved dependencies.
 type MapInput struct {
 	RepositoryID   string
 	RepositoryName string
 	RepositoryRoot string
 	SnapshotID     string
-	RunID          string
-	Dataset        *mapper.Dataset
-	Bins           *mapper.BinningResult
+	Files          []community.File
 	// Edges are file-to-file dependencies resolved from symbol edges.
 	Edges []MapEdge
 	// Imports are external imports declared by the materialized files. They are
@@ -77,91 +76,6 @@ type MapResult struct {
 
 const mapKeyPrefix = "map|"
 
-// ApplyMap materializes the mapper folder/bin/cluster hierarchy into the
-// workspace. A top element representing the map is placed in the workspace root
-// view and owns the map view: the map view contains folder, bin and
-// standalone-file elements; each bin view contains its cluster elements; each
-// cluster view contains its member file elements. Resources are keyed by
-// canonical logical keys so reruns upsert instead of duplicating, and stale map
-// resources are pruned.
-func ApplyMap(ctx context.Context, ws core.Store, idx IndexStore, input MapInput, opts MapOptions) (MapResult, error) {
-	if input.Dataset == nil || input.Bins == nil {
-		return MapResult{}, fmt.Errorf("map materialize requires a dataset and binning result")
-	}
-	existing, err := idx.MappingsByRepository(ctx, input.RepositoryID)
-	if err != nil {
-		return MapResult{}, err
-	}
-	byKey := make(map[string]cstore.ResourceMapping, len(existing))
-	for _, mapping := range existing {
-		byKey[mapping.LogicalKey] = mapping
-	}
-	naming, clusterNames, err := inferClusterNames(input.Dataset, input.Bins)
-	if err != nil {
-		return MapResult{}, err
-	}
-	m := &mapMaterializer{
-		ctx:             ctx,
-		ws:              ws,
-		idx:             idx,
-		input:           input,
-		opts:            opts,
-		byKey:           byKey,
-		kept:            map[string]bool{},
-		placed:          map[int64]map[int64]bool{},
-		position:        map[int64]int{},
-		naming:          naming,
-		clusterNames:    clusterNames,
-		fileElementIDs:  map[string]int64{},
-		fileChains:      map[string][]int64{},
-		fileElementPath: map[string][]int64{},
-		queued:          map[int64]map[int64]bool{},
-		layoutEdges:     map[int64][]layout.Connector{},
-		leafViews:       map[int64]bool{},
-		maxConnectors:   maxConnectorsPerView(opts),
-		maxLeaf:         maxLeafConnectorsPerView(opts),
-		total:           countMapResources(input.Bins.Tree) + 1,
-	}
-	rootKey := mapKeyPrefix + "view|" + input.RepositoryID
-	topKey := mapKeyPrefix + "top|" + input.RepositoryID
-	legacyMapViewID := int64(0)
-	if mapping, ok := byKey[rootKey]; ok && mapping.Kind == cstore.MappingView {
-		legacyMapViewID = mapping.ResourceID
-	}
-	workspaceRootID, err := workspaceRootViewID(ctx, ws, legacyMapViewID)
-	if err != nil {
-		return MapResult{}, err
-	}
-	topElementID, err := m.upsertElement(topKey, mapTopElement(input))
-	if err != nil {
-		return MapResult{}, err
-	}
-	rootViewID, err := m.upsertView(rootKey, mapViewName(input), "Map", &topElementID)
-	if err != nil {
-		return MapResult{}, err
-	}
-	m.result.ViewID = rootViewID
-	if err := m.place(workspaceRootID, topElementID); err != nil {
-		return MapResult{}, err
-	}
-	if err := m.materializeFolder(input.Bins.Tree, rootViewID, []int64{rootViewID}, nil); err != nil {
-		return MapResult{}, err
-	}
-	if err := m.materializeConnectors(); err != nil {
-		return MapResult{}, err
-	}
-	if err := m.materializeImports(rootViewID); err != nil {
-		return m.result, err
-	}
-	if err := m.applyLayout(); err != nil {
-		return m.result, err
-	}
-	if err := m.pruneMapResources(); err != nil {
-		return m.result, err
-	}
-	return m.result, nil
-}
-
 type mapMaterializer struct {
 	ctx             context.Context
 	ws              core.Store
@@ -174,8 +88,6 @@ type mapMaterializer struct {
 	pendingPlaces   []pendingPlacement
 	placed          map[int64]map[int64]bool
 	position        map[int64]int
-	naming          *mapper.NameIndex
-	clusterNames    []string
 	fileElementIDs  map[string]int64
 	fileChains      map[string][]int64
 	fileElementPath map[string][]int64
@@ -194,94 +106,6 @@ type mapMaterializer struct {
 type pendingPlacement struct {
 	viewID    int64
 	elementID int64
-}
-
-func (m *mapMaterializer) materializeFolder(node mapper.FolderNode, viewID int64, chain, elementPath []int64) error {
-	// A view whose only content is files is laid out with the leaf budget.
-	m.leafViews[viewID] = len(node.Children) == 0 && len(node.Bins) == 0 && len(node.Standalone) > 0
-	for _, child := range node.Children {
-		element, err := m.upsertElement(folderKey(m.input.RepositoryID, child.Path), folderElement(child))
-		if err != nil {
-			return err
-		}
-		childViewID, err := m.upsertView(folderViewKey(m.input.RepositoryID, child.Path), folderName(child.Path), "Map", &element)
-		if err != nil {
-			return err
-		}
-		if err := m.queuePlacement(viewID, element); err != nil {
-			return err
-		}
-		if err := m.materializeFolder(child, childViewID, appendView(chain, childViewID), appendElem(elementPath, element)); err != nil {
-			return err
-		}
-	}
-	for binIndex, bin := range node.Bins {
-		name := m.binName(bin, node.Path)
-		element, err := m.upsertElement(binKey(m.input.RepositoryID, node.Path, binIndex), binElement(name, bin))
-		if err != nil {
-			return err
-		}
-		binViewID, err := m.upsertView(binViewKey(m.input.RepositoryID, node.Path, binIndex), name, "Map", &element)
-		if err != nil {
-			return err
-		}
-		if err := m.queuePlacement(viewID, element); err != nil {
-			return err
-		}
-		binViews := chain
-		binElems := appendElem(elementPath, element)
-		for _, clusterIndex := range bin.Clusters {
-			if clusterIndex < 0 || clusterIndex >= len(m.input.Bins.Units) {
-				continue
-			}
-			unit := m.input.Bins.Units[clusterIndex]
-			clusterInput := clusterElement(unit, m.clusterName(clusterIndex))
-			clusterKeyValue := clusterKey(m.input.RepositoryID, node.Path, binIndex, unit.Rank)
-			clusterElementID, err := m.upsertElement(clusterKeyValue, clusterInput)
-			if err != nil {
-				return err
-			}
-			clusterViewID, err := m.upsertView(clusterViewKey(m.input.RepositoryID, node.Path, binIndex, unit.Rank), clusterInput.Name, "Map", &clusterElementID)
-			if err != nil {
-				return err
-			}
-			m.leafViews[clusterViewID] = true
-			if err := m.queuePlacement(binViewID, clusterElementID); err != nil {
-				return err
-			}
-			clusterViews := appendView(binViews, binViewID)
-			clusterElems := appendElem(binElems, clusterElementID)
-			for _, member := range unit.Members {
-				if member < 0 || member >= len(m.input.Dataset.Facts) {
-					continue
-				}
-				fact := m.input.Dataset.Facts[member]
-				fileID, err := m.upsertElement(fileKey(m.input.RepositoryID, fact.ID), m.fileElement(member))
-				if err != nil {
-					return err
-				}
-				if err := m.queuePlacement(clusterViewID, fileID); err != nil {
-					return err
-				}
-				m.recordFile(fact.ID, fileID, appendView(clusterViews, clusterViewID), appendElem(clusterElems, fileID))
-			}
-		}
-	}
-	for _, member := range node.Standalone {
-		if member < 0 || member >= len(m.input.Dataset.Facts) {
-			continue
-		}
-		fact := m.input.Dataset.Facts[member]
-		fileID, err := m.upsertElement(fileKey(m.input.RepositoryID, fact.ID), m.fileElement(member))
-		if err != nil {
-			return err
-		}
-		if err := m.queuePlacement(viewID, fileID); err != nil {
-			return err
-		}
-		m.recordFile(fact.ID, fileID, chain, appendElem(elementPath, fileID))
-	}
-	return nil
 }
 
 // recordFile remembers where a file element sits: the chain of view ids from the
@@ -738,7 +562,7 @@ func (m *mapMaterializer) advance(detail string) {
 }
 
 func (m *mapMaterializer) fileElement(member int) core.LibraryElement {
-	fact := m.input.Dataset.Facts[member]
+	fact := m.input.Files[member]
 	kind := "file"
 	// File facts carry their path as the display name; show only the file name
 	// and keep the full path on FilePath for source linking.
@@ -833,9 +657,8 @@ func workspaceRootViewID(ctx context.Context, ws core.Store, exclude int64) (int
 	return view.ID, nil
 }
 
-// folderName is the last path segment of a folder or file path, so a child
-// nested under A/B is shown as C rather than A/B/C and a file as c.go rather
-// than src/deep/c.go.
+// folderName is the last path segment of a file path, so a file nested under
+// A/B is shown as c.go rather than src/deep/c.go.
 func folderName(path string) string {
 	if path == "." || path == "" {
 		return "root"
@@ -847,114 +670,6 @@ func folderName(path string) string {
 	return path
 }
 
-// inferClusterNames builds the lexical naming index and names the binning
-// units, which are in the same rank order as the pipeline domains. The index is
-// reused to name bins and folders over their aggregated members.
-func inferClusterNames(dataset *mapper.Dataset, bins *mapper.BinningResult) (*mapper.NameIndex, []string, error) {
-	index, err := mapper.NewNameIndex(dataset, mapper.DefaultNameOptions())
-	if err != nil {
-		return nil, nil, err
-	}
-	names := make([]string, len(bins.Units))
-	for i, unit := range bins.Units {
-		names[i] = index.Name(unit.Members)
-	}
-	return index, names, nil
-}
-
-func (m *mapMaterializer) clusterName(index int) string {
-	if index >= 0 && index < len(m.clusterNames) && m.clusterNames[index] != "" {
-		return m.clusterNames[index]
-	}
-	if index >= 0 && index < len(m.input.Bins.Units) {
-		unit := m.input.Bins.Units[index]
-		if m.naming != nil {
-			if folder := m.naming.FallbackName(unit.Members); folder != "" {
-				return folderName(folder)
-			}
-		}
-		return folderName(unit.Folder)
-	}
-	return "Other"
-}
-
-// membersUnderClusters returns every member fact of the given cluster indices.
-func (m *mapMaterializer) membersUnderClusters(indices []int) []int {
-	seen := map[int]bool{}
-	members := make([]int, 0)
-	for _, index := range indices {
-		if index < 0 || index >= len(m.input.Bins.Units) {
-			continue
-		}
-		for _, member := range m.input.Bins.Units[index].Members {
-			if seen[member] {
-				continue
-			}
-			seen[member] = true
-			members = append(members, member)
-		}
-	}
-	return members
-}
-
-// binName infers one name from all the facts it groups. When no token qualifies
-// it falls back to the group's most common source folder, then its own folder.
-// It never emits developer terms or a size suffix.
-func (m *mapMaterializer) binName(bin mapper.Bin, folderPath string) string {
-	members := m.membersUnderClusters(bin.Clusters)
-	if m.naming != nil {
-		if name := m.naming.Name(members); name != "" {
-			return name
-		}
-		if folder := m.naming.FallbackName(members); folder != "" {
-			return folderName(folder)
-		}
-	}
-	return folderName(folderPath)
-}
-
-// folderElement builds the element for a folder node. Folders always keep their
-// path segment as the name: they are structural containers, and inferred naming
-// (used by bins and clusters) would otherwise relabel a parent after a
-// distinctive child, for example internal becoming codeindex.
-func folderElement(node mapper.FolderNode) core.LibraryElement {
-	kind := "folder"
-	description := fmt.Sprintf("%d files", node.Counts.Facts)
-	// Keep the full path in the description since the name is only the base dir.
-	if node.Path != "." && node.Path != "" {
-		description = node.Path + " · " + description
-	}
-	return core.LibraryElement{
-		Name:        folderName(node.Path),
-		Kind:        &kind,
-		Description: &description,
-	}
-}
-
-func binElement(name string, bin mapper.Bin) core.LibraryElement {
-	return core.LibraryElement{
-		Name:        name,
-		Kind:        strPtr(""),
-		Description: strPtr(fmt.Sprintf("%d files", bin.Size)),
-	}
-}
-
-func clusterElement(unit mapper.ClusterUnit, name string) core.LibraryElement {
-	if name == "" {
-		name = "Other"
-	}
-	description := fmt.Sprintf("%d files", unit.Size)
-	if unit.Folder != "" {
-		description += " · " + unit.Folder
-	}
-	if len(unit.Spans) > 1 {
-		description += " · " + strings.Join(unit.Spans, ", ")
-	}
-	// An explicit empty kind clears any previous "cluster" value on update:
-	// UpdateElement uses COALESCE, so a nil kind would keep the old value.
-	return core.LibraryElement{Name: name, Kind: strPtr(""), Description: &description}
-}
-
 func strPtr(value string) *string { return &value }
 
 func gridPositionCols(index, cols int) (float64, float64) {
@@ -964,30 +679,6 @@ func gridPositionCols(index, cols int) (float64, float64) {
 	col := index % cols
 	row := index / cols
 	return float64(120 + col*240), float64(120 + row*180)
-}
-
-func folderKey(repositoryID, path string) string {
-	return mapKeyPrefix + "folder|" + repositoryID + "|" + path
-}
-
-func folderViewKey(repositoryID, path string) string {
-	return mapKeyPrefix + "folderview|" + repositoryID + "|" + path
-}
-
-func binKey(repositoryID, path string, index int) string {
-	return fmt.Sprintf("%sbin|%s|%s|%d", mapKeyPrefix, repositoryID, path, index)
-}
-
-func binViewKey(repositoryID, path string, index int) string {
-	return fmt.Sprintf("%sbinview|%s|%s|%d", mapKeyPrefix, repositoryID, path, index)
-}
-
-func clusterKey(repositoryID, path string, index, rank int) string {
-	return fmt.Sprintf("%scluster|%s|%s|%d|%d", mapKeyPrefix, repositoryID, path, index, rank)
-}
-
-func clusterViewKey(repositoryID, path string, index, rank int) string {
-	return fmt.Sprintf("%sclusterview|%s|%s|%d|%d", mapKeyPrefix, repositoryID, path, index, rank)
 }
 
 func fileKey(repositoryID, factID string) string {
@@ -1012,23 +703,4 @@ func importKey(repositoryID, importPath string) string {
 
 func importConnectorKey(repositoryID, fileFactID, importPath string) string {
 	return mapKeyPrefix + "importconn|" + repositoryID + "|" + fileFactID + "|" + importPath
-}
-
-func countMapResources(tree mapper.FolderNode) int {
-	total := 1 // map view
-	var walk func(node mapper.FolderNode)
-	walk = func(node mapper.FolderNode) {
-		for _, child := range node.Children {
-			total += 2 // folder element + view
-			walk(child)
-		}
-		for _, bin := range node.Bins {
-			total += 2 // bin element + view
-			total += len(bin.Clusters) * 2
-			total += bin.Size
-		}
-		total += len(node.Standalone)
-	}
-	walk(tree)
-	return total
 }

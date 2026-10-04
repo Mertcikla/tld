@@ -30,8 +30,8 @@ vi.mock('../api/client', () => ({
         sources: 4,
       }]),
       snapshots: vi.fn(async () => [
-        { id: 'snap-0', repositoryId: 'repo-1', createdUnix: 90, gitRevision: 'old', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-0', ingestionStatus: 'complete', embeddingStatus: 'complete', projects: [], warnings: [] },
-        { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', commitMessage: 'feat: snapshot message', ingestionStatus: 'complete', embeddingStatus: 'complete', projects: [], warnings: [] },
+        { id: 'snap-0', repositoryId: 'repo-1', createdUnix: 90, gitRevision: 'old', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-0', ingestionStatus: 'complete', projects: [], warnings: [] },
+        { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', commitMessage: 'feat: snapshot message', ingestionStatus: 'complete', projects: [], warnings: [] },
       ]),
       maps: vi.fn(async () => []),
       history: vi.fn(async () => ({ repositoryUrl: 'https://github.com/test/demo', commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
@@ -486,7 +486,7 @@ describe('Repositories map action', () => {
     await act(async () => { renderer = create(<Repositories />) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'watch-start' }).props.onClick() })
-    expect(api.repositories.startWatch).toHaveBeenCalledWith('repo-1', expect.objectContaining({ embed: true }))
+    expect(api.repositories.startWatch).toHaveBeenCalledWith('repo-1', expect.objectContaining({ materialize: false }))
     vi.mocked(api.repositories.watchStatus).mockResolvedValue({
       repositoryId: 'repo-1', running: true, managed: true, state: 'scanning', stage: 'tree-sitter',
       ownerKind: 'server', ownerPid: 42, repoRoot: '/repo/demo', gitBranch: 'main', gitRevision: 'abc',
@@ -514,7 +514,7 @@ describe('Repositories map action', () => {
     vi.mocked(api.repositories.startWatch).mockClear()
     await act(async () => { panel.findByProps({ 'data-testid': 'watch-restart' }).props.onClick() })
     expect(api.repositories.stopWatch).toHaveBeenCalledWith('repo-1')
-    expect(api.repositories.startWatch).toHaveBeenCalledWith('repo-1', { embed: true, materialize: false })
+    expect(api.repositories.startWatch).toHaveBeenCalledWith('repo-1', { materialize: false })
     expect(vi.mocked(api.repositories.stopWatch).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(api.repositories.startWatch).mock.invocationCallOrder[0])
     vi.mocked(api.repositories.watchStatus).mockClear()
     await act(async () => { panel.findByProps({ 'data-testid': 'watch-refresh' }).props.onClick() })
@@ -548,7 +548,6 @@ describe('Repositories map action', () => {
       gitRevision: `rev-${index}`,
       gitBranch: 'main',
       ingestionStatus: 'complete',
-      embeddingStatus: 'complete',
       projects: [],
       warnings: [],
       provenance: 'commit',

@@ -36,13 +36,6 @@ func TestMapperServiceMapRepository(t *testing.T) {
 	if err := idx.Publish(ctx, root, snap, graph); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	for i := range paths {
-		id := "f" + string(rune('1'+i))
-		embedding := &codeindexv1.Embedding{Id: "e" + id, FactId: id, SnapshotId: snap.Id, Profile: "p1", Dimensions: 3, Vector: []float32{1, 0, 0}}
-		if err := idx.SaveFactEmbedding(ctx, embedding); err != nil {
-			t.Fatalf("save embedding %s: %v", id, err)
-		}
-	}
 
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
@@ -159,11 +152,6 @@ func TestMapperServiceMaterializesImports(t *testing.T) {
 	if err := idx.Publish(ctx, root, snap, graph); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
-	for _, id := range []string{"f1", "f2"} {
-		if err := idx.SaveFactEmbedding(ctx, &codeindexv1.Embedding{Id: "e" + id, FactId: id, SnapshotId: snap.Id, Profile: "p1", Dimensions: 3, Vector: []float32{1, 0, 0}}); err != nil {
-			t.Fatalf("save embedding %s: %v", id, err)
-		}
-	}
 
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
@@ -230,32 +218,3 @@ func TestMapperServiceGraphGroupingNeedsNoEmbeddings(t *testing.T) {
 	}
 }
 
-func TestMapperServiceEmbeddingModeRequiresEmbeddings(t *testing.T) {
-	t.Setenv("TLD_MAP_GROUPING", "embedding")
-	ctx := context.Background()
-	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
-
-	root := "/repo/embedding"
-	repoID := cgraph.RepositoryID(root)
-	snap := &codeindexv1.Snapshot{Id: "snap-embedding", RepositoryId: repoID, CreatedUnix: 100}
-	graph := cgraph.NewGraph(repoID, snap.Id)
-	graph.Facts["f1"] = &codeindexv1.CodeFact{Id: "f1", RepositoryId: repoID, SnapshotId: snap.Id, Kind: codeindexv1.FactKind_FACT_KIND_FILE, Anchor: &codeindexv1.SourceAnchor{Path: "a.go"}}
-	if err := idx.Publish(ctx, root, snap, graph); err != nil {
-		t.Fatalf("publish: %v", err)
-	}
-
-	ts := httptest.NewServer(routes)
-	defer ts.Close()
-	client := codeindexv1connect.NewMapperServiceClient(ts.Client(), ts.URL+"/api")
-
-	stream, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID}))
-	if err == nil {
-		for stream.Receive() {
-		}
-		err = stream.Err()
-	}
-	if err == nil {
-		t.Fatal("expected an error when embedding mode runs without embeddings")
-	}
-}

@@ -7,11 +7,8 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"math"
-	"sync"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
@@ -38,15 +35,6 @@ type CodeIndexStore interface {
 	EdgeVersions(ctx context.Context, logicalKey string) ([]*pb.EdgeFact, error)
 	Chunk(ctx context.Context, id string) (*pb.Chunk, error)
 	Chunks(ctx context.Context, snapshotID string) ([]*pb.Chunk, error)
-	UpdateSnapshot(ctx context.Context, snap *pb.Snapshot) error
-	GetCachedEmbedding(ctx context.Context, key string) ([]float32, error)
-	CacheEmbedding(ctx context.Context, key string, vector []float32) error
-	SaveEmbedding(ctx context.Context, embedding *pb.Embedding) error
-	SaveFactEmbedding(ctx context.Context, embedding *pb.Embedding) error
-	SimilarFacts(ctx context.Context, snapshotID, profile string, query []float32, limit int) ([]FactScore, error)
-	FactSimilarities(ctx context.Context, snapshotID, profile string, query []float32, factIDs []string) (map[string]float32, error)
-	MajorityProfile(ctx context.Context, snapshotID string) (string, error)
-	FactEmbeddings(ctx context.Context, snapshotID, profile string, kind pb.FactKind) ([]FactVector, error)
 	FileEdges(ctx context.Context, snapshotID string) ([]FileEdge, error)
 	FileImports(ctx context.Context, snapshotID string) ([]FileImport, error)
 	SaveAnalysis(ctx context.Context, run AnalysisRun) error
@@ -68,8 +56,6 @@ type Store struct {
 	bun     *bun.DB
 	dialect dbrepo.Dialect
 
-	vecOnce sync.Once
-	vecErr  error
 }
 
 var _ CodeIndexStore = (*Store)(nil)
@@ -137,27 +123,6 @@ func unmarshalStrings(raw string) []string {
 	var out []string
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return nil
-	}
-	return out
-}
-
-// encodeVector serialises float32s as little-endian bytes.
-func encodeVector(v []float32) []byte {
-	buf := make([]byte, len(v)*4)
-	for i, f := range v {
-		binary.LittleEndian.PutUint32(buf[i*4:], math.Float32bits(f))
-	}
-	return buf
-}
-
-// decodeVector parses little-endian float32 bytes.
-func decodeVector(b []byte) []float32 {
-	if len(b)%4 != 0 {
-		return nil
-	}
-	out := make([]float32, len(b)/4)
-	for i := range out {
-		out[i] = math.Float32frombits(binary.LittleEndian.Uint32(b[i*4:]))
 	}
 	return out
 }

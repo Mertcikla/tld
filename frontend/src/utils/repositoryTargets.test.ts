@@ -13,7 +13,6 @@ const snapshot = (id: string, provenance: string): CodeSnapshot => ({
   gitRevision: 'sha',
   gitBranch: 'main',
   ingestionStatus: 'complete',
-  embeddingStatus: 'complete',
   projects: [],
   warnings: [],
   contentFingerprint: 'fp',

@@ -30,7 +30,7 @@ export default function RepositoryWatcherPanel({ status, repositoryRoot, branch,
       </Flex>
       <Text fontSize="xs" color="gray.400" mb={3}>{activity.detail}</Text>
       {status?.running && <HStack spacing={3} mb={3} fontSize="xs" flexWrap="wrap">
-        {[['listen', 'Listen'], ['index', 'Index'], ['embed', 'Embed'], ['map', 'Update map']].map(([step, label]) => <Text key={step} color={activity.step === step ? 'var(--accent)' : 'gray.500'} fontWeight={activity.step === step ? 'semibold' : 'normal'}>{label}</Text>)}
+        {[['listen', 'Listen'], ['index', 'Index'], ['map', 'Update map']].map(([step, label]) => <Text key={step} color={activity.step === step ? 'var(--accent)' : 'gray.500'} fontWeight={activity.step === step ? 'semibold' : 'normal'}>{label}</Text>)}
       </HStack>}
       <Flex gap={4} wrap="wrap" fontSize="xs" color="gray.400" data-testid="watch-detail">
         <Text>{status?.pendingFiles ?? 0} pending files</Text>

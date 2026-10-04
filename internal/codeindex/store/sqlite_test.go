@@ -169,22 +169,5 @@ func TestPublishRoundTrip(t *testing.T) {
 		t.Fatalf("repository summary = %+v", repos[0])
 	}
 
-	// Vector similarity ranks the fact whose embedding is closest to the query.
-	if len(facts) >= 2 {
-		profile := "test-profile"
-		a, b := facts[0], facts[1]
-		if err := st.SaveFactEmbedding(ctx, &pb.Embedding{FactId: a.Id, SnapshotId: snap.Id, Profile: profile, Model: "test", Dimensions: 2, Vector: []float32{1, 0}}); err != nil {
-			t.Fatalf("save fact embedding a: %v", err)
-		}
-		if err := st.SaveFactEmbedding(ctx, &pb.Embedding{FactId: b.Id, SnapshotId: snap.Id, Profile: profile, Model: "test", Dimensions: 2, Vector: []float32{0, 1}}); err != nil {
-			t.Fatalf("save fact embedding b: %v", err)
-		}
-		scores, err := st.SimilarFacts(ctx, snap.Id, profile, []float32{1, 0}, 10)
-		if err != nil {
-			t.Fatalf("similar facts: %v", err)
-		}
-		if len(scores) == 0 || scores[0].FactID != a.Id {
-			t.Fatalf("similar facts top = %+v, want %s", scores, a.Id)
-		}
-	}
+
 }
