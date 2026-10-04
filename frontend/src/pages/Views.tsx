@@ -114,9 +114,6 @@ function DiagramJumpToolbar({
       maxW="calc(100vw - 24px)"
     >
       <motion.div
-        initial={{ y: -10, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
       >
         <Flex
           bg="var(--bg-panel)"
@@ -159,14 +156,12 @@ function DiagramJumpToolbar({
               aria-label="Explore view"
             >
               {view === 'explore' && (
-                <MotionBox
-                  layoutId="active-pill"
+                <Box
                   position="absolute"
                   inset={0}
                   bg="var(--bg-element)"
                   borderRadius="md"
                   zIndex={-1}
-                  transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
                 />
               )}
               <HStack spacing={1.5} zIndex={1}>
@@ -190,14 +185,12 @@ function DiagramJumpToolbar({
               aria-label="Hierarchy view"
             >
               {view === 'hierarchy' && (
-                <MotionBox
-                  layoutId="active-pill"
+                <Box
                   position="absolute"
                   inset={0}
                   bg="var(--bg-element)"
                   borderRadius="md"
                   zIndex={-1}
-                  transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
                 />
               )}
               <HStack spacing={1.5} zIndex={1}>
@@ -210,6 +203,7 @@ function DiagramJumpToolbar({
           <Box w="1px" h="18px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
 
           <motion.div
+            initial={false}
             animate={isMobileLayout ? undefined : { width: desktopSearchWidth }}
             transition={{ duration: 0.12, ease: [0.25, 1, 0.5, 1] }}
             style={{ flex: isMobileLayout ? '1 1 0' : '0 0 auto', minWidth: 0 }}
