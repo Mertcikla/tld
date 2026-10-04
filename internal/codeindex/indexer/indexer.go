@@ -156,12 +156,14 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	}
 	totalProjects := len(projects)
 	emitProgress(progress, Progress{Stage: "scip", Total: int64(totalProjects)})
-	projectIndex := 0
 	for i, pr := range projects {
-		emitProgress(progress, Progress{Stage: "scip", Current: int64(projectIndex), Total: int64(totalProjects), Detail: pr.Root})
-		projectIndex++
 		family := languageFamily(pr.Language)
 		scipBacked := !isSyntaxFamily(family)
+		tool := "scip"
+		if spec, specErr := indexerForFamily(family, p.Config); specErr == nil {
+			tool = spec.name
+		}
+		emitProgress(progress, Progress{Stage: "scip", Current: int64(i), Total: int64(totalProjects), Detail: fmt.Sprintf("%s · %s", tool, pr.Root)})
 		projectDir := filepath.Join(root, filepath.FromSlash(pr.Root))
 		projectKey := family + "|" + pr.Root
 		fingerprint := projectFingerprints[projectKey]
@@ -175,6 +177,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 				if version == base.Snapshot.ToolVersions[spec.name] {
 					snap.ToolVersions[spec.name] = version
 					hashes := projectHashes(pr, sources)
+					emitProgress(progress, Progress{Stage: "scip", Current: int64(i), Total: int64(totalProjects), Detail: fmt.Sprintf("reusing cached · %s · %s", spec.name, pr.Root)})
 					if err := importSCIPReader(ctx, g, pr, bytes.NewReader(cached.Data), hashes, false, scipBacked, table); err != nil {
 						return nil, nil, false, err
 					}
@@ -209,6 +212,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 				cmd.Dir = projectDir
 				return cmd.CombinedOutput()
 			}
+			emitProgress(progress, Progress{Stage: "scip", Current: int64(i), Total: int64(totalProjects), Detail: fmt.Sprintf("running %s · %s", spec.name, pr.Root)})
 			out, e := runTool(argv)
 			if e != nil && spec.fallbackArgs != nil {
 				// Extra projects are an enrichment; when one of them breaks the
@@ -255,6 +259,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 			_ = os.Remove(artifact)
 		}
 	}
+	emitProgress(progress, Progress{Stage: "scip", Current: int64(totalProjects), Total: int64(totalProjects)})
 	emitProgress(progress, Progress{Stage: "relationships"})
 	table.apply(g)
 	deriveCalls(g, calls, table)

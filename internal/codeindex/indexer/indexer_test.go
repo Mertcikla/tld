@@ -319,6 +319,69 @@ func TestSourceDriftPreventsSnapshot(t *testing.T) {
 		t.Fatal("source drift accepted")
 	}
 }
+func TestSCIPStageProgressReportsCompletion(t *testing.T) {
+	root := t.TempDir()
+	for _, project := range []struct{ dir, module string }{{".", "example.com/root"}, {"sub", "example.com/sub"}} {
+		if e := os.MkdirAll(filepath.Join(root, project.dir), 0700); e != nil {
+			t.Fatal(e)
+		}
+		if e := os.WriteFile(filepath.Join(root, project.dir, "go.mod"), []byte("module "+project.module+"\n\ngo 1.26\n"), 0600); e != nil {
+			t.Fatal(e)
+		}
+	}
+	// A metadata-only SCIP index lets the stub indexer satisfy importSCIP without
+	// depending on a real scip-go install.
+	fixture := filepath.Join(t.TempDir(), "empty.scip")
+	data, e := proto.Marshal(&scip.Index{Metadata: &scip.Metadata{ToolInfo: &scip.ToolInfo{Name: "stub-scip", Version: "1.0"}}})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e = os.WriteFile(fixture, data, 0600); e != nil {
+		t.Fatal(e)
+	}
+	bin := filepath.Join(t.TempDir(), "scip-go")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = \"--version\" ]; then echo 'scip-go 1.0'; exit 0; fi\n" +
+		"prev=\"\"\n" +
+		"for a in \"$@\"; do\n" +
+		"  if [ \"$prev\" = \"--output\" ]; then cp \"" + fixture + "\" \"$a\"; fi\n" +
+		"  prev=\"$a\"\n" +
+		"done\n" +
+		"echo 'scip-go 1.0'\n"
+	if e = os.WriteFile(bin, []byte(script), 0700); e != nil {
+		t.Fatal(e)
+	}
+	cfg := config.Default()
+	cfg.Tools.SCIPGo = bin
+	var updates []Progress
+	if _, _, e = (Pipeline{Config: cfg}).Build(context.Background(), &pb.IndexRequest{Directory: root}, func(update Progress) {
+		if update.Stage == "scip" {
+			updates = append(updates, update)
+		}
+	}); e != nil {
+		t.Fatal(e)
+	}
+	if len(updates) == 0 {
+		t.Fatal("no scip progress emitted")
+	}
+	last := updates[len(updates)-1]
+	if last.Current != 2 || last.Total != 2 {
+		t.Fatalf("final scip progress = %d/%d, want 2/2", last.Current, last.Total)
+	}
+	named := false
+	for _, u := range updates {
+		if u.Current > u.Total {
+			t.Fatalf("scip progress %d/%d exceeds total", u.Current, u.Total)
+		}
+		if strings.Contains(u.Detail, "scip-go") {
+			named = true
+		}
+	}
+	if !named {
+		t.Fatalf("scip progress never named the tool: %+v", updates)
+	}
+}
+
 func TestMissingToolAndMalformedSCIP(t *testing.T) {
 	root := t.TempDir()
 	if e := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/missing\n\ngo 1.26\n"), 0600); e != nil {
