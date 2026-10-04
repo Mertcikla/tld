@@ -18,8 +18,12 @@ type MapInput struct {
 	RepositoryID   string
 	RepositoryName string
 	RepositoryRoot string
-	SnapshotID     string
-	Files          []community.File
+	// RepositoryRemoteURL is the canonical remote of the repository when it has
+	// one. Materialized elements carry it so source links survive across
+	// checkouts and machines; the local root is only a fallback.
+	RepositoryRemoteURL string
+	SnapshotID          string
+	Files               []community.File
 	// Edges are file-to-file dependencies resolved from symbol edges.
 	Edges []MapEdge
 	// Imports are external imports declared by the materialized files. They are
@@ -675,10 +679,11 @@ func (m *mapMaterializer) fileElement(member int) core.LibraryElement {
 		language := fact.Language
 		input.Language = &language
 	}
-	if repo := m.input.RepositoryRoot; repo != "" {
+	if repo := m.input.RepositoryRemoteURL; repo != "" {
 		input.Repo = &repo
-	} else if m.input.RepositoryName != "" {
-		repo := m.input.RepositoryName
+	} else if repo := m.input.RepositoryRoot; repo != "" {
+		input.Repo = &repo
+	} else if repo := m.input.RepositoryName; repo != "" {
 		input.Repo = &repo
 	}
 	if m.input.RepositoryID != "" {
@@ -698,7 +703,9 @@ func mapViewName(input MapInput) string {
 func mapTopElement(input MapInput) core.LibraryElement {
 	kind := "map"
 	description := "Repository map"
-	if input.RepositoryRoot != "" {
+	if input.RepositoryRemoteURL != "" {
+		description = "Repository map · " + input.RepositoryRemoteURL
+	} else if input.RepositoryRoot != "" {
 		description = "Repository map · " + input.RepositoryRoot
 	}
 	return core.LibraryElement{Name: mapViewName(input), Kind: &kind, Description: &description}

@@ -38,7 +38,9 @@ func openIndexStore(ctx context.Context, dataDirOverride string) (*localstore.SQ
 	if err != nil {
 		return nil, nil, "", err
 	}
-	return sq, cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect()), dataDir, nil
+	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
+	_ = idx.BackfillRemoteKeys(ctx)
+	return sq, idx, dataDir, nil
 }
 
 func resolveRepoRoot(path string) (string, error) {
@@ -51,6 +53,13 @@ func resolveRepoRoot(path string) (string, error) {
 		return "", err
 	}
 	return resolved, nil
+}
+
+// watchKeyForRoot derives the per-checkout watcher key. Watch ownership is
+// scoped by checkout path so multiple developers can watch their own clone of
+// the same logical repository.
+func watchKeyForRoot(root string) string {
+	return cgraph.RepositoryID(root)
 }
 
 func newStatusCmd() *cobra.Command {
@@ -99,7 +108,7 @@ repository's watcher. With no path or --all, lists every watcher.`,
 			if err != nil {
 				return err
 			}
-			repoID := cgraph.RepositoryID(root)
+			repoID := watchKeyForRoot(root)
 			st, ok, err := idx.WatchState(ctx, repoID)
 			if err != nil {
 				return err
@@ -152,7 +161,7 @@ control record.`,
 				return err
 			}
 			defer func() { _ = sq.Close() }()
-			repoID := cgraph.RepositoryID(root)
+			repoID := watchKeyForRoot(root)
 			st, ok, err := idx.WatchState(ctx, repoID)
 			if err != nil {
 				return err
@@ -288,7 +297,6 @@ func runDetached(cmd *cobra.Command, opts options) error {
 
 	// Verify the child actually claimed the repository. A child that loses the
 	// claim race exits, and reporting success would be misleading.
-	repoID := cgraph.RepositoryID(root)
 	ctx := cmd.Context()
 	sq, idx, _, err := openIndexStore(ctx, opts.dataDir)
 	if err != nil {
@@ -296,6 +304,7 @@ func runDetached(cmd *cobra.Command, opts options) error {
 		return err
 	}
 	defer func() { _ = sq.Close() }()
+	repoID := watchKeyForRoot(root)
 	deadline := time.Now().Add(5 * time.Second)
 	claimed := false
 	for time.Now().Before(deadline) && ctx.Err() == nil {

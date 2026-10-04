@@ -253,3 +253,80 @@ func TestDeleteRepositoryRejectsEmptyID(t *testing.T) {
 		t.Fatal("expected an error for an empty repository id")
 	}
 }
+
+func TestRepositoryByRemoteKeyReusesExistingIdentity(t *testing.T) {
+	ctx := context.Background()
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+
+	if err := st.EnsureRepositoryIdentity(ctx, "repo-a", "/Users/a/proj", "git@github.com:Owner/Repo.git", "github.com/owner/repo", false); err != nil {
+		t.Fatalf("ensure identity: %v", err)
+	}
+	id, ok, err := st.RepositoryByRemoteKey(ctx, "github.com/owner/repo")
+	if err != nil || !ok || id != "repo-a" {
+		t.Fatalf("resolve existing = %q ok=%v err=%v", id, ok, err)
+	}
+	// A second checkout registers under the same identity instead of a new row.
+	if err := st.EnsureRepositoryIdentity(ctx, "repo-b", "/home/b/proj", "https://github.com/owner/repo", "github.com/owner/repo", false); err != nil {
+		t.Fatalf("ensure second checkout: %v", err)
+	}
+	id, ok, err = st.RepositoryByRemoteKey(ctx, "github.com/owner/repo")
+	if err != nil || !ok || id != "repo-a" {
+		t.Fatalf("resolve canonical = %q ok=%v err=%v", id, ok, err)
+	}
+}
+
+func TestRepositoryByRemoteKeyNormalizesLegacyRemoteURL(t *testing.T) {
+	ctx := context.Background()
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+
+	// Simulate a row written before remote_key existed.
+	if _, err := st.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, managed, latest_snapshot_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, '', ?, ?)`, "legacy", "/old/proj", "git@github.com:Owner/Repo.git", false, "now", "now").Exec(ctx); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	id, ok, err := st.RepositoryByRemoteKey(ctx, "github.com/owner/repo")
+	if err != nil || !ok || id != "legacy" {
+		t.Fatalf("legacy resolve = %q ok=%v err=%v", id, ok, err)
+	}
+}
+
+func TestBackfillRemoteKeys(t *testing.T) {
+	ctx := context.Background()
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+
+	if _, err := st.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, managed, latest_snapshot_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, '', ?, ?)`, "legacy", "/old/proj", "https://github.com/Owner/Repo", false, "now", "now").Exec(ctx); err != nil {
+		t.Fatalf("seed legacy row: %v", err)
+	}
+	if err := st.BackfillRemoteKeys(ctx); err != nil {
+		t.Fatalf("backfill: %v", err)
+	}
+	var key string
+	if err := st.bun.NewRaw(`SELECT remote_key FROM codeindex_repositories WHERE id = ?`, "legacy").Scan(ctx, &key); err != nil {
+		t.Fatalf("read remote_key: %v", err)
+	}
+	if key != "github.com/owner/repo" {
+		t.Fatalf("remote_key = %q", key)
+	}
+}
+
+func TestEnsureRepositoryIdentityPreservesExistingRemote(t *testing.T) {
+	ctx := context.Background()
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+
+	if err := st.EnsureRepositoryIdentity(ctx, "repo-a", "/a", "https://github.com/owner/repo", "github.com/owner/repo", true); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+	// A later checkout without remote info must not blank the identity fields.
+	if err := st.EnsureRepositoryIdentity(ctx, "repo-a", "/b", "", "", false); err != nil {
+		t.Fatalf("re-ensure: %v", err)
+	}
+	remote, managed, err := st.RepositoryOrigin(ctx, "repo-a")
+	if err != nil || remote != "https://github.com/owner/repo" || !managed {
+		t.Fatalf("origin = %q managed=%v err=%v", remote, managed, err)
+	}
+}

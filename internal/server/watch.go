@@ -14,6 +14,7 @@ import (
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
+	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -289,15 +290,18 @@ func (s *watchService) StartWatch(ctx context.Context, req *connect.Request[code
 	if strings.TrimSpace(repo.Root) == "" {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("repository has no local path"))
 	}
+	// Watch ownership is scoped to the checkout, so a watcher on another host's
+	// clone of the same logical repository does not block this one.
+	key := cgraph.RepositoryID(repo.Root)
 	// Reset any stale record so a crashed watcher cannot block a fresh start.
-	if existing, ok, err := s.idx.WatchState(ctx, repositoryID); err == nil && ok && !existing.Live(time.Now()) {
-		_ = s.idx.ForceClearWatchState(ctx, repositoryID)
+	if existing, ok, err := s.idx.WatchState(ctx, key); err == nil && ok && !existing.Live(time.Now()) {
+		_ = s.idx.ForceClearWatchState(ctx, key)
 	}
-	st := cstore.WatchState{RepositoryID: repositoryID, RepoRoot: repo.Root, OwnerKind: "server", State: "starting", StartedUnix: time.Now().Unix()}
+	st := cstore.WatchState{RepositoryID: key, RepoRoot: repo.Root, OwnerKind: "server", State: "starting", StartedUnix: time.Now().Unix()}
 	if _, err := s.manager.start(ctx, st, req.Msg.GetMaterialize()); err != nil {
 		return nil, connect.NewError(connect.CodeAlreadyExists, err)
 	}
-	return connect.NewResponse(s.status(ctx, repositoryID)), nil
+	return connect.NewResponse(s.status(ctx, repositoryID, key)), nil
 }
 
 func (s *watchService) StopWatch(ctx context.Context, req *connect.Request[codeindexv1.StopWatchRequest]) (*connect.Response[codeindexv1.WatchStatus], error) {
@@ -305,11 +309,15 @@ func (s *watchService) StopWatch(ctx context.Context, req *connect.Request[codei
 	if repositoryID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository_id is required"))
 	}
-	if err := s.idx.RequestWatchStop(ctx, repositoryID); err != nil {
+	key, err := s.watchKey(ctx, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.idx.RequestWatchStop(ctx, key); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	s.manager.stop(ctx, repositoryID)
-	return connect.NewResponse(s.status(ctx, repositoryID)), nil
+	s.manager.stop(ctx, key)
+	return connect.NewResponse(s.status(ctx, repositoryID, key)), nil
 }
 
 func (s *watchService) GetWatchStatus(ctx context.Context, req *connect.Request[codeindexv1.GetWatchStatusRequest]) (*connect.Response[codeindexv1.WatchStatus], error) {
@@ -317,7 +325,22 @@ func (s *watchService) GetWatchStatus(ctx context.Context, req *connect.Request[
 	if repositoryID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository_id is required"))
 	}
-	return connect.NewResponse(s.status(ctx, repositoryID)), nil
+	key, err := s.watchKey(ctx, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	return connect.NewResponse(s.status(ctx, repositoryID, key)), nil
+}
+
+// watchKey resolves a repository's per-checkout watcher key from its stored
+// local root. When no repository row (or no local path) exists, the given id is
+// used directly as the checkout key so direct watch-key lookups keep working.
+func (s *watchService) watchKey(ctx context.Context, repositoryID string) (string, error) {
+	repo, err := s.idx.Repository(ctx, repositoryID)
+	if err != nil || strings.TrimSpace(repo.Root) == "" {
+		return repositoryID, nil
+	}
+	return cgraph.RepositoryID(repo.Root), nil
 }
 
 func (s *watchService) ListWatches(ctx context.Context, _ *connect.Request[codeindexv1.ListWatchesRequest]) (*connect.Response[codeindexv1.ListWatchesResponse], error) {
@@ -334,17 +357,21 @@ func (s *watchService) ListWatches(ctx context.Context, _ *connect.Request[codei
 	return connect.NewResponse(out), nil
 }
 
-func (s *watchService) status(ctx context.Context, repositoryID string) *codeindexv1.WatchStatus {
-	st, ok, err := s.idx.WatchState(ctx, repositoryID)
+// status reports a watcher's state using the per-checkout key, but labels the
+// returned status with the logical repository id the caller asked for.
+func (s *watchService) status(ctx context.Context, repositoryID, key string) *codeindexv1.WatchStatus {
+	st, ok, err := s.idx.WatchState(ctx, key)
 	if err != nil {
 		ok = false
 	}
 	if ok && !st.Live(time.Now()) {
-		_ = s.idx.ForceClearWatchState(ctx, repositoryID)
+		_ = s.idx.ForceClearWatchState(ctx, key)
 		st.State = "stopped"
 		st.StopRequested = false
 	}
-	return s.statusFor(st, ok)
+	out := s.statusFor(st, ok)
+	out.RepositoryId = repositoryID
+	return out
 }
 
 func (s *watchService) statusFor(st cstore.WatchState, found bool) *codeindexv1.WatchStatus {

@@ -2,11 +2,14 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/uptrace/bun"
 )
 
@@ -162,30 +165,127 @@ func (s *Store) ListRepositories(ctx context.Context) ([]*pb.RepositorySummary, 
 	return out, nil
 }
 
-// SetRepositoryOrigin records a repository's canonical remote URL and whether
-// tld owns the checkout.
+// SetRepositoryOrigin records a repository's canonical remote URL, its
+// normalized remote key, and whether tld owns the checkout.
 func (s *Store) SetRepositoryOrigin(ctx context.Context, repositoryID, remoteURL string, managed bool) error {
 	if strings.TrimSpace(repositoryID) == "" {
 		return nil
 	}
-	_, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_url = ?, managed = ?, updated_at = ? WHERE id = ?`,
-		remoteURL, managed, time.Now().UTC().Format(time.RFC3339), repositoryID).Exec(ctx)
+	_, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_url = ?, remote_key = ?, managed = ?, updated_at = ? WHERE id = ?`,
+		remoteURL, repolink.RemoteKey(remoteURL), managed, time.Now().UTC().Format(time.RFC3339), repositoryID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("set repository origin: %w", err)
 	}
 	return nil
 }
 
-// SetRepositoryRemoteURL refreshes only the canonical remote URL, preserving
-// the managed flag.
+// SetRepositoryRemoteURL refreshes only the canonical remote URL and remote key,
+// preserving the managed flag.
 func (s *Store) SetRepositoryRemoteURL(ctx context.Context, repositoryID, remoteURL string) error {
 	if strings.TrimSpace(repositoryID) == "" {
 		return nil
 	}
-	_, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_url = ?, updated_at = ? WHERE id = ?`,
-		remoteURL, time.Now().UTC().Format(time.RFC3339), repositoryID).Exec(ctx)
+	_, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_url = ?, remote_key = ?, updated_at = ? WHERE id = ?`,
+		remoteURL, repolink.RemoteKey(remoteURL), time.Now().UTC().Format(time.RFC3339), repositoryID).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("set repository remote url: %w", err)
+	}
+	return nil
+}
+
+// RepositoryByRemoteKey returns the id of the canonical repository registered
+// for a normalized remote key. When legacy duplicates exist, managed rows win,
+// then the most recently updated. Rows written before remote_key existed are
+// matched by normalizing their remote_url in Go.
+func (s *Store) RepositoryByRemoteKey(ctx context.Context, remoteKey string) (string, bool, error) {
+	remoteKey = strings.TrimSpace(remoteKey)
+	if remoteKey == "" {
+		return "", false, nil
+	}
+	var id string
+	err := s.bun.NewRaw(`SELECT id FROM codeindex_repositories WHERE remote_key = ?
+		ORDER BY managed DESC, updated_at DESC, id LIMIT 1`, remoteKey).Scan(ctx, &id)
+	if err == nil && id != "" {
+		return id, true, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", false, fmt.Errorf("repository by remote key: %w", err)
+	}
+
+	type row struct {
+		ID        string `bun:"id"`
+		RemoteURL string `bun:"remote_url"`
+	}
+	var rows []row
+	if err := s.bun.NewRaw(`SELECT id, remote_url FROM codeindex_repositories
+		WHERE remote_url <> '' ORDER BY managed DESC, updated_at DESC, id`).Scan(ctx, &rows); err != nil {
+		return "", false, fmt.Errorf("repository by remote key: %w", err)
+	}
+	for _, item := range rows {
+		if strings.EqualFold(repolink.RemoteKey(item.RemoteURL), remoteKey) {
+			return item.ID, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// RepositoryExists reports whether a repository id is already registered.
+func (s *Store) RepositoryExists(ctx context.Context, id string) (bool, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, nil
+	}
+	var count int
+	if err := s.bun.NewRaw(`SELECT COUNT(*) FROM codeindex_repositories WHERE id = ?`, id).Scan(ctx, &count); err != nil {
+		return false, fmt.Errorf("repository exists: %w", err)
+	}
+	return count > 0, nil
+}
+
+// EnsureRepositoryIdentity upserts a repository's stable identity fields
+// without touching its latest snapshot pointer or snapshot data. Non-empty
+// values only are applied on conflict, so a later scan from another checkout
+// cannot blank a good remote URL or remote key.
+func (s *Store) EnsureRepositoryIdentity(ctx context.Context, id, root, remoteURL, remoteKey string, managed bool) error {
+	if strings.TrimSpace(id) == "" {
+		return nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, '', ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			root = CASE WHEN excluded.root <> '' THEN excluded.root ELSE codeindex_repositories.root END,
+			remote_url = CASE WHEN excluded.remote_url <> '' THEN excluded.remote_url ELSE codeindex_repositories.remote_url END,
+			remote_key = CASE WHEN excluded.remote_key <> '' THEN excluded.remote_key ELSE codeindex_repositories.remote_key END,
+			managed = codeindex_repositories.managed OR excluded.managed,
+			updated_at = excluded.updated_at`,
+		id, root, remoteURL, remoteKey, managed, now, now).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("ensure repository identity: %w", err)
+	}
+	return nil
+}
+
+// BackfillRemoteKeys derives remote_key for repositories registered before the
+// column existed. It is a no-op when every row already has a key. Normalization
+// lives in Go because SQL cannot canonicalize git remote forms.
+func (s *Store) BackfillRemoteKeys(ctx context.Context) error {
+	type row struct {
+		ID        string `bun:"id"`
+		RemoteURL string `bun:"remote_url"`
+	}
+	var rows []row
+	if err := s.bun.NewRaw(`SELECT id, remote_url FROM codeindex_repositories WHERE remote_key = '' AND remote_url <> ''`).Scan(ctx, &rows); err != nil {
+		return fmt.Errorf("backfill remote keys: %w", err)
+	}
+	for _, item := range rows {
+		key := repolink.RemoteKey(item.RemoteURL)
+		if key == "" {
+			continue
+		}
+		if _, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_key = ? WHERE id = ?`, key, item.ID).Exec(ctx); err != nil {
+			return fmt.Errorf("backfill remote key for %s: %w", item.ID, err)
+		}
 	}
 	return nil
 }

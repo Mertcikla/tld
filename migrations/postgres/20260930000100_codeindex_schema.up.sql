@@ -8,11 +8,15 @@ CREATE TABLE IF NOT EXISTS codeindex_repositories (
   id TEXT PRIMARY KEY,
   root TEXT NOT NULL,
   remote_url TEXT NOT NULL DEFAULT '',
+  remote_key TEXT NOT NULL DEFAULT '',
   managed BOOLEAN NOT NULL DEFAULT FALSE,
   latest_snapshot_id TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_codeindex_repositories_remote_key
+  ON codeindex_repositories(remote_key);
 
 CREATE TABLE IF NOT EXISTS codeindex_snapshots (
   id TEXT PRIMARY KEY,

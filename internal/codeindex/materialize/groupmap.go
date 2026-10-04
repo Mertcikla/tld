@@ -17,7 +17,9 @@ type GroupMapInput struct {
 	RepositoryID   string
 	RepositoryName string
 	RepositoryRoot string
-	SnapshotID     string
+	// RepositoryRemoteURL is the canonical remote of the repository, when known.
+	RepositoryRemoteURL string
+	SnapshotID          string
 	// Files are the repository's file facts, indexed by group member.
 	Files []community.File
 	// Groups is the community hierarchy, outermost first.
@@ -45,13 +47,14 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 		byKey[mapping.LogicalKey] = mapping
 	}
 	base := MapInput{
-		RepositoryID:   input.RepositoryID,
-		RepositoryName: input.RepositoryName,
-		RepositoryRoot: input.RepositoryRoot,
-		SnapshotID:     input.SnapshotID,
-		Files:          input.Files,
-		Edges:          input.Edges,
-		Imports:        input.Imports,
+		RepositoryID:        input.RepositoryID,
+		RepositoryName:      input.RepositoryName,
+		RepositoryRoot:      input.RepositoryRoot,
+		RepositoryRemoteURL: input.RepositoryRemoteURL,
+		SnapshotID:          input.SnapshotID,
+		Files:               input.Files,
+		Edges:               input.Edges,
+		Imports:             input.Imports,
 	}
 	m := &mapMaterializer{
 		ctx:             ctx,

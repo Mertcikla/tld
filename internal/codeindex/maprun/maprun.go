@@ -8,9 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/community"
@@ -102,8 +104,12 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 		indexOf[fact.GetId()] = i
 	}
 	repositoryRoot := ""
+	repositoryRemote := ""
 	if repo, err := deps.Codeindex.Repository(ctx, repositoryID); err == nil && repo != nil {
 		repositoryRoot = repo.GetRoot()
+	}
+	if remote, _, err := deps.Codeindex.RepositoryOrigin(ctx, repositoryID); err == nil {
+		repositoryRemote = remote
 	}
 	report("loading", len(facts), len(facts), "loaded")
 
@@ -131,7 +137,9 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	}
 
 	repositoryName := repositoryID
-	if base := filepath.Base(repositoryRoot); repositoryRoot != "" && base != "." && base != "/" {
+	if base := repositoryRemoteName(repositoryRemote); base != "" {
+		repositoryName = base
+	} else if base := filepath.Base(repositoryRoot); repositoryRoot != "" && base != "." && base != "/" {
 		repositoryName = base
 	}
 
@@ -141,14 +149,15 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 		return nil, false, err
 	}
 	mapResult, err := materialize.ApplyGroupMap(ctx, deps.Workspace, deps.Codeindex, materialize.GroupMapInput{
-		RepositoryID:   repositoryID,
-		RepositoryName: repositoryName,
-		RepositoryRoot: repositoryRoot,
-		SnapshotID:     snapshotID,
-		Files:          files,
-		Groups:         grouping.Groups,
-		Edges:          mapEdges,
-		Imports:        imports,
+		RepositoryID:        repositoryID,
+		RepositoryName:      repositoryName,
+		RepositoryRoot:      repositoryRoot,
+		RepositoryRemoteURL: repositoryRemote,
+		SnapshotID:          snapshotID,
+		Files:               files,
+		Groups:              grouping.Groups,
+		Edges:               mapEdges,
+		Imports:             imports,
 	}, deps.Options.MaterializeOptions(func(current, total int, detail string) {
 		report("materializing", current, total, detail)
 	}))
@@ -266,6 +275,20 @@ func stableLookup(stableByID map[string]string, factID string) string {
 		return key
 	}
 	return factID
+}
+
+// repositoryRemoteName derives a short display name from a canonical remote URL
+// such as https://github.com/owner/repo.
+func repositoryRemoteName(remote string) string {
+	remote = strings.TrimRight(strings.TrimSpace(remote), "/")
+	if remote == "" {
+		return ""
+	}
+	name := path.Base(remote)
+	if name == "." || name == "/" || name == remote {
+		return ""
+	}
+	return name
 }
 
 // analysisGroups flattens a community hierarchy into persisted analysis groups,

@@ -23,6 +23,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
 	"github.com/mertcikla/tld/v2/internal/codeindex/gitstate"
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/tld/v2/internal/codeindex/identity"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
@@ -113,6 +114,10 @@ type engine struct {
 	opts    options
 	dataDir string
 	out     io.Writer
+	// repoID is the stable logical repository identity resolved from the
+	// checkout's remote, so the same repository is one repository across
+	// checkouts and machines.
+	repoID string
 }
 
 // detectRemoteTarget reports whether the index target is a remote repository
@@ -198,18 +203,19 @@ func run(cmd *cobra.Command, opts options) error {
 		dataDir: dataDir,
 		out:     cmd.OutOrStdout(),
 	}
-	if remoteSpec.WebURL != "" {
-		if err := eng.store.SetRepositoryOrigin(ctx, cgraph.RepositoryID(root), remoteSpec.WebURL, true); err != nil {
-			return err
-		}
+	_ = eng.store.BackfillRemoteKeys(ctx)
+	resolved, err := identity.Apply(ctx, eng.store, root, "", remoteSpec.WebURL, remoteSpec.WebURL != "")
+	if err != nil {
+		return err
 	}
+	eng.repoID = resolved.ID
 	if opts.watch {
 		ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 		defer stop()
 		cmd.SetContext(ctx)
 		return eng.watch(ctx, cmd, root)
 	}
-	ctx, release, err := eng.store.AcquireLease(ctx, cgraph.RepositoryID(root))
+	ctx, release, err := eng.store.AcquireLease(ctx, eng.repoID)
 	if err != nil {
 		return err
 	}
@@ -269,6 +275,16 @@ var indexJokes = []string{
 	"Detected a commit message that just says 'fix'. We have questions.",
 }
 
+// resolveRepoID returns the stable repository identity for a checkout, falling
+// back to the path-derived id when the engine was not seeded by run (tests and
+// direct callers).
+func (e *engine) resolveRepoID(root string) string {
+	if e.repoID != "" {
+		return e.repoID
+	}
+	return cgraph.RepositoryID(root)
+}
+
 func displayStage(stage string) string {
 	if name, ok := indexStageDisplay[stage]; ok {
 		return name
@@ -300,7 +316,7 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 		lastStage = stage
 	}
 
-	pipeline := indexer.Pipeline{Config: e.cfg}
+	pipeline := indexer.Pipeline{Config: e.cfg, RepositoryID: e.repoID}
 	req := &pb.IndexRequest{Directory: root, Exclude: e.opts.exclude, Incremental: base != nil}
 
 	var (
@@ -373,14 +389,17 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 	if _, err := gitstate.Run(ctx, root, "rev-parse", "--git-dir"); err != nil {
 		return fmt.Errorf("watch requires a Git repository: %w", err)
 	}
-	repoID := cgraph.RepositoryID(root)
+	// Watch ownership is per checkout (path), so every developer can watch
+	// their own clone. Snapshots and maps are published under e.repoID, the
+	// shared logical repository identity.
+	watchKey := cgraph.RepositoryID(root)
 	ownerID := uuid.NewString()
 	ownerKind := e.opts.watchOwner
 	if ownerKind == "" {
 		ownerKind = "cli"
 	}
 	status := cstore.WatchState{
-		RepositoryID:   repoID,
+		RepositoryID:   watchKey,
 		OwnerKind:      ownerKind,
 		OwnerPID:       os.Getpid(),
 		OwnerID:        ownerID,
@@ -402,7 +421,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer cancel()
-		_ = e.store.ReleaseWatch(cleanup, repoID, ownerID)
+		_ = e.store.ReleaseWatch(cleanup, watchKey, ownerID)
 		_ = localserver.RemoveProcess(os.Getpid())
 	}()
 
@@ -415,7 +434,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		if mutate != nil {
 			mutate(&status)
 		}
-		status.RepositoryID = repoID
+		status.RepositoryID = watchKey
 		status.OwnerID = ownerID
 		status.OwnerPID = os.Getpid()
 		snapshot := status
@@ -439,7 +458,7 @@ func (e *engine) watch(ctx context.Context, cmd *cobra.Command, root string) err
 		defer ticker.Stop()
 		stoppingSince := time.Time{}
 		for {
-			if requested, err := e.store.WatchStopRequested(heartbeatCtx, repoID); err == nil && requested {
+			if requested, err := e.store.WatchStopRequested(heartbeatCtx, watchKey); err == nil && requested {
 				if stoppingSince.IsZero() {
 					stoppingSince = time.Now()
 					persist(func(s *cstore.WatchState) { s.State = "stopping" })
@@ -563,7 +582,7 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 			report(stage)
 		}
 	}
-	repoID := cgraph.RepositoryID(root)
+	repoID := e.resolveRepoID(root)
 	reportStage("waiting-indexer")
 	var release func()
 	var err error

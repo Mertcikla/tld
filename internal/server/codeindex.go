@@ -16,7 +16,7 @@ import (
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
-	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/tld/v2/internal/codeindex/identity"
 	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
@@ -93,7 +93,11 @@ func (s *codeIndexRepositoryService) AddRepository(ctx context.Context, req *con
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("missing required indexers: %s; install them and try again", strings.Join(missing, ", ")))
 	}
 
-	repositoryID := cgraph.RepositoryID(root)
+	resolved, err := identity.Apply(ctx, s.store, root, "", spec.WebURL, spec.WebURL != "")
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	repositoryID := resolved.ID
 	ctx, release, err := s.store.AcquireLease(ctx, repositoryID)
 	if err != nil {
 		return impactError(err)
@@ -117,11 +121,6 @@ func (s *codeIndexRepositoryService) AddRepository(ctx context.Context, req *con
 	snapshot, err := engine.Prepare(ctx, &codeindexv1.ComparisonTarget{WorkingTree: true})
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
-	}
-	if spec.WebURL != "" {
-		if err := s.store.SetRepositoryOrigin(ctx, repositoryID, spec.WebURL, true); err != nil {
-			return connect.NewError(connect.CodeInternal, err)
-		}
 	}
 	if req.Msg.GetMaterialize() {
 		_ = stream.Send(&codeindexv1.AddRepositoryEvent{Event: &codeindexv1.AddRepositoryEvent_Progress{Progress: &codeindexv1.IndexProgress{Stage: "map"}}})
@@ -555,6 +554,7 @@ func nextEdgeCursor(edges []*codeindexv1.EdgeFact, limit int) string {
 
 func registerCodeIndexHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, dataDir string, configs ...*workspace.Config) {
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	_ = idx.BackfillRemoteKeys(context.Background())
 	repoSvc := &codeIndexRepositoryService{store: idx, ws: sqliteStore, dataDir: dataDir}
 	if len(configs) > 0 {
 		repoSvc.config = configs[0]
