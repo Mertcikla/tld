@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Badge,
   Box,
   Button,
   Code,
   Flex,
+  Grid,
   HStack,
   Input,
   Spinner,
@@ -44,6 +45,7 @@ export default function RepositoryHistory({
   const [details, setDetails] = useState<RepositoryCommitDetails | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const graphScrollRef = useRef<HTMLDivElement>(null)
   const layout = useMemo(
     () => layoutCommitGraph(history?.commits ?? []),
     [history],
@@ -97,36 +99,46 @@ export default function RepositoryHistory({
     }
   }, [repositoryId, inspected])
   const rowHeight = 36
+  const graphWidth = Math.max(44, layout.laneCount * 18 + 28)
+  const historyHeight = layout.rows.length * rowHeight
   const x = (lane: number) => 18 + lane * 18
   const y = (row: number) => row * rowHeight + rowHeight / 2
   const color = (lane: number) =>
     GRAPH_LANE_COLORS[lane % GRAPH_LANE_COLORS.length]
   return (
     <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
-      <Flex px={4} h="40px" gap={3} align="center">
+      <Grid
+        px={4}
+        h="40px"
+        gap={{ base: 2, md: 3 }}
+        alignItems="center"
+        templateColumns={{ base: 'auto minmax(0, 1fr) auto', md: 'minmax(0, 1fr) minmax(0, 200px) minmax(0, 1fr)' }}
+      >
         <Button
           size="xs"
           variant="ghost"
           onClick={onToggle}
           aria-expanded={!collapsed}
+          justifySelf="start"
         >
           Commit history
         </Button>
-        <Text fontSize="xs" color="gray.500">
+        <Box minW={0}>
+          {!collapsed && (
+            <Input
+              size="xs"
+              maxW="200px"
+              placeholder="Search commits…"
+              aria-label="Filter commits"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          )}
+        </Box>
+        <Text fontSize="xs" color="gray.500" textAlign="right" justifySelf="end" whiteSpace="nowrap">
           {layout.rows.length} commits
         </Text>
-        <Box flex={1} />
-        {!collapsed && (
-          <Input
-            size="xs"
-            maxW="200px"
-            placeholder="Filter commits…"
-            aria-label="Filter commits"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        )}
-      </Flex>
+      </Grid>
       {!collapsed && (
         <>
           {!history?.isGit && (
@@ -140,54 +152,74 @@ export default function RepositoryHistory({
               No commits yet.
             </Text>
           )}
-          <Flex maxH="240px" overflowY="auto">
+          <Flex
+            maxH="240px"
+            overflowY="auto"
+            onScroll={(event) => {
+              if (graphScrollRef.current) graphScrollRef.current.scrollTop = event.currentTarget.scrollTop
+            }}
+          >
             <Box
               flexShrink={0}
-              h={`${layout.rows.length * rowHeight}px`}
+              h={`${historyHeight}px`}
               borderRight="1px solid"
               borderColor="whiteAlpha.200"
-              w={`${Math.max(44, layout.laneCount * 18 + 28)}px`}
+              w={`${Math.min(graphWidth, 140)}px`}
+              maxW={{ base: '80px', md: '140px' }}
             >
-              <svg
-                aria-label="Commit graph"
-                style={{ display: 'block' }}
-                width="100%"
-                height={layout.rows.length * rowHeight}
+              <Box
+                ref={graphScrollRef}
+                position="sticky"
+                top={0}
+                h={`${Math.min(historyHeight, 240)}px`}
+                overflowX="auto"
+                overflowY="hidden"
+                tabIndex={0}
+                role="region"
+                aria-label="Scrollable commit graph"
+                _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '-2px' }}
               >
-                {layout.rows.map((row, i) => inRange(i) && (
-                  <rect key={row.commit.sha} x={0} y={i * rowHeight} width="100%" height={rowHeight} fill="rgba(var(--accent-rgb), 0.12)" />
-                ))}
-                {layout.edges.map((edge, i) => (
-                  <path
-                    key={i}
-                    d={commitGraphPath(edge, layout.rows.length, rowHeight)}
-                    stroke={color(edge.railLane)}
-                    strokeWidth={2}
-                    fill="none"
-                  />
-                ))}
-                {layout.rows.map((row, i) => (
-                  <g key={row.commit.sha}>
-                    <circle
-                      cx={x(row.lane)}
-                      cy={y(i)}
-                      r={row.isMerge ? 6 : 4}
-                      fill={color(row.lane)}
-                    >
-                      <title>{row.commit.subject}</title>
-                    </circle>
-                    {(base === row.commit.sha || head === row.commit.sha) && (
+                <svg
+                  aria-label="Commit graph"
+                  style={{ display: 'block' }}
+                  width={graphWidth}
+                  height={historyHeight}
+                >
+                  {layout.rows.map((row, i) => inRange(i) && (
+                    <rect key={row.commit.sha} x={0} y={i * rowHeight} width="100%" height={rowHeight} fill="rgba(var(--accent-rgb), 0.12)" />
+                  ))}
+                  {layout.edges.map((edge, i) => (
+                    <path
+                      key={i}
+                      d={commitGraphPath(edge, layout.rows.length, rowHeight)}
+                      stroke={color(edge.railLane)}
+                      strokeWidth={2}
+                      fill="none"
+                    />
+                  ))}
+                  {layout.rows.map((row, i) => (
+                    <g key={row.commit.sha}>
                       <circle
                         cx={x(row.lane)}
                         cy={y(i)}
-                        r={9}
-                        fill="none"
-                        stroke={base === row.commit.sha ? '#A0AEC0' : '#68D391'}
-                      />
-                    )}
-                  </g>
-                ))}
-              </svg>
+                        r={row.isMerge ? 6 : 4}
+                        fill={color(row.lane)}
+                      >
+                        <title>{row.commit.subject}</title>
+                      </circle>
+                      {(base === row.commit.sha || head === row.commit.sha) && (
+                        <circle
+                          cx={x(row.lane)}
+                          cy={y(i)}
+                          r={9}
+                          fill="none"
+                          stroke={base === row.commit.sha ? '#A0AEC0' : '#68D391'}
+                        />
+                      )}
+                    </g>
+                  ))}
+                </svg>
+              </Box>
             </Box>
             <VStack spacing={0} flex={1} minW={0} align="stretch">
               {layout.rows.map(({ commit }, index) => (

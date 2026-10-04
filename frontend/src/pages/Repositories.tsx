@@ -1686,7 +1686,7 @@ export default function Repositories() {
                   collapsed={historyCollapsed}
                   onToggle={() => setHistoryCollapsed(!historyCollapsed)}
                 />}
-                {(mode !== 'pr' || shownImpact) && <Flex
+                {shownImpact && <Flex
                   px={4}
                   h="40px"
                   align="center"
@@ -1723,10 +1723,6 @@ export default function Repositories() {
                       )}
                     </HStack>
                   )}
-                  <Box flex={1} />
-                  <Text fontSize="xs" color="gray.500">
-                    {mode === 'live' ? 'Current commit → pending changes' : mode === 'compare' ? 'Select snapshots or Git revisions' : ''}
-                  </Text>
                 </Flex>}
                 {mode === 'live' && (
                   <>

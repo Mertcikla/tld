@@ -9,7 +9,7 @@ vi.mock('@chakra-ui/react', async () => {
   const ReactModule = await import('react')
   const Box = ({ children, ...props }: { children?: React.ReactNode }) => ReactModule.createElement('div', props, children)
   const Button = ({ children, isDisabled, ...props }: { children?: React.ReactNode; isDisabled?: boolean }) => ReactModule.createElement('button', { ...props, disabled: isDisabled }, children)
-  return { Badge: Box, Box, Button, Code: Box, Flex: Box, HStack: Box, Input: Box, Spinner: Box, Text: Box, VStack: Box }
+  return { Badge: Box, Box, Button, Code: Box, Flex: Box, Grid: Box, HStack: Box, Input: Box, Spinner: Box, Text: Box, VStack: Box }
 })
 const commits: RepositoryCommit[] = ['newer', 'middle', 'older', 'oldest'].map((sha, index) => ({
   sha, subject: sha, author: 'Test', authorEmail: '', createdUnix: 100 - index,

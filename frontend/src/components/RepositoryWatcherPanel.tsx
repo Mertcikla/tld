@@ -17,15 +17,35 @@ export default function RepositoryWatcherPanel({ status, repositoryRoot, branch,
           {activity.active ? <Spinner size="xs" color="var(--accent)" /> : <Box w="7px" h="7px" borderRadius="full" bg={status?.running ? 'green.300' : 'gray.500'} />}
           <Text fontSize="sm" fontWeight="semibold" data-testid="watch-state" aria-live="polite">{activity.label}</Text>
         </HStack>
-        <Text fontSize="xs" color="gray.400">{branch || 'Detached HEAD'} · {revision ? revision.slice(0, 12) : '—'}</Text>
+        {(branch || revision) && (
+          <HStack spacing={2} minW={0} fontSize="xs" color="gray.400" aria-label="Watched Git revision">
+            {branch && <Text isTruncated title={branch}>Branch: {branch}</Text>}
+            {revision && <Text fontFamily="mono" flexShrink={0} title={revision}>{!branch && 'Commit: '}{revision.slice(0, 7)}</Text>}
+          </HStack>
+        )}
         <Flex ml="auto" gap={2} wrap="wrap">
           {status?.running ? <>
             <Button size="xs" variant="outline" isDisabled={busy || !!stopping} onClick={onStop} data-testid="watch-stop">{stopping ? 'Stopping…' : 'Stop watcher'}</Button>
             <Tooltip label={unavailable ? status?.installHint : 'Stop and start the watcher again'}><Button size="xs" variant="ghost" isDisabled={busy || !!stopping || unavailable} onClick={onRestart} data-testid="watch-restart">Restart</Button></Tooltip>
           </> : <Tooltip label={unavailable ? status?.installHint || 'Install the tld CLI to start a watcher' : undefined}>
-            <Button size="xs" colorScheme="green" isLoading={busy} isDisabled={unavailable || !status} onClick={onStart} data-testid="watch-start">{status?.error ? 'Retry watcher' : 'Start watcher'}</Button>
+            <Button
+              size="sm"
+              h="32px"
+              px={4}
+              variant="solid"
+              bg="var(--accent)"
+              color="white"
+              fontWeight="semibold"
+              borderColor="transparent"
+              _hover={{ bg: 'var(--accent)', filter: 'brightness(1.08)' }}
+              _active={{ bg: 'var(--accent)', filter: 'brightness(0.95)' }}
+              isLoading={busy}
+              isDisabled={unavailable || !status}
+              onClick={onStart}
+              data-testid="watch-start"
+            >{status?.error ? 'Retry watcher' : 'Start watcher'}</Button>
           </Tooltip>}
-          <Button size="xs" variant="ghost" isDisabled={busy} onClick={onRefresh} data-testid="watch-refresh">Refresh</Button>
+          <Button size="sm" h="32px" px={4} variant="ghost" isDisabled={busy} onClick={onRefresh} data-testid="watch-refresh">Refresh</Button>
         </Flex>
       </Flex>
       <Text fontSize="xs" color="gray.400" mb={3}>{activity.detail}</Text>
