@@ -948,7 +948,6 @@ describe('Repositories map action', () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repository-settings-page' }).length).toBeGreaterThan(0)
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repository-override-resolution' }).props.onChange({ target: { checked: true } }) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repository-map-resolution' }).props.onChange({ target: { value: '2.4' } }) })
     await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repository-map-save' }).props.onClick() })
     expect(api.repositories.updateMapConfiguration).toHaveBeenCalledWith('repo-1', { resolution: 2.4 })
@@ -964,11 +963,23 @@ describe('Repositories map action', () => {
     searchParamsMock.mockReturnValue(new URLSearchParams('repo=repo-1&page=settings'))
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repository-override-minRootGroups' }).props.onChange({ target: { checked: true } }) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repository-map-minRootGroups' }).props.onChange({ target: { value: '21' } }) })
     await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repository-map-save' }).props.onClick() })
     expect(api.repositories.updateMapConfiguration).not.toHaveBeenCalled()
     expect(renderer.root.findAllByProps({ role: 'alert' }).length).toBeGreaterThan(0)
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('overrides external import materialization only when changed', async () => {
+    const { api } = await import('../api/client')
+    const settings = await api.repositories.settings('repo-1')
+    vi.mocked(api.repositories.updateMapConfiguration).mockResolvedValue(settings)
+    searchParamsMock.mockReturnValue(new URLSearchParams('repo=repo-1&page=settings'))
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repository-map-includeExternalImports' }).props.onChange({ target: { checked: true } }) })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repository-map-save' }).props.onClick() })
+    expect(api.repositories.updateMapConfiguration).toHaveBeenCalledWith('repo-1', { includeExternalImports: true })
     await act(async () => { renderer.unmount() })
   })
 

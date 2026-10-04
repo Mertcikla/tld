@@ -17,6 +17,10 @@ func (o Options) WithOverrides(overrides *pb.RepositoryMapConfiguration) (Option
 	}
 	var invalid error
 	overrides.ProtoReflect().Range(func(field protoreflect.FieldDescriptor, value protoreflect.Value) bool {
+		if field.Kind() == protoreflect.BoolKind {
+			// Optional booleans track presence, so both values are valid.
+			return true
+		}
 		if field.Kind() == protoreflect.DoubleKind {
 			n := value.Float()
 			if n <= 0 || math.IsNaN(n) || math.IsInf(n, 0) {
@@ -57,6 +61,9 @@ func (o Options) WithOverrides(overrides *pb.RepositoryMapConfiguration) (Option
 	if overrides.MaxLeafConnectorsPerView != nil {
 		o.MaxLeafConnectorsPerView = int(overrides.GetMaxLeafConnectorsPerView())
 	}
+	if overrides.IncludeExternalImports != nil {
+		o.IncludeExternalImports = overrides.GetIncludeExternalImports()
+	}
 	if o.Grouping.MinRootGroups > o.Grouping.MaxRootGroups {
 		return o, fmt.Errorf("maximum root groups must be at least minimum root groups (including inherited defaults)")
 	}
@@ -75,5 +82,6 @@ func (o Options) Configuration() *pb.RepositoryMapConfiguration {
 		MaxLeafFiles:             proto.Uint32(uint32(o.Grouping.MaxLeafFiles)),
 		MaxConnectorsPerView:     proto.Uint32(uint32(o.MaxConnectorsPerView)),
 		MaxLeafConnectorsPerView: proto.Uint32(uint32(o.MaxLeafConnectorsPerView)),
+		IncludeExternalImports:   proto.Bool(o.IncludeExternalImports),
 	}
 }

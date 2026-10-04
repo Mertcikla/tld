@@ -18,6 +18,45 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+func TestRepositorySettingsExternalImportsDefaultOff(t *testing.T) {
+	ctx := context.Background()
+	ws, routes := newTestServerWithOptions(t, uuid.New(), nil, Options{Config: workspace.DefaultConfig()})
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	root := t.TempDir()
+	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %s %v", out, err)
+	}
+	id := graph.RepositoryID(root)
+	snap := &pb.Snapshot{Id: id + "-snap", RepositoryId: id, CreatedUnix: 100}
+	if err := idx.Publish(ctx, root, snap, graph.NewGraph(id, snap.Id)); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(routes)
+	defer server.Close()
+	client := codeindexv1connect.NewRepositoryServiceClient(server.Client(), server.URL+"/api")
+	settings, err := client.GetRepositorySettings(ctx, connect.NewRequest(&pb.GetRepositorySettingsRequest{RepositoryId: id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if settings.Msg.GetEffectiveMap().GetIncludeExternalImports() || settings.Msg.GetMapDefaults().GetIncludeExternalImports() {
+		t.Fatalf("external imports must default off: %v", settings.Msg)
+	}
+	saved, err := client.UpdateRepositoryMapConfiguration(ctx, connect.NewRequest(&pb.UpdateRepositoryMapConfigurationRequest{RepositoryId: id, Overrides: &pb.RepositoryMapConfiguration{IncludeExternalImports: proto.Bool(true)}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !saved.Msg.GetEffectiveMap().GetIncludeExternalImports() || saved.Msg.GetMapOverrides().GetIncludeExternalImports() != true {
+		t.Fatalf("enable override not persisted: %v", saved.Msg)
+	}
+	saved, err = client.UpdateRepositoryMapConfiguration(ctx, connect.NewRequest(&pb.UpdateRepositoryMapConfigurationRequest{RepositoryId: id, Overrides: &pb.RepositoryMapConfiguration{IncludeExternalImports: proto.Bool(false)}}))
+	if err != nil {
+		t.Fatalf("explicit false override rejected: %v", err)
+	}
+	if saved.Msg.GetEffectiveMap().GetIncludeExternalImports() || saved.Msg.GetMapOverrides().IncludeExternalImports == nil {
+		t.Fatalf("explicit false override not persisted: %v", saved.Msg)
+	}
+}
+
 func TestRepositorySettingsOverridesAndRemotes(t *testing.T) {
 	ctx := context.Background()
 	cfg := workspace.DefaultConfig()

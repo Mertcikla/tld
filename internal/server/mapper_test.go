@@ -234,6 +234,9 @@ func TestMapperServiceMaterializesBoundedExternalImports(t *testing.T) {
 	if err := idx.Publish(ctx, root, snap, graph); err != nil {
 		t.Fatalf("publish: %v", err)
 	}
+	if err := idx.SaveRepositoryMapOverrides(ctx, repoID, &codeindexv1.RepositoryMapConfiguration{IncludeExternalImports: proto.Bool(true)}); err != nil {
+		t.Fatalf("enable external imports: %v", err)
+	}
 
 	ts := httptest.NewServer(routes)
 	defer ts.Close()

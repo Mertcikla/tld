@@ -26,6 +26,7 @@ import {
 import { buildSceneGraph, type SceneGraph } from './sceneGraph'
 import type { ZUILayout, ZUIViewState } from './types'
 import type { ZUIProxyConnectorState } from './useZUIProxyConnectors'
+import { subscribeElementNameFontsChanged } from '../../utils/elementName'
 
 export interface ZUIRenderInvalidator {
   invalidate: () => void
@@ -151,6 +152,8 @@ export function useZUIRenderLoop({
     setOnImageLoadCallback(invalidate)
     return () => setOnImageLoadCallback(null)
   }, [invalidate])
+
+  useEffect(() => subscribeElementNameFontsChanged(invalidate), [invalidate])
 
   useEffect(invalidate, [invalidate, viewState, crossBranchSettings])
 

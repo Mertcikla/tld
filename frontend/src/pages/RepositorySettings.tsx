@@ -11,7 +11,9 @@ import {
   type RepositorySettings as Settings,
 } from '../api/client'
 
-const fields: { key: keyof RepositoryMapConfiguration; label: string; description: string; group: string }[] = [
+type NumberMapKey = 'resolution' | 'minGroupSize' | 'minRootGroups' | 'maxRootGroups' | 'maxChildren' | 'maxDepth' | 'maxLeafFiles' | 'maxConnectorsPerView' | 'maxLeafConnectorsPerView'
+
+const fields: { key: NumberMapKey; label: string; description: string; group: string }[] = [
   { key: 'resolution', label: 'Resolution', description: 'Higher values produce more, smaller groups.', group: 'Grouping' },
   { key: 'minGroupSize', label: 'Minimum group size', description: 'Merge tiny leaf groups into their strongest sibling.', group: 'Grouping' },
   { key: 'minRootGroups', label: 'Minimum root groups', description: 'Lower bound for top-level groups.', group: 'Grouping' },
@@ -22,6 +24,14 @@ const fields: { key: keyof RepositoryMapConfiguration; label: string; descriptio
   { key: 'maxConnectorsPerView', label: 'Connectors per view', description: 'Limit connections drawn in group views.', group: 'Connection budgets' },
   { key: 'maxLeafConnectorsPerView', label: 'Connectors per leaf view', description: 'Limit connections drawn in file-level views.', group: 'Connection budgets' },
 ]
+
+const importFields: { key: 'includeExternalImports'; label: string; description: string }[] = [
+  { key: 'includeExternalImports', label: 'Materialize external imports', description: 'Show third-party imports under a single External element. Off by default because imports can dominate the connector budget.' },
+]
+
+type MapKey = NumberMapKey | 'includeExternalImports'
+const overrideKeys: MapKey[] = [...fields.map(field => field.key), ...importFields.map(field => field.key)]
+const stringValue = (value: number | boolean | undefined): string => value === undefined ? '' : String(value)
 
 interface Props {
   repository: IndexedRepository
@@ -79,8 +89,7 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
   const applySettings = (value: Settings) => {
     setSettings(value)
     setDraft(Object.fromEntries(
-      fields.filter(field => value.mapOverrides[field.key] !== undefined)
-        .map(field => [field.key, String(value.mapOverrides[field.key])]),
+      overrideKeys.map(key => [key, stringValue(value.effectiveMap[key] ?? value.mapDefaults[key])]),
     ))
   }
   useEffect(() => {
@@ -103,7 +112,13 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
         setError(`${field.label} must be a positive ${field.key === 'resolution' ? 'number' : 'integer no larger than 2147483647'}.`)
         return
       }
-      overrides[field.key] = value
+      if (value !== settings.mapDefaults[field.key]) overrides[field.key] = value
+    }
+    for (const field of importFields) {
+      const raw = draft[field.key]
+      if (raw === undefined) continue
+      const value = raw === 'true'
+      if (value !== (settings.mapDefaults[field.key] ?? false)) overrides[field.key] = value
     }
     if ((overrides.minRootGroups ?? settings.mapDefaults.minRootGroups ?? 3) > (overrides.maxRootGroups ?? settings.mapDefaults.maxRootGroups ?? 20)) {
       setError('Maximum root groups must be at least minimum root groups, including inherited defaults.')
@@ -119,10 +134,18 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
     } catch (err) { setError(err instanceof Error ? err.message : 'Could not save map overrides') }
     finally { setSaving(false) }
   }
-  const overrideCount = fields.filter(field => draft[field.key] !== undefined).length
-  const hasMapChanges = !!settings && fields.some(field => draft[field.key] !== (
-    settings.mapOverrides[field.key] === undefined ? undefined : String(settings.mapOverrides[field.key])
-  ))
+  const defaultString = (key: MapKey) => stringValue(settings?.mapDefaults[key])
+  const savedString = (key: MapKey) => stringValue(settings?.effectiveMap[key] ?? settings?.mapDefaults[key])
+  const isChanged = (key: MapKey): boolean => {
+    if (!settings) return false
+    const raw = draft[key]
+    if (raw === undefined) return false
+    if (key === 'includeExternalImports') return raw !== defaultString(key)
+    const value = Number(raw)
+    return Number.isFinite(value) ? value !== settings.mapDefaults[key] : raw !== defaultString(key)
+  }
+  const overrideCount = overrideKeys.filter(isChanged).length
+  const hasMapChanges = !!settings && overrideKeys.some(key => (draft[key] ?? '') !== savedString(key))
 
   return (
     <VStack data-testid="repository-settings-page" align="stretch" spacing={5} p={{ base: 4, md: 6 }} pb={{ base: 'calc(var(--bottomnav-container-h, 0px) + env(safe-area-inset-bottom, 0px) + 24px)', md: 8 }} maxW="1100px" w="full" minW={0} mx="auto">
@@ -208,28 +231,17 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
                   <Text as="h3" fontSize="sm" fontWeight="semibold" mb={3}>{group}</Text>
                   <Grid templateColumns={fieldColumns} gap={3}>
                     {fields.filter(field => field.group === group).map(field => {
-                      const override = draft[field.key] !== undefined
+                      const changed = isChanged(field.key)
                       return (
-                        <Box key={field.key} border="1px solid" borderColor={override ? 'var(--accent)' : 'var(--border-main)'} borderRadius="lg" p={3} minW={0}>
-                          <Flex align="start" justify="space-between" gap={3}>
-                            <Text as="label" htmlFor={`map-${field.key}`} fontSize="sm" fontWeight="medium">{field.label}</Text>
-                            <Switch size="sm" flexShrink={0} mt={1} aria-label={`Override ${field.label}`} data-testid={`repository-override-${field.key}`} isChecked={override} isDisabled={disabled} onChange={event => {
-                              setDraft(old => {
-                                const next = { ...old }
-                                if (event.target.checked) next[field.key] = String(settings.mapDefaults[field.key])
-                                else delete next[field.key]
-                                return next
-                              })
-                              setMessage('')
-                            }} />
-                          </Flex>
+                        <Box key={field.key} border="1px solid" borderColor={changed ? 'var(--accent)' : 'var(--border-main)'} borderRadius="lg" p={3} minW={0}>
+                          <Text as="label" htmlFor={`map-${field.key}`} fontSize="sm" fontWeight="medium">{field.label}</Text>
                           <Text id={`map-${field.key}-help`} fontSize="xs" color="gray.400" mt={1} minH="36px">{field.description}</Text>
                           <Flex align="center" justify="space-between" gap={3} mt={3}>
                             <Box>
-                              <Text fontSize="xs" color={override ? 'var(--accent)' : 'gray.400'}>{override ? 'Override' : 'Inherited'}</Text>
+                              <Text fontSize="xs" color={changed ? 'var(--accent)' : 'gray.400'}>{changed ? 'Overridden' : 'Inherited'}</Text>
                               <Text fontSize="xs" color="gray.500">Global default: {settings.mapDefaults[field.key]}</Text>
                             </Box>
-                            <Input id={`map-${field.key}`} aria-describedby={`map-${field.key}-help`} data-testid={`repository-map-${field.key}`} type="number" size="sm" w="100px" flexShrink={0} min={field.key === 'resolution' ? undefined : 1} step={field.key === 'resolution' ? 'any' : 1} value={override ? draft[field.key] : settings.mapDefaults[field.key] ?? ''} isDisabled={disabled || !override} onChange={event => {
+                            <Input id={`map-${field.key}`} aria-describedby={`map-${field.key}-help`} data-testid={`repository-map-${field.key}`} type="number" size="sm" w="100px" flexShrink={0} min={field.key === 'resolution' ? undefined : 1} step={field.key === 'resolution' ? 'any' : 1} value={draft[field.key] ?? ''} isDisabled={disabled} onChange={event => {
                               setDraft(old => ({ ...old, [field.key]: event.target.value }))
                               setMessage('')
                             }} />
@@ -240,11 +252,36 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
                   </Grid>
                 </Box>
               ))}
+              <Box>
+                <Text as="h3" fontSize="sm" fontWeight="semibold" mb={3}>External imports</Text>
+                <Grid templateColumns={fieldColumns} gap={3}>
+                  {importFields.map(field => {
+                    const changed = isChanged(field.key)
+                    const enabled = (draft[field.key] ?? defaultString(field.key)) === 'true'
+                    return (
+                      <Box key={field.key} border="1px solid" borderColor={changed ? 'var(--accent)' : 'var(--border-main)'} borderRadius="lg" p={3} minW={0}>
+                        <Text as="label" htmlFor={`map-${field.key}`} fontSize="sm" fontWeight="medium">{field.label}</Text>
+                        <Text id={`map-${field.key}-help`} fontSize="xs" color="gray.400" mt={1} minH="36px">{field.description}</Text>
+                        <Flex align="center" justify="space-between" gap={3} mt={3}>
+                          <Box>
+                            <Text fontSize="xs" color={changed ? 'var(--accent)' : 'gray.400'}>{changed ? 'Overridden' : 'Inherited'}</Text>
+                            <Text fontSize="xs" color="gray.500">Global default: {String(settings.mapDefaults[field.key] ?? false)}</Text>
+                          </Box>
+                          <Switch id={`map-${field.key}`} data-testid={`repository-map-${field.key}`} size="sm" colorScheme="blue" isChecked={enabled} isDisabled={disabled} onChange={event => {
+                            setDraft(old => ({ ...old, [field.key]: event.target.checked ? 'true' : 'false' }))
+                            setMessage('')
+                          }} />
+                        </Flex>
+                      </Box>
+                    )
+                  })}
+                </Grid>
+              </Box>
             </VStack>
             <Flex align="center" justify="space-between" gap={3} wrap="wrap" mt={5} pt={4} borderTop="1px solid var(--border-main)">
               <Button size="sm" variant="ghost" isDisabled={disabled} onClick={() => {
-                setDraft({})
-                setMessage('All overrides cleared. Save to inherit global defaults.')
+                setDraft(Object.fromEntries(overrideKeys.map(key => [key, stringValue(settings.mapDefaults[key])])))
+                setMessage('Reset to global defaults. Save to apply.')
                 setError('')
               }}>Use global defaults</Button>
               <Flex align="center" gap={3} wrap="wrap">

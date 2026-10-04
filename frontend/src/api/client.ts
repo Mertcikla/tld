@@ -166,6 +166,7 @@ export interface RepositoryMapConfiguration {
   maxLeafFiles?: number
   maxConnectorsPerView?: number
   maxLeafConnectorsPerView?: number
+  includeExternalImports?: boolean
 }
 export interface RepositoryRemote {
   name: string

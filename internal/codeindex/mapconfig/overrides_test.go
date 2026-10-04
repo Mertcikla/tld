@@ -40,3 +40,18 @@ func TestRepositoryOverridesInheritAndValidate(t *testing.T) {
 		t.Fatalf("nil overrides must preserve the base: %+v %v", reset, err)
 	}
 }
+
+func TestRepositoryOverridesExternalImports(t *testing.T) {
+	defaults := mapconfig.FromGlobal(workspace.DefaultConfig())
+	if defaults.IncludeExternalImports {
+		t.Fatal("external imports must default off")
+	}
+	on, err := defaults.WithOverrides(&pb.RepositoryMapConfiguration{IncludeExternalImports: proto.Bool(true)})
+	if err != nil || !on.IncludeExternalImports {
+		t.Fatalf("enable override: %+v %v", on, err)
+	}
+	off, err := defaults.WithOverrides(&pb.RepositoryMapConfiguration{IncludeExternalImports: proto.Bool(false)})
+	if err != nil || off.IncludeExternalImports {
+		t.Fatalf("explicit false override must be accepted: %+v %v", off, err)
+	}
+}

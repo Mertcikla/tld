@@ -10,6 +10,8 @@ interface ElementBodyProps extends FlexProps {
   logoUrl?: string
   nameSize?: string
   nameNoOfLines?: number
+  nameLines?: string[]
+  nameFontSize?: number
   typeSize?: string
   techSize?: string
 }
@@ -22,6 +24,8 @@ export const ElementBody = ({
   logoUrl,
   nameSize = 'sm',
   nameNoOfLines = 2,
+  nameLines,
+  nameFontSize,
   typeSize = '2xs',
   techSize = 'xs',
   children,
@@ -61,17 +65,34 @@ export const ElementBody = ({
 
       <Flex flexDir="column" align={hasLogo ? 'flex-start' : 'center'} justify="center" flex={1} minW={0}>
         {nameContent ?? (
-          <Text
-            fontWeight="semibold"
-            fontSize={nameSize}
-            noOfLines={nameNoOfLines}
-            wordBreak={nameNoOfLines === 1 ? 'break-all' : undefined}
-            textAlign={hasLogo ? 'left' : 'center'}
-            color="gray.100"
-            lineHeight={1.15}
-          >
-            {name}
-          </Text>
+          nameLines && nameFontSize ? (
+            <Box
+              fontWeight="semibold"
+              fontSize={`${nameFontSize}px`}
+              color="gray.100"
+              lineHeight={1.15}
+              textAlign={hasLogo ? 'left' : 'center'}
+              maxW="100%"
+            >
+              {nameLines.map((line, index) => (
+                <Box key={index} whiteSpace="nowrap">
+                  {line}
+                </Box>
+              ))}
+            </Box>
+          ) : (
+            <Text
+              fontWeight="semibold"
+              fontSize={nameSize}
+              noOfLines={nameNoOfLines}
+              wordBreak={nameNoOfLines === 1 ? 'break-all' : undefined}
+              textAlign={hasLogo ? 'left' : 'center'}
+              color="gray.100"
+              lineHeight={1.15}
+            >
+              {name}
+            </Text>
+          )
         )}
         {!!type && (
           <Text

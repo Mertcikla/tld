@@ -16,8 +16,15 @@ import {
   getLogicalHandleId,
   getVisualHandleIdForGroup,
 } from '../../utils/edgeDistribution'
+import {
+  ELEMENT_NAME_FONT_FAMILY,
+  ELEMENT_NAME_FONT_STEPS,
+  ELEMENT_NAME_INSET_RATIO,
+  ELEMENT_NAME_LINE_HEIGHT,
+  fitElementName,
+} from '../../utils/elementName'
 
-export const ZUI_FONT_FAMILY = "'Metrophobic', system-ui, -apple-system, sans-serif"
+export const ZUI_FONT_FAMILY = ELEMENT_NAME_FONT_FAMILY
 
 const MIN_LABEL_PX = 12
 const MIN_DRAW_PX = 2
@@ -627,6 +634,69 @@ function drawGrid(
   ctx.restore()
 }
 
+export interface NodeNameLayout {
+  lines: string[]
+  fontSize: number
+  truncated: boolean
+  centerY: number
+  lineHeight: number
+}
+
+export function computeNodeNameLayout(options: {
+  label: string
+  worldWidth: number
+  worldHeight: number
+  drawZoom: number
+  showLogo: boolean
+  showType: boolean
+  childrenAnimating: boolean
+  measure: (text: string, fontSize: number) => number
+}): NodeNameLayout {
+  const {
+    label,
+    worldWidth: w,
+    worldHeight: h,
+    drawZoom,
+    showLogo,
+    showType,
+    childrenAnimating,
+    measure,
+  } = options
+
+  const baseOffset = showLogo ? 0.15 : 0
+  const nameY = showType ? h * (0.42 + baseOffset) : h * (0.5 + baseOffset)
+  const maxLines = !showLogo && showType && !childrenAnimating ? 2 : 1
+
+  const typeFontSize = h * TYPE_FONT_TO_NODE_H
+  const bandTop = h * 0.06
+  const bandBottom = h * (0.62 + baseOffset) - typeFontSize * 0.8 - 2
+
+  const fontSizes = ELEMENT_NAME_FONT_STEPS
+    .map((size) => (size / VIEW_EDITOR_NODE_H) * h)
+    .filter((size) => size * drawZoom >= 6)
+
+  const fit = fontSizes.length > 0
+    ? fitElementName({
+        name: label,
+        maxWidth: w * (1 - ELEMENT_NAME_INSET_RATIO),
+        maxLines,
+        fontSizes,
+        lineHeight: ELEMENT_NAME_LINE_HEIGHT,
+        bandHeight: maxLines > 1 ? bandBottom - bandTop : undefined,
+        measureKey: 'zui',
+        measure,
+      })
+    : { lines: [label], fontSize: h * NAME_FONT_TO_NODE_H, truncated: false }
+
+  return {
+    lines: fit.lines,
+    fontSize: fit.fontSize,
+    truncated: fit.truncated,
+    centerY: fit.lines.length > 1 ? (bandTop + bandBottom) / 2 : nameY,
+    lineHeight: fit.fontSize * ELEMENT_NAME_LINE_HEIGHT,
+  }
+}
+
 function drawSceneNode(
   ctx: CanvasRenderingContext2D,
   node: SceneNode,
@@ -788,32 +858,40 @@ function drawSceneNode(
     const screenFontSize = nameFontSize * drawZoom
 
     if (screenFontSize >= 6) {
+      const showLogo = !!layout.logoUrl && drawScreenW > 60
+      const showType = drawScreenW > BADGE_THRESHOLD
+      const baseOffset = showLogo ? 0.15 : 0
+      const typeFontSize = h * TYPE_FONT_TO_NODE_H
+
+      const name = computeNodeNameLayout({
+        label: layout.label,
+        worldWidth: w,
+        worldHeight: h,
+        drawZoom,
+        showLogo,
+        showType,
+        childrenAnimating: hasChildren && t < 0.9,
+        measure: (text, fontSize) => {
+          ctx.font = `600 ${fontSize}px ${ZUI_FONT_FAMILY}`
+          return ctx.measureText(text).width
+        },
+      })
+
       ctx.save()
       ctx.globalAlpha = parentAlpha
-      ctx.font = `600 ${nameFontSize}px ${ZUI_FONT_FAMILY}`
       ctx.fillStyle = '#f7fafc'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
+      ctx.font = `600 ${name.fontSize}px ${ZUI_FONT_FAMILY}`
 
-      const worldPadding = w * 0.08
-      const maxW = w - worldPadding
-      let label = layout.label
-      const totalW = ctx.measureText(label).width
-      if (totalW > maxW) {
-        const ratio = maxW / totalW
-        label = label.slice(0, Math.max(3, Math.floor(label.length * ratio)))
-        if (label.length < layout.label.length) label += '\u2026'
+      const startY = name.centerY - ((name.lines.length - 1) * name.lineHeight) / 2
+      for (let i = 0; i < name.lines.length; i += 1) {
+        ctx.fillText(name.lines[i], x + w / 2, y + startY + i * name.lineHeight)
       }
 
-      const showLogo = !!layout.logoUrl && drawScreenW > 60
-      const baseOffset = showLogo ? 0.15 : 0
-      const nameY = drawScreenW > BADGE_THRESHOLD ? y + h * (0.42 + baseOffset) : y + h * (0.5 + baseOffset)
-      ctx.fillText(label, x + w / 2, nameY)
-
-      if (drawScreenW > BADGE_THRESHOLD) {
-        const badgeFontSize = h * TYPE_FONT_TO_NODE_H
-        if (badgeFontSize * drawZoom >= 5) {
-          ctx.font = `${badgeFontSize}px ${ZUI_FONT_FAMILY}`
+      if (showType) {
+        if (typeFontSize * drawZoom >= 5) {
+          ctx.font = `${typeFontSize}px ${ZUI_FONT_FAMILY}`
           ctx.fillStyle = '#a0aec0'
           const displayType = typeof layout.type === 'string' ? layout.type.toUpperCase() : 'UNKNOWN'
           ctx.fillText(displayType, x + w / 2, y + h * (0.62 + baseOffset))
