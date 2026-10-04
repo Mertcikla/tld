@@ -112,7 +112,7 @@ export default function Inventory() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [tagSearch, setTagSearch] = useState('')
   const [tagColorMap, setTagColorMap] = useState<Record<string, { color: string }>>({})
-  const [groupTagMeta, setGroupTagMeta] = useState<Record<string, { label: string; color: string }>>({})
+  const [groupTagMeta, setGroupTagMeta] = useState<Record<string, { label: string; color: string; layerId: number; viewId: number }>>({})
   const [tagDeleteConfirm, setTagDeleteConfirm] = useState<{ tag: string; count: number } | null>(null)
   const [deletingTag, setDeletingTag] = useState<string | null>(null)
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = useState(false)
@@ -158,11 +158,11 @@ export default function Inventory() {
         })
       })
       const nextConnectors = dependencies.connectors.map(dependencyConnectorToConnector)
-      const nextGroupTagMeta: Record<string, { label: string; color: string }> = {}
+      const nextGroupTagMeta: Record<string, { label: string; color: string; layerId: number; viewId: number }> = {}
       allLayers.forEach((layer) => {
         const groupTag = elementGroupTagForLayer(layer)
         if (groupTag) {
-          nextGroupTagMeta[groupTag] = { label: `group:${layer.name}`, color: layer.color || '#A0AEC0' }
+          nextGroupTagMeta[groupTag] = { label: `group:${layer.name}`, color: layer.color || '#A0AEC0', layerId: layer.id, viewId: layer.diagram_id }
         }
       })
       const tagSet = new Set<string>(Object.keys(fetchedTagColors))
@@ -547,6 +547,30 @@ export default function Inventory() {
     }
   }
 
+  const handleDeleteGroup = async (tag: string) => {
+    const meta = groupTagMeta[tag]
+    if (!meta) return
+    setDeletingTag(tag)
+    try {
+      const members = elements.filter((element) => (element.tags ?? []).includes(tag))
+      await Promise.all(
+        members.map((element) =>
+          api.workspace.elements.update(element.id, {
+            tags: (element.tags ?? []).filter((existing) => existing !== tag),
+          }),
+        ),
+      )
+      await api.workspace.views.layers.delete(meta.viewId, meta.layerId).catch(() => undefined)
+      await api.workspace.orgs.tagColors.delete(tag).catch(() => undefined)
+      setTagDeleteConfirm(null)
+      void refresh()
+    } catch (err) {
+      console.error('Failed to delete group', err)
+    } finally {
+      setDeletingTag(null)
+    }
+  }
+
   return (
     <ViewEditorContext.Provider value={editorContext}>
       <Box data-testid="inventory-page" h="100%" bg="var(--bg-canvas)" display="flex" flexDir="column" overflow="hidden">
@@ -723,19 +747,18 @@ export default function Inventory() {
                             transition="opacity 0.1s"
                           />
                           <Text fontSize="xs" color={isActive ? color : 'gray.400'} flex={1} isTruncated title={label !== tag ? tag : undefined}>{label}</Text>
-                          <Text fontSize="10px" color={count === 0 ? 'gray.700' : isActive ? color : 'gray.600'} fontWeight="bold" ml={1} _groupHover={{ display: isGroupTag ? 'block' : 'none' }}>{count}</Text>
-                          {!isGroupTag && (
-                            <Popover
-                              placement="right-start"
-                              isOpen={tagDeleteConfirm?.tag === tag}
-                              onClose={() => setTagDeleteConfirm(null)}
-                              closeOnBlur
-                            >
-                            <Tooltip label={`Delete tag "${tag}"`} placement="right" openDelay={400}>
+                          <Text fontSize="10px" color={count === 0 ? 'gray.700' : isActive ? color : 'gray.600'} fontWeight="bold" ml={1} _groupHover={{ display: 'none' }}>{count}</Text>
+                          <Popover
+                            placement="right-start"
+                            isOpen={tagDeleteConfirm?.tag === tag}
+                            onClose={() => setTagDeleteConfirm(null)}
+                            closeOnBlur
+                          >
+                            <Tooltip label={isGroupTag ? `Delete group "${label}"` : `Delete tag "${tag}"`} placement="right" openDelay={400}>
                               <Box>
                                 <PopoverTrigger>
                                   <IconButton
-                                    aria-label={`Delete tag ${tag}`}
+                                    aria-label={isGroupTag ? `Delete group ${label}` : `Delete tag ${tag}`}
                                     icon={<DeleteIcon boxSize="9px" />}
                                     size="xs"
                                     variant="ghost"
@@ -765,7 +788,11 @@ export default function Inventory() {
                               <PopoverArrow bg="rgb(var(--bg-main-rgb))" />
                               <PopoverBody pt={3} pb={2}>
                                 <Text fontSize="sm" color="gray.100" lineHeight={1.35}>
-                                  {count > 0 ? `Delete "${tag}" and remove it from ${count} item(s)?` : `Delete "${tag}"?`}
+                                  {isGroupTag
+                                    ? `Delete group "${label}"? Its ${count} element(s) keep their other tags.`
+                                    : count > 0
+                                      ? `Delete "${tag}" and remove it from ${count} item(s)?`
+                                      : `Delete "${tag}"?`}
                                 </Text>
                               </PopoverBody>
                               <PopoverFooter border="0" pt={0} pb={3}>
@@ -782,17 +809,16 @@ export default function Inventory() {
                                   <Button
                                     size="xs"
                                     colorScheme="red"
-                                    onClick={() => { void handleDeleteTag(tag) }}
+                                    onClick={() => { void (isGroupTag ? handleDeleteGroup(tag) : handleDeleteTag(tag)) }}
                                     isLoading={deletingTag === tag}
                                     loadingText="Deleting"
                                   >
-                                    Delete
+                                    {isGroupTag ? 'Ungroup' : 'Delete'}
                                   </Button>
                                 </HStack>
                               </PopoverFooter>
                             </PopoverContent>
                           </Popover>
-                          )}
                         </Flex>
                       </Box>
                     )

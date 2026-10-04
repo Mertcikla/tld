@@ -276,7 +276,7 @@ export function ConnectorInspector({ data, cardShadow: _cardShadow, onSelectRow 
           position="absolute"
           inset={0}
           sx={{
-            '[data-testid="vieweditor-node-zoom-in"], [data-testid="vieweditor-node-zoom-out"]': { display: 'none' },
+            '[data-testid="vieweditor-node-zoom-in"], [data-testid="vieweditor-node-zoom-out"]': { visibility: 'hidden', pointerEvents: 'none' },
             '.react-flow__handle': { visibility: 'hidden', pointerEvents: 'none' },
             '.react-flow__pane': { cursor: 'default !important' },
           }}

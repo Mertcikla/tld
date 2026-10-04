@@ -817,7 +817,7 @@ func mapViewName(input MapInput) string {
 }
 
 func mapTopElement(input MapInput) core.LibraryElement {
-	kind := "map"
+	kind := "repository"
 	description := "Repository map"
 	if input.RepositoryRemoteURL != "" {
 		description = "Repository map · " + input.RepositoryRemoteURL
