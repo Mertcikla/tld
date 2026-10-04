@@ -67,7 +67,8 @@ in-tree codeindex engine and publishes an immutable snapshot.
 For a one-time index, pass --materialize to additionally project candidate
 elements and connectors into a workspace view, or --map to group the
 dependency graph into architectural components and materialize the map view.
-Map grouping and connector budgets come from the global map.* configuration.
+Map grouping and connector budgets inherit global map.* configuration, with
+per-repository overrides configurable on the repository settings page.
 With --watch, --map refreshes the map after each scan.
 
 With --watch, Git's current commit is the Base and the combined staged,
@@ -316,8 +317,8 @@ func (e *engine) buildAndPublish(ctx context.Context, root string, base *indexer
 	return snap, parity.Summarize(snap, g), mres, mapRes, false, nil
 }
 
-// mapGraph runs the graph mapping pipeline for a snapshot using the global map
-// configuration and reports progress through the active stage tracker.
+// mapGraph runs the graph mapping pipeline for a snapshot using global map
+// defaults and repository overrides and reports progress through the active stage tracker.
 func (e *engine) mapGraph(ctx context.Context, snap *pb.Snapshot, tracker *term.StageTracker) (*pb.MapResult, error) {
 	tracker.Begin(stageMapGraph)
 	result, _, err := maprun.Run(ctx, maprun.Deps{

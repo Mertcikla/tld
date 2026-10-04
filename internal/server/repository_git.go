@@ -20,7 +20,7 @@ func repositoryGit(ctx context.Context, root string, args ...string) (string, er
 	raw, err := cmd.Output()
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {
-			return "", fmt.Errorf("git: %s", strings.TrimSpace(string(exit.Stderr)))
+			return "", fmt.Errorf("git: %s: %w", strings.TrimSpace(string(exit.Stderr)), err)
 		}
 		return "", err
 	}

@@ -40,7 +40,7 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_completed_maps WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
 			return err
 		}
-		for _, table := range []string{"codeindex_impacts", "codeindex_watch_state", "codeindex_leases"} {
+		for _, table := range []string{"codeindex_impacts", "codeindex_watch_state", "codeindex_leases", "codeindex_repository_settings"} {
 			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
 				return err
 			}

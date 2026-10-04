@@ -152,6 +152,33 @@ export interface IndexedRepository {
   sources: number
 }
 
+export interface RepositoryMapConfiguration {
+  resolution?: number
+  minGroupSize?: number
+  minRootGroups?: number
+  maxRootGroups?: number
+  maxChildren?: number
+  maxDepth?: number
+  maxLeafFiles?: number
+  maxConnectorsPerView?: number
+  maxLeafConnectorsPerView?: number
+}
+export interface RepositoryRemote {
+  name: string
+  fetchUrls: string[]
+  pushUrls: string[]
+}
+export interface RepositorySettings {
+  mapValidationError?: string
+  mapDefaults: RepositoryMapConfiguration
+  mapOverrides: RepositoryMapConfiguration
+  effectiveMap: RepositoryMapConfiguration
+  remotes: RepositoryRemote[]
+  isGit: boolean
+  currentBranch: string
+  headSha: string
+}
+
 export type SnapshotChangeKind = 'added' | 'removed' | 'modified' | 'unchanged'
 
 export interface CodeSnapshotProject {
@@ -1923,6 +1950,18 @@ export const api = {
   },
 
   repositories: {
+    settings: (repositoryId: string, signal?: AbortSignal): Promise<RepositorySettings> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getRepositorySettings({ repositoryId }, { signal })
+      return { ...response, mapDefaults: response.mapDefaults ?? {}, mapOverrides: response.mapOverrides ?? {}, effectiveMap: response.effectiveMap ?? {} }
+    }),
+    updateMapConfiguration: (repositoryId: string, overrides: RepositoryMapConfiguration): Promise<RepositorySettings> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.updateRepositoryMapConfiguration({ repositoryId, overrides })
+      return { ...response, mapDefaults: response.mapDefaults ?? {}, mapOverrides: response.mapOverrides ?? {}, effectiveMap: response.effectiveMap ?? {} }
+    }),
+    updateRemote: (repositoryId: string, remote: RepositoryRemote, remove = false): Promise<RepositorySettings> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.updateRepositoryRemote({ repositoryId, remote, remove })
+      return { ...response, mapDefaults: response.mapDefaults ?? {}, mapOverrides: response.mapOverrides ?? {}, effectiveMap: response.effectiveMap ?? {} }
+    }),
     fileSymbols: (repositoryId: string, snapshotId: string, path: string, signal?: AbortSignal): Promise<CodeFact[]> => rpc(async () => {
       const facts: CodeFact[] = []
       let pageToken = ''

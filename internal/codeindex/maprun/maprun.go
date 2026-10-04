@@ -53,6 +53,14 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 		}
 	}
 	repositoryID, snapshotID := req.RepositoryID, req.SnapshotID
+	overrides, err := deps.Codeindex.RepositoryMapOverrides(ctx, repositoryID)
+	if err != nil {
+		return nil, false, err
+	}
+	deps.Options, err = deps.Options.WithOverrides(overrides)
+	if err != nil {
+		return nil, false, err
+	}
 	configHash := deps.Options.ConfigHash(req.IncludeImports)
 
 	completed, err := deps.Codeindex.CompletedMaps(ctx, repositoryID)

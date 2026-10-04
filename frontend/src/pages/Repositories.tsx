@@ -36,6 +36,7 @@ import {
   ChevronRightIcon,
   DeleteIcon,
   RepeatIcon,
+  SettingsIcon,
 } from '@chakra-ui/icons'
 import {
   api,
@@ -54,6 +55,7 @@ import {
   type SnapshotSourceChange,
 } from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
+import RepositorySettings from './RepositorySettings'
 import RepositoryHistory from '../components/RepositoryHistory'
 import RepositoryChangeCanvas from '../components/RepositoryChangeCanvas'
 import RepositorySymbols from '../components/RepositorySymbols'
@@ -420,6 +422,7 @@ export default function Repositories() {
     () => params.get('headBranch') || '',
   )
   const [branch, setBranch] = useState(() => params.get('branch') || '')
+  const [showRepositorySettings, setShowRepositorySettings] = useState(() => params.get('page') === 'settings')
   const [collapsed, setCollapsed] = useState(false)
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
   const [showIds] = useState(readShowIds)
@@ -516,6 +519,7 @@ export default function Repositories() {
         const next = new URLSearchParams(old)
         for (const [key, value] of Object.entries({
           repo: selectedId,
+          page: showRepositorySettings ? 'settings' : '',
           mode: mode === 'live' ? 'watch' : mode,
           base,
           head,
@@ -530,7 +534,7 @@ export default function Repositories() {
       },
       { replace: true },
     )
-  }, [selectedId, base, head, branch, baseBranch, headBranch, mode, setParams])
+  }, [selectedId, base, head, branch, baseBranch, headBranch, mode, showRepositorySettings, setParams])
   useEffect(() => {
     let stale = false
     setDataError('')
@@ -762,6 +766,7 @@ export default function Repositories() {
     } finally { setWatchBusy(false) }
   }
   const selectRepo = (id: string) => {
+    setShowRepositorySettings(false)
     if (id === selectedId) return
     operation.current?.abort()
     operation.current = null
@@ -941,170 +946,7 @@ export default function Repositories() {
       setAdding(false)
     }
   }
-  return (
-    <Box
-      h="full"
-      bg="var(--bg-canvas)"
-      display="flex"
-      flexDir="column"
-      overflow="hidden"
-    >
-      <ErrorMessage message={error} />
-      {loading && !repositories.length ? (
-        <Center flex={1}>
-          <Spinner color="var(--accent)" />
-        </Center>
-      ) : (
-        <Flex
-          flex={1}
-          minH={0}
-          direction={{ base: 'column', lg: 'row' }}
-          overflow="hidden"
-        >
-          <Box
-            w={{ base: 'full', lg: collapsed ? '52px' : '320px' }}
-            maxH={{ base: collapsed ? '96px' : '32vh', lg: 'none' }}
-            display="flex"
-            flexDir="column"
-            flexShrink={0}
-            borderRight="1px solid"
-            borderBottom={{ base: '1px solid', lg: 'none' }}
-            borderColor="whiteAlpha.100"
-          >
-            <Flex
-              px={collapsed ? 0 : 3}
-              h="44px"
-              flexShrink={0}
-              gap={2}
-              align="center"
-              justify={collapsed ? 'center' : undefined}
-              borderBottom="1px solid"
-              borderColor="whiteAlpha.100"
-            >
-              {!collapsed && (
-                <>
-                  <Label>Repositories</Label>
-                  <Box flex={1} />
-                </>
-              )}
-              <IconButton
-                size="xs"
-                variant="ghost"
-                aria-label={
-                  collapsed ? 'Expand repositories' : 'Collapse repositories'
-                }
-                icon={collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
-                onClick={() => setCollapsed(!collapsed)}
-              />
-              {!collapsed && (
-                <IconButton
-                  aria-label="Reload repositories"
-                  size="xs"
-                  variant="ghost"
-                  icon={<RepeatIcon />}
-                  onClick={() => {
-                    void reload()
-                    setNonce((n) => n + 1)
-                  }}
-                />
-              )}
-            </Flex>
-            <Box flex="0 1 auto" minH={0} overflowY="auto">
-            {repositories.map((repo) => (
-              <Box
-                key={repo.id}
-                role="group"
-                borderBottom="1px solid"
-                borderColor="whiteAlpha.100"
-              >
-                <Flex
-                  position="relative"
-                  px={collapsed ? 0 : 4}
-                  py={3}
-                  align="center"
-                  justify={collapsed ? 'center' : undefined}
-                  gap={3}
-                  sx={{
-                    '&:hover > .repository-delete, &:focus-within > .repository-delete':
-                      { opacity: 1, pointerEvents: 'auto' },
-                    '@media (hover: none)': {
-                      '> .repository-delete': {
-                        opacity: 1,
-                        pointerEvents: 'auto',
-                      },
-                    },
-                  }}
-                >
-                  <Button
-                      p={0}
-                      h={collapsed ? '28px' : undefined}
-                      display="flex"
-                      alignItems="center"
-                      justifyContent="center"
-                    minW="28px"
-                    size="sm"
-                    variant="unstyled"
-                    aria-label={`Select ${nameOf(repo.root)}`}
-                    onClick={() => selectRepo(repo.id)}
-                  >
-                    <Glyph name={nameOf(repo.root)} />
-                  </Button>
-                  {!collapsed && (
-                    <>
-                      <Box
-                        flex={1}
-                        minW={0}
-                        onClick={() => selectRepo(repo.id)}
-                        cursor="pointer"
-                      >
-                        <Text fontSize="sm" fontWeight="semibold" isTruncated>
-                          {nameOf(repo.root)}
-                        </Text>
-                        <Text
-                          fontSize="xs"
-                          color="gray.500"
-                          isTruncated
-                          title={repo.root}
-                        >
-                          {repo.root}
-                        </Text>
-                        <Badge
-                          fontSize="2xs"
-                          colorScheme={repo.latestSnapshotId ? 'green' : 'gray'}
-                        >
-                          {repo.latestSnapshotId ? 'Indexed' : 'Not indexed'}
-                        </Badge>
-                      </Box>
-                      <IconButton
-                        data-testid={`repositories-delete-${repo.id}`}
-                        aria-label={`Delete ${nameOf(repo.root)}`}
-                        className="repository-delete"
-                        icon={<DeleteIcon boxSize="12px" />}
-                        position="absolute"
-                        top="50%"
-                        right="6px"
-                        transform="translateY(-50%)"
-                        size="xs"
-                        variant="ghost"
-                        color="red.400"
-                        bg="var(--bg-element)"
-                        _hover={{ bg: 'var(--bg-element)' }}
-                        _active={{ bg: 'var(--bg-element)' }}
-                        borderRadius="md"
-                        opacity={0}
-                        pointerEvents="none"
-                        _focusVisible={{ opacity: 1, pointerEvents: 'auto' }}
-                        isDisabled={busy}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setRepoToDelete(repo)
-                          setDeleteMaterialized(false)
-                        }}
-                      />
-                    </>
-                  )}
-                </Flex>
-                {!collapsed && repo.id === selectedId && (
+  const repositoryDetails = (
                   <Box px={4} pb={3}>
                     <VStack align="stretch" spacing={2} mb={4}>
                   <Select
@@ -1260,6 +1102,15 @@ export default function Repositories() {
                               Statistics unavailable
                             </Text>
                           )}
+                          <Box as="details" mt={2} fontSize="xs" color="gray.400">
+                            <Text as="summary" cursor="pointer">Snapshot details</Text>
+                            <Text mt={2} overflowWrap="anywhere">ID: {s.id}</Text>
+                            <Text overflowWrap="anywhere">Revision: {s.gitRevision || '—'} · {s.provenance || 'Unknown provenance'}</Text>
+                            <Text>Captured: {new Date(s.createdUnix * 1000).toLocaleString()} · {s.ingestionStatus || 'Unknown status'}</Text>
+                            <Text overflowWrap="anywhere">Content fingerprint: {s.contentFingerprint || '—'}</Text>
+                            {s.projects.map((project) => <Text key={`${project.root}:${project.configPath}`} overflowWrap="anywhere">{project.language} · {project.root} · {project.configPath}</Text>)}
+                            {s.warnings.map((warning, index) => <Text key={index} color="orange.300" overflowWrap="anywhere">{warning}</Text>)}
+                          </Box>
                         </Box>
                       ))}
                     </VStack>
@@ -1302,7 +1153,171 @@ export default function Repositories() {
                       </HStack>
                     )}
                   </Box>
-                )}
+  )
+  return (
+    <Box
+      h="full"
+      bg="var(--bg-canvas)"
+      display="flex"
+      flexDir="column"
+      overflow="hidden"
+    >
+      <ErrorMessage message={error} />
+      {loading && !repositories.length ? (
+        <Center flex={1}>
+          <Spinner color="var(--accent)" />
+        </Center>
+      ) : (
+        <Flex
+          flex={1}
+          minH={0}
+          direction={{ base: 'column', lg: 'row' }}
+          overflow="hidden"
+        >
+          <Box
+            w={{ base: 'full', lg: collapsed ? '52px' : '320px' }}
+            maxH={{ base: collapsed ? '96px' : '32vh', lg: 'none' }}
+            display="flex"
+            flexDir="column"
+            flexShrink={0}
+            borderRight="1px solid"
+            borderBottom={{ base: '1px solid', lg: 'none' }}
+            borderColor="whiteAlpha.100"
+          >
+            <Flex
+              px={collapsed ? 0 : 3}
+              h="44px"
+              flexShrink={0}
+              gap={2}
+              align="center"
+              justify={collapsed ? 'center' : undefined}
+              borderBottom="1px solid"
+              borderColor="whiteAlpha.100"
+            >
+              {!collapsed && (
+                <>
+                  <Label>Repositories</Label>
+                  <Box flex={1} />
+                </>
+              )}
+              <IconButton
+                size="xs"
+                variant="ghost"
+                aria-label={
+                  collapsed ? 'Expand repositories' : 'Collapse repositories'
+                }
+                icon={collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+                onClick={() => setCollapsed(!collapsed)}
+              />
+              {!collapsed && (
+                <IconButton
+                  aria-label="Reload repositories"
+                  size="xs"
+                  variant="ghost"
+                  icon={<RepeatIcon />}
+                  onClick={() => {
+                    void reload()
+                    setNonce((n) => n + 1)
+                  }}
+                />
+              )}
+            </Flex>
+            <Box flex="0 1 auto" minH={0} overflowY="auto">
+            {repositories.map((repo) => (
+              <Box
+                key={repo.id}
+                role="group"
+                borderBottom="1px solid"
+                borderColor="whiteAlpha.100"
+              >
+                <Flex
+                  position="relative"
+                  px={collapsed ? 0 : 4}
+                  py={3}
+                  align="center"
+                  justify={collapsed ? 'center' : undefined}
+                  gap={3}
+                  sx={{
+                    '&:hover > .repository-settings, &:focus-within > .repository-settings':
+                      { opacity: 1, pointerEvents: 'auto' },
+                    '@media (hover: none)': {
+                      '> .repository-settings': {
+                        opacity: 1,
+                        pointerEvents: 'auto',
+                      },
+                    },
+                  }}
+                >
+                  <Button
+                      p={0}
+                      h={collapsed ? '28px' : undefined}
+                      display="flex"
+                      alignItems="center"
+                      justifyContent="center"
+                    minW="28px"
+                    size="sm"
+                    variant="unstyled"
+                    aria-label={`Select ${nameOf(repo.root)}`}
+                    onClick={() => selectRepo(repo.id)}
+                  >
+                    <Glyph name={nameOf(repo.root)} />
+                  </Button>
+                  {!collapsed && (
+                    <>
+                      <Box
+                        flex={1}
+                        minW={0}
+                        onClick={() => selectRepo(repo.id)}
+                        cursor="pointer"
+                      >
+                        <Text fontSize="sm" fontWeight="semibold" isTruncated>
+                          {nameOf(repo.root)}
+                        </Text>
+                        <Text
+                          fontSize="xs"
+                          color="gray.500"
+                          isTruncated
+                          title={repo.root}
+                        >
+                          {repo.root}
+                        </Text>
+                        <Badge
+                          fontSize="2xs"
+                          colorScheme={repo.latestSnapshotId ? 'green' : 'gray'}
+                        >
+                          {repo.latestSnapshotId ? 'Indexed' : 'Not indexed'}
+                        </Badge>
+                      </Box>
+                      <IconButton
+                        data-testid={`repositories-settings-${repo.id}`}
+                        aria-label={`Settings for ${nameOf(repo.root)}`}
+                        className="repository-settings"
+                        icon={<SettingsIcon boxSize="12px" />}
+                        position="absolute"
+                        top="50%"
+                        right="6px"
+                        transform="translateY(-50%)"
+                        size="xs"
+                        variant="ghost"
+                        color="gray.400"
+                        bg="var(--bg-element)"
+                        _hover={{ bg: 'var(--bg-element)' }}
+                        _active={{ bg: 'var(--bg-element)' }}
+                        borderRadius="md"
+                        opacity={1}
+                        pointerEvents="auto"
+                        _focusVisible={{ opacity: 1, pointerEvents: 'auto' }}
+                        isDisabled={busy}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          selectRepo(repo.id)
+                          setShowRepositorySettings(true)
+                        }}
+                      />
+                    </>
+                  )}
+                </Flex>
+
               </Box>
             ))}
             </Box>
@@ -1504,7 +1519,11 @@ export default function Repositories() {
             display="flex"
             flexDir="column"
           >
-            {selected && (
+            {selected && (showRepositorySettings ? (
+              <RepositorySettings key={selected.id} repository={selected} snapshots={snapshots} maps={maps} history={history} busy={busy} dataError={dataError || historyError} onBack={() => setShowRepositorySettings(false)} onDelete={() => { setRepoToDelete(selected); setDeleteMaterialized(false) }} onUpdated={() => { setNonce(n => n + 1); void reload() }}>
+                {repositoryDetails}
+              </RepositorySettings>
+            ) : (
               <>
                 <Flex
                   px={2}
@@ -1754,7 +1773,7 @@ export default function Repositories() {
                   <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} selectedPath={selectedPath} repositoryRoot={selected.root} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
                 </Flex>
               </>
-            )}
+            ))}
           </Box>
         </Flex>
       )}

@@ -12,6 +12,7 @@ import (
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestMapperServiceMapRepository(t *testing.T) {
@@ -199,6 +200,21 @@ func TestMapperServiceMapConfigChangeReruns(t *testing.T) {
 	third, thirdProgress := mapOnce()
 	if third == nil || third.RunId != second.RunId || thirdProgress != 0 {
 		t.Fatalf("cached rerun: result=%+v progress=%d", third, thirdProgress)
+	}
+	repositoryClient := codeindexv1connect.NewRepositoryServiceClient(ts.Client(), ts.URL+"/api")
+	if _, err := repositoryClient.UpdateRepositoryMapConfiguration(ctx, connect.NewRequest(&codeindexv1.UpdateRepositoryMapConfigurationRequest{RepositoryId: repoID, Overrides: &codeindexv1.RepositoryMapConfiguration{Resolution: proto.Float64(3)}})); err != nil {
+		t.Fatal(err)
+	}
+	fourth, fourthProgress := mapOnce()
+	if fourth == nil || fourth.RunId == third.RunId || fourthProgress == 0 {
+		t.Fatalf("repository overrides reused a map built with global defaults: result=%+v progress=%d", fourth, fourthProgress)
+	}
+	if _, err := repositoryClient.UpdateRepositoryMapConfiguration(ctx, connect.NewRequest(&codeindexv1.UpdateRepositoryMapConfigurationRequest{RepositoryId: repoID})); err != nil {
+		t.Fatal(err)
+	}
+	restored, restoredProgress := mapOnce()
+	if restored == nil || restored.RunId != third.RunId || restoredProgress != 0 {
+		t.Fatalf("reset did not reuse the matching global map: result=%+v progress=%d", restored, restoredProgress)
 	}
 }
 
