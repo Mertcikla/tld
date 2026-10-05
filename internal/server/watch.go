@@ -182,10 +182,12 @@ func (m *watchManager) stop(ctx context.Context, repositoryID string) {
 	m.mu.Unlock()
 
 	if managed {
+		// Allow the cooperative stop to release the indexing lease before
+		// escalating to process termination.
 		if child.cancel != nil {
-			child.cancel()
+			defer child.cancel()
 		}
-		if m.waitChild(child, 5*time.Second) {
+		if m.waitChild(child, cstore.WatchStopDeadline) {
 			return
 		}
 	}

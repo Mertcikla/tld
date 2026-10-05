@@ -886,8 +886,9 @@ export default function Repositories() {
     setDeletingSnapshot(true)
     try {
       await api.repositories.deleteSnapshot(snapshotToDelete.id)
-      if (snapshotToDelete.id === base) setBase('')
-      if (snapshotToDelete.id === head) setHead('')
+      const target = `snapshot:${snapshotToDelete.id}`
+      if (target === base) setBase('')
+      if (target === head) setHead('')
       setSnapshotToDelete(null)
       setNonce((n) => n + 1)
       await reload()

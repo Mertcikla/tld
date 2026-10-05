@@ -299,26 +299,32 @@ describe('Repositories map action', () => {
     expect(api.repositories.delete).toHaveBeenCalledWith('repo-1', { deleteMaterialized: true, deleteClone: false })
     expect(api.repositories.list).toHaveBeenCalled()
   })
-  it('deletes a snapshot after confirmation', async () => {
+  it.each(['base', 'head'] as const)('clears the selected %s target after deleting its snapshot', async (side) => {
     const { api } = await import('../api/client')
     vi.mocked(api.repositories.deleteSnapshot).mockClear()
     let renderer!: ReturnType<typeof create>
     await act(async () => {
       renderer = create(<Repositories />)
     })
+    const snapshotId = side === 'base' ? 'snap-0' : 'snap-1'
+    expect(renderer.root.findByProps({ 'data-testid': `repositories-${side}-target` }).props.value).toBe(`snapshot:${snapshotId}`)
 
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
 
     act(() => {
       renderer.root
-        .findByProps({ 'data-testid': 'repositories-snapshot-delete-snap-1' })
+        .findByProps({ 'data-testid': `repositories-snapshot-delete-${snapshotId}` })
         .props.onClick({ stopPropagation: () => {} })
     })
     await act(async () => {
       await renderer.root.findByProps({ 'data-testid': 'confirm-dialog-confirm' }).props.onClick()
     })
 
-    expect(api.repositories.deleteSnapshot).toHaveBeenCalledWith('snap-1')
+    expect(api.repositories.deleteSnapshot).toHaveBeenCalledWith(snapshotId)
+    await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
+    expect(renderer.root.findByProps({ 'data-testid': `repositories-${side}-target` }).props.value).toBe('')
+    expect(renderer.root.findByProps({ 'data-testid': `repositories-${side === 'base' ? 'head' : 'base'}-target` }).props.value).toBe(`snapshot:${side === 'base' ? 'snap-1' : 'snap-0'}`)
+    await act(async () => { renderer.unmount() })
   })
   it('adds a repository from the sidebar dialog', async () => {
     const { api } = await import('../api/client')

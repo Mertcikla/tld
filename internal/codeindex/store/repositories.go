@@ -44,7 +44,9 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_completed_maps WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
 			return err
 		}
-		for _, table := range []string{"codeindex_active_maps", "codeindex_impacts", "codeindex_watch_state", "codeindex_leases", "codeindex_repository_settings"} {
+		// The caller retains the indexing lease through deletion and releases
+		// it afterward. Clearing it here would admit a concurrent publisher.
+		for _, table := range []string{"codeindex_active_maps", "codeindex_impacts", "codeindex_watch_state", "codeindex_repository_settings"} {
 			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
 				return err
 			}

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -412,6 +413,21 @@ func TestRepositoryServiceDeleteRepository(t *testing.T) {
 	if _, err := client.DeleteRepository(ctx, connect.NewRequest(&codeindexv1.DeleteRepositoryRequest{Id: "missing"})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("missing repository error = %v, want not found", err)
 	}
+	_, release, err := idx.AcquireLease(ctx, repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, deleteErr := client.DeleteRepository(ctx, connect.NewRequest(&codeindexv1.DeleteRepositoryRequest{Id: repoID, DeleteMaterialized: true}))
+	release()
+	if connect.CodeOf(deleteErr) != connect.CodeAlreadyExists {
+		t.Fatalf("delete while indexing: %v", deleteErr)
+	}
+	if _, err := idx.Repository(ctx, repoID); err != nil {
+		t.Fatalf("busy deletion removed repository: %v", err)
+	}
+	if _, err := sqliteStore.ViewByID(ctx, view.ID); err != nil {
+		t.Fatalf("busy deletion removed materialized view: %v", err)
+	}
 
 	if _, err := client.DeleteRepository(ctx, connect.NewRequest(&codeindexv1.DeleteRepositoryRequest{Id: repoID, DeleteMaterialized: true})); err != nil {
 		t.Fatalf("DeleteRepository: %v", err)
@@ -432,5 +448,76 @@ func TestRepositoryServiceDeleteRepository(t *testing.T) {
 	}
 	if len(mappings) != 0 {
 		t.Fatalf("mappings remain: %d", len(mappings))
+	}
+}
+
+func TestDeleteRepositoryStopsWatcherOnAnotherCheckout(t *testing.T) {
+	s, root, _, repoID := prepareFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	remote := "https://github.com/test/demo"
+	testGit(t, root, "remote", "add", "origin", remote)
+	if err := s.idx.SetRepositoryOrigin(ctx, repoID, remote, false); err != nil {
+		t.Fatal(err)
+	}
+	otherRoot, _ := gitFixture(t)
+	testGit(t, otherRoot, "remote", "add", "origin", remote)
+	watchKey := cgraph.RepositoryID(otherRoot)
+	if err := s.idx.ClaimWatch(ctx, cstore.WatchState{RepositoryID: watchKey, RepoRoot: otherRoot, OwnerID: "watch-owner", State: "scanning"}); err != nil {
+		t.Fatal(err)
+	}
+	unrelatedKey := cgraph.RepositoryID("/unrelated")
+	if err := s.idx.UpsertWatchState(ctx, cstore.WatchState{RepositoryID: unrelatedKey, RepoRoot: "/unrelated", OwnerID: "unrelated-owner", State: "idle"}); err != nil {
+		t.Fatal(err)
+	}
+	_, release, err := s.idx.AcquireLease(ctx, repoID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	child := &watchChild{repositoryID: watchKey, repoRoot: otherRoot, done: make(chan struct{})}
+	manager := newWatchManager("", s.idx)
+	manager.children[watchKey] = child
+	stopped := make(chan error, 1)
+	go func() {
+		defer close(child.done)
+		defer release()
+		ticker := time.NewTicker(5 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			requested, err := s.idx.WatchStopRequested(ctx, watchKey)
+			if err != nil {
+				stopped <- err
+				return
+			}
+			if requested {
+				stopped <- s.idx.ReleaseWatch(ctx, watchKey, "watch-owner")
+				return
+			}
+			select {
+			case <-ctx.Done():
+				stopped <- ctx.Err()
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	svc := &codeIndexRepositoryService{store: s.idx, ws: s.ws, watches: manager}
+	_, err = svc.DeleteRepository(ctx, connect.NewRequest(&codeindexv1.DeleteRepositoryRequest{Id: repoID}))
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := <-stopped; err != nil {
+		t.Fatalf("watcher did not stop cooperatively: %v", err)
+	}
+	if _, err := s.idx.Repository(ctx, repoID); err == nil {
+		t.Fatal("repository remains after watcher shutdown")
+	}
+	state, ok, err := s.idx.WatchState(ctx, watchKey)
+	if err != nil || !ok || state.Live(time.Now()) {
+		t.Fatalf("checkout watcher still running: %+v, %v", state, err)
+	}
+	state, ok, err = s.idx.WatchState(ctx, unrelatedKey)
+	if err != nil || !ok || !state.Live(time.Now()) || state.StopRequested {
+		t.Fatalf("unrelated watcher was stopped: %+v, %v", state, err)
 	}
 }

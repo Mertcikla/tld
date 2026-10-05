@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,30 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestDeleteRepositoryRetainsLeaseUntilCallerReleases(t *testing.T) {
+	ctx := context.Background()
+	idx, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+	snap := &pb.Snapshot{Id: "delete-lease-snapshot", RepositoryId: "delete-lease-repository"}
+	if err := idx.Publish(ctx, "/repo", snap, graph.NewGraph(snap.RepositoryId, snap.Id)); err != nil {
+		t.Fatal(err)
+	}
+	_, release, err := idx.AcquireLease(ctx, snap.RepositoryId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	if err := idx.DeleteRepository(ctx, snap.RepositoryId); err != nil {
+		t.Fatal(err)
+	}
+	if _, acquiredRelease, err := idx.AcquireLease(ctx, snap.RepositoryId); !errors.Is(err, ErrBusy) {
+		if acquiredRelease != nil {
+			acquiredRelease()
+		}
+		t.Fatalf("deletion released indexing lease: %v", err)
+	}
+}
 
 func TestDeleteRepositoryAfterDeletingOriginSnapshot(t *testing.T) {
 	ctx := context.Background()

@@ -16,6 +16,7 @@ import (
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
+	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/identity"
 	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
 	"github.com/mertcikla/tld/v2/internal/codeindex/ingest"
@@ -37,6 +38,7 @@ type codeIndexRepositoryService struct {
 	ws      *store.SQLiteStore
 	dataDir string
 	config  *workspace.Config
+	watches *watchManager
 }
 
 func (s *codeIndexRepositoryService) ListRepositories(ctx context.Context, _ *connect.Request[codeindexv1.ListRepositoriesRequest]) (*connect.Response[codeindexv1.ListRepositoriesResponse], error) {
@@ -297,6 +299,19 @@ func (s *codeIndexRepositoryService) DeleteRepository(ctx context.Context, req *
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
+	if err := s.stopRepositoryWatches(ctx, repository); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	ctx, release, err := s.store.AcquireLease(ctx, repositoryID)
+	if err != nil {
+		return nil, impactError(err)
+	}
+	defer release()
+	// Another deletion may have completed while we were stopping the watcher.
+	repository, err = s.store.Repository(ctx, repositoryID)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
 	if req.Msg.GetDeleteMaterialized() {
 		if err := s.deleteMaterializedResources(ctx, repositoryID); err != nil {
 			return nil, connect.NewError(connect.CodeInternal, err)
@@ -320,6 +335,49 @@ func (s *codeIndexRepositoryService) DeleteRepository(ctx context.Context, req *
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	return connect.NewResponse(&codeindexv1.DeleteRepositoryResponse{}), nil
+}
+
+func (s *codeIndexRepositoryService) stopRepositoryWatches(ctx context.Context, repository *codeindexv1.Repository) error {
+	states, err := s.store.ListWatchStates(ctx)
+	if err != nil {
+		return err
+	}
+	keys := map[string]bool{cgraph.RepositoryID(repository.Root): true, repository.Id: true}
+	for _, state := range states {
+		if keys[state.RepositoryID] {
+			continue
+		}
+		if state.SnapshotID != "" {
+			if snapshot, err := s.store.Snapshot(ctx, state.SnapshotID); err == nil && snapshot.RepositoryId == repository.Id {
+				keys[state.RepositoryID] = true
+				continue
+			}
+		}
+		// A second checkout may not have published its first snapshot yet.
+		if state.RepoRoot != "" {
+			resolved, err := identity.Resolve(ctx, s.store, state.RepoRoot, "", "")
+			if err != nil {
+				return err
+			}
+			if resolved.ID == repository.Id {
+				keys[state.RepositoryID] = true
+			}
+		}
+	}
+	manager := s.watches
+	if manager == nil {
+		manager = newWatchManager(s.dataDir, s.store)
+	}
+	for key := range keys {
+		if err := s.store.RequestWatchStop(ctx, key); err != nil {
+			return err
+		}
+		manager.stop(ctx, key)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // deleteMaterializedResources removes the workspace views, elements, and
@@ -552,10 +610,10 @@ func nextEdgeCursor(edges []*codeindexv1.EdgeFact, limit int) string {
 	return ""
 }
 
-func registerCodeIndexHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, dataDir string, configs ...*workspace.Config) {
+func registerCodeIndexHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, dataDir string, watches *watchManager, configs ...*workspace.Config) {
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
 	_ = idx.BackfillRemoteKeys(context.Background())
-	repoSvc := &codeIndexRepositoryService{store: idx, ws: sqliteStore, dataDir: dataDir}
+	repoSvc := &codeIndexRepositoryService{store: idx, ws: sqliteStore, dataDir: dataDir, watches: watches}
 	if len(configs) > 0 {
 		repoSvc.config = configs[0]
 	}

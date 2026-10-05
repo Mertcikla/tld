@@ -29,10 +29,17 @@ func TestPullRequestNumber(t *testing.T) {
 func TestRepositoryPullRequestDoesNotChangeCheckout(t *testing.T) {
 	s, root, initial, repoID := prepareFixture(t)
 	testGit(t, root, "remote", "add", "origin", "https://github.com/test/demo.git")
+	testGit(t, root, "switch", "-c", "feature")
 	testGit(t, root, "commit", "--allow-empty", "-m", "feature")
 	head := strings.TrimSpace(testGit(t, root, "rev-parse", "HEAD"))
+	testGit(t, root, "switch", "main")
+	writeFixtureSource(t, root, "main-only.go", "package sample\nfunc MainOnly() {}\n")
+	testGit(t, root, "add", ".")
+	testGit(t, root, "commit", "-m", "unrelated base change")
+	base := strings.TrimSpace(testGit(t, root, "rev-parse", "HEAD"))
+	testGit(t, root, "switch", "feature")
 	bin := t.TempDir()
-	raw, err := json.Marshal(map[string]string{"title": "Feature", "url": "https://github.com/test/demo/pull/7", "baseRefOid": initial, "headRefOid": head, "baseRefName": "main", "headRefName": "feature"})
+	raw, err := json.Marshal(map[string]string{"title": "Feature", "url": "https://github.com/test/demo/pull/7", "baseRefOid": base, "headRefOid": head, "baseRefName": "main", "headRefName": "feature"})
 	if err != nil {
 		t.Fatal(err)
 	}

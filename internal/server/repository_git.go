@@ -257,7 +257,11 @@ func (s *codeIndexRepositoryService) GetPullRequest(ctx context.Context, req *co
 	if _, err := resolveRevision(ctx, repo.Root, pr.HeadRefOid); err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&pb.GetPullRequestResponse{Title: pr.Title, Url: pr.URL, BaseSha: pr.BaseRefOid, HeadSha: pr.HeadRefOid, BaseBranch: pr.BaseRefName, HeadBranch: pr.HeadRefName}), nil
+	mergeBase, err := repositoryGit(ctx, repo.Root, "merge-base", pr.BaseRefOid, pr.HeadRefOid)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("PR merge base is unavailable: %w", err))
+	}
+	return connect.NewResponse(&pb.GetPullRequestResponse{Title: pr.Title, Url: pr.URL, BaseSha: strings.TrimSpace(mergeBase), HeadSha: pr.HeadRefOid, BaseBranch: pr.BaseRefName, HeadBranch: pr.HeadRefName}), nil
 }
 
 func (s *codeIndexRepositoryService) ListPullRequests(ctx context.Context, req *connect.Request[pb.ListPullRequestsRequest]) (*connect.Response[pb.ListPullRequestsResponse], error) {
