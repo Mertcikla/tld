@@ -94,8 +94,9 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 			// there is no local checkout for watching, and the server cannot
 			// open the caller's editor.
 			"capabilities": map[string]bool{
-				"watch":  !selfHosted,
-				"editor": !selfHosted,
+				"watch":        !selfHosted,
+				"editor":       !selfHosted,
+				"repositories": !selfHosted,
 			},
 		})
 	})

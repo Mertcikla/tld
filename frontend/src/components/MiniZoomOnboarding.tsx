@@ -29,16 +29,6 @@ export default function MiniZoomOnboarding({ isVisible, onClose }: Props) {
         overflow="hidden"
         border="1.5px solid rgba(var(--accent-rgb), 0.3)"
       >
-        {/* Subtle accent bar for visual continuity */}
-        <Box
-          position="absolute"
-          top={0}
-          left={0}
-          w="4px"
-          h="100%"
-          bg="var(--accent)"
-          opacity={0.8}
-        />
         {onClose && (
           <CloseButton
             aria-label="Dismiss zoom hint"
