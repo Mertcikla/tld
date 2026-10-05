@@ -3,6 +3,7 @@
 package postgres_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -136,11 +137,13 @@ func run(t *testing.T, dir string, env []string, name string, args ...string) st
 	if env != nil {
 		cmd.Env = env
 	}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %s failed: %v\n%s", name, strings.Join(args, " "), err, out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("%s %s failed: %v\n%s", name, strings.Join(args, " "), err, stderr.String())
 	}
-	return string(out)
+	return stdout.String()
 }
 
 func writeFile(t *testing.T, path, content string) {
