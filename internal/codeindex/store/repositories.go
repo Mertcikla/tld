@@ -28,6 +28,7 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 	if !owned {
 		return fmt.Errorf("repository %q not found", repositoryID)
 	}
+	where, scopeArgs := scope(ctx).clause("org_id")
 	snapshotScoped := []string{
 		"codeindex_project_artifacts",
 		"codeindex_sources",
@@ -37,51 +38,51 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 	}
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_group_members WHERE group_id IN (
-			SELECT id FROM codeindex_groups WHERE run_id IN (
-				SELECT id FROM codeindex_analysis_runs WHERE repository_id = ?))`, repositoryID).Exec(ctx); err != nil {
+			SELECT id FROM codeindex_groups WHERE codeindex_groups.org_id = codeindex_group_members.org_id AND run_id IN (
+				SELECT id FROM codeindex_analysis_runs WHERE codeindex_analysis_runs.org_id = codeindex_group_members.org_id AND repository_id = ?))`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_groups WHERE run_id IN (
-			SELECT id FROM codeindex_analysis_runs WHERE repository_id = ?)`, repositoryID).Exec(ctx); err != nil {
+			SELECT id FROM codeindex_analysis_runs WHERE codeindex_analysis_runs.org_id = codeindex_groups.org_id AND repository_id = ?)`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
-		if _, err := tx.NewRaw(`DELETE FROM codeindex_analysis_runs WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_analysis_runs WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
-		if _, err := tx.NewRaw(`DELETE FROM codeindex_completed_maps WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_completed_maps WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		// The caller retains the indexing lease through deletion and releases
 		// it afterward. Clearing it here would admit a concurrent publisher.
 		for _, table := range []string{"codeindex_active_maps", "codeindex_impacts", "codeindex_watch_state", "codeindex_repository_settings"} {
-			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
+			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 				return err
 			}
 		}
 		for _, table := range snapshotScoped {
 			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE snapshot_id IN (
-				SELECT id FROM codeindex_snapshots WHERE repository_id = ?)`, repositoryID).Exec(ctx); err != nil {
+				SELECT id FROM codeindex_snapshots WHERE codeindex_snapshots.org_id = `+table+`.org_id AND repository_id = ?)`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 				return err
 			}
 		}
 		// Shared entities retain the snapshot_id of their first publication,
 		// which may no longer exist. Delete by repository ownership instead.
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_chunks WHERE fact_id IN (
-			SELECT id FROM codeindex_facts WHERE repository_id = ?)`, repositoryID).Exec(ctx); err != nil {
+			SELECT id FROM codeindex_facts WHERE codeindex_facts.org_id = codeindex_chunks.org_id AND repository_id = ?)`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		for _, table := range []string{"codeindex_edges", "codeindex_facts"} {
-			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
+			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 				return err
 			}
 		}
-		if _, err := tx.NewRaw(`DELETE FROM codeindex_snapshots WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_snapshots WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
-		if _, err := tx.NewRaw(`DELETE FROM codeindex_elements WHERE repository_id = ?`, repositoryID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_elements WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
-		_, err := tx.NewRaw(`DELETE FROM codeindex_repositories WHERE id = ?`, repositoryID).Exec(ctx)
+		_, err := tx.NewRaw(`DELETE FROM codeindex_repositories WHERE id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx)
 		return err
 	})
 }
@@ -104,7 +105,7 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 	}
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_group_members WHERE group_id IN (
-			SELECT id FROM codeindex_groups WHERE snapshot_id = ?)`, snapshotID).Exec(ctx); err != nil {
+			SELECT id FROM codeindex_groups WHERE codeindex_groups.org_id = codeindex_group_members.org_id AND snapshot_id = ?)`+where, append([]any{snapshotID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		for _, table := range []string{
@@ -117,33 +118,33 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 			"codeindex_snapshot_chunks",
 			"codeindex_snapshot_edges",
 		} {
-			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?", snapshotID).Exec(ctx); err != nil {
+			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?"+where, append([]any{snapshotID}, scopeArgs...)...).Exec(ctx); err != nil {
 				return err
 			}
 		}
-		if _, err := tx.NewRaw(`UPDATE codeindex_elements SET snapshot_id = '' WHERE snapshot_id = ?`, snapshotID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`UPDATE codeindex_elements SET snapshot_id = '' WHERE snapshot_id = ?`+where, append([]any{snapshotID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_edges
-			WHERE repository_id = ? AND id NOT IN (SELECT edge_id FROM codeindex_snapshot_edges)`, repositoryID).Exec(ctx); err != nil {
+			WHERE repository_id = ? AND id NOT IN (SELECT edge_id FROM codeindex_snapshot_edges WHERE codeindex_snapshot_edges.org_id = codeindex_edges.org_id)`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_chunks
-			WHERE id NOT IN (SELECT chunk_id FROM codeindex_snapshot_chunks)
-			AND fact_id IN (SELECT id FROM codeindex_facts WHERE repository_id = ?)`, repositoryID).Exec(ctx); err != nil {
+			WHERE id NOT IN (SELECT chunk_id FROM codeindex_snapshot_chunks WHERE codeindex_snapshot_chunks.org_id = codeindex_chunks.org_id)
+			AND fact_id IN (SELECT id FROM codeindex_facts WHERE codeindex_facts.org_id = codeindex_chunks.org_id AND repository_id = ?)`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_facts
-			WHERE repository_id = ? AND id NOT IN (SELECT fact_id FROM codeindex_snapshot_facts)`, repositoryID).Exec(ctx); err != nil {
+			WHERE repository_id = ? AND id NOT IN (SELECT fact_id FROM codeindex_snapshot_facts WHERE codeindex_snapshot_facts.org_id = codeindex_facts.org_id)`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
-		if _, err := tx.NewRaw(`DELETE FROM codeindex_snapshots WHERE id = ?`, snapshotID).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_snapshots WHERE id = ?`+where, append([]any{snapshotID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		_, err := tx.NewRaw(`UPDATE codeindex_repositories SET latest_snapshot_id = COALESCE(
-			(SELECT id FROM codeindex_snapshots WHERE repository_id = ?
+			(SELECT id FROM codeindex_snapshots WHERE codeindex_snapshots.org_id = codeindex_repositories.org_id AND repository_id = ?
 				ORDER BY created_unix DESC, capture_order DESC, id DESC LIMIT 1), '')
-			WHERE id = ? AND latest_snapshot_id = ?`, repositoryID, repositoryID, snapshotID).Exec(ctx)
+			WHERE id = ? AND latest_snapshot_id = ?`+where, append([]any{repositoryID, repositoryID, snapshotID}, scopeArgs...)...).Exec(ctx)
 		return err
 	})
 }
@@ -156,12 +157,12 @@ func (s *Store) ListRepositories(ctx context.Context) ([]*pb.RepositorySummary, 
 	query := `SELECT
 		r.id, r.root, r.latest_snapshot_id, r.remote_url, r.managed,
 		COALESCE(s.created_unix, 0), COALESCE(s.git_revision, ''), COALESCE(s.git_branch, ''),
-		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = r.latest_snapshot_id),
-		(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = r.latest_snapshot_id),
-		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = r.latest_snapshot_id),
-		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = r.latest_snapshot_id)
+		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id),
+		(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id),
+		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id),
+		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id)
 		FROM codeindex_repositories r
-		LEFT JOIN codeindex_snapshots s ON s.id = r.latest_snapshot_id`
+		LEFT JOIN codeindex_snapshots s ON s.id = r.latest_snapshot_id AND s.org_id = r.org_id`
 	args := []any{}
 	if t := scope(ctx); t.on {
 		query += ` WHERE r.org_id = ?`
@@ -283,18 +284,22 @@ func (s *Store) EnsureRepositoryIdentity(ctx context.Context, id, root, remoteUR
 		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at, org_id)
+	res, err := s.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at, org_id)
 		VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
+		ON CONFLICT(org_id, id) DO UPDATE SET
 			root = CASE WHEN excluded.root <> '' THEN excluded.root ELSE codeindex_repositories.root END,
 			remote_url = CASE WHEN excluded.remote_url <> '' THEN excluded.remote_url ELSE codeindex_repositories.remote_url END,
 			remote_key = CASE WHEN excluded.remote_key <> '' THEN excluded.remote_key ELSE codeindex_repositories.remote_key END,
 			managed = codeindex_repositories.managed OR excluded.managed,
-			updated_at = excluded.updated_at,
-			org_id = COALESCE(codeindex_repositories.org_id, excluded.org_id)`,
+			updated_at = excluded.updated_at`,
 		id, root, remoteURL, remoteKey, managed, now, now, scope(ctx).value()).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("ensure repository identity: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("ensure repository identity: %w", sql.ErrNoRows)
 	}
 	return nil
 }

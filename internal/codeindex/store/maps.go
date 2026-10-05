@@ -22,13 +22,13 @@ func (s *Store) SaveCompletedMap(ctx context.Context, repositoryID string, mappe
 	org := scope(ctx).value()
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		_, err := tx.NewRaw(`INSERT INTO codeindex_completed_maps (run_id, repository_id, snapshot_id, config_hash, completed_unix, result_json, org_id)
- VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(run_id) DO UPDATE SET completed_unix = excluded.completed_unix, result_json = excluded.result_json, org_id = COALESCE(codeindex_completed_maps.org_id, excluded.org_id)`,
+ VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_id, run_id) DO UPDATE SET completed_unix = excluded.completed_unix, result_json = excluded.result_json`,
 			mapped.Result.RunId, repositoryID, mapped.Result.SnapshotId, mapped.ConfigHash, mapped.CompletedUnix, string(raw), org).Exec(ctx)
 		if err != nil {
 			return err
 		}
 		_, err = tx.NewRaw(`INSERT INTO codeindex_active_maps (repository_id, run_id, org_id) VALUES (?, ?, ?)
- ON CONFLICT(repository_id) DO UPDATE SET run_id = excluded.run_id, org_id = COALESCE(codeindex_active_maps.org_id, excluded.org_id)`, repositoryID, mapped.Result.RunId, org).Exec(ctx)
+ ON CONFLICT(org_id, repository_id) DO UPDATE SET run_id = excluded.run_id`, repositoryID, mapped.Result.RunId, org).Exec(ctx)
 		return err
 	})
 }
@@ -61,7 +61,7 @@ func (s *Store) ActiveMap(ctx context.Context, repositoryID string) (*pb.Complet
 	var raw string
 	where, scopeArgs := scope(ctx).clause("a.org_id")
 	err := s.bun.QueryRowContext(ctx, `SELECT m.completed_unix, m.config_hash, m.result_json
- FROM codeindex_completed_maps m JOIN codeindex_active_maps a ON a.run_id = m.run_id
+ FROM codeindex_completed_maps m JOIN codeindex_active_maps a ON a.run_id = m.run_id AND a.org_id = m.org_id
  WHERE a.repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Scan(&item.CompletedUnix, &item.ConfigHash, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

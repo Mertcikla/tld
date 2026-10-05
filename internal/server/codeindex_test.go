@@ -227,7 +227,7 @@ func TestRepositoryServiceAddRepository(t *testing.T) {
 	if repository == nil {
 		t.Fatal("stream ended without a repository")
 	}
-	repoID := cgraph.RepositoryID(resolved)
+	repoID := cgraph.ID("organisation", workspaceID.String(), cgraph.RepositoryID(resolved))
 	if repository.GetId() != repoID || repository.GetRoot() != resolved {
 		t.Fatalf("repository = %+v, want id %s root %s", repository, repoID, resolved)
 	}
@@ -358,7 +358,7 @@ func TestRepositoryServiceAddRepositoryMapsRepository(t *testing.T) {
 	if !stages["materializing"] {
 		t.Fatalf("stages = %+v, want a graph-map materializing stage", stages)
 	}
-	mappings, err := idx.MappingsByRepository(ctx, cgraph.RepositoryID(resolved))
+	mappings, err := idx.MappingsByRepository(ctx, cgraph.ID("organisation", workspaceID.String(), cgraph.RepositoryID(resolved)))
 	if err != nil {
 		t.Fatalf("mappings: %v", err)
 	}

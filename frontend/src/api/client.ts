@@ -973,7 +973,7 @@ export function protoLayer(l: Record<string, unknown>): ViewLayer {
   }
 }
 
-let capabilitiesPromise: Promise<{ watch: boolean; editor: boolean }> | null = null
+let capabilitiesPromise: Promise<{ watch: boolean; editor: boolean; repositories: boolean }> | null = null
 
 export const api = {
   system: {
@@ -982,19 +982,20 @@ export const api = {
     // capabilities reports which workstation-bound features the server exposes.
     // Self-hosted deployments disable watching and opening the caller's editor.
     // Cached: the answer is stable for the life of the page.
-    capabilities: async (): Promise<{ watch: boolean; editor: boolean }> => {
+    capabilities: async (): Promise<{ watch: boolean; editor: boolean; repositories: boolean }> => {
       if (!capabilitiesPromise) {
         capabilitiesPromise = (async () => {
           try {
             const res = await fetch(apiUrl('/ready'))
-            if (!res.ok) return { watch: true, editor: true }
-            const json = await res.json() as { capabilities?: { watch?: boolean; editor?: boolean } }
+            if (!res.ok) return { watch: true, editor: true, repositories: true }
+            const json = await res.json() as { capabilities?: { watch?: boolean; editor?: boolean; repositories?: boolean } }
             return {
               watch: json.capabilities?.watch !== false,
               editor: json.capabilities?.editor !== false,
+              repositories: json.capabilities?.repositories !== false,
             }
           } catch {
-            return { watch: true, editor: true }
+            return { watch: true, editor: true, repositories: true }
           }
         })()
       }

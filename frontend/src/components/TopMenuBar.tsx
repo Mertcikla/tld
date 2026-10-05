@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import type { TopMenuBarSlots } from '../slots'
+import { api } from "../api/client"
 import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom"
 import {
   Box,
@@ -82,10 +83,6 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Repositories", path: "/repositories", icon: RepositoriesIcon, shortcutKey: "4" },
 ]
 
-const NAV_SHORTCUT_PATHS: ReadonlyMap<string, string> = new Map(
-  NAV_ITEMS.map((item) => [item.shortcutKey, item.path]),
-)
-
 export default function TopMenuBar({
   children,
   hideMobileBar,
@@ -103,6 +100,23 @@ export default function TopMenuBar({
   const appearancePopover = useDisclosure()
   const appearanceTriggerRef = useRef<HTMLButtonElement | null>(null)
   const appearanceContentRef = useRef<HTMLElement | null>(null)
+  const [navItems, setNavItems] = useState<NavItem[]>(NAV_ITEMS)
+
+  useEffect(() => {
+    let mounted = true
+    void api.system.capabilities()
+      .then((caps) => {
+        if (mounted && !caps.repositories) {
+          setNavItems(NAV_ITEMS.filter((item) => item.path !== "/repositories"))
+        }
+      })
+      .catch(() => {
+        // Keep the default nav when capabilities are unavailable.
+      })
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   useEffect(() => {
     if (!appearancePopover.isOpen) return
@@ -126,11 +140,12 @@ export default function TopMenuBar({
   }, [appearancePopover])
 
   useEffect(() => {
+    const shortcutPaths = new Map<string, string>(navItems.map((item) => [item.shortcutKey, item.path]))
     const handleKeyDown = (event: KeyboardEvent) => {
       const isModifierPressed = event.metaKey || event.ctrlKey
       if (!isModifierPressed || event.altKey || event.shiftKey) return
 
-      const shortcutPath = NAV_SHORTCUT_PATHS.get(event.key)
+      const shortcutPath = shortcutPaths.get(event.key)
       if (!shortcutPath) return
 
       event.preventDefault()
@@ -141,7 +156,7 @@ export default function TopMenuBar({
     return () => {
       window.removeEventListener("keydown", handleKeyDown)
     }
-  }, [navigate])
+  }, [navigate, navItems])
 
   const isActive = (path: string) => {
     if (path === "/") {
@@ -313,7 +328,7 @@ export default function TopMenuBar({
           )}
 
           <HStack spacing={2} h="full" align="center" style={{ "--wails-draggable": "no-drag" } as React.CSSProperties}>
-            {NAV_ITEMS.map((item) => {
+            {navItems.map((item) => {
               const active = isActive(item.path)
               const Icon = item.icon
               return (
@@ -479,12 +494,7 @@ export default function TopMenuBar({
             paddingRight: "max(env(safe-area-inset-right, 0px), 4px)",
           } as React.CSSProperties}
         >
-          {[
-            { label: "Editor", path: "/", icon: PencilIcon },
-            { label: "Diagrams", path: "/views", icon: FolderTreeIcon },
-            { label: "Inventory", path: "/inventory", icon: InventoryIcon },
-            { label: "Repositories", path: "/repositories", icon: RepositoriesIcon },
-          ].map((item) => {
+          {navItems.map((item) => {
             const Icon = item.icon
             const active = isActive(item.path)
             return (

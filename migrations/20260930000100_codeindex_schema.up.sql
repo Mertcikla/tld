@@ -1,25 +1,32 @@
 PRAGMA foreign_keys = ON;
 
 -- codeindex: immutable, snapshot-scoped code graph replacing the watch_* tables.
--- Consolidated migration covering the codeindex baseline, snapshot provenance,
--- completed maps, watch state, snapshot membership, and repository settings.
+-- Complete schema for a fresh install. org_id is part of every primary key and
+-- the nil UUID is the self-hosted single-tenant sentinel, so organisations can
+-- hold identically-derived entity ids without collisions.
 
 CREATE TABLE IF NOT EXISTS codeindex_repositories (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL,
   root TEXT NOT NULL,
   remote_url TEXT NOT NULL DEFAULT '',
   remote_key TEXT NOT NULL DEFAULT '',
   managed BOOLEAN NOT NULL DEFAULT FALSE,
   latest_snapshot_id TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
+  updated_at TEXT NOT NULL,
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_codeindex_repositories_remote_key
   ON codeindex_repositories(remote_key);
+CREATE INDEX IF NOT EXISTS idx_codeindex_repositories_org_id
+  ON codeindex_repositories(org_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_codeindex_repositories_org_remote_key_unique
+  ON codeindex_repositories(org_id, remote_key) WHERE remote_key <> '';
 
 CREATE TABLE IF NOT EXISTS codeindex_snapshots (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
   created_unix INTEGER NOT NULL DEFAULT 0,
   git_revision TEXT NOT NULL DEFAULT '',
@@ -28,11 +35,21 @@ CREATE TABLE IF NOT EXISTS codeindex_snapshots (
   config_hash TEXT NOT NULL DEFAULT '',
   projects_json TEXT NOT NULL DEFAULT '[]',
   warnings_json TEXT NOT NULL DEFAULT '[]',
-  tool_versions_json TEXT NOT NULL DEFAULT '{}'
+  tool_versions_json TEXT NOT NULL DEFAULT '{}',
+  provenance TEXT NOT NULL DEFAULT '',
+  content_fingerprint TEXT NOT NULL DEFAULT '',
+  capture_order BIGINT NOT NULL DEFAULT 0,
+  commit_message TEXT NOT NULL DEFAULT '',
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_codeindex_snapshots_repository
   ON codeindex_snapshots(repository_id, created_unix);
+CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_revision
+  ON codeindex_snapshots(repository_id, git_revision, provenance, config_hash);
+CREATE INDEX IF NOT EXISTS idx_codeindex_snapshots_org_id
+  ON codeindex_snapshots(org_id);
 
 CREATE TABLE IF NOT EXISTS codeindex_sources (
   snapshot_id TEXT NOT NULL,
@@ -40,14 +57,22 @@ CREATE TABLE IF NOT EXISTS codeindex_sources (
   hash TEXT NOT NULL,
   size INTEGER NOT NULL DEFAULT 0,
   content BLOB,
-  PRIMARY KEY (snapshot_id, path)
+  language TEXT NOT NULL DEFAULT '',
+  input_blob TEXT NOT NULL DEFAULT '',
+  dirty BOOLEAN NOT NULL DEFAULT FALSE,
+  syntax_cache TEXT NOT NULL DEFAULT '',
+  file_cache TEXT NOT NULL DEFAULT '',
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, snapshot_id, path)
 );
 
 CREATE INDEX IF NOT EXISTS idx_codeindex_sources_hash
   ON codeindex_sources(hash);
+CREATE INDEX IF NOT EXISTS idx_codeindex_sources_org_id
+  ON codeindex_sources(org_id);
 
 CREATE TABLE IF NOT EXISTS codeindex_facts (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   language TEXT NOT NULL DEFAULT '',
@@ -63,30 +88,36 @@ CREATE TABLE IF NOT EXISTS codeindex_facts (
   path TEXT NOT NULL DEFAULT '',
   anchor_json TEXT NOT NULL DEFAULT 'null',
   evidence_json TEXT NOT NULL DEFAULT '[]',
-  imports_json TEXT NOT NULL DEFAULT '[]'
+  imports_json TEXT NOT NULL DEFAULT '[]',
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_codeindex_facts_snapshot ON codeindex_facts(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_codeindex_facts_logical ON codeindex_facts(snapshot_id, logical_key);
 CREATE INDEX IF NOT EXISTS idx_codeindex_facts_symbol ON codeindex_facts(snapshot_id, symbol_key);
 CREATE INDEX IF NOT EXISTS idx_codeindex_facts_path ON codeindex_facts(snapshot_id, path);
+CREATE INDEX IF NOT EXISTS idx_codeindex_facts_org_id ON codeindex_facts(org_id);
 
 CREATE TABLE IF NOT EXISTS codeindex_chunks (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL,
   fact_id TEXT NOT NULL DEFAULT '',
   snapshot_id TEXT NOT NULL,
   anchor_json TEXT NOT NULL DEFAULT 'null',
   text TEXT NOT NULL DEFAULT '',
   context TEXT NOT NULL DEFAULT '',
   idx INTEGER NOT NULL DEFAULT 0,
-  total INTEGER NOT NULL DEFAULT 0
+  total INTEGER NOT NULL DEFAULT 0,
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_codeindex_chunks_snapshot ON codeindex_chunks(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_codeindex_chunks_fact ON codeindex_chunks(fact_id);
+CREATE INDEX IF NOT EXISTS idx_codeindex_chunks_org_id ON codeindex_chunks(org_id);
 
 CREATE TABLE IF NOT EXISTS codeindex_edges (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   kind INTEGER NOT NULL DEFAULT 0,
@@ -96,165 +127,146 @@ CREATE TABLE IF NOT EXISTS codeindex_edges (
   logical_key TEXT NOT NULL DEFAULT '',
   weight REAL NOT NULL DEFAULT 0,
   anchor_json TEXT NOT NULL DEFAULT 'null',
-  evidence_json TEXT NOT NULL DEFAULT '[]'
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_codeindex_edges_snapshot ON codeindex_edges(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_codeindex_edges_logical ON codeindex_edges(snapshot_id, logical_key);
 CREATE INDEX IF NOT EXISTS idx_codeindex_edges_from ON codeindex_edges(from_fact_id);
 CREATE INDEX IF NOT EXISTS idx_codeindex_edges_to ON codeindex_edges(to_fact_id);
+CREATE INDEX IF NOT EXISTS idx_codeindex_edges_org_id ON codeindex_edges(org_id);
 
 CREATE TABLE IF NOT EXISTS codeindex_analysis_runs (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   algorithm TEXT NOT NULL DEFAULT '',
   params_json TEXT NOT NULL DEFAULT '{}',
-  created_unix INTEGER NOT NULL DEFAULT 0
+  created_unix INTEGER NOT NULL DEFAULT 0,
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_codeindex_analysis_runs_org_id ON codeindex_analysis_runs(org_id);
+
 CREATE TABLE IF NOT EXISTS codeindex_groups (
-  id TEXT PRIMARY KEY,
+  id TEXT NOT NULL,
   run_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   label TEXT NOT NULL DEFAULT '',
   kind INTEGER NOT NULL DEFAULT 0,
-  size INTEGER NOT NULL DEFAULT 0
+  size INTEGER NOT NULL DEFAULT 0,
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_codeindex_groups_org_id ON codeindex_groups(org_id);
 
 CREATE TABLE IF NOT EXISTS codeindex_group_members (
   group_id TEXT NOT NULL,
   fact_id TEXT NOT NULL,
-  PRIMARY KEY (group_id, fact_id)
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, group_id, fact_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_codeindex_group_members_org_id ON codeindex_group_members(org_id);
 
 -- Canonical codeindex logical keys mapped to materialized workspace resources.
 -- logical_key is the fact or edge logical key; resource_type is 'element' or
 -- 'connector'; resource_id points at the corresponding workspace row.
 CREATE TABLE IF NOT EXISTS codeindex_elements (
-  logical_key TEXT PRIMARY KEY,
+  logical_key TEXT NOT NULL,
   resource_type TEXT NOT NULL DEFAULT 'element',
   resource_id INTEGER NOT NULL DEFAULT 0,
   repository_id TEXT NOT NULL DEFAULT '',
   snapshot_id TEXT NOT NULL DEFAULT '',
-  updated_at TEXT NOT NULL DEFAULT ''
+  updated_at TEXT NOT NULL DEFAULT '',
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, logical_key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_codeindex_elements_snapshot ON codeindex_elements(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_codeindex_elements_resource ON codeindex_elements(resource_type, resource_id);
+CREATE INDEX IF NOT EXISTS idx_codeindex_elements_org_id ON codeindex_elements(org_id);
 
--- Workspace versioning and shared indexes.
-
-CREATE TABLE IF NOT EXISTS workspace_versions (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  org_id TEXT NULL,
-  version_id TEXT NOT NULL UNIQUE,
-  source TEXT NOT NULL,
-  parent_version_id INTEGER NULL,
-  view_count INTEGER NOT NULL DEFAULT 0,
-  element_count INTEGER NOT NULL DEFAULT 0,
-  connector_count INTEGER NOT NULL DEFAULT 0,
-  description TEXT NULL,
-  workspace_hash TEXT NULL,
-  created_at TEXT NOT NULL,
-  FOREIGN KEY (parent_version_id) REFERENCES workspace_versions(id) ON DELETE SET NULL
-);
-
-CREATE TABLE IF NOT EXISTS workspace_version_settings (
-  id INTEGER PRIMARY KEY CHECK (id = 1),
-  cli_versioning_enabled INTEGER NOT NULL DEFAULT 1
-);
-
-INSERT INTO workspace_version_settings(id, cli_versioning_enabled)
-VALUES (1, 1)
-ON CONFLICT(id) DO NOTHING;
-
-CREATE INDEX IF NOT EXISTS idx_views_owner_element_id
-  ON views(owner_element_id);
-
-CREATE INDEX IF NOT EXISTS idx_placements_element_id_view_id
-  ON placements(element_id, view_id);
-
-CREATE INDEX IF NOT EXISTS idx_placements_view_id_id
-  ON placements(view_id, id);
-
-CREATE INDEX IF NOT EXISTS idx_connectors_view_id_id
-  ON connectors(view_id, id);
-
-CREATE INDEX IF NOT EXISTS idx_elements_updated_at_id
-  ON elements(updated_at DESC, id DESC);
-
-ALTER TABLE codeindex_snapshots ADD COLUMN provenance TEXT NOT NULL DEFAULT '';
-ALTER TABLE codeindex_snapshots ADD COLUMN content_fingerprint TEXT NOT NULL DEFAULT '';
-ALTER TABLE codeindex_snapshots ADD COLUMN capture_order BIGINT NOT NULL DEFAULT 0;
-CREATE INDEX idx_codeindex_snapshot_revision ON codeindex_snapshots(repository_id, git_revision, provenance, config_hash);
-CREATE TABLE codeindex_completed_maps (
-  run_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS codeindex_completed_maps (
+  run_id TEXT NOT NULL,
   repository_id TEXT NOT NULL,
   snapshot_id TEXT NOT NULL,
   config_hash TEXT NOT NULL,
   completed_unix BIGINT NOT NULL,
-  result_json TEXT NOT NULL
-);
-CREATE INDEX idx_codeindex_completed_maps_repository ON codeindex_completed_maps(repository_id, completed_unix);
-
-ALTER TABLE codeindex_sources ADD COLUMN language TEXT NOT NULL DEFAULT '';
-ALTER TABLE codeindex_sources ADD COLUMN input_blob TEXT NOT NULL DEFAULT '';
-ALTER TABLE codeindex_sources ADD COLUMN dirty BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE codeindex_sources ADD COLUMN syntax_cache TEXT NOT NULL DEFAULT '';
-CREATE TABLE codeindex_impacts (
- repository_id TEXT NOT NULL,
- comparison_key TEXT NOT NULL,
- result_json TEXT NOT NULL,
- PRIMARY KEY (repository_id, comparison_key)
-);
-CREATE TABLE codeindex_leases (
- repository_id TEXT PRIMARY KEY,
- owner TEXT NOT NULL,
- expires_unix BIGINT NOT NULL
-);
-CREATE TABLE codeindex_watch_state (
- repository_id TEXT PRIMARY KEY,
- heartbeat_unix BIGINT NOT NULL DEFAULT 0,
- error TEXT NOT NULL DEFAULT '',
- git_branch TEXT NOT NULL DEFAULT '',
- git_revision TEXT NOT NULL DEFAULT ''
-);
-CREATE TABLE codeindex_project_artifacts (
- snapshot_id TEXT NOT NULL,
- project_key TEXT NOT NULL,
- fingerprint TEXT NOT NULL,
- data BLOB NOT NULL,
- PRIMARY KEY (snapshot_id, project_key)
+  result_json TEXT NOT NULL,
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, run_id)
 );
 
--- Incremental watch support: shared watcher control, per-source extraction
--- caches, and snapshot membership so the CLI and server can observe and
--- cooperatively stop a watcher while an incremental publish writes only the
--- entities that changed.
+CREATE INDEX IF NOT EXISTS idx_codeindex_completed_maps_repository
+  ON codeindex_completed_maps(repository_id, completed_unix);
+CREATE INDEX IF NOT EXISTS idx_codeindex_completed_maps_org_id ON codeindex_completed_maps(org_id);
 
--- Watch control: extend the shared watch state row so the CLI and the server
--- can both observe and cooperatively stop a repository's watcher.
-ALTER TABLE codeindex_watch_state ADD COLUMN owner_kind TEXT NOT NULL DEFAULT '';
-ALTER TABLE codeindex_watch_state ADD COLUMN owner_pid INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE codeindex_watch_state ADD COLUMN owner_id TEXT NOT NULL DEFAULT '';
-ALTER TABLE codeindex_watch_state ADD COLUMN state TEXT NOT NULL DEFAULT '';
-ALTER TABLE codeindex_watch_state ADD COLUMN stage TEXT NOT NULL DEFAULT '';
-ALTER TABLE codeindex_watch_state ADD COLUMN repo_root TEXT NOT NULL DEFAULT '';
-ALTER TABLE codeindex_watch_state ADD COLUMN snapshot_id TEXT NOT NULL DEFAULT '';
-ALTER TABLE codeindex_watch_state ADD COLUMN content_fingerprint TEXT NOT NULL DEFAULT '';
-ALTER TABLE codeindex_watch_state ADD COLUMN changed_files INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE codeindex_watch_state ADD COLUMN pending_files INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE codeindex_watch_state ADD COLUMN started_unix BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE codeindex_watch_state ADD COLUMN last_scan_unix BIGINT NOT NULL DEFAULT 0;
-ALTER TABLE codeindex_watch_state ADD COLUMN last_scan_ms INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE codeindex_watch_state ADD COLUMN stop_requested BOOLEAN NOT NULL DEFAULT FALSE;
-ALTER TABLE codeindex_watch_state ADD COLUMN poll_interval_ms INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE codeindex_watch_state ADD COLUMN debounce_ms INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS codeindex_impacts (
+  repository_id TEXT NOT NULL,
+  comparison_key TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, repository_id, comparison_key)
+);
 
--- Whole-file fact/chunk cache keyed by content hash so unchanged files are not
--- re-chunked on every incremental build.
-ALTER TABLE codeindex_sources ADD COLUMN file_cache TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_codeindex_impacts_org_id ON codeindex_impacts(org_id);
+
+CREATE TABLE IF NOT EXISTS codeindex_leases (
+  repository_id TEXT NOT NULL,
+  owner TEXT NOT NULL,
+  expires_unix BIGINT NOT NULL,
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, repository_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_codeindex_leases_org_id ON codeindex_leases(org_id);
+
+-- Watch control lets the CLI and the server observe and cooperatively stop a
+-- repository's watcher while an incremental publish writes only changed rows.
+CREATE TABLE IF NOT EXISTS codeindex_watch_state (
+  repository_id TEXT NOT NULL,
+  heartbeat_unix BIGINT NOT NULL DEFAULT 0,
+  error TEXT NOT NULL DEFAULT '',
+  git_branch TEXT NOT NULL DEFAULT '',
+  git_revision TEXT NOT NULL DEFAULT '',
+  owner_kind TEXT NOT NULL DEFAULT '',
+  owner_pid INTEGER NOT NULL DEFAULT 0,
+  owner_id TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT '',
+  stage TEXT NOT NULL DEFAULT '',
+  repo_root TEXT NOT NULL DEFAULT '',
+  snapshot_id TEXT NOT NULL DEFAULT '',
+  content_fingerprint TEXT NOT NULL DEFAULT '',
+  changed_files INTEGER NOT NULL DEFAULT 0,
+  pending_files INTEGER NOT NULL DEFAULT 0,
+  started_unix BIGINT NOT NULL DEFAULT 0,
+  last_scan_unix BIGINT NOT NULL DEFAULT 0,
+  last_scan_ms INTEGER NOT NULL DEFAULT 0,
+  stop_requested BOOLEAN NOT NULL DEFAULT FALSE,
+  poll_interval_ms INTEGER NOT NULL DEFAULT 0,
+  debounce_ms INTEGER NOT NULL DEFAULT 0,
+  stop_requested_unix BIGINT NOT NULL DEFAULT 0,
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, repository_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_codeindex_watch_state_org_id ON codeindex_watch_state(org_id);
+
+CREATE TABLE IF NOT EXISTS codeindex_project_artifacts (
+  snapshot_id TEXT NOT NULL,
+  project_key TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  data BLOB NOT NULL,
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, snapshot_id, project_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_codeindex_project_artifacts_org_id ON codeindex_project_artifacts(org_id);
 
 -- Snapshot membership decouples immutable entities (facts, chunks, edges) from
 -- the snapshots that contain them. Reused entities keep a stable id across
@@ -263,31 +275,52 @@ ALTER TABLE codeindex_sources ADD COLUMN file_cache TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS codeindex_snapshot_facts (
   snapshot_id TEXT NOT NULL,
   fact_id TEXT NOT NULL,
-  PRIMARY KEY (snapshot_id, fact_id)
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, snapshot_id, fact_id)
 );
+
 CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_facts_fact ON codeindex_snapshot_facts(fact_id);
+CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_facts_org_id ON codeindex_snapshot_facts(org_id);
 
 CREATE TABLE IF NOT EXISTS codeindex_snapshot_chunks (
   snapshot_id TEXT NOT NULL,
   chunk_id TEXT NOT NULL,
-  PRIMARY KEY (snapshot_id, chunk_id)
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, snapshot_id, chunk_id)
 );
+
 CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_chunks_chunk ON codeindex_snapshot_chunks(chunk_id);
+CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_chunks_org_id ON codeindex_snapshot_chunks(org_id);
 
 CREATE TABLE IF NOT EXISTS codeindex_snapshot_edges (
   snapshot_id TEXT NOT NULL,
   edge_id TEXT NOT NULL,
-  PRIMARY KEY (snapshot_id, edge_id)
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, snapshot_id, edge_id)
 );
+
 CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_edges_edge ON codeindex_snapshot_edges(edge_id);
+CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_edges_org_id ON codeindex_snapshot_edges(org_id);
 
--- Watch stop deadline: records when a stop was requested so controllers can
--- escalate if a watcher does not honor it.
-ALTER TABLE codeindex_watch_state ADD COLUMN stop_requested_unix BIGINT NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS codeindex_repository_settings (
+  repository_id TEXT NOT NULL,
+  map_overrides TEXT NOT NULL DEFAULT '{}',
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, repository_id),
+  FOREIGN KEY (org_id, repository_id) REFERENCES codeindex_repositories(org_id, id) ON DELETE CASCADE
+);
 
--- Snapshot commit message: records the Git subject at the captured revision so
--- the UI and CLI can label saved snapshots without a separate history lookup.
-ALTER TABLE codeindex_snapshots ADD COLUMN commit_message TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_codeindex_repository_settings_org_id ON codeindex_repository_settings(org_id);
+
+CREATE TABLE IF NOT EXISTS codeindex_active_maps (
+  repository_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+  PRIMARY KEY (org_id, repository_id),
+  FOREIGN KEY (org_id, run_id) REFERENCES codeindex_completed_maps(org_id, run_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_codeindex_active_maps_org_id ON codeindex_active_maps(org_id);
 
 -- Remove the legacy watch pipeline tables, replaced by the codeindex schema.
 
@@ -318,19 +351,6 @@ DROP TABLE IF EXISTS watch_symbols;
 DROP TABLE IF EXISTS watch_files;
 DROP TABLE IF EXISTS watch_repositories;
 
-CREATE TABLE codeindex_repository_settings (
-    repository_id TEXT PRIMARY KEY REFERENCES codeindex_repositories(id) ON DELETE CASCADE,
-    map_overrides TEXT NOT NULL DEFAULT '{}'
-);
-
 -- Link workspace elements to indexed codeindex repositories.
 ALTER TABLE elements ADD COLUMN repository_id TEXT NULL;
 CREATE INDEX IF NOT EXISTS idx_elements_repository ON elements(repository_id);
-
-CREATE TABLE IF NOT EXISTS codeindex_active_maps (
- repository_id TEXT PRIMARY KEY,
- run_id TEXT NOT NULL REFERENCES codeindex_completed_maps(run_id) ON DELETE CASCADE
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_codeindex_repositories_remote_key_unique
-  ON codeindex_repositories(remote_key) WHERE remote_key <> '';

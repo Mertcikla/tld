@@ -150,7 +150,7 @@ func (s *Store) UpsertWatchState(ctx context.Context, st WatchState) error {
 	_, err := s.bun.NewRaw(`INSERT INTO codeindex_watch_state
 		(`+watchColumnsOrg+`)
 		VALUES (`+watchPlaceholdersOrg+`)
-		ON CONFLICT(repository_id) DO UPDATE SET
+		ON CONFLICT(org_id, repository_id) DO UPDATE SET
 			owner_kind = excluded.owner_kind, owner_pid = excluded.owner_pid, owner_id = excluded.owner_id,
 			state = excluded.state, stage = excluded.stage, error = excluded.error,
 			git_branch = excluded.git_branch, git_revision = excluded.git_revision,
@@ -160,8 +160,7 @@ func (s *Store) UpsertWatchState(ctx context.Context, st WatchState) error {
 			started_unix = excluded.started_unix, last_scan_unix = excluded.last_scan_unix,
 			last_scan_ms = excluded.last_scan_ms, heartbeat_unix = excluded.heartbeat_unix,
 			poll_interval_ms = excluded.poll_interval_ms,
-			debounce_ms = excluded.debounce_ms,
-			org_id = COALESCE(codeindex_watch_state.org_id, excluded.org_id)`,
+			debounce_ms = excluded.debounce_ms`,
 		append(watchArgs(st), scope(ctx).value())...).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("upsert watch state: %w", err)
@@ -247,7 +246,7 @@ func (s *Store) ClaimWatch(ctx context.Context, st WatchState) error {
 	res, err := s.bun.NewRaw(`INSERT INTO codeindex_watch_state
 		(`+watchColumnsOrg+`)
 		VALUES (`+watchPlaceholdersOrg+`)
-		ON CONFLICT(repository_id) DO UPDATE SET
+		ON CONFLICT(org_id, repository_id) DO UPDATE SET
 			owner_kind = excluded.owner_kind, owner_pid = excluded.owner_pid, owner_id = excluded.owner_id,
 			state = excluded.state, stage = excluded.stage, error = excluded.error,
 			git_branch = excluded.git_branch, git_revision = excluded.git_revision,
@@ -258,8 +257,7 @@ func (s *Store) ClaimWatch(ctx context.Context, st WatchState) error {
 			last_scan_ms = excluded.last_scan_ms, heartbeat_unix = excluded.heartbeat_unix,
 			stop_requested = excluded.stop_requested, stop_requested_unix = excluded.stop_requested_unix,
 			poll_interval_ms = excluded.poll_interval_ms,
-			debounce_ms = excluded.debounce_ms,
-			org_id = COALESCE(codeindex_watch_state.org_id, excluded.org_id)
+			debounce_ms = excluded.debounce_ms
 		WHERE codeindex_watch_state.owner_id = excluded.owner_id
 		   OR codeindex_watch_state.heartbeat_unix <= ?`,
 		claimArgs...).Exec(ctx)

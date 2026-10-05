@@ -5,7 +5,8 @@
 // when a checkout has a remote, so another developer's clone of the same
 // repository resolves to the same repository id. Checkouts without a remote
 // fall back to the explicit id from .tld.yaml and finally to a path-derived id,
-// preserving single-machine behavior.
+// preserving single-machine behavior. New path-derived identities are
+// namespaced by organisation when the request is tenant-scoped.
 package identity
 
 import (
@@ -13,9 +14,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/repolink"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 // Resolved is a repository's stable identity plus the local checkout it was
@@ -59,7 +62,19 @@ func Resolve(ctx context.Context, idx *cstore.Store, root, explicitID, remoteURL
 			return Resolved{ID: id, Root: root, RemoteURL: remoteURL, RemoteKey: key}, nil
 		}
 	}
-	return Resolved{ID: graph.RepositoryID(root), Root: root, RemoteURL: remoteURL, RemoteKey: key}, nil
+	id := graph.RepositoryID(root)
+	if orgID := app.TenantOrgIDFromCtx(ctx); orgID != uuid.Nil {
+		// Keep previously registered identities within this organisation, but
+		// namespace new identities so tenants can index the same local path.
+		exists, err := idx.RepositoryExists(ctx, id)
+		if err != nil {
+			return Resolved{}, err
+		}
+		if !exists {
+			id = graph.ID("organisation", orgID.String(), id)
+		}
+	}
+	return Resolved{ID: id, Root: root, RemoteURL: remoteURL, RemoteKey: key}, nil
 }
 
 // Apply resolves then persists the identity so a scan from another checkout

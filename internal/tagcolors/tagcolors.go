@@ -1,87 +1,15 @@
 package tagcolors
 
 import (
-	"context"
 	crand "crypto/rand"
-	"database/sql"
 	"fmt"
 	"hash/fnv"
 	"strings"
-
-	"github.com/uptrace/bun"
 )
 
 var SwatchColors = []string{
 	"#F56565", "#ED8936", "#ECC94B", "#48BB78", "#38B2AC",
 	"#4299E1", "#667EEA", "#9F7AEA", "#ED64A6", "#A0AEC0",
-}
-
-func Ensure(ctx context.Context, db *sql.DB, tags []string) error {
-	return ensure(ctx, db.QueryContext, func(ctx context.Context, name, color string) error {
-		_, err := db.ExecContext(ctx, `INSERT INTO tags(name, color, description) VALUES (?, ?, NULL) ON CONFLICT(name) DO NOTHING`, name, color)
-		return err
-	}, tags)
-}
-
-func EnsureBun(ctx context.Context, db *bun.DB, tags []string) error {
-	return ensure(ctx, db.QueryContext, func(ctx context.Context, name, color string) error {
-		_, err := db.NewInsert().
-			Model(&tagModel{Name: name, Color: color}).
-			On("CONFLICT (name) DO NOTHING").
-			Exec(ctx)
-		return err
-	}, tags)
-}
-
-type tagModel struct {
-	bun.BaseModel `bun:"table:tags"`
-
-	Name        string  `bun:"name,pk"`
-	Color       string  `bun:"color"`
-	Description *string `bun:"description"`
-}
-
-func ensure(ctx context.Context, query func(context.Context, string, ...any) (*sql.Rows, error), insert func(context.Context, string, string) error, tags []string) error {
-	if len(tags) == 0 {
-		return nil
-	}
-
-	rows, err := query(ctx, `SELECT name, color FROM tags ORDER BY name`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-
-	existing := map[string]struct{}{}
-	var usedColors []string
-	for rows.Next() {
-		var name, color string
-		if err := rows.Scan(&name, &color); err != nil {
-			return err
-		}
-		existing[name] = struct{}{}
-		usedColors = append(usedColors, color)
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	for _, name := range tags {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		if _, ok := existing[name]; ok {
-			continue
-		}
-		color := PickUnusedColor(usedColors)
-		if err := insert(ctx, name, color); err != nil {
-			return err
-		}
-		usedColors = append(usedColors, color)
-		existing[name] = struct{}{}
-	}
-	return nil
 }
 
 func PickUnusedColor(usedColors []string) string {

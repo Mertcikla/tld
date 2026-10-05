@@ -17,7 +17,7 @@ vi.mock('../components/RepositoryHistory', () => ({ default: (props: Record<stri
 vi.mock('../api/client', () => ({
   api: {
     editor: { open: vi.fn(async () => {}) },
-    system: { capabilities: vi.fn(async () => ({ editor: true, watch: true })) },
+    system: { capabilities: vi.fn(async () => ({ editor: true, watch: true, repositories: true })) },
     repositories: {
       list: vi.fn(async () => [{
         id: 'repo-1',
@@ -198,7 +198,7 @@ describe('Repositories map action', () => {
 
   it('hides the Watch tab and add-watch option when the server disables watching', async () => {
     const { api } = await import('../api/client')
-    vi.mocked(api.system.capabilities).mockResolvedValueOnce({ watch: false, editor: false })
+    vi.mocked(api.system.capabilities).mockResolvedValueOnce({ watch: false, editor: false, repositories: true })
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-live-tab' })).toHaveLength(0)

@@ -35,11 +35,17 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 	now := time.Now().UTC().Format(time.RFC3339)
 	repoID := snap.RepositoryId
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_repositories (id, root, latest_snapshot_id, created_at, updated_at, org_id)
+		res, err := tx.NewRaw(`INSERT INTO codeindex_repositories (id, root, latest_snapshot_id, created_at, updated_at, org_id)
 			VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT(id) DO UPDATE SET root = excluded.root, latest_snapshot_id = CASE WHEN ? OR codeindex_repositories.latest_snapshot_id = '' THEN excluded.latest_snapshot_id ELSE codeindex_repositories.latest_snapshot_id END, updated_at = excluded.updated_at, org_id = COALESCE(codeindex_repositories.org_id, excluded.org_id)`,
-			repoID, root, snap.Id, now, now, scope(ctx).value(), advanceLatest).Exec(ctx); err != nil {
+			ON CONFLICT(org_id, id) DO UPDATE SET root = excluded.root, latest_snapshot_id = CASE WHEN ? OR codeindex_repositories.latest_snapshot_id = '' THEN excluded.latest_snapshot_id ELSE codeindex_repositories.latest_snapshot_id END, updated_at = excluded.updated_at`,
+			repoID, root, snap.Id, now, now, scope(ctx).value(), advanceLatest).Exec(ctx)
+		if err != nil {
 			return fmt.Errorf("upsert repository: %w", err)
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return fmt.Errorf("upsert repository: %w", sql.ErrNoRows)
 		}
 		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_snapshot_facts", "codeindex_snapshot_chunks", "codeindex_snapshot_edges"} {
 			where, scopeArgs := scope(ctx).clause("org_id")
@@ -74,17 +80,17 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 func saveMembership(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph) error {
 	org := scope(ctx).value()
 	for id := range g.Facts {
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_facts (snapshot_id, fact_id, org_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, snap.Id, id, org).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_facts (snapshot_id, fact_id, org_id) VALUES (?, ?, ?) ON CONFLICT(org_id, snapshot_id, fact_id) DO NOTHING`, snap.Id, id, org).Exec(ctx); err != nil {
 			return fmt.Errorf("membership fact %s: %w", id, err)
 		}
 	}
 	for id := range g.Chunks {
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_chunks (snapshot_id, chunk_id, org_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, snap.Id, id, org).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_chunks (snapshot_id, chunk_id, org_id) VALUES (?, ?, ?) ON CONFLICT(org_id, snapshot_id, chunk_id) DO NOTHING`, snap.Id, id, org).Exec(ctx); err != nil {
 			return fmt.Errorf("membership chunk %s: %w", id, err)
 		}
 	}
 	for id := range g.EdgeFacts {
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_edges (snapshot_id, edge_id, org_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, snap.Id, id, org).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_edges (snapshot_id, edge_id, org_id) VALUES (?, ?, ?) ON CONFLICT(org_id, snapshot_id, edge_id) DO NOTHING`, snap.Id, id, org).Exec(ctx); err != nil {
 			return fmt.Errorf("membership edge %s: %w", id, err)
 		}
 	}
@@ -95,10 +101,10 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 	projects, _ := marshalJSON(snap.Projects)
 	warnings, _ := marshalJSON(snap.Warnings)
 	tools, _ := marshalJSON(snap.ToolVersions)
-	_, err := tx.NewRaw(`INSERT INTO codeindex_snapshots
+	res, err := tx.NewRaw(`INSERT INTO codeindex_snapshots
 		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, capture_order, org_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(id) DO UPDATE SET
+		ON CONFLICT(org_id, id) DO UPDATE SET
 			repository_id = excluded.repository_id,
 			git_revision = excluded.git_revision,
 			git_branch = excluded.git_branch,
@@ -108,12 +114,16 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 			warnings_json = excluded.warnings_json,
 			tool_versions_json = excluded.tool_versions_json,
         provenance = excluded.provenance, content_fingerprint = excluded.content_fingerprint,
-        commit_message = excluded.commit_message,
-        org_id = COALESCE(codeindex_snapshots.org_id, excluded.org_id)`,
+        commit_message = excluded.commit_message`,
 		snap.Id, snap.RepositoryId, snap.CreatedUnix, snap.GitRevision, snap.GitBranch,
 		snap.IngestionStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, snap.CommitMessage, time.Now().UnixNano(), scope(ctx).value()).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("upsert snapshot: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("upsert snapshot: %w", sql.ErrNoRows)
 	}
 	return nil
 }
@@ -163,7 +173,7 @@ func saveFacts(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph
 		}
 		if _, err := tx.NewRaw(`INSERT INTO codeindex_facts
 			(id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, code, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json, org_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_id, id) DO NOTHING`,
 			f.Id, f.RepositoryId, f.SnapshotId, f.Language, int(f.Kind), f.Name, f.QualifiedName, f.SymbolKey,
 			f.Signature, f.Documentation, f.Code, f.ParentFactId, f.LogicalKey, path, anchor, evidence, imports, org).Exec(ctx); err != nil {
 			return fmt.Errorf("insert fact %s: %w", f.Id, err)
@@ -184,7 +194,7 @@ func saveChunks(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
 		anchor, _ := marshalJSON(c.Anchor)
 		if _, err := tx.NewRaw(`INSERT INTO codeindex_chunks
 			(id, fact_id, snapshot_id, anchor_json, text, context, idx, total, org_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_id, id) DO NOTHING`,
 			c.Id, c.FactId, c.SnapshotId, anchor, c.Text, c.Context, c.Index, c.Total, org).Exec(ctx); err != nil {
 			return fmt.Errorf("insert chunk %s: %w", c.Id, err)
 		}
@@ -205,7 +215,7 @@ func saveEdges(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
 		evidence, _ := marshalJSON(e.Evidence)
 		if _, err := tx.NewRaw(`INSERT INTO codeindex_edges
 			(id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, anchor_json, evidence_json, org_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_id, id) DO NOTHING`,
 			e.Id, e.RepositoryId, e.SnapshotId, int(e.Kind), e.FromFactId, e.ToFactId, e.TargetSymbolKey,
 			e.LogicalKey, e.Weight, anchor, evidence, org).Exec(ctx); err != nil {
 			return fmt.Errorf("insert edge %s: %w", e.Id, err)
@@ -323,10 +333,10 @@ func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snaps
 		id, repository_id, created_unix, git_revision, git_branch,
 		ingestion_status, config_hash,
 		projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message,
-		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = codeindex_snapshots.id),
-		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = codeindex_snapshots.id),
-		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = codeindex_snapshots.id),
-		(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = codeindex_snapshots.id)
+		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id),
+		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id),
+		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id),
+		(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id)
 		FROM codeindex_snapshots
 		WHERE repository_id = ?`+where+`
 		ORDER BY created_unix, capture_order, id`, append([]any{repositoryID}, scopeArgs...)...)
@@ -414,7 +424,7 @@ func (s *Store) Fact(ctx context.Context, id string) (*pb.CodeFact, error) {
 // Facts lists facts for a snapshot via membership, optionally filtered by kind
 // and path prefix.
 func (s *Store) Facts(ctx context.Context, snapshotID string, kind pb.FactKind, pathPrefix, after string, limit int) ([]*pb.CodeFact, error) {
-	query := `SELECT ` + factColumnsQualified + ` FROM codeindex_facts f JOIN codeindex_snapshot_facts m ON m.fact_id = f.id WHERE m.snapshot_id = ?`
+	query := `SELECT ` + factColumnsQualified + ` FROM codeindex_facts f JOIN codeindex_snapshot_facts m ON m.fact_id = f.id AND m.org_id = f.org_id WHERE m.snapshot_id = ?`
 	args := []any{snapshotID}
 	if where, scopeArgs := scope(ctx).clause("f.org_id"); where != "" {
 		query += where
@@ -467,7 +477,7 @@ func (s *Store) EdgeFact(ctx context.Context, id string) (*pb.EdgeFact, error) {
 // EdgeFacts lists edges for a snapshot via membership, optionally filtered by
 // kind and logical key.
 func (s *Store) EdgeFacts(ctx context.Context, snapshotID string, kind pb.EdgeKind, logicalKey, after string, limit int) ([]*pb.EdgeFact, error) {
-	query := `SELECT ` + edgeColumnsQualified + ` FROM codeindex_edges e JOIN codeindex_snapshot_edges m ON m.edge_id = e.id WHERE m.snapshot_id = ?`
+	query := `SELECT ` + edgeColumnsQualified + ` FROM codeindex_edges e JOIN codeindex_snapshot_edges m ON m.edge_id = e.id AND m.org_id = e.org_id WHERE m.snapshot_id = ?`
 	args := []any{snapshotID}
 	if where, scopeArgs := scope(ctx).clause("e.org_id"); where != "" {
 		query += where
@@ -519,7 +529,7 @@ func (s *Store) Chunk(ctx context.Context, id string) (*pb.Chunk, error) {
 // Chunks lists a snapshot's chunks via membership.
 func (s *Store) Chunks(ctx context.Context, snapshotID string) ([]*pb.Chunk, error) {
 	where, scopeArgs := scope(ctx).clause("c.org_id")
-	chunks, err := s.scanChunks(ctx, `SELECT `+chunkColumnsQualified+` FROM codeindex_chunks c JOIN codeindex_snapshot_chunks m ON m.chunk_id = c.id WHERE m.snapshot_id = ?`+where+` ORDER BY c.id`, append([]any{snapshotID}, scopeArgs...)...)
+	chunks, err := s.scanChunks(ctx, `SELECT `+chunkColumnsQualified+` FROM codeindex_chunks c JOIN codeindex_snapshot_chunks m ON m.chunk_id = c.id AND m.org_id = c.org_id WHERE m.snapshot_id = ?`+where+` ORDER BY c.id`, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}

@@ -18,7 +18,7 @@ func (s *Store) SaveImpact(ctx context.Context, diagram *pb.ImpactDiagram) error
 		return err
 	}
 	_, err = s.bun.NewRaw(`INSERT INTO codeindex_impacts (repository_id, comparison_key, result_json, org_id) VALUES (?, ?, ?, ?)
- ON CONFLICT(repository_id, comparison_key) DO UPDATE SET result_json = excluded.result_json, org_id = COALESCE(codeindex_impacts.org_id, excluded.org_id)`, diagram.RepositoryId, diagram.ComparisonKey, string(raw), scope(ctx).value()).Exec(ctx)
+ ON CONFLICT(org_id, repository_id, comparison_key) DO UPDATE SET result_json = excluded.result_json`, diagram.RepositoryId, diagram.ComparisonKey, string(raw), scope(ctx).value()).Exec(ctx)
 	return err
 }
 
@@ -65,10 +65,11 @@ var ErrBusy = errors.New("repository indexing is already running")
 // AcquireLease serializes indexing/materialization across server and CLI
 // processes. Renewals cancel the operation if ownership is lost.
 func (s *Store) AcquireLease(ctx context.Context, repositoryID string) (context.Context, func(), error) {
+	where, scopeArgs := scope(ctx).clause("org_id")
 	owner := uuid.NewString()
 	now := time.Now().Unix()
 	res, err := s.bun.NewRaw(`INSERT INTO codeindex_leases (repository_id, owner, expires_unix, org_id) VALUES (?, ?, ?, ?)
- ON CONFLICT(repository_id) DO UPDATE SET owner = excluded.owner, expires_unix = excluded.expires_unix, org_id = excluded.org_id WHERE codeindex_leases.expires_unix <= ?`, repositoryID, owner, now+30, scope(ctx).value(), now).Exec(ctx)
+ ON CONFLICT(org_id, repository_id) DO UPDATE SET owner = excluded.owner, expires_unix = excluded.expires_unix WHERE codeindex_leases.expires_unix <= ?`, repositoryID, owner, now+30, scope(ctx).value(), now).Exec(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -90,7 +91,7 @@ func (s *Store) AcquireLease(ctx context.Context, repositoryID string) (context.
 			case <-leased.Done():
 				return
 			case <-ticker.C:
-				res, e := s.bun.NewRaw(`UPDATE codeindex_leases SET expires_unix = ? WHERE repository_id = ? AND owner = ? AND expires_unix > ?`, time.Now().Unix()+30, repositoryID, owner, time.Now().Unix()).Exec(leased)
+				res, e := s.bun.NewRaw(`UPDATE codeindex_leases SET expires_unix = ? WHERE repository_id = ? AND owner = ? AND expires_unix > ?`+where, append([]any{time.Now().Unix() + 30, repositoryID, owner, time.Now().Unix()}, scopeArgs...)...).Exec(leased)
 				if e != nil {
 					cancel()
 					return
@@ -108,7 +109,7 @@ func (s *Store) AcquireLease(ctx context.Context, repositoryID string) (context.
 		<-done
 		cleanup, end := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		defer end()
-		_, _ = s.bun.NewRaw(`DELETE FROM codeindex_leases WHERE repository_id = ? AND owner = ?`, repositoryID, owner).Exec(cleanup)
+		_, _ = s.bun.NewRaw(`DELETE FROM codeindex_leases WHERE repository_id = ? AND owner = ?`+where, append([]any{repositoryID, owner}, scopeArgs...)...).Exec(cleanup)
 	}
 	return leased, release, nil
 }
