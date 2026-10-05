@@ -47,13 +47,12 @@ func (s *Store) SaveMappings(ctx context.Context, mappings []ResourceMapping) er
 			}
 			if _, err := tx.NewRaw(`INSERT INTO codeindex_elements (logical_key, resource_type, resource_id, repository_id, snapshot_id, updated_at, org_id)
 				VALUES (?, ?, ?, ?, ?, ?, ?)
-				ON CONFLICT(logical_key) DO UPDATE SET
+				ON CONFLICT(org_id, logical_key) DO UPDATE SET
 					resource_type = excluded.resource_type,
 					resource_id = excluded.resource_id,
 					repository_id = excluded.repository_id,
 					snapshot_id = excluded.snapshot_id,
-					updated_at = excluded.updated_at,
-					org_id = COALESCE(codeindex_elements.org_id, excluded.org_id)`,
+					updated_at = excluded.updated_at`,
 				m.LogicalKey, string(kind), m.ResourceID, m.RepositoryID, m.SnapshotID, now, org).Exec(ctx); err != nil {
 				return err
 			}

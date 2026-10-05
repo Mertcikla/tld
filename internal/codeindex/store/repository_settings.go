@@ -38,6 +38,6 @@ func (s *Store) SaveRepositoryMapOverrides(ctx context.Context, repositoryID str
 		return err
 	}
 	_, err = s.bun.NewRaw(`INSERT INTO codeindex_repository_settings (repository_id, map_overrides, org_id)
-		VALUES (?, ?, ?) ON CONFLICT (repository_id) DO UPDATE SET map_overrides = excluded.map_overrides, org_id = COALESCE(codeindex_repository_settings.org_id, excluded.org_id)`, repositoryID, string(raw), scope(ctx).value()).Exec(ctx)
+		VALUES (?, ?, ?) ON CONFLICT(org_id, repository_id) DO UPDATE SET map_overrides = excluded.map_overrides`, repositoryID, string(raw), scope(ctx).value()).Exec(ctx)
 	return err
 }

@@ -242,7 +242,7 @@ func (s *Store) diffFactsByMembership(ctx context.Context, fromID, toID string) 
 // factLogicalKeys maps a snapshot's fact ids to their logical identity.
 func (s *Store) factLogicalKeys(ctx context.Context, snapshotID string) (map[string]string, error) {
 	where, scopeArgs := scope(ctx).clause("f.org_id")
-	rows, err := s.bun.QueryContext(ctx, `SELECT f.id, f.logical_key FROM codeindex_facts f JOIN codeindex_snapshot_facts m ON m.fact_id = f.id WHERE m.snapshot_id = ?`+where, append([]any{snapshotID}, scopeArgs...)...)
+	rows, err := s.bun.QueryContext(ctx, `SELECT f.id, f.logical_key FROM codeindex_facts f JOIN codeindex_snapshot_facts m ON m.fact_id = f.id AND m.org_id = f.org_id WHERE m.snapshot_id = ?`+where, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}
