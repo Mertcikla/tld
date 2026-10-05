@@ -55,6 +55,7 @@ import {
   type SnapshotSourceChange,
 } from '../api/client'
 import ConfirmDialog from '../components/ConfirmDialog'
+import '../styles/editor-panels.css'
 import RepositorySettings from './RepositorySettings'
 import RepositoryHistory from '../components/RepositoryHistory'
 import RepositoryTargetPicker from '../components/RepositoryTargetPicker'
@@ -1389,12 +1390,11 @@ export default function Repositories() {
                   w="28px"
                   h="28px"
                   flexShrink={0}
-                  border="1px dashed"
-                  borderColor="whiteAlpha.400"
+                  bg="whiteAlpha.100"
                   borderRadius="md"
                   color="gray.400"
                 >
-                  <AddIcon boxSize="12px" />
+                  <AddIcon boxSize="12px" color="var(--accent)"/>
                 </Center>
                 {!collapsed && (
                   <Box flex={1} minW={0}>
