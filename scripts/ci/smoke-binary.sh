@@ -65,7 +65,7 @@ export TLD_DATA_DIR="${data_dir}"
   "${TLD_BINARY}" --workspace .tld --format json add "Smoke DB" --ref smoke-db --kind database --technology SQLite > add-db.json
   "${TLD_BINARY}" --workspace .tld --format json connect --from smoke-api --to smoke-db --label stores > connect.json
   "${TLD_BINARY}" --workspace .tld validate
-  "${TLD_BINARY}" --workspace .tld --format json views > views.json
+  "${TLD_BINARY}" --workspace .tld --format json list views > views.json
 
   parse_json_file add-api.json
   parse_json_file add-db.json
