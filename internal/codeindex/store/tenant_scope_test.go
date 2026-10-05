@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
@@ -125,5 +126,71 @@ func TestRepositoryRemoteKeyUniquePerOrg(t *testing.T) {
 	gotB, ok, err := st.RepositoryByRemoteKey(ctxB, remoteKey)
 	if err != nil || !ok || gotB != "repo-b" {
 		t.Fatalf("org B remote key lookup = %q ok=%v err=%v, want repo-b", gotB, ok, err)
+	}
+}
+
+func TestRepositoryWritesRejectForeignOwnership(t *testing.T) {
+	for _, unscopedOwner := range []bool{false, true} {
+		for _, operation := range []string{"identity", "publish", "historical"} {
+			t.Run(fmt.Sprintf("unscoped=%t/%s", unscopedOwner, operation), func(t *testing.T) {
+				st, handle := openTestStore(t)
+				defer func() { _ = handle.Close() }()
+				owner := context.Background()
+				if !unscopedOwner {
+					owner = app.WithTenantOrgID(owner, uuid.New())
+				}
+				other := app.WithTenantOrgID(context.Background(), uuid.New())
+				original := &pb.Snapshot{Id: "original", RepositoryId: "repo"}
+				if err := st.Publish(owner, "/original", original, graph.NewGraph("repo", original.Id)); err != nil {
+					t.Fatal(err)
+				}
+				attempt := &pb.Snapshot{Id: "foreign", RepositoryId: "repo"}
+				var err error
+				switch operation {
+				case "identity":
+					err = st.EnsureRepositoryIdentity(other, "repo", "/foreign", "https://github.com/foreign/repo", "github.com/foreign/repo", true)
+				case "publish":
+					err = st.Publish(other, "/foreign", attempt, graph.NewGraph("repo", attempt.Id))
+				case "historical":
+					err = st.PublishHistorical(other, "/foreign", attempt, graph.NewGraph("repo", attempt.Id))
+				}
+				if !errors.Is(err, sql.ErrNoRows) {
+					t.Fatalf("foreign write err = %v, want sql.ErrNoRows", err)
+				}
+				repo, err := st.Repository(owner, "repo")
+				if err != nil || repo.Root != "/original" || repo.LatestSnapshotId != original.Id {
+					t.Fatalf("owner repository changed: %+v, err = %v", repo, err)
+				}
+				remote, managed, err := st.RepositoryOrigin(owner, "repo")
+				if err != nil || remote != "" || managed {
+					t.Fatalf("owner origin changed: remote=%q managed=%v err=%v", remote, managed, err)
+				}
+				if _, err := st.Snapshot(context.Background(), attempt.Id); !errors.Is(err, sql.ErrNoRows) {
+					t.Fatalf("rejected publication left a snapshot: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestSnapshotCollisionRollsBackPublication(t *testing.T) {
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+	ctxA := app.WithTenantOrgID(context.Background(), uuid.New())
+	ctxB := app.WithTenantOrgID(context.Background(), uuid.New())
+	snap := &pb.Snapshot{Id: "shared-snapshot-id", RepositoryId: "repo-a", GitRevision: "original"}
+	if err := st.Publish(ctxA, "/a", snap, graph.NewGraph(snap.RepositoryId, snap.Id)); err != nil {
+		t.Fatal(err)
+	}
+	attempt := &pb.Snapshot{Id: snap.Id, RepositoryId: "repo-b", GitRevision: "foreign"}
+	if err := st.Publish(ctxB, "/b", attempt, graph.NewGraph(attempt.RepositoryId, attempt.Id)); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("snapshot collision err = %v, want sql.ErrNoRows", err)
+	}
+	got, err := st.Snapshot(ctxA, snap.Id)
+	if err != nil || got.RepositoryId != snap.RepositoryId || got.GitRevision != snap.GitRevision {
+		t.Fatalf("owner snapshot changed: %+v, err = %v", got, err)
+	}
+	if _, err := st.Repository(ctxB, attempt.RepositoryId); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("failed publication left a repository: %v", err)
 	}
 }

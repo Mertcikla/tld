@@ -5,8 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/pkg/app"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )
 
@@ -72,5 +75,51 @@ func TestResolveHonorsExplicitRegisteredID(t *testing.T) {
 	}
 	if resolved.ID != "pinned" {
 		t.Fatalf("id = %q, want pinned", resolved.ID)
+	}
+}
+
+func TestApplyIsolatesSameCheckoutAcrossOrganisations(t *testing.T) {
+	st := openIdentityStore(t)
+	ctxA := app.WithTenantOrgID(context.Background(), uuid.New())
+	ctxB := app.WithTenantOrgID(context.Background(), uuid.New())
+	const root = "/shared/checkout"
+	const remote = "https://github.com/owner/repo"
+	first, err := Apply(ctxA, st, root, "", remote, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := Apply(ctxB, st, root, "", remote, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == second.ID {
+		t.Fatal("organisations share a repository identity")
+	}
+	for _, tc := range []struct {
+		ctx context.Context
+		id  string
+	}{{ctxA, first.ID}, {ctxB, second.ID}} {
+		again, err := Apply(tc.ctx, st, root, "", remote, false)
+		if err != nil || again.ID != tc.id {
+			t.Fatalf("repeat identity = %q, err = %v, want %q", again.ID, err, tc.id)
+		}
+	}
+}
+
+func TestResolvePreservesExistingPathIdentity(t *testing.T) {
+	st := openIdentityStore(t)
+	ctx := app.WithTenantOrgID(context.Background(), uuid.New())
+	const root = "/shared/legacy-checkout"
+	id := graph.RepositoryID(root)
+	if err := st.EnsureRepositoryIdentity(ctx, id, root, "", "", false); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := Resolve(ctx, st, root, "", "")
+	if err != nil || resolved.ID != id {
+		t.Fatalf("identity = %q, err = %v, want existing %q", resolved.ID, err, id)
+	}
+	local, err := Resolve(context.Background(), st, "/local/checkout", "", "")
+	if err != nil || local.ID != graph.RepositoryID("/local/checkout") {
+		t.Fatalf("local identity changed: %+v, err = %v", local, err)
 	}
 }

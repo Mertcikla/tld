@@ -57,3 +57,13 @@ func (t tenantScope) clause(column string) (string, []any) {
 	}
 	return " AND " + column + " = ?", []any{t.orgID}
 }
+
+// conflictWhere prevents a scoped upsert from modifying a row owned by another
+// organisation, including unscoped rows. The condition is evaluated atomically
+// by the database rather than relying on a separate ownership check.
+func (t tenantScope) conflictWhere(column string) (string, []any) {
+	if !t.on {
+		return "", nil
+	}
+	return " WHERE " + column + " = ?", []any{t.orgID}
+}
