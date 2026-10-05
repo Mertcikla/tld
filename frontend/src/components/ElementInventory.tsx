@@ -453,7 +453,7 @@ function ElementLibrary({
                 Elements are reusable building blocks - services, databases, people, and more.
               </Text>
               {canEdit && (
-                <Button size="xs" colorScheme="blue" variant="outline" mt={1} onClick={onCreateNew}>
+                <Button size="xs" color="var(--accent)" variant="outline" mt={1} onClick={onCreateNew}>
                   Create your first element
                 </Button>
               )}
