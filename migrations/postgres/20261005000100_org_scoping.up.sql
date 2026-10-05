@@ -20,7 +20,7 @@ CREATE INDEX IF NOT EXISTS idx_view_visibility_overrides_org_id ON view_visibili
 -- tags and view_markdown_documents stored org_id as TEXT while elements, views,
 -- connectors and workspace_versions used UUID. Unify on UUID so tenant filters
 -- and comparisons work across tables.
-UPDATE tags SET org_id = '00000000-0000-0000-0000-000000000000' WHERE org_id IS NULL;
+UPDATE tags SET org_id = '00000000-0000-0000-0000-000000000000' WHERE org_id IS NULL OR org_id = '';
 ALTER TABLE tags ALTER COLUMN org_id TYPE UUID USING NULLIF(org_id, '')::uuid;
 ALTER TABLE view_markdown_documents
   ALTER COLUMN org_id TYPE UUID USING NULLIF(org_id, '')::uuid;

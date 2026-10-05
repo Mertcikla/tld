@@ -34,4 +34,5 @@ fi
 
 export TLD_TEST_POSTGRES_URL="${TLD_TEST_POSTGRES_URL:-postgres://${user}:${password}@localhost:${port}/${database}?sslmode=disable}"
 go test -tags integration ./pkg/dbrepo -count=1 -v
+go test -tags integration ./internal/codeindex/store -count=1 -v
 go test -tags integration ./tests/postgres -count=1 -v

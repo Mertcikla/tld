@@ -26,7 +26,7 @@ CREATE INDEX IF NOT EXISTS idx_view_visibility_overrides_org_id ON view_visibili
 -- UNIQUE constraints, which would leave the uniqueness unenforced for the
 -- self-hosted single-tenant mode that stores a nil organisation.
 
-UPDATE tags SET org_id = '00000000-0000-0000-0000-000000000000' WHERE org_id IS NULL;
+UPDATE tags SET org_id = '00000000-0000-0000-0000-000000000000' WHERE org_id IS NULL OR org_id = '';
 
 CREATE TABLE tags_org_scoped (
   org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',

@@ -5,9 +5,7 @@ package store
 import (
 	"context"
 	"database/sql"
-	"net/url"
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -19,6 +17,11 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 )
 
+// TestPostgresTenantScopeCollidingKeys verifies tenant isolation against the
+// real Postgres schema produced by the production migration set. The migrator
+// runs every migration exactly as the server does, so the test fails if a
+// migration drifts from what the store expects. A dedicated schema isolates
+// this test from others sharing the same DSN.
 func TestPostgresTenantScopeCollidingKeys(t *testing.T) {
 	dsn := os.Getenv("TLD_TEST_POSTGRES_URL")
 	if dsn == "" {
@@ -36,57 +39,22 @@ func TestPostgresTenantScopeCollidingKeys(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	parsed, err := url.Parse(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
-	query := parsed.Query()
-	query.Set("search_path", schema)
-	parsed.RawQuery = query.Encode()
-	// Apply the production codeindex DDL without the retired watch pipeline's
-	// pgvector dependency or unrelated workspace tables. Run the key migration
-	// unchanged, in a transaction just as Bun runs the .tx.up.sql migration.
-	db := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(parsed.String())))
+
+	// Point the session at the isolated schema. This must run on the same
+	// connection the migrator uses, so the pool is capped at one connection.
+	db := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn)))
+	db.SetMaxOpenConns(1)
 	defer func() { _ = db.Close() }()
-	for _, migration := range []string{
-		"20260930000100_codeindex_schema.up.sql",
-		"20261005000100_org_scoping.up.sql",
-		"20261005000200_codeindex_tenant_keys.tx.up.sql",
-	} {
-		raw, err := assets.FS.ReadFile("migrations/postgres/" + migration)
-		if err != nil {
-			t.Fatal(err)
-		}
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.HasSuffix(migration, ".tx.up.sql") {
-			if _, err := tx.ExecContext(ctx, string(raw)); err != nil {
-				_ = tx.Rollback()
-				t.Fatalf("%s: %v", migration, err)
-			}
-		} else {
-			ddl := regexp.MustCompile(`(?m)^--.*$`).ReplaceAllString(string(raw), "")
-			for _, statement := range strings.Split(ddl, ";") {
-				statement = strings.TrimSpace(statement)
-				if !strings.HasPrefix(statement, "CREATE TABLE") && !strings.HasPrefix(statement, "ALTER TABLE") && !strings.HasPrefix(statement, "CREATE INDEX") && !strings.HasPrefix(statement, "CREATE UNIQUE INDEX") && !strings.HasPrefix(statement, "DROP INDEX") && !strings.HasPrefix(statement, "UPDATE") {
-					continue
-				}
-				if !strings.Contains(statement, "TABLE codeindex_") && !strings.Contains(statement, "TABLE IF NOT EXISTS codeindex_") && !strings.Contains(statement, "ON codeindex_") && !strings.HasPrefix(statement, "UPDATE codeindex_") && !strings.Contains(statement, "DROP INDEX IF EXISTS idx_codeindex_") {
-					continue
-				}
-				if _, err := tx.ExecContext(ctx, statement); err != nil {
-					_ = tx.Rollback()
-					t.Fatalf("%s: %v", migration, err)
-				}
-			}
-		}
-		if err := tx.Commit(); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := db.ExecContext(ctx, `SET search_path TO "`+schema+`", public`); err != nil {
+		t.Fatalf("set search path: %v", err)
 	}
-	st := NewStore(db, bun.NewDB(db, pgdialect.New()), dbrepo.DialectPostgres)
+
+	bunDB := bun.NewDB(db, pgdialect.New())
+	if err := dbrepo.ApplyEmbeddedMigrations(ctx, bunDB, assets.FS, "migrations/postgres"); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	st := NewStore(db, bunDB, dbrepo.DialectPostgres)
 	t.Run("colliding keys", func(t *testing.T) { testTenantScopeCollidingKeys(t, st) })
 	t.Run("lease and watch claims", func(t *testing.T) { testTenantScopeLeaseAndWatchClaims(t, st) })
 }
