@@ -5,60 +5,62 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
-	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
 )
 
-func TestOpenSQLiteUpgradesLegacyVectorTable(t *testing.T) {
+func TestOpenSQLiteSkipsLegacyVectorTable(t *testing.T) {
 	ctx := context.Background()
-	path := os.Getenv("TLD_TEST_LEGACY_VEC_DB")
-	if path == "" {
-		path = filepath.Join(t.TempDir(), "legacy.db")
-		db, err := sql.Open("sqlite", path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := sqlitevec.Register(db); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := db.ExecContext(ctx, `CREATE VIRTUAL TABLE watch_embedding_vec USING vec(id)`); err != nil {
-			t.Fatal(err)
-		}
-		if err := db.Close(); err != nil {
-			t.Fatal(err)
-		}
-		// Module registration is process-global. Upgrade in a fresh process so
-		// fixture creation cannot mask a missing registration in OpenSQLite.
-		exe, err := os.Executable()
-		if err != nil {
-			t.Fatal(err)
-		}
-		child := exec.Command(exe, "-test.run=^TestOpenSQLiteUpgradesLegacyVectorTable$")
-		child.Env = append(os.Environ(), "TLD_TEST_LEGACY_VEC_DB="+path)
-		if output, err := child.CombinedOutput(); err != nil {
-			t.Fatalf("upgrade: %v\n%s", err, output)
-		}
-		return
-	}
-	handle, err := dbrepo.OpenSQLite(ctx, dbrepo.DBOptions{SQLitePath: path, Migrations: assets.FS})
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = handle.Close() }()
-	var count int
-	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('watch_embedding_vec', '_vec_watch_embedding_vec')`).Scan(&count); err != nil {
+	db.SetMaxOpenConns(1)
+	// Older releases created this virtual table with the sqlite-vec module,
+	// which is no longer linked. Seed the schema entry directly to mimic such a
+	// database without depending on the module.
+	if _, err := db.ExecContext(ctx, `PRAGMA writable_schema = ON`); err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 {
-		t.Fatalf("legacy vector tables remain: %d", count)
+	if _, err := db.ExecContext(ctx, `INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql)
+		VALUES ('table', 'watch_embedding_vec', 'watch_embedding_vec', 0, 'CREATE VIRTUAL TABLE watch_embedding_vec USING vec(id)')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA writable_schema = RESET`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	handle, err := dbrepo.OpenSQLite(ctx, dbrepo.DBOptions{SQLitePath: path, Migrations: assets.FS})
+	if err != nil {
+		t.Fatalf("OpenSQLite with legacy vector table: %v", err)
+	}
+	defer func() { _ = handle.Close() }()
+
+	// The real shadow table from the removed watch pipeline is dropped.
+	var shadow int
+	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name = '_vec_watch_embedding_vec'`).Scan(&shadow); err != nil {
+		t.Fatal(err)
+	}
+	if shadow != 0 {
+		t.Fatalf("legacy shadow table remains: %d", shadow)
+	}
+
+	// The virtual table needs the missing module to drop, so it is left as is.
+	var vec int
+	if err := handle.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name = 'watch_embedding_vec'`).Scan(&vec); err != nil {
+		t.Fatal(err)
+	}
+	if vec != 1 {
+		t.Fatalf("legacy virtual table entries = %d, want it left untouched", vec)
 	}
 }
 

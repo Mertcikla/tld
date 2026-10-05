@@ -7,12 +7,12 @@ require (
 	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261005123600-41f7ffec9d5f.2
 	connectrpc.com/connect v1.21.0
 	github.com/bmatcuk/doublestar/v4 v4.6.1
-	github.com/fsnotify/fsnotify v1.10.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/odvcencio/gotreesitter v0.55.1
-	github.com/sammcj/mermaid-check v0.0.4
+	github.com/sammcj/mermaid-check v0.5.1
 	github.com/scip-code/scip/bindings/go/scip v0.10.0
 	github.com/speps/go-hashids/v2 v2.0.1
 	github.com/spf13/cobra v1.10.1
@@ -20,11 +20,10 @@ require (
 	github.com/uptrace/bun/dialect/pgdialect v1.2.18
 	github.com/uptrace/bun/dialect/sqlitedialect v1.2.18
 	github.com/uptrace/bun/driver/pgdriver v1.2.18
-	github.com/viant/sqlite-vec v0.3.0
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/mod v0.38.0
 	golang.org/x/sync v0.22.0
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.45.0
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
@@ -153,7 +152,6 @@ require (
 	github.com/ulikunitz/xz v0.5.15 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
-	github.com/viant/vec v0.1.1-0.20240628004145-aad750556278 // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect

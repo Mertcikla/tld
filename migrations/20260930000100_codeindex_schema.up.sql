@@ -291,7 +291,8 @@ ALTER TABLE codeindex_snapshots ADD COLUMN commit_message TEXT NOT NULL DEFAULT 
 
 -- Remove the legacy watch pipeline tables, replaced by the codeindex schema.
 
-DROP TABLE IF EXISTS watch_embedding_vec;
+-- watch_embedding_vec was a sqlite-vec virtual table. The module is no longer
+-- linked, so SQLite cannot drop it; leave the orphaned definition in place.
 DROP TABLE IF EXISTS _vec_watch_embedding_vec;
 DROP TABLE IF EXISTS watch_version_resources;
 DROP TABLE IF EXISTS watch_representation_diffs;

@@ -15,7 +15,6 @@ import (
 	"github.com/uptrace/bun/dialect/sqlitedialect"
 	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/migrate"
-	sqlitevec "github.com/viant/sqlite-vec/vec"
 	_ "modernc.org/sqlite"
 )
 
@@ -79,12 +78,6 @@ func OpenSQLite(ctx context.Context, opts DBOptions) (*Handle, error) {
 	db, err := sql.Open("sqlite", opts.SQLitePath)
 	if err != nil {
 		return nil, err
-	}
-	// Legacy databases may still contain vec virtual tables. SQLite needs the
-	// module registered even to drop those tables during the codeindex upgrade.
-	if err := sqlitevec.Register(db); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("register legacy sqlite-vec: %w", err)
 	}
 	configureSQLitePool(db)
 	if err := configureSQLite(ctx, db); err != nil {
