@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"net/http/httputil"
@@ -15,26 +14,24 @@ import (
 	"strings"
 
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/diag/v1/diagv1connect"
-	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
-	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/tech"
-	"github.com/mertcikla/tld/v2/internal/watch"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
 )
 
 type Server struct {
 	handler http.Handler
+	watches *watchManager
 }
 
 type Options struct {
-	DataDir                  string
-	WorkspaceDir             string
-	PublicURL                string
-	AllowedOrigins           []string
-	PopulateRerankerEndpoint string
+	DataDir        string
+	WorkspaceDir   string
+	PublicURL      string
+	AllowedOrigins []string
+	Config         *workspace.Config
 }
 
 func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, dataDir ...string) (*Server, error) {
@@ -46,7 +43,6 @@ func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, da
 }
 
 func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, opts Options) (*Server, error) {
-	watchStore := watch.NewStoreWithBun(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
 	dataDirs := []string{}
 	if opts.DataDir != "" || opts.WorkspaceDir != "" {
 		dataDirs = append(dataDirs, opts.DataDir)
@@ -55,26 +51,24 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 		}
 	}
 	apiStore := store.NewAPIAdapter(sqliteStore, dataDirs...)
-	lockHooks := watchLockHooks{store: watchStore}
 	collabHub := api.NewCollaborationHub()
-	collabHooks := collaborationHooks{base: lockHooks, store: apiStore, hub: collabHub}
+	collabHooks := collaborationHooks{base: api.NopWorkspaceHooks{}, store: apiStore, hub: collabHub}
 	wsSvc := &api.WorkspaceService{Store: apiStore, Hooks: collabHooks}
 	orgSvc := &api.OrgService{Store: apiStore, Hooks: collabHooks}
 	depSvc := &api.DependencyService{Store: apiStore}
 	importSvc := &api.ImportService{Store: apiStore}
 	mermaidSvc := &api.MermaidService{Store: apiStore, Hooks: collabHooks}
-	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: collabHooks}
 	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 
-	configurePopulateReranker(opts.PopulateRerankerEndpoint)
-
 	mux := http.NewServeMux()
-	watch.NewHandler(watchStore).Register(mux)
-	registerEditorHandlers(mux, watchStore)
+	selfHosted := isSelfHosted(opts)
+	watchManager := registerWatchHandlers(mux, sqliteStore, opts.DataDir, selfHosted, opts.Config)
+	registerCodeIndexHandlers(mux, sqliteStore, opts.DataDir, watchManager, opts.Config)
+	registerMapperHandlers(mux, sqliteStore, opts.Config)
+	registerEditorHandlers(mux, sqliteStore, selfHosted)
 	registerDensityHandlers(mux, sqliteStore)
 	registerMergeHandlers(mux, sqliteStore)
-	registerPopulateHandlers(mux, sqliteStore)
 	registerTagHandlers(mux, apiStore, workspaceID)
 
 	mux.HandleFunc("GET /api/ready", func(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +88,14 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 				"views":      views,
 				"elements":   elements,
 				"connectors": connectors,
+			},
+			// Capabilities are disabled for reverse-proxied self-hosted
+			// deployments where the server is not the user's workstation:
+			// there is no local checkout for watching, and the server cannot
+			// open the caller's editor.
+			"capabilities": map[string]bool{
+				"watch":  !selfHosted,
+				"editor": !selfHosted,
 			},
 		})
 	})
@@ -133,9 +135,6 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	mermaidPath, mermaidHandler := diagv1connect.NewMermaidServiceHandler(mermaidSvc)
 	mux.Handle("/api"+mermaidPath, http.StripPrefix("/api", mermaidHandler))
 
-	versionPath, versionHandler := diagv1connect.NewWorkspaceVersionServiceHandler(versionSvc)
-	mux.Handle("/api"+versionPath, http.StripPrefix("/api", versionHandler))
-
 	collabPath, collabHandler := diagv1connect.NewCollaborationServiceHandler(collabSvc)
 	mux.Handle("/api"+collabPath, http.StripPrefix("/api", collabHandler))
 
@@ -149,27 +148,7 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
 
-	return &Server{handler: localCORSMiddleware(handler, opts)}, nil
-}
-
-type watchLockHooks struct {
-	api.NopWorkspaceHooks
-	store *watch.Store
-}
-
-func (h watchLockHooks) CheckWrite(ctx context.Context, _ uuid.UUID, resourceType string) error {
-	if h.store == nil {
-		return nil
-	}
-	applying, err := h.store.ActiveApplyLock(ctx, watch.LockHeartbeatTimeout)
-	if err != nil || !applying {
-		return err
-	}
-	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("workspace is being updated by tld watch; retry editing %s shortly", resourceType))
-}
-
-func (h watchLockHooks) CheckApplyPlan(ctx context.Context, workspaceID uuid.UUID, _ *diagv1.ApplyPlanRequest) error {
-	return h.CheckWrite(ctx, workspaceID, "workspace")
+	return &Server{handler: localCORSMiddleware(handler, opts), watches: watchManager}, nil
 }
 
 func (s *Server) Routes() http.Handler {
@@ -177,6 +156,9 @@ func (s *Server) Routes() http.Handler {
 }
 
 func (s *Server) Shutdown(context.Context) error {
+	if s.watches != nil {
+		return s.watches.Close()
+	}
 	return nil
 }
 
@@ -204,6 +186,14 @@ func localCORSMiddleware(next http.Handler, opts Options) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isSelfHosted reports whether the server is running as a shared, reverse-proxied
+// deployment rather than the user's local workstation. Self-hosted servers
+// disable workstation-bound capabilities (watching a local checkout, opening the
+// caller's editor).
+func isSelfHosted(opts Options) bool {
+	return strings.TrimSpace(opts.PublicURL) != ""
 }
 
 func configuredCORSOrigins(opts Options) map[string]struct{} {

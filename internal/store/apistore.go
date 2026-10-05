@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
@@ -179,6 +178,7 @@ func (a *APIAdapter) CreateElement(ctx context.Context, _ uuid.UUID, input api.E
 		TechnologyConnectors: technologyLinksFromProto(input.TechLinks),
 		Tags:                 cloneStrings(input.Tags),
 		Repo:                 input.Repo,
+		RepositoryID:         input.RepositoryID,
 		Branch:               input.Branch,
 		Language:             input.Language,
 		FilePath:             input.FilePath,
@@ -204,6 +204,7 @@ func (a *APIAdapter) UpdateElement(ctx context.Context, id int32, _ uuid.UUID, i
 		TechnologyConnectors: technologyLinksFromProto(input.TechLinks),
 		Tags:                 cloneStrings(input.Tags),
 		Repo:                 input.Repo,
+		RepositoryID:         input.RepositoryID,
 		Branch:               input.Branch,
 		Language:             input.Language,
 		FilePath:             input.FilePath,
@@ -907,11 +908,6 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 		if planned.GetRef() == "" {
 			return nil, fmt.Errorf("plan element ref is required")
 		}
-		bypassNoiseGate := true
-		if planned.BypassNoiseGate != nil {
-			bypassNoiseGate = planned.GetBypassNoiseGate()
-		}
-
 		input := api.ElementInput{
 			Name:            planned.GetName(),
 			Description:     planned.Description,
@@ -922,10 +918,11 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			TechLinks:       cloneTechLinks(planned.GetTechnologyLinks()),
 			Tags:            cloneStrings(planned.GetTags()),
 			Repo:            planned.Repo,
+			RepositoryID:    planned.RepositoryId,
 			Branch:          planned.Branch,
 			Language:        planned.Language,
 			FilePath:        planned.FilePath,
-			BypassNoiseGate: &bypassNoiseGate,
+			BypassNoiseGate: planned.BypassNoiseGate,
 			HasView:         planned.GetHasView(),
 			ViewLabel:       planned.ViewLabel,
 		}
@@ -934,9 +931,17 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 		if planned.GetId() != 0 {
 			element, err = a.UpdateElement(ctx, planned.GetId(), uuid.Nil, input)
 			if errors.Is(err, sql.ErrNoRows) {
+				if input.BypassNoiseGate == nil {
+					defaultBypass := true
+					input.BypassNoiseGate = &defaultBypass
+				}
 				element, err = a.CreateElement(ctx, uuid.Nil, input)
 			}
 		} else {
+			if input.BypassNoiseGate == nil {
+				defaultBypass := true
+				input.BypassNoiseGate = &defaultBypass
+			}
 			element, err = a.CreateElement(ctx, uuid.Nil, input)
 		}
 		if err != nil {
@@ -964,7 +969,9 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			}
 			var view *diagv1.View
 			if planned.GetViewId() != 0 {
-				view, err = a.UpdateView(ctx, planned.GetViewId(), uuid.Nil, viewName, nil, planned.ViewLabel, nil)
+				// The plan has an element name but no view name. Existing views
+				// retain their independently chosen names.
+				view, err = a.UpdateView(ctx, planned.GetViewId(), uuid.Nil, "", nil, planned.ViewLabel, nil)
 				if errors.Is(err, sql.ErrNoRows) {
 					ownerID := element.GetId()
 					view, err = a.CreateView(ctx, uuid.Nil, &ownerID, viewName, planned.ViewLabel, false)
@@ -1185,94 +1192,6 @@ func (a *APIAdapter) planViewLayoutConnectors(ctx context.Context, viewID int64)
 	return out, nil
 }
 
-func (a *APIAdapter) ListVersions(ctx context.Context, workspaceID uuid.UUID, limit int) ([]*diagv1.WorkspaceVersionInfo, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	var rows []workspaceVersionModel
-	if err := a.Store.legacy.BunDB().NewSelect().
-		Model(&rows).
-		Order("id DESC").
-		Limit(limit).
-		Scan(ctx); err != nil {
-		return nil, err
-	}
-	out := make([]*diagv1.WorkspaceVersionInfo, 0, len(rows))
-	for _, row := range rows {
-		version, err := workspaceVersionToProto(row, workspaceID)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, version)
-	}
-	return out, nil
-}
-
-func (a *APIAdapter) GetLatestVersion(ctx context.Context, workspaceID uuid.UUID) (*diagv1.WorkspaceVersionInfo, error) {
-	var row workspaceVersionModel
-	err := a.Store.legacy.BunDB().NewSelect().
-		Model(&row).
-		Order("id DESC").
-		Limit(1).
-		Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, api.ErrUnimplemented
-	}
-	if err != nil {
-		return nil, err
-	}
-	return workspaceVersionToProto(row, workspaceID)
-}
-
-func (a *APIAdapter) CreateVersion(ctx context.Context, workspaceID uuid.UUID, versionID, source string, parentID *int32, viewCount, elementCount, connectorCount int, description, workspaceHash *string) (*diagv1.WorkspaceVersionInfo, error) {
-	var parent *int64
-	if parentID != nil {
-		value := int64(*parentID)
-		parent = &value
-	}
-	row := &workspaceVersionModel{
-		VersionID:       versionID,
-		Source:          source,
-		ParentVersionID: parent,
-		ViewCount:       int64(viewCount),
-		ElementCount:    int64(elementCount),
-		ConnectorCount:  int64(connectorCount),
-		Description:     description,
-		WorkspaceHash:   workspaceHash,
-		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
-	}
-	_, err := a.Store.legacy.BunDB().NewInsert().Model(row).Exec(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return workspaceVersionToProto(*row, workspaceID)
-}
-
-func (a *APIAdapter) GetVersioningEnabled(ctx context.Context, _ uuid.UUID) (bool, error) {
-	var row workspaceVersionSettingsModel
-	err := a.Store.legacy.BunDB().NewSelect().
-		Model(&row).
-		Where("id = 1").
-		Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return true, nil
-	}
-	return row.CLIVersioningEnabled != 0, err
-}
-
-func (a *APIAdapter) SetVersioningEnabled(ctx context.Context, _ uuid.UUID, enabled bool) error {
-	value := 0
-	if enabled {
-		value = 1
-	}
-	_, err := a.Store.legacy.BunDB().NewInsert().
-		Model(&workspaceVersionSettingsModel{ID: 1, CLIVersioningEnabled: value}).
-		On("CONFLICT(id) DO UPDATE").
-		Set("cli_versioning_enabled = excluded.cli_versioning_enabled").
-		Exec(ctx)
-	return err
-}
-
 func (a *APIAdapter) GetWorkspaceResourceCounts(ctx context.Context, _ uuid.UUID) (views, elements, connectors int, err error) {
 	views, err = a.Store.legacy.BunDB().NewSelect().Model((*countModel)(nil)).Count(ctx)
 	if err != nil {
@@ -1300,34 +1219,6 @@ func (a *APIAdapter) ensureRootViewID(ctx context.Context) (int32, error) {
 		}
 	}
 	return 0, fmt.Errorf("root view not found")
-}
-
-func workspaceVersionToProto(row workspaceVersionModel, workspaceID uuid.UUID) (*diagv1.WorkspaceVersionInfo, error) {
-	createdAt, err := time.Parse(time.RFC3339, row.CreatedAt)
-	if err != nil {
-		createdAt = time.Now().UTC()
-	}
-	info := &diagv1.WorkspaceVersionInfo{
-		Id:             strconv.FormatInt(row.ID, 10),
-		OrgId:          workspaceID.String(),
-		VersionId:      row.VersionID,
-		Source:         row.Source,
-		ViewCount:      int32(row.ViewCount),
-		ElementCount:   int32(row.ElementCount),
-		ConnectorCount: int32(row.ConnectorCount),
-		CreatedAt:      timestamppb.New(createdAt),
-	}
-	if row.ParentVersionID != nil {
-		parent := strconv.FormatInt(*row.ParentVersionID, 10)
-		info.ParentVersionId = &parent
-	}
-	if row.Description != nil {
-		info.Description = row.Description
-	}
-	if row.WorkspaceHash != nil {
-		info.WorkspaceHash = row.WorkspaceHash
-	}
-	return info, nil
 }
 
 func (a *APIAdapter) findPlacedElement(ctx context.Context, viewID, elementID int64) (*diagv1.PlacedElement, error) {
@@ -1417,6 +1308,9 @@ func elementToProto(element app.LibraryElement, workspaceID uuid.UUID) *diagv1.E
 	if element.Repo != nil {
 		p.Repo = element.Repo
 	}
+	if element.RepositoryID != nil {
+		p.RepositoryId = element.RepositoryID
+	}
 	if element.Branch != nil {
 		p.Branch = element.Branch
 	}
@@ -1472,6 +1366,9 @@ func placedElementToProto(item app.PlacedElement) *diagv1.PlacedElement {
 	}
 	if item.Repo != nil {
 		p.Repo = item.Repo
+	}
+	if item.RepositoryID != nil {
+		p.RepositoryId = item.RepositoryID
 	}
 	if item.Branch != nil {
 		p.Branch = item.Branch

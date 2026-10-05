@@ -1,19 +1,14 @@
 package stop
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
 	"syscall"
 	"time"
 
-	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/internal/localserver"
-	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
-	watchpkg "github.com/mertcikla/tld/v2/internal/watch"
-	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +25,7 @@ func NewStopCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stop",
 		Short: "Stop local tlDiagram processes",
-		Long: `Stop local tlDiagram processes started by 'tld serve' or 'tld watch'.
+		Long: `Stop local tlDiagram processes started by 'tld serve'.
 
 Process state is read from the global tld process registry.
 Sends graceful stop requests and waits up to 10 seconds for shutdown.
@@ -81,9 +76,6 @@ func runStop(cmd *cobra.Command, forceKill bool) error {
 
 	var signalErrs []string
 	for _, proc := range live {
-		if proc.Kind == localserver.ProcessKindWatch {
-			_ = requestWatchStop(proc)
-		}
 		if err := signalPID(proc.PID, syscall.SIGTERM); err != nil {
 			if !processIsRunning(proc.PID) {
 				_ = localserver.RemoveProcess(proc.PID)
@@ -118,28 +110,10 @@ func runStop(cmd *cobra.Command, forceKill bool) error {
 	return fmt.Errorf("%d tld process(es) did not stop within 10s; use --kill to force", len(remaining))
 }
 
-func requestWatchStop(proc localserver.ProcessRecord) error {
-	if proc.DataDir == "" {
-		return nil
-	}
-	cfg, err := workspace.LoadGlobalConfig()
-	if err != nil {
-		return err
-	}
-	sqliteStore, err := store.OpenLocal(context.Background(), cfg, proc.DataDir, assets.FS)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = sqliteStore.Close() }()
-	return watchpkg.NewStoreWithBun(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect()).RequestStopActive(context.Background())
-}
-
 func printableKind(kind string) string {
 	switch kind {
 	case localserver.ProcessKindServer:
 		return "Server"
-	case localserver.ProcessKindWatch:
-		return "Watch"
 	default:
 		return "Process"
 	}

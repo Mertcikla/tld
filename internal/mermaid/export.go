@@ -191,7 +191,6 @@ func elementMetadataEntries(element *diagv1.PlacedElement, ref string) []metadat
 	appendStringEntry("repo", element.GetRepo())
 	appendStringEntry("branch", element.GetBranch())
 	appendStringEntry("file", element.GetFilePath())
-	appendStringEntry("lang", element.GetLanguage())
 	if element.GetBypassNoiseGate() {
 		entries = append(entries, metadataEntry{Key: "bypass", Value: "1"})
 	}

@@ -3,13 +3,8 @@ import { useBreakpointValue } from '@chakra-ui/react'
 import { useTouchOnlyCanvasInput } from '../../hooks/useCanvasInputMode'
 import { shouldEnableCanvasWheelPan } from '../../utils/canvasInputMode'
 import type { ExploreData, ViewLayer } from '../../types'
-import { api } from '../../api/client'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
 import { buildWorkspaceGraphSnapshot } from '../../crossBranch/graph'
-import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
-import { diffResourceKey, type ExploreDiffDetail, type ExploreDiffLens } from '../../utils/exploreDiffLens'
-import { getSourceEditor } from '../../utils/sourceEditor'
-import { toast } from '../../utils/toast'
 import { computeLayout } from './layout'
 import { getCameraRebase, screenToWorldX, screenToWorldY, worldToScreenX, worldToScreenY } from './layoutEngine'
 import { useZUIInteraction } from './useZUIInteraction'
@@ -19,6 +14,8 @@ import { useZUICamera } from './useZUICamera'
 import { useZUIProxyConnectors } from './useZUIProxyConnectors'
 import { useZUIRenderLoop } from './useZUIRenderLoop'
 import { ZUIBreadcrumb, ZUIHoverPopover } from './ZUIOverlays'
+import { applyChangeOverlays } from './changeOverlay'
+import type { ZUIChangeOverlay } from './types'
 
 declare global {
   interface Window {
@@ -43,6 +40,8 @@ export interface ZUICameraFrame {
 }
 
 interface Props {
+  preserveCameraOnUpdate?: boolean
+  changeOverlays?: Record<number, ZUIChangeOverlay>
   data: ExploreData
   onReady?: () => void
   onZoom?: () => void
@@ -52,14 +51,13 @@ interface Props {
   highlightColor?: string
   hiddenTags?: string[]
   groupLayers?: ViewLayer[]
-  versionPreview?: WorkspaceVersionPreview | null
-  versionFollowTarget?: WorkspaceVersionFollowTarget | null
-  diffLens?: ExploreDiffLens | null
   crossBranchSettings: CrossBranchContextSettings
   hoverLocked?: boolean
 }
 
 export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
+  preserveCameraOnUpdate = false,
+  changeOverlays,
   data,
   onReady,
   onZoom,
@@ -69,9 +67,6 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   highlightColor,
   hiddenTags,
   groupLayers = [],
-  versionPreview,
-  versionFollowTarget,
-  diffLens,
   crossBranchSettings,
   hoverLocked = false,
 }, ref) {
@@ -86,7 +81,10 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
   const debugViewport = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiCamera'), [])
   const debugTestState = useMemo(() => typeof window !== 'undefined' && window.location.href.includes('debugZuiTest'), [])
 
-  const layout = useMemo(() => computeLayout(data), [data])
+  const layout = useMemo(() => {
+    const base = computeLayout(data)
+    return changeOverlays ? applyChangeOverlays(base, changeOverlays) : base
+  }, [data, changeOverlays])
   const fittedLayoutRef = useRef(layout)
   const workspaceSnapshot = useMemo(() => buildWorkspaceGraphSnapshot(data), [data])
 
@@ -175,9 +173,6 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     highlightColor,
     hiddenTags,
     groupLayers,
-    versionPreview,
-    versionFollowTarget,
-    diffLens,
   })
 
   useEffect(() => {
@@ -222,6 +217,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     if (!initialized) return
     if (fittedLayoutRef.current === layout) return
     fittedLayoutRef.current = layout
+    if (preserveCameraOnUpdate) return
     const el = containerRef.current
     if (!el) return
     const w = el.offsetWidth
@@ -230,7 +226,7 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
       setContainerSize({ w, h })
       fitInitialView(w, h)
     }
-  }, [fitInitialView, initialized, layout])
+  }, [fitInitialView, initialized, layout, preserveCameraOnUpdate])
 
   useEffect(() => {
     if (!debugViewport) return
@@ -292,33 +288,6 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     )
   }, [hoveredScreenRect, containerSize])
 
-  const hoveredDiffDetail = useMemo(() => {
-    if (!hoveredItem || !diffLens) return null
-    if (hoveredItem.type === 'node') {
-      return diffLens.diffDetailsByResource.get(diffResourceKey('element', hoveredItem.data.elementId)) ?? null
-    }
-    if (hoveredItem.type === 'edge' && !hoveredItem.data.isProxy) {
-      return hoveredItem.data.id
-        ? diffLens.diffDetailsByResource.get(diffResourceKey('connector', hoveredItem.data.id)) ?? null
-        : null
-    }
-    return null
-  }, [diffLens, hoveredItem])
-
-  const handleOpenSource = useCallback((detail: ExploreDiffDetail) => {
-    if (!detail.sourcePath) return
-    api.editor.open({
-      editor: getSourceEditor(),
-      file_path: detail.sourcePath,
-      line: detail.line ?? null,
-    }).catch((error: unknown) => {
-      toast({
-        title: 'Could not open source',
-        description: error instanceof Error ? error.message : 'The source editor command failed.',
-        status: 'error',
-      })
-    })
-  }, [])
 
   const [breadcrumbView, setBreadcrumbView] = useState(viewState)
   const breadcrumbTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -332,14 +301,6 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
     return getPathAt(breadcrumbView, layout.groups, containerSize.w, containerSize.h)
   }, [breadcrumbView, layout.groups, containerSize])
 
-  useEffect(() => {
-    if (!initialized || !versionFollowTarget?.viewId) return
-    if (versionFollowTarget.resourceType === 'element' && versionFollowTarget.resourceId) {
-      focusElement(versionFollowTarget.viewId, versionFollowTarget.resourceId)
-      return
-    }
-    focusDiagram(versionFollowTarget.viewId)
-  }, [focusDiagram, focusElement, initialized, versionFollowTarget?.resourceId, versionFollowTarget?.resourceType, versionFollowTarget?.token, versionFollowTarget?.viewId])
 
   useImperativeHandle(
     ref,
@@ -380,8 +341,6 @@ export const ZUICanvas = forwardRef<ZUICanvasHandle, Props>(function ZUICanvas({
         hoveredItem={hoveredItem}
         hoveredScreenRect={hoveredScreenRect}
         isHoveredItemFullyVisible={isHoveredItemFullyVisible}
-        hoveredDiffDetail={hoveredDiffDetail}
-        onOpenSource={handleOpenSource}
         onHoverLock={setHoverLocked}
       />
     </div>

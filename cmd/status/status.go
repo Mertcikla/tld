@@ -3,13 +3,17 @@ package status
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/mertcikla/tld/v2/cmd/version"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/localserver"
+	"github.com/mertcikla/tld/v2/internal/runtimeinfo"
 	"github.com/mertcikla/tld/v2/internal/term"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
@@ -45,7 +49,7 @@ func NewStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show running local tlDiagram processes",
-		Long: `Show running local tlDiagram processes registered by 'tld serve' and 'tld watch'.
+		Long: `Show running local tlDiagram processes registered by 'tld serve'.
 
 To refresh the workspace YAML cache from the server, use 'tld pull'.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -54,8 +58,8 @@ To refresh the workspace YAML cache from the server, use 'tld pull'.`,
 				return err
 			}
 			items := buildRuntimeStatus(reg.Processes)
-			if cmdutil.WantsJSON(cmd.Root().PersistentFlags().Lookup("format").Value.String()) {
-				return writeRuntimeStatusJSON(cmd.OutOrStdout(), cmd.Root().PersistentFlags().Lookup("compact").Value.String() == "true", items)
+			if cmdutil.WantsJSONFromCmd(cmd) {
+				return writeRuntimeStatusJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), items)
 			}
 			printRuntimeStatus(cmd.OutOrStdout(), items)
 			return nil
@@ -106,54 +110,85 @@ func buildRuntimeStatus(processes []localserver.ProcessRecord) []runtimeStatusIt
 	return items
 }
 
-func printRuntimeStatus(out interface{ Write([]byte) (int, error) }, items []runtimeStatusItem) {
+func printRuntimeStatus(out io.Writer, items []runtimeStatusItem) {
+	term.Label(out, term.DefaultLabelWidth, "Version", version.Version)
+	term.Separator(out)
 	if len(items) == 0 {
 		term.Info(out, "No tld processes running.")
 		term.Hint(out, "Run 'tld serve' to start the local server")
+		term.Separator(out)
+		printDataEnvironment(out)
+		term.Separator(out)
+		term.Label(out, term.DefaultLabelWidth, "Config path", term.Path(out, configPath()))
 		return
 	}
 	for i, item := range items {
 		if i > 0 {
 			term.Separator(out)
 		}
-		term.Label(out, 16, printableKind(item.Kind), "running")
-		term.Label(out, 16, "PID", fmt.Sprintf("%d", item.PID))
+		term.Label(out, term.DefaultLabelWidth, printableKind(item.Kind), "running")
+		term.Label(out, term.DefaultLabelWidth, "PID", fmt.Sprintf("%d", item.PID))
 		if item.URL != "" {
-			term.Label(out, 16, "URL", term.URL(out, item.URL))
+			term.Label(out, term.DefaultLabelWidth, "URL", term.URL(out, item.URL))
 		}
 		if item.Ready != nil {
-			term.Label(out, 16, "Ready", printableBool(*item.Ready))
+			term.Label(out, term.DefaultLabelWidth, "Ready", printableBool(*item.Ready))
 		}
 		if item.Resources != nil {
-			term.Label(out, 16, "Resources", fmt.Sprintf("%d views, %d elements, %d connectors", item.Resources.Views, item.Resources.Elements, item.Resources.Connectors))
+			term.Label(out, term.DefaultLabelWidth, "Resources", runtimeinfo.ResourceCounts{
+				Views:      item.Resources.Views,
+				Elements:   item.Resources.Elements,
+				Connectors: item.Resources.Connectors,
+			}.Format())
 		}
 		if item.RepoRoot != "" {
-			term.Label(out, 16, "Repo", term.Path(out, item.RepoRoot))
+			term.Label(out, term.DefaultLabelWidth, "Repo", term.Path(out, item.RepoRoot))
 		}
 		if item.RepositoryID != 0 {
-			term.Label(out, 16, "Repository ID", fmt.Sprintf("%d", item.RepositoryID))
-		}
-		if item.DataDir != "" {
-			term.Label(out, 16, "Data dir", term.Path(out, item.DataDir))
-		}
-		if item.DBPath != "" {
-			term.Label(out, 16, "DB", term.Path(out, item.DBPath))
-		}
-		if item.DBSize > 0 {
-			term.Label(out, 16, "DB size", humanBytes(item.DBSize))
-		}
-		if item.DBModifiedAt != "" {
-			term.Label(out, 16, "DB modified", item.DBModifiedAt)
+			term.Label(out, term.DefaultLabelWidth, "Repository ID", fmt.Sprintf("%d", item.RepositoryID))
 		}
 		if item.StartedAt != "" {
-			term.Label(out, 16, "Started", item.StartedAt)
+			term.Label(out, term.DefaultLabelWidth, "Started", item.StartedAt)
 		}
+		runtimeinfo.PrintStorage(out, runtimeinfo.Storage{
+			DataDir:      item.DataDir,
+			DBPath:       item.DBPath,
+			DBSize:       item.DBSize,
+			DBModifiedAt: item.DBModifiedAt,
+		})
 	}
 	term.Separator(out)
+	term.Label(out, term.DefaultLabelWidth, "Config path", term.Path(out, configPath()))
 	term.Hint(out, "Run 'tld stop' to shut down registered processes")
 }
 
-func writeRuntimeStatusJSON(out interface{ Write([]byte) (int, error) }, compact bool, items []runtimeStatusItem) error {
+func configPath() string {
+	path, _ := workspace.ExistingGlobalConfigPath()
+	return path
+}
+
+func printDataEnvironment(out io.Writer) {
+	cfg, err := workspace.LoadGlobalConfig()
+	if err != nil {
+		return
+	}
+	dataDir, err := workspace.ResolveDataDir(cfg, "")
+	if err != nil {
+		return
+	}
+	storage := runtimeinfo.Storage{DataDir: dataDir, DBDriver: cfg.Database.Driver}
+	if runtimeinfo.NormalizeDBDriver(cfg.Database.Driver) == "sqlite" {
+		dbPath := localserver.DatabasePath(dataDir)
+		storage.DBPath = dbPath
+		if info, err := os.Stat(dbPath); err == nil {
+			storage.DBSize = info.Size()
+			storage.DBModifiedAt = info.ModTime().Format(time.RFC3339)
+		}
+	}
+	runtimeinfo.PrintStorage(out, storage)
+}
+
+func writeRuntimeStatusJSON(out io.Writer, compact bool, items []runtimeStatusItem) error {
 	status := "stopped"
 	if len(items) > 0 {
 		status = "running"
@@ -199,8 +234,6 @@ func printableKind(kind string) string {
 	switch kind {
 	case localserver.ProcessKindServer:
 		return "Server"
-	case localserver.ProcessKindWatch:
-		return "Watch"
 	default:
 		return "Process"
 	}
@@ -211,17 +244,4 @@ func printableBool(value bool) string {
 		return "yes"
 	}
 	return "no"
-}
-
-func humanBytes(size int64) string {
-	const unit = 1024
-	if size < unit {
-		return fmt.Sprintf("%d B", size)
-	}
-	div, exp := int64(unit), 0
-	for n := size / unit; n >= unit; n /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %cB", float64(size)/float64(div), "KMGTPE"[exp])
 }

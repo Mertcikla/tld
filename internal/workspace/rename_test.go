@@ -40,21 +40,21 @@ _meta_views:
 	if err := workspace.WriteLockFile(dir, &workspace.LockFile{Version: "v1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`platform:platform:api:contains:
+	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`platform/platform~api/contains:
   view: platform
   source: platform
   target: api
   label: contains
-system:web:platform:calls:
+system/web~platform/calls:
   view: system
   source: web
   target: platform
   label: calls
 _meta_connectors:
-  platform:platform:api:contains:
+  platform/platform~api/contains:
     id: 31
     updated_at: 2024-01-01T00:00:00Z
-  system:web:platform:calls:
+  system/web~platform/calls:
     id: 32
     updated_at: 2024-01-01T00:00:00Z
 `), 0600); err != nil {
@@ -141,7 +141,7 @@ func TestRenameElement_InvalidTargetFails(t *testing.T) {
 
 func TestRenameConnector(t *testing.T) {
 	dir := t.TempDir()
-	content := `system:api-handler:db:reads:
+	content := `system/api-handler~db/reads:
   view: system
   source: api-handler
   target: db
@@ -152,7 +152,7 @@ system:web:api-handler:calls:
   target: api-handler
   label: calls
 _meta_connectors:
-  system:api-handler:db:reads:
+  system/api-handler~db/reads:
     id: c1
     updated_at: 2024-01-01T00:00:00Z
   system:web:api-handler:calls:

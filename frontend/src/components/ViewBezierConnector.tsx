@@ -135,31 +135,18 @@ function ViewBezierConnector({
     : 0
   const proxyBadgeDetails = ((edge?.data as { proxyBadgeDetails?: ProxyConnectorDetails | null } | undefined)?.proxyBadgeDetails) ?? null
   const proxyBadgeText = proxyBadgeCount > 0 ? `+${proxyBadgeCount}` : ''
-  const versionChangeType = (edge?.data as { versionChangeType?: string } | undefined)?.versionChangeType
-  const versionBadgeText = versionChangeType === 'added'
-    ? '+ connector'
-    : versionChangeType === 'deleted'
-      ? '- connector'
-      : versionChangeType
-        ? '~ connector'
-        : ''
   const badgeFontSize = 11
   const badgeHorizontalPadding = 7
   const badgeSize = 24
   const labelWidth = textWidth + padding[1] * 2
-  const versionBadgeWidth = versionBadgeText
-    ? measureEdgeLabel(versionBadgeText, `700 ${badgeFontSize}px Inter, system-ui, sans-serif`) + badgeHorizontalPadding * 2
-    : 0
   const badgeWidth = proxyBadgeText
     ? Math.max(badgeSize, measureEdgeLabel(proxyBadgeText, `600 ${badgeFontSize}px Inter, system-ui, sans-serif`) + badgeHorizontalPadding * 2)
     : 0
   const labelHeight = fullText ? fontSize + padding[0] * 2 : 0
-  const badgeGap = (fullText && (proxyBadgeText || versionBadgeText)) || (proxyBadgeText && versionBadgeText) ? 8 : 0
-  const stackWidth = Math.max(labelWidth, badgeWidth, versionBadgeWidth)
+  const badgeGap = (fullText && proxyBadgeText) ? 8 : 0
+  const stackWidth = Math.max(labelWidth, badgeWidth)
   const stackHeight = labelHeight +
-    (fullText && (proxyBadgeText || versionBadgeText) ? badgeGap : 0) +
-    (versionBadgeText ? badgeSize : 0) +
-    (versionBadgeText && proxyBadgeText ? badgeGap : 0) +
+    (fullText && proxyBadgeText ? badgeGap : 0) +
     (proxyBadgeText ? badgeSize : 0)
 
   const labelLayout = useEdgeLabelLayout({
@@ -173,7 +160,7 @@ function ViewBezierConnector({
   })
 
   const labelZIndex = (data as { labelZIndex?: number } | undefined)?.labelZIndex ?? Z_CONNECTOR_LABEL
-  const labelCenterY = labelLayout.y - ((proxyBadgeText || versionBadgeText) ? (stackHeight - labelHeight) / 2 : 0)
+  const labelCenterY = labelLayout.y - (proxyBadgeText ? (stackHeight - labelHeight) / 2 : 0)
   const labelPath = fullText ? ` M ${labelLayout.x - labelWidth / 2},${labelCenterY} L ${labelLayout.x + labelWidth / 2},${labelCenterY}` : ''
   const combinedInteractionPath = `${interactionPath}${labelPath}`
   const handleBadgeClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
@@ -199,7 +186,7 @@ function ViewBezierConnector({
         interactionWidth={20}
         style={{ stroke: 'transparent' }}
       />
-      {(fullText || proxyBadgeText || versionBadgeText) && (
+      {(fullText || proxyBadgeText) && (
         <EdgeLabelRenderer>
           <div
             style={{
@@ -262,28 +249,6 @@ function ViewBezierConnector({
               >
                 {proxyBadgeText}
               </button>
-            )}
-            {versionBadgeText && (
-              <div
-                style={{
-                  minWidth: versionBadgeWidth,
-                  height: badgeSize,
-                  padding: `0 ${badgeHorizontalPadding}px`,
-                  borderRadius: 999,
-                  background: 'rgba(17, 24, 39, 0.9)',
-                  border: `1px solid ${versionChangeType === 'added' ? '#68d391' : versionChangeType === 'deleted' ? '#fc8181' : '#f6e05e'}`,
-                  color: versionChangeType === 'added' ? '#68d391' : versionChangeType === 'deleted' ? '#fc8181' : '#f6e05e',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: badgeFontSize,
-                  fontWeight: 700,
-                  lineHeight: 1,
-                  boxShadow: '0 6px 18px rgba(0,0,0,0.28)',
-                }}
-              >
-                {versionBadgeText}
-              </div>
             )}
           </div>
         </EdgeLabelRenderer>

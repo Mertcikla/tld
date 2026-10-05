@@ -358,8 +358,11 @@ func TestMermaidServiceImportPreservesTldMetadata(t *testing.T) {
 	if len(api.TechLinks) != 1 || api.TechLinks[0].GetType() != "catalog" || api.TechLinks[0].GetSlug() != "go" || api.TechLinks[0].GetLabel() != "Go" || !api.TechLinks[0].GetIsPrimaryIcon() {
 		t.Fatalf("API technology links = %+v, want primary Go catalog link", api.TechLinks)
 	}
-	if derefString(api.Repo) != "github.com/example/shop" || derefString(api.Branch) != "main" || derefString(api.FilePath) != "cmd/api/main.go" || derefString(api.Language) != "go" {
-		t.Fatalf("API source link metadata = repo:%v branch:%v file:%v language:%v", api.Repo, api.Branch, api.FilePath, api.Language)
+	if derefString(api.Repo) != "github.com/example/shop" || derefString(api.Branch) != "main" || derefString(api.FilePath) != "cmd/api/main.go" {
+		t.Fatalf("API source link metadata = repo:%v branch:%v file:%v", api.Repo, api.Branch, api.FilePath)
+	}
+	if api.Language != nil {
+		t.Fatalf("API language = %v, want nil (language is derived from the file path)", api.Language)
 	}
 	if api.BypassNoiseGate == nil || !*api.BypassNoiseGate || !api.HasView || derefString(api.ViewLabel) != "Component" {
 		t.Fatalf("API view flags = bypass:%v hasView:%v viewLabel:%v", api.BypassNoiseGate, api.HasView, api.ViewLabel)

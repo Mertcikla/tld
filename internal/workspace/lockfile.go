@@ -28,6 +28,11 @@ func LoadLockFile(dir string) (*LockFile, error) {
 		return nil, fmt.Errorf("parse lock file: %w", err)
 	}
 
+	normalizeResourceMetadataMapKeys(lockFile.CurrentConnectors)
+	if lockFile.Metadata != nil {
+		normalizeResourceMetadataMapKeys(lockFile.Metadata.Connectors)
+	}
+
 	return &lockFile, nil
 }
 

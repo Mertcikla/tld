@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from 'react'
 import type { CrossBranchContextSettings } from '../../crossBranch/types'
-import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../context/WorkspaceVersionContext'
-import type { ExploreDiffLens } from '../../utils/exploreDiffLens'
 import type { ViewLayer } from '../../types'
 import type { ZUIViewportBounds } from '../../crossBranch/resolve'
 import {
@@ -22,13 +20,13 @@ import {
   setHighlightedTags as setRendererHighlightedTags,
   setHiddenTags as setRendererHiddenTags,
   setOnImageLoadCallback,
-  setVersionDiff as setRendererVersionDiff,
   getThemeVars,
   type RenderContext,
 } from './renderer'
 import { buildSceneGraph, type SceneGraph } from './sceneGraph'
 import type { ZUILayout, ZUIViewState } from './types'
 import type { ZUIProxyConnectorState } from './useZUIProxyConnectors'
+import { subscribeElementNameFontsChanged } from '../../utils/elementName'
 
 export interface ZUIRenderInvalidator {
   invalidate: () => void
@@ -93,9 +91,6 @@ interface UseZUIRenderLoopArgs {
   highlightColor?: string
   hiddenTags?: string[]
   groupLayers: ViewLayer[]
-  versionPreview?: WorkspaceVersionPreview | null
-  versionFollowTarget?: WorkspaceVersionFollowTarget | null
-  diffLens?: ExploreDiffLens | null
 }
 
 export function useZUIRenderLoop({
@@ -115,9 +110,6 @@ export function useZUIRenderLoop({
   highlightColor,
   hiddenTags,
   groupLayers,
-  versionPreview,
-  versionFollowTarget,
-  diffLens,
 }: UseZUIRenderLoopArgs): ZUIRenderInvalidator {
   const needsRedrawRef = useRef(true)
   const labelBgRef = useRef('#171923')
@@ -160,6 +152,8 @@ export function useZUIRenderLoop({
     setOnImageLoadCallback(invalidate)
     return () => setOnImageLoadCallback(null)
   }, [invalidate])
+
+  useEffect(() => subscribeElementNameFontsChanged(invalidate), [invalidate])
 
   useEffect(invalidate, [invalidate, viewState, crossBranchSettings])
 
@@ -373,39 +367,12 @@ export function useZUIRenderLoop({
     invalidate()
   }, [hiddenTags, invalidate])
 
-  useEffect(() => {
-    if (diffLens) {
-      setRendererVersionDiff(
-        diffLens.elementChanges,
-        diffLens.connectorChanges,
-        diffLens.elementLineDeltas,
-        diffLens.contextElementIds,
-        diffLens.contextConnectorIds,
-        true,
-      )
-      invalidate()
-      return
-    }
-    const pulsedElementChanges = new Map<number, string>()
-    const pulsedElementLineDeltas = new Map<number, { added: number; removed: number }>()
-    if (versionFollowTarget?.resourceType === 'element' && versionFollowTarget.resourceId) {
-      const change = versionFollowTarget.changeType ?? versionPreview?.elementChanges.get(versionFollowTarget.resourceId)
-      if (change) pulsedElementChanges.set(versionFollowTarget.resourceId, change)
-    }
-    setRendererVersionDiff(
-      pulsedElementChanges,
-      versionPreview?.connectorChanges ?? new Map(),
-      versionPreview?.elementLineDeltas ?? pulsedElementLineDeltas,
-    )
-    invalidate()
-  }, [diffLens, invalidate, versionPreview, versionFollowTarget])
 
   useEffect(() => {
     return () => {
       setRendererHighlightedTags(new Set())
       setRendererHighlightColor('')
       setRendererHiddenTags(new Set())
-      setRendererVersionDiff(new Map(), new Map())
     }
   }, [])
 

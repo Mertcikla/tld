@@ -5,9 +5,7 @@ package postgres_test
 import (
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,12 +14,14 @@ import (
 	"time"
 
 	diagv1connect "buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/diag/v1/diagv1connect"
+	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld/v2"
+	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
-	"github.com/mertcikla/tld/v2/internal/watch"
 	workspacecfg "github.com/mertcikla/tld/v2/internal/workspace"
 	coreapi "github.com/mertcikla/tld/v2/pkg/api"
 )
@@ -356,51 +356,6 @@ func TestPostgresWorkspaceServiceCriticalPathE2E(t *testing.T) {
 	})
 }
 
-func TestPostgresSimilarEmbeddingsE2E(t *testing.T) {
-	dsn := requirePostgresDSN(t)
-	store := openPostgresLocalStore(t, dsn)
-	watchStore := watch.NewStoreWithBun(store.DB(), store.BunDB(), store.Dialect())
-	ctx := context.Background()
-
-	modelID, err := watchStore.EnsureEmbeddingModel(ctx, watch.EmbeddingConfig{
-		Provider:  "local-deterministic-test",
-		Model:     "pgvector",
-		Dimension: 3,
-	}, "pgvector")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, item := range []struct {
-		key    string
-		vector watch.Vector
-	}{
-		{key: "a", vector: watch.Vector{1, 0, 0}},
-		{key: "b", vector: watch.Vector{0, 1, 0}},
-		{key: "c", vector: watch.Vector{0.8, 0.2, 0}},
-	} {
-		if err := watchStore.SaveEmbedding(ctx, modelID, "symbol", item.key, item.key, vectorBytes(item.vector)); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	idsByKey := embeddingIDsByOwnerKey(t, store.DB(), modelID)
-	ids, err := watchStore.SimilarEmbeddings(ctx, modelID, watch.Vector{1, 0, 0}, 2)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ids) != 2 || ids[0] != idsByKey["a"] || ids[1] != idsByKey["c"] {
-		t.Fatalf("pgvector ids = %v, want [%d %d] ordered by cosine distance", ids, idsByKey["a"], idsByKey["c"])
-	}
-	one, err := watchStore.SimilarEmbeddings(ctx, modelID, watch.Vector{1, 0, 0}, 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(one) != 1 || one[0] != idsByKey["a"] {
-		t.Fatalf("pgvector limit ids = %v, want [%d]", one, idsByKey["a"])
-	}
-	assertPgVectorDistanceOrder(t, store.DB(), modelID)
-}
-
 func requirePostgresDSN(t *testing.T) string {
 	t.Helper()
 	dsn := os.Getenv("TLD_TEST_POSTGRES_URL")
@@ -575,71 +530,6 @@ func assertStoredOrgID(t *testing.T, db *sql.DB, table string, id int32, want uu
 	}
 }
 
-func embeddingIDsByOwnerKey(t *testing.T, db *sql.DB, modelID int64) map[string]int64 {
-	t.Helper()
-	rows, err := db.QueryContext(context.Background(), `
-		SELECT owner_key, id
-		FROM watch_embeddings
-		WHERE model_id = $1
-		ORDER BY owner_key`, modelID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = rows.Close() }()
-	out := map[string]int64{}
-	for rows.Next() {
-		var key string
-		var id int64
-		if err := rows.Scan(&key, &id); err != nil {
-			t.Fatal(err)
-		}
-		out[key] = id
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if len(out) != 3 {
-		t.Fatalf("embedding ids = %+v, want three rows", out)
-	}
-	return out
-}
-
-func assertPgVectorDistanceOrder(t *testing.T, db *sql.DB, modelID int64) {
-	t.Helper()
-	rows, err := db.QueryContext(context.Background(), `
-		SELECT owner_key, embedding <=> '[1,0,0]'::vector AS distance
-		FROM watch_embeddings
-		WHERE model_id = $1
-		ORDER BY distance`, modelID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = rows.Close() }()
-	var keys []string
-	for rows.Next() {
-		var key string
-		var distance float64
-		if err := rows.Scan(&key, &distance); err != nil {
-			t.Fatal(err)
-		}
-		keys = append(keys, key)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if len(keys) != 3 || keys[0] != "a" || keys[1] != "c" || keys[2] != "b" {
-		t.Fatalf("pgvector distance order = %v, want [a c b]", keys)
-	}
-}
-
-func vectorBytes(vector watch.Vector) []byte {
-	out := make([]byte, len(vector)*4)
-	for i, value := range vector {
-		binary.LittleEndian.PutUint32(out[i*4:(i+1)*4], math.Float32bits(value))
-	}
-	return out
-}
-
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -651,4 +541,54 @@ func stringSliceContains(values []string, want string) bool {
 
 func ptr[T any](value T) *T {
 	return &value
+}
+
+func TestPostgresSnapshotMembershipE2E(t *testing.T) {
+	dsn := requirePostgresDSN(t)
+	sq := openPostgresLocalStore(t, dsn)
+	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
+	ctx := context.Background()
+	src := &graph.Source{Path: "a.go", Hash: "hash", Text: []byte("func A() {}")}
+	first := graph.NewGraph("repo-membership", "snapshot-first")
+	first.Sources[src.Path] = src
+	fact := first.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(0, len(src.Text)), string(src.Text), "func A()", nil)
+	chunk := first.AddChunk(fact.Id, fact.Anchor, fact.Code, "", 0, 1)
+	edge := first.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, fact.Id, "", "external", fact.Anchor, nil)
+	second := graph.NewGraph(first.RepositoryID, "snapshot-second")
+	second.Sources[src.Path] = src
+	adopted := second.AdoptFactAnchored(fact, fact.Anchor, fact.Code, fact.Signature)
+	second.AdoptChunkAnchored(chunk, adopted.Id)
+	second.AdoptEdgeFact(edge, adopted.Id, "", "external")
+	for _, g := range []*graph.Graph{first, second} {
+		snap := &pb.Snapshot{Id: g.SnapshotID, RepositoryId: g.RepositoryID, Sources: []*pb.SourceFile{{Path: src.Path, Hash: src.Hash, Size: uint64(len(src.Text))}}}
+		for range 2 {
+			if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := idx.LoadGraph(ctx, snap.Id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(stored.Facts) != 1 || len(stored.Chunks) != 1 || len(stored.EdgeFacts) != 1 {
+				t.Fatalf("roundtrip counts: %d/%d/%d", len(stored.Facts), len(stored.Chunks), len(stored.EdgeFacts))
+			}
+		}
+	}
+	if err := idx.SaveCompletedMap(ctx, first.RepositoryID, &pb.CompletedMap{Result: &pb.MapResult{RunId: "membership-map", SnapshotId: first.SnapshotID}, ConfigHash: "cfg"}); err != nil {
+		t.Fatal(err)
+	}
+	active, err := idx.ActiveMap(ctx, first.RepositoryID)
+	if err != nil || active == nil || active.Result.RunId != "membership-map" {
+		t.Fatalf("active map: %+v %v", active, err)
+	}
+	if err := idx.DeleteSnapshot(ctx, first.SnapshotID); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := idx.LoadGraph(ctx, second.SnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Facts[fact.Id] == nil || stored.Chunks[chunk.Id] == nil {
+		t.Fatal("shared entities were lost")
+	}
 }

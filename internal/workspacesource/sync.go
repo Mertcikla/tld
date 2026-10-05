@@ -609,7 +609,6 @@ func elementEntries(ref string, element *diagv1.PlacedElement) []metadataEntry {
 	appendStringEntry("repo", element.GetRepo())
 	appendStringEntry("branch", element.GetBranch())
 	appendStringEntry("file", element.GetFilePath())
-	appendStringEntry("lang", element.GetLanguage())
 	if element.GetBypassNoiseGate() {
 		entries = append(entries, metadataEntry{key: "bypass", value: "1"})
 	}
@@ -922,7 +921,6 @@ func elementInput(element *desiredElement) api.ElementInput {
 		Tags:            append([]string{}, element.Tags...),
 		Repo:            optionalString(element.Repo),
 		Branch:          optionalString(element.Branch),
-		Language:        optionalString(element.Language),
 		FilePath:        optionalString(element.FilePath),
 		BypassNoiseGate: element.BypassNoiseGate,
 		HasView:         element.HasView,

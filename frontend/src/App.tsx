@@ -5,18 +5,15 @@ import { api } from './api/client'
 import ViewEditor from './pages/ViewEditor'
 import ViewsPage from './pages/Views'
 import Inventory from './pages/Inventory'
+import Repositories from './pages/Repositories'
 import { SharedInfiniteZoom } from './pages/InfiniteZoom'
 import Settings from './pages/Settings'
 import ProfileSettings from './pages/ProfileSettings'
 import AppearanceSettings from './pages/AppearanceSettings'
-import ExperimentalSettings from './pages/ExperimentalSettings'
 import UpdateSettings from './pages/UpdateSettings'
 import { HeaderProvider, useHeader } from './components/HeaderContext'
 import TopMenuBar from './components/TopMenuBar'
 import TopMenuBarCollaboration, { type CollaborationProps } from './components/TopMenuBarCollaboration'
-import WorkspacePanel from './components/WorkspacePanel'
-import { ExperimentalProvider, useExperimental } from './context/ExperimentalContext'
-import { WorkspaceVersionProvider } from './context/WorkspaceVersionContext'
 import { ConnectorStyleProvider } from './context/ConnectorStyleContext'
 import { initializeTheme, ThemeProvider } from './context/ThemeContext'
 import { platform } from './platform/local'
@@ -31,12 +28,10 @@ function AppLayout() {
   const hideMobileBar = header && typeof header === 'object' && 'hideMobileBar' in header ? !!(header as { hideMobileBar?: boolean }).hideMobileBar : false
   const collaboration = header && typeof header === 'object' && 'collaboration' in header ? (header as { collaboration?: CollaborationProps }).collaboration : undefined
   const hideTopBar = typeof window !== 'undefined' && !!window.__TLD_VSCODE__
-  const { experimental } = useExperimental()
-  const rightSlot = collaboration || experimental.watchEnabled
+  const rightSlot = collaboration
     ? (
       <HStack spacing={2}>
-        {collaboration && <TopMenuBarCollaboration collaboration={collaboration} />}
-        {experimental.watchEnabled && <WorkspacePanel />}
+        <TopMenuBarCollaboration collaboration={collaboration} />
       </HStack>
     )
     : undefined
@@ -104,26 +99,24 @@ export default function App() {
   }
 
   return (
-      <ExperimentalProvider>
       <ThemeProvider>
       <ConnectorStyleProvider>
         <Box h="var(--app-viewport-height)" bg="var(--bg-canvas)" overflow="hidden">
           <Routes>
             {platform.getRoutes({ user: null })}
 
-            <Route path="/explore/shared/:token" element={<Box h="var(--app-viewport-height)" overflow="hidden"><HeaderProvider><WorkspaceVersionProvider><SharedInfiniteZoom /></WorkspaceVersionProvider></HeaderProvider></Box>} />
+            <Route path="/explore/shared/:token" element={<Box h="var(--app-viewport-height)" overflow="hidden"><HeaderProvider><SharedInfiniteZoom /></HeaderProvider></Box>} />
             <Route
               element={
                 <HeaderProvider>
-                  <WorkspaceVersionProvider>
-                    <AppLayout />
-                  </WorkspaceVersionProvider>
+                  <AppLayout />
                 </HeaderProvider>
               }
             >
               <Route index element={<HomeRedirect />} />
               <Route path="views" element={<ViewsPage />} />
               <Route path="views/:id" element={<ViewEditor />} />
+              <Route path="repositories" element={<Repositories />} />
               <Route path="inventory" element={<Inventory />} />
               <Route path="dependencies" element={<DependenciesRedirect />} />
               <Route path="explore" element={<Navigate to="/views" replace />} />
@@ -132,7 +125,6 @@ export default function App() {
                 {platform.getSettingsRoutes({ user: null })}
                 <Route path="profile" element={<ProfileSettings />} />
                 <Route path="appearance" element={<AppearanceSettings />} />
-                <Route path="experimental" element={<ExperimentalSettings />} />
                 <Route path="updates" element={isWailsApp && !isWailsAppStore ? <UpdateSettings /> : <Navigate to="/settings/appearance" replace />} />
               </Route>
             </Route>
@@ -142,6 +134,5 @@ export default function App() {
         </Box>
       </ConnectorStyleProvider>
       </ThemeProvider>
-    </ExperimentalProvider>
   )
 }

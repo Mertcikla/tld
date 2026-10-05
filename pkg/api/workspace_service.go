@@ -282,7 +282,7 @@ func (s *WorkspaceService) ApplyWorkspacePlan(
 		return nil, err
 	}
 
-	resp, err := s.Store.ApplyPlan(ctx, workspaceID, req.Msg)
+	resp, err := s.applyPlan(ctx, workspaceID, req.Msg)
 	if err != nil {
 		return nil, storeErr("apply plan", err)
 	}
@@ -290,6 +290,29 @@ func (s *WorkspaceService) ApplyWorkspacePlan(
 	s.hooks().AfterApplyPlan(ctx, workspaceID, m, resp)
 
 	return connect.NewResponse(resp), nil
+}
+
+// applyPlan runs ApplyPlan inside a store transaction when the store supports
+// one, so a failed batch leaves no partial writes behind. Stores without
+// transaction support fall back to a direct apply.
+func (s *WorkspaceService) applyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error) {
+	if transactional, ok := s.Store.(TransactionalStore); ok {
+		var resp *diagv1.ApplyPlanResponse
+		err := transactional.RunInTransaction(ctx, func(txCtx context.Context, txStore Store) error {
+			var applyErr error
+			resp, applyErr = txStore.ApplyPlan(txCtx, workspaceID, req)
+			return applyErr
+		})
+		switch {
+		case err == nil:
+			return resp, nil
+		case errors.Is(err, ErrUnimplemented):
+			// Store cannot run transactions; fall back to direct mutations.
+		default:
+			return nil, err
+		}
+	}
+	return s.Store.ApplyPlan(ctx, workspaceID, req)
 }
 
 func (s *WorkspaceService) ExportWorkspace(
@@ -479,7 +502,7 @@ func (s *WorkspaceService) GetWorkspace(
 				BypassNoiseGate: p.BypassNoiseGate,
 				Description:     p.Description, Technology: p.Technology,
 				Url: p.Url, LogoUrl: p.LogoUrl, TechnologyLinks: p.TechnologyLinks,
-				Repo: p.Repo, Branch: p.Branch, Language: p.Language, FilePath: p.FilePath,
+				Repo: p.Repo, RepositoryId: p.RepositoryId, Branch: p.Branch, Language: p.Language, FilePath: p.FilePath,
 			})
 		}
 		for _, c := range allConnectors {
@@ -700,6 +723,7 @@ func (s *WorkspaceService) CreateElement(
 		TechLinks:       techLinks,
 		Tags:            tags,
 		Repo:            OptStr(m.GetRepo()),
+		RepositoryID:    OptStr(m.GetRepositoryId()),
 		Branch:          OptStr(m.GetBranch()),
 		Language:        OptStr(m.GetLanguage()),
 		FilePath:        OptStr(m.GetFilePath()),
@@ -777,6 +801,7 @@ func (s *WorkspaceService) UpdateElement(
 		TechLinks:       techLinks,
 		Tags:            tags,
 		Repo:            m.Repo,
+		RepositoryID:    m.RepositoryId,
 		Branch:          m.Branch,
 		Language:        m.Language,
 		FilePath:        m.FilePath,

@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"time"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
@@ -176,6 +175,7 @@ func (a *APIStore) CreateElement(ctx context.Context, workspaceID uuid.UUID, inp
 		TechnologyConnectors: techLinks,
 		Tags:                 input.Tags,
 		Repo:                 input.Repo,
+		RepositoryID:         input.RepositoryID,
 		Branch:               input.Branch,
 		Language:             input.Language,
 		FilePath:             input.FilePath,
@@ -201,6 +201,7 @@ func (a *APIStore) UpdateElement(ctx context.Context, id int32, workspaceID uuid
 		TechnologyConnectors: technologyLinksToConnectors(input.TechLinks),
 		Tags:                 input.Tags,
 		Repo:                 input.Repo,
+		RepositoryID:         input.RepositoryID,
 		Branch:               input.Branch,
 		Language:             input.Language,
 		FilePath:             input.FilePath,
@@ -919,58 +920,7 @@ func (*APIStore) RunInTransaction(_ context.Context, _ func(context.Context, Sto
 	return fmt.Errorf("transactional store: %w", ErrUnimplemented)
 }
 
-// ─── Versioning ──────────────────────────────────────────────────────────────
-
-var _ = []any{
-	// compile-time check
-	(*APIStore)(nil),
-}
-
-type workspaceVersionModel struct {
-	bun.BaseModel `bun:"table:workspace_versions"`
-
-	ID              int64      `bun:"id,pk,autoincrement"`
-	OrgID           *uuid.UUID `bun:"org_id,nullzero"`
-	VersionID       string     `bun:"version_id"`
-	Source          string     `bun:"source"`
-	ParentVersionID *int64     `bun:"parent_version_id"`
-	ViewCount       int64      `bun:"view_count"`
-	ElementCount    int64      `bun:"element_count"`
-	ConnectorCount  int64      `bun:"connector_count"`
-	Description     *string    `bun:"description"`
-	WorkspaceHash   *string    `bun:"workspace_hash"`
-	CreatedAt       string     `bun:"created_at"`
-}
-
-func (m *workspaceVersionModel) BeforeAppendModel(ctx context.Context, query bun.Query) error {
-	orgID := app.TenantOrgIDFromCtx(ctx)
-	if orgID == uuid.Nil {
-		return nil
-	}
-	if _, ok := query.(*bun.InsertQuery); ok && m != nil && m.OrgID == nil {
-		m.OrgID = &orgID
-	}
-	return nil
-}
-
-func (m *workspaceVersionModel) BeforeSelect(ctx context.Context, query *bun.SelectQuery) error {
-	return applyAPIStoreTenantWhere(ctx, query)
-}
-
-func (m *workspaceVersionModel) BeforeUpdate(ctx context.Context, query *bun.UpdateQuery) error {
-	return applyAPIStoreTenantWhere(ctx, query)
-}
-
-func (m *workspaceVersionModel) BeforeDelete(ctx context.Context, query *bun.DeleteQuery) error {
-	return applyAPIStoreTenantWhere(ctx, query)
-}
-
-type workspaceVersionSettingsModel struct {
-	bun.BaseModel `bun:"table:workspace_version_settings"`
-
-	ID                   int `bun:"id,pk"`
-	CLIVersioningEnabled int `bun:"cli_versioning_enabled"`
-}
+// ─── Resource counts ────────────────────────────────────────────────────────
 
 type apiStoreViewCountModel struct {
 	bun.BaseModel `bun:"table:views"`
@@ -1000,75 +950,6 @@ type apiStoreConnectorCountModel struct {
 
 func (m *apiStoreConnectorCountModel) BeforeSelect(ctx context.Context, query *bun.SelectQuery) error {
 	return applyAPIStoreTenantWhere(ctx, query)
-}
-
-func (a *APIStore) ListVersions(ctx context.Context, workspaceID uuid.UUID, limit int) ([]*diagv1.WorkspaceVersionInfo, error) {
-	ctx = app.WithTenantOrgID(ctx, workspaceID)
-	if limit <= 0 {
-		limit = 50
-	}
-	var rows []workspaceVersionModel
-	if err := a.bunDB.NewSelect().Model(&rows).Order("id DESC").Limit(limit).Scan(ctx); err != nil {
-		return nil, err
-	}
-	out := make([]*diagv1.WorkspaceVersionInfo, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, workspaceVersionToProto(row, workspaceID))
-	}
-	return out, nil
-}
-
-func (a *APIStore) GetLatestVersion(ctx context.Context, workspaceID uuid.UUID) (*diagv1.WorkspaceVersionInfo, error) {
-	ctx = app.WithTenantOrgID(ctx, workspaceID)
-	var row workspaceVersionModel
-	if err := a.bunDB.NewSelect().Model(&row).Order("id DESC").Limit(1).Scan(ctx); err != nil {
-		return nil, ErrUnimplemented
-	}
-	return workspaceVersionToProto(row, workspaceID), nil
-}
-
-func (a *APIStore) CreateVersion(ctx context.Context, workspaceID uuid.UUID, versionID, source string, parentID *int32, viewCount, elementCount, connectorCount int, description, workspaceHash *string) (*diagv1.WorkspaceVersionInfo, error) {
-	ctx = app.WithTenantOrgID(ctx, workspaceID)
-	var parent *int64
-	if parentID != nil {
-		value := int64(*parentID)
-		parent = &value
-	}
-	row := &workspaceVersionModel{
-		VersionID:       versionID,
-		Source:          source,
-		ParentVersionID: parent,
-		ViewCount:       int64(viewCount),
-		ElementCount:    int64(elementCount),
-		ConnectorCount:  int64(connectorCount),
-		Description:     description,
-		WorkspaceHash:   workspaceHash,
-		CreatedAt:       time.Now().UTC().Format(time.RFC3339),
-	}
-	if _, err := a.bunDB.NewInsert().Model(row).Exec(ctx); err != nil {
-		return nil, err
-	}
-	return workspaceVersionToProto(*row, workspaceID), nil
-}
-
-func (a *APIStore) GetVersioningEnabled(ctx context.Context, workspaceID uuid.UUID) (bool, error) {
-	var row workspaceVersionSettingsModel
-	if err := a.bunDB.NewSelect().Model(&row).Column("cli_versioning_enabled").Where("id = 1").Scan(ctx); err != nil {
-		return true, nil
-	}
-	return row.CLIVersioningEnabled == 1, nil
-}
-
-func (a *APIStore) SetVersioningEnabled(ctx context.Context, workspaceID uuid.UUID, enabled bool) error {
-	value := 0
-	if enabled {
-		value = 1
-	}
-	_, err := a.bunDB.NewInsert().Model(&workspaceVersionSettingsModel{ID: 1, CLIVersioningEnabled: value}).
-		On("CONFLICT(id) DO UPDATE").
-		Set("cli_versioning_enabled = excluded.cli_versioning_enabled").
-		Exec(ctx)
-	return err
 }
 
 func (a *APIStore) GetWorkspaceResourceCounts(ctx context.Context, workspaceID uuid.UUID) (views, elements, connectors int, err error) {
@@ -1201,6 +1082,9 @@ func elementToProto(element app.LibraryElement, workspaceID uuid.UUID) *diagv1.E
 	if element.Repo != nil {
 		p.Repo = element.Repo
 	}
+	if element.RepositoryID != nil {
+		p.RepositoryId = element.RepositoryID
+	}
 	if element.Branch != nil {
 		p.Branch = element.Branch
 	}
@@ -1253,6 +1137,9 @@ func placedElementToProto(item app.PlacedElement) *diagv1.PlacedElement {
 	}
 	if item.Repo != nil {
 		p.Repo = item.Repo
+	}
+	if item.RepositoryID != nil {
+		p.RepositoryId = item.RepositoryID
 	}
 	if item.Branch != nil {
 		p.Branch = item.Branch
@@ -1346,31 +1233,6 @@ func technologyLinksToConnectors(links []*diagv1.TechnologyLink) []app.Technolog
 		})
 	}
 	return out
-}
-
-func workspaceVersionToProto(row workspaceVersionModel, workspaceID uuid.UUID) *diagv1.WorkspaceVersionInfo {
-	createdAt, _ := time.Parse(time.RFC3339, row.CreatedAt)
-	info := &diagv1.WorkspaceVersionInfo{
-		Id:             strconv.FormatInt(row.ID, 10),
-		OrgId:          workspaceID.String(),
-		VersionId:      row.VersionID,
-		Source:         row.Source,
-		ViewCount:      int32(row.ViewCount),
-		ElementCount:   int32(row.ElementCount),
-		ConnectorCount: int32(row.ConnectorCount),
-		CreatedAt:      timestamppb.New(createdAt),
-	}
-	if row.ParentVersionID != nil {
-		parent := strconv.FormatInt(*row.ParentVersionID, 10)
-		info.ParentVersionId = &parent
-	}
-	if row.Description != nil {
-		info.Description = row.Description
-	}
-	if row.WorkspaceHash != nil {
-		info.WorkspaceHash = row.WorkspaceHash
-	}
-	return info
 }
 
 func defaultViewMarkdownPath(viewID int32, fileName *string) string {

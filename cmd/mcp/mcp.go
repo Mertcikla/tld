@@ -9,10 +9,14 @@ import (
 
 	"github.com/mertcikla/tld/v2/cmd/add"
 	"github.com/mertcikla/tld/v2/cmd/connect"
+	"github.com/mertcikla/tld/v2/cmd/inspect"
+	"github.com/mertcikla/tld/v2/cmd/list"
 	"github.com/mertcikla/tld/v2/cmd/pull"
 	"github.com/mertcikla/tld/v2/cmd/remove"
 	"github.com/mertcikla/tld/v2/cmd/rename"
+	"github.com/mertcikla/tld/v2/cmd/render"
 	"github.com/mertcikla/tld/v2/cmd/update"
+	"github.com/mertcikla/tld/v2/cmd/view"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/localserver"
 	archwarnings "github.com/mertcikla/tld/v2/internal/warnings"
@@ -28,6 +32,7 @@ type addArgs struct {
 	Description string  `json:"description,omitempty"`
 	Technology  string  `json:"technology,omitempty"`
 	URL         string  `json:"url,omitempty"`
+	Tags        string  `json:"tags,omitempty" jsonschema:"comma-separated tags"`
 	Parent      string  `json:"parent,omitempty" jsonschema:"parent element ref (default: root)"`
 	PositionX   float64 `json:"position_x,omitempty"`
 	PositionY   float64 `json:"position_y,omitempty"`
@@ -44,6 +49,7 @@ type connectArgs struct {
 	Direction    string `json:"direction,omitempty" jsonschema:"forward|backward|both|none"`
 	Style        string `json:"style,omitempty"`
 	URL          string `json:"url,omitempty"`
+	Tags         string `json:"tags,omitempty" jsonschema:"comma-separated tags"`
 }
 
 type removeElementArgs struct {
@@ -68,7 +74,7 @@ type updateElementArgs struct {
 }
 
 type updateConnectorArgs struct {
-	Ref   string `json:"ref" jsonschema:"connector key e.g. view:source:target[:label]"`
+	Ref   string `json:"ref" jsonschema:"connector key e.g. view/source~target[/label]"`
 	Field string `json:"field"`
 	Value string `json:"value"`
 }
@@ -81,6 +87,55 @@ type validateArgs struct {
 type pullArgs struct {
 	Force  bool `json:"force,omitempty" jsonschema:"overwrite local changes without prompting"`
 	DryRun bool `json:"dry_run,omitempty"`
+}
+
+type listElementsArgs struct {
+	Search string `json:"search,omitempty" jsonschema:"substring filter across ref, name, kind, technology, owner, and tags"`
+	Kind   string `json:"kind,omitempty" jsonschema:"only show elements of this kind"`
+}
+
+type listConnectorsArgs struct {
+	Search string `json:"search,omitempty" jsonschema:"substring filter across view, source, target, label, and relationship"`
+	View   string `json:"view,omitempty" jsonschema:"only show connectors bound to this view ref"`
+}
+
+type listViewsArgs struct {
+	Search string `json:"search,omitempty" jsonschema:"substring filter across ref, name, label, and parent"`
+	Parent string `json:"parent,omitempty" jsonschema:"only show views placed under this parent ref"`
+	Tree   bool   `json:"tree,omitempty" jsonschema:"show the derived view hierarchy with depth and path"`
+}
+
+type inspectArgs struct {
+	Ref   string `json:"ref" jsonschema:"element, view, or connector ref to inspect"`
+	Type  string `json:"type,omitempty" jsonschema:"resource type: element, view, or connector"`
+	Cloud bool   `json:"cloud,omitempty" jsonschema:"include cloud state"`
+	All   bool   `json:"all,omitempty" jsonschema:"include all state sources"`
+}
+
+type viewCreateArgs struct {
+	Ref   string `json:"ref" jsonschema:"element ref that will own the view"`
+	Name  string `json:"name,omitempty" jsonschema:"view display name (default: element name)"`
+	Label string `json:"label,omitempty" jsonschema:"view level label, e.g. Container"`
+}
+
+type viewRenameArgs struct {
+	Ref  string `json:"ref" jsonschema:"element ref that owns the view"`
+	Name string `json:"name" jsonschema:"new view display name"`
+}
+
+type viewSetLevelArgs struct {
+	Ref   string `json:"ref" jsonschema:"element ref that owns the view"`
+	Label string `json:"label" jsonschema:"view level label, e.g. Container"`
+}
+
+type viewDeleteArgs struct {
+	Ref string `json:"ref" jsonschema:"element ref whose view should be deleted (the element is kept)"`
+}
+
+type renderArgs struct {
+	View   string `json:"view,omitempty" jsonschema:"view ref to render (default: root)"`
+	Format string `json:"format,omitempty" jsonschema:"render output format (supported: mermaid)"`
+	Output string `json:"output,omitempty" jsonschema:"write render output to this file"`
 }
 
 type result struct {
@@ -121,6 +176,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		}
 		if a.URL != "" {
 			args = append(args, "--url", a.URL)
+		}
+		if a.Tags != "" {
+			args = append(args, "--tags", a.Tags)
 		}
 		if a.Parent != "" {
 			args = append(args, "--parent", a.Parent)
@@ -166,6 +224,9 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		}
 		if a.URL != "" {
 			args = append(args, "--url", a.URL)
+		}
+		if a.Tags != "" {
+			args = append(args, "--tags", a.Tags)
 		}
 		if dataDir != "" {
 			args = append(args, "--data-dir", dataDir)
@@ -291,6 +352,152 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 	})
 }
 
+func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bool, dataDir string) {
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "tld_list_elements",
+		Description: "List workspace elements, optionally filtered by search text or kind.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a listElementsArgs) (*mcpsdk.CallToolResult, result, error) {
+		c := list.NewListCmd(wdir, format, compact)
+		args := []string{"elements"}
+		if a.Search != "" {
+			args = append(args, "--search", a.Search)
+		}
+		if a.Kind != "" {
+			args = append(args, "--kind", a.Kind)
+		}
+		return runSubcommand(ctx, c, args)
+	})
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "tld_list_connectors",
+		Description: "List workspace connectors, optionally filtered by search text or view.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a listConnectorsArgs) (*mcpsdk.CallToolResult, result, error) {
+		c := list.NewListCmd(wdir, format, compact)
+		args := []string{"connectors"}
+		if a.Search != "" {
+			args = append(args, "--search", a.Search)
+		}
+		if a.View != "" {
+			args = append(args, "--view", a.View)
+		}
+		return runSubcommand(ctx, c, args)
+	})
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "tld_list_views",
+		Description: "List workspace views (diagrams), optionally filtered by search text or parent, with an optional hierarchy tree.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a listViewsArgs) (*mcpsdk.CallToolResult, result, error) {
+		c := list.NewListCmd(wdir, format, compact)
+		args := []string{"views"}
+		if a.Search != "" {
+			args = append(args, "--search", a.Search)
+		}
+		if a.Parent != "" {
+			args = append(args, "--parent", a.Parent)
+		}
+		if a.Tree {
+			args = append(args, "--tree")
+		}
+		return runSubcommand(ctx, c, args)
+	})
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "tld_inspect",
+		Description: "Inspect an element, view, or connector across YAML, local DB, and optional cloud state.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a inspectArgs) (*mcpsdk.CallToolResult, result, error) {
+		c := inspect.NewInspectCmd(wdir, format, compact)
+		args := []string{a.Ref}
+		if a.Type != "" {
+			args = append(args, "--type", a.Type)
+		}
+		if a.Cloud {
+			args = append(args, "--cloud")
+		}
+		if a.All {
+			args = append(args, "--all")
+		}
+		if dataDir != "" {
+			args = append(args, "--data-dir", dataDir)
+		}
+		return runSubcommand(ctx, c, args)
+	})
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "tld_render",
+		Description: "Render a workspace view to a text format (mermaid).",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a renderArgs) (*mcpsdk.CallToolResult, result, error) {
+		c := render.NewRenderCmd(wdir)
+		target := a.View
+		if target == "" {
+			target = workspace.RootRef
+		}
+		args := []string{target}
+		if a.Format != "" {
+			args = append(args, "--format", a.Format)
+		}
+		if a.Output != "" {
+			args = append(args, "--output", a.Output)
+		}
+		return runSubcommand(ctx, c, args)
+	})
+}
+
+func registerViewTools(server *mcpsdk.Server, wdir, format *string, compact *bool, dataDir string) {
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "tld_view_create",
+		Description: "Create (or ensure) the diagram (view) owned by an existing element.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a viewCreateArgs) (*mcpsdk.CallToolResult, result, error) {
+		c := view.NewViewCmd(wdir, format, compact)
+		args := []string{"create", a.Ref}
+		if a.Name != "" {
+			args = append(args, "--name", a.Name)
+		}
+		if a.Label != "" {
+			args = append(args, "--label", a.Label)
+		}
+		if dataDir != "" {
+			args = append(args, "--data-dir", dataDir)
+		}
+		return runSubcommand(ctx, c, args)
+	})
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "tld_view_rename",
+		Description: "Rename the diagram (view) owned by an element.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a viewRenameArgs) (*mcpsdk.CallToolResult, result, error) {
+		c := view.NewViewCmd(wdir, format, compact)
+		args := []string{"rename", a.Ref, a.Name}
+		if dataDir != "" {
+			args = append(args, "--data-dir", dataDir)
+		}
+		return runSubcommand(ctx, c, args)
+	})
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "tld_view_set_level",
+		Description: "Set the level label of the diagram (view) owned by an element.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a viewSetLevelArgs) (*mcpsdk.CallToolResult, result, error) {
+		c := view.NewViewCmd(wdir, format, compact)
+		args := []string{"set-level", a.Ref, a.Label}
+		if dataDir != "" {
+			args = append(args, "--data-dir", dataDir)
+		}
+		return runSubcommand(ctx, c, args)
+	})
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "tld_view_delete",
+		Description: "Delete the diagram (view) owned by an element; the element itself is kept. The view must be empty.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a viewDeleteArgs) (*mcpsdk.CallToolResult, result, error) {
+		c := view.NewViewCmd(wdir, format, compact)
+		args := []string{"delete", a.Ref}
+		if dataDir != "" {
+			args = append(args, "--data-dir", dataDir)
+		}
+		return runSubcommand(ctx, c, args)
+	})
+}
+
 func runSubcommand(ctx context.Context, c *cobra.Command, args []string) (*mcpsdk.CallToolResult, result, error) {
 	var buf bytes.Buffer
 	c.SetOut(&buf)
@@ -362,10 +569,10 @@ func ensureServeRunning(cmd *cobra.Command, host, port, dataDir string) error {
 func NewMCPCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "mcp",
-		Short: "Run an MCP server over stdio exposing tld CRUD + validate tools",
+		Short: "Run an MCP server over stdio exposing tld CRUD, view, query & render tools",
 		Long: `Start a Model Context Protocol server on stdio.
 
-Exposes tld's CRUD commands (add, connect, remove, rename, update) and validate as MCP tools.
+Exposes tld's CRUD commands (add, connect, remove, rename, update), view lifecycle (create, rename, set-level, delete), read/query commands (list, inspect), render, validate, and pull as MCP tools.
 
 If a 'tld serve' instance is already running, only the MCP server is started.
 Otherwise, 'tld serve' is launched in the background first, then the MCP server starts on stdio.
@@ -394,6 +601,8 @@ Accepts the same --host, --port, --data-dir flags as 'tld serve'.`,
 
 			server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "tld", Version: "0.1.0"}, nil)
 			registerTools(server, cmd, wdir, format, compact, dataDir)
+			registerViewTools(server, wdir, format, compact, dataDir)
+			registerQueryTools(server, wdir, format, compact, dataDir)
 			addPullTool(server, wdir)
 
 			return server.Run(cmd.Context(), &mcpsdk.StdioTransport{})

@@ -26,6 +26,16 @@ type App struct {
 	InitializedData bool
 	Resources       ResourceCounts
 	Handler         http.Handler
+	shutdown        func(context.Context) error
+}
+
+// Shutdown stops background work owned by the server, such as supervised
+// watchers. It is safe to call more than once.
+func (a *App) Shutdown(ctx context.Context) error {
+	if a == nil || a.shutdown == nil {
+		return nil
+	}
+	return a.shutdown(ctx)
 }
 
 type ResourceCounts struct {
@@ -112,7 +122,6 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 
 	publicURL := o.PublicURL
 	allowedOrigins := o.AllowedOrigins
-	rerankerEndpoint := ""
 	if o.Config != nil {
 		if publicURL == "" {
 			publicURL = o.Config.Serve.PublicURL
@@ -120,14 +129,13 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 		if len(allowedOrigins) == 0 {
 			allowedOrigins = o.Config.Serve.AllowedOrigins
 		}
-		rerankerEndpoint = o.Config.Serve.PopulateRerankerEndpoint
 	}
 	srv, err := server.NewWithOptions(sqliteStore, staticFS, localWorkspaceID, server.Options{
-		DataDir:                  dataDir,
-		WorkspaceDir:             o.WorkspaceDir,
-		PublicURL:                publicURL,
-		AllowedOrigins:           allowedOrigins,
-		PopulateRerankerEndpoint: rerankerEndpoint,
+		DataDir:        dataDir,
+		WorkspaceDir:   o.WorkspaceDir,
+		PublicURL:      publicURL,
+		AllowedOrigins: allowedOrigins,
+		Config:         o.Config,
 	})
 	if err != nil {
 		return nil, err
@@ -145,7 +153,8 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 			Elements:   elements,
 			Connectors: connectors,
 		},
-		Handler: srv.Routes(),
+		Handler:  srv.Routes(),
+		shutdown: srv.Shutdown,
 	}, nil
 }
 

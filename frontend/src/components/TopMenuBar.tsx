@@ -22,7 +22,6 @@ import logoMarkUrl from "../assets/logo-mark.svg"
 import { useAccentColor } from "../context/ThemeContext"
 import { hexToRgba } from "../constants/colors"
 import AppearanceSettings from "../pages/AppearanceSettings"
-import ExperimentalSettings from "../pages/ExperimentalSettings"
 import UpdateSettings from "../pages/UpdateSettings"
 import { isWailsApp, isWailsMac, isWailsWindows } from "../config/runtime"
 import WindowsWindowControls from "./WindowsWindowControls"
@@ -56,6 +55,14 @@ const InventoryIcon = ({ size = 22 }: { size?: number }) => (
   </svg>
 )
 
+const RepositoriesIcon = ({ size = 22 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22.5z" />
+    <path d="M4 4.5A2.5 2.5 0 0 0 6.5 7H20" />
+    <path d="M9 12h7" />
+  </svg>
+)
+
 interface Props extends TopMenuBarSlots {
   children?: React.ReactNode
   hideMobileBar?: boolean
@@ -65,13 +72,14 @@ type NavItem = {
   label: string
   path: string
   icon: (props: { size?: number }) => JSX.Element
-  shortcutKey: "1" | "2" | "3"
+  shortcutKey: "1" | "2" | "3" | "4"
 }
 
 const NAV_ITEMS: NavItem[] = [
   { label: "Editor", path: "/", icon: PencilIcon, shortcutKey: "1" },
   { label: "Diagrams", path: "/views", icon: FolderTreeIcon, shortcutKey: "2" },
   { label: "Inventory", path: "/inventory", icon: InventoryIcon, shortcutKey: "3" },
+  { label: "Repositories", path: "/repositories", icon: RepositoriesIcon, shortcutKey: "4" },
 ]
 
 const NAV_SHORTCUT_PATHS: ReadonlyMap<string, string> = new Map(
@@ -188,7 +196,6 @@ export default function TopMenuBar({
           <PopoverBody p={4} overflowY="auto" flex={1} minH={0}>
             <Flex direction="column" gap={5}>
               <AppearanceSettings compact />
-              <ExperimentalSettings compact />
               {isWailsApp && <UpdateSettings compact />}
             </Flex>
           </PopoverBody>
@@ -476,6 +483,7 @@ export default function TopMenuBar({
             { label: "Editor", path: "/", icon: PencilIcon },
             { label: "Diagrams", path: "/views", icon: FolderTreeIcon },
             { label: "Inventory", path: "/inventory", icon: InventoryIcon },
+            { label: "Repositories", path: "/repositories", icon: RepositoriesIcon },
           ].map((item) => {
             const Icon = item.icon
             const active = isActive(item.path)

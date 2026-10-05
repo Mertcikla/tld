@@ -5,6 +5,7 @@ import type { NeighbourNode } from './types'
 import { chunkNodes, toCompactLevel } from './utils'
 import { RelationshipCard } from './RelationshipCard'
 import { ConnectionIndicator } from './ConnectionIndicator'
+import { resolveElementIconUrl } from '../../utils/elementIcon'
 
 interface ElementInspectorProps {
   selectedElement: LibraryElement | null | undefined
@@ -43,6 +44,9 @@ export function ElementInspector({
   const colSpacing = maxCompactLevel >= 3 ? 2 : maxCompactLevel >= 2 ? 3 : maxCompactLevel >= 1 ? 5 : 8
   const nodeSpacing = maxCompactLevel >= 2 ? 1 : maxCompactLevel >= 1 ? 2 : 3
 
+  const logoFor = (element: LibraryElement | null | undefined) =>
+    resolveElementIconUrl(element?.logo_url, element?.technology_connectors) ?? undefined
+
   return (
     <Flex direction="column" align="center">
       {topNodes.length > 0 && (
@@ -56,6 +60,7 @@ export function ElementInspector({
                     name={node.element.name}
                     type={node.element.kind || ''}
                     technology={node.element.technology || ''}
+                    logoUrl={logoFor(node.element)}
                     borderColor={TYPE_COLORS[node.element.kind || ''] || 'gray'}
                     compactLevel={maxCompactLevel}
                     onClick={() => onSelectRow(`element:${node.element.id}`)}
@@ -80,6 +85,7 @@ export function ElementInspector({
                       name={node.element.name}
                       type={node.element.kind || ''}
                       technology={node.element.technology || ''}
+                      logoUrl={logoFor(node.element)}
                       borderColor={TYPE_COLORS[node.element.kind || ''] || 'gray'}
                       compactLevel={leftCompactLevel}
                       onClick={() => onSelectRow(`element:${node.element.id}`)}
@@ -99,6 +105,7 @@ export function ElementInspector({
             name={selectedElement?.name || ''}
             type={selectedElement?.kind || ''}
             technology={selectedElement?.technology || ''}
+            logoUrl={logoFor(selectedElement)}
             borderColor={accent}
             shadow={cardShadow}
             compactLevel={0}
@@ -117,6 +124,7 @@ export function ElementInspector({
                       name={node.element.name}
                       type={node.element.kind || ''}
                       technology={node.element.technology || ''}
+                      logoUrl={logoFor(node.element)}
                       borderColor={TYPE_COLORS[node.element.kind || ''] || 'gray'}
                       compactLevel={rightCompactLevel}
                       onClick={() => onSelectRow(`element:${node.element.id}`)}
@@ -141,6 +149,7 @@ export function ElementInspector({
                     name={node.element.name}
                     type={node.element.kind || ''}
                     technology={node.element.technology || ''}
+                    logoUrl={logoFor(node.element)}
                     borderColor={TYPE_COLORS[node.element.kind || ''] || 'gray'}
                     compactLevel={maxCompactLevel}
                     onClick={() => onSelectRow(`element:${node.element.id}`)}

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/completion"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
@@ -49,12 +50,28 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 				return err
 			}
 
+			if output != "" {
+				if err := os.WriteFile(output, []byte(content), 0600); err != nil {
+					return fmt.Errorf("write output: %w", err)
+				}
+			}
+			// The local --format flag shadows the global one, so honor a global
+			// JSON request only when the local flag was not set explicitly.
+			if cmdutil.WantsJSONFromCmd(cmd) && !cmd.Flags().Changed("format") {
+				return cmdutil.WriteJSON(cmd.OutOrStdout(), cmdutil.CompactFromCmd(cmd), cmdutil.JSONOutput{
+					Command: "render",
+					Status:  "ok",
+					Extra: map[string]any{
+						"view":    viewRef,
+						"format":  "mermaid",
+						"content": content,
+						"output":  output,
+					},
+				})
+			}
 			if output == "" {
 				_, _ = fmt.Fprint(cmd.OutOrStdout(), content)
 				return nil
-			}
-			if err := os.WriteFile(output, []byte(content), 0600); err != nil {
-				return fmt.Errorf("write output: %w", err)
 			}
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "wrote %s\n", output)
 			return nil

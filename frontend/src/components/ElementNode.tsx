@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { Handle, Position, useStore } from 'reactflow'
 import { Box, Flex, Text, Tooltip, HStack, Button, Divider, Input, VStack, Portal } from '@chakra-ui/react'
 import { LinkIcon } from '@chakra-ui/icons'
@@ -9,6 +9,7 @@ import { ElementContainer } from './NodeContainer'
 import { ElementBody } from './NodeBody'
 import { resolveElementIconUrl } from '../utils/elementIcon'
 import { ZoomInIcon, ZoomOutIcon, TrashIcon as TrashSvg, DrawIcon as EditSvg } from './Icons'
+import { KbdHint, ShortcutHint } from './PanelUI'
 import { vscodeBridge } from '../lib/vscodeBridge'
 import { openExternalUrl } from '../lib/desktop'
 import { parseSourceLink, sourceAnchorLabel } from '../utils/sourceLinks'
@@ -22,6 +23,50 @@ import {
   HANDLE_SLOT_CENTER_INDEX,
   HANDLE_SLOT_COUNT,
 } from '../utils/edgeDistribution'
+import {
+  ELEMENT_NAME_FONT_STEPS,
+  ELEMENT_NAME_INSET_RATIO,
+  ELEMENT_NAME_LINE_HEIGHT,
+  fitElementName,
+  measureTextWithCanvas,
+  subscribeElementNameFontsChanged,
+} from '../utils/elementName'
+
+const ELEMENT_NODE_WIDTH = 180
+const ELEMENT_NODE_HEIGHT = 85
+const ELEMENT_NODE_BORDER = 1
+const ELEMENT_NAME_BODY_TOP = 36
+const ELEMENT_NAME_BODY_TOP_COMPACT = 8
+const ELEMENT_NAME_BODY_BOTTOM = 8
+const ELEMENT_NAME_TYPE_LINE = 11 * 1.1
+const ELEMENT_NAME_TECH_LINE = 12 * 1.1
+const ELEMENT_BODY_GAP = 4
+const ELEMENT_NAME_MIN_FONT = 13
+const ELEMENT_NAME_FONT_SIZES = ELEMENT_NAME_FONT_STEPS.filter((size) => size <= 18)
+
+function computeElementNameFit(
+  name: string,
+  kind: string | null | undefined,
+  hasLogo: boolean,
+  hasTechnology: boolean,
+) {
+  const maxWidth = (ELEMENT_NODE_WIDTH - ELEMENT_NODE_BORDER * 2) * (1 - ELEMENT_NAME_INSET_RATIO)
+  const bodyTop = hasLogo ? ELEMENT_NAME_BODY_TOP : ELEMENT_NAME_BODY_TOP_COMPACT
+  let band = ELEMENT_NODE_HEIGHT - ELEMENT_NODE_BORDER * 2 - bodyTop - ELEMENT_NAME_BODY_BOTTOM
+  if (kind) band -= ELEMENT_NAME_TYPE_LINE + ELEMENT_BODY_GAP
+  if (hasTechnology) band -= ELEMENT_NAME_TECH_LINE + ELEMENT_BODY_GAP
+  const hasRoomForBand = band >= ELEMENT_NAME_MIN_FONT * ELEMENT_NAME_LINE_HEIGHT
+  return fitElementName({
+    name,
+    maxWidth,
+    maxLines: 2,
+    fontSizes: ELEMENT_NAME_FONT_SIZES,
+    lineHeight: ELEMENT_NAME_LINE_HEIGHT,
+    bandHeight: hasRoomForBand ? band : undefined,
+    measureKey: 'editor',
+    measure: measureTextWithCanvas,
+  })
+}
 
 function VscodeCodePreview({
   filePath,
@@ -166,8 +211,6 @@ interface NodeData extends PlacedElement {
   reconnectCandidates?: readonly { handleId: string; edgeId: string; endpoint: 'source' | 'target'; selected: boolean }[]
   isConnectorHighlighted?: boolean
   isMultiSelected?: boolean
-  versionChangeType?: 'added' | 'updated' | 'deleted' | 'initialized'
-  versionLineDelta?: { added: number; removed: number }
   pendingCreate?: PendingElementCreateData
 }
 
@@ -600,6 +643,16 @@ function ElementNode({ data, selected }: Props) {
       ? (data.technology || (technologyLinkCount > 1 ? data.technology_connectors.map((l) => l.label).join(', ') : undefined))
       : undefined
 
+  const [, bumpNameFontGeneration] = useReducer((value: number) => value + 1, 0)
+  useEffect(
+    () => subscribeElementNameFontsChanged(bumpNameFontGeneration),
+    [bumpNameFontGeneration],
+  )
+
+  const nameFit = data.pendingCreate || !data.name
+    ? null
+    : computeElementNameFit(data.name, data.kind, !!nodeLogoUrl, !!technologyText)
+
   const [menuVisible, setMenuVisible] = useState(false)
   const [isDraggedOver, setIsDraggedOver] = useState(false)
   const menuRef = useRef<{ type: 'in' | 'out', links: ViewConnector[] } | null>(null)
@@ -749,13 +802,6 @@ function ElementNode({ data, selected }: Props) {
   const isCreateConnectMode = !!data.isCreateConnectMode
 
   const bodyCursor = isPending ? 'grab' : isSource ? 'crosshair' : isTarget ? 'cell' : 'pointer'
-  const versionColor = data.versionChangeType === 'added'
-    ? 'green.300'
-    : data.versionChangeType === 'deleted'
-      ? 'red.300'
-      : data.versionChangeType
-        ? 'yellow.300'
-        : undefined
 
   return (
     <ElementContainer
@@ -771,12 +817,12 @@ function ElementNode({ data, selected }: Props) {
       isConnectorHighlighted={!!data.isConnectorHighlighted}
       hasStack={hasChild}
       kind={data.kind}
-      w="180px"
-      h="85px"
+      w={`${ELEMENT_NODE_WIDTH}px`}
+      h={`${ELEMENT_NODE_HEIGHT}px`}
       cursor={bodyCursor}
-      outline={isDraggedOver || versionColor ? '2px solid' : undefined}
-      outlineColor={isDraggedOver ? 'var(--accent)' : versionColor}
-      outlineOffset={isDraggedOver || versionColor ? '2px' : undefined}
+      outline={isDraggedOver ? '2px solid' : undefined}
+      outlineColor={isDraggedOver ? 'var(--accent)' : undefined}
+      outlineOffset={isDraggedOver ? '2px' : undefined}
       borderTopWidth={data.layerHighlightColor ? '2px' : undefined}
       borderTopColor={data.layerHighlightColor ?? undefined}
       onClick={handleBodyClick}
@@ -960,9 +1006,11 @@ function ElementNode({ data, selected }: Props) {
         technology={technologyText}
         logoUrl={undefined}
         nameSize="18px"
-        nameNoOfLines={2}
+        nameLines={nameFit?.lines}
+        nameFontSize={nameFit?.fontSize}
         h="100%"
         overflow="hidden"
+        px={`${ELEMENT_NAME_INSET_RATIO * 50}%`}
         pt={nodeLogoUrl ? 9 : 2}
         pb={2}
       />
@@ -1034,7 +1082,7 @@ function ElementNode({ data, selected }: Props) {
       )}
 
       {/* Code Preview Icon/Link in Bottom Right Corner */}
-      {!isPending && !window.__TLD_VSCODE__ && ((data.repo || data.url) || data.versionLineDelta) && (
+      {!isPending && !window.__TLD_VSCODE__ && (data.repo || data.url) && (
         <HStack
           position="absolute"
           bottom="8px"
@@ -1043,26 +1091,6 @@ function ElementNode({ data, selected }: Props) {
           spacing={1}
           align="center"
         >
-          {data.versionLineDelta && (
-            <HStack
-              spacing={1}
-              h="18px"
-              px={1.5}
-              rounded="md"
-              bg="rgba(var(--bg-main-rgb), 0.86)"
-              border="1px solid"
-              borderColor="whiteAlpha.300"
-              boxShadow="0 4px 12px rgba(0,0,0,0.28)"
-              pointerEvents="none"
-            >
-              {data.versionLineDelta.added > 0 && (
-                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="green.300">+{data.versionLineDelta.added}</Text>
-              )}
-              {data.versionLineDelta.removed > 0 && (
-                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="red.300">-{data.versionLineDelta.removed}</Text>
-              )}
-            </HStack>
-          )}
           {(data.repo || data.url) && !window.__TLD_VSCODE__ && (
             <Tooltip
               label={
@@ -1112,26 +1140,6 @@ function ElementNode({ data, selected }: Props) {
           spacing={1}
           align="center"
         >
-          {data.versionLineDelta && (
-            <HStack
-              spacing={1}
-              h="18px"
-              px={1.5}
-              rounded="md"
-              bg="rgba(var(--bg-main-rgb), 0.86)"
-              border="1px solid"
-              borderColor="whiteAlpha.300"
-              boxShadow="0 4px 12px rgba(0,0,0,0.28)"
-              pointerEvents="none"
-            >
-              {data.versionLineDelta.added > 0 && (
-                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="green.300">+{data.versionLineDelta.added}</Text>
-              )}
-              {data.versionLineDelta.removed > 0 && (
-                <Text fontSize="9px" fontWeight="800" lineHeight="1" color="red.300">-{data.versionLineDelta.removed}</Text>
-              )}
-            </HStack>
-          )}
           <VscodeCodePreview
             filePath={data.file_path}
             fallbackSymbolName={data.name}
@@ -1144,31 +1152,31 @@ function ElementNode({ data, selected }: Props) {
       {!isPending && selected && !isSource && (
         <HStack
           position="absolute"
-          top="-20px"
-          left="0"
+          top="-28px"
+          left="-14px"
           right="0"
-          spacing={0}
+          spacing={1.5}
           justify="space-evenly"
           pointerEvents="none"
           zIndex={10}
           opacity={data.isCanvasMoving ? 0 : 0.6}
           transition="opacity 0.2s"
         >
-          <HStack spacing={1.5}>
-            <Text color="whiteAlpha.600" fontSize="8px" fontWeight="bold">E</Text>
+          <HStack spacing={1}>
+            <KbdHint ml={0}>E</KbdHint>
             <Text color="whiteAlpha.400" fontSize="8px">Connect</Text>
           </HStack>
-          <HStack spacing={1.5}>
-            <Text color="whiteAlpha.600" fontSize="8px" fontWeight="bold">R</Text>
+          <HStack spacing={1}>
+            <KbdHint ml={0}>R</KbdHint>
             <Text color="whiteAlpha.400" fontSize="8px">Remove</Text>
           </HStack>
-          <HStack spacing={1.5}>
-            <Text color="whiteAlpha.600" fontSize="8px" fontWeight="bold">⇧R</Text>
+          <HStack spacing={1}>
+            <ShortcutHint keys={['shift', 'R']} />
             <Text color="whiteAlpha.400" fontSize="8px">Delete</Text>
           </HStack>
           {!isMultiSelected && (
-            <HStack spacing={1.5}>
-              <Text color="whiteAlpha.600" fontSize="8px" fontWeight="bold">T</Text>
+            <HStack spacing={1}>
+              <KbdHint ml={0}>T</KbdHint>
               <Text color="whiteAlpha.400" fontSize="8px">Tech</Text>
             </HStack>
           )}
@@ -1388,8 +1396,6 @@ function arePropsEqual(prev: Props, next: Props) {
     p.selectedHandleIds === n.selectedHandleIds &&
     p.reconnectCandidates === n.reconnectCandidates &&
     p.isConnectorHighlighted === n.isConnectorHighlighted &&
-    p.versionChangeType === n.versionChangeType &&
-    p.versionLineDelta === n.versionLineDelta &&
     p.parentViewId === n.parentViewId
   )
 }

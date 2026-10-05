@@ -16,6 +16,7 @@ export interface InventoryRow {
   name: string
   subtitle: string
   tags: string[]
+  filterTags: string[]
   updatedAt: string
   typeLabel: string
   usageLabel: string
@@ -110,6 +111,7 @@ export function buildInventoryRows(
       name: element.name,
       subtitle: [element.kind, element.technology].filter(Boolean).join(' / ') || 'element',
       tags: visibleTags,
+      filterTags: element.tags,
       updatedAt: element.updated_at,
       typeLabel: element.kind || 'element',
       usageLabel: `${connectorCount} connectors${element.has_view ? ', child view' : ''}`,
@@ -139,6 +141,7 @@ export function buildInventoryRows(
       name: view.name,
       subtitle: view.level_label || (view.parent_view_id == null ? 'root view' : 'view'),
       tags: view.tags ?? [],
+      filterTags: view.tags ?? [],
       updatedAt: view.updated_at,
       typeLabel: view.level_label || 'view',
       usageLabel: `${counts.placements} elements, ${counts.connectors} connectors`,
@@ -152,7 +155,7 @@ export function buildInventoryRows(
     const sourceName = elementById.get(connector.source_element_id)?.name ?? `Element ${connector.source_element_id}`
     const targetName = elementById.get(connector.target_element_id)?.name ?? `Element ${connector.target_element_id}`
     const viewName = viewById.get(connector.view_id)?.name ?? `View ${connector.view_id}`
-    const name = connector.label || `${sourceName} -> ${targetName}`
+    const name = connector.label || ''
     const qualityFlags = [
       ...((connector.tags ?? []).length === 0 ? ['untagged'] : []),
       ...(!connector.description ? ['missing description'] : []),
@@ -176,6 +179,7 @@ export function buildInventoryRows(
       name,
       subtitle: `${sourceName} -> ${targetName}`,
       tags: connector.tags ?? [],
+      filterTags: connector.tags ?? [],
       updatedAt: connector.updated_at,
       typeLabel: connector.relationship || connector.direction || 'connector',
       usageLabel: viewName,
@@ -200,7 +204,7 @@ export function filterInventoryRows(rows: InventoryRow[], filters: InventoryFilt
   return rows.filter((row) => {
     if (filters.type !== 'all' && `${row.objectType}s` !== filters.type) return false
     if (query && !row.searchableText.includes(query)) return false
-    if (filters.tags.length > 0 && !filters.tags.some((tag) => row.tags.includes(tag))) return false
+    if (filters.tags.length > 0 && !filters.tags.some((tag) => row.filterTags.includes(tag))) return false
     if (filters.kind && row.typeLabel !== filters.kind) return false
     if (filters.qualities.length > 0 && !filters.qualities.some((q) => row.qualityFlags.includes(q))) return false
     return true

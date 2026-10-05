@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mertcikla/tld/v2/internal/analyzer"
+	"github.com/mertcikla/tld/v2/internal/codeindex/symbolcheck"
 	"github.com/mertcikla/tld/v2/internal/git"
 	"github.com/mertcikla/tld/v2/internal/ignore"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -27,9 +27,9 @@ func CheckSymbols(ctx context.Context, ws *workspace.Workspace, repoCtx RepoScop
 		if _, err := os.Stat(absPath); err != nil {
 			continue
 		}
-		found, err := analyzer.HasSymbol(ctx, absPath, element.Symbol)
+		found, err := symbolcheck.HasSymbol(ctx, absPath, element.Symbol)
 		if err != nil {
-			if analyzer.IsUnsupportedLanguage(err) {
+			if symbolcheck.IsUnsupported(err) {
 				continue
 			}
 			failures = append(failures, fmt.Sprintf("elements.yaml[%s]: %v", ref, err))

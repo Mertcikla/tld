@@ -18,14 +18,12 @@ import {
   getVisualHandleSlot,
 } from '../../../utils/edgeDistribution'
 import { buildViewContentLinks, useStore } from '../../../store/useStore'
-import type { WorkspaceVersionFollowTarget, WorkspaceVersionPreview } from '../../../context/WorkspaceVersionContext'
 import {
   Z_CONNECTOR,
   Z_CONNECTOR_LABEL,
   Z_ELEMENT,
   Z_ELEMENT_INTERACTION_SOURCE,
   Z_ELEMENT_LAYER_HIGHLIGHT,
-  Z_ELEMENT_VERSION_PULSE,
 } from '../../../utils/zOrder'
 
 interface ViewDataOptions {
@@ -40,8 +38,6 @@ interface ViewDataOptions {
   hoveredLayerTags: string[] | null
   hoveredLayerColor: string | null
   tagColors: Record<string, Tag>
-  versionPreview?: WorkspaceVersionPreview | null
-  versionFollowTarget?: WorkspaceVersionFollowTarget | null
   // Node-level callbacks (stable refs from parent)
   stableOnZoomIn: (elementId: number) => Promise<void>
   stableOnZoomOut: (elementId: number) => Promise<void>
@@ -65,7 +61,6 @@ function alphaColor(color: string, opacity: number): string {
 // letting structural-sharing fast-path bail out without rebuilding the node.
 const HIDDEN_STYLE: CSSProperties = { opacity: 0.1, pointerEvents: 'none' }
 const SOFT_FOCUS_STYLE: CSSProperties = { opacity: 0.2 }
-const VERSION_DIM_STYLE: CSSProperties = { opacity: 0.1 }
 const EMPTY_ARRAY: readonly never[] = Object.freeze([])
 const EMPTY_NODE_CONNECTION_META = Object.freeze({
   key: '',
@@ -183,8 +178,6 @@ export function useViewData({
   hoveredLayerTags,
   hoveredLayerColor,
   tagColors,
-  versionPreview,
-  versionFollowTarget,
   stableOnZoomIn,
   stableOnZoomOut,
   stableOnNavigateToView,
@@ -456,10 +449,6 @@ export function useViewData({
       const hoveredSet = hoveredLayerTags !== null ? new Set(hoveredLayerTags) : null
       const isClickConnectMode = clickConnectMode !== null
       const isCreateConnectMode = isConnectorCreatePreviewActive || isClickConnectMode || interactionSourceId !== null
-      const versionElementChanges = versionPreview?.elementChanges
-      const versionElementLineDeltas = versionPreview?.elementLineDeltas
-      const versionActive = !!versionPreview
-
       return viewElements.map((obj) => {
         const nodeId = String(obj.element_id)
         const existing = prevNodeMap.get(nodeId)
@@ -469,27 +458,16 @@ export function useViewData({
         const isInactive = isHiddenByLayer || (activeSet !== null && !objTags.some((t) => activeSet.has(t)))
         const isLayerHighlighted = hoveredSet !== null && objTags.some((t) => hoveredSet.has(t))
         const isSoftFocused = hoveredSet !== null && !isLayerHighlighted
-        const versionChangeType = versionElementChanges?.get(obj.element_id)
-        const versionLineDelta = versionElementLineDeltas?.get(obj.element_id)
-        const versionPulseChangeType = versionFollowTarget?.resourceType === 'element' && versionFollowTarget.resourceId === obj.element_id
-          ? versionFollowTarget.changeType ?? versionChangeType
-          : undefined
-        const isDimmedByVersionPreview = versionActive && !versionChangeType
-
-        const newZIndex = versionPulseChangeType
-          ? Z_ELEMENT_VERSION_PULSE
-          : isLayerHighlighted
-            ? Z_ELEMENT_LAYER_HIGHLIGHT
-            : interactionSourceId === obj.element_id
-              ? Z_ELEMENT_INTERACTION_SOURCE
-              : Z_ELEMENT
+        const newZIndex = isLayerHighlighted
+          ? Z_ELEMENT_LAYER_HIGHLIGHT
+          : interactionSourceId === obj.element_id
+            ? Z_ELEMENT_INTERACTION_SOURCE
+            : Z_ELEMENT
         const newStyle = isInactive
           ? HIDDEN_STYLE
           : isSoftFocused
             ? SOFT_FOCUS_STYLE
-            : isDimmedByVersionPreview
-              ? VERSION_DIM_STYLE
-              : undefined
+            : undefined
         const layerHighlightColor = isLayerHighlighted ? (hoveredLayerColor ?? undefined) : undefined
         const position = existing?.dragging ? existing.position : { x: obj.position_x ?? 0, y: obj.position_y ?? 0 }
         const isZoomHovered = hoveredZoomRef.current?.elementId === obj.element_id ? hoveredZoomRef.current.type : null
@@ -533,9 +511,7 @@ export function useViewData({
           existing.data.connectedHandleIds === connectionMeta.connectedHandleIds &&
           existing.data.selectedHandleIds === connectionMeta.selectedHandleIds &&
           existing.data.reconnectCandidates === connectionMeta.reconnectCandidates &&
-          existing.data.isConnectorHighlighted === connectionMeta.isConnectorHighlighted &&
-          existing.data.versionChangeType === versionPulseChangeType &&
-          existing.data.versionLineDelta === versionLineDelta
+          existing.data.isConnectorHighlighted === connectionMeta.isConnectorHighlighted
         ) {
           return existing
         }
@@ -576,8 +552,6 @@ export function useViewData({
             selectedHandleIds: connectionMeta.selectedHandleIds,
             reconnectCandidates: connectionMeta.reconnectCandidates,
             isConnectorHighlighted: connectionMeta.isConnectorHighlighted,
-            versionChangeType: versionPulseChangeType,
-            versionLineDelta,
           },
         }
       })
@@ -588,7 +562,7 @@ export function useViewData({
     stableOnZoomIn, stableOnZoomOut, stableOnNavigateToView, stableOnSelect,
     stableOnInteractionStart, stableOnConnectTo, stableOnStartHandleReconnect, stableOnRemoveElement, stableOnHoverZoom,
     stableOnOpenCodePreview, hoveredZoomRef, activeTags, hiddenLayerTags, hoveredLayerTags, hoveredLayerColor, tagColors,
-    nodeConnectionMetaByElementId, setRfNodes, versionPreview, versionFollowTarget,
+    nodeConnectionMetaByElementId, setRfNodes,
   ])
 
   // ── Derive RF connectors ────────────────────────────────────────────────────────
@@ -596,9 +570,6 @@ export function useViewData({
     const hiddenSet = hiddenLayerTags.length > 0 ? new Set(hiddenLayerTags) : null
     const activeSet = activeTags.length > 0 ? new Set(activeTags) : null
     const hoveredSet = hoveredLayerTags !== null ? new Set(hoveredLayerTags) : null
-    const versionConnectorChanges = versionPreview?.connectorChanges
-    const versionActive = !!versionPreview
-
     setRfEdges((prevConnectors) => {
       const prevEdgeMap = new Map(prevConnectors.map((e) => [e.id, e]))
 
@@ -625,13 +596,11 @@ export function useViewData({
           !srcTags.some((t) => hoveredSet.has(t)) ||
           !tgtTags.some((t) => hoveredSet.has(t))
         )
-        const versionChangeType = versionConnectorChanges?.get(e.id)
-        const isDimmedByVersionPreview = versionActive && !versionChangeType
-        const edgeOpacity = isInactive || isDimmedByVersionPreview ? 0.1 : isSoftFocused ? 0.2 : 0.8
-        const markerOpacity = isInactive || isDimmedByVersionPreview ? 0.1 : isSoftFocused ? 0.2 : 1
+        const edgeOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 0.8
+        const markerOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 1
         const newZIndex = Z_CONNECTOR
         const pointerEvents = (isInactive || isSoftFocused) ? 'none' : 'auto'
-        const labelBgOpacity = isInactive || isDimmedByVersionPreview ? 0.1 : isSoftFocused ? 0.2 : 0.95
+        const labelBgOpacity = isInactive ? 0.1 : isSoftFocused ? 0.2 : 0.95
 
         // Structural sharing: when all user-visible outputs match prev exactly, reuse prev ref.
         // We match on the underlying connector ref plus every computed visibility/layout value.
@@ -649,8 +618,7 @@ export function useViewData({
           (existing.data as { sourceGroupIndex?: number }).sourceGroupIndex === layout.sourceGroupIndex &&
           (existing.data as { targetGroupIndex?: number }).targetGroupIndex === layout.targetGroupIndex &&
           (existing.data as { sourceGroupCount?: number }).sourceGroupCount === layout.sourceGroupCount &&
-          (existing.data as { targetGroupCount?: number }).targetGroupCount === layout.targetGroupCount &&
-          (existing.data as { versionChangeType?: string }).versionChangeType === versionChangeType
+          (existing.data as { targetGroupCount?: number }).targetGroupCount === layout.targetGroupCount
         ) {
           return existing
         }
@@ -676,7 +644,6 @@ export function useViewData({
             targetHandleSide: layout.targetHandleSide,
             sourceHandleSlot: layout.sourceHandleSlot,
             targetHandleSlot: layout.targetHandleSlot,
-            versionChangeType,
             labelZIndex: Z_CONNECTOR_LABEL,
           },
 
@@ -690,7 +657,7 @@ export function useViewData({
         }
       })
     })
-  }, [connectorLayouts, activeTags, hiddenLayerTags, hoveredLayerTags, elementMap, setRfEdges, versionPreview])
+  }, [connectorLayouts, activeTags, hiddenLayerTags, hoveredLayerTags, elementMap, setRfEdges])
 
   return {
     // State

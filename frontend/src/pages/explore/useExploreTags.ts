@@ -73,11 +73,19 @@ export function useExploreTags(data: ExploreData | null, sharedToken?: string): 
     let cancelled = false
     const tree = data.tree ?? []
     const rootIds = new Set(tree.filter((node) => !node.parent_view_id).map((node) => node.id))
-    const viewIds = tree
-      .filter((node) => rootIds.has(node.id) || (data.views[String(node.id)]?.placements ?? []).some((placement) =>
-        (placement.tags ?? []).some(isElementGroupTag)
-      ))
-      .map((node) => node.id)
+    // The explore layout nests child diagrams inside their owner nodes, so only
+    // root diagrams appear in `tree`. A group layer can live in any view, so
+    // discover the views that actually contain a group tag from the full content
+    // map rather than from the tree alone, then union in the root views.
+    const viewIdSet = new Set<number>(rootIds)
+    for (const [key, view] of Object.entries(data.views ?? {})) {
+      const id = Number(key)
+      if (Number.isNaN(id)) continue
+      if ((view?.placements ?? []).some((placement) => (placement.tags ?? []).some(isElementGroupTag))) {
+        viewIdSet.add(id)
+      }
+    }
+    const viewIds = Array.from(viewIdSet)
     const fetchTagData = async () => {
       try {
         const [diagramLayers, colors] = await Promise.all([

@@ -64,10 +64,6 @@ import {
   type MermaidMarkdownBlockInfo,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/mermaid_service_pb'
 import {
-  WorkspaceVersionService,
-  type WorkspaceVersionInfo,
-} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_version_service_pb'
-import {
   OrgService,
   ListTagColorsResponseSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/org_service_pb'
@@ -78,8 +74,20 @@ import {
   AddCommentResponseSchema,
   ListReactionsResponseSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/collaboration_service_pb'
+import {
+  ChangeKind,
+  CodeFactService,
+  FactKind,
+  MapperService,
+  RepositoryService,
+  WatchService,
+  type Snapshot as CodeSnapshotProto,
+  type SnapshotDiff as SnapshotDiffProto,
+  type ImpactDiagram as ImpactDiagramProto,
+  type CodeFact,
+} from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import { transport } from './transport'
-import { apiUrl, fetchApiAsset, isWailsApp } from '../config/runtime'
+import { apiUrl, fetchApiAsset } from '../config/runtime'
 import {
   normalizeConnectorRouteStyle,
   normalizeLogoUrl,
@@ -94,16 +102,6 @@ export {
 
 const localWorkspaceOrgId = '11111111-1111-1111-1111-111111111111'
 const orgIdOrLocal = (orgId?: string | null) => orgId || localWorkspaceOrgId
-
-export function watchWebSocketUrl(): string {
-  const baseUrl = isWailsApp ? window.__TLD_SERVER_URL__ : window.location.href
-  if (isWailsApp && !baseUrl) {
-    throw new Error('Desktop server URL is not configured')
-  }
-  const url = new URL(apiUrl('/watch/ws'), baseUrl)
-  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  return url.toString()
-}
 
 async function responseError(res: Response, fallback: string): Promise<Error> {
   const body = await res.json().catch(() => null) as { error?: string; message?: string } | null
@@ -136,127 +134,262 @@ export interface DependenciesResponse {
   totalCount?: number
 }
 
-export interface WatchRepository {
-  id: number
-  remote_url: string | null
-  repo_root: string
-  display_name: string
-  branch: string | null
-  head_commit: string | null
-  identity_status: string
-}
-
-export interface WatchLock {
-  id: number
-  repository_id: number
-  pid: number
-  started_at: string
-  heartbeat_at: string
-  status: 'active' | 'paused' | 'stopping' | 'stale' | 'released' | string
-}
-
-export interface WatchStatus {
-  active: boolean
-  repository?: WatchRepository
-  lock?: WatchLock
-  connected_clients?: number
-}
-
-export interface WatchRepresentationSummary {
-  repository_id: number
-  raw_graph_hash?: string
-  filter_settings_hash?: string
-  representation_hash?: string
-  last_status?: string
-  last_started_at?: string
-  last_finished_at?: string
-  elements_created: number
-  elements_updated: number
-  connectors_created: number
-  connectors_updated: number
-  views_created: number
-  diffs?: WatchDiff[]
-}
-
-export interface WatchContextActionResponse {
-  repository_id: number
-  action: 'show' | 'hide' | 'clean' | string
-  policies_created: number
-  policies_updated: number
-  policies_deactivated: number
-  owners_affected: number
-  tier_before: number
-  tier_after: number
-  max_tier: number
-  elements_added: number
-  connectors_added: number
-  views_added: number
-  elements_removed: number
-  connectors_removed: number
-  views_removed: number
-  representation: {
-    repository_id: number
-    representation_run_id: number
-    filter_run_id: number
-    raw_graph_hash: string
-    filter_settings_hash: string
-    representation_hash: string
-  }
-  summary: WatchRepresentationSummary
-}
-
-export interface WatchEvent {
-  type: string
-  repository_id?: number
-  message?: string
-  at: string
-  data?: unknown
-  phase?: string
-  watcher_mode?: string
-  languages?: string[]
-  changed_files?: number
-  warnings?: string[]
-}
-
-export interface WatchVersion {
-  id: number
-  repository_id: number
-  commit_hash: string
-  commit_message?: string
-  parent_commit_hash?: string
-  branch?: string
-  representation_hash: string
-  workspace_version_id?: number
-  created_at: string
-}
-
-export interface WatchDiff {
-  id: number
-  version_id: number
-  owner_type: string
-  owner_key: string
-  change_type: string
-  before_hash?: string
-  after_hash?: string
-  resource_type?: string
-  resource_id?: number
-  language?: string
-  summary?: string
-  added_lines?: number
-  removed_lines?: number
-}
-
-export interface WorkspaceVersion {
+// IndexedRepository is a repository known to the in-process codeindex engine,
+// with a summary of its latest published snapshot.
+export interface IndexedRepository {
   id: string
-  version_id: string
-  source: string
-  parent_version_id?: string
-  view_count: number
-  element_count: number
-  connector_count: number
-  description?: string
-  workspace_hash?: string
-  created_at: string
+  root: string
+  latestSnapshotId: string
+  latestCreatedUnix: number
+  gitRevision: string
+  gitBranch: string
+  facts: number
+  chunks: number
+  edges: number
+  sources: number
+  remoteUrl: string
+  name: string
+  managed: boolean
+}
+
+export interface RepositoryMapConfiguration {
+  resolution?: number
+  minGroupSize?: number
+  minRootGroups?: number
+  maxRootGroups?: number
+  maxChildren?: number
+  maxDepth?: number
+  maxLeafFiles?: number
+  maxConnectorsPerView?: number
+  maxLeafConnectorsPerView?: number
+  includeExternalImports?: boolean
+}
+export interface RepositoryRemote {
+  name: string
+  fetchUrls: string[]
+  pushUrls: string[]
+}
+export interface RepositorySettings {
+  mapValidationError?: string
+  mapDefaults: RepositoryMapConfiguration
+  mapOverrides: RepositoryMapConfiguration
+  effectiveMap: RepositoryMapConfiguration
+  remotes: RepositoryRemote[]
+  isGit: boolean
+  currentBranch: string
+  headSha: string
+}
+
+export type SnapshotChangeKind = 'added' | 'removed' | 'modified' | 'unchanged'
+
+export interface CodeSnapshotProject {
+  root: string
+  language: string
+  configPath: string
+}
+
+// CodeSnapshot is one immutable indexed revision of a repository.
+export interface CodeSnapshot {
+  id: string
+  repositoryId: string
+  createdUnix: number
+  gitRevision: string
+  gitBranch: string
+  ingestionStatus: string
+  projects: CodeSnapshotProject[]
+  warnings: string[]
+  provenance?: string
+  contentFingerprint?: string
+  commitMessage?: string
+  statistics?: { facts: number; edges: number; sources: number; chunks: number }
+}
+
+export interface SnapshotSourceChange {
+  path: string
+  change: SnapshotChangeKind
+  fromHash: string
+  toHash: string
+  linesAdded?: number
+  linesRemoved?: number
+}
+
+export interface SnapshotDeltaCounts {
+  added: number
+  removed: number
+  modified: number
+}
+
+export interface SnapshotDiff {
+  fromSnapshotId: string
+  toSnapshotId: string
+  fromGitRevision: string
+  toGitRevision: string
+  sources: SnapshotSourceChange[]
+  facts: SnapshotDeltaCounts
+  edgeFacts: SnapshotDeltaCounts
+  factDetails?: ImpactSymbols
+}
+
+export interface ImpactSymbols {
+  added: CodeFact[]
+  removed: CodeFact[]
+  modified: CodeFact[]
+}
+export interface ImpactFileNode {
+  key: string
+  path: string
+  name: string
+  change: SnapshotSourceChange['change'] | 'unchanged'
+  context: boolean
+  elementId: number
+  symbols: ImpactSymbols
+  x: number
+  y: number
+}
+export interface RepositoryImpact {
+  repositoryId: string
+  comparisonKey: string
+  viewId: number
+  diff: SnapshotDiff
+  nodes: ImpactFileNode[]
+  edges: { fromKey: string; toKey: string; change: SnapshotSourceChange['change'] | 'unchanged'; weight: number }[]
+  radius: number
+  maxRadius: number
+  version: string
+}
+export interface LiveRepositoryImpact {
+  diagram: RepositoryImpact | null
+  watching: boolean
+  error: string
+  gitBranch: string
+  gitRevision: string
+}
+
+// WatchStatus is the exact, shared state of a repository's watcher.
+export interface RepositoryWatchStatus {
+  repositoryId: string
+  running: boolean
+  managed: boolean
+  state: string
+  stage: string
+  ownerKind: string
+  ownerPid: number
+  repoRoot: string
+  gitBranch: string
+  gitRevision: string
+  snapshotId: string
+  contentFingerprint: string
+  changedFiles: number
+  pendingFiles: number
+  startedUnix: number
+  lastScanUnix: number
+  lastScanMs: number
+  heartbeatUnix: number
+  stopRequested: boolean
+  pollIntervalMs: number
+  debounceMs: number
+  error: string
+  cliAvailable: boolean
+  installHint: string
+}
+
+// RepositoryMapProgress reports coarse mapper pipeline progress.
+export interface RepositoryMapProgress {
+  stage: string
+  current: number
+  total: number
+  detail: string
+}
+
+// RepositoryIndexProgress reports coarse indexing progress while adding a repository.
+export interface RepositoryIndexProgress {
+  stage: string
+  current: number
+  total: number
+  detail: string
+}
+
+// RepositoryIndexerRequirement is one external SCIP indexer a repository needs
+// based on the project families discovered in it.
+export interface RepositoryIndexerRequirement {
+  family: string
+  tool: string
+  languages: string[]
+  installed: boolean
+  installHint: string
+}
+
+// RepositoryIndexerCheck is the result of inspecting a repository's required
+// indexers before indexing it.
+export interface RepositoryIndexerCheck {
+  indexers: RepositoryIndexerRequirement[]
+  ready: boolean
+}
+
+// RepositoryMapResult summarizes a completed mapper run.
+export interface RepositoryMapResult {
+  snapshotId?: string
+  runId: string
+  viewId: number
+  facts: number
+  clusters: number
+  bins: number
+  unclustered: number
+  weightedTightness: number
+}
+
+export interface RepositoryCommit {
+  sha: string
+  subject: string
+  author: string
+  authorEmail: string
+  createdUnix: number
+  parents: string[]
+  refs: string[]
+  body: string
+}
+export interface RepositoryPullRequest {
+  title: string
+  url: string
+  baseSha: string
+  headSha: string
+  baseBranch: string
+  headBranch: string
+}
+
+export interface OpenRepositoryPullRequest {
+  number: number
+  title: string
+  url: string
+  baseBranch: string
+  headBranch: string
+}
+
+export interface RepositoryGitHistory {
+  repositoryUrl?: string
+  commits: RepositoryCommit[]
+  branches: { name: string; sha: string }[]
+  headSha: string
+  currentBranch: string
+  hasMore: boolean
+  isGit: boolean
+}
+export interface RepositoryCommitDetails {
+  commit: RepositoryCommit | null
+  files: { path: string; added: number; removed: number; binary: boolean }[]
+}
+export interface CompletedRepositoryMap {
+  result: RepositoryMapResult
+  completedUnix: number
+  configHash: string
+}
+export interface RepositoryMapOptions {
+  snapshotId?: string
+  gitRevision?: string
+  workingTree?: boolean
+  gitBranch?: string
+  signal?: AbortSignal
+  onProgress?: (progress: RepositoryMapProgress) => void
 }
 
 export type SourceEditor = 'zed' | 'vscode'
@@ -301,7 +434,10 @@ const workspaceClient = createClient(WorkspaceService, transport)
 const dependencyClient = createClient(DependencyService, transport)
 const importClient = createClient(ImportService, transport)
 const mermaidClient = createClient(MermaidService, transport)
-const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
+const codeIndexFactClient = createClient(CodeFactService, transport)
+const codeIndexMapperClient = createClient(MapperService, transport)
+const codeIndexRepositoryClient = createClient(RepositoryService, transport)
+const codeIndexWatchClient = createClient(WatchService, transport)
 const orgClient = createClient(OrgService, transport)
 const collaborationClient = createClient(CollaborationService, transport)
 
@@ -320,25 +456,122 @@ export function j<T>(schema: Parameters<typeof toJson>[0], msg: Parameters<typeo
   return toJson(schema, msg, { useProtoFieldName: true, emitDefaultValues: true }) as unknown as T
 }
 
-function timestampToISOString(value?: WorkspaceVersionInfo['createdAt'] | null): string {
-  if (!value) return ''
-  const seconds = typeof value.seconds === 'bigint' ? Number(value.seconds) : Number(value.seconds ?? 0)
-  const nanos = Number(value.nanos ?? 0)
-  return new Date(seconds * 1000 + Math.floor(nanos / 1_000_000)).toISOString()
+function mapSnapshotChangeKind(kind: ChangeKind): SnapshotChangeKind {
+  switch (kind) {
+    case ChangeKind.ADDED:
+      return 'added'
+    case ChangeKind.REMOVED:
+      return 'removed'
+    case ChangeKind.MODIFIED:
+      return 'modified'
+    default:
+      return 'unchanged'
+  }
 }
 
-function mapWorkspaceVersion(version: WorkspaceVersionInfo): WorkspaceVersion {
+function mapSnapshotDeltaCounts(delta?: { added: unknown[]; removed: unknown[]; modified: unknown[] }): SnapshotDeltaCounts {
   return {
-    id: version.id,
-    version_id: version.versionId,
-    source: version.source,
-    parent_version_id: version.parentVersionId,
-    view_count: version.viewCount,
-    element_count: version.elementCount,
-    connector_count: version.connectorCount,
-    description: version.description,
-    workspace_hash: version.workspaceHash,
-    created_at: timestampToISOString(version.createdAt),
+    added: delta?.added?.length ?? 0,
+    removed: delta?.removed?.length ?? 0,
+    modified: delta?.modified?.length ?? 0,
+  }
+}
+
+export function mapWatchStatus(status: {
+  repositoryId: string; running: boolean; managed: boolean; state: string; stage: string
+  ownerKind: string; ownerPid: bigint | number; repoRoot: string; gitBranch: string; gitRevision: string
+  snapshotId: string; contentFingerprint: string; changedFiles: number; pendingFiles: number
+  startedUnix: bigint | number; lastScanUnix: bigint | number; lastScanMs: bigint | number
+  heartbeatUnix: bigint | number; stopRequested: boolean; pollIntervalMs: bigint | number
+  debounceMs: bigint | number; error: string; cliAvailable: boolean; installHint: string
+}): RepositoryWatchStatus {
+  return {
+    repositoryId: status.repositoryId,
+    running: status.running,
+    managed: status.managed,
+    state: status.state,
+    stage: status.stage,
+    ownerKind: status.ownerKind,
+    ownerPid: Number(status.ownerPid),
+    repoRoot: status.repoRoot,
+    gitBranch: status.gitBranch,
+    gitRevision: status.gitRevision,
+    snapshotId: status.snapshotId,
+    contentFingerprint: status.contentFingerprint,
+    changedFiles: status.changedFiles,
+    pendingFiles: status.pendingFiles,
+    startedUnix: Number(status.startedUnix),
+    lastScanUnix: Number(status.lastScanUnix),
+    lastScanMs: Number(status.lastScanMs),
+    heartbeatUnix: Number(status.heartbeatUnix),
+    stopRequested: status.stopRequested,
+    pollIntervalMs: Number(status.pollIntervalMs),
+    debounceMs: Number(status.debounceMs),
+    error: status.error,
+    cliAvailable: status.cliAvailable,
+    installHint: status.installHint,
+  }
+}
+
+export function mapCodeSnapshot(snapshot: CodeSnapshotProto): CodeSnapshot {
+  return {
+    id: snapshot.id,
+    repositoryId: snapshot.repositoryId,
+    createdUnix: Number(snapshot.createdUnix),
+    gitRevision: snapshot.gitRevision,
+    gitBranch: snapshot.gitBranch,
+    ingestionStatus: snapshot.ingestionStatus,
+    projects: snapshot.projects.map((project) => ({
+      root: project.root,
+      language: project.language,
+      configPath: project.configPath,
+    })),
+    warnings: [...snapshot.warnings],
+    provenance: snapshot.provenance,
+    contentFingerprint: snapshot.contentFingerprint,
+    commitMessage: snapshot.commitMessage,
+    ...(snapshot.statistics ? { statistics: {
+      facts: snapshot.statistics.facts,
+      edges: snapshot.statistics.edges,
+      sources: snapshot.statistics.sources,
+      chunks: snapshot.statistics.chunks,
+    } } : {}),
+  }
+}
+
+export function mapSnapshotDiff(diff: SnapshotDiffProto): SnapshotDiff {
+  return {
+    fromSnapshotId: diff.fromSnapshotId,
+    toSnapshotId: diff.toSnapshotId,
+    fromGitRevision: diff.fromGitRevision,
+    toGitRevision: diff.toGitRevision,
+    sources: diff.sources.map((source) => ({
+      path: source.path,
+      change: mapSnapshotChangeKind(source.change),
+      fromHash: source.fromHash,
+      toHash: source.toHash,
+      linesAdded: source.linesAdded,
+      linesRemoved: source.linesRemoved,
+    })),
+    facts: mapSnapshotDeltaCounts(diff.facts),
+    factDetails: { added: diff.facts?.added ?? [], removed: diff.facts?.removed ?? [], modified: diff.facts?.modified ?? [] },
+    edgeFacts: mapSnapshotDeltaCounts(diff.edgeFacts),
+  }
+}
+
+function mapImpact(diagram: ImpactDiagramProto): RepositoryImpact {
+  if (!diagram.diff) throw new Error('Impact diagram has no comparison')
+  const change = (kind: ChangeKind) => kind === ChangeKind.UNSPECIFIED ? 'unchanged' as const : mapSnapshotChangeKind(kind)
+  return {
+    repositoryId: diagram.repositoryId, comparisonKey: diagram.comparisonKey,
+    viewId: Number(diagram.viewId), diff: mapSnapshotDiff(diagram.diff),
+    radius: diagram.radius, maxRadius: diagram.maxRadius, version: diagram.version,
+    nodes: diagram.nodes.map((node) => ({
+      key: node.key, path: node.path, name: node.name, change: change(node.change),
+      context: node.context, elementId: Number(node.elementId), x: node.x, y: node.y,
+      symbols: { added: node.symbols?.added ?? [], removed: node.symbols?.removed ?? [], modified: node.symbols?.modified ?? [] },
+    })),
+    edges: diagram.edges.map((edge) => ({ ...edge, change: change(edge.change) })),
   }
 }
 
@@ -573,6 +806,7 @@ export function protoElementToLibrary(e: Record<string, unknown>): LibraryElemen
     technology_connectors: technologyConnectors,
     tags: (e.tags ?? []) as string[],
     repo: (e.repo ?? null) as string | null,
+    repository_id: (e.repository_id ?? e.repositoryId ?? null) as string | null,
     branch: (e.branch ?? null) as string | null,
     file_path: (e.file_path ?? null) as string | null,
     language: (e.language ?? null) as string | null,
@@ -597,6 +831,7 @@ export function libraryElementToDependency(element: LibraryElement): DependencyE
     tags: element.tags,
     bypass_noise_gate: element.bypass_noise_gate ?? false,
     repo: element.repo,
+    repository_id: element.repository_id,
     branch: element.branch,
     language: element.language,
     file_path: element.file_path,
@@ -622,6 +857,7 @@ export function protoPlacedElement(p: Record<string, unknown>): PlacedElement {
     technology_connectors: technologyConnectors,
     tags: (p.tags ?? []) as string[],
     repo: (p.repo ?? null) as string | null,
+    repository_id: (p.repository_id ?? p.repositoryId ?? null) as string | null,
     branch: (p.branch ?? null) as string | null,
     file_path: (p.file_path ?? null) as string | null,
     language: (p.language ?? null) as string | null,
@@ -737,10 +973,33 @@ export function protoLayer(l: Record<string, unknown>): ViewLayer {
   }
 }
 
+let capabilitiesPromise: Promise<{ watch: boolean; editor: boolean }> | null = null
+
 export const api = {
   system: {
     ready: (): Promise<{ ok: boolean }> =>
       rpc(() => workspaceClient.listViews({}).then(() => ({ ok: true }))),
+    // capabilities reports which workstation-bound features the server exposes.
+    // Self-hosted deployments disable watching and opening the caller's editor.
+    // Cached: the answer is stable for the life of the page.
+    capabilities: async (): Promise<{ watch: boolean; editor: boolean }> => {
+      if (!capabilitiesPromise) {
+        capabilitiesPromise = (async () => {
+          try {
+            const res = await fetch(apiUrl('/ready'))
+            if (!res.ok) return { watch: true, editor: true }
+            const json = await res.json() as { capabilities?: { watch?: boolean; editor?: boolean } }
+            return {
+              watch: json.capabilities?.watch !== false,
+              editor: json.capabilities?.editor !== false,
+            }
+          } catch {
+            return { watch: true, editor: true }
+          }
+        })()
+      }
+      return capabilitiesPromise
+    },
   },
 
   user: {
@@ -817,6 +1076,7 @@ export const api = {
           })),
           tags: data.tags ?? [],
           repo: data.repo ?? undefined,
+          repositoryId: data.repository_id ?? undefined,
           branch: data.branch ?? undefined,
           filePath: data.file_path ?? undefined,
           language: data.language ?? undefined,
@@ -844,10 +1104,11 @@ export const api = {
             isPrimaryIcon: tl.is_primary_icon ?? false,
           })),
           tags: data.tags ?? [],
-          repo: data.repo ?? undefined,
-          branch: data.branch ?? undefined,
-          filePath: data.file_path ?? undefined,
-          language: data.language ?? undefined,
+          repo: data.repo === null ? '' : data.repo,
+          repositoryId: data.repository_id === null ? '' : data.repository_id,
+          branch: data.branch === null ? '' : data.branch,
+          filePath: data.file_path === null ? '' : data.file_path,
+          language: data.language === null ? '' : data.language,
           bypassNoiseGate: data.bypass_noise_gate,
         }
         const res = await workspaceClient.updateElement(request as Parameters<typeof workspaceClient.updateElement>[0])
@@ -862,6 +1123,7 @@ export const api = {
       kind: string | null
       description: string | null
       repo: string | null
+      repository_id: string | null
       branch: string | null
       file_path: string | null
       language: string | null
@@ -1226,27 +1488,6 @@ export const api = {
             elements_enabled: Number(json.elements_enabled ?? 0),
             overrides_created: Number(json.overrides_created ?? 0),
           }
-        },
-      },
-
-      populate: {
-        getQuery: async (id: number): Promise<{ query: string; enriched_query: string }> => {
-          const res = await fetch(apiUrl(`/views/${id}/populate-query`))
-          if (!res.ok) throw new Error('Failed to load populate query')
-          const json = await res.json() as { query: string; enriched_query?: string }
-          return { query: json.query, enriched_query: json.enriched_query ?? json.query }
-        },
-        search: async (id: number, q: string, limit: number): Promise<Array<LibraryElement & { similarity_score: number; match_kind?: string; match_reason?: string }>> => {
-          const params = new URLSearchParams({ q, limit: String(limit) })
-          const res = await fetch(apiUrl(`/views/${id}/populate?${params}`))
-          if (!res.ok) throw new Error('Failed to run similarity search')
-          const json = await res.json() as { results: Array<Record<string, unknown> & { similarity_score: number; match_kind?: string; match_reason?: string }> }
-          return (json.results ?? []).map(r => ({
-            ...protoElementToLibrary(r),
-            similarity_score: r.similarity_score,
-            match_kind: r.match_kind,
-            match_reason: r.match_reason,
-          }))
         },
       },
 
@@ -1709,60 +1950,231 @@ export const api = {
       }),
   },
 
-  versions: {
-    list: (limit = 50): Promise<WorkspaceVersion[]> =>
+  repositories: {
+    settings: (repositoryId: string, signal?: AbortSignal): Promise<RepositorySettings> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getRepositorySettings({ repositoryId }, { signal })
+      return { ...response, mapDefaults: response.mapDefaults ?? {}, mapOverrides: response.mapOverrides ?? {}, effectiveMap: response.effectiveMap ?? {} }
+    }),
+    updateMapConfiguration: (repositoryId: string, overrides: RepositoryMapConfiguration): Promise<RepositorySettings> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.updateRepositoryMapConfiguration({ repositoryId, overrides })
+      return { ...response, mapDefaults: response.mapDefaults ?? {}, mapOverrides: response.mapOverrides ?? {}, effectiveMap: response.effectiveMap ?? {} }
+    }),
+    updateRemote: (repositoryId: string, remote: RepositoryRemote, remove = false): Promise<RepositorySettings> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.updateRepositoryRemote({ repositoryId, remote, remove })
+      return { ...response, mapDefaults: response.mapDefaults ?? {}, mapOverrides: response.mapOverrides ?? {}, effectiveMap: response.effectiveMap ?? {} }
+    }),
+    fileSymbols: (repositoryId: string, snapshotId: string, path: string, signal?: AbortSignal): Promise<CodeFact[]> => rpc(async () => {
+      const facts: CodeFact[] = []
+      let pageToken = ''
+      do {
+        const page = await codeIndexFactClient.listFacts({ repositoryId, snapshotId, pathPrefix: path, pageSize: 500, pageToken }, { signal })
+        facts.push(...page.facts.filter((fact) => fact.anchor?.path === path))
+        pageToken = page.nextPageToken
+      } while (pageToken)
+      return facts
+    }),
+    files: (repositoryId: string, snapshotId: string, signal?: AbortSignal): Promise<CodeFact[]> => rpc(async () => {
+      const facts: CodeFact[] = []
+      let pageToken = ''
+      do {
+        const page = await codeIndexFactClient.listFacts({ repositoryId, snapshotId, kind: FactKind.FILE, pageSize: 500, pageToken }, { signal })
+        facts.push(...page.facts)
+        pageToken = page.nextPageToken
+      } while (pageToken)
+      return facts
+    }),
+    list: (): Promise<IndexedRepository[]> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.listRepositories({})
+      return response.repositories.map((repo) => ({ ...repo, latestCreatedUnix: Number(repo.latestCreatedUnix) }))
+    }),
+    checkIndexers: async (
+      input: string | { path?: string; remoteUrl?: string },
+      options: { signal?: AbortSignal } = {},
+    ): Promise<RepositoryIndexerCheck> => {
+      try {
+        const request = typeof input === 'string'
+          ? { path: input, remoteUrl: '' }
+          : { path: input.path ?? '', remoteUrl: input.remoteUrl ?? '' }
+        const response = await codeIndexRepositoryClient.checkRepositoryIndexers(request, { signal: options.signal })
+        return {
+          ready: response.ready,
+          indexers: response.indexers.map((item) => ({
+            family: item.family,
+            tool: item.tool,
+            languages: item.languages,
+            installed: item.installed,
+            installHint: item.installHint,
+          })),
+        }
+      } catch (e) {
+        if (e instanceof ConnectError) throw new Error(e.message)
+        throw e
+      }
+    },
+    add: async (
+      input: string | { path?: string; remoteUrl?: string },
+      handlers: { signal?: AbortSignal; onProgress?: (progress: RepositoryIndexProgress) => void; materialize?: boolean } = {},
+    ): Promise<{ id: string; root: string; latestSnapshotId: string }> => {
+      try {
+        const request = typeof input === 'string'
+          ? { path: input, remoteUrl: '', materialize: handlers.materialize ?? false }
+          : { path: input.path ?? '', remoteUrl: input.remoteUrl ?? '', materialize: handlers.materialize ?? false }
+        const stream = codeIndexRepositoryClient.addRepository(request, { signal: handlers.signal })
+        let repository: { id: string; root: string; latestSnapshotId: string } | null = null
+        for await (const event of stream) {
+          if (event.event.case === 'progress') {
+            handlers.onProgress?.({
+              stage: event.event.value.stage,
+              current: event.event.value.current,
+              total: event.event.value.total,
+              detail: event.event.value.detail,
+            })
+          } else if (event.event.case === 'repository') {
+            const repo = event.event.value
+            repository = { id: repo.id, root: repo.root, latestSnapshotId: repo.latestSnapshotId }
+          }
+        }
+        if (!repository) throw new Error('Add repository finished without a repository')
+        return repository
+      } catch (e) {
+        if (e instanceof ConnectError) throw new Error(e.message)
+        throw e
+      }
+    },
+    history: (repositoryId: string, branch = '', limit = 0): Promise<RepositoryGitHistory> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit })
+      return { ...response, commits: response.commits.map((commit) => ({ ...commit, createdUnix: Number(commit.createdUnix) })) }
+    }),
+    openPullRequests: (repositoryId: string, signal?: AbortSignal): Promise<OpenRepositoryPullRequest[]> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.listPullRequests({ repositoryId }, { signal })
+      return response.pullRequests
+    }),
+    pullRequest: (repositoryId: string, pullRequest: string, signal?: AbortSignal): Promise<RepositoryPullRequest> => rpc(async () => {
+      return codeIndexRepositoryClient.getPullRequest({ repositoryId, pullRequest }, { signal })
+    }),
+    commitDetails: (repositoryId: string, revision: string): Promise<RepositoryCommitDetails> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getCommitDetails({ repositoryId, revision })
+      return { commit: response.commit ? { ...response.commit, createdUnix: Number(response.commit.createdUnix) } : null, files: response.files }
+    }),
+    maps: (repositoryId: string): Promise<CompletedRepositoryMap[]> => rpc(async () => {
+      const response = await codeIndexMapperClient.listMaps({ repositoryId })
+      return response.maps.filter((item) => !!item.result).map((item) => ({
+        completedUnix: Number(item.completedUnix),
+        configHash: item.configHash,
+        result: { ...item.result!, viewId: Number(item.result!.viewId) },
+      }))
+    }),
+    snapshots: (repositoryId: string): Promise<CodeSnapshot[]> =>
       rpc(async () => {
-        const res = await workspaceVersionClient.listVersions({ limit })
-        return (res.versions ?? []).map(mapWorkspaceVersion)
+        const res = await codeIndexFactClient.listSnapshots({ id: repositoryId })
+        return (res.snapshots ?? []).map(mapCodeSnapshot)
+      }),
+    deleteSnapshot: (snapshotId: string): Promise<void> =>
+      rpc(async () => {
+        await codeIndexFactClient.deleteSnapshot({ snapshotId })
+      }),
+    diff: (input: { fromSnapshotId: string; toSnapshotId: string }): Promise<SnapshotDiff> =>
+      rpc(async () => {
+        const res = await codeIndexFactClient.diffSnapshots({
+          fromSnapshotId: input.fromSnapshotId,
+          toSnapshotId: input.toSnapshotId,
+          sourcesOnly: false,
+        })
+        return mapSnapshotDiff(res)
+      }),
+    map: async (
+      repositoryId: string,
+      handlers: RepositoryMapOptions = {},
+    ): Promise<RepositoryMapResult> => {
+      try {
+        const stream = codeIndexMapperClient.mapRepository({
+          repositoryId,
+          snapshotId: handlers.snapshotId, gitRevision: handlers.gitRevision,
+          workingTree: handlers.workingTree, gitBranch: handlers.gitBranch,
+        }, { signal: handlers.signal })
+        let result: RepositoryMapResult | null = null
+        for await (const event of stream) {
+          if (event.event.case === 'progress') {
+            handlers.onProgress?.({
+              stage: event.event.value.stage,
+              current: event.event.value.current,
+              total: event.event.value.total,
+              detail: event.event.value.detail,
+            })
+          } else if (event.event.case === 'result') {
+            const mapped = event.event.value
+            result = {
+              snapshotId: mapped.snapshotId,
+              runId: mapped.runId,
+              viewId: Number(mapped.viewId),
+              facts: mapped.facts,
+              clusters: mapped.clusters,
+              bins: mapped.bins,
+              unclustered: mapped.unclustered,
+              weightedTightness: mapped.weightedTightness,
+            }
+          }
+        }
+        if (!result) throw new Error('Map finished without a result')
+        return result
+      } catch (e) {
+        if (e instanceof ConnectError) throw new Error(e.message)
+        throw e
+      }
+    },
+    compare: async (repositoryId: string, options: {
+      base: RepositoryMapOptions; head: RepositoryMapOptions; radius?: number
+      signal?: AbortSignal; onProgress?: (progress: RepositoryMapProgress) => void
+    }): Promise<RepositoryImpact> => {
+      const stream = codeIndexMapperClient.compareRepository({ repositoryId, base: options.base, head: options.head, radius: options.radius ?? 0 }, { signal: options.signal })
+      let result: RepositoryImpact | null = null
+      for await (const event of stream) {
+        if (event.event.case === 'progress') options.onProgress?.(event.event.value)
+        if (event.event.case === 'result') result = mapImpact(event.event.value)
+      }
+      if (!result) throw new Error('Comparison finished without a diagram')
+      return result
+    },
+    liveImpact: (repositoryId: string, signal?: AbortSignal): Promise<LiveRepositoryImpact> => rpc(async () => {
+      const result = await codeIndexMapperClient.getLiveImpact({ repositoryId }, { signal })
+      return { ...result, diagram: result.diagram ? mapImpact(result.diagram) : null }
+    }),
+    watchStatus: (repositoryId: string, signal?: AbortSignal): Promise<RepositoryWatchStatus> => rpc(async () => {
+      const result = await codeIndexWatchClient.getWatchStatus({ repositoryId }, { signal })
+      return mapWatchStatus(result)
+    }),
+    startWatch: (repositoryId: string, options: { materialize?: boolean } = {}): Promise<RepositoryWatchStatus> => rpc(async () => {
+      const result = await codeIndexWatchClient.startWatch({
+        repositoryId,
+        materialize: options.materialize ?? false,
+      })
+      return mapWatchStatus(result)
+    }),
+    stopWatch: (repositoryId: string): Promise<RepositoryWatchStatus> => rpc(async () => {
+      const result = await codeIndexWatchClient.stopWatch({ repositoryId })
+      return mapWatchStatus(result)
+    }),
+    impactRadius: (repositoryId: string, comparisonKey: string, radius: number, signal?: AbortSignal): Promise<RepositoryImpact> => rpc(async () =>
+      mapImpact(await codeIndexMapperClient.setImpactRadius({ repositoryId, comparisonKey, radius }, { signal })),
+    ),
+    delete: (repositoryId: string, options: { deleteMaterialized?: boolean; deleteClone?: boolean } = {}): Promise<void> =>
+      rpc(async () => {
+        await codeIndexRepositoryClient.deleteRepository({
+          id: repositoryId,
+          deleteMaterialized: options.deleteMaterialized ?? false,
+          deleteClone: options.deleteClone ?? false,
+        })
       }),
   },
 
-  watch: {
-    status: async (): Promise<WatchStatus> => {
-      const res = await fetch(apiUrl('/watch/status'))
-      if (!res.ok) throw new Error(`Failed to load watch status: ${res.statusText}`)
-      return res.json()
-    },
-    websocketUrl: watchWebSocketUrl,
-    repositories: async (): Promise<WatchRepository[]> => {
-      const res = await fetch(apiUrl('/watch/repositories'))
-      if (!res.ok) throw new Error(`Failed to load watch repositories: ${res.statusText}`)
-      return res.json()
-    },
-    versions: async (repositoryId: number): Promise<WatchVersion[]> => {
-      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/versions`))
-      if (!res.ok) throw new Error(`Failed to load watch versions: ${res.statusText}`)
-      return res.json()
-    },
-    diffs: async (versionId: number, filters?: { owner_type?: string; change_type?: string; resource_type?: string; language?: string }): Promise<WatchDiff[]> => {
-      const params = new URLSearchParams()
-      if (filters?.owner_type) params.set('owner_type', filters.owner_type)
-      if (filters?.change_type) params.set('change_type', filters.change_type)
-      if (filters?.resource_type) params.set('resource_type', filters.resource_type)
-      if (filters?.language) params.set('language', filters.language)
-      const suffix = params.toString() ? `?${params}` : ''
-      const res = await fetch(apiUrl(`/watch/versions/${versionId}/diffs${suffix}`))
-      if (!res.ok) throw new Error(`Failed to load watch diffs: ${res.statusText}`)
-      return res.json()
-    },
-    cleanContext: async (repositoryId: number, input: { resource_type: 'element' | 'view'; resource_id: number }): Promise<WatchContextActionResponse> => {
-      const res = await fetch(apiUrl(`/watch/repositories/${repositoryId}/context/clean`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
-      })
-      if (!res.ok) throw await responseError(res, 'Failed to clean watch context')
-      return res.json()
-    },
-  },
-
   editor: {
-    open: async (input: { editor: SourceEditor; repo?: string | null; file_path: string; line?: number | null }): Promise<void> => {
+    open: async (input: { editor: SourceEditor; repository_id?: string | null; repo?: string | null; file_path: string; line?: number | null }): Promise<void> => {
       const res = await fetch(apiUrl('/editor/open'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           editor: input.editor,
+          repository_id: input.repository_id ?? '',
           repo: input.repo ?? '',
           file_path: input.file_path,
           line: input.line ?? 0,
@@ -1771,6 +2183,16 @@ export const api = {
       if (!res.ok) {
         throw await responseError(res, 'Failed to open editor')
       }
+    },
+    source: async (input: { repository_id?: string | null; repo?: string | null; file_path: string }): Promise<{ content: string; path: string }> => {
+      return rpc(async () => {
+        const res = await codeIndexRepositoryClient.getWorktreeSource({
+          repositoryId: input.repository_id ?? '',
+          repo: input.repo ?? '',
+          filePath: input.file_path,
+        })
+        return { content: res.content, path: res.path }
+      })
     },
   },
 }

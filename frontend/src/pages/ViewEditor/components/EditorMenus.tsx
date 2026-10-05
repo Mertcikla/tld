@@ -9,15 +9,8 @@ import {
   MoveTargetIcon as MoveTargetSvg,
   GridIcon as GridSvg,
 } from '../../../components/Icons'
+import { KbdHint } from '../../../components/PanelUI'
 import { useViewEditorContext } from '../context'
-
-const KbdHint = ({ children }: { children: string }) => (
-  <Box as="span" display="inline-flex" alignItems="center" justifyContent="center"
-    px={1.5} py={0.5} bg="whiteAlpha.300" rounded="sm" fontSize="8px"
-    fontWeight="bold" color="whiteAlpha.900" flexShrink={0}>
-    {children}
-  </Box>
-)
 
 interface ConnectorContextMenuProps {
   menu: { edgeId: number; x: number; y: number } | null
@@ -98,7 +91,7 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = React.memo(({
           <HStack spacing={2} w="full">
             <AddElementSvg />
             <Text fontSize="xs" fontWeight="normal" flex={1}>Add Element</Text>
-            <KbdHint>C</KbdHint>
+            <KbdHint ml={0}>C</KbdHint>
           </HStack>
         </Button>
         {onCopyMermaid && (

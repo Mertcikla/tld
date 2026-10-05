@@ -8,15 +8,17 @@ import (
 	"strings"
 
 	"github.com/mertcikla/tld/v2/internal/git"
+	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
 type RepoScope struct {
-	Root      string
-	Name      string
-	Label     string
-	RemoteURL string
-	Branch    string
+	Root         string
+	Name         string
+	Label        string
+	RemoteURL    string
+	RepositoryID string
+	Branch       string
 }
 
 func DetectRepoScope(startDir, fallbackDir string) RepoScope {
@@ -71,8 +73,15 @@ func (s RepoScope) MatchesElement(element *workspace.Element) bool {
 	if !s.Active() {
 		return true
 	}
+	if s.RepositoryID != "" && element.RepositoryID != "" {
+		return s.RepositoryID == element.RepositoryID
+	}
 	if s.RemoteURL != "" && element.Repo != "" {
-		return element.Repo == s.RemoteURL
+		if element.Repo == s.RemoteURL {
+			return true
+		}
+		needle := repolink.RemoteKey(element.Repo)
+		return needle != "" && needle == repolink.RemoteKey(s.RemoteURL)
 	}
 	if element.FilePath == "" {
 		return false
@@ -113,10 +122,11 @@ func ConfiguredRepoScopes(ws *workspace.Workspace) []RepoScope {
 			}
 			seen[root] = struct{}{}
 			scopes = append(scopes, RepoScope{
-				Root:      root,
-				Name:      repoName,
-				Label:     repositoryLabel(workspaceRoot, root, repoName),
-				RemoteURL: repository.URL,
+				Root:         root,
+				Name:         repoName,
+				Label:        repositoryLabel(workspaceRoot, root, repoName),
+				RemoteURL:    repository.URL,
+				RepositoryID: repository.ID,
 			})
 		}
 	}

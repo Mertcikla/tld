@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/Mertcikla/tld/refs/heads/main/schemas/elements.schema.json",
+  "title": "tld elements.yaml",
+  "description": "Workspace element definitions for the tld / tlDiagram CLI. Each top-level key is an element ref: a stable, lowercase identifier used by connectors and placements to reference the element. The `root` ref is reserved for the synthetic workspace root view and may only be used as a placement/view parent.",
+  "type": "object",
+  "propertyNames": {
+    "$ref": "#/$defs/elementRef"
+  },
+  "additionalProperties": {
+    "$ref": "#/$defs/element"
+  },
+  "$defs": {
+    "elementRef": {
+      "description": "Element reference. Must start with a lowercase letter or digit and may contain lowercase letters, digits, dots, underscores, and hyphens. `root` is reserved for the synthetic workspace root and cannot be used as an element ref.",
+      "type": "string",
+      "pattern": "^(?!(?:root)$)[a-z0-9][a-z0-9._-]*$",
+      "examples": ["api-service", "postgres", "web_app", "svc.orders"]
+    },
+    "parentRef": {
+      "description": "Parent/view reference. Same character rules as an element ref, plus the reserved value `root` for the synthetic workspace root.",
+      "type": "string",
+      "pattern": "^(?:root|[a-z0-9][a-z0-9._-]*)$",
+      "examples": ["root", "platform", "api-service"]
+    },
+    "tag": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "examples": ["backend", "data", "external"]
+    },
+    "viewPlacement": {
+      "type": "object",
+      "description": "Places the containing element inside another element's internal view (or the root view when parent is `root`).",
+      "properties": {
+        "parent": {
+          "$ref": "#/$defs/parentRef"
+        },
+        "position_x": {
+          "type": "number",
+          "description": "X coordinate within the parent view. Omitted coordinates are auto-laid-out by the frontend."
+        },
+        "position_y": {
+          "type": "number",
+          "description": "Y coordinate within the parent view. Omitted coordinates are auto-laid-out by the frontend."
+        },
+        "visibility_delta": {
+          "type": "integer",
+          "description": "Density/noise-gate adjustment applied to this placement relative to the parent view."
+        }
+      },
+      "required": ["parent"],
+      "additionalProperties": false
+    },
+    "element": {
+      "type": "object",
+      "description": "A single element (node) in the workspace. `name` and `kind` are required by the CLI validator.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable element name shown on the diagram.",
+          "examples": ["API Service", "Postgres"]
+        },
+        "kind": {
+          "type": "string",
+          "description": "Element kind/category. Free-form lowercase token used for icon and default styling (e.g. service, database, queue, cache). Defaults to `service` when created through the CLI.",
+          "examples": ["service", "database", "queue", "cache", "client", "external"]
+        },
+        "owner": {
+          "type": "string",
+          "description": "Registered repository key from `repositories` in .tld.yaml. When set, the CLI validates that the owner is a known repository.",
+          "examples": ["backend", "frontend"]
+        },
+        "description": {
+          "type": "string",
+          "description": "Long-form description of the element's responsibility."
+        },
+        "technology": {
+          "type": "string",
+          "description": "Primary technology label (e.g. Go, React, Postgres).",
+          "examples": ["Go", "React", "Postgres"]
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "External link to documentation, repo, or runbook."
+        },
+        "logo_url": {
+          "type": "string",
+          "description": "Override logo/icon URL or catalog slug. May be a relative path or a technology slug.",
+          "examples": ["/icons/go.svg", "go"]
+        },
+        "repo": {
+          "type": "string",
+          "description": "Repository identifier this element lives in (e.g. an owner/name slug)."
+        },
+        "repository_id": {
+          "type": "string",
+          "description": "Identifier of the indexed codeindex repository this element is linked to. When set, `repo`/`file_path` are resolved against that repository's local checkout."
+        },
+        "branch": {
+          "type": "string",
+          "description": "Repository branch associated with this element."
+        },
+        "file_path": {
+          "type": "string",
+          "description": "Source file path within the repo for code-linked elements. When combined with `symbol`, the CLI verifies the symbol exists."
+        },
+        "symbol": {
+          "type": "string",
+          "description": "Named code symbol within `file_path` (e.g. a function or type name). Verified by `tld validate` when the file is accessible.",
+          "examples": ["HandleCheckout", "PaymentService"]
+        },
+        "tags": {
+          "type": "array",
+          "description": "Free-form labels used for filtering and visual grouping.",
+          "items": {
+            "$ref": "#/$defs/tag"
+          },
+          "uniqueItems": true
+        },
+        "has_view": {
+          "type": "boolean",
+          "description": "Whether this element owns an internal (child) view/diagram. Defaults to false.",
+          "default": false
+        },
+        "view_name": {
+          "type": "string",
+          "description": "Optional internal name for the child view."
+        },
+        "view_label": {
+          "type": "string",
+          "description": "Label shown for a drill-down into this element's child view (e.g. Container, Component)."
+        },
+        "density_level": {
+          "type": "integer",
+          "description": "Noise-gate density level for this element's internal view. Higher values reveal more detail."
+        },
+        "bypass_noise_gate": {
+          "type": "boolean",
+          "description": "When true, this element is always shown regardless of the view's density level."
+        },
+        "placements": {
+          "type": "array",
+          "description": "Where this element appears across views. A source element placed in multiple parent views has one entry per parent.",
+          "items": {
+            "$ref": "#/$defs/viewPlacement"
+          }
+        }
+      },
+      "required": ["name", "kind"],
+      "additionalProperties": false,
+      "examples": [
+        {
+          "name": "API Service",
+          "kind": "service",
+          "description": "Handles checkout requests",
+          "technology": "Go",
+          "tags": ["backend"],
+          "has_view": true,
+          "view_label": "Component",
+          "placements": [
+            {
+              "parent": "root",
+              "position_x": 100,
+              "position_y": 200
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

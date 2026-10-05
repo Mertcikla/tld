@@ -7,12 +7,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/mertcikla/tld/v2/internal/analyzer"
 	"gopkg.in/yaml.v3"
 )
 
@@ -189,122 +187,45 @@ func ValidateGlobalConfig(cfg *Config) ConfigValidationErrors {
 	if strings.TrimSpace(cfg.Serve.PublicURL) != "" && !validRootHTTPURL(cfg.Serve.PublicURL) {
 		add("serve.public_url", "must be an http or https root URL")
 	}
-	if strings.TrimSpace(cfg.Serve.PopulateRerankerEndpoint) != "" && !validHTTPURL(cfg.Serve.PopulateRerankerEndpoint) {
-		add("serve.populate_reranker_endpoint", "must be a valid URL")
-	}
 	for _, origin := range cfg.Serve.AllowedOrigins {
 		if !validHTTPOrigin(origin) {
 			add("serve.allowed_origins", "entries must be http or https origins without a path")
 			break
 		}
 	}
-
-	for _, item := range []struct {
-		key   string
-		value string
-	}{
-		{"watch.poll_interval", cfg.Watch.PollInterval},
-		{"watch.debounce", cfg.Watch.Debounce},
-		{"watch.lsp.health_interval", cfg.Watch.LSP.HealthInterval},
-	} {
-		d, err := time.ParseDuration(strings.TrimSpace(item.value))
-		if err != nil || d <= 0 {
-			add(item.key, "must be a positive duration such as 500ms or 1s")
-		}
-	}
-	switch strings.ToLower(strings.TrimSpace(cfg.Watch.Watcher)) {
-	case "auto", "fsnotify", "poll":
-	default:
-		add("watch.watcher", "must be auto, fsnotify, or poll")
-	}
-	switch strings.ToLower(strings.TrimSpace(cfg.Watch.Scale.Strategy)) {
-	case "auto", "full", "limited", "abort":
-	default:
-		add("watch.scale.strategy", "must be auto, full, limited, or abort")
-	}
-	if len(normalizeConfigLanguages(cfg.Watch.Languages)) == 0 {
-		add("watch.languages", "must include at least one supported language")
-	}
-	for _, item := range []struct {
-		key   string
-		value int
-	}{
-		{"watch.thresholds.max_elements_per_view", cfg.Watch.Thresholds.MaxElementsPerView},
-		{"watch.thresholds.max_connectors_per_view", cfg.Watch.Thresholds.MaxConnectorsPerView},
-		{"watch.thresholds.max_incoming_per_element", cfg.Watch.Thresholds.MaxIncomingPerElement},
-		{"watch.thresholds.max_outgoing_per_element", cfg.Watch.Thresholds.MaxOutgoingPerElement},
-		{"watch.thresholds.max_expanded_connectors_per_group", cfg.Watch.Thresholds.MaxExpandedConnectorsPerGroup},
-		{"watch.scale.max_tracked_files", cfg.Watch.Scale.MaxTrackedFiles},
-		{"watch.scale.max_limited_files", cfg.Watch.Scale.MaxLimitedFiles},
-		{"watch.scale.max_recent_files", cfg.Watch.Scale.MaxRecentFiles},
-		{"watch.scale.max_caller_depth", cfg.Watch.Scale.MaxCallerDepth},
-	} {
-		if item.value <= 0 {
-			add(item.key, "must be positive")
-		}
-	}
-	if cfg.Watch.Scale.MaxBlastRadiusHops < 0 {
-		add("watch.scale.max_blast_radius_hops", "must be zero or positive")
-	}
-	if cfg.Watch.LSP.MemoryLimitBytes <= 0 {
-		add("watch.lsp.memory_limit_bytes", "must be positive")
-	}
-	for language := range cfg.Watch.LSP.Commands {
-		if !validLSPCommandLanguage(language) {
-			add("watch.lsp.commands."+language, "unsupported language")
-		}
-	}
-	for _, item := range []struct {
-		key   string
-		value float64
-	}{
-		{"watch.visibility.core_threshold", cfg.Watch.Visibility.CoreThreshold},
-		{"watch.visibility.tier_multiplier", cfg.Watch.Visibility.TierMultiplier},
-		{"watch.visibility.max_expansion_multiplier", cfg.Watch.Visibility.MaxExpansionMultiplier},
-		{"watch.layout.link_distance", cfg.Watch.Layout.LinkDistance},
-		{"watch.layout.collide_radius", cfg.Watch.Layout.CollideRadius},
-		{"watch.layout.gravity_strength", cfg.Watch.Layout.GravityStrength},
-	} {
-		if item.value <= 0 {
-			add(item.key, "must be positive")
-		}
-	}
-	if cfg.Watch.Layout.ChargeStrength == 0 {
-		add("watch.layout.charge_strength", "must be non-zero")
-	}
 	if d, err := time.ParseDuration(strings.TrimSpace(cfg.Updates.CheckInterval)); err != nil || d <= 0 {
 		add("updates.check_interval", "must be a positive duration such as 24h")
 	}
 
-	provider := strings.TrimSpace(cfg.Watch.Embedding.Provider)
-	switch provider {
-	case "none", "openai", "ollama", "local-lexical", "local-deterministic-test":
-	default:
-		add("watch.embedding.provider", "must be none, openai, ollama, local-lexical, or local-deterministic-test")
+	if cfg.Index.Tools.TimeoutSeconds < 0 {
+		add("index.tools.timeout_seconds", "must be non-negative")
 	}
-	if cfg.Watch.Embedding.Dimension < 0 {
-		add("watch.embedding.dimension", "must be non-negative")
+	if cfg.Map.Grouping.Resolution <= 0 {
+		add("map.grouping.resolution", "must be positive")
 	}
-	if cfg.Watch.Embedding.MaxTokens < 0 {
-		add("watch.embedding.max_tokens", "must be non-negative")
+	if cfg.Map.Grouping.MinGroupSize < 1 {
+		add("map.grouping.min_group_size", "must be at least 1")
 	}
-	if provider == "openai" || provider == "ollama" {
-		endpoints := cfg.Watch.Embedding.Endpoint.Values()
-		if len(endpoints) == 0 {
-			add("watch.embedding.endpoint", "must be a valid URL for the selected provider")
-		}
-		for _, endpoint := range endpoints {
-			if !validHTTPURL(endpoint) {
-				add("watch.embedding.endpoint", "must be a valid URL for the selected provider")
-				break
-			}
-		}
-		if strings.TrimSpace(cfg.Watch.Embedding.Model) == "" {
-			add("watch.embedding.model", "must be non-empty for the selected provider")
-		}
-		if cfg.Watch.Embedding.HealthThreshold <= 0 || cfg.Watch.Embedding.HealthThreshold > 1 {
-			add("watch.embedding.health_threshold", "must be greater than 0 and at most 1")
-		}
+	if cfg.Map.Grouping.MinRootGroups < 1 {
+		add("map.grouping.min_root_groups", "must be at least 1")
+	}
+	if cfg.Map.Grouping.MaxRootGroups < cfg.Map.Grouping.MinRootGroups {
+		add("map.grouping.max_root_groups", "must be at least min_root_groups")
+	}
+	if cfg.Map.Grouping.MaxChildren < 2 {
+		add("map.grouping.max_children", "must be at least 2")
+	}
+	if cfg.Map.Grouping.MaxDepth < 0 {
+		add("map.grouping.max_depth", "must be non-negative")
+	}
+	if cfg.Map.Grouping.MaxLeafFiles < 1 {
+		add("map.grouping.max_leaf_files", "must be at least 1")
+	}
+	if cfg.Map.Budget.MaxConnectorsPerView < 1 {
+		add("map.budget.max_connectors_per_view", "must be at least 1")
+	}
+	if cfg.Map.Budget.MaxLeafConnectorsPerView < 1 {
+		add("map.budget.max_leaf_connectors_per_view", "must be at least 1")
 	}
 	return errs
 }
@@ -329,14 +250,6 @@ func ResolveCompletionRemote() bool {
 		return false
 	}
 	return cfg.Completion.Remote
-}
-
-func ResolveWatchLayoutConfig() WatchLayoutConfig {
-	cfg, err := LoadGlobalConfig()
-	if err != nil {
-		return DefaultConfig().Watch.Layout
-	}
-	return cfg.Watch.Layout
 }
 
 func FormatConfigValue(value any) string {
@@ -373,58 +286,26 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "serve.data_dir", Env: []string{"TLD_DATA_DIR"}, Description: "Directory for local database and logs."},
 	{Key: "serve.public_url", Env: []string{"TLD_PUBLIC_URL"}, Description: "Public root URL for reverse-proxied self-hosted deployments."},
 	{Key: "serve.allowed_origins", Env: []string{"TLD_ALLOWED_ORIGINS"}, Description: "Additional comma-separated HTTP(S) origins allowed by local server CORS."},
-	{Key: "serve.populate_reranker_endpoint", Env: []string{"TLD_POPULATE_RERANKER_ENDPOINT"}, Description: "Opt-in populate reranker endpoint, a Jina-compatible /v1/rerank API (e.g. http://127.0.0.1:8000/v1/rerank); empty (default) disables so no source is sent."},
-	{Key: "watch.languages", Env: []string{"TLD_WATCH_LANGUAGES"}, Description: "Comma-separated source languages watched by analyze/watch."},
-	{Key: "watch.watcher", Env: []string{"TLD_WATCH_WATCHER"}, Description: "File watcher backend: auto, fsnotify, or poll."},
-	{Key: "watch.poll_interval", Env: []string{"TLD_WATCH_POLL_INTERVAL"}, Description: "Polling interval used by the poll watcher."},
-	{Key: "watch.debounce", Env: []string{"TLD_WATCH_DEBOUNCE"}, Description: "Delay used to batch file changes before rescanning."},
-	{Key: "watch.thresholds.max_elements_per_view", Description: "Maximum generated elements in a watch-created view."},
-	{Key: "watch.thresholds.max_connectors_per_view", Description: "Maximum generated connectors in a watch-created view."},
-	{Key: "watch.thresholds.max_incoming_per_element", Description: "Incoming reference limit before collapsing context."},
-	{Key: "watch.thresholds.max_outgoing_per_element", Description: "Outgoing reference limit before collapsing context."},
-	{Key: "watch.thresholds.max_expanded_connectors_per_group", Description: "File-pair connector expansion limit before folder-level collapse."},
-	{Key: "watch.scale.strategy", Env: []string{"TLD_WATCH_SCALE_STRATEGY"}, Description: "Huge-repo scan strategy: auto, full, limited, or abort."},
-	{Key: "watch.scale.max_tracked_files", Env: []string{"TLD_WATCH_SCALE_MAX_TRACKED_FILES"}, Description: "Tracked-file threshold before auto limited view."},
-	{Key: "watch.scale.max_limited_files", Env: []string{"TLD_WATCH_SCALE_MAX_LIMITED_FILES"}, Description: "Maximum files selected in limited view after recent-file, anchor, neighbor, and caller expansion."},
-	{Key: "watch.scale.max_recent_files", Env: []string{"TLD_WATCH_SCALE_MAX_RECENT_FILES"}, Description: "Maximum recently changed local-git-history files used as limited-view seeds."},
-	{Key: "watch.scale.max_caller_depth", Env: []string{"TLD_WATCH_SCALE_MAX_CALLER_DEPTH"}, Description: "Maximum incoming caller depth used during limited-view expansion."},
-	{Key: "watch.scale.max_blast_radius_hops", Env: []string{"TLD_WATCH_SCALE_MAX_BLAST_RADIUS_HOPS"}, Description: "Maximum relationship hops used to expand limited-view changed-file blast radius; 0 disables blast expansion."},
-	{Key: "watch.dependencies.enabled", Env: []string{"TLD_WATCH_DEPENDENCIES_ENABLED"}, Description: "Enable dependency/import inventory scanning and materialization for external libraries and imports."},
-	{Key: "watch.lsp.enabled", Env: []string{"TLD_WATCH_LSP_ENABLED"}, Description: "Enable language-server definition resolution during watch/analyze scans."},
-	{Key: "watch.lsp.health_interval", Env: []string{"TLD_WATCH_LSP_HEALTH_INTERVAL"}, Description: "Minimum interval between language-server health checks."},
-	{Key: "watch.lsp.memory_limit_bytes", Env: []string{"TLD_WATCH_LSP_MEMORY_LIMIT_BYTES"}, Description: "Per-language-server RSS limit before the server is restarted."},
-	{Key: "watch.lsp.commands.c", Env: []string{"TLD_WATCH_LSP_C_COMMAND"}, Description: "Override command for the C language server."},
-	{Key: "watch.lsp.commands.cpp", Env: []string{"TLD_WATCH_LSP_CPP_COMMAND"}, Description: "Override command for the C++ language server."},
-	{Key: "watch.lsp.commands.go", Env: []string{"TLD_WATCH_LSP_GO_COMMAND"}, Description: "Override command for the Go language server."},
-	{Key: "watch.lsp.commands.java", Env: []string{"TLD_WATCH_LSP_JAVA_COMMAND"}, Description: "Override command for the Java language server."},
-	{Key: "watch.lsp.commands.javascript", Env: []string{"TLD_WATCH_LSP_JAVASCRIPT_COMMAND"}, Description: "Override command for the JavaScript language server."},
-	{Key: "watch.lsp.commands.python", Env: []string{"TLD_WATCH_LSP_PYTHON_COMMAND"}, Description: "Override command for the Python language server."},
-	{Key: "watch.lsp.commands.rust", Env: []string{"TLD_WATCH_LSP_RUST_COMMAND"}, Description: "Override command for the Rust language server."},
-	{Key: "watch.lsp.commands.typescript", Env: []string{"TLD_WATCH_LSP_TYPESCRIPT_COMMAND"}, Description: "Override command for the TypeScript language server."},
-	{Key: "watch.visibility.core_threshold_enabled", Description: "Enable score thresholding for watch visibility decisions."},
-	{Key: "watch.visibility.core_threshold", Description: "Minimum score for core watch visibility."},
-	{Key: "watch.visibility.tier_multiplier", Description: "Density multiplier added by each Show Context tier."},
-	{Key: "watch.visibility.max_expansion_multiplier", Description: "Maximum density multiplier allowed by Show Context."},
-	{Key: "watch.visibility.weights.changed", Description: "Visibility score weight for changed resources."},
-	{Key: "watch.visibility.weights.selected", Description: "Visibility score weight for selected context expansion resources."},
-	{Key: "watch.visibility.weights.user_show", Description: "Visibility score weight for durable show policies."},
-	{Key: "watch.visibility.weights.user_hide", Description: "Visibility score weight for durable hide policies."},
-	{Key: "watch.visibility.weights.high_signal_fact", Description: "Visibility score weight for high-signal facts."},
-	{Key: "watch.visibility.weights.relationship_proximity", Description: "Visibility score weight for graph/fact neighborhood proximity."},
-	{Key: "watch.visibility.weights.dependency_fact", Description: "Visibility score weight for dependency facts."},
-	{Key: "watch.visibility.weights.utility_noise", Description: "Visibility score penalty for utility-like noise."},
-	{Key: "watch.visibility.weights.high_degree_noise", Description: "Visibility score penalty for high-degree noise."},
-	{Key: "watch.embedding.provider", Env: []string{"TLD_EMBEDDING_PROVIDER"}, Description: "Embedding provider for watch identity and similarity."},
-	{Key: "watch.embedding.endpoint", Env: []string{"TLD_EMBEDDING_ENDPOINT"}, Description: "Embedding provider endpoint when the provider uses HTTP."},
-	{Key: "watch.embedding.model", Env: []string{"TLD_EMBEDDING_MODEL"}, Description: "Embedding model name."},
-	{Key: "watch.embedding.dimension", Env: []string{"TLD_EMBEDDING_DIMENSION"}, Description: "Embedding vector dimension, or 0 to infer when supported."},
-	{Key: "watch.embedding.max_tokens", Env: []string{"TLD_EMBEDDING_MAX_TOKENS"}, Description: "Maximum input token length for embedding model."},
-	{Key: "watch.embedding.runtime_path", Env: []string{"TLD_EMBEDDING_RUNTIME_PATH", "ONNXRUNTIME_LIB_PATH"}, Description: "ONNX Runtime shared library path for local embedding providers."},
-	{Key: "watch.embedding.health_threshold", Description: "Similarity threshold required by embedding health checks."},
-	{Key: "watch.layout.link_distance", Env: []string{"LAYOUT_LINK_DISTANCE"}, Description: "Organic layout target link distance for generated watch views."},
-	{Key: "watch.layout.charge_strength", Env: []string{"LAYOUT_CHARGE_STRENGTH"}, Description: "Organic layout node charge strength for generated watch views."},
-	{Key: "watch.layout.collide_radius", Env: []string{"LAYOUT_COLLIDE_RADIUS"}, Description: "Organic layout collision radius for generated watch views."},
-	{Key: "watch.layout.gravity_strength", Env: []string{"LAYOUT_GRAVITY_STRENGTH"}, Description: "Organic layout gravity strength for generated watch views."},
+	{Key: "index.tools.scip_go", Env: []string{"TLD_INDEX_SCIP_GO"}, Description: "Path or name of the scip-go indexer."},
+	{Key: "index.tools.scip_typescript", Env: []string{"TLD_INDEX_SCIP_TYPESCRIPT"}, Description: "Path or name of the scip-typescript indexer."},
+	{Key: "index.tools.scip_python", Env: []string{"TLD_INDEX_SCIP_PYTHON"}, Description: "Path or name of the scip-python indexer."},
+	{Key: "index.tools.scip_dotnet", Env: []string{"TLD_INDEX_SCIP_DOTNET"}, Description: "Path or name of the scip-dotnet indexer."},
+	{Key: "index.tools.scip_clang", Env: []string{"TLD_INDEX_SCIP_CLANG"}, Description: "Path or name of the scip-clang indexer."},
+	{Key: "index.tools.scip_java", Env: []string{"TLD_INDEX_SCIP_JAVA"}, Description: "Path or name of the scip-java indexer."},
+	{Key: "index.tools.scip_dart", Env: []string{"TLD_INDEX_SCIP_DART"}, Description: "Path or name of the scip-dart indexer."},
+	{Key: "index.tools.scip_php", Env: []string{"TLD_INDEX_SCIP_PHP"}, Description: "Path or name of the scip-php indexer."},
+	{Key: "index.tools.scip_ruby", Env: []string{"TLD_INDEX_SCIP_RUBY"}, Description: "Path or name of the scip-ruby indexer."},
+	{Key: "index.tools.rust_analyzer", Env: []string{"TLD_INDEX_RUST_ANALYZER"}, Description: "Path or name of the rust-analyzer binary used for SCIP."},
+	{Key: "index.tools.timeout_seconds", Env: []string{"TLD_INDEX_TOOL_TIMEOUT_SECONDS"}, Description: "Per-indexer invocation timeout in seconds."},
+	{Key: "map.grouping.resolution", Env: []string{"TLD_MAP_GROUPING_RESOLUTION"}, Description: "Louvain resolution: higher values produce more, smaller communities."},
+	{Key: "map.grouping.min_group_size", Env: []string{"TLD_MAP_GROUPING_MIN_GROUP_SIZE"}, Description: "Merge leaf groups smaller than this into their strongest sibling."},
+	{Key: "map.grouping.min_root_groups", Env: []string{"TLD_MAP_GROUPING_MIN_ROOT_GROUPS"}, Description: "Minimum number of root components in a graph map."},
+	{Key: "map.grouping.max_root_groups", Env: []string{"TLD_MAP_GROUPING_MAX_ROOT_GROUPS"}, Description: "Maximum number of root components in a graph map."},
+	{Key: "map.grouping.max_children", Env: []string{"TLD_MAP_GROUPING_MAX_CHILDREN"}, Description: "Maximum fan-out of one map subdivision."},
+	{Key: "map.grouping.max_depth", Env: []string{"TLD_MAP_GROUPING_MAX_DEPTH"}, Description: "Maximum depth of the map group hierarchy."},
+	{Key: "map.grouping.max_leaf_files", Env: []string{"TLD_MAP_GROUPING_MAX_LEAF_FILES"}, Description: "Files per leaf view before the group is subdivided."},
+	{Key: "map.budget.max_connectors_per_view", Env: []string{"TLD_MAP_BUDGET_MAX_CONNECTORS_PER_VIEW"}, Description: "Maximum rolled-up connectors drawn in one map view."},
+	{Key: "map.budget.max_leaf_connectors_per_view", Env: []string{"TLD_MAP_BUDGET_MAX_LEAF_CONNECTORS_PER_VIEW"}, Description: "Maximum connectors drawn in a file-only map view."},
 	{Key: "completion.remote", Env: []string{"TLD_COMPLETION_REMOTE"}, Description: "Allow shell completion to query remote resources."},
 	{Key: "updates.auto", Env: []string{"TLD_UPDATES_AUTO"}, Description: "Automatically install available tld CLI updates during startup checks."},
 	{Key: "updates.check_interval", Env: []string{"TLD_UPDATES_CHECK_INTERVAL"}, Description: "Minimum time between GitHub update checks."},
@@ -523,39 +404,26 @@ func applyEnvOverridesDetailed(cfg *Config, root *yaml.Node) ([]ConfigValue, err
 		{"serve.data_dir", "TLD_DATA_DIR"},
 		{"serve.public_url", "TLD_PUBLIC_URL"},
 		{"serve.allowed_origins", "TLD_ALLOWED_ORIGINS"},
-		{"serve.populate_reranker_endpoint", "TLD_POPULATE_RERANKER_ENDPOINT"},
-		{"watch.languages", "TLD_WATCH_LANGUAGES"},
-		{"watch.watcher", "TLD_WATCH_WATCHER"},
-		{"watch.poll_interval", "TLD_WATCH_POLL_INTERVAL"},
-		{"watch.debounce", "TLD_WATCH_DEBOUNCE"},
-		{"watch.scale.strategy", "TLD_WATCH_SCALE_STRATEGY"},
-		{"watch.scale.max_tracked_files", "TLD_WATCH_SCALE_MAX_TRACKED_FILES"},
-		{"watch.scale.max_limited_files", "TLD_WATCH_SCALE_MAX_LIMITED_FILES"},
-		{"watch.scale.max_recent_files", "TLD_WATCH_SCALE_MAX_RECENT_FILES"},
-		{"watch.scale.max_caller_depth", "TLD_WATCH_SCALE_MAX_CALLER_DEPTH"},
-		{"watch.scale.max_blast_radius_hops", "TLD_WATCH_SCALE_MAX_BLAST_RADIUS_HOPS"},
-		{"watch.dependencies.enabled", "TLD_WATCH_DEPENDENCIES_ENABLED"},
-		{"watch.lsp.enabled", "TLD_WATCH_LSP_ENABLED"},
-		{"watch.lsp.health_interval", "TLD_WATCH_LSP_HEALTH_INTERVAL"},
-		{"watch.lsp.memory_limit_bytes", "TLD_WATCH_LSP_MEMORY_LIMIT_BYTES"},
-		{"watch.lsp.commands.c", "TLD_WATCH_LSP_C_COMMAND"},
-		{"watch.lsp.commands.cpp", "TLD_WATCH_LSP_CPP_COMMAND"},
-		{"watch.lsp.commands.go", "TLD_WATCH_LSP_GO_COMMAND"},
-		{"watch.lsp.commands.java", "TLD_WATCH_LSP_JAVA_COMMAND"},
-		{"watch.lsp.commands.javascript", "TLD_WATCH_LSP_JAVASCRIPT_COMMAND"},
-		{"watch.lsp.commands.python", "TLD_WATCH_LSP_PYTHON_COMMAND"},
-		{"watch.lsp.commands.rust", "TLD_WATCH_LSP_RUST_COMMAND"},
-		{"watch.lsp.commands.typescript", "TLD_WATCH_LSP_TYPESCRIPT_COMMAND"},
-		{"watch.embedding.provider", "TLD_EMBEDDING_PROVIDER"},
-		{"watch.embedding.endpoint", "TLD_EMBEDDING_ENDPOINT"},
-		{"watch.embedding.model", "TLD_EMBEDDING_MODEL"},
-		{"watch.embedding.dimension", "TLD_EMBEDDING_DIMENSION"},
-		{"watch.embedding.max_tokens", "TLD_EMBEDDING_MAX_TOKENS"},
-		{"watch.embedding.runtime_path", "TLD_EMBEDDING_RUNTIME_PATH"},
-		{"watch.layout.link_distance", "LAYOUT_LINK_DISTANCE"},
-		{"watch.layout.charge_strength", "LAYOUT_CHARGE_STRENGTH"},
-		{"watch.layout.collide_radius", "LAYOUT_COLLIDE_RADIUS"},
-		{"watch.layout.gravity_strength", "LAYOUT_GRAVITY_STRENGTH"},
+		{"index.tools.scip_go", "TLD_INDEX_SCIP_GO"},
+		{"index.tools.scip_typescript", "TLD_INDEX_SCIP_TYPESCRIPT"},
+		{"index.tools.scip_python", "TLD_INDEX_SCIP_PYTHON"},
+		{"index.tools.scip_dotnet", "TLD_INDEX_SCIP_DOTNET"},
+		{"index.tools.scip_clang", "TLD_INDEX_SCIP_CLANG"},
+		{"index.tools.scip_java", "TLD_INDEX_SCIP_JAVA"},
+		{"index.tools.scip_dart", "TLD_INDEX_SCIP_DART"},
+		{"index.tools.scip_php", "TLD_INDEX_SCIP_PHP"},
+		{"index.tools.scip_ruby", "TLD_INDEX_SCIP_RUBY"},
+		{"index.tools.rust_analyzer", "TLD_INDEX_RUST_ANALYZER"},
+		{"index.tools.timeout_seconds", "TLD_INDEX_TOOL_TIMEOUT_SECONDS"},
+		{"map.grouping.resolution", "TLD_MAP_GROUPING_RESOLUTION"},
+		{"map.grouping.min_group_size", "TLD_MAP_GROUPING_MIN_GROUP_SIZE"},
+		{"map.grouping.min_root_groups", "TLD_MAP_GROUPING_MIN_ROOT_GROUPS"},
+		{"map.grouping.max_root_groups", "TLD_MAP_GROUPING_MAX_ROOT_GROUPS"},
+		{"map.grouping.max_children", "TLD_MAP_GROUPING_MAX_CHILDREN"},
+		{"map.grouping.max_depth", "TLD_MAP_GROUPING_MAX_DEPTH"},
+		{"map.grouping.max_leaf_files", "TLD_MAP_GROUPING_MAX_LEAF_FILES"},
+		{"map.budget.max_connectors_per_view", "TLD_MAP_BUDGET_MAX_CONNECTORS_PER_VIEW"},
+		{"map.budget.max_leaf_connectors_per_view", "TLD_MAP_BUDGET_MAX_LEAF_CONNECTORS_PER_VIEW"},
 	} {
 		if err := apply(item.key, item.env, os.Getenv(item.env)); err != nil {
 			return nil, err
@@ -630,16 +498,6 @@ func configValueEnv(def ConfigDefinition, active string) string {
 
 func setConfigValue(cfg *Config, key, value string) error {
 	key = normalizeConfigKey(key)
-	if language, ok := lspCommandLanguageFromKey(key); ok {
-		if cfg.Watch.LSP.Commands == nil {
-			cfg.Watch.LSP.Commands = map[string]string{}
-		}
-		cfg.Watch.LSP.Commands[language] = strings.TrimSpace(value)
-		return nil
-	}
-	if strings.HasPrefix(key, "watch.lsp.commands.") {
-		return fmt.Errorf("unsupported LSP command language %q", strings.TrimPrefix(key, "watch.lsp.commands."))
-	}
 	switch key {
 	case "server_url":
 		cfg.ServerURL = strings.TrimSpace(value)
@@ -679,226 +537,86 @@ func setConfigValue(cfg *Config, key, value string) error {
 		cfg.Serve.PublicURL = normalizePublicURLValue(value)
 	case "serve.allowed_origins":
 		cfg.Serve.AllowedOrigins = parseStringList(value)
-	case "serve.populate_reranker_endpoint":
-		cfg.Serve.PopulateRerankerEndpoint = strings.TrimSpace(value)
-	case "watch.languages":
-		cfg.Watch.Languages = parseStringList(value)
-	case "watch.watcher":
-		cfg.Watch.Watcher = strings.ToLower(strings.TrimSpace(value))
-	case "watch.poll_interval":
-		cfg.Watch.PollInterval = strings.TrimSpace(value)
-	case "watch.debounce":
-		cfg.Watch.Debounce = strings.TrimSpace(value)
-	case "watch.scale.strategy":
-		cfg.Watch.Scale.Strategy = strings.ToLower(strings.TrimSpace(value))
-	case "watch.scale.max_tracked_files":
+	case "index.tools.scip_go":
+		cfg.Index.Tools.SCIPGo = strings.TrimSpace(value)
+	case "index.tools.scip_typescript":
+		cfg.Index.Tools.SCIPTypeScript = strings.TrimSpace(value)
+	case "index.tools.scip_python":
+		cfg.Index.Tools.SCIPPython = strings.TrimSpace(value)
+	case "index.tools.scip_dotnet":
+		cfg.Index.Tools.SCIPDotnet = strings.TrimSpace(value)
+	case "index.tools.scip_clang":
+		cfg.Index.Tools.SCIPClang = strings.TrimSpace(value)
+	case "index.tools.scip_java":
+		cfg.Index.Tools.SCIPJava = strings.TrimSpace(value)
+	case "index.tools.scip_dart":
+		cfg.Index.Tools.SCIPDart = strings.TrimSpace(value)
+	case "index.tools.scip_php":
+		cfg.Index.Tools.SCIPPhp = strings.TrimSpace(value)
+	case "index.tools.scip_ruby":
+		cfg.Index.Tools.SCIPRuby = strings.TrimSpace(value)
+	case "index.tools.rust_analyzer":
+		cfg.Index.Tools.RustAnalyzer = strings.TrimSpace(value)
+	case "index.tools.timeout_seconds":
 		v, err := parseInt(value)
 		if err != nil {
 			return err
 		}
-		cfg.Watch.Scale.MaxTrackedFiles = v
-	case "watch.scale.max_limited_files":
+		cfg.Index.Tools.TimeoutSeconds = v
+	case "map.grouping.resolution":
+		v, err := parseFloat(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.Grouping.Resolution = v
+	case "map.grouping.min_group_size":
 		v, err := parseInt(value)
 		if err != nil {
 			return err
 		}
-		cfg.Watch.Scale.MaxLimitedFiles = v
-	case "watch.scale.max_recent_files":
+		cfg.Map.Grouping.MinGroupSize = v
+	case "map.grouping.min_root_groups":
 		v, err := parseInt(value)
 		if err != nil {
 			return err
 		}
-		cfg.Watch.Scale.MaxRecentFiles = v
-	case "watch.scale.max_caller_depth":
+		cfg.Map.Grouping.MinRootGroups = v
+	case "map.grouping.max_root_groups":
 		v, err := parseInt(value)
 		if err != nil {
 			return err
 		}
-		cfg.Watch.Scale.MaxCallerDepth = v
-	case "watch.scale.max_blast_radius_hops":
+		cfg.Map.Grouping.MaxRootGroups = v
+	case "map.grouping.max_children":
 		v, err := parseInt(value)
 		if err != nil {
 			return err
 		}
-		cfg.Watch.Scale.MaxBlastRadiusHops = v
-	case "watch.dependencies.enabled":
-		v, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Dependencies.Enabled = v
-	case "watch.lsp.enabled":
-		v, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.LSP.Enabled = v
-	case "watch.lsp.health_interval":
-		cfg.Watch.LSP.HealthInterval = strings.TrimSpace(value)
-	case "watch.lsp.memory_limit_bytes":
-		v, err := parseInt64(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.LSP.MemoryLimitBytes = v
-	case "watch.thresholds.max_elements_per_view":
+		cfg.Map.Grouping.MaxChildren = v
+	case "map.grouping.max_depth":
 		v, err := parseInt(value)
 		if err != nil {
 			return err
 		}
-		cfg.Watch.Thresholds.MaxElementsPerView = v
-	case "watch.thresholds.max_connectors_per_view":
+		cfg.Map.Grouping.MaxDepth = v
+	case "map.grouping.max_leaf_files":
 		v, err := parseInt(value)
 		if err != nil {
 			return err
 		}
-		cfg.Watch.Thresholds.MaxConnectorsPerView = v
-	case "watch.thresholds.max_incoming_per_element":
+		cfg.Map.Grouping.MaxLeafFiles = v
+	case "map.budget.max_connectors_per_view":
 		v, err := parseInt(value)
 		if err != nil {
 			return err
 		}
-		cfg.Watch.Thresholds.MaxIncomingPerElement = v
-	case "watch.thresholds.max_outgoing_per_element":
+		cfg.Map.Budget.MaxConnectorsPerView = v
+	case "map.budget.max_leaf_connectors_per_view":
 		v, err := parseInt(value)
 		if err != nil {
 			return err
 		}
-		cfg.Watch.Thresholds.MaxOutgoingPerElement = v
-	case "watch.thresholds.max_expanded_connectors_per_group":
-		v, err := parseInt(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Thresholds.MaxExpandedConnectorsPerGroup = v
-	case "watch.visibility.core_threshold_enabled":
-		v, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.CoreThresholdEnabled = v
-	case "watch.visibility.core_threshold":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.CoreThreshold = v
-	case "watch.visibility.tier_multiplier":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.TierMultiplier = v
-	case "watch.visibility.max_expansion_multiplier":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.MaxExpansionMultiplier = v
-	case "watch.visibility.weights.changed":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.Weights.Changed = v
-	case "watch.visibility.weights.selected":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.Weights.Selected = v
-	case "watch.visibility.weights.user_show":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.Weights.UserShow = v
-	case "watch.visibility.weights.user_hide":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.Weights.UserHide = v
-	case "watch.visibility.weights.high_signal_fact":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.Weights.HighSignalFact = v
-	case "watch.visibility.weights.relationship_proximity":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.Weights.RelationshipProximity = v
-	case "watch.visibility.weights.dependency_fact":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.Weights.DependencyFact = v
-	case "watch.visibility.weights.utility_noise":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.Weights.UtilityNoise = v
-	case "watch.visibility.weights.high_degree_noise":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Visibility.Weights.HighDegreeNoise = v
-	case "watch.embedding.provider":
-		cfg.Watch.Embedding.Provider = strings.TrimSpace(value)
-	case "watch.embedding.endpoint":
-		cfg.Watch.Embedding.Endpoint = EndpointList{value}
-	case "watch.embedding.model":
-		cfg.Watch.Embedding.Model = strings.TrimSpace(value)
-	case "watch.embedding.dimension":
-		v, err := parseInt(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Embedding.Dimension = v
-	case "watch.embedding.max_tokens":
-		v, err := parseInt(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Embedding.MaxTokens = v
-	case "watch.embedding.runtime_path":
-		cfg.Watch.Embedding.RuntimePath = strings.TrimSpace(value)
-	case "watch.embedding.health_threshold":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Embedding.HealthThreshold = v
-	case "watch.layout.link_distance":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Layout.LinkDistance = v
-	case "watch.layout.charge_strength":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Layout.ChargeStrength = v
-	case "watch.layout.collide_radius":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Layout.CollideRadius = v
-	case "watch.layout.gravity_strength":
-		v, err := parseFloat(value)
-		if err != nil {
-			return err
-		}
-		cfg.Watch.Layout.GravityStrength = v
+		cfg.Map.Budget.MaxLeafConnectorsPerView = v
 	case "completion.remote":
 		v, err := parseBool(value)
 		if err != nil {
@@ -951,110 +669,46 @@ func getConfigValue(cfg *Config, key string) any {
 		return cfg.Serve.PublicURL
 	case "serve.allowed_origins":
 		return cfg.Serve.AllowedOrigins
-	case "serve.populate_reranker_endpoint":
-		return cfg.Serve.PopulateRerankerEndpoint
-	case "watch.languages":
-		return cfg.Watch.Languages
-	case "watch.watcher":
-		return cfg.Watch.Watcher
-	case "watch.poll_interval":
-		return cfg.Watch.PollInterval
-	case "watch.debounce":
-		return cfg.Watch.Debounce
-	case "watch.thresholds.max_elements_per_view":
-		return cfg.Watch.Thresholds.MaxElementsPerView
-	case "watch.thresholds.max_connectors_per_view":
-		return cfg.Watch.Thresholds.MaxConnectorsPerView
-	case "watch.thresholds.max_incoming_per_element":
-		return cfg.Watch.Thresholds.MaxIncomingPerElement
-	case "watch.thresholds.max_outgoing_per_element":
-		return cfg.Watch.Thresholds.MaxOutgoingPerElement
-	case "watch.thresholds.max_expanded_connectors_per_group":
-		return cfg.Watch.Thresholds.MaxExpandedConnectorsPerGroup
-	case "watch.scale.strategy":
-		return cfg.Watch.Scale.Strategy
-	case "watch.scale.max_tracked_files":
-		return cfg.Watch.Scale.MaxTrackedFiles
-	case "watch.scale.max_limited_files":
-		return cfg.Watch.Scale.MaxLimitedFiles
-	case "watch.scale.max_recent_files":
-		return cfg.Watch.Scale.MaxRecentFiles
-	case "watch.scale.max_caller_depth":
-		return cfg.Watch.Scale.MaxCallerDepth
-	case "watch.scale.max_blast_radius_hops":
-		return cfg.Watch.Scale.MaxBlastRadiusHops
-	case "watch.dependencies.enabled":
-		return cfg.Watch.Dependencies.Enabled
-	case "watch.lsp.enabled":
-		return cfg.Watch.LSP.Enabled
-	case "watch.lsp.health_interval":
-		return cfg.Watch.LSP.HealthInterval
-	case "watch.lsp.memory_limit_bytes":
-		return cfg.Watch.LSP.MemoryLimitBytes
-	case "watch.lsp.commands.c":
-		return cfg.Watch.LSP.Commands["c"]
-	case "watch.lsp.commands.cpp":
-		return cfg.Watch.LSP.Commands["cpp"]
-	case "watch.lsp.commands.go":
-		return cfg.Watch.LSP.Commands["go"]
-	case "watch.lsp.commands.java":
-		return cfg.Watch.LSP.Commands["java"]
-	case "watch.lsp.commands.javascript":
-		return cfg.Watch.LSP.Commands["javascript"]
-	case "watch.lsp.commands.python":
-		return cfg.Watch.LSP.Commands["python"]
-	case "watch.lsp.commands.rust":
-		return cfg.Watch.LSP.Commands["rust"]
-	case "watch.lsp.commands.typescript":
-		return cfg.Watch.LSP.Commands["typescript"]
-	case "watch.visibility.core_threshold_enabled":
-		return cfg.Watch.Visibility.CoreThresholdEnabled
-	case "watch.visibility.core_threshold":
-		return cfg.Watch.Visibility.CoreThreshold
-	case "watch.visibility.tier_multiplier":
-		return cfg.Watch.Visibility.TierMultiplier
-	case "watch.visibility.max_expansion_multiplier":
-		return cfg.Watch.Visibility.MaxExpansionMultiplier
-	case "watch.visibility.weights.changed":
-		return cfg.Watch.Visibility.Weights.Changed
-	case "watch.visibility.weights.selected":
-		return cfg.Watch.Visibility.Weights.Selected
-	case "watch.visibility.weights.user_show":
-		return cfg.Watch.Visibility.Weights.UserShow
-	case "watch.visibility.weights.user_hide":
-		return cfg.Watch.Visibility.Weights.UserHide
-	case "watch.visibility.weights.high_signal_fact":
-		return cfg.Watch.Visibility.Weights.HighSignalFact
-	case "watch.visibility.weights.relationship_proximity":
-		return cfg.Watch.Visibility.Weights.RelationshipProximity
-	case "watch.visibility.weights.dependency_fact":
-		return cfg.Watch.Visibility.Weights.DependencyFact
-	case "watch.visibility.weights.utility_noise":
-		return cfg.Watch.Visibility.Weights.UtilityNoise
-	case "watch.visibility.weights.high_degree_noise":
-		return cfg.Watch.Visibility.Weights.HighDegreeNoise
-	case "watch.embedding.provider":
-		return cfg.Watch.Embedding.Provider
-	case "watch.embedding.endpoint":
-		return cfg.Watch.Embedding.Endpoint.String()
-	case "watch.embedding.model":
-		return cfg.Watch.Embedding.Model
-	case "watch.embedding.dimension":
-		return cfg.Watch.Embedding.Dimension
-	case "watch.embedding.max_tokens":
-		return cfg.Watch.Embedding.MaxTokens
-	case "watch.embedding.runtime_path":
-		return cfg.Watch.Embedding.RuntimePath
-	case "watch.embedding.health_threshold":
-		return cfg.Watch.Embedding.HealthThreshold
-	case "watch.layout.link_distance":
-		return cfg.Watch.Layout.LinkDistance
-	case "watch.layout.charge_strength":
-		return cfg.Watch.Layout.ChargeStrength
-	case "watch.layout.collide_radius":
-		return cfg.Watch.Layout.CollideRadius
-	case "watch.layout.gravity_strength":
-		return cfg.Watch.Layout.GravityStrength
+	case "index.tools.scip_go":
+		return cfg.Index.Tools.SCIPGo
+	case "index.tools.scip_typescript":
+		return cfg.Index.Tools.SCIPTypeScript
+	case "index.tools.scip_python":
+		return cfg.Index.Tools.SCIPPython
+	case "index.tools.scip_dotnet":
+		return cfg.Index.Tools.SCIPDotnet
+	case "index.tools.scip_clang":
+		return cfg.Index.Tools.SCIPClang
+	case "index.tools.scip_java":
+		return cfg.Index.Tools.SCIPJava
+	case "index.tools.scip_dart":
+		return cfg.Index.Tools.SCIPDart
+	case "index.tools.scip_php":
+		return cfg.Index.Tools.SCIPPhp
+	case "index.tools.scip_ruby":
+		return cfg.Index.Tools.SCIPRuby
+	case "index.tools.rust_analyzer":
+		return cfg.Index.Tools.RustAnalyzer
+	case "index.tools.timeout_seconds":
+		return cfg.Index.Tools.TimeoutSeconds
+	case "map.grouping.resolution":
+		return cfg.Map.Grouping.Resolution
+	case "map.grouping.min_group_size":
+		return cfg.Map.Grouping.MinGroupSize
+	case "map.grouping.min_root_groups":
+		return cfg.Map.Grouping.MinRootGroups
+	case "map.grouping.max_root_groups":
+		return cfg.Map.Grouping.MaxRootGroups
+	case "map.grouping.max_children":
+		return cfg.Map.Grouping.MaxChildren
+	case "map.grouping.max_depth":
+		return cfg.Map.Grouping.MaxDepth
+	case "map.grouping.max_leaf_files":
+		return cfg.Map.Grouping.MaxLeafFiles
+	case "map.budget.max_connectors_per_view":
+		return cfg.Map.Budget.MaxConnectorsPerView
+	case "map.budget.max_leaf_connectors_per_view":
+		return cfg.Map.Budget.MaxLeafConnectorsPerView
 	case "completion.remote":
 		return cfg.Completion.Remote
 	case "updates.auto":
@@ -1104,94 +758,48 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	addScalar(serve, "data_dir", cfg.Serve.DataDir, desc("serve.data_dir"))
 	addScalar(serve, "public_url", cfg.Serve.PublicURL, desc("serve.public_url"))
 	addStringSeq(serve, "allowed_origins", cfg.Serve.AllowedOrigins, desc("serve.allowed_origins"))
-	addScalar(serve, "populate_reranker_endpoint", cfg.Serve.PopulateRerankerEndpoint, desc("serve.populate_reranker_endpoint"))
-	appendUnknownEntries(serve, mappingValueNode(existing, "serve"), setOf("host", "port", "data_dir", "public_url", "allowed_origins", "populate_reranker_endpoint"))
+	appendUnknownEntries(serve, mappingValueNode(existing, "serve"), setOf("host", "port", "data_dir", "public_url", "allowed_origins"))
 	addMap(mapping, "serve", serve, "Local web server settings.")
 
-	watchNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	addStringSeq(watchNode, "languages", cfg.Watch.Languages, desc("watch.languages"))
-	addScalar(watchNode, "watcher", cfg.Watch.Watcher, desc("watch.watcher"))
-	addScalar(watchNode, "poll_interval", cfg.Watch.PollInterval, desc("watch.poll_interval"))
-	addScalar(watchNode, "debounce", cfg.Watch.Debounce, desc("watch.debounce"))
+	indexNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	indexTools := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addScalar(indexTools, "scip_go", cfg.Index.Tools.SCIPGo, desc("index.tools.scip_go"))
+	addScalar(indexTools, "scip_typescript", cfg.Index.Tools.SCIPTypeScript, desc("index.tools.scip_typescript"))
+	addScalar(indexTools, "scip_python", cfg.Index.Tools.SCIPPython, desc("index.tools.scip_python"))
+	addScalar(indexTools, "scip_dotnet", cfg.Index.Tools.SCIPDotnet, desc("index.tools.scip_dotnet"))
+	addScalar(indexTools, "scip_clang", cfg.Index.Tools.SCIPClang, desc("index.tools.scip_clang"))
+	addScalar(indexTools, "scip_java", cfg.Index.Tools.SCIPJava, desc("index.tools.scip_java"))
+	addScalar(indexTools, "scip_dart", cfg.Index.Tools.SCIPDart, desc("index.tools.scip_dart"))
+	addScalar(indexTools, "scip_php", cfg.Index.Tools.SCIPPhp, desc("index.tools.scip_php"))
+	addScalar(indexTools, "scip_ruby", cfg.Index.Tools.SCIPRuby, desc("index.tools.scip_ruby"))
+	addScalar(indexTools, "rust_analyzer", cfg.Index.Tools.RustAnalyzer, desc("index.tools.rust_analyzer"))
+	addScalar(indexTools, "timeout_seconds", cfg.Index.Tools.TimeoutSeconds, desc("index.tools.timeout_seconds"))
+	appendUnknownEntries(indexTools, mappingValueNode(mappingValueNode(existing, "index"), "tools"), setOf("scip_go", "scip_typescript", "scip_python", "scip_dotnet", "scip_clang", "scip_java", "scip_dart", "scip_php", "scip_ruby", "rust_analyzer", "timeout_seconds"))
+	addMap(indexNode, "tools", indexTools, "External SCIP indexer binaries resolved on PATH.")
 
-	thresholds := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	addScalar(thresholds, "max_elements_per_view", cfg.Watch.Thresholds.MaxElementsPerView, desc("watch.thresholds.max_elements_per_view"))
-	addScalar(thresholds, "max_connectors_per_view", cfg.Watch.Thresholds.MaxConnectorsPerView, desc("watch.thresholds.max_connectors_per_view"))
-	addScalar(thresholds, "max_incoming_per_element", cfg.Watch.Thresholds.MaxIncomingPerElement, desc("watch.thresholds.max_incoming_per_element"))
-	addScalar(thresholds, "max_outgoing_per_element", cfg.Watch.Thresholds.MaxOutgoingPerElement, desc("watch.thresholds.max_outgoing_per_element"))
-	addScalar(thresholds, "max_expanded_connectors_per_group", cfg.Watch.Thresholds.MaxExpandedConnectorsPerGroup, desc("watch.thresholds.max_expanded_connectors_per_group"))
-	appendUnknownEntries(thresholds, mappingValueNode(mappingValueNode(existing, "watch"), "thresholds"), setOf("max_elements_per_view", "max_connectors_per_view", "max_incoming_per_element", "max_outgoing_per_element", "max_expanded_connectors_per_group"))
-	addMap(watchNode, "thresholds", thresholds, "Limits used while materializing generated watch views.")
+	appendUnknownEntries(indexNode, mappingValueNode(existing, "index"), setOf("tools"))
+	addMap(mapping, "index", indexNode, "In-tree codeindex engine settings.")
 
-	scale := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	addScalar(scale, "strategy", cfg.Watch.Scale.Strategy, desc("watch.scale.strategy"))
-	addScalar(scale, "max_tracked_files", cfg.Watch.Scale.MaxTrackedFiles, desc("watch.scale.max_tracked_files"))
-	addScalar(scale, "max_limited_files", cfg.Watch.Scale.MaxLimitedFiles, desc("watch.scale.max_limited_files"))
-	addScalar(scale, "max_recent_files", cfg.Watch.Scale.MaxRecentFiles, desc("watch.scale.max_recent_files"))
-	addScalar(scale, "max_caller_depth", cfg.Watch.Scale.MaxCallerDepth, desc("watch.scale.max_caller_depth"))
-	addScalar(scale, "max_blast_radius_hops", cfg.Watch.Scale.MaxBlastRadiusHops, desc("watch.scale.max_blast_radius_hops"))
-	appendUnknownEntries(scale, mappingValueNode(mappingValueNode(existing, "watch"), "scale"), setOf("strategy", "max_tracked_files", "max_limited_files", "max_recent_files", "max_caller_depth", "max_blast_radius_hops"))
-	addMap(watchNode, "scale", scale, "Huge-repo detection and limited-view settings.")
+	mapNode := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	mapGrouping := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addScalar(mapGrouping, "resolution", cfg.Map.Grouping.Resolution, desc("map.grouping.resolution"))
+	addScalar(mapGrouping, "min_group_size", cfg.Map.Grouping.MinGroupSize, desc("map.grouping.min_group_size"))
+	addScalar(mapGrouping, "min_root_groups", cfg.Map.Grouping.MinRootGroups, desc("map.grouping.min_root_groups"))
+	addScalar(mapGrouping, "max_root_groups", cfg.Map.Grouping.MaxRootGroups, desc("map.grouping.max_root_groups"))
+	addScalar(mapGrouping, "max_children", cfg.Map.Grouping.MaxChildren, desc("map.grouping.max_children"))
+	addScalar(mapGrouping, "max_depth", cfg.Map.Grouping.MaxDepth, desc("map.grouping.max_depth"))
+	addScalar(mapGrouping, "max_leaf_files", cfg.Map.Grouping.MaxLeafFiles, desc("map.grouping.max_leaf_files"))
+	appendUnknownEntries(mapGrouping, mappingValueNode(mappingValueNode(existing, "map"), "grouping"), setOf("resolution", "min_group_size", "min_root_groups", "max_root_groups", "max_children", "max_depth", "max_leaf_files"))
+	addMap(mapNode, "grouping", mapGrouping, "Louvain grouping parameters for graph maps.")
 
-	dependencies := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	addScalar(dependencies, "enabled", cfg.Watch.Dependencies.Enabled, desc("watch.dependencies.enabled"))
-	appendUnknownEntries(dependencies, mappingValueNode(mappingValueNode(existing, "watch"), "dependencies"), setOf("enabled"))
-	addMap(watchNode, "dependencies", dependencies, "Dependency and import inventory settings.")
+	mapBudget := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addScalar(mapBudget, "max_connectors_per_view", cfg.Map.Budget.MaxConnectorsPerView, desc("map.budget.max_connectors_per_view"))
+	addScalar(mapBudget, "max_leaf_connectors_per_view", cfg.Map.Budget.MaxLeafConnectorsPerView, desc("map.budget.max_leaf_connectors_per_view"))
+	appendUnknownEntries(mapBudget, mappingValueNode(mappingValueNode(existing, "map"), "budget"), setOf("max_connectors_per_view", "max_leaf_connectors_per_view"))
+	addMap(mapNode, "budget", mapBudget, "Connector drawing budgets for graph map views.")
 
-	lsp := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	addScalar(lsp, "enabled", cfg.Watch.LSP.Enabled, desc("watch.lsp.enabled"))
-	addScalar(lsp, "health_interval", cfg.Watch.LSP.HealthInterval, desc("watch.lsp.health_interval"))
-	addScalar(lsp, "memory_limit_bytes", cfg.Watch.LSP.MemoryLimitBytes, desc("watch.lsp.memory_limit_bytes"))
-	commands := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	for _, language := range []string{"c", "cpp", "go", "java", "javascript", "python", "rust", "typescript"} {
-		addScalar(commands, language, cfg.Watch.LSP.Commands[language], desc("watch.lsp.commands."+language))
-	}
-	appendUnknownEntries(commands, mappingValueNode(mappingValueNode(mappingValueNode(existing, "watch"), "lsp"), "commands"), setOf("c", "cpp", "go", "java", "javascript", "python", "rust", "typescript"))
-	addMap(lsp, "commands", commands, "Per-language language-server command overrides.")
-	appendUnknownEntries(lsp, mappingValueNode(mappingValueNode(existing, "watch"), "lsp"), setOf("enabled", "health_interval", "memory_limit_bytes", "commands"))
-	addMap(watchNode, "lsp", lsp, "Language-server integration settings.")
-
-	visibility := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	addScalar(visibility, "core_threshold_enabled", cfg.Watch.Visibility.CoreThresholdEnabled, desc("watch.visibility.core_threshold_enabled"))
-	addScalar(visibility, "core_threshold", cfg.Watch.Visibility.CoreThreshold, desc("watch.visibility.core_threshold"))
-	addScalar(visibility, "tier_multiplier", cfg.Watch.Visibility.TierMultiplier, desc("watch.visibility.tier_multiplier"))
-	addScalar(visibility, "max_expansion_multiplier", cfg.Watch.Visibility.MaxExpansionMultiplier, desc("watch.visibility.max_expansion_multiplier"))
-	weights := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	addScalar(weights, "changed", cfg.Watch.Visibility.Weights.Changed, desc("watch.visibility.weights.changed"))
-	addScalar(weights, "selected", cfg.Watch.Visibility.Weights.Selected, desc("watch.visibility.weights.selected"))
-	addScalar(weights, "user_show", cfg.Watch.Visibility.Weights.UserShow, desc("watch.visibility.weights.user_show"))
-	addScalar(weights, "user_hide", cfg.Watch.Visibility.Weights.UserHide, desc("watch.visibility.weights.user_hide"))
-	addScalar(weights, "high_signal_fact", cfg.Watch.Visibility.Weights.HighSignalFact, desc("watch.visibility.weights.high_signal_fact"))
-	addScalar(weights, "relationship_proximity", cfg.Watch.Visibility.Weights.RelationshipProximity, desc("watch.visibility.weights.relationship_proximity"))
-	addScalar(weights, "dependency_fact", cfg.Watch.Visibility.Weights.DependencyFact, desc("watch.visibility.weights.dependency_fact"))
-	addScalar(weights, "utility_noise", cfg.Watch.Visibility.Weights.UtilityNoise, desc("watch.visibility.weights.utility_noise"))
-	addScalar(weights, "high_degree_noise", cfg.Watch.Visibility.Weights.HighDegreeNoise, desc("watch.visibility.weights.high_degree_noise"))
-	appendUnknownEntries(weights, mappingValueNode(mappingValueNode(mappingValueNode(existing, "watch"), "visibility"), "weights"), setOf("changed", "selected", "user_show", "user_hide", "high_signal_fact", "relationship_proximity", "dependency_fact", "utility_noise", "high_degree_noise"))
-	addMap(visibility, "weights", weights, "Visibility scoring weights.")
-	appendUnknownEntries(visibility, mappingValueNode(mappingValueNode(existing, "watch"), "visibility"), setOf("core_threshold_enabled", "core_threshold", "tier_multiplier", "max_expansion_multiplier", "weights"))
-	addMap(watchNode, "visibility", visibility, "Scoring and density-tier settings for watch context.")
-
-	embedding := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	addScalar(embedding, "provider", cfg.Watch.Embedding.Provider, desc("watch.embedding.provider"))
-	addScalar(embedding, "endpoint", cfg.Watch.Embedding.Endpoint.String(), desc("watch.embedding.endpoint"))
-	addScalar(embedding, "model", cfg.Watch.Embedding.Model, desc("watch.embedding.model"))
-	addScalar(embedding, "dimension", cfg.Watch.Embedding.Dimension, desc("watch.embedding.dimension"))
-	addScalar(embedding, "max_tokens", cfg.Watch.Embedding.MaxTokens, desc("watch.embedding.max_tokens"))
-	addScalar(embedding, "runtime_path", cfg.Watch.Embedding.RuntimePath, desc("watch.embedding.runtime_path"))
-	addScalar(embedding, "health_threshold", cfg.Watch.Embedding.HealthThreshold, desc("watch.embedding.health_threshold"))
-	appendUnknownEntries(embedding, mappingValueNode(mappingValueNode(existing, "watch"), "embedding"), setOf("provider", "endpoint", "model", "dimension", "max_tokens", "runtime_path", "health_threshold"))
-	addMap(watchNode, "embedding", embedding, "Embedding settings used by watch/analyze identity matching.")
-
-	layout := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
-	addScalar(layout, "link_distance", cfg.Watch.Layout.LinkDistance, desc("watch.layout.link_distance"))
-	addScalar(layout, "charge_strength", cfg.Watch.Layout.ChargeStrength, desc("watch.layout.charge_strength"))
-	addScalar(layout, "collide_radius", cfg.Watch.Layout.CollideRadius, desc("watch.layout.collide_radius"))
-	addScalar(layout, "gravity_strength", cfg.Watch.Layout.GravityStrength, desc("watch.layout.gravity_strength"))
-	appendUnknownEntries(layout, mappingValueNode(mappingValueNode(existing, "watch"), "layout"), setOf("link_distance", "charge_strength", "collide_radius", "gravity_strength"))
-	addMap(watchNode, "layout", layout, "Organic layout tuning for generated watch views.")
-
-	appendUnknownEntries(watchNode, mappingValueNode(existing, "watch"), setOf("languages", "watcher", "poll_interval", "debounce", "thresholds", "scale", "dependencies", "lsp", "visibility", "embedding", "layout"))
-	addMap(mapping, "watch", watchNode, "Source watch/analyze pipeline settings.")
+	appendUnknownEntries(mapNode, mappingValueNode(existing, "map"), setOf("grouping", "budget"))
+	addMap(mapping, "map", mapNode, "Graph map pipeline settings.")
 
 	completion := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 	addScalar(completion, "remote", cfg.Completion.Remote, desc("completion.remote"))
@@ -1204,7 +812,7 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	appendUnknownEntries(updates, mappingValueNode(existing, "updates"), setOf("auto", "check_interval"))
 	addMap(mapping, "updates", updates, "CLI update check settings.")
 
-	appendUnknownEntries(mapping, existing, setOf("server_url", "api_key", "org_id", "apply", "database", "validation", "serve", "watch", "completion", "updates"))
+	appendUnknownEntries(mapping, existing, setOf("server_url", "api_key", "org_id", "apply", "database", "validation", "serve", "index", "map", "completion", "updates"))
 	return root
 }
 
@@ -1292,24 +900,6 @@ func normalizeConfigKey(key string) string {
 	return strings.ToLower(strings.TrimSpace(key))
 }
 
-func lspCommandLanguageFromKey(key string) (string, bool) {
-	language, ok := strings.CutPrefix(key, "watch.lsp.commands.")
-	if !ok || !validLSPCommandLanguage(language) {
-		return "", false
-	}
-	return language, true
-}
-
-func validLSPCommandLanguage(language string) bool {
-	language = strings.ToLower(strings.TrimSpace(language))
-	for _, spec := range analyzer.SupportedLanguages() {
-		if string(spec.Language) == language {
-			return true
-		}
-	}
-	return false
-}
-
 func parseStringList(value string) []string {
 	if strings.TrimSpace(value) == "" {
 		return nil
@@ -1338,14 +928,6 @@ func parseBool(value string) (bool, error) {
 
 func parseInt(value string) (int, error) {
 	v, err := strconv.Atoi(strings.TrimSpace(value))
-	if err != nil {
-		return 0, fmt.Errorf("must be an integer")
-	}
-	return v, nil
-}
-
-func parseInt64(value string) (int64, error) {
-	v, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
 	if err != nil {
 		return 0, fmt.Errorf("must be an integer")
 	}
@@ -1434,25 +1016,6 @@ func splitAddrOverride(addr string) (host string, port string, err error) {
 		return h, p, nil
 	}
 	return addr, "", nil
-}
-
-func normalizeConfigLanguages(values []string) []string {
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		lang := strings.ToLower(strings.TrimSpace(value))
-		if lang == "" {
-			continue
-		}
-		if _, ok := analyzer.LanguageSpecFor(analyzer.Language(lang)); ok {
-			seen[lang] = struct{}{}
-		}
-	}
-	out := make([]string, 0, len(seen))
-	for lang := range seen {
-		out = append(out, lang)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func setOf(values ...string) map[string]struct{} {

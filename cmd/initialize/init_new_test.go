@@ -3,6 +3,7 @@ package initialize_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mertcikla/tld/v2/cmd"
@@ -41,6 +42,16 @@ func TestInitCmd_CreatesTldDirectory(t *testing.T) {
 		path := filepath.Join(tldDir, f)
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("file %s was not created in .tld directory", f)
+			continue
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("read %s: %v", f, err)
+			continue
+		}
+		firstLine := strings.SplitN(string(data), "\n", 2)[0]
+		if !strings.HasPrefix(firstLine, "# yaml-language-server: $schema=") {
+			t.Errorf("%s first line = %q, want yaml-language-server schema directive", f, firstLine)
 		}
 	}
 

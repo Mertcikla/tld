@@ -20,10 +20,10 @@ func TestProgressLineRendersInPlace(t *testing.T) {
 	})
 	line.Start("Scanning", 10)
 	now = now.Add(2 * time.Second)
-	line.Advance("internal/watch/scan.go")
+	line.Advance("internal/codeindex/indexer/scan.go")
 
 	got := out.String()
-	for _, want := range []string{"\r\033[K", "Scanning", "1/10", "10%", "elapsed 2s", "0.5/s", "internal/watch/scan.go"} {
+	for _, want := range []string{"\r\033[K", "Scanning", "1/10", "10%", "elapsed 2s", "0.5/s", "internal/codeindex/indexer/scan.go"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("progress output missing %q:\n%q", want, got)
 		}
@@ -80,7 +80,7 @@ func TestProgressLineTruncatesLongDetailsToWidth(t *testing.T) {
 	var out bytes.Buffer
 	line := NewProgressLine(&out, ProgressLineOptions{ForceTerminal: true, Throttle: -1, Width: 64})
 	line.Start("Scanning", 100)
-	line.Advance("internal/watch/some/really/very/long/path/with/SymbolName.That.Would.Wrap.go")
+	line.Advance("internal/codeindex/some/really/very/long/path/with/SymbolName.That.Would.Wrap.go")
 
 	got := out.String()
 	rendered := got[strings.LastIndex(got, "\r\033[K")+len("\r\033[K"):]

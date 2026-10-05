@@ -29,7 +29,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import ViewsGrid from './ViewsGrid'
 import InfiniteZoom, { type InfiniteZoomHandle } from './InfiniteZoom'
 import { ZoomInIcon } from '../components/Icons'
-import { WATCH_REPRESENTATION_UPDATED_EVENT } from '../components/WorkspacePanel'
+import { ShortcutHint } from '../components/PanelUI'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
 import type { ExploreData, ViewTreeNode } from '../types'
@@ -95,12 +95,25 @@ function DiagramJumpToolbar({
   const searchHasContent = searchTerm.length > 0 || searchResults.length > 0
   const searchIsActive = searchFocused || searchHasContent
   const showCreateButton = !searchHasContent
-  const desktopSearchWidth = searchHasContent ? 318 : searchFocused ? 236 : 118
+  const desktopSearchWidth = searchHasContent ? 318 : searchFocused ? 236 : 150
 
   const maybeCollapseSearch = useCallback(() => {
     window.setTimeout(() => {
       setSearchFocused(false)
     }, 80)
+  }, [])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const isInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable
+      if (isInput) return
+      if (e.key.toLowerCase() !== 'k' || (!e.metaKey && !e.ctrlKey) || e.altKey || e.shiftKey) return
+      e.preventDefault()
+      searchInputRef.current?.focus()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
   }, [])
 
   return (
@@ -115,9 +128,6 @@ function DiagramJumpToolbar({
       maxW="calc(100vw - 24px)"
     >
       <motion.div
-        initial={{ y: -10, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
       >
         <Flex
           bg="var(--bg-panel)"
@@ -160,14 +170,12 @@ function DiagramJumpToolbar({
               aria-label="Explore view"
             >
               {view === 'explore' && (
-                <MotionBox
-                  layoutId="active-pill"
+                <Box
                   position="absolute"
                   inset={0}
                   bg="var(--bg-element)"
                   borderRadius="md"
                   zIndex={-1}
-                  transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
                 />
               )}
               <HStack spacing={1.5} zIndex={1}>
@@ -191,14 +199,12 @@ function DiagramJumpToolbar({
               aria-label="Hierarchy view"
             >
               {view === 'hierarchy' && (
-                <MotionBox
-                  layoutId="active-pill"
+                <Box
                   position="absolute"
                   inset={0}
                   bg="var(--bg-element)"
                   borderRadius="md"
                   zIndex={-1}
-                  transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
                 />
               )}
               <HStack spacing={1.5} zIndex={1}>
@@ -211,6 +217,7 @@ function DiagramJumpToolbar({
           <Box w="1px" h="18px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
 
           <motion.div
+            initial={false}
             animate={isMobileLayout ? undefined : { width: desktopSearchWidth }}
             transition={{ duration: 0.12, ease: [0.25, 1, 0.5, 1] }}
             style={{ flex: isMobileLayout ? '1 1 0' : '0 0 auto', minWidth: 0 }}
@@ -238,11 +245,16 @@ function DiagramJumpToolbar({
                 color="white"
                 h="28px"
                 pl="28px"
-                pr={searchTerm ? 8 : 2}
+                pr={searchTerm ? 8 : searchFocused ? 2 : '2.75rem'}
                 _placeholder={{ color: 'whiteAlpha.350' }}
                 _hover={{ borderColor: 'whiteAlpha.200' }}
                 _focus={{ borderColor: 'var(--accent)', boxShadow: '0 0 0 1px rgba(var(--accent-rgb), 0.45)' }}
               />
+              {!isMobileLayout && !searchTerm && !searchFocused && (
+                <InputRightElement h="28px" w="auto" pr={2} pointerEvents="none">
+                  <ShortcutHint keys={['mod', 'K']} opacity={0.6} />
+                </InputRightElement>
+              )}
               {searchTerm && (
                 <InputRightElement h="28px" w="28px">
                   <IconButton
@@ -508,14 +520,6 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => {
-    const refresh = () => {
-      void refreshTree()
-    }
-    window.addEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
-    return () => window.removeEventListener(WATCH_REPRESENTATION_UPDATED_EVENT, refresh)
-  }, [refreshTree])
-
   const commitSearchResult = useCallback((result: JumpSearchResult) => {
     if (view === 'explore') {
       const newParams = new URLSearchParams(searchParams)
@@ -555,6 +559,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     if (e.key === 'Escape') {
       setSearchResults([])
       setActiveSearchIndex(-1)
+      ;(e.target as HTMLInputElement).blur()
       return
     }
     if (searchResults.length === 0) return

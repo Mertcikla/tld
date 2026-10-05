@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,33 +16,102 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mertcikla/tld/v2/internal/watch"
+	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"connectrpc.com/connect"
+	"github.com/google/uuid"
+	"github.com/mertcikla/tld/v2/internal/repolink"
+	"github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
+const maxSourcePreviewBytes = 1 << 20
+
 type openEditorRequest struct {
-	Editor   string `json:"editor"`
-	Repo     string `json:"repo"`
-	FilePath string `json:"file_path"`
-	Line     int    `json:"line"`
+	Editor       string `json:"editor"`
+	RepositoryID string `json:"repository_id"`
+	Repo         string `json:"repo"`
+	FilePath     string `json:"file_path"`
+	Line         int    `json:"line"`
 }
 
-func registerEditorHandlers(mux *http.ServeMux, store *watch.Store) {
+func registerEditorHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, selfHosted bool) {
+	fetcher := dbRepositoryFetcher{db: sqliteStore.DB()}
 	mux.HandleFunc("POST /api/editor/open", func(w http.ResponseWriter, r *http.Request) {
+		if selfHosted {
+			// The server cannot open the caller's editor in a self-hosted
+			// deployment; the UI falls back to opening the remote on GitHub.
+			writeJSONError(w, http.StatusConflict, "open-in-editor is unavailable for self-hosted deployments")
+			return
+		}
 		var req openEditorRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
-		if err := openInEditor(r.Context(), store, req); err != nil {
+		if err := openInEditor(r.Context(), fetcher, req); err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]bool{"ok": true})
 	})
+
 }
 
-func openInEditor(ctx context.Context, store *watch.Store, req openEditorRequest) error {
+func (s *codeIndexRepositoryService) GetWorktreeSource(ctx context.Context, req *connect.Request[codeindexv1.GetWorktreeSourceRequest]) (*connect.Response[codeindexv1.GetWorktreeSourceResponse], error) {
+	if strings.TrimSpace(req.Msg.GetFilePath()) == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("file_path is required"))
+	}
+	fetcher := dbRepositoryFetcher{db: s.ws.DB()}
+	target, err := resolveEditorPath(ctx, fetcher, req.Msg.GetRepositoryId(), req.Msg.GetRepo(), req.Msg.GetFilePath())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	repos, err := fetcher.Repositories(ctx)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	for _, repo := range repos {
+		relative, err := filepath.Rel(repo.Root, target)
+		if err != nil || !filepath.IsLocal(relative) {
+			continue
+		}
+		content, err := readSourceFile(repo.Root, relative, maxSourcePreviewBytes)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		return connect.NewResponse(&codeindexv1.GetWorktreeSourceResponse{Content: content, Path: target}), nil
+	}
+	return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("file_path must stay inside a registered repository"))
+}
+
+// readSourceFile returns a text file's contents for in-app preview, rejecting
+// symlink escapes, binaries and files larger than maxBytes.
+func readSourceFile(repositoryRoot, path string, maxBytes int64) (string, error) {
+	root, err := os.OpenRoot(repositoryRoot)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = root.Close() }()
+	file, err := root.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if int64(len(data)) > maxBytes {
+		return "", fmt.Errorf("file is too large to preview")
+	}
+	if bytes.IndexByte(data, 0) >= 0 {
+		return "", fmt.Errorf("binary file cannot be previewed")
+	}
+	return string(data), nil
+}
+
+func openInEditor(ctx context.Context, store repositoryFetcher, req openEditorRequest) error {
 	editor := strings.TrimSpace(strings.ToLower(req.Editor))
 	if editor != "zed" && editor != "vscode" {
 		return fmt.Errorf("unsupported editor %q", req.Editor)
@@ -48,7 +120,7 @@ func openInEditor(ctx context.Context, store *watch.Store, req openEditorRequest
 		return errors.New("file_path is required")
 	}
 
-	target, err := resolveEditorPath(ctx, store, req.Repo, req.FilePath)
+	target, err := resolveEditorPath(ctx, store, req.RepositoryID, req.Repo, req.FilePath)
 	if err != nil {
 		return err
 	}
@@ -81,10 +153,41 @@ func openInEditor(ctx context.Context, store *watch.Store, req openEditorRequest
 }
 
 type repositoryFetcher interface {
-	Repositories(ctx context.Context) ([]watch.Repository, error)
+	Repositories(ctx context.Context) ([]repolink.Repository, error)
 }
 
-func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue string, filePath string) (string, error) {
+// dbRepositoryFetcher lists indexed repository roots from the codeindex store.
+type dbRepositoryFetcher struct{ db *sql.DB }
+
+func (f dbRepositoryFetcher) Repositories(ctx context.Context) ([]repolink.Repository, error) {
+	query := `SELECT id, root, remote_url FROM codeindex_repositories WHERE root <> ''`
+	args := []any{}
+	if orgID := app.TenantOrgIDFromCtx(ctx); orgID != uuid.Nil {
+		query += ` AND org_id = ?`
+		args = append(args, orgID)
+	}
+	query += ` ORDER BY root`
+	rows, err := f.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := []repolink.Repository{}
+	for rows.Next() {
+		var repo repolink.Repository
+		if err := rows.Scan(&repo.ID, &repo.Root, &repo.RemoteURL); err != nil {
+			return nil, err
+		}
+		if repo.RemoteURL == "" {
+			repo.RemoteURL = repolink.GitRemoteURL(ctx, repo.Root)
+		}
+		repo.Name = filepath.Base(repo.Root)
+		out = append(out, repo)
+	}
+	return out, rows.Err()
+}
+
+func resolveEditorPath(ctx context.Context, store repositoryFetcher, repositoryID, repoValue, filePath string) (string, error) {
 	cleanFile := strings.TrimSpace(filePath)
 	if before, _, ok := strings.Cut(cleanFile, "#"); ok {
 		cleanFile = before
@@ -98,7 +201,7 @@ func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue s
 	if filepath.IsAbs(cleanFile) {
 		cleanFile = filepath.Clean(cleanFile)
 		for _, repo := range repos {
-			root := filepath.Clean(repo.RepoRoot)
+			root := filepath.Clean(repo.Root)
 			if cleanFile == root || strings.HasPrefix(cleanFile, root+string(filepath.Separator)) {
 				return cleanFile, nil
 			}
@@ -119,7 +222,7 @@ func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue s
 		return "", errors.New("no watched repositories are configured; add a repository in the Workspace panel before opening source files")
 	}
 
-	repo, ok := matchRepository(repos, repoValue)
+	repo, ok := repolink.Resolve(repositoryID, repoValue, relative, repos)
 	if !ok && len(repos) == 1 {
 		repo = repos[0]
 		ok = true
@@ -128,52 +231,12 @@ func resolveEditorPath(ctx context.Context, store repositoryFetcher, repoValue s
 		return "", errors.New("could not resolve the linked repository to a local worktree")
 	}
 
-	root := filepath.Clean(repo.RepoRoot)
+	root := filepath.Clean(repo.Root)
 	target := filepath.Clean(filepath.Join(root, relative))
 	if target != root && !strings.HasPrefix(target, root+string(filepath.Separator)) {
 		return "", errors.New("resolved file path escapes the watched repository")
 	}
 	return target, nil
-}
-
-func matchRepository(repos []watch.Repository, value string) (watch.Repository, bool) {
-	needle := strings.TrimSpace(value)
-	needleSlug := githubSlug(needle)
-	for _, repo := range repos {
-		candidates := []string{repo.RepoRoot}
-		if repo.RemoteURL.Valid {
-			candidates = append(candidates, repo.RemoteURL.String)
-		}
-		for _, candidate := range candidates {
-			if strings.EqualFold(strings.TrimSpace(candidate), needle) {
-				return repo, true
-			}
-			if needleSlug != "" && strings.EqualFold(githubSlug(candidate), needleSlug) {
-				return repo, true
-			}
-		}
-	}
-	return watch.Repository{}, false
-}
-
-func githubSlug(value string) string {
-	cleaned := strings.TrimSpace(value)
-	cleaned = strings.TrimSuffix(cleaned, ".git")
-	if after, ok := strings.CutPrefix(cleaned, "git@github.com:"); ok {
-		return strings.ToLower(after)
-	}
-	cleaned = strings.TrimPrefix(cleaned, "https://")
-	cleaned = strings.TrimPrefix(cleaned, "http://")
-	cleaned = strings.TrimPrefix(cleaned, "github.com/")
-	cleaned = strings.TrimPrefix(cleaned, "www.github.com/")
-	parts := strings.Split(cleaned, "/")
-	if len(parts) >= 2 && !strings.Contains(parts[0], ".") {
-		return strings.ToLower(parts[0] + "/" + parts[1])
-	}
-	if len(parts) >= 3 && strings.EqualFold(parts[0], "github.com") {
-		return strings.ToLower(parts[1] + "/" + parts[2])
-	}
-	return ""
 }
 
 func lookPath(name string) (string, error) {

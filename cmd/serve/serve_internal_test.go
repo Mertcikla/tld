@@ -70,7 +70,7 @@ func TestPrintServeInfoIncludesExistingDataCounts(t *testing.T) {
 	if !strings.Contains(got, "Server status:") || !strings.Contains(got, "using existing local data") {
 		t.Fatalf("missing existing data status in output: %q", got)
 	}
-	if !strings.Contains(got, "Resource counts:") || !strings.Contains(got, "2 views, 7 elements, 3 connectors") {
+	if !strings.Contains(got, "Resources:") || !strings.Contains(got, "2 views, 7 elements, 3 connectors") {
 		t.Fatalf("missing resource counts in output: %q", got)
 	}
 	if !strings.Contains(got, "DB:") {
@@ -117,7 +117,7 @@ func TestPrintServeInfoUsesPostgresStatus(t *testing.T) {
 	if !strings.Contains(got, "Server status:") || !strings.Contains(got, "using postgres database") {
 		t.Fatalf("missing postgres status in output: %q", got)
 	}
-	if !strings.Contains(got, "Resource counts:") || !strings.Contains(got, "2 views, 7 elements, 3 connectors") {
+	if !strings.Contains(got, "Resources:") || !strings.Contains(got, "2 views, 7 elements, 3 connectors") {
 		t.Fatalf("missing postgres resource counts in output: %q", got)
 	}
 	if !strings.Contains(got, "DB:") || !strings.Contains(got, "postgres") {

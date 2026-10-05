@@ -80,7 +80,6 @@ type desiredElement struct {
 	Tags            []string
 	Repo            string
 	Branch          string
-	Language        string
 	FilePath        string
 	BypassNoiseGate *bool
 	HasView         bool

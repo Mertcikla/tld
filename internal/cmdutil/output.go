@@ -6,10 +6,30 @@ import (
 	"strings"
 
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/spf13/cobra"
 )
 
 func WantsJSON(format string) bool {
 	return strings.EqualFold(format, "json")
+}
+
+// WantsJSONFromCmd reports whether the root --format flag requests JSON. It is a
+// convenience for commands that do not take a format pointer directly.
+func WantsJSONFromCmd(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	flag := cmd.Root().PersistentFlags().Lookup("format")
+	return flag != nil && WantsJSON(flag.Value.String())
+}
+
+// CompactFromCmd reports whether the root --compact flag is set.
+func CompactFromCmd(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	flag := cmd.Root().PersistentFlags().Lookup("compact")
+	return flag != nil && flag.Value.String() == "true"
 }
 
 func WriteJSON(w io.Writer, compact bool, payload JSONOutput) error {

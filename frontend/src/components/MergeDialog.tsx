@@ -25,6 +25,7 @@ interface MergeDialogProps {
     kind: string | null
     description: string | null
     repo: string | null
+    repository_id: string | null
     branch: string | null
     file_path: string | null
     language: string | null
@@ -109,10 +110,11 @@ export default function MergeDialog({ isOpen, onClose, source, onMerge }: MergeD
         kind: string | null
         description: string | null
         repo: string | null
+        repository_id: string | null
         branch: string | null
         file_path: string | null
         language: string | null
-      } = { kind: null, description: null, repo: null, branch: null, file_path: null, language: null }
+      } = { kind: null, description: null, repo: null, repository_id: null, branch: null, file_path: null, language: null }
 
       if (resolved.kind) finalResolved.kind = resolvedConflictValue('kind')
       if (resolved.description) finalResolved.description = resolvedConflictValue('description')
@@ -124,6 +126,7 @@ export default function MergeDialog({ isOpen, onClose, source, onMerge }: MergeD
           finalResolved.file_path = parts[2] || null
           finalResolved.language = parts[3] || null
         }
+        finalResolved.repository_id = resolved.gitsource === 'source' ? (source?.repository_id ?? null) : (survivor?.repository_id ?? null)
       }
       await onMerge(survivorId, finalResolved)
     } catch (e) {
@@ -131,7 +134,7 @@ export default function MergeDialog({ isOpen, onClose, source, onMerge }: MergeD
     } finally {
       setLoading(false)
     }
-  }, [conflicts, resolved, onMerge])
+  }, [conflicts, resolved, onMerge, source, survivor])
 
   const handleResolve = useCallback(async () => {
     if (!survivor) return

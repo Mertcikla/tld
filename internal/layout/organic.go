@@ -7,8 +7,6 @@ import (
 	"math"
 	"math/rand/v2"
 	"time"
-
-	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
 const (
@@ -20,13 +18,12 @@ const (
 	VelocityDecay = 0.6
 )
 
-// Tunable layout parameters — override via environment variables.
+// Tunable layout parameters for the organic layout.
 var (
-	layoutConfig    = workspace.ResolveWatchLayoutConfig()
-	LinkDistance    = layoutConfig.LinkDistance
-	ChargeStrength  = layoutConfig.ChargeStrength
-	CollideRadius   = layoutConfig.CollideRadius
-	GravityStrength = layoutConfig.GravityStrength
+	LinkDistance    = 100.0
+	ChargeStrength  = -400.0
+	CollideRadius   = 180.0
+	GravityStrength = 0.05
 )
 
 // Node is a positioned graph node. ID matches an element_id in the placements table.
@@ -44,8 +41,16 @@ type Edge struct {
 }
 
 // OrganicLayout applies a D3-like force-directed layout to nodes and edges,
-// mutating node X/Y positions in place.
+// mutating node X/Y positions in place. The initial scatter is seeded from the
+// wall clock, so repeated calls may differ.
 func OrganicLayout(nodes []*Node, edges []*Edge) {
+	// #nosec G404
+	OrganicLayoutSeeded(nodes, edges, uint64(time.Now().UnixNano()))
+}
+
+// OrganicLayoutSeeded is OrganicLayout with a fixed seed, making generated
+// layouts reproducible across reruns.
+func OrganicLayoutSeeded(nodes []*Node, edges []*Edge, seed uint64) {
 	if len(nodes) == 0 {
 		return
 	}
@@ -60,7 +65,7 @@ func OrganicLayout(nodes []*Node, edges []*Edge) {
 
 	// Initialize random generator and scatter unpositioned nodes to avoid exact overlapping.
 	// #nosec G404
-	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 0))
+	rng := rand.New(rand.NewPCG(seed, 0))
 	for _, n := range nodes {
 		// D3 initialises unpositioned nodes in a phyllotaxis arrangement; we
 		// scatter in a 2:1 aspect ratio to match the canvas.

@@ -3,6 +3,7 @@ package validate
 import (
 	"fmt"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/term"
@@ -128,21 +129,39 @@ func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings [
 		level = workspace.DefaultValidationLevel
 	}
 	levelNames := map[int]string{1: "Minimal", 2: "Standard", 3: "Strict"}
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\n## Architectural Warnings (Level %d: %s)\n\n", level, levelNames[level])
-	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Issues found in workspace that may affect the visibility and usability of your diagrams. Consider applying the suggested mediations to improve your diagrams.\n\n")
-	for _, wg := range warnings {
-		if verbose {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n%s\n", wg.RuleCode, wg.RuleName, wg.Mediation)
+	out := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(out, "\nArchitectural Warnings (Level %d: %s)\n\n", level, levelNames[level])
+	_, _ = fmt.Fprintln(out, "Issues found in workspace that may affect the visibility and usability of your diagrams. Consider applying the suggested mediations to improve your diagrams.")
+	_, _ = fmt.Fprintln(out)
+
+	if verbose {
+		for _, wg := range warnings {
+			_, _ = fmt.Fprintf(out, "[%s] %s\n", wg.RuleCode, wg.RuleName)
+			_, _ = fmt.Fprintf(out, "  %s\n", wg.Mediation)
 			for _, v := range wg.Violations {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  * %s\n", v)
+				_, _ = fmt.Fprintf(out, "    - %s\n", v)
 			}
-		} else {
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s (%d violations)\n", wg.RuleCode, wg.RuleName, len(wg.Violations))
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", wg.Mediation)
+			_, _ = fmt.Fprintln(out)
 		}
-		_, _ = fmt.Fprintln(cmd.OutOrStdout())
+	} else {
+		tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "CODE\tRULE\tVIOLATIONS")
+		for _, wg := range warnings {
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\n", wg.RuleCode, wg.RuleName, len(wg.Violations))
+		}
+		_ = tw.Flush()
+		_, _ = fmt.Fprintln(out)
+
+		tw = tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "CODE\tMEDIATION")
+		for _, wg := range warnings {
+			_, _ = fmt.Fprintf(tw, "%s\t%s\n", wg.RuleCode, wg.Mediation)
+		}
+		_ = tw.Flush()
+		_, _ = fmt.Fprintln(out)
 	}
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "To suppress specific rule codes, use .tld.yaml: validation.exclude_rules: [ARC002]")
+
+	_, _ = fmt.Fprintln(out, "To suppress specific rule codes, use .tld.yaml: validation.exclude_rules: [ARC002]")
 }
 
 func printRuleViolations(cmd *cobra.Command, code string, warnings []archwarnings.WarningGroup) error {

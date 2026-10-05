@@ -49,19 +49,20 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 			kind = "element"
 		}
 		newWS.Elements[ref] = &workspace.Element{
-			Name:        e.Name,
-			Kind:        kind,
-			Description: e.GetDescription(),
-			Technology:  e.GetTechnology(),
-			URL:         e.GetUrl(),
-			LogoURL:     e.GetLogoUrl(),
-			Repo:        e.GetRepo(),
-			Branch:      e.GetBranch(),
-			Language:    e.GetLanguage(),
-			FilePath:    e.GetFilePath(),
-			Tags:        cloneStrings(e.GetTags()),
-			HasView:     e.GetHasView(),
-			ViewLabel:   strings.TrimSpace(e.GetViewLabel()),
+			Name:         e.Name,
+			Kind:         kind,
+			Description:  e.GetDescription(),
+			Technology:   e.GetTechnology(),
+			URL:          e.GetUrl(),
+			LogoURL:      e.GetLogoUrl(),
+			Repo:         e.GetRepo(),
+			RepositoryID: e.GetRepositoryId(),
+			Branch:       e.GetBranch(),
+			Language:     e.GetLanguage(),
+			FilePath:     e.GetFilePath(),
+			Tags:         cloneStrings(e.GetTags()),
+			HasView:      e.GetHasView(),
+			ViewLabel:    strings.TrimSpace(e.GetViewLabel()),
 		}
 		newWS.Meta.Elements[ref] = &workspace.ResourceMetadata{
 			ID:        workspace.ResourceID(e.Id),
@@ -122,7 +123,12 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 			continue
 		}
 
-		fallbackKey := viewRef + ":" + srcRef + ":" + tgtRef + ":" + e.GetLabel()
+		fallbackKey := workspace.ConnectorKey(&workspace.Connector{
+			View:   viewRef,
+			Source: srcRef,
+			Target: tgtRef,
+			Label:  e.GetLabel(),
+		})
 		key, ok := existingConnectorRefs[e.Id]
 		if !ok || !connectorRefMatches(key, viewRef, srcRef, tgtRef, e.GetLabel()) {
 			key = fallbackKey
@@ -140,6 +146,7 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 			URL:          e.GetUrl(),
 			SourceHandle: e.GetSourceHandle(),
 			TargetHandle: e.GetTargetHandle(),
+			Tags:         cloneStrings(e.GetTags()),
 		}
 		newWS.Meta.Connectors[key] = &workspace.ResourceMetadata{
 			ID:        workspace.ResourceID(e.Id),
@@ -151,14 +158,11 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 }
 
 func connectorRefMatches(ref, viewRef, srcRef, tgtRef, label string) bool {
-	parts := strings.Split(ref, ":")
-	if len(parts) < 4 {
+	view, source, target, refLabel, ok := workspace.ParseConnectorKey(workspace.NormalizeConnectorKey(ref))
+	if !ok {
 		return false
 	}
-	return parts[0] == viewRef &&
-		parts[1] == srcRef &&
-		parts[2] == tgtRef &&
-		strings.Join(parts[3:], ":") == label
+	return view == viewRef && source == srcRef && target == tgtRef && refLabel == label
 }
 
 func CountViews(ws *workspace.Workspace) int {

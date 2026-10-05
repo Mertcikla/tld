@@ -1,0 +1,229 @@
+// Package impact builds comparison payloads for transient ZUI change overlays.
+package impact
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/google/uuid"
+	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/internal/core"
+)
+
+type pair struct{ from, to string }
+
+func fileEdges(g *graph.Graph) map[pair]float64 {
+	out := map[pair]float64{}
+	for _, edge := range g.EdgeFacts {
+		from, to := g.Facts[edge.FromFactId], g.Facts[edge.ToFactId]
+		if from == nil || to == nil || from.Anchor == nil || to.Anchor == nil {
+			continue
+		}
+		a, b := from.Anchor.Path, to.Anchor.Path
+		if a != "" && b != "" && a != b {
+			out[pair{a, b}]++
+		}
+	}
+	return out
+}
+
+// Build describes changed files, attaches their symbol deltas, and adds
+// eligible existing workspace resources within the requested file-dependency radius.
+func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, key, fromID, toID string, radius uint32) (*pb.ImpactDiagram, error) {
+	diff, err := idx.Diff(ctx, fromID, toID, false)
+	if err != nil {
+		return nil, err
+	}
+	before, err := idx.LoadGraph(ctx, fromID)
+	if err != nil {
+		return nil, err
+	}
+	after, err := idx.LoadGraph(ctx, toID)
+	if err != nil {
+		return nil, err
+	}
+	diagram := &pb.ImpactDiagram{RepositoryId: repositoryID, ComparisonKey: key, Diff: diff, Version: uuid.NewString()}
+	changes := map[string]*pb.ImpactNode{}
+	distance := map[string]uint32{}
+	queue := []string{}
+	for _, change := range diff.Sources {
+		node := &pb.ImpactNode{Key: "file|" + change.Path, Path: change.Path, Name: filepath.Base(change.Path), Change: change.Change, Symbols: &pb.CodeFactDelta{}}
+		changes[change.Path] = node
+		distance[change.Path] = 0
+		queue = append(queue, change.Path)
+		diagram.Nodes = append(diagram.Nodes, node)
+	}
+	addSymbols := func(facts []*pb.CodeFact, which pb.ChangeKind) {
+		for _, fact := range facts {
+			if fact.Anchor == nil || fact.Kind == pb.FactKind_FACT_KIND_FILE {
+				continue
+			}
+			node := changes[fact.Anchor.Path]
+			if node == nil {
+				continue
+			}
+			switch which {
+			case pb.ChangeKind_CHANGE_KIND_ADDED:
+				node.Symbols.Added = append(node.Symbols.Added, fact)
+			case pb.ChangeKind_CHANGE_KIND_REMOVED:
+				node.Symbols.Removed = append(node.Symbols.Removed, fact)
+			case pb.ChangeKind_CHANGE_KIND_MODIFIED:
+				node.Symbols.Modified = append(node.Symbols.Modified, fact)
+			}
+		}
+	}
+	addSymbols(diff.GetFacts().GetAdded(), pb.ChangeKind_CHANGE_KIND_ADDED)
+	addSymbols(diff.GetFacts().GetRemoved(), pb.ChangeKind_CHANGE_KIND_REMOVED)
+	addSymbols(diff.GetFacts().GetModified(), pb.ChangeKind_CHANGE_KIND_MODIFIED)
+	oldEdges, newEdges := fileEdges(before), fileEdges(after)
+	adjacency := map[string]map[string]bool{}
+	link := func(a, b string) {
+		if adjacency[a] == nil {
+			adjacency[a] = map[string]bool{}
+		}
+		adjacency[a][b] = true
+	}
+	for edge := range oldEdges {
+		link(edge.from, edge.to)
+		link(edge.to, edge.from)
+	}
+	for edge := range newEdges {
+		link(edge.from, edge.to)
+		link(edge.to, edge.from)
+	}
+	for i := 0; i < len(queue); i++ {
+		path := queue[i]
+		neighbors := make([]string, 0, len(adjacency[path]))
+		for next := range adjacency[path] {
+			neighbors = append(neighbors, next)
+		}
+		sort.Strings(neighbors)
+		for _, next := range neighbors {
+			if _, seen := distance[next]; seen {
+				continue
+			}
+			distance[next] = distance[path] + 1
+			queue = append(queue, next)
+		}
+	}
+	mappings, err := idx.MappingsByRepository(ctx, repositoryID)
+	if err != nil {
+		return nil, err
+	}
+	seenResources := map[int64]bool{}
+	for _, mapping := range mappings {
+		if mapping.Kind != cstore.MappingElement || strings.HasPrefix(mapping.LogicalKey, "impact|") || seenResources[mapping.ResourceID] {
+			continue
+		}
+		element, err := ws.ElementByID(ctx, mapping.ResourceID)
+		if err != nil {
+			continue
+		}
+		if element.FilePath == nil {
+			continue
+		}
+		path := *element.FilePath
+		hops, reachable := distance[path]
+		if !reachable || changes[path] != nil || after.Sources[path] == nil {
+			continue
+		}
+		diagram.MaxRadius = max(diagram.MaxRadius, hops)
+		seenResources[element.ID] = true
+		if hops > radius {
+			continue
+		}
+		diagram.Nodes = append(diagram.Nodes, &pb.ImpactNode{Key: fmt.Sprintf("context|%d", element.ID), Path: path, Name: element.Name, Context: true, ElementId: element.ID})
+	}
+	diagram.Radius = min(radius, diagram.MaxRadius)
+	sort.Slice(diagram.Nodes, func(i, j int) bool { return diagram.Nodes[i].Key < diagram.Nodes[j].Key })
+	if err := placeAddedFiles(ctx, ws, diagram, mappings); err != nil {
+		return nil, err
+	}
+	nodesByPath := map[string][]*pb.ImpactNode{}
+	for _, node := range diagram.Nodes {
+		nodesByPath[node.Path] = append(nodesByPath[node.Path], node)
+	}
+	allEdges := map[pair]bool{}
+	for edge := range oldEdges {
+		allEdges[edge] = true
+	}
+	for edge := range newEdges {
+		allEdges[edge] = true
+	}
+	for edge := range allEdges {
+		kind := pb.ChangeKind_CHANGE_KIND_UNSPECIFIED
+		oldWeight, had := oldEdges[edge]
+		weight, has := newEdges[edge]
+		switch {
+		case !had:
+			kind = pb.ChangeKind_CHANGE_KIND_ADDED
+		case !has:
+			kind = pb.ChangeKind_CHANGE_KIND_REMOVED
+			weight = oldWeight
+		case weight != oldWeight:
+			kind = pb.ChangeKind_CHANGE_KIND_MODIFIED
+		}
+		for _, from := range nodesByPath[edge.from] {
+			for _, to := range nodesByPath[edge.to] {
+				diagram.Edges = append(diagram.Edges, &pb.ImpactEdge{FromKey: from.Key, ToKey: to.Key, Change: kind, Weight: weight})
+			}
+		}
+	}
+	sort.Slice(diagram.Edges, func(i, j int) bool {
+		a, b := diagram.Edges[i], diagram.Edges[j]
+		return a.FromKey+"\x00"+a.ToKey < b.FromKey+"\x00"+b.ToKey
+	})
+	return diagram, nil
+}
+
+// Save persists the comparison payload only. Canvas overlays are ephemeral and
+// must never create workspace elements, connectors, or views.
+func Save(ctx context.Context, ws core.Store, idx *cstore.Store, repo, key, from, to string, radius uint32) (*pb.ImpactDiagram, error) {
+	if err := removeLegacyMaterialization(ctx, ws, idx, repo); err != nil {
+		return nil, err
+	}
+	diagram, err := Build(ctx, ws, idx, repo, key, from, to, radius)
+	if err != nil {
+		return nil, err
+	}
+	if err = idx.SaveImpact(ctx, diagram); err != nil {
+		return nil, err
+	}
+	return diagram, nil
+}
+
+// Remove only resources owned by the retired impact materializer. Shared
+// context elements have no impact ownership mapping and remain untouched.
+func removeLegacyMaterialization(ctx context.Context, ws core.Store, idx *cstore.Store, repo string) error {
+	mappings, err := idx.MappingsByRepository(ctx, repo)
+	if err != nil {
+		return err
+	}
+	for _, kind := range []cstore.MappingKind{cstore.MappingConnector, cstore.MappingView, cstore.MappingElement} {
+		for _, mapping := range mappings {
+			if mapping.Kind != kind || !strings.HasPrefix(mapping.LogicalKey, "impact|") {
+				continue
+			}
+			switch kind {
+			case cstore.MappingConnector:
+				err = ws.DeleteConnector(ctx, mapping.ResourceID)
+			case cstore.MappingView:
+				err = ws.DeleteView(ctx, mapping.ResourceID)
+			case cstore.MappingElement:
+				err = ws.DeleteElement(ctx, mapping.ResourceID)
+			}
+			if err != nil {
+				return err
+			}
+			if err = idx.DeleteMapping(ctx, mapping.LogicalKey); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}

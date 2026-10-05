@@ -103,7 +103,7 @@ tasks:
       - go get buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go@$(buf registry sdk version --module=buf.build/tldiagramcom/diagram --plugin=buf.build/protocolbuffers/go)
       - go get buf.build/gen/go/tldiagramcom/diagram/connectrpc/go@$(buf registry sdk version --module=buf.build/tldiagramcom/diagram --plugin=buf.build/connectrpc/go)
       - go mod tidy
-      - cd frontend && npm install @buf/tldiagramcom_diagram.bufbuild_es --no-workspaces
+      - cd frontend && npm install @buf/tldiagramcom_diagram.bufbuild_es@latest
 
   test:
     desc: Run fast backend and frontend unit tests

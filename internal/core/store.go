@@ -16,6 +16,7 @@ type ViewStore interface {
 	UpdatePlacement(ctx context.Context, viewID, elementID int64, x, y float64) error
 	DeletePlacement(ctx context.Context, viewID, elementID int64) error
 	Layers(ctx context.Context, viewID int64) ([]ViewLayer, error)
+	LayerByID(ctx context.Context, id int64) (ViewLayer, error)
 	CreateLayer(ctx context.Context, viewID int64, name string, tags []string, color *string) (ViewLayer, error)
 	UpdateLayer(ctx context.Context, id int64, patch ViewLayer) (ViewLayer, error)
 	DeleteLayer(ctx context.Context, id int64) error
@@ -34,6 +35,7 @@ type ElementStore interface {
 
 type ConnectorStore interface {
 	Connectors(ctx context.Context, viewID int64) ([]Connector, error)
+	ConnectorByID(ctx context.Context, id int64) (Connector, error)
 	CreateConnector(ctx context.Context, input Connector) (Connector, error)
 	UpdateConnector(ctx context.Context, id int64, patch Connector) (Connector, error)
 	DeleteConnector(ctx context.Context, id int64) error

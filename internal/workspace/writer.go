@@ -28,8 +28,8 @@ var elementScalarFields = map[string]bool{
 	"url":               true,
 	"logo_url":          true,
 	"repo":              true,
+	"repository_id":     true,
 	"branch":            true,
-	"language":          true,
 	"file_path":         true,
 	"symbol":            true,
 	"has_view":          true,
@@ -55,11 +55,15 @@ var connectorScalarFields = map[string]bool{
 }
 
 func ElementFieldNames() []string {
-	return append([]string{"ref"}, sortedBoolMapKeys(elementScalarFields)...)
+	fields := append([]string{"ref", "tags"}, sortedBoolMapKeys(elementScalarFields)...)
+	sort.Strings(fields)
+	return fields
 }
 
 func ConnectorFieldNames() []string {
-	return sortedBoolMapKeys(connectorScalarFields)
+	fields := append([]string{"tags"}, sortedBoolMapKeys(connectorScalarFields)...)
+	sort.Strings(fields)
+	return fields
 }
 
 func sortedBoolMapKeys(values map[string]bool) []string {
@@ -471,6 +475,31 @@ func mergeElementFields(ref string, existing, incoming *Element) (*Element, erro
 	if merged.URL == "" {
 		merged.URL = incoming.URL
 	}
+	if merged.LogoURL == "" {
+		merged.LogoURL = incoming.LogoURL
+	}
+	if merged.Owner == "" {
+		merged.Owner = incoming.Owner
+	}
+	if merged.Repo == "" {
+		merged.Repo = incoming.Repo
+	}
+	if merged.Branch == "" {
+		merged.Branch = incoming.Branch
+	}
+	if merged.FilePath == "" {
+		merged.FilePath = incoming.FilePath
+	}
+	if merged.Symbol == "" {
+		merged.Symbol = incoming.Symbol
+	}
+	merged.Tags = UnionTags(merged.Tags, incoming.Tags)
+	if merged.DensityLevel == 0 {
+		merged.DensityLevel = incoming.DensityLevel
+	}
+	if merged.BypassNoiseGate == nil {
+		merged.BypassNoiseGate = incoming.BypassNoiseGate
+	}
 	if incoming.HasView {
 		merged.HasView = true
 		if merged.ViewLabel == "" {
@@ -496,12 +525,154 @@ func mergeElementFields(ref string, existing, incoming *Element) (*Element, erro
 	return &merged, nil
 }
 
+const (
+	// connectorRefSeparator separates view/source and target/label. It cannot
+	// appear in a resource ref (see refPattern), so the ref segments are
+	// unambiguous.
+	connectorRefSeparator = "/"
+	// connectorTargetSeparator separates source from target. Labels are free
+	// text and may contain either separator.
+	connectorTargetSeparator = "~"
+)
+
+func formatConnectorKey(view, source, target, label string) string {
+	key := view + connectorRefSeparator + source + connectorTargetSeparator + target
+	if label != "" {
+		key += connectorRefSeparator + label
+	}
+	return key
+}
+
+// ConnectorKey returns the canonical, human-readable YAML key for a connector:
+// view/source~target when there is no label, or view/source~target/label
+// otherwise.
 func ConnectorKey(spec *Connector) string {
-	return spec.View + ":" + spec.Source + ":" + spec.Target + ":" + spec.Label
+	return formatConnectorKey(spec.View, spec.Source, spec.Target, spec.Label)
+}
+
+// ParseConnectorKey splits a canonical connector key back into its fields. The
+// label may itself contain "/" or "~".
+func ParseConnectorKey(ref string) (view, source, target, label string, ok bool) {
+	targetSep := strings.Index(ref, connectorTargetSeparator)
+	if targetSep < 0 {
+		return "", "", "", "", false
+	}
+	viewSource := strings.Split(ref[:targetSep], connectorRefSeparator)
+	if len(viewSource) != 2 || viewSource[0] == "" || viewSource[1] == "" {
+		return "", "", "", "", false
+	}
+	remainder := ref[targetSep+1:]
+	if labelSep := strings.Index(remainder, connectorRefSeparator); labelSep >= 0 {
+		target = remainder[:labelSep]
+		label = remainder[labelSep+1:]
+	} else {
+		target = remainder
+	}
+	if target == "" {
+		return "", "", "", "", false
+	}
+	return viewSource[0], viewSource[1], target, label, true
+}
+
+// NormalizeConnectorKey upgrades connector keys written in older formats to the
+// canonical "view/source~target[/label]" form:
+//
+//	view:source:target:label   (legacy)
+//	view/source/target[~label] (intermediate)
+//
+// Keys that are already canonical are returned unchanged.
+func NormalizeConnectorKey(ref string) string {
+	if isCanonicalConnectorKey(ref) {
+		return ref
+	}
+	if strings.Contains(ref, ":") {
+		parts := strings.SplitN(ref, ":", 4)
+		if len(parts) >= 3 {
+			label := ""
+			if len(parts) == 4 {
+				label = parts[3]
+			}
+			return formatConnectorKey(parts[0], parts[1], parts[2], label)
+		}
+	}
+	head, label := ref, ""
+	if targetSep := strings.Index(ref, connectorTargetSeparator); targetSep >= 0 {
+		head, label = ref[:targetSep], ref[targetSep+1:]
+	}
+	if parts := strings.Split(head, connectorRefSeparator); len(parts) == 3 {
+		return formatConnectorKey(parts[0], parts[1], parts[2], label)
+	}
+	return ref
+}
+
+// isCanonicalConnectorKey reports whether ref already uses the
+// "view/source~target[/label]" form.
+func isCanonicalConnectorKey(ref string) bool {
+	targetSep := strings.Index(ref, connectorTargetSeparator)
+	if targetSep < 0 {
+		return false
+	}
+	return strings.Count(ref[:targetSep], connectorRefSeparator) == 1
+}
+
+func normalizeConnectorMapKeys(connectors map[string]*Connector) {
+	for ref, connector := range connectors {
+		if connector == nil {
+			continue
+		}
+		normalized := ConnectorKey(connector)
+		if normalized == ref {
+			continue
+		}
+		delete(connectors, ref)
+		connectors[normalized] = connector
+	}
+}
+
+func normalizeResourceMetadataMapKeys(metadata map[string]*ResourceMetadata) {
+	for ref, resourceMeta := range metadata {
+		normalized := NormalizeConnectorKey(ref)
+		if normalized == ref {
+			continue
+		}
+		delete(metadata, ref)
+		metadata[normalized] = resourceMeta
+	}
 }
 
 func writeYAMLNode(path string, root *yaml.Node) error {
-	normalizeYAMLStyle(root)
+	return encodeYAMLWithSchemaHeader(path, root)
+}
+
+// ensureSchemaHeader guarantees that an existing node carries the
+// yaml-language-server schema directive as its head comment. Older files that
+// predate the schema, and files produced by readers that drop comments, get the
+// directive added on the next write. It returns true when a comment was set.
+func ensureSchemaHeader(node *yaml.Node, filename string) bool {
+	comment := schemaDirective(filepath.Base(filename))
+	if comment == "" || node == nil {
+		return false
+	}
+	if strings.Contains(node.HeadComment, "yaml-language-server") {
+		return false
+	}
+	if node.HeadComment != "" {
+		node.HeadComment = comment + "\n" + node.HeadComment
+	} else {
+		node.HeadComment = comment
+	}
+	return true
+}
+
+// encodeYAMLWithSchemaHeader encodes node to path, ensuring the schema directive
+// is present. Files that have a published schema get the comment prepended to
+// the document node so it remains the first line, even after merges.
+func encodeYAMLWithSchemaHeader(path string, node *yaml.Node) error {
+	normalizeYAMLStyle(node)
+	if ensureSchemaHeader(node, filepath.Base(path)) {
+		// Re-normalize so the injected head comment is emitted on its own line.
+		normalizeYAMLStyle(node)
+	}
 	f, err := os.Create(path)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
@@ -510,7 +681,7 @@ func writeYAMLNode(path string, root *yaml.Node) error {
 
 	enc := yaml.NewEncoder(f)
 	enc.SetIndent(2)
-	if err := enc.Encode(root); err != nil {
+	if err := enc.Encode(node); err != nil {
 		return fmt.Errorf("encode %s: %w", path, err)
 	}
 	if err := f.Close(); err != nil {
@@ -544,19 +715,7 @@ func WriteFullYAMLList(path string, items any) error {
 	if err := node.Encode(items); err != nil {
 		return fmt.Errorf("encode items for %s: %w", path, err)
 	}
-	normalizeYAMLStyle(&node)
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-
-	enc := yaml.NewEncoder(f)
-	enc.SetIndent(2)
-	if err := enc.Encode(&node); err != nil {
-		return fmt.Errorf("encode %s: %w", path, err)
-	}
-	return f.Close()
+	return encodeYAMLWithSchemaHeader(path, &node)
 }
 func WriteFullYAMLMap(path string, items any, meta map[string]*ResourceMetadata) error {
 	return WriteFullYAMLMapSections(path, items, []metadataSection{{name: "_meta", values: meta, persist: true}})
@@ -598,26 +757,7 @@ func WriteFullYAMLMapSections(path string, items any, sections []metadataSection
 	}
 
 	// 3. Write back to file with specific indentation
-	normalizeYAMLStyle(&node)
-	f, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("create %s: %w", path, err)
-	}
-	defer func() {
-		_ = f.Close()
-	}()
-
-	enc := yaml.NewEncoder(f)
-	enc.SetIndent(2)
-	if err := enc.Encode(&node); err != nil {
-		return fmt.Errorf("encode %s: %w", path, err)
-	}
-
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close %s: %w", path, err)
-	}
-
-	return nil
+	return encodeYAMLWithSchemaHeader(path, &node)
 }
 
 func useElementWorkspaceFiles(ws *Workspace) bool {
@@ -722,6 +862,9 @@ func UpdateElementField(dir, ref, field, value string) error {
 	if field == "ref" {
 		return RenameElement(dir, ref, value)
 	}
+	if field == "tags" {
+		return UpdateElementTags(dir, ref, ParseTagList(value))
+	}
 	if !elementScalarFields[field] {
 		return fmt.Errorf("unknown element field %q; known fields: %s", field, strings.Join(ElementFieldNames(), ", "))
 	}
@@ -753,6 +896,131 @@ func UpdateElementField(dir, ref, field, value string) error {
 	}
 
 	return writeYAMLNode(path, root)
+}
+
+// ParseTagList splits a comma or whitespace separated tag list into a
+// normalized, de-duplicated slice preserving first-seen order.
+func ParseTagList(value string) []string {
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == '\t'
+	})
+	out := make([]string, 0, len(fields))
+	seen := make(map[string]bool, len(fields))
+	for _, field := range fields {
+		tag := strings.TrimSpace(field)
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+	}
+	return out
+}
+
+// UnionTags returns base plus extra tags not already present, preserving order.
+func UnionTags(base, extra []string) []string {
+	out := append([]string(nil), base...)
+	seen := make(map[string]bool, len(base)+len(extra))
+	for _, tag := range base {
+		seen[tag] = true
+	}
+	for _, tag := range extra {
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		out = append(out, tag)
+	}
+	return out
+}
+
+// SubtractTags returns base without any tags present in remove.
+func SubtractTags(base, remove []string) []string {
+	drop := make(map[string]bool, len(remove))
+	for _, tag := range remove {
+		drop[tag] = true
+	}
+	out := make([]string, 0, len(base))
+	for _, tag := range base {
+		if tag == "" || drop[tag] {
+			continue
+		}
+		out = append(out, tag)
+	}
+	return out
+}
+
+// UpdateElementTags replaces the tags sequence on an element by ref, preserving
+// surrounding YAML comments. An empty list removes the tags field entirely.
+func UpdateElementTags(dir, ref string, tags []string) error {
+	path := filepath.Join(dir, "elements.yaml")
+	root, mapping, err := loadYAMLMappingNode(path)
+	if err != nil {
+		return err
+	}
+
+	found := false
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		key := mapping.Content[i].Value
+		if key == "_meta_elements" || key == "_meta_views" {
+			continue
+		}
+		if key != ref {
+			continue
+		}
+		found = true
+		if err := setMappingStringSequence(mapping.Content[i+1], "tags", tags); err != nil {
+			return fmt.Errorf("update element %q tags: %w", ref, err)
+		}
+		break
+	}
+	if !found {
+		return fmt.Errorf("element %q not found", ref)
+	}
+	return writeYAMLNode(path, root)
+}
+
+// UpdateConnectorTags replaces the tags sequence on a connector by its key.
+// Connectors are serialized as a flat list, so this round-trips the workspace.
+func UpdateConnectorTags(dir, ref string, tags []string) error {
+	ws, err := Load(dir)
+	if err != nil {
+		return err
+	}
+	connector, ok := ws.Connectors[ref]
+	if !ok || connector == nil {
+		return fmt.Errorf("connector %q not found", ref)
+	}
+	connector.Tags = tags
+	return Save(ws)
+}
+
+// setMappingStringSequence sets fieldName to a string sequence, or removes the
+// field when values is empty (matching omitempty semantics).
+func setMappingStringSequence(mapping *yaml.Node, fieldName string, values []string) error {
+	if mapping == nil || mapping.Kind != yaml.MappingNode {
+		return fmt.Errorf("resource value must be a mapping")
+	}
+	index, _ := findMappingValueNode(mapping, fieldName)
+	if len(values) == 0 {
+		if index >= 0 {
+			removeMappingEntry(mapping, index)
+		}
+		return nil
+	}
+	sequence := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+	for _, value := range values {
+		sequence.Content = append(sequence.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value})
+	}
+	if index >= 0 {
+		mapping.Content[index+1] = sequence
+		return nil
+	}
+	mapping.Content = append(mapping.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: fieldName},
+		sequence,
+	)
+	return nil
 }
 
 func updatePlacementParentRefs(node *yaml.Node, oldRef, newRef string) {
@@ -847,6 +1115,9 @@ func ValidateConnectorFieldChange(ws *Workspace, ref, field, value string) error
 	if _, ok := ws.Connectors[ref]; !ok {
 		return fmt.Errorf("connector %q not found", ref)
 	}
+	if field == "tags" {
+		return nil
+	}
 	if !connectorScalarFields[field] {
 		return fmt.Errorf("unknown connector field %q; known fields: %s", field, strings.Join(ConnectorFieldNames(), ", "))
 	}
@@ -913,11 +1184,20 @@ func ApplyConnectorField(spec *Connector, field, value string) {
 		spec.SourceHandle = value
 	case "target_handle":
 		spec.TargetHandle = value
+	case "tags":
+		spec.Tags = ParseTagList(value)
+	case "visibility_delta":
+		if parsed, err := strconv.Atoi(value); err == nil {
+			spec.VisibilityDelta = parsed
+		}
 	}
 }
 
 // UpdateConnectorField updates one field on a connector by its key.
 func UpdateConnectorField(dir, ref, field, value string) error {
+	if field == "tags" {
+		return UpdateConnectorTags(dir, ref, ParseTagList(value))
+	}
 	ws, err := Load(dir)
 	if err != nil {
 		return err

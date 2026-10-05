@@ -29,7 +29,7 @@ func TestStopCmdGracefullyStopsAllRegisteredProcesses(t *testing.T) {
 	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
 	if err := localserver.SaveProcessRegistry(localserver.ProcessRegistry{Processes: []localserver.ProcessRecord{
 		{Kind: localserver.ProcessKindServer, PID: 101, Addr: "127.0.0.1:8060"},
-		{Kind: localserver.ProcessKindWatch, PID: 202, RepoRoot: "/repo"},
+		{Kind: localserver.ProcessKindServer, PID: 202, RepoRoot: "/repo"},
 	}}); err != nil {
 		t.Fatalf("seed registry: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestStopCmdGracefullyStopsAllRegisteredProcesses(t *testing.T) {
 	if len(reg.Processes) != 0 {
 		t.Fatalf("registry should be empty after stop, got %+v", reg.Processes)
 	}
-	if !strings.Contains(out.String(), "Server stopped") || !strings.Contains(out.String(), "Watch stopped") {
+	if strings.Count(out.String(), "Server stopped") != 2 {
 		t.Fatalf("missing stop output: %q", out.String())
 	}
 }
@@ -66,7 +66,7 @@ func TestStopCmdKillStopsAllRegisteredProcesses(t *testing.T) {
 	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
 	if err := localserver.SaveProcessRegistry(localserver.ProcessRegistry{Processes: []localserver.ProcessRecord{
 		{Kind: localserver.ProcessKindServer, PID: 303},
-		{Kind: localserver.ProcessKindWatch, PID: 404},
+		{Kind: localserver.ProcessKindServer, PID: 404},
 	}}); err != nil {
 		t.Fatalf("seed registry: %v", err)
 	}

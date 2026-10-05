@@ -54,6 +54,7 @@ type ElementInput struct {
 	TechLinks       []*diagv1.TechnologyLink
 	Tags            []string
 	Repo            *string
+	RepositoryID    *string
 	Branch          *string
 	Language        *string
 	FilePath        *string
@@ -169,13 +170,7 @@ type Store interface {
 	// ApplyPlan atomically applies a CLI workspace plan (create/update elements, views, connectors).
 	ApplyPlan(ctx context.Context, workspaceID uuid.UUID, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error)
 
-	// Versioning may return ErrUnimplemented for single-tenant deployments.
-	ListVersions(ctx context.Context, workspaceID uuid.UUID, limit int) ([]*diagv1.WorkspaceVersionInfo, error)
-	GetLatestVersion(ctx context.Context, workspaceID uuid.UUID) (*diagv1.WorkspaceVersionInfo, error)
-	CreateVersion(ctx context.Context, workspaceID uuid.UUID, versionID, source string, parentID *int32, viewCount, elementCount, connectorCount int, description, workspaceHash *string) (*diagv1.WorkspaceVersionInfo, error)
-	GetVersioningEnabled(ctx context.Context, workspaceID uuid.UUID) (bool, error)
-	SetVersioningEnabled(ctx context.Context, workspaceID uuid.UUID, enabled bool) error
-	// GetWorkspaceResourceCounts returns current view/element/connector counts (for version snapshots).
+	// GetWorkspaceResourceCounts returns current view/element/connector counts.
 	GetWorkspaceResourceCounts(ctx context.Context, workspaceID uuid.UUID) (views, elements, connectors int, err error)
 }
 

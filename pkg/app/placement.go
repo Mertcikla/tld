@@ -21,6 +21,7 @@ type placementJoinRow struct {
 	TechnologyConnectors string  `bun:"technology_connectors"`
 	Tags                 string  `bun:"tags"`
 	Repo                 *string `bun:"repo"`
+	RepositoryID         *string `bun:"repository_id"`
 	Branch               *string `bun:"branch"`
 	FilePath             *string `bun:"file_path"`
 	Language             *string `bun:"language"`
@@ -32,7 +33,7 @@ func (s *Store) Placements(ctx context.Context, viewID int64) ([]PlacedElement, 
 	query := s.bun.NewSelect().
 		TableExpr("placements AS p").
 		ColumnExpr("p.id, p.view_id, p.element_id, p.position_x, p.position_y").
-		ColumnExpr("e.name, e.kind, e.description, e.technology, e.url, e.logo_url, e.technology_connectors, e.tags, e.repo, e.branch, e.file_path, e.language, e.bypass_noise_gate").
+		ColumnExpr("e.name, e.kind, e.description, e.technology, e.url, e.logo_url, e.technology_connectors, e.tags, e.repo, e.repository_id, e.branch, e.file_path, e.language, e.bypass_noise_gate").
 		Join("JOIN elements AS e ON e.id = p.element_id").
 		Where("p.view_id = ?", viewID).
 		Order("p.id")
@@ -64,7 +65,7 @@ func (s *Store) AllPlacements(ctx context.Context) ([]PlacedElement, error) {
 	query := s.bun.NewSelect().
 		TableExpr("placements AS p").
 		ColumnExpr("p.id, p.view_id, p.element_id, p.position_x, p.position_y").
-		ColumnExpr("e.name, e.kind, e.description, e.technology, e.url, e.logo_url, e.technology_connectors, e.tags, e.repo, e.branch, e.file_path, e.language, e.bypass_noise_gate").
+		ColumnExpr("e.name, e.kind, e.description, e.technology, e.url, e.logo_url, e.technology_connectors, e.tags, e.repo, e.repository_id, e.branch, e.file_path, e.language, e.bypass_noise_gate").
 		Join("JOIN elements AS e ON e.id = p.element_id").
 		Order("p.view_id").
 		Order("p.id")
@@ -214,6 +215,7 @@ func placedElementFromPlacementRow(row placementJoinRow) PlacedElement {
 		TechnologyConnectors: parseTechnologyConnectors(row.TechnologyConnectors),
 		Tags:                 parseStrings(row.Tags),
 		Repo:                 row.Repo,
+		RepositoryID:         row.RepositoryID,
 		Branch:               row.Branch,
 		FilePath:             row.FilePath,
 		Language:             row.Language,

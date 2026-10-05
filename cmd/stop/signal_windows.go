@@ -24,8 +24,7 @@ func signalProcess(pid int, sig os.Signal) error {
 	if err != nil {
 		// On Windows, signaling a process often fails if it's not a console process
 		// or not in the same console. We ignore these errors to allow the
-		// graceful shutdown wait loop to proceed (especially useful for 'watch'
-		// which uses a database-based shutdown flag).
+		// graceful shutdown wait loop to proceed for such processes.
 		errMsg := err.Error()
 		if strings.Contains(errMsg, "not supported") || strings.Contains(errMsg, "invalid argument") {
 			return nil

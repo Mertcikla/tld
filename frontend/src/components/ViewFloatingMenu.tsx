@@ -19,7 +19,7 @@ import {
   TagsIcon,
   ChevronDownIcon,
 } from './Icons'
-import { KbdHint } from './PanelUI'
+import { KbdHint, ShortcutHint } from './PanelUI'
 import { RedoSvg, UndoSvg } from './ViewDrawMenu'
 import { useViewEditorContext } from '../pages/ViewEditor/context'
 import { isElementGroupLayer } from '../utils/elementGroups'
@@ -169,7 +169,7 @@ function ViewFloatingMenu({
       <HStack spacing={4} opacity={0.6} userSelect="none">
         <HStack spacing={1.5}><KbdHint ml={0}>C</KbdHint><Text fontSize="10px" fontWeight="bold" color="whiteAlpha.600">Create</Text></HStack>
         <HStack spacing={1.5}><KbdHint ml={0}>F</KbdHint><Text fontSize="10px" fontWeight="bold" color="whiteAlpha.600">Fit</Text></HStack>
-        <HStack spacing={1.5}><KbdHint ml={0}>/</KbdHint><Text fontSize="10px" fontWeight="bold" color="whiteAlpha.600">Search</Text></HStack>
+        <HStack spacing={1.5}><ShortcutHint keys={['mod', 'K']} /><Text fontSize="10px" fontWeight="bold" color="whiteAlpha.600">Search</Text></HStack>
         <HStack spacing={1.5}><KbdHint ml={0}>+/-</KbdHint><Text fontSize="10px" fontWeight="bold" color="whiteAlpha.600">Magnify</Text></HStack>
       </HStack>
 

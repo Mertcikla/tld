@@ -36,6 +36,7 @@ vi.mock('./PanelUI', async () => {
   const ReactModule = await import('react')
   return {
     KbdHint: ({ children }: { children?: React.ReactNode }) => ReactModule.createElement('span', null, children),
+    ShortcutHint: ({ keys }: { keys?: string | string[] }) => ReactModule.createElement('span', null, Array.isArray(keys) ? keys.join('') : keys),
   }
 })
 
@@ -88,6 +89,7 @@ vi.mock('@chakra-ui/react', async () => {
     Input: InputLike,
     InputGroup: BoxLike,
     InputLeftElement: BoxLike,
+    InputRightElement: BoxLike,
     Spinner: BoxLike,
     Text: BoxLike,
     Tooltip: BoxLike,

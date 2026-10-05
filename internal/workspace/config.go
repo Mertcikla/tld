@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"gopkg.in/yaml.v3"
 )
 
 // ConfigDir returns the path to the global configuration directory.
@@ -103,7 +101,7 @@ func WorkspaceConfigPath(dir string) string {
 }
 
 // Config holds all global tld configuration, merging server settings,
-// watch behaviors, and authentication.
+// index behaviors, and authentication.
 type Config struct {
 	ServerURL   string           `yaml:"server_url"`
 	APIKey      string           `yaml:"api_key"`
@@ -112,9 +110,67 @@ type Config struct {
 	Database    DatabaseConfig   `yaml:"database"`
 	Validation  ValidationConfig `yaml:"validation"`
 	Serve       ServeConfig      `yaml:"serve"`
-	Watch       WatchConfig      `yaml:"watch"`
+	Index       IndexConfig      `yaml:"index"`
+	Map         MapConfig        `yaml:"map"`
 	Completion  CompletionConfig `yaml:"completion"`
 	Updates     UpdatesConfig    `yaml:"updates"`
+}
+
+// MapConfig configures the graph mapping pipeline.
+type MapConfig struct {
+	Grouping MapGroupingConfig `yaml:"grouping"`
+	Budget   MapBudgetConfig   `yaml:"budget"`
+	Annotate MapAnnotateConfig `yaml:"annotate"`
+}
+
+// MapAnnotateConfig controls generated enrichment on mapped resources. A nil
+// pointer means enabled, so enrichment is on by default and only opt-out needs
+// configuration.
+type MapAnnotateConfig struct {
+	Connectors  *bool `yaml:"connectors"`
+	Tags        *bool `yaml:"tags"`
+	Technology  *bool `yaml:"technology"`
+	GroupLayers *bool `yaml:"group_layers"`
+}
+
+// MapGroupingConfig controls the Louvain community hierarchy. Higher resolution
+// values produce more, smaller communities; the root bounds and tree budgets
+// keep the resulting map readable.
+type MapGroupingConfig struct {
+	Resolution    float64 `yaml:"resolution"`
+	MinGroupSize  int     `yaml:"min_group_size"`
+	MinRootGroups int     `yaml:"min_root_groups"`
+	MaxRootGroups int     `yaml:"max_root_groups"`
+	MaxChildren   int     `yaml:"max_children"`
+	MaxDepth      int     `yaml:"max_depth"`
+	MaxLeafFiles  int     `yaml:"max_leaf_files"`
+}
+
+// MapBudgetConfig caps how many rolled-up connectors a map view may draw.
+type MapBudgetConfig struct {
+	MaxConnectorsPerView     int `yaml:"max_connectors_per_view"`
+	MaxLeafConnectorsPerView int `yaml:"max_leaf_connectors_per_view"`
+}
+
+// IndexConfig configures the in-tree codeindex engine and its external SCIP
+// indexers.
+type IndexConfig struct {
+	Tools IndexToolsConfig `yaml:"tools"`
+}
+
+// IndexToolsConfig overrides the external SCIP indexer binaries resolved on PATH.
+type IndexToolsConfig struct {
+	SCIPGo         string `yaml:"scip_go"`
+	SCIPTypeScript string `yaml:"scip_typescript"`
+	SCIPPython     string `yaml:"scip_python"`
+	SCIPDotnet     string `yaml:"scip_dotnet"`
+	SCIPClang      string `yaml:"scip_clang"`
+	SCIPJava       string `yaml:"scip_java"`
+	SCIPDart       string `yaml:"scip_dart"`
+	SCIPPhp        string `yaml:"scip_php"`
+	SCIPRuby       string `yaml:"scip_ruby"`
+	RustAnalyzer   string `yaml:"rust_analyzer"`
+	TimeoutSeconds int    `yaml:"timeout_seconds"`
 }
 
 // ApplyConfig controls where CLI workspace plans are materialized.
@@ -137,132 +193,11 @@ type ValidationConfig struct {
 
 // ServeConfig holds serve-specific settings from the global config file.
 type ServeConfig struct {
-	Host                     string   `yaml:"host"`
-	Port                     string   `yaml:"port"`
-	DataDir                  string   `yaml:"data_dir"`
-	PublicURL                string   `yaml:"public_url"`
-	AllowedOrigins           []string `yaml:"allowed_origins"`
-	PopulateRerankerEndpoint string   `yaml:"populate_reranker_endpoint"`
-}
-
-type WatchEmbeddingConfig struct {
-	Provider        string       `yaml:"provider"`
-	Endpoint        EndpointList `yaml:"endpoint"`
-	Model           string       `yaml:"model"`
-	Dimension       int          `yaml:"dimension"`
-	RuntimePath     string       `yaml:"runtime_path"`
-	HealthThreshold float64      `yaml:"health_threshold"`
-	MaxTokens       int          `yaml:"max_tokens"`
-}
-
-type EndpointList []string
-
-func (e EndpointList) String() string {
-	return strings.Join(e.Values(), ",")
-}
-
-func (e EndpointList) Values() []string {
-	out := make([]string, 0, len(e))
-	for _, value := range e {
-		for _, part := range strings.Split(value, ",") {
-			part = strings.TrimSpace(part)
-			if part != "" {
-				out = append(out, strings.TrimRight(part, "/"))
-			}
-		}
-	}
-	return out
-}
-
-func (e *EndpointList) UnmarshalYAML(value *yaml.Node) error {
-	if value == nil {
-		return nil
-	}
-	var values []string
-	switch value.Kind {
-	case yaml.SequenceNode:
-		for _, item := range value.Content {
-			if item.Kind != yaml.ScalarNode {
-				return fmt.Errorf("endpoint entries must be strings")
-			}
-			values = append(values, item.Value)
-		}
-	case yaml.ScalarNode:
-		values = append(values, value.Value)
-	default:
-		return fmt.Errorf("endpoint must be a string or list of strings")
-	}
-	*e = EndpointList(values).Values()
-	return nil
-}
-
-type WatchThresholdConfig struct {
-	MaxElementsPerView            int `yaml:"max_elements_per_view"`
-	MaxConnectorsPerView          int `yaml:"max_connectors_per_view"`
-	MaxIncomingPerElement         int `yaml:"max_incoming_per_element"`
-	MaxOutgoingPerElement         int `yaml:"max_outgoing_per_element"`
-	MaxExpandedConnectorsPerGroup int `yaml:"max_expanded_connectors_per_group"`
-}
-
-type WatchVisibilityWeightsConfig struct {
-	Changed               float64 `yaml:"changed"`
-	Selected              float64 `yaml:"selected"`
-	UserShow              float64 `yaml:"user_show"`
-	UserHide              float64 `yaml:"user_hide"`
-	HighSignalFact        float64 `yaml:"high_signal_fact"`
-	RelationshipProximity float64 `yaml:"relationship_proximity"`
-	DependencyFact        float64 `yaml:"dependency_fact"`
-	UtilityNoise          float64 `yaml:"utility_noise"`
-	HighDegreeNoise       float64 `yaml:"high_degree_noise"`
-}
-
-type WatchVisibilityConfig struct {
-	CoreThresholdEnabled   bool                         `yaml:"core_threshold_enabled"`
-	CoreThreshold          float64                      `yaml:"core_threshold"`
-	TierMultiplier         float64                      `yaml:"tier_multiplier"`
-	MaxExpansionMultiplier float64                      `yaml:"max_expansion_multiplier"`
-	Weights                WatchVisibilityWeightsConfig `yaml:"weights"`
-}
-
-type WatchLayoutConfig struct {
-	LinkDistance    float64 `yaml:"link_distance"`
-	ChargeStrength  float64 `yaml:"charge_strength"`
-	CollideRadius   float64 `yaml:"collide_radius"`
-	GravityStrength float64 `yaml:"gravity_strength"`
-}
-
-type WatchScaleConfig struct {
-	Strategy           string `yaml:"strategy"`
-	MaxTrackedFiles    int    `yaml:"max_tracked_files"`
-	MaxLimitedFiles    int    `yaml:"max_limited_files"`
-	MaxRecentFiles     int    `yaml:"max_recent_files"`
-	MaxCallerDepth     int    `yaml:"max_caller_depth"`
-	MaxBlastRadiusHops int    `yaml:"max_blast_radius_hops"`
-}
-
-type WatchDependencyConfig struct {
-	Enabled bool `yaml:"enabled"`
-}
-
-type WatchLSPConfig struct {
-	Enabled          bool              `yaml:"enabled"`
-	HealthInterval   string            `yaml:"health_interval"`
-	MemoryLimitBytes int64             `yaml:"memory_limit_bytes"`
-	Commands         map[string]string `yaml:"commands"`
-}
-
-type WatchConfig struct {
-	Languages    []string              `yaml:"languages"`
-	Watcher      string                `yaml:"watcher"`
-	PollInterval string                `yaml:"poll_interval"`
-	Debounce     string                `yaml:"debounce"`
-	Thresholds   WatchThresholdConfig  `yaml:"thresholds"`
-	Visibility   WatchVisibilityConfig `yaml:"visibility"`
-	Embedding    WatchEmbeddingConfig  `yaml:"embedding"`
-	Layout       WatchLayoutConfig     `yaml:"layout"`
-	Scale        WatchScaleConfig      `yaml:"scale"`
-	Dependencies WatchDependencyConfig `yaml:"dependencies"`
-	LSP          WatchLSPConfig        `yaml:"lsp"`
+	Host           string   `yaml:"host"`
+	Port           string   `yaml:"port"`
+	DataDir        string   `yaml:"data_dir"`
+	PublicURL      string   `yaml:"public_url"`
+	AllowedOrigins []string `yaml:"allowed_origins"`
 }
 
 type CompletionConfig struct {
@@ -293,72 +228,34 @@ func DefaultConfig() *Config {
 			Host: "127.0.0.1",
 			Port: "8060",
 		},
-		Watch: WatchConfig{
-			Languages:    []string{"go", "python", "typescript", "javascript", "java", "c", "cpp", "rust"},
-			Watcher:      "auto",
-			PollInterval: "10s",
-			Debounce:     "500ms",
-			Thresholds: WatchThresholdConfig{
-				MaxElementsPerView:            100,
-				MaxConnectorsPerView:          200,
-				MaxIncomingPerElement:         20,
-				MaxOutgoingPerElement:         20,
-				MaxExpandedConnectorsPerGroup: 24,
+		Index: IndexConfig{
+			Tools: IndexToolsConfig{
+				SCIPGo:         "scip-go",
+				SCIPTypeScript: "scip-typescript",
+				SCIPPython:     "scip-python",
+				SCIPDotnet:     "scip-dotnet",
+				SCIPClang:      "scip-clang",
+				SCIPJava:       "scip-java",
+				SCIPDart:       "scip-dart",
+				SCIPPhp:        "scip-php",
+				SCIPRuby:       "scip-ruby",
+				RustAnalyzer:   "rust-analyzer",
+				TimeoutSeconds: 300,
 			},
-			Visibility: WatchVisibilityConfig{
-				CoreThresholdEnabled:   true,
-				CoreThreshold:          1,
-				TierMultiplier:         0.5,
-				MaxExpansionMultiplier: 2,
-				Weights: WatchVisibilityWeightsConfig{
-					Changed:               100,
-					Selected:              100,
-					UserShow:              100,
-					UserHide:              -100,
-					HighSignalFact:        1.5,
-					RelationshipProximity: 1,
-					DependencyFact:        0.2,
-					UtilityNoise:          -0.8,
-					HighDegreeNoise:       -1.5,
-				},
+		},
+		Map: MapConfig{
+			Grouping: MapGroupingConfig{
+				Resolution:    1.0,
+				MinGroupSize:  2,
+				MinRootGroups: 3,
+				MaxRootGroups: 20,
+				MaxChildren:   8,
+				MaxDepth:      4,
+				MaxLeafFiles:  40,
 			},
-			Embedding: WatchEmbeddingConfig{
-				Provider:        "local-lexical",
-				Endpoint:        EndpointList{"http://127.0.0.1:8000/v1/embeddings"},
-				Model:           "embeddinggemma-300m-4bit",
-				HealthThreshold: 0.70,
-			},
-			Layout: WatchLayoutConfig{
-				LinkDistance:    100,
-				ChargeStrength:  -400,
-				CollideRadius:   180,
-				GravityStrength: 0.05,
-			},
-			Scale: WatchScaleConfig{
-				Strategy:           "auto",
-				MaxTrackedFiles:    15000,
-				MaxLimitedFiles:    2000,
-				MaxRecentFiles:     1000,
-				MaxCallerDepth:     10,
-				MaxBlastRadiusHops: 1,
-			},
-			Dependencies: WatchDependencyConfig{
-				Enabled: false,
-			},
-			LSP: WatchLSPConfig{
-				Enabled:          true,
-				HealthInterval:   "1m",
-				MemoryLimitBytes: 4294967296,
-				Commands: map[string]string{
-					"c":          "",
-					"cpp":        "",
-					"go":         "",
-					"java":       "",
-					"javascript": "",
-					"python":     "",
-					"rust":       "",
-					"typescript": "",
-				},
+			Budget: MapBudgetConfig{
+				MaxConnectorsPerView:     40,
+				MaxLeafConnectorsPerView: 12,
 			},
 		},
 		Updates: UpdatesConfig{

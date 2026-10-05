@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import type { ReactNode } from 'react'
 import {
   AlertDialog,
   AlertDialogBody,
@@ -18,6 +19,7 @@ interface Props {
   confirmLabel?: string
   confirmColorScheme?: string
   isLoading?: boolean
+  children?: ReactNode
 }
 
 export default function ConfirmDialog({
@@ -29,6 +31,7 @@ export default function ConfirmDialog({
   confirmLabel = 'Delete',
   confirmColorScheme = 'red',
   isLoading,
+  children,
 }: Props) {
   const cancelRef = useRef<HTMLButtonElement>(null)
 
@@ -41,6 +44,7 @@ export default function ConfirmDialog({
         </AlertDialogHeader>
         <AlertDialogBody fontSize="sm">
           {body}
+          {children}
         </AlertDialogBody>
         <AlertDialogFooter gap={2} pt={4}>
           <Button

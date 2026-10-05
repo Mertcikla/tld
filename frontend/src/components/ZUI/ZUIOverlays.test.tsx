@@ -82,8 +82,6 @@ function renderPopover(open: boolean, onHoverLock: (locked: boolean) => void) {
       hoveredItem={open ? hoveredNode() : null}
       hoveredScreenRect={open ? { sx: 0, sy: 0, sw: 100, sh: 80 } : null}
       isHoveredItemFullyVisible={open}
-      hoveredDiffDetail={null}
-      onOpenSource={vi.fn()}
       onHoverLock={onHoverLock}
     />
   )

@@ -16,3 +16,5 @@ build/
 .bin/
 .gocache/
 testdata/
+.playwright-cli/
+output/playwright/

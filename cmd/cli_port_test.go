@@ -9,18 +9,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/version"
 
 	"github.com/mertcikla/tld/v2/cmd"
-	"github.com/mertcikla/tld/v2/internal/workspace"
 )
-
-func TestRootCmd_HelpMatchesReferenceSurface(t *testing.T) {
-	stdout, _, err := cmd.RunCmd(t, ".", "--help")
-	if err != nil {
-		t.Fatalf("root --help: %v", err)
-	}
-	if !strings.Contains(stdout, "tld manages software architecture diagrams as code") {
-		t.Fatalf("help output missing CLI description:\n%s", stdout)
-	}
-}
 
 func TestRootCmd_VersionFlagMatchesCurrentVersion(t *testing.T) {
 	stdout, _, err := cmd.RunCmd(t, ".", "--version")
@@ -122,29 +111,5 @@ func TestConnectCmd_HelpHidesStyleFlag(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "--view") {
 		t.Fatalf("connect help should include --view:\n%s", stdout)
-	}
-}
-
-func TestAnalyzeCmd_EmptyGoFileDoesNotChangeWorkspaceContents(t *testing.T) {
-	dir := t.TempDir()
-	dataDir := t.TempDir()
-	cmd.MustInitWorkspace(t, dir)
-
-	repoDir := filepath.Join(dir, "repo")
-	cmd.InitGitRepo(t, repoDir, "empty.go", "package main\n")
-
-	stdout, stderr, err := cmd.RunCmd(t, dir, "analyze", repoDir, "--data-dir", dataDir, "--embedding-provider", "none")
-	if err != nil {
-		t.Fatalf("analyze empty.go: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-	}
-	ws, err := workspace.Load(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ws.Connectors) != 0 {
-		t.Fatalf("empty Go file should not create connectors: %+v", ws.Connectors)
-	}
-	if len(ws.Elements) == 0 {
-		t.Fatalf("watch-backed analyze should materialize repository/file context")
 	}
 }

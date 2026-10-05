@@ -16,6 +16,15 @@ import {
   getLogicalHandleId,
   getVisualHandleIdForGroup,
 } from '../../utils/edgeDistribution'
+import {
+  ELEMENT_NAME_FONT_FAMILY,
+  ELEMENT_NAME_FONT_STEPS,
+  ELEMENT_NAME_INSET_RATIO,
+  ELEMENT_NAME_LINE_HEIGHT,
+  fitElementName,
+} from '../../utils/elementName'
+
+export const ZUI_FONT_FAMILY = ELEMENT_NAME_FONT_FAMILY
 
 const MIN_LABEL_PX = 12
 const MIN_DRAW_PX = 2
@@ -164,27 +173,6 @@ export function setHiddenTags(tags: Set<string>): void {
   currentHiddenTags = tags
 }
 
-let currentVersionElementChanges: Map<number, string> = new Map()
-let currentVersionConnectorChanges: Map<number, string> = new Map()
-let currentVersionElementLineDeltas: Map<number, { added: number; removed: number }> = new Map()
-let currentDiffContextElementIds: Set<number> = new Set()
-let currentDiffContextConnectorIds: Set<number> = new Set()
-let currentDiffLensActive = false
-export function setVersionDiff(
-  elementChanges: Map<number, string>,
-  connectorChanges: Map<number, string>,
-  elementLineDeltas: Map<number, { added: number; removed: number }> = new Map(),
-  contextElementIds: Set<number> = new Set(),
-  contextConnectorIds: Set<number> = new Set(),
-  diffLensActive = false,
-): void {
-  currentVersionElementChanges = elementChanges
-  currentVersionConnectorChanges = connectorChanges
-  currentVersionElementLineDeltas = elementLineDeltas
-  currentDiffContextElementIds = contextElementIds
-  currentDiffContextConnectorIds = contextConnectorIds
-  currentDiffLensActive = diffLensActive
-}
 
 function getOrLoadImage(url: string | null): HTMLImageElement | null {
   if (!url) return null
@@ -430,7 +418,7 @@ function drawElementGroupBackgrounds(
       const badgeLeft = x + 8 / zoom
       const badgeTop = y + 7 / zoom
       const maxTextWidth = Math.max(0, bounds.width - 16 / zoom - padX * 2 - 18 / zoom)
-      ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`
+      ctx.font = `600 ${fontSize}px ${ZUI_FONT_FAMILY}`
       const textWidth = Math.min(ctx.measureText(bounds.layer.name).width, maxTextWidth)
       const badgeWidth = Math.min(bounds.width - 16 / zoom, textWidth + 18 / zoom + padX * 2)
       ctx.globalAlpha = 0.94
@@ -472,7 +460,7 @@ function drawNavigationHints(
     ctx.save()
     ctx.setTransform(hint.matrix)
     ctx.globalAlpha = hint.alpha
-    ctx.font = `${hint.fontSize}px Inter, system-ui, sans-serif`
+    ctx.font = `${hint.fontSize}px ${ZUI_FONT_FAMILY}`
     ctx.fillStyle = hint.color
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
@@ -570,7 +558,7 @@ function drawGroupLabel(
   )) return
 
   ctx.save()
-  ctx.font = `600 ${14}px Inter, system-ui, sans-serif`
+  ctx.font = `600 ${14}px ${ZUI_FONT_FAMILY}`
 
   const text = group.label
   const textW = ctx.measureText(text).width
@@ -644,6 +632,69 @@ function drawGrid(
   }
   ctx.fill()
   ctx.restore()
+}
+
+export interface NodeNameLayout {
+  lines: string[]
+  fontSize: number
+  truncated: boolean
+  centerY: number
+  lineHeight: number
+}
+
+export function computeNodeNameLayout(options: {
+  label: string
+  worldWidth: number
+  worldHeight: number
+  drawZoom: number
+  showLogo: boolean
+  showType: boolean
+  childrenAnimating: boolean
+  measure: (text: string, fontSize: number) => number
+}): NodeNameLayout {
+  const {
+    label,
+    worldWidth: w,
+    worldHeight: h,
+    drawZoom,
+    showLogo,
+    showType,
+    childrenAnimating,
+    measure,
+  } = options
+
+  const baseOffset = showLogo ? 0.15 : 0
+  const nameY = showType ? h * (0.42 + baseOffset) : h * (0.5 + baseOffset)
+  const maxLines = !showLogo && showType && !childrenAnimating ? 2 : 1
+
+  const typeFontSize = h * TYPE_FONT_TO_NODE_H
+  const bandTop = h * 0.06
+  const bandBottom = h * (0.62 + baseOffset) - typeFontSize * 0.8 - 2
+
+  const fontSizes = ELEMENT_NAME_FONT_STEPS
+    .map((size) => (size / VIEW_EDITOR_NODE_H) * h)
+    .filter((size) => size * drawZoom >= 6)
+
+  const fit = fontSizes.length > 0
+    ? fitElementName({
+        name: label,
+        maxWidth: w * (1 - ELEMENT_NAME_INSET_RATIO),
+        maxLines,
+        fontSizes,
+        lineHeight: ELEMENT_NAME_LINE_HEIGHT,
+        bandHeight: maxLines > 1 ? bandBottom - bandTop : undefined,
+        measureKey: 'zui',
+        measure,
+      })
+    : { lines: [label], fontSize: h * NAME_FONT_TO_NODE_H, truncated: false }
+
+  return {
+    lines: fit.lines,
+    fontSize: fit.fontSize,
+    truncated: fit.truncated,
+    centerY: fit.lines.length > 1 ? (bandTop + bandBottom) / 2 : nameY,
+    lineHeight: fit.fontSize * ELEMENT_NAME_LINE_HEIGHT,
+  }
 }
 
 function drawSceneNode(
@@ -807,32 +858,40 @@ function drawSceneNode(
     const screenFontSize = nameFontSize * drawZoom
 
     if (screenFontSize >= 6) {
+      const showLogo = !!layout.logoUrl && drawScreenW > 60
+      const showType = drawScreenW > BADGE_THRESHOLD
+      const baseOffset = showLogo ? 0.15 : 0
+      const typeFontSize = h * TYPE_FONT_TO_NODE_H
+
+      const name = computeNodeNameLayout({
+        label: layout.label,
+        worldWidth: w,
+        worldHeight: h,
+        drawZoom,
+        showLogo,
+        showType,
+        childrenAnimating: hasChildren && t < 0.9,
+        measure: (text, fontSize) => {
+          ctx.font = `600 ${fontSize}px ${ZUI_FONT_FAMILY}`
+          return ctx.measureText(text).width
+        },
+      })
+
       ctx.save()
       ctx.globalAlpha = parentAlpha
-      ctx.font = `600 ${nameFontSize}px Inter, system-ui, sans-serif`
       ctx.fillStyle = '#f7fafc'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
+      ctx.font = `600 ${name.fontSize}px ${ZUI_FONT_FAMILY}`
 
-      const worldPadding = w * 0.08
-      const maxW = w - worldPadding
-      let label = layout.label
-      const totalW = ctx.measureText(label).width
-      if (totalW > maxW) {
-        const ratio = maxW / totalW
-        label = label.slice(0, Math.max(3, Math.floor(label.length * ratio)))
-        if (label.length < layout.label.length) label += '\u2026'
+      const startY = name.centerY - ((name.lines.length - 1) * name.lineHeight) / 2
+      for (let i = 0; i < name.lines.length; i += 1) {
+        ctx.fillText(name.lines[i], x + w / 2, y + startY + i * name.lineHeight)
       }
 
-      const showLogo = !!layout.logoUrl && drawScreenW > 60
-      const baseOffset = showLogo ? 0.15 : 0
-      const nameY = drawScreenW > BADGE_THRESHOLD ? y + h * (0.42 + baseOffset) : y + h * (0.5 + baseOffset)
-      ctx.fillText(label, x + w / 2, nameY)
-
-      if (drawScreenW > BADGE_THRESHOLD) {
-        const badgeFontSize = h * TYPE_FONT_TO_NODE_H
-        if (badgeFontSize * drawZoom >= 5) {
-          ctx.font = `${badgeFontSize}px Inter, system-ui, sans-serif`
+      if (showType) {
+        if (typeFontSize * drawZoom >= 5) {
+          ctx.font = `${typeFontSize}px ${ZUI_FONT_FAMILY}`
           ctx.fillStyle = '#a0aec0'
           const displayType = typeof layout.type === 'string' ? layout.type.toUpperCase() : 'UNKNOWN'
           ctx.fillText(displayType, x + w / 2, y + h * (0.62 + baseOffset))
@@ -852,7 +911,7 @@ function drawSceneNode(
       const hintText = hintPrefix + layout.linkedDiagramLabel + hintSuffix
 
       ctx.save()
-      ctx.font = `${hintFontSize}px Inter, system-ui, sans-serif`
+      ctx.font = `${hintFontSize}px ${ZUI_FONT_FAMILY}`
       const tw = ctx.measureText(hintText).width
       ctx.restore()
 
@@ -940,64 +999,46 @@ function drawSceneNode(
     }
   }
 
-  if ((currentVersionElementChanges.size > 0 || currentVersionConnectorChanges.size > 0) && parentAlpha > 0.05) {
-    const change = currentVersionElementChanges.get(layout.elementId)
-    if (!change) {
-      ctx.save()
-      const isContext = currentDiffLensActive && currentDiffContextElementIds.has(layout.elementId)
-      ctx.globalAlpha = parentAlpha * (isContext ? 0.45 : 0.9)
-      ctx.fillStyle = canvasBg
-      traceShape()
-      ctx.fill()
-      if (isContext && drawScreenW > 40) {
-        ctx.globalAlpha = parentAlpha * 0.55
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)'
-        ctx.lineWidth = 1.5 / drawZoom
-        ctx.setLineDash([4 / drawZoom, 4 / drawZoom])
-        traceShape()
-        ctx.stroke()
-        ctx.setLineDash([])
-      }
-      ctx.restore()
-    } else {
-      const color = change === 'added' ? '#68d391' : change === 'deleted' ? '#fc8181' : '#f6e05e'
-      ctx.save()
-      ctx.globalAlpha = parentAlpha
-      ctx.shadowColor = color
-      ctx.shadowBlur = 8 / drawZoom
-      ctx.strokeStyle = color
-      ctx.lineWidth = 2.5 / drawZoom
-      traceShape()
-      ctx.stroke()
-      ctx.restore()
-    }
-  }
 
-  const delta = currentVersionElementLineDeltas.get(layout.elementId)
-  if (!renderCtx.lowDetail && delta && (delta.added > 0 || delta.removed > 0) && drawScreenW > 52 && parentAlpha > 0.05) {
-    const addText = delta.added > 0 ? `+${delta.added}` : ''
-    const removeText = delta.removed > 0 ? `-${delta.removed}` : ''
-    const badgeText = [addText, removeText].filter(Boolean).join(' ')
-    const fontSize = getClampedFontSize(12, 8, 13, drawZoom)
+  if (layout.changeOverlay && parentAlpha > 0.05) {
+    const change = layout.changeOverlay
+    const color = { added: '#48bb78', removed: '#fc8181', modified: '#ecc94b', unchanged: '#718096' }[change.change]
     ctx.save()
     ctx.globalAlpha = parentAlpha
-    ctx.font = `800 ${fontSize}px Inter, system-ui, sans-serif`
-    const textWidth = ctx.measureText(badgeText).width
-    const badgeW = textWidth + 12 / drawZoom
-    const badgeH = 20 / drawZoom
-    const badgeX = x + w - badgeW - 6 / drawZoom
-    const badgeY = y + h - badgeH - 6 / drawZoom
-    ctx.fillStyle = 'rgba(17, 24, 39, 0.9)'
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)'
-    ctx.lineWidth = 1 / drawZoom
-    ctx.beginPath()
-    ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 5 / drawZoom)
-    ctx.fill()
+    ctx.strokeStyle = color
+    ctx.lineWidth = 2.5 / drawZoom
+    ctx.setLineDash(change.change === 'removed' ? [5 / drawZoom, 3 / drawZoom] : [])
+    traceShape()
     ctx.stroke()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = delta.added > 0 && delta.removed === 0 ? '#68d391' : delta.removed > 0 && delta.added === 0 ? '#fc8181' : '#e2e8f0'
-    ctx.fillText(badgeText, badgeX + badgeW / 2, badgeY + badgeH / 2)
+    if (change.change !== 'unchanged' && drawScreenW > 70 && !renderCtx.lowDetail) {
+      const plus = `+${change.linesAdded ?? 0}`
+      const minus = `\u2212${change.linesRemoved ?? 0}`
+      const badgePad = 6 / drawZoom
+      const padX = 6 / drawZoom
+      const gap = 5 / drawZoom
+      const badgeH = 16 / drawZoom
+      ctx.font = `600 ${10 / drawZoom}px ${ZUI_FONT_FAMILY}`
+      const plusW = ctx.measureText(plus).width
+      const minusW = ctx.measureText(minus).width
+      const badgeW = Math.min(plusW + gap + minusW + padX * 2, w - badgePad * 2)
+      const badgeX = x
+      const badgeY = y + h + badgePad
+      ctx.setLineDash([])
+      ctx.beginPath()
+      ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 5 / drawZoom)
+      ctx.fillStyle = portalTintColor(color, 0.22)
+      ctx.fill()
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1.5 / drawZoom
+      ctx.stroke()
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      const textY = badgeY + badgeH / 2 + 0.5 / drawZoom
+      ctx.fillStyle = '#48bb78'
+      ctx.fillText(plus, badgeX + padX, textY)
+      ctx.fillStyle = '#fc8181'
+      ctx.fillText(minus, badgeX + padX + plusW + gap, textY)
+    }
     ctx.restore()
   }
 
@@ -1203,28 +1244,9 @@ function drawEdges(
       )
 
       ctx.save()
-      const edgeChange = currentVersionConnectorChanges.get(edge.id)
-      const versionPreviewActive = currentVersionElementChanges.size > 0 || currentVersionConnectorChanges.size > 0
-      const edgeContext = currentDiffLensActive && (
-        currentDiffContextConnectorIds.has(edge.id) ||
-        currentDiffContextElementIds.has(node.elementId) ||
-        currentDiffContextElementIds.has(target.elementId) ||
-        currentVersionElementChanges.has(node.elementId) ||
-        currentVersionElementChanges.has(target.elementId)
-      )
-      ctx.globalAlpha = versionPreviewActive && !edgeChange
-        ? edgeContext
-          ? Math.max(edgeAlpha * 0.28, 0.12 * endpointAlphaFactor)
-          : Math.max(edgeAlpha * 0.08, 0.04 * endpointAlphaFactor)
-        : connectorAlpha(edgeAlpha, CONNECTOR_MIN_ALPHA * endpointAlphaFactor)
-      ctx.strokeStyle = edgeChange === 'added'
-        ? '#68d391'
-        : edgeChange === 'deleted'
-          ? '#fc8181'
-          : edgeChange
-            ? '#f6e05e'
-            : accent
-      ctx.lineWidth = (edgeChange ? CONNECTOR_LINE_PX * 1.35 : CONNECTOR_LINE_PX) / zoom
+      ctx.globalAlpha = connectorAlpha(edgeAlpha, CONNECTOR_MIN_ALPHA * endpointAlphaFactor)
+      ctx.strokeStyle = accent
+      ctx.lineWidth = CONNECTOR_LINE_PX / zoom
 
       let midX = (sH.x + tH.x) / 2
       let midY = (sH.y + tH.y) / 2
@@ -1371,7 +1393,7 @@ function drawEdges(
       if (!lowDetail && edge.label && shouldDrawConnectorDetailLabel(dir, visualSourceScreenW, visualTargetScreenW)) {
         const screenFontSize = 12
         const worldFontSize = screenFontSize / zoom
-        ctx.font = `${worldFontSize}px Inter, system-ui, sans-serif`
+        ctx.font = `${worldFontSize}px ${ZUI_FONT_FAMILY}`
         ctx.fillStyle = '#cbd5e0'
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'

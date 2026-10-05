@@ -14,7 +14,6 @@ export const Z_CONTEXT_BOUNDARY = 2
 
 export const Z_ELEMENT = 100
 export const Z_ELEMENT_LAYER_HIGHLIGHT = 110
-export const Z_ELEMENT_VERSION_PULSE = 120
 export const Z_CONTEXT_NODE = 130
 export const Z_CONTEXT_GROUP_ANCHOR = 140
 

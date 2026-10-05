@@ -72,7 +72,7 @@ export async function prepareStorage(page: Page) {
     localStorage.setItem('diag:snapToGrid', 'false')
     localStorage.setItem('diag:libraryOpen', 'false')
     localStorage.setItem('diag:explorerOpen', 'false')
-    localStorage.setItem('tld:experimental', JSON.stringify({ watchEnabled: true }))
+    localStorage.setItem('tld:experimental', JSON.stringify({ populateEnabled: true }))
   }, onboardingStorage)
 }
 
@@ -219,7 +219,7 @@ export function currentViewId(page: Page) {
 }
 
 export function nodeByName(page: Page, name: string): Locator {
-  return page.getByTestId('vieweditor-node').filter({ hasText: name })
+  return page.locator(`[data-testid="vieweditor-node"][data-node-name=${JSON.stringify(name)}]`)
 }
 
 export function libraryItemByName(page: Page, name: string): Locator {
@@ -1003,139 +1003,4 @@ export async function createConnectorGraph(page: Page, prefix = 'Connector') {
   await createConnector(page, diagram.id, center.id, both.id, { label: 'both', direction: 'both' })
   await createConnector(page, diagram.id, center.id, undirected.id, { label: 'none', direction: 'none' })
   return { diagram, center, incoming, outgoing, both, undirected }
-}
-
-export async function mockWatchRuntime(page: Page, options: {
-  active?: boolean
-  repositoryId?: number
-  versionId?: number
-  viewId?: number
-  elementId?: number
-  elementName?: string
-} = {}) {
-  const repositoryId = options.repositoryId ?? 1001
-  const versionId = options.versionId ?? 2001
-  const elementId = options.elementId ?? 1
-  const elementName = options.elementName ?? 'Changed element'
-  const active = options.active ?? true
-
-  await page.addInitScript((payload) => {
-    const sent: string[] = []
-    class MockWebSocket extends EventTarget {
-      static CONNECTING = 0
-      static OPEN = 1
-      static CLOSING = 2
-      static CLOSED = 3
-      readyState = MockWebSocket.CONNECTING
-      url: string
-      onopen: ((event: Event) => void) | null = null
-      onclose: ((event: Event) => void) | null = null
-      onmessage: ((event: MessageEvent) => void) | null = null
-      onerror: ((event: Event) => void) | null = null
-
-      constructor(url: string) {
-        super()
-        this.url = url
-        ;(window as unknown as { __TLD_WATCH_SENT__: string[] }).__TLD_WATCH_SENT__ = sent
-        window.setTimeout(() => {
-          this.readyState = MockWebSocket.OPEN
-          const openEvent = new Event('open')
-          this.dispatchEvent(openEvent)
-          this.onopen?.(openEvent)
-          for (const event of payload.events) {
-            const message = new MessageEvent('message', { data: JSON.stringify(event) })
-            this.dispatchEvent(message)
-            this.onmessage?.(message)
-          }
-        }, 20)
-      }
-
-      send(data: string) {
-        sent.push(data)
-      }
-
-      close() {
-        this.readyState = MockWebSocket.CLOSED
-        const event = new Event('close')
-        this.dispatchEvent(event)
-        this.onclose?.(event)
-      }
-    }
-    ;(window as unknown as { WebSocket: typeof MockWebSocket }).WebSocket = MockWebSocket
-  }, {
-    events: [
-      { type: 'watch.connected', at: new Date().toISOString(), repository_id: repositoryId, watcher_mode: 'mock', languages: ['go'] },
-      { type: 'scan.started', at: new Date().toISOString(), repository_id: repositoryId, changed_files: 2 },
-      { type: 'source.changed', at: new Date().toISOString(), repository_id: repositoryId, data: { change: { path: 'internal/app/service.go', change_type: 'modified' }, representation_changed: true } },
-      { type: 'scan.completed', at: new Date().toISOString(), repository_id: repositoryId },
-    ],
-  })
-
-  const repo = {
-    id: repositoryId,
-    remote_url: null,
-    repo_root: '/tmp/e2e-repo',
-    display_name: 'e2e-repo',
-    branch: 'main',
-    head_commit: 'abcdef0',
-    identity_status: 'associated',
-  }
-  const version = {
-    id: versionId,
-    repository_id: repositoryId,
-    commit_hash: 'abcdef0',
-    commit_message: 'E2E mocked watch version',
-    branch: 'main',
-    representation_hash: 'mock-hash',
-    workspace_version_id: 3001,
-    created_at: new Date().toISOString(),
-  }
-  const diff = {
-    id: 4001,
-    version_id: versionId,
-    owner_type: 'file',
-    owner_key: 'internal/app/service.go',
-    change_type: 'updated',
-    resource_type: 'element',
-    resource_id: elementId,
-    summary: elementName,
-    added_lines: 12,
-    removed_lines: 3,
-  }
-
-  await page.route('**/api/watch/status', async (route) => {
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify(active
-        ? { active: true, repository: repo, lock: { id: 1, repository_id: repositoryId, pid: 123, started_at: new Date().toISOString(), heartbeat_at: new Date().toISOString(), status: 'active' } }
-        : { active: false }),
-    })
-  })
-  await page.route('**/api/watch/repositories', async (route) => {
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify([repo]) })
-  })
-  await page.route(`**/api/watch/repositories/${repositoryId}/versions`, async (route) => {
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify([version]) })
-  })
-  await page.route(`**/api/watch/versions/${versionId}/diffs**`, async (route) => {
-    await route.fulfill({ contentType: 'application/json', body: JSON.stringify([diff]) })
-  })
-  await page.route('**/api/versions**', async (route) => {
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        versions: [{
-          id: '3001',
-          version_id: String(versionId),
-          source: 'watch',
-          view_count: 1,
-          element_count: 1,
-          connector_count: 0,
-          description: 'mock',
-          workspace_hash: 'hash',
-          created_at: new Date().toISOString(),
-        }],
-      }),
-    })
-  })
 }

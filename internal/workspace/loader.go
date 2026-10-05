@@ -111,6 +111,7 @@ loadConnectors:
 				}
 				delete(ws.Connectors, "_meta")
 				delete(ws.Connectors, "_meta_connectors")
+				normalizeConnectorMapKeys(ws.Connectors)
 			default:
 				return nil, fmt.Errorf("parse connectors.yaml: expected list or mapping document")
 			}
@@ -122,6 +123,7 @@ loadConnectors:
 	if err != nil {
 		return nil, fmt.Errorf("load metadata: %w", err)
 	}
+	normalizeResourceMetadataMapKeys(meta.Connectors)
 	ws.Meta = meta
 
 	return ws, nil

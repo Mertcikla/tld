@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/mertcikla/tld/v2/internal/analyzer"
+	"github.com/mertcikla/tld/v2/internal/codeindex/symbolcheck"
 )
 
 // ValidationError describes a single validation failure.
@@ -57,7 +57,7 @@ func (ws *Workspace) ValidateWithOpts(opts ValidationOptions) []ValidationError 
 			errs = append(errs, ValidationError{loc, "kind is required"})
 		}
 		if element.Owner != "" && ws.WorkspaceConfig != nil {
-			if _, ok := ws.WorkspaceConfig.Repositories[element.Owner]; !ok {
+			if _, ok := ws.WorkspaceConfig.Repositories[element.Owner]; !ok && !ws.ownerMatchesIndexedRepository(element.Owner) {
 				errs = append(errs, ValidationError{loc, fmt.Sprintf("owner %q is not a registered repository", element.Owner)})
 			}
 		}
@@ -178,9 +178,9 @@ func (ws *Workspace) validateSymbols() []ValidationError {
 		if _, err := os.Stat(element.FilePath); err != nil {
 			continue // file not accessible locally skip
 		}
-		found, err := analyzer.HasSymbol(ctx, element.FilePath, element.Symbol)
+		found, err := symbolcheck.HasSymbol(ctx, element.FilePath, element.Symbol)
 		if err != nil {
-			if analyzer.IsUnsupportedLanguage(err) {
+			if symbolcheck.IsUnsupported(err) {
 				continue // language not supported skip silently
 			}
 			errs = append(errs, ValidationError{
@@ -197,4 +197,18 @@ func (ws *Workspace) validateSymbols() []ValidationError {
 		}
 	}
 	return errs
+}
+
+// ownerMatchesIndexedRepository reports whether owner names a repository that
+// .tld.yaml has linked to a codeindex repository via its id field.
+func (ws *Workspace) ownerMatchesIndexedRepository(owner string) bool {
+	if ws == nil || ws.WorkspaceConfig == nil {
+		return false
+	}
+	for _, repository := range ws.WorkspaceConfig.Repositories {
+		if repository.ID != "" && repository.ID == owner {
+			return true
+		}
+	}
+	return false
 }

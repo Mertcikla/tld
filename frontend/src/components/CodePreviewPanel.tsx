@@ -17,9 +17,10 @@ import { findSymbolByName, getParser, detectLanguage, type SupportedLanguage } f
 import { githubCache } from '../utils/githubCache'
 import { getGithubRepoVisibility } from '../utils/githubApi'
 import { parseRepoSlug } from '../utils/url'
-import { useSourceEditor } from '../utils/sourceEditor'
+import OpenInEditorButton from './OpenInEditorButton'
+import { listIndexedRepositories, resolveElementRepository } from '../utils/repositoryResolver'
+import type { IndexedRepository } from '../api/client'
 import { parseSourceLink } from '../utils/sourceLinks'
-import { toast } from '../utils/toast'
 import { openExternalUrl } from '../lib/desktop'
 import type { PlacedElement } from '../types'
 
@@ -62,6 +63,15 @@ interface Props {
   hasBackdrop?: boolean
 }
 
+// Indexed repositories record their local root directory on the element's repo
+// field; GitHub-linked elements record an owner/repo slug instead.
+function isLocalRepoPath(repo: string | null | undefined): boolean {
+  const value = (repo ?? '').trim()
+  if (!value) return false
+  if (value.startsWith('/') || value.startsWith('\\\\')) return true
+  return /^[A-Za-z]:[\\/]/.test(value)
+}
+
 export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop = true }: Props) {
   const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
@@ -69,19 +79,44 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   const [resolvedStartLine, setResolvedStartLine] = useState<number | null>(null)
   const [resolvedEndLine, setResolvedEndLine] = useState<number | null>(null)
   const [isPrivateRepo, setIsPrivateRepo] = useState(false)
-  const [openingEditor, setOpeningEditor] = useState(false)
-  const { editor: sourceEditor } = useSourceEditor()
+  // undefined while the indexed repository lookup is in flight.
+  const [indexedRepo, setIndexedRepo] = useState<IndexedRepository | null | undefined>(undefined)
 
   const editorRef = useRef<ReactCodeMirrorRef>(null)
 
   const filePath = element?.file_path || ''
   const { basePath, anchor } = useMemo(() => parseSourceLink(filePath), [filePath])
-  const repoSlug = element?.repo ? parseRepoSlug(element.repo) : ''
+  const localRepo = isLocalRepoPath(element?.repo)
+  const repoSlug = !localRepo && element?.repo ? parseRepoSlug(element.repo) : ''
   const anchorStartLine = anchor.kind === 'line' ? anchor.startLine : null
   const editorStartLine = resolvedStartLine ?? anchorStartLine
 
   useEffect(() => {
-    if (!isOpen || !element || !repoSlug || !basePath) return
+    const repositoryId = element?.repository_id ?? ''
+    const repoValue = element?.repo ?? ''
+    const filePathValue = element?.file_path ?? ''
+    if (!repositoryId && !repoValue) {
+      setIndexedRepo(null)
+      return
+    }
+    let cancelled = false
+    setIndexedRepo(undefined)
+    listIndexedRepositories()
+      .then((repos) => {
+        if (cancelled) return
+        setIndexedRepo(resolveElementRepository({ repository_id: repositoryId, repo: repoValue, file_path: filePathValue }, repos))
+      })
+      .catch(() => {
+        if (!cancelled) setIndexedRepo(null)
+      })
+    return () => { cancelled = true }
+  }, [element?.repository_id, element?.repo, element?.file_path])
+
+  useEffect(() => {
+    if (!isOpen || !element || !basePath) return
+    if (indexedRepo === undefined) return
+    const useIndexed = Boolean(indexedRepo)
+    if (!useIndexed && !localRepo && !repoSlug) return
 
     let cancelled = false
     setLoading(true)
@@ -90,6 +125,46 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
     setResolvedStartLine(null)
     setResolvedEndLine(null)
     setIsPrivateRepo(false)
+
+    const resolveAnchors = async (text: string) => {
+      const effectiveLanguage = detectLanguage(basePath)
+      if (anchor.kind === 'symbol' && effectiveLanguage) {
+        try {
+          const parser = await getParser(effectiveLanguage as SupportedLanguage)
+          const tree = parser.parse(text)
+          const found = findSymbolByName(tree, effectiveLanguage as SupportedLanguage, anchor.symbolName, anchor.nodeType)
+          if (!cancelled && found) {
+            setResolvedStartLine(found.startLine)
+            setResolvedEndLine(found.endLine)
+          }
+        } catch {
+          // intentionally empty
+        }
+      } else if (anchor.kind === 'line' && !cancelled) {
+        setResolvedStartLine(anchor.startLine)
+        setResolvedEndLine(anchor.endLine)
+      }
+    }
+
+    if (useIndexed || localRepo) {
+      api.editor.source({
+        repository_id: indexedRepo?.id ?? element.repository_id,
+        repo: indexedRepo?.root ?? element.repo,
+        file_path: basePath,
+      })
+        .then(async ({ content }) => {
+          if (cancelled) return
+          setCode(content)
+          await resolveAnchors(content)
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+        })
+        .finally(() => {
+          if (!cancelled) setLoading(false)
+        })
+      return () => { cancelled = true }
+    }
 
     const branch = element.branch || 'main'
     const rawUrl = `https://raw.githubusercontent.com/${repoSlug}/refs/heads/${branch}/${basePath}`
@@ -120,20 +195,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
       if (cached) {
         if (!cancelled) setCode(cached)
         if (!cancelled) setLoading(false)
-        const effectiveLanguage = element.language || detectLanguage(basePath)
-        if (anchor.kind === 'symbol' && effectiveLanguage) {
-          getParser(effectiveLanguage as SupportedLanguage).then(async (parser) => {
-            const tree = parser.parse(cached)
-            const found = findSymbolByName(tree, effectiveLanguage as SupportedLanguage, anchor.symbolName, anchor.nodeType)
-            if (!cancelled && found) {
-              setResolvedStartLine(found.startLine)
-              setResolvedEndLine(found.endLine)
-            }
-          }).catch(() => {})
-        } else if (anchor.kind === 'line' && !cancelled) {
-          setResolvedStartLine(anchor.startLine)
-          setResolvedEndLine(anchor.endLine)
-        }
+        await resolveAnchors(cached)
         return
       }
 
@@ -144,26 +206,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
         if (cancelled) return
         githubCache.setContent(rawUrl, text)
         setCode(text)
-
-        const effectiveLanguage = element.language || detectLanguage(basePath)
-        if (anchor.kind === 'symbol' && effectiveLanguage) {
-          try {
-            const parser = await getParser(effectiveLanguage as SupportedLanguage)
-            const tree = parser.parse(text)
-            const found = findSymbolByName(tree, effectiveLanguage as SupportedLanguage, anchor.symbolName, anchor.nodeType)
-            if (!cancelled && found) {
-              setResolvedStartLine(found.startLine)
-              setResolvedEndLine(found.endLine)
-            }
-          } catch {
-            // intentionally empty
-          }
-        } else if (anchor.kind === 'line') {
-          if (!cancelled) {
-            setResolvedStartLine(anchor.startLine)
-            setResolvedEndLine(anchor.endLine)
-          }
-        }
+        await resolveAnchors(text)
       } catch (err: unknown) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err))
       } finally {
@@ -173,7 +216,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
 
     checkAndFetch()
     return () => { cancelled = true }
-  }, [isOpen, element, repoSlug, basePath, anchor])
+  }, [isOpen, element, repoSlug, basePath, anchor, localRepo, indexedRepo])
 
   useEffect(() => {
     if (!code || !resolvedStartLine || !editorRef.current?.view) return
@@ -192,36 +235,24 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   }
   }, [code, resolvedStartLine, resolvedEndLine])
 
-  const githubUrl = element?.repo && basePath
+  useEffect(() => {
+    if (!isOpen) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isOpen, onClose])
+
+  const githubUrl = !localRepo && element?.repo && basePath
     ? `https://github.com/${repoSlug}/blob/${element.branch || 'main'}/${basePath}`
     + (editorStartLine ? `#L${editorStartLine}-L${resolvedEndLine ?? editorStartLine}` : '')
     : null
 
-  const handleOpenInEditor = async () => {
-    if (!basePath) return
-    setOpeningEditor(true)
-    try {
-      await api.editor.open({
-        editor: sourceEditor,
-        repo: element?.repo ?? '',
-        file_path: basePath,
-        line: editorStartLine,
-      })
-    } catch (err) {
-      toast({
-        title: 'Failed to open editor',
-        description: err instanceof Error ? err.message : String(err),
-        status: 'error',
-        duration: 4000,
-      })
-    } finally {
-      setOpeningEditor(false)
-    }
-  }
 
   const getLanguageExtension = () => {
     const extensions = [customCodeTheme]
-    const effectiveLanguage = element?.language || detectLanguage(basePath)
+    const effectiveLanguage = detectLanguage(basePath)
     switch (effectiveLanguage) {
       case 'javascript':
       case 'typescript':
@@ -342,38 +373,7 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
             </Tooltip>
           )}
           {basePath && (
-            <Tooltip label={`Open in ${sourceEditor === 'zed' ? 'Zed' : 'VS Code'}`} placement="bottom">
-              <Button
-                aria-label={`Open in ${sourceEditor === 'zed' ? 'Zed' : 'VS Code'}`}
-                leftIcon={<ExternalLinkIcon w="12px" h="12px" />}
-                size="xs"
-                variant="outline"
-                color="whiteAlpha.700"
-                borderColor="whiteAlpha.200"
-                h="24px"
-                px={2.5}
-                fontSize="11px"
-                fontWeight="600"
-                bg="whiteAlpha.50"
-                isLoading={openingEditor}
-                onClick={handleOpenInEditor}
-                _hover={{
-                  color: 'white',
-                  bg: 'whiteAlpha.100',
-                  borderColor: 'whiteAlpha.400',
-                  textDecoration: 'none',
-                  transform: 'translateY(-0.5px)',
-                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                }}
-                _active={{
-                  bg: 'whiteAlpha.200',
-                  transform: 'translateY(0)',
-                }}
-                transition="all 0.1s"
-              >
-                Open in Editor
-              </Button>
-            </Tooltip>
+            <OpenInEditorButton repo={element?.repo ?? ''} repositoryId={element?.repository_id} filePath={basePath} line={editorStartLine} branch={element?.branch} />
           )}
           <CloseButton
             data-testid="code-preview-close"

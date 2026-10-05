@@ -39,6 +39,8 @@ import { parseRepoSlug } from '../utils/url'
 import { githubRequest } from '../utils/githubApi'
 import { formatLineSourceLink, formatSymbolSourceLink, parseSourceLink } from '../utils/sourceLinks'
 import { openExternalUrl } from '../lib/desktop'
+import { api, type IndexedRepository } from '../api/client'
+import { isLocalRepoPath, listIndexedRepositories, normalizeRemoteKey } from '../utils/repositoryResolver'
 import type { LibraryElement } from '../types'
 
 interface Props {
@@ -367,7 +369,42 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
   const [lineSearch, setLineSearch] = useState('')
 
   const [apiRateLimited, setApiRateLimited] = useState(false)
+  const [indexedRepo, setIndexedRepo] = useState<IndexedRepository | null>(null)
   const toast = useToast()
+
+  // Resolve the typed repo against locally indexed repositories. When indexed,
+  // branches, files, symbols, and previews come from the local index instead of
+  // GitHub's API. The element's explicit repository_id wins while its repo value
+  // is unchanged, which covers materialized elements whose repo is a worktree
+  // root rather than a remote slug.
+  function pickIndexedRepo(repos: IndexedRepository[], repoValue: string): IndexedRepository | null {
+    const explicitId = element.repository_id ?? ''
+    const unchanged = repoValue.trim() === '' || repoValue === (element.repo ?? '')
+    if (explicitId && unchanged) {
+      const byID = repos.find((candidate) => candidate.id === explicitId)
+      if (byID) return byID
+    }
+    const key = normalizeRemoteKey(repoValue)
+    if (!key) return null
+    return repos.find((candidate) => normalizeRemoteKey(candidate.remoteUrl) === key) ?? null
+  }
+
+  useEffect(() => {
+    if (!repo && !element.repository_id) {
+      setIndexedRepo(null)
+      return
+    }
+    let cancelled = false
+    listIndexedRepositories()
+      .then((repos) => {
+        if (!cancelled) setIndexedRepo(pickIndexedRepo(repos, repo))
+      })
+      .catch(() => {
+        if (!cancelled) setIndexedRepo(null)
+      })
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repo, element.repository_id, element.repo])
 
   useEffect(() => {
     const hasLink = !!(element.repo && element.file_path)
@@ -422,7 +459,38 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
       ?? null
     : null
 
+  async function resolveIndexedRepo(repoValue: string): Promise<IndexedRepository | null> {
+    try {
+      const repos = await listIndexedRepositories()
+      return pickIndexedRepo(repos, repoValue)
+    } catch {
+      return null
+    }
+  }
+
   async function fetchBranches(repoSlug: string) {
+    const indexed = await resolveIndexedRepo(repoSlug)
+    if (indexed) {
+      setBranchLoading(true)
+      setApiRateLimited(false)
+      try {
+        const history = await api.repositories.history(indexed.id, '', 1)
+        const names = history.branches.map((item) => item.name)
+        if (history.currentBranch && !names.includes(history.currentBranch)) names.unshift(history.currentBranch)
+        setBranches(names)
+        if (!branch) {
+          const def = names.find(n => n === history.currentBranch) ?? names.find(n => n === 'main') ?? names.find(n => n === 'master')
+          if (def) setBranch(def)
+        }
+        setBranchOpen(true)
+      } catch {
+        setBranches([])
+      } finally {
+        setBranchLoading(false)
+      }
+      return
+    }
+
     const cached = githubCache.getBranches(repoSlug)
     if (cached) {
       setBranches(cached)
@@ -459,6 +527,27 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
   const [fileTreeTruncated, setFileTreeTruncated] = useState(false)
 
   async function fetchFileTree(repoSlug: string, branchName: string) {
+    const indexed = await resolveIndexedRepo(repoSlug)
+    if (indexed) {
+      setFileTreeLoading(true)
+      setApiRateLimited(false)
+      setFileTreeTruncated(false)
+      try {
+        const facts = await api.repositories.files(indexed.id, indexed.latestSnapshotId)
+        const files = facts
+          .map((fact) => fact.anchor?.path || fact.name)
+          .filter((path): path is string => Boolean(path))
+          .sort((a, b) => a.localeCompare(b))
+        setFileTree(files)
+        setFileOpen(true)
+      } catch {
+        setFileTree([])
+      } finally {
+        setFileTreeLoading(false)
+      }
+      return
+    }
+
     const cached = githubCache.getTree(repoSlug, branchName)
     if (cached) {
       setFileTree(cached)
@@ -486,19 +575,32 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
     }
   }
 
+  async function fetchSourceText(): Promise<string> {
+    const indexed = await resolveIndexedRepo(repo)
+    if (indexed) {
+      const { content } = await api.editor.source({
+        repository_id: indexed.id,
+        repo: indexed.root,
+        file_path: filePath,
+      })
+      return content
+    }
+    const rawUrl = `https://raw.githubusercontent.com/${repo}/refs/heads/${branch}/${filePath}`
+    const cached = githubCache.getContent(rawUrl)
+    if (cached) return cached
+    const res = await fetch(rawUrl)
+    if (!res.ok) throw new Error(`Failed to fetch: ${res.statusText}`)
+    const text = await res.text()
+    githubCache.setContent(rawUrl, text)
+    return text
+  }
+
   async function fetchAndParseSymbols(lang: SupportedLanguage) {
     setSymbolLoading(true)
     setSymbols([])
     setRawCode('')
     try {
-      const rawUrl = `https://raw.githubusercontent.com/${repo}/refs/heads/${branch}/${filePath}`
-      let source = githubCache.getContent(rawUrl)
-      if (!source) {
-        const res = await fetch(rawUrl)
-        if (!res.ok) throw new Error(`Failed to fetch: ${res.statusText}`)
-        source = await res.text()
-        githubCache.setContent(rawUrl, source)
-      }
+      const source = await fetchSourceText()
       setRawCode(source)
       const parser = await getParser(lang)
       const tree = parser.parse(source)
@@ -518,17 +620,7 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
     setRawCodeLoading(true)
     setRawCode('')
     try {
-      const rawUrl = `https://raw.githubusercontent.com/${repo}/refs/heads/${branch}/${filePath}`
-      const cached = githubCache.getContent(rawUrl)
-      if (cached) {
-        setRawCode(cached)
-      } else {
-        const res = await fetch(rawUrl)
-        if (!res.ok) throw new Error(`Failed to fetch: ${res.statusText}`)
-        const text = await res.text()
-        githubCache.setContent(rawUrl, text)
-        setRawCode(text)
-      }
+      setRawCode(await fetchSourceText())
     } catch (err: unknown) {
       toast({ title: 'Failed to fetch file', description: err instanceof Error ? err.message : String(err), status: 'error', duration: 4000 })
     } finally {
@@ -593,8 +685,11 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
   }
 
   function handleApply() {
+    const unchanged = repo.trim() === '' || repo === (element.repo ?? '')
+    const preserveRepositoryID = isLocalRepoPath(repo) || unchanged
     onUpdate({
-      repo: parseRepoSlug(repo),
+      repo: isLocalRepoPath(repo) ? repo : parseRepoSlug(repo),
+      repository_id: indexedRepo?.id ?? (preserveRepositoryID ? element.repository_id ?? null : null),
       branch,
       file_path: buildFilePath(),
       language: isSupported ? language : undefined,
@@ -603,7 +698,7 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
   }
 
   function handleRemoveLink() {
-    onUpdate({ repo: null, branch: null, file_path: null, language: null })
+    onUpdate({ repo: null, repository_id: null, branch: null, file_path: null, language: null })
     // Explicitly reset local state to ensure immediate UI update
     setRepo('')
     setBranch('')
@@ -618,8 +713,20 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
     setStep(1)
   }
 
-  const repoValid = /^[\w.-]+\/[\w.-]+$/.test(parseRepoSlug(repo))
+  const repoValid = /^[\w.-]+\/[\w.-]+$/.test(parseRepoSlug(repo)) ||
+    (isLocalRepoPath(repo) && !!element.repository_id)
   const showPreviewCard = mode === 'edit' && step === 4
+
+  const existingLocalRepo = isLocalRepoPath(element.repo)
+  const summaryRemoteSlug = indexedRepo?.remoteUrl?.includes('github.com')
+    ? parseRepoSlug(indexedRepo.remoteUrl)
+    : (!existingLocalRepo ? parseRepoSlug(element.repo ?? '') : '')
+  const summaryRepoLabel = indexedRepo
+    ? indexedRepo.name || summaryRemoteSlug || element.repo || ''
+    : element.repo
+      ? parseRepoSlug(element.repo)
+      : ''
+  const showGithubLink = /^[\w.-]+\/[\w.-]+$/.test(summaryRemoteSlug)
 
   // --- RENDER ---
   return (
@@ -633,9 +740,16 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                   Git Source
                 </Text>
                 {hasExistingLink && mode === 'summary' && (
-                  <Badge variant="subtle" colorScheme="blue" fontSize="9px" ml={1} px={1.5}>
-                    Linked
-                  </Badge>
+                  <>
+                    <Badge variant="subtle" colorScheme="blue" fontSize="9px" ml={1} px={1.5}>
+                      Linked
+                    </Badge>
+                    {(element.repository_id || indexedRepo) && (
+                      <Badge variant="subtle" colorScheme="green" fontSize="9px" px={1.5}>
+                        Indexed
+                      </Badge>
+                    )}
+                  </>
                 )}
               </HStack>
               <AccordionIcon color="gray.500" />
@@ -650,7 +764,7 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                   <HStack justify="space-between">
                     <HStack spacing={2} minW={0}>
                       <Text fontSize="xs" color="gray.500" flexShrink={0}>Repo</Text>
-                      <Text fontSize="xs" color="white" fontFamily="mono" isTruncated>{element.repo ? parseRepoSlug(element.repo) : ''}</Text>
+                      <Text fontSize="xs" color="white" fontFamily="mono" isTruncated>{summaryRepoLabel}</Text>
                     </HStack>
                     {!isReadOnly && (
                       <HStack spacing={1}>
@@ -685,9 +799,9 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                       <Text fontSize="xs" color="blue.300" fontFamily="mono">L{parseExistingLink(element).pickedLine}</Text>
                     </HStack>
                   )}
-                  {element.repo && (
+                  {showGithubLink && (
                     <Button
-                      onClick={() => openExternalUrl(`https://github.com/${parseRepoSlug(element.repo ?? '')}/blob/${element.branch || 'main'}/${parseExistingLink(element).basePath}`)}
+                      onClick={() => openExternalUrl(`https://github.com/${summaryRemoteSlug}/blob/${element.branch || 'main'}/${parseExistingLink(element).basePath}`)}
                       size="xs" variant="ghost" leftIcon={<ExternalLinkIcon />}
                       justifyContent="flex-start" px={0} mt={0.5} h="auto" py={1}
                       color="blue.400" _hover={{ color: 'blue.200', bg: 'transparent' }}>
@@ -743,7 +857,9 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                         _hover={{ borderColor: 'whiteAlpha.300' }}
                         _focus={{ borderColor: 'blue.500', bg: 'whiteAlpha.100' }}
                       />
-                      <Text fontSize="10px" color="gray.600" mt={1}>Public GitHub repositories only</Text>
+                      <Text fontSize="10px" color={indexedRepo ? 'green.400' : 'gray.600'} mt={1}>
+                        {indexedRepo ? `Indexed locally · ${indexedRepo.name}` : 'Public GitHub repositories only'}
+                      </Text>
                     </FormControl>
                     <Button size="sm" rightIcon={<ChevronRightIcon />} isDisabled={!repoValid || isReadOnly}
                       onClick={() => advanceTo(2)} alignSelf="flex-end" colorScheme="blue" variant="outline" h="32px">

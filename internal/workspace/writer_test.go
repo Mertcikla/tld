@@ -289,7 +289,7 @@ func TestSave_WritesElementsAndConnectorsAndRemovesLegacyFiles(t *testing.T) {
 			},
 		},
 		Connectors: map[string]*workspace.Connector{
-			"api:api:db:reads": {View: "api", Source: "api", Target: "db", Label: "reads"},
+			"api/api~db/reads": {View: "api", Source: "api", Target: "db", Label: "reads"},
 		},
 		Meta: &workspace.Meta{
 			Elements: map[string]*workspace.ResourceMetadata{
@@ -299,7 +299,7 @@ func TestSave_WritesElementsAndConnectorsAndRemovesLegacyFiles(t *testing.T) {
 				"api": {ID: 2, UpdatedAt: time.Now()},
 			},
 			Connectors: map[string]*workspace.ResourceMetadata{
-				"api:api:db:reads": {ID: 3, UpdatedAt: time.Now()},
+				"api/api~db/reads": {ID: 3, UpdatedAt: time.Now()},
 			},
 		},
 	}
@@ -322,7 +322,7 @@ func TestSave_WritesElementsAndConnectorsAndRemovesLegacyFiles(t *testing.T) {
 	if lockFile.CurrentViews["api"] == nil || lockFile.CurrentViews["api"].ID != 2 {
 		t.Fatalf("lockfile current view metadata missing: %+v", lockFile.CurrentViews)
 	}
-	if lockFile.CurrentConnectors["api:api:db:reads"] == nil || lockFile.CurrentConnectors["api:api:db:reads"].ID != 3 {
+	if lockFile.CurrentConnectors["api/api~db/reads"] == nil || lockFile.CurrentConnectors["api/api~db/reads"].ID != 3 {
 		t.Fatalf("lockfile current connector metadata missing: %+v", lockFile.CurrentConnectors)
 	}
 	connectorsData, _ := os.ReadFile(filepath.Join(dir, "connectors.yaml"))
@@ -339,5 +339,129 @@ func TestSave_WritesElementsAndConnectorsAndRemovesLegacyFiles(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, legacyFile)); !os.IsNotExist(err) {
 			t.Fatalf("expected %s to be removed, err=%v", legacyFile, err)
 		}
+	}
+}
+
+func TestConnectorKeyCanonicalFormat(t *testing.T) {
+	cases := []struct {
+		spec workspace.Connector
+		want string
+	}{
+		{workspace.Connector{View: "action", Source: "devicedetail", Target: "action"}, "action/devicedetail~action"},
+		{workspace.Connector{View: "system", Source: "web", Target: "api", Label: "reads"}, "system/web~api/reads"},
+	}
+	for _, tc := range cases {
+		if got := workspace.ConnectorKey(&tc.spec); got != tc.want {
+			t.Fatalf("ConnectorKey(%+v) = %q, want %q", tc.spec, got, tc.want)
+		}
+	}
+}
+
+func TestNormalizeConnectorKey(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"system:api:db:reads", "system/api~db/reads"},
+		{"action:devicedetail:action:", "action/devicedetail~action"},
+		{"system:api:db:", "system/api~db"},
+		{"system/api~db/reads", "system/api~db/reads"},
+		{"action/devicedetail~action", "action/devicedetail~action"},
+		{"system/api/db~reads", "system/api~db/reads"},
+		{"system/api/db", "system/api~db"},
+		{"system:api:db:label/with/slash", "system/api~db/label/with/slash"},
+		{"system:api:db:label~with~tilde", "system/api~db/label~with~tilde"},
+	}
+	for _, tc := range cases {
+		if got := workspace.NormalizeConnectorKey(tc.in); got != tc.want {
+			t.Fatalf("NormalizeConnectorKey(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestParseConnectorKey(t *testing.T) {
+	cases := []struct {
+		in                        string
+		view, source, target, lbl string
+		ok                        bool
+	}{
+		{"system/web~api/reads", "system", "web", "api", "reads", true},
+		{"action/devicedetail~action", "action", "devicedetail", "action", "", true},
+		{"system/api~db/a:b/c", "system", "api", "db", "a:b/c", true},
+		{"system/api~db/label~with~tilde", "system", "api", "db", "label~with~tilde", true},
+		{"not-a-key", "", "", "", "", false},
+	}
+	for _, tc := range cases {
+		view, source, target, label, ok := workspace.ParseConnectorKey(tc.in)
+		if ok != tc.ok || view != tc.view || source != tc.source || target != tc.target || label != tc.lbl {
+			t.Fatalf("ParseConnectorKey(%q) = (%q,%q,%q,%q,%v), want (%q,%q,%q,%q,%v)",
+				tc.in, view, source, target, label, ok, tc.view, tc.source, tc.target, tc.lbl, tc.ok)
+		}
+	}
+}
+
+func firstLine(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return strings.SplitN(string(data), "\n", 2)[0]
+}
+
+func assertSchemaDirective(t *testing.T, path, wantURL string) {
+	t.Helper()
+	line := firstLine(t, path)
+	want := "# yaml-language-server: $schema=" + wantURL
+	if line != want {
+		t.Fatalf("%s first line = %q, want %q", filepath.Base(path), line, want)
+	}
+}
+
+// Saved workspaces must carry the yaml-language-server schema directive so
+// editors validate and autocomplete elements.yaml/connectors.yaml.
+func TestSaveWritesSchemaDirective(t *testing.T) {
+	dir := t.TempDir()
+	ws := &workspace.Workspace{
+		Dir:        dir,
+		Elements:   map[string]*workspace.Element{"api": {Name: "API", Kind: "service"}},
+		Connectors: map[string]*workspace.Connector{"root/api~db/reads": {View: "root", Source: "api", Target: "db", Label: "reads"}},
+	}
+	if err := workspace.Save(ws); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	assertSchemaDirective(t, filepath.Join(dir, "elements.yaml"), workspace.ElementsSchemaURL)
+	assertSchemaDirective(t, filepath.Join(dir, "connectors.yaml"), workspace.ConnectorsSchemaURL)
+}
+
+// Merging (used by `tld pull`) must add the directive to legacy files that
+// predate the schema, and must not duplicate it on subsequent merges.
+func TestMergeWorkspaceAddsSchemaDirective(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte("api:\n  name: API\n  kind: service\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte("[]\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	emptyMeta := &workspace.Meta{
+		Elements:   map[string]*workspace.ResourceMetadata{},
+		Views:      map[string]*workspace.ResourceMetadata{},
+		Connectors: map[string]*workspace.ResourceMetadata{},
+	}
+	ws := &workspace.Workspace{
+		Dir:        dir,
+		Elements:   map[string]*workspace.Element{"api": {Name: "API", Kind: "service"}},
+		Connectors: map[string]*workspace.Connector{},
+		Meta:       emptyMeta,
+	}
+	for i := 0; i < 2; i++ {
+		if err := workspace.MergeWorkspace(dir, ws, emptyMeta, emptyMeta); err != nil {
+			t.Fatalf("MergeWorkspace: %v", err)
+		}
+		assertSchemaDirective(t, filepath.Join(dir, "elements.yaml"), workspace.ElementsSchemaURL)
+		assertSchemaDirective(t, filepath.Join(dir, "connectors.yaml"), workspace.ConnectorsSchemaURL)
+	}
+	// Ensure the directive appears exactly once, not duplicated across merges.
+	data, _ := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+	if got := strings.Count(string(data), "yaml-language-server"); got != 1 {
+		t.Fatalf("elements.yaml schema directive count = %d, want 1:\n%s", got, data)
 	}
 }

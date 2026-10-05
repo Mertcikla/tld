@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { ViewLayer } from '../../types'
 import { createNodeScreenState, type SceneNode } from './sceneGraph'
-import { edgeLabelDrawRectFromCenter, getElementGroupBounds, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, setHiddenTags, shouldDrawConnectorDetailLabel } from './renderer'
+import { edgeLabelDrawRectFromCenter, computeNodeNameLayout, getElementGroupBounds, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, setHiddenTags, shouldDrawConnectorDetailLabel } from './renderer'
+import { ELEMENT_NAME_INSET_RATIO } from '../../utils/elementName'
 import type { LayoutNode } from './types'
 
 function layoutNode(id: string, elementId: number, children: LayoutNode[] = []): LayoutNode {
@@ -79,6 +80,65 @@ describe('edge label positioning', () => {
 
     expect(labelCenter).toEqual({ x: 100, y: 50 })
     expect(labelRect).toEqual({ x: 80, y: 40, width: 40, height: 20 })
+  })
+})
+
+describe('computeNodeNameLayout', () => {
+  const measure = (text: string, fontSize: number) => text.length * fontSize * 0.6
+  const base = {
+    worldWidth: 180,
+    worldHeight: 85,
+    drawZoom: 1,
+    showLogo: false,
+    showType: true,
+    childrenAnimating: false,
+    measure,
+  }
+
+  it('keeps short names on one line at the base size', () => {
+    const layout = computeNodeNameLayout({ ...base, label: 'Payments' })
+    expect(layout.lines).toEqual(['Payments'])
+    expect(layout.fontSize).toBe(20)
+    expect(layout.centerY).toBeCloseTo(85 * 0.42)
+    expect(layout.truncated).toBe(false)
+  })
+
+  it('wraps long names into two balanced lines', () => {
+    const layout = computeNodeNameLayout({ ...base, label: 'PaymentProcessingService' })
+    expect(layout.lines).toHaveLength(2)
+    expect(layout.lines.join('')).toBe('PaymentProcessingService')
+    expect(layout.fontSize).toBeLessThan(20)
+    expect(layout.truncated).toBe(false)
+  })
+
+  it('limits logo nodes to a single line', () => {
+    const layout = computeNodeNameLayout({
+      ...base,
+      label: 'PaymentProcessingService',
+      showLogo: true,
+    })
+    expect(layout.lines).toHaveLength(1)
+  })
+
+  it('limits animating child previews to a single line', () => {
+    const layout = computeNodeNameLayout({
+      ...base,
+      label: 'PaymentProcessingService',
+      childrenAnimating: true,
+    })
+    expect(layout.lines).toHaveLength(1)
+  })
+
+  it('middle-elides unbreakable names as a last resort', () => {
+    const layout = computeNodeNameLayout({
+      ...base,
+      label: 'abcdefghijklmnopqrstuvwxyz0123456789',
+    })
+    expect(layout.truncated).toBe(true)
+    expect(layout.lines[0]).toContain('\u2026')
+    expect(measure(layout.lines[0], layout.fontSize)).toBeLessThanOrEqual(
+      base.worldWidth * (1 - ELEMENT_NAME_INSET_RATIO),
+    )
   })
 })
 
