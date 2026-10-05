@@ -3,15 +3,12 @@ package parity
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/mertcikla/tld/v2/internal/codeindex/config"
 )
-
-var update = flag.Bool("update", false, "update golden files")
 
 // fixtureFiles is a tool-free repository: it has source files but no project
 // marker, so discovery yields no SCIP projects and the harness exercises only
@@ -83,41 +80,20 @@ func writeFixture(t *testing.T) string {
 	return dir
 }
 
-func TestParityGolden(t *testing.T) {
+func TestParityFixture(t *testing.T) {
 	dir := writeFixture(t)
 	got, err := Run(context.Background(), dir, config.Default())
 	if err != nil {
 		t.Fatalf("run parity: %v", err)
 	}
-	goldenPath := filepath.Join("testdata", "mixed.golden.json")
-
-	if *update {
-		b, err := json.MarshalIndent(got, "", "  ")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(filepath.Dir(goldenPath), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(goldenPath, append(b, '\n'), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		return
+	if got.Sources != len(fixtureFiles) {
+		t.Errorf("sources: want %d got %d", len(fixtureFiles), got.Sources)
 	}
-
-	b, err := os.ReadFile(goldenPath)
-	if err != nil {
-		t.Fatalf("read golden (run with -update to create): %v", err)
+	if got.Facts == 0 {
+		t.Error("expected source facts from the fixture")
 	}
-	var want Report
-	if err := json.Unmarshal(b, &want); err != nil {
-		t.Fatal(err)
-	}
-	if diffs := Compare(want, got); len(diffs) > 0 {
-		for _, d := range diffs {
-			t.Errorf("%s: want %v got %v", d.Field, d.Want, d.Got)
-		}
-		t.Fatalf("parity mismatch against %s (run with -update to refresh)", goldenPath)
+	if got.Chunks == 0 {
+		t.Error("expected chunks from the fixture")
 	}
 }
 

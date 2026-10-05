@@ -3,8 +3,8 @@ module github.com/mertcikla/tld/v2
 go 1.26.2
 
 require (
-	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261002160550-95d6f3c5872d.1
-	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261002160550-95d6f3c5872d.2
+	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261005045443-c86893e55209.1
+	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261005045443-c86893e55209.2
 	connectrpc.com/connect v1.21.0
 	github.com/bmatcuk/doublestar/v4 v4.6.1
 	github.com/fsnotify/fsnotify v1.10.0

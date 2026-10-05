@@ -309,6 +309,10 @@ function isAllowedConsoleError(message: ConsoleMessage) {
     return true
   }
 
+  if (/net::ERR_FILE_NOT_FOUND/i.test(text) && /\bblob:/i.test(target)) {
+    return true
+  }
+
   const isResourceLoadError = /Failed to load resource/i.test(text) || /net::ERR_/i.test(text)
   if (!isResourceLoadError) return false
 

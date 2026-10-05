@@ -187,7 +187,7 @@ func indexerForFamily(family string, cfg config.Config) (indexerSpec, error) {
 			versionArgs: []string{"--version"},
 			executable:  func(cfg config.Config, _ indexerContext) string { return cfg.Tools.SCIPGo },
 			args: func(_ config.Config, c indexerContext) ([]string, bool, error) {
-				return []string{"--output", c.artifact, "--project-root", c.projectDir, "--module-root", c.projectDir, "--repository-root", c.root}, true, nil
+				return []string{"index", "--output", c.artifact, "--module-root", c.projectDir}, true, nil
 			},
 		}, nil
 	case familyWeb:

@@ -219,7 +219,7 @@ export function currentViewId(page: Page) {
 }
 
 export function nodeByName(page: Page, name: string): Locator {
-  return page.getByTestId('vieweditor-node').filter({ hasText: name })
+  return page.locator(`[data-testid="vieweditor-node"][data-node-name=${JSON.stringify(name)}]`)
 }
 
 export function libraryItemByName(page: Page, name: string): Locator {
@@ -1004,4 +1004,3 @@ export async function createConnectorGraph(page: Page, prefix = 'Connector') {
   await createConnector(page, diagram.id, center.id, undirected.id, { label: 'none', direction: 'none' })
   return { diagram, center, incoming, outgoing, both, undirected }
 }
-

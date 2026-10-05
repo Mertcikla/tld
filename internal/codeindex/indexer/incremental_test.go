@@ -192,7 +192,11 @@ func TestSCIPArtifactReuseAcrossUnaffectedFamilies(t *testing.T) {
 	tool := filepath.Join(toolDir, "scip-fixture")
 	script := `#!/bin/sh
 if [ "$1" = "--version" ]; then echo 1; exit 0; fi
-cp "$TLD_SCIP_TEST_ARTIFACT" "$2"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then cp "$TLD_SCIP_TEST_ARTIFACT" "$a"; fi
+  prev="$a"
+done
 echo indexed >> "$TLD_SCIP_TEST_COUNTER"
 `
 	if err := os.WriteFile(tool, []byte(script), 0700); err != nil {

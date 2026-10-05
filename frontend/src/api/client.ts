@@ -85,7 +85,7 @@ import {
   type SnapshotDiff as SnapshotDiffProto,
   type ImpactDiagram as ImpactDiagramProto,
   type CodeFact,
-} from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb'
+} from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset } from '../config/runtime'
 import {

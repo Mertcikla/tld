@@ -7,7 +7,7 @@ import {
   EdgeFactSchema,
   SnapshotDiffSchema,
   SnapshotSchema,
-} from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb'
+} from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import type { LibraryElement } from '../types'
 import {
   libraryElementToDependency,
