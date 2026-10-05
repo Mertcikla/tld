@@ -235,6 +235,15 @@ export default function CodePreviewPanel({ isOpen, onClose, element, hasBackdrop
   }
   }, [code, resolvedStartLine, resolvedEndLine])
 
+  useEffect(() => {
+    if (!isOpen) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isOpen, onClose])
+
   const githubUrl = !localRepo && element?.repo && basePath
     ? `https://github.com/${repoSlug}/blob/${element.branch || 'main'}/${basePath}`
     + (editorStartLine ? `#L${editorStartLine}-L${resolvedEndLine ?? editorStartLine}` : '')
