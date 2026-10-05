@@ -12,8 +12,9 @@ import (
 // RepositoryMapOverrides reads the sparse overrides; missing fields inherit
 // global defaults. A repository without settings has no overrides.
 func (s *Store) RepositoryMapOverrides(ctx context.Context, repositoryID string) (*pb.RepositoryMapConfiguration, error) {
+	where, scopeArgs := scope(ctx).clause("org_id")
 	var raw string
-	err := s.bun.NewRaw(`SELECT map_overrides FROM codeindex_repository_settings WHERE repository_id = ?`, repositoryID).Scan(ctx, &raw)
+	err := s.bun.NewRaw(`SELECT map_overrides FROM codeindex_repository_settings WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Scan(ctx, &raw)
 	out := &pb.RepositoryMapConfiguration{}
 	if errors.Is(err, sql.ErrNoRows) {
 		return out, nil
@@ -36,7 +37,7 @@ func (s *Store) SaveRepositoryMapOverrides(ctx context.Context, repositoryID str
 	if err != nil {
 		return err
 	}
-	_, err = s.bun.NewRaw(`INSERT INTO codeindex_repository_settings (repository_id, map_overrides)
-		VALUES (?, ?) ON CONFLICT (repository_id) DO UPDATE SET map_overrides = excluded.map_overrides`, repositoryID, string(raw)).Exec(ctx)
+	_, err = s.bun.NewRaw(`INSERT INTO codeindex_repository_settings (repository_id, map_overrides, org_id)
+		VALUES (?, ?, ?) ON CONFLICT (repository_id) DO UPDATE SET map_overrides = excluded.map_overrides, org_id = COALESCE(codeindex_repository_settings.org_id, excluded.org_id)`, repositoryID, string(raw), scope(ctx).value()).Exec(ctx)
 	return err
 }

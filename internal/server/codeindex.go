@@ -28,6 +28,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 // codeIndexRepositoryService exposes the repositories indexed by the in-process
@@ -170,7 +171,7 @@ func (s *codeIndexRepositoryService) resolveAddTarget(ctx context.Context, path,
 	if s.dataDir == "" {
 		return "", remote.Spec{}, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("remote repositories require a local data directory"))
 	}
-	root := remote.ManagedDir(s.dataDir, spec)
+	root := remote.ManagedDir(s.dataDir, spec, app.TenantOrgIDFromCtx(ctx))
 	if onClone != nil {
 		onClone(spec)
 	}
@@ -323,7 +324,7 @@ func (s *codeIndexRepositoryService) DeleteRepository(ctx context.Context, req *
 			return nil, connect.NewError(connect.CodeInternal, err)
 		}
 		if managed {
-			if s.dataDir == "" || !remote.IsManagedPath(s.dataDir, repository.Root) {
+			if s.dataDir == "" || !remote.IsManagedPath(s.dataDir, app.TenantOrgIDFromCtx(ctx), repository.Root) {
 				return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("repository checkout is not tld-managed"))
 			}
 			if err := os.RemoveAll(repository.Root); err != nil {

@@ -17,14 +17,15 @@ func (s *Store) SaveImpact(ctx context.Context, diagram *pb.ImpactDiagram) error
 	if err != nil {
 		return err
 	}
-	_, err = s.bun.NewRaw(`INSERT INTO codeindex_impacts (repository_id, comparison_key, result_json) VALUES (?, ?, ?)
- ON CONFLICT(repository_id, comparison_key) DO UPDATE SET result_json = excluded.result_json`, diagram.RepositoryId, diagram.ComparisonKey, string(raw)).Exec(ctx)
+	_, err = s.bun.NewRaw(`INSERT INTO codeindex_impacts (repository_id, comparison_key, result_json, org_id) VALUES (?, ?, ?, ?)
+ ON CONFLICT(repository_id, comparison_key) DO UPDATE SET result_json = excluded.result_json, org_id = COALESCE(codeindex_impacts.org_id, excluded.org_id)`, diagram.RepositoryId, diagram.ComparisonKey, string(raw), scope(ctx).value()).Exec(ctx)
 	return err
 }
 
 func (s *Store) Impact(ctx context.Context, repositoryID, key string) (*pb.ImpactDiagram, error) {
+	where, scopeArgs := scope(ctx).clause("org_id")
 	var raw string
-	if err := s.bun.NewRaw(`SELECT result_json FROM codeindex_impacts WHERE repository_id = ? AND comparison_key = ?`, repositoryID, key).Scan(ctx, &raw); err != nil {
+	if err := s.bun.NewRaw(`SELECT result_json FROM codeindex_impacts WHERE repository_id = ? AND comparison_key = ?`+where, append([]any{repositoryID, key}, scopeArgs...)...).Scan(ctx, &raw); err != nil {
 		return nil, err
 	}
 	diagram := &pb.ImpactDiagram{}
@@ -66,8 +67,8 @@ var ErrBusy = errors.New("repository indexing is already running")
 func (s *Store) AcquireLease(ctx context.Context, repositoryID string) (context.Context, func(), error) {
 	owner := uuid.NewString()
 	now := time.Now().Unix()
-	res, err := s.bun.NewRaw(`INSERT INTO codeindex_leases (repository_id, owner, expires_unix) VALUES (?, ?, ?)
- ON CONFLICT(repository_id) DO UPDATE SET owner = excluded.owner, expires_unix = excluded.expires_unix WHERE codeindex_leases.expires_unix <= ?`, repositoryID, owner, now+30, now).Exec(ctx)
+	res, err := s.bun.NewRaw(`INSERT INTO codeindex_leases (repository_id, owner, expires_unix, org_id) VALUES (?, ?, ?, ?)
+ ON CONFLICT(repository_id) DO UPDATE SET owner = excluded.owner, expires_unix = excluded.expires_unix, org_id = excluded.org_id WHERE codeindex_leases.expires_unix <= ?`, repositoryID, owner, now+30, scope(ctx).value(), now).Exec(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -113,7 +114,10 @@ func (s *Store) AcquireLease(ctx context.Context, repositoryID string) (context.
 }
 
 func (s *Store) AdvanceLatest(ctx context.Context, repositoryID, snapshotID string) error {
-	res, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET latest_snapshot_id = ? WHERE id = ? AND EXISTS (SELECT 1 FROM codeindex_snapshots WHERE id = ? AND repository_id = ?)`, snapshotID, repositoryID, snapshotID, repositoryID).Exec(ctx)
+	repoWhere, repoScopeArgs := scope(ctx).clause("org_id")
+	snapWhere, snapScopeArgs := scope(ctx).clause("org_id")
+	res, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET latest_snapshot_id = ? WHERE id = ? AND EXISTS (SELECT 1 FROM codeindex_snapshots WHERE id = ? AND repository_id = ?`+snapWhere+`)`+repoWhere,
+		append(append([]any{snapshotID, repositoryID, snapshotID, repositoryID}, snapScopeArgs...), repoScopeArgs...)...).Exec(ctx)
 	if err != nil {
 		return err
 	}

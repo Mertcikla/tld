@@ -21,6 +21,13 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 	if strings.TrimSpace(repositoryID) == "" {
 		return fmt.Errorf("repository id is required")
 	}
+	owned, err := s.repositoryOwned(ctx, repositoryID)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return fmt.Errorf("repository %q not found", repositoryID)
+	}
 	snapshotScoped := []string{
 		"codeindex_project_artifacts",
 		"codeindex_sources",
@@ -90,8 +97,9 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 	if strings.TrimSpace(snapshotID) == "" {
 		return fmt.Errorf("snapshot id is required")
 	}
+	where, scopeArgs := scope(ctx).clause("org_id")
 	var repositoryID string
-	if err := s.bun.NewRaw(`SELECT repository_id FROM codeindex_snapshots WHERE id = ?`, snapshotID).Scan(ctx, &repositoryID); err != nil {
+	if err := s.bun.NewRaw(`SELECT repository_id FROM codeindex_snapshots WHERE id = ?`+where, append([]any{snapshotID}, scopeArgs...)...).Scan(ctx, &repositoryID); err != nil {
 		return err
 	}
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -145,7 +153,7 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 // counts in a single query using the snapshot membership tables, matching the
 // counts reported by Snapshot.
 func (s *Store) ListRepositories(ctx context.Context) ([]*pb.RepositorySummary, error) {
-	rows, err := s.bun.QueryContext(ctx, `SELECT
+	query := `SELECT
 		r.id, r.root, r.latest_snapshot_id, r.remote_url, r.managed,
 		COALESCE(s.created_unix, 0), COALESCE(s.git_revision, ''), COALESCE(s.git_branch, ''),
 		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = r.latest_snapshot_id),
@@ -153,8 +161,14 @@ func (s *Store) ListRepositories(ctx context.Context) ([]*pb.RepositorySummary, 
 		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = r.latest_snapshot_id),
 		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = r.latest_snapshot_id)
 		FROM codeindex_repositories r
-		LEFT JOIN codeindex_snapshots s ON s.id = r.latest_snapshot_id
-		ORDER BY r.root, r.id`)
+		LEFT JOIN codeindex_snapshots s ON s.id = r.latest_snapshot_id`
+	args := []any{}
+	if t := scope(ctx); t.on {
+		query += ` WHERE r.org_id = ?`
+		args = append(args, t.orgID)
+	}
+	query += ` ORDER BY r.root, r.id`
+	rows, err := s.bun.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -184,8 +198,9 @@ func (s *Store) SetRepositoryOrigin(ctx context.Context, repositoryID, remoteURL
 	if strings.TrimSpace(repositoryID) == "" {
 		return nil
 	}
-	_, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_url = ?, remote_key = ?, managed = ?, updated_at = ? WHERE id = ?`,
-		remoteURL, repolink.RemoteKey(remoteURL), managed, time.Now().UTC().Format(time.RFC3339), repositoryID).Exec(ctx)
+	where, args := scope(ctx).clause("org_id")
+	_, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_url = ?, remote_key = ?, managed = ?, updated_at = ? WHERE id = ?`+where,
+		append([]any{remoteURL, repolink.RemoteKey(remoteURL), managed, time.Now().UTC().Format(time.RFC3339), repositoryID}, args...)...).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("set repository origin: %w", err)
 	}
@@ -198,8 +213,9 @@ func (s *Store) SetRepositoryRemoteURL(ctx context.Context, repositoryID, remote
 	if strings.TrimSpace(repositoryID) == "" {
 		return nil
 	}
-	_, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_url = ?, remote_key = ?, updated_at = ? WHERE id = ?`,
-		remoteURL, repolink.RemoteKey(remoteURL), time.Now().UTC().Format(time.RFC3339), repositoryID).Exec(ctx)
+	where, args := scope(ctx).clause("org_id")
+	_, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_url = ?, remote_key = ?, updated_at = ? WHERE id = ?`+where,
+		append([]any{remoteURL, repolink.RemoteKey(remoteURL), time.Now().UTC().Format(time.RFC3339), repositoryID}, args...)...).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("set repository remote url: %w", err)
 	}
@@ -215,9 +231,10 @@ func (s *Store) RepositoryByRemoteKey(ctx context.Context, remoteKey string) (st
 	if remoteKey == "" {
 		return "", false, nil
 	}
+	where, scopeArgs := scope(ctx).clause("org_id")
 	var id string
-	err := s.bun.NewRaw(`SELECT id FROM codeindex_repositories WHERE remote_key = ?
-		ORDER BY managed DESC, updated_at DESC, id LIMIT 1`, remoteKey).Scan(ctx, &id)
+	err := s.bun.NewRaw(`SELECT id FROM codeindex_repositories WHERE remote_key = ?`+where+`
+		ORDER BY managed DESC, updated_at DESC, id LIMIT 1`, append([]any{remoteKey}, scopeArgs...)...).Scan(ctx, &id)
 	if err == nil && id != "" {
 		return id, true, nil
 	}
@@ -230,8 +247,9 @@ func (s *Store) RepositoryByRemoteKey(ctx context.Context, remoteKey string) (st
 		RemoteURL string `bun:"remote_url"`
 	}
 	var rows []row
+	where, scopeArgs = scope(ctx).clause("org_id")
 	if err := s.bun.NewRaw(`SELECT id, remote_url FROM codeindex_repositories
-		WHERE remote_url <> '' ORDER BY managed DESC, updated_at DESC, id`).Scan(ctx, &rows); err != nil {
+		WHERE remote_url <> ''`+where+` ORDER BY managed DESC, updated_at DESC, id`, scopeArgs...).Scan(ctx, &rows); err != nil {
 		return "", false, fmt.Errorf("repository by remote key: %w", err)
 	}
 	for _, item := range rows {
@@ -248,8 +266,9 @@ func (s *Store) RepositoryExists(ctx context.Context, id string) (bool, error) {
 	if id == "" {
 		return false, nil
 	}
+	where, scopeArgs := scope(ctx).clause("org_id")
 	var count int
-	if err := s.bun.NewRaw(`SELECT COUNT(*) FROM codeindex_repositories WHERE id = ?`, id).Scan(ctx, &count); err != nil {
+	if err := s.bun.NewRaw(`SELECT COUNT(*) FROM codeindex_repositories WHERE id = ?`+where, append([]any{id}, scopeArgs...)...).Scan(ctx, &count); err != nil {
 		return false, fmt.Errorf("repository exists: %w", err)
 	}
 	return count > 0, nil
@@ -264,15 +283,16 @@ func (s *Store) EnsureRepositoryIdentity(ctx context.Context, id, root, remoteUR
 		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, '', ?, ?)
+	_, err := s.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at, org_id)
+		VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			root = CASE WHEN excluded.root <> '' THEN excluded.root ELSE codeindex_repositories.root END,
 			remote_url = CASE WHEN excluded.remote_url <> '' THEN excluded.remote_url ELSE codeindex_repositories.remote_url END,
 			remote_key = CASE WHEN excluded.remote_key <> '' THEN excluded.remote_key ELSE codeindex_repositories.remote_key END,
 			managed = codeindex_repositories.managed OR excluded.managed,
-			updated_at = excluded.updated_at`,
-		id, root, remoteURL, remoteKey, managed, now, now).Exec(ctx)
+			updated_at = excluded.updated_at,
+			org_id = COALESCE(codeindex_repositories.org_id, excluded.org_id)`,
+		id, root, remoteURL, remoteKey, managed, now, now, scope(ctx).value()).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("ensure repository identity: %w", err)
 	}
@@ -287,8 +307,9 @@ func (s *Store) BackfillRemoteKeys(ctx context.Context) error {
 		ID        string `bun:"id"`
 		RemoteURL string `bun:"remote_url"`
 	}
+	where, scopeArgs := scope(ctx).clause("org_id")
 	var rows []row
-	if err := s.bun.NewRaw(`SELECT id, remote_url FROM codeindex_repositories WHERE remote_key = '' AND remote_url <> ''`).Scan(ctx, &rows); err != nil {
+	if err := s.bun.NewRaw(`SELECT id, remote_url FROM codeindex_repositories WHERE remote_key = '' AND remote_url <> ''`+where, scopeArgs...).Scan(ctx, &rows); err != nil {
 		return fmt.Errorf("backfill remote keys: %w", err)
 	}
 	for _, item := range rows {
@@ -302,7 +323,7 @@ func (s *Store) BackfillRemoteKeys(ctx context.Context) error {
 		if owner, ok, err := s.RepositoryByRemoteKey(ctx, key); err == nil && ok && owner != item.ID {
 			continue
 		}
-		if _, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_key = ? WHERE id = ?`, key, item.ID).Exec(ctx); err != nil {
+		if _, err := s.bun.NewRaw(`UPDATE codeindex_repositories SET remote_key = ? WHERE id = ?`+where, append([]any{key, item.ID}, scopeArgs...)...).Exec(ctx); err != nil {
 			continue
 		}
 	}
@@ -316,7 +337,8 @@ func (s *Store) RepositoryOrigin(ctx context.Context, repositoryID string) (stri
 		RemoteURL string `bun:"remote_url"`
 		Managed   bool   `bun:"managed"`
 	}
-	err := s.bun.NewRaw(`SELECT remote_url, managed FROM codeindex_repositories WHERE id = ?`, repositoryID).Scan(ctx, &row)
+	where, scopeArgs := scope(ctx).clause("org_id")
+	err := s.bun.NewRaw(`SELECT remote_url, managed FROM codeindex_repositories WHERE id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Scan(ctx, &row)
 	if err != nil {
 		return "", false, fmt.Errorf("repository origin: %w", err)
 	}

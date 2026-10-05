@@ -18,8 +18,10 @@ import (
 
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
+	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 const maxSourcePreviewBytes = 1 << 20
@@ -158,7 +160,14 @@ type repositoryFetcher interface {
 type dbRepositoryFetcher struct{ db *sql.DB }
 
 func (f dbRepositoryFetcher) Repositories(ctx context.Context) ([]repolink.Repository, error) {
-	rows, err := f.db.QueryContext(ctx, `SELECT id, root, remote_url FROM codeindex_repositories WHERE root <> '' ORDER BY root`)
+	query := `SELECT id, root, remote_url FROM codeindex_repositories WHERE root <> ''`
+	args := []any{}
+	if orgID := app.TenantOrgIDFromCtx(ctx); orgID != uuid.Nil {
+		query += ` AND org_id = ?`
+		args = append(args, orgID)
+	}
+	query += ` ORDER BY root`
+	rows, err := f.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

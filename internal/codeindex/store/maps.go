@@ -19,21 +19,23 @@ func (s *Store) SaveCompletedMap(ctx context.Context, repositoryID string, mappe
 	if mapped.CompletedUnix == 0 {
 		mapped.CompletedUnix = time.Now().Unix()
 	}
+	org := scope(ctx).value()
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		_, err := tx.NewRaw(`INSERT INTO codeindex_completed_maps (run_id, repository_id, snapshot_id, config_hash, completed_unix, result_json)
- VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(run_id) DO UPDATE SET completed_unix = excluded.completed_unix, result_json = excluded.result_json`,
-			mapped.Result.RunId, repositoryID, mapped.Result.SnapshotId, mapped.ConfigHash, mapped.CompletedUnix, string(raw)).Exec(ctx)
+		_, err := tx.NewRaw(`INSERT INTO codeindex_completed_maps (run_id, repository_id, snapshot_id, config_hash, completed_unix, result_json, org_id)
+ VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(run_id) DO UPDATE SET completed_unix = excluded.completed_unix, result_json = excluded.result_json, org_id = COALESCE(codeindex_completed_maps.org_id, excluded.org_id)`,
+			mapped.Result.RunId, repositoryID, mapped.Result.SnapshotId, mapped.ConfigHash, mapped.CompletedUnix, string(raw), org).Exec(ctx)
 		if err != nil {
 			return err
 		}
-		_, err = tx.NewRaw(`INSERT INTO codeindex_active_maps (repository_id, run_id) VALUES (?, ?)
- ON CONFLICT(repository_id) DO UPDATE SET run_id = excluded.run_id`, repositoryID, mapped.Result.RunId).Exec(ctx)
+		_, err = tx.NewRaw(`INSERT INTO codeindex_active_maps (repository_id, run_id, org_id) VALUES (?, ?, ?)
+ ON CONFLICT(repository_id) DO UPDATE SET run_id = excluded.run_id, org_id = COALESCE(codeindex_active_maps.org_id, excluded.org_id)`, repositoryID, mapped.Result.RunId, org).Exec(ctx)
 		return err
 	})
 }
 
 func (s *Store) CompletedMaps(ctx context.Context, repositoryID string) ([]*pb.CompletedMap, error) {
-	rows, err := s.bun.QueryContext(ctx, `SELECT completed_unix, config_hash, result_json FROM codeindex_completed_maps WHERE repository_id = ? ORDER BY completed_unix DESC, run_id`, repositoryID)
+	where, scopeArgs := scope(ctx).clause("org_id")
+	rows, err := s.bun.QueryContext(ctx, `SELECT completed_unix, config_hash, result_json FROM codeindex_completed_maps WHERE repository_id = ?`+where+` ORDER BY completed_unix DESC, run_id`, append([]any{repositoryID}, scopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -57,9 +59,10 @@ func (s *Store) CompletedMaps(ctx context.Context, repositoryID string) ([]*pb.C
 func (s *Store) ActiveMap(ctx context.Context, repositoryID string) (*pb.CompletedMap, error) {
 	item := &pb.CompletedMap{Result: &pb.MapResult{}}
 	var raw string
+	where, scopeArgs := scope(ctx).clause("a.org_id")
 	err := s.bun.QueryRowContext(ctx, `SELECT m.completed_unix, m.config_hash, m.result_json
  FROM codeindex_completed_maps m JOIN codeindex_active_maps a ON a.run_id = m.run_id
- WHERE a.repository_id = ?`, repositoryID).Scan(&item.CompletedUnix, &item.ConfigHash, &raw)
+ WHERE a.repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Scan(&item.CompletedUnix, &item.ConfigHash, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -75,6 +78,7 @@ func (s *Store) ActiveMap(ctx context.Context, repositoryID string) (*pb.Complet
 // InvalidateActiveMap clears the cache before workspace mutations, including runs
 // that fail partway through materialization.
 func (s *Store) InvalidateActiveMap(ctx context.Context, repositoryID string) error {
-	_, err := s.bun.NewRaw(`DELETE FROM codeindex_active_maps WHERE repository_id = ?`, repositoryID).Exec(ctx)
+	where, scopeArgs := scope(ctx).clause("org_id")
+	_, err := s.bun.NewRaw(`DELETE FROM codeindex_active_maps WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx)
 	return err
 }

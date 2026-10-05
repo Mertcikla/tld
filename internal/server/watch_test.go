@@ -12,12 +12,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 func TestWatchStatusShowsStoppedWhenNoRecord(t *testing.T) {
-	ctx := context.Background()
-	ws, routes := newTestServer(t, uuid.New(), nil)
+	workspaceID := uuid.New()
+	ws, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 	repoID := graph.RepositoryID("/repo")
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
@@ -66,9 +68,10 @@ func TestWatchStatusShowsStoppedWhenNoRecord(t *testing.T) {
 }
 
 func TestWatchStatusReapsDeadOwnerWithFreshHeartbeat(t *testing.T) {
-	ctx := context.Background()
-	ws, routes := newTestServer(t, uuid.New(), nil)
+	workspaceID := uuid.New()
+	ws, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 	repoID := graph.RepositoryID("/repo")
 	// A fresh heartbeat whose owning process does not exist must not read as
 	// running; status reads reap it so the UI never shows a phantom watcher.
@@ -98,9 +101,10 @@ func TestWatchStatusReapsDeadOwnerWithFreshHeartbeat(t *testing.T) {
 }
 
 func TestWatchStopStopsAndClearsRecord(t *testing.T) {
-	ctx := context.Background()
-	ws, routes := newTestServer(t, uuid.New(), nil)
+	workspaceID := uuid.New()
+	ws, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 	repoID := graph.RepositoryID("/repo")
 	// A watcher with no live pid (an impossible pid) is treated as stale.
 	if err := idx.UpsertWatchState(ctx, cstore.WatchState{RepositoryID: repoID, OwnerKind: "cli", OwnerID: "owner", OwnerPID: 1 << 30, State: "watching", RepoRoot: "/repo"}); err != nil {

@@ -14,10 +14,12 @@ import (
 	"github.com/google/uuid"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/repolink"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 func TestWorktreeSourceRPC(t *testing.T) {
-	sq, routes := newTestServerWithOptions(t, uuid.New(), nil, Options{PublicURL: "https://diagram.example.com"})
+	workspaceID := uuid.New()
+	sq, routes := newTestServerWithOptions(t, workspaceID, nil, Options{PublicURL: "https://diagram.example.com"})
 	idx := cstore.NewStore(sq.DB(), sq.BunDB(), sq.Dialect())
 	root, outside := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("package main\n"), 0o600); err != nil {
@@ -26,7 +28,7 @@ func TestWorktreeSourceRPC(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("outside repository"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 	if err := idx.EnsureRepositoryIdentity(ctx, "repo", root, "", "", false); err != nil {
 		t.Fatal(err)
 	}

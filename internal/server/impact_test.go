@@ -11,12 +11,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 func TestCompareRepositoryRadiusNoCheckout(t *testing.T) {
-	ctx := context.Background()
-	ws, routes := newTestServer(t, uuid.New(), nil)
+	workspaceID := uuid.New()
+	ws, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 	root := "/missing/repo"
 	repoID := graph.RepositoryID(root)
 	for _, id := range []string{"base", "head"} {

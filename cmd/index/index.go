@@ -170,7 +170,7 @@ func run(cmd *cobra.Command, opts options) error {
 		return err
 	} else if isRemote {
 		remoteSpec = spec
-		root = remote.ManagedDir(dataDir, spec)
+		root = remote.ManagedDir(dataDir, spec, uuid.Nil)
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Cloning %s into %s\n", spec.WebURL, root)
 		if err := remote.Clone(ctx, spec, root); err != nil {
 			return err

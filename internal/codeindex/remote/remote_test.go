@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestParse(t *testing.T) {
@@ -55,22 +57,38 @@ func TestManagedDirIsDeterministicAndContained(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := ManagedDir("/data", spec)
-	second := ManagedDir("/data", spec)
+	orgA := uuid.New()
+	first := ManagedDir("/data", spec, orgA)
+	second := ManagedDir("/data", spec, orgA)
 	if first != second {
 		t.Fatalf("ManagedDir not deterministic: %q vs %q", first, second)
 	}
 	if !strings.HasPrefix(first, filepath.Join("/data", "repositories")+string(filepath.Separator)) {
 		t.Fatalf("ManagedDir %q not under repositories root", first)
 	}
-	if !IsManagedPath("/data", first) {
+	if !IsManagedPath("/data", orgA, first) {
 		t.Fatalf("IsManagedPath(%q) = false", first)
 	}
-	if IsManagedPath("/data", "/data/elsewhere") {
+	if IsManagedPath("/data", orgA, "/data/elsewhere") {
 		t.Fatal("IsManagedPath accepted an unmanaged path")
 	}
-	if IsManagedPath("/data", ManagedRoot("/data")) {
+	if IsManagedPath("/data", orgA, ManagedRoot("/data", orgA)) {
 		t.Fatal("IsManagedPath accepted the managed root itself")
+	}
+
+	// Organisations get separate checkouts for the same remote, and another
+	// organisation cannot treat this one's checkout as its own.
+	local := ManagedDir("/data", spec, uuid.Nil)
+	orgBID := uuid.New()
+	orgB := ManagedDir("/data", spec, orgBID)
+	if local == first || orgB == first {
+		t.Fatalf("same remote shares a managed dir across organisations: %q %q %q", local, first, orgB)
+	}
+	if !strings.Contains(first, orgA.String()) {
+		t.Fatalf("ManagedDir %q does not include organisation %s", first, orgA)
+	}
+	if IsManagedPath("/data", orgBID, first) {
+		t.Fatal("IsManagedPath accepted another organisation's checkout")
 	}
 }
 

@@ -78,6 +78,10 @@ const watchColumns = `repository_id, owner_kind, owner_pid, owner_id, state, sta
 
 const watchPlaceholders = `?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?`
 
+const watchColumnsOrg = watchColumns + `, org_id`
+
+const watchPlaceholdersOrg = watchPlaceholders + `, ?`
+
 func scanWatchState(scan func(dest ...any) error) (WatchState, error) {
 	var st WatchState
 	err := scan(&st.RepositoryID, &st.OwnerKind, &st.OwnerPID, &st.OwnerID, &st.State, &st.Stage, &st.Error,
@@ -98,8 +102,9 @@ func watchArgs(st WatchState) []any {
 
 // WatchState reads a repository's watcher record.
 func (s *Store) WatchState(ctx context.Context, repositoryID string) (WatchState, bool, error) {
+	where, scopeArgs := scope(ctx).clause("org_id")
 	st, err := scanWatchState(func(dest ...any) error {
-		return s.bun.NewRaw(`SELECT `+watchColumns+` FROM codeindex_watch_state WHERE repository_id = ?`, repositoryID).Scan(ctx, dest...)
+		return s.bun.NewRaw(`SELECT `+watchColumns+` FROM codeindex_watch_state WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Scan(ctx, dest...)
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return WatchState{}, false, nil
@@ -112,7 +117,14 @@ func (s *Store) WatchState(ctx context.Context, repositoryID string) (WatchState
 
 // ListWatchStates returns every repository's watcher record.
 func (s *Store) ListWatchStates(ctx context.Context) ([]WatchState, error) {
-	rows, err := s.bun.QueryContext(ctx, `SELECT `+watchColumns+` FROM codeindex_watch_state ORDER BY repository_id`)
+	query := `SELECT ` + watchColumns + ` FROM codeindex_watch_state`
+	scopeArgs := []any{}
+	if where, args := scope(ctx).clause("org_id"); where != "" {
+		query += ` WHERE 1 = 1` + where
+		scopeArgs = append(scopeArgs, args...)
+	}
+	query += ` ORDER BY repository_id`
+	rows, err := s.bun.QueryContext(ctx, query, scopeArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -136,8 +148,8 @@ func (s *Store) UpsertWatchState(ctx context.Context, st WatchState) error {
 		st.HeartbeatUnix = time.Now().Unix()
 	}
 	_, err := s.bun.NewRaw(`INSERT INTO codeindex_watch_state
-		(`+watchColumns+`)
-		VALUES (`+watchPlaceholders+`)
+		(`+watchColumnsOrg+`)
+		VALUES (`+watchPlaceholdersOrg+`)
 		ON CONFLICT(repository_id) DO UPDATE SET
 			owner_kind = excluded.owner_kind, owner_pid = excluded.owner_pid, owner_id = excluded.owner_id,
 			state = excluded.state, stage = excluded.stage, error = excluded.error,
@@ -148,8 +160,9 @@ func (s *Store) UpsertWatchState(ctx context.Context, st WatchState) error {
 			started_unix = excluded.started_unix, last_scan_unix = excluded.last_scan_unix,
 			last_scan_ms = excluded.last_scan_ms, heartbeat_unix = excluded.heartbeat_unix,
 			poll_interval_ms = excluded.poll_interval_ms,
-			debounce_ms = excluded.debounce_ms`,
-		watchArgs(st)...).Exec(ctx)
+			debounce_ms = excluded.debounce_ms,
+			org_id = COALESCE(codeindex_watch_state.org_id, excluded.org_id)`,
+		append(watchArgs(st), scope(ctx).value())...).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("upsert watch state: %w", err)
 	}
@@ -169,17 +182,20 @@ func (s *Store) WatchHeartbeat(ctx context.Context, st WatchState) error {
 		return fmt.Errorf("watch heartbeat requires owner id")
 	}
 	st.HeartbeatUnix = time.Now().Unix()
+	where, scopeArgs := scope(ctx).clause("org_id")
 	res, err := s.bun.NewRaw(`UPDATE codeindex_watch_state SET
 			owner_kind = ?, owner_pid = ?, state = ?, stage = ?, error = ?,
 			git_branch = ?, git_revision = ?, repo_root = ?, snapshot_id = ?, content_fingerprint = ?,
 			changed_files = ?, pending_files = ?, started_unix = ?, last_scan_unix = ?, last_scan_ms = ?,
 			heartbeat_unix = ?, poll_interval_ms = ?, debounce_ms = ?
-		WHERE repository_id = ? AND owner_id = ?`,
-		st.OwnerKind, st.OwnerPID, st.State, st.Stage, st.Error,
-		st.GitBranch, st.GitRevision, st.RepoRoot, st.SnapshotID, st.ContentFingerprint,
-		st.ChangedFiles, st.PendingFiles, st.StartedUnix, st.LastScanUnix, st.LastScanMS,
-		st.HeartbeatUnix, st.PollIntervalMS, st.DebounceMS,
-		st.RepositoryID, st.OwnerID).Exec(ctx)
+		WHERE repository_id = ? AND owner_id = ?`+where,
+		append([]any{
+			st.OwnerKind, st.OwnerPID, st.State, st.Stage, st.Error,
+			st.GitBranch, st.GitRevision, st.RepoRoot, st.SnapshotID, st.ContentFingerprint,
+			st.ChangedFiles, st.PendingFiles, st.StartedUnix, st.LastScanUnix, st.LastScanMS,
+			st.HeartbeatUnix, st.PollIntervalMS, st.DebounceMS,
+			st.RepositoryID, st.OwnerID,
+		}, scopeArgs...)...).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("watch heartbeat: %w", err)
 	}
@@ -226,9 +242,11 @@ func (s *Store) ClaimWatch(ctx context.Context, st WatchState) error {
 	st.HeartbeatUnix = now.Unix()
 	st.StopRequested = false
 	st.StopRequestedUnix = 0
+	claimArgs := append(watchArgs(st), scope(ctx).value())
+	claimArgs = append(claimArgs, now.Add(-WatchHeartbeatFreshWindow).Unix())
 	res, err := s.bun.NewRaw(`INSERT INTO codeindex_watch_state
-		(`+watchColumns+`)
-		VALUES (`+watchPlaceholders+`)
+		(`+watchColumnsOrg+`)
+		VALUES (`+watchPlaceholdersOrg+`)
 		ON CONFLICT(repository_id) DO UPDATE SET
 			owner_kind = excluded.owner_kind, owner_pid = excluded.owner_pid, owner_id = excluded.owner_id,
 			state = excluded.state, stage = excluded.stage, error = excluded.error,
@@ -240,10 +258,11 @@ func (s *Store) ClaimWatch(ctx context.Context, st WatchState) error {
 			last_scan_ms = excluded.last_scan_ms, heartbeat_unix = excluded.heartbeat_unix,
 			stop_requested = excluded.stop_requested, stop_requested_unix = excluded.stop_requested_unix,
 			poll_interval_ms = excluded.poll_interval_ms,
-			debounce_ms = excluded.debounce_ms
+			debounce_ms = excluded.debounce_ms,
+			org_id = COALESCE(codeindex_watch_state.org_id, excluded.org_id)
 		WHERE codeindex_watch_state.owner_id = excluded.owner_id
 		   OR codeindex_watch_state.heartbeat_unix <= ?`,
-		append(watchArgs(st), now.Add(-WatchHeartbeatFreshWindow).Unix())...).Exec(ctx)
+		claimArgs...).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("claim watch: %w", err)
 	}
@@ -261,10 +280,11 @@ func (s *Store) ClaimWatch(ctx context.Context, st WatchState) error {
 // records when the stop was requested so controllers can escalate if it is not
 // honored within WatchStopDeadline.
 func (s *Store) RequestWatchStop(ctx context.Context, repositoryID string) error {
+	where, scopeArgs := scope(ctx).clause("org_id")
 	if _, err := s.bun.NewRaw(`UPDATE codeindex_watch_state
 		SET stop_requested = TRUE,
 		    stop_requested_unix = CASE WHEN stop_requested THEN stop_requested_unix ELSE ? END
-		WHERE repository_id = ?`, time.Now().Unix(), repositoryID).Exec(ctx); err != nil {
+		WHERE repository_id = ?`+where, append([]any{time.Now().Unix(), repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 		return fmt.Errorf("request watch stop: %w", err)
 	}
 	return nil
@@ -272,8 +292,9 @@ func (s *Store) RequestWatchStop(ctx context.Context, repositoryID string) error
 
 // WatchStopRequested reports whether a stop has been requested.
 func (s *Store) WatchStopRequested(ctx context.Context, repositoryID string) (bool, error) {
+	where, scopeArgs := scope(ctx).clause("org_id")
 	var requested bool
-	err := s.bun.NewRaw(`SELECT stop_requested FROM codeindex_watch_state WHERE repository_id = ?`, repositoryID).Scan(ctx, &requested)
+	err := s.bun.NewRaw(`SELECT stop_requested FROM codeindex_watch_state WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Scan(ctx, &requested)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -283,18 +304,20 @@ func (s *Store) WatchStopRequested(ctx context.Context, repositoryID string) (bo
 // ReleaseWatch clears a watcher's heartbeat and stop flag, but only when the
 // caller still owns the record, so a new watcher's claim is never clobbered.
 func (s *Store) ReleaseWatch(ctx context.Context, repositoryID, ownerID string) error {
+	where, scopeArgs := scope(ctx).clause("org_id")
 	_, err := s.bun.NewRaw(`UPDATE codeindex_watch_state
 		SET heartbeat_unix = 0, stop_requested = FALSE, stop_requested_unix = 0, state = 'stopped', stage = ''
-		WHERE repository_id = ? AND owner_id = ?`, repositoryID, ownerID).Exec(ctx)
+		WHERE repository_id = ? AND owner_id = ?`+where, append([]any{repositoryID, ownerID}, scopeArgs...)...).Exec(ctx)
 	return err
 }
 
 // ForceClearWatchState resets a repository's watcher record to stopped. It is
 // used to recover from stale rows left by crashed watchers.
 func (s *Store) ForceClearWatchState(ctx context.Context, repositoryID string) error {
+	where, scopeArgs := scope(ctx).clause("org_id")
 	_, err := s.bun.NewRaw(`UPDATE codeindex_watch_state
 		SET heartbeat_unix = 0, stop_requested = FALSE, stop_requested_unix = 0, state = 'stopped', stage = ''
-		WHERE repository_id = ?`, repositoryID).Exec(ctx)
+		WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx)
 	return err
 }
 

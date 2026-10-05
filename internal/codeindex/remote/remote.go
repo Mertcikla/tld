@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/repolink"
 )
 
@@ -105,23 +106,36 @@ func githubSpec(webKey string) (Spec, error) {
 	return Spec{Provider: ProviderGitHub, WebURL: webURL, CloneURL: webURL + ".git"}, nil
 }
 
-// ManagedRoot is the directory that holds tld-cloned checkouts.
-func ManagedRoot(dataDir string) string {
-	return filepath.Join(dataDir, "repositories")
+// managedOrgNamespace is the per-organisation subdirectory for tld-cloned
+// checkouts. Namespacing keeps two organisations that index the same remote
+// from sharing a checkout (and therefore a path-derived repository id). The
+// nil organisation (self-hosted single-tenant) uses "local".
+func managedOrgNamespace(orgID uuid.UUID) string {
+	if orgID == uuid.Nil {
+		return "local"
+	}
+	return orgID.String()
 }
 
-// ManagedDir returns the deterministic checkout path for a remote spec.
-func ManagedDir(dataDir string, spec Spec) string {
+// ManagedRoot is the directory that holds an organisation's tld-cloned checkouts.
+func ManagedRoot(dataDir string, orgID uuid.UUID) string {
+	return filepath.Join(dataDir, "repositories", managedOrgNamespace(orgID))
+}
+
+// ManagedDir returns the deterministic checkout path for a remote spec within
+// the organisation's managed root.
+func ManagedDir(dataDir string, spec Spec, orgID uuid.UUID) string {
 	sum := sha256.Sum256([]byte(spec.WebURL))
 	slug := strings.TrimPrefix(spec.WebURL, "https://")
 	slug = strings.NewReplacer("/", "-", ":", "-", "@", "-").Replace(slug)
 	slug = strings.Trim(slug, "-.")
-	return filepath.Join(ManagedRoot(dataDir), slug+"-"+hex.EncodeToString(sum[:4]))
+	return filepath.Join(ManagedRoot(dataDir, orgID), slug+"-"+hex.EncodeToString(sum[:4]))
 }
 
-// IsManagedPath reports whether root is one of tld's cloned checkouts.
-func IsManagedPath(dataDir, root string) bool {
-	managedRoot := filepath.Clean(ManagedRoot(dataDir))
+// IsManagedPath reports whether root is one of the organisation's cloned
+// checkouts.
+func IsManagedPath(dataDir string, orgID uuid.UUID, root string) bool {
+	managedRoot := filepath.Clean(ManagedRoot(dataDir, orgID))
 	clean := filepath.Clean(root)
 	return clean != managedRoot && strings.HasPrefix(clean, managedRoot+string(filepath.Separator))
 }

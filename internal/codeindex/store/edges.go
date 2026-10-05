@@ -25,11 +25,12 @@ type FileEdge struct {
 // must resolve files via codeindex_snapshot_facts rather than
 // codeindex_facts.snapshot_id.
 func (s *Store) snapshotFileIDs(ctx context.Context, snapshotID string) (map[string]string, error) {
+	where, scopeArgs := scope(ctx).clause("f.org_id")
 	rows, err := s.bun.QueryContext(ctx, `
 		SELECT f.id, f.path
 		FROM codeindex_facts f
 		JOIN codeindex_snapshot_facts m ON m.fact_id = f.id
-		WHERE m.snapshot_id = ? AND f.kind = ?`, snapshotID, int(pb.FactKind_FACT_KIND_FILE))
+		WHERE m.snapshot_id = ? AND f.kind = ?`+where, append([]any{snapshotID, int(pb.FactKind_FACT_KIND_FILE)}, scopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -55,13 +56,14 @@ func (s *Store) FileEdges(ctx context.Context, snapshotID string) ([]FileEdge, e
 	if err != nil {
 		return nil, err
 	}
+	where, scopeArgs := scope(ctx).clause("e.org_id")
 	rows, err := s.bun.QueryContext(ctx, `
 		SELECT sf.path, tf.path, COALESCE(e.weight, 0)
 		FROM codeindex_edges e
 		JOIN codeindex_facts sf ON sf.id = e.from_fact_id
 		JOIN codeindex_facts tf ON tf.id = e.to_fact_id
-		WHERE e.snapshot_id = ?
-		ORDER BY e.id`, snapshotID)
+		WHERE e.snapshot_id = ?`+where+`
+		ORDER BY e.id`, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -101,13 +103,14 @@ func (s *Store) AggregatedFileEdges(ctx context.Context, snapshotID string) ([]F
 	if err != nil {
 		return nil, err
 	}
+	where, scopeArgs := scope(ctx).clause("e.org_id")
 	rows, err := s.bun.QueryContext(ctx, `
 		SELECT sf.path, tf.path, e.kind, COALESCE(e.weight, 0)
 		FROM codeindex_edges e
 		JOIN codeindex_facts sf ON sf.id = e.from_fact_id
 		JOIN codeindex_facts tf ON tf.id = e.to_fact_id
-		WHERE e.snapshot_id = ?
-		ORDER BY e.id`, snapshotID)
+		WHERE e.snapshot_id = ?`+where+`
+		ORDER BY e.id`, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -222,12 +225,13 @@ func (s *Store) FileImports(ctx context.Context, snapshotID string) ([]FileImpor
 	if err != nil {
 		return nil, err
 	}
+	where, scopeArgs := scope(ctx).clause("sf.org_id")
 	rows, err := s.bun.QueryContext(ctx, `
 		SELECT sf.path, sf.imports_json
 		FROM codeindex_facts sf
 		JOIN codeindex_snapshot_facts msf ON msf.snapshot_id = ? AND msf.fact_id = sf.id
 		WHERE sf.path <> ''
-			AND sf.imports_json NOT IN ('', 'null', '[]')`, snapshotID)
+			AND sf.imports_json NOT IN ('', 'null', '[]')`+where, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}

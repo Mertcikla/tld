@@ -13,13 +13,15 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/app"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestMapperServiceMapRepository(t *testing.T) {
-	ctx := context.Background()
-	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
+	workspaceID := uuid.New()
+	sqliteStore, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo/demo"
 	repoID := cgraph.RepositoryID(root)
@@ -141,10 +143,11 @@ func TestMapperServiceMapRepository(t *testing.T) {
 }
 
 func TestMapperServiceMapConfigChangeReruns(t *testing.T) {
-	ctx := context.Background()
+	workspaceID := uuid.New()
 	cfg := workspace.DefaultConfig()
-	sqliteStore, routes := newTestServerWithOptions(t, uuid.New(), nil, Options{Config: cfg})
+	sqliteStore, routes := newTestServerWithOptions(t, workspaceID, nil, Options{Config: cfg})
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo/config"
 	repoID := cgraph.RepositoryID(root)
@@ -220,9 +223,10 @@ func TestMapperServiceMapConfigChangeReruns(t *testing.T) {
 }
 
 func TestMapperServiceMaterializesBoundedExternalImports(t *testing.T) {
-	ctx := context.Background()
-	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
+	workspaceID := uuid.New()
+	sqliteStore, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo/demo"
 	repoID := cgraph.RepositoryID(root)
@@ -281,9 +285,10 @@ func TestMapperServiceMaterializesBoundedExternalImports(t *testing.T) {
 }
 
 func TestMapperServiceGraphGroupingNeedsNoEmbeddings(t *testing.T) {
-	ctx := context.Background()
-	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
+	workspaceID := uuid.New()
+	sqliteStore, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo/empty"
 	repoID := cgraph.RepositoryID(root)

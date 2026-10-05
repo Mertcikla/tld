@@ -21,9 +21,10 @@ import (
 )
 
 func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
-	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
+	workspaceID := uuid.New()
+	sqliteStore, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
-	ctx := context.Background()
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo"
 	repoID := cgraph.RepositoryID(root)
@@ -134,9 +135,10 @@ func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 }
 
 func TestListSnapshotsExcludesWorkingTree(t *testing.T) {
-	sqliteStore, routes := newTestServer(t, uuid.New(), nil)
+	workspaceID := uuid.New()
+	sqliteStore, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
-	ctx := context.Background()
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo-snapshots"
 	repoID := cgraph.RepositoryID(root)
@@ -170,7 +172,7 @@ func TestRepositoryServiceAddRepository(t *testing.T) {
 	workspaceID := uuid.New()
 	sqliteStore, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
-	ctx := context.Background()
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\nfunc A() {}\n"), 0o600); err != nil {
@@ -317,7 +319,7 @@ func TestRepositoryServiceAddRepositoryMapsRepository(t *testing.T) {
 	workspaceID := uuid.New()
 	sqliteStore, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
-	ctx := context.Background()
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a\n\nfunc A() {}\n"), 0o600); err != nil {

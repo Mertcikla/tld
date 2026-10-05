@@ -15,13 +15,15 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/app"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestRepositorySettingsExternalImportsDefaultOff(t *testing.T) {
-	ctx := context.Background()
-	ws, routes := newTestServerWithOptions(t, uuid.New(), nil, Options{Config: workspace.DefaultConfig()})
+	workspaceID := uuid.New()
+	ws, routes := newTestServerWithOptions(t, workspaceID, nil, Options{Config: workspace.DefaultConfig()})
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 	root := t.TempDir()
 	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %s %v", out, err)
@@ -58,11 +60,12 @@ func TestRepositorySettingsExternalImportsDefaultOff(t *testing.T) {
 }
 
 func TestRepositorySettingsOverridesAndRemotes(t *testing.T) {
-	ctx := context.Background()
+	workspaceID := uuid.New()
 	cfg := workspace.DefaultConfig()
 	cfg.Map.Grouping.Resolution = 1.5
-	ws, routes := newTestServerWithOptions(t, uuid.New(), nil, Options{Config: cfg})
+	ws, routes := newTestServerWithOptions(t, workspaceID, nil, Options{Config: cfg})
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 	root := t.TempDir()
 	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
 		t.Fatalf("git init: %s %v", out, err)
