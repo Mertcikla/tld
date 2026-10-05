@@ -46,6 +46,12 @@ export const tldVersion = runtimeWindow?.__TLD_VERSION__ ?? trim(import.meta.env
 export const isWailsMac = isWailsApp && (wailsPlatform === 'darwin' || (!wailsPlatform && browserPlatform.toLowerCase().includes('mac')))
 export const isWailsWindows = isWailsApp && (wailsPlatform === 'windows' || (!wailsPlatform && browserPlatform.toLowerCase().includes('win')))
 
+// Whether the current surface uses macOS modifier glyphs (⌘/⌥/⇧/⌃) rather than
+// the Ctrl/Alt/Shift words. Used by keyboard-shortcut hint components.
+export const isMacPlatform = isWailsApp
+  ? isWailsMac
+  : /mac/i.test(browserPlatform || (typeof navigator !== 'undefined' ? navigator.userAgent : ''))
+
 const defaultApiBase = typeof window !== 'undefined' && window.__TLD_SERVER_URL__ ? `${window.__TLD_SERVER_URL__.replace(/\/$/, "")}/api` : "/api"
 
 export const apiBase = trimTrailingSlash(

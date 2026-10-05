@@ -29,6 +29,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import ViewsGrid from './ViewsGrid'
 import InfiniteZoom, { type InfiniteZoomHandle } from './InfiniteZoom'
 import { ZoomInIcon } from '../components/Icons'
+import { ShortcutHint } from '../components/PanelUI'
 import { api } from '../api/client'
 import { toast } from '../utils/toast'
 import type { ExploreData, ViewTreeNode } from '../types'
@@ -94,12 +95,25 @@ function DiagramJumpToolbar({
   const searchHasContent = searchTerm.length > 0 || searchResults.length > 0
   const searchIsActive = searchFocused || searchHasContent
   const showCreateButton = !searchHasContent
-  const desktopSearchWidth = searchHasContent ? 318 : searchFocused ? 236 : 118
+  const desktopSearchWidth = searchHasContent ? 318 : searchFocused ? 236 : 150
 
   const maybeCollapseSearch = useCallback(() => {
     window.setTimeout(() => {
       setSearchFocused(false)
     }, 80)
+  }, [])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const isInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable
+      if (isInput) return
+      if (e.key.toLowerCase() !== 'k' || (!e.metaKey && !e.ctrlKey) || e.altKey || e.shiftKey) return
+      e.preventDefault()
+      searchInputRef.current?.focus()
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
   }, [])
 
   return (
@@ -231,11 +245,16 @@ function DiagramJumpToolbar({
                 color="white"
                 h="28px"
                 pl="28px"
-                pr={searchTerm ? 8 : 2}
+                pr={searchTerm ? 8 : searchFocused ? 2 : '2.75rem'}
                 _placeholder={{ color: 'whiteAlpha.350' }}
                 _hover={{ borderColor: 'whiteAlpha.200' }}
                 _focus={{ borderColor: 'var(--accent)', boxShadow: '0 0 0 1px rgba(var(--accent-rgb), 0.45)' }}
               />
+              {!isMobileLayout && !searchTerm && !searchFocused && (
+                <InputRightElement h="28px" w="auto" pr={2} pointerEvents="none">
+                  <ShortcutHint keys={['mod', 'K']} opacity={0.6} />
+                </InputRightElement>
+              )}
               {searchTerm && (
                 <InputRightElement h="28px" w="28px">
                   <IconButton
@@ -540,6 +559,7 @@ export default function ViewsPage({ shareSlot, onShareView }: Props) {
     if (e.key === 'Escape') {
       setSearchResults([])
       setActiveSearchIndex(-1)
+      ;(e.target as HTMLInputElement).blur()
       return
     }
     if (searchResults.length === 0) return

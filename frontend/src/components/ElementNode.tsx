@@ -9,6 +9,7 @@ import { ElementContainer } from './NodeContainer'
 import { ElementBody } from './NodeBody'
 import { resolveElementIconUrl } from '../utils/elementIcon'
 import { ZoomInIcon, ZoomOutIcon, TrashIcon as TrashSvg, DrawIcon as EditSvg } from './Icons'
+import { KbdHint, ShortcutHint } from './PanelUI'
 import { vscodeBridge } from '../lib/vscodeBridge'
 import { openExternalUrl } from '../lib/desktop'
 import { parseSourceLink, sourceAnchorLabel } from '../utils/sourceLinks'
@@ -1151,31 +1152,31 @@ function ElementNode({ data, selected }: Props) {
       {!isPending && selected && !isSource && (
         <HStack
           position="absolute"
-          top="-20px"
-          left="0"
+          top="-28px"
+          left="-14px"
           right="0"
-          spacing={0}
+          spacing={1.5}
           justify="space-evenly"
           pointerEvents="none"
           zIndex={10}
           opacity={data.isCanvasMoving ? 0 : 0.6}
           transition="opacity 0.2s"
         >
-          <HStack spacing={1.5}>
-            <Text color="whiteAlpha.600" fontSize="8px" fontWeight="bold">E</Text>
+          <HStack spacing={1}>
+            <KbdHint ml={0}>E</KbdHint>
             <Text color="whiteAlpha.400" fontSize="8px">Connect</Text>
           </HStack>
-          <HStack spacing={1.5}>
-            <Text color="whiteAlpha.600" fontSize="8px" fontWeight="bold">R</Text>
+          <HStack spacing={1}>
+            <KbdHint ml={0}>R</KbdHint>
             <Text color="whiteAlpha.400" fontSize="8px">Remove</Text>
           </HStack>
-          <HStack spacing={1.5}>
-            <Text color="whiteAlpha.600" fontSize="8px" fontWeight="bold">⇧R</Text>
+          <HStack spacing={1}>
+            <ShortcutHint keys={['shift', 'R']} />
             <Text color="whiteAlpha.400" fontSize="8px">Delete</Text>
           </HStack>
           {!isMultiSelected && (
-            <HStack spacing={1.5}>
-              <Text color="whiteAlpha.600" fontSize="8px" fontWeight="bold">T</Text>
+            <HStack spacing={1}>
+              <KbdHint ml={0}>T</KbdHint>
               <Text color="whiteAlpha.400" fontSize="8px">Tech</Text>
             </HStack>
           )}

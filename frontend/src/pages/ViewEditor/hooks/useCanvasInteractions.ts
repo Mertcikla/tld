@@ -2398,7 +2398,20 @@ export function useCanvasInteractions({
         return
       }
       const key = e.key.toLowerCase()
-      if (!['w', 'a', 's', 'd', 'm', 'c', 'e', 'backspace', 'delete', 'r', 'f', 'g', '+', '=', '-', '/'].includes(key)) return
+      if (key === 'k' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+        e.preventDefault()
+        // Toggle the library panel if it's not already open
+        if (!libraryOpen && openLibrary) {
+          openLibrary()
+        }
+        // Focus search in open panel (might need a tiny timeout to wait for panel to mount/open)
+        setTimeout(() => {
+          const searchInput = document.querySelector<HTMLInputElement>('.panel-search-input')
+          searchInput?.focus()
+        }, 10)
+        return
+      }
+      if (!['w', 'a', 's', 'd', 'm', 'c', 'e', 'backspace', 'delete', 'r', 'f', 'g', '+', '=', '-'].includes(key)) return
       if (e.ctrlKey || e.altKey || (e.metaKey && key !== 'z')) return
       if (key === 'c' && e.shiftKey) return
 
@@ -2516,20 +2529,6 @@ export function useCanvasInteractions({
       if (key === 'g') {
         e.preventDefault()
         setGlobalSnapToGrid?.(!snapToGrid)
-        return
-      }
-
-      if (key === '/') {
-        e.preventDefault()
-        // Toggle the library panel if it's not already open
-        if (!libraryOpen && openLibrary) {
-          openLibrary()
-        }
-        // Focus search in open panel (might need a tiny timeout to wait for panel to mount/open)
-        setTimeout(() => {
-          const searchInput = document.querySelector<HTMLInputElement>('.panel-search-input')
-          searchInput?.focus()
-        }, 10)
         return
       }
 

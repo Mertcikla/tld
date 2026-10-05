@@ -40,6 +40,7 @@ import ConnectorPanel from '../components/ConnectorPanel'
 import ElementPanel from '../components/ElementPanel'
 import ViewPanel from '../components/ViewPanel'
 import InspectDrawer from '../components/InventoryInspector'
+import { ShortcutHint } from '../components/PanelUI'
 import { ViewEditorContext } from './ViewEditor/context'
 import type { Connector, LibraryElement, ViewTreeNode } from '../types'
 import {
@@ -587,7 +588,7 @@ export default function Inventory() {
               placeholder="Search names, tags, kinds…"
               variant="elevated"
               pl={8}
-              pr={query ? '2.5rem' : '5.5rem'}
+              pr={query ? '2.5rem' : '4rem'}
               _placeholder={{ color: 'gray.600' }}
             />
             {query ? (
@@ -604,7 +605,7 @@ export default function Inventory() {
               </InputRightElement>
             ) : (
               <InputRightElement w="auto" pr={2} pointerEvents="none">
-                <Text fontSize="10px" color="gray.600" fontFamily="mono" px={1} border="1px solid" borderColor="whiteAlpha.200" borderRadius="md">⌘K</Text>
+                <ShortcutHint keys={['mod', 'K']} opacity={0.7} />
               </InputRightElement>
             )}
           </InputGroup>

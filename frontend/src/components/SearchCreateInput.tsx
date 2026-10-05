@@ -49,6 +49,12 @@ export default function SearchCreateInput({
   }
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      setShowResults(false)
+      event.currentTarget.blur()
+      return
+    }
     if (event.key === 'Enter') {
       event.preventDefault()
       if (submitOnSelect && results.length > 0) {

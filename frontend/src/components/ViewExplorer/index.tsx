@@ -196,6 +196,9 @@ function ViewExplorer({
   }, [filteredByMode, query])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault(); (e.target as HTMLInputElement).blur(); setActiveFilter(null); return
+    }
     if (filtered.length === 0) return
     switch (e.key) {
       case 'ArrowDown':
@@ -207,8 +210,6 @@ function ViewExplorer({
         if (filtered[targetIdx]) { e.preventDefault(); handleNavigate(filtered[targetIdx].id) }
         break
       }
-      case 'Escape':
-        e.preventDefault(); (e.target as HTMLInputElement).blur(); setActiveFilter(null); break
     }
   }
 

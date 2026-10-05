@@ -1,5 +1,6 @@
 import React from 'react'
 import { Box, Text } from '@chakra-ui/react'
+import { KbdHint } from '../../../components/PanelUI'
 
 interface EmptyCanvasStateProps {
   isMobile: boolean
@@ -35,7 +36,7 @@ export const EmptyCanvasState: React.FC<EmptyCanvasStateProps> = React.memo(({ i
       <Text fontSize="xs" color="gray.600" lineHeight="tall">
         {isMobile
           ? 'Tap/Drag from the left panel, or Hold on the canvas to bring up the menu, then tap Add Element.'
-          : <> Drag from the left panel, or press <kbd style={{ fontFamily: 'monospace', background: '#1F2937', border: '1px solid #374151', borderRadius: 3, padding: '0 4px' }}>C</kbd> to create a new element directly.</>}
+          : <> Drag from the left panel, or press <KbdHint ml={1} mr={1} verticalAlign="middle">C</KbdHint> to create a new element directly.</>}
       </Text>
     </Box>
   )

@@ -8,6 +8,8 @@ import {
   Grid,
   HStack,
   Input,
+  InputGroup,
+  InputRightElement,
   Spinner,
   Text,
   VStack,
@@ -19,6 +21,7 @@ import {
   type RepositoryGitHistory,
 } from '../api/client'
 import { GRAPH_LANE_COLORS, layoutCommitGraph, commitGraphPath } from '../utils/commitGraph'
+import { ShortcutHint } from './PanelUI'
 
 export default function RepositoryHistory({
   repositoryId,
@@ -46,6 +49,22 @@ export default function RepositoryHistory({
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const graphScrollRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const isInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable
+      if (isInput) return
+      if (e.key.toLowerCase() !== 'k' || (!e.metaKey && !e.ctrlKey) || e.altKey || e.shiftKey) return
+      e.preventDefault()
+      if (collapsed) onToggle()
+      window.setTimeout(() => searchInputRef.current?.focus(), 50)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [collapsed, onToggle])
   const layout = useMemo(
     () => layoutCommitGraph(history?.commits ?? []),
     [history],
@@ -125,14 +144,23 @@ export default function RepositoryHistory({
         </Button>
         <Box minW={0}>
           {!collapsed && (
-            <Input
-              size="xs"
-              maxW="200px"
-              placeholder="Search commits…"
-              aria-label="Filter commits"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+            <InputGroup size="xs" w="full" maxW="200px">
+              <Input
+                ref={searchInputRef}
+                size="xs"
+                placeholder="Search commits…"
+                aria-label="Filter commits"
+                value={query}
+                pr={query ? undefined : 8}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.blur() } }}
+              />
+              {!query && (
+                <InputRightElement w="auto" pr={2} pointerEvents="none">
+                  <ShortcutHint keys={['mod', 'K']} opacity={0.6} />
+                </InputRightElement>
+              )}
+            </InputGroup>
           )}
         </Box>
         <Text fontSize="xs" color="gray.500" textAlign="right" justifySelf="end" whiteSpace="nowrap">

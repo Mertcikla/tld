@@ -11,6 +11,7 @@ import {
   Input,
   InputGroup,
   InputLeftElement,
+  InputRightElement,
   Spinner,
   Text,
   Tooltip,
@@ -21,7 +22,7 @@ import SlidingPanel from './SlidingPanel'
 import PanelHeader from './PanelHeader'
 import { AddIcon, CheckIcon, SearchIcon, ViewIcon } from '@chakra-ui/icons'
 import '../styles/editor-panels.css'
-import { KbdHint } from './PanelUI'
+import { KbdHint, ShortcutHint } from './PanelUI'
 import { api } from '../api/client'
 import type { LibraryElement } from '../types'
 import { TYPE_COLORS } from '../types'
@@ -127,14 +128,14 @@ function ElementLibrary({
 
   const fetchElements = useCallback(async (offset: number, currentSearch: string, isInitial = false) => {
     if (!isInitial && isFetching.current) return
-    
+
     const mySearchId = ++searchIdRef.current
     isFetching.current = true
     setLoading(true)
     try {
       const limit = 20
       const newElements = await api.elements.list({ limit, offset, search: currentSearch })
-      
+
       if (mySearchId !== searchIdRef.current) return
 
       if (isInitial) {
@@ -359,6 +360,7 @@ function ElementLibrary({
             className="panel-search-input"
             placeholder="Search inventory…"
             value={search}
+            pr={search ? undefined : 8}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
@@ -390,6 +392,11 @@ function ElementLibrary({
               }
             }}
           />
+          {!search && !isMobile && (
+            <InputRightElement w="auto" pr={2} pointerEvents="none">
+              <ShortcutHint keys={['mod', 'K']} opacity={0.6} />
+            </InputRightElement>
+          )}
         </InputGroup>
         <Checkbox
           data-testid="element-library-hide-existing"
