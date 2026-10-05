@@ -43,7 +43,7 @@ func (s *Store) SaveAnalysis(ctx context.Context, run AnalysisRun) error {
 	groupWhere, groupArgs := scope(ctx).clause("org_id")
 	runWhere, runArgs := scope(ctx).clause("org_id")
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewRaw(`DELETE FROM codeindex_group_members WHERE group_id IN (SELECT id FROM codeindex_groups WHERE run_id = ?)`+memberWhere, append([]any{run.ID}, memberArgs...)...).Exec(ctx); err != nil {
+		if _, err := tx.NewRaw(`DELETE FROM codeindex_group_members WHERE group_id IN (SELECT id FROM codeindex_groups WHERE org_id = codeindex_group_members.org_id AND run_id = ?)`+memberWhere, append([]any{run.ID}, memberArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_groups WHERE run_id = ?`+groupWhere, append([]any{run.ID}, groupArgs...)...).Exec(ctx); err != nil {
@@ -62,7 +62,7 @@ func (s *Store) SaveAnalysis(ctx context.Context, run AnalysisRun) error {
 				return err
 			}
 			for _, member := range group.Members {
-				if _, err := tx.NewRaw(`INSERT INTO codeindex_group_members (group_id, fact_id, org_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`, group.ID, member, org).Exec(ctx); err != nil {
+				if _, err := tx.NewRaw(`INSERT INTO codeindex_group_members (group_id, fact_id, org_id) VALUES (?, ?, ?) ON CONFLICT(org_id, group_id, fact_id) DO NOTHING`, group.ID, member, org).Exec(ctx); err != nil {
 					return err
 				}
 			}

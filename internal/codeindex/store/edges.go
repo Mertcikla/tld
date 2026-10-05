@@ -29,7 +29,7 @@ func (s *Store) snapshotFileIDs(ctx context.Context, snapshotID string) (map[str
 	rows, err := s.bun.QueryContext(ctx, `
 		SELECT f.id, f.path
 		FROM codeindex_facts f
-		JOIN codeindex_snapshot_facts m ON m.fact_id = f.id
+		JOIN codeindex_snapshot_facts m ON m.fact_id = f.id AND m.org_id = f.org_id
 		WHERE m.snapshot_id = ? AND f.kind = ?`+where, append([]any{snapshotID, int(pb.FactKind_FACT_KIND_FILE)}, scopeArgs...)...)
 	if err != nil {
 		return nil, err
@@ -60,8 +60,8 @@ func (s *Store) FileEdges(ctx context.Context, snapshotID string) ([]FileEdge, e
 	rows, err := s.bun.QueryContext(ctx, `
 		SELECT sf.path, tf.path, COALESCE(e.weight, 0)
 		FROM codeindex_edges e
-		JOIN codeindex_facts sf ON sf.id = e.from_fact_id
-		JOIN codeindex_facts tf ON tf.id = e.to_fact_id
+		JOIN codeindex_facts sf ON sf.id = e.from_fact_id AND sf.org_id = e.org_id
+		JOIN codeindex_facts tf ON tf.id = e.to_fact_id AND tf.org_id = e.org_id
 		WHERE e.snapshot_id = ?`+where+`
 		ORDER BY e.id`, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {
@@ -107,8 +107,8 @@ func (s *Store) AggregatedFileEdges(ctx context.Context, snapshotID string) ([]F
 	rows, err := s.bun.QueryContext(ctx, `
 		SELECT sf.path, tf.path, e.kind, COALESCE(e.weight, 0)
 		FROM codeindex_edges e
-		JOIN codeindex_facts sf ON sf.id = e.from_fact_id
-		JOIN codeindex_facts tf ON tf.id = e.to_fact_id
+		JOIN codeindex_facts sf ON sf.id = e.from_fact_id AND sf.org_id = e.org_id
+		JOIN codeindex_facts tf ON tf.id = e.to_fact_id AND tf.org_id = e.org_id
 		WHERE e.snapshot_id = ?`+where+`
 		ORDER BY e.id`, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {
@@ -229,7 +229,7 @@ func (s *Store) FileImports(ctx context.Context, snapshotID string) ([]FileImpor
 	rows, err := s.bun.QueryContext(ctx, `
 		SELECT sf.path, sf.imports_json
 		FROM codeindex_facts sf
-		JOIN codeindex_snapshot_facts msf ON msf.snapshot_id = ? AND msf.fact_id = sf.id
+		JOIN codeindex_snapshot_facts msf ON msf.snapshot_id = ? AND msf.fact_id = sf.id AND msf.org_id = sf.org_id
 		WHERE sf.path <> ''
 			AND sf.imports_json NOT IN ('', 'null', '[]')`+where, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {

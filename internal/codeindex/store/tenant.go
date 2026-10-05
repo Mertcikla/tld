@@ -24,8 +24,8 @@ func (s *Store) repositoryOwned(ctx context.Context, repositoryID string) (bool,
 
 // tenantScope is the organisation a codeindex request is confined to. When no
 // organisation is present (the self-hosted single-tenant case) scope is
-// disabled: rows are written with a NULL org_id and reads are unfiltered, which
-// preserves the pre-multi-tenant behaviour.
+// disabled: rows use the nil UUID and reads are unfiltered, preserving the
+// pre-multi-tenant behaviour.
 type tenantScope struct {
 	orgID uuid.UUID
 	on    bool
@@ -40,11 +40,10 @@ func scope(ctx context.Context) tenantScope {
 	return tenantScope{orgID: id, on: true}
 }
 
-// value returns the org_id to persist for a new row, or nil when scoped to
-// nothing (single-tenant). It is passed as an INSERT argument.
+// value returns the org_id to persist, using the nil UUID for single-tenant rows.
 func (t tenantScope) value() any {
 	if !t.on {
-		return nil
+		return uuid.Nil
 	}
 	return t.orgID
 }

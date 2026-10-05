@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/pkg/app"
+	"google.golang.org/protobuf/proto"
 )
 
 // TestTenantScopeIsolatesCodeindex verifies that repositories and everything
@@ -125,5 +127,146 @@ func TestRepositoryRemoteKeyUniquePerOrg(t *testing.T) {
 	gotB, ok, err := st.RepositoryByRemoteKey(ctxB, remoteKey)
 	if err != nil || !ok || gotB != "repo-b" {
 		t.Fatalf("org B remote key lookup = %q ok=%v err=%v, want repo-b", gotB, ok, err)
+	}
+}
+
+// Identical content-derived IDs must coexist, and retries must update only the
+// requesting organisation's row. Exercise actual writes rather than only filters.
+func TestTenantScopeCollidingKeys(t *testing.T) {
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+	testTenantScopeCollidingKeys(t, st)
+}
+
+func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
+	contexts := []context.Context{
+		app.WithTenantOrgID(context.Background(), uuid.New()),
+		app.WithTenantOrgID(context.Background(), uuid.New()),
+	}
+	write := func(ctx context.Context, label string, resourceID int64) {
+		t.Helper()
+		g := graph.NewGraph("repo", "snap")
+		g.Facts["fact"] = &pb.CodeFact{Id: "fact", RepositoryId: "repo", SnapshotId: "snap", Name: label, LogicalKey: "file:main.go"}
+		g.Chunks["chunk"] = &pb.Chunk{Id: "chunk", FactId: "fact", SnapshotId: "snap", Text: label}
+		g.EdgeFacts["edge"] = &pb.EdgeFact{Id: "edge", RepositoryId: "repo", SnapshotId: "snap", LogicalKey: label}
+		snap := &pb.Snapshot{Id: "snap", RepositoryId: "repo", GitBranch: label, Sources: []*pb.SourceFile{{Path: "main.go", Hash: label}}}
+		g.Sources["main.go"] = &graph.Source{Text: []byte(label)}
+		for _, err := range []error{
+			st.EnsureRepositoryIdentity(ctx, "repo", "/"+label, "", "", false),
+			st.Publish(ctx, "/"+label, snap, g),
+			st.SaveMappings(ctx, []ResourceMapping{{LogicalKey: "file:main.go", ResourceID: resourceID, RepositoryID: "repo", SnapshotID: "snap"}}),
+			st.SaveImpact(ctx, &pb.ImpactDiagram{RepositoryId: "repo", ComparisonKey: "live", ViewId: resourceID}),
+			st.UpsertWatchState(ctx, WatchState{RepositoryID: "repo", State: label, OwnerID: label}),
+			st.SaveCompletedMap(ctx, "repo", &pb.CompletedMap{Result: &pb.MapResult{RunId: "run", SnapshotId: "snap", ViewId: resourceID}, ConfigHash: label}),
+			st.SaveRepositoryMapOverrides(ctx, "repo", &pb.RepositoryMapConfiguration{MaxLeafFiles: proto.Uint32(uint32(resourceID))}),
+			st.SaveAnalysis(ctx, AnalysisRun{ID: "analysis", RepositoryID: "repo", SnapshotID: "snap", Groups: []AnalysisGroup{{ID: "group", Label: label, Members: []string{"fact"}}}}),
+		} {
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	verify := func(ctx context.Context, label string, resourceID int64) {
+		t.Helper()
+		m, ok, err := st.MappingByLogicalKey(ctx, "file:main.go")
+		if err != nil || !ok || m.ResourceID != resourceID {
+			t.Fatalf("%s mapping = %+v, ok=%v err=%v", label, m, ok, err)
+		}
+		impact, err := st.Impact(ctx, "repo", "live")
+		if err != nil || impact.ViewId != resourceID {
+			t.Fatalf("%s impact = %+v err=%v", label, impact, err)
+		}
+		watch, ok, err := st.WatchState(ctx, "repo")
+		if err != nil || !ok || watch.State != label {
+			t.Fatalf("%s watch = %+v err=%v", label, watch, err)
+		}
+		active, err := st.ActiveMap(ctx, "repo")
+		if err != nil || active == nil || active.Result.ViewId != resourceID {
+			t.Fatalf("%s active map = %+v err=%v", label, active, err)
+		}
+		overrides, err := st.RepositoryMapOverrides(ctx, "repo")
+		if err != nil || overrides.GetMaxLeafFiles() != uint32(resourceID) {
+			t.Fatalf("%s overrides = %+v err=%v", label, overrides, err)
+		}
+		repos, err := st.ListRepositories(ctx)
+		if err != nil || len(repos) != 1 || repos[0].Root != "/"+label || repos[0].GitBranch != label || repos[0].Facts != 1 || repos[0].Chunks != 1 || repos[0].Edges != 1 || repos[0].Sources != 1 {
+			t.Fatalf("%s repositories = %+v err=%v", label, repos, err)
+		}
+		snaps, err := st.Snapshots(ctx, "repo")
+		if err != nil || len(snaps) != 1 || snaps[0].GitBranch != label || snaps[0].Statistics.Facts != 1 {
+			t.Fatalf("%s snapshots = %+v err=%v", label, snaps, err)
+		}
+		facts, err := st.Facts(ctx, "snap", pb.FactKind_FACT_KIND_UNSPECIFIED, "", "", 10)
+		if err != nil || len(facts) != 1 || facts[0].Name != label {
+			t.Fatalf("%s facts = %+v err=%v", label, facts, err)
+		}
+		chunks, err := st.Chunks(ctx, "snap")
+		if err != nil || len(chunks) != 1 || chunks[0].Text != label {
+			t.Fatalf("%s chunks = %+v err=%v", label, chunks, err)
+		}
+		edges, err := st.EdgeFacts(ctx, "snap", pb.EdgeKind_EDGE_KIND_UNSPECIFIED, "", "", 10)
+		if err != nil || len(edges) != 1 || edges[0].LogicalKey != label {
+			t.Fatalf("%s edges = %+v err=%v", label, edges, err)
+		}
+		var groupLabel string
+		if err := st.bun.NewRaw(`SELECT label FROM codeindex_groups WHERE id = ? AND org_id = ?`, "group", scope(ctx).value()).Scan(ctx, &groupLabel); err != nil || groupLabel != label {
+			t.Fatalf("%s group = %s err=%v", label, groupLabel, err)
+		}
+	}
+	write(contexts[0], "a", 111)
+	write(contexts[1], "b", 999)
+	verify(contexts[0], "a", 111)
+	verify(contexts[1], "b", 999)
+	// Same-tenant retries still update mutable rows without duplicating immutable ones.
+	write(contexts[1], "b", 1000)
+	verify(contexts[0], "a", 111)
+	verify(contexts[1], "b", 1000)
+	if err := st.DeleteSnapshot(contexts[1], "snap"); err != nil {
+		t.Fatal(err)
+	}
+	verify(contexts[0], "a", 111)
+	if _, err := st.Fact(contexts[1], "fact"); err == nil {
+		t.Fatal("unreferenced B fact survived snapshot deletion")
+	}
+	write(contexts[1], "b", 1000)
+	if err := st.DeleteRepository(contexts[1], "repo"); err != nil {
+		t.Fatal(err)
+	}
+	verify(contexts[0], "a", 111)
+	if _, err := st.Repository(contexts[1], "repo"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("deleted repository err=%v", err)
+	}
+}
+
+func TestTenantScopeLeaseAndWatchClaims(t *testing.T) {
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+	testTenantScopeLeaseAndWatchClaims(t, st)
+}
+
+func testTenantScopeLeaseAndWatchClaims(t *testing.T, st *Store) {
+	for _, ctx := range []context.Context{
+		app.WithTenantOrgID(context.Background(), uuid.New()),
+		app.WithTenantOrgID(context.Background(), uuid.New()),
+	} {
+		_, release, err := st.AcquireLease(ctx, "repo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer release()
+		if _, _, err := st.AcquireLease(ctx, "repo"); !errors.Is(err, ErrBusy) {
+			t.Fatalf("same-tenant lease err=%v", err)
+		}
+		claim := WatchState{RepositoryID: "repo", OwnerKind: "server", OwnerPID: os.Getpid(), OwnerID: "owner", State: "watching"}
+		if err := st.ClaimWatch(ctx, claim); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.ClaimWatch(ctx, claim); err != nil {
+			t.Fatal(err)
+		}
+		claim.OwnerID = "other"
+		if err := st.ClaimWatch(ctx, claim); !errors.Is(err, ErrWatchActive) {
+			t.Fatalf("same-tenant watch claim err=%v", err)
+		}
 	}
 }
