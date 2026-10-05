@@ -189,5 +189,3 @@ require (
 )
 
 tool github.com/go-task/task/v3/cmd/task
-
-replace github.com/sugarme/tokenizer => github.com/clems4ever/tokenizer v0.0.0-20250926133620-9ddc80533c43
