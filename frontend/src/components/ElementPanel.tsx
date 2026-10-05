@@ -396,6 +396,7 @@ function ElementPanel({
   const [explicitLogoClear, setExplicitLogoClear] = useState(false)
   const [draftNoiseGateLevel, setDraftNoiseGateLevel] = useState(() => noiseGateLevelFromVisibilityDelta(visibilityOverrideDelta))
   const typeInputRef = useRef<HTMLInputElement>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
   const techInputRef = useRef<HTMLInputElement>(null)
   const suppressTypeBlurRef = useRef(false)
   const lastSavedFingerprintByElementRef = useRef(new Map<number, string>())
@@ -823,6 +824,19 @@ function ElementPanel({
 
       if (e.key === 'Escape' && !isInput) handleClose()
 
+      // Escape while editing the name saves (via auto-save on blur) and defocuses.
+      if (e.key === 'Escape' && target === nameInputRef.current) {
+        e.preventDefault()
+        nameInputRef.current?.blur()
+      }
+
+      // Enter on a selected element jumps into renaming it.
+      if (e.key === 'Enter' && !isInput && isEdit && !isReadOnly && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault()
+        nameInputRef.current?.focus()
+        nameInputRef.current?.select()
+      }
+
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault()
         if (!autoSaveEdit) {
@@ -839,7 +853,7 @@ function ElementPanel({
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [isOpen, handleClose, autoSaveEdit, handleSave])
+  }, [isOpen, handleClose, autoSaveEdit, handleSave, isEdit, isReadOnly])
 
   const addCatalogTechnology = (item: TechnologyCatalogItem) => {
     if (technologyLinks.length >= 3) return
@@ -1132,6 +1146,7 @@ function ElementPanel({
               <FormLabel>Name</FormLabel>
               <Input
                 data-testid="element-panel-name-input"
+                ref={nameInputRef}
                 size="sm"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
