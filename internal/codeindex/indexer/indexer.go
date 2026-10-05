@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -52,6 +53,28 @@ type IncrementalBase struct {
 	Graph    *graph.Graph
 	Snapshot *pb.Snapshot
 	Sources  map[string]string
+	// unpublished marks a base carried over from a failed attempt of the same
+	// build. Its artifacts are reusable, but its snapshot was never published
+	// and must not be returned as an unchanged reuse.
+	unpublished bool
+}
+
+// maxDriftAttempts bounds how many times a build restarts after repository
+// inputs change mid-index. Each retry carries the previous attempt's syntax
+// caches and SCIP artifacts, so only what moved is reindexed.
+const maxDriftAttempts = 3
+
+// inputDriftError reports that repository inputs changed while indexing. It
+// carries the partial build so the pipeline can retry incrementally instead of
+// discarding all completed work.
+type inputDriftError struct {
+	summary string
+	snap    *pb.Snapshot
+	graph   *graph.Graph
+}
+
+func (e *inputDriftError) Error() string {
+	return "repository inputs changed during indexing; retry: " + e.summary
 }
 
 func (p Pipeline) Build(ctx context.Context, req *pb.IndexRequest, progress ProgressFunc) (*pb.Snapshot, *graph.Graph, error) {
@@ -66,7 +89,42 @@ func (p Pipeline) BuildIncremental(ctx context.Context, req *pb.IndexRequest, pr
 	return p.build(ctx, req, progress, base)
 }
 
+// build runs buildOnce and, when repository inputs drift mid-index, restarts
+// with the failed attempt's graph as the base. Edits made while one attempt ran
+// are picked up by the next, which reuses every unaffected project artifact and
+// syntax cache, so convergence is cheap even for large repositories.
 func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress ProgressFunc, base *IncrementalBase) (*pb.Snapshot, *graph.Graph, bool, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxDriftAttempts; attempt++ {
+		snap, g, reused, err := p.buildOnce(ctx, req, progress, base)
+		if err == nil {
+			return snap, g, reused, nil
+		}
+		var drift *inputDriftError
+		if !errors.As(err, &drift) {
+			return nil, nil, false, err
+		}
+		lastErr = err
+		if attempt == maxDriftAttempts-1 {
+			break
+		}
+		emitProgress(progress, Progress{Stage: "verify", Detail: fmt.Sprintf("inputs changed; retrying with incremental reuse (attempt %d/%d)", attempt+2, maxDriftAttempts)})
+		base = &IncrementalBase{Graph: drift.graph, Snapshot: drift.snap, Sources: sourceHashes(drift.graph.Sources), unpublished: true}
+	}
+	return nil, nil, false, lastErr
+}
+
+// sourceHashes projects a source set into the path-to-hash view used by
+// incremental reuse checks.
+func sourceHashes(sources map[string]*graph.Source) map[string]string {
+	hashes := make(map[string]string, len(sources))
+	for path, src := range sources {
+		hashes[path] = src.Hash
+	}
+	return hashes
+}
+
+func (p Pipeline) buildOnce(ctx context.Context, req *pb.IndexRequest, progress ProgressFunc, base *IncrementalBase) (*pb.Snapshot, *graph.Graph, bool, error) {
 	root, err := filepath.Abs(req.Directory)
 	if err != nil {
 		return nil, nil, false, err
@@ -84,7 +142,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	if err != nil {
 		return nil, nil, false, err
 	}
-	before, revision, branch, provenance, err := fingerprintInputs(ctx, root, p.Config, req, projects, sources)
+	before, revision, branch, provenance, beforeInputs, err := fingerprintInputs(ctx, root, p.Config, req, projects, sources)
 	if err != nil {
 		return nil, nil, false, err
 	}
@@ -105,7 +163,7 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 			}
 		}
 	}
-	if base != nil && ToolchainCompatible(ctx, p.Config, root, base.Snapshot, req.ScipArtifacts) && base.Snapshot.ContentFingerprint == before && len(kept) == len(sources) && !anyBaseSourceRemoved(sources, base.Sources) {
+	if base != nil && !base.unpublished && ToolchainCompatible(ctx, p.Config, root, base.Snapshot, req.ScipArtifacts) && base.Snapshot.ContentFingerprint == before && len(kept) == len(sources) && !anyBaseSourceRemoved(sources, base.Sources) {
 		// Nothing changed; reuse the published snapshot verbatim.
 		return base.Snapshot, base.Graph, true, nil
 	}
@@ -191,12 +249,14 @@ func (p Pipeline) build(ctx context.Context, req *pb.IndexRequest, progress Prog
 	if err != nil {
 		return nil, nil, false, err
 	}
-	after, _, _, _, err := fingerprintInputs(ctx, root, p.Config, req, afterProjects, afterSources)
+	after, _, _, _, afterInputs, err := fingerprintInputs(ctx, root, p.Config, req, afterProjects, afterSources)
 	if err != nil {
 		return nil, nil, false, err
 	}
 	if after != before {
-		return nil, nil, false, fmt.Errorf("repository inputs changed during indexing; retry")
+		drift := inputDrift(beforeInputs, afterInputs)
+		emitProgress(progress, Progress{Stage: "verify", Detail: "inputs changed: " + drift})
+		return snap, g, false, &inputDriftError{summary: drift, snap: snap, graph: g}
 	}
 	snap.IngestionStatus = "complete"
 	return snap, g, false, nil
@@ -263,6 +323,12 @@ func (p Pipeline) indexProject(
 		argv, explicit, err := spec.args(p.Config, c)
 		if err != nil {
 			return err
+		}
+		if generated := inferredTsconfig(projectDir, argv); generated != "" {
+			// scip-typescript writes an inferred tsconfig.json into the project;
+			// remove it so indexing does not dirty the checkout or change the
+			// post-index input fingerprint.
+			defer func() { _ = os.Remove(generated) }()
 		}
 		implicitArtifact := filepath.Join(projectDir, "index.scip")
 		if !explicit {

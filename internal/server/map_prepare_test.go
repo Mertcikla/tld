@@ -209,9 +209,13 @@ func TestDetachedWorktreeCleanupOnFailureAndCancellation(t *testing.T) {
 func TestIndexerRejectsInputsChangingDuringCapture(t *testing.T) {
 	root, _ := gitFixture(t)
 	pipeline := indexer.Pipeline{Config: configbridge.FromGlobal(nil)}
+	// Mutating on every verify event drifts every attempt, exhausting the
+	// bounded retry loop.
+	content := []byte("package sample\nfunc Late() {}\n")
 	_, _, err := pipeline.Build(context.Background(), &pb.IndexRequest{Directory: root}, func(p indexer.Progress) {
 		if p.Stage == "verify" {
-			writeFixtureSource(t, root, "new.go", "package sample\nfunc Late() {}\n")
+			content = append(content, '\n')
+			writeFixtureSource(t, root, "new.go", string(content))
 		}
 	})
 	if err == nil || !strings.Contains(err.Error(), "changed during indexing") {

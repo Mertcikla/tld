@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -365,6 +366,22 @@ func synthesizeJSTsConfig(c indexerContext, configs []string) string {
 	}
 	path := c.artifact + ".tsconfig.json"
 	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return ""
+	}
+	return path
+}
+
+// inferredTsconfig returns the path scip-typescript will create when invoked
+// with --infer-tsconfig for a project that has no tsconfig of its own. The
+// caller removes the generated file after the run so indexing never dirties
+// the checkout. It returns "" when the arguments do not request inference or a
+// user-supplied tsconfig already exists.
+func inferredTsconfig(projectDir string, argv []string) string {
+	if !slices.Contains(argv, "--infer-tsconfig") {
+		return ""
+	}
+	path := filepath.Join(projectDir, "tsconfig.json")
+	if _, err := os.Stat(path); err == nil {
 		return ""
 	}
 	return path

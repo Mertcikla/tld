@@ -314,13 +314,190 @@ func TestSourceDriftPreventsSnapshot(t *testing.T) {
 	if e := os.WriteFile(file, []byte("package drift\nfunc A(){}\n"), 0600); e != nil {
 		t.Fatal(e)
 	}
+	// Editing on every verify event drifts every attempt, so the bounded retry
+	// loop exhausts and the error names the moving input.
+	content := []byte("package drift\nfunc A(){}\n")
 	_, _, e := (Pipeline{Config: config.Default()}).Build(context.Background(), &pb.IndexRequest{Directory: root}, func(update Progress) {
 		if update.Stage == "verify" {
-			_ = os.WriteFile(file, []byte("package drift\nfunc B(){}\n"), 0600)
+			content = append(content, '\n')
+			_ = os.WriteFile(file, content, 0600)
 		}
 	})
 	if e == nil {
 		t.Fatal("source drift accepted")
+	}
+	if !strings.Contains(e.Error(), "source:drift.go") {
+		t.Fatalf("drift error does not name the changed input: %v", e)
+	}
+}
+
+// stubGoIndexer installs a scip-go stub that writes an empty SCIP index and
+// records each invocation's project directory name in TLD_DRIFT_COUNTER.
+func stubGoIndexer(t *testing.T) config.Config {
+	t.Helper()
+	toolDir := t.TempDir()
+	fixture := filepath.Join(toolDir, "empty.scip")
+	data, err := proto.Marshal(&scip.Index{Metadata: &scip.Metadata{ToolInfo: &scip.ToolInfo{Name: "stub-scip", Version: "1.0"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(fixture, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TLD_DRIFT_FIXTURE", fixture)
+	t.Setenv("TLD_DRIFT_COUNTER", filepath.Join(toolDir, "runs"))
+	bin := filepath.Join(toolDir, "scip-go")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then echo 'scip-go 1.0'; exit 0; fi
+echo "$(basename "$PWD")" >> "$TLD_DRIFT_COUNTER"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then cp "$TLD_DRIFT_FIXTURE" "$a"; fi
+  prev="$a"
+done
+`
+	if err = os.WriteFile(bin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Tools.SCIPGo = bin
+	return cfg
+}
+
+// TestSourceDriftRecoversOnRetry proves an edit made while one attempt runs is
+// picked up by the automatic retry instead of failing the build.
+func TestSourceDriftRecoversOnRetry(t *testing.T) {
+	cfg := stubGoIndexer(t)
+	root := t.TempDir()
+	if e := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/retrydrift\n\ngo 1.26\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	file := filepath.Join(root, "drift.go")
+	if e := os.WriteFile(file, []byte("package drift\nfunc A(){}\n"), 0600); e != nil {
+		t.Fatal(e)
+	}
+	updated := []byte("package drift\nfunc B(){}\n")
+	edited := false
+	snap, g, e := (Pipeline{Config: cfg}).Build(context.Background(), &pb.IndexRequest{Directory: root}, func(update Progress) {
+		if update.Stage == "verify" && !edited {
+			edited = true
+			_ = os.WriteFile(file, updated, 0600)
+		}
+	})
+	if e != nil {
+		t.Fatalf("drift should recover on retry: %v", e)
+	}
+	if !edited {
+		t.Fatal("test did not edit during the first attempt")
+	}
+	if snap.IngestionStatus != "complete" {
+		t.Fatalf("status = %s", snap.IngestionStatus)
+	}
+	if g.Sources["drift.go"].Hash != graph.Hash(updated) {
+		t.Fatal("retried snapshot does not reflect the edit")
+	}
+}
+
+// TestDriftRetryReusesUnaffectedProjects verifies a retry after a mid-index
+// edit only reruns the project whose inputs moved.
+func TestDriftRetryReusesUnaffectedProjects(t *testing.T) {
+	cfg := stubGoIndexer(t)
+	root := t.TempDir()
+	for _, name := range []string{"a", "b"} {
+		dir := filepath.Join(root, name)
+		if e := os.Mkdir(dir, 0700); e != nil {
+			t.Fatal(e)
+		}
+		if e := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module "+name+"\n\ngo 1.26\n"), 0600); e != nil {
+			t.Fatal(e)
+		}
+		if e := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package fixture\nfunc Stable() {}\n"), 0600); e != nil {
+			t.Fatal(e)
+		}
+	}
+	edited := false
+	snap, _, e := (Pipeline{Config: cfg}).Build(context.Background(), &pb.IndexRequest{Directory: root}, func(update Progress) {
+		if update.Stage == "verify" && !edited {
+			edited = true
+			_ = os.WriteFile(filepath.Join(root, "b", "main.go"), []byte("package fixture\nfunc Changed() {}\n"), 0600)
+		}
+	})
+	if e != nil {
+		t.Fatalf("drift should recover on retry: %v", e)
+	}
+	if snap.IngestionStatus != "complete" {
+		t.Fatalf("status = %s", snap.IngestionStatus)
+	}
+	runs, e := os.ReadFile(os.Getenv("TLD_DRIFT_COUNTER"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if strings.Count(string(runs), "a\n") != 1 {
+		t.Fatalf("unchanged project should be cached across retry: %s", runs)
+	}
+	if strings.Count(string(runs), "b\n") != 2 {
+		t.Fatalf("changed project should rerun once: %s", runs)
+	}
+}
+
+func TestInputDriftReportsMarkers(t *testing.T) {
+	drift := inputDrift(
+		map[string]string{"source:a.go": "h1", "source:b.go": "h2", "revision": "abc"},
+		map[string]string{"source:a.go": "h3", "source:c.go": "h4", "revision": "abc"},
+	)
+	for _, want := range []string{"~source:a.go(h1->h3)", "-source:b.go", "+source:c.go"} {
+		if !strings.Contains(drift, want) {
+			t.Fatalf("drift %q lacks %q", drift, want)
+		}
+	}
+}
+
+// TestWebIndexerCleansInferredTsconfig proves scip-typescript's generated
+// tsconfig.json neither lingers in the checkout nor drifts the fingerprint.
+func TestWebIndexerCleansInferredTsconfig(t *testing.T) {
+	toolDir := t.TempDir()
+	fixture := filepath.Join(toolDir, "empty.scip")
+	data, err := proto.Marshal(&scip.Index{Metadata: &scip.Metadata{ToolInfo: &scip.ToolInfo{Name: "stub-scip", Version: "1.0"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(fixture, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TLD_WEB_FIXTURE", fixture)
+	bin := filepath.Join(toolDir, "scip-typescript")
+	script := `#!/bin/sh
+if [ "$1" = "--version" ]; then echo 'scip-typescript 0.4.0'; exit 0; fi
+for a in "$@"; do
+  if [ "$a" = "--infer-tsconfig" ]; then echo '{}' > tsconfig.json; fi
+done
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then cp "$TLD_WEB_FIXTURE" "$a"; fi
+  prev="$a"
+done
+`
+	if err = os.WriteFile(bin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Tools.SCIPTypeScript = bin
+	root := t.TempDir()
+	if err = os.WriteFile(filepath.Join(root, "package.json"), []byte(`{"name":"fixture"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(root, "app.js"), []byte("const answer = 42\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	snap, _, err := (Pipeline{Config: cfg}).Build(context.Background(), &pb.IndexRequest{Directory: root}, nil)
+	if err != nil {
+		t.Fatalf("indexing a project without tsconfig should not drift: %v", err)
+	}
+	if snap.IngestionStatus != "complete" {
+		t.Fatalf("status = %s", snap.IngestionStatus)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "tsconfig.json")); statErr == nil {
+		t.Fatal("inferred tsconfig was not cleaned up")
 	}
 }
 func TestSCIPStageProgressReportsCompletion(t *testing.T) {
