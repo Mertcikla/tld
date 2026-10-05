@@ -10,7 +10,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// syntaxCache is the per-source extraction cache. Version 3 stores one entry
+const syntaxCacheVersion = 4
+
+// syntaxCache is the per-source extraction cache. Version 4 stores one entry
 // per declaration keyed by structural identity and body/context hash so an
 // edited file reuses the facts and chunks of unchanged symbols.
 type syntaxCache struct {
@@ -34,7 +36,7 @@ type declCacheEntry struct {
 	Chunks      []*pb.Chunk
 }
 
-// syntaxFacts extracts a source's declarations. A version 3 cache is only ever
+// syntaxFacts extracts a source's declarations. A current cache is only ever
 // carried onto a source whose content hash is unchanged, so when it is present
 // the facts and chunks are adopted verbatim without parsing the file at all.
 // Otherwise the file is parsed once and only changed declarations are rebuilt.
@@ -43,7 +45,7 @@ func syntaxFacts(ctx context.Context, g *graph.Graph, src *graph.Source) ([]call
 	if src.SyntaxCache != "" {
 		_ = json.Unmarshal([]byte(src.SyntaxCache), &cached)
 	}
-	if cached.Version == 3 && cached.FileHash == src.Hash && len(cached.Decls) > 0 && allCached(cached) {
+	if cached.Version == syntaxCacheVersion && cached.FileHash == src.Hash && len(cached.Decls) > 0 && allCached(cached) {
 		return adoptCached(g, src, cached), nil
 	}
 	extraction, err := extractFile(ctx, src)
@@ -115,12 +117,12 @@ func adoptCached(g *graph.Graph, src *graph.Source, cache syntaxCache) []callSit
 // re-adopted unchanged declaration yields a deterministic id.
 func mergeExtraction(g *graph.Graph, src *graph.Source, cached *syntaxCache, extraction fileExtraction) syntaxCache {
 	oldByKey := map[string]declCacheEntry{}
-	if cached != nil {
+	if cached != nil && cached.Version == syntaxCacheVersion {
 		for _, entry := range cached.Decls {
 			oldByKey[entry.Key] = entry
 		}
 	}
-	next := syntaxCache{Version: 3}
+	next := syntaxCache{Version: syntaxCacheVersion}
 	factIDs := make([]string, len(extraction.Decls))
 	keys := make([]string, len(extraction.Decls))
 	contexts := make([]string, len(extraction.Decls))
@@ -129,7 +131,11 @@ func mergeExtraction(g *graph.Graph, src *graph.Source, cached *syntaxCache, ext
 	reused := make([]bool, len(extraction.Decls))
 	for i := range extraction.Decls {
 		decl := extraction.Decls[i]
-		keys[i] = nextDeclKey(decl, ordinals)
+		scope := decl.Scope
+		if decl.Parent >= 0 {
+			scope = keys[decl.Parent] + "|" + scope
+		}
+		keys[i] = nextDeclKey(decl, scope, ordinals)
 		contexts[i] = contextFor(extraction, i)
 		contextHashes[i] = graph.Hash([]byte(contexts[i]))
 	}
@@ -166,6 +172,7 @@ func mergeExtraction(g *graph.Graph, src *graph.Source, cached *syntaxCache, ext
 			next.Decls = append(next.Decls, entry)
 			continue
 		}
+		fact.LogicalKey = graph.LogicalFactKey(decl.Kind, decl.Name, src.Path) + "|scope|" + keys[i]
 		if decl.Parent >= 0 && factIDs[decl.Parent] != "" {
 			fact.ParentFactId = factIDs[decl.Parent]
 		}
@@ -209,8 +216,8 @@ func rebuildChunkAnchors(g *graph.Graph, src *graph.Source, fact *pb.CodeFact, d
 	return out
 }
 
-func nextDeclKey(decl declExtraction, ordinals map[string]int) string {
-	base := decl.Kind.String() + "|" + decl.Name
+func nextDeclKey(decl declExtraction, scope string, ordinals map[string]int) string {
+	base := scope + "|" + decl.Kind.String() + "|" + decl.Name
 	ordinal := ordinals[base]
 	ordinals[base]++
 	return base + "|" + strconv.Itoa(ordinal)

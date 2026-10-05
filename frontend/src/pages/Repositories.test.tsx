@@ -326,6 +326,23 @@ describe('Repositories map action', () => {
     expect(renderer.root.findByProps({ 'data-testid': `repositories-${side === 'base' ? 'head' : 'base'}-target` }).props.value).toBe(`snapshot:${side === 'base' ? 'snap-1' : 'snap-0'}`)
     await act(async () => { renderer.unmount() })
   })
+  it('clears PR targets when selecting a newly added repository', async () => {
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-pr-tab' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ 'aria-label': 'Pull request number or URL' }).props.onChange({ target: { value: '7' } }) })
+    await act(async () => { await renderer.root.findAll((node) => node.props.as === 'form')[0].props.onSubmit({ preventDefault: () => {} }) })
+    const repositories = await api.repositories.list()
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([...repositories, { ...repositories[0], id: 'repo-2', root: '/repo/new', name: 'new' }])
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'aria-label': 'Pull request number or URL' }).props.value).toBe('')
+    expect(api.repositories.history).toHaveBeenCalledWith('repo-2', '', 0)
+    expect(vi.mocked(api.repositories.history).mock.calls.filter(([id]) => id === 'repo-2').some(([, branch]) => branch === 'pr-head')).toBe(false)
+    await act(async () => { renderer.unmount() })
+  })
   it('adds a repository from the sidebar dialog', async () => {
     const { api } = await import('../api/client')
     vi.mocked(api.repositories.list).mockClear()

@@ -2,9 +2,11 @@ package materialize
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/mertcikla/tld/v2/internal/codeindex/community"
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
@@ -35,7 +37,7 @@ type GroupMapInput struct {
 // nested views: one element and view per group, direct member files placed in
 // their group's view, and every edge drawn at the deepest view where its
 // endpoints fall under different children.
-func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input GroupMapInput, opts MapOptions) (MapResult, error) {
+func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input GroupMapInput, opts MapOptions) (result MapResult, retErr error) {
 	if len(input.Files) == 0 {
 		return MapResult{}, fmt.Errorf("group map requires file facts")
 	}
@@ -77,6 +79,18 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 		maxLeaf:         maxLeafConnectorsPerView(opts),
 		total:           countGroupResources(input.Groups) + 1,
 	}
+	// Workspace writes are already committed. Persist their ownership even if
+	// cancellation interrupts the run, so retries reuse these resources.
+	defer func() {
+		if len(m.mappingBuffers) == 0 {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if err := idx.SaveMappings(cleanupCtx, m.mappingBuffers); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("save map resource mappings: %w", err))
+		}
+	}()
 	rootKey := mapKeyPrefix + "view|" + input.RepositoryID
 	topKey := mapKeyPrefix + "top|" + input.RepositoryID
 	legacyMapViewID := int64(0)
@@ -364,7 +378,7 @@ func countGroupResources(groups []*community.Group) int {
 }
 
 // pruneMapResources deletes map resources that are no longer part of the
-// current run and persists the pending logical-key mappings.
+// current run. Ownership mappings are persisted when the run exits.
 func (m *mapMaterializer) pruneMapResources() error {
 	for key, mapping := range m.byKey {
 		if !strings.HasPrefix(key, mapKeyPrefix) || m.kept[key] {
@@ -384,9 +398,6 @@ func (m *mapMaterializer) pruneMapResources() error {
 			return err
 		}
 		m.result.Pruned++
-	}
-	if err := m.idx.SaveMappings(m.ctx, m.mappingBuffers); err != nil {
-		return err
 	}
 	return nil
 }

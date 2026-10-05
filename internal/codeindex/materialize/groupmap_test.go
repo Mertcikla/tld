@@ -3,6 +3,7 @@ package materialize
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,87 @@ import (
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/store"
 )
+
+type cancelMapStore struct {
+	core.Store
+	cancel    context.CancelFunc
+	remaining int
+}
+
+func (s *cancelMapStore) created(err error) {
+	if err == nil {
+		s.remaining--
+		if s.remaining == 0 {
+			s.cancel()
+		}
+	}
+}
+
+func (s *cancelMapStore) CreateElement(ctx context.Context, input core.LibraryElement) (core.LibraryElement, error) {
+	el, err := s.Store.CreateElement(ctx, input)
+	s.created(err)
+	return el, err
+}
+
+func (s *cancelMapStore) CreateView(ctx context.Context, name string, label *string, ownerID *int64) (core.ViewSummary, error) {
+	view, err := s.Store.CreateView(ctx, name, label, ownerID)
+	s.created(err)
+	return view, err
+}
+
+func (s *cancelMapStore) CreateConnector(ctx context.Context, input core.Connector) (core.Connector, error) {
+	connector, err := s.Store.CreateConnector(ctx, input)
+	s.created(err)
+	return connector, err
+}
+
+func TestApplyGroupMapCancellationRetainsOwnership(t *testing.T) {
+	for _, cancelAfter := range []int{1, 2, 5, 9} {
+		t.Run(fmt.Sprint(cancelAfter), func(t *testing.T) {
+			ws, idx := openGroupMapStore(t)
+			input := GroupMapInput{
+				RepositoryID: "repo", RepositoryName: "demo", SnapshotID: "snap",
+				Files:  groupMapFiles(),
+				Groups: []*community.Group{{Key: "all", Name: "all", Files: 4, Members: []int{0, 1, 2, 3}}},
+				Edges:  []MapEdge{{FromFactID: "id-a", ToFactID: "id-b", Weight: 1, Kind: "calls"}},
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			cancelStore := &cancelMapStore{Store: ws, cancel: cancel, remaining: cancelAfter}
+			_, err := ApplyGroupMap(ctx, cancelStore, idx, input, MapOptions{})
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("expected cancellation after %d resources, got %v", cancelAfter, err)
+			}
+			before, err := idx.MappingsByRepository(context.Background(), "repo")
+			if err != nil || len(before) == 0 {
+				t.Fatalf("lost ownership on cancellation: %v mappings=%d", err, len(before))
+			}
+			if _, err := ApplyGroupMap(context.Background(), ws, idx, input, MapOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			after, err := idx.MappingsByRepository(context.Background(), "repo")
+			if err != nil {
+				t.Fatal(err)
+			}
+			byKey := map[string]int64{}
+			for _, mapping := range after {
+				byKey[mapping.LogicalKey] = mapping.ResourceID
+			}
+			for _, mapping := range before {
+				if byKey[mapping.LogicalKey] != mapping.ResourceID {
+					t.Fatalf("retry replaced %s: %d -> %d", mapping.LogicalKey, mapping.ResourceID, byKey[mapping.LogicalKey])
+				}
+			}
+			var count int
+			if err := ws.DB().QueryRow(`SELECT count(*) FROM elements WHERE name = 'demo'`).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != 1 {
+				t.Fatalf("retry created duplicate repository elements: %d", count)
+			}
+		})
+	}
+}
 
 func containsString(values []string, want string) bool {
 	for _, value := range values {

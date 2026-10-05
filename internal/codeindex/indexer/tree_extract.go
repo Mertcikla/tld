@@ -30,6 +30,7 @@ func treeFacts(ctx context.Context, g *graph.Graph, s *graph.Source) ([]callSite
 type declExtraction struct {
 	Kind       pb.FactKind
 	Name       string
+	Scope      string
 	Parent     int
 	Start, End int
 	Code       string
@@ -127,6 +128,7 @@ func extractFile(ctx context.Context, s *graph.Source) (fileExtraction, error) {
 		decl := declExtraction{
 			Kind:      kind,
 			Name:      name,
+			Scope:     receiverScope(n, s.Text),
 			Parent:    parent,
 			Start:     start,
 			End:       end,
@@ -139,6 +141,20 @@ func extractFile(ctx context.Context, s *graph.Source) (fileExtraction, error) {
 		out.Decls = append(out.Decls, decl)
 	}
 	return out, nil
+}
+
+// Go methods declare their receiver outside the type's syntax subtree.
+func receiverScope(n *tsNode, text []byte) string {
+	receiver := n.ChildByFieldName("receiver")
+	if receiver == nil {
+		return ""
+	}
+	for i := 0; i < receiver.NamedChildCount(); i++ {
+		if typ := receiver.NamedChild(i).ChildByFieldName("type"); typ != nil {
+			return string(text[typ.StartByte():typ.EndByte()])
+		}
+	}
+	return ""
 }
 
 // contextFor returns the chunk context for a declaration: its signature with

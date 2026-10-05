@@ -49,6 +49,40 @@ func testSource(t *testing.T, path, language, text string) (*graph.Graph, *graph
 	return g, src
 }
 
+func TestSCIPSynthesizedLogicalKeysIncludeScope(t *testing.T) {
+	var previous map[string]bool
+	for _, version := range []string{"0.1.0", "0.2.0"} {
+		g, source := testSource(t, "lib.rs", "rust", "fn run() {}\nfn run() {}\n")
+		doc := &scip.Document{RelativePath: source.Path, Text: string(source.Text)}
+		for i, scope := range []string{"A", "B"} {
+			symbol := "scip-rust cargo fixture " + version + " " + scope + "#run()."
+			doc.Symbols = append(doc.Symbols, &scip.SymbolInformation{Symbol: symbol, DisplayName: "run", Kind: scip.SymbolInformation_Method})
+			doc.Occurrences = append(doc.Occurrences, &scip.Occurrence{
+				Range: []int32{int32(i), 3, 6}, Symbol: symbol, SymbolRoles: int32(scip.SymbolRole_Definition),
+			})
+		}
+		idx := &scip.Index{Documents: []*scip.Document{doc}}
+		if err := importSCIPReader(context.Background(), g, &pb.Project{Root: "."}, bytes.NewReader(marshalIndex(t, idx)), nil, false, true, newSymbols()); err != nil {
+			t.Fatal(err)
+		}
+		keys := map[string]bool{}
+		for _, fact := range g.Facts {
+			keys[fact.LogicalKey] = true
+		}
+		if len(keys) != 2 {
+			t.Fatalf("SCIP scopes collided: %v", keys)
+		}
+		if previous != nil {
+			for key := range keys {
+				if !previous[key] {
+					t.Fatalf("package version changed declaration identity: %s", key)
+				}
+			}
+		}
+		previous = keys
+	}
+}
+
 // TestSCIPSynthesizesDefinitionFact verifies that a definition occurrence with
 // an enclosing range and a symbol kind becomes a code Fact with captured code
 // and chunks, without any tree-sitter grammar for the language.

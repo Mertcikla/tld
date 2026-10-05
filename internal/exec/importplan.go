@@ -60,8 +60,10 @@ func BuildImportPlan(
 		return nil, fmt.Errorf("list elements on target: %w", err)
 	}
 	byName := make(map[string][]*diagv1.Element, len(serverElements))
+	byID := make(map[int32]*diagv1.Element, len(serverElements))
 	for _, el := range serverElements {
 		byName[el.GetName()] = append(byName[el.GetName()], el)
+		byID[el.GetId()] = el
 	}
 
 	serverViews, err := runner.ListViews(ctx)
@@ -146,6 +148,10 @@ func BuildImportPlan(
 		id := elementIDs[ref]
 		if id != 0 {
 			pe.Id = &id
+			if pe.BypassNoiseGate == nil && byID[id] != nil {
+				bypass := byID[id].GetBypassNoiseGate()
+				pe.BypassNoiseGate = &bypass
+			}
 			plan.ElementsUpdated++
 		} else {
 			plan.ElementsCreated++

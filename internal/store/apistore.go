@@ -909,11 +909,6 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 		if planned.GetRef() == "" {
 			return nil, fmt.Errorf("plan element ref is required")
 		}
-		bypassNoiseGate := true
-		if planned.BypassNoiseGate != nil {
-			bypassNoiseGate = planned.GetBypassNoiseGate()
-		}
-
 		input := api.ElementInput{
 			Name:            planned.GetName(),
 			Description:     planned.Description,
@@ -928,7 +923,7 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			Branch:          planned.Branch,
 			Language:        planned.Language,
 			FilePath:        planned.FilePath,
-			BypassNoiseGate: &bypassNoiseGate,
+			BypassNoiseGate: planned.BypassNoiseGate,
 			HasView:         planned.GetHasView(),
 			ViewLabel:       planned.ViewLabel,
 		}
@@ -937,9 +932,17 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 		if planned.GetId() != 0 {
 			element, err = a.UpdateElement(ctx, planned.GetId(), uuid.Nil, input)
 			if errors.Is(err, sql.ErrNoRows) {
+				if input.BypassNoiseGate == nil {
+					defaultBypass := true
+					input.BypassNoiseGate = &defaultBypass
+				}
 				element, err = a.CreateElement(ctx, uuid.Nil, input)
 			}
 		} else {
+			if input.BypassNoiseGate == nil {
+				defaultBypass := true
+				input.BypassNoiseGate = &defaultBypass
+			}
 			element, err = a.CreateElement(ctx, uuid.Nil, input)
 		}
 		if err != nil {
@@ -967,7 +970,9 @@ func (a *APIAdapter) ApplyPlan(ctx context.Context, _ uuid.UUID, req *diagv1.App
 			}
 			var view *diagv1.View
 			if planned.GetViewId() != 0 {
-				view, err = a.UpdateView(ctx, planned.GetViewId(), uuid.Nil, viewName, nil, planned.ViewLabel, nil)
+				// The plan has an element name but no view name. Existing views
+				// retain their independently chosen names.
+				view, err = a.UpdateView(ctx, planned.GetViewId(), uuid.Nil, "", nil, planned.ViewLabel, nil)
 				if errors.Is(err, sql.ErrNoRows) {
 					ownerID := element.GetId()
 					view, err = a.CreateView(ctx, uuid.Nil, &ownerID, viewName, planned.ViewLabel, false)

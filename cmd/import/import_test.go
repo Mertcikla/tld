@@ -1,14 +1,75 @@
 package importcmd_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mertcikla/tld/v2/cmd"
+	"github.com/mertcikla/tld/v2/internal/exec"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
+
+func TestImportCmd_PreservesOmittedVisibility(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--bypass-noise-gate=false")
+	file := writeImportFile(t, "elements:\n  api:\n    name: API\n    description: edited\n")
+	cmd.MustRunCmd(t, dir, "import", file)
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := exec.NewRunner(ws.Config, "local", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = runner.Close() }()
+	el, err := runner.GetElement(context.Background(), int32(ws.Meta.Elements["api"].ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if el.GetBypassNoiseGate() || el.GetDescription() != "edited" {
+		t.Fatalf("import changed omitted visibility or lost description: %v", el)
+	}
+	if ws.Elements["api"].BypassNoiseGate == nil || *ws.Elements["api"].BypassNoiseGate {
+		t.Fatal("local cache lost visibility setting")
+	}
+}
+
+func TestImportCmd_ConnectorOnlyPreservesViewName(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api")
+	cmd.MustRunCmd(t, dir, "add", "Database", "--ref", "db")
+	cmd.MustRunCmd(t, dir, "view", "create", "api", "--name", "Custom diagram")
+	file := writeImportFile(t, "connectors:\n  - view: api\n    source: api\n    target: db\n")
+	cmd.MustRunCmd(t, dir, "import", file)
+	ws, err := workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner, err := exec.NewRunner(ws.Config, "local", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = runner.Close() }()
+	views, err := runner.ListViews(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, view := range views {
+		if view.GetId() == int32(ws.Meta.Views["api"].ID) {
+			if view.GetName() != "Custom diagram" {
+				t.Fatalf("view name = %q", view.GetName())
+			}
+			return
+		}
+	}
+	t.Fatal("import lost existing view")
+}
 
 const basicImport = `
 elements:

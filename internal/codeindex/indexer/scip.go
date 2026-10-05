@@ -227,6 +227,13 @@ func synthesizeFact(g *graph.Graph, source *graph.Source, o *scip.Occurrence, sy
 	fact := g.AddFact(kind, name, source.Language, anchor, code, signature, &pb.Evidence{Producer: "scip", Version: version, OriginalId: symbol, Anchor: anchor, Derivation: "synthesized from definition occurrence"})
 	fact.SymbolKey = symbol
 	fact.QualifiedName = symbol
+	// Descriptors contain declaration scope and overload disambiguators, while
+	// package versions can change without changing a declaration's identity.
+	identity, err := scip.DescriptorOnlyFormatter.Format(symbol)
+	if err != nil {
+		identity = symbol
+	}
+	fact.LogicalKey += "|symbol|" + identity
 	if docs := info.GetDocumentation(); len(docs) > 0 {
 		fact.Documentation = strings.Join(docs, "\n")
 	}

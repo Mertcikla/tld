@@ -964,7 +964,7 @@ export default function Repositories() {
         status: 'success',
       })
       await reload()
-      setSelectedId(added.id)
+      selectRepo(added.id)
       if (addWatch) {
         try {
           await api.repositories.startWatch(added.id, {

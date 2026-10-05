@@ -363,6 +363,21 @@ func TestApplyPlanDefaultsBypassNoiseGateTrueAndPreservesExplicitFalse(t *testin
 	if got["Manual"] {
 		t.Fatalf("explicit false bypass = %v, want false preserved", got["Manual"])
 	}
+	for _, element := range resp.GetCreatedElements() {
+		if element.GetName() != "Manual" {
+			continue
+		}
+		id := element.GetId()
+		updated, err := NewAPIAdapter(sqliteStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
+			Elements: []*diagv1.PlanElement{{Ref: "manual", Id: &id, Name: "Manual edited"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if updated.GetCreatedElements()[0].GetBypassNoiseGate() {
+			t.Fatal("update with omitted bypass changed explicit false")
+		}
+	}
 }
 
 func TestListElementsMapsSearchPaginationAndViewMetadata(t *testing.T) {

@@ -114,3 +114,35 @@ func findDecl(cache syntaxCache, name string) *declCacheEntry {
 	}
 	return nil
 }
+
+func TestSyntaxCacheRebuildsLegacyLogicalKeys(t *testing.T) {
+	text := []byte("class A { run() {} }\nclass B { run() {} }\n")
+	src := &graph.Source{Path: "a.ts", Language: "typescript", Text: text, Hash: graph.Hash(text)}
+	g := graph.NewGraph("repo", "before")
+	if _, err := syntaxFacts(context.Background(), g, src); err != nil {
+		t.Fatal(err)
+	}
+	cache := decodeCache(t, src.SyntaxCache)
+	cache.Version = 3
+	for _, entry := range cache.Decls {
+		entry.Fact.LogicalKey = graph.LogicalFactKey(entry.Fact.Kind, entry.Name, src.Path)
+	}
+	raw, err := json.Marshal(cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.SyntaxCache = string(raw)
+	next := graph.NewGraph("repo", "after")
+	if _, err := syntaxFacts(context.Background(), next, src); err != nil {
+		t.Fatal(err)
+	}
+	keys := map[string]bool{}
+	for _, fact := range next.Facts {
+		if fact.Name == "run" {
+			keys[fact.LogicalKey] = true
+		}
+	}
+	if len(keys) != 2 || decodeCache(t, src.SyntaxCache).Version != syntaxCacheVersion {
+		t.Fatal("legacy cache reused colliding logical keys")
+	}
+}

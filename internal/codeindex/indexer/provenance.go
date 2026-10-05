@@ -26,7 +26,8 @@ func ConfigurationHash(cfg config.Config, req *pb.IndexRequest) string {
 		Config                 config.Config
 		Excludes, ProjectRoots []string
 		SCIPArtifacts          map[string]string
-	}{cfg, req.Exclude, req.ProjectRoots, req.ScipArtifacts})
+		ExtractionVersion      int
+	}{cfg, req.Exclude, req.ProjectRoots, req.ScipArtifacts, syntaxCacheVersion})
 	return graph.Hash(raw)
 }
 
