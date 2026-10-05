@@ -67,6 +67,86 @@ func baseFor(snapshot *pb.Snapshot, g *graph.Graph) *IncrementalBase {
 	}
 	return &IncrementalBase{Snapshot: snapshot, Graph: g, Sources: sources}
 }
+
+func TestIncrementalRetriesFailedProjectsWithoutSourceChanges(t *testing.T) {
+	ctx := context.Background()
+	root, toolDir := t.TempDir(), t.TempDir()
+	write := func(path string, data []byte, mode os.FileMode) {
+		t.Helper()
+		if err := os.WriteFile(path, data, mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"healthy", "retry"} {
+		dir := filepath.Join(root, name)
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		write(filepath.Join(dir, "go.mod"), []byte("module "+name+"\n\ngo 1.26\n"), 0600)
+		write(filepath.Join(dir, "main.go"), []byte("package fixture\nfunc Main() {}\n"), 0600)
+	}
+	artifact, counter, failure := filepath.Join(toolDir, "fixture.scip"), filepath.Join(toolDir, "runs"), filepath.Join(toolDir, "fail")
+	data, err := proto.Marshal(&scip.Index{Metadata: &scip.Metadata{ToolInfo: &scip.ToolInfo{Name: "fixture", Version: "1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(artifact, data, 0600)
+	write(failure, nil, 0600)
+	t.Setenv("TLD_RETRY_ARTIFACT", artifact)
+	t.Setenv("TLD_RETRY_COUNTER", counter)
+	t.Setenv("TLD_RETRY_FAILURE", failure)
+	tool := filepath.Join(toolDir, "scip-fixture")
+	write(tool, []byte(`#!/bin/sh
+if [ "$1" = "--version" ]; then echo 1; exit 0; fi
+project=$(basename "$PWD")
+echo "$project" >> "$TLD_RETRY_COUNTER"
+if [ "$project" = "retry" ] && [ -f "$TLD_RETRY_FAILURE" ]; then exit 1; fi
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--output" ]; then cp "$TLD_RETRY_ARTIFACT" "$a"; fi
+  prev="$a"
+done
+`), 0700)
+	cfg := config.Default()
+	cfg.Tools.SCIPGo = tool
+	pipeline := Pipeline{Config: cfg}
+	req := &pb.IndexRequest{Directory: root}
+	snap, g, err := pipeline.Build(ctx, req, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Warnings) != 1 || len(g.ProjectArtifacts) != 1 {
+		t.Fatalf("partial build: warnings=%v artifacts=%d", snap.Warnings, len(g.ProjectArtifacts))
+	}
+	if ToolchainCompatible(ctx, cfg, root, snap, nil) {
+		t.Fatal("partial snapshot is eligible for reuse, including commit lookup")
+	}
+	next, nextGraph, reused, err := pipeline.BuildIncremental(ctx, req, nil, baseFor(snap, g))
+	if err != nil || reused || len(next.Warnings) != 1 {
+		t.Fatalf("failed retry: err=%v reused=%v snapshot=%v", err, reused, next)
+	}
+	if err := os.Remove(failure); err != nil {
+		t.Fatal(err)
+	}
+	recovered, recoveredGraph, reused, err := pipeline.BuildIncremental(ctx, req, nil, baseFor(next, nextGraph))
+	if err != nil || reused || len(recovered.Warnings) != 0 || len(recoveredGraph.ProjectArtifacts) != 2 {
+		t.Fatalf("recovery: err=%v reused=%v snapshot=%v", err, reused, recovered)
+	}
+	if recovered.ContentFingerprint != snap.ContentFingerprint {
+		t.Fatal("test unexpectedly changed repository inputs")
+	}
+	_, _, reused, err = pipeline.BuildIncremental(ctx, req, nil, baseFor(recovered, recoveredGraph))
+	if err != nil || !reused {
+		t.Fatalf("healthy snapshot should be reused: err=%v reused=%v", err, reused)
+	}
+	runs, err := os.ReadFile(counter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(runs), "healthy\n") != 1 || strings.Count(string(runs), "retry\n") != 3 {
+		t.Fatalf("healthy project should stay cached and failed project retry: %s", runs)
+	}
+}
 func TestIncrementalMatchesFreshAndRetainsChunks(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

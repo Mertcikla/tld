@@ -35,11 +35,17 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 	now := time.Now().UTC().Format(time.RFC3339)
 	repoID := snap.RepositoryId
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_repositories (id, root, latest_snapshot_id, created_at, updated_at, org_id)
+		res, err := tx.NewRaw(`INSERT INTO codeindex_repositories (id, root, latest_snapshot_id, created_at, updated_at, org_id)
 			VALUES (?, ?, ?, ?, ?, ?)
 			ON CONFLICT(org_id, id) DO UPDATE SET root = excluded.root, latest_snapshot_id = CASE WHEN ? OR codeindex_repositories.latest_snapshot_id = '' THEN excluded.latest_snapshot_id ELSE codeindex_repositories.latest_snapshot_id END, updated_at = excluded.updated_at`,
-			repoID, root, snap.Id, now, now, scope(ctx).value(), advanceLatest).Exec(ctx); err != nil {
+			repoID, root, snap.Id, now, now, scope(ctx).value(), advanceLatest).Exec(ctx)
+		if err != nil {
 			return fmt.Errorf("upsert repository: %w", err)
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return fmt.Errorf("upsert repository: %w", sql.ErrNoRows)
 		}
 		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_snapshot_facts", "codeindex_snapshot_chunks", "codeindex_snapshot_edges"} {
 			where, scopeArgs := scope(ctx).clause("org_id")
@@ -95,7 +101,7 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 	projects, _ := marshalJSON(snap.Projects)
 	warnings, _ := marshalJSON(snap.Warnings)
 	tools, _ := marshalJSON(snap.ToolVersions)
-	_, err := tx.NewRaw(`INSERT INTO codeindex_snapshots
+	res, err := tx.NewRaw(`INSERT INTO codeindex_snapshots
 		(id, repository_id, created_unix, git_revision, git_branch, ingestion_status, config_hash, projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message, capture_order, org_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(org_id, id) DO UPDATE SET
@@ -113,6 +119,11 @@ func saveSnapshotRow(ctx context.Context, tx bun.Tx, snap *pb.Snapshot) error {
 		snap.IngestionStatus, snap.ConfigHash, projects, warnings, tools, snap.Provenance, snap.ContentFingerprint, snap.CommitMessage, time.Now().UnixNano(), scope(ctx).value()).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("upsert snapshot: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("upsert snapshot: %w", sql.ErrNoRows)
 	}
 	return nil
 }

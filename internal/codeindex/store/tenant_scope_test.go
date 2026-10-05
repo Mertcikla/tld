@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 
@@ -268,5 +269,89 @@ func testTenantScopeLeaseAndWatchClaims(t *testing.T, st *Store) {
 		if err := st.ClaimWatch(ctx, claim); !errors.Is(err, ErrWatchActive) {
 			t.Fatalf("same-tenant watch claim err=%v", err)
 		}
+	}
+}
+
+func TestRepositoryWritesPreserveForeignOwnership(t *testing.T) {
+	for _, unscopedOwner := range []bool{false, true} {
+		for _, operation := range []string{"identity", "publish", "historical"} {
+			t.Run(fmt.Sprintf("unscoped=%t/%s", unscopedOwner, operation), func(t *testing.T) {
+				st, handle := openTestStore(t)
+				defer func() { _ = handle.Close() }()
+				owner := context.Background()
+				if !unscopedOwner {
+					owner = app.WithTenantOrgID(owner, uuid.New())
+				}
+				other := app.WithTenantOrgID(context.Background(), uuid.New())
+				original := &pb.Snapshot{Id: "original", RepositoryId: "repo"}
+				if err := st.Publish(owner, "/original", original, graph.NewGraph("repo", original.Id)); err != nil {
+					t.Fatal(err)
+				}
+				attempt := &pb.Snapshot{Id: "foreign", RepositoryId: "repo"}
+				var err error
+				switch operation {
+				case "identity":
+					err = st.EnsureRepositoryIdentity(other, "repo", "/foreign", "https://github.com/foreign/repo", "github.com/foreign/repo", true)
+				case "publish":
+					err = st.Publish(other, "/foreign", attempt, graph.NewGraph("repo", attempt.Id))
+				case "historical":
+					err = st.PublishHistorical(other, "/foreign", attempt, graph.NewGraph("repo", attempt.Id))
+				}
+				if err != nil {
+					t.Fatalf("independent tenant write: %v", err)
+				}
+				// Unscoped reads intentionally include all tenants; inspect the owner row directly.
+				var repo struct {
+					Root             string
+					LatestSnapshotId string `bun:"latest_snapshot_id"`
+				}
+				err = st.bun.NewRaw(`SELECT root, latest_snapshot_id FROM codeindex_repositories WHERE id = ? AND org_id = ?`, "repo", scope(owner).value()).Scan(owner, &repo)
+				if err != nil || repo.Root != "/original" || repo.LatestSnapshotId != original.Id {
+					t.Fatalf("owner repository changed: %+v, err = %v", repo, err)
+				}
+				var remote string
+				var managed bool
+				err = st.bun.NewRaw(`SELECT remote_url, managed FROM codeindex_repositories WHERE id = ? AND org_id = ?`, "repo", scope(owner).value()).Scan(owner, &remote, &managed)
+				if err != nil || remote != "" || managed {
+					t.Fatalf("owner origin changed: remote=%q managed=%v err=%v", remote, managed, err)
+				}
+				otherRepo, err := st.Repository(other, "repo")
+				if err != nil || otherRepo.Root != "/foreign" {
+					t.Fatalf("other repository = %+v, err = %v", otherRepo, err)
+				}
+				if operation != "identity" {
+					if _, err := st.Snapshot(other, attempt.Id); err != nil {
+						t.Fatalf("independent publication missing snapshot: %v", err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestSnapshotCollisionPreservesIndependentPublications(t *testing.T) {
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+	ctxA := app.WithTenantOrgID(context.Background(), uuid.New())
+	ctxB := app.WithTenantOrgID(context.Background(), uuid.New())
+	snap := &pb.Snapshot{Id: "shared-snapshot-id", RepositoryId: "repo-a", GitRevision: "original"}
+	if err := st.Publish(ctxA, "/a", snap, graph.NewGraph(snap.RepositoryId, snap.Id)); err != nil {
+		t.Fatal(err)
+	}
+	attempt := &pb.Snapshot{Id: snap.Id, RepositoryId: "repo-b", GitRevision: "foreign"}
+	if err := st.Publish(ctxB, "/b", attempt, graph.NewGraph(attempt.RepositoryId, attempt.Id)); err != nil {
+		t.Fatalf("independent publication: %v", err)
+	}
+	got, err := st.Snapshot(ctxA, snap.Id)
+	if err != nil || got.RepositoryId != snap.RepositoryId || got.GitRevision != snap.GitRevision {
+		t.Fatalf("owner snapshot changed: %+v, err = %v", got, err)
+	}
+	got, err = st.Snapshot(ctxB, attempt.Id)
+	if err != nil || got.RepositoryId != attempt.RepositoryId || got.GitRevision != attempt.GitRevision {
+		t.Fatalf("other snapshot = %+v, err = %v", got, err)
+	}
+	repo, err := st.Repository(ctxB, attempt.RepositoryId)
+	if err != nil || repo.LatestSnapshotId != attempt.Id {
+		t.Fatalf("other repository = %+v, err = %v", repo, err)
 	}
 }

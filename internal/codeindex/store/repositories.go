@@ -284,7 +284,7 @@ func (s *Store) EnsureRepositoryIdentity(ctx context.Context, id, root, remoteUR
 		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at, org_id)
+	res, err := s.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at, org_id)
 		VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)
 		ON CONFLICT(org_id, id) DO UPDATE SET
 			root = CASE WHEN excluded.root <> '' THEN excluded.root ELSE codeindex_repositories.root END,
@@ -295,6 +295,11 @@ func (s *Store) EnsureRepositoryIdentity(ctx context.Context, id, root, remoteUR
 		id, root, remoteURL, remoteKey, managed, now, now, scope(ctx).value()).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("ensure repository identity: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("ensure repository identity: %w", sql.ErrNoRows)
 	}
 	return nil
 }
