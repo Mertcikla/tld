@@ -2,7 +2,6 @@ package indexer
 
 import (
 	"context"
-	"github.com/mertcikla/tld/v2/internal/codeindex/config"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +9,7 @@ import (
 	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/tld/v2/internal/codeindex/config"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 )
 
@@ -78,9 +78,15 @@ func projectHashes(pr *pb.Project, sources map[string]*graph.Source) map[string]
 	return hashes
 }
 
-// ToolchainCompatible permits offline reuse of recorded graphs, but invalidates
-// caches when an installed extractor reports a different version.
+// ToolchainCompatible permits offline reuse of successful recorded graphs, but
+// invalidates caches after project failures or extractor version changes.
 func ToolchainCompatible(ctx context.Context, cfg config.Config, root string, snap *pb.Snapshot, explicit map[string]string) bool {
+	// Project failures are published as warnings so healthy siblings remain
+	// usable. They must never make the whole snapshot eligible for reuse: the
+	// next run retries failed projects while retaining successful artifacts.
+	if len(snap.Warnings) > 0 {
+		return false
+	}
 	if snap.ToolVersions["gotreesitter"] != gotreesitterVersion() {
 		return false
 	}

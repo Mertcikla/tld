@@ -283,7 +283,8 @@ func (s *Store) EnsureRepositoryIdentity(ctx context.Context, id, root, remoteUR
 		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at, org_id)
+	where, args := scope(ctx).conflictWhere("codeindex_repositories.org_id")
+	res, err := s.bun.NewRaw(`INSERT INTO codeindex_repositories (id, root, remote_url, remote_key, managed, latest_snapshot_id, created_at, updated_at, org_id)
 		VALUES (?, ?, ?, ?, ?, '', ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			root = CASE WHEN excluded.root <> '' THEN excluded.root ELSE codeindex_repositories.root END,
@@ -291,10 +292,15 @@ func (s *Store) EnsureRepositoryIdentity(ctx context.Context, id, root, remoteUR
 			remote_key = CASE WHEN excluded.remote_key <> '' THEN excluded.remote_key ELSE codeindex_repositories.remote_key END,
 			managed = codeindex_repositories.managed OR excluded.managed,
 			updated_at = excluded.updated_at,
-			org_id = COALESCE(codeindex_repositories.org_id, excluded.org_id)`,
-		id, root, remoteURL, remoteKey, managed, now, now, scope(ctx).value()).Exec(ctx)
+			org_id = COALESCE(codeindex_repositories.org_id, excluded.org_id)`+where,
+		append([]any{id, root, remoteURL, remoteKey, managed, now, now, scope(ctx).value()}, args...)...).Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("ensure repository identity: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return fmt.Errorf("ensure repository identity: %w", sql.ErrNoRows)
 	}
 	return nil
 }
