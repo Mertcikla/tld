@@ -935,19 +935,6 @@ func (s *contractStore) ApplyPlan(ctx context.Context, workspaceID uuid.UUID, re
 	}
 	return nil, nil
 }
-func (s *contractStore) ListVersions(context.Context, uuid.UUID, int) ([]*diagv1.WorkspaceVersionInfo, error) {
-	return nil, nil
-}
-func (s *contractStore) GetLatestVersion(context.Context, uuid.UUID) (*diagv1.WorkspaceVersionInfo, error) {
-	return nil, nil
-}
-func (s *contractStore) CreateVersion(context.Context, uuid.UUID, string, string, *int32, int, int, int, *string, *string) (*diagv1.WorkspaceVersionInfo, error) {
-	return nil, nil
-}
-func (s *contractStore) GetVersioningEnabled(context.Context, uuid.UUID) (bool, error) {
-	return false, nil
-}
-func (s *contractStore) SetVersioningEnabled(context.Context, uuid.UUID, bool) error { return nil }
 func (s *contractStore) GetWorkspaceResourceCounts(context.Context, uuid.UUID) (int, int, int, error) {
 	return 0, 0, 0, nil
 }

@@ -423,7 +423,7 @@ func TestPrebuiltSCIPManifest(t *testing.T) {
 		t.Fatal(e)
 	}
 	artifact := filepath.Join(t.TempDir(), "index.scip")
-	cmd := exec.Command("scip-go", "index", "--output", artifact, "--module-root", root)
+	cmd := exec.Command("scip-go", "--output", artifact, "--module-root", root)
 	cmd.Dir = root
 	if output, e := cmd.CombinedOutput(); e != nil {
 		t.Fatalf("scip-go %v %s", e, output)
