@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/tagcolors"
 	"github.com/uptrace/bun"
 )
@@ -160,15 +159,12 @@ func (s *Store) Tags(ctx context.Context) (map[string]Tag, error) {
 
 func (s *Store) UpdateTag(ctx context.Context, name, color string, description *string) error {
 	row := &tagModel{Name: name, Color: color, Description: description}
-	query := s.bun.NewInsert().
+	_, err := s.bun.NewInsert().
 		Model(row).
-		On("CONFLICT(name) DO UPDATE").
+		On("CONFLICT(org_id, name) DO UPDATE").
 		Set("color = excluded.color").
-		Set("description = excluded.description")
-	if TenantOrgIDFromCtx(ctx) != uuid.Nil {
-		query = query.Value("org_id", "?", TenantOrgIDFromCtx(ctx).String())
-	}
-	_, err := query.Exec(ctx)
+		Set("description = excluded.description").
+		Exec(ctx)
 	return err
 }
 
@@ -346,12 +342,9 @@ func (s *Store) ensureTagColors(ctx context.Context, tags []string) error {
 }
 
 func (s *Store) insertTagIfMissing(ctx context.Context, name, color string) error {
-	query := s.bun.NewInsert().
+	_, err := s.bun.NewInsert().
 		Model(&tagModel{Name: name, Color: color}).
-		On("CONFLICT (name) DO NOTHING")
-	if TenantOrgIDFromCtx(ctx) != uuid.Nil {
-		query = query.Value("org_id", "?", TenantOrgIDFromCtx(ctx).String())
-	}
-	_, err := query.Exec(ctx)
+		On("CONFLICT (org_id, name) DO NOTHING").
+		Exec(ctx)
 	return err
 }

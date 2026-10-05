@@ -10,7 +10,7 @@ import (
 	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
-func TestAPIStoreTenantScopedCountsAndVersions(t *testing.T) {
+func TestAPIStoreTenantScopedCounts(t *testing.T) {
 	store, err := app.OpenStore(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
 	if err != nil {
 		t.Fatal(err)
@@ -58,26 +58,5 @@ func TestAPIStoreTenantScopedCountsAndVersions(t *testing.T) {
 	}
 	if views != 1 || elements != 2 || connectors != 1 {
 		t.Fatalf("org A counts = views:%d elements:%d connectors:%d, want 1/2/1", views, elements, connectors)
-	}
-
-	if _, err := apiStore.CreateVersion(context.Background(), orgA, "org-a-v1", "test", nil, views, elements, connectors, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := apiStore.CreateVersion(context.Background(), orgB, "org-b-v1", "test", nil, 1, 1, 0, nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	versions, err := apiStore.ListVersions(context.Background(), orgA, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(versions) != 1 || versions[0].GetVersionId() != "org-a-v1" || versions[0].GetOrgId() != orgA.String() {
-		t.Fatalf("org A versions = %+v, want only org-a-v1", versions)
-	}
-	latest, err := apiStore.GetLatestVersion(context.Background(), orgB)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if latest.GetVersionId() != "org-b-v1" || latest.GetOrgId() != orgB.String() {
-		t.Fatalf("org B latest = %+v, want org-b-v1", latest)
 	}
 }

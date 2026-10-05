@@ -58,7 +58,6 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 	depSvc := &api.DependencyService{Store: apiStore}
 	importSvc := &api.ImportService{Store: apiStore}
 	mermaidSvc := &api.MermaidService{Store: apiStore, Hooks: collabHooks}
-	versionSvc := &api.WorkspaceVersionService{Store: apiStore, Hooks: collabHooks}
 	collabSvc := &api.CollaborationService{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 	collabRealtime := &api.CollaborationRealtimeHandler{Store: apiStore, Hooks: collabHooks, Hub: collabHub}
 
@@ -135,9 +134,6 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 
 	mermaidPath, mermaidHandler := diagv1connect.NewMermaidServiceHandler(mermaidSvc)
 	mux.Handle("/api"+mermaidPath, http.StripPrefix("/api", mermaidHandler))
-
-	versionPath, versionHandler := diagv1connect.NewWorkspaceVersionServiceHandler(versionSvc)
-	mux.Handle("/api"+versionPath, http.StripPrefix("/api", versionHandler))
 
 	collabPath, collabHandler := diagv1connect.NewCollaborationServiceHandler(collabSvc)
 	mux.Handle("/api"+collabPath, http.StripPrefix("/api", collabHandler))

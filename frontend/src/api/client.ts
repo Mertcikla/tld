@@ -64,10 +64,6 @@ import {
   type MermaidMarkdownBlockInfo,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/mermaid_service_pb'
 import {
-  WorkspaceVersionService,
-  type WorkspaceVersionInfo,
-} from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_version_service_pb'
-import {
   OrgService,
   ListTagColorsResponseSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/org_service_pb'
@@ -396,19 +392,6 @@ export interface RepositoryMapOptions {
   onProgress?: (progress: RepositoryMapProgress) => void
 }
 
-export interface WorkspaceVersion {
-  id: string
-  version_id: string
-  source: string
-  parent_version_id?: string
-  view_count: number
-  element_count: number
-  connector_count: number
-  description?: string
-  workspace_hash?: string
-  created_at: string
-}
-
 export type SourceEditor = 'zed' | 'vscode'
 export type MermaidDirection = 'TB' | 'TD' | 'BT' | 'RL' | 'LR'
 export type MermaidImportFormat = 'mermaid' | 'structurizr'
@@ -451,7 +434,6 @@ const workspaceClient = createClient(WorkspaceService, transport)
 const dependencyClient = createClient(DependencyService, transport)
 const importClient = createClient(ImportService, transport)
 const mermaidClient = createClient(MermaidService, transport)
-const workspaceVersionClient = createClient(WorkspaceVersionService, transport)
 const codeIndexFactClient = createClient(CodeFactService, transport)
 const codeIndexMapperClient = createClient(MapperService, transport)
 const codeIndexRepositoryClient = createClient(RepositoryService, transport)
@@ -472,28 +454,6 @@ export async function rpc<T>(call: () => Promise<T>): Promise<T> {
 
 export function j<T>(schema: Parameters<typeof toJson>[0], msg: Parameters<typeof toJson>[1]): T {
   return toJson(schema, msg, { useProtoFieldName: true, emitDefaultValues: true }) as unknown as T
-}
-
-function timestampToISOString(value?: WorkspaceVersionInfo['createdAt'] | null): string {
-  if (!value) return ''
-  const seconds = typeof value.seconds === 'bigint' ? Number(value.seconds) : Number(value.seconds ?? 0)
-  const nanos = Number(value.nanos ?? 0)
-  return new Date(seconds * 1000 + Math.floor(nanos / 1_000_000)).toISOString()
-}
-
-function mapWorkspaceVersion(version: WorkspaceVersionInfo): WorkspaceVersion {
-  return {
-    id: version.id,
-    version_id: version.versionId,
-    source: version.source,
-    parent_version_id: version.parentVersionId,
-    view_count: version.viewCount,
-    element_count: version.elementCount,
-    connector_count: version.connectorCount,
-    description: version.description,
-    workspace_hash: version.workspaceHash,
-    created_at: timestampToISOString(version.createdAt),
-  }
 }
 
 function mapSnapshotChangeKind(kind: ChangeKind): SnapshotChangeKind {
@@ -1987,14 +1947,6 @@ export const api = {
           previousStatus: mapMermaidMarkdownSyncStatus(res.previousStatus),
           warnings: res.warnings,
         }
-      }),
-  },
-
-  versions: {
-    list: (limit = 50): Promise<WorkspaceVersion[]> =>
-      rpc(async () => {
-        const res = await workspaceVersionClient.listVersions({ limit })
-        return (res.versions ?? []).map(mapWorkspaceVersion)
       }),
   },
 

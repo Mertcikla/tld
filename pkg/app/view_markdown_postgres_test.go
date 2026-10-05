@@ -32,7 +32,7 @@ func TestEnsureViewMarkdownTablePostgresRepeated(t *testing.T) {
 	for _, query := range []string{
 		`CREATE SCHEMA ` + schema,
 		`SET LOCAL search_path TO ` + schema,
-		`CREATE TABLE views (id INTEGER PRIMARY KEY)`,
+		`CREATE TABLE views (id BIGINT PRIMARY KEY)`,
 		`CREATE TABLE view_markdown_documents (view_id INTEGER PRIMARY KEY REFERENCES views(id), path TEXT NOT NULL, is_managed INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
 	} {
 		if _, err := db.ExecContext(ctx, query); err != nil {

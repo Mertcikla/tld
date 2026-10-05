@@ -113,19 +113,27 @@ func (s *Store) DeleteViewMarkdown(ctx context.Context, viewID int64) error {
 	return err
 }
 
+// ensureViewMarkdownTable creates the lazy table for databases that predate the
+// view_markdown_documents migration. The column types must match the migration
+// for the dialect in use: Postgres keys views.id as BIGINT, so an INTEGER
+// primary key would fail the foreign key with incompatible key types.
 func (s *Store) ensureViewMarkdownTable(ctx context.Context) error {
+	viewIDType, boolType := "INTEGER", "INTEGER NOT NULL DEFAULT 0"
+	if s.dialect == dbrepo.DialectPostgres {
+		viewIDType, boolType = "BIGINT", "BOOLEAN NOT NULL DEFAULT FALSE"
+	}
 	if _, err := s.db.ExecContext(ctx, `
-			CREATE TABLE IF NOT EXISTS view_markdown_documents (
-				view_id INTEGER PRIMARY KEY,
-				org_id TEXT NULL,
-				path TEXT NOT NULL,
-				is_managed INTEGER NOT NULL DEFAULT 0,
-				source_kind TEXT NOT NULL DEFAULT '',
-				created_at TEXT NOT NULL,
-				updated_at TEXT NOT NULL,
-				FOREIGN KEY (view_id) REFERENCES views(id) ON DELETE CASCADE
-			)
-		`); err != nil {
+		CREATE TABLE IF NOT EXISTS view_markdown_documents (
+			view_id `+viewIDType+` PRIMARY KEY,
+			org_id TEXT NULL,
+			path TEXT NOT NULL,
+			is_managed `+boolType+`,
+			source_kind TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY (view_id) REFERENCES views(id) ON DELETE CASCADE
+		)
+	`); err != nil {
 		return err
 	}
 	addColumn := "ALTER TABLE view_markdown_documents ADD COLUMN "

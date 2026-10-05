@@ -1,28 +1,12 @@
 package store
 
-import "github.com/uptrace/bun"
+import (
+	"context"
 
-type workspaceVersionModel struct {
-	bun.BaseModel `bun:"table:workspace_versions"`
-
-	ID              int64   `bun:"id,pk,autoincrement"`
-	VersionID       string  `bun:"version_id"`
-	Source          string  `bun:"source"`
-	ParentVersionID *int64  `bun:"parent_version_id"`
-	ViewCount       int64   `bun:"view_count"`
-	ElementCount    int64   `bun:"element_count"`
-	ConnectorCount  int64   `bun:"connector_count"`
-	Description     *string `bun:"description"`
-	WorkspaceHash   *string `bun:"workspace_hash"`
-	CreatedAt       string  `bun:"created_at"`
-}
-
-type workspaceVersionSettingsModel struct {
-	bun.BaseModel `bun:"table:workspace_version_settings"`
-
-	ID                   int64 `bun:"id,pk"`
-	CLIVersioningEnabled int   `bun:"cli_versioning_enabled"`
-}
+	"github.com/google/uuid"
+	"github.com/mertcikla/tld/v2/pkg/app"
+	"github.com/uptrace/bun"
+)
 
 type placementLayoutModel struct {
 	bun.BaseModel `bun:"table:placements"`
@@ -84,12 +68,52 @@ type connectorCountModel struct {
 type visibilityOverrideModel struct {
 	bun.BaseModel `bun:"table:view_visibility_overrides"`
 
-	ViewID       int64  `bun:"view_id,pk"`
-	ResourceType string `bun:"resource_type,pk"`
-	ResourceID   int64  `bun:"resource_id,pk"`
-	LevelDelta   int    `bun:"level_delta"`
-	CreatedAt    string `bun:"created_at"`
-	UpdatedAt    string `bun:"updated_at"`
+	ViewID       int64      `bun:"view_id,pk"`
+	ResourceType string     `bun:"resource_type,pk"`
+	ResourceID   int64      `bun:"resource_id,pk"`
+	OrgID        *uuid.UUID `bun:"org_id,nullzero"`
+	LevelDelta   int        `bun:"level_delta"`
+	CreatedAt    string     `bun:"created_at"`
+	UpdatedAt    string     `bun:"updated_at"`
+}
+
+func (m *visibilityOverrideModel) BeforeAppendModel(ctx context.Context, query bun.Query) error {
+	orgID := app.TenantOrgIDFromCtx(ctx)
+	if orgID == uuid.Nil {
+		return nil
+	}
+	if _, ok := query.(*bun.InsertQuery); ok && m != nil && m.OrgID == nil {
+		m.OrgID = &orgID
+	}
+	return nil
+}
+
+func (m *visibilityOverrideModel) BeforeSelect(ctx context.Context, query *bun.SelectQuery) error {
+	return applyTenantWhere(ctx, query)
+}
+
+func (m *visibilityOverrideModel) BeforeUpdate(ctx context.Context, query *bun.UpdateQuery) error {
+	return applyTenantWhere(ctx, query)
+}
+
+func (m *visibilityOverrideModel) BeforeDelete(ctx context.Context, query *bun.DeleteQuery) error {
+	return applyTenantWhere(ctx, query)
+}
+
+func applyTenantWhere(ctx context.Context, query any) error {
+	orgID := app.TenantOrgIDFromCtx(ctx)
+	if orgID == uuid.Nil {
+		return nil
+	}
+	switch q := query.(type) {
+	case *bun.SelectQuery:
+		q.Where("org_id = ?", orgID)
+	case *bun.UpdateQuery:
+		q.Where("org_id = ?", orgID)
+	case *bun.DeleteQuery:
+		q.Where("org_id = ?", orgID)
+	}
+	return nil
 }
 
 func visibilityOverrideFromModel(row visibilityOverrideModel) VisibilityOverride {
