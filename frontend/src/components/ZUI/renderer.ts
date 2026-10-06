@@ -168,6 +168,48 @@ export function setHighlightColor(color: string): void {
   currentHighlightColor = color
 }
 
+// A node stays fully opaque when it or any descendant carries a change overlay,
+// so blast-radius context keeps its normal appearance instead of fading out.
+const changeOverlaySubtreeCache = new WeakMap<LayoutNode, boolean>()
+function subtreeHasChangeOverlay(node: LayoutNode): boolean {
+  const cached = changeOverlaySubtreeCache.get(node)
+  if (cached !== undefined) return cached
+  const result = !!node.changeOverlay || node.children.some(subtreeHasChangeOverlay)
+  changeOverlaySubtreeCache.set(node, result)
+  return result
+}
+
+function isDirectChange(node: LayoutNode): boolean {
+  return !!node.changeOverlay && node.changeOverlay.change !== 'unchanged'
+}
+
+// Connectors often join container elements rather than files, so an endpoint
+// counts as directly impacted when a direct change lives anywhere in its
+// subtree.
+const directChangeSubtreeCache = new WeakMap<LayoutNode, boolean>()
+function subtreeHasDirectChange(node: LayoutNode): boolean {
+  const cached = directChangeSubtreeCache.get(node)
+  if (cached !== undefined) return cached
+  const result = isDirectChange(node) || node.children.some(subtreeHasDirectChange)
+  directChangeSubtreeCache.set(node, result)
+  return result
+}
+
+// Layered connector styling for the change overlay: both ends impacted keeps the
+// accent, a single impacted end fades to 50%, and an edge between untouched
+// elements drops to the node border grey.
+export function edgeLayerStyle(source: LayoutNode, target: LayoutNode, accent: string): { color: string; alphaFactor: number } {
+  const sourceDirect = subtreeHasDirectChange(source)
+  const targetDirect = subtreeHasDirectChange(target)
+  if (sourceDirect && targetDirect) {
+    return { color: accent, alphaFactor: 1 }
+  }
+  if (sourceDirect || targetDirect) {
+    return { color: accent, alphaFactor: 0.5 }
+  }
+  return { color: typeBorderColor(source.type), alphaFactor: 1 }
+}
+
 let currentHiddenTags: Set<string> = new Set()
 export function setHiddenTags(tags: Set<string>): void {
   currentHiddenTags = tags
@@ -976,14 +1018,7 @@ function drawSceneNode(
 
   if (currentHighlightedTags.size > 0 && parentAlpha > 0.05) {
     const isHighlighted = layout.tags.length > 0 && layout.tags.some((t2) => currentHighlightedTags.has(t2))
-    if (!isHighlighted) {
-      ctx.save()
-      ctx.globalAlpha = parentAlpha * 0.82
-      ctx.fillStyle = canvasBg
-      traceShape()
-      ctx.fill()
-      ctx.restore()
-    } else {
+    if (isHighlighted) {
       const glowColor = currentHighlightColor || accent
       ctx.save()
       ctx.globalAlpha = parentAlpha
@@ -996,11 +1031,23 @@ function drawSceneNode(
       ctx.stroke()
       ctx.shadowBlur = 0
       ctx.restore()
+    } else if (!subtreeHasChangeOverlay(layout)) {
+      // Nodes inside a change overlay subtree (direct impact or blast-radius
+      // context) stay fully opaque; only unrelated elements fade into the
+      // background.
+      ctx.save()
+      ctx.globalAlpha = parentAlpha * 0.82
+      ctx.fillStyle = canvasBg
+      traceShape()
+      ctx.fill()
+      ctx.restore()
     }
   }
 
 
-  if (layout.changeOverlay && parentAlpha > 0.05) {
+  // Blast-radius context keeps its grey marker internally for opacity, but is
+  // not drawn: neighbours should look exactly like the original canvas.
+  if (layout.changeOverlay && layout.changeOverlay.change !== 'unchanged' && parentAlpha > 0.05) {
     const change = layout.changeOverlay
     const color = { added: '#48bb78', removed: '#fc8181', modified: '#ecc94b', unchanged: '#718096' }[change.change]
     ctx.save()
@@ -1177,6 +1224,7 @@ function drawEdges(
   const oy = originY ?? 0
 
   const { nodeMap, sceneNodeMap, handleUsage, handleUsageIndex } = getDrawEdgesLayoutMetadata(sceneNodes)
+  const changeMode = sceneNodes.some((sn) => subtreeHasChangeOverlay(sn.layout))
 
   for (const sn of sceneNodes) {
     const node = sn.layout
@@ -1190,6 +1238,15 @@ function drawEdges(
         const srcHidden = isHiddenByTags(node)
         const tgtHidden = isHiddenByTags(target)
         if (srcHidden || tgtHidden) continue
+      }
+
+      // Layered connector filtering for the change overlay.
+      let strokeColor = accent
+      let layerFactor = 1
+      if (changeMode) {
+        const layer = edgeLayerStyle(node, target, accent)
+        strokeColor = layer.color
+        layerFactor = layer.alphaFactor
       }
 
       const endpointAlphaFactor = Math.min(
@@ -1244,8 +1301,8 @@ function drawEdges(
       )
 
       ctx.save()
-      ctx.globalAlpha = connectorAlpha(edgeAlpha, CONNECTOR_MIN_ALPHA * endpointAlphaFactor)
-      ctx.strokeStyle = accent
+      ctx.globalAlpha = connectorAlpha(edgeAlpha * layerFactor, CONNECTOR_MIN_ALPHA * endpointAlphaFactor * layerFactor)
+      ctx.strokeStyle = strokeColor
       ctx.lineWidth = CONNECTOR_LINE_PX / zoom
 
       let midX = (sH.x + tH.x) / 2
@@ -1380,13 +1437,13 @@ function drawEdges(
       if (dir === 'forward' || dir === 'both' || dir === 'bidirectional') {
         if (targetConnectorDetailVisible) {
           const arrowScreenSize = Math.min(ARROW_SIZE_BASE, visualTargetScreenW * 0.2)
-          drawArrowHead(ctx, tH.x, tH.y, finalAngleT, arrowScreenSize / zoom, accent)
+          drawArrowHead(ctx, tH.x, tH.y, finalAngleT, arrowScreenSize / zoom, strokeColor)
         }
       }
       if (dir === 'backward' || dir === 'both' || dir === 'bidirectional') {
         if (sourceConnectorDetailVisible) {
           const arrowScreenSize = Math.min(ARROW_SIZE_BASE, visualSourceScreenW * 0.2)
-          drawArrowHead(ctx, sH.x, sH.y, finalAngleS, arrowScreenSize / zoom, accent)
+          drawArrowHead(ctx, sH.x, sH.y, finalAngleS, arrowScreenSize / zoom, strokeColor)
         }
       }
 
@@ -1415,12 +1472,12 @@ function drawEdges(
         const labelRect = edgeLabelDrawRectFromCenter(labelCenter, labelW, labelH)
 
         ctx.fillStyle = labelBg
-        ctx.globalAlpha = Math.min(edgeAlpha, connectorAlpha(edgeAlpha * 1.1))
+        ctx.globalAlpha = Math.min(edgeAlpha, connectorAlpha(edgeAlpha * 1.1)) * layerFactor
         ctx.beginPath()
         ctx.roundRect(labelRect.x, labelRect.y, labelRect.width, labelRect.height, 4 / zoom)
         ctx.fill()
 
-        ctx.globalAlpha = edgeAlpha
+        ctx.globalAlpha = edgeAlpha * layerFactor
         ctx.fillStyle = '#cbd5e0'
         ctx.fillText(edge.label, labelCenter.x, labelCenter.y)
       }

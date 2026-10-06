@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { RepositoryImpact } from '../api/client'
 import type { ExploreData, PlacedElement, ViewTreeNode } from '../types'
 import { repositoryChangeOverlay, REPOSITORY_CHANGE_TAG } from './repositoryChangeOverlay'
-import { applyChangeOverlays } from '../components/ZUI/changeOverlay'
+import { applyChangeOverlays, CHANGE_OVERLAY_TAG } from '../components/ZUI/changeOverlay'
 import { computeLayout } from '../components/ZUI/layout'
 
 const view = (id: number, name = 'Map'): ViewTreeNode => ({ id, name, description: null, level_label: null, level: 0, depth: 0, created_at: '', updated_at: '', parent_view_id: null, children: [] })
@@ -45,6 +45,16 @@ describe('repository change overlays', () => {
     expect(annotated.groups[0].nodes[0].changeOverlay?.linesAdded).toBe(3)
     expect(base.groups[0].nodes[0].changeOverlay).toBeUndefined()
     expect(annotated.groups[0].nodes[0].description).toBe('Existing description')
+  })
+  it('does not highlight blast-radius context nodes as direct impact', () => {
+    const scene = repositoryChangeOverlay(workspace, impact, '/repo')
+    const annotated = applyChangeOverlays(computeLayout(scene.data), scene.overlays)
+    const changed = annotated.groups[0].nodes.find((node) => node.elementId === 1)!
+    const context = annotated.groups[0].nodes.find((node) => node.elementId === 2)!
+    expect(changed.tags).toContain(CHANGE_OVERLAY_TAG)
+    expect(context.tags).not.toContain(CHANGE_OVERLAY_TAG)
+    expect(context.changeOverlay?.change).toBe('unchanged')
+    expect(scene.data.views[1].placements.find((element) => element.element_id === 2)!.tags).not.toContain(REPOSITORY_CHANGE_TAG)
   })
   it('places added files in the pipeline-selected base view at the computed position', () => {
     const target: RepositoryImpact = { ...impact, viewId: 1, nodes: [node('a.go', 'modified'), { ...node('new.go', 'added'), x: 300, y: 120 }] }
@@ -92,5 +102,27 @@ describe('repository change overlays', () => {
     expect(scene.overlays[1]?.change).toBe('modified')
     expect(scene.overlays[2]?.change).toBe('unchanged')
     expect(scene.overlays[3]).toBeUndefined()
+  })
+  it('plain mode keeps the container elements that reach impacted nested views', () => {
+    const linked = (id: number, from: number, to: number, element: number) => ({ id, element_id: element, from_view_id: from, to_view_id: to, to_view_name: `view-${to}`, relation_type: 'child' })
+    const nestedTree: ViewTreeNode[] = [{
+      ...view(10, 'Workspace'),
+      children: [{ ...view(11, 'repo map'), parent_view_id: 10, children: [{ ...view(12, 'Group'), parent_view_id: 11 }] }],
+    }]
+    const nested: ExploreData = {
+      tree: nestedTree,
+      views: {
+        10: { placements: [{ ...placement(100, ''), file_path: null, has_view: true, name: 'repo map' }], connectors: [] },
+        11: { placements: [{ ...placement(200, ''), file_path: null, has_view: true, name: 'Group' }], connectors: [] },
+        12: { placements: [placement(1, 'a.go'), placement(3, 'c.go')], connectors: [] },
+      },
+      navigations: [linked(1, 10, 11, 100), linked(2, 11, 12, 200)],
+    }
+    const scene = repositoryChangeOverlay(nested, impact, '/repo', { plain: true })
+    expect(scene.data.tree[0].children?.[0].children?.[0].id).toBe(12)
+    expect(scene.data.views[10].placements.map((element) => element.element_id)).toEqual([100])
+    expect(scene.data.views[11].placements.map((element) => element.element_id)).toEqual([200])
+    expect(scene.data.views[12].placements.map((element) => element.file_path)).toEqual(['a.go'])
+    expect(computeLayout(scene.data).groups[0].nodes[0].elementId).toBe(100)
   })
 })

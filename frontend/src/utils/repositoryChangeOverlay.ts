@@ -31,14 +31,14 @@ function adjustConnectorHandles(placements: PlacedElement[], connectors: Connect
 export function repositoryChangeOverlay(workspace: ExploreData, impact: RepositoryImpact, repositoryRoot: string, options: { plain?: boolean } = {}) {
   const plain = options.plain ?? false
   const overlays: Record<number, ZUIChangeOverlay> = {}
-  const filesByPath = new Map(impact.nodes.map((file) => [file.path, file]))
+  const filesByPath = new Map(impact.nodes.map((file) => [normalize(file.path), file]))
   const sources = new Map(impact.diff.sources.map((source) => [source.path, source]))
   const matched = new Set<string>()
   const eligibleIds = new Set(impact.nodes.filter((node) => node.context).map((node) => node.elementId))
   const belongs = (element: PlacedElement) => element.repository_id
     ? element.repository_id === impact.repositoryId
     : normalize(element.repo ?? '') === normalize(repositoryRoot) || eligibleIds.has(element.element_id)
-  const impacted = (element: PlacedElement) => (element.file_path ? filesByPath.has(element.file_path) : false) || eligibleIds.has(element.element_id)
+  const impacted = (element: PlacedElement) => (element.file_path ? filesByPath.has(normalize(element.file_path)) : false) || eligibleIds.has(element.element_id)
   const shown = (element: PlacedElement) => plain ? belongs(element) && impacted(element) : belongs(element)
   const overlay = (file: RepositoryImpact['nodes'][number]): ZUIChangeOverlay => ({
     change: file.change, path: file.path,
@@ -57,19 +57,34 @@ export function repositoryChangeOverlay(workspace: ExploreData, impact: Reposito
     return [{ ...view, children }]
   })
   const data: ExploreData = { tree: keep(workspace.tree), views: {}, navigations: [] }
+  // Plain mode still needs the container elements that own retained child views;
+  // without them the hierarchy can't be traversed and the impacted leaves are
+  // unreachable. They are structural only and never annotated as changes.
+  const linkElements = new Map<number, Set<number>>()
+  if (plain) {
+    for (const link of workspace.navigations ?? []) {
+      if (link.relation_type !== 'child' || link.element_id == null || !retained.has(link.to_view_id)) continue
+      const elements = linkElements.get(link.from_view_id) ?? new Set<number>()
+      elements.add(link.element_id)
+      linkElements.set(link.from_view_id, elements)
+    }
+  }
   for (const id of retained) {
     const view = workspace.views[id]
     if (!view) continue
-    const placements = plain ? view.placements.filter(shown) : view.placements
+    const links = linkElements.get(id)
+    const placements = plain ? view.placements.filter((element) => shown(element) || links?.has(element.element_id)) : view.placements
     const visibleIds = new Set(placements.map((element) => element.element_id))
     const connectors = plain ? (view.connectors ?? []).filter((item) => visibleIds.has(item.source_element_id) && visibleIds.has(item.target_element_id)) : view.connectors
     data.views[id] = { ...view, placements: placements.map((element) => {
       if (!shown(element)) return element
-      const file = filesByPath.get(element.file_path ?? '')
+      const file = filesByPath.get(normalize(element.file_path ?? ''))
       if (!file) return element
       matched.add(file.path)
       overlays[element.element_id] = overlay(file)
-      return { ...element, tags: [...element.tags, REPOSITORY_CHANGE_TAG] }
+      // Only direct changes glow; blast-radius context keeps its outline but no
+      // spotlight so it reads as surrounding context.
+      return file.change === 'unchanged' ? element : { ...element, tags: [...element.tags, REPOSITORY_CHANGE_TAG] }
     }), connectors }
   }
   data.navigations = workspace.navigations.filter((link) => retained.has(link.from_view_id) && retained.has(link.to_view_id))
