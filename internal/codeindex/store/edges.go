@@ -87,6 +87,36 @@ func (s *Store) FileEdges(ctx context.Context, snapshotID string) ([]FileEdge, e
 	return out, rows.Err()
 }
 
+// FilePairCounts aggregates a snapshot's symbol-to-symbol edges into the number
+// of observations crossing each ordered pair of distinct files. It is the SQL
+// equivalent of walking a loaded graph's facts and edges, without materializing
+// either, so change overlays can build file adjacency cheaply.
+func (s *Store) FilePairCounts(ctx context.Context, snapshotID string) (map[[2]string]float64, error) {
+	where, scopeArgs := scope(ctx).clause("e.org_id")
+	rows, err := s.bun.QueryContext(ctx, `
+		SELECT sf.path, tf.path, COUNT(*)
+		FROM codeindex_edges e
+		JOIN codeindex_snapshot_edges m ON m.edge_id = e.id AND m.org_id = e.org_id
+		JOIN codeindex_facts sf ON sf.id = e.from_fact_id AND sf.org_id = e.org_id
+		JOIN codeindex_facts tf ON tf.id = e.to_fact_id AND tf.org_id = e.org_id
+		WHERE m.snapshot_id = ? AND sf.path <> '' AND tf.path <> '' AND sf.path <> tf.path`+where+`
+		GROUP BY sf.path, tf.path`, append([]any{snapshotID}, scopeArgs...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[[2]string]float64{}
+	for rows.Next() {
+		var from, to string
+		var count int
+		if err := rows.Scan(&from, &to, &count); err != nil {
+			return nil, err
+		}
+		out[[2]string{from, to}] = float64(count)
+	}
+	return out, rows.Err()
+}
+
 // FileImport is one external import declared by a file fact.
 type FileImport struct {
 	FileFactID string

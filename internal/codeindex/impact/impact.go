@@ -10,40 +10,26 @@ import (
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
-	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 )
 
-type pair struct{ from, to string }
-
-func fileEdges(g *graph.Graph) map[pair]float64 {
-	out := map[pair]float64{}
-	for _, edge := range g.EdgeFacts {
-		from, to := g.Facts[edge.FromFactId], g.Facts[edge.ToFactId]
-		if from == nil || to == nil || from.Anchor == nil || to.Anchor == nil {
-			continue
-		}
-		a, b := from.Anchor.Path, to.Anchor.Path
-		if a != "" && b != "" && a != b {
-			out[pair{a, b}]++
-		}
-	}
-	return out
-}
-
 // Build describes changed files, attaches their symbol deltas, and adds
 // eligible existing workspace resources within the requested file-dependency radius.
 func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, key, fromID, toID string, radius uint32) (*pb.ImpactDiagram, error) {
-	diff, err := idx.Diff(ctx, fromID, toID, false)
+	diff, err := idx.ImpactDiff(ctx, fromID, toID)
 	if err != nil {
 		return nil, err
 	}
-	before, err := idx.LoadGraph(ctx, fromID)
+	oldEdges, err := idx.FilePairCounts(ctx, fromID)
 	if err != nil {
 		return nil, err
 	}
-	after, err := idx.LoadGraph(ctx, toID)
+	newEdges, err := idx.FilePairCounts(ctx, toID)
+	if err != nil {
+		return nil, err
+	}
+	toSources, err := idx.SnapshotSources(ctx, toID)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +66,6 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 	addSymbols(diff.GetFacts().GetAdded(), pb.ChangeKind_CHANGE_KIND_ADDED)
 	addSymbols(diff.GetFacts().GetRemoved(), pb.ChangeKind_CHANGE_KIND_REMOVED)
 	addSymbols(diff.GetFacts().GetModified(), pb.ChangeKind_CHANGE_KIND_MODIFIED)
-	oldEdges, newEdges := fileEdges(before), fileEdges(after)
 	adjacency := map[string]map[string]bool{}
 	link := func(a, b string) {
 		if adjacency[a] == nil {
@@ -89,12 +74,12 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 		adjacency[a][b] = true
 	}
 	for edge := range oldEdges {
-		link(edge.from, edge.to)
-		link(edge.to, edge.from)
+		link(edge[0], edge[1])
+		link(edge[1], edge[0])
 	}
 	for edge := range newEdges {
-		link(edge.from, edge.to)
-		link(edge.to, edge.from)
+		link(edge[0], edge[1])
+		link(edge[1], edge[0])
 	}
 	for i := 0; i < len(queue); i++ {
 		path := queue[i]
@@ -129,7 +114,10 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 		}
 		path := *element.FilePath
 		hops, reachable := distance[path]
-		if !reachable || changes[path] != nil || after.Sources[path] == nil {
+		if !reachable || changes[path] != nil {
+			continue
+		}
+		if _, present := toSources[path]; !present {
 			continue
 		}
 		diagram.MaxRadius = max(diagram.MaxRadius, hops)
@@ -148,7 +136,7 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 	for _, node := range diagram.Nodes {
 		nodesByPath[node.Path] = append(nodesByPath[node.Path], node)
 	}
-	allEdges := map[pair]bool{}
+	allEdges := map[[2]string]bool{}
 	for edge := range oldEdges {
 		allEdges[edge] = true
 	}
@@ -168,8 +156,8 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 		case weight != oldWeight:
 			kind = pb.ChangeKind_CHANGE_KIND_MODIFIED
 		}
-		for _, from := range nodesByPath[edge.from] {
-			for _, to := range nodesByPath[edge.to] {
+		for _, from := range nodesByPath[edge[0]] {
+			for _, to := range nodesByPath[edge[1]] {
 				diagram.Edges = append(diagram.Edges, &pb.ImpactEdge{FromKey: from.Key, ToKey: to.Key, Change: kind, Weight: weight})
 			}
 		}
