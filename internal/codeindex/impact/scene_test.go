@@ -85,16 +85,16 @@ func TestSceneAssemblesRepositoryMembersAndTransientChanges(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scene.GetTree()) != 1 || scene.GetTree()[0].GetId() != view.ID {
+	if len(scene.GetTree()) != 1 || int64(scene.GetTree()[0].GetId()) != view.ID {
 		t.Fatalf("scene tree = %+v", scene.GetTree())
 	}
 	content := scene.GetViews()[strconv.FormatInt(view.ID, 10)]
 	if content == nil {
 		t.Fatalf("scene missing view content: %+v", scene.GetViews())
 	}
-	byPath := map[string]*pb.ImpactScenePlacement{}
+	byPath := map[string]*pb.ScenePlacement{}
 	for _, placement := range content.GetPlacements() {
-		byPath[placement.GetFilePath()] = placement
+		byPath[placement.GetElement().GetFilePath()] = placement
 	}
 	if overlay := byPath["a.go"].GetOverlay(); overlay == nil || overlay.GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED || overlay.GetDistance() != 0 {
 		t.Fatalf("changed overlay = %+v", overlay)

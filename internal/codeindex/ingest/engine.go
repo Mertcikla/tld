@@ -40,7 +40,7 @@ func (e Engine) Base(ctx context.Context, id string) (*indexer.IncrementalBase, 
 	return &indexer.IncrementalBase{Snapshot: snap, Graph: g, Sources: sources}, nil
 }
 
-func (e Engine) Prepare(ctx context.Context, target *pb.ComparisonTarget) (*pb.Snapshot, error) {
+func (e Engine) Prepare(ctx context.Context, target *pb.Revision) (*pb.Snapshot, error) {
 	if target == nil {
 		return nil, fmt.Errorf("comparison target is required")
 	}

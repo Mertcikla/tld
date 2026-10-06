@@ -237,11 +237,6 @@ func synthesizeFact(g *graph.Graph, source *graph.Source, o *scip.Occurrence, sy
 	if docs := info.GetDocumentation(); len(docs) > 0 {
 		fact.Documentation = strings.Join(docs, "\n")
 	}
-	context := signature
-	ranges := splitChunk(source, start, end, 4096, 8192)
-	for i, r := range ranges {
-		g.AddChunk(fact.Id, source.Anchor(r[0], r[1]), string(source.Text[r[0]:r[1]]), context, uint32(i), uint32(len(ranges)))
-	}
 	return fact
 }
 

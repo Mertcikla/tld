@@ -12,7 +12,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func TestIncrementalPublicationRetainsChunksAndCurrentAnchors(t *testing.T) {
+func TestIncrementalPublicationRetainsCurrentAnchors(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	put := func(name, code string) {
@@ -64,8 +64,8 @@ func TestIncrementalPublicationRetainsChunksAndCurrentAnchors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(stored.Facts) != len(nextGraph.Facts) || len(stored.Chunks) != len(nextGraph.Chunks) {
-				t.Fatalf("published counts: facts %d/%d chunks %d/%d", len(stored.Facts), len(nextGraph.Facts), len(stored.Chunks), len(nextGraph.Chunks))
+			if len(stored.Facts) != len(nextGraph.Facts) {
+				t.Fatalf("published counts: facts %d/%d", len(stored.Facts), len(nextGraph.Facts))
 			}
 			for id, want := range nextGraph.Facts {
 				got := stored.Facts[id]
@@ -79,11 +79,6 @@ func TestIncrementalPublicationRetainsChunksAndCurrentAnchors(t *testing.T) {
 					if !proto.Equal(got.Evidence[i], evidence) {
 						t.Fatalf("stale evidence: %s", want.Name)
 					}
-				}
-			}
-			for id, want := range nextGraph.Chunks {
-				if !proto.Equal(stored.Chunks[id].Anchor, want.Anchor) || stored.Chunks[id].FactId != want.FactId {
-					t.Fatalf("stale chunk: %s", id)
 				}
 			}
 		}

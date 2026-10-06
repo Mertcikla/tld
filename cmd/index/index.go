@@ -60,7 +60,7 @@ func NewIndexCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "index [path|url]",
 		Short: "Index a repository into the codeindex graph",
-		Long: `Index extracts code facts, edges, and chunks from a repository using the
+		Long: `Index extracts code facts and edges from a repository using the
 in-tree codeindex engine and publishes an immutable snapshot.
 
 The target is a local directory or a remote URL (github.com/owner/repo,
@@ -651,15 +651,15 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 		return nil, parity.Report{}, nil, err
 	}
 	for _, revision := range commits {
-		if _, err = engine.Prepare(ctx, &pb.ComparisonTarget{GitRevision: revision, GitBranch: state.Branch}); err != nil {
+		if _, err = engine.Prepare(ctx, &pb.Revision{GitRevision: revision, GitBranch: state.Branch}); err != nil {
 			return nil, parity.Report{}, nil, err
 		}
 	}
-	base, err := engine.Prepare(ctx, &pb.ComparisonTarget{GitRevision: state.Revision, GitBranch: state.Branch})
+	base, err := engine.Prepare(ctx, &pb.Revision{GitRevision: state.Revision, GitBranch: state.Branch})
 	if err != nil {
 		return nil, parity.Report{}, nil, err
 	}
-	snap, err := engine.Prepare(ctx, &pb.ComparisonTarget{WorkingTree: true})
+	snap, err := engine.Prepare(ctx, &pb.Revision{WorkingTree: true})
 	if err != nil {
 		return nil, parity.Report{}, nil, err
 	}
@@ -714,7 +714,6 @@ func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Repo
 	_, _ = fmt.Fprintf(tw, "sources\t%d\n", report.Sources)
 	_, _ = fmt.Fprintf(tw, "projects\t%d\n", report.Projects)
 	_, _ = fmt.Fprintf(tw, "facts\t%d\n", report.Facts)
-	_, _ = fmt.Fprintf(tw, "chunks\t%d\n", report.Chunks)
 	_, _ = fmt.Fprintf(tw, "edges\t%d\n", report.Edges)
 	if report.Warnings > 0 {
 		_, _ = fmt.Fprintf(tw, "warnings\t%d\n", report.Warnings)

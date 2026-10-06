@@ -10,7 +10,7 @@ import (
 )
 
 // TestSymbolLevelReuseOnEdit confirms that editing one declaration reuses the
-// facts and chunks of unchanged siblings instead of rebuilding the whole file.
+// facts of unchanged siblings instead of rebuilding the whole file.
 func TestSymbolLevelReuseOnEdit(t *testing.T) {
 	ctx := context.Background()
 	original := "package a\nfunc Alpha() int { return 1 }\nfunc Beta() int { return 2 }\n"
@@ -50,14 +50,11 @@ func TestSymbolLevelReuseOnEdit(t *testing.T) {
 		t.Fatal("edited declaration kept its old body hash")
 	}
 	// Unchanged sibling content is preserved byte-for-byte.
-	if betaAfter.Fact.Code != betaBefore.Fact.Code || betaAfter.Fact.Signature != betaBefore.Fact.Signature {
+	if betaAfter.Fact.BodyHash != betaBefore.Fact.BodyHash || betaAfter.Fact.Signature != betaBefore.Fact.Signature {
 		t.Fatal("unchanged sibling was rebuilt")
 	}
-	if len(betaAfter.Chunks) != len(betaBefore.Chunks) || betaAfter.Chunks[0].Text != betaBefore.Chunks[0].Text {
-		t.Fatal("unchanged sibling chunks were rebuilt")
-	}
-	if alphaAfter.Fact.Code == alphaBefore.Fact.Code {
-		t.Fatal("edited declaration did not update its code")
+	if alphaAfter.Fact.BodyHash == alphaBefore.Fact.BodyHash {
+		t.Fatal("edited declaration did not update its body hash")
 	}
 	if alphaAfter.Fact.Id == betaAfter.Fact.Id {
 		t.Fatal("declarations share an id")
@@ -92,8 +89,8 @@ func TestUnchangedFileAdoptsWithoutReserializing(t *testing.T) {
 	if stable == nil {
 		t.Fatal("adopted fact missing")
 	}
-	if stable.SnapshotId != "snap-2" || len(g2.Chunks) == 0 {
-		t.Fatalf("fact/chunks not adopted into new snapshot: %+v", stable)
+	if stable.SnapshotId != "snap-2" {
+		t.Fatalf("fact not adopted into new snapshot: %+v", stable)
 	}
 }
 

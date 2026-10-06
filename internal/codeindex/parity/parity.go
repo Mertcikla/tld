@@ -22,7 +22,6 @@ type Report struct {
 	Projects     int               `json:"projects"`
 	Warnings     int               `json:"warnings"`
 	Facts        int               `json:"facts"`
-	Chunks       int               `json:"chunks"`
 	Edges        int               `json:"edges"`
 	FactsByKind  map[string]int    `json:"facts_by_kind"`
 	EdgesByKind  map[string]int    `json:"edges_by_kind"`
@@ -67,7 +66,6 @@ func Summarize(snap *pb.Snapshot, g *graph.Graph) Report {
 			r.FactsByPath[f.Anchor.Path]++
 		}
 	}
-	r.Chunks = len(g.Chunks)
 	for _, e := range g.EdgeFacts {
 		r.Edges++
 		r.EdgesByKind[pb.EdgeKind_name[int32(e.Kind)]]++
@@ -95,9 +93,6 @@ func Compare(want, got Report) []Diff {
 	}
 	if want.Facts != got.Facts {
 		add("facts", want.Facts, got.Facts)
-	}
-	if want.Chunks != got.Chunks {
-		add("chunks", want.Chunks, got.Chunks)
 	}
 	if want.Edges != got.Edges {
 		add("edges", want.Edges, got.Edges)

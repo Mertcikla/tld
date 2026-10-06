@@ -56,8 +56,7 @@ func message() string { return "hello" }
 			Id string `json:"id"`
 		} `json:"snapshot"`
 		Report struct {
-			Facts  int `json:"facts"`
-			Chunks int `json:"chunks"`
+			Facts int `json:"facts"`
 		} `json:"report"`
 	}
 	if err := json.Unmarshal([]byte(indexOut), &result); err != nil {
@@ -70,7 +69,6 @@ func message() string { return "hello" }
 	db := openPostgres(t, dsn)
 	defer func() { _ = db.Close() }()
 	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM codeindex_facts`, 2)
-	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM codeindex_chunks`, 1)
 	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM codeindex_snapshots`, 1)
 	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM elements`, 1)
 	assertCountAtLeast(t, db, `SELECT COUNT(*) FROM views`, 1)

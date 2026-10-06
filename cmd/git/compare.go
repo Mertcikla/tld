@@ -107,8 +107,8 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	display, depth := compareScope(opts, cmd.Flags().Changed("radius"))
 	diagram, err := service.Compare(ctx, impact.CompareRequest{
 		RepositoryID: repositoryID,
-		Base:         &pb.ComparisonTarget{GitRevision: base},
-		Head:         &pb.ComparisonTarget{GitRevision: head},
+		Base:         &pb.Revision{GitRevision: base},
+		Head:         &pb.Revision{GitRevision: head},
 		ContextDepth: depth,
 		Progress: func(update indexer.Progress) {
 			stage := indexcmd.DisplayStage(update.Stage)

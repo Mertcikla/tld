@@ -209,7 +209,7 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
           <Grid templateColumns="repeat(auto-fit, minmax(100px, 1fr))" gap={3}>
             {[
               ['Files', repository.sources], ['Facts', repository.facts], ['Edges', repository.edges],
-              ['Chunks', repository.chunks], ['Snapshots', snapshots.length], ['Maps', maps.length],
+              ['Snapshots', snapshots.length], ['Maps', maps.length],
             ].map(([label, count]) => (
               <Box key={label}>
                 <Text fontSize="xl" fontWeight="semibold" sx={{ fontVariantNumeric: 'tabular-nums' }}>{Number(count).toLocaleString()}</Text>

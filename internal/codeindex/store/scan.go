@@ -7,13 +7,11 @@ import (
 )
 
 const (
-	factColumns  = `id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, code, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json`
-	edgeColumns  = `id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, anchor_json, evidence_json`
-	chunkColumns = `id, fact_id, snapshot_id, anchor_json, text, context, idx, total`
+	factColumns = `id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, body_hash, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json`
+	edgeColumns = `id, repository_id, snapshot_id, kind, from_fact_id, to_fact_id, target_symbol_key, logical_key, weight, anchor_json, evidence_json`
 
-	factColumnsQualified  = `f.id, f.repository_id, f.snapshot_id, f.language, f.kind, f.name, f.qualified_name, f.symbol_key, f.signature, f.documentation, f.code, f.parent_fact_id, f.logical_key, f.path, f.anchor_json, f.evidence_json, f.imports_json`
-	edgeColumnsQualified  = `e.id, e.repository_id, e.snapshot_id, e.kind, e.from_fact_id, e.to_fact_id, e.target_symbol_key, e.logical_key, e.weight, e.anchor_json, e.evidence_json`
-	chunkColumnsQualified = `c.id, c.fact_id, c.snapshot_id, c.anchor_json, c.text, c.context, c.idx, c.total`
+	factColumnsQualified = `f.id, f.repository_id, f.snapshot_id, f.language, f.kind, f.name, f.qualified_name, f.symbol_key, f.signature, f.documentation, f.body_hash, f.parent_fact_id, f.logical_key, f.path, f.anchor_json, f.evidence_json, f.imports_json`
+	edgeColumnsQualified = `e.id, e.repository_id, e.snapshot_id, e.kind, e.from_fact_id, e.to_fact_id, e.target_symbol_key, e.logical_key, e.weight, e.anchor_json, e.evidence_json`
 )
 
 func (s *Store) scanFacts(ctx context.Context, query string, args ...any) ([]*pb.CodeFact, error) {
@@ -32,7 +30,7 @@ func (s *Store) scanFacts(ctx context.Context, query string, args ...any) ([]*pb
 			imports          string
 		)
 		if err := rows.Scan(&f.Id, &f.RepositoryId, &f.SnapshotId, &f.Language, &kind, &f.Name, &f.QualifiedName,
-			&f.SymbolKey, &f.Signature, &f.Documentation, &f.Code, &f.ParentFactId, &f.LogicalKey, &path,
+			&f.SymbolKey, &f.Signature, &f.Documentation, &f.BodyHash, &f.ParentFactId, &f.LogicalKey, &path,
 			&anchor, &evidence, &imports); err != nil {
 			return nil, err
 		}
@@ -66,31 +64,6 @@ func (s *Store) scanEdges(ctx context.Context, query string, args ...any) ([]*pb
 		e.Anchor = unmarshalAnchor(anchor)
 		e.Evidence = unmarshalEvidence(evidence)
 		out = append(out, &e)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) scanChunks(ctx context.Context, query string, args ...any) ([]*pb.Chunk, error) {
-	rows, err := s.bun.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	out := []*pb.Chunk{}
-	for rows.Next() {
-		var (
-			c      pb.Chunk
-			anchor string
-			index  int
-			total  int
-		)
-		if err := rows.Scan(&c.Id, &c.FactId, &c.SnapshotId, &anchor, &c.Text, &c.Context, &index, &total); err != nil {
-			return nil, err
-		}
-		c.Anchor = unmarshalAnchor(anchor)
-		c.Index = uint32(index)
-		c.Total = uint32(total)
-		out = append(out, &c)
 	}
 	return out, rows.Err()
 }

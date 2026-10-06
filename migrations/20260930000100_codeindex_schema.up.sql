@@ -78,6 +78,7 @@ CREATE TABLE IF NOT EXISTS codeindex_facts (
   language TEXT NOT NULL DEFAULT '',
   kind INTEGER NOT NULL DEFAULT 0,
   name TEXT NOT NULL DEFAULT '',
+  body_hash TEXT NOT NULL DEFAULT '',
   qualified_name TEXT NOT NULL DEFAULT '',
   symbol_key TEXT NOT NULL DEFAULT '',
   signature TEXT NOT NULL DEFAULT '',
@@ -98,23 +99,6 @@ CREATE INDEX IF NOT EXISTS idx_codeindex_facts_logical ON codeindex_facts(snapsh
 CREATE INDEX IF NOT EXISTS idx_codeindex_facts_symbol ON codeindex_facts(snapshot_id, symbol_key);
 CREATE INDEX IF NOT EXISTS idx_codeindex_facts_path ON codeindex_facts(snapshot_id, path);
 CREATE INDEX IF NOT EXISTS idx_codeindex_facts_org_id ON codeindex_facts(org_id);
-
-CREATE TABLE IF NOT EXISTS codeindex_chunks (
-  id TEXT NOT NULL,
-  fact_id TEXT NOT NULL DEFAULT '',
-  snapshot_id TEXT NOT NULL,
-  anchor_json TEXT NOT NULL DEFAULT 'null',
-  text TEXT NOT NULL DEFAULT '',
-  context TEXT NOT NULL DEFAULT '',
-  idx INTEGER NOT NULL DEFAULT 0,
-  total INTEGER NOT NULL DEFAULT 0,
-  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
-  PRIMARY KEY (org_id, id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_codeindex_chunks_snapshot ON codeindex_chunks(snapshot_id);
-CREATE INDEX IF NOT EXISTS idx_codeindex_chunks_fact ON codeindex_chunks(fact_id);
-CREATE INDEX IF NOT EXISTS idx_codeindex_chunks_org_id ON codeindex_chunks(org_id);
 
 CREATE TABLE IF NOT EXISTS codeindex_edges (
   id TEXT NOT NULL,
@@ -268,7 +252,7 @@ CREATE TABLE IF NOT EXISTS codeindex_project_artifacts (
 
 CREATE INDEX IF NOT EXISTS idx_codeindex_project_artifacts_org_id ON codeindex_project_artifacts(org_id);
 
--- Snapshot membership decouples immutable entities (facts, chunks, edges) from
+-- Snapshot membership decouples immutable entities (facts, edges) from
 -- the snapshots that contain them. Reused entities keep a stable id across
 -- snapshots, so an incremental publish writes only changed rows and records
 -- membership for the rest.
@@ -281,16 +265,6 @@ CREATE TABLE IF NOT EXISTS codeindex_snapshot_facts (
 
 CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_facts_fact ON codeindex_snapshot_facts(fact_id);
 CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_facts_org_id ON codeindex_snapshot_facts(org_id);
-
-CREATE TABLE IF NOT EXISTS codeindex_snapshot_chunks (
-  snapshot_id TEXT NOT NULL,
-  chunk_id TEXT NOT NULL,
-  org_id TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
-  PRIMARY KEY (org_id, snapshot_id, chunk_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_chunks_chunk ON codeindex_snapshot_chunks(chunk_id);
-CREATE INDEX IF NOT EXISTS idx_codeindex_snapshot_chunks_org_id ON codeindex_snapshot_chunks(org_id);
 
 CREATE TABLE IF NOT EXISTS codeindex_snapshot_edges (
   snapshot_id TEXT NOT NULL,

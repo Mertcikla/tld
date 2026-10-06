@@ -17,7 +17,7 @@ func TestDiffFactsIgnoresSCIPPackageVersion(t *testing.T) {
 		Name:          "Run",
 		Language:      "go",
 		Signature:     "func (s *Store) Run() error",
-		Code:          "func (s *Store) Run() error { return nil }",
+		BodyHash:      "base-body-hash",
 		LogicalKey:    "fact|store.go|FACT_KIND_METHOD|Run|scope|*Store|0",
 		SymbolKey:     "scip-go gomod github.com/x/y . `pkg`/Store#Run().",
 		QualifiedName: "scip-go gomod github.com/x/y . `pkg`/Store#Run().",
@@ -29,7 +29,7 @@ func TestDiffFactsIgnoresSCIPPackageVersion(t *testing.T) {
 		Name:          base.Name,
 		Language:      base.Language,
 		Signature:     base.Signature,
-		Code:          base.Code,
+		BodyHash:      base.BodyHash,
 		LogicalKey:    base.LogicalKey,
 		SymbolKey:     "scip-go gomod github.com/x/y 15cd83bf4f54 `pkg`/Store#Run().",
 		QualifiedName: "scip-go gomod github.com/x/y 15cd83bf4f54 `pkg`/Store#Run().",
@@ -44,7 +44,7 @@ func TestDiffFactsIgnoresSCIPPackageVersion(t *testing.T) {
 		t.Fatalf("unexpected add/remove: added=%d removed=%d", len(delta.Added), len(delta.Removed))
 	}
 
-	head.Code = "func (s *Store) Run() error { return err }"
+	head.BodyHash = "changed-body-hash"
 	if delta := diffFacts([]*pb.CodeFact{base}, []*pb.CodeFact{head}); len(delta.Modified) != 1 {
 		t.Fatalf("real body change not reported as modified: %+v", delta.Modified)
 	}

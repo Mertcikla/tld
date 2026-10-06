@@ -5,15 +5,23 @@ import (
 	"encoding/json"
 	"time"
 
-	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/uptrace/bun"
+)
+
+// GroupKind classifies a persisted analysis group.
+type GroupKind int
+
+const (
+	GroupKindUnspecified GroupKind = 0
+	GroupKindCommunity   GroupKind = 1
+	GroupKindCluster     GroupKind = 2
 )
 
 // AnalysisGroup is one persisted grouping produced by an analysis run.
 type AnalysisGroup struct {
 	ID      string
 	Label   string
-	Kind    pb.GroupKind
+	Kind    GroupKind
 	Members []string
 }
 

@@ -79,7 +79,7 @@ func TestImpactRadiusAndScopedMaterialization(t *testing.T) {
 			t.Fatal("removed symbol not shown")
 		}
 	}
-	assertNoInlinedCode(t, diagram)
+	assertFactFingerprints(t, diagram)
 	expanded, err := Save(ctx, ws, idx, "repo", "live", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -467,9 +467,9 @@ func TestRetireLegacyMaterializationPreservesSharedResources(t *testing.T) {
 	}
 }
 
-// assertNoInlinedCode verifies impact diagrams carry symbol metadata only:
-// names and anchors stay, but inline source is never part of the payload.
-func assertNoInlinedCode(t *testing.T, diagram *pb.ImpactDiagram) {
+// assertBodyFingerprints verifies impact diagrams carry symbol metadata and a
+// content fingerprint, never inline source.
+func assertFactFingerprints(t *testing.T, diagram *pb.ImpactDiagram) {
 	t.Helper()
 	for _, facts := range [][]*pb.CodeFact{
 		diagram.GetDiff().GetFacts().GetAdded(),
@@ -477,16 +477,16 @@ func assertNoInlinedCode(t *testing.T, diagram *pb.ImpactDiagram) {
 		diagram.GetDiff().GetFacts().GetModified(),
 	} {
 		for _, fact := range facts {
-			if fact.GetCode() != "" {
-				t.Fatalf("impact diff inlined source for %q", fact.GetName())
+			if fact.GetBodyHash() == "" {
+				t.Fatalf("impact diff missing body hash for %q", fact.GetName())
 			}
 		}
 	}
 	for _, node := range diagram.GetNodes() {
 		for _, facts := range [][]*pb.CodeFact{node.GetSymbols().GetAdded(), node.GetSymbols().GetRemoved(), node.GetSymbols().GetModified()} {
 			for _, fact := range facts {
-				if fact.GetCode() != "" {
-					t.Fatalf("impact node inlined source for %q", fact.GetName())
+				if fact.GetBodyHash() == "" {
+					t.Fatalf("impact node missing body hash for %q", fact.GetName())
 				}
 				if fact.GetName() == "" || fact.GetAnchor().GetPath() == "" {
 					t.Fatalf("symbol metadata dropped: %+v", fact)

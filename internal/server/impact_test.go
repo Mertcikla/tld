@@ -35,8 +35,8 @@ func TestCompareRepositoryNoCheckout(t *testing.T) {
 	}
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
-	client := codeindexv1connect.NewMapperServiceClient(ts.Client(), ts.URL+"/api")
-	stream, err := client.CompareRepository(ctx, connect.NewRequest(&pb.CompareRepositoryRequest{RepositoryId: repoID, Base: &pb.ComparisonTarget{SnapshotId: "base"}, Head: &pb.ComparisonTarget{SnapshotId: "head"}}))
+	client := codeindexv1connect.NewCodeIndexServiceClient(ts.Client(), ts.URL+"/api")
+	stream, err := client.CompareRepository(ctx, connect.NewRequest(&pb.CompareRepositoryRequest{RepositoryId: repoID, Base: &pb.Revision{SnapshotId: "base"}, Head: &pb.Revision{SnapshotId: "head"}}))
 	if err != nil {
 		t.Fatal(err)
 	}

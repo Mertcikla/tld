@@ -14,7 +14,6 @@ func TestAdoptRekeysAcrossSnapshots(t *testing.T) {
 	child := base.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(16, 25), "func A(){}", "func A()", &pb.Evidence{Producer: "tree-sitter"})
 	child.ParentFactId = parent.Id
 	child.SymbolKey = "sym-a"
-	base.AddChunk(child.Id, src.Anchor(16, 25), "func A(){}", "func A()", 0, 1)
 	edge := base.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, child.Id, parent.Id, "", src.Anchor(20, 21), &pb.Evidence{Producer: "scip"})
 
 	next := NewGraph("repo", "snap-b")
@@ -23,16 +22,10 @@ func TestAdoptRekeysAcrossSnapshots(t *testing.T) {
 	if adoptedChild.Id == child.Id || adoptedChild.Id != next.AdoptFact(child).Id {
 		t.Fatalf("adopt is not snapshot-scoped or stable: %q", adoptedChild.Id)
 	}
-	if adoptedChild.SymbolKey != "sym-a" || adoptedChild.Code != child.Code || len(adoptedChild.Evidence) != 1 {
+	if adoptedChild.SymbolKey != "sym-a" || adoptedChild.BodyHash != child.BodyHash || len(adoptedChild.Evidence) != 1 {
 		t.Fatalf("adopted fact lost data: %+v", adoptedChild)
 	}
 	adoptedChild.ParentFactId = adoptedParent.Id
-	for _, c := range base.Chunks {
-		next.AdoptChunk(c, adoptedChild.Id)
-	}
-	if len(next.Chunks) != 1 {
-		t.Fatalf("chunks = %d", len(next.Chunks))
-	}
 	adoptedEdge := next.AdoptEdgeFact(edge, adoptedChild.Id, adoptedParent.Id, "")
 	if adoptedEdge == nil || adoptedEdge.FromFactId != adoptedChild.Id || adoptedEdge.ToFactId != adoptedParent.Id {
 		t.Fatalf("adopted edge %+v", adoptedEdge)

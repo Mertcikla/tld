@@ -23,11 +23,6 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 	if err != nil {
 		return nil, err
 	}
-	// Impact diagrams carry identifiers, anchors, and change metadata only.
-	// Inlining source would multiply the payload (it is duplicated in both the
-	// diff and each node's symbol delta) and bloat the persisted overlay;
-	// consumers fetch source through GetFact/GetSource when they need it.
-	stripFactCode(diff)
 	oldEdges, err := idx.FilePairCounts(ctx, fromID)
 	if err != nil {
 		return nil, err
@@ -185,21 +180,6 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 	}
 	diagram.Groups = buildImpactGroups(ctx, idx, diagram, mappings, data)
 	return diagram, nil
-}
-
-// stripFactCode clears inline source from a diff's facts in place. The diff is
-// freshly built for this diagram, so the store's copy is unaffected.
-func stripFactCode(diff *pb.SnapshotDiff) {
-	if diff == nil {
-		return
-	}
-	for _, facts := range [][]*pb.CodeFact{diff.GetFacts().GetAdded(), diff.GetFacts().GetRemoved(), diff.GetFacts().GetModified()} {
-		for _, fact := range facts {
-			if fact != nil {
-				fact.Code = ""
-			}
-		}
-	}
 }
 
 // Save persists the comparison payload only. Canvas overlays are ephemeral and

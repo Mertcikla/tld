@@ -34,8 +34,8 @@ type Service struct {
 // to carry into the diagram.
 type CompareRequest struct {
 	RepositoryID string
-	Base         *pb.ComparisonTarget
-	Head         *pb.ComparisonTarget
+	Base         *pb.Revision
+	Head         *pb.Revision
 	ContextDepth uint32
 	Progress     indexer.ProgressFunc
 }

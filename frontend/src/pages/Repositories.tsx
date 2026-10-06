@@ -1130,8 +1130,7 @@ export default function Repositories() {
                             <Text fontSize="10px" color="gray.400" mt={1}>
                               {s.statistics.facts.toLocaleString()} facts ·{' '}
                               {s.statistics.edges.toLocaleString()} edges ·{' '}
-                              {s.statistics.sources.toLocaleString()} files ·{' '}
-                              {s.statistics.chunks.toLocaleString()} chunks
+                              {s.statistics.sources.toLocaleString()} files
                             </Text>
                           ) : (
                             <Text fontSize="10px" color="gray.500" mt={1}>

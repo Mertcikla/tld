@@ -11,7 +11,7 @@ import (
 )
 
 // LoadGraph reconstructs a published snapshot's code graph so an incremental
-// build can carry forward unchanged facts, chunks, and edges.
+// build can carry forward unchanged facts and edges.
 func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph, error) {
 	snap, err := s.Snapshot(ctx, snapshotID)
 	if err != nil {
@@ -61,13 +61,6 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 	}
 	for _, f := range facts {
 		g.Facts[f.Id] = f
-	}
-	chunks, err := s.Chunks(ctx, snap.Id)
-	if err != nil {
-		return nil, err
-	}
-	for _, c := range chunks {
-		g.Chunks[c.Id] = c
 	}
 	edges, err := s.EdgeFacts(ctx, snap.Id, pb.EdgeKind_EDGE_KIND_UNSPECIFIED, "", "", graphLoadLimit)
 	if err != nil {
@@ -325,7 +318,7 @@ func sameFact(a, b *pb.CodeFact) bool {
 	if a.Kind == pb.FactKind_FACT_KIND_FILE && a.Anchor != nil && a.Anchor.SourceHash != b.Anchor.SourceHash {
 		return false
 	}
-	return a.Documentation == b.Documentation && strings.Join(a.Imports, "\x00") == strings.Join(b.Imports, "\x00") && graph.Hash([]byte(a.Code)) == graph.Hash([]byte(b.Code))
+	return a.Documentation == b.Documentation && strings.Join(a.Imports, "\x00") == strings.Join(b.Imports, "\x00") && a.GetBodyHash() == b.GetBodyHash()
 }
 
 func diffFacts(from, to []*pb.CodeFact) *pb.CodeFactDelta {

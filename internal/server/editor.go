@@ -58,7 +58,7 @@ func registerEditorHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, 
 
 }
 
-func (s *codeIndexRepositoryService) GetWorktreeSource(ctx context.Context, req *connect.Request[codeindexv1.GetWorktreeSourceRequest]) (*connect.Response[codeindexv1.GetWorktreeSourceResponse], error) {
+func (s *repositoryService) GetWorktreeSource(ctx context.Context, req *connect.Request[codeindexv1.GetWorktreeSourceRequest]) (*connect.Response[codeindexv1.GetWorktreeSourceResponse], error) {
 	if strings.TrimSpace(req.Msg.GetFilePath()) == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("file_path is required"))
 	}

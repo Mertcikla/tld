@@ -40,7 +40,7 @@ func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 	baseGraph := cgraph.NewGraph(repoID, base.Id)
 	baseGraph.Facts["f1"] = &codeindexv1.CodeFact{
 		Id: "f1", RepositoryId: repoID, SnapshotId: base.Id, LogicalKey: "l1",
-		Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Name: "A", Code: "func A() {}",
+		Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Name: "A", BodyHash: "hash-a-v1",
 		Anchor: &codeindexv1.SourceAnchor{Path: "a.go", SourceHash: "h1"},
 	}
 	if err := idx.Publish(ctx, root, base, baseGraph); err != nil {
@@ -61,12 +61,12 @@ func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 	nextGraph := cgraph.NewGraph(repoID, next.Id)
 	nextGraph.Facts["f1b"] = &codeindexv1.CodeFact{
 		Id: "f1b", RepositoryId: repoID, SnapshotId: next.Id, LogicalKey: "l1",
-		Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Name: "A", Code: "func A() int { return 1 }",
+		Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Name: "A", BodyHash: "hash-a-v2",
 		Anchor: &codeindexv1.SourceAnchor{Path: "a.go", SourceHash: "h2"},
 	}
 	nextGraph.Facts["f2"] = &codeindexv1.CodeFact{
 		Id: "f2", RepositoryId: repoID, SnapshotId: next.Id, LogicalKey: "l2",
-		Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Name: "B", Code: "func B() {}",
+		Kind: codeindexv1.FactKind_FACT_KIND_FUNCTION, Name: "B", BodyHash: "hash-b",
 		Anchor: &codeindexv1.SourceAnchor{Path: "b.go", SourceHash: "h3"},
 	}
 	if err := idx.Publish(ctx, root, next, nextGraph); err != nil {
@@ -75,9 +75,9 @@ func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
-	client := codeindexv1connect.NewCodeFactServiceClient(ts.Client(), ts.URL+"/api")
+	client := codeindexv1connect.NewCodeIndexServiceClient(ts.Client(), ts.URL+"/api")
 
-	snaps, err := client.ListSnapshots(ctx, connect.NewRequest(&codeindexv1.RepositoryID{Id: repoID}))
+	snaps, err := client.ListSnapshots(ctx, connect.NewRequest(&codeindexv1.ID{Id: repoID}))
 	if err != nil {
 		t.Fatalf("ListSnapshots: %v", err)
 	}
@@ -92,17 +92,17 @@ func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 		if snap.Id == next.Id {
 			expected = 2
 		}
-		if snap.Statistics == nil || snap.Statistics.Facts != expected || snap.Statistics.Sources != expected || snap.Statistics.Edges != 0 || snap.Statistics.Chunks != 0 {
+		if snap.Statistics == nil || snap.Statistics.Facts != expected || snap.Statistics.Sources != expected || snap.Statistics.Edges != 0 {
 			t.Fatalf("snapshot %s statistics: %+v", snap.Id, snap.Statistics)
 		}
 	}
 
-	repo, err := client.GetRepository(ctx, connect.NewRequest(&codeindexv1.RepositoryID{Id: repoID}))
+	repo, err := idx.Repository(ctx, repoID)
 	if err != nil {
-		t.Fatalf("GetRepository: %v", err)
+		t.Fatalf("Repository: %v", err)
 	}
-	if repo.Msg.GetLatestSnapshotId() != "snap-2" {
-		t.Fatalf("latest = %q, want snap-2", repo.Msg.GetLatestSnapshotId())
+	if repo.GetLatestSnapshotId() != "snap-2" {
+		t.Fatalf("latest = %q, want snap-2", repo.GetLatestSnapshotId())
 	}
 
 	diff, err := client.DiffSnapshots(ctx, connect.NewRequest(&codeindexv1.SnapshotDiffRequest{
@@ -153,9 +153,9 @@ func TestListSnapshotsExcludesWorkingTree(t *testing.T) {
 
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
-	client := codeindexv1connect.NewCodeFactServiceClient(ts.Client(), ts.URL+"/api")
+	client := codeindexv1connect.NewCodeIndexServiceClient(ts.Client(), ts.URL+"/api")
 
-	snaps, err := client.ListSnapshots(ctx, connect.NewRequest(&codeindexv1.RepositoryID{Id: repoID}))
+	snaps, err := client.ListSnapshots(ctx, connect.NewRequest(&codeindexv1.ID{Id: repoID}))
 	if err != nil {
 		t.Fatalf("ListSnapshots: %v", err)
 	}
@@ -459,25 +459,25 @@ func TestDeleteRepositoryStopsWatcherOnAnotherCheckout(t *testing.T) {
 	defer cancel()
 	remote := "https://github.com/test/demo"
 	testGit(t, root, "remote", "add", "origin", remote)
-	if err := s.idx.SetRepositoryOrigin(ctx, repoID, remote, false); err != nil {
+	if err := s.store.SetRepositoryOrigin(ctx, repoID, remote, false); err != nil {
 		t.Fatal(err)
 	}
 	otherRoot, _ := gitFixture(t)
 	testGit(t, otherRoot, "remote", "add", "origin", remote)
 	watchKey := cgraph.RepositoryID(otherRoot)
-	if err := s.idx.ClaimWatch(ctx, cstore.WatchState{RepositoryID: watchKey, RepoRoot: otherRoot, OwnerID: "watch-owner", State: "scanning"}); err != nil {
+	if err := s.store.ClaimWatch(ctx, cstore.WatchState{RepositoryID: watchKey, RepoRoot: otherRoot, OwnerID: "watch-owner", State: "scanning"}); err != nil {
 		t.Fatal(err)
 	}
 	unrelatedKey := cgraph.RepositoryID("/unrelated")
-	if err := s.idx.UpsertWatchState(ctx, cstore.WatchState{RepositoryID: unrelatedKey, RepoRoot: "/unrelated", OwnerID: "unrelated-owner", State: "idle"}); err != nil {
+	if err := s.store.UpsertWatchState(ctx, cstore.WatchState{RepositoryID: unrelatedKey, RepoRoot: "/unrelated", OwnerID: "unrelated-owner", State: "idle"}); err != nil {
 		t.Fatal(err)
 	}
-	_, release, err := s.idx.AcquireLease(ctx, repoID)
+	_, release, err := s.store.AcquireLease(ctx, repoID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	child := &watchChild{repositoryID: watchKey, repoRoot: otherRoot, done: make(chan struct{})}
-	manager := newWatchManager("", s.idx)
+	manager := newWatchManager("", s.store)
 	manager.children[watchKey] = child
 	stopped := make(chan error, 1)
 	go func() {
@@ -486,13 +486,13 @@ func TestDeleteRepositoryStopsWatcherOnAnotherCheckout(t *testing.T) {
 		ticker := time.NewTicker(5 * time.Millisecond)
 		defer ticker.Stop()
 		for {
-			requested, err := s.idx.WatchStopRequested(ctx, watchKey)
+			requested, err := s.store.WatchStopRequested(ctx, watchKey)
 			if err != nil {
 				stopped <- err
 				return
 			}
 			if requested {
-				stopped <- s.idx.ReleaseWatch(ctx, watchKey, "watch-owner")
+				stopped <- s.store.ReleaseWatch(ctx, watchKey, "watch-owner")
 				return
 			}
 			select {
@@ -503,7 +503,7 @@ func TestDeleteRepositoryStopsWatcherOnAnotherCheckout(t *testing.T) {
 			}
 		}
 	}()
-	svc := &codeIndexRepositoryService{store: s.idx, ws: s.ws, watches: manager}
+	svc := &repositoryService{store: s.store, ws: s.ws, watches: manager}
 	_, err = svc.DeleteRepository(ctx, connect.NewRequest(&codeindexv1.DeleteRepositoryRequest{Id: repoID}))
 	if err != nil {
 		t.Fatalf("delete: %v", err)
@@ -511,14 +511,14 @@ func TestDeleteRepositoryStopsWatcherOnAnotherCheckout(t *testing.T) {
 	if err := <-stopped; err != nil {
 		t.Fatalf("watcher did not stop cooperatively: %v", err)
 	}
-	if _, err := s.idx.Repository(ctx, repoID); err == nil {
+	if _, err := s.store.Repository(ctx, repoID); err == nil {
 		t.Fatal("repository remains after watcher shutdown")
 	}
-	state, ok, err := s.idx.WatchState(ctx, watchKey)
+	state, ok, err := s.store.WatchState(ctx, watchKey)
 	if err != nil || !ok || state.Live(time.Now()) {
 		t.Fatalf("checkout watcher still running: %+v, %v", state, err)
 	}
-	state, ok, err = s.idx.WatchState(ctx, unrelatedKey)
+	state, ok, err = s.store.WatchState(ctx, unrelatedKey)
 	if err != nil || !ok || !state.Live(time.Now()) || state.StopRequested {
 		t.Fatalf("unrelated watcher was stopped: %+v, %v", state, err)
 	}

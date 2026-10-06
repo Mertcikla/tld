@@ -41,13 +41,6 @@ func normalizeGraph(t *testing.T, g *graph.Graph) []string {
 		f.ParentFactId = key(f.ParentFactId)
 		encode(f)
 	}
-	for _, chunk := range g.Chunks {
-		c := proto.Clone(chunk).(*pb.Chunk)
-		c.Id = ""
-		c.SnapshotId = ""
-		c.FactId = key(c.FactId)
-		encode(c)
-	}
 	for _, edge := range g.EdgeFacts {
 		e := proto.Clone(edge).(*pb.EdgeFact)
 		e.Id = ""
@@ -147,7 +140,7 @@ done
 		t.Fatalf("healthy project should stay cached and failed project retry: %s", runs)
 	}
 }
-func TestIncrementalMatchesFreshAndRetainsChunks(t *testing.T) {
+func TestIncrementalMatchesFresh(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	put := func(name, code string) {
@@ -177,7 +170,7 @@ func TestIncrementalMatchesFreshAndRetainsChunks(t *testing.T) {
 			t.Fatal(err)
 		}
 		if !reflect.DeepEqual(normalizeGraph(t, incremental), normalizeGraph(t, fresh)) {
-			t.Fatalf("incremental differs from fresh; chunks=%d/%d", len(incremental.Chunks), len(fresh.Chunks))
+			t.Fatal("incremental differs from fresh")
 		}
 		if incremental.Sources["b.go"].SyntaxCache != stableCache {
 			t.Fatal("unchanged syntax was reparsed")

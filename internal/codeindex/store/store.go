@@ -33,8 +33,6 @@ type CodeIndexStore interface {
 	EdgeFact(ctx context.Context, id string) (*pb.EdgeFact, error)
 	EdgeFacts(ctx context.Context, snapshotID string, kind pb.EdgeKind, logicalKey, after string, limit int) ([]*pb.EdgeFact, error)
 	EdgeVersions(ctx context.Context, logicalKey string) ([]*pb.EdgeFact, error)
-	Chunk(ctx context.Context, id string) (*pb.Chunk, error)
-	Chunks(ctx context.Context, snapshotID string) ([]*pb.Chunk, error)
 	FileEdges(ctx context.Context, snapshotID string) ([]FileEdge, error)
 	FileImports(ctx context.Context, snapshotID string) ([]FileImport, error)
 	SaveAnalysis(ctx context.Context, run AnalysisRun) error

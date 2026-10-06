@@ -13,6 +13,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/pkg/app"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestWatchStatusShowsStoppedWhenNoRecord(t *testing.T) {
@@ -23,8 +24,8 @@ func TestWatchStatusShowsStoppedWhenNoRecord(t *testing.T) {
 	repoID := graph.RepositoryID("/repo")
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
-	client := codeindexv1connect.NewWatchServiceClient(ts.Client(), ts.URL+"/api")
-	status, err := client.GetWatchStatus(ctx, connect.NewRequest(&pb.GetWatchStatusRequest{RepositoryId: repoID}))
+	client := codeindexv1connect.NewRepositoryServiceClient(ts.Client(), ts.URL+"/api")
+	status, err := client.GetWatchStatus(ctx, connect.NewRequest(&pb.ID{Id: repoID}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +49,7 @@ func TestWatchStatusShowsStoppedWhenNoRecord(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	status, err = client.GetWatchStatus(ctx, connect.NewRequest(&pb.GetWatchStatusRequest{RepositoryId: repoID}))
+	status, err = client.GetWatchStatus(ctx, connect.NewRequest(&pb.ID{Id: repoID}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +59,7 @@ func TestWatchStatusShowsStoppedWhenNoRecord(t *testing.T) {
 		got.GetPollIntervalMs() != 2000 || got.GetDebounceMs() != 350 || got.GetGitBranch() != "main" {
 		t.Fatalf("status: %+v", got)
 	}
-	list, err := client.ListWatches(ctx, connect.NewRequest(&pb.ListWatchesRequest{}))
+	list, err := client.ListWatches(ctx, connect.NewRequest(&emptypb.Empty{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,8 +84,8 @@ func TestWatchStatusReapsDeadOwnerWithFreshHeartbeat(t *testing.T) {
 	}
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
-	client := codeindexv1connect.NewWatchServiceClient(ts.Client(), ts.URL+"/api")
-	status, err := client.GetWatchStatus(ctx, connect.NewRequest(&pb.GetWatchStatusRequest{RepositoryId: repoID}))
+	client := codeindexv1connect.NewRepositoryServiceClient(ts.Client(), ts.URL+"/api")
+	status, err := client.GetWatchStatus(ctx, connect.NewRequest(&pb.ID{Id: repoID}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +113,8 @@ func TestWatchStopStopsAndClearsRecord(t *testing.T) {
 	}
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
-	client := codeindexv1connect.NewWatchServiceClient(ts.Client(), ts.URL+"/api")
-	status, err := client.StopWatch(ctx, connect.NewRequest(&pb.StopWatchRequest{RepositoryId: repoID}))
+	client := codeindexv1connect.NewRepositoryServiceClient(ts.Client(), ts.URL+"/api")
+	status, err := client.StopWatch(ctx, connect.NewRequest(&pb.ID{Id: repoID}))
 	if err != nil {
 		t.Fatal(err)
 	}

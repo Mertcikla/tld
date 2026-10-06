@@ -43,8 +43,7 @@ func TestDeleteRepositoryAfterDeletingOriginSnapshot(t *testing.T) {
 	st, handle := openTestStore(t)
 	defer func() { _ = handle.Close() }()
 	g := graph.NewGraph("repo", "s1")
-	g.Facts["fact"] = &pb.CodeFact{Id: "fact", RepositoryId: "repo", SnapshotId: "s1", Code: "retained code"}
-	g.Chunks["chunk"] = &pb.Chunk{Id: "chunk", FactId: "fact", SnapshotId: "s1", Text: "retained code"}
+	g.Facts["fact"] = &pb.CodeFact{Id: "fact", RepositoryId: "repo", SnapshotId: "s1", BodyHash: "retained-body-hash"}
 	g.EdgeFacts["edge"] = &pb.EdgeFact{Id: "edge", RepositoryId: "repo", SnapshotId: "s1", FromFactId: "fact"}
 	for _, snap := range []*pb.Snapshot{{Id: "s1", RepositoryId: "repo", CreatedUnix: 1}, {Id: "s2", RepositoryId: "repo", CreatedUnix: 2}} {
 		if err := st.Publish(ctx, "/repo", snap, g); err != nil {
@@ -68,7 +67,7 @@ func TestDeleteRepositoryAfterDeletingOriginSnapshot(t *testing.T) {
 	if _, err := st.Fact(ctx, "other-fact"); err != nil {
 		t.Fatalf("another repository was affected: %v", err)
 	}
-	for _, table := range []string{"codeindex_chunks", "codeindex_edges", "codeindex_snapshot_chunks", "codeindex_snapshot_edges"} {
+	for _, table := range []string{"codeindex_edges", "codeindex_snapshot_edges"} {
 		var count int
 		if err := st.bun.NewRaw("SELECT COUNT(*) FROM "+table).Scan(ctx, &count); err != nil {
 			t.Fatal(err)
@@ -215,9 +214,6 @@ func TestListingsReportMembershipStatsWithoutSourceManifests(t *testing.T) {
 	}
 	if got, want := listed.Statistics.Edges, uint32(len(g.EdgeFacts)); got != want {
 		t.Fatalf("statistics edges = %d, want %d", got, want)
-	}
-	if got, want := listed.Statistics.Chunks, uint32(len(g.Chunks)); got != want {
-		t.Fatalf("statistics chunks = %d, want %d", got, want)
 	}
 	if got, want := listed.Statistics.Sources, uint32(len(snap.Sources)); got != want {
 		t.Fatalf("statistics sources = %d, want %d", got, want)

@@ -14,8 +14,8 @@ import (
 )
 
 // DeleteRepository removes a repository, every snapshot it published, and all
-// snapshot-scoped records (sources, facts, chunks, edges, analysis runs and
-// their groups), plus any resource mappings recorded for it. It does not touch
+// snapshot-scoped records (sources, facts, edges, analysis runs and their
+// groups), plus any resource mappings recorded for it. It does not touch
 // workspace resources materialized from the repository.
 func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error {
 	if strings.TrimSpace(repositoryID) == "" {
@@ -33,7 +33,6 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 		"codeindex_project_artifacts",
 		"codeindex_sources",
 		"codeindex_snapshot_facts",
-		"codeindex_snapshot_chunks",
 		"codeindex_snapshot_edges",
 	}
 	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
@@ -67,10 +66,6 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 		}
 		// Shared entities retain the snapshot_id of their first publication,
 		// which may no longer exist. Delete by repository ownership instead.
-		if _, err := tx.NewRaw(`DELETE FROM codeindex_chunks WHERE fact_id IN (
-			SELECT id FROM codeindex_facts WHERE codeindex_facts.org_id = codeindex_chunks.org_id AND repository_id = ?)`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
-			return err
-		}
 		for _, table := range []string{"codeindex_edges", "codeindex_facts"} {
 			if _, err := tx.NewRaw(`DELETE FROM `+table+` WHERE repository_id = ?`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 				return err
@@ -89,7 +84,7 @@ func (s *Store) DeleteRepository(ctx context.Context, repositoryID string) error
 
 // DeleteSnapshot removes one published snapshot and the records scoped to it
 // (sources, project artifacts, analysis runs and their groups, and completed
-// maps). Resource ownership survives snapshot deletion. Facts, chunks, and edges are shared
+// maps). Resource ownership survives snapshot deletion. Facts and edges are shared
 // across snapshots through membership tables, so only this snapshot's
 // membership is removed; entities no longer referenced by any snapshot are
 // garbage collected. When the deleted snapshot was the repository's latest, the
@@ -115,7 +110,6 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 			"codeindex_project_artifacts",
 			"codeindex_sources",
 			"codeindex_snapshot_facts",
-			"codeindex_snapshot_chunks",
 			"codeindex_snapshot_edges",
 		} {
 			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?"+where, append([]any{snapshotID}, scopeArgs...)...).Exec(ctx); err != nil {
@@ -127,11 +121,6 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_edges
 			WHERE repository_id = ? AND id NOT IN (SELECT edge_id FROM codeindex_snapshot_edges WHERE codeindex_snapshot_edges.org_id = codeindex_edges.org_id)`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
-			return err
-		}
-		if _, err := tx.NewRaw(`DELETE FROM codeindex_chunks
-			WHERE id NOT IN (SELECT chunk_id FROM codeindex_snapshot_chunks WHERE codeindex_snapshot_chunks.org_id = codeindex_chunks.org_id)
-			AND fact_id IN (SELECT id FROM codeindex_facts WHERE codeindex_facts.org_id = codeindex_chunks.org_id AND repository_id = ?)`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_facts
@@ -153,12 +142,11 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 // latest published snapshot. It resolves the latest snapshot and its record
 // counts in a single query using the snapshot membership tables, matching the
 // counts reported by Snapshot.
-func (s *Store) ListRepositories(ctx context.Context) ([]*pb.RepositorySummary, error) {
+func (s *Store) ListRepositories(ctx context.Context) ([]*pb.Repository, error) {
 	query := `SELECT
 		r.id, r.root, r.latest_snapshot_id, r.remote_url, r.managed,
 		COALESCE(s.created_unix, 0), COALESCE(s.git_revision, ''), COALESCE(s.git_branch, ''),
 		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id),
-		(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id),
 		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id),
 		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = r.latest_snapshot_id AND org_id = r.org_id)
 		FROM codeindex_repositories r
@@ -175,13 +163,13 @@ func (s *Store) ListRepositories(ctx context.Context) ([]*pb.RepositorySummary, 
 	}
 	defer func() { _ = rows.Close() }()
 
-	out := make([]*pb.RepositorySummary, 0)
+	out := make([]*pb.Repository, 0)
 	for rows.Next() {
-		var summary pb.RepositorySummary
+		var summary pb.Repository
 		if err := rows.Scan(
 			&summary.Id, &summary.Root, &summary.LatestSnapshotId, &summary.RemoteUrl, &summary.Managed,
 			&summary.LatestCreatedUnix, &summary.GitRevision, &summary.GitBranch,
-			&summary.Facts, &summary.Chunks, &summary.Edges, &summary.Sources,
+			&summary.Facts, &summary.Edges, &summary.Sources,
 		); err != nil {
 			return nil, err
 		}

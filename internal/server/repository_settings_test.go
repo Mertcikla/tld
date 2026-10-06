@@ -36,7 +36,7 @@ func TestRepositorySettingsExternalImportsDefaultOff(t *testing.T) {
 	server := httptest.NewServer(routes)
 	defer server.Close()
 	client := codeindexv1connect.NewRepositoryServiceClient(server.Client(), server.URL+"/api")
-	settings, err := client.GetRepositorySettings(ctx, connect.NewRequest(&pb.GetRepositorySettingsRequest{RepositoryId: id}))
+	settings, err := client.GetRepositorySettings(ctx, connect.NewRequest(&pb.ID{Id: id}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestRepositorySettingsOverridesAndRemotes(t *testing.T) {
 	server := httptest.NewServer(routes)
 	defer server.Close()
 	client := codeindexv1connect.NewRepositoryServiceClient(server.Client(), server.URL+"/api")
-	settings, err := client.GetRepositorySettings(ctx, connect.NewRequest(&pb.GetRepositorySettingsRequest{RepositoryId: id}))
+	settings, err := client.GetRepositorySettings(ctx, connect.NewRequest(&pb.ID{Id: id}))
 	if err != nil || !settings.Msg.IsGit || len(settings.Msg.Remotes) != 0 || settings.Msg.MapDefaults.GetResolution() != 1.5 {
 		t.Fatalf("defaults: %v %v", settings, err)
 	}
@@ -93,7 +93,7 @@ func TestRepositorySettingsOverridesAndRemotes(t *testing.T) {
 	if saved.Msg.EffectiveMap.GetMaxLeafFiles() != 12 || saved.Msg.EffectiveMap.GetResolution() != 1.5 || saved.Msg.MapOverrides.Resolution != nil {
 		t.Fatalf("override presence/inheritance lost: %v", saved.Msg)
 	}
-	other, err := client.GetRepositorySettings(ctx, connect.NewRequest(&pb.GetRepositorySettingsRequest{RepositoryId: graph.RepositoryID(otherRoot)}))
+	other, err := client.GetRepositorySettings(ctx, connect.NewRequest(&pb.ID{Id: graph.RepositoryID(otherRoot)}))
 	if err != nil || other.Msg.EffectiveMap.GetMaxLeafFiles() != 40 || other.Msg.MapOverrides.MaxLeafFiles != nil || other.Msg.IsGit {
 		t.Fatalf("settings leaked into another repository: %v %v", other, err)
 	}
@@ -101,7 +101,7 @@ func TestRepositorySettingsOverridesAndRemotes(t *testing.T) {
 		t.Fatalf("accepted inverted inherited bounds: %v", err)
 	}
 	cfg.Map.Grouping.Resolution = 2
-	settings, err = client.GetRepositorySettings(ctx, connect.NewRequest(&pb.GetRepositorySettingsRequest{RepositoryId: id}))
+	settings, err = client.GetRepositorySettings(ctx, connect.NewRequest(&pb.ID{Id: id}))
 	if err != nil || settings.Msg.EffectiveMap.GetResolution() != 2 || settings.Msg.EffectiveMap.GetMaxLeafFiles() != 12 {
 		t.Fatalf("global change did not flow through inheritance: %v %v", settings, err)
 	}
@@ -147,7 +147,7 @@ func TestRepositorySettingsOverridesAndRemotes(t *testing.T) {
 	if _, err := client.UpdateRepositoryMapConfiguration(ctx, connect.NewRequest(&pb.UpdateRepositoryMapConfigurationRequest{RepositoryId: id})); err != nil {
 		t.Fatal(err)
 	}
-	settings, err = client.GetRepositorySettings(ctx, connect.NewRequest(&pb.GetRepositorySettingsRequest{RepositoryId: id}))
+	settings, err = client.GetRepositorySettings(ctx, connect.NewRequest(&pb.ID{Id: id}))
 	if err != nil || settings.Msg.EffectiveMap.GetMaxLeafFiles() != 40 || settings.Msg.MapOverrides.MaxLeafFiles != nil {
 		t.Fatalf("reset overrides: %v %v", settings, err)
 	}
@@ -155,7 +155,7 @@ func TestRepositorySettingsOverridesAndRemotes(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.Map.Grouping.MinRootGroups = 15
-	settings, err = client.GetRepositorySettings(ctx, connect.NewRequest(&pb.GetRepositorySettingsRequest{RepositoryId: id}))
+	settings, err = client.GetRepositorySettings(ctx, connect.NewRequest(&pb.ID{Id: id}))
 	if err != nil || settings.Msg.MapValidationError == "" {
 		t.Fatalf("conflicting inherited defaults made settings inaccessible: %v %v", settings, err)
 	}
@@ -165,7 +165,7 @@ func TestRepositorySettingsOverridesAndRemotes(t *testing.T) {
 	if err := idx.DeleteRepository(ctx, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.GetRepositorySettings(ctx, connect.NewRequest(&pb.GetRepositorySettingsRequest{RepositoryId: id})); connect.CodeOf(err) != connect.CodeNotFound {
+	if _, err := client.GetRepositorySettings(ctx, connect.NewRequest(&pb.ID{Id: id})); connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("deleted settings still accessible: %v", err)
 	}
 }

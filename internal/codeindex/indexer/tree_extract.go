@@ -36,8 +36,6 @@ type declExtraction struct {
 	Code       string
 	Signature  string
 	BodyHash   string
-	// chunks holds the byte ranges of the declaration's chunks.
-	chunks [][2]int
 }
 
 // fileExtraction is the symbol-level result of parsing one source file.
@@ -134,8 +132,7 @@ func extractFile(ctx context.Context, s *graph.Source) (fileExtraction, error) {
 			End:       end,
 			Code:      string(s.Text[start:end]),
 			Signature: signature,
-			BodyHash:  graph.Hash(s.Text[start:end]),
-			chunks:    splitDeclaration(s, n, start, end, 4096, 8192),
+			BodyHash:  graph.BodyHash(s.Text[start:end]),
 		}
 		indexBySpan[fmt.Sprintf("%d:%d", n.StartByte(), n.EndByte())] = len(out.Decls)
 		out.Decls = append(out.Decls, decl)
@@ -157,7 +154,7 @@ func receiverScope(n *tsNode, text []byte) string {
 	return ""
 }
 
-// contextFor returns the chunk context for a declaration: its signature with
+// contextFor returns the context for a declaration: its signature with
 // the enclosing declaration's signature prepended, matching legacy behavior.
 func contextFor(out fileExtraction, index int) string {
 	if index < 0 || index >= len(out.Decls) {

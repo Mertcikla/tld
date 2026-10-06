@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/layout"
 	"google.golang.org/protobuf/proto"
@@ -53,8 +54,8 @@ type sceneBuilder struct {
 func (b *sceneBuilder) build() *pb.ImpactScene {
 	b.index()
 	scene := &pb.ImpactScene{
-		Views:       map[string]*pb.ImpactSceneViewContent{},
-		Navigations: []*pb.ImpactSceneNavigation{},
+		Views:       map[string]*pb.SceneViewContent{},
+		Navigations: []*diagv1.ElementNavigationInfo{},
 	}
 	for _, view := range b.pruneTree(b.workspace.Tree) {
 		scene.Tree = append(scene.Tree, sceneView(view))
@@ -149,7 +150,7 @@ func (b *sceneBuilder) pruneTree(nodes []core.ViewTreeNode) []core.ViewTreeNode 
 // change overlay to every placement that matches a diagram node.
 func (b *sceneBuilder) appendView(scene *pb.ImpactScene, viewID int64) {
 	content := b.workspace.Views[strconv.FormatInt(viewID, 10)]
-	placements := make([]*pb.ImpactScenePlacement, 0, len(content.Placements))
+	placements := make([]*pb.ScenePlacement, 0, len(content.Placements))
 	for _, placement := range content.Placements {
 		item := scenePlacement(placement)
 		if b.belongs(placement) {
@@ -162,11 +163,11 @@ func (b *sceneBuilder) appendView(scene *pb.ImpactScene, viewID int64) {
 		}
 		placements = append(placements, item)
 	}
-	connectors := make([]*pb.ImpactSceneConnector, 0, len(content.Connectors))
+	connectors := make([]*diagv1.Connector, 0, len(content.Connectors))
 	for _, connector := range content.Connectors {
 		connectors = append(connectors, sceneConnector(connector))
 	}
-	scene.Views[strconv.FormatInt(viewID, 10)] = &pb.ImpactSceneViewContent{Placements: placements, Connectors: connectors}
+	scene.Views[strconv.FormatInt(viewID, 10)] = &pb.SceneViewContent{Placements: placements, Connectors: connectors}
 }
 
 // placeMissing appends transient placements for directly changed files that
@@ -194,32 +195,35 @@ func (b *sceneBuilder) placeMissing(scene *pb.ImpactScene) {
 	for index, node := range missing {
 		ids[node.GetKey()] = -int64(index + 1)
 	}
-	placements := make([]*pb.ImpactScenePlacement, 0, len(missing))
+	placements := make([]*pb.ScenePlacement, 0, len(missing))
 	for index, node := range missing {
 		id := ids[node.GetKey()]
 		x, y := float64((index%3)*240), float64((index/3)*150)
 		if useTarget {
 			x, y = node.GetX(), node.GetY()
 		}
-		placements = append(placements, &pb.ImpactScenePlacement{
-			Id: id, ElementId: id, ViewId: viewID,
-			PositionX: x, PositionY: y,
-			Name: node.GetName(), Kind: proto.String("component"),
-			Description: proto.String(node.GetPath()), Repo: proto.String(b.root),
-			FilePath: proto.String(node.GetPath()), Overlay: b.overlay(node),
-			Tags: []string{},
+		placements = append(placements, &pb.ScenePlacement{
+			Element: &diagv1.PlacedElement{
+				Id: int32(id), ElementId: int32(id), ViewId: int32(viewID),
+				PositionX: x, PositionY: y,
+				Name: node.GetName(), Kind: proto.String("component"),
+				Description: proto.String(node.GetPath()), Repo: proto.String(b.root),
+				FilePath: proto.String(node.GetPath()),
+				Tags:     []string{},
+			},
+			Overlay: b.overlay(node),
 		})
 	}
-	connectors := make([]*pb.ImpactSceneConnector, 0)
+	connectors := make([]*diagv1.Connector, 0)
 	for _, edge := range b.diagram.GetEdges() {
 		source, sourceOK := ids[edge.GetFromKey()]
 		target, targetOK := ids[edge.GetToKey()]
 		if !sourceOK || !targetOK {
 			continue
 		}
-		connectors = append(connectors, &pb.ImpactSceneConnector{
-			Id: -int64(len(connectors) + 1), ViewId: viewID,
-			SourceElementId: source, TargetElementId: target,
+		connectors = append(connectors, &diagv1.Connector{
+			Id: int32(-(len(connectors) + 1)), ViewId: int32(viewID),
+			SourceElementId: int32(source), TargetElementId: int32(target),
 			Label:     proto.String(strconv.FormatFloat(edge.GetWeight(), 'f', -1, 64) + " dependencies"),
 			Direction: "forward", Style: "bezier",
 		})
@@ -230,8 +234,8 @@ func (b *sceneBuilder) placeMissing(scene *pb.ImpactScene) {
 		return
 	}
 	scene.FallbackViewId = viewID
-	scene.Tree = append(scene.Tree, &pb.ImpactSceneView{Id: viewID, Name: "Changes", Children: []*pb.ImpactSceneView{}})
-	scene.Views[strconv.FormatInt(viewID, 10)] = &pb.ImpactSceneViewContent{Placements: placements, Connectors: connectors}
+	scene.Tree = append(scene.Tree, &diagv1.View{Id: int32(viewID), Name: "Changes", Children: []*diagv1.View{}})
+	scene.Views[strconv.FormatInt(viewID, 10)] = &pb.SceneViewContent{Placements: placements, Connectors: connectors}
 }
 
 // overlay shapes a diagram node into the transient annotation the canvas
@@ -264,13 +268,13 @@ func (b *sceneBuilder) overlay(node *pb.ImpactNode) *pb.ImpactSceneOverlay {
 	return overlay
 }
 
-func sceneView(view core.ViewTreeNode) *pb.ImpactSceneView {
-	out := &pb.ImpactSceneView{
-		Id: view.ID, OwnerElementId: view.OwnerElementID, Name: view.Name,
+func sceneView(view core.ViewTreeNode) *diagv1.View {
+	out := &diagv1.View{
+		Id: int32(view.ID), OwnerElementId: int32Pointer(view.OwnerElementID), Name: view.Name,
 		Description: view.Description, LevelLabel: view.LevelLabel,
 		Tags: append([]string(nil), view.Tags...), Level: int32(view.Level), Depth: int32(view.Depth),
-		CreatedAt: view.CreatedAt, UpdatedAt: view.UpdatedAt, ParentViewId: view.ParentViewID,
-		Children: make([]*pb.ImpactSceneView, 0, len(view.Children)),
+		ParentViewId: int32Pointer(view.ParentViewID),
+		Children:     make([]*diagv1.View, 0, len(view.Children)),
 	}
 	for _, child := range view.Children {
 		out.Children = append(out.Children, sceneView(child))
@@ -278,9 +282,9 @@ func sceneView(view core.ViewTreeNode) *pb.ImpactSceneView {
 	return out
 }
 
-func scenePlacement(placement core.PlacedElement) *pb.ImpactScenePlacement {
-	out := &pb.ImpactScenePlacement{
-		Id: placement.ID, ViewId: placement.ViewID, ElementId: placement.ElementID,
+func scenePlacement(placement core.PlacedElement) *pb.ScenePlacement {
+	element := &diagv1.PlacedElement{
+		Id: int32(placement.ID), ViewId: int32(placement.ViewID), ElementId: int32(placement.ElementID),
 		PositionX: placement.PositionX, PositionY: placement.PositionY,
 		Name: placement.Name, Description: placement.Description, Kind: placement.Kind,
 		Technology: placement.Technology, Url: placement.URL, LogoUrl: placement.LogoURL,
@@ -288,48 +292,61 @@ func scenePlacement(placement core.PlacedElement) *pb.ImpactScenePlacement {
 		Repo: placement.Repo, RepositoryId: placement.RepositoryID, Branch: placement.Branch,
 		FilePath: placement.FilePath, Language: placement.Language,
 		HasView: placement.HasView, ViewLabel: placement.ViewLabel,
+		BypassNoiseGate: placement.BypassNoiseGate,
 	}
 	for _, connector := range placement.TechnologyConnectors {
-		out.TechnologyConnectors = append(out.TechnologyConnectors, &pb.ImpactTechnologyConnector{
-			Type: connector.Type, Slug: connector.Slug, Label: connector.Label, IsPrimaryIcon: connector.IsPrimaryIcon,
+		slug := connector.Slug
+		element.TechnologyLinks = append(element.TechnologyLinks, &diagv1.TechnologyLink{
+			Type: connector.Type, Slug: &slug, Label: connector.Label, IsPrimaryIcon: connector.IsPrimaryIcon,
 		})
 	}
-	return out
+	return &pb.ScenePlacement{Element: element}
 }
 
-func sceneConnector(connector core.Connector) *pb.ImpactSceneConnector {
-	return &pb.ImpactSceneConnector{
-		Id: connector.ID, ViewId: connector.ViewID,
-		SourceElementId: connector.SourceElementID, TargetElementId: connector.TargetElementID,
+func sceneConnector(connector core.Connector) *diagv1.Connector {
+	return &diagv1.Connector{
+		Id: int32(connector.ID), ViewId: int32(connector.ViewID),
+		SourceElementId: int32(connector.SourceElementID), TargetElementId: int32(connector.TargetElementID),
 		Label: connector.Label, Description: connector.Description, Relationship: connector.Relationship,
 		Direction: connector.Direction, Style: connector.Style, Url: connector.URL,
 		SourceHandle: connector.SourceHandle, TargetHandle: connector.TargetHandle,
-		Tags: append([]string(nil), connector.Tags...), CreatedAt: connector.CreatedAt, UpdatedAt: connector.UpdatedAt,
+		Tags: append([]string(nil), connector.Tags...),
 	}
 }
 
-func sceneNavigation(link core.ViewConnector) *pb.ImpactSceneNavigation {
-	elementID := link.ElementID
-	return &pb.ImpactSceneNavigation{
-		Id: link.ID, ElementId: elementID, FromViewId: link.FromViewID,
-		ToViewId: link.ToViewID, ToViewName: link.ToViewName, RelationType: link.RelationType,
+func sceneNavigation(link core.ViewConnector) *diagv1.ElementNavigationInfo {
+	return &diagv1.ElementNavigationInfo{
+		Id: int32(link.ID), ElementId: int32Pointer(link.ElementID),
+		FromViewId: int32(link.FromViewID), ToViewId: int32(link.ToViewID),
+		ToViewName: link.ToViewName, RelationType: link.RelationType,
 	}
+}
+
+// int32Pointer narrows an optional int64 id into the workspace proto's int32
+// id space. Scene ids fit int32: workspace rows and transient negatives.
+func int32Pointer(value *int64) *int32 {
+	if value == nil {
+		return nil
+	}
+	narrowed := int32(*value)
+	return &narrowed
 }
 
 // adjustSceneConnectorHandles re-attaches connectors to the handles that yield
 // the shortest anchor distance for the scene's final placements, mirroring the
 // map pipeline's "Adjust Connectors" pass.
-func adjustSceneConnectorHandles(placements []*pb.ImpactScenePlacement, connectors []*pb.ImpactSceneConnector) {
+func adjustSceneConnectorHandles(placements []*pb.ScenePlacement, connectors []*diagv1.Connector) {
 	if len(connectors) == 0 {
 		return
 	}
 	positions := make(map[int64]layout.Placement, len(placements))
 	for _, placement := range placements {
-		positions[placement.GetElementId()] = layout.Placement{ElementID: placement.GetElementId(), X: placement.GetPositionX(), Y: placement.GetPositionY()}
+		element := placement.GetElement()
+		positions[int64(element.GetElementId())] = layout.Placement{ElementID: int64(element.GetElementId()), X: element.GetPositionX(), Y: element.GetPositionY()}
 	}
 	for _, connector := range connectors {
-		source, sourceOK := positions[connector.GetSourceElementId()]
-		target, targetOK := positions[connector.GetTargetElementId()]
+		source, sourceOK := positions[int64(connector.GetSourceElementId())]
+		target, targetOK := positions[int64(connector.GetTargetElementId())]
 		if !sourceOK || !targetOK {
 			continue
 		}

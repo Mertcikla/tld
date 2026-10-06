@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,13 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/store"
-	"github.com/mertcikla/tld/v2/internal/workspace"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 // watchChild is a CLI watcher process supervised by the server.
@@ -264,30 +261,13 @@ func (m *watchManager) Close() error {
 	return nil
 }
 
-// watchService exposes the manager over ConnectRPC.
-type watchService struct {
-	codeindexv1connect.UnimplementedWatchServiceHandler
-	idx        *cstore.Store
-	manager    *watchManager
-	selfHosted bool
-}
-
-func registerWatchHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, dataDir string, selfHosted bool, configs ...*workspace.Config) *watchManager {
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
-	manager := newWatchManager(dataDir, idx)
-	svc := &watchService{idx: idx, manager: manager, selfHosted: selfHosted}
-	path, handler := codeindexv1connect.NewWatchServiceHandler(svc)
-	mux.Handle("/api"+path, http.StripPrefix("/api", handler))
-	return manager
-}
-
 // cliAvailable reports whether the watcher UI should be actionable. Self-hosted
 // servers never have the caller's checkout or CLI, so watching is disabled.
-func (s *watchService) cliAvailable() bool {
-	return !s.selfHosted && s.manager.cliAvailable()
+func (s *repositoryService) cliAvailable() bool {
+	return !s.selfHosted && s.watches.cliAvailable()
 }
 
-func (s *watchService) StartWatch(ctx context.Context, req *connect.Request[codeindexv1.StartWatchRequest]) (*connect.Response[codeindexv1.WatchStatus], error) {
+func (s *repositoryService) StartWatch(ctx context.Context, req *connect.Request[codeindexv1.StartWatchRequest]) (*connect.Response[codeindexv1.WatchStatus], error) {
 	if s.selfHosted {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("watching is disabled for self-hosted deployments"))
 	}
@@ -295,7 +275,7 @@ func (s *watchService) StartWatch(ctx context.Context, req *connect.Request[code
 	if repositoryID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository_id is required"))
 	}
-	repo, err := s.idx.Repository(ctx, repositoryID)
+	repo, err := s.store.Repository(ctx, repositoryID)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}
@@ -306,18 +286,18 @@ func (s *watchService) StartWatch(ctx context.Context, req *connect.Request[code
 	// clone of the same logical repository does not block this one.
 	key := cgraph.RepositoryID(repo.Root)
 	// Reset any stale record so a crashed watcher cannot block a fresh start.
-	if existing, ok, err := s.idx.WatchState(ctx, key); err == nil && ok && !existing.Live(time.Now()) {
-		_ = s.idx.ForceClearWatchState(ctx, key)
+	if existing, ok, err := s.store.WatchState(ctx, key); err == nil && ok && !existing.Live(time.Now()) {
+		_ = s.store.ForceClearWatchState(ctx, key)
 	}
 	st := cstore.WatchState{RepositoryID: key, RepoRoot: repo.Root, OwnerKind: "server", State: "starting", StartedUnix: time.Now().Unix()}
-	if _, err := s.manager.start(ctx, st, req.Msg.GetMaterialize()); err != nil {
+	if _, err := s.watches.start(ctx, st, req.Msg.GetMaterialize()); err != nil {
 		return nil, connect.NewError(connect.CodeAlreadyExists, err)
 	}
 	return connect.NewResponse(s.status(ctx, repositoryID, key)), nil
 }
 
-func (s *watchService) StopWatch(ctx context.Context, req *connect.Request[codeindexv1.StopWatchRequest]) (*connect.Response[codeindexv1.WatchStatus], error) {
-	repositoryID := strings.TrimSpace(req.Msg.GetRepositoryId())
+func (s *repositoryService) StopWatch(ctx context.Context, req *connect.Request[codeindexv1.ID]) (*connect.Response[codeindexv1.WatchStatus], error) {
+	repositoryID := strings.TrimSpace(req.Msg.GetId())
 	if repositoryID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository_id is required"))
 	}
@@ -325,15 +305,15 @@ func (s *watchService) StopWatch(ctx context.Context, req *connect.Request[codei
 	if err != nil {
 		return nil, err
 	}
-	if err := s.idx.RequestWatchStop(ctx, key); err != nil {
+	if err := s.store.RequestWatchStop(ctx, key); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	s.manager.stop(ctx, key)
+	s.watches.stop(ctx, key)
 	return connect.NewResponse(s.status(ctx, repositoryID, key)), nil
 }
 
-func (s *watchService) GetWatchStatus(ctx context.Context, req *connect.Request[codeindexv1.GetWatchStatusRequest]) (*connect.Response[codeindexv1.WatchStatus], error) {
-	repositoryID := strings.TrimSpace(req.Msg.GetRepositoryId())
+func (s *repositoryService) GetWatchStatus(ctx context.Context, req *connect.Request[codeindexv1.ID]) (*connect.Response[codeindexv1.WatchStatus], error) {
+	repositoryID := strings.TrimSpace(req.Msg.GetId())
 	if repositoryID == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository_id is required"))
 	}
@@ -347,18 +327,18 @@ func (s *watchService) GetWatchStatus(ctx context.Context, req *connect.Request[
 // watchKey resolves a repository's per-checkout watcher key from its stored
 // local root. When no repository row (or no local path) exists, the given id is
 // used directly as the checkout key so direct watch-key lookups keep working.
-func (s *watchService) watchKey(ctx context.Context, repositoryID string) (string, error) {
-	repo, err := s.idx.Repository(ctx, repositoryID)
+func (s *repositoryService) watchKey(ctx context.Context, repositoryID string) (string, error) {
+	repo, err := s.store.Repository(ctx, repositoryID)
 	if err != nil || strings.TrimSpace(repo.Root) == "" {
 		return repositoryID, nil
 	}
 	return cgraph.RepositoryID(repo.Root), nil
 }
 
-func (s *watchService) ListWatches(ctx context.Context, _ *connect.Request[codeindexv1.ListWatchesRequest]) (*connect.Response[codeindexv1.ListWatchesResponse], error) {
-	s.manager.reap()
-	_ = s.idx.ReapStaleWatchStates(ctx)
-	states, err := s.idx.ListWatchStates(ctx)
+func (s *repositoryService) ListWatches(ctx context.Context, _ *connect.Request[emptypb.Empty]) (*connect.Response[codeindexv1.ListWatchesResponse], error) {
+	s.watches.reap()
+	_ = s.store.ReapStaleWatchStates(ctx)
+	states, err := s.store.ListWatchStates(ctx)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
@@ -371,13 +351,13 @@ func (s *watchService) ListWatches(ctx context.Context, _ *connect.Request[codei
 
 // status reports a watcher's state using the per-checkout key, but labels the
 // returned status with the logical repository id the caller asked for.
-func (s *watchService) status(ctx context.Context, repositoryID, key string) *codeindexv1.WatchStatus {
-	st, ok, err := s.idx.WatchState(ctx, key)
+func (s *repositoryService) status(ctx context.Context, repositoryID, key string) *codeindexv1.WatchStatus {
+	st, ok, err := s.store.WatchState(ctx, key)
 	if err != nil {
 		ok = false
 	}
 	if ok && !st.Live(time.Now()) {
-		_ = s.idx.ForceClearWatchState(ctx, key)
+		_ = s.store.ForceClearWatchState(ctx, key)
 		st.State = "stopped"
 		st.StopRequested = false
 	}
@@ -386,8 +366,8 @@ func (s *watchService) status(ctx context.Context, repositoryID, key string) *co
 	return out
 }
 
-func (s *watchService) statusFor(st cstore.WatchState, found bool) *codeindexv1.WatchStatus {
-	return buildWatchStatus(st, found, s.manager.managed(st.RepositoryID), s.cliAvailable())
+func (s *repositoryService) statusFor(st cstore.WatchState, found bool) *codeindexv1.WatchStatus {
+	return buildWatchStatus(st, found, s.watches.managed(st.RepositoryID), s.cliAvailable())
 }
 
 func buildWatchStatus(st cstore.WatchState, found, managed, cliAvailable bool) *codeindexv1.WatchStatus {

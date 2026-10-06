@@ -552,12 +552,10 @@ func TestPostgresSnapshotMembershipE2E(t *testing.T) {
 	first := graph.NewGraph("repo-membership", "snapshot-first")
 	first.Sources[src.Path] = src
 	fact := first.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(0, len(src.Text)), string(src.Text), "func A()", nil)
-	chunk := first.AddChunk(fact.Id, fact.Anchor, fact.Code, "", 0, 1)
 	edge := first.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, fact.Id, "", "external", fact.Anchor, nil)
 	second := graph.NewGraph(first.RepositoryID, "snapshot-second")
 	second.Sources[src.Path] = src
-	adopted := second.AdoptFactAnchored(fact, fact.Anchor, fact.Code, fact.Signature)
-	second.AdoptChunkAnchored(chunk, adopted.Id)
+	adopted := second.AdoptFactAnchored(fact, fact.Anchor, fact.BodyHash, fact.Signature)
 	second.AdoptEdgeFact(edge, adopted.Id, "", "external")
 	for _, g := range []*graph.Graph{first, second} {
 		snap := &pb.Snapshot{Id: g.SnapshotID, RepositoryId: g.RepositoryID, Sources: []*pb.SourceFile{{Path: src.Path, Hash: src.Hash, Size: uint64(len(src.Text))}}}
@@ -569,8 +567,8 @@ func TestPostgresSnapshotMembershipE2E(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(stored.Facts) != 1 || len(stored.Chunks) != 1 || len(stored.EdgeFacts) != 1 {
-				t.Fatalf("roundtrip counts: %d/%d/%d", len(stored.Facts), len(stored.Chunks), len(stored.EdgeFacts))
+			if len(stored.Facts) != 1 || len(stored.EdgeFacts) != 1 {
+				t.Fatalf("roundtrip counts: %d/%d", len(stored.Facts), len(stored.EdgeFacts))
 			}
 		}
 	}
@@ -588,7 +586,7 @@ func TestPostgresSnapshotMembershipE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Facts[fact.Id] == nil || stored.Chunks[chunk.Id] == nil {
+	if stored.Facts[fact.Id] == nil {
 		t.Fatal("shared entities were lost")
 	}
 }

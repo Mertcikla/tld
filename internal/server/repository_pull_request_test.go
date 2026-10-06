@@ -47,7 +47,7 @@ func TestRepositoryPullRequestDoesNotChangeCheckout(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	svc := &codeIndexRepositoryService{store: s.idx}
+	svc := &repositoryService{store: s.store}
 	result, err := svc.GetPullRequest(context.Background(), connect.NewRequest(&pb.GetPullRequestRequest{RepositoryId: repoID, PullRequest: "7"}))
 	if err != nil {
 		t.Fatal(err)
@@ -92,12 +92,12 @@ JSON
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	svc := &codeIndexRepositoryService{store: s.idx}
+	svc := &repositoryService{store: s.store}
 	history, err := svc.GetGitHistory(context.Background(), connect.NewRequest(&pb.GetGitHistoryRequest{RepositoryId: repoID}))
 	if err != nil || history.Msg.RepositoryUrl != "https://github.com/test/demo" {
 		t.Fatalf("repository URL: %v %v", history, err)
 	}
-	result, err := svc.ListPullRequests(context.Background(), connect.NewRequest(&pb.ListPullRequestsRequest{RepositoryId: repoID}))
+	result, err := svc.ListPullRequests(context.Background(), connect.NewRequest(&pb.ID{Id: repoID}))
 	if err != nil {
 		t.Fatal(err)
 	}
