@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"time"
@@ -137,8 +138,55 @@ func ApplyEmbeddedMigrations(ctx context.Context, db *bun.DB, migrations embed.F
 	if err := bootstrapLegacyMigrationState(ctx, db, migrator, migrationsCollection.Sorted(), dbDialect); err != nil {
 		return err
 	}
+	if dbDialect == DialectSQLite {
+		return applySQLiteMigrations(ctx, db, migrator, migrationFS)
+	}
 	if _, err := migrator.Migrate(ctx); err != nil {
 		return fmt.Errorf("apply migrations: %w", err)
+	}
+	return nil
+}
+
+// SQLite DDL and migration history must commit together. Otherwise an
+// interrupted upgrade can delete data or commit an ALTER TABLE without its
+// history record, causing the next startup to repeat a non-repeatable change.
+func applySQLiteMigrations(ctx context.Context, db *bun.DB, migrator *migrate.Migrator, migrationFS fs.FS) error {
+	migrations, err := migrator.MigrationsWithStatus(ctx)
+	if err != nil {
+		return fmt.Errorf("read migration status: %w", err)
+	}
+	pending := migrations.Unapplied()
+	if len(pending) == 0 {
+		return nil
+	}
+	applied, err := migrator.AppliedMigrations(ctx)
+	if err != nil {
+		return fmt.Errorf("read applied migrations: %w", err)
+	}
+	groupID := applied.LastGroupID() + 1
+	err = db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, migration := range pending {
+			filename := migration.String() + ".up.sql"
+			raw, err := fs.ReadFile(migrationFS, filename)
+			if errors.Is(err, fs.ErrNotExist) {
+				filename = migration.String() + ".tx.up.sql"
+				raw, err = fs.ReadFile(migrationFS, filename)
+			}
+			if err != nil {
+				return fmt.Errorf("read migration %s: %w", filename, err)
+			}
+			if _, err := tx.Tx.ExecContext(ctx, string(raw)); err != nil {
+				return fmt.Errorf("migration %s: %w", migration.Name, err)
+			}
+			migration.GroupID = groupID
+			if _, err := tx.NewInsert().Model(&migration).ModelTableExpr("bun_migrations").Exec(ctx); err != nil {
+				return fmt.Errorf("record migration %s: %w", migration.Name, err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("apply sqlite migrations: %w", err)
 	}
 	return nil
 }

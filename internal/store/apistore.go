@@ -380,7 +380,7 @@ func (a *APIAdapter) createConnectorWithID(ctx context.Context, id int32, input 
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
-	_, err := a.Store.legacy.BunDB().NewInsert().
+	_, err := a.Store.legacy.QueryDB().NewInsert().
 		Model(row).
 		Exec(ctx)
 	if err != nil {
@@ -584,7 +584,7 @@ func (a *APIAdapter) ListViewThreads(ctx context.Context, workspaceID uuid.UUID,
 		CreatedAt         string  `bun:"created_at"`
 		ResolvedAt        *string `bun:"resolved_at"`
 	}
-	err := a.Store.legacy.BunDB().NewRaw(
+	err := a.Store.legacy.QueryDB().NewRaw(
 		`SELECT t.id, t.workspace_id, t.view_id, t.element_id, t.connector_id, t.created_by,
 		        COALESCE(NULLIF(t.created_by_username, ''), t.created_by) AS created_by_username,
 		        t.status, t.created_at, t.resolved_at
@@ -614,7 +614,7 @@ func (a *APIAdapter) CreateViewThread(ctx context.Context, workspaceID uuid.UUID
 	var row struct {
 		ID int32 `bun:"id"`
 	}
-	err := a.Store.legacy.BunDB().NewRaw(
+	err := a.Store.legacy.QueryDB().NewRaw(
 		`INSERT INTO view_threads (workspace_id, view_id, element_id, connector_id, created_by, created_by_username, status, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, 'open', ?)
 		 RETURNING id`,
@@ -639,7 +639,7 @@ func (a *APIAdapter) GetViewThread(ctx context.Context, workspaceID uuid.UUID, v
 		CreatedAt         string  `bun:"created_at"`
 		ResolvedAt        *string `bun:"resolved_at"`
 	}
-	err := a.Store.legacy.BunDB().NewRaw(
+	err := a.Store.legacy.QueryDB().NewRaw(
 		`SELECT t.id, t.workspace_id, t.view_id, t.element_id, t.connector_id, t.created_by,
 		        COALESCE(NULLIF(t.created_by_username, ''), t.created_by) AS created_by_username,
 		        t.status, t.created_at, t.resolved_at
@@ -667,7 +667,7 @@ func (a *APIAdapter) SetViewThreadResolved(ctx context.Context, workspaceID uuid
 		now := nowRFC3339()
 		resolvedAt = &now
 	}
-	_, err := a.Store.legacy.BunDB().NewRaw(
+	_, err := a.Store.legacy.QueryDB().NewRaw(
 		`UPDATE view_threads
 		 SET status = ?, resolved_at = ?
 		 WHERE workspace_id = ? AND view_id = ? AND id = ?`,
@@ -681,7 +681,7 @@ func (a *APIAdapter) CreateViewComment(ctx context.Context, workspaceID uuid.UUI
 	var row struct {
 		ID int32 `bun:"id"`
 	}
-	err := a.Store.legacy.BunDB().NewRaw(
+	err := a.Store.legacy.QueryDB().NewRaw(
 		`INSERT INTO view_comments (workspace_id, view_id, thread_id, author_id, author_username, body, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 RETURNING id`,
@@ -714,7 +714,7 @@ func (a *APIAdapter) listViewComments(ctx context.Context, workspaceID uuid.UUID
 		CreatedAt      string `bun:"created_at"`
 		UpdatedAt      string `bun:"updated_at"`
 	}
-	err := a.Store.legacy.BunDB().NewRaw(
+	err := a.Store.legacy.QueryDB().NewRaw(
 		`SELECT c.id, c.workspace_id, c.view_id, c.thread_id, c.author_id,
 		        COALESCE(NULLIF(c.author_username, ''), c.author_id) AS author_username,
 		        c.body, c.created_at, c.updated_at
@@ -769,7 +769,7 @@ func (a *APIAdapter) ListViewElementReactions(ctx context.Context, workspaceID u
 		Count       int32  `bun:"reaction_count"`
 		ReactedByMe int32  `bun:"reacted_by_me"`
 	}
-	err := a.Store.legacy.BunDB().NewRaw(
+	err := a.Store.legacy.QueryDB().NewRaw(
 		`SELECT element_id, emoji, COUNT(*) AS reaction_count,
 		        MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS reacted_by_me
 		 FROM element_reactions
@@ -794,7 +794,7 @@ func (a *APIAdapter) ListViewElementReactions(ctx context.Context, workspaceID u
 }
 
 func (a *APIAdapter) ToggleElementReaction(ctx context.Context, workspaceID uuid.UUID, viewID, elementID int32, userID, emoji string) (bool, error) {
-	result, err := a.Store.legacy.BunDB().NewRaw(
+	result, err := a.Store.legacy.QueryDB().NewRaw(
 		`DELETE FROM element_reactions
 		 WHERE workspace_id = ? AND view_id = ? AND element_id = ? AND user_id = ? AND emoji = ?`,
 		collaborationWorkspaceKey(workspaceID), viewID, elementID, userID, emoji,
@@ -807,7 +807,7 @@ func (a *APIAdapter) ToggleElementReaction(ctx context.Context, workspaceID uuid
 		return false, nil
 	}
 	now := nowRFC3339()
-	_, err = a.Store.legacy.BunDB().NewRaw(
+	_, err = a.Store.legacy.QueryDB().NewRaw(
 		`INSERT INTO element_reactions (workspace_id, view_id, element_id, user_id, emoji, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		collaborationWorkspaceKey(workspaceID), viewID, elementID, userID, emoji, now,
@@ -828,7 +828,7 @@ func (a *APIAdapter) ListDrawings(ctx context.Context, workspaceID uuid.UUID, vi
 		Text     string  `bun:"text"`
 		FontSize float64 `bun:"font_size"`
 	}
-	err := a.Store.legacy.BunDB().NewRaw(
+	err := a.Store.legacy.QueryDB().NewRaw(
 		`SELECT path_id, user_id, points, color, width, text, font_size
 		 FROM drawings
 		 WHERE workspace_id = ? AND view_id = ?
@@ -855,7 +855,7 @@ func (a *APIAdapter) ListDrawings(ctx context.Context, workspaceID uuid.UUID, vi
 
 func (a *APIAdapter) UpsertDrawing(ctx context.Context, workspaceID uuid.UUID, viewID int32, input api.RealtimeDrawingInput) error {
 	now := nowRFC3339()
-	_, err := a.Store.legacy.BunDB().NewRaw(
+	_, err := a.Store.legacy.QueryDB().NewRaw(
 		`INSERT INTO drawings (workspace_id, view_id, user_id, path_id, points, color, width, text, font_size, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (workspace_id, view_id, path_id) DO UPDATE SET
@@ -872,7 +872,7 @@ func (a *APIAdapter) UpsertDrawing(ctx context.Context, workspaceID uuid.UUID, v
 }
 
 func (a *APIAdapter) DeleteDrawing(ctx context.Context, workspaceID uuid.UUID, viewID int32, pathID string) error {
-	_, err := a.Store.legacy.BunDB().NewRaw(
+	_, err := a.Store.legacy.QueryDB().NewRaw(
 		`DELETE FROM drawings WHERE workspace_id = ? AND view_id = ? AND path_id = ?`,
 		collaborationWorkspaceKey(workspaceID), viewID, pathID,
 	).Exec(ctx)
@@ -1160,7 +1160,7 @@ func (a *APIAdapter) layoutPlanView(ctx context.Context, viewID int64, targets m
 
 func (a *APIAdapter) planViewPlacementNodes(ctx context.Context, viewID int64) ([]layout.Placement, error) {
 	var rows []placementLayoutModel
-	if err := a.Store.legacy.BunDB().NewSelect().
+	if err := a.Store.legacy.QueryDB().NewSelect().
 		Model(&rows).
 		Column("element_id", "position_x", "position_y").
 		Where("view_id = ?", viewID).
@@ -1177,7 +1177,7 @@ func (a *APIAdapter) planViewPlacementNodes(ctx context.Context, viewID int64) (
 
 func (a *APIAdapter) planViewLayoutConnectors(ctx context.Context, viewID int64) ([]layout.Connector, error) {
 	var rows []connectorLayoutModel
-	if err := a.Store.legacy.BunDB().NewSelect().
+	if err := a.Store.legacy.QueryDB().NewSelect().
 		Model(&rows).
 		Column("source_element_id", "target_element_id").
 		Where("view_id = ?", viewID).
@@ -1193,15 +1193,15 @@ func (a *APIAdapter) planViewLayoutConnectors(ctx context.Context, viewID int64)
 }
 
 func (a *APIAdapter) GetWorkspaceResourceCounts(ctx context.Context, _ uuid.UUID) (views, elements, connectors int, err error) {
-	views, err = a.Store.legacy.BunDB().NewSelect().Model((*countModel)(nil)).Count(ctx)
+	views, err = a.Store.legacy.QueryDB().NewSelect().Model((*countModel)(nil)).Count(ctx)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	elements, err = a.Store.legacy.BunDB().NewSelect().Model((*elementCountModel)(nil)).Count(ctx)
+	elements, err = a.Store.legacy.QueryDB().NewSelect().Model((*elementCountModel)(nil)).Count(ctx)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	connectors, err = a.Store.legacy.BunDB().NewSelect().Model((*connectorCountModel)(nil)).Count(ctx)
+	connectors, err = a.Store.legacy.QueryDB().NewSelect().Model((*connectorCountModel)(nil)).Count(ctx)
 	if err != nil {
 		return 0, 0, 0, err
 	}

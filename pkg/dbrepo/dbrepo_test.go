@@ -11,6 +11,9 @@ import (
 
 	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/sqlitedialect"
+	"github.com/uptrace/bun/migrate"
 	_ "modernc.org/sqlite"
 )
 
@@ -61,6 +64,112 @@ func TestOpenSQLiteSkipsLegacyVectorTable(t *testing.T) {
 	}
 	if vec != 1 {
 		t.Fatalf("legacy virtual table entries = %d, want it left untouched", vec)
+	}
+}
+
+func TestSQLiteUpgradeRollsBackSchemaAndHistoryOnFailure(t *testing.T) {
+	for _, failure := range []string{"codeindex-sql", "org-scoping-sql", "history-write"} {
+		t.Run(failure, func(t *testing.T) {
+			ctx := context.Background()
+			db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "upgrade.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			db.SetMaxOpenConns(1)
+			b := bun.NewDB(db, sqlitedialect.New())
+			defer func() { _ = b.Close() }()
+			seedPreCodeindexSQLite(t, ctx, b)
+			if _, err := db.ExecContext(ctx, `INSERT INTO tags(name, color) VALUES ('preserved', '#123456')`); err != nil {
+				t.Fatal(err)
+			}
+			var inject, repair string
+			switch failure {
+			case "codeindex-sql":
+				// Fail after the destructive legacy cleanup, at the final ALTER.
+				inject = `ALTER TABLE elements ADD COLUMN repository_id TEXT`
+				repair = `ALTER TABLE elements DROP COLUMN repository_id`
+			case "org-scoping-sql":
+				inject = `CREATE TRIGGER fail_upgrade BEFORE UPDATE ON tags BEGIN SELECT RAISE(ABORT, 'injected failure'); END`
+				repair = `DROP TRIGGER fail_upgrade`
+			case "history-write":
+				inject = `CREATE TRIGGER fail_upgrade BEFORE INSERT ON bun_migrations WHEN NEW.name = '20260930000100' BEGIN SELECT RAISE(ABORT, 'injected failure'); END`
+				repair = `DROP TRIGGER fail_upgrade`
+			}
+			if _, err := db.ExecContext(ctx, inject); err != nil {
+				t.Fatal(err)
+			}
+			if err := dbrepo.ApplyEmbeddedMigrations(ctx, b, assets.FS, "migrations"); err == nil {
+				t.Fatal("expected injected upgrade failure")
+			}
+			var legacyTables, newTables, history, orgColumns int
+			for query, dest := range map[string]*int{
+				`SELECT COUNT(*) FROM sqlite_master WHERE name = 'watch_repositories'`:                           &legacyTables,
+				`SELECT COUNT(*) FROM sqlite_master WHERE name IN ('codeindex_repositories', 'tags_org_scoped')`: &newTables,
+				`SELECT COUNT(*) FROM bun_migrations WHERE name >= '20260930000100'`:                             &history,
+				`SELECT COUNT(*) FROM pragma_table_info('placements') WHERE name = 'org_id'`:                     &orgColumns,
+			} {
+				if err := db.QueryRowContext(ctx, query).Scan(dest); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if legacyTables != 1 || newTables != 0 || history != 0 || orgColumns != 0 {
+				t.Fatalf("partial upgrade: legacy=%d new=%d history=%d org columns=%d", legacyTables, newTables, history, orgColumns)
+			}
+			var color string
+			if err := db.QueryRowContext(ctx, `SELECT color FROM tags WHERE name = 'preserved'`).Scan(&color); err != nil {
+				t.Fatal(err)
+			}
+			if color != "#123456" {
+				t.Fatalf("legacy tag changed: %s", color)
+			}
+			if _, err := db.ExecContext(ctx, repair); err != nil {
+				t.Fatal(err)
+			}
+			// The same database must upgrade successfully once the cause is
+			// removed, and reopening must not repeat committed schema changes.
+			for range 2 {
+				if err := dbrepo.ApplyEmbeddedMigrations(ctx, b, assets.FS, "migrations"); err != nil {
+					t.Fatalf("retry upgrade: %v", err)
+				}
+			}
+			if err := db.QueryRowContext(ctx, `SELECT color FROM tags WHERE name = 'preserved'`).Scan(&color); err != nil {
+				t.Fatal(err)
+			}
+			if color != "#123456" {
+				t.Fatalf("tag changed after retry: %s", color)
+			}
+		})
+	}
+}
+
+func seedPreCodeindexSQLite(t *testing.T, ctx context.Context, db *bun.DB) {
+	t.Helper()
+	if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := fs.ReadDir(assets.FS, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrator := migrate.NewMigrator(db, migrate.NewMigrations(), migrate.WithUpsert(true))
+	if err := migrator.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") || entry.Name() >= "20260930000100" {
+			continue
+		}
+		raw, err := assets.FS.ReadFile("migrations/" + entry.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.ExecContext(ctx, string(raw)); err != nil {
+			t.Fatal(err)
+		}
+		name, _, _ := strings.Cut(entry.Name(), "_")
+		if err := migrator.MarkApplied(ctx, &migrate.Migration{Name: name, GroupID: 1}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/mertcikla/tld/v2/pkg/api"
+	"github.com/mertcikla/tld/v2/pkg/app"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )
 
@@ -17,21 +18,9 @@ func (a *APIAdapter) RunInTransaction(ctx context.Context, fn func(context.Conte
 	if a.Store.Dialect() != dbrepo.DialectSQLite {
 		return fmt.Errorf("transactional Mermaid import for %s: %w", a.Store.Dialect(), api.ErrUnimplemented)
 	}
-	if _, err := a.Store.DB().ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
-		return err
-	}
-	committed := false
-	defer func() {
-		if !committed {
-			_, _ = a.Store.DB().ExecContext(context.Background(), `ROLLBACK`)
-		}
-	}()
-	if err := fn(ctx, a); err != nil {
-		return err
-	}
-	if _, err := a.Store.DB().ExecContext(ctx, `COMMIT`); err != nil {
-		return err
-	}
-	committed = true
-	return nil
+	return a.Store.legacy.RunInTransaction(ctx, func(txCtx context.Context, txStore *app.Store) error {
+		txAdapter := *a
+		txAdapter.Store = &SQLiteStore{legacy: txStore}
+		return fn(txCtx, &txAdapter)
+	})
 }

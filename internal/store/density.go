@@ -135,7 +135,7 @@ func (s *SQLiteStore) InitializeViewNoiseGate(ctx context.Context, viewID int64,
 		})
 	}
 
-	if err := s.legacy.BunDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+	if err := s.legacy.QueryDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewUpdate().
 			Table("views").
 			Set("density_level = ?", targetLevel).
@@ -181,7 +181,7 @@ func (s *SQLiteStore) ExportDensityState(ctx context.Context) (map[int64]int, []
 		ID           int64 `bun:"id"`
 		DensityLevel int   `bun:"density_level"`
 	}
-	if err := s.legacy.BunDB().NewSelect().
+	if err := s.legacy.QueryDB().NewSelect().
 		Table("views").
 		Column("id", "density_level").
 		Order("id").
@@ -195,7 +195,7 @@ func (s *SQLiteStore) ExportDensityState(ctx context.Context) (map[int64]int, []
 	}
 
 	var overrideRows []visibilityOverrideModel
-	if err := s.legacy.BunDB().NewSelect().
+	if err := s.legacy.QueryDB().NewSelect().
 		Model(&overrideRows).
 		Order("view_id").
 		Order("resource_type").

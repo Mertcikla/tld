@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
 	"github.com/uptrace/bun/driver/pgdriver"
 )
 
@@ -39,7 +41,7 @@ func TestEnsureViewMarkdownTablePostgresRepeated(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	store := &Store{db: db, dialect: dbrepo.DialectPostgres}
+	store := NewStore(db, bun.NewDB(db, pgdialect.New()), dbrepo.DialectPostgres)
 	for range 3 {
 		if err := store.ensureViewMarkdownTable(ctx); err != nil {
 			t.Fatal(err)

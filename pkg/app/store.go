@@ -17,7 +17,8 @@ import (
 
 type Store struct {
 	db      *sql.DB
-	bun     *bun.DB
+	bun     bun.IDB
+	bunDB   *bun.DB
 	dialect dbrepo.Dialect
 }
 
@@ -25,8 +26,26 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
+// BunDB returns the underlying connection pool. Use QueryDB for queries that
+// must participate in the store's current transaction.
 func (s *Store) BunDB() *bun.DB {
+	return s.bunDB
+}
+
+// QueryDB returns the store's query executor, including its transaction when
+// the store was provided to a RunInTransaction callback.
+func (s *Store) QueryDB() bun.IDB {
 	return s.bun
+}
+
+// RunInTransaction reserves a connection and supplies a separate store whose
+// queries all use the transaction. The original store remains unchanged.
+func (s *Store) RunInTransaction(ctx context.Context, fn func(context.Context, *Store) error) error {
+	return s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		txStore := *s
+		txStore.bun = tx
+		return fn(ctx, &txStore)
+	})
 }
 
 func (s *Store) Dialect() dbrepo.Dialect {
@@ -103,7 +122,7 @@ type PlanConnector struct {
 }
 
 func NewStore(db *sql.DB, bunDB *bun.DB, dialect dbrepo.Dialect) *Store {
-	return &Store{db: db, bun: bunDB, dialect: dialect}
+	return &Store{db: db, bun: bunDB, bunDB: bunDB, dialect: dialect}
 }
 
 func OpenStore(dbPath string, migrations embed.FS) (*Store, error) {
@@ -119,7 +138,7 @@ func OpenStoreWithOptions(ctx context.Context, opts dbrepo.DBOptions) (*Store, e
 	if err != nil {
 		return nil, err
 	}
-	store := &Store{db: handle.DB, bun: handle.Bun, dialect: handle.Dialect}
+	store := NewStore(handle.DB, handle.Bun, handle.Dialect)
 	if err := store.ensureBootstrapData(context.Background()); err != nil {
 		_ = store.Close()
 		return nil, err

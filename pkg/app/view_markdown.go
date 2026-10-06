@@ -122,7 +122,7 @@ func (s *Store) ensureViewMarkdownTable(ctx context.Context) error {
 	if s.dialect == dbrepo.DialectPostgres {
 		viewIDType, boolType = "BIGINT", "BOOLEAN NOT NULL DEFAULT FALSE"
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := s.bun.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS view_markdown_documents (
 			view_id `+viewIDType+` PRIMARY KEY,
 			org_id TEXT NULL,
@@ -140,10 +140,10 @@ func (s *Store) ensureViewMarkdownTable(ctx context.Context) error {
 	if s.dialect == dbrepo.DialectPostgres {
 		addColumn += "IF NOT EXISTS "
 	}
-	if _, err := s.db.ExecContext(ctx, addColumn+`org_id TEXT NULL`); err != nil && !isDuplicateColumnError(err) {
+	if _, err := s.bun.ExecContext(ctx, addColumn+`org_id TEXT NULL`); err != nil && !isDuplicateColumnError(err) {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, addColumn+`source_kind TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnError(err) {
+	if _, err := s.bun.ExecContext(ctx, addColumn+`source_kind TEXT NOT NULL DEFAULT ''`); err != nil && !isDuplicateColumnError(err) {
 		return err
 	}
 	return nil
