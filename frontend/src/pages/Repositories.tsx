@@ -38,6 +38,13 @@ import {
   SettingsIcon,
 } from '@chakra-ui/icons'
 import {
+  faCodeCompare,
+  faCodePullRequest,
+  faEye,
+  faFolder,
+  faFolderOpen,
+} from '@fortawesome/free-solid-svg-icons'
+import {
   api,
   type CodeSnapshot,
   type CompletedRepositoryMap,
@@ -117,22 +124,12 @@ function Glyph({ name }: { name: string }) {
   )
 }
 function RepositoryModeIcon({ mode }: { mode: 'compare' | 'live' | 'pr' }) {
+  const icon = mode === 'compare' ? faCodeCompare : mode === 'live' ? faEye : faCodePullRequest
+  const [width, height, , , pathData] = icon.icon
+  const paths = Array.isArray(pathData) ? pathData : [pathData]
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
-      {mode === 'compare' ? (
-        <>
-          <path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" />
-        </>
-      ) : mode === 'live' ? (
-        <path d="M2 12h4l3-8 6 16 3-8h4" />
-      ) : (
-        <>
-          <circle cx="6" cy="5" r="3" />
-          <circle cx="6" cy="19" r="3" />
-          <circle cx="18" cy="19" r="3" />
-          <path d="M6 8v8M18 16V9a4 4 0 0 0-4-4h-1m3-3-3 3 3 3" />
-        </>
-      )}
+    <svg width="13" height="13" viewBox={`0 0 ${width} ${height}`} fill="currentColor" aria-hidden="true" style={{ flexShrink: 0 }}>
+      {paths.map((path, index) => <path key={index} d={path} />)}
     </svg>
   )
 }
@@ -159,21 +156,22 @@ function ErrorMessage({ message }: { message: string }) {
 }
 
 function FileTreeIcon({ directory, expanded, change }: { directory?: boolean; expanded?: boolean; change?: SnapshotSourceChange['change'] }) {
+  if (directory) {
+    const icon = expanded ? faFolderOpen : faFolder
+    const [width, height, , , pathData] = icon.icon
+    const paths = Array.isArray(pathData) ? pathData : [pathData]
+    return (
+      <svg width="16" height="16" viewBox={`0 0 ${width} ${height}`} fill="currentColor" aria-hidden="true" style={{ flexShrink: 0 }}>
+        {paths.map((path, index) => <path key={index} d={path} />)}
+      </svg>
+    )
+  }
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flexShrink: 0 }}>
-      {directory ? expanded ? (
-        <>
-          <path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v2" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-          <path d="M3 8h18l-2 12H5a2 2 0 0 1-2-2V8Z" fill="currentColor" fillOpacity="0.25" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-        </>
-      ) : (
-        <path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" fill="currentColor" fillOpacity="0.25" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-      ) : (
-        <g stroke={change === 'added' ? '#a6e22e' : change === 'removed' ? '#ff656d' : '#ffb340'} strokeWidth="2.5">
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          {change === 'added' ? <path d="M8 12h8M12 8v8" /> : change === 'removed' ? <path d="M8 12h8" /> : <circle cx="12" cy="12" r="1.5" fill="#ffb340" />}
-        </g>
-      )}
+      <g stroke={change === 'added' ? '#a6e22e' : change === 'removed' ? '#ff656d' : '#ffb340'} strokeWidth="2.5">
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+        {change === 'added' ? <path d="M8 12h8M12 8v8" /> : change === 'removed' ? <path d="M8 12h8" /> : <circle cx="12" cy="12" r="1.5" fill="#ffb340" />}
+      </g>
     </svg>
   )
 }
