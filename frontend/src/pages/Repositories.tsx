@@ -1698,44 +1698,6 @@ export default function Repositories() {
                   collapsed={historyCollapsed}
                   onToggle={() => setHistoryCollapsed(!historyCollapsed)}
                 />}
-                {shownImpact && <Flex
-                  px={4}
-                  h="40px"
-                  align="center"
-                  gap={3}
-                  flexShrink={0}
-                  borderBottom="1px solid"
-                  borderColor="whiteAlpha.100"
-                >
-                  {shownImpact && (
-                    <HStack
-                      spacing={1}
-                      align="center"
-                      data-testid="repositories-radius"
-                    >
-                      <Text fontSize="xs" color="gray.500">
-                        Radius
-                      </Text>
-                      {Array.from(
-                        { length: Math.min(3, shownImpact.maxRadius) + 1 },
-                        (_, r) => (
-                          <Button
-                            key={r}
-                            data-testid={`repositories-radius-${r}`}
-                            size="xs"
-                            variant={shownImpact.radius === r ? 'solid' : 'ghost'}
-                            isDisabled={busy}
-                            onClick={() => {
-                              if (r !== shownImpact.radius) void changeRadius(r)
-                            }}
-                          >
-                            {r}
-                          </Button>
-                        ),
-                      )}
-                    </HStack>
-                  )}
-                </Flex>}
                 {mode === 'live' && (
                   <>
                     <RepositoryWatcherPanel status={watch} repositoryRoot={selected.root} branch={watch?.gitBranch || live?.gitBranch || ''} revision={watch?.gitRevision || live?.gitRevision || ''} busy={watchBusy} onStart={() => void startWatch()} onStop={() => void stopWatch()} onRestart={() => void restartWatch()} onRefresh={() => void refreshWatch()} />
@@ -1855,7 +1817,7 @@ export default function Repositories() {
                     )}
                     </Box>
                   </Box>
-                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} selectedPath={selectedPath} repositoryRoot={selected.root} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
+                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} selectedPath={selectedPath} repositoryRoot={selected.root} busy={busy} onRadiusChange={(radius) => void changeRadius(radius)} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
                 </Flex>
               </>
             ))}
