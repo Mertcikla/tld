@@ -217,6 +217,8 @@ describe('codeindex snapshot mapping', () => {
       provenance: '',
       contentFingerprint: '',
       commitMessage: '',
+      configHash: '',
+      toolVersions: {},
     })
     snapshot.statistics = { $typeName: 'codeindex.v1.SnapshotStatistics', facts: 100, edges: 20, sources: 5 }
     expect(mapCodeSnapshot(snapshot).statistics).toEqual({ facts: 100, edges: 20, sources: 5 })

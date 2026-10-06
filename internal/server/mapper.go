@@ -40,8 +40,8 @@ func (s *codeIndexService) MapRepository(ctx context.Context, req *connect.Reque
 	if targets > 1 {
 		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("snapshot_id, git_revision, and working_tree are mutually exclusive"))
 	}
-	if !s.begin(repositoryID) {
-		return connect.NewError(connect.CodeAlreadyExists, fmt.Errorf("a map is already running for this repository"))
+	if !s.begin(repositoryID, "map") {
+		return connect.NewError(connect.CodeAlreadyExists, fmt.Errorf("a map or snapshot capture is already running for this repository"))
 	}
 	defer s.end(repositoryID)
 	ctx, release, err := s.store.AcquireLease(ctx, repositoryID)
@@ -65,13 +65,13 @@ func (s *codeIndexService) MapRepository(ctx context.Context, req *connect.Reque
 	return stream.Send(&codeindexv1.MapRepositoryEvent{Event: &codeindexv1.MapRepositoryEvent_Result{Result: result}})
 }
 
-func (s *codeIndexService) begin(repositoryID string) bool {
+func (s *codeIndexService) begin(repositoryID, kind string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.running[repositoryID]; ok {
 		return false
 	}
-	s.running[repositoryID] = struct{}{}
+	s.running[repositoryID] = kind
 	return true
 }
 

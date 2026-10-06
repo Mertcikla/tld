@@ -247,6 +247,11 @@ func TestRepositoryServiceAddRepository(t *testing.T) {
 	if len(snap.GetSources()) != 1 || snap.GetSources()[0].GetPath() != "a.go" {
 		t.Fatalf("snapshot sources = %+v", snap.GetSources())
 	}
+	// The initial index of a dirty or non-Git checkout is promoted from the
+	// transient working_tree marker to a visible saved point.
+	if snap.GetProvenance() != "manual" {
+		t.Fatalf("snapshot provenance = %q, want manual", snap.GetProvenance())
+	}
 }
 
 func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
@@ -282,6 +287,9 @@ func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
 	if !strings.Contains(indexers[0].GetInstallHint(), "scip-go") {
 		t.Fatalf("install hint = %q, want a scip-go install command", indexers[0].GetInstallHint())
 	}
+	if indexers[0].GetMinVersion() == "" || indexers[0].GetDownloadUrl() == "" {
+		t.Fatalf("indexer metadata = %+v, want a minimum version and download URL", indexers[0])
+	}
 
 	stream, err := missingClient.AddRepository(ctx, connect.NewRequest(&codeindexv1.AddRepositoryRequest{Path: dir}))
 	if err == nil {
@@ -312,6 +320,9 @@ func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
 	}
 	if indexers := check.Msg.GetIndexers(); len(indexers) != 1 || !indexers[0].GetInstalled() {
 		t.Fatalf("indexers = %+v, want installed scip-go", indexers)
+	}
+	if indexer := check.Msg.GetIndexers()[0]; indexer.GetVersion() == "" || !indexer.GetBelowMinimum() {
+		t.Fatalf("indexer = %+v, want a detected version below the minimum", indexer)
 	}
 }
 

@@ -202,6 +202,8 @@ export interface CodeSnapshot {
   provenance?: string
   contentFingerprint?: string
   commitMessage?: string
+  configHash?: string
+  toolVersions?: Record<string, string>
   statistics?: { facts: number; edges: number; sources: number }
 }
 
@@ -357,6 +359,11 @@ export interface RepositoryIndexerRequirement {
   languages: string[]
   installed: boolean
   installHint: string
+  version: string
+  minVersion: string
+  belowMinimum: boolean
+  downloadUrl: string
+  path: string
 }
 
 // RepositoryIndexerCheck is the result of inspecting a repository's required
@@ -568,6 +575,8 @@ export function mapCodeSnapshot(snapshot: CodeSnapshotProto): CodeSnapshot {
     provenance: snapshot.provenance,
     contentFingerprint: snapshot.contentFingerprint,
     commitMessage: snapshot.commitMessage,
+    configHash: snapshot.configHash,
+    toolVersions: snapshot.toolVersions,
     ...(snapshot.statistics ? { statistics: {
       facts: snapshot.statistics.facts,
       edges: snapshot.statistics.edges,
@@ -2120,6 +2129,11 @@ export const api = {
             languages: item.languages,
             installed: item.installed,
             installHint: item.installHint,
+            version: item.version,
+            minVersion: item.minVersion,
+            belowMinimum: item.belowMinimum,
+            downloadUrl: item.downloadUrl,
+            path: item.path,
           })),
         }
       } catch (e) {
@@ -2185,6 +2199,35 @@ export const api = {
         const res = await codeIndexClient.listSnapshots({ id: repositoryId })
         return (res.snapshots ?? []).map(mapCodeSnapshot)
       }),
+    captureSnapshot: async (
+      repositoryId: string,
+      handlers: { workingTree?: boolean; signal?: AbortSignal; onProgress?: (progress: RepositoryIndexProgress) => void } = {},
+    ): Promise<CodeSnapshot> => {
+      try {
+        const stream = codeIndexClient.captureSnapshot({
+          repositoryId,
+          workingTree: handlers.workingTree ?? false,
+        }, { signal: handlers.signal })
+        let snapshot: CodeSnapshotProto | null = null
+        for await (const event of stream) {
+          if (event.event.case === 'progress') {
+            handlers.onProgress?.({
+              stage: event.event.value.stage,
+              current: event.event.value.current,
+              total: event.event.value.total,
+              detail: event.event.value.detail,
+            })
+          } else if (event.event.case === 'snapshot') {
+            snapshot = event.event.value
+          }
+        }
+        if (!snapshot) throw new Error('Snapshot capture finished without a snapshot')
+        return mapCodeSnapshot(snapshot)
+      } catch (e) {
+        if (e instanceof ConnectError) throw new Error(e.message)
+        throw e
+      }
+    },
     deleteSnapshot: (snapshotId: string): Promise<void> =>
       rpc(async () => {
         await codeIndexClient.deleteSnapshot({ id: snapshotId })

@@ -645,10 +645,25 @@ func measure(roots []*Group, g *graph, files []File, activeMembers []int, totalF
 	metrics.Groups = len(nodes)
 
 	rootDegree := map[int32]map[int32]struct{}{}
-	isolated := 0
-	for _, group := range nodes {
-		if group.Isolated {
-			isolated += group.Files
+	// Isolated groups nest (a directory container and its leaf buckets are both
+	// isolated and both report descendant Files), so summing group.Files across
+	// the tree double counts. Count each file once instead: a file is isolated
+	// when any group on its path is isolated.
+	isolated := totalFiles
+	for member := 0; member < totalFiles; member++ {
+		groupPath := paths[member]
+		if len(groupPath) == 0 {
+			continue
+		}
+		clustered := true
+		for _, id := range groupPath {
+			if nodes[id].Isolated {
+				clustered = false
+				break
+			}
+		}
+		if clustered {
+			isolated--
 		}
 	}
 	for _, e := range g.edges {

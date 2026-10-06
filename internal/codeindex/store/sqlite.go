@@ -347,6 +347,23 @@ func (s *Store) Latest(ctx context.Context, repositoryID string) (string, error)
 	return latest, nil
 }
 
+// SetSnapshotProvenance rewrites one snapshot's provenance marker. It promotes
+// the initial working-tree index captured when a repository is added into a
+// durable saved point instead of the transient working_tree marker.
+func (s *Store) SetSnapshotProvenance(ctx context.Context, id, provenance string) error {
+	where, scopeArgs := scope(ctx).clause("org_id")
+	res, err := s.bun.NewRaw(`UPDATE codeindex_snapshots SET provenance = ? WHERE id = ?`+where, append([]any{provenance, id}, scopeArgs...)...).Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("set snapshot provenance: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // Repository loads repository metadata.
 func (s *Store) Repository(ctx context.Context, id string) (*pb.Repository, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")

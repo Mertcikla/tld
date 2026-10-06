@@ -18,6 +18,7 @@ import (
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/config"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
+	"github.com/mertcikla/tld/v2/internal/codeindex/metrics"
 	"github.com/mertcikla/tld/v2/internal/codeindex/tools"
 )
 
@@ -25,6 +26,15 @@ type Pipeline struct {
 	Config config.Config
 	// RepositoryID preserves canonical identity when indexing a temporary checkout.
 	RepositoryID string
+	// Metrics, when non-nil, collects coarse per-stage timings and item counts
+	// for the indexing run. It is optional and safe to leave nil.
+	Metrics *metrics.Collector
+}
+
+// measure starts a coarse stage timer, folding the stage's item count in when
+// the returned function is called. A nil Metrics collector makes it a no-op.
+func (p Pipeline) measure(stage string) func(items int64) {
+	return p.Metrics.Measure(stage)
 }
 
 // Progress reports indexing progress. Stage names the active phase; Current and
@@ -138,6 +148,7 @@ func (p Pipeline) buildOnce(ctx context.Context, req *pb.IndexRequest, progress 
 		return nil, nil, false, err
 	}
 	emitProgress(progress, Progress{Stage: "discover"})
+	doneDiscover := p.measure("discover")
 	var baseSources map[string]*graph.Source
 	if base != nil && base.Snapshot.ConfigHash == ConfigurationHash(p.Config, req) {
 		baseSources = base.Graph.Sources
@@ -150,6 +161,7 @@ func (p Pipeline) buildOnce(ctx context.Context, req *pb.IndexRequest, progress 
 	if err != nil {
 		return nil, nil, false, err
 	}
+	doneDiscover(int64(len(sources)))
 	repo := p.RepositoryID
 	if repo == "" {
 		repo = graph.RepositoryID(root)
@@ -195,6 +207,7 @@ func (p Pipeline) buildOnce(ctx context.Context, req *pb.IndexRequest, progress 
 		syntaxSources = append(syntaxSources, src)
 	}
 	emitProgress(progress, Progress{Stage: "tree-sitter", Total: int64(len(syntaxSources))})
+	doneTreeSitter := p.measure("tree-sitter")
 	var calls []callSite
 	for i, src := range syntaxSources {
 		emitProgress(progress, Progress{Stage: "tree-sitter", Current: int64(i), Total: int64(len(syntaxSources)), Detail: src.Path})
@@ -204,6 +217,7 @@ func (p Pipeline) buildOnce(ctx context.Context, req *pb.IndexRequest, progress 
 		}
 		calls = append(calls, sites...)
 	}
+	doneTreeSitter(int64(len(syntaxSources)))
 	emitProgress(progress, Progress{Stage: "tree-sitter", Current: int64(len(syntaxSources)), Total: int64(len(syntaxSources))})
 	tmp, err := os.MkdirTemp("", "codeindex-scip-")
 	if err != nil {
@@ -220,6 +234,7 @@ func (p Pipeline) buildOnce(ctx context.Context, req *pb.IndexRequest, progress 
 	}
 	totalProjects := len(projects)
 	emitProgress(progress, Progress{Stage: "scip", Total: int64(totalProjects)})
+	doneScip := p.measure("scip")
 	for i, pr := range projects {
 		family := languageFamily(pr.Language)
 		scipBacked := !isSyntaxFamily(family)
@@ -239,16 +254,22 @@ func (p Pipeline) buildOnce(ctx context.Context, req *pb.IndexRequest, progress 
 			continue
 		}
 	}
+	doneScip(int64(totalProjects))
 	emitProgress(progress, Progress{Stage: "scip", Current: int64(totalProjects), Total: int64(totalProjects)})
 	emitProgress(progress, Progress{Stage: "relationships"})
+	doneRelationships := p.measure("relationships")
 	table.apply(g)
 	deriveCalls(g, calls, table)
+	doneRelationships(int64(len(g.EdgeFacts)))
 	emitProgress(progress, Progress{Stage: "infra"})
+	doneInfra := p.measure("infra")
 	if e := addInfraFacts(ctx, g, root); e != nil {
 		return nil, nil, false, e
 	}
 	addFileFacts(g)
+	doneInfra(int64(len(g.Facts)))
 	emitProgress(progress, Progress{Stage: "verify"})
+	doneVerify := p.measure("verify")
 	afterProjects, afterSources, err := discover(ctx, root, req.ProjectRoots, req.Exclude, sources, false)
 	if err != nil {
 		return nil, nil, false, err
@@ -257,6 +278,7 @@ func (p Pipeline) buildOnce(ctx context.Context, req *pb.IndexRequest, progress 
 	if err != nil {
 		return nil, nil, false, err
 	}
+	doneVerify(int64(len(afterSources)))
 	if after != before {
 		drift := inputDrift(beforeInputs, afterInputs)
 		emitProgress(progress, Progress{Stage: "verify", Detail: "inputs changed: " + drift})

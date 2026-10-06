@@ -54,7 +54,7 @@ func prepareFixture(t *testing.T) (*codeIndexService, string, string, string) {
 	if err := idx.Publish(context.Background(), root, seed, graph.NewGraph(repoID, seed.Id)); err != nil {
 		t.Fatal(err)
 	}
-	return &codeIndexService{ws: ws, store: idx, running: map[string]struct{}{}}, root, sha, repoID
+	return &codeIndexService{ws: ws, store: idx, running: map[string]string{}}, root, sha, repoID
 }
 
 func TestPrepareCommitSnapshotPreservesIdentityAndLatest(t *testing.T) {

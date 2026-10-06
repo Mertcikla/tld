@@ -30,22 +30,25 @@ type Tool struct {
 	// InstallHint is a copy-pasteable command that installs the tool, or a
 	// release page when no package manager install exists.
 	InstallHint string
+	// DownloadURL is the release or package page a user can download the tool
+	// from. It backs the UI's download action for missing or outdated tools.
+	DownloadURL string
 	path        func(config.Config) string
 }
 
 // All returns every indexer the pipeline knows how to invoke.
 func All() []Tool {
 	return []Tool{
-		{Family: "go", Name: "scip-go", VersionArgs: []string{"--version"}, MinVersion: "0.1.26", InstallHint: "go install github.com/scip-code/scip-go/cmd/scip-go@latest", path: func(c config.Config) string { return c.Tools.SCIPGo }},
-		{Family: "web", Name: "scip-typescript", VersionArgs: []string{"--version"}, MinVersion: "0.4.0", InstallHint: "npm install -g @sourcegraph/scip-typescript", path: func(c config.Config) string { return c.Tools.SCIPTypeScript }},
-		{Family: "python", Name: "scip-python", VersionArgs: []string{"--version"}, MinVersion: "0.6.6", InstallHint: "npm install -g @sourcegraph/scip-python", path: func(c config.Config) string { return c.Tools.SCIPPython }},
-		{Family: "dotnet", Name: "scip-dotnet", VersionArgs: []string{"--version"}, MinVersion: "0.2.14", InstallHint: "dotnet tool install --global scip-dotnet", path: func(c config.Config) string { return c.Tools.SCIPDotnet }},
-		{Family: "clang", Name: "scip-clang", VersionArgs: []string{"--version"}, MinVersion: "0.4.0", InstallHint: "download a release from https://github.com/sourcegraph/scip-clang/releases", path: func(c config.Config) string { return c.Tools.SCIPClang }},
-		{Family: "jvm", Name: "scip-java", VersionArgs: []string{"--version"}, InstallHint: "cs install scip-java", path: func(c config.Config) string { return c.Tools.SCIPJava }},
-		{Family: "dart", Name: "scip-dart", VersionArgs: []string{"--version"}, MinVersion: "1.6.2", InstallHint: "dart pub global activate scip_dart", path: func(c config.Config) string { return c.Tools.SCIPDart }},
-		{Family: "php", Name: "scip-php", VersionArgs: []string{"--help"}, InstallHint: "composer global require davidrjenni/scip-php", path: func(c config.Config) string { return c.Tools.SCIPPhp }},
-		{Family: "ruby", Name: "scip-ruby", VersionArgs: []string{"--version"}, MinVersion: "0.5.0", InstallHint: "gem install scip-ruby", path: func(c config.Config) string { return c.Tools.SCIPRuby }},
-		{Family: "rust", Name: "rust-analyzer", VersionArgs: []string{"--version"}, InstallHint: "rustup component add rust-analyzer", path: func(c config.Config) string { return c.Tools.RustAnalyzer }},
+		{Family: "go", Name: "scip-go", VersionArgs: []string{"--version"}, MinVersion: "0.1.26", InstallHint: "go install github.com/scip-code/scip-go/cmd/scip-go@latest", DownloadURL: "https://github.com/scip-code/scip-go/releases", path: func(c config.Config) string { return c.Tools.SCIPGo }},
+		{Family: "web", Name: "scip-typescript", VersionArgs: []string{"--version"}, MinVersion: "0.4.0", InstallHint: "npm install -g @sourcegraph/scip-typescript", DownloadURL: "https://github.com/sourcegraph/scip-typescript/releases", path: func(c config.Config) string { return c.Tools.SCIPTypeScript }},
+		{Family: "python", Name: "scip-python", VersionArgs: []string{"--version"}, MinVersion: "0.6.6", InstallHint: "npm install -g @sourcegraph/scip-python", DownloadURL: "https://github.com/sourcegraph/scip-python/releases", path: func(c config.Config) string { return c.Tools.SCIPPython }},
+		{Family: "dotnet", Name: "scip-dotnet", VersionArgs: []string{"--version"}, MinVersion: "0.2.14", InstallHint: "dotnet tool install --global scip-dotnet", DownloadURL: "https://github.com/sourcegraph/scip-dotnet/releases", path: func(c config.Config) string { return c.Tools.SCIPDotnet }},
+		{Family: "clang", Name: "scip-clang", VersionArgs: []string{"--version"}, MinVersion: "0.4.0", InstallHint: "download a release from https://github.com/sourcegraph/scip-clang/releases", DownloadURL: "https://github.com/sourcegraph/scip-clang/releases", path: func(c config.Config) string { return c.Tools.SCIPClang }},
+		{Family: "jvm", Name: "scip-java", VersionArgs: []string{"--version"}, InstallHint: "cs install scip-java", DownloadURL: "https://github.com/sourcegraph/scip-java/releases", path: func(c config.Config) string { return c.Tools.SCIPJava }},
+		{Family: "dart", Name: "scip-dart", VersionArgs: []string{"--version"}, MinVersion: "1.6.2", InstallHint: "dart pub global activate scip_dart", DownloadURL: "https://pub.dev/packages/scip_dart", path: func(c config.Config) string { return c.Tools.SCIPDart }},
+		{Family: "php", Name: "scip-php", VersionArgs: []string{"--help"}, InstallHint: "composer global require davidrjenni/scip-php", DownloadURL: "https://github.com/davidrjenni/scip-php", path: func(c config.Config) string { return c.Tools.SCIPPhp }},
+		{Family: "ruby", Name: "scip-ruby", VersionArgs: []string{"--version"}, MinVersion: "0.5.0", InstallHint: "gem install scip-ruby", DownloadURL: "https://github.com/sourcegraph/scip-ruby/releases", path: func(c config.Config) string { return c.Tools.SCIPRuby }},
+		{Family: "rust", Name: "rust-analyzer", VersionArgs: []string{"--version"}, InstallHint: "rustup component add rust-analyzer", DownloadURL: "https://rust-analyzer.github.io/", path: func(c config.Config) string { return c.Tools.RustAnalyzer }},
 	}
 }
 
@@ -81,6 +84,7 @@ type Status struct {
 	Minimum      string
 	Error        string
 	InstallHint  string
+	DownloadURL  string
 }
 
 // Resolve returns the executable path for a tool. Paths containing a separator
@@ -190,7 +194,7 @@ func Missing(ctx context.Context, cfg config.Config) []Status {
 }
 
 func checkOne(ctx context.Context, t Tool, cfg config.Config) Status {
-	s := Status{Family: t.Family, Name: t.Name, InstallHint: t.InstallHint}
+	s := Status{Family: t.Family, Name: t.Name, InstallHint: t.InstallHint, DownloadURL: t.DownloadURL, Minimum: t.MinVersion}
 	path, err := Resolve(t, cfg)
 	if err != nil {
 		s.Path = path
@@ -201,7 +205,6 @@ func checkOne(ctx context.Context, t Tool, cfg config.Config) Status {
 	s.Found = true
 	s.Version = probeVersion(ctx, path, t.VersionArgs)
 	if t.MinVersion != "" {
-		s.Minimum = t.MinVersion
 		if ok, comparable := versionAtLeast(s.Version, t.MinVersion); comparable && !ok {
 			s.BelowMinimum = true
 		}

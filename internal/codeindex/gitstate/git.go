@@ -32,6 +32,17 @@ func Resolve(ctx context.Context, root, revision string) (string, error) {
 	return strings.TrimSpace(raw), err
 }
 
+// CurrentCommit resolves the checked-out commit and its branch, for capturing a
+// saved snapshot of HEAD without touching the working tree.
+func CurrentCommit(ctx context.Context, root string) (branch, revision string, err error) {
+	revision, err = Resolve(ctx, root, "HEAD")
+	if err != nil {
+		return "", "", fmt.Errorf("repository has no commit to capture: %w", err)
+	}
+	branch, _ = Run(ctx, root, "symbolic-ref", "--quiet", "--short", "HEAD")
+	return strings.TrimSpace(branch), revision, nil
+}
+
 type State struct {
 	Revision, Branch, Signature string
 	Paths                       []string
