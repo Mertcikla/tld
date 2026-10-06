@@ -44,7 +44,7 @@ func TestMapperServiceMapRepository(t *testing.T) {
 
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
-	client := codeindexv1connect.NewMapperServiceClient(ts.Client(), ts.URL+"/api")
+	client := codeindexv1connect.NewCodeIndexServiceClient(ts.Client(), ts.URL+"/api")
 
 	stream, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID}))
 	if err != nil {
@@ -79,11 +79,11 @@ func TestMapperServiceMapRepository(t *testing.T) {
 		t.Fatal("result has no run id")
 	}
 
-	maps, err := client.ListMaps(ctx, connect.NewRequest(&codeindexv1.ListMapsRequest{RepositoryId: repoID}))
+	maps, err := client.ListMaps(ctx, connect.NewRequest(&codeindexv1.ID{Id: repoID}))
 	if err != nil || len(maps.Msg.Maps) != 1 || maps.Msg.Maps[0].Result.SnapshotId != snap.Id {
 		t.Fatalf("completed maps: %+v: %v", maps, err)
 	}
-	reused, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID, SnapshotId: snap.Id}))
+	reused, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID, Revision: &codeindexv1.Revision{SnapshotId: snap.Id}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestMapperServiceMapRepository(t *testing.T) {
 	if err := reused.Err(); err != nil {
 		t.Fatal(err)
 	}
-	invalid, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID, SnapshotId: snap.Id, WorkingTree: true}))
+	invalid, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID, Revision: &codeindexv1.Revision{SnapshotId: snap.Id, WorkingTree: true}}))
 	if err == nil {
 		for invalid.Receive() {
 		}
@@ -112,7 +112,7 @@ func TestMapperServiceMapRepository(t *testing.T) {
 	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_analysis_runs WHERE repository_id = ?`, repoID).Scan(&analysisRuns); err != nil {
 		t.Fatal(err)
 	}
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_groups WHERE run_id = ? AND kind = ?`, result.GetRunId(), codeindexv1.GroupKind_GROUP_KIND_COMMUNITY).Scan(&groups); err != nil {
+	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_groups WHERE run_id = ? AND kind = ?`, result.GetRunId(), int(cstore.GroupKindCommunity)).Scan(&groups); err != nil {
 		t.Fatal(err)
 	}
 	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_group_members WHERE group_id IN (SELECT id FROM codeindex_groups WHERE run_id = ?)`, result.GetRunId()).Scan(&members); err != nil {
@@ -164,7 +164,7 @@ func TestMapperServiceMapConfigChangeReruns(t *testing.T) {
 
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
-	client := codeindexv1connect.NewMapperServiceClient(ts.Client(), ts.URL+"/api")
+	client := codeindexv1connect.NewCodeIndexServiceClient(ts.Client(), ts.URL+"/api")
 
 	mapOnce := func() (*codeindexv1.MapResult, int) {
 		stream, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID}))
@@ -244,7 +244,7 @@ func TestMapperServiceMaterializesBoundedExternalImports(t *testing.T) {
 
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
-	client := codeindexv1connect.NewMapperServiceClient(ts.Client(), ts.URL+"/api")
+	client := codeindexv1connect.NewCodeIndexServiceClient(ts.Client(), ts.URL+"/api")
 	stream, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID}))
 	if err != nil {
 		t.Fatalf("map repository: %v", err)
@@ -301,7 +301,7 @@ func TestMapperServiceGraphGroupingNeedsNoEmbeddings(t *testing.T) {
 
 	ts := httptest.NewServer(routes)
 	defer ts.Close()
-	client := codeindexv1connect.NewMapperServiceClient(ts.Client(), ts.URL+"/api")
+	client := codeindexv1connect.NewCodeIndexServiceClient(ts.Client(), ts.URL+"/api")
 
 	stream, err := client.MapRepository(ctx, connect.NewRequest(&codeindexv1.MapRepositoryRequest{RepositoryId: repoID}))
 	if err != nil {

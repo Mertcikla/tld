@@ -31,12 +31,20 @@ import {
 } from '@chakra-ui/react'
 import {
   AddIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   DeleteIcon,
   RepeatIcon,
   SettingsIcon,
 } from '@chakra-ui/icons'
+import {
+  faCodeCompare,
+  faCodePullRequest,
+  faEye,
+  faFolder,
+  faFolderOpen,
+} from '@fortawesome/free-solid-svg-icons'
 import {
   api,
   type CodeSnapshot,
@@ -102,6 +110,27 @@ function age(unix: number) {
         ? `${Math.floor(minutes / 60)}h ago`
         : `${Math.floor(minutes / 1440)}d ago`
 }
+function targetSummary(value: string, snapshots: CodeSnapshot[]) {
+  if (!value) return 'Not selected'
+  if (value === 'working_tree') return 'Working tree'
+  if (value.startsWith('commit:')) return short(value.slice(7))
+  const snapshot = snapshotForTarget(value, snapshots)
+  if (snapshot) return snapshot.gitBranch || short(snapshot.gitRevision)
+  return value.startsWith('snapshot:') ? short(value.slice(9)) : value
+}
+function targetStatus(
+  value: string,
+  snapshots: CodeSnapshot[],
+  maps: CompletedRepositoryMap[],
+) {
+  const snapshot = snapshotForTarget(value, snapshots)
+  const mapped = !!snapshot && maps.some((m) => m.result.snapshotId === snapshot.id)
+  return mapped
+    ? { label: 'Mapped', colorScheme: 'green' }
+    : snapshot
+      ? { label: 'Indexed', colorScheme: 'blue' }
+      : { label: 'Not captured', colorScheme: 'gray' }
+}
 function Glyph({ name }: { name: string }) {
   return (
     <Center
@@ -117,22 +146,12 @@ function Glyph({ name }: { name: string }) {
   )
 }
 function RepositoryModeIcon({ mode }: { mode: 'compare' | 'live' | 'pr' }) {
+  const icon = mode === 'compare' ? faCodeCompare : mode === 'live' ? faEye : faCodePullRequest
+  const [width, height, , , pathData] = icon.icon
+  const paths = Array.isArray(pathData) ? pathData : [pathData]
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
-      {mode === 'compare' ? (
-        <>
-          <path d="M4 7h16m-4-4 4 4-4 4M20 17H4m4-4-4 4 4 4" />
-        </>
-      ) : mode === 'live' ? (
-        <path d="M2 12h4l3-8 6 16 3-8h4" />
-      ) : (
-        <>
-          <circle cx="6" cy="5" r="3" />
-          <circle cx="6" cy="19" r="3" />
-          <circle cx="18" cy="19" r="3" />
-          <path d="M6 8v8M18 16V9a4 4 0 0 0-4-4h-1m3-3-3 3 3 3" />
-        </>
-      )}
+    <svg width="13" height="13" viewBox={`0 0 ${width} ${height}`} fill="currentColor" aria-hidden="true" style={{ flexShrink: 0 }}>
+      {paths.map((path, index) => <path key={index} d={path} />)}
     </svg>
   )
 }
@@ -159,21 +178,22 @@ function ErrorMessage({ message }: { message: string }) {
 }
 
 function FileTreeIcon({ directory, expanded, change }: { directory?: boolean; expanded?: boolean; change?: SnapshotSourceChange['change'] }) {
+  if (directory) {
+    const icon = expanded ? faFolderOpen : faFolder
+    const [width, height, , , pathData] = icon.icon
+    const paths = Array.isArray(pathData) ? pathData : [pathData]
+    return (
+      <svg width="16" height="16" viewBox={`0 0 ${width} ${height}`} fill="currentColor" aria-hidden="true" style={{ flexShrink: 0 }}>
+        {paths.map((path, index) => <path key={index} d={path} />)}
+      </svg>
+    )
+  }
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" style={{ flexShrink: 0 }}>
-      {directory ? expanded ? (
-        <>
-          <path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v2" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-          <path d="M3 8h18l-2 12H5a2 2 0 0 1-2-2V8Z" fill="currentColor" fillOpacity="0.25" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-        </>
-      ) : (
-        <path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" fill="currentColor" fillOpacity="0.25" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-      ) : (
-        <g stroke={change === 'added' ? '#a6e22e' : change === 'removed' ? '#ff656d' : '#ffb340'} strokeWidth="2.5">
-          <rect x="3" y="3" width="18" height="18" rx="2" />
-          {change === 'added' ? <path d="M8 12h8M12 8v8" /> : change === 'removed' ? <path d="M8 12h8" /> : <circle cx="12" cy="12" r="1.5" fill="#ffb340" />}
-        </g>
-      )}
+      <g stroke={change === 'added' ? '#a6e22e' : change === 'removed' ? '#ff656d' : '#ffb340'} strokeWidth="2.5">
+        <rect x="3" y="3" width="18" height="18" rx="2" />
+        {change === 'added' ? <path d="M8 12h8M12 8v8" /> : change === 'removed' ? <path d="M8 12h8" /> : <circle cx="12" cy="12" r="1.5" fill="#ffb340" />}
+      </g>
     </svg>
   )
 }
@@ -408,6 +428,7 @@ export default function Repositories() {
   const [showRepositorySettings, setShowRepositorySettings] = useState(() => params.get('page') === 'settings')
   const [collapsed, setCollapsed] = useState(false)
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
+  const [compareCollapsed, setCompareCollapsed] = useState(false)
   const [showIds] = useState(readShowIds)
   const [snapshots, setSnapshots] = useState<CodeSnapshot[]>([])
   const [maps, setMaps] = useState<CompletedRepositoryMap[]>([])
@@ -660,7 +681,7 @@ export default function Repositories() {
       compareTargets.current = null
     }
     operation.current?.abort(); operation.current = null
-    setBusy(false); setProgress(null); setComparison(null); setOperationError(''); setSelectedPath(''); setFilesTab('files'); setMode(next)
+    setBusy(false); setProgress(null); setComparison(null); setOperationError(''); setSelectedPath(''); setFilesTab('files'); setCompareCollapsed(false); setMode(next)
   }
   useEffect(() => {
     return () => { prListOperation.current?.abort(); prListOperation.current = null }
@@ -697,23 +718,6 @@ export default function Repositories() {
     } finally {
       if (operation.current === controller) { operation.current = null; setBusy(false) }
     }
-  }
-  const changeRadius = async (radius: number) => {
-    if (!shownImpact || busy) return
-    const nextRadius = Math.min(radius, 3)
-    const repositoryId = selectedId
-    const key = shownImpact.comparisonKey
-    const controller = new AbortController()
-    operation.current = controller; setBusy(true); setOperationError('')
-    try {
-      const result = await api.repositories.impactRadius(repositoryId, key, nextRadius, controller.signal)
-      if (!controller.signal.aborted && selectedRef.current === repositoryId && operation.current === controller) {
-        if (mode === 'live') setLive((old) => old ? { ...old, diagram: result } : old)
-        else setComparison(result)
-      }
-    } catch (err) {
-      if (!controller.signal.aborted && selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not update blast radius')
-    } finally { if (operation.current === controller) { operation.current = null; setBusy(false) } }
   }
   const startWatch = async () => {
     const repositoryId = selectedId
@@ -785,6 +789,7 @@ export default function Repositories() {
     setBaseBranch('')
     setHeadBranch('')
     setComparison(null); setSelectedPath(''); setFilesTab('files')
+    setHistoryCollapsed(false); setCompareCollapsed(false)
     initialized.current = ''
     restored.current = { base: '', head: '' }
     setSelectedId(id)
@@ -837,7 +842,11 @@ export default function Repositories() {
           base: targetMapOptions(base, baseBranch), head: targetMapOptions(head, headBranch),
           signal: controller.signal, onProgress: (next) => { if (isActive()) setProgress(next) },
         })
-        if (isActive()) setComparison(result)
+        if (isActive()) {
+          setComparison(result)
+          setHistoryCollapsed(true)
+          setCompareCollapsed(true)
+        }
       } else {
         await map(
           kind === 'base' ? base : head,
@@ -1121,8 +1130,7 @@ export default function Repositories() {
                             <Text fontSize="10px" color="gray.400" mt={1}>
                               {s.statistics.facts.toLocaleString()} facts ·{' '}
                               {s.statistics.edges.toLocaleString()} edges ·{' '}
-                              {s.statistics.sources.toLocaleString()} files ·{' '}
-                              {s.statistics.chunks.toLocaleString()} chunks
+                              {s.statistics.sources.toLocaleString()} files
                             </Text>
                           ) : (
                             <Text fontSize="10px" color="gray.500" mt={1}>
@@ -1700,44 +1708,6 @@ export default function Repositories() {
                   collapsed={historyCollapsed}
                   onToggle={() => setHistoryCollapsed(!historyCollapsed)}
                 />}
-                {shownImpact && <Flex
-                  px={4}
-                  h="40px"
-                  align="center"
-                  gap={3}
-                  flexShrink={0}
-                  borderBottom="1px solid"
-                  borderColor="whiteAlpha.100"
-                >
-                  {shownImpact && (
-                    <HStack
-                      spacing={1}
-                      align="center"
-                      data-testid="repositories-radius"
-                    >
-                      <Text fontSize="xs" color="gray.500">
-                        Radius
-                      </Text>
-                      {Array.from(
-                        { length: Math.min(3, shownImpact.maxRadius) + 1 },
-                        (_, r) => (
-                          <Button
-                            key={r}
-                            data-testid={`repositories-radius-${r}`}
-                            size="xs"
-                            variant={shownImpact.radius === r ? 'solid' : 'ghost'}
-                            isDisabled={busy}
-                            onClick={() => {
-                              if (r !== shownImpact.radius) void changeRadius(r)
-                            }}
-                          >
-                            {r}
-                          </Button>
-                        ),
-                      )}
-                    </HStack>
-                  )}
-                </Flex>}
                 {mode === 'live' && (
                   <>
                     <RepositoryWatcherPanel status={watch} repositoryRoot={selected.root} branch={watch?.gitBranch || live?.gitBranch || ''} revision={watch?.gitRevision || live?.gitRevision || ''} busy={watchBusy} onStart={() => void startWatch()} onStop={() => void stopWatch()} onRestart={() => void restartWatch()} onRefresh={() => void refreshWatch()} />
@@ -1745,43 +1715,57 @@ export default function Repositories() {
                   </>
                 )}
                 {(mode === 'compare' || (mode === 'pr' && pullRequest)) && (
-                  <Box
-                    p={4}
-                    borderBottom="1px solid"
-                    borderColor="whiteAlpha.100"
-                  >
-                    <Grid
-                      templateColumns={{ base: '1fr', md: '1fr 1fr' }}
+                  <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
+                    <Flex
+                      px={4}
+                      py={3}
                       gap={3}
+                      align="center"
+                      wrap="wrap"
+                      cursor="pointer"
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={!compareCollapsed}
+                      data-testid="repositories-compare-summary"
+                      onClick={() => setCompareCollapsed((current) => !current)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          setCompareCollapsed((current) => !current)
+                        }
+                      }}
+                      _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '-2px' }}
                     >
-                      <CompareSide
-                        side="Base"
-                        value={base}
-                        branch={baseBranch}
-                        snapshots={snapshots}
-                        maps={maps}
-                        history={history}
-                        showIds={showIds}
-                        disabled={busy || dataLoading}
-                        locked={mode === 'pr'}
-                        onChange={(value) => chooseTarget('base', value)}
-                        onMap={() => void run('base')}
-                      />
-                      <CompareSide
-                        side="Head"
-                        value={head}
-                        branch={headBranch}
-                        snapshots={snapshots}
-                        maps={maps}
-                        history={history}
-                        showIds={showIds}
-                        disabled={busy || dataLoading}
-                        locked={mode === 'pr'}
-                        onChange={(value) => chooseTarget('head', value)}
-                        onMap={() => void run('head')}
-                      />
-                    </Grid>
-                    <Flex mt={3} gap={3} align="center" wrap="wrap">
+                      <HStack spacing={2} minW={0}>
+                        <Box w={2} h={2} borderRadius="full" bg="gray.400" flexShrink={0} />
+                        <Label>Base</Label>
+                        <Text fontSize="xs" color="gray.300" isTruncated>
+                          {targetSummary(base, snapshots)}
+                        </Text>
+                        <Badge
+                          colorScheme={targetStatus(base, snapshots, maps).colorScheme}
+                          fontSize="2xs"
+                          flexShrink={0}
+                        >
+                          {targetStatus(base, snapshots, maps).label}
+                        </Badge>
+                      </HStack>
+                      <Text as="span" color="gray.600" flexShrink={0}>→</Text>
+                      <HStack spacing={2} minW={0}>
+                        <Box w={2} h={2} borderRadius="full" bg="green.400" flexShrink={0} />
+                        <Label>Head</Label>
+                        <Text fontSize="xs" color="gray.300" isTruncated>
+                          {targetSummary(head, snapshots)}
+                        </Text>
+                        <Badge
+                          colorScheme={targetStatus(head, snapshots, maps).colorScheme}
+                          fontSize="2xs"
+                          flexShrink={0}
+                        >
+                          {targetStatus(head, snapshots, maps).label}
+                        </Badge>
+                      </HStack>
                       <Box flex={1} />
                       <Button
                         {...accentStyle}
@@ -1790,7 +1774,10 @@ export default function Repositories() {
                         isLoading={busy}
                         loadingText="Comparing…"
                         isDisabled={!base || !head || dataLoading}
-                        onClick={() => void run('compare')}
+                        onClick={(event) => {
+                          event?.stopPropagation()
+                          void run('compare')
+                        }}
                       >
                         Compare maps
                       </Button>
@@ -1798,14 +1785,57 @@ export default function Repositories() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => {
+                          onClick={(event) => {
+                            event?.stopPropagation()
                             operation.current?.abort()
                           }}
                         >
                           Cancel
                         </Button>
                       )}
+                      <ChevronDownIcon
+                        boxSize="16px"
+                        color="gray.500"
+                        flexShrink={0}
+                        transform={compareCollapsed ? 'rotate(-90deg)' : undefined}
+                        transition="transform 0.2s"
+                      />
                     </Flex>
+                    {!compareCollapsed && (
+                      <Box px={4} pb={4}>
+                        <Grid
+                          templateColumns={{ base: '1fr', md: '1fr 1fr' }}
+                          gap={3}
+                        >
+                          <CompareSide
+                            side="Base"
+                            value={base}
+                            branch={baseBranch}
+                            snapshots={snapshots}
+                            maps={maps}
+                            history={history}
+                            showIds={showIds}
+                            disabled={busy || dataLoading}
+                            locked={mode === 'pr'}
+                            onChange={(value) => chooseTarget('base', value)}
+                            onMap={() => void run('base')}
+                          />
+                          <CompareSide
+                            side="Head"
+                            value={head}
+                            branch={headBranch}
+                            snapshots={snapshots}
+                            maps={maps}
+                            history={history}
+                            showIds={showIds}
+                            disabled={busy || dataLoading}
+                            locked={mode === 'pr'}
+                            onChange={(value) => chooseTarget('head', value)}
+                            onMap={() => void run('head')}
+                          />
+                        </Grid>
+                      </Box>
+                    )}
                   </Box>
                 )}
                 {busy && (
@@ -1857,7 +1887,7 @@ export default function Repositories() {
                     )}
                     </Box>
                   </Box>
-                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} selectedPath={selectedPath} repositoryRoot={selected.root} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
+                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} selectedPath={selectedPath} busy={busy} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
                 </Flex>
               </>
             ))}

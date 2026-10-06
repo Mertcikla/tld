@@ -1,9 +1,7 @@
 package indexer
 
 import (
-	"sort"
 	"strings"
-	"unicode/utf8"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
@@ -240,92 +238,4 @@ func signatureContext(src []byte, start, end int, name string) string {
 		return name
 	}
 	return t
-}
-func splitDeclaration(s *graph.Source, n *tsNode, start, end, target, max int) [][2]int {
-	if end-start <= max {
-		return [][2]int{{start, end}}
-	}
-	var boundaries []int
-	var collect func(*tsNode)
-	collect = func(node *tsNode) {
-		for i := 0; i < node.NamedChildCount(); i++ {
-			child := node.NamedChild(i)
-			if int(child.EndByte()) > start && int(child.EndByte()) < end {
-				boundaries = append(boundaries, int(child.EndByte()))
-			}
-			if uint(child.EndByte()-child.StartByte()) > uint(target) {
-				collect(child)
-			}
-		}
-	}
-	collect(n)
-	sort.Ints(boundaries)
-	var out [][2]int
-	for start < end {
-		limit := start + max
-		if limit >= end {
-			out = append(out, [2]int{start, end})
-			break
-		}
-		targetEnd := start + target
-		cut := 0
-		for _, b := range boundaries {
-			if b > start && b <= limit && (cut == 0 || absInt(b-targetEnd) < absInt(cut-targetEnd)) {
-				cut = b
-			}
-		}
-		if cut == 0 {
-			part := splitChunk(s, start, end, target, max)
-			out = append(out, part...)
-			break
-		}
-		out = append(out, [2]int{start, cut})
-		start = cut
-	}
-	return out
-}
-func absInt(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-func splitChunk(s *graph.Source, start, end, target, max int) [][2]int {
-	if end-start <= max {
-		return [][2]int{{start, end}}
-	}
-	var out [][2]int
-	for start < end {
-		cut := start + target
-		if cut >= end {
-			cut = end
-		} else {
-			limit := start + max
-			if limit > end {
-				limit = end
-			}
-			if p := strings.LastIndexByte(string(s.Text[cut:limit]), '\n'); p >= 0 {
-				cut += p + 1
-			} else if p := strings.LastIndexByte(string(s.Text[start:cut]), '\n'); p >= 0 && start+p+1 > start {
-				cut = start + p + 1
-			} else {
-				cut = limit
-			}
-		}
-		if cut <= start {
-			cut = start + max
-			if cut > end {
-				cut = end
-			}
-		}
-		for cut < end && cut > start && !utf8.RuneStart(s.Text[cut]) {
-			cut--
-		}
-		if cut <= start {
-			cut = end
-		}
-		out = append(out, [2]int{start, cut})
-		start = cut
-	}
-	return out
 }

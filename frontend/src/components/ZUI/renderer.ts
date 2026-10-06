@@ -168,6 +168,48 @@ export function setHighlightColor(color: string): void {
   currentHighlightColor = color
 }
 
+// A node stays fully opaque when it or any descendant carries a change overlay,
+// so blast-radius context keeps its normal appearance instead of fading out.
+const changeOverlaySubtreeCache = new WeakMap<LayoutNode, boolean>()
+function subtreeHasChangeOverlay(node: LayoutNode): boolean {
+  const cached = changeOverlaySubtreeCache.get(node)
+  if (cached !== undefined) return cached
+  const result = !!node.changeOverlay || node.children.some(subtreeHasChangeOverlay)
+  changeOverlaySubtreeCache.set(node, result)
+  return result
+}
+
+function isDirectChange(node: LayoutNode): boolean {
+  return !!node.changeOverlay && node.changeOverlay.change !== 'unchanged'
+}
+
+// Connectors often join container elements rather than files, so an endpoint
+// counts as directly impacted when a direct change lives anywhere in its
+// subtree.
+const directChangeSubtreeCache = new WeakMap<LayoutNode, boolean>()
+function subtreeHasDirectChange(node: LayoutNode): boolean {
+  const cached = directChangeSubtreeCache.get(node)
+  if (cached !== undefined) return cached
+  const result = isDirectChange(node) || node.children.some(subtreeHasDirectChange)
+  directChangeSubtreeCache.set(node, result)
+  return result
+}
+
+// Layered connector styling for the change overlay: both ends impacted keeps the
+// accent, a single impacted end fades to 50%, and an edge between untouched
+// elements drops to the node border grey.
+export function edgeLayerStyle(source: LayoutNode, target: LayoutNode, accent: string): { color: string; alphaFactor: number } {
+  const sourceDirect = subtreeHasDirectChange(source)
+  const targetDirect = subtreeHasDirectChange(target)
+  if (sourceDirect && targetDirect) {
+    return { color: accent, alphaFactor: 1 }
+  }
+  if (sourceDirect || targetDirect) {
+    return { color: accent, alphaFactor: 0.5 }
+  }
+  return { color: typeBorderColor(source.type), alphaFactor: 1 }
+}
+
 let currentHiddenTags: Set<string> = new Set()
 export function setHiddenTags(tags: Set<string>): void {
   currentHiddenTags = tags
@@ -505,6 +547,22 @@ function drawCycleIcon(ctx: CanvasRenderingContext2D, x: number, y: number, size
   ctx.lineTo(13.5, 12.5)
   ctx.stroke()
   ctx.restore()
+}
+
+function unitVector(fromX: number, fromY: number, toX: number, toY: number): { x: number; y: number; len: number } {
+  const dx = toX - fromX
+  const dy = toY - fromY
+  const len = Math.hypot(dx, dy)
+  if (len <= 0) return { x: 0, y: 0, len: 0 }
+  return { x: dx / len, y: dy / len, len }
+}
+
+function trimDelta(x: number, y: number, towardX: number, towardY: number, dist: number): { dx: number; dy: number } {
+  if (dist <= 0) return { dx: 0, dy: 0 }
+  const u = unitVector(x, y, towardX, towardY)
+  if (u.len <= 0) return { dx: 0, dy: 0 }
+  const d = Math.min(dist, u.len * 0.9)
+  return { dx: u.x * d, dy: u.y * d }
 }
 
 function drawArrowHead(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, size: number, color: string): void {
@@ -976,14 +1034,7 @@ function drawSceneNode(
 
   if (currentHighlightedTags.size > 0 && parentAlpha > 0.05) {
     const isHighlighted = layout.tags.length > 0 && layout.tags.some((t2) => currentHighlightedTags.has(t2))
-    if (!isHighlighted) {
-      ctx.save()
-      ctx.globalAlpha = parentAlpha * 0.82
-      ctx.fillStyle = canvasBg
-      traceShape()
-      ctx.fill()
-      ctx.restore()
-    } else {
+    if (isHighlighted) {
       const glowColor = currentHighlightColor || accent
       ctx.save()
       ctx.globalAlpha = parentAlpha
@@ -996,11 +1047,23 @@ function drawSceneNode(
       ctx.stroke()
       ctx.shadowBlur = 0
       ctx.restore()
+    } else if (!subtreeHasChangeOverlay(layout)) {
+      // Nodes inside a change overlay subtree (direct impact or blast-radius
+      // context) stay fully opaque; only unrelated elements fade into the
+      // background.
+      ctx.save()
+      ctx.globalAlpha = parentAlpha * 0.82
+      ctx.fillStyle = canvasBg
+      traceShape()
+      ctx.fill()
+      ctx.restore()
     }
   }
 
 
-  if (layout.changeOverlay && parentAlpha > 0.05) {
+  // Blast-radius context keeps its grey marker internally for opacity, but is
+  // not drawn: neighbours should look exactly like the original canvas.
+  if (layout.changeOverlay && layout.changeOverlay.change !== 'unchanged' && parentAlpha > 0.05) {
     const change = layout.changeOverlay
     const color = { added: '#48bb78', removed: '#fc8181', modified: '#ecc94b', unchanged: '#718096' }[change.change]
     ctx.save()
@@ -1177,6 +1240,7 @@ function drawEdges(
   const oy = originY ?? 0
 
   const { nodeMap, sceneNodeMap, handleUsage, handleUsageIndex } = getDrawEdgesLayoutMetadata(sceneNodes)
+  const changeMode = sceneNodes.some((sn) => subtreeHasChangeOverlay(sn.layout))
 
   for (const sn of sceneNodes) {
     const node = sn.layout
@@ -1190,6 +1254,15 @@ function drawEdges(
         const srcHidden = isHiddenByTags(node)
         const tgtHidden = isHiddenByTags(target)
         if (srcHidden || tgtHidden) continue
+      }
+
+      // Layered connector filtering for the change overlay.
+      let strokeColor = accent
+      let layerFactor = 1
+      if (changeMode) {
+        const layer = edgeLayerStyle(node, target, accent)
+        strokeColor = layer.color
+        layerFactor = layer.alphaFactor
       }
 
       const endpointAlphaFactor = Math.min(
@@ -1244,14 +1317,26 @@ function drawEdges(
       )
 
       ctx.save()
-      ctx.globalAlpha = connectorAlpha(edgeAlpha, CONNECTOR_MIN_ALPHA * endpointAlphaFactor)
-      ctx.strokeStyle = accent
+      ctx.globalAlpha = connectorAlpha(edgeAlpha * layerFactor, CONNECTOR_MIN_ALPHA * endpointAlphaFactor * layerFactor)
+      ctx.strokeStyle = strokeColor
       ctx.lineWidth = CONNECTOR_LINE_PX / zoom
 
       let midX = (sH.x + tH.x) / 2
       let midY = (sH.y + tH.y) / 2
       let finalAngleS = 0
       let finalAngleT = 0
+
+      const visualTargetScreenW = effWTarget * zoom
+      const visualSourceScreenW = effWSource * zoom
+      const ARROW_SIZE_BASE = 10
+      const targetConnectorDetailVisible = visualTargetScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
+      const sourceConnectorDetailVisible = visualSourceScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
+      const drawTargetArrow = (dir === 'forward' || dir === 'both' || dir === 'bidirectional') && targetConnectorDetailVisible
+      const drawSourceArrow = (dir === 'backward' || dir === 'both' || dir === 'bidirectional') && sourceConnectorDetailVisible
+      const targetArrowSize = Math.min(ARROW_SIZE_BASE, visualTargetScreenW * 0.2) / zoom
+      const sourceArrowSize = Math.min(ARROW_SIZE_BASE, visualSourceScreenW * 0.2) / zoom
+      const targetTrim = drawTargetArrow ? targetArrowSize * 1.6 : 0
+      const sourceTrim = drawSourceArrow ? sourceArrowSize * 1.6 : 0
 
       if (type === 'bezier') {
         const curvature = 0.5
@@ -1278,23 +1363,38 @@ function drawEdges(
           cp2y += tH.pos === 'top' ? -stem : stem
         }
 
-        ctx.beginPath()
-        ctx.moveTo(sH.x, sH.y)
-        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tH.x, tH.y)
-        ctx.stroke()
-
         midX = 0.125 * sH.x + 0.375 * cp1x + 0.375 * cp2x + 0.125 * tH.x
         midY = 0.125 * sH.y + 0.375 * cp1y + 0.375 * cp2y + 0.125 * tH.y
         finalAngleT = Math.atan2(tH.y - cp2y, tH.x - cp2x)
         finalAngleS = Math.atan2(sH.y - cp1y, sH.x - cp1x)
 
-      } else if (type === 'straight') {
+        const endDelta = trimDelta(tH.x, tH.y, cp2x, cp2y, targetTrim)
+        const startDelta = trimDelta(sH.x, sH.y, cp1x, cp1y, sourceTrim)
+
         ctx.beginPath()
-        ctx.moveTo(sH.x, sH.y)
-        ctx.lineTo(tH.x, tH.y)
+        ctx.moveTo(sH.x + startDelta.dx, sH.y + startDelta.dy)
+        ctx.bezierCurveTo(
+          cp1x + startDelta.dx,
+          cp1y + startDelta.dy,
+          cp2x + endDelta.dx,
+          cp2y + endDelta.dy,
+          tH.x + endDelta.dx,
+          tH.y + endDelta.dy,
+        )
         ctx.stroke()
+
+      } else if (type === 'straight') {
         finalAngleT = Math.atan2(tH.y - sH.y, tH.x - sH.x)
         finalAngleS = Math.atan2(sH.y - tH.y, sH.x - tH.x)
+
+        const { x: ux, y: uy, len } = unitVector(sH.x, sH.y, tH.x, tH.y)
+        const startTrim = Math.min(sourceTrim, len * 0.45)
+        const endTrim = Math.min(targetTrim, len * 0.45)
+
+        ctx.beginPath()
+        ctx.moveTo(sH.x + ux * startTrim, sH.y + uy * startTrim)
+        ctx.lineTo(tH.x - ux * endTrim, tH.y - uy * endTrim)
+        ctx.stroke()
 
       } else if (type === 'step' || type === 'smoothstep') {
         const borderRadius = type === 'smoothstep' ? 6 / zoom : 0
@@ -1333,13 +1433,26 @@ function drawEdges(
           midY = (p1.y + p2.y) / 2
         }
 
-        ctx.beginPath()
-        ctx.moveTo(points[0].x, points[0].y)
+        const first = points[0]
+        const firstNext = points[1]
+        const last = points[points.length - 1]
+        const lastPrev = points[points.length - 2]
+        finalAngleS = Math.atan2(first.y - firstNext.y, first.x - firstNext.x)
+        finalAngleT = Math.atan2(last.y - lastPrev.y, last.x - lastPrev.x)
 
-        for (let i = 1; i < points.length; i++) {
-          const curr = points[i]
-          const prev = points[i - 1]
-          const next = points[i + 1]
+        const linePoints = points.slice()
+        const startDelta = trimDelta(first.x, first.y, firstNext.x, firstNext.y, sourceTrim)
+        const endDelta = trimDelta(last.x, last.y, lastPrev.x, lastPrev.y, targetTrim)
+        linePoints[0] = { x: first.x + startDelta.dx, y: first.y + startDelta.dy }
+        linePoints[linePoints.length - 1] = { x: last.x + endDelta.dx, y: last.y + endDelta.dy }
+
+        ctx.beginPath()
+        ctx.moveTo(linePoints[0].x, linePoints[0].y)
+
+        for (let i = 1; i < linePoints.length; i++) {
+          const curr = linePoints[i]
+          const prev = linePoints[i - 1]
+          const next = linePoints[i + 1]
 
           if (borderRadius > 0 && next) {
             const dPrevX = curr.x - prev.x
@@ -1360,34 +1473,13 @@ function drawEdges(
           }
         }
         ctx.stroke()
-
-        const last = points[points.length - 1]
-        const prev = points[points.length - 2]
-        finalAngleT = Math.atan2(last.y - prev.y, last.x - prev.x)
-
-        const first = points[0]
-        const firstNext = points[1]
-        finalAngleS = Math.atan2(first.y - firstNext.y, first.x - firstNext.x)
       }
 
-      const visualTargetScreenW = effWTarget * zoom
-      const visualSourceScreenW = effWSource * zoom
-
-      const ARROW_SIZE_BASE = 10
-      const sourceConnectorDetailVisible = visualSourceScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
-      const targetConnectorDetailVisible = visualTargetScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
-
-      if (dir === 'forward' || dir === 'both' || dir === 'bidirectional') {
-        if (targetConnectorDetailVisible) {
-          const arrowScreenSize = Math.min(ARROW_SIZE_BASE, visualTargetScreenW * 0.2)
-          drawArrowHead(ctx, tH.x, tH.y, finalAngleT, arrowScreenSize / zoom, accent)
-        }
+      if (drawTargetArrow) {
+        drawArrowHead(ctx, tH.x, tH.y, finalAngleT, targetArrowSize, strokeColor)
       }
-      if (dir === 'backward' || dir === 'both' || dir === 'bidirectional') {
-        if (sourceConnectorDetailVisible) {
-          const arrowScreenSize = Math.min(ARROW_SIZE_BASE, visualSourceScreenW * 0.2)
-          drawArrowHead(ctx, sH.x, sH.y, finalAngleS, arrowScreenSize / zoom, accent)
-        }
+      if (drawSourceArrow) {
+        drawArrowHead(ctx, sH.x, sH.y, finalAngleS, sourceArrowSize, strokeColor)
       }
 
       if (!lowDetail && edge.label && shouldDrawConnectorDetailLabel(dir, visualSourceScreenW, visualTargetScreenW)) {
@@ -1415,12 +1507,12 @@ function drawEdges(
         const labelRect = edgeLabelDrawRectFromCenter(labelCenter, labelW, labelH)
 
         ctx.fillStyle = labelBg
-        ctx.globalAlpha = Math.min(edgeAlpha, connectorAlpha(edgeAlpha * 1.1))
+        ctx.globalAlpha = Math.min(edgeAlpha, connectorAlpha(edgeAlpha * 1.1)) * layerFactor
         ctx.beginPath()
         ctx.roundRect(labelRect.x, labelRect.y, labelRect.width, labelRect.height, 4 / zoom)
         ctx.fill()
 
-        ctx.globalAlpha = edgeAlpha
+        ctx.globalAlpha = edgeAlpha * layerFactor
         ctx.fillStyle = '#cbd5e0'
         ctx.fillText(edge.label, labelCenter.x, labelCenter.y)
       }

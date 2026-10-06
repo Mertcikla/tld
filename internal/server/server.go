@@ -63,9 +63,7 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 
 	mux := http.NewServeMux()
 	selfHosted := isSelfHosted(opts)
-	watchManager := registerWatchHandlers(mux, sqliteStore, opts.DataDir, selfHosted, opts.Config)
-	registerCodeIndexHandlers(mux, sqliteStore, opts.DataDir, watchManager, opts.Config)
-	registerMapperHandlers(mux, sqliteStore, opts.Config)
+	watchManager := registerCodeIndexHandlers(mux, sqliteStore, opts.DataDir, selfHosted, opts.Config)
 	registerEditorHandlers(mux, sqliteStore, selfHosted)
 	registerDensityHandlers(mux, sqliteStore)
 	registerMergeHandlers(mux, sqliteStore)

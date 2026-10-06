@@ -209,7 +209,7 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
           <Grid templateColumns="repeat(auto-fit, minmax(100px, 1fr))" gap={3}>
             {[
               ['Files', repository.sources], ['Facts', repository.facts], ['Edges', repository.edges],
-              ['Chunks', repository.chunks], ['Snapshots', snapshots.length], ['Maps', maps.length],
+              ['Snapshots', snapshots.length], ['Maps', maps.length],
             ].map(([label, count]) => (
               <Box key={label}>
                 <Text fontSize="xl" fontWeight="semibold" sx={{ fontVariantNumeric: 'tabular-nums' }}>{Number(count).toLocaleString()}</Text>
@@ -219,7 +219,28 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
           </Grid>
         </Box>
       </SettingsSection>
-
+      <Grid templateColumns="repeat(auto-fit, minmax(min(100%, 360px), 1fr))" gap={5} alignItems="start">
+        <SettingsSection title="Snapshots" description="Saved indexes of this repository." action={<Badge sx={{ fontVariantNumeric: 'tabular-nums' }}>{snapshots.length}</Badge>}>
+          <Box mx={-4} mb={-3}>{children}</Box>
+        </SettingsSection>
+        <SettingsSection title="Completed maps" description="Open a map built from a saved snapshot." action={<Badge sx={{ fontVariantNumeric: 'tabular-nums' }}>{maps.length}</Badge>}>
+          {maps.length ? (
+            <VStack align="stretch" spacing={3}>
+              {maps.map(map => (
+                <Box key={`${map.result.runId}:${map.configHash}`} border="1px solid var(--border-main)" borderRadius="lg" p={3} minW={0}>
+                  <Text fontSize="sm" fontWeight="medium">{new Date(map.completedUnix * 1000).toLocaleString()}</Text>
+                  <Text fontSize="xs" color="gray.400" mt={1}>{map.result.clusters.toLocaleString()} groups · {map.result.facts.toLocaleString()} facts</Text>
+                  <Box as="details" mt={3}>
+                    <Text as="summary" fontSize="xs" color="gray.500" cursor="pointer">Snapshot ID</Text>
+                    <Text fontSize="xs" fontFamily="mono" overflowWrap="anywhere" mt={1}>{map.result.snapshotId}</Text>
+                  </Box>
+                  <Button size="sm" variant="outline" mt={3} onClick={() => navigate(`/views/${map.result.viewId}`)}>Open map</Button>
+                </Box>
+              ))}
+            </VStack>
+          ) : <Text fontSize="sm" color="gray.400" py={2}>No maps built yet.</Text>}
+        </SettingsSection>
+      </Grid>
       <SettingsSection title="Map configuration" description="Customize how this repository is grouped and connected. Changes apply to new full maps." action={settings && <Badge colorScheme={overrideCount ? 'blue' : 'gray'} textTransform="none">{overrideCount ? `${overrideCount} ${overrideCount === 1 ? 'override' : 'overrides'}` : 'Using global defaults'}</Badge>}>
         {!settings ? (
           <HStack color="gray.400" fontSize="sm">{!error && <Spinner size="sm" />}<Text>{error ? 'Settings unavailable.' : 'Loading configuration…'}</Text></HStack>
@@ -293,28 +314,7 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
         )}
       </SettingsSection>
 
-      <Grid templateColumns="repeat(auto-fit, minmax(min(100%, 360px), 1fr))" gap={5} alignItems="start">
-        <SettingsSection title="Snapshots" description="Saved indexes of this repository." action={<Badge sx={{ fontVariantNumeric: 'tabular-nums' }}>{snapshots.length}</Badge>}>
-          <Box mx={-4} mb={-3}>{children}</Box>
-        </SettingsSection>
-        <SettingsSection title="Completed maps" description="Open a map built from a saved snapshot." action={<Badge sx={{ fontVariantNumeric: 'tabular-nums' }}>{maps.length}</Badge>}>
-          {maps.length ? (
-            <VStack align="stretch" spacing={3}>
-              {maps.map(map => (
-                <Box key={`${map.result.runId}:${map.configHash}`} border="1px solid var(--border-main)" borderRadius="lg" p={3} minW={0}>
-                  <Text fontSize="sm" fontWeight="medium">{new Date(map.completedUnix * 1000).toLocaleString()}</Text>
-                  <Text fontSize="xs" color="gray.400" mt={1}>{map.result.clusters.toLocaleString()} groups · {map.result.facts.toLocaleString()} facts</Text>
-                  <Box as="details" mt={3}>
-                    <Text as="summary" fontSize="xs" color="gray.500" cursor="pointer">Snapshot ID</Text>
-                    <Text fontSize="xs" fontFamily="mono" overflowWrap="anywhere" mt={1}>{map.result.snapshotId}</Text>
-                  </Box>
-                  <Button size="sm" variant="outline" mt={3} onClick={() => navigate(`/views/${map.result.viewId}`)}>Open map</Button>
-                </Box>
-              ))}
-            </VStack>
-          ) : <Text fontSize="sm" color="gray.400" py={2}>No maps built yet.</Text>}
-        </SettingsSection>
-      </Grid>
+
 
       <Box as="section" border="1px solid" borderColor="red.900" borderRadius="xl" p={{ base: 4, md: 5 }}>
         <Flex align="center" justify="space-between" gap={4} wrap="wrap">

@@ -92,9 +92,6 @@ func TestParityFixture(t *testing.T) {
 	if got.Facts == 0 {
 		t.Error("expected source facts from the fixture")
 	}
-	if got.Chunks == 0 {
-		t.Error("expected chunks from the fixture")
-	}
 }
 
 // TestParityBaseline compares against an upstream codeindex baseline when one

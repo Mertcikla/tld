@@ -49,8 +49,8 @@ func TestPublishRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build: %v", err)
 	}
-	if len(g.Facts) == 0 || len(g.Chunks) == 0 {
-		t.Fatalf("indexer produced no graph: facts=%d chunks=%d", len(g.Facts), len(g.Chunks))
+	if len(g.Facts) == 0 {
+		t.Fatalf("indexer produced no graph: facts=%d", len(g.Facts))
 	}
 
 	st, handle := openTestStore(t)
@@ -79,14 +79,6 @@ func TestPublishRoundTrip(t *testing.T) {
 	}
 	if len(facts) != len(g.Facts) {
 		t.Fatalf("facts = %d, want %d", len(facts), len(g.Facts))
-	}
-
-	chunks, err := st.Chunks(ctx, snap.Id)
-	if err != nil {
-		t.Fatalf("chunks: %v", err)
-	}
-	if len(chunks) != len(g.Chunks) {
-		t.Fatalf("chunks = %d, want %d", len(chunks), len(g.Chunks))
 	}
 
 	edges, err := st.EdgeFacts(ctx, snap.Id, pb.EdgeKind_EDGE_KIND_UNSPECIFIED, "", "", 1000)
@@ -132,8 +124,8 @@ func TestPublishRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load graph: %v", err)
 	}
-	if len(lg.Facts) != len(g.Facts) || len(lg.Chunks) != len(g.Chunks) || len(lg.EdgeFacts) != len(g.EdgeFacts) {
-		t.Fatalf("load graph mismatch: %d/%d/%d", len(lg.Facts), len(lg.Chunks), len(lg.EdgeFacts))
+	if len(lg.Facts) != len(g.Facts) || len(lg.EdgeFacts) != len(g.EdgeFacts) {
+		t.Fatalf("load graph mismatch: %d/%d", len(lg.Facts), len(lg.EdgeFacts))
 	}
 
 	// Diffing a snapshot against itself yields no changes.

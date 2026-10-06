@@ -65,7 +65,7 @@ func readCommits(ctx context.Context, root, sha string, limit int) ([]*pb.GitCom
 	return commits, nil
 }
 
-func (s *codeIndexRepositoryService) GetGitHistory(ctx context.Context, req *connect.Request[pb.GetGitHistoryRequest]) (*connect.Response[pb.GetGitHistoryResponse], error) {
+func (s *repositoryService) GetGitHistory(ctx context.Context, req *connect.Request[pb.GetGitHistoryRequest]) (*connect.Response[pb.GetGitHistoryResponse], error) {
 	repo, err := s.store.Repository(ctx, req.Msg.GetRepositoryId())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
@@ -123,7 +123,7 @@ func (s *codeIndexRepositoryService) GetGitHistory(ctx context.Context, req *con
 	return connect.NewResponse(result), nil
 }
 
-func (s *codeIndexRepositoryService) GetCommitDetails(ctx context.Context, req *connect.Request[pb.GetCommitDetailsRequest]) (*connect.Response[pb.GetCommitDetailsResponse], error) {
+func (s *repositoryService) GetCommitDetails(ctx context.Context, req *connect.Request[pb.GetCommitDetailsRequest]) (*connect.Response[pb.GetCommitDetailsResponse], error) {
 	repo, err := s.store.Repository(ctx, req.Msg.GetRepositoryId())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
@@ -217,7 +217,7 @@ func pullRequestNumber(input, remote string) (string, error) {
 	return number, nil
 }
 
-func (s *codeIndexRepositoryService) GetPullRequest(ctx context.Context, req *connect.Request[pb.GetPullRequestRequest]) (*connect.Response[pb.GetPullRequestResponse], error) {
+func (s *repositoryService) GetPullRequest(ctx context.Context, req *connect.Request[pb.GetPullRequestRequest]) (*connect.Response[pb.GetPullRequestResponse], error) {
 	repo, err := s.store.Repository(ctx, req.Msg.GetRepositoryId())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
@@ -264,8 +264,8 @@ func (s *codeIndexRepositoryService) GetPullRequest(ctx context.Context, req *co
 	return connect.NewResponse(&pb.GetPullRequestResponse{Title: pr.Title, Url: pr.URL, BaseSha: strings.TrimSpace(mergeBase), HeadSha: pr.HeadRefOid, BaseBranch: pr.BaseRefName, HeadBranch: pr.HeadRefName}), nil
 }
 
-func (s *codeIndexRepositoryService) ListPullRequests(ctx context.Context, req *connect.Request[pb.ListPullRequestsRequest]) (*connect.Response[pb.ListPullRequestsResponse], error) {
-	repo, err := s.store.Repository(ctx, req.Msg.GetRepositoryId())
+func (s *repositoryService) ListPullRequests(ctx context.Context, req *connect.Request[pb.ID]) (*connect.Response[pb.ListPullRequestsResponse], error) {
+	repo, err := s.store.Repository(ctx, req.Msg.GetId())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
 	}

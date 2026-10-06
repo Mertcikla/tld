@@ -16,15 +16,15 @@ import (
 	"github.com/mertcikla/tld/v2/internal/repolink"
 )
 
-func (s *codeIndexRepositoryService) GetRepositorySettings(ctx context.Context, req *connect.Request[pb.GetRepositorySettingsRequest]) (*connect.Response[pb.RepositorySettings], error) {
-	settings, err := s.repositorySettings(ctx, req.Msg.RepositoryId)
+func (s *repositoryService) GetRepositorySettings(ctx context.Context, req *connect.Request[pb.ID]) (*connect.Response[pb.RepositorySettings], error) {
+	settings, err := s.repositorySettings(ctx, req.Msg.GetId())
 	if err != nil {
 		return nil, err
 	}
 	return connect.NewResponse(settings), nil
 }
 
-func (s *codeIndexRepositoryService) repositorySettings(ctx context.Context, repositoryID string) (*pb.RepositorySettings, error) {
+func (s *repositoryService) repositorySettings(ctx context.Context, repositoryID string) (*pb.RepositorySettings, error) {
 	repo, err := s.store.Repository(ctx, repositoryID)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
@@ -65,7 +65,7 @@ func (s *codeIndexRepositoryService) repositorySettings(ctx context.Context, rep
 	return settings, nil
 }
 
-func (s *codeIndexRepositoryService) UpdateRepositoryMapConfiguration(ctx context.Context, req *connect.Request[pb.UpdateRepositoryMapConfigurationRequest]) (*connect.Response[pb.RepositorySettings], error) {
+func (s *repositoryService) UpdateRepositoryMapConfiguration(ctx context.Context, req *connect.Request[pb.UpdateRepositoryMapConfigurationRequest]) (*connect.Response[pb.RepositorySettings], error) {
 	id := req.Msg.RepositoryId
 	if _, err := s.store.Repository(ctx, id); err != nil {
 		return nil, connect.NewError(connect.CodeNotFound, err)
@@ -81,7 +81,7 @@ func (s *codeIndexRepositoryService) UpdateRepositoryMapConfiguration(ctx contex
 	if err := s.store.SaveRepositoryMapOverrides(ctx, id, req.Msg.Overrides); err != nil {
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	return s.GetRepositorySettings(ctx, connect.NewRequest(&pb.GetRepositorySettingsRequest{RepositoryId: id}))
+	return s.GetRepositorySettings(ctx, connect.NewRequest(&pb.ID{Id: id}))
 }
 
 var remoteNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
@@ -118,7 +118,7 @@ func remoteConfigURLs(ctx context.Context, root, name, key string) ([]string, er
 	return strings.Split(strings.TrimSuffix(raw, "\n"), "\n"), nil
 }
 
-func (s *codeIndexRepositoryService) UpdateRepositoryRemote(ctx context.Context, req *connect.Request[pb.UpdateRepositoryRemoteRequest]) (*connect.Response[pb.RepositorySettings], error) {
+func (s *repositoryService) UpdateRepositoryRemote(ctx context.Context, req *connect.Request[pb.UpdateRepositoryRemoteRequest]) (*connect.Response[pb.RepositorySettings], error) {
 	if err := validateRemote(req.Msg.Remote, req.Msg.Remove); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -149,7 +149,7 @@ func (s *codeIndexRepositoryService) UpdateRepositoryRemote(ctx context.Context,
 	if remoteURL := repolink.GitRemoteURL(ctx, repo.Root); remoteURL != "" {
 		_ = s.store.SetRepositoryRemoteURL(ctx, repo.Id, remoteURL)
 	}
-	return s.GetRepositorySettings(ctx, connect.NewRequest(&pb.GetRepositorySettingsRequest{RepositoryId: repo.Id}))
+	return s.GetRepositorySettings(ctx, connect.NewRequest(&pb.ID{Id: repo.Id}))
 }
 
 func replaceRemoteURLs(ctx context.Context, root string, remote *pb.RepositoryRemote) error {

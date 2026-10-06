@@ -60,7 +60,7 @@ func NewIndexCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "index [path|url]",
 		Short: "Index a repository into the codeindex graph",
-		Long: `Index extracts code facts, edges, and chunks from a repository using the
+		Long: `Index extracts code facts and edges from a repository using the
 in-tree codeindex engine and publishes an immutable snapshot.
 
 The target is a local directory or a remote URL (github.com/owner/repo,
@@ -236,18 +236,35 @@ var indexStageDisplay = map[string]string{
 	"relationships": "Relationships",
 	"infra":         "Infrastructure",
 	"verify":        "Verify",
+	"overlay":       stageChanges,
 }
 
 var indexStageOrder = []string{
 	"Discover", "Parse sources", "Index symbols", "Relationships", "Infrastructure", "Verify",
-	"Publish snapshot", "Save change overlay", "Map graph",
+	"Publish snapshot", "Save diff diagram", "Map graph",
+}
+
+// compareStageOrder is the index stage prefix a comparison runs before saving
+// its change overlay. It omits publishing and graph mapping.
+var compareStageOrder = []string{
+	"Discover", "Parse sources", "Index symbols", "Relationships", "Infrastructure", "Verify",
+	stageChanges,
 }
 
 const (
 	stagePublish  = "Publish snapshot"
-	stageChanges  = "Save change overlay"
+	stageChanges  = "Save diff diagram"
 	stageMapGraph = "Map graph"
 )
+
+// NewCompareStageTracker returns the stage tracker used by `tld git compare`,
+// matching the `tld index` progress display.
+func NewCompareStageTracker(out io.Writer) *term.StageTracker {
+	return term.NewStageTracker(out, compareStageOrder, term.StageTrackerOptions{Jokes: indexJokes})
+}
+
+// DisplayStage maps an indexer stage id to its user-facing label.
+func DisplayStage(stage string) string { return displayStage(stage) }
 
 // indexJokes are rotated on the active stage line to keep long indexes
 // entertaining and to gently roast whatever codebase is being indexed.
@@ -634,15 +651,15 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 		return nil, parity.Report{}, nil, err
 	}
 	for _, revision := range commits {
-		if _, err = engine.Prepare(ctx, &pb.ComparisonTarget{GitRevision: revision, GitBranch: state.Branch}); err != nil {
+		if _, err = engine.Prepare(ctx, &pb.Revision{GitRevision: revision, GitBranch: state.Branch}); err != nil {
 			return nil, parity.Report{}, nil, err
 		}
 	}
-	base, err := engine.Prepare(ctx, &pb.ComparisonTarget{GitRevision: state.Revision, GitBranch: state.Branch})
+	base, err := engine.Prepare(ctx, &pb.Revision{GitRevision: state.Revision, GitBranch: state.Branch})
 	if err != nil {
 		return nil, parity.Report{}, nil, err
 	}
-	snap, err := engine.Prepare(ctx, &pb.ComparisonTarget{WorkingTree: true})
+	snap, err := engine.Prepare(ctx, &pb.Revision{WorkingTree: true})
 	if err != nil {
 		return nil, parity.Report{}, nil, err
 	}
@@ -660,13 +677,9 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	if err != nil {
 		return nil, parity.Report{}, nil, err
 	}
-	radius := uint32(0)
-	if recorded, loadErr := e.store.Impact(ctx, repoID, "live"); loadErr == nil {
-		radius = recorded.Radius
-	}
 	reportStage("live-map")
 	tracker.Begin(stageChanges)
-	if _, err = impact.Save(ctx, e.ws, e.store, repoID, "live", base.Id, snap.Id, radius); err != nil {
+	if _, err = impact.Save(ctx, e.ws, e.store, repoID, "live", base.Id, snap.Id, impact.DefaultContextDepth); err != nil {
 		return nil, parity.Report{}, nil, err
 	}
 	var mapRes *pb.MapResult
@@ -701,7 +714,6 @@ func (e *engine) print(cmd *cobra.Command, snap *pb.Snapshot, report parity.Repo
 	_, _ = fmt.Fprintf(tw, "sources\t%d\n", report.Sources)
 	_, _ = fmt.Fprintf(tw, "projects\t%d\n", report.Projects)
 	_, _ = fmt.Fprintf(tw, "facts\t%d\n", report.Facts)
-	_, _ = fmt.Fprintf(tw, "chunks\t%d\n", report.Chunks)
 	_, _ = fmt.Fprintf(tw, "edges\t%d\n", report.Edges)
 	if report.Warnings > 0 {
 		_, _ = fmt.Fprintf(tw, "warnings\t%d\n", report.Warnings)

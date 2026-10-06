@@ -11,7 +11,7 @@ import (
 )
 
 // LoadGraph reconstructs a published snapshot's code graph so an incremental
-// build can carry forward unchanged facts, chunks, and edges.
+// build can carry forward unchanged facts and edges.
 func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph, error) {
 	snap, err := s.Snapshot(ctx, snapshotID)
 	if err != nil {
@@ -62,13 +62,6 @@ func (s *Store) LoadGraph(ctx context.Context, snapshotID string) (*graph.Graph,
 	for _, f := range facts {
 		g.Facts[f.Id] = f
 	}
-	chunks, err := s.Chunks(ctx, snap.Id)
-	if err != nil {
-		return nil, err
-	}
-	for _, c := range chunks {
-		g.Chunks[c.Id] = c
-	}
 	edges, err := s.EdgeFacts(ctx, snap.Id, pb.EdgeKind_EDGE_KIND_UNSPECIFIED, "", "", graphLoadLimit)
 	if err != nil {
 		return nil, err
@@ -97,6 +90,18 @@ func (s *Store) SnapshotSources(ctx context.Context, snapshotID string) (map[str
 // keyed by stable logical identity, so renames surface as add plus remove and a
 // changed body surfaces as modified.
 func (s *Store) Diff(ctx context.Context, fromID, toID string, sourcesOnly bool) (*pb.SnapshotDiff, error) {
+	return s.diff(ctx, fromID, toID, sourcesOnly, false)
+}
+
+// ImpactDiff computes the comparison payload used by change overlays. Impact
+// diagrams carry file-level dependency edges (FilePairCounts) and symbol
+// deltas, so the edge delta is left out entirely: materializing every edge of
+// both snapshots produced a payload nothing consumed.
+func (s *Store) ImpactDiff(ctx context.Context, fromID, toID string) (*pb.SnapshotDiff, error) {
+	return s.diff(ctx, fromID, toID, false, true)
+}
+
+func (s *Store) diff(ctx context.Context, fromID, toID string, sourcesOnly, skipEdges bool) (*pb.SnapshotDiff, error) {
 	from, err := s.Snapshot(ctx, fromID)
 	if err != nil {
 		return nil, err
@@ -127,6 +132,9 @@ func (s *Store) Diff(ctx context.Context, fromID, toID string, sourcesOnly bool)
 		return nil, err
 	}
 	diff.Facts = diffFacts(fromFacts, toFacts)
+	if skipEdges {
+		return diff, nil
+	}
 	fromEdges, err := s.EdgeFacts(ctx, from.Id, pb.EdgeKind_EDGE_KIND_UNSPECIFIED, "", "", graphLoadLimit)
 	if err != nil {
 		return nil, err
@@ -286,8 +294,13 @@ func logicalFact(f *pb.CodeFact) string {
 }
 
 func sameFact(a, b *pb.CodeFact) bool {
-	if a.Kind != b.Kind || a.Name != b.Name || a.QualifiedName != b.QualifiedName ||
-		a.Signature != b.Signature || a.Language != b.Language || a.SymbolKey != b.SymbolKey {
+	// QualifiedName and SymbolKey carry the SCIP package version (and package
+	// manager/name); the indexer deliberately treats those as non-identifying
+	// when deriving LogicalKey, and facts already pair by that key, so comparing
+	// them would report every symbol in a file as modified whenever the package
+	// version differs between snapshots.
+	if a.Kind != b.Kind || a.Name != b.Name ||
+		a.Signature != b.Signature || a.Language != b.Language {
 		return false
 	}
 	if (a.Anchor == nil) != (b.Anchor == nil) {
@@ -301,7 +314,7 @@ func sameFact(a, b *pb.CodeFact) bool {
 	if a.Kind == pb.FactKind_FACT_KIND_FILE && a.Anchor != nil && a.Anchor.SourceHash != b.Anchor.SourceHash {
 		return false
 	}
-	return a.Documentation == b.Documentation && strings.Join(a.Imports, "\x00") == strings.Join(b.Imports, "\x00") && graph.Hash([]byte(a.Code)) == graph.Hash([]byte(b.Code))
+	return a.Documentation == b.Documentation && strings.Join(a.Imports, "\x00") == strings.Join(b.Imports, "\x00") && a.GetBodyHash() == b.GetBodyHash()
 }
 
 func diffFacts(from, to []*pb.CodeFact) *pb.CodeFactDelta {

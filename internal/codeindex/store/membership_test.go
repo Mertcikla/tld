@@ -22,8 +22,8 @@ func TestSnapshotMembershipSharesReusedFacts(t *testing.T) {
 	src := &graph.Source{Path: "a.go", Language: "go", Text: []byte("package a\nfunc A(){}\nfunc B(){}\n")}
 	g1.Sources[src.Path] = src
 	a1 := g1.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(9, 20), "func A(){}", "func A()", nil)
+	_ = a1
 	bFact := g1.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "B", "go", src.Anchor(21, 32), "func B(){}", "func B()", nil)
-	g1.AddChunk(a1.Id, src.Anchor(9, 20), "func A(){}", "", 0, 1)
 	if err := idx.Publish(ctx, "/repo", snapFor(repo, "snap-1", src), g1); err != nil {
 		t.Fatal(err)
 	}
@@ -32,11 +32,10 @@ func TestSnapshotMembershipSharesReusedFacts(t *testing.T) {
 	g2 := graph.NewGraph(repo, "snap-2")
 	g2.Sources[src.Path] = src
 	a2 := g2.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "A", "go", src.Anchor(9, 22), "func A(){x}", "func A()", nil)
-	adopted := g2.AdoptFactAnchored(bFact, bFact.Anchor, "func B(){}", "func B()")
+	adopted := g2.AdoptFactAnchored(bFact, bFact.Anchor, bFact.BodyHash, "func B()")
 	if adopted.Id != bFact.Id {
 		t.Fatal("reused fact did not keep its id")
 	}
-	g2.AddChunk(a2.Id, src.Anchor(9, 22), "func A(){x}", "", 0, 1)
 	if err := idx.Publish(ctx, "/repo", snapFor(repo, "snap-2", src), g2); err != nil {
 		t.Fatal(err)
 	}

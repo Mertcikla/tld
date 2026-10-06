@@ -2,6 +2,7 @@ package impact
 
 import (
 	"context"
+	"math"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
+	"github.com/mertcikla/tld/v2/internal/layout"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 )
 
@@ -77,6 +79,7 @@ func TestImpactRadiusAndScopedMaterialization(t *testing.T) {
 			t.Fatal("removed symbol not shown")
 		}
 	}
+	assertFactFingerprints(t, diagram)
 	expanded, err := Save(ctx, ws, idx, "repo", "live", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +91,7 @@ func TestImpactRadiusAndScopedMaterialization(t *testing.T) {
 		if node.Path == "c.go" {
 			t.Fatal("unmaterialized unchanged file was introduced")
 		}
-		if node.Context && node.ElementId != contextElement.ID {
+		if node.GetDistance() > 0 && node.ElementId != contextElement.ID {
 			t.Fatal("context did not reuse existing element")
 		}
 	}
@@ -128,7 +131,31 @@ func TestImpactPlacesAddedFilesInClosestView(t *testing.T) {
 	}
 	defer func() { _ = ws.Close() }()
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
-	view, err := ws.CreateView(ctx, "Pkg", nil, nil)
+	// Materialize a realistic Workspace -> repository -> Pkg view chain so the
+	// impact hierarchy skips the two always-present top levels.
+	root, err := ws.CreateView(ctx, "Workspace", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoOwner, err := ws.CreateElement(ctx, core.LibraryElement{Name: "repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, root.ID, repoOwner.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	repoView, err := ws.CreateView(ctx, "repo", nil, &repoOwner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgOwner, err := ws.CreateElement(ctx, core.LibraryElement{Name: "Pkg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, repoView.ID, pkgOwner.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	view, err := ws.CreateView(ctx, "Pkg", nil, &pkgOwner.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,8 +199,163 @@ func TestImpactPlacesAddedFilesInClosestView(t *testing.T) {
 	if _, ok := formed["pkg/new.go"]; !ok {
 		t.Fatalf("added node missing: %+v", diagram.Nodes)
 	}
-	if node := formed["pkg/other.go"]; node == nil || node.X != overlaySpacingX || node.Y != 0 {
-		t.Fatalf("added node not laid out: %+v", node)
+	for _, path := range []string{"pkg/new.go", "pkg/other.go"} {
+		node := formed[path]
+		if node == nil {
+			t.Fatalf("added node %s missing: %+v", path, diagram.Nodes)
+		}
+		if node.X == 10 && node.Y == 20 {
+			t.Fatalf("added node %s overlapped the existing placement: %+v", path, node)
+		}
+	}
+	if formed["pkg/new.go"].X == formed["pkg/other.go"].X && formed["pkg/new.go"].Y == formed["pkg/other.go"].Y {
+		t.Fatal("added nodes overlapped each other")
+	}
+	if len(diagram.Groups) != 1 || diagram.Groups[0].ViewId != view.ID || diagram.Groups[0].Source != "view" {
+		t.Fatalf("added files not grouped under the closest view: %+v", diagram.Groups)
+	}
+	if diagram.Groups[0].Name != "Pkg" {
+		t.Fatalf("top two view levels were not skipped: %+v", diagram.Groups)
+	}
+	if got := diagram.Groups[0].NodeKeys; len(got) != 2 {
+		t.Fatalf("group node keys = %v", got)
+	}
+}
+
+func TestImpactSynthesizesCommunityHierarchy(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	// No workspace views or element mappings: the repository is unmapped, so the
+	// hierarchy must fall back to the dependency-graph grouping pipeline.
+	publish := func(id string, code map[string]string) {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
+		g := graph.NewGraph("repo", id)
+		facts := map[string]*pb.CodeFact{}
+		for path, text := range code {
+			src := &graph.Source{Path: path, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[path] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: path, Hash: src.Hash, Size: uint64(len(src.Text))})
+			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+		}
+		for _, link := range [][2]string{{"alpha/a.go", "alpha/b.go"}, {"beta/c.go", "beta/d.go"}} {
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[link[0]].Id, facts[link[1]].Id, "", facts[link[0]].Anchor, nil)
+		}
+		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths := []string{"alpha/a.go", "alpha/b.go", "beta/c.go", "beta/d.go"}
+	base := map[string]string{}
+	head := map[string]string{}
+	for _, path := range paths {
+		base[path] = "func Stable() { return 1 }"
+		head[path] = "func Stable() { return 2 }"
+	}
+	publish("base", base)
+	publish("head", head)
+	diagram, err := Save(ctx, ws, idx, "repo", "live", "base", "head", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagram.ViewId != 0 {
+		t.Fatalf("unmapped comparison set view id %d", diagram.ViewId)
+	}
+	if len(diagram.Groups) == 0 {
+		t.Fatalf("no community hierarchy synthesized: %+v", diagram)
+	}
+	grouped := map[string]bool{}
+	var walk func(groups []*pb.ImpactGroup)
+	walk = func(groups []*pb.ImpactGroup) {
+		for _, group := range groups {
+			if group.Source != "community" {
+				t.Fatalf("group source = %q", group.Source)
+			}
+			for _, key := range group.NodeKeys {
+				grouped[key] = true
+			}
+			walk(group.Children)
+		}
+	}
+	walk(diagram.Groups)
+	if len(grouped) != len(diagram.Nodes) {
+		t.Fatalf("grouped %d nodes, want %d: %+v", len(grouped), len(diagram.Nodes), diagram.Groups)
+	}
+}
+
+func TestImpactPlacesAddedFilesNearConnectedElements(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	view, err := ws.CreateView(ctx, "Pkg", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextElement, err := ws.CreateElement(ctx, core.LibraryElement{Name: "ctx.go", FilePath: stringPtr("pkg/ctx.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, view.ID, contextElement.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{{LogicalKey: "map|pkg|ctx", Kind: cstore.MappingElement, ResourceID: contextElement.ID, RepositoryID: "repo", SnapshotID: "head"}}); err != nil {
+		t.Fatal(err)
+	}
+	publish := func(id string, paths []string, linked bool) {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
+		g := graph.NewGraph("repo", id)
+		facts := map[string]*pb.CodeFact{}
+		for _, p := range paths {
+			text := "func Stable() {}"
+			src := &graph.Source{Path: p, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[p] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: p, Hash: src.Hash, Size: uint64(len(src.Text))})
+			facts[p] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+		}
+		if linked {
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["pkg/new.go"].Id, facts["pkg/ctx.go"].Id, "", facts["pkg/new.go"].Anchor, nil)
+		}
+		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("base", []string{"pkg/ctx.go"}, false)
+	publish("head", []string{"pkg/ctx.go", "pkg/new.go"}, true)
+	diagram, err := Save(ctx, ws, idx, "repo", "live", "base", "head", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagram.ViewId != view.ID {
+		t.Fatalf("connected added file not placed in closest view: got %d want %d", diagram.ViewId, view.ID)
+	}
+	var added, existing *pb.ImpactNode
+	for _, node := range diagram.Nodes {
+		switch node.Path {
+		case "pkg/new.go":
+			added = node
+		case "pkg/ctx.go":
+			existing = node
+		}
+	}
+	if existing == nil || existing.GetDistance() == 0 || existing.ElementId != contextElement.ID {
+		t.Fatalf("connected element missing from context: %+v", diagram.Nodes)
+	}
+	if added == nil {
+		t.Fatalf("added node missing: %+v", diagram.Nodes)
+	}
+	if math.Abs(added.X) > layout.PlacementGapX || math.Abs(added.Y) > layout.PlacementGapY {
+		t.Fatalf("added node not placed adjacent to its neighbor: %+v", added)
+	}
+	if added.X == existing.X && added.Y == existing.Y {
+		t.Fatalf("added node overlapped its neighbor: %+v", added)
 	}
 }
 
@@ -282,5 +464,34 @@ func TestRetireLegacyMaterializationPreservesSharedResources(t *testing.T) {
 	mappings, err := idx.MappingsByRepository(ctx, "repo")
 	if err != nil || len(mappings) != 1 || mappings[0].LogicalKey != "map|shared" {
 		t.Fatalf("legacy mappings: %+v %v", mappings, err)
+	}
+}
+
+// assertBodyFingerprints verifies impact diagrams carry symbol metadata and a
+// content fingerprint, never inline source.
+func assertFactFingerprints(t *testing.T, diagram *pb.ImpactDiagram) {
+	t.Helper()
+	for _, facts := range [][]*pb.CodeFact{
+		diagram.GetDiff().GetFacts().GetAdded(),
+		diagram.GetDiff().GetFacts().GetRemoved(),
+		diagram.GetDiff().GetFacts().GetModified(),
+	} {
+		for _, fact := range facts {
+			if fact.GetBodyHash() == "" {
+				t.Fatalf("impact diff missing body hash for %q", fact.GetName())
+			}
+		}
+	}
+	for _, node := range diagram.GetNodes() {
+		for _, facts := range [][]*pb.CodeFact{node.GetSymbols().GetAdded(), node.GetSymbols().GetRemoved(), node.GetSymbols().GetModified()} {
+			for _, fact := range facts {
+				if fact.GetBodyHash() == "" {
+					t.Fatalf("impact node missing body hash for %q", fact.GetName())
+				}
+				if fact.GetName() == "" || fact.GetAnchor().GetPath() == "" {
+					t.Fatalf("symbol metadata dropped: %+v", fact)
+				}
+			}
+		}
 	}
 }

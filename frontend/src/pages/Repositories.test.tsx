@@ -27,7 +27,6 @@ vi.mock('../api/client', () => ({
         gitRevision: 'abc',
         gitBranch: 'main',
         facts: 4,
-        chunks: 4,
         edges: 0,
         sources: 4,
         remoteUrl: 'https://github.com/test/demo',
@@ -49,7 +48,7 @@ vi.mock('../api/client', () => ({
       fileSymbols: vi.fn(async () => []),
       diff: vi.fn(async () => null),
       compare: vi.fn(async () => ({
-        repositoryId: 'repo-1', comparisonKey: 'pair', viewId: 9, version: 'v1', radius: 0, maxRadius: 2,
+        repositoryId: 'repo-1', comparisonKey: 'pair', viewId: 9, version: 'v1', maxRadius: 2,
         nodes: [], edges: [], diff: { fromSnapshotId: 'snap-0', toSnapshotId: 'snap-1', fromGitRevision: 'old', toGitRevision: 'abc', sources: [], facts: { added: 0, removed: 0, modified: 0 }, edgeFacts: { added: 0, removed: 0, modified: 0 } },
       })),
       liveImpact: vi.fn(async () => ({ diagram: null, watching: false, error: '', gitBranch: 'main', gitRevision: 'abc' })),
@@ -62,7 +61,6 @@ vi.mock('../api/client', () => ({
       })),
       startWatch: vi.fn(async () => ({ running: true, state: 'starting' })),
       stopWatch: vi.fn(async () => ({ running: false, state: 'stopped' })),
-      impactRadius: vi.fn(),
       delete: vi.fn(async () => {}),
       deleteSnapshot: vi.fn(async () => {}),
       add: vi.fn(async (_path: string, handlers?: { onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void; materialize?: boolean }) => {
@@ -77,7 +75,9 @@ vi.mock('../api/client', () => ({
   },
 }))
 
-vi.mock('../components/RepositoryChangeCanvas', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', { ...props, 'data-testid': 'mock-impact' }) }))
+vi.mock('../components/RepositoryChangeCanvas', () => ({
+  default: (props: Record<string, unknown>) => React.createElement('div', { ...props, 'data-testid': 'mock-impact' }),
+}))
 
 vi.mock('../utils/toast', () => ({ toast: vi.fn() }))
 vi.mock('../utils/sourceEditor', () => ({ useSourceEditor: () => ({ editor: 'zed' }) }))
@@ -92,6 +92,7 @@ vi.mock('@chakra-ui/icons', () => ({
   SettingsIcon: () => null,
   ChevronLeftIcon: () => null,
   ChevronRightIcon: () => null,
+  ChevronDownIcon: () => null,
 }))
 
 vi.mock('@chakra-ui/react', async () => {
@@ -566,7 +567,6 @@ describe('Repositories map action', () => {
       gitRevision: 'abc',
       gitBranch: 'main',
       facts: 4,
-      chunks: 4,
       edges: 0,
       sources: 4,
       remoteUrl: 'https://github.com/test/demo',
@@ -711,6 +711,30 @@ describe('Repositories map action', () => {
     expect(api.repositories.compare).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: { snapshotId: 'snap-0' }, head: { snapshotId: 'snap-1' }, signal: expect.any(AbortSignal) }))
     expect(api.repositories.map).not.toHaveBeenCalled()
     expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram.viewId).toBe(9)
+    renderer.unmount()
+  })
+
+  it('collapses and expands the compare branches from the summary bar', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    const summary = () => renderer.root.findByProps({ 'data-testid': 'repositories-compare-summary' })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
+    await act(async () => { summary().props.onClick() })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBe(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare' })).toBeTruthy()
+    await act(async () => { summary().props.onClick() })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
+    renderer.unmount()
+  })
+
+  it('auto-collapses history and compare branches after comparing', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.collapsed).toBe(false)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.collapsed).toBe(true)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBe(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare' })).toBeTruthy()
     renderer.unmount()
   })
 
@@ -883,22 +907,19 @@ describe('Repositories map action', () => {
     renderer.unmount()
   })
 
-  it('loads live state without initiating maps and changes radius without reindexing', async () => {
+  it('loads live state without initiating maps', async () => {
     vi.useFakeTimers()
     const { api } = await import('../api/client')
     const diagram = await api.repositories.compare('repo-1', { base: {}, head: {} })
     vi.mocked(api.repositories.compare).mockClear()
     vi.mocked(api.repositories.liveImpact).mockResolvedValue({ diagram: { ...diagram, comparisonKey: 'live' }, watching: true, error: '', gitBranch: 'main', gitRevision: 'abc' })
-    vi.mocked(api.repositories.impactRadius).mockResolvedValue({ ...diagram, comparisonKey: 'live', radius: 1, version: 'v2' })
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
     expect(api.repositories.liveImpact).toHaveBeenCalledWith('repo-1', expect.any(AbortSignal))
     expect(api.repositories.compare).not.toHaveBeenCalled()
     expect(api.repositories.map).not.toHaveBeenCalled()
-    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-radius-1' }).props.onClick() })
-    expect(api.repositories.impactRadius).toHaveBeenCalledWith('repo-1', 'live', 1, expect.any(AbortSignal))
-    expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram.radius).toBe(1)
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram.comparisonKey).toBe('live')
     await act(async () => { renderer.unmount() })
     vi.useRealTimers()
   })

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ViewLayer } from '../../types'
 import { createNodeScreenState, type SceneNode } from './sceneGraph'
-import { edgeLabelDrawRectFromCenter, computeNodeNameLayout, getElementGroupBounds, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, setHiddenTags, shouldDrawConnectorDetailLabel } from './renderer'
+import { edgeLabelDrawRectFromCenter, computeNodeNameLayout, edgeLayerStyle, getElementGroupBounds, nodeConnectorEndpointAlphaFromState, pickEdgeLabelPosition, setHiddenTags, shouldDrawConnectorDetailLabel } from './renderer'
 import { ELEMENT_NAME_INSET_RATIO } from '../../utils/elementName'
 import type { LayoutNode } from './types'
 
@@ -177,5 +177,43 @@ describe('Explore group backgrounds', () => {
     setHiddenTags(new Set([marker]))
     expect(getElementGroupBounds([layer], [sceneNode(first, { isVisible: true }), sceneNode(second, { isVisible: false })], 1)).toEqual([])
     setHiddenTags(new Set())
+  })
+})
+
+describe('edgeLayerStyle', () => {
+  const overlay = (change: 'added' | 'removed' | 'modified' | 'unchanged') => ({ change, path: `${change}.go`, symbols: [] })
+  const accent = '#63b3ed'
+  const borderGrey = 'rgba(160,174,192,0.5)'
+
+  it('keeps the accent when both endpoints are direct impact', () => {
+    const source = layoutNode('source', 1)
+    const target = layoutNode('target', 2)
+    source.changeOverlay = overlay('modified')
+    target.changeOverlay = overlay('added')
+    expect(edgeLayerStyle(source, target, accent)).toEqual({ color: accent, alphaFactor: 1 })
+  })
+
+  it('fades to 50% when only one endpoint is direct impact', () => {
+    const source = layoutNode('source', 1)
+    const target = layoutNode('target', 2)
+    source.changeOverlay = overlay('modified')
+    target.changeOverlay = overlay('unchanged')
+    expect(edgeLayerStyle(source, target, accent)).toEqual({ color: accent, alphaFactor: 0.5 })
+  })
+
+  it('uses the node border grey when neither endpoint is direct impact', () => {
+    const source = layoutNode('source', 1)
+    const target = layoutNode('target', 2)
+    source.changeOverlay = overlay('unchanged')
+    target.changeOverlay = overlay('unchanged')
+    expect(edgeLayerStyle(source, target, accent)).toEqual({ color: borderGrey, alphaFactor: 1 })
+  })
+
+  it('treats a container with a direct change in its subtree as impacted', () => {
+    const container = layoutNode('container', 1, [layoutNode('child', 2)])
+    container.children[0].changeOverlay = overlay('modified')
+    const context = layoutNode('context', 3)
+    context.changeOverlay = overlay('unchanged')
+    expect(edgeLayerStyle(container, context, accent)).toEqual({ color: accent, alphaFactor: 0.5 })
   })
 })

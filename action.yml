@@ -1,0 +1,197 @@
+name: tld PR diagram
+description: Generate and cache PR impact diagrams, then publish them from a trusted workflow.
+inputs:
+  mode:
+    description: generate or publish
+    default: generate
+  repository-path:
+    description: Path to the checkout to index
+    default: ${{ github.workspace }}
+  prepare-command:
+    description: Bash setup command executed inside each uncached revision
+    default: ''
+  indexers:
+    description: Space or comma separated SCIP indexers (go, typescript)
+    default: go typescript
+  context-depth:
+    description: Unchanged dependency hops to include
+    default: '0'
+  artifact-name:
+    description: Result artifact name shared by generation and publication
+    default: tld-pr-diagram
+  run-id:
+    description: Originating workflow run (defaults to the workflow_run event)
+    default: ''
+  source-workflow:
+    description: Expected generator workflow filename, verified before publication
+    default: pr-diagram.yml
+  github-token:
+    description: Token used only by publish mode; requires actions read and pull-requests write
+    default: ${{ github.token }}
+outputs:
+  status:
+    description: ready, skipped, empty, or error
+    value: ${{ steps.generate.outputs.status || steps.init.outputs.status }}
+runs:
+  using: composite
+  steps:
+    - name: Initialize diagram result and cache keys
+      id: init
+      if: inputs.mode == 'generate'
+      shell: bash
+      env:
+        TLD_ACTION_PATH: ${{ github.action_path }}
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_REPOSITORY_PATH: ${{ inputs.repository-path }}
+        INPUT_PREPARE_COMMAND: ${{ inputs.prepare-command }}
+        INPUT_INDEXERS: ${{ inputs.indexers }}
+      run: node "$TLD_ACTION_PATH/scripts/pr-bot/main.mjs" init
+
+    - name: Set up Go
+      id: setup-go
+      if: steps.init.outputs.status != 'error' && inputs.mode == 'generate'
+      continue-on-error: true
+      uses: actions/setup-go@v6
+      with:
+        go-version: '1.26.2'
+        cache: true
+        cache-dependency-path: ${{ github.action_path }}/go.sum
+
+    - name: Set up Node
+      id: setup-node
+      if: steps.init.outputs.status != 'error' && inputs.mode == 'generate'
+      continue-on-error: true
+      uses: actions/setup-node@v6
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: ${{ github.action_path }}/frontend/package-lock.json
+
+    - name: Restore tld binary and indexers
+      id: binary-cache
+      if: steps.init.outputs.binary-key != '' && steps.init.outputs.status != 'error'
+      continue-on-error: true
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.init.outputs.binary-dir }}
+        key: ${{ steps.init.outputs.binary-key }}
+
+    - name: Build tld and install SCIP
+      id: tools
+      if: steps.init.outputs.binary-key != '' && steps.init.outputs.status != 'error'
+      continue-on-error: true
+      shell: bash
+      env:
+        TLD_ACTION_PATH: ${{ github.action_path }}
+        TLD_BINARY_DIR: ${{ steps.init.outputs.binary-dir }}
+        TLD_INSTALL_GO: ${{ steps.init.outputs.go-indexer }}
+        TLD_INSTALL_TYPESCRIPT: ${{ steps.init.outputs.typescript-indexer }}
+        GOWORK: 'off'
+        CGO_ENABLED: '0'
+      run: |
+        if [[ "$RUNNER_OS" != Linux ]]; then
+          echo 'The tld PR action currently supports Ubuntu runners.'
+          exit 1
+        fi
+        echo "$TLD_BINARY_DIR" >> "$GITHUB_PATH"
+        echo "$TLD_BINARY_DIR/scip-npm/bin" >> "$GITHUB_PATH"
+        if [[ ! -x "$TLD_BINARY_DIR/tld" ]]; then
+          cd "$TLD_ACTION_PATH/frontend" || exit 1
+          npm ci --ignore-scripts
+          VITE_APP_BASE=/ VITE_ROUTER_BASENAME=/ npm run build:app
+          cd "$TLD_ACTION_PATH" || exit 1
+          go build -trimpath -o "$TLD_BINARY_DIR/tld" ./cmd/tld
+        fi
+        if [[ "$TLD_INSTALL_GO" == true ]]; then
+          if [[ ! -x "$TLD_BINARY_DIR/scip-go" ]]; then
+            GOBIN="$TLD_BINARY_DIR" go install github.com/scip-code/scip-go/cmd/scip-go@v0.2.7
+          fi
+          tool_version=$("$TLD_BINARY_DIR/scip-go" --version)
+          echo "$tool_version"
+          [[ "$tool_version" == *0.2.7* ]]
+        fi
+        if [[ "$TLD_INSTALL_TYPESCRIPT" == true ]]; then
+          if [[ ! -x "$TLD_BINARY_DIR/scip-npm/bin/scip-typescript" ]]; then
+            npm install --global --prefix "$TLD_BINARY_DIR/scip-npm" @sourcegraph/scip-typescript@0.4.0
+          fi
+          tool_version=$("$TLD_BINARY_DIR/scip-npm/bin/scip-typescript" --version)
+          echo "$tool_version"
+          [[ "$tool_version" == *0.4.0* ]]
+        fi
+
+    - name: Save tld binary and indexers
+      if: steps.tools.outcome == 'success' && steps.setup-go.outcome == 'success' && steps.setup-node.outcome == 'success' && steps.binary-cache.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.init.outputs.binary-dir }}
+        key: ${{ steps.init.outputs.binary-key }}
+
+    - name: Restore indexed snapshots
+      if: steps.init.outputs.cache-key != '' && steps.init.outputs.status != 'error'
+      continue-on-error: true
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.init.outputs.data-dir }}
+        key: ${{ steps.init.outputs.cache-key }}
+        restore-keys: ${{ steps.init.outputs.restore-keys }}
+
+    - name: Generate diagram
+      id: generate
+      if: ${{ !cancelled() && steps.init.outputs.status != 'error' && inputs.mode == 'generate' }}
+      shell: bash
+      env:
+        TLD_ACTION_PATH: ${{ github.action_path }}
+        INPUT_REPOSITORY_PATH: ${{ inputs.repository-path }}
+        INPUT_PREPARE_COMMAND: ${{ inputs.prepare-command }}
+        INPUT_INDEXERS: ${{ inputs.indexers }}
+        INPUT_CONTEXT_DEPTH: ${{ inputs.context-depth }}
+        INPUT_TOOLS_READY: ${{ steps.tools.outcome == 'success' && steps.setup-go.outcome == 'success' && steps.setup-node.outcome == 'success' }}
+      run: node "$TLD_ACTION_PATH/scripts/pr-bot/main.mjs" generate
+
+    - name: Save indexed snapshots
+      if: ${{ !cancelled() && steps.generate.outputs.cache-ready == 'true' }}
+      continue-on-error: true
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.init.outputs.data-dir }}
+        key: ${{ steps.init.outputs.cache-key }}
+
+    - name: Upload PR diagram result
+      if: ${{ !cancelled() && inputs.mode == 'generate' }}
+      continue-on-error: true
+      uses: actions/upload-artifact@v5
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ runner.temp }}/tld-pr-bot/result/result.json
+        retention-days: 3
+        if-no-files-found: warn
+
+    - name: Validate originating run and PR
+      id: publication
+      if: inputs.mode == 'publish'
+      shell: bash
+      env:
+        TLD_ACTION_PATH: ${{ github.action_path }}
+        INPUT_RUN_ID: ${{ inputs.run-id }}
+        INPUT_SOURCE_WORKFLOW: ${{ inputs.source-workflow }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: node "$TLD_ACTION_PATH/scripts/pr-bot/main.mjs" publish-check
+
+    - name: Download result from the validated run
+      if: steps.publication.outputs.publish == 'true'
+      continue-on-error: true
+      uses: actions/download-artifact@v6
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ runner.temp }}/tld-pr-bot/download
+        run-id: ${{ steps.publication.outputs.run-id }}
+        github-token: ${{ inputs.github-token }}
+
+    - name: Update PR comment
+      if: ${{ !cancelled() && steps.publication.outputs.publish == 'true' }}
+      shell: bash
+      env:
+        TLD_ACTION_PATH: ${{ github.action_path }}
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: node "$TLD_ACTION_PATH/scripts/pr-bot/main.mjs" publish

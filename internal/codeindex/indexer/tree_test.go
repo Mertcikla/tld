@@ -32,8 +32,8 @@ func TestTreeFactsOnlyCodeDeclarations(t *testing.T) {
 			if _, err := treeFacts(context.Background(), g, src); err != nil {
 				t.Fatal(err)
 			}
-			if len(g.Facts) != len(tt.want) || len(g.Chunks) != len(tt.want) {
-				t.Fatalf("facts=%d chunks=%d want=%d", len(g.Facts), len(g.Chunks), len(tt.want))
+			if len(g.Facts) != len(tt.want) {
+				t.Fatalf("facts=%d want=%d", len(g.Facts), len(tt.want))
 			}
 			for _, f := range g.Facts {
 				if tt.want[f.Name] != f.Kind {

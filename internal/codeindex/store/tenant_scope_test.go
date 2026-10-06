@@ -148,7 +148,6 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 		t.Helper()
 		g := graph.NewGraph("repo", "snap")
 		g.Facts["fact"] = &pb.CodeFact{Id: "fact", RepositoryId: "repo", SnapshotId: "snap", Name: label, LogicalKey: "file:main.go"}
-		g.Chunks["chunk"] = &pb.Chunk{Id: "chunk", FactId: "fact", SnapshotId: "snap", Text: label}
 		g.EdgeFacts["edge"] = &pb.EdgeFact{Id: "edge", RepositoryId: "repo", SnapshotId: "snap", LogicalKey: label}
 		snap := &pb.Snapshot{Id: "snap", RepositoryId: "repo", GitBranch: label, Sources: []*pb.SourceFile{{Path: "main.go", Hash: label}}}
 		g.Sources["main.go"] = &graph.Source{Text: []byte(label)}
@@ -190,7 +189,7 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 			t.Fatalf("%s overrides = %+v err=%v", label, overrides, err)
 		}
 		repos, err := st.ListRepositories(ctx)
-		if err != nil || len(repos) != 1 || repos[0].Root != "/"+label || repos[0].GitBranch != label || repos[0].Facts != 1 || repos[0].Chunks != 1 || repos[0].Edges != 1 || repos[0].Sources != 1 {
+		if err != nil || len(repos) != 1 || repos[0].Root != "/"+label || repos[0].GitBranch != label || repos[0].Facts != 1 || repos[0].Edges != 1 || repos[0].Sources != 1 {
 			t.Fatalf("%s repositories = %+v err=%v", label, repos, err)
 		}
 		snaps, err := st.Snapshots(ctx, "repo")
@@ -200,10 +199,6 @@ func testTenantScopeCollidingKeys(t *testing.T, st *Store) {
 		facts, err := st.Facts(ctx, "snap", pb.FactKind_FACT_KIND_UNSPECIFIED, "", "", 10)
 		if err != nil || len(facts) != 1 || facts[0].Name != label {
 			t.Fatalf("%s facts = %+v err=%v", label, facts, err)
-		}
-		chunks, err := st.Chunks(ctx, "snap")
-		if err != nil || len(chunks) != 1 || chunks[0].Text != label {
-			t.Fatalf("%s chunks = %+v err=%v", label, chunks, err)
 		}
 		edges, err := st.EdgeFacts(ctx, "snap", pb.EdgeKind_EDGE_KIND_UNSPECIFIED, "", "", 10)
 		if err != nil || len(edges) != 1 || edges[0].LogicalKey != label {

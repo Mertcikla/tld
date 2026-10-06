@@ -14,7 +14,6 @@ function repo(overrides: Partial<IndexedRepository> & { id: string }): IndexedRe
     gitRevision: '',
     gitBranch: '',
     facts: 0,
-    chunks: 0,
     edges: 0,
     sources: 0,
     remoteUrl: '',

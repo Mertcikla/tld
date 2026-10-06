@@ -44,7 +44,7 @@ func writeFixtureSource(t *testing.T, root, name, contents string) {
 		t.Fatal(err)
 	}
 }
-func prepareFixture(t *testing.T) (*mapperService, string, string, string) {
+func prepareFixture(t *testing.T) (*codeIndexService, string, string, string) {
 	t.Helper()
 	root, sha := gitFixture(t)
 	ws, _ := newTestServer(t, uuid.New(), nil)
@@ -54,29 +54,29 @@ func prepareFixture(t *testing.T) (*mapperService, string, string, string) {
 	if err := idx.Publish(context.Background(), root, seed, graph.NewGraph(repoID, seed.Id)); err != nil {
 		t.Fatal(err)
 	}
-	return &mapperService{ws: ws, idx: idx, running: map[string]struct{}{}}, root, sha, repoID
+	return &codeIndexService{ws: ws, store: idx, running: map[string]struct{}{}}, root, sha, repoID
 }
 
 func TestPrepareCommitSnapshotPreservesIdentityAndLatest(t *testing.T) {
 	s, root, sha, repoID := prepareFixture(t)
 	ctx := context.Background()
-	send := func(*pb.MapProgress) {}
-	snap, err := s.prepareSnapshot(ctx, &pb.MapRepositoryRequest{RepositoryId: repoID, GitRevision: sha, GitBranch: "main"}, send)
+	send := func(*pb.Progress) {}
+	snap, err := s.prepareSnapshot(ctx, &pb.MapRepositoryRequest{RepositoryId: repoID, Revision: &pb.Revision{GitRevision: sha, GitBranch: "main"}}, send)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if snap.Id == "legacy-live" || snap.Provenance != "commit" || snap.GitRevision != sha || snap.GitBranch != "main" || snap.RepositoryId != repoID {
 		t.Fatalf("snapshot = %+v", snap)
 	}
-	latest, err := s.idx.Latest(ctx, repoID)
+	latest, err := s.store.Latest(ctx, repoID)
 	if err != nil || latest != "legacy-live" {
 		t.Fatalf("latest = %s: %v", latest, err)
 	}
-	repos, err := s.idx.ListRepositories(ctx)
+	repos, err := s.store.ListRepositories(ctx)
 	if err != nil || len(repos) != 1 || repos[0].Root != root {
 		t.Fatalf("repositories = %+v: %v", repos, err)
 	}
-	facts, err := s.idx.Facts(ctx, snap.Id, 0, "", "", 100)
+	facts, err := s.store.Facts(ctx, snap.Id, 0, "", "", 100)
 	if err != nil || len(facts) == 0 {
 		t.Fatalf("facts: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestPrepareCommitSnapshotPreservesIdentityAndLatest(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Rename(missing, root) })
-	reused, err := s.prepareSnapshot(ctx, &pb.MapRepositoryRequest{RepositoryId: repoID, GitRevision: sha}, send)
+	reused, err := s.prepareSnapshot(ctx, &pb.MapRepositoryRequest{RepositoryId: repoID, Revision: &pb.Revision{GitRevision: sha}}, send)
 	if err != nil || reused.Id != snap.Id {
 		t.Fatalf("offline reuse: %+v: %v", reused, err)
 	}
@@ -103,14 +103,14 @@ func TestPrepareCommitSnapshotPreservesIdentityAndLatest(t *testing.T) {
 func TestPrepareBranchResolvesAndCapturesImmutableCommit(t *testing.T) {
 	s, root, sha, repoID := prepareFixture(t)
 	ctx := context.Background()
-	snapshot, err := s.prepareSnapshot(ctx, &pb.MapRepositoryRequest{RepositoryId: repoID, GitRevision: "main"}, func(*pb.MapProgress) {})
+	snapshot, err := s.prepareSnapshot(ctx, &pb.MapRepositoryRequest{RepositoryId: repoID, Revision: &pb.Revision{GitRevision: "main"}}, func(*pb.Progress) {})
 	if err != nil || snapshot.GitRevision != sha || snapshot.GitBranch != "main" || snapshot.Provenance != "commit" {
 		t.Fatalf("branch capture: %+v: %v", snapshot, err)
 	}
 	writeFixtureSource(t, root, "sample.go", "package sample\nfunc NewHead() {}\n")
 	testGit(t, root, "add", ".")
 	testGit(t, root, "commit", "-m", "advance main")
-	saved, err := s.idx.Snapshot(ctx, snapshot.Id)
+	saved, err := s.store.Snapshot(ctx, snapshot.Id)
 	if err != nil || saved.GitRevision != sha || saved.GitBranch != "main" {
 		t.Fatalf("moving ref changed snapshot provenance: %+v: %v", saved, err)
 	}
@@ -124,7 +124,7 @@ func TestPrepareCommitAheadOfLocalBranchTip(t *testing.T) {
 	testGit(t, root, "commit", "--allow-empty", "-m", "remote advance")
 	ahead := strings.TrimSpace(testGit(t, root, "rev-parse", "HEAD"))
 	testGit(t, root, "checkout", "main")
-	snap, err := s.prepareSnapshot(context.Background(), &pb.MapRepositoryRequest{RepositoryId: repoID, GitRevision: ahead, GitBranch: "main"}, func(*pb.MapProgress) {})
+	snap, err := s.prepareSnapshot(context.Background(), &pb.MapRepositoryRequest{RepositoryId: repoID, Revision: &pb.Revision{GitRevision: ahead, GitBranch: "main"}}, func(*pb.Progress) {})
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -141,7 +141,7 @@ func TestPrepareCommitWithMissingLocalBranch(t *testing.T) {
 	head := strings.TrimSpace(testGit(t, root, "rev-parse", "HEAD"))
 	testGit(t, root, "checkout", "main")
 	testGit(t, root, "branch", "-D", "pr-head")
-	snap, err := s.prepareSnapshot(context.Background(), &pb.MapRepositoryRequest{RepositoryId: repoID, GitRevision: head, GitBranch: "feature"}, func(*pb.MapProgress) {})
+	snap, err := s.prepareSnapshot(context.Background(), &pb.MapRepositoryRequest{RepositoryId: repoID, Revision: &pb.Revision{GitRevision: head, GitBranch: "feature"}}, func(*pb.Progress) {})
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
@@ -153,12 +153,12 @@ func TestPrepareCommitWithMissingLocalBranch(t *testing.T) {
 func TestPrepareWorkingTreeIncludesLocalContents(t *testing.T) {
 	s, root, sha, repoID := prepareFixture(t)
 	ctx := context.Background()
-	send := func(*pb.MapProgress) {}
+	send := func(*pb.Progress) {}
 	writeFixtureSource(t, root, "sample.go", "package sample\nfunc Staged() {}\n")
 	testGit(t, root, "add", "sample.go")
 	writeFixtureSource(t, root, "sample.go", "package sample\nfunc Unstaged() {}\n")
 	writeFixtureSource(t, root, "untracked.go", "package sample\nfunc Local() {}\n")
-	req := &pb.MapRepositoryRequest{RepositoryId: repoID, WorkingTree: true}
+	req := &pb.MapRepositoryRequest{RepositoryId: repoID, Revision: &pb.Revision{WorkingTree: true}}
 	snap, err := s.prepareSnapshot(ctx, req, send)
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +175,7 @@ func TestPrepareWorkingTreeIncludesLocalContents(t *testing.T) {
 	if err != nil || changed.Id == snap.Id {
 		t.Fatalf("changed contents: %v", err)
 	}
-	if _, err := s.idx.Snapshot(ctx, changed.Id); err != nil {
+	if _, err := s.store.Snapshot(ctx, changed.Id); err != nil {
 		t.Fatal("changed snapshot was not persisted")
 	}
 }
@@ -226,13 +226,13 @@ func TestIndexerRejectsInputsChangingDuringCapture(t *testing.T) {
 func TestPrepareRejectsSnapshotFromAnotherRepository(t *testing.T) {
 	s, _, _, repoID := prepareFixture(t)
 	other := &pb.Snapshot{Id: "other", RepositoryId: "another-repo"}
-	if err := s.idx.Publish(context.Background(), "/another", other, graph.NewGraph(other.RepositoryId, other.Id)); err != nil {
+	if err := s.store.Publish(context.Background(), "/another", other, graph.NewGraph(other.RepositoryId, other.Id)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.prepareSnapshot(context.Background(), &pb.MapRepositoryRequest{RepositoryId: repoID, SnapshotId: other.Id}, func(*pb.MapProgress) {}); err == nil {
+	if _, err := s.prepareSnapshot(context.Background(), &pb.MapRepositoryRequest{RepositoryId: repoID, Revision: &pb.Revision{SnapshotId: other.Id}}, func(*pb.Progress) {}); err == nil {
 		t.Fatal("accepted another repository's snapshot")
 	}
-	if _, err := s.idx.Diff(context.Background(), "legacy-live", other.Id, false); err == nil {
+	if _, err := s.store.Diff(context.Background(), "legacy-live", other.Id, false); err == nil {
 		t.Fatal("accepted a cross-repository diff")
 	}
 }
@@ -245,7 +245,7 @@ func TestRepositoryGitHistoryAndDetails(t *testing.T) {
 	testGit(t, root, "commit", "-m", "feature change")
 	feature := strings.TrimSpace(testGit(t, root, "rev-parse", "HEAD"))
 	testGit(t, root, "tag", "v1")
-	svc := &codeIndexRepositoryService{store: s.idx}
+	svc := &repositoryService{store: s.store}
 	ctx := context.Background()
 	history, err := svc.GetGitHistory(ctx, connect.NewRequest(&pb.GetGitHistoryRequest{RepositoryId: repoID, Branch: "main", Limit: 1}))
 	if err != nil {
@@ -299,7 +299,7 @@ func TestRepositoryHistoryForNonGitAndUnbornRepositories(t *testing.T) {
 		if err := idx.Publish(context.Background(), root, snap, graph.NewGraph("repo", snap.Id)); err != nil {
 			t.Fatal(err)
 		}
-		svc := &codeIndexRepositoryService{store: idx}
+		svc := &repositoryService{store: idx}
 		result, err := svc.GetGitHistory(context.Background(), connect.NewRequest(&pb.GetGitHistoryRequest{RepositoryId: "repo"}))
 		if err != nil || result.Msg.IsGit != git || result.Msg.HeadSha != "" || len(result.Msg.Commits) != 0 {
 			t.Fatalf("initial Git history (git=%v): %+v: %v", git, result, err)

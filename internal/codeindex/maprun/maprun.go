@@ -339,7 +339,7 @@ func analysisGroups(runID string, groups []*community.Group, files []community.F
 		out = append(out, cstore.AnalysisGroup{
 			ID:      unique,
 			Label:   group.Name,
-			Kind:    codeindexv1.GroupKind_GROUP_KIND_COMMUNITY,
+			Kind:    cstore.GroupKindCommunity,
 			Members: members,
 		})
 		for i, child := range group.Children {

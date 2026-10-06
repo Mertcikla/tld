@@ -47,7 +47,7 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 		} else if n == 0 {
 			return fmt.Errorf("upsert repository: %w", sql.ErrNoRows)
 		}
-		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_snapshot_facts", "codeindex_snapshot_chunks", "codeindex_snapshot_edges"} {
+		for _, table := range []string{"codeindex_project_artifacts", "codeindex_sources", "codeindex_snapshot_facts", "codeindex_snapshot_edges"} {
 			where, scopeArgs := scope(ctx).clause("org_id")
 			if _, err := tx.NewRaw("DELETE FROM "+table+" WHERE snapshot_id = ?"+where, append([]any{snap.Id}, scopeArgs...)...).Exec(ctx); err != nil {
 				return fmt.Errorf("clear %s: %w", table, err)
@@ -60,9 +60,6 @@ func (s *Store) publish(ctx context.Context, root string, snap *pb.Snapshot, g *
 			return err
 		}
 		if err := saveFacts(ctx, tx, snap, g); err != nil {
-			return err
-		}
-		if err := saveChunks(ctx, tx, g); err != nil {
 			return err
 		}
 		if err := saveEdges(ctx, tx, g); err != nil {
@@ -82,11 +79,6 @@ func saveMembership(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.
 	for id := range g.Facts {
 		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_facts (snapshot_id, fact_id, org_id) VALUES (?, ?, ?) ON CONFLICT(org_id, snapshot_id, fact_id) DO NOTHING`, snap.Id, id, org).Exec(ctx); err != nil {
 			return fmt.Errorf("membership fact %s: %w", id, err)
-		}
-	}
-	for id := range g.Chunks {
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_snapshot_chunks (snapshot_id, chunk_id, org_id) VALUES (?, ?, ?) ON CONFLICT(org_id, snapshot_id, chunk_id) DO NOTHING`, snap.Id, id, org).Exec(ctx); err != nil {
-			return fmt.Errorf("membership chunk %s: %w", id, err)
 		}
 	}
 	for id := range g.EdgeFacts {
@@ -172,31 +164,11 @@ func saveFacts(ctx context.Context, tx bun.Tx, snap *pb.Snapshot, g *graph.Graph
 			path = f.Anchor.Path
 		}
 		if _, err := tx.NewRaw(`INSERT INTO codeindex_facts
-			(id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, code, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json, org_id)
+			(id, repository_id, snapshot_id, language, kind, name, qualified_name, symbol_key, signature, documentation, body_hash, parent_fact_id, logical_key, path, anchor_json, evidence_json, imports_json, org_id)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_id, id) DO NOTHING`,
 			f.Id, f.RepositoryId, f.SnapshotId, f.Language, int(f.Kind), f.Name, f.QualifiedName, f.SymbolKey,
-			f.Signature, f.Documentation, f.Code, f.ParentFactId, f.LogicalKey, path, anchor, evidence, imports, org).Exec(ctx); err != nil {
+			f.Signature, f.Documentation, f.BodyHash, f.ParentFactId, f.LogicalKey, path, anchor, evidence, imports, org).Exec(ctx); err != nil {
 			return fmt.Errorf("insert fact %s: %w", f.Id, err)
-		}
-	}
-	return nil
-}
-
-func saveChunks(ctx context.Context, tx bun.Tx, g *graph.Graph) error {
-	if g == nil {
-		return nil
-	}
-	org := scope(ctx).value()
-	for _, c := range sortedChunks(g) {
-		if g.Reused[c.Id] {
-			continue
-		}
-		anchor, _ := marshalJSON(c.Anchor)
-		if _, err := tx.NewRaw(`INSERT INTO codeindex_chunks
-			(id, fact_id, snapshot_id, anchor_json, text, context, idx, total, org_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(org_id, id) DO NOTHING`,
-			c.Id, c.FactId, c.SnapshotId, anchor, c.Text, c.Context, c.Index, c.Total, org).Exec(ctx); err != nil {
-			return fmt.Errorf("insert chunk %s: %w", c.Id, err)
 		}
 	}
 	return nil
@@ -228,15 +200,6 @@ func sortedFacts(g *graph.Graph) []*pb.CodeFact {
 	out := make([]*pb.CodeFact, 0, len(g.Facts))
 	for _, f := range g.Facts {
 		out = append(out, f)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Id < out[j].Id })
-	return out
-}
-
-func sortedChunks(g *graph.Graph) []*pb.Chunk {
-	out := make([]*pb.Chunk, 0, len(g.Chunks))
-	for _, c := range g.Chunks {
-		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Id < out[j].Id })
 	return out
@@ -301,23 +264,21 @@ func (s *Store) Snapshot(ctx context.Context, id string) (*pb.Snapshot, error) {
 	statQuery := `SELECT
 		(SELECT COUNT(*) FROM codeindex_snapshot_facts WHERE snapshot_id = ?),
 		(SELECT COUNT(*) FROM codeindex_snapshot_edges WHERE snapshot_id = ?),
-		(SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = ?),
-		(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = ?)`
-	statArgs := []any{id, id, id, id}
+		(SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = ?)`
+	statArgs := []any{id, id, id}
 	if statsWhere, statsScopeArgs := scope(ctx).clause("org_id"); statsWhere != "" {
 		statQuery = `SELECT
 			(SELECT COUNT(*) FROM codeindex_snapshot_facts WHERE snapshot_id = ?` + statsWhere + `),
 			(SELECT COUNT(*) FROM codeindex_snapshot_edges WHERE snapshot_id = ?` + statsWhere + `),
-			(SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = ?` + statsWhere + `),
-			(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = ?` + statsWhere + `)`
+			(SELECT COUNT(*) FROM codeindex_sources WHERE snapshot_id = ?` + statsWhere + `)`
 		statArgs = []any{}
-		for i := 0; i < 4; i++ {
+		for i := 0; i < 3; i++ {
 			statArgs = append(statArgs, id)
 			statArgs = append(statArgs, statsScopeArgs...)
 		}
 	}
 	if err := s.bun.NewRaw(statQuery, statArgs...).
-		Scan(ctx, &snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources, &snap.Statistics.Chunks); err != nil {
+		Scan(ctx, &snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources); err != nil {
 		return nil, fmt.Errorf("load snapshot statistics: %w", err)
 	}
 	return &snap, nil
@@ -335,8 +296,7 @@ func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snaps
 		projects_json, warnings_json, tool_versions_json, provenance, content_fingerprint, commit_message,
 		(SELECT COUNT(*) FROM codeindex_snapshot_facts  WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id),
 		(SELECT COUNT(*) FROM codeindex_snapshot_edges  WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id),
-		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id),
-		(SELECT COUNT(*) FROM codeindex_snapshot_chunks WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id)
+		(SELECT COUNT(*) FROM codeindex_sources         WHERE snapshot_id = codeindex_snapshots.id AND org_id = codeindex_snapshots.org_id)
 		FROM codeindex_snapshots
 		WHERE repository_id = ?`+where+`
 		ORDER BY created_unix, capture_order, id`, append([]any{repositoryID}, scopeArgs...)...)
@@ -357,7 +317,7 @@ func (s *Store) Snapshots(ctx context.Context, repositoryID string) ([]*pb.Snaps
 			&snap.Id, &snap.RepositoryId, &createdUnix, &snap.GitRevision, &snap.GitBranch,
 			&snap.IngestionStatus, &snap.ConfigHash,
 			&projects, &warnings, &tools, &snap.Provenance, &snap.ContentFingerprint, &snap.CommitMessage,
-			&snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources, &snap.Statistics.Chunks,
+			&snap.Statistics.Facts, &snap.Statistics.Edges, &snap.Statistics.Sources,
 		); err != nil {
 			return nil, err
 		}
@@ -511,32 +471,6 @@ func (s *Store) EdgeFacts(ctx context.Context, snapshotID string, kind pb.EdgeKi
 func (s *Store) EdgeVersions(ctx context.Context, logicalKey string) ([]*pb.EdgeFact, error) {
 	where, scopeArgs := scope(ctx).clause("org_id")
 	return s.scanEdges(ctx, `SELECT `+edgeColumns+` FROM codeindex_edges WHERE logical_key = ?`+where+` ORDER BY snapshot_id DESC`, append([]any{logicalKey}, scopeArgs...)...)
-}
-
-// Chunk loads a single chunk.
-func (s *Store) Chunk(ctx context.Context, id string) (*pb.Chunk, error) {
-	where, scopeArgs := scope(ctx).clause("org_id")
-	chunks, err := s.scanChunks(ctx, `SELECT `+chunkColumns+` FROM codeindex_chunks WHERE id = ?`+where, append([]any{id}, scopeArgs...)...)
-	if err != nil {
-		return nil, err
-	}
-	if len(chunks) == 0 {
-		return nil, notFound("chunk", id)
-	}
-	return chunks[0], nil
-}
-
-// Chunks lists a snapshot's chunks via membership.
-func (s *Store) Chunks(ctx context.Context, snapshotID string) ([]*pb.Chunk, error) {
-	where, scopeArgs := scope(ctx).clause("c.org_id")
-	chunks, err := s.scanChunks(ctx, `SELECT `+chunkColumnsQualified+` FROM codeindex_chunks c JOIN codeindex_snapshot_chunks m ON m.chunk_id = c.id AND m.org_id = c.org_id WHERE m.snapshot_id = ?`+where+` ORDER BY c.id`, append([]any{snapshotID}, scopeArgs...)...)
-	if err != nil {
-		return nil, err
-	}
-	for _, c := range chunks {
-		c.SnapshotId = snapshotID
-	}
-	return chunks, nil
 }
 
 func escapeLike(s string) string {

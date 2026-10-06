@@ -84,8 +84,8 @@ func TestSCIPSynthesizedLogicalKeysIncludeScope(t *testing.T) {
 }
 
 // TestSCIPSynthesizesDefinitionFact verifies that a definition occurrence with
-// an enclosing range and a symbol kind becomes a code Fact with captured code
-// and chunks, without any tree-sitter grammar for the language.
+// an enclosing range and a symbol kind becomes a code Fact with captured code,
+// without any tree-sitter grammar for the language.
 func TestSCIPSynthesizesDefinitionFact(t *testing.T) {
 	text := "fn greet(name: &str) -> String {\n    format!(\"hi {}\", name)\n}\n"
 	g, s := testSource(t, "src/lib.rs", "rust", text)
@@ -124,8 +124,12 @@ func TestSCIPSynthesizesDefinitionFact(t *testing.T) {
 		if f.Kind != pb.FactKind_FACT_KIND_FUNCTION || f.Name != "greet" || f.Language != "rust" {
 			t.Fatalf("fact: %+v", f)
 		}
-		if !strings.Contains(f.Code, "format!") {
-			t.Fatalf("captured code does not span the declaration: %q", f.Code)
+		body := s.Text[f.Anchor.GetStartByte():f.Anchor.GetEndByte()]
+		if !strings.Contains(string(body), "format!") {
+			t.Fatalf("captured body does not span the declaration: %q", body)
+		}
+		if f.BodyHash != graph.BodyHash(body) {
+			t.Fatalf("body hash does not match captured body: %q", f.BodyHash)
 		}
 		if f.SymbolKey != symbol || f.Documentation != "Say hello." {
 			t.Fatalf("symbol metadata missing: %+v", f)
@@ -133,9 +137,6 @@ func TestSCIPSynthesizesDefinitionFact(t *testing.T) {
 		if f.Signature != "fn greet(name: &str) -> String" {
 			t.Fatalf("signature: %q", f.Signature)
 		}
-	}
-	if len(g.Chunks) == 0 {
-		t.Fatal("synthesized fact produced no chunks")
 	}
 	if table.definitions[symbol] == "" {
 		t.Fatal("definition not registered")
@@ -239,15 +240,16 @@ func TestSCIPSynthesizesDeclarationBodies(t *testing.T) {
 				if f.Name != tt.symbolName {
 					t.Fatalf("name: %q", f.Name)
 				}
-				if strings.TrimSpace(f.Code) == tt.symbolName {
-					t.Fatalf("captured only the symbol name: %q", f.Code)
+				body := s.Text[f.Anchor.GetStartByte():f.Anchor.GetEndByte()]
+				if strings.TrimSpace(string(body)) == tt.symbolName {
+					t.Fatalf("captured only the symbol name: %q", body)
 				}
-				if !strings.Contains(f.Code, tt.marker) {
-					t.Fatalf("captured code does not span the declaration body: %q", f.Code)
+				if !strings.Contains(string(body), tt.marker) {
+					t.Fatalf("captured body does not span the declaration body: %q", body)
 				}
-			}
-			if len(g.Chunks) == 0 {
-				t.Fatal("synthesized fact produced no chunks")
+				if f.BodyHash != graph.BodyHash(body) {
+					t.Fatalf("body hash does not match captured body: %q", f.BodyHash)
+				}
 			}
 		})
 	}

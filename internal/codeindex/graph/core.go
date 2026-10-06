@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/cespare/xxhash/v2"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -25,14 +26,19 @@ func ID(parts ...string) string {
 func Hash(b []byte) string            { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 func RepositoryID(root string) string { return ID(filepath.Clean(root)) }
 
+// BodyHash is a fast, stable fingerprint of a fact's content. It is used to
+// detect unchanged declarations across snapshots and never leaves the index;
+// declaration source is addressed by the anchor's source hash instead.
+func BodyHash(body []byte) string { return fmt.Sprintf("%016x", xxhash.Sum64(body)) }
+
 type Source struct {
 	Path, Language, Hash string
 	Text                 []byte
 	InputBlob            string
 	Dirty                bool
 	SyntaxCache          string
-	// FileCache stores this source's whole-file fact and chunks keyed by the
-	// content hash they were built from, so unchanged files are not re-chunked.
+	// FileCache stores this source's whole-file fact keyed by the content hash
+	// it was built from, so unchanged files are not rebuilt.
 	FileCache string
 	// lines caches the byte offset of each line start so Position and Offset
 	// resolve anchors in O(log n) instead of rescanning (and copying) the
@@ -202,7 +208,6 @@ type Graph struct {
 	SnapshotID       string
 	Sources          map[string]*Source
 	Facts            map[string]*pb.CodeFact
-	Chunks           map[string]*pb.Chunk
 	EdgeFacts        map[string]*pb.EdgeFact
 	// Reused records entity ids whose content was carried over unchanged from a
 	// previous snapshot. Publishing can skip re-writing their immutable rows and
@@ -211,15 +216,15 @@ type Graph struct {
 }
 
 func NewGraph(repo, snapshot string) *Graph {
-	return &Graph{ProjectArtifacts: map[string]ProjectArtifact{}, RepositoryID: repo, SnapshotID: snapshot, Sources: map[string]*Source{}, Facts: map[string]*pb.CodeFact{}, Chunks: map[string]*pb.Chunk{}, EdgeFacts: map[string]*pb.EdgeFact{}, Reused: map[string]bool{}}
+	return &Graph{ProjectArtifacts: map[string]ProjectArtifact{}, RepositoryID: repo, SnapshotID: snapshot, Sources: map[string]*Source{}, Facts: map[string]*pb.CodeFact{}, EdgeFacts: map[string]*pb.EdgeFact{}, Reused: map[string]bool{}}
 }
-func (g *Graph) AddFact(kind pb.FactKind, name, language string, anchor *pb.SourceAnchor, code, signature string, evidence *pb.Evidence) *pb.CodeFact {
+func (g *Graph) AddFact(kind pb.FactKind, name, language string, anchor *pb.SourceAnchor, body, signature string, evidence *pb.Evidence) *pb.CodeFact {
 	id := ID(g.SnapshotID, "fact", anchor.Path, fmt.Sprint(anchor.StartByte), fmt.Sprint(anchor.EndByte), kind.String(), name)
 	if f := g.Facts[id]; f != nil {
 		f.Evidence = appendEvidence(f.Evidence, evidence)
 		return f
 	}
-	f := &pb.CodeFact{Id: id, RepositoryId: g.RepositoryID, SnapshotId: g.SnapshotID, Kind: kind, Name: name, Language: language, Anchor: anchor, Code: code, Signature: signature, LogicalKey: LogicalFactKey(kind, name, anchor.Path)}
+	f := &pb.CodeFact{Id: id, RepositoryId: g.RepositoryID, SnapshotId: g.SnapshotID, Kind: kind, Name: name, Language: language, Anchor: anchor, BodyHash: BodyHash([]byte(body)), Signature: signature, LogicalKey: LogicalFactKey(kind, name, anchor.Path)}
 	f.Evidence = appendEvidence(f.Evidence, evidence)
 	g.Facts[id] = f
 	return f
@@ -243,7 +248,7 @@ func (g *Graph) AddInfraFact(kind pb.FactKind, subject, object, language, extrac
 	f := &pb.CodeFact{
 		Id: id, RepositoryId: g.RepositoryID, SnapshotId: g.SnapshotID,
 		Kind: kind, Name: object, QualifiedName: subject, Language: language,
-		Anchor: anchor, Code: text,
+		Anchor: anchor, BodyHash: BodyHash([]byte(text)),
 		LogicalKey: LogicalInfraKey(kind, subject, object, anchor.Path),
 	}
 	if extractor != "" {
@@ -266,12 +271,6 @@ func (g *Graph) LogicalEdgeKey(kind pb.EdgeKind, from, target string) string {
 		fromKey = f.LogicalKey
 	}
 	return strings.Join([]string{"edge", kind.String(), fromKey, target}, "|")
-}
-func (g *Graph) AddChunk(factID string, anchor *pb.SourceAnchor, text, context string, index, total uint32) *pb.Chunk {
-	id := ID(g.SnapshotID, "chunk", factID, fmt.Sprint(index))
-	c := &pb.Chunk{Id: id, FactId: factID, SnapshotId: g.SnapshotID, Anchor: anchor, Text: text, Context: context, Index: index, Total: total}
-	g.Chunks[id] = c
-	return c
 }
 func (g *Graph) AddEdgeFact(kind pb.EdgeKind, from, to, targetKey string, anchor *pb.SourceAnchor, evidence *pb.Evidence) *pb.EdgeFact {
 	if anchor == nil || kind == pb.EdgeKind_EDGE_KIND_UNSPECIFIED {
@@ -309,7 +308,7 @@ func (g *Graph) AdoptFact(f *pb.CodeFact) *pb.CodeFact {
 		Id: id, RepositoryId: g.RepositoryID, SnapshotId: g.SnapshotID,
 		Language: f.Language, Anchor: f.Anchor, Kind: f.Kind, Name: f.Name,
 		QualifiedName: f.QualifiedName, SymbolKey: f.SymbolKey, Signature: f.Signature,
-		Documentation: f.Documentation, Code: f.Code, LogicalKey: f.LogicalKey,
+		Documentation: f.Documentation, BodyHash: f.BodyHash, LogicalKey: f.LogicalKey,
 		Evidence: append([]*pb.Evidence(nil), f.Evidence...),
 		Imports:  append([]string(nil), f.Imports...),
 	}
@@ -318,13 +317,14 @@ func (g *Graph) AdoptFact(f *pb.CodeFact) *pb.CodeFact {
 }
 
 // AdoptFactAnchored shares an immutable row only when its source anchor and
-// content are unchanged; edited sources receive snapshot-specific identities.
-func (g *Graph) AdoptFactAnchored(f *pb.CodeFact, anchor *pb.SourceAnchor, code, signature string) *pb.CodeFact {
+// content hash are unchanged; edited sources receive snapshot-specific
+// identities.
+func (g *Graph) AdoptFactAnchored(f *pb.CodeFact, anchor *pb.SourceAnchor, bodyHash, signature string) *pb.CodeFact {
 	if f == nil || anchor == nil {
 		return nil
 	}
 	id := f.Id
-	reused := id != "" && proto.Equal(f.Anchor, anchor) && f.Code == code && f.Signature == signature
+	reused := id != "" && proto.Equal(f.Anchor, anchor) && f.BodyHash == bodyHash && f.Signature == signature
 	if !reused {
 		id = ID(g.SnapshotID, "fact", anchor.Path, fmt.Sprint(anchor.StartByte), fmt.Sprint(anchor.EndByte), f.Kind.String(), f.Name)
 	}
@@ -335,7 +335,7 @@ func (g *Graph) AdoptFactAnchored(f *pb.CodeFact, anchor *pb.SourceAnchor, code,
 		Id: id, RepositoryId: g.RepositoryID, SnapshotId: g.SnapshotID,
 		Language: f.Language, Anchor: anchor, Kind: f.Kind, Name: f.Name,
 		QualifiedName: f.QualifiedName, SymbolKey: f.SymbolKey, Signature: signature,
-		Documentation: f.Documentation, Code: code, LogicalKey: f.LogicalKey,
+		Documentation: f.Documentation, BodyHash: bodyHash, LogicalKey: f.LogicalKey,
 		Evidence: append([]*pb.Evidence(nil), f.Evidence...),
 		Imports:  append([]string(nil), f.Imports...),
 	}
@@ -352,30 +352,6 @@ func (g *Graph) AdoptFactAnchored(f *pb.CodeFact, anchor *pb.SourceAnchor, code,
 	}
 	g.Reused[id] = reused
 	return c
-}
-
-// AdoptChunkAnchored inserts an already re-anchored chunk, preserving its id so
-// unchanged chunks keep their identity across snapshots.
-func (g *Graph) AdoptChunkAnchored(c *pb.Chunk, factID string) *pb.Chunk {
-	if c == nil {
-		return nil
-	}
-	id := c.Id
-	if id == "" {
-		id = ID(g.SnapshotID, "chunk", factID, fmt.Sprint(c.Index))
-	}
-	n := &pb.Chunk{Id: id, FactId: factID, SnapshotId: g.SnapshotID, Anchor: c.Anchor, Text: c.Text, Context: c.Context, Index: c.Index, Total: c.Total}
-	g.Chunks[id] = n
-	g.Reused[id] = c.Id != ""
-	return n
-}
-
-// AdoptChunk re-keys a chunk into this graph under a (possibly remapped) Fact id.
-func (g *Graph) AdoptChunk(c *pb.Chunk, factID string) *pb.Chunk {
-	id := ID(g.SnapshotID, "chunk", factID, fmt.Sprint(c.Index))
-	n := &pb.Chunk{Id: id, FactId: factID, SnapshotId: g.SnapshotID, Anchor: c.Anchor, Text: c.Text, Context: c.Context, Index: c.Index, Total: c.Total}
-	g.Chunks[id] = n
-	return n
 }
 
 // AdoptEdgeFact re-keys an EdgeFact from another snapshot into this graph with
@@ -457,14 +433,6 @@ func (g *Graph) SortedFacts() []*pb.CodeFact {
 	out := make([]*pb.CodeFact, 0, len(g.Facts))
 	for _, f := range g.Facts {
 		out = append(out, f)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Id < out[j].Id })
-	return out
-}
-func (g *Graph) SortedChunks() []*pb.Chunk {
-	out := make([]*pb.Chunk, 0, len(g.Chunks))
-	for _, c := range g.Chunks {
-		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Id < out[j].Id })
 	return out

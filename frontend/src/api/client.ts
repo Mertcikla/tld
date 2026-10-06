@@ -47,6 +47,7 @@ import {
   UpdateViewLayerResponseSchema,
   PlanElement,
   PlanConnector,
+  type View as ProtoView,
   type ViewContent,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/workspace_service_pb'
 import {
@@ -76,18 +77,19 @@ import {
 } from '@buf/tldiagramcom_diagram.bufbuild_es/diag/v1/collaboration_service_pb'
 import {
   ChangeKind,
-  CodeFactService,
+  CodeIndexService,
   FactKind,
-  MapperService,
   RepositoryService,
-  WatchService,
   type Snapshot as CodeSnapshotProto,
   type SnapshotDiff as SnapshotDiffProto,
   type ImpactDiagram as ImpactDiagramProto,
+  type ImpactScene as ImpactSceneProto,
+  type ImpactSymbolChange as ImpactSymbolChangeProto,
   type CodeFact,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset } from '../config/runtime'
+import { MAX_BLAST_RADIUS } from '../utils/impactScope'
 import {
   normalizeConnectorRouteStyle,
   normalizeLogoUrl,
@@ -144,7 +146,6 @@ export interface IndexedRepository {
   gitRevision: string
   gitBranch: string
   facts: number
-  chunks: number
   edges: number
   sources: number
   remoteUrl: string
@@ -201,7 +202,7 @@ export interface CodeSnapshot {
   provenance?: string
   contentFingerprint?: string
   commitMessage?: string
-  statistics?: { facts: number; edges: number; sources: number; chunks: number }
+  statistics?: { facts: number; edges: number; sources: number }
 }
 
 export interface SnapshotSourceChange {
@@ -240,7 +241,7 @@ export interface ImpactFileNode {
   path: string
   name: string
   change: SnapshotSourceChange['change'] | 'unchanged'
-  context: boolean
+  distance: number
   elementId: number
   symbols: ImpactSymbols
   x: number
@@ -253,9 +254,48 @@ export interface RepositoryImpact {
   diff: SnapshotDiff
   nodes: ImpactFileNode[]
   edges: { fromKey: string; toKey: string; change: SnapshotSourceChange['change'] | 'unchanged'; weight: number }[]
-  radius: number
   maxRadius: number
   version: string
+}
+export interface RepositoryImpactMermaid {
+  code: string
+  markdown: string
+  warnings: string[]
+}
+// RepositoryImpactSymbol is one changed symbol of an overlay. It keeps the
+// portable identity of the change, not the underlying snapshot fact.
+export interface RepositoryImpactSymbol {
+  change: SnapshotSourceChange['change'] | 'unchanged'
+  name: string
+  kind: number
+  bodyHash: string
+  anchor?: { path: string; startLine: number; endLine: number }
+}
+// RepositoryImpactOverlay is one placement's transient change annotation.
+// Context neighbours carry the hop distance used for client-side scoping.
+export interface RepositoryImpactOverlay {
+  change: SnapshotSourceChange['change'] | 'unchanged'
+  path: string
+  linesAdded?: number
+  linesRemoved?: number
+  symbols: string[]
+  symbolDetails: RepositoryImpactSymbol[]
+  distance: number
+}
+// RepositoryImpactScene is the backend-assembled change scene: the repository
+// workspace subset, context neighbours, and transient placements with overlays.
+// It is self-contained, so the identity fields travel with it and a viewer can
+// render the scene without the repository, its index, or its snapshots.
+export interface RepositoryImpactScene extends ExploreData {
+  fallbackViewId: number
+  repositoryId: string
+  comparisonKey: string
+  version: string
+  schemaVersion: string
+  maxRadius: number
+  fromGitRevision: string
+  toGitRevision: string
+  overlays: Record<number, RepositoryImpactOverlay>
 }
 export interface LiveRepositoryImpact {
   diagram: RepositoryImpact | null
@@ -434,10 +474,8 @@ const workspaceClient = createClient(WorkspaceService, transport)
 const dependencyClient = createClient(DependencyService, transport)
 const importClient = createClient(ImportService, transport)
 const mermaidClient = createClient(MermaidService, transport)
-const codeIndexFactClient = createClient(CodeFactService, transport)
-const codeIndexMapperClient = createClient(MapperService, transport)
+const codeIndexClient = createClient(CodeIndexService, transport)
 const codeIndexRepositoryClient = createClient(RepositoryService, transport)
-const codeIndexWatchClient = createClient(WatchService, transport)
 const orgClient = createClient(OrgService, transport)
 const collaborationClient = createClient(CollaborationService, transport)
 
@@ -534,7 +572,6 @@ export function mapCodeSnapshot(snapshot: CodeSnapshotProto): CodeSnapshot {
       facts: snapshot.statistics.facts,
       edges: snapshot.statistics.edges,
       sources: snapshot.statistics.sources,
-      chunks: snapshot.statistics.chunks,
     } } : {}),
   }
 }
@@ -565,13 +602,90 @@ function mapImpact(diagram: ImpactDiagramProto): RepositoryImpact {
   return {
     repositoryId: diagram.repositoryId, comparisonKey: diagram.comparisonKey,
     viewId: Number(diagram.viewId), diff: mapSnapshotDiff(diagram.diff),
-    radius: diagram.radius, maxRadius: diagram.maxRadius, version: diagram.version,
+    maxRadius: diagram.maxRadius, version: diagram.version,
     nodes: diagram.nodes.map((node) => ({
       key: node.key, path: node.path, name: node.name, change: change(node.change),
-      context: node.context, elementId: Number(node.elementId), x: node.x, y: node.y,
+      distance: node.distance, elementId: Number(node.elementId), x: node.x, y: node.y,
       symbols: { added: node.symbols?.added ?? [], removed: node.symbols?.removed ?? [], modified: node.symbols?.modified ?? [] },
     })),
     edges: diagram.edges.map((edge) => ({ ...edge, change: change(edge.change) })),
+  }
+}
+
+function mapImpactSceneView(view: ProtoView): ViewTreeNode {
+  return {
+    id: Number(view.id),
+    owner_element_id: view.ownerElementId != null ? Number(view.ownerElementId) : null,
+    name: view.name,
+    description: view.description ?? null,
+    level_label: view.levelLabel ?? null,
+    tags: [...view.tags],
+    level: view.level,
+    depth: view.depth,
+    created_at: '',
+    updated_at: '',
+    parent_view_id: view.parentViewId != null ? Number(view.parentViewId) : null,
+    children: view.children.map(mapImpactSceneView),
+  }
+}
+
+// impactSymbolLabel is the overlay's one-line symbol label. The scene carries
+// structured symbol changes, so labels are derived here instead of shipped.
+const impactSymbolPrefix = { added: '+ ', removed: '− ', modified: '~ ', unchanged: '' } as const
+
+export function mapImpactScene(scene: ImpactSceneProto): RepositoryImpactScene {
+  const views: ExploreData['views'] = {}
+  const overlays: Record<number, RepositoryImpactOverlay> = {}
+  for (const [key, content] of Object.entries(scene.views)) {
+    const placements = content.placements.map((placement) => {
+      const mapped = protoPlacedElement(placement.element as unknown as Record<string, unknown>)
+      if (placement.overlay) {
+        const change = placement.overlay.change === ChangeKind.UNSPECIFIED ? 'unchanged' as const : mapSnapshotChangeKind(placement.overlay.change)
+        overlays[mapped.element_id] = {
+          change,
+          path: placement.overlay.path,
+          linesAdded: placement.overlay.linesAdded,
+          linesRemoved: placement.overlay.linesRemoved,
+          symbols: placement.overlay.symbols.map((symbol) => {
+            const symbolChange = symbol.change === ChangeKind.UNSPECIFIED ? 'unchanged' : mapSnapshotChangeKind(symbol.change)
+            return `${impactSymbolPrefix[symbolChange]}${symbol.name}`
+          }),
+          symbolDetails: placement.overlay.symbols.map(mapImpactSymbolChange),
+          distance: placement.overlay.distance,
+        }
+      }
+      return mapped
+    })
+    views[key] = {
+      placements,
+      connectors: content.connectors.map((connector) => protoConnector(connector as unknown as Record<string, unknown>)),
+    }
+  }
+  return {
+    tree: scene.tree.map(mapImpactSceneView),
+    views,
+    navigations: scene.navigations.map((navigation) => protoNavigation(navigation as unknown as Record<string, unknown>)),
+    fallbackViewId: Number(scene.fallbackViewId),
+    repositoryId: scene.repositoryId,
+    comparisonKey: scene.comparisonKey,
+    version: scene.version,
+    schemaVersion: scene.schemaVersion,
+    maxRadius: scene.maxRadius,
+    fromGitRevision: scene.fromGitRevision,
+    toGitRevision: scene.toGitRevision,
+    overlays,
+  }
+}
+
+function mapImpactSymbolChange(symbol: ImpactSymbolChangeProto): RepositoryImpactSymbol {
+  return {
+    change: symbol.change === ChangeKind.UNSPECIFIED ? 'unchanged' : mapSnapshotChangeKind(symbol.change),
+    name: symbol.name,
+    kind: symbol.kind,
+    bodyHash: symbol.bodyHash,
+    anchor: symbol.anchor
+      ? { path: symbol.anchor.path, startLine: symbol.anchor.startLine, endLine: symbol.anchor.endLine }
+      : undefined,
   }
 }
 
@@ -841,7 +955,7 @@ export function libraryElementToDependency(element: LibraryElement): DependencyE
 }
 
 export function protoPlacedElement(p: Record<string, unknown>): PlacedElement {
-  const technologyConnectors = normalizeTechnologyConnectors(p.technology_connect_ors ?? p.technology_connectors ?? p.technology_links ?? p.technologyLinks)
+  const technologyConnectors = normalizeTechnologyConnectors(p.technology_connect_ors ?? p.technology_connectors ?? p.technology_links ?? p.technologyLinks ?? p.technologyConnectors)
   return {
     id: Number(p.id ?? 0),
     view_id: Number(p.view_id ?? p.viewId ?? 0),
@@ -930,13 +1044,14 @@ export function protoDependencyConnector(e: Record<string, unknown>): Dependency
 }
 
 export function protoNavigation(n: Record<string, unknown>): ViewConnector {
+  const elementID = n.element_id ?? n.elementId
   return {
     id: Number(n.id ?? 0),
-    element_id: (n.element_id ?? null) as number | null,
-    from_view_id: Number(n.from_view_id ?? 0),
-    to_view_id: Number(n.to_view_id ?? 0),
-    to_view_name: String(n.to_view_name ?? ''),
-    relation_type: String(n.relation_type ?? 'child'),
+    element_id: elementID != null ? Number(elementID) : null,
+    from_view_id: Number(n.from_view_id ?? n.fromViewId ?? 0),
+    to_view_id: Number(n.to_view_id ?? n.toViewId ?? 0),
+    to_view_name: String(n.to_view_name ?? n.toViewName ?? ''),
+    relation_type: String(n.relation_type ?? n.relationType ?? 'child'),
   }
 }
 
@@ -1953,7 +2068,7 @@ export const api = {
 
   repositories: {
     settings: (repositoryId: string, signal?: AbortSignal): Promise<RepositorySettings> => rpc(async () => {
-      const response = await codeIndexRepositoryClient.getRepositorySettings({ repositoryId }, { signal })
+      const response = await codeIndexRepositoryClient.getRepositorySettings({ id: repositoryId }, { signal })
       return { ...response, mapDefaults: response.mapDefaults ?? {}, mapOverrides: response.mapOverrides ?? {}, effectiveMap: response.effectiveMap ?? {} }
     }),
     updateMapConfiguration: (repositoryId: string, overrides: RepositoryMapConfiguration): Promise<RepositorySettings> => rpc(async () => {
@@ -1968,7 +2083,7 @@ export const api = {
       const facts: CodeFact[] = []
       let pageToken = ''
       do {
-        const page = await codeIndexFactClient.listFacts({ repositoryId, snapshotId, pathPrefix: path, pageSize: 500, pageToken }, { signal })
+        const page = await codeIndexClient.listFacts({ repositoryId, snapshotId, pathPrefix: path, pageSize: 500, pageToken }, { signal })
         facts.push(...page.facts.filter((fact) => fact.anchor?.path === path))
         pageToken = page.nextPageToken
       } while (pageToken)
@@ -1978,7 +2093,7 @@ export const api = {
       const facts: CodeFact[] = []
       let pageToken = ''
       do {
-        const page = await codeIndexFactClient.listFacts({ repositoryId, snapshotId, kind: FactKind.FILE, pageSize: 500, pageToken }, { signal })
+        const page = await codeIndexClient.listFacts({ repositoryId, snapshotId, kind: FactKind.FILE, pageSize: 500, pageToken }, { signal })
         facts.push(...page.facts)
         pageToken = page.nextPageToken
       } while (pageToken)
@@ -2047,7 +2162,7 @@ export const api = {
       return { ...response, commits: response.commits.map((commit) => ({ ...commit, createdUnix: Number(commit.createdUnix) })) }
     }),
     openPullRequests: (repositoryId: string, signal?: AbortSignal): Promise<OpenRepositoryPullRequest[]> => rpc(async () => {
-      const response = await codeIndexRepositoryClient.listPullRequests({ repositoryId }, { signal })
+      const response = await codeIndexRepositoryClient.listPullRequests({ id: repositoryId }, { signal })
       return response.pullRequests
     }),
     pullRequest: (repositoryId: string, pullRequest: string, signal?: AbortSignal): Promise<RepositoryPullRequest> => rpc(async () => {
@@ -2058,7 +2173,7 @@ export const api = {
       return { commit: response.commit ? { ...response.commit, createdUnix: Number(response.commit.createdUnix) } : null, files: response.files }
     }),
     maps: (repositoryId: string): Promise<CompletedRepositoryMap[]> => rpc(async () => {
-      const response = await codeIndexMapperClient.listMaps({ repositoryId })
+      const response = await codeIndexClient.listMaps({ id: repositoryId })
       return response.maps.filter((item) => !!item.result).map((item) => ({
         completedUnix: Number(item.completedUnix),
         configHash: item.configHash,
@@ -2067,16 +2182,16 @@ export const api = {
     }),
     snapshots: (repositoryId: string): Promise<CodeSnapshot[]> =>
       rpc(async () => {
-        const res = await codeIndexFactClient.listSnapshots({ id: repositoryId })
+        const res = await codeIndexClient.listSnapshots({ id: repositoryId })
         return (res.snapshots ?? []).map(mapCodeSnapshot)
       }),
     deleteSnapshot: (snapshotId: string): Promise<void> =>
       rpc(async () => {
-        await codeIndexFactClient.deleteSnapshot({ snapshotId })
+        await codeIndexClient.deleteSnapshot({ id: snapshotId })
       }),
     diff: (input: { fromSnapshotId: string; toSnapshotId: string }): Promise<SnapshotDiff> =>
       rpc(async () => {
-        const res = await codeIndexFactClient.diffSnapshots({
+        const res = await codeIndexClient.diffSnapshots({
           fromSnapshotId: input.fromSnapshotId,
           toSnapshotId: input.toSnapshotId,
           sourcesOnly: false,
@@ -2088,10 +2203,12 @@ export const api = {
       handlers: RepositoryMapOptions = {},
     ): Promise<RepositoryMapResult> => {
       try {
-        const stream = codeIndexMapperClient.mapRepository({
+        const stream = codeIndexClient.mapRepository({
           repositoryId,
-          snapshotId: handlers.snapshotId, gitRevision: handlers.gitRevision,
-          workingTree: handlers.workingTree, gitBranch: handlers.gitBranch,
+          revision: {
+            snapshotId: handlers.snapshotId, gitRevision: handlers.gitRevision,
+            workingTree: handlers.workingTree, gitBranch: handlers.gitBranch,
+          },
         }, { signal: handlers.signal })
         let result: RepositoryMapResult | null = null
         for await (const event of stream) {
@@ -2124,10 +2241,14 @@ export const api = {
       }
     },
     compare: async (repositoryId: string, options: {
-      base: RepositoryMapOptions; head: RepositoryMapOptions; radius?: number
+      base: RepositoryMapOptions; head: RepositoryMapOptions; contextDepth?: number
       signal?: AbortSignal; onProgress?: (progress: RepositoryMapProgress) => void
     }): Promise<RepositoryImpact> => {
-      const stream = codeIndexMapperClient.compareRepository({ repositoryId, base: options.base, head: options.head, radius: options.radius ?? 0 }, { signal: options.signal })
+      const toRevision = (o: RepositoryMapOptions) => ({
+        snapshotId: o.snapshotId, gitRevision: o.gitRevision,
+        workingTree: o.workingTree, gitBranch: o.gitBranch,
+      })
+      const stream = codeIndexClient.compareRepository({ repositoryId, base: toRevision(options.base), head: toRevision(options.head), contextDepth: options.contextDepth ?? MAX_BLAST_RADIUS }, { signal: options.signal })
       let result: RepositoryImpact | null = null
       for await (const event of stream) {
         if (event.event.case === 'progress') options.onProgress?.(event.event.value)
@@ -2137,27 +2258,38 @@ export const api = {
       return result
     },
     liveImpact: (repositoryId: string, signal?: AbortSignal): Promise<LiveRepositoryImpact> => rpc(async () => {
-      const result = await codeIndexMapperClient.getLiveImpact({ repositoryId }, { signal })
+      const result = await codeIndexClient.getLiveImpact({ id: repositoryId }, { signal })
       return { ...result, diagram: result.diagram ? mapImpact(result.diagram) : null }
     }),
     watchStatus: (repositoryId: string, signal?: AbortSignal): Promise<RepositoryWatchStatus> => rpc(async () => {
-      const result = await codeIndexWatchClient.getWatchStatus({ repositoryId }, { signal })
+      const result = await codeIndexRepositoryClient.getWatchStatus({ id: repositoryId }, { signal })
       return mapWatchStatus(result)
     }),
     startWatch: (repositoryId: string, options: { materialize?: boolean } = {}): Promise<RepositoryWatchStatus> => rpc(async () => {
-      const result = await codeIndexWatchClient.startWatch({
+      const result = await codeIndexRepositoryClient.startWatch({
         repositoryId,
         materialize: options.materialize ?? false,
       })
       return mapWatchStatus(result)
     }),
     stopWatch: (repositoryId: string): Promise<RepositoryWatchStatus> => rpc(async () => {
-      const result = await codeIndexWatchClient.stopWatch({ repositoryId })
+      const result = await codeIndexRepositoryClient.stopWatch({ id: repositoryId })
       return mapWatchStatus(result)
     }),
-    impactRadius: (repositoryId: string, comparisonKey: string, radius: number, signal?: AbortSignal): Promise<RepositoryImpact> => rpc(async () =>
-      mapImpact(await codeIndexMapperClient.setImpactRadius({ repositoryId, comparisonKey, radius }, { signal })),
-    ),
+    impactScene: (repositoryId: string, comparisonKey: string, signal?: AbortSignal): Promise<RepositoryImpactScene> => rpc(async () => {
+      const response = await codeIndexClient.getImpactScene({ repositoryId, comparisonKey }, { signal })
+      if (!response.scene) throw new Error('Impact scene unavailable')
+      return mapImpactScene(response.scene)
+    }),
+    impactMermaid: (repositoryId: string, comparisonKey: string, options: { radius?: number; markdown?: boolean; signal?: AbortSignal } = {}): Promise<RepositoryImpactMermaid> => rpc(async () => {
+      const response = await codeIndexClient.exportImpactMermaid({
+        repositoryId,
+        comparisonKey,
+        radius: options.radius ?? 0,
+        markdown: options.markdown ?? false,
+      }, { signal: options.signal })
+      return { code: response.code, markdown: response.markdown, warnings: [...response.warnings] }
+    }),
     delete: (repositoryId: string, options: { deleteMaterialized?: boolean; deleteClone?: boolean } = {}): Promise<void> =>
       rpc(async () => {
         await codeIndexRepositoryClient.deleteRepository({

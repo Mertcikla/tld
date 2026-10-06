@@ -67,4 +67,13 @@ describe('RepositoryHistory selection', () => {
     expect(blocked.onRange).not.toHaveBeenCalled()
     act(() => { blocked.renderer.unmount() })
   })
+
+  it('toggles from the summary topbar', () => {
+    const onToggle = vi.fn()
+    let renderer!: ReturnType<typeof create>
+    act(() => { renderer = create(<RepositoryHistory repositoryId="repo" history={history} base="" head="" collapsed={false} onToggle={onToggle} onRange={vi.fn()} />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-history-summary' }).props.onClick() })
+    expect(onToggle).toHaveBeenCalledTimes(1)
+    act(() => { renderer.unmount() })
+  })
 })

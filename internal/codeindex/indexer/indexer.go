@@ -29,12 +29,16 @@ type Pipeline struct {
 
 // Progress reports indexing progress. Stage names the active phase; Current and
 // Total are per-stage counters (zero when unknown); Detail is an optional item
-// such as the file or project currently being processed.
+// such as the file or project currently being processed. Target names the
+// comparison side an update belongs to ("base" or "head") and is empty for a
+// single-target index; it lets surfaces tell two otherwise identical stage runs
+// apart.
 type Progress struct {
 	Stage   string
 	Current int64
 	Total   int64
 	Detail  string
+	Target  string
 }
 
 // ProgressFunc receives progress updates. It must be safe to call frequently.

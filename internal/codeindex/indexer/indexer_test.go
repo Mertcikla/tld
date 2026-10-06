@@ -176,7 +176,7 @@ func TestTreeFactsCaptureImports(t *testing.T) {
 	}
 }
 
-func TestBuildAddsFileFactsAndChunks(t *testing.T) {
+func TestBuildAddsFileFacts(t *testing.T) {
 	root := t.TempDir()
 	files := map[string]string{
 		"main.go":      "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println() }\n",
@@ -200,22 +200,8 @@ func TestBuildAddsFileFactsAndChunks(t *testing.T) {
 		if f.Kind == pb.FactKind_FACT_KIND_IMPORT {
 			t.Fatalf("import fact was produced: %s", f.Name)
 		}
-		if f.Kind != pb.FactKind_FACT_KIND_FILE {
-			continue
-		}
-		fileFacts++
-		var text strings.Builder
-		for _, c := range g.Chunks {
-			if c.FactId == f.Id {
-				text.WriteString(c.Text)
-			}
-		}
-		want, rerr := os.ReadFile(filepath.Join(root, filepath.FromSlash(f.Name)))
-		if rerr != nil {
-			t.Fatal(rerr)
-		}
-		if text.String() != string(want) {
-			t.Fatalf("file chunk text for %s does not reassemble the source", f.Name)
+		if f.Kind == pb.FactKind_FACT_KIND_FILE {
+			fileFacts++
 		}
 	}
 	if fileFacts != len(files) {
