@@ -37,6 +37,15 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	if !strings.Contains(stderr, "Parse sources") || !strings.Contains(stderr, "Save change overlay") {
 		t.Fatalf("progress output = %q", stderr)
 	}
+	baseAt := strings.Index(stderr, "base HEAD~1")
+	headAt := strings.Index(stderr, "head HEAD")
+	overlayAt := strings.Index(stderr, "Save change overlay")
+	if baseAt < 0 || headAt < 0 || overlayAt < 0 {
+		t.Fatalf("comparison sides not labelled: %q", stderr)
+	}
+	if baseAt > headAt || headAt > overlayAt {
+		t.Fatalf("side labels out of order:\n%s", stderr)
+	}
 
 	out, stderr, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD")
 	if err != nil {
@@ -88,6 +97,16 @@ func TestScopeToBudgetNarrowsRadius(t *testing.T) {
 	result = scopeToBudget(diagram, 2, compareOptions{maxNodes: 2, maxBytes: 1})
 	if !result.limited || result.radius != 0 || len(result.diagram.GetNodes()) != 1 {
 		t.Fatalf("byte budget: radius=%d limited=%v nodes=%d", result.radius, result.limited, len(result.diagram.GetNodes()))
+	}
+}
+
+func TestCompareTargetLabelNamesSideAndRevision(t *testing.T) {
+	out := &bytes.Buffer{}
+	if got := compareTargetLabel(out, impact.TargetBase, "HEAD~1"); got != "base HEAD~1" {
+		t.Fatalf("label = %q", got)
+	}
+	if got := compareTargetLabel(out, impact.TargetHead, ""); got != "head" {
+		t.Fatalf("label without revision = %q", got)
 	}
 }
 

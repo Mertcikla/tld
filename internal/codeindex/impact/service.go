@@ -21,6 +21,13 @@ const DefaultContextDepth = 3
 // diagram wider than this is progressively narrowed by blast radius.
 const DefaultMaxNodes = 400
 
+// Comparison targets reported on progress updates so a caller can attribute
+// each stage run to the revision it came from.
+const (
+	TargetBase = "base"
+	TargetHead = "head"
+)
+
 // Service builds repository comparisons and their transient scenes from a
 // workspace and codeindex store. Server RPC handlers and the CLI share it so
 // compare behavior cannot drift between surfaces.
@@ -57,12 +64,13 @@ func (s Service) Compare(ctx context.Context, req CompareRequest) (*pb.ImpactDia
 		Config:       s.Config,
 		Root:         repo.Root,
 		RepositoryID: repo.Id,
-		Progress:     req.Progress,
 	}
+	engine.Progress = forTarget(req.Progress, TargetBase)
 	before, err := engine.Prepare(ctx, req.Base)
 	if err != nil {
 		return nil, err
 	}
+	engine.Progress = forTarget(req.Progress, TargetHead)
 	after, err := engine.Prepare(ctx, req.Head)
 	if err != nil {
 		return nil, err
@@ -72,4 +80,16 @@ func (s Service) Compare(ctx context.Context, req CompareRequest) (*pb.ImpactDia
 	}
 	key := graph.ID(before.Id, after.Id)
 	return Save(ctx, s.Workspace, s.Index, repo.Id, key, before.Id, after.Id, req.ContextDepth)
+}
+
+// forTarget tags every progress update with the comparison side being prepared
+// so callers can label the base and head scans separately.
+func forTarget(progress indexer.ProgressFunc, target string) indexer.ProgressFunc {
+	if progress == nil {
+		return nil
+	}
+	return func(update indexer.Progress) {
+		update.Target = target
+		progress(update)
+	}
 }

@@ -3,6 +3,7 @@ package git
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/mermaid"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -101,9 +103,12 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		return err
 	}
 	service := impact.Service{Workspace: sq, Index: store, Config: configbridge.FromGlobal(global)}
-	tracker := indexcmd.NewCompareStageTracker(cmd.ErrOrStderr())
+	errOut := cmd.ErrOrStderr()
+	tracker := indexcmd.NewCompareStageTracker(errOut)
 	defer tracker.Finish()
 	lastStage := indexcmd.DisplayStage("discover")
+	revisions := map[string]string{impact.TargetBase: base, impact.TargetHead: head}
+	shownTarget := ""
 	display, depth := compareScope(opts, cmd.Flags().Changed("radius"))
 	diagram, err := service.Compare(ctx, impact.CompareRequest{
 		RepositoryID: repositoryID,
@@ -111,6 +116,15 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		Head:         &pb.Revision{GitRevision: head},
 		ContextDepth: depth,
 		Progress: func(update indexer.Progress) {
+			// Both revisions run the same pipeline, so announce the side before
+			// its first stage instead of repeating identical stage lines.
+			if update.Target != "" && update.Target != shownTarget {
+				// Commit the previous side's trailing stage first so it does not
+				// land under the next side's heading.
+				tracker.Complete(lastStage)
+				shownTarget = update.Target
+				tracker.Message(compareTargetLabel(errOut, update.Target, revisions[update.Target]))
+			}
 			stage := indexcmd.DisplayStage(update.Stage)
 			lastStage = stage
 			if update.Total > 0 || update.Current > 0 || update.Detail != "" {
@@ -127,15 +141,17 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	requested := min(display, depth, diagram.GetMaxRadius())
 	result := scopeToBudget(diagram, requested, opts)
 	if result.limited {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
-			"warning: output limited to blast radius %d of %d (%d nodes); pass --radius %d or raise --max-nodes to include more\n",
-			result.radius, requested, len(result.diagram.GetNodes()), requested)
+		tracker.Message(fmt.Sprintf(
+			"warning: output limited to blast radius %d of %d (%d nodes); pass --radius %d or raise --max-nodes to include more",
+			result.radius, requested, len(result.diagram.GetNodes()), requested))
 	}
 	if result.overBudget {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
-			"warning: output is %s even with direct changes only; --max-bytes %s cannot be met\n",
-			humanBytes(result.size), humanBytes(opts.maxBytes))
+		tracker.Message(fmt.Sprintf("warning: output is %s even with direct changes only; --max-bytes %s cannot be met",
+			humanBytes(result.size), humanBytes(opts.maxBytes)))
 	}
+	// The diagram shares the terminal with the progress display; close the
+	// pinned stage line before anything reaches stdout.
+	tracker.Finish()
 	out := cmd.OutOrStdout()
 	if opts.mermaid || opts.markdown {
 		code := mermaid.ExportImpactDiagram(result.diagram, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: result.radius})
@@ -152,6 +168,16 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	}
 	_, err = fmt.Fprintln(out, string(payload))
 	return err
+}
+
+// compareTargetLabel titles the stage run of one comparison side, naming the
+// revision it scans so repeated stages are attributable.
+func compareTargetLabel(out io.Writer, target, revision string) string {
+	label := term.Colorize(out, term.ColorCyan, target)
+	if revision == "" {
+		return label
+	}
+	return label + " " + revision
 }
 
 // compareScope resolves the blast radius to display and the dependency depth to
