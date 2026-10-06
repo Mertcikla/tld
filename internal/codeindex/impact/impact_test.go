@@ -2,6 +2,7 @@ package impact
 
 import (
 	"context"
+	"math"
 	"path/filepath"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
+	"github.com/mertcikla/tld/v2/internal/layout"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 )
 
@@ -172,8 +174,89 @@ func TestImpactPlacesAddedFilesInClosestView(t *testing.T) {
 	if _, ok := formed["pkg/new.go"]; !ok {
 		t.Fatalf("added node missing: %+v", diagram.Nodes)
 	}
-	if node := formed["pkg/other.go"]; node == nil || node.X != overlaySpacingX || node.Y != 0 {
-		t.Fatalf("added node not laid out: %+v", node)
+	for _, path := range []string{"pkg/new.go", "pkg/other.go"} {
+		node := formed[path]
+		if node == nil {
+			t.Fatalf("added node %s missing: %+v", path, diagram.Nodes)
+		}
+		if node.X == 10 && node.Y == 20 {
+			t.Fatalf("added node %s overlapped the existing placement: %+v", path, node)
+		}
+	}
+	if formed["pkg/new.go"].X == formed["pkg/other.go"].X && formed["pkg/new.go"].Y == formed["pkg/other.go"].Y {
+		t.Fatal("added nodes overlapped each other")
+	}
+}
+
+func TestImpactPlacesAddedFilesNearConnectedElements(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	view, err := ws.CreateView(ctx, "Pkg", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contextElement, err := ws.CreateElement(ctx, core.LibraryElement{Name: "ctx.go", FilePath: stringPtr("pkg/ctx.go")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, view.ID, contextElement.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.SaveMappings(ctx, []cstore.ResourceMapping{{LogicalKey: "map|pkg|ctx", Kind: cstore.MappingElement, ResourceID: contextElement.ID, RepositoryID: "repo", SnapshotID: "head"}}); err != nil {
+		t.Fatal(err)
+	}
+	publish := func(id string, paths []string, linked bool) {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
+		g := graph.NewGraph("repo", id)
+		facts := map[string]*pb.CodeFact{}
+		for _, p := range paths {
+			text := "func Stable() {}"
+			src := &graph.Source{Path: p, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[p] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: p, Hash: src.Hash, Size: uint64(len(src.Text))})
+			facts[p] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+		}
+		if linked {
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts["pkg/new.go"].Id, facts["pkg/ctx.go"].Id, "", facts["pkg/new.go"].Anchor, nil)
+		}
+		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("base", []string{"pkg/ctx.go"}, false)
+	publish("head", []string{"pkg/ctx.go", "pkg/new.go"}, true)
+	diagram, err := Save(ctx, ws, idx, "repo", "live", "base", "head", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagram.ViewId != view.ID {
+		t.Fatalf("connected added file not placed in closest view: got %d want %d", diagram.ViewId, view.ID)
+	}
+	var added, existing *pb.ImpactNode
+	for _, node := range diagram.Nodes {
+		switch node.Path {
+		case "pkg/new.go":
+			added = node
+		case "pkg/ctx.go":
+			existing = node
+		}
+	}
+	if existing == nil || !existing.Context || existing.ElementId != contextElement.ID {
+		t.Fatalf("connected element missing from context: %+v", diagram.Nodes)
+	}
+	if added == nil {
+		t.Fatalf("added node missing: %+v", diagram.Nodes)
+	}
+	if math.Abs(added.X) > layout.PlacementGapX || math.Abs(added.Y) > layout.PlacementGapY {
+		t.Fatalf("added node not placed adjacent to its neighbor: %+v", added)
+	}
+	if added.X == existing.X && added.Y == existing.Y {
+		t.Fatalf("added node overlapped its neighbor: %+v", added)
 	}
 }
 
