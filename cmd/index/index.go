@@ -236,6 +236,7 @@ var indexStageDisplay = map[string]string{
 	"relationships": "Relationships",
 	"infra":         "Infrastructure",
 	"verify":        "Verify",
+	"overlay":       stageChanges,
 }
 
 var indexStageOrder = []string{
@@ -243,11 +244,27 @@ var indexStageOrder = []string{
 	"Publish snapshot", "Save change overlay", "Map graph",
 }
 
+// compareStageOrder is the index stage prefix a comparison runs before saving
+// its change overlay. It omits publishing and graph mapping.
+var compareStageOrder = []string{
+	"Discover", "Parse sources", "Index symbols", "Relationships", "Infrastructure", "Verify",
+	stageChanges,
+}
+
 const (
 	stagePublish  = "Publish snapshot"
 	stageChanges  = "Save change overlay"
 	stageMapGraph = "Map graph"
 )
+
+// NewCompareStageTracker returns the stage tracker used by `tld git compare`,
+// matching the `tld index` progress display.
+func NewCompareStageTracker(out io.Writer) *term.StageTracker {
+	return term.NewStageTracker(out, compareStageOrder, term.StageTrackerOptions{Jokes: indexJokes})
+}
+
+// DisplayStage maps an indexer stage id to its user-facing label.
+func DisplayStage(stage string) string { return displayStage(stage) }
 
 // indexJokes are rotated on the active stage line to keep long indexes
 // entertaining and to gently roast whatever codebase is being indexed.

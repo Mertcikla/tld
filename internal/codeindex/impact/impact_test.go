@@ -79,6 +79,7 @@ func TestImpactRadiusAndScopedMaterialization(t *testing.T) {
 			t.Fatal("removed symbol not shown")
 		}
 	}
+	assertNoInlinedCode(t, diagram)
 	expanded, err := Save(ctx, ws, idx, "repo", "live", "base", "head", 1)
 	if err != nil {
 		t.Fatal(err)
@@ -463,5 +464,34 @@ func TestRetireLegacyMaterializationPreservesSharedResources(t *testing.T) {
 	mappings, err := idx.MappingsByRepository(ctx, "repo")
 	if err != nil || len(mappings) != 1 || mappings[0].LogicalKey != "map|shared" {
 		t.Fatalf("legacy mappings: %+v %v", mappings, err)
+	}
+}
+
+// assertNoInlinedCode verifies impact diagrams carry symbol metadata only:
+// names and anchors stay, but inline source is never part of the payload.
+func assertNoInlinedCode(t *testing.T, diagram *pb.ImpactDiagram) {
+	t.Helper()
+	for _, facts := range [][]*pb.CodeFact{
+		diagram.GetDiff().GetFacts().GetAdded(),
+		diagram.GetDiff().GetFacts().GetRemoved(),
+		diagram.GetDiff().GetFacts().GetModified(),
+	} {
+		for _, fact := range facts {
+			if fact.GetCode() != "" {
+				t.Fatalf("impact diff inlined source for %q", fact.GetName())
+			}
+		}
+	}
+	for _, node := range diagram.GetNodes() {
+		for _, facts := range [][]*pb.CodeFact{node.GetSymbols().GetAdded(), node.GetSymbols().GetRemoved(), node.GetSymbols().GetModified()} {
+			for _, fact := range facts {
+				if fact.GetCode() != "" {
+					t.Fatalf("impact node inlined source for %q", fact.GetName())
+				}
+				if fact.GetName() == "" || fact.GetAnchor().GetPath() == "" {
+					t.Fatalf("symbol metadata dropped: %+v", fact)
+				}
+			}
+		}
 	}
 }

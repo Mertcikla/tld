@@ -67,6 +67,9 @@ func (s Service) Compare(ctx context.Context, req CompareRequest) (*pb.ImpactDia
 	if err != nil {
 		return nil, err
 	}
+	if req.Progress != nil {
+		req.Progress(indexer.Progress{Stage: "overlay", Detail: "preparing change overlay"})
+	}
 	key := graph.ID(before.Id, after.Id)
 	return Save(ctx, s.Workspace, s.Index, repo.Id, key, before.Id, after.Id, req.ContextDepth)
 }

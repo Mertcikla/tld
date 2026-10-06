@@ -10,6 +10,7 @@ import (
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
 	assets "github.com/mertcikla/tld/v2"
+	indexcmd "github.com/mertcikla/tld/v2/cmd/index"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
 	"github.com/mertcikla/tld/v2/internal/codeindex/identity"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
@@ -51,8 +52,11 @@ owner/repo, or a Git URL). Missing snapshots are indexed on demand.
 The default output is the protojson encoding of the impact diagram. Pass
 --mermaid to emit the same Mermaid change diagram the web UI renders.
 
-When the diagram exceeds the node budget the output is progressively narrowed
-by blast radius and a warning is written to stderr.`,
+--depth controls how many dependency hops of unchanged context are included
+(0 = direct changes only). An explicit --radius narrows the displayed scope
+without shrinking the computed neighbourhood. When the diagram exceeds the
+node or byte budget the output is progressively narrowed by blast radius and
+a warning is written to stderr.`,
 		Args: cobra.RangeArgs(2, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := "."
@@ -64,8 +68,8 @@ by blast radius and a warning is written to stderr.`,
 	}
 	c.Flags().BoolVar(&opts.mermaid, "mermaid", false, "emit the Mermaid change diagram instead of protojson")
 	c.Flags().BoolVar(&opts.markdown, "markdown", false, "wrap the Mermaid diagram in a Markdown code fence")
-	c.Flags().Uint32Var(&opts.radius, "radius", 0, "blast radius of unchanged context to include (0 = direct changes only)")
-	c.Flags().Uint32Var(&opts.depth, "depth", impact.DefaultContextDepth, "maximum dependency hops of context to compute")
+	c.Flags().Uint32Var(&opts.radius, "radius", 0, "blast radius to display; defaults to --depth")
+	c.Flags().Uint32Var(&opts.depth, "depth", impact.DefaultContextDepth, "dependency hops of unchanged context to include (0 = direct changes only)")
 	c.Flags().IntVar(&opts.maxNodes, "max-nodes", impact.DefaultMaxNodes, "node budget; the blast radius is narrowed when exceeded (0 disables)")
 	c.Flags().IntVar(&opts.maxBytes, "max-bytes", 2<<20, "protojson byte budget; the blast radius is narrowed when exceeded (0 disables)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
@@ -97,26 +101,44 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		return err
 	}
 	service := impact.Service{Workspace: sq, Index: store, Config: configbridge.FromGlobal(global)}
+	tracker := indexcmd.NewCompareStageTracker(cmd.ErrOrStderr())
+	defer tracker.Finish()
+	lastStage := indexcmd.DisplayStage("discover")
+	display, depth := compareScope(opts, cmd.Flags().Changed("radius"))
 	diagram, err := service.Compare(ctx, impact.CompareRequest{
 		RepositoryID: repositoryID,
 		Base:         &pb.ComparisonTarget{GitRevision: base},
 		Head:         &pb.ComparisonTarget{GitRevision: head},
-		ContextDepth: opts.depth,
-		Progress:     progressPrinter(cmd),
+		ContextDepth: depth,
+		Progress: func(update indexer.Progress) {
+			stage := indexcmd.DisplayStage(update.Stage)
+			lastStage = stage
+			if update.Total > 0 || update.Current > 0 || update.Detail != "" {
+				tracker.Report(stage, update.Current, update.Total, update.Detail)
+			} else {
+				tracker.Begin(stage)
+			}
+		},
 	})
 	if err != nil {
+		tracker.Fail(lastStage, err)
 		return err
 	}
-	requested := min(opts.radius, opts.depth, diagram.GetMaxRadius())
-	scoped, radius, limited := scopeToBudget(diagram, requested, opts)
-	if limited {
+	requested := min(display, depth, diagram.GetMaxRadius())
+	result := scopeToBudget(diagram, requested, opts)
+	if result.limited {
 		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
 			"warning: output limited to blast radius %d of %d (%d nodes); pass --radius %d or raise --max-nodes to include more\n",
-			radius, requested, len(scoped.GetNodes()), requested)
+			result.radius, requested, len(result.diagram.GetNodes()), requested)
+	}
+	if result.overBudget {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(),
+			"warning: output is %s even with direct changes only; --max-bytes %s cannot be met\n",
+			humanBytes(result.size), humanBytes(opts.maxBytes))
 	}
 	out := cmd.OutOrStdout()
 	if opts.mermaid || opts.markdown {
-		code := mermaid.ExportImpactDiagram(scoped, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: radius})
+		code := mermaid.ExportImpactDiagram(result.diagram, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: result.radius})
 		if opts.markdown {
 			_, err = fmt.Fprint(out, mermaid.MermaidBlock(code))
 			return err
@@ -124,7 +146,7 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		_, err = fmt.Fprint(out, code)
 		return err
 	}
-	payload, err := protoJSONOptions.Marshal(scoped)
+	payload, err := protoJSONOptions.Marshal(result.diagram)
 	if err != nil {
 		return err
 	}
@@ -132,36 +154,73 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	return err
 }
 
-// scopeToBudget narrows the diagram by blast radius until it fits the node and
-// byte budgets, returning the scoped diagram and the radius it used.
-func scopeToBudget(diagram *pb.ImpactDiagram, requested uint32, opts compareOptions) (*pb.ImpactDiagram, uint32, bool) {
-	radius, limited := impact.FitRadius(diagram, requested, opts.maxNodes)
-	scoped := impact.Scope(diagram, radius)
-	if opts.maxBytes <= 0 {
-		return scoped, radius, limited
+// compareScope resolves the blast radius to display and the dependency depth to
+// compute. The display defaults to --depth so passing --depth alone widens the
+// output; an explicit --radius narrows the display without shrinking the
+// computed neighbourhood.
+func compareScope(opts compareOptions, radiusSet bool) (display, depth uint32) {
+	display = opts.depth
+	if radiusSet {
+		display = opts.radius
 	}
-	for radius > 0 {
-		payload, err := protoJSONOptions.Marshal(scoped)
-		if err != nil || len(payload) <= opts.maxBytes {
-			break
-		}
-		radius--
-		limited = true
-		scoped = impact.Scope(diagram, radius)
-	}
-	return scoped, radius, limited
+	depth = max(opts.depth, display)
+	return display, depth
 }
 
-func progressPrinter(cmd *cobra.Command) indexer.ProgressFunc {
-	last := ""
-	return func(p indexer.Progress) {
-		stage := strings.TrimSpace(p.Stage)
-		if stage == "" || stage == last {
-			return
-		}
-		last = stage
-		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), stage)
+// scopedDiagram is the outcome of applying the CLI size budgets.
+type scopedDiagram struct {
+	diagram    *pb.ImpactDiagram
+	radius     uint32
+	size       int
+	limited    bool // radius was narrowed below the requested scope
+	overBudget bool // direct changes alone still exceed --max-bytes
+}
+
+// scopeToBudget narrows the diagram by blast radius until it fits the node and
+// byte budgets. If even the direct-change diagram exceeds the byte budget the
+// caller is told the budget cannot be met.
+func scopeToBudget(diagram *pb.ImpactDiagram, requested uint32, opts compareOptions) scopedDiagram {
+	result := scopedDiagram{diagram: diagram}
+	result.radius, result.limited = impact.FitRadius(diagram, requested, opts.maxNodes)
+	result.diagram = impact.Scope(diagram, result.radius)
+	result.measure()
+	if opts.maxBytes <= 0 {
+		return result
 	}
+	for result.radius > 0 && result.size > opts.maxBytes {
+		result.radius--
+		result.limited = true
+		result.diagram = impact.Scope(diagram, result.radius)
+		result.measure()
+	}
+	result.overBudget = result.size > opts.maxBytes
+	return result
+}
+
+// measure records the current protojson size, treating a marshal failure as
+// fitting so budget narrowing always terminates.
+func (s *scopedDiagram) measure() {
+	payload, err := protoJSONOptions.Marshal(s.diagram)
+	if err != nil {
+		s.size = 0
+		return
+	}
+	s.size = len(payload)
+}
+
+func humanBytes(size int) string {
+	const unit = 1024
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+	value := float64(size)
+	for _, suffix := range []string{"KiB", "MiB", "GiB"} {
+		value /= unit
+		if value < unit {
+			return fmt.Sprintf("%.1f %s", value, suffix)
+		}
+	}
+	return fmt.Sprintf("%.1f TiB", value/unit)
 }
 
 // resolveRepository maps a repository id, local path, or remote URL to the

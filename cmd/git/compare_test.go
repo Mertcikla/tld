@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
+	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 )
 
 func TestCompareMermaidAndProtoJSON(t *testing.T) {
@@ -33,6 +34,9 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	if !strings.Contains(mermaid, "flowchart LR") || !strings.Contains(mermaid, "a.go") {
 		t.Fatalf("mermaid output = %q", mermaid)
 	}
+	if !strings.Contains(stderr, "Parse sources") || !strings.Contains(stderr, "Save change overlay") {
+		t.Fatalf("progress output = %q", stderr)
+	}
 
 	out, stderr, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD")
 	if err != nil {
@@ -54,6 +58,21 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	}
 }
 
+func TestCompareScopeResolvesDepthAndRadius(t *testing.T) {
+	if display, depth := compareScope(compareOptions{depth: 2}, false); display != 2 || depth != 2 {
+		t.Fatalf("depth only: display=%d depth=%d", display, depth)
+	}
+	if display, depth := compareScope(compareOptions{depth: 3, radius: 1}, true); display != 1 || depth != 3 {
+		t.Fatalf("radius override: display=%d depth=%d", display, depth)
+	}
+	if display, depth := compareScope(compareOptions{depth: 1, radius: 2}, true); display != 2 || depth != 2 {
+		t.Fatalf("radius deeper: display=%d depth=%d", display, depth)
+	}
+	if display, depth := compareScope(compareOptions{depth: impact.DefaultContextDepth}, false); display != impact.DefaultContextDepth || depth != impact.DefaultContextDepth {
+		t.Fatalf("defaults: display=%d depth=%d", display, depth)
+	}
+}
+
 func TestScopeToBudgetNarrowsRadius(t *testing.T) {
 	diagram := &pb.ImpactDiagram{
 		Nodes: []*pb.ImpactNode{
@@ -62,13 +81,13 @@ func TestScopeToBudgetNarrowsRadius(t *testing.T) {
 			{Key: "context|2", Path: "c.go", Name: "c.go", Distance: 2, ElementId: 2},
 		},
 	}
-	scoped, radius, limited := scopeToBudget(diagram, 2, compareOptions{maxNodes: 2})
-	if !limited || radius != 1 || len(scoped.GetNodes()) != 2 {
-		t.Fatalf("scopeToBudget: radius=%d limited=%v nodes=%d", radius, limited, len(scoped.GetNodes()))
+	result := scopeToBudget(diagram, 2, compareOptions{maxNodes: 2})
+	if !result.limited || result.radius != 1 || len(result.diagram.GetNodes()) != 2 {
+		t.Fatalf("scopeToBudget: radius=%d limited=%v nodes=%d", result.radius, result.limited, len(result.diagram.GetNodes()))
 	}
-	scoped, radius, limited = scopeToBudget(diagram, 2, compareOptions{maxNodes: 2, maxBytes: 1})
-	if !limited || radius != 0 || len(scoped.GetNodes()) != 1 {
-		t.Fatalf("byte budget: radius=%d limited=%v nodes=%d", radius, limited, len(scoped.GetNodes()))
+	result = scopeToBudget(diagram, 2, compareOptions{maxNodes: 2, maxBytes: 1})
+	if !result.limited || result.radius != 0 || len(result.diagram.GetNodes()) != 1 {
+		t.Fatalf("byte budget: radius=%d limited=%v nodes=%d", result.radius, result.limited, len(result.diagram.GetNodes()))
 	}
 }
 
