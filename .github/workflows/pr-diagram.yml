@@ -1,0 +1,35 @@
+name: PR diagram
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+permissions:
+  contents: read
+concurrency:
+  group: pr-diagram-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  diagram:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - name: Checkout trusted bot source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: bot
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: repository
+      - uses: ./bot
+        env:
+          TLD_PR_MAX_ELEMENTS: ${{ vars.TLD_PR_MAX_ELEMENTS || '80' }}
+          TLD_PR_MAX_CONNECTORS: ${{ vars.TLD_PR_MAX_CONNECTORS || '160' }}
+        with:
+          mode: generate
+          repository-path: ${{ github.workspace }}/repository
+          prepare-command: npm --prefix frontend ci --ignore-scripts && npm --prefix frontend run build:app

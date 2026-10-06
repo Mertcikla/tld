@@ -1,0 +1,28 @@
+name: Publish PR diagram
+on:
+  workflow_run:
+    workflows: [PR diagram]
+    types: [completed]
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+concurrency:
+  # Serialize publications without allowing an older run to cancel a newer one.
+  group: pr-diagram-publish-${{ github.event.workflow_run.head_repository.id }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: ./
+        with:
+          mode: publish
+          source-workflow: pr-diagram.yml

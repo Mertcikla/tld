@@ -2,11 +2,14 @@ package git
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/google/uuid"
@@ -27,14 +30,18 @@ import (
 )
 
 type compareOptions struct {
-	mermaid  bool
-	markdown bool
-	verbose  bool
-	radius   uint32
-	depth    uint32
-	maxNodes int
-	maxBytes int
-	dataDir  string
+	mermaid        bool
+	markdown       bool
+	verbose        bool
+	radius         uint32
+	depth          uint32
+	maxNodes       int
+	maxBytes       int
+	dataDir        string
+	maxElements    int
+	maxConnectors  int
+	reportJSON     string
+	prepareCommand string
 }
 
 // protoJSONOptions keeps zero-value fields explicit so downstream consumers can
@@ -85,10 +92,17 @@ stderr.`,
 	c.Flags().IntVar(&opts.maxNodes, "max-nodes", impact.DefaultMaxNodes, "node budget; the blast radius is narrowed when exceeded (0 disables)")
 	c.Flags().IntVar(&opts.maxBytes, "max-bytes", 2<<20, "output byte budget; the blast radius is narrowed when exceeded (0 disables)")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "override the data directory")
+	c.Flags().IntVar(&opts.maxElements, "max-elements", 0, "skip output when the requested diagram exceeds this element count (0 disables)")
+	c.Flags().IntVar(&opts.maxConnectors, "max-connectors", 0, "skip output when the requested diagram exceeds this connector count (0 disables)")
+	c.Flags().StringVar(&opts.reportJSON, "report-json", "", "write comparison status, counts, revisions, and index warnings to this JSON file")
+	c.Flags().StringVar(&opts.prepareCommand, "prepare-command", "", "run this Bash command in each uncached revision before indexing; requires Bash")
 	return c
 }
 
 func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head string) error {
+	if opts.maxElements < 0 || opts.maxConnectors < 0 {
+		return fmt.Errorf("--max-elements and --max-connectors must be nonnegative")
+	}
 	ctx := cmd.Context()
 	global, err := workspace.LoadGlobalConfig()
 	if err != nil {
@@ -129,15 +143,27 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		return err
 	}
 	service := impact.Service{Workspace: sq, Index: store, Config: configbridge.FromGlobal(global)}
+	service.Config.PrepareCommand = opts.prepareCommand
+	var prepare func(context.Context, string) error
+	if opts.prepareCommand != "" {
+		prepare = func(ctx context.Context, directory string) error {
+			command := exec.CommandContext(ctx, "bash", "-e", "-o", "pipefail", "-c", opts.prepareCommand)
+			command.Dir = directory
+			command.Stdout, command.Stderr = errOut, errOut
+			command.WaitDelay = 2 * time.Second
+			return command.Run()
+		}
+	}
 	lastStage := indexcmd.DisplayStage("discover")
 	revisions := map[string]string{impact.TargetBase: base, impact.TargetHead: head}
 	shownTarget := ""
 	display, depth := compareScope(opts, cmd.Flags().Changed("radius"))
 	diagram, err := service.Compare(ctx, impact.CompareRequest{
-		RepositoryID: repositoryID,
-		Base:         &pb.Revision{GitRevision: base},
-		Head:         &pb.Revision{GitRevision: head},
-		ContextDepth: depth,
+		RepositoryID:    repositoryID,
+		Base:            &pb.Revision{GitRevision: base},
+		Head:            &pb.Revision{GitRevision: head},
+		ContextDepth:    depth,
+		PrepareCheckout: prepare,
 		Progress: func(update indexer.Progress) {
 			if tracker == nil {
 				return
@@ -168,6 +194,25 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	// land below the work they describe.
 	tracker.Complete(lastStage)
 	requested := min(display, depth, diagram.GetMaxRadius())
+	report := comparisonReport(impact.Scope(diagram, requested), opts)
+	if opts.reportJSON != "" {
+		for _, id := range []string{diagram.GetDiff().GetFromSnapshotId(), diagram.GetDiff().GetToSnapshotId()} {
+			snapshot, loadErr := store.Snapshot(ctx, id)
+			if loadErr != nil {
+				return loadErr
+			}
+			report.Warnings = append(report.Warnings, snapshot.GetWarnings()...)
+			if report.Base == "" {
+				report.Base = snapshot.GetGitRevision()
+			} else {
+				report.Head = snapshot.GetGitRevision()
+			}
+		}
+	}
+	if report.Status == "skipped" {
+		notice("warning: " + report.Reason)
+		return writeCompareReport(opts.reportJSON, report)
+	}
 	render := compareRenderer{ctx: ctx, service: service, opts: opts}
 	result, err := scopeToBudget(diagram, requested, opts, render.build)
 	if err != nil {
@@ -185,6 +230,9 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	// The payload shares the terminal with the progress display; close the
 	// pinned stage line before anything reaches stdout.
 	tracker.Finish()
+	if err := writeCompareReport(opts.reportJSON, report); err != nil {
+		return err
+	}
 	out := cmd.OutOrStdout()
 	if opts.mermaid || opts.markdown {
 		_, err = fmt.Fprint(out, result.text)
@@ -192,6 +240,40 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	}
 	_, err = fmt.Fprintln(out, result.text)
 	return err
+}
+
+// CompareReport counts the requested scope, before the shrinking output budgets.
+type CompareReport struct {
+	Status     string   `json:"status"`
+	Elements   int      `json:"elements"`
+	Connectors int      `json:"connectors"`
+	Base       string   `json:"base"`
+	Head       string   `json:"head"`
+	Warnings   []string `json:"warnings"`
+	Reason     string   `json:"reason,omitempty"`
+}
+
+func comparisonReport(diagram *pb.ImpactDiagram, opts compareOptions) CompareReport {
+	report := CompareReport{Status: "ready", Elements: len(diagram.GetNodes()), Connectors: len(diagram.GetEdges()), Warnings: []string{}}
+	if report.Elements == 0 {
+		report.Status = "empty"
+	}
+	if (opts.maxElements > 0 && report.Elements > opts.maxElements) || (opts.maxConnectors > 0 && report.Connectors > opts.maxConnectors) {
+		report.Status = "skipped"
+		report.Reason = fmt.Sprintf("diagram has %d elements and %d connectors; limits are %d elements and %d connectors (0 disables a limit)", report.Elements, report.Connectors, opts.maxElements, opts.maxConnectors)
+	}
+	return report
+}
+
+func writeCompareReport(path string, report CompareReport) error {
+	if path == "" {
+		return nil
+	}
+	raw, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(raw, '\n'), 0o600)
 }
 
 // compareRenderer builds the payload for one blast radius. The default output is

@@ -2,6 +2,7 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,10 +10,153 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 )
+
+func TestCompareHardLimits(t *testing.T) {
+	diagram := &pb.ImpactDiagram{
+		Nodes: []*pb.ImpactNode{{Key: "a"}, {Key: "b"}},
+		Edges: []*pb.ImpactEdge{{FromKey: "a", ToKey: "b"}, {FromKey: "b", ToKey: "a"}},
+	}
+	for _, test := range []struct {
+		name   string
+		opts   compareOptions
+		status string
+	}{
+		{"disabled", compareOptions{}, "ready"},
+		{"exact boundary", compareOptions{maxElements: 2, maxConnectors: 2}, "ready"},
+		{"elements", compareOptions{maxElements: 1}, "skipped"},
+		{"connectors", compareOptions{maxConnectors: 1}, "skipped"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			report := comparisonReport(diagram, test.opts)
+			if report.Status != test.status || report.Elements != 2 || report.Connectors != 2 {
+				t.Fatalf("report = %+v", report)
+			}
+		})
+	}
+	if report := comparisonReport(&pb.ImpactDiagram{}, compareOptions{}); report.Status != "empty" {
+		t.Fatalf("empty report = %+v", report)
+	}
+}
+
+func TestCompareReportAndSkip(t *testing.T) {
+	dir := compareRepo(t)
+	writeSource(t, dir, "b.go", "package a\nfunc B() {}\n")
+	gitRun(t, dir, "add", ".")
+	gitRun(t, dir, "commit", "-m", "another file")
+	reportPath := filepath.Join(t.TempDir(), "report.json")
+	out, stderr, err := runGitCompare(t, "compare", dir, "HEAD~2", "HEAD", "--markdown", "--max-elements", "1", "--report-json", reportPath)
+	if err != nil || out != "" || !strings.Contains(stderr, "diagram has 2 elements") {
+		t.Fatalf("skip: output=%q stderr=%q error=%v", out, stderr, err)
+	}
+	raw, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report CompareReport
+	if err = json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Status != "skipped" || report.Elements != 2 || len(report.Base) != 40 || len(report.Head) != 40 || report.Warnings == nil {
+		t.Fatalf("report = %+v", report)
+	}
+	// A skipped render still leaves both snapshots reusable.
+	out, _, err = runGitCompare(t, "compare", dir, "HEAD~2", "HEAD", "--markdown", "--max-elements", "2")
+	if err != nil || !strings.Contains(out, "```mermaid") {
+		t.Fatalf("boundary: %q %v", out, err)
+	}
+}
+
+func TestComparePreparationAndReuse(t *testing.T) {
+	dir := compareRepo(t)
+	gitRun(t, dir, "remote", "add", "origin", "https://github.com/example/pr-bot-fixture.git")
+	args := []string{"compare", dir, "HEAD~1", "HEAD", "--markdown", "--prepare-command", "test -f a.go && echo prepared"}
+	_, stderr, err := runGitCompare(t, args...)
+	if err != nil || strings.Count(stderr, "prepared") != 2 {
+		t.Fatalf("prepare: %q %v", stderr, err)
+	}
+	_, stderr, err = runGitCompare(t, args...)
+	if err != nil || strings.Contains(stderr, "prepared") {
+		t.Fatalf("cache hit ran setup: %q %v", stderr, err)
+	}
+	// Subsequent CI runs can use different checkout paths. Identity by
+	// remote must preserve the cached BASE across those checkouts.
+	clone := filepath.Join(t.TempDir(), "clone")
+	if raw, cloneErr := exec.Command("git", "clone", "--quiet", "--local", dir, clone).CombinedOutput(); cloneErr != nil {
+		t.Fatalf("clone: %v %s", cloneErr, raw)
+	}
+	gitRun(t, clone, "remote", "set-url", "origin", "https://github.com/example/pr-bot-fixture.git")
+	gitRun(t, clone, "config", "user.name", "Test")
+	gitRun(t, clone, "config", "user.email", "test@example.com")
+	cloneArgs := append([]string(nil), args...)
+	cloneArgs[1] = clone
+	_, stderr, err = runGitCompare(t, cloneArgs...)
+	if err != nil || strings.Contains(stderr, "prepared") {
+		t.Fatalf("cache moved between checkouts: %q %v", stderr, err)
+	}
+	writeSource(t, clone, "a.go", "package a\nfunc A() { return 3 }\n")
+	gitRun(t, clone, "add", ".")
+	gitRun(t, clone, "commit", "-m", "updated PR")
+	cloneArgs[2] = "HEAD~2"
+	_, stderr, err = runGitCompare(t, cloneArgs...)
+	if err != nil || strings.Count(stderr, "prepared") != 1 {
+		t.Fatalf("updated PR should reuse BASE: %q %v", stderr, err)
+	}
+	// An edited setup command must invalidate both snapshots.
+	args[len(args)-1] = "test -f a.go && echo prepared-again"
+	_, stderr, err = runGitCompare(t, args...)
+	if err != nil || strings.Count(stderr, "prepared-again") != 2 {
+		t.Fatalf("invalidate: %q %v", stderr, err)
+	}
+	args[len(args)-1] = "exit 7"
+	out, _, err := runGitCompare(t, args...)
+	if err == nil || strings.Contains(out, "flowchart LR") || !strings.Contains(err.Error(), "prepare revision") {
+		t.Fatalf("failed setup: %q %v", out, err)
+	}
+}
+
+func TestCompareReportIncludesIndexWarnings(t *testing.T) {
+	dir := compareRepo(t)
+	t.Setenv("CODEINDEX_SCIP_GO", "missing-scip-for-report-test")
+	writeSource(t, dir, "go.mod", "module example.com/report\n\ngo 1.26.2\n")
+	gitRun(t, dir, "add", ".")
+	gitRun(t, dir, "commit", "-m", "Go project")
+	reportPath := filepath.Join(t.TempDir(), "report.json")
+	_, _, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--markdown", "--report-json", reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report CompareReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Warnings) == 0 || !strings.Contains(strings.Join(report.Warnings, "\n"), "missing-scip-for-report-test") {
+		t.Fatalf("warnings missing: %+v", report)
+	}
+}
+
+func TestComparePreparationCancellation(t *testing.T) {
+	dir := compareRepo(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	cmd := NewGitCmd()
+	cmd.SetContext(ctx)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"compare", dir, "HEAD~1", "HEAD", "--prepare-command", "exec sleep 20"})
+	start := time.Now()
+	if err := cmd.Execute(); err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("cancellation: %v after %s", err, time.Since(start))
+	}
+}
 
 func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	dir := compareRepo(t)

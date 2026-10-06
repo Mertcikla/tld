@@ -47,6 +47,10 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 | `--radius N` | `--depth` | Blast radius to display; narrows the view without shrinking the computed neighbourhood |
 | `--max-nodes N` | `400` | Node budget; blast radius is narrowed when exceeded (`0` disables) |
 | `--max-bytes N` | `2097152` | Output byte budget; blast radius is narrowed when exceeded (`0` disables) |
+| `--max-elements N` | `0` | Skip output if the requested diagram has more than N elements (`0` disables) |
+| `--max-connectors N` | `0` | Skip output if the requested diagram has more than N connectors (`0` disables) |
+| `--report-json PATH` | unset | Write status, requested counts, resolved BASE/HEAD SHAs, index warnings, and skip reason to JSON |
+| `--prepare-command COMMAND` | unset | Run a Bash command in each uncached revision's temporary checkout before indexing |
 | `--data-dir PATH` | global | Override the data directory |
 
 ## Output
@@ -66,6 +70,22 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 Progress is written to stderr only with `--verbose`; budget warnings always go
 to stderr. If the payload exceeds a budget, a warning tells you to raise
 `--radius` or `--max-nodes`.
+
+Hard element and connector limits are checked **before** the shrinking budgets
+and rendering. Either limit being exceeded suppresses stdout and exits
+successfully; both indexed snapshots remain in the database. Counts equal to a
+limit are allowed. The optional JSON report uses `ready`, `skipped`, or `empty`
+status and reports the requested scope, even if the shrinking budgets later
+narrow the rendered output. Command failures still return a nonzero exit code.
+
+`--prepare-command` runs only when a snapshot needs indexing. Its contents are
+part of the snapshot configuration hash, so changing setup invalidates cached
+snapshots. Setup stdout and stderr go to stderr. Each revision has its own
+temporary checkout: install dependencies and generate required build assets
+there, rather than only in the original checkout. A setup failure stops the
+comparison. Preparation should leave tracked indexing inputs unchanged.
+
+See [the PR action guide](pr-bot.md) for cached GitHub PR comments and fork support.
 
 ## Tips
 

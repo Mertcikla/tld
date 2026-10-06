@@ -45,6 +45,8 @@ type CompareRequest struct {
 	Head         *pb.Revision
 	ContextDepth uint32
 	Progress     indexer.ProgressFunc
+	// PrepareCheckout runs only when a revision needs indexing.
+	PrepareCheckout func(context.Context, string) error
 }
 
 // Compare prepares both targets (indexing on demand), builds the impact diagram
@@ -60,10 +62,11 @@ func (s Service) Compare(ctx context.Context, req CompareRequest) (*pb.ImpactDia
 	}
 	defer release()
 	engine := ingest.Engine{
-		Store:        s.Index,
-		Config:       s.Config,
-		Root:         repo.Root,
-		RepositoryID: repo.Id,
+		Store:           s.Index,
+		Config:          s.Config,
+		Root:            repo.Root,
+		RepositoryID:    repo.Id,
+		PrepareCheckout: req.PrepareCheckout,
 	}
 	engine.Progress = forTarget(req.Progress, TargetBase)
 	before, err := engine.Prepare(ctx, req.Base)

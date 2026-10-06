@@ -8,7 +8,10 @@ import (
 )
 
 type Config struct {
-	GRPC struct {
+	// PrepareCommand fingerprints optional commit setup without changing the
+	// compatibility hash of existing configurations when it is unset.
+	PrepareCommand string `yaml:"-" json:"PrepareCommand,omitempty"`
+	GRPC           struct {
 		Address string `yaml:"address"`
 	} `yaml:"grpc"`
 	Surreal struct {

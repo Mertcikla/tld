@@ -19,6 +19,7 @@ type Engine struct {
 	Root, RepositoryID string
 	Exclude            []string
 	Progress           indexer.ProgressFunc
+	PrepareCheckout    func(context.Context, string) error
 }
 
 func (e Engine) Base(ctx context.Context, id string) (*indexer.IncrementalBase, error) {
@@ -121,6 +122,11 @@ func (e Engine) Prepare(ctx context.Context, target *pb.Revision) (*pb.Snapshot,
 	}
 	var snapshot *pb.Snapshot
 	build := func(directory string) error {
+		if e.PrepareCheckout != nil {
+			if err := e.PrepareCheckout(ctx, directory); err != nil {
+				return fmt.Errorf("prepare revision %s: %w", revision, err)
+			}
+		}
 		pipeline := indexer.Pipeline{Config: e.Config, RepositoryID: e.RepositoryID}
 		input := &pb.IndexRequest{Directory: directory, Exclude: e.Exclude, Incremental: base != nil}
 		snap, g, reused, err := pipeline.BuildIncremental(ctx, input, e.Progress, base)
