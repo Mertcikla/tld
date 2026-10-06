@@ -1,4 +1,5 @@
 import { api } from '../api/client'
+import { chooseConnectorHandles } from './connectorHandles'
 
 export const NODE_W = 200
 export const NODE_H = 120
@@ -62,34 +63,7 @@ export async function removeCollisions(viewId: number) {
     const tPos = newPositions.get(edge.target_element_id)
     if (!sPos || !tPos) continue
 
-    const sourceHandles: Record<string, { x: number; y: number }> = {
-      top: { x: sPos.x + NODE_W / 2, y: sPos.y },
-      bottom: { x: sPos.x + NODE_W / 2, y: sPos.y + NODE_H },
-      left: { x: sPos.x, y: sPos.y + NODE_H / 2 },
-      right: { x: sPos.x + NODE_W, y: sPos.y + NODE_H / 2 },
-    }
-
-    const targetHandles: Record<string, { x: number; y: number }> = {
-      top: { x: tPos.x + NODE_W / 2, y: tPos.y },
-      bottom: { x: tPos.x + NODE_W / 2, y: tPos.y + NODE_H },
-      left: { x: tPos.x, y: tPos.y + NODE_H / 2 },
-      right: { x: tPos.x + NODE_W, y: tPos.y + NODE_H / 2 },
-    }
-
-    let minDist = Infinity
-    let bestSource = edge.source_handle || 'top'
-    let bestTarget = edge.target_handle || 'top'
-
-    for (const [sId, sCoord] of Object.entries(sourceHandles)) {
-      for (const [tId, tCoord] of Object.entries(targetHandles)) {
-        const dist = Math.sqrt((sCoord.x - tCoord.x) ** 2 + (sCoord.y - tCoord.y) ** 2)
-        if (dist < minDist) {
-          minDist = dist
-          bestSource = sId
-          bestTarget = tId
-        }
-      }
-    }
+    const { source: bestSource, target: bestTarget } = chooseConnectorHandles(sPos, tPos)
 
     if (bestSource !== edge.source_handle || bestTarget !== edge.target_handle) {
       handleUpdates.push(api.workspace.connectors.update(viewId, edge.id, {

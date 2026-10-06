@@ -116,3 +116,73 @@ func TestExportImpactDiagramCustomColors(t *testing.T) {
 		t.Fatalf("ExportImpactDiagram() ignored custom color:\n%s", got)
 	}
 }
+
+func groupedImpactFixture() *codeindexv1.ImpactDiagram {
+	return &codeindexv1.ImpactDiagram{
+		Nodes: []*codeindexv1.ImpactNode{
+			{Key: "file|pkg/a.go", Path: "pkg/a.go", Name: "a.go"},
+			{Key: "file|pkg/b.go", Path: "pkg/b.go", Name: "b.go"},
+			{Key: "file|lib/c.go", Path: "lib/c.go", Name: "c.go"},
+			{Key: "file|other/d.go", Path: "other/d.go", Name: "d.go"},
+		},
+		Edges: []*codeindexv1.ImpactEdge{
+			{FromKey: "file|pkg/a.go", ToKey: "file|pkg/b.go", Weight: 1},
+			{FromKey: "file|pkg/a.go", ToKey: "file|lib/c.go", Weight: 2},
+			{FromKey: "file|lib/c.go", ToKey: "file|other/d.go", Weight: 3},
+		},
+		Groups: []*codeindexv1.ImpactGroup{
+			{
+				Key: "view:1", Name: "Repo", Source: "view", ViewId: 1,
+				Children: []*codeindexv1.ImpactGroup{
+					{Key: "view:2", Name: "pkg", Source: "view", ViewId: 2, NodeKeys: []string{"file|pkg/a.go", "file|pkg/b.go"}},
+					{Key: "view:3", Name: "lib", Source: "view", ViewId: 3, NodeKeys: []string{"file|lib/c.go"}},
+				},
+			},
+			{Key: "view:4", Name: "other", Source: "view", ViewId: 4, NodeKeys: []string{"file|other/d.go"}},
+		},
+	}
+}
+
+func TestExportImpactDiagramNestsSubgraphs(t *testing.T) {
+	t.Parallel()
+
+	got := ExportImpactDiagram(groupedImpactFixture(), ImpactExportOptions{})
+	for _, want := range []string{
+		`  subgraph group_view_1["Repo"]`,
+		`    subgraph group_view_2["pkg"]`,
+		`      node_file_pkg_a_go["a.go"]`,
+		`      node_file_pkg_b_go["b.go"]`,
+		`    end`,
+		`    subgraph group_view_3["lib"]`,
+		`      node_file_lib_c_go["c.go"]`,
+		`    end`,
+		`  end`,
+		`  subgraph group_view_4["other"]`,
+		`    node_file_other_d_go["d.go"]`,
+		`  end`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ExportImpactDiagram() missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestExportImpactDiagramNestsEdgesAtDeepestGroup(t *testing.T) {
+	t.Parallel()
+
+	got := ExportImpactDiagram(groupedImpactFixture(), ImpactExportOptions{})
+	for _, want := range []string{
+		// Siblings inside pkg share the deepest group.
+		`      node_file_pkg_a_go -- "1 dependency" --> node_file_pkg_b_go`,
+		// pkg and lib diverge, so the edge lands in their parent Repo.
+		`    node_file_pkg_a_go -- "2 dependencies" --> node_file_lib_c_go`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("ExportImpactDiagram() missing %q in:\n%s", want, got)
+		}
+	}
+	// lib and other are separate roots, so the edge is emitted at the top level.
+	if !strings.Contains(got, "\n  node_file_lib_c_go -- \"3 dependencies\" --> node_file_other_d_go\n") {
+		t.Fatalf("ExportImpactDiagram() did not place cross-root edge at top level:\n%s", got)
+	}
+}

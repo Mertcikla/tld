@@ -130,7 +130,31 @@ func TestImpactPlacesAddedFilesInClosestView(t *testing.T) {
 	}
 	defer func() { _ = ws.Close() }()
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
-	view, err := ws.CreateView(ctx, "Pkg", nil, nil)
+	// Materialize a realistic Workspace -> repository -> Pkg view chain so the
+	// impact hierarchy skips the two always-present top levels.
+	root, err := ws.CreateView(ctx, "Workspace", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoOwner, err := ws.CreateElement(ctx, core.LibraryElement{Name: "repo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, root.ID, repoOwner.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	repoView, err := ws.CreateView(ctx, "repo", nil, &repoOwner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgOwner, err := ws.CreateElement(ctx, core.LibraryElement{Name: "Pkg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ws.AddPlacement(ctx, repoView.ID, pkgOwner.ID, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	view, err := ws.CreateView(ctx, "Pkg", nil, &pkgOwner.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,6 +209,80 @@ func TestImpactPlacesAddedFilesInClosestView(t *testing.T) {
 	}
 	if formed["pkg/new.go"].X == formed["pkg/other.go"].X && formed["pkg/new.go"].Y == formed["pkg/other.go"].Y {
 		t.Fatal("added nodes overlapped each other")
+	}
+	if len(diagram.Groups) != 1 || diagram.Groups[0].ViewId != view.ID || diagram.Groups[0].Source != "view" {
+		t.Fatalf("added files not grouped under the closest view: %+v", diagram.Groups)
+	}
+	if diagram.Groups[0].Name != "Pkg" {
+		t.Fatalf("top two view levels were not skipped: %+v", diagram.Groups)
+	}
+	if got := diagram.Groups[0].NodeKeys; len(got) != 2 {
+		t.Fatalf("group node keys = %v", got)
+	}
+}
+
+func TestImpactSynthesizesCommunityHierarchy(t *testing.T) {
+	ctx := context.Background()
+	ws, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	// No workspace views or element mappings: the repository is unmapped, so the
+	// hierarchy must fall back to the dependency-graph grouping pipeline.
+	publish := func(id string, code map[string]string) {
+		snap := &pb.Snapshot{Id: id, RepositoryId: "repo", GitRevision: id, Provenance: "commit", IngestionStatus: "complete"}
+		g := graph.NewGraph("repo", id)
+		facts := map[string]*pb.CodeFact{}
+		for path, text := range code {
+			src := &graph.Source{Path: path, Language: "go", Text: []byte(text), Hash: graph.Hash([]byte(text))}
+			g.Sources[path] = src
+			snap.Sources = append(snap.Sources, &pb.SourceFile{Path: path, Hash: src.Hash, Size: uint64(len(src.Text))})
+			facts[path] = g.AddFact(pb.FactKind_FACT_KIND_FUNCTION, "Stable", "go", src.Anchor(0, len(src.Text)), text, "", nil)
+		}
+		for _, link := range [][2]string{{"alpha/a.go", "alpha/b.go"}, {"beta/c.go", "beta/d.go"}} {
+			g.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, facts[link[0]].Id, facts[link[1]].Id, "", facts[link[0]].Anchor, nil)
+		}
+		if err := idx.Publish(ctx, "/repo", snap, g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths := []string{"alpha/a.go", "alpha/b.go", "beta/c.go", "beta/d.go"}
+	base := map[string]string{}
+	head := map[string]string{}
+	for _, path := range paths {
+		base[path] = "func Stable() { return 1 }"
+		head[path] = "func Stable() { return 2 }"
+	}
+	publish("base", base)
+	publish("head", head)
+	diagram, err := Save(ctx, ws, idx, "repo", "live", "base", "head", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diagram.ViewId != 0 {
+		t.Fatalf("unmapped comparison set view id %d", diagram.ViewId)
+	}
+	if len(diagram.Groups) == 0 {
+		t.Fatalf("no community hierarchy synthesized: %+v", diagram)
+	}
+	grouped := map[string]bool{}
+	var walk func(groups []*pb.ImpactGroup)
+	walk = func(groups []*pb.ImpactGroup) {
+		for _, group := range groups {
+			if group.Source != "community" {
+				t.Fatalf("group source = %q", group.Source)
+			}
+			for _, key := range group.NodeKeys {
+				grouped[key] = true
+			}
+			walk(group.Children)
+		}
+	}
+	walk(diagram.Groups)
+	if len(grouped) != len(diagram.Nodes) {
+		t.Fatalf("grouped %d nodes, want %d: %+v", len(grouped), len(diagram.Nodes), diagram.Groups)
 	}
 }
 

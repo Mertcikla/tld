@@ -86,40 +86,75 @@ func ExportImpactDiagram(diagram *codeindexv1.ImpactDiagram, opts ImpactExportOp
 	classByNode := map[string]string{}
 	nodeIDs := map[string]string{}
 	usedIDs := map[string]bool{}
+	renders := make([]impactNodeRender, 0, len(diagram.GetNodes()))
+	renderByKey := make(map[string]impactNodeRender, len(diagram.GetNodes()))
 	for _, node := range diagram.GetNodes() {
 		if node == nil {
 			continue
 		}
 		ref := uniqueImpactNodeID(node, nodeIDs, usedIDs)
 		label := impactNodeLabel(node, stats)
-		lines = append(lines, fmt.Sprintf(`  %s["%s"]`, ref, escapeMermaidLabel(label)))
 		classByNode[ref] = impactNodeClass(node)
+		item := impactNodeRender{key: node.GetKey(), ref: ref, line: fmt.Sprintf(`%s["%s"]`, ref, escapeMermaidLabel(label))}
+		renders = append(renders, item)
+		renderByKey[item.key] = item
 	}
 
-	edgeLines := make([]string, 0, len(diagram.GetEdges()))
-	for _, edge := range diagram.GetEdges() {
-		if edge == nil {
-			continue
+	if len(diagram.GetGroups()) == 0 {
+		for _, item := range renders {
+			lines = append(lines, "  "+item.line)
 		}
-		sourceID, ok := nodeIDs[edge.GetFromKey()]
-		if !ok {
-			continue
+		edgeLines := make([]string, 0, len(diagram.GetEdges()))
+		for _, edge := range diagram.GetEdges() {
+			if line, ok := impactEdgeLine(edge, nodeIDs); ok {
+				edgeLines = append(edgeLines, "  "+line)
+			}
 		}
-		targetID, ok := nodeIDs[edge.GetToKey()]
-		if !ok {
-			continue
+		if len(edgeLines) > 0 {
+			lines = append(lines, "")
+			lines = append(lines, edgeLines...)
 		}
-		weight := edge.GetWeight()
-		label := impactEdgeLabel(weight)
-		if label != "" {
-			edgeLines = append(edgeLines, fmt.Sprintf(`  %s -- "%s" --> %s`, sourceID, escapeMermaidLabel(label), targetID))
-		} else {
-			edgeLines = append(edgeLines, fmt.Sprintf("  %s --> %s", sourceID, targetID))
+	} else {
+		usedGroups := map[string]bool{}
+		index := 0
+		groups := buildImpactGroupRenders(diagram.GetGroups(), usedGroups, &index)
+		pathByKey := map[string][]string{}
+		assignImpactGroupPaths(groups, nil, pathByKey)
+		edgesByLevel := map[string][]string{}
+		topEdges := make([]string, 0, len(diagram.GetEdges()))
+		for _, edge := range diagram.GetEdges() {
+			line, ok := impactEdgeLine(edge, nodeIDs)
+			if !ok {
+				continue
+			}
+			level := impactEdgeLevel(edge.GetFromKey(), edge.GetToKey(), pathByKey)
+			if level == "" {
+				topEdges = append(topEdges, line)
+				continue
+			}
+			edgesByLevel[level] = append(edgesByLevel[level], line)
 		}
-	}
-	if len(edgeLines) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, edgeLines...)
+		groupedRefs := map[string]bool{}
+		lines = appendImpactGroups(lines, groups, renderByKey, edgesByLevel, groupedRefs, 0)
+
+		ungrouped := make([]impactNodeRender, 0, len(renders))
+		for _, item := range renders {
+			if !groupedRefs[item.ref] {
+				ungrouped = append(ungrouped, item)
+			}
+		}
+		if len(ungrouped) > 0 {
+			lines = append(lines, "")
+			for _, item := range ungrouped {
+				lines = append(lines, "  "+item.line)
+			}
+		}
+		if len(topEdges) > 0 {
+			lines = append(lines, "")
+			for _, line := range topEdges {
+				lines = append(lines, "  "+line)
+			}
+		}
 	}
 
 	classLines := impactClassLines(classByNode, colors)
@@ -129,6 +164,125 @@ func ExportImpactDiagram(diagram *codeindexv1.ImpactDiagram, opts ImpactExportOp
 	}
 
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// impactNodeRender is one exported node: its stable render line and the node
+// key that places it in the hierarchy.
+type impactNodeRender struct {
+	key  string
+	ref  string
+	line string
+}
+
+// impactGroupRender is one nested hierarchy group with its resolved subgraph id.
+type impactGroupRender struct {
+	ref      string
+	name     string
+	nodes    []string
+	children []*impactGroupRender
+}
+
+func buildImpactGroupRenders(groups []*codeindexv1.ImpactGroup, used map[string]bool, index *int) []*impactGroupRender {
+	out := make([]*impactGroupRender, 0, len(groups))
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		key := strings.TrimSpace(group.GetKey())
+		if key == "" {
+			key = fmt.Sprintf("%d", *index)
+		}
+		*index++
+		ref := sanitizeMermaidID("group_" + key)
+		if ref == "" {
+			ref = "group"
+		}
+		if used[ref] {
+			for n := 2; ; n++ {
+				candidate := fmt.Sprintf("%s_%d", ref, n)
+				if !used[candidate] {
+					ref = candidate
+					break
+				}
+			}
+		}
+		used[ref] = true
+		item := &impactGroupRender{ref: ref, name: group.GetName(), nodes: group.GetNodeKeys()}
+		item.children = buildImpactGroupRenders(group.GetChildren(), used, index)
+		out = append(out, item)
+	}
+	return out
+}
+
+func assignImpactGroupPaths(groups []*impactGroupRender, prefix []string, pathByKey map[string][]string) {
+	for _, group := range groups {
+		path := append(append([]string(nil), prefix...), group.ref)
+		for _, key := range group.nodes {
+			if _, exists := pathByKey[key]; !exists {
+				pathByKey[key] = path
+			}
+		}
+		assignImpactGroupPaths(group.children, path, pathByKey)
+	}
+}
+
+func appendImpactGroups(lines []string, groups []*impactGroupRender, renderByKey map[string]impactNodeRender, edgesByLevel map[string][]string, groupedRefs map[string]bool, depth int) []string {
+	indent := strings.Repeat("  ", depth+1)
+	inner := indent + "  "
+	for _, group := range groups {
+		lines = append(lines, "", fmt.Sprintf(`%ssubgraph %s["%s"]`, indent, group.ref, escapeMermaidLabel(group.name)))
+		lines = appendImpactGroups(lines, group.children, renderByKey, edgesByLevel, groupedRefs, depth+1)
+		for _, key := range group.nodes {
+			item, ok := renderByKey[key]
+			if !ok || groupedRefs[item.ref] {
+				continue
+			}
+			groupedRefs[item.ref] = true
+			lines = append(lines, inner+item.line)
+		}
+		for _, line := range edgesByLevel[group.ref] {
+			lines = append(lines, inner+line)
+		}
+		lines = append(lines, indent+"end")
+	}
+	return lines
+}
+
+func impactEdgeLine(edge *codeindexv1.ImpactEdge, nodeIDs map[string]string) (string, bool) {
+	if edge == nil {
+		return "", false
+	}
+	sourceID, ok := nodeIDs[edge.GetFromKey()]
+	if !ok {
+		return "", false
+	}
+	targetID, ok := nodeIDs[edge.GetToKey()]
+	if !ok {
+		return "", false
+	}
+	label := impactEdgeLabel(edge.GetWeight())
+	if label != "" {
+		return fmt.Sprintf(`%s -- "%s" --> %s`, sourceID, escapeMermaidLabel(label), targetID), true
+	}
+	return fmt.Sprintf("%s --> %s", sourceID, targetID), true
+}
+
+// impactEdgeLevel returns the deepest group shared by both endpoints, or "" when
+// they share no group and the edge belongs at the top level.
+func impactEdgeLevel(fromKey, toKey string, pathByKey map[string][]string) string {
+	from, fromOK := pathByKey[fromKey]
+	to, toOK := pathByKey[toKey]
+	if !fromOK || !toOK {
+		return ""
+	}
+	common := 0
+	for common < len(from) && common < len(to) && from[common] == to[common] {
+		common++
+	}
+	if common == 0 {
+		return ""
+	}
+	return from[common-1]
 }
 
 func impactLineStats(diagram *codeindexv1.ImpactDiagram) map[string]*codeindexv1.SourceChange {

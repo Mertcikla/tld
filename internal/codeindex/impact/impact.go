@@ -100,6 +100,15 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 	if err != nil {
 		return nil, err
 	}
+	// Explore once for both placement and hierarchy resolution. A clean overlay
+	// has no nodes to place or group, so skip the query entirely.
+	data := core.ExploreData{}
+	if len(diagram.Nodes) > 0 {
+		data, err = ws.Explore(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
 	seenResources := map[int64]bool{}
 	for _, mapping := range mappings {
 		if mapping.Kind != cstore.MappingElement || strings.HasPrefix(mapping.LogicalKey, "impact|") || seenResources[mapping.ResourceID] {
@@ -165,9 +174,10 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 	})
 	// Placement runs last so new overlay nodes can be laid out next to the
 	// context and already-mapped elements they are connected to.
-	if err := placeAddedFiles(ctx, ws, diagram, mappings); err != nil {
+	if err := placeAddedFiles(ctx, ws, diagram, mappings, data); err != nil {
 		return nil, err
 	}
+	diagram.Groups = buildImpactGroups(ctx, idx, diagram, mappings, data)
 	return diagram, nil
 }
 

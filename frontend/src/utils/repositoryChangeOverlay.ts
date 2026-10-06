@@ -1,10 +1,28 @@
 import type { RepositoryImpact } from '../api/client'
-import type { ExploreData, PlacedElement, ViewTreeNode } from '../types'
+import type { Connector, ExploreData, PlacedElement, ViewTreeNode } from '../types'
 import type { ZUIChangeOverlay } from '../components/ZUI/types'
+import { chooseConnectorHandles } from './connectorHandles'
 
 export { CHANGE_OVERLAY_TAG as REPOSITORY_CHANGE_TAG } from '../components/ZUI/changeOverlay'
 import { CHANGE_OVERLAY_TAG as REPOSITORY_CHANGE_TAG } from '../components/ZUI/changeOverlay'
 const normalize = (path: string) => path.replace(/\\/g, '/').replace(/\/$/, '')
+
+// Re-attach every connector in a view to the source/target handles that yield
+// the shortest anchor distance for the overlay's final placements, mirroring the
+// map pipeline's "Adjust Connectors" pass. The overlay is transient, so this
+// never writes back to the workspace.
+function adjustConnectorHandles(placements: PlacedElement[], connectors: Connector[]): Connector[] {
+  if (!connectors.length) return connectors
+  const positions = new Map(placements.map((element) => [element.element_id, { x: element.position_x, y: element.position_y }]))
+  return connectors.map((connector) => {
+    const source = positions.get(connector.source_element_id)
+    const target = positions.get(connector.target_element_id)
+    if (!source || !target) return connector
+    const handles = chooseConnectorHandles(source, target)
+    if (connector.source_handle === handles.source && connector.target_handle === handles.target) return connector
+    return { ...connector, source_handle: handles.source, target_handle: handles.target }
+  })
+}
 
 // Build a transient scene over existing workspace placements. New and removed
 // files without placements get negative IDs; nothing is written to the workspace.
@@ -73,6 +91,9 @@ export function repositoryChangeOverlay(workspace: ExploreData, impact: Reposito
       data.tree.push({ id: viewId, name: 'Changes', description: null, level_label: null, level: 0, depth: 0, created_at: '', updated_at: '', parent_view_id: null, children: [] })
       data.views[viewId] = { placements, connectors }
     }
+  }
+  for (const view of Object.values(data.views)) {
+    view.connectors = adjustConnectorHandles(view.placements, view.connectors ?? [])
   }
   return { data, overlays }
 }

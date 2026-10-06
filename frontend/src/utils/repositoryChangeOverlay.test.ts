@@ -54,6 +54,17 @@ describe('repository change overlays', () => {
     expect(added).toMatchObject({ view_id: 1, position_x: 300, position_y: 120 })
     expect(scene.overlays[added.element_id].change).toBe('added')
   })
+  it('re-attaches transient connectors to the closest handles', () => {
+    const target: RepositoryImpact = {
+      ...impact,
+      viewId: 1,
+      nodes: [{ ...node('new.go', 'added'), x: 0, y: 0 }, { ...node('new2.go', 'added'), x: 400, y: 0 }],
+      edges: [{ fromKey: 'file|new.go', toKey: 'file|new2.go', change: 'added', weight: 1 }],
+    }
+    const scene = repositoryChangeOverlay(workspace, target, '/repo')
+    const connector = scene.data.views[1].connectors.find((item) => item.label === '1 dependencies')!
+    expect(connector).toMatchObject({ source_handle: 'right', target_handle: 'left' })
+  })
   it('falls back to a transient view when the selected view is unavailable', () => {
     const target: RepositoryImpact = { ...impact, viewId: 42, nodes: [...impact.nodes, { ...node('new.go', 'added'), x: 300, y: 120 }] }
     const scene = repositoryChangeOverlay(workspace, target, '/repo')

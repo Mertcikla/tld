@@ -34,7 +34,7 @@ type viewIndex struct {
 // unoccupied cell next to the elements they depend on. When no added file
 // matches a materialized view the diagram keeps view_id 0 and the frontend falls
 // back to its unmapped overlay.
-func placeAddedFiles(ctx context.Context, ws core.Store, diagram *pb.ImpactDiagram, mappings []cstore.ResourceMapping) error {
+func placeAddedFiles(ctx context.Context, ws core.Store, diagram *pb.ImpactDiagram, mappings []cstore.ResourceMapping, data core.ExploreData) error {
 	added := make([]*pb.ImpactNode, 0, len(diagram.Nodes))
 	changed := make([]*pb.ImpactNode, 0, len(diagram.Nodes))
 	for _, node := range diagram.Nodes {
@@ -53,10 +53,7 @@ func placeAddedFiles(ctx context.Context, ws core.Store, diagram *pb.ImpactDiagr
 	if len(voters) == 0 {
 		return nil
 	}
-	index, err := buildViewIndex(ctx, ws, mappings)
-	if err != nil {
-		return err
-	}
+	index := buildViewIndex(data, mappings)
 	votes := map[int64]int{}
 	for _, node := range voters {
 		if view := index.closest(node.Path); view != 0 {
@@ -146,7 +143,7 @@ const folderViewPrefix = "map|folderview|"
 // materialized files, indexes the map's folder views by path, and records which
 // repo-owned files already have a placement. Only resources mapped to this
 // repository participate, so overlapping paths in other repositories never win.
-func buildViewIndex(ctx context.Context, ws core.Store, mappings []cstore.ResourceMapping) (viewIndex, error) {
+func buildViewIndex(data core.ExploreData, mappings []cstore.ResourceMapping) viewIndex {
 	index := viewIndex{dirs: map[string]int64{}, folders: map[string]int64{}, placed: map[string]int64{}}
 	owned := make(map[int64]bool, len(mappings))
 	for _, mapping := range mappings {
@@ -163,11 +160,7 @@ func buildViewIndex(ctx context.Context, ws core.Store, mappings []cstore.Resour
 		}
 	}
 	if len(owned) == 0 {
-		return index, nil
-	}
-	data, err := ws.Explore(ctx)
-	if err != nil {
-		return viewIndex{}, err
+		return index
 	}
 	tallies := map[string]map[int64]int{}
 	for _, view := range data.Views {
@@ -197,7 +190,7 @@ func buildViewIndex(ctx context.Context, ws core.Store, mappings []cstore.Resour
 			index.dirs[dir] = view
 		}
 	}
-	return index, nil
+	return index
 }
 
 // closest returns the deepest indexed view containing the file, walking up the
