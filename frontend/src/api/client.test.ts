@@ -5,6 +5,8 @@ import {
   ChangeKind,
   CodeFactSchema,
   EdgeFactSchema,
+  FactKind,
+  ImpactSceneSchema,
   SnapshotDiffSchema,
   SnapshotSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
@@ -12,6 +14,7 @@ import type { LibraryElement } from '../types'
 import {
   libraryElementToDependency,
   mapCodeSnapshot,
+  mapImpactScene,
   mapSnapshotDiff,
   mapViewMarkdown,
   normalizeFrontendImportElements,
@@ -244,5 +247,61 @@ describe('codeindex snapshot mapping', () => {
       factDetails: { added: diff.facts!.added, removed: [], modified: [] },
       edgeFacts: { added: 0, removed: 2, modified: 0 },
     })
+  })
+})
+
+describe('impact scene mapping', () => {
+  it('labels symbols from structured changes and keeps scene identity', () => {
+    const scene = create(ImpactSceneSchema, {
+      repositoryId: 'repo-1',
+      comparisonKey: 'key-1',
+      version: 'v1',
+      schemaVersion: '1',
+      maxRadius: 2,
+      fromGitRevision: 'aaa',
+      toGitRevision: 'bbb',
+      tree: [{ id: 1, name: 'Root', children: [] }],
+      views: {
+        '1': {
+          placements: [
+            {
+              element: { elementId: 7, viewId: 1, name: 'a.go', filePath: 'a.go', tags: [] },
+              overlay: {
+                change: ChangeKind.MODIFIED,
+                path: 'a.go',
+                linesAdded: 12,
+                linesRemoved: 3,
+                distance: 0,
+                symbols: [
+                  { change: ChangeKind.MODIFIED, name: 'Changed', kind: FactKind.FUNCTION, bodyHash: 'ff', anchor: { path: 'a.go', startLine: 3, endLine: 9 } },
+                  { change: ChangeKind.ADDED, name: 'Fresh', kind: FactKind.METHOD },
+                  { change: ChangeKind.REMOVED, name: 'Gone' },
+                ],
+              },
+            },
+          ],
+          connectors: [],
+        },
+      },
+    })
+
+    const mapped = mapImpactScene(scene)
+    expect(mapped.repositoryId).toBe('repo-1')
+    expect(mapped.comparisonKey).toBe('key-1')
+    expect(mapped.version).toBe('v1')
+    expect(mapped.schemaVersion).toBe('1')
+    expect(mapped.maxRadius).toBe(2)
+    expect(mapped.fromGitRevision).toBe('aaa')
+    expect(mapped.toGitRevision).toBe('bbb')
+    expect(mapped.overlays[7].symbols).toEqual(['~ Changed', '+ Fresh', '− Gone'])
+    expect(mapped.overlays[7].symbolDetails[0]).toEqual({
+      change: 'modified',
+      name: 'Changed',
+      kind: FactKind.FUNCTION,
+      bodyHash: 'ff',
+      anchor: { path: 'a.go', startLine: 3, endLine: 9 },
+    })
+    expect(mapped.overlays[7].symbolDetails[2].anchor).toBeUndefined()
+    expect(mapped.overlays[7].distance).toBe(0)
   })
 })

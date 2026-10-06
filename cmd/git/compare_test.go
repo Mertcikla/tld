@@ -41,20 +41,52 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("protojson compare: %v\n%s", err, stderr)
 	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+	var scene map[string]any
+	if err := json.Unmarshal([]byte(out), &scene); err != nil {
 		t.Fatalf("protojson output: %v\n%s", err, out)
 	}
-	if payload["comparisonKey"] == nil || payload["repositoryId"] == nil {
-		t.Fatalf("protojson missing keys: %v", payload)
+	if scene["comparisonKey"] == nil || scene["repositoryId"] == nil || scene["schemaVersion"] != impact.SceneSchemaVersion {
+		t.Fatalf("scene is not self-identifying: %v", scene)
 	}
-	nodes, ok := payload["nodes"].([]any)
-	if !ok || len(nodes) != 1 {
-		t.Fatalf("nodes = %v", payload["nodes"])
+	if _, ok := scene["diff"]; ok {
+		t.Fatalf("scene must not carry the index diff: %v", scene["diff"])
 	}
-	if node := nodes[0].(map[string]any); node["distance"] != float64(0) {
-		t.Fatalf("node distance = %v", node["distance"])
+	overlay := findOverlay(t, scene)
+	if overlay == nil {
+		t.Fatalf("changed file has no overlay: %v", scene["views"])
 	}
+	if overlay["path"] != "a.go" || overlay["distance"] != float64(0) {
+		t.Fatalf("overlay = %v", overlay)
+	}
+	symbols, _ := overlay["symbols"].([]any)
+	if len(symbols) == 0 {
+		t.Fatalf("overlay carries no symbol details: %v", overlay)
+	}
+	symbol, _ := symbols[0].(map[string]any)
+	if symbol["name"] != "A" || symbol["change"] != "CHANGE_KIND_MODIFIED" {
+		t.Fatalf("symbol detail = %v", symbol)
+	}
+	if _, ok := symbol["snapshotId"]; ok {
+		t.Fatalf("symbol detail must stay snapshot-free: %v", symbol)
+	}
+}
+
+// findOverlay returns the first overlay in a serialized scene, or nil.
+func findOverlay(t *testing.T, scene map[string]any) map[string]any {
+	t.Helper()
+	views, _ := scene["views"].(map[string]any)
+	for _, content := range views {
+		view, _ := content.(map[string]any)
+		placements, _ := view["placements"].([]any)
+		for _, item := range placements {
+			placement, _ := item.(map[string]any)
+			overlay, _ := placement["overlay"].(map[string]any)
+			if overlay != nil {
+				return overlay
+			}
+		}
+	}
+	return nil
 }
 
 // Indexing both revisions must stay silent on stderr unless progress is asked
@@ -140,62 +172,56 @@ func TestScopeToBudgetNarrowsRadius(t *testing.T) {
 			{Key: "context|2", Path: "c.go", Name: "c.go", Distance: 2, ElementId: 2},
 		},
 	}
-	result := scopeToBudget(diagram, 2, compareOptions{maxNodes: 2}, outputSize(compareOptions{}))
+	// A payload proportional to the node count lets the budget walk the radius
+	// down the same way a real render does.
+	build := func(scoped *pb.ImpactDiagram, radius uint32) (string, int, error) {
+		size := len(scoped.GetNodes()) * 1000
+		return fmt.Sprintf("radius=%d nodes=%d", radius, len(scoped.GetNodes())), size, nil
+	}
+	result, err := scopeToBudget(diagram, 2, compareOptions{maxNodes: 2}, build)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !result.limited || result.radius != 1 || len(result.diagram.GetNodes()) != 2 {
-		t.Fatalf("scopeToBudget: radius=%d limited=%v nodes=%d", result.radius, result.limited, len(result.diagram.GetNodes()))
+		t.Fatalf("node budget: radius=%d limited=%v nodes=%d", result.radius, result.limited, len(result.diagram.GetNodes()))
 	}
-	result = scopeToBudget(diagram, 2, compareOptions{maxNodes: 2, maxBytes: 1}, outputSize(compareOptions{}))
-	if !result.limited || result.radius != 0 || len(result.diagram.GetNodes()) != 1 {
-		t.Fatalf("byte budget: radius=%d limited=%v nodes=%d", result.radius, result.limited, len(result.diagram.GetNodes()))
+	if result.text != "radius=1 nodes=2" || result.size != 2000 {
+		t.Fatalf("payload does not match the chosen radius: %q (%d bytes)", result.text, result.size)
+	}
+	result, err = scopeToBudget(diagram, 2, compareOptions{maxNodes: 2, maxBytes: 1500}, build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.limited || result.radius != 0 || result.size != 1000 || result.overBudget {
+		t.Fatalf("byte budget: radius=%d limited=%v size=%d over=%v", result.radius, result.limited, result.size, result.overBudget)
+	}
+	result, err = scopeToBudget(diagram, 2, compareOptions{maxNodes: 2, maxBytes: 1}, build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.overBudget || result.radius != 0 {
+		t.Fatalf("unmeetable budget: radius=%d over=%v size=%d", result.radius, result.overBudget, result.size)
 	}
 }
 
-// The byte budget follows the selected output format, so a Mermaid run is not
-// measured (or narrowed) against the much larger protojson encoding.
-func TestScopeToBudgetMeasuresSelectedFormat(t *testing.T) {
-	facts := make([]*pb.CodeFact, 40)
-	for i := range facts {
-		facts[i] = &pb.CodeFact{Name: fmt.Sprintf("SymbolWithAVeryLongName%02d", i), BodyHash: strings.Repeat("a", 32)}
-	}
+// Mermaid renders straight from the diagram, so its size never depends on a
+// scene build.
+func TestCompareRendererMermaidSizes(t *testing.T) {
 	diagram := &pb.ImpactDiagram{
-		Nodes: []*pb.ImpactNode{
-			{Key: "file|a.go", Path: "a.go", Name: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED,
-				Symbols: &pb.CodeFactDelta{Modified: facts}},
-			{Key: "context|1", Path: "b.go", Name: "b.go", Distance: 1, ElementId: 1},
-		},
-		MaxRadius: 1,
+		Nodes: []*pb.ImpactNode{{Key: "file|a.go", Path: "a.go", Name: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED}},
 	}
-	opts := compareOptions{maxNodes: 10, maxBytes: 2048}
-	protojson := scopeToBudget(diagram, 1, opts, outputSize(opts))
-	mermaid := scopeToBudget(diagram, 1, opts, outputSize(compareOptions{mermaid: true}))
-	if !protojson.overBudget || protojson.size <= 2048 {
-		t.Fatalf("protojson size %d should exceed the budget", protojson.size)
-	}
-	if mermaid.overBudget || mermaid.limited || mermaid.radius != 1 || mermaid.size >= 2048 {
-		t.Fatalf("mermaid size %d narrowed the diagram: %+v", mermaid.size, mermaid)
-	}
-}
-
-func TestRenderDiagramSizesTheEmittedPayload(t *testing.T) {
-	diagram := &pb.ImpactDiagram{Nodes: []*pb.ImpactNode{{Key: "file|a.go", Path: "a.go", Name: "a.go"}}}
-	for _, opts := range []compareOptions{{}, {mermaid: true}, {markdown: true}} {
-		payload, size, err := renderDiagram(diagram, opts, 0)
+	for _, opts := range []compareOptions{{mermaid: true}, {markdown: true}} {
+		text, size, err := compareRenderer{opts: opts}.build(diagram, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := len(payload) + protoJSONNewline(opts); size != want {
-			t.Fatalf("size %d, want %d for %+v", size, want, opts)
+		if size != len(text) {
+			t.Fatalf("size %d vs %d bytes for %+v", size, len(text), opts)
+		}
+		if !strings.HasPrefix(text, "```mermaid") && !strings.HasPrefix(text, "flowchart") {
+			t.Fatalf("unexpected mermaid payload for %+v: %q", opts, text)
 		}
 	}
-}
-
-// protoJSONNewline reports the trailing newline the protojson writer adds on
-// top of the marshalled payload.
-func protoJSONNewline(opts compareOptions) int {
-	if opts.mermaid || opts.markdown {
-		return 0
-	}
-	return 1
 }
 
 func TestCompareTargetLabelNamesSideAndRevision(t *testing.T) {

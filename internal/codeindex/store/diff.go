@@ -93,15 +93,15 @@ func (s *Store) Diff(ctx context.Context, fromID, toID string, sourcesOnly bool)
 	return s.diff(ctx, fromID, toID, sourcesOnly, false)
 }
 
-// ImpactDiff computes the comparison payload used by change overlays. It is
-// equivalent to Diff, but the edge delta is resolved with a keyed aggregate so
-// only changed relationships are materialized instead of every edge in both
-// snapshots.
+// ImpactDiff computes the comparison payload used by change overlays. Impact
+// diagrams carry file-level dependency edges (FilePairCounts) and symbol
+// deltas, so the edge delta is left out entirely: materializing every edge of
+// both snapshots produced a payload nothing consumed.
 func (s *Store) ImpactDiff(ctx context.Context, fromID, toID string) (*pb.SnapshotDiff, error) {
 	return s.diff(ctx, fromID, toID, false, true)
 }
 
-func (s *Store) diff(ctx context.Context, fromID, toID string, sourcesOnly, aggregateEdges bool) (*pb.SnapshotDiff, error) {
+func (s *Store) diff(ctx context.Context, fromID, toID string, sourcesOnly, skipEdges bool) (*pb.SnapshotDiff, error) {
 	from, err := s.Snapshot(ctx, fromID)
 	if err != nil {
 		return nil, err
@@ -132,11 +132,7 @@ func (s *Store) diff(ctx context.Context, fromID, toID string, sourcesOnly, aggr
 		return nil, err
 	}
 	diff.Facts = diffFacts(fromFacts, toFacts)
-	if aggregateEdges {
-		diff.EdgeFacts, err = s.diffEdgeFactsAggregated(ctx, from.Id, to.Id)
-		if err != nil {
-			return nil, err
-		}
+	if skipEdges {
 		return diff, nil
 	}
 	fromEdges, err := s.EdgeFacts(ctx, from.Id, pb.EdgeKind_EDGE_KIND_UNSPECIFIED, "", "", graphLoadLimit)
@@ -410,128 +406,4 @@ func diffEdgeFacts(from, to []*pb.EdgeFact) *pb.EdgeFactDelta {
 
 func sortEdgeFacts(edges []*pb.EdgeFact) {
 	sort.Slice(edges, func(i, j int) bool { return logicalEdge(edges[i]) < logicalEdge(edges[j]) })
-}
-
-// edgeObservation is one logical relationship's representative edge id and the
-// number of times that relationship was observed in a snapshot.
-type edgeObservation struct {
-	id    string
-	count int
-}
-
-// edgeLogicalCounts aggregates a snapshot's edges by logical identity. The
-// representative id is the first row in id order, matching the representative
-// diffEdgeFacts keeps when it walks a fully loaded, id-ordered edge slice.
-func (s *Store) edgeLogicalCounts(ctx context.Context, snapshotID string) (map[string]edgeObservation, error) {
-	where, scopeArgs := scope(ctx).clause("e.org_id")
-	rows, err := s.bun.QueryContext(ctx, `SELECT e.id, e.logical_key FROM codeindex_edges e JOIN codeindex_snapshot_edges m ON m.edge_id = e.id AND m.org_id = e.org_id WHERE m.snapshot_id = ?`+where+` ORDER BY e.id`, append([]any{snapshotID}, scopeArgs...)...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	out := map[string]edgeObservation{}
-	for rows.Next() {
-		var id, key string
-		if err := rows.Scan(&id, &key); err != nil {
-			return nil, err
-		}
-		if key == "" {
-			key = id
-		}
-		if existing, ok := out[key]; ok {
-			existing.count++
-			out[key] = existing
-			continue
-		}
-		out[key] = edgeObservation{id: id, count: 1}
-	}
-	return out, rows.Err()
-}
-
-// diffEdgeFactsAggregated computes the same edge delta as diffEdgeFacts without
-// loading every edge of both snapshots. It aggregates observations by logical
-// key, then materializes only the representative edges of changed
-// relationships.
-func (s *Store) diffEdgeFactsAggregated(ctx context.Context, fromID, toID string) (*pb.EdgeFactDelta, error) {
-	from, err := s.edgeLogicalCounts(ctx, fromID)
-	if err != nil {
-		return nil, err
-	}
-	to, err := s.edgeLogicalCounts(ctx, toID)
-	if err != nil {
-		return nil, err
-	}
-	needed := map[string]bool{}
-	for key, current := range to {
-		if prev, ok := from[key]; !ok || prev.count != current.count {
-			needed[current.id] = true
-		}
-	}
-	for key, prev := range from {
-		if _, ok := to[key]; !ok {
-			needed[prev.id] = true
-		}
-	}
-	loaded, err := s.edgesByIds(ctx, needed)
-	if err != nil {
-		return nil, err
-	}
-	delta := &pb.EdgeFactDelta{}
-	for key, current := range to {
-		prev, ok := from[key]
-		switch {
-		case !ok:
-			if edge := edgeFromID(loaded, current.id, toID); edge != nil {
-				delta.Added = append(delta.Added, edge)
-			}
-		case prev.count != current.count:
-			if edge := edgeFromID(loaded, current.id, toID); edge != nil {
-				delta.Modified = append(delta.Modified, edge)
-			}
-		}
-	}
-	for key, prev := range from {
-		if _, ok := to[key]; !ok {
-			if edge := edgeFromID(loaded, prev.id, fromID); edge != nil {
-				delta.Removed = append(delta.Removed, edge)
-			}
-		}
-	}
-	sortEdgeFacts(delta.Added)
-	sortEdgeFacts(delta.Removed)
-	sortEdgeFacts(delta.Modified)
-	return delta, nil
-}
-
-func edgeFromID(edges map[string]*pb.EdgeFact, id, snapshotID string) *pb.EdgeFact {
-	edge := edges[id]
-	if edge == nil {
-		return nil
-	}
-	edge.SnapshotId = snapshotID
-	return edge
-}
-
-// edgesByIds batch-loads edges, mirroring factsByIDs.
-func (s *Store) edgesByIds(ctx context.Context, ids map[string]bool) (map[string]*pb.EdgeFact, error) {
-	if len(ids) == 0 {
-		return map[string]*pb.EdgeFact{}, nil
-	}
-	placeholders := make([]string, 0, len(ids))
-	args := make([]any, 0, len(ids))
-	for id := range ids {
-		placeholders = append(placeholders, "?")
-		args = append(args, id)
-	}
-	where, scopeArgs := scope(ctx).clause("org_id")
-	args = append(args, scopeArgs...)
-	edges, err := s.scanEdges(ctx, `SELECT `+edgeColumns+` FROM codeindex_edges WHERE id IN (`+strings.Join(placeholders, ",")+`)`+where, args...)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]*pb.EdgeFact, len(edges))
-	for _, edge := range edges {
-		out[edge.Id] = edge
-	}
-	return out, nil
 }

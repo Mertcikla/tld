@@ -40,23 +40,32 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 
 | Flag | Default | Purpose |
 |---|---|---|
-| `--mermaid` | off | Emit the Mermaid change diagram instead of protojson |
+| `--mermaid` | off | Emit the Mermaid change diagram instead of the scene |
 | `--markdown` | off | Wrap the Mermaid diagram in a Markdown code fence |
+| `-v`, `--verbose` | off | Report base/head indexing progress on stderr |
 | `--depth N` | `3` | Dependency hops of unchanged context (`0` = direct changes only) |
 | `--radius N` | `--depth` | Blast radius to display; narrows the view without shrinking the computed neighbourhood |
 | `--max-nodes N` | `400` | Node budget; blast radius is narrowed when exceeded (`0` disables) |
-| `--max-bytes N` | `2097152` | protojson byte budget; blast radius is narrowed when exceeded (`0` disables) |
+| `--max-bytes N` | `2097152` | Output byte budget; blast radius is narrowed when exceeded (`0` disables) |
 | `--data-dir PATH` | global | Override the data directory |
 
 ## Output
 
-- **Default:** protojson encoding of the impact diagram (zero-value fields kept
-  explicit for downstream consumers).
-- **`--mermaid` / `--markdown`:** the same Mermaid change diagram the web UI
-  renders.
+- **Default:** protojson encoding of the **impact scene** — the same payload the
+  web canvas loads from `GetImpactScene`. It is portable: the emitted document
+  is all a viewer needs, with no repository, index, or snapshot on the other
+  end. Each placement carries a change overlay with the file's line counts and
+  structured symbol changes (name, kind, anchor, body fingerprint), and the
+  scene names what it compared (`schemaVersion`, `repositoryId`,
+  `comparisonKey`, `fromGitRevision`, `toGitRevision`, `maxRadius`).
+- **`--mermaid` / `--markdown`:** the Mermaid change diagram. It is drawn from
+  the comparison's file-level dependency graph rather than the scene, because a
+  scene carries workspace connectors, not the dependency weights between changed
+  files.
 
-Progress is written to stderr. If the diagram exceeds a budget, a warning on
-stderr tells you to raise `--radius` or `--max-nodes`.
+Progress is written to stderr only with `--verbose`; budget warnings always go
+to stderr. If the payload exceeds a budget, a warning tells you to raise
+`--radius` or `--max-nodes`.
 
 ## Tips
 

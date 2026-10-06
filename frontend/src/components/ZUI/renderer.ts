@@ -549,6 +549,22 @@ function drawCycleIcon(ctx: CanvasRenderingContext2D, x: number, y: number, size
   ctx.restore()
 }
 
+function unitVector(fromX: number, fromY: number, toX: number, toY: number): { x: number; y: number; len: number } {
+  const dx = toX - fromX
+  const dy = toY - fromY
+  const len = Math.hypot(dx, dy)
+  if (len <= 0) return { x: 0, y: 0, len: 0 }
+  return { x: dx / len, y: dy / len, len }
+}
+
+function trimDelta(x: number, y: number, towardX: number, towardY: number, dist: number): { dx: number; dy: number } {
+  if (dist <= 0) return { dx: 0, dy: 0 }
+  const u = unitVector(x, y, towardX, towardY)
+  if (u.len <= 0) return { dx: 0, dy: 0 }
+  const d = Math.min(dist, u.len * 0.9)
+  return { dx: u.x * d, dy: u.y * d }
+}
+
 function drawArrowHead(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, size: number, color: string): void {
   ctx.save()
   ctx.translate(x, y)
@@ -1310,6 +1326,18 @@ function drawEdges(
       let finalAngleS = 0
       let finalAngleT = 0
 
+      const visualTargetScreenW = effWTarget * zoom
+      const visualSourceScreenW = effWSource * zoom
+      const ARROW_SIZE_BASE = 10
+      const targetConnectorDetailVisible = visualTargetScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
+      const sourceConnectorDetailVisible = visualSourceScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
+      const drawTargetArrow = (dir === 'forward' || dir === 'both' || dir === 'bidirectional') && targetConnectorDetailVisible
+      const drawSourceArrow = (dir === 'backward' || dir === 'both' || dir === 'bidirectional') && sourceConnectorDetailVisible
+      const targetArrowSize = Math.min(ARROW_SIZE_BASE, visualTargetScreenW * 0.2) / zoom
+      const sourceArrowSize = Math.min(ARROW_SIZE_BASE, visualSourceScreenW * 0.2) / zoom
+      const targetTrim = drawTargetArrow ? targetArrowSize * 1.6 : 0
+      const sourceTrim = drawSourceArrow ? sourceArrowSize * 1.6 : 0
+
       if (type === 'bezier') {
         const curvature = 0.5
         let cp1x = sH.x, cp1y = sH.y, cp2x = tH.x, cp2y = tH.y
@@ -1335,23 +1363,38 @@ function drawEdges(
           cp2y += tH.pos === 'top' ? -stem : stem
         }
 
-        ctx.beginPath()
-        ctx.moveTo(sH.x, sH.y)
-        ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, tH.x, tH.y)
-        ctx.stroke()
-
         midX = 0.125 * sH.x + 0.375 * cp1x + 0.375 * cp2x + 0.125 * tH.x
         midY = 0.125 * sH.y + 0.375 * cp1y + 0.375 * cp2y + 0.125 * tH.y
         finalAngleT = Math.atan2(tH.y - cp2y, tH.x - cp2x)
         finalAngleS = Math.atan2(sH.y - cp1y, sH.x - cp1x)
 
-      } else if (type === 'straight') {
+        const endDelta = trimDelta(tH.x, tH.y, cp2x, cp2y, targetTrim)
+        const startDelta = trimDelta(sH.x, sH.y, cp1x, cp1y, sourceTrim)
+
         ctx.beginPath()
-        ctx.moveTo(sH.x, sH.y)
-        ctx.lineTo(tH.x, tH.y)
+        ctx.moveTo(sH.x + startDelta.dx, sH.y + startDelta.dy)
+        ctx.bezierCurveTo(
+          cp1x + startDelta.dx,
+          cp1y + startDelta.dy,
+          cp2x + endDelta.dx,
+          cp2y + endDelta.dy,
+          tH.x + endDelta.dx,
+          tH.y + endDelta.dy,
+        )
         ctx.stroke()
+
+      } else if (type === 'straight') {
         finalAngleT = Math.atan2(tH.y - sH.y, tH.x - sH.x)
         finalAngleS = Math.atan2(sH.y - tH.y, sH.x - tH.x)
+
+        const { x: ux, y: uy, len } = unitVector(sH.x, sH.y, tH.x, tH.y)
+        const startTrim = Math.min(sourceTrim, len * 0.45)
+        const endTrim = Math.min(targetTrim, len * 0.45)
+
+        ctx.beginPath()
+        ctx.moveTo(sH.x + ux * startTrim, sH.y + uy * startTrim)
+        ctx.lineTo(tH.x - ux * endTrim, tH.y - uy * endTrim)
+        ctx.stroke()
 
       } else if (type === 'step' || type === 'smoothstep') {
         const borderRadius = type === 'smoothstep' ? 6 / zoom : 0
@@ -1390,13 +1433,26 @@ function drawEdges(
           midY = (p1.y + p2.y) / 2
         }
 
-        ctx.beginPath()
-        ctx.moveTo(points[0].x, points[0].y)
+        const first = points[0]
+        const firstNext = points[1]
+        const last = points[points.length - 1]
+        const lastPrev = points[points.length - 2]
+        finalAngleS = Math.atan2(first.y - firstNext.y, first.x - firstNext.x)
+        finalAngleT = Math.atan2(last.y - lastPrev.y, last.x - lastPrev.x)
 
-        for (let i = 1; i < points.length; i++) {
-          const curr = points[i]
-          const prev = points[i - 1]
-          const next = points[i + 1]
+        const linePoints = points.slice()
+        const startDelta = trimDelta(first.x, first.y, firstNext.x, firstNext.y, sourceTrim)
+        const endDelta = trimDelta(last.x, last.y, lastPrev.x, lastPrev.y, targetTrim)
+        linePoints[0] = { x: first.x + startDelta.dx, y: first.y + startDelta.dy }
+        linePoints[linePoints.length - 1] = { x: last.x + endDelta.dx, y: last.y + endDelta.dy }
+
+        ctx.beginPath()
+        ctx.moveTo(linePoints[0].x, linePoints[0].y)
+
+        for (let i = 1; i < linePoints.length; i++) {
+          const curr = linePoints[i]
+          const prev = linePoints[i - 1]
+          const next = linePoints[i + 1]
 
           if (borderRadius > 0 && next) {
             const dPrevX = curr.x - prev.x
@@ -1417,34 +1473,13 @@ function drawEdges(
           }
         }
         ctx.stroke()
-
-        const last = points[points.length - 1]
-        const prev = points[points.length - 2]
-        finalAngleT = Math.atan2(last.y - prev.y, last.x - prev.x)
-
-        const first = points[0]
-        const firstNext = points[1]
-        finalAngleS = Math.atan2(first.y - firstNext.y, first.x - firstNext.x)
       }
 
-      const visualTargetScreenW = effWTarget * zoom
-      const visualSourceScreenW = effWSource * zoom
-
-      const ARROW_SIZE_BASE = 10
-      const sourceConnectorDetailVisible = visualSourceScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
-      const targetConnectorDetailVisible = visualTargetScreenW > MIN_NODE_W_FOR_CONNECTOR_DETAIL
-
-      if (dir === 'forward' || dir === 'both' || dir === 'bidirectional') {
-        if (targetConnectorDetailVisible) {
-          const arrowScreenSize = Math.min(ARROW_SIZE_BASE, visualTargetScreenW * 0.2)
-          drawArrowHead(ctx, tH.x, tH.y, finalAngleT, arrowScreenSize / zoom, strokeColor)
-        }
+      if (drawTargetArrow) {
+        drawArrowHead(ctx, tH.x, tH.y, finalAngleT, targetArrowSize, strokeColor)
       }
-      if (dir === 'backward' || dir === 'both' || dir === 'bidirectional') {
-        if (sourceConnectorDetailVisible) {
-          const arrowScreenSize = Math.min(ARROW_SIZE_BASE, visualSourceScreenW * 0.2)
-          drawArrowHead(ctx, sH.x, sH.y, finalAngleS, arrowScreenSize / zoom, strokeColor)
-        }
+      if (drawSourceArrow) {
+        drawArrowHead(ctx, sH.x, sH.y, finalAngleS, sourceArrowSize, strokeColor)
       }
 
       if (!lowDetail && edge.label && shouldDrawConnectorDetailLabel(dir, visualSourceScreenW, visualTargetScreenW)) {

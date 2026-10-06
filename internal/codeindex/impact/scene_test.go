@@ -108,4 +108,41 @@ func TestSceneAssemblesRepositoryMembersAndTransientChanges(t *testing.T) {
 	if got := scene.GetNavigations(); len(got) != 0 {
 		t.Fatalf("unexpected navigations: %+v", got)
 	}
+	// A scene is a portable artifact: it names what it compared and carries
+	// enough symbol detail to describe the change without the snapshot.
+	if scene.GetSchemaVersion() != SceneSchemaVersion || scene.GetRepositoryId() != "repo" ||
+		scene.GetComparisonKey() != "key" || scene.GetFromGitRevision() != "base" || scene.GetToGitRevision() != "head" {
+		t.Fatalf("scene identity = %+v", scene)
+	}
+	if scene.GetMaxRadius() != 1 {
+		t.Fatalf("scene max radius = %d, want the widest distance present", scene.GetMaxRadius())
+	}
+	overlay := byPath["a.go"].GetOverlay()
+	symbols := overlay.GetSymbols()
+	if len(symbols) != 1 || symbols[0].GetName() != "Stable" || symbols[0].GetChange() != pb.ChangeKind_CHANGE_KIND_MODIFIED {
+		t.Fatalf("symbol detail = %+v", symbols)
+	}
+	if symbols[0].GetAnchor().GetPath() != "a.go" || symbols[0].GetKind() != pb.FactKind_FACT_KIND_FUNCTION {
+		t.Fatalf("symbol detail lost its anchor or kind: %+v", symbols[0])
+	}
+	if symbols[0].GetBodyHash() == "" {
+		t.Fatalf("symbol detail has no body fingerprint: %+v", symbols[0])
+	}
+}
+
+func TestSceneMaxRadiusCountsOnlyDistancesPresent(t *testing.T) {
+	scene := &pb.ImpactScene{Views: map[string]*pb.SceneViewContent{
+		"1": {Placements: []*pb.ScenePlacement{
+			{Overlay: &pb.ImpactSceneOverlay{Change: pb.ChangeKind_CHANGE_KIND_MODIFIED, Distance: 0}},
+		}},
+	}}
+	if got := sceneMaxRadius(scene); got != 0 {
+		t.Fatalf("direct-changes-only scene max radius = %d", got)
+	}
+	scene.Views["1"].Placements = append(scene.Views["1"].Placements, &pb.ScenePlacement{
+		Overlay: &pb.ImpactSceneOverlay{Distance: 2},
+	})
+	if got := sceneMaxRadius(scene); got != 2 {
+		t.Fatalf("scene max radius = %d, want 2", got)
+	}
 }

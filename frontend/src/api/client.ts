@@ -84,6 +84,7 @@ import {
   type SnapshotDiff as SnapshotDiffProto,
   type ImpactDiagram as ImpactDiagramProto,
   type ImpactScene as ImpactSceneProto,
+  type ImpactSymbolChange as ImpactSymbolChangeProto,
   type CodeFact,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import { transport } from './transport'
@@ -261,6 +262,15 @@ export interface RepositoryImpactMermaid {
   markdown: string
   warnings: string[]
 }
+// RepositoryImpactSymbol is one changed symbol of an overlay. It keeps the
+// portable identity of the change, not the underlying snapshot fact.
+export interface RepositoryImpactSymbol {
+  change: SnapshotSourceChange['change'] | 'unchanged'
+  name: string
+  kind: number
+  bodyHash: string
+  anchor?: { path: string; startLine: number; endLine: number }
+}
 // RepositoryImpactOverlay is one placement's transient change annotation.
 // Context neighbours carry the hop distance used for client-side scoping.
 export interface RepositoryImpactOverlay {
@@ -269,12 +279,22 @@ export interface RepositoryImpactOverlay {
   linesAdded?: number
   linesRemoved?: number
   symbols: string[]
+  symbolDetails: RepositoryImpactSymbol[]
   distance: number
 }
 // RepositoryImpactScene is the backend-assembled change scene: the repository
 // workspace subset, context neighbours, and transient placements with overlays.
+// It is self-contained, so the identity fields travel with it and a viewer can
+// render the scene without the repository, its index, or its snapshots.
 export interface RepositoryImpactScene extends ExploreData {
   fallbackViewId: number
+  repositoryId: string
+  comparisonKey: string
+  version: string
+  schemaVersion: string
+  maxRadius: number
+  fromGitRevision: string
+  toGitRevision: string
   overlays: Record<number, RepositoryImpactOverlay>
 }
 export interface LiveRepositoryImpact {
@@ -609,6 +629,10 @@ function mapImpactSceneView(view: ProtoView): ViewTreeNode {
   }
 }
 
+// impactSymbolLabel is the overlay's one-line symbol label. The scene carries
+// structured symbol changes, so labels are derived here instead of shipped.
+const impactSymbolPrefix = { added: '+ ', removed: '− ', modified: '~ ', unchanged: '' } as const
+
 export function mapImpactScene(scene: ImpactSceneProto): RepositoryImpactScene {
   const views: ExploreData['views'] = {}
   const overlays: Record<number, RepositoryImpactOverlay> = {}
@@ -616,12 +640,17 @@ export function mapImpactScene(scene: ImpactSceneProto): RepositoryImpactScene {
     const placements = content.placements.map((placement) => {
       const mapped = protoPlacedElement(placement.element as unknown as Record<string, unknown>)
       if (placement.overlay) {
+        const change = placement.overlay.change === ChangeKind.UNSPECIFIED ? 'unchanged' as const : mapSnapshotChangeKind(placement.overlay.change)
         overlays[mapped.element_id] = {
-          change: placement.overlay.change === ChangeKind.UNSPECIFIED ? 'unchanged' : mapSnapshotChangeKind(placement.overlay.change),
+          change,
           path: placement.overlay.path,
           linesAdded: placement.overlay.linesAdded,
           linesRemoved: placement.overlay.linesRemoved,
-          symbols: [...placement.overlay.symbols],
+          symbols: placement.overlay.symbols.map((symbol) => {
+            const symbolChange = symbol.change === ChangeKind.UNSPECIFIED ? 'unchanged' : mapSnapshotChangeKind(symbol.change)
+            return `${impactSymbolPrefix[symbolChange]}${symbol.name}`
+          }),
+          symbolDetails: placement.overlay.symbols.map(mapImpactSymbolChange),
           distance: placement.overlay.distance,
         }
       }
@@ -637,7 +666,26 @@ export function mapImpactScene(scene: ImpactSceneProto): RepositoryImpactScene {
     views,
     navigations: scene.navigations.map((navigation) => protoNavigation(navigation as unknown as Record<string, unknown>)),
     fallbackViewId: Number(scene.fallbackViewId),
+    repositoryId: scene.repositoryId,
+    comparisonKey: scene.comparisonKey,
+    version: scene.version,
+    schemaVersion: scene.schemaVersion,
+    maxRadius: scene.maxRadius,
+    fromGitRevision: scene.fromGitRevision,
+    toGitRevision: scene.toGitRevision,
     overlays,
+  }
+}
+
+function mapImpactSymbolChange(symbol: ImpactSymbolChangeProto): RepositoryImpactSymbol {
+  return {
+    change: symbol.change === ChangeKind.UNSPECIFIED ? 'unchanged' : mapSnapshotChangeKind(symbol.change),
+    name: symbol.name,
+    kind: symbol.kind,
+    bodyHash: symbol.bodyHash,
+    anchor: symbol.anchor
+      ? { path: symbol.anchor.path, startLine: symbol.anchor.startLine, endLine: symbol.anchor.endLine }
+      : undefined,
   }
 }
 

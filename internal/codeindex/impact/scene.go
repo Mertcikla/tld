@@ -13,6 +13,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// SceneSchemaVersion identifies the portable scene contract. Bump it when the
+// scene shape changes so a stored artifact stays readable by later readers.
+const SceneSchemaVersion = "1"
+
 // retiredImpactViewMarker identifies views owned by the retired impact
 // materializer. They are hidden while an older watcher is still running.
 const retiredImpactViewMarker = " impact · "
@@ -20,12 +24,13 @@ const retiredImpactViewMarker = " impact · "
 // Scene assembles the transient repository change scene for a persisted
 // comparison: the repository's workspace subset, its blast-radius neighbours,
 // transient placements for changed files that have no workspace element, and
-// per-placement change overlays with hop distances. Nothing is persisted and no
-// workspace resource is written; callers scope the scene by radius and
-// standard/plain view locally.
+// per-placement change overlays with hop distances. The result is
+// self-contained: a viewer renders it without the repository, its index, or its
+// snapshots. Nothing is persisted and no workspace resource is written; callers
+// scope the scene by radius and standard/plain view locally.
 func (s Service) Scene(ctx context.Context, diagram *pb.ImpactDiagram) (*pb.ImpactScene, error) {
 	if diagram == nil {
-		return &pb.ImpactScene{}, nil
+		return &pb.ImpactScene{SchemaVersion: SceneSchemaVersion}, nil
 	}
 	repo, err := s.Index.Repository(ctx, diagram.GetRepositoryId())
 	if err != nil {
@@ -53,9 +58,16 @@ type sceneBuilder struct {
 
 func (b *sceneBuilder) build() *pb.ImpactScene {
 	b.index()
+	diff := b.diagram.GetDiff()
 	scene := &pb.ImpactScene{
-		Views:       map[string]*pb.SceneViewContent{},
-		Navigations: []*diagv1.ElementNavigationInfo{},
+		Views:           map[string]*pb.SceneViewContent{},
+		Navigations:     []*diagv1.ElementNavigationInfo{},
+		SchemaVersion:   SceneSchemaVersion,
+		RepositoryId:    b.diagram.GetRepositoryId(),
+		ComparisonKey:   b.diagram.GetComparisonKey(),
+		Version:         b.diagram.GetVersion(),
+		FromGitRevision: diff.GetFromGitRevision(),
+		ToGitRevision:   diff.GetToGitRevision(),
 	}
 	for _, view := range b.pruneTree(b.workspace.Tree) {
 		scene.Tree = append(scene.Tree, sceneView(view))
@@ -73,7 +85,24 @@ func (b *sceneBuilder) build() *pb.ImpactScene {
 	for _, content := range scene.Views {
 		adjustSceneConnectorHandles(content.Placements, content.Connectors)
 	}
+	// The radius a reader may still select is bounded by what this scene
+	// actually carries, not by the wider neighbourhood it was scoped from.
+	scene.MaxRadius = sceneMaxRadius(scene)
 	return scene
+}
+
+// sceneMaxRadius is the highest overlay distance present in the scene. Only
+// direct changes (distance 0) means the reader has no radius left to widen.
+func sceneMaxRadius(scene *pb.ImpactScene) uint32 {
+	maxRadius := uint32(0)
+	for _, content := range scene.Views {
+		for _, placement := range content.GetPlacements() {
+			if distance := placement.GetOverlay().GetDistance(); distance > maxRadius {
+				maxRadius = distance
+			}
+		}
+	}
+	return maxRadius
 }
 
 func (b *sceneBuilder) index() {
@@ -240,6 +269,8 @@ func (b *sceneBuilder) placeMissing(scene *pb.ImpactScene) {
 
 // overlay shapes a diagram node into the transient annotation the canvas
 // renders. Context nodes keep their hop distance so clients can scope them.
+// Symbol changes are carried structured: a reader labels them itself, so no
+// pre-shaped text has to stay in sync with the underlying fact.
 func (b *sceneBuilder) overlay(node *pb.ImpactNode) *pb.ImpactSceneOverlay {
 	if node == nil {
 		return nil
@@ -250,22 +281,40 @@ func (b *sceneBuilder) overlay(node *pb.ImpactNode) *pb.ImpactSceneOverlay {
 		overlay.LinesRemoved = source.LinesRemoved
 	}
 	delta := node.GetSymbols()
-	for _, entry := range []struct {
-		kind   pb.ChangeKind
-		prefix string
-	}{
-		{pb.ChangeKind_CHANGE_KIND_ADDED, "+ "},
-		{pb.ChangeKind_CHANGE_KIND_REMOVED, "− "},
-		{pb.ChangeKind_CHANGE_KIND_MODIFIED, "~ "},
+	for _, kind := range []pb.ChangeKind{
+		pb.ChangeKind_CHANGE_KIND_ADDED,
+		pb.ChangeKind_CHANGE_KIND_REMOVED,
+		pb.ChangeKind_CHANGE_KIND_MODIFIED,
 	} {
-		for _, fact := range factsByKind(delta, entry.kind) {
+		for _, fact := range factsByKind(delta, kind) {
 			if fact == nil {
 				continue
 			}
-			overlay.Symbols = append(overlay.Symbols, entry.prefix+fact.GetName())
+			overlay.Symbols = append(overlay.Symbols, symbolChange(kind, fact))
 		}
 	}
 	return overlay
+}
+
+// symbolChange keeps only the portable identity of a changed fact: name, kind,
+// anchor lines, and body fingerprint. Snapshot provenance, qualified SCIP
+// names, evidence, and imports are left behind so a scene carries no
+// index-only weight.
+func symbolChange(kind pb.ChangeKind, fact *pb.CodeFact) *pb.ImpactSymbolChange {
+	change := &pb.ImpactSymbolChange{
+		Change:   kind,
+		Name:     fact.GetName(),
+		Kind:     fact.GetKind(),
+		BodyHash: fact.GetBodyHash(),
+	}
+	if anchor := fact.GetAnchor(); anchor != nil {
+		change.Anchor = &pb.ImpactSymbolAnchor{
+			Path:      anchor.GetPath(),
+			StartLine: anchor.GetStartLine(),
+			EndLine:   anchor.GetEndLine(),
+		}
+	}
+	return change
 }
 
 func sceneView(view core.ViewTreeNode) *diagv1.View {

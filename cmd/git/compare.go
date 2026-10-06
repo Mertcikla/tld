@@ -46,22 +46,26 @@ func newCompareCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "compare [repository] <base> <head>",
 		Short: "Compare two revisions of a repository",
-		Long: `Compare two Git revisions and emit the repository impact diagram.
+		Long: `Compare two Git revisions and emit the repository impact scene.
 
 The repository may be omitted to use the current checkout, or given as a
 repository id, a local path, or a remote URL (github.com/owner/repo,
 owner/repo, or a Git URL). Missing snapshots are indexed on demand.
 
-The default output is the protojson encoding of the impact diagram. Pass
---mermaid to emit the same Mermaid change diagram the web UI renders.
+The default output is the protojson encoding of the impact scene: exactly the
+payload the canvas loads, and self-contained, so it renders offline without the
+repository, its index, or its snapshots. Each placement carries a change overlay
+with the file's line counts and structured symbol changes, and the scene names
+what it compared. Pass --mermaid to emit the Mermaid change diagram, which is
+drawn from the comparison's file-level dependency graph.
 
 --depth controls how many dependency hops of unchanged context are included
 (0 = direct changes only). An explicit --radius narrows the displayed scope
-without shrinking the computed neighbourhood. When the diagram exceeds the
-node or byte budget the output is progressively narrowed by blast radius and
-a warning is written to stderr.
+without shrinking the computed neighbourhood. When the output exceeds the node
+or byte budget it is progressively narrowed by blast radius and a warning is
+written to stderr.
 
-Indexing progress is quiet by default so scripted runs only emit the diagram
+Indexing progress is quiet by default so scripted runs only emit the payload
 and budget warnings; pass --verbose to follow the base and head scans on
 stderr.`,
 		Args: cobra.RangeArgs(2, 3),
@@ -73,7 +77,7 @@ stderr.`,
 			return runCompare(cmd, opts, target, args[len(args)-2], args[len(args)-1])
 		},
 	}
-	c.Flags().BoolVar(&opts.mermaid, "mermaid", false, "emit the Mermaid change diagram instead of protojson")
+	c.Flags().BoolVar(&opts.mermaid, "mermaid", false, "emit the Mermaid change diagram instead of the scene")
 	c.Flags().BoolVar(&opts.markdown, "markdown", false, "wrap the Mermaid diagram in a Markdown code fence")
 	c.Flags().BoolVarP(&opts.verbose, "verbose", "v", false, "report indexing progress for both revisions on stderr")
 	c.Flags().Uint32Var(&opts.radius, "radius", 0, "blast radius to display; defaults to --depth")
@@ -164,7 +168,11 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 	// land below the work they describe.
 	tracker.Complete(lastStage)
 	requested := min(display, depth, diagram.GetMaxRadius())
-	result := scopeToBudget(diagram, requested, opts, outputSize(opts))
+	render := compareRenderer{ctx: ctx, service: service, opts: opts}
+	result, err := scopeToBudget(diagram, requested, opts, render.build)
+	if err != nil {
+		return err
+	}
 	if result.limited {
 		notice(fmt.Sprintf(
 			"warning: output limited to blast radius %d of %d (%d nodes); pass --radius %d or raise --max-nodes to include more",
@@ -174,50 +182,49 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 		notice(fmt.Sprintf("warning: output is %s even with direct changes only; --max-bytes %s cannot be met",
 			humanBytes(result.size), humanBytes(opts.maxBytes)))
 	}
-	// The diagram shares the terminal with the progress display; close the
+	// The payload shares the terminal with the progress display; close the
 	// pinned stage line before anything reaches stdout.
 	tracker.Finish()
-	payload, _, err := renderDiagram(result.diagram, opts, result.radius)
-	if err != nil {
-		return err
-	}
+	out := cmd.OutOrStdout()
 	if opts.mermaid || opts.markdown {
-		_, err = fmt.Fprint(cmd.OutOrStdout(), payload)
+		_, err = fmt.Fprint(out, result.text)
 		return err
 	}
-	_, err = fmt.Fprintln(cmd.OutOrStdout(), payload)
+	_, err = fmt.Fprintln(out, result.text)
 	return err
 }
 
-// renderDiagram serializes a scoped diagram in the requested output format and
-// reports its size in bytes. Sizes are taken from the format actually selected
-// so --max-bytes describes the payload the caller receives rather than the
-// protojson encoding the UI happens to use.
-func renderDiagram(diagram *pb.ImpactDiagram, opts compareOptions, radius uint32) (string, int, error) {
-	if opts.mermaid || opts.markdown {
+// compareRenderer builds the payload for one blast radius. The default output is
+// the portable impact scene — exactly what the canvas loads — so a reader needs
+// no repository, index, or snapshot. Mermaid keeps the diagram as its source
+// because it draws the file-level dependency graph, which a scene does not
+// carry for files that already have workspace placements.
+type compareRenderer struct {
+	ctx     context.Context
+	service impact.Service
+	opts    compareOptions
+}
+
+// build renders a scoped diagram at radius, returning the text to write and its
+// size in bytes so --max-bytes describes the payload the caller receives.
+func (r compareRenderer) build(diagram *pb.ImpactDiagram, radius uint32) (string, int, error) {
+	if r.opts.mermaid || r.opts.markdown {
 		code := mermaid.ExportImpactDiagram(diagram, mermaid.ImpactExportOptions{IncludeMetadata: true, Radius: radius})
-		if opts.markdown {
+		if r.opts.markdown {
 			code = mermaid.MermaidBlock(code)
 		}
 		return code, len(code), nil
 	}
-	payload, err := protoJSONOptions.Marshal(diagram)
+	scene, err := r.service.Scene(r.ctx, diagram)
+	if err != nil {
+		return "", 0, err
+	}
+	payload, err := protoJSONOptions.Marshal(scene)
 	if err != nil {
 		return "", 0, err
 	}
 	// The protojson payload is written with a trailing newline.
 	return string(payload), len(payload) + 1, nil
-}
-
-// outputSize adapts renderDiagram into the sizer scopeToBudget narrows against.
-func outputSize(opts compareOptions) func(*pb.ImpactDiagram, uint32) int {
-	return func(diagram *pb.ImpactDiagram, radius uint32) int {
-		_, size, err := renderDiagram(diagram, opts, radius)
-		if err != nil {
-			return 0
-		}
-		return size
-	}
 }
 
 // compareTargetLabel titles the stage run of one comparison side, naming the
@@ -247,32 +254,40 @@ func compareScope(opts compareOptions, radiusSet bool) (display, depth uint32) {
 type scopedDiagram struct {
 	diagram    *pb.ImpactDiagram
 	radius     uint32
+	text       string // the payload to write
 	size       int
 	limited    bool // radius was narrowed below the requested scope
 	overBudget bool // direct changes alone still exceed --max-bytes
 }
 
 // scopeToBudget narrows the diagram by blast radius until it fits the node and
-// byte budgets. sizeOf reports the bytes the selected output format would emit,
-// so a Mermaid run is not judged by the protojson encoding. If even the
-// direct-change diagram exceeds the byte budget the caller is told the budget
-// cannot be met.
-func scopeToBudget(diagram *pb.ImpactDiagram, requested uint32, opts compareOptions, sizeOf func(*pb.ImpactDiagram, uint32) int) scopedDiagram {
-	result := scopedDiagram{diagram: diagram}
-	result.radius, result.limited = impact.FitRadius(diagram, requested, opts.maxNodes)
-	result.diagram = impact.Scope(diagram, result.radius)
-	result.size = sizeOf(result.diagram, result.radius)
-	if opts.maxBytes <= 0 {
-		return result
+// byte budgets. build renders one candidate radius and reports the bytes it
+// would write, so the budget describes the selected output format and not some
+// internal encoding. If even the direct-change payload exceeds the byte budget
+// the caller is told the budget cannot be met.
+func scopeToBudget(diagram *pb.ImpactDiagram, requested uint32, opts compareOptions, build func(*pb.ImpactDiagram, uint32) (string, int, error)) (scopedDiagram, error) {
+	radius, limited := impact.FitRadius(diagram, requested, opts.maxNodes)
+	result := scopedDiagram{radius: radius, limited: limited}
+	scoped := impact.Scope(diagram, radius)
+	text, size, err := build(scoped, radius)
+	if err != nil {
+		return scopedDiagram{}, err
 	}
-	for result.radius > 0 && result.size > opts.maxBytes {
-		result.radius--
+	result.diagram, result.text, result.size = scoped, text, size
+	if opts.maxBytes <= 0 {
+		return result, nil
+	}
+	for radius > 0 && result.size > opts.maxBytes {
+		radius--
+		result.radius = radius
 		result.limited = true
-		result.diagram = impact.Scope(diagram, result.radius)
-		result.size = sizeOf(result.diagram, result.radius)
+		result.diagram = impact.Scope(diagram, radius)
+		if result.text, result.size, err = build(result.diagram, radius); err != nil {
+			return scopedDiagram{}, err
+		}
 	}
 	result.overBudget = result.size > opts.maxBytes
-	return result
+	return result, nil
 }
 
 func humanBytes(size int) string {
