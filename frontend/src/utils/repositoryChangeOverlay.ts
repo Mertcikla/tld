@@ -70,7 +70,7 @@ export function repositoryChangeOverlay(workspace: ExploreData, impact: Reposito
       target.placements = [...target.placements, ...placements]
       target.connectors = [...(target.connectors ?? []), ...connectors]
     } else {
-      data.tree.push({ id: viewId, name: 'Unmapped changes · temporary overlay', description: null, level_label: null, level: 0, depth: 0, created_at: '', updated_at: '', parent_view_id: null, children: [] })
+      data.tree.push({ id: viewId, name: 'Changes', description: null, level_label: null, level: 0, depth: 0, created_at: '', updated_at: '', parent_view_id: null, children: [] })
       data.views[viewId] = { placements, connectors }
     }
   }
