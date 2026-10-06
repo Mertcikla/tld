@@ -257,6 +257,11 @@ export interface RepositoryImpact {
   maxRadius: number
   version: string
 }
+export interface RepositoryImpactMermaid {
+  code: string
+  markdown: string
+  warnings: string[]
+}
 export interface LiveRepositoryImpact {
   diagram: RepositoryImpact | null
   watching: boolean
@@ -2158,6 +2163,14 @@ export const api = {
     impactRadius: (repositoryId: string, comparisonKey: string, radius: number, signal?: AbortSignal): Promise<RepositoryImpact> => rpc(async () =>
       mapImpact(await codeIndexMapperClient.setImpactRadius({ repositoryId, comparisonKey, radius }, { signal })),
     ),
+    impactMermaid: async (repositoryId: string, comparisonKey: string, options: { markdown?: boolean; signal?: AbortSignal } = {}): Promise<RepositoryImpactMermaid> => {
+      const params = new URLSearchParams({ comparisonKey })
+      if (options.markdown) params.set('markdown', '1')
+      const res = await fetch(apiUrl(`/repositories/${encodeURIComponent(repositoryId)}/impact/mermaid?${params.toString()}`), { signal: options.signal })
+      if (!res.ok) throw new Error('Failed to load the change diagram')
+      const json = await res.json() as Partial<RepositoryImpactMermaid>
+      return { code: json.code ?? '', markdown: json.markdown ?? '', warnings: json.warnings ?? [] }
+    },
     delete: (repositoryId: string, options: { deleteMaterialized?: boolean; deleteClone?: boolean } = {}): Promise<void> =>
       rpc(async () => {
         await codeIndexRepositoryClient.deleteRepository({

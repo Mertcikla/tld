@@ -77,7 +77,19 @@ vi.mock('../api/client', () => ({
   },
 }))
 
-vi.mock('../components/RepositoryChangeCanvas', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', { ...props, 'data-testid': 'mock-impact' }) }))
+vi.mock('../components/RepositoryChangeCanvas', () => ({
+  default: (props: Record<string, unknown>) => {
+    const diagram = props.diagram as { radius?: number; maxRadius?: number } | null | undefined
+    const onRadiusChange = props.onRadiusChange as ((radius: number) => void) | undefined
+    const children: React.ReactNode[] = []
+    if (diagram && onRadiusChange) {
+      for (let r = 0; r <= Math.min(3, diagram.maxRadius ?? 0); r++) {
+        children.push(React.createElement('button', { key: r, 'data-testid': `repositories-radius-${r}`, onClick: () => onRadiusChange(r) }))
+      }
+    }
+    return React.createElement('div', { ...props, 'data-testid': 'mock-impact' }, children)
+  },
+}))
 
 vi.mock('../utils/toast', () => ({ toast: vi.fn() }))
 vi.mock('../utils/sourceEditor', () => ({ useSourceEditor: () => ({ editor: 'zed' }) }))
