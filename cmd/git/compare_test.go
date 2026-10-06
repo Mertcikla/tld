@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,32 +15,21 @@ import (
 )
 
 func TestCompareMermaidAndProtoJSON(t *testing.T) {
-	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
-	t.Setenv("TLD_DATA_DIR", t.TempDir())
-	dir := t.TempDir()
-	gitRun(t, dir, "init", "-b", "main")
-	gitRun(t, dir, "config", "user.name", "Test")
-	gitRun(t, dir, "config", "user.email", "test@example.com")
-	writeSource(t, dir, "a.go", "package a\nfunc A() { return 1 }\n")
-	gitRun(t, dir, "add", ".")
-	gitRun(t, dir, "commit", "-m", "initial")
-	writeSource(t, dir, "a.go", "package a\nfunc A() { return 2 }\n")
-	gitRun(t, dir, "add", ".")
-	gitRun(t, dir, "commit", "-m", "change")
+	dir := compareRepo(t)
 
-	mermaid, stderr, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--mermaid")
+	mermaid, stderr, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--mermaid", "--verbose")
 	if err != nil {
 		t.Fatalf("mermaid compare: %v\n%s", err, stderr)
 	}
 	if !strings.Contains(mermaid, "flowchart LR") || !strings.Contains(mermaid, "a.go") {
 		t.Fatalf("mermaid output = %q", mermaid)
 	}
-	if !strings.Contains(stderr, "Parse sources") || !strings.Contains(stderr, "Save change overlay") {
+	if !strings.Contains(stderr, "Parse sources") || !strings.Contains(stderr, "Save diff diagram") {
 		t.Fatalf("progress output = %q", stderr)
 	}
 	baseAt := strings.Index(stderr, "base HEAD~1")
 	headAt := strings.Index(stderr, "head HEAD")
-	overlayAt := strings.Index(stderr, "Save change overlay")
+	overlayAt := strings.Index(stderr, "Save diff diagram")
 	if baseAt < 0 || headAt < 0 || overlayAt < 0 {
 		t.Fatalf("comparison sides not labelled: %q", stderr)
 	}
@@ -67,6 +57,66 @@ func TestCompareMermaidAndProtoJSON(t *testing.T) {
 	}
 }
 
+// Indexing both revisions must stay silent on stderr unless progress is asked
+// for, so scripted runs only carry the diagram.
+func TestCompareKeepsProgressBehindVerbose(t *testing.T) {
+	t.Run("quiet", func(t *testing.T) {
+		dir := compareRepo(t)
+		out, stderr, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--mermaid")
+		if err != nil {
+			t.Fatalf("compare: %v\n%s", err, stderr)
+		}
+		if !strings.Contains(out, "flowchart LR") {
+			t.Fatalf("mermaid output = %q", out)
+		}
+		if strings.TrimSpace(stderr) != "" {
+			t.Fatalf("progress leaked without --verbose: %q", stderr)
+		}
+	})
+
+	t.Run("verbose", func(t *testing.T) {
+		dir := compareRepo(t)
+		_, stderr, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "-v")
+		if err != nil {
+			t.Fatalf("compare: %v\n%s", err, stderr)
+		}
+		if !strings.Contains(stderr, "base HEAD~1") || !strings.Contains(stderr, "head HEAD") {
+			t.Fatalf("verbose progress missing sides: %q", stderr)
+		}
+	})
+}
+
+// Budget warnings stay visible without --verbose so CI logs record them.
+func TestCompareWarnsWithoutVerbose(t *testing.T) {
+	dir := compareRepo(t)
+	_, stderr, err := runGitCompare(t, "compare", dir, "HEAD~1", "HEAD", "--max-bytes", "1")
+	if err != nil {
+		t.Fatalf("compare: %v\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "warning: output is") {
+		t.Fatalf("expected budget warning on stderr: %q", stderr)
+	}
+}
+
+// compareRepo isolates the config and data directories and returns a checkout
+// with two commits, so a comparison has to index both revisions from scratch.
+func compareRepo(t *testing.T) string {
+	t.Helper()
+	t.Setenv("TLD_CONFIG_DIR", t.TempDir())
+	t.Setenv("TLD_DATA_DIR", t.TempDir())
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "-b", "main")
+	gitRun(t, dir, "config", "user.name", "Test")
+	gitRun(t, dir, "config", "user.email", "test@example.com")
+	writeSource(t, dir, "a.go", "package a\nfunc A() { return 1 }\n")
+	gitRun(t, dir, "add", ".")
+	gitRun(t, dir, "commit", "-m", "initial")
+	writeSource(t, dir, "a.go", "package a\nfunc A() { return 2 }\n")
+	gitRun(t, dir, "add", ".")
+	gitRun(t, dir, "commit", "-m", "change")
+	return dir
+}
+
 func TestCompareScopeResolvesDepthAndRadius(t *testing.T) {
 	if display, depth := compareScope(compareOptions{depth: 2}, false); display != 2 || depth != 2 {
 		t.Fatalf("depth only: display=%d depth=%d", display, depth)
@@ -90,14 +140,62 @@ func TestScopeToBudgetNarrowsRadius(t *testing.T) {
 			{Key: "context|2", Path: "c.go", Name: "c.go", Distance: 2, ElementId: 2},
 		},
 	}
-	result := scopeToBudget(diagram, 2, compareOptions{maxNodes: 2})
+	result := scopeToBudget(diagram, 2, compareOptions{maxNodes: 2}, outputSize(compareOptions{}))
 	if !result.limited || result.radius != 1 || len(result.diagram.GetNodes()) != 2 {
 		t.Fatalf("scopeToBudget: radius=%d limited=%v nodes=%d", result.radius, result.limited, len(result.diagram.GetNodes()))
 	}
-	result = scopeToBudget(diagram, 2, compareOptions{maxNodes: 2, maxBytes: 1})
+	result = scopeToBudget(diagram, 2, compareOptions{maxNodes: 2, maxBytes: 1}, outputSize(compareOptions{}))
 	if !result.limited || result.radius != 0 || len(result.diagram.GetNodes()) != 1 {
 		t.Fatalf("byte budget: radius=%d limited=%v nodes=%d", result.radius, result.limited, len(result.diagram.GetNodes()))
 	}
+}
+
+// The byte budget follows the selected output format, so a Mermaid run is not
+// measured (or narrowed) against the much larger protojson encoding.
+func TestScopeToBudgetMeasuresSelectedFormat(t *testing.T) {
+	facts := make([]*pb.CodeFact, 40)
+	for i := range facts {
+		facts[i] = &pb.CodeFact{Name: fmt.Sprintf("SymbolWithAVeryLongName%02d", i), BodyHash: strings.Repeat("a", 32)}
+	}
+	diagram := &pb.ImpactDiagram{
+		Nodes: []*pb.ImpactNode{
+			{Key: "file|a.go", Path: "a.go", Name: "a.go", Change: pb.ChangeKind_CHANGE_KIND_MODIFIED,
+				Symbols: &pb.CodeFactDelta{Modified: facts}},
+			{Key: "context|1", Path: "b.go", Name: "b.go", Distance: 1, ElementId: 1},
+		},
+		MaxRadius: 1,
+	}
+	opts := compareOptions{maxNodes: 10, maxBytes: 2048}
+	protojson := scopeToBudget(diagram, 1, opts, outputSize(opts))
+	mermaid := scopeToBudget(diagram, 1, opts, outputSize(compareOptions{mermaid: true}))
+	if !protojson.overBudget || protojson.size <= 2048 {
+		t.Fatalf("protojson size %d should exceed the budget", protojson.size)
+	}
+	if mermaid.overBudget || mermaid.limited || mermaid.radius != 1 || mermaid.size >= 2048 {
+		t.Fatalf("mermaid size %d narrowed the diagram: %+v", mermaid.size, mermaid)
+	}
+}
+
+func TestRenderDiagramSizesTheEmittedPayload(t *testing.T) {
+	diagram := &pb.ImpactDiagram{Nodes: []*pb.ImpactNode{{Key: "file|a.go", Path: "a.go", Name: "a.go"}}}
+	for _, opts := range []compareOptions{{}, {mermaid: true}, {markdown: true}} {
+		payload, size, err := renderDiagram(diagram, opts, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := len(payload) + protoJSONNewline(opts); size != want {
+			t.Fatalf("size %d, want %d for %+v", size, want, opts)
+		}
+	}
+}
+
+// protoJSONNewline reports the trailing newline the protojson writer adds on
+// top of the marshalled payload.
+func protoJSONNewline(opts compareOptions) int {
+	if opts.mermaid || opts.markdown {
+		return 0
+	}
+	return 1
 }
 
 func TestCompareTargetLabelNamesSideAndRevision(t *testing.T) {

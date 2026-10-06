@@ -241,7 +241,7 @@ var indexStageDisplay = map[string]string{
 
 var indexStageOrder = []string{
 	"Discover", "Parse sources", "Index symbols", "Relationships", "Infrastructure", "Verify",
-	"Publish snapshot", "Save change overlay", "Map graph",
+	"Publish snapshot", "Save diff diagram", "Map graph",
 }
 
 // compareStageOrder is the index stage prefix a comparison runs before saving
@@ -253,7 +253,7 @@ var compareStageOrder = []string{
 
 const (
 	stagePublish  = "Publish snapshot"
-	stageChanges  = "Save change overlay"
+	stageChanges  = "Save diff diagram"
 	stageMapGraph = "Map graph"
 )
 
