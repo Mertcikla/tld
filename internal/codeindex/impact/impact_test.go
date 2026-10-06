@@ -90,7 +90,7 @@ func TestImpactRadiusAndScopedMaterialization(t *testing.T) {
 		if node.Path == "c.go" {
 			t.Fatal("unmaterialized unchanged file was introduced")
 		}
-		if node.Context && node.ElementId != contextElement.ID {
+		if node.GetDistance() > 0 && node.ElementId != contextElement.ID {
 			t.Fatal("context did not reuse existing element")
 		}
 	}
@@ -344,7 +344,7 @@ func TestImpactPlacesAddedFilesNearConnectedElements(t *testing.T) {
 			existing = node
 		}
 	}
-	if existing == nil || !existing.Context || existing.ElementId != contextElement.ID {
+	if existing == nil || existing.GetDistance() == 0 || existing.ElementId != contextElement.ID {
 		t.Fatalf("connected element missing from context: %+v", diagram.Nodes)
 	}
 	if added == nil {

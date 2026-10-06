@@ -13,7 +13,6 @@ func impactFixture() *codeindexv1.ImpactDiagram {
 	return &codeindexv1.ImpactDiagram{
 		RepositoryId:  "repo-1",
 		ComparisonKey: "key-1",
-		Radius:        2,
 		MaxRadius:     3,
 		Diff: &codeindexv1.SnapshotDiff{
 			Sources: []*codeindexv1.SourceChange{
@@ -24,7 +23,7 @@ func impactFixture() *codeindexv1.ImpactDiagram {
 		Nodes: []*codeindexv1.ImpactNode{
 			{Key: "file|src/api.go", Path: "src/api.go", Name: "api.go", Change: codeindexv1.ChangeKind_CHANGE_KIND_MODIFIED},
 			{Key: "file|src/new.go", Path: "src/new.go", Name: "new.go", Change: codeindexv1.ChangeKind_CHANGE_KIND_ADDED},
-			{Key: "context|42", Path: "src/db.go", Name: "db.go", Context: true, ElementId: 42},
+			{Key: "context|42", Path: "src/db.go", Name: "db.go", Distance: 1, ElementId: 42},
 		},
 		Edges: []*codeindexv1.ImpactEdge{
 			{FromKey: "file|src/api.go", ToKey: "file|src/new.go", Change: codeindexv1.ChangeKind_CHANGE_KIND_ADDED, Weight: 2},
@@ -36,7 +35,7 @@ func impactFixture() *codeindexv1.ImpactDiagram {
 func TestExportImpactDiagram(t *testing.T) {
 	t.Parallel()
 
-	got := ExportImpactDiagram(impactFixture(), ImpactExportOptions{IncludeMetadata: true})
+	got := ExportImpactDiagram(impactFixture(), ImpactExportOptions{IncludeMetadata: true, Radius: 2})
 	for _, want := range []string{
 		"flowchart LR",
 		"%% tld-impact repo=repo-1 key=key-1 radius=2",

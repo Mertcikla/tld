@@ -8,38 +8,40 @@ import { MarkdownPreview } from './ViewMarkdownPanel/MarkdownPreview'
 import { markdownPanelBodySx } from './ViewMarkdownPanel/styles'
 
 type MermaidPaneState =
-  | { status: 'idle'; markdown: string; error: '' }
-  | { status: 'loading'; markdown: string; error: '' }
-  | { status: 'ready'; markdown: string; error: '' }
-  | { status: 'error'; markdown: string; error: string }
+  | { status: 'idle'; markdown: string; warnings: string[]; error: '' }
+  | { status: 'loading'; markdown: string; warnings: string[]; error: '' }
+  | { status: 'ready'; markdown: string; warnings: string[]; error: '' }
+  | { status: 'error'; markdown: string; warnings: string[]; error: string }
 
 export default function RepositoryChangeMermaid({
   repositoryId,
   comparisonKey,
+  radius,
   open,
 }: {
   repositoryId: string
   comparisonKey: string
+  radius: number
   open: boolean
 }) {
-  const [state, setState] = useState<MermaidPaneState>({ status: 'idle', markdown: '', error: '' })
+  const [state, setState] = useState<MermaidPaneState>({ status: 'idle', markdown: '', warnings: [], error: '' })
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     if (!open || !repositoryId || !comparisonKey) return undefined
     const controller = new AbortController()
-    setState({ status: 'loading', markdown: '', error: '' })
+    setState({ status: 'loading', markdown: '', warnings: [], error: '' })
     void api.repositories
-      .impactMermaid(repositoryId, comparisonKey, { markdown: true, signal: controller.signal })
+      .impactMermaid(repositoryId, comparisonKey, { radius, markdown: true, signal: controller.signal })
       .then((result) => {
-        if (!controller.signal.aborted) setState({ status: 'ready', markdown: result.markdown, error: '' })
+        if (!controller.signal.aborted) setState({ status: 'ready', markdown: result.markdown, warnings: result.warnings, error: '' })
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted || (err instanceof Error && err.name === 'AbortError')) return
-        setState({ status: 'error', markdown: '', error: err instanceof Error ? err.message : 'Could not load the change diagram' })
+        setState({ status: 'error', markdown: '', warnings: [], error: err instanceof Error ? err.message : 'Could not load the change diagram' })
       })
     return () => controller.abort()
-  }, [open, repositoryId, comparisonKey])
+  }, [open, repositoryId, comparisonKey, radius])
 
   useEffect(() => {
     setCopied(false)
@@ -110,6 +112,11 @@ export default function RepositoryChangeMermaid({
           </Text>
         ) : state.markdown ? (
           <Box p={4}>
+            {state.warnings.length > 0 && (
+              <Text mb={2} fontSize="xs" color="orange.300">
+                {state.warnings.join(' ')}
+              </Text>
+            )}
             <MarkdownPreview markdown={state.markdown} />
           </Box>
         ) : (

@@ -38,7 +38,7 @@ func placeAddedFiles(ctx context.Context, ws core.Store, diagram *pb.ImpactDiagr
 	added := make([]*pb.ImpactNode, 0, len(diagram.Nodes))
 	changed := make([]*pb.ImpactNode, 0, len(diagram.Nodes))
 	for _, node := range diagram.Nodes {
-		if node.Context {
+		if node.GetDistance() > 0 {
 			continue
 		}
 		changed = append(changed, node)
@@ -89,7 +89,7 @@ func placeAddedFiles(ctx context.Context, ws core.Store, diagram *pb.ImpactDiagr
 	// negative ID that never collides with a real workspace element.
 	ids := make(map[string]int64, len(diagram.Nodes))
 	for _, node := range diagram.Nodes {
-		if node.Context {
+		if node.GetDistance() > 0 {
 			ids[node.Key] = node.ElementId
 		}
 	}

@@ -41,7 +41,6 @@ func registerMapperHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, 
 	}
 	path, handler := codeindexv1connect.NewMapperServiceHandler(svc)
 	mux.Handle("/api"+path, http.StripPrefix("/api", handler))
-	registerImpactMermaidHandler(mux, svc)
 }
 
 func (s *mapperService) MapRepository(ctx context.Context, req *connect.Request[codeindexv1.MapRepositoryRequest], stream *connect.ServerStream[codeindexv1.MapRepositoryEvent]) error {

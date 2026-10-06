@@ -110,7 +110,7 @@ func buildViewGroups(diagram *pb.ImpactDiagram, data core.ExploreData, mappings 
 			continue
 		}
 		view := int64(0)
-		if node.GetContext() {
+		if node.GetDistance() > 0 {
 			view = hierarchy.element[node.GetElementId()]
 		} else {
 			view = hierarchy.file[filepath.ToSlash(node.GetPath())]

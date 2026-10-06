@@ -24,7 +24,7 @@ export default function RepositoryChangeMenu({
   onToggleMermaid: () => void
   hasMermaid?: boolean
 }) {
-  const radiusStops = Array.from({ length: Math.min(3, maxRadius) + 1 }, (_, r) => r)
+  const radiusStops = Array.from({ length: Math.max(0, maxRadius) + 1 }, (_, r) => r)
 
   return (
     <VStack

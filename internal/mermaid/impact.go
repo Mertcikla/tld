@@ -24,7 +24,10 @@ type ImpactExportOptions struct {
 	// IncludeMetadata prepends a %% tld-impact comment with the repository,
 	// comparison key, and radius so the block can be round-tripped later.
 	IncludeMetadata bool
-	Colors          ImpactExportColors
+	// Radius is the display blast radius the diagram was scoped to; it is only
+	// emitted in the metadata comment.
+	Radius uint32
+	Colors ImpactExportColors
 }
 
 // DefaultImpactExportColors returns the palette used by the change overlay
@@ -79,7 +82,7 @@ func ExportImpactDiagram(diagram *codeindexv1.ImpactDiagram, opts ImpactExportOp
 		}
 		appendEntry("repo", diagram.GetRepositoryId())
 		appendEntry("key", diagram.GetComparisonKey())
-		parts = append(parts, fmt.Sprintf("radius=%d", diagram.GetRadius()))
+		parts = append(parts, fmt.Sprintf("radius=%d", opts.Radius))
 		lines = append(lines, strings.Join(parts, " "))
 	}
 
@@ -331,7 +334,7 @@ func impactNodeLabel(node *codeindexv1.ImpactNode, stats map[string]*codeindexv1
 		label = node.GetKey()
 	}
 	lines := []string{label}
-	if node.GetContext() {
+	if node.GetDistance() > 0 {
 		lines = append(lines, "(context)")
 	} else if stat, ok := stats[node.GetPath()]; ok {
 		added, removed := uint32(0), uint32(0)
@@ -349,7 +352,7 @@ func impactNodeLabel(node *codeindexv1.ImpactNode, stats map[string]*codeindexv1
 }
 
 func impactNodeClass(node *codeindexv1.ImpactNode) string {
-	if node.GetContext() {
+	if node.GetDistance() > 0 {
 		return "context"
 	}
 	switch node.GetChange() {

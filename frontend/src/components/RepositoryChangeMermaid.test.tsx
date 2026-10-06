@@ -31,7 +31,7 @@ vi.mock('@chakra-ui/react', async () => {
 const markdown = '```mermaid\nflowchart LR\n  a --> b\n```\n'
 
 function renderPane(overrides: Partial<React.ComponentProps<typeof RepositoryChangeMermaid>> = {}) {
-  return create(<RepositoryChangeMermaid repositoryId="repo-1" comparisonKey="key-1" open {...overrides} />)
+  return create(<RepositoryChangeMermaid repositoryId="repo-1" comparisonKey="key-1" radius={0} open {...overrides} />)
 }
 
 describe('RepositoryChangeMermaid', () => {
@@ -47,7 +47,7 @@ describe('RepositoryChangeMermaid', () => {
       renderer = renderPane()
     })
 
-    expect(api.repositories.impactMermaid).toHaveBeenCalledWith('repo-1', 'key-1', expect.objectContaining({ markdown: true }))
+    expect(api.repositories.impactMermaid).toHaveBeenCalledWith('repo-1', 'key-1', expect.objectContaining({ markdown: true, radius: 0 }))
     expect(renderer.root.findByProps({ 'data-testid': 'mock-markdown' }).props.children).toContain('flowchart LR')
   })
 

@@ -84,10 +84,13 @@ import {
   type Snapshot as CodeSnapshotProto,
   type SnapshotDiff as SnapshotDiffProto,
   type ImpactDiagram as ImpactDiagramProto,
+  type ImpactScene as ImpactSceneProto,
+  type ImpactSceneView as ImpactSceneViewProto,
   type CodeFact,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
 import { transport } from './transport'
 import { apiUrl, fetchApiAsset } from '../config/runtime'
+import { MAX_BLAST_RADIUS } from '../utils/impactScope'
 import {
   normalizeConnectorRouteStyle,
   normalizeLogoUrl,
@@ -240,7 +243,7 @@ export interface ImpactFileNode {
   path: string
   name: string
   change: SnapshotSourceChange['change'] | 'unchanged'
-  context: boolean
+  distance: number
   elementId: number
   symbols: ImpactSymbols
   x: number
@@ -253,7 +256,6 @@ export interface RepositoryImpact {
   diff: SnapshotDiff
   nodes: ImpactFileNode[]
   edges: { fromKey: string; toKey: string; change: SnapshotSourceChange['change'] | 'unchanged'; weight: number }[]
-  radius: number
   maxRadius: number
   version: string
 }
@@ -261,6 +263,22 @@ export interface RepositoryImpactMermaid {
   code: string
   markdown: string
   warnings: string[]
+}
+// RepositoryImpactOverlay is one placement's transient change annotation.
+// Context neighbours carry the hop distance used for client-side scoping.
+export interface RepositoryImpactOverlay {
+  change: SnapshotSourceChange['change'] | 'unchanged'
+  path: string
+  linesAdded?: number
+  linesRemoved?: number
+  symbols: string[]
+  distance: number
+}
+// RepositoryImpactScene is the backend-assembled change scene: the repository
+// workspace subset, context neighbours, and transient placements with overlays.
+export interface RepositoryImpactScene extends ExploreData {
+  fallbackViewId: number
+  overlays: Record<number, RepositoryImpactOverlay>
 }
 export interface LiveRepositoryImpact {
   diagram: RepositoryImpact | null
@@ -570,13 +588,62 @@ function mapImpact(diagram: ImpactDiagramProto): RepositoryImpact {
   return {
     repositoryId: diagram.repositoryId, comparisonKey: diagram.comparisonKey,
     viewId: Number(diagram.viewId), diff: mapSnapshotDiff(diagram.diff),
-    radius: diagram.radius, maxRadius: diagram.maxRadius, version: diagram.version,
+    maxRadius: diagram.maxRadius, version: diagram.version,
     nodes: diagram.nodes.map((node) => ({
       key: node.key, path: node.path, name: node.name, change: change(node.change),
-      context: node.context, elementId: Number(node.elementId), x: node.x, y: node.y,
+      distance: node.distance, elementId: Number(node.elementId), x: node.x, y: node.y,
       symbols: { added: node.symbols?.added ?? [], removed: node.symbols?.removed ?? [], modified: node.symbols?.modified ?? [] },
     })),
     edges: diagram.edges.map((edge) => ({ ...edge, change: change(edge.change) })),
+  }
+}
+
+function mapImpactSceneView(view: ImpactSceneViewProto): ViewTreeNode {
+  return {
+    id: Number(view.id),
+    owner_element_id: view.ownerElementId != null ? Number(view.ownerElementId) : null,
+    name: view.name,
+    description: view.description ?? null,
+    level_label: view.levelLabel ?? null,
+    tags: [...view.tags],
+    level: view.level,
+    depth: view.depth,
+    created_at: view.createdAt,
+    updated_at: view.updatedAt,
+    parent_view_id: view.parentViewId != null ? Number(view.parentViewId) : null,
+    children: view.children.map(mapImpactSceneView),
+  }
+}
+
+export function mapImpactScene(scene: ImpactSceneProto): RepositoryImpactScene {
+  const views: ExploreData['views'] = {}
+  const overlays: Record<number, RepositoryImpactOverlay> = {}
+  for (const [key, content] of Object.entries(scene.views)) {
+    const placements = content.placements.map((placement) => {
+      const mapped = protoPlacedElement(placement as unknown as Record<string, unknown>)
+      if (placement.overlay) {
+        overlays[mapped.element_id] = {
+          change: placement.overlay.change === ChangeKind.UNSPECIFIED ? 'unchanged' : mapSnapshotChangeKind(placement.overlay.change),
+          path: placement.overlay.path,
+          linesAdded: placement.overlay.linesAdded,
+          linesRemoved: placement.overlay.linesRemoved,
+          symbols: [...placement.overlay.symbols],
+          distance: placement.overlay.distance,
+        }
+      }
+      return mapped
+    })
+    views[key] = {
+      placements,
+      connectors: content.connectors.map((connector) => protoConnector(connector as unknown as Record<string, unknown>)),
+    }
+  }
+  return {
+    tree: scene.tree.map(mapImpactSceneView),
+    views,
+    navigations: scene.navigations.map((navigation) => protoNavigation(navigation as unknown as Record<string, unknown>)),
+    fallbackViewId: Number(scene.fallbackViewId),
+    overlays,
   }
 }
 
@@ -846,7 +913,7 @@ export function libraryElementToDependency(element: LibraryElement): DependencyE
 }
 
 export function protoPlacedElement(p: Record<string, unknown>): PlacedElement {
-  const technologyConnectors = normalizeTechnologyConnectors(p.technology_connect_ors ?? p.technology_connectors ?? p.technology_links ?? p.technologyLinks)
+  const technologyConnectors = normalizeTechnologyConnectors(p.technology_connect_ors ?? p.technology_connectors ?? p.technology_links ?? p.technologyLinks ?? p.technologyConnectors)
   return {
     id: Number(p.id ?? 0),
     view_id: Number(p.view_id ?? p.viewId ?? 0),
@@ -935,13 +1002,14 @@ export function protoDependencyConnector(e: Record<string, unknown>): Dependency
 }
 
 export function protoNavigation(n: Record<string, unknown>): ViewConnector {
+  const elementID = n.element_id ?? n.elementId
   return {
     id: Number(n.id ?? 0),
-    element_id: (n.element_id ?? null) as number | null,
-    from_view_id: Number(n.from_view_id ?? 0),
-    to_view_id: Number(n.to_view_id ?? 0),
-    to_view_name: String(n.to_view_name ?? ''),
-    relation_type: String(n.relation_type ?? 'child'),
+    element_id: elementID != null ? Number(elementID) : null,
+    from_view_id: Number(n.from_view_id ?? n.fromViewId ?? 0),
+    to_view_id: Number(n.to_view_id ?? n.toViewId ?? 0),
+    to_view_name: String(n.to_view_name ?? n.toViewName ?? ''),
+    relation_type: String(n.relation_type ?? n.relationType ?? 'child'),
   }
 }
 
@@ -2129,10 +2197,10 @@ export const api = {
       }
     },
     compare: async (repositoryId: string, options: {
-      base: RepositoryMapOptions; head: RepositoryMapOptions; radius?: number
+      base: RepositoryMapOptions; head: RepositoryMapOptions; contextDepth?: number
       signal?: AbortSignal; onProgress?: (progress: RepositoryMapProgress) => void
     }): Promise<RepositoryImpact> => {
-      const stream = codeIndexMapperClient.compareRepository({ repositoryId, base: options.base, head: options.head, radius: options.radius ?? 0 }, { signal: options.signal })
+      const stream = codeIndexMapperClient.compareRepository({ repositoryId, base: options.base, head: options.head, contextDepth: options.contextDepth ?? MAX_BLAST_RADIUS }, { signal: options.signal })
       let result: RepositoryImpact | null = null
       for await (const event of stream) {
         if (event.event.case === 'progress') options.onProgress?.(event.event.value)
@@ -2160,17 +2228,20 @@ export const api = {
       const result = await codeIndexWatchClient.stopWatch({ repositoryId })
       return mapWatchStatus(result)
     }),
-    impactRadius: (repositoryId: string, comparisonKey: string, radius: number, signal?: AbortSignal): Promise<RepositoryImpact> => rpc(async () =>
-      mapImpact(await codeIndexMapperClient.setImpactRadius({ repositoryId, comparisonKey, radius }, { signal })),
-    ),
-    impactMermaid: async (repositoryId: string, comparisonKey: string, options: { markdown?: boolean; signal?: AbortSignal } = {}): Promise<RepositoryImpactMermaid> => {
-      const params = new URLSearchParams({ comparisonKey })
-      if (options.markdown) params.set('markdown', '1')
-      const res = await fetch(apiUrl(`/repositories/${encodeURIComponent(repositoryId)}/impact/mermaid?${params.toString()}`), { signal: options.signal })
-      if (!res.ok) throw new Error('Failed to load the change diagram')
-      const json = await res.json() as Partial<RepositoryImpactMermaid>
-      return { code: json.code ?? '', markdown: json.markdown ?? '', warnings: json.warnings ?? [] }
-    },
+    impactScene: (repositoryId: string, comparisonKey: string, signal?: AbortSignal): Promise<RepositoryImpactScene> => rpc(async () => {
+      const response = await codeIndexMapperClient.getImpactScene({ repositoryId, comparisonKey }, { signal })
+      if (!response.scene) throw new Error('Impact scene unavailable')
+      return mapImpactScene(response.scene)
+    }),
+    impactMermaid: (repositoryId: string, comparisonKey: string, options: { radius?: number; markdown?: boolean; signal?: AbortSignal } = {}): Promise<RepositoryImpactMermaid> => rpc(async () => {
+      const response = await codeIndexMapperClient.exportImpactMermaid({
+        repositoryId,
+        comparisonKey,
+        radius: options.radius ?? 0,
+        markdown: options.markdown ?? false,
+      }, { signal: options.signal })
+      return { code: response.code, markdown: response.markdown, warnings: [...response.warnings] }
+    }),
     delete: (repositoryId: string, options: { deleteMaterialized?: boolean; deleteClone?: boolean } = {}): Promise<void> =>
       rpc(async () => {
         await codeIndexRepositoryClient.deleteRepository({

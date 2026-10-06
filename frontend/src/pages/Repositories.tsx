@@ -719,23 +719,6 @@ export default function Repositories() {
       if (operation.current === controller) { operation.current = null; setBusy(false) }
     }
   }
-  const changeRadius = async (radius: number) => {
-    if (!shownImpact || busy) return
-    const nextRadius = Math.min(radius, 3)
-    const repositoryId = selectedId
-    const key = shownImpact.comparisonKey
-    const controller = new AbortController()
-    operation.current = controller; setBusy(true); setOperationError('')
-    try {
-      const result = await api.repositories.impactRadius(repositoryId, key, nextRadius, controller.signal)
-      if (!controller.signal.aborted && selectedRef.current === repositoryId && operation.current === controller) {
-        if (mode === 'live') setLive((old) => old ? { ...old, diagram: result } : old)
-        else setComparison(result)
-      }
-    } catch (err) {
-      if (!controller.signal.aborted && selectedRef.current === repositoryId) setOperationError(err instanceof Error ? err.message : 'Could not update blast radius')
-    } finally { if (operation.current === controller) { operation.current = null; setBusy(false) } }
-  }
   const startWatch = async () => {
     const repositoryId = selectedId
     setWatchBusy(true)
@@ -1905,7 +1888,7 @@ export default function Repositories() {
                     )}
                     </Box>
                   </Box>
-                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} selectedPath={selectedPath} repositoryRoot={selected.root} busy={busy} onRadiusChange={(radius) => void changeRadius(radius)} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
+                  <RepositoryChangeCanvas key={`${selectedId}:${mode}:${shownImpact?.comparisonKey ?? ''}`} diagram={shownImpact} selectedPath={selectedPath} busy={busy} emptyMessage={mode === 'pr' ? pullRequest ? 'Compare the PR maps to overlay changes on the workspace.' : 'Select an open PR or enter its number or URL to start a review.' : mode === 'live' ? 'Waiting for the watcher to prepare the live map.' : undefined} />
                 </Flex>
               </>
             ))}

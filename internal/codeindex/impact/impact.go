@@ -15,8 +15,10 @@ import (
 )
 
 // Build describes changed files, attaches their symbol deltas, and adds
-// eligible existing workspace resources within the requested file-dependency radius.
-func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, key, fromID, toID string, radius uint32) (*pb.ImpactDiagram, error) {
+// eligible existing workspace resources within the requested file-dependency
+// radius. Every node carries its hop distance so callers can scope the diagram
+// client-side without another server round trip.
+func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, key, fromID, toID string, contextDepth uint32) (*pb.ImpactDiagram, error) {
 	diff, err := idx.ImpactDiff(ctx, fromID, toID)
 	if err != nil {
 		return nil, err
@@ -131,12 +133,11 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 		}
 		diagram.MaxRadius = max(diagram.MaxRadius, hops)
 		seenResources[element.ID] = true
-		if hops > radius {
+		if hops > contextDepth {
 			continue
 		}
-		diagram.Nodes = append(diagram.Nodes, &pb.ImpactNode{Key: fmt.Sprintf("context|%d", element.ID), Path: path, Name: element.Name, Context: true, ElementId: element.ID})
+		diagram.Nodes = append(diagram.Nodes, &pb.ImpactNode{Key: fmt.Sprintf("context|%d", element.ID), Path: path, Name: element.Name, Distance: hops, ElementId: element.ID})
 	}
-	diagram.Radius = min(radius, diagram.MaxRadius)
 	sort.Slice(diagram.Nodes, func(i, j int) bool { return diagram.Nodes[i].Key < diagram.Nodes[j].Key })
 	nodesByPath := map[string][]*pb.ImpactNode{}
 	for _, node := range diagram.Nodes {

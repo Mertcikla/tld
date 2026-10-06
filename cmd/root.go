@@ -8,6 +8,7 @@ import (
 	configcmd "github.com/mertcikla/tld/v2/cmd/config"
 	"github.com/mertcikla/tld/v2/cmd/connect"
 	doctorcmd "github.com/mertcikla/tld/v2/cmd/doctor"
+	gitcmd "github.com/mertcikla/tld/v2/cmd/git"
 	importcmd "github.com/mertcikla/tld/v2/cmd/import"
 	indexcmd "github.com/mertcikla/tld/v2/cmd/index"
 	"github.com/mertcikla/tld/v2/cmd/initialize"
@@ -167,6 +168,9 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 	techCmd := techcmd.NewTechCmd()
 	techCmd.GroupID = queryGroup.ID
 
+	gitCmd := gitcmd.NewGitCmd()
+	gitCmd.GroupID = queryGroup.ID
+
 	// Server & integration commands
 	serveCmd := serve.NewServeCmd(nil)
 	serveCmd.GroupID = serverGroup.ID
@@ -206,6 +210,7 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 		inspectCmd,
 		listCmd,
 		techCmd,
+		gitCmd,
 		doctorCmd,
 		indexCmd,
 		serveCmd,

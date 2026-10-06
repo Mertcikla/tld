@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"buf.build/gen/go/tldiagramcom/diagram/connectrpc/go/codeindex/v1/codeindexv1connect"
@@ -14,7 +15,7 @@ import (
 	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
-func TestCompareRepositoryRadiusNoCheckout(t *testing.T) {
+func TestCompareRepositoryNoCheckout(t *testing.T) {
 	workspaceID := uuid.New()
 	ws, routes := newTestServer(t, workspaceID, nil)
 	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
@@ -51,15 +52,30 @@ func TestCompareRepositoryRadiusNoCheckout(t *testing.T) {
 	if result == nil || result.ViewId != 0 || len(result.Nodes) != 1 || len(result.Nodes[0].Symbols.Modified) != 1 {
 		t.Fatalf("comparison: %+v", result)
 	}
-	radius, err := client.SetImpactRadius(ctx, connect.NewRequest(&pb.SetImpactRadiusRequest{RepositoryId: repoID, ComparisonKey: result.ComparisonKey, Radius: 3}))
+	if result.Nodes[0].Distance != 0 {
+		t.Fatalf("direct change distance = %d, want 0", result.Nodes[0].Distance)
+	}
+	mermaid, err := client.ExportImpactMermaid(ctx, connect.NewRequest(&pb.ExportImpactMermaidRequest{
+		RepositoryId: repoID, ComparisonKey: result.ComparisonKey, Markdown: true,
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if radius.Msg.ViewId != result.ViewId {
-		t.Fatal("radius duplicated view")
+	if !strings.Contains(mermaid.Msg.GetCode(), "flowchart LR") || !strings.Contains(mermaid.Msg.GetCode(), "a.go") {
+		t.Fatalf("mermaid code: %q", mermaid.Msg.GetCode())
+	}
+	if !strings.HasPrefix(mermaid.Msg.GetMarkdown(), "```mermaid\n") {
+		t.Fatalf("mermaid markdown: %q", mermaid.Msg.GetMarkdown())
+	}
+	scene, err := client.GetImpactScene(ctx, connect.NewRequest(&pb.GetImpactSceneRequest{RepositoryId: repoID, ComparisonKey: result.ComparisonKey}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scene.Msg.GetScene() == nil {
+		t.Fatal("scene missing")
 	}
 	snapshots, err := idx.Snapshots(ctx, repoID)
 	if err != nil || len(snapshots) != 2 {
-		t.Fatal("radius indexed sources")
+		t.Fatal("scene or mermaid indexed sources")
 	}
 }

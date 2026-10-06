@@ -660,13 +660,9 @@ func (e *engine) scanWatched(ctx context.Context, root string, state gitstate.Qu
 	if err != nil {
 		return nil, parity.Report{}, nil, err
 	}
-	radius := uint32(0)
-	if recorded, loadErr := e.store.Impact(ctx, repoID, "live"); loadErr == nil {
-		radius = recorded.Radius
-	}
 	reportStage("live-map")
 	tracker.Begin(stageChanges)
-	if _, err = impact.Save(ctx, e.ws, e.store, repoID, "live", base.Id, snap.Id, radius); err != nil {
+	if _, err = impact.Save(ctx, e.ws, e.store, repoID, "live", base.Id, snap.Id, impact.DefaultContextDepth); err != nil {
 		return nil, parity.Report{}, nil, err
 	}
 	var mapRes *pb.MapResult
