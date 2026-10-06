@@ -14,6 +14,7 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react'
+import { ChevronDownIcon } from '@chakra-ui/icons'
 import {
   api,
   type RepositoryCommit,
@@ -131,18 +132,35 @@ export default function RepositoryHistory({
         h="40px"
         gap={{ base: 2, md: 3 }}
         alignItems="center"
+        cursor="pointer"
+        role="button"
+        tabIndex={0}
+        aria-expanded={!collapsed}
+        data-testid="repositories-history-summary"
+        onClick={onToggle}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            onToggle()
+          }
+        }}
+        _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '-2px' }}
         templateColumns={{ base: 'auto minmax(0, 1fr) auto', md: 'minmax(0, 1fr) minmax(0, 200px) minmax(0, 1fr)' }}
       >
-        <Button
-          size="xs"
-          variant="ghost"
-          onClick={onToggle}
-          aria-expanded={!collapsed}
-          justifySelf="start"
-        >
-          Commit history
-        </Button>
-        <Box minW={0}>
+        <HStack spacing={1} minW={0} justifySelf="start">
+          <ChevronDownIcon
+            boxSize="14px"
+            color="gray.500"
+            flexShrink={0}
+            transform={collapsed ? 'rotate(-90deg)' : undefined}
+            transition="transform 0.2s"
+          />
+          <Text fontSize="sm" fontWeight="semibold" color="gray.200" isTruncated>
+            Commit history
+          </Text>
+        </HStack>
+        <Box minW={0} onClick={(event) => event.stopPropagation()}>
           {!collapsed && (
             <InputGroup size="xs" w="full" maxW="200px">
               <Input
@@ -163,9 +181,22 @@ export default function RepositoryHistory({
             </InputGroup>
           )}
         </Box>
-        <Text fontSize="xs" color="gray.500" textAlign="right" justifySelf="end" whiteSpace="nowrap">
-          {layout.rows.length} commits
-        </Text>
+        <HStack spacing={2} minW={0} justifySelf="end">
+          {base && head && (
+            <Text
+              fontFamily="mono"
+              fontSize="xs"
+              color="gray.400"
+              whiteSpace="nowrap"
+              display={{ base: 'none', lg: 'block' }}
+            >
+              {base.slice(0, 7)} → {head.slice(0, 7)}
+            </Text>
+          )}
+          <Text fontSize="xs" color="gray.500" whiteSpace="nowrap">
+            {layout.rows.length} commits
+          </Text>
+        </HStack>
       </Grid>
       {!collapsed && (
         <>

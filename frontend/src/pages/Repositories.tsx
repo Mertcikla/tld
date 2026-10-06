@@ -31,6 +31,7 @@ import {
 } from '@chakra-ui/react'
 import {
   AddIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   DeleteIcon,
@@ -108,6 +109,27 @@ function age(unix: number) {
       : minutes < 1440
         ? `${Math.floor(minutes / 60)}h ago`
         : `${Math.floor(minutes / 1440)}d ago`
+}
+function targetSummary(value: string, snapshots: CodeSnapshot[]) {
+  if (!value) return 'Not selected'
+  if (value === 'working_tree') return 'Working tree'
+  if (value.startsWith('commit:')) return short(value.slice(7))
+  const snapshot = snapshotForTarget(value, snapshots)
+  if (snapshot) return snapshot.gitBranch || short(snapshot.gitRevision)
+  return value.startsWith('snapshot:') ? short(value.slice(9)) : value
+}
+function targetStatus(
+  value: string,
+  snapshots: CodeSnapshot[],
+  maps: CompletedRepositoryMap[],
+) {
+  const snapshot = snapshotForTarget(value, snapshots)
+  const mapped = !!snapshot && maps.some((m) => m.result.snapshotId === snapshot.id)
+  return mapped
+    ? { label: 'Mapped', colorScheme: 'green' }
+    : snapshot
+      ? { label: 'Indexed', colorScheme: 'blue' }
+      : { label: 'Not captured', colorScheme: 'gray' }
 }
 function Glyph({ name }: { name: string }) {
   return (
@@ -406,6 +428,7 @@ export default function Repositories() {
   const [showRepositorySettings, setShowRepositorySettings] = useState(() => params.get('page') === 'settings')
   const [collapsed, setCollapsed] = useState(false)
   const [historyCollapsed, setHistoryCollapsed] = useState(false)
+  const [compareCollapsed, setCompareCollapsed] = useState(false)
   const [showIds] = useState(readShowIds)
   const [snapshots, setSnapshots] = useState<CodeSnapshot[]>([])
   const [maps, setMaps] = useState<CompletedRepositoryMap[]>([])
@@ -658,7 +681,7 @@ export default function Repositories() {
       compareTargets.current = null
     }
     operation.current?.abort(); operation.current = null
-    setBusy(false); setProgress(null); setComparison(null); setOperationError(''); setSelectedPath(''); setFilesTab('files'); setMode(next)
+    setBusy(false); setProgress(null); setComparison(null); setOperationError(''); setSelectedPath(''); setFilesTab('files'); setCompareCollapsed(false); setMode(next)
   }
   useEffect(() => {
     return () => { prListOperation.current?.abort(); prListOperation.current = null }
@@ -783,6 +806,7 @@ export default function Repositories() {
     setBaseBranch('')
     setHeadBranch('')
     setComparison(null); setSelectedPath(''); setFilesTab('files')
+    setHistoryCollapsed(false); setCompareCollapsed(false)
     initialized.current = ''
     restored.current = { base: '', head: '' }
     setSelectedId(id)
@@ -835,7 +859,11 @@ export default function Repositories() {
           base: targetMapOptions(base, baseBranch), head: targetMapOptions(head, headBranch),
           signal: controller.signal, onProgress: (next) => { if (isActive()) setProgress(next) },
         })
-        if (isActive()) setComparison(result)
+        if (isActive()) {
+          setComparison(result)
+          setHistoryCollapsed(true)
+          setCompareCollapsed(true)
+        }
       } else {
         await map(
           kind === 'base' ? base : head,
@@ -1743,43 +1771,57 @@ export default function Repositories() {
                   </>
                 )}
                 {(mode === 'compare' || (mode === 'pr' && pullRequest)) && (
-                  <Box
-                    p={4}
-                    borderBottom="1px solid"
-                    borderColor="whiteAlpha.100"
-                  >
-                    <Grid
-                      templateColumns={{ base: '1fr', md: '1fr 1fr' }}
+                  <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
+                    <Flex
+                      px={4}
+                      py={3}
                       gap={3}
+                      align="center"
+                      wrap="wrap"
+                      cursor="pointer"
+                      role="button"
+                      tabIndex={0}
+                      aria-expanded={!compareCollapsed}
+                      data-testid="repositories-compare-summary"
+                      onClick={() => setCompareCollapsed((current) => !current)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          setCompareCollapsed((current) => !current)
+                        }
+                      }}
+                      _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '-2px' }}
                     >
-                      <CompareSide
-                        side="Base"
-                        value={base}
-                        branch={baseBranch}
-                        snapshots={snapshots}
-                        maps={maps}
-                        history={history}
-                        showIds={showIds}
-                        disabled={busy || dataLoading}
-                        locked={mode === 'pr'}
-                        onChange={(value) => chooseTarget('base', value)}
-                        onMap={() => void run('base')}
-                      />
-                      <CompareSide
-                        side="Head"
-                        value={head}
-                        branch={headBranch}
-                        snapshots={snapshots}
-                        maps={maps}
-                        history={history}
-                        showIds={showIds}
-                        disabled={busy || dataLoading}
-                        locked={mode === 'pr'}
-                        onChange={(value) => chooseTarget('head', value)}
-                        onMap={() => void run('head')}
-                      />
-                    </Grid>
-                    <Flex mt={3} gap={3} align="center" wrap="wrap">
+                      <HStack spacing={2} minW={0}>
+                        <Box w={2} h={2} borderRadius="full" bg="gray.400" flexShrink={0} />
+                        <Label>Base</Label>
+                        <Text fontSize="xs" color="gray.300" isTruncated>
+                          {targetSummary(base, snapshots)}
+                        </Text>
+                        <Badge
+                          colorScheme={targetStatus(base, snapshots, maps).colorScheme}
+                          fontSize="2xs"
+                          flexShrink={0}
+                        >
+                          {targetStatus(base, snapshots, maps).label}
+                        </Badge>
+                      </HStack>
+                      <Text as="span" color="gray.600" flexShrink={0}>→</Text>
+                      <HStack spacing={2} minW={0}>
+                        <Box w={2} h={2} borderRadius="full" bg="green.400" flexShrink={0} />
+                        <Label>Head</Label>
+                        <Text fontSize="xs" color="gray.300" isTruncated>
+                          {targetSummary(head, snapshots)}
+                        </Text>
+                        <Badge
+                          colorScheme={targetStatus(head, snapshots, maps).colorScheme}
+                          fontSize="2xs"
+                          flexShrink={0}
+                        >
+                          {targetStatus(head, snapshots, maps).label}
+                        </Badge>
+                      </HStack>
                       <Box flex={1} />
                       <Button
                         {...accentStyle}
@@ -1788,7 +1830,10 @@ export default function Repositories() {
                         isLoading={busy}
                         loadingText="Comparing…"
                         isDisabled={!base || !head || dataLoading}
-                        onClick={() => void run('compare')}
+                        onClick={(event) => {
+                          event?.stopPropagation()
+                          void run('compare')
+                        }}
                       >
                         Compare maps
                       </Button>
@@ -1796,14 +1841,57 @@ export default function Repositories() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => {
+                          onClick={(event) => {
+                            event?.stopPropagation()
                             operation.current?.abort()
                           }}
                         >
                           Cancel
                         </Button>
                       )}
+                      <ChevronDownIcon
+                        boxSize="16px"
+                        color="gray.500"
+                        flexShrink={0}
+                        transform={compareCollapsed ? 'rotate(-90deg)' : undefined}
+                        transition="transform 0.2s"
+                      />
                     </Flex>
+                    {!compareCollapsed && (
+                      <Box px={4} pb={4}>
+                        <Grid
+                          templateColumns={{ base: '1fr', md: '1fr 1fr' }}
+                          gap={3}
+                        >
+                          <CompareSide
+                            side="Base"
+                            value={base}
+                            branch={baseBranch}
+                            snapshots={snapshots}
+                            maps={maps}
+                            history={history}
+                            showIds={showIds}
+                            disabled={busy || dataLoading}
+                            locked={mode === 'pr'}
+                            onChange={(value) => chooseTarget('base', value)}
+                            onMap={() => void run('base')}
+                          />
+                          <CompareSide
+                            side="Head"
+                            value={head}
+                            branch={headBranch}
+                            snapshots={snapshots}
+                            maps={maps}
+                            history={history}
+                            showIds={showIds}
+                            disabled={busy || dataLoading}
+                            locked={mode === 'pr'}
+                            onChange={(value) => chooseTarget('head', value)}
+                            onMap={() => void run('head')}
+                          />
+                        </Grid>
+                      </Box>
+                    )}
                   </Box>
                 )}
                 {busy && (
