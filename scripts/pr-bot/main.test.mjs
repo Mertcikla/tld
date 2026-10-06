@@ -98,6 +98,8 @@ test('PR caches preserve the comparison and config changes namespace caches', t 
   assert.notEqual(f.result().base, f.result().head);
   assert.equal(f.result().prNumber, 7);
   const first = readFileSync(f.env.GITHUB_OUTPUT, 'utf8');
+  const release = first.match(/tld-version<<TLD_OUTPUT\n(v[^\n]+)/)[1];
+  assert.ok(first.includes(`tld-binary-v2-Linux-X64-tld${release.slice(1)}-`));
   f.run('init', { INPUT_PREPARE_COMMAND: 'echo setup' });
   const keys = readFileSync(f.env.GITHUB_OUTPUT, 'utf8').match(/cache-key<<TLD_OUTPUT\n([^\n]+)/g);
   assert.ok(first.includes('-pr-7-'));

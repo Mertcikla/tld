@@ -64,8 +64,6 @@ runs:
       uses: actions/setup-node@v6
       with:
         node-version: '24'
-        cache: npm
-        cache-dependency-path: ${{ github.action_path }}/frontend/package-lock.json
 
     - name: Restore tld binary and indexers
       id: binary-cache
@@ -76,7 +74,7 @@ runs:
         path: ${{ steps.init.outputs.binary-dir }}
         key: ${{ steps.init.outputs.binary-key }}
 
-    - name: Build tld and install SCIP
+    - name: Download tld and install SCIP
       id: tools
       if: steps.init.outputs.binary-key != '' && steps.init.outputs.status != 'error'
       continue-on-error: true
@@ -84,24 +82,40 @@ runs:
       env:
         TLD_ACTION_PATH: ${{ github.action_path }}
         TLD_BINARY_DIR: ${{ steps.init.outputs.binary-dir }}
+        TLD_VERSION: ${{ steps.init.outputs.tld-version }}
         TLD_INSTALL_GO: ${{ steps.init.outputs.go-indexer }}
         TLD_INSTALL_TYPESCRIPT: ${{ steps.init.outputs.typescript-indexer }}
         GOWORK: 'off'
         CGO_ENABLED: '0'
       run: |
         if [[ "$RUNNER_OS" != Linux ]]; then
-          echo 'The tld PR action currently supports Ubuntu runners.'
+          echo 'The tld PR action requires an Ubuntu runner.'
+          exit 1
+        fi
+        # shellcheck disable=SC1091
+        source /etc/os-release
+        if [[ "$ID" != ubuntu ]]; then
+          echo 'The tld PR action requires an Ubuntu runner.'
           exit 1
         fi
         echo "$TLD_BINARY_DIR" >> "$GITHUB_PATH"
         echo "$TLD_BINARY_DIR/scip-npm/bin" >> "$GITHUB_PATH"
         if [[ ! -x "$TLD_BINARY_DIR/tld" ]]; then
-          cd "$TLD_ACTION_PATH/frontend" || exit 1
-          npm ci --ignore-scripts
-          VITE_APP_BASE=/ VITE_ROUTER_BASENAME=/ npm run build:app
-          cd "$TLD_ACTION_PATH" || exit 1
-          go build -trimpath -o "$TLD_BINARY_DIR/tld" ./cmd/tld
+          case "$RUNNER_OS-$RUNNER_ARCH" in
+            Linux-X64) asset=tld_Linux_x86_64.tar.gz ;;
+            Linux-ARM64) asset=tld_Linux_arm64.tar.gz ;;
+            *) echo "Unsupported runner: $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+          esac
+          download_dir=$(mktemp -d)
+          trap 'rm -rf "$download_dir"' EXIT
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/Mertcikla/tld/releases/download/$TLD_VERSION/$asset" \
+            --output "$download_dir/archive.tar.gz"
+          tar -xzf "$download_dir/archive.tar.gz" -C "$download_dir" tld
+          chmod +x "$download_dir/tld"
+          mv "$download_dir/tld" "$TLD_BINARY_DIR/tld"
         fi
+        "$TLD_BINARY_DIR/tld" --version
         if [[ "$TLD_INSTALL_GO" == true ]]; then
           if [[ ! -x "$TLD_BINARY_DIR/scip-go" ]]; then
             GOBIN="$TLD_BINARY_DIR" go install github.com/scip-code/scip-go/cmd/scip-go@v0.2.7

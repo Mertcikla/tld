@@ -14,10 +14,11 @@ Existing test and lint checks are independent of this bot.
 
 ## Installing in another repository
 
-Use an Ubuntu runner. Choose a commit or release containing this action and
+Use an Ubuntu runner (x86_64 or ARM64). Choose a commit or release containing this action and
 replace `PINNED_REF` in both examples with that same immutable reference.
-The action builds `tld` from its own source, including the frontend assets; no
-new CLI release is required. It sets up Go 1.26.2 and Node 24 and installs
+To upgrade, change `tldVersion` in `scripts/pr-bot/main.mjs`;
+the download URL and binary/database cache keys update together.
+It sets up Go 1.26.2 and Node 24 for indexing and installs
 `scip-go@v0.2.7` and `@sourcegraph/scip-typescript@0.4.0`.
 
 The producer and publisher must have different permissions. The publisher
@@ -90,7 +91,7 @@ An empty preparation command is appropriate for projects that need no setup.
 For this repo, the generation workflow installs frontend dependencies and builds the
 embedded frontend inside each uncached revision. Its producer checks out trusted
 default-branch bot code separately from the PR checkout so PR source changes
-do not change the action binary or cache namespace on every synchronize event.
+do not change the bot code or cache namespace on every synchronize event.
 
 ## Configuration
 
@@ -124,9 +125,11 @@ the job summary; detailed preparation/indexer output stays in the run logs.
 
 ## Cache behavior and fork PRs
 
-The action caches its built binary and indexers separately from the isolated
+The action caches the release binary and indexers separately from the isolated
 tld database. Snapshot keys include repository identity, action source digest,
-runtime and indexer versions, enabled indexers, and preparation configuration.
+the tld release, runtime and indexer versions, enabled indexers, and preparation configuration.
+Binary cache keys include the tld release, runtime/indexer versions, and runner
+OS/architecture; action source changes do not redownload the same release.
 Restore reuses the PR's previous database, preferring the same BASE revision.
 The database is saved after the compare process closes, including SQLite
 sidecars when present. Snapshots are retained even when a diagram is skipped.

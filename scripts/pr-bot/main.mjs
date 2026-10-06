@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { limits, digest, GitHub, publicationContext, validateResult, upsertComment, maxResultBytes } from './lib.mjs';
 
 const env = process.env;
+const tldVersion = 'v2.4.0-beta.4';
 const mode = process.argv[2];
 const root = resolve(fileURLToPath(new URL('../..', import.meta.url)));
 const stateDir = join(env.RUNNER_TEMP ?? '/tmp', 'tld-pr-bot');
@@ -62,10 +63,11 @@ function initialize() {
   writeFileSync(statePath, JSON.stringify(state));
   saveResult(state); // Remains a valid advisory failure artifact if setup fails.
   const source = sourceDigest(root);
-  const tools = 'go1.26.2-node24-scipgo0.2.7-scipts0.4.0';
+  const tools = `tld${tldVersion.slice(1)}-go1.26.2-node24-scipgo0.2.7-scipts0.4.0`;
   const namespace = `tld-pr-v1-${env.RUNNER_OS}-${env.RUNNER_ARCH}-${digest(`${env.GITHUB_REPOSITORY}|${source}|${tools}|${env.INPUT_INDEXERS}|${env.INPUT_PREPARE_COMMAND}`).slice(0, 32)}`;
   const scope = `pr-${state.prNumber}`;
-  output('binary-key', `tld-binary-v1-${env.RUNNER_OS}-${env.RUNNER_ARCH}-${source}-${tools}`);
+  output('binary-key', `tld-binary-v2-${env.RUNNER_OS}-${env.RUNNER_ARCH}-${tools}`);
+  output('tld-version', tldVersion);
   output('binary-dir', binaryDir);
   output('data-dir', dataDir);
   output('result-dir', resultDir);
