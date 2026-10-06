@@ -1,11 +1,15 @@
 import { Box, Button, HStack, Text, Tooltip, VStack } from '@chakra-ui/react'
 import { MarkdownIcon } from './Icons'
 
+export type RepositoryChangeViewMode = 'standard' | 'plain'
+
 export default function RepositoryChangeMenu({
   radius,
   maxRadius,
   onRadiusChange,
   busy = false,
+  viewMode,
+  onViewModeChange,
   mermaidOpen,
   onToggleMermaid,
   hasMermaid = false,
@@ -14,6 +18,8 @@ export default function RepositoryChangeMenu({
   maxRadius: number
   onRadiusChange: (radius: number) => void
   busy?: boolean
+  viewMode: RepositoryChangeViewMode
+  onViewModeChange: (mode: RepositoryChangeViewMode) => void
   mermaidOpen: boolean
   onToggleMermaid: () => void
   hasMermaid?: boolean
@@ -43,6 +49,30 @@ export default function RepositoryChangeMenu({
         px={1.5}
         py={1.5}
       >
+        <HStack spacing={1} align="center" data-testid="repositories-view-mode" px={1}>
+          <Text fontSize="10px" fontWeight="bold" color="gray.500" textTransform="uppercase" letterSpacing="0.06em">
+            View
+          </Text>
+          {(['standard', 'plain'] as const).map((option) => (
+            <Button
+              key={option}
+              data-testid={`repositories-view-mode-${option}`}
+              size="xs"
+              h="28px"
+              px={2}
+              variant={viewMode === option ? 'solid' : 'ghost'}
+              isDisabled={busy}
+              onClick={() => {
+                if (option !== viewMode) onViewModeChange(option)
+              }}
+            >
+              {option === 'standard' ? 'Standard' : 'Plain'}
+            </Button>
+          ))}
+        </HStack>
+
+        <Box w="1px" h="16px" bg="whiteAlpha.100" flexShrink={0} mx={0.5} />
+
         <HStack spacing={1} align="center" data-testid="repositories-radius" px={1}>
           <Text fontSize="10px" fontWeight="bold" color="gray.500" textTransform="uppercase" letterSpacing="0.06em">
             Radius

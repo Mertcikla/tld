@@ -26,7 +26,10 @@ function adjustConnectorHandles(placements: PlacedElement[], connectors: Connect
 
 // Build a transient scene over existing workspace placements. New and removed
 // files without placements get negative IDs; nothing is written to the workspace.
-export function repositoryChangeOverlay(workspace: ExploreData, impact: RepositoryImpact, repositoryRoot: string) {
+// In plain mode only the impacted elements are kept and every other placement is
+// hidden, so the blast radius alone controls which neighbours enter the view.
+export function repositoryChangeOverlay(workspace: ExploreData, impact: RepositoryImpact, repositoryRoot: string, options: { plain?: boolean } = {}) {
+  const plain = options.plain ?? false
   const overlays: Record<number, ZUIChangeOverlay> = {}
   const filesByPath = new Map(impact.nodes.map((file) => [file.path, file]))
   const sources = new Map(impact.diff.sources.map((source) => [source.path, source]))
@@ -35,6 +38,8 @@ export function repositoryChangeOverlay(workspace: ExploreData, impact: Reposito
   const belongs = (element: PlacedElement) => element.repository_id
     ? element.repository_id === impact.repositoryId
     : normalize(element.repo ?? '') === normalize(repositoryRoot) || eligibleIds.has(element.element_id)
+  const impacted = (element: PlacedElement) => (element.file_path ? filesByPath.has(element.file_path) : false) || eligibleIds.has(element.element_id)
+  const shown = (element: PlacedElement) => plain ? belongs(element) && impacted(element) : belongs(element)
   const overlay = (file: RepositoryImpact['nodes'][number]): ZUIChangeOverlay => ({
     change: file.change, path: file.path,
     linesAdded: sources.get(file.path)?.linesAdded,
@@ -47,7 +52,7 @@ export function repositoryChangeOverlay(workspace: ExploreData, impact: Reposito
     if (view.name.includes(' impact · ')) return []
     const children = keep(view.children)
     const placements = workspace.views[view.id]?.placements ?? []
-    if (!children.length && !placements.some(belongs)) return []
+    if (!children.length && !placements.some(shown)) return []
     retained.add(view.id)
     return [{ ...view, children }]
   })
@@ -55,13 +60,17 @@ export function repositoryChangeOverlay(workspace: ExploreData, impact: Reposito
   for (const id of retained) {
     const view = workspace.views[id]
     if (!view) continue
-    data.views[id] = { ...view, placements: view.placements.map((element) => {
-      const file = belongs(element) ? filesByPath.get(element.file_path ?? '') : undefined
+    const placements = plain ? view.placements.filter(shown) : view.placements
+    const visibleIds = new Set(placements.map((element) => element.element_id))
+    const connectors = plain ? (view.connectors ?? []).filter((item) => visibleIds.has(item.source_element_id) && visibleIds.has(item.target_element_id)) : view.connectors
+    data.views[id] = { ...view, placements: placements.map((element) => {
+      if (!shown(element)) return element
+      const file = filesByPath.get(element.file_path ?? '')
       if (!file) return element
       matched.add(file.path)
       overlays[element.element_id] = overlay(file)
       return { ...element, tags: [...element.tags, REPOSITORY_CHANGE_TAG] }
-    }) }
+    }), connectors }
   }
   data.navigations = workspace.navigations.filter((link) => retained.has(link.from_view_id) && retained.has(link.to_view_id))
   const missing = impact.nodes.filter((file) => !file.context && !matched.has(file.path))

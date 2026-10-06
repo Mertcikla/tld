@@ -17,13 +17,14 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, reposito
   const [workspace, setWorkspace] = useState<ExploreData | null>(null)
   const [error, setError] = useState('')
   const [mermaidOpen, setMermaidOpen] = useState(true)
+  const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
   useEffect(() => {
     let active = true
     setError('')
     void api.explore.load().then((result) => { if (active) setWorkspace(result) }).catch((err: unknown) => { if (active) setError(err instanceof Error ? err.message : 'Could not load the workspace map') })
     return () => { active = false }
   }, [repositoryRoot, diagram?.version])
-  const scene = useMemo(() => workspace && diagram ? repositoryChangeOverlay(workspace, diagram, repositoryRoot) : null, [workspace, diagram, repositoryRoot])
+  const scene = useMemo(() => workspace && diagram ? repositoryChangeOverlay(workspace, diagram, repositoryRoot, { plain: displayMode === 'plain' }) : null, [workspace, diagram, repositoryRoot, displayMode])
   const focusSelected = useCallback(() => {
     if (!scene || !selectedPath) return
     for (const [viewId, view] of Object.entries(scene.data.views)) {
@@ -45,6 +46,8 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, reposito
               maxRadius={diagram.maxRadius}
               onRadiusChange={onRadiusChange ?? (() => {})}
               busy={busy}
+              viewMode={displayMode}
+              onViewModeChange={setDisplayMode}
               mermaidOpen={mermaidOpen}
               onToggleMermaid={() => setMermaidOpen((open) => !open)}
               hasMermaid
@@ -62,7 +65,6 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, reposito
               <RepositoryChangeMermaid
                 repositoryId={diagram.repositoryId}
                 comparisonKey={diagram.comparisonKey}
-                radius={diagram.radius}
                 open={mermaidOpen}
               />
             </Box>

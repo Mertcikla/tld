@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/mertcikla/tld/v2/internal/codeindex/impact"
 	"github.com/mertcikla/tld/v2/internal/mermaid"
 )
 
@@ -32,6 +33,14 @@ func (s *mapperService) impactMermaid(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSONError(w, http.StatusInternalServerError, "could not load impact diagram")
 		return
+	}
+	// The change diagram is always the direct-change view. Neighbour context
+	// added by a wider blast radius makes the exported flowchart too noisy, so
+	// rebuild at radius 0 instead of reusing the persisted overlay.
+	if diff := diagram.GetDiff(); diff != nil && diff.GetFromSnapshotId() != "" && diff.GetToSnapshotId() != "" {
+		if rebuilt, buildErr := impact.Build(r.Context(), s.ws, s.idx, repositoryID, comparisonKey, diff.GetFromSnapshotId(), diff.GetToSnapshotId(), 0); buildErr == nil {
+			diagram = rebuilt
+		}
 	}
 	code := mermaid.ExportImpactDiagram(diagram, mermaid.ImpactExportOptions{IncludeMetadata: true})
 	markdown := ""

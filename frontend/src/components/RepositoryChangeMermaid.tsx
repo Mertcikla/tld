@@ -17,12 +17,10 @@ export default function RepositoryChangeMermaid({
   repositoryId,
   comparisonKey,
   open,
-  radius,
 }: {
   repositoryId: string
   comparisonKey: string
   open: boolean
-  radius: number
 }) {
   const [state, setState] = useState<MermaidPaneState>({ status: 'idle', markdown: '', error: '' })
   const [copied, setCopied] = useState(false)
@@ -41,7 +39,7 @@ export default function RepositoryChangeMermaid({
         setState({ status: 'error', markdown: '', error: err instanceof Error ? err.message : 'Could not load the change diagram' })
       })
     return () => controller.abort()
-  }, [open, repositoryId, comparisonKey, radius])
+  }, [open, repositoryId, comparisonKey])
 
   useEffect(() => {
     setCopied(false)

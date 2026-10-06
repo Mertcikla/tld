@@ -77,4 +77,20 @@ describe('repository change overlays', () => {
     expect(scene.overlays).toEqual({})
     expect(scene.data.views[1].placements[0].tags).toEqual(['original'])
   })
+  it('plain mode hides non-impacted elements and their connectors while keeping neighbours', () => {
+    const connector = (id: number, source: number, target: number) => ({ id, view_id: 1, source_element_id: source, target_element_id: target, label: null, description: null, relationship: null, direction: 'forward', style: 'bezier', url: null, source_handle: null, target_handle: null, created_at: '', updated_at: '' })
+    const plainWorkspace: ExploreData = {
+      ...workspace,
+      views: {
+        1: { placements: [placement(1, 'a.go'), placement(2, 'b.go'), placement(3, 'c.go')], connectors: [connector(11, 1, 2), connector(12, 1, 3)] },
+        9: { placements: [placement(5, 'a.go')], connectors: [] },
+      },
+    }
+    const scene = repositoryChangeOverlay(plainWorkspace, impact, '/repo', { plain: true })
+    expect(scene.data.views[1].placements.map((element) => element.file_path)).toEqual(['a.go', 'b.go'])
+    expect(scene.data.views[1].connectors?.map((item) => item.id)).toEqual([11])
+    expect(scene.overlays[1]?.change).toBe('modified')
+    expect(scene.overlays[2]?.change).toBe('unchanged')
+    expect(scene.overlays[3]).toBeUndefined()
+  })
 })

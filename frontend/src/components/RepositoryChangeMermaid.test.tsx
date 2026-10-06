@@ -31,7 +31,7 @@ vi.mock('@chakra-ui/react', async () => {
 const markdown = '```mermaid\nflowchart LR\n  a --> b\n```\n'
 
 function renderPane(overrides: Partial<React.ComponentProps<typeof RepositoryChangeMermaid>> = {}) {
-  return create(<RepositoryChangeMermaid repositoryId="repo-1" comparisonKey="key-1" open radius={0} {...overrides} />)
+  return create(<RepositoryChangeMermaid repositoryId="repo-1" comparisonKey="key-1" open {...overrides} />)
 }
 
 describe('RepositoryChangeMermaid', () => {

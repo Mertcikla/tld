@@ -24,6 +24,8 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof RepositoryCha
       radius={0}
       maxRadius={2}
       onRadiusChange={vi.fn()}
+      viewMode="standard"
+      onViewModeChange={vi.fn()}
       mermaidOpen
       onToggleMermaid={vi.fn()}
       hasMermaid
@@ -44,6 +46,17 @@ describe('RepositoryChangeMenu', () => {
     })
 
     expect(onRadiusChange).toHaveBeenCalledWith(2)
+  })
+
+  it('switches between standard and plain view modes', () => {
+    const onViewModeChange = vi.fn()
+    const renderer = renderMenu({ viewMode: 'standard', onViewModeChange })
+
+    act(() => {
+      renderer.root.findByProps({ 'data-testid': 'repositories-view-mode-plain' }).props.onClick()
+    })
+
+    expect(onViewModeChange).toHaveBeenCalledWith('plain')
   })
 
   it('toggles the mermaid pane', () => {
