@@ -286,8 +286,13 @@ func logicalFact(f *pb.CodeFact) string {
 }
 
 func sameFact(a, b *pb.CodeFact) bool {
-	if a.Kind != b.Kind || a.Name != b.Name || a.QualifiedName != b.QualifiedName ||
-		a.Signature != b.Signature || a.Language != b.Language || a.SymbolKey != b.SymbolKey {
+	// QualifiedName and SymbolKey carry the SCIP package version (and package
+	// manager/name); the indexer deliberately treats those as non-identifying
+	// when deriving LogicalKey, and facts already pair by that key, so comparing
+	// them would report every symbol in a file as modified whenever the package
+	// version differs between snapshots.
+	if a.Kind != b.Kind || a.Name != b.Name ||
+		a.Signature != b.Signature || a.Language != b.Language {
 		return false
 	}
 	if (a.Anchor == nil) != (b.Anchor == nil) {
