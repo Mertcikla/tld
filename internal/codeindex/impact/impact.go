@@ -129,9 +129,6 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 	}
 	diagram.Radius = min(radius, diagram.MaxRadius)
 	sort.Slice(diagram.Nodes, func(i, j int) bool { return diagram.Nodes[i].Key < diagram.Nodes[j].Key })
-	if err := placeAddedFiles(ctx, ws, diagram, mappings); err != nil {
-		return nil, err
-	}
 	nodesByPath := map[string][]*pb.ImpactNode{}
 	for _, node := range diagram.Nodes {
 		nodesByPath[node.Path] = append(nodesByPath[node.Path], node)
@@ -166,6 +163,11 @@ func Build(ctx context.Context, ws core.Store, idx *cstore.Store, repositoryID, 
 		a, b := diagram.Edges[i], diagram.Edges[j]
 		return a.FromKey+"\x00"+a.ToKey < b.FromKey+"\x00"+b.ToKey
 	})
+	// Placement runs last so new overlay nodes can be laid out next to the
+	// context and already-mapped elements they are connected to.
+	if err := placeAddedFiles(ctx, ws, diagram, mappings); err != nil {
+		return nil, err
+	}
 	return diagram, nil
 }
 
