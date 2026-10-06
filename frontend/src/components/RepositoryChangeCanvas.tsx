@@ -4,9 +4,16 @@ import { api, type RepositoryImpact as ImpactDiagram, type RepositoryImpactScene
 import { ZUICanvas, type ZUICanvasHandle } from './ZUI'
 import { repositoryChangeScene, REPOSITORY_CHANGE_TAG } from '../utils/repositoryChangeScene'
 import { fitBlastRadius, MAX_BLAST_RADIUS } from '../utils/impactScope'
+import {
+  PANEL_COLLAPSE_SNAP,
+  PANEL_OVERLAY_SNAP,
+  useResizableColumn,
+} from '../hooks/useResizableColumn'
+import ColumnResizeHandle from './ColumnResizeHandle'
 import RepositoryChangeMenu from './RepositoryChangeMenu'
 import RepositoryChangeMermaid from './RepositoryChangeMermaid'
 
+const MERMAID_PANE_DEFAULT_WIDTH = 380
 const colors = { added: '#48bb78', removed: '#fc8181', modified: '#ecc94b', unchanged: '#718096' }
 const crossBranchSettings = { enabled: false, depth: 1, connectorBudget: 50, connectorPriority: 'external' as const }
 export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.', busy = false }: {
@@ -14,13 +21,20 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   busy?: boolean
 }) {
   const canvas = useRef<ZUICanvasHandle>(null)
+  const splitRef = useRef<HTMLDivElement | null>(null)
   const [scene, setScene] = useState<RepositoryImpactScene | null>(null)
   const [error, setError] = useState('')
-  const [mermaidOpen, setMermaidOpen] = useState(true)
   const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
   const [radius, setRadius] = useState(0)
-  const [limited, setLimited] = useState(false)
-  const hasDiagram = diagram != null
+  const mermaidPane = useResizableColumn({
+    storageKey: 'tld:repositories:mermaidPaneWidth',
+    defaultWidth: MERMAID_PANE_DEFAULT_WIDTH,
+    collapseBelow: PANEL_COLLAPSE_SNAP,
+    overlayAbove: PANEL_OVERLAY_SNAP,
+    side: 'end',
+    maxWidth: (containerWidth) => containerWidth,
+    containerRef: splitRef,
+  })
   const repositoryId = diagram?.repositoryId ?? ''
   const comparisonKey = diagram?.comparisonKey ?? ''
   const version = diagram?.version ?? ''
@@ -37,11 +51,10 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
     return () => { active = false }
   }, [repositoryId, comparisonKey, version])
   useEffect(() => {
-    setRadius(budgetRadius)
-    setLimited(hasDiagram && budgetRadius < maxRadius)
-  }, [comparisonKey, version, hasDiagram, budgetRadius, maxRadius])
+    setRadius(0)
+  }, [comparisonKey, version, maxRadius])
   const view = useMemo(() => scene ? repositoryChangeScene(scene, { radius, plain: displayMode === 'plain' }) : null, [scene, radius, displayMode])
-  const warning = diagram != null && (limited || radius > budgetRadius)
+  const warning = diagram != null && radius > budgetRadius
   const focusSelected = useCallback(() => {
     if (!view || !selectedPath) return
     for (const [viewId, data] of Object.entries(view.data.views)) {
@@ -56,11 +69,11 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
         {error && <Text p={3} color="red.300">{error}</Text>}
         {warning && (
           <Text px={3} py={1.5} fontSize="xs" color="orange.300" bg="orange.900" data-testid="repository-change-radius-warning">
-            Showing blast radius {radius} of {maxRadius} because the diagram is large. Pick a larger radius to include more context.
+            Blast radius {radius} exceeds the recommended size for this diagram. Pick a smaller radius to show less context.
           </Text>
         )}
         {!diagram.nodes.length && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
-        <Flex flex={1} minH={0} direction={{ base: 'column', lg: 'row' }}>
+        <Flex flex={1} minH={0} direction={{ base: 'column', lg: 'row' }} position="relative" ref={splitRef} data-testid="repository-change-split">
           <Box position="relative" minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">
             {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate highlightedTags={diagram.nodes.length ? [REPOSITORY_CHANGE_TAG] : []} highlightColor={colors.modified} crossBranchSettings={crossBranchSettings} onReady={focusSelected} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
             <RepositoryChangeMenu
@@ -70,28 +83,44 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
               busy={busy}
               viewMode={displayMode}
               onViewModeChange={setDisplayMode}
-              mermaidOpen={mermaidOpen}
-              onToggleMermaid={() => setMermaidOpen((open) => !open)}
-              hasMermaid
             />
           </Box>
-          {mermaidOpen && (
-            <Box
-              w={{ base: 'full', lg: '380px' }}
-              h={{ base: '360px', lg: 'auto' }}
-              minH={0}
-              flexShrink={0}
-              borderTop={{ base: '1px solid', lg: 'none' }}
-              borderColor="whiteAlpha.100"
-            >
-              <RepositoryChangeMermaid
-                repositoryId={diagram.repositoryId}
-                comparisonKey={diagram.comparisonKey}
-                radius={radius}
-                open={mermaidOpen}
-              />
-            </Box>
-          )}
+          {/* The change diagram is always docked beside the canvas; shrinking it
+              below the collapse threshold is what hides its contents. */}
+          <ColumnResizeHandle
+          label="Resize change diagram"
+          dataTestId="repository-change-mermaid-resize"
+          display={{ base: 'none', lg: 'block' }}
+          zIndex={mermaidPane.isOverlay ? 40 : 0}
+          isActive={mermaidPane.isResizing}
+          onPointerDown={mermaidPane.startResize}
+        />
+        <Box
+          data-testid="repository-change-mermaid-slot"
+          w={{ base: 'full', lg: `${mermaidPane.renderedWidth}px` }}
+          h={{ base: '360px', lg: 'auto' }}
+          minH={0}
+          flexShrink={0}
+          position={mermaidPane.isOverlay ? { base: 'relative', lg: 'absolute' } : 'relative'}
+          top={{ lg: 0 }}
+          right={{ lg: 0 }}
+          bottom={{ lg: 0 }}
+          zIndex={mermaidPane.isOverlay ? 30 : undefined}
+          boxShadow={mermaidPane.isOverlay ? '-12px 0 32px rgba(0,0,0,0.55)' : undefined}
+          borderTop={{ base: '1px solid', lg: 'none' }}
+          borderColor="whiteAlpha.100"
+        >
+          <RepositoryChangeMermaid
+            repositoryId={diagram.repositoryId}
+            comparisonKey={diagram.comparisonKey}
+            radius={radius}
+            open
+            collapsed={mermaidPane.isCollapsed}
+            overlay={mermaidPane.isOverlay}
+            onExpand={mermaidPane.expand}
+            onDock={mermaidPane.dock}
+          />
+        </Box>
         </Flex>
       </Flex>}
     </Flex>

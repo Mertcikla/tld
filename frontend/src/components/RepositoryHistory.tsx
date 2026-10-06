@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Badge,
   Box,
@@ -7,6 +7,7 @@ import {
   Flex,
   Grid,
   HStack,
+  IconButton,
   Input,
   InputGroup,
   InputRightElement,
@@ -32,6 +33,7 @@ export default function RepositoryHistory({
   collapsed,
   onToggle,
   onRange,
+  footerContent,
   disabled = false,
 }: {
   repositoryId: string
@@ -41,6 +43,7 @@ export default function RepositoryHistory({
   collapsed: boolean
   onToggle: () => void
   onRange: (base: RepositoryCommit, head: RepositoryCommit) => void
+  footerContent?: ReactNode
   disabled?: boolean
 }) {
   const [query, setQuery] = useState('')
@@ -127,7 +130,7 @@ export default function RepositoryHistory({
     GRAPH_LANE_COLORS[lane % GRAPH_LANE_COLORS.length]
   return (
     <Box borderBottom="1px solid" borderColor="whiteAlpha.100">
-      <Grid
+      {!collapsed && <Grid
         px={4}
         h="40px"
         gap={{ base: 2, md: 3 }}
@@ -146,22 +149,14 @@ export default function RepositoryHistory({
           }
         }}
         _focusVisible={{ outline: '2px solid var(--accent)', outlineOffset: '-2px' }}
-        templateColumns={{ base: 'auto minmax(0, 1fr) auto', md: 'minmax(0, 1fr) minmax(0, 200px) minmax(0, 1fr)' }}
+        templateColumns="minmax(0, 1fr) minmax(0, 200px) minmax(0, 1fr)"
       >
         <HStack spacing={1} minW={0} justifySelf="start">
-          <ChevronDownIcon
-            boxSize="14px"
-            color="gray.500"
-            flexShrink={0}
-            transform={collapsed ? 'rotate(-90deg)' : undefined}
-            transition="transform 0.2s"
-          />
           <Text fontSize="sm" fontWeight="semibold" color="gray.200" isTruncated>
             Commit history
           </Text>
         </HStack>
-        <Box minW={0} onClick={(event) => event.stopPropagation()}>
-          {!collapsed && (
+        <Box minW={0} justifySelf="center" w="full" onClick={(event) => event.stopPropagation()}>
             <InputGroup size="xs" w="full" maxW="200px">
               <Input
                 ref={searchInputRef}
@@ -179,25 +174,13 @@ export default function RepositoryHistory({
                 </InputRightElement>
               )}
             </InputGroup>
-          )}
         </Box>
-        <HStack spacing={2} minW={0} justifySelf="end">
-          {base && head && (
-            <Text
-              fontFamily="mono"
-              fontSize="xs"
-              color="gray.400"
-              whiteSpace="nowrap"
-              display={{ base: 'none', lg: 'block' }}
-            >
-              {base.slice(0, 7)} → {head.slice(0, 7)}
-            </Text>
-          )}
+        <HStack spacing={2} minW={0} justifySelf="end" onClick={(event) => event.stopPropagation()}>
           <Text fontSize="xs" color="gray.500" whiteSpace="nowrap">
             {layout.rows.length} commits
           </Text>
         </HStack>
-      </Grid>
+      </Grid>}
       {!collapsed && (
         <>
           {!history?.isGit && (
@@ -421,6 +404,28 @@ export default function RepositoryHistory({
             </Box>
           )}
         </>
+      )}
+      {footerContent && (
+        <Grid
+          px={4}
+          py={2}
+          gap={2}
+          alignItems="center"
+          templateColumns="24px minmax(0, 1fr)"
+          borderTop="1px solid"
+          borderColor="whiteAlpha.100"
+          data-testid="repositories-history-footer"
+        >
+          <IconButton
+            aria-label={collapsed ? 'Expand commit history' : 'Collapse commit history'}
+            size="xs"
+            variant="ghost"
+            flexShrink={0}
+            icon={<ChevronDownIcon boxSize="14px" transform={collapsed ? 'rotate(-90deg)' : undefined} transition="transform 0.2s" />}
+            onClick={onToggle}
+          />
+          <Box minW={0}>{footerContent}</Box>
+        </Grid>
       )}
     </Box>
   )

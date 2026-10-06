@@ -12,7 +12,10 @@ vi.mock('react-router-dom', () => ({
   useSearchParams: () => [searchParamsMock(), setParamsMock],
 }))
 vi.mock('../components/RepositoryTargetPicker', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', props) }))
-vi.mock('../components/RepositoryHistory', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', { ...props, 'data-testid': 'mock-history' }) }))
+vi.mock('../components/RepositoryHistory', () => ({ default: (props: Record<string, unknown>) => {
+  const { footerContent, ...rest } = props
+  return React.createElement('div', { ...rest, 'data-testid': 'mock-history' }, footerContent as React.ReactNode)
+} }))
 
 vi.mock('../api/client', () => ({
   api: {
@@ -172,6 +175,30 @@ vi.mock('@chakra-ui/react', async () => {
   }
 })
 
+/** Counts only rendered DOM nodes, ignoring the mocked Chakra components themselves. */
+function hostNodes(renderer: ReturnType<typeof create>, testId: string) {
+  return renderer.root
+    .findAll((node) => node.type === 'div' && node.props['data-testid'] === testId)
+}
+
+/**
+ * The `data-testid` of every rendered div between `node` and the root. Resize
+ * handles rely on `align-self: stretch`, so they must sit directly in the flex
+ * row: any extra div in this chain means the drag target has no height.
+ */
+function divTestIdAncestry(node: { type: unknown; props: Record<string, unknown>; parent: unknown }) {
+  const chain: (string | null)[] = []
+  let current = node as { type: unknown; props: Record<string, unknown>; parent: unknown } | null
+  while (current) {
+    if (current.type === 'div') {
+      const testId = current.props['data-testid']
+      chain.push(typeof testId === 'string' ? testId : null)
+    }
+    current = current.parent as typeof current
+  }
+  return chain
+}
+
 describe('Repositories map action', () => {
   afterEach(() => { vi.useRealTimers() })
   beforeEach(() => {
@@ -261,20 +288,17 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.unmount() })
   })
 
-  it('runs the mapper for the selected head and stays on this page', async () => {
+  it('compares the selected targets without individual map buttons', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => {
       renderer = create(<Repositories />)
     })
-
-    const mapButton = renderer.root.findByProps({ 'data-testid': 'repositories-map' })
-    await act(async () => {
-      await mapButton.props.onClick()
-    })
-
     const { api } = await import('../api/client')
-    expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ snapshotId: 'snap-1', onProgress: expect.any(Function) }))
+    expect(renderer.root.findAll((node) => node.props['data-testid'] === 'repositories-map' || node.props['data-testid'] === 'repositories-map-base')).toHaveLength(0)
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+    expect(api.repositories.compare).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: { snapshotId: 'snap-0' }, head: { snapshotId: 'snap-1' }, signal: expect.any(AbortSignal) }))
     expect(navigateMock).not.toHaveBeenCalled()
+    renderer.unmount()
   })
 
   it('deletes a repository after confirmation, including materialized resources when toggled', async () => {
@@ -714,26 +738,28 @@ describe('Repositories map action', () => {
     renderer.unmount()
   })
 
-  it('collapses and expands the compare branches from the summary bar', async () => {
+  it('collapses the history list while keeping compare controls in its header', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
-    const summary = () => renderer.root.findByProps({ 'data-testid': 'repositories-compare-summary' })
+    const history = () => renderer.root.findByProps({ 'data-testid': 'mock-history' })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
-    await act(async () => { summary().props.onClick() })
-    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBe(0)
+    await act(async () => { history().props.onToggle() })
+    expect(history().props.collapsed).toBe(true)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare' })).toBeTruthy()
-    await act(async () => { summary().props.onClick() })
+    await act(async () => { history().props.onToggle() })
+    expect(history().props.collapsed).toBe(false)
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
     renderer.unmount()
   })
 
-  it('auto-collapses history and compare branches after comparing', async () => {
+  it('auto-collapses history after comparing while keeping controls visible', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.collapsed).toBe(false)
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
     expect(renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.collapsed).toBe(true)
-    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBe(0)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare' })).toBeTruthy()
     renderer.unmount()
   })
@@ -841,14 +867,14 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.unmount() })
   })
 
-  it('changes base and head independently and maps local working contents', async () => {
+  it('changes base and head independently while supporting working-tree targets', async () => {
     const { api } = await import('../api/client')
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.onChange('working_tree') })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-0')
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-map' }).props.onClick() })
-    expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ workingTree: true }))
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
+    expect(api.repositories.map).not.toHaveBeenCalled()
   })
 
   it('displays a failed comparison', async () => {
@@ -1080,6 +1106,47 @@ describe('Repositories map action', () => {
 
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-show-less' }).props.onClick() })
     expect(visible()).toHaveLength(5)
+    renderer.unmount()
+  })
+
+  it('collapses the files and symbols panel into a rail that counts files and symbols', async () => {
+    const { api } = await import('../api/client')
+    const result = await api.repositories.compare('repo-1', { base: {}, head: {} })
+    vi.mocked(api.repositories.compare).mockResolvedValueOnce({ ...result, diff: { ...result.diff,
+      sources: [
+        { path: 'src/file.go', change: 'modified', fromHash: 'old', toHash: 'new' },
+        { path: 'src/other.go', change: 'modified', fromHash: 'old', toHash: 'new' },
+      ],
+      facts: { added: 3, removed: 2, modified: 1 },
+    } })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+
+    expect(hostNodes(renderer, 'repositories-files-panel')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repositories-files-resize')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repositories-files-collapsed')).toHaveLength(0)
+    const resize = hostNodes(renderer, 'repositories-files-resize')[0]
+    expect(resize.props.alignSelf).toBe('stretch')
+    expect(divTestIdAncestry(resize).slice(0, 2)).toEqual([
+      'repositories-files-resize',
+      'repositories-split',
+    ])
+
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-files-collapse' }).props.onClick() })
+
+    expect(hostNodes(renderer, 'repositories-files-panel')).toHaveLength(0)
+    expect(hostNodes(renderer, 'repositories-files-resize')).toHaveLength(0)
+    const rail = hostNodes(renderer, 'repositories-files-collapsed')[0]
+    expect(rail.props['aria-expanded']).toBe(false)
+    expect(rail.props['aria-label']).toBe('Expand files and symbols panel, 2 files, 6 symbols')
+    expect(hostNodes(renderer, 'repositories-files-collapsed-count')).toHaveLength(0)
+    expect(hostNodes(renderer, 'repositories-symbols-collapsed-count')).toHaveLength(0)
+
+    await act(async () => { rail.props.onClick() })
+
+    expect(hostNodes(renderer, 'repositories-files-panel')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repositories-files-collapsed')).toHaveLength(0)
     renderer.unmount()
   })
 
