@@ -4,6 +4,7 @@ import type { ViewFloatingMenuSlots } from '../slots'
 import {
   HStack, Tooltip, Button, Box, Text, Popover, PopoverTrigger, Portal, PopoverContent, PopoverBody, IconButton, Slider, SliderTrack, SliderFilledTrack, SliderThumb, Switch, VStack, useDisclosure
 } from '@chakra-ui/react'
+import { faFilter } from '@fortawesome/free-solid-svg-icons'
 
 import {
   DrawIcon as PencilSvg,
@@ -32,6 +33,16 @@ const DENSITY_STOPS = [
   { value: 1, label: 'Rich' },
   { value: 2, label: 'Full' },
 ] as const
+
+function FilterOffIcon({ size = 15 }: { size?: number }) {
+  const [width, height, , , pathData] = faFilter.icon
+  const paths = Array.isArray(pathData) ? pathData : [pathData]
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${width} ${height}`} fill="currentColor" aria-hidden="true" style={{ flexShrink: 0 }}>
+      {paths.map((path, index) => <path key={index} d={path} />)}
+    </svg>
+  )
+}
 
 export interface ViewFloatingMenuProps extends ViewFloatingMenuSlots {
   drawingMode: boolean
@@ -250,9 +261,9 @@ function ViewFloatingMenu({
                 >
                   <HStack spacing={1.5}>
                     {hasActiveFilters && onDensityLevelChange ? (
-                      noiseGateEnabled ? <NoiseGateIcon size={15} level={densityLevel} /> : <FocusSvg size={15} />
+                      noiseGateEnabled ? <NoiseGateIcon size={15} level={densityLevel} /> : <FilterOffIcon size={15} />
                     ) : (
-                      <FocusSvg size={15} />
+                      <FilterOffIcon size={15} />
                     )}
                     <Text fontSize="11px" fontWeight={hasActiveFilters ? 'semibold' : 'normal'}>
                       {noiseGateEnabled ? activeNoiseGateLabel : 'Filters'}
