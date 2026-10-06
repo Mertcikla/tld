@@ -29,11 +29,11 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, reposito
   }, [scene, selectedPath])
   useEffect(focusSelected, [focusSelected])
   return (
-    <Flex direction="column" flex={1} minW={0} minH="400px" data-testid="repository-change-overlay">
+    <Flex direction="column" flex={1} minW={0} minH="240px" data-testid="repository-change-overlay">
       {!diagram ? <Text p={6} fontSize="sm" color="gray.400">{emptyMessage}</Text> : <Flex flex={1} minH={0} direction="column">
         {error && <Text p={3} color="red.300">{error}</Text>}
         {!diagram.nodes.length && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
-        <Box minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">
+        <Box minW={0} flex={1} minH={{ base: '320px', xl: '420px' }} data-testid="repository-change-canvas">
           {scene ? <ZUICanvas ref={canvas} data={scene.data} changeOverlays={scene.overlays} preserveCameraOnUpdate highlightedTags={diagram.nodes.length ? [REPOSITORY_CHANGE_TAG] : []} highlightColor={colors.modified} crossBranchSettings={crossBranchSettings} onReady={focusSelected} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading workspace map…</Text>}
         </Box>
       </Flex>}

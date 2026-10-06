@@ -92,6 +92,7 @@ vi.mock('@chakra-ui/icons', () => ({
   SettingsIcon: () => null,
   ChevronLeftIcon: () => null,
   ChevronRightIcon: () => null,
+  ChevronDownIcon: () => null,
 }))
 
 vi.mock('@chakra-ui/react', async () => {
@@ -711,6 +712,30 @@ describe('Repositories map action', () => {
     expect(api.repositories.compare).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: { snapshotId: 'snap-0' }, head: { snapshotId: 'snap-1' }, signal: expect.any(AbortSignal) }))
     expect(api.repositories.map).not.toHaveBeenCalled()
     expect(renderer.root.findByProps({ 'data-testid': 'mock-impact' }).props.diagram.viewId).toBe(9)
+    renderer.unmount()
+  })
+
+  it('collapses and expands the compare branches from the summary bar', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    const summary = () => renderer.root.findByProps({ 'data-testid': 'repositories-compare-summary' })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
+    await act(async () => { summary().props.onClick() })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBe(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare' })).toBeTruthy()
+    await act(async () => { summary().props.onClick() })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
+    renderer.unmount()
+  })
+
+  it('auto-collapses history and compare branches after comparing', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.collapsed).toBe(false)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.collapsed).toBe(true)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBe(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare' })).toBeTruthy()
     renderer.unmount()
   })
 
