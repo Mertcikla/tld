@@ -83,7 +83,6 @@ CREATE TABLE IF NOT EXISTS codeindex_facts (
   symbol_key TEXT NOT NULL DEFAULT '',
   signature TEXT NOT NULL DEFAULT '',
   documentation TEXT NOT NULL DEFAULT '',
-  code TEXT NOT NULL DEFAULT '',
   parent_fact_id TEXT NOT NULL DEFAULT '',
   logical_key TEXT NOT NULL DEFAULT '',
   path TEXT NOT NULL DEFAULT '',
