@@ -49,7 +49,7 @@ tld git compare 3f9c1a... HEAD~5 HEAD
 | `--max-bytes N` | `2097152` | Output byte budget; blast radius is narrowed when exceeded (`0` disables) |
 | `--max-elements N` | `0` | Skip output if the requested diagram has more than N elements (`0` disables) |
 | `--max-connectors N` | `0` | Skip output if the requested diagram has more than N connectors (`0` disables) |
-| `--report-json PATH` | unset | Write status, requested counts, resolved BASE/HEAD SHAs, index warnings, and skip reason to JSON |
+| `--report-json PATH` | unset | Write status, requested counts, change stats, resolved BASE/HEAD SHAs, index warnings, and skip reason to JSON |
 | `--prepare-command COMMAND` | unset | Run a Bash command in each uncached revision's temporary checkout before indexing |
 | `--data-dir PATH` | global | Override the data directory |
 
@@ -76,7 +76,12 @@ and rendering. Either limit being exceeded suppresses stdout and exits
 successfully; both indexed snapshots remain in the database. Counts equal to a
 limit are allowed. The optional JSON report uses `ready`, `skipped`, or `empty`
 status and reports the requested scope, even if the shrinking budgets later
-narrow the rendered output. Command failures still return a nonzero exit code.
+narrow the rendered output. It also carries a `stats` object derived from the
+snapshot diff — `files`, `directories`, `subsystems`, `linesAdded`,
+`linesRemoved`, `symbolsAdded`, `symbolsModified`, `symbolsRemoved`, and the
+changed `paths` (capped at 500, with `pathsTruncated` set beyond that). Stats
+describe the change itself, so they are present even when the diagram is
+skipped or empty. Command failures still return a nonzero exit code.
 
 `--prepare-command` runs only when a snapshot needs indexing. Its contents are
 part of the snapshot configuration hash, so changing setup invalidates cached

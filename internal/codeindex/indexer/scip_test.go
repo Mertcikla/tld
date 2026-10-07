@@ -3,6 +3,7 @@ package indexer
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -482,5 +483,41 @@ func TestSCIPApplyInfersCallsWithoutSymbolKind(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("calls = %d, want 1 inferred from definition kind", calls)
+	}
+}
+
+func TestSCIPDefinitionOrderDoesNotChangeBindings(t *testing.T) {
+	source := &graph.Source{Path: "a.cpp", Language: "cpp", Text: []byte("map map map"), Hash: "hash"}
+	symbols := []string{"scip-clang . . . map(b).", "scip-clang . . . map(a)."}
+	var wantKey, wantSymbol string
+	for _, order := range [][]int{{0, 1}, {1, 0}} {
+		g := graph.NewGraph("repo", "snap")
+		for _, i := range order {
+			symbol := symbols[i]
+			synthesizeFact(g, source, &scip.Occurrence{}, symbol,
+				&scip.SymbolInformation{DisplayName: "map", Kind: scip.SymbolInformation_Method},
+				source.Anchor(0, 3), "utf-8", "1", nil)
+		}
+		if len(g.Facts) != 1 {
+			t.Fatalf("physical facts=%d", len(g.Facts))
+		}
+		for _, fact := range g.Facts {
+			if wantKey == "" {
+				wantKey, wantSymbol = fact.LogicalKey, fact.SymbolKey
+			}
+			if fact.LogicalKey != wantKey || fact.SymbolKey != wantSymbol {
+				t.Fatalf("alias order changed identity: %s/%s vs %s/%s", fact.LogicalKey, fact.SymbolKey, wantKey, wantSymbol)
+			}
+			if strings.Count(fact.LogicalKey, "|symbol|") != 1 {
+				t.Fatalf("appended alias identities: %s", fact.LogicalKey)
+			}
+		}
+		table := newSymbols()
+		for _, i := range order {
+			table.define("same-template", fmt.Sprint(i), source.Anchor(i*4, i*4+3))
+		}
+		if table.definitions["same-template"] != "0" || table.definitionSites["same-template"].StartByte != 0 {
+			t.Fatal("definition site depends on occurrence order")
+		}
 	}
 }

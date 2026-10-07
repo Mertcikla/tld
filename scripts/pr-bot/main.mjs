@@ -3,6 +3,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { limits, digest, GitHub, publicationContext, validateResult, upsertComment, maxResultBytes } from './lib.mjs';
+import { record, parseChurnLog, parseFixLog, sizeStat, fixHistoryStat } from './history.mjs';
 
 const env = process.env;
 const tldVersion = 'v2.4.0-beta.4';
@@ -26,6 +27,34 @@ const repository = resolve(env.INPUT_REPOSITORY_PATH || env.GITHUB_WORKSPACE);
 const statePath = join(stateDir, 'state.json');
 const readState = () => JSON.parse(readFileSync(statePath, 'utf8'));
 const saveResult = result => writeFileSync(join(resultDir, 'result.json'), JSON.stringify(result));
+
+// Recent commits sampled for the size rank, and the cap on the pre-change walk
+// that looks for prior bug fixes. Both keep the git work bounded on huge repos.
+const baselineCommits = 200;
+const fixHistoryCommits = 2000;
+
+// collectHistory derives the change-risk signals from git alone. It runs only
+// in generate mode, inside the PR checkout, and never fails the bot: a broken
+// or shallow history degrades to available: false.
+function collectHistory(report, state) {
+  try {
+    const stats = report.stats ?? {};
+    const baseline = parseChurnLog(execute('git', ['log', '--no-merges', `--max-count=${baselineCommits}`, '--numstat', `--format=${record}%H`, state.base, '--'], repository));
+    const size = sizeStat((stats.linesAdded ?? 0) + (stats.linesRemoved ?? 0), baseline);
+    let fix = null;
+    const paths = Array.isArray(stats.paths) ? stats.paths : [];
+    if (paths.length > 0) {
+      // History is read at the fork point, from before the change.
+      const asOf = Number(execute('git', ['show', '-s', '--format=%ct', state.head], repository));
+      const log = parseFixLog(execute('git', ['log', '--no-merges', `--max-count=${fixHistoryCommits}`, `--format=${record}%ct%x09%s`, '--name-only', state.base, '--', ...paths], repository));
+      fix = fixHistoryStat(paths, log, asOf > 0 ? asOf : Date.now() / 1000);
+    }
+    return { available: true, size, fix };
+  } catch (error) {
+    console.log(`change history unavailable: ${error.message}`);
+    return { available: false, size: null, fix: null };
+  }
+}
 
 function sourceDigest(directory) {
   const inputs = [];
@@ -109,6 +138,7 @@ function generate() {
   const payload = { ...state, ...report, repository: state.repository, prNumber: state.prNumber, targetBase: state.targetBase,
     skipReason: report.status === 'skipped' ? 'diagram-limit' : undefined,
     markdown: report.status === 'ready' ? result.stdout : '' };
+  payload.history = collectHistory(report, state);
   if (report.warnings.length) {
     console.log(report.warnings.join('\n'));
     payload.status = 'error';

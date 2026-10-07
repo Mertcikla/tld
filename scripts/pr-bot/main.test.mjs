@@ -19,6 +19,8 @@ function fixture(t) {
   git(['init', '-b', 'main']);
   git(['config', 'user.name', 'Test']);
   git(['config', 'user.email', 'test@example.com']);
+  writeFileSync(join(repo, 'file.txt'), 'seed');
+  git(['add', '.']); git(['commit', '-m', 'fix: seed regression']);
   writeFileSync(join(repo, 'file.txt'), 'base');
   git(['add', '.']); git(['commit', '-m', 'base']);
   const base = git(['rev-parse', 'HEAD']);
@@ -49,7 +51,9 @@ function fixture(t) {
     const warnings = process.env.FAKE_WARNINGS ? ['indexer failed'] : [];
     if (process.env.FAKE_ERROR) process.exit(1);
     fs.writeFileSync(args[args.indexOf('--report-json') + 1], JSON.stringify({
-      status: process.env.FAKE_STATUS || 'ready', base: args[3], head: args[4], elements: 2, connectors: 1, warnings
+      status: process.env.FAKE_STATUS || 'ready', base: args[3], head: args[4], elements: 2, connectors: 1, warnings,
+      stats: { files: 1, directories: 1, subsystems: 1, linesAdded: 5, linesRemoved: 5,
+        symbolsAdded: 0, symbolsModified: 0, symbolsRemoved: 0, paths: ['file.txt'] }
     }));
     console.log('\\x60\\x60\\x60mermaid\\nflowchart LR\\n  a["A"] --> b["B"]\\n\\x60\\x60\\x60');
   `);
@@ -65,6 +69,16 @@ test('producer initializes identities and creates a valid diagram artifact', t =
   assert.equal(f.result().prNumber, 7);
   assert.ok(f.result().markdown.includes('```mermaid'));
   assert.ok(readFileSync(f.env.GITHUB_OUTPUT, 'utf8').includes('cache-ready<<TLD_OUTPUT\ntrue'));
+});
+
+test('artifacts carry change stats and prior-fix history', t => {
+  const f = fixture(t);
+  f.run('generate');
+  const result = f.result();
+  assert.equal(result.stats.files, 1);
+  assert.equal(result.stats.paths[0], 'file.txt');
+  assert.equal(result.history.available, true);
+  assert.equal(result.history.fix.filesWithFixes, 1);
 });
 
 test('partial indexes omit diagrams and do not save the cache', t => {

@@ -15,6 +15,9 @@ import (
 	"github.com/mertcikla/tld/v2/internal/codeindex/graph"
 )
 
+// Bump when relationship semantics change, independently of syntax caches.
+const relationshipVersion = 1
+
 // CaptureInputs fingerprints exactly the source/configuration inputs used by indexing.
 func CaptureInputs(ctx context.Context, root string, cfg config.Config, excludes []string) (fingerprint, revision, branch, provenance string, err error) {
 	return captureInputs(ctx, root, cfg, &pb.IndexRequest{Exclude: excludes})
@@ -27,7 +30,8 @@ func ConfigurationHash(cfg config.Config, req *pb.IndexRequest) string {
 		Excludes, ProjectRoots []string
 		SCIPArtifacts          map[string]string
 		ExtractionVersion      int
-	}{cfg, req.Exclude, req.ProjectRoots, req.ScipArtifacts, syntaxCacheVersion})
+		RelationshipVersion    int
+	}{cfg, req.Exclude, req.ProjectRoots, req.ScipArtifacts, syntaxCacheVersion, relationshipVersion})
 	return graph.Hash(raw)
 }
 

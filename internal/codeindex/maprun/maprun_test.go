@@ -2,6 +2,7 @@ package maprun
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -199,5 +200,64 @@ func TestAnalysisGroupsNeverDuplicateIDs(t *testing.T) {
 			t.Fatalf("duplicate group id %q", group.ID)
 		}
 		seen[group.ID] = true
+	}
+}
+
+func TestColdSnapshotsKeepCommunityResources(t *testing.T) {
+	ctx := context.Background()
+	ws, err := wsstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ws.Close() }()
+	idx := cstore.NewStore(ws.DB(), ws.BunDB(), ws.Dialect())
+	deps := Deps{Workspace: ws, Codeindex: idx, Options: mapconfig.FromGlobal(nil)}
+	var first *codeindexv1.MapResult
+	var mappings map[string]int64
+	for _, snapshot := range []string{"cold-a", "cold-b", "cold-c"} {
+		g := cgraph.NewGraph("repo", snapshot)
+		var ids []string
+		for i := range 40 {
+			path := fmt.Sprintf("pkg%d/file%d.go", i/10, i)
+			f := g.AddFact(codeindexv1.FactKind_FACT_KIND_FILE, path, "go", &codeindexv1.SourceAnchor{Path: path}, "", "", nil)
+			ids = append(ids, f.Id)
+		}
+		for i := range 40 {
+			for j := i + 1; j < 40; j++ {
+				if i/10 == j/10 || j == i+1 {
+					g.AddEdgeFact(codeindexv1.EdgeKind_EDGE_KIND_REFERENCES, ids[i], ids[j], "", &codeindexv1.SourceAnchor{Path: fmt.Sprint(i), StartByte: uint32(j)}, nil)
+				}
+			}
+		}
+		if err := idx.Publish(ctx, "/repo", &codeindexv1.Snapshot{Id: snapshot, RepositoryId: "repo"}, g); err != nil {
+			t.Fatal(err)
+		}
+		res, cached, err := Run(ctx, deps, Request{RepositoryID: "repo", SnapshotID: snapshot}, nil)
+		if err != nil || cached {
+			t.Fatalf("run: cached=%v err=%v", cached, err)
+		}
+		got, err := idx.MappingsByRepository(ctx, "repo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first == nil {
+			first = res
+			mappings = make(map[string]int64, len(got))
+			for _, m := range got {
+				mappings[m.LogicalKey] = m.ResourceID
+			}
+		} else {
+			if res.Clusters != first.Clusters || res.Bins != first.Bins || res.WeightedTightness != first.WeightedTightness {
+				t.Fatalf("cold map grouping changed: %v vs %v", res, first)
+			}
+			if len(got) != len(mappings) {
+				t.Fatal("cold map changed resource count")
+			}
+			for _, m := range got {
+				if mappings[m.LogicalKey] != m.ResourceID {
+					t.Fatalf("cold map recreated resource %s", m.LogicalKey)
+				}
+			}
+		}
 	}
 }

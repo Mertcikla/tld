@@ -17,6 +17,7 @@ import (
 	codeindexv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	"connectrpc.com/connect"
 	"github.com/mertcikla/tld/v2/internal/codeindex/configbridge"
+	"github.com/mertcikla/tld/v2/internal/codeindex/gitstate"
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/identity"
 	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
@@ -129,6 +130,16 @@ func (s *repositoryService) AddRepository(ctx context.Context, req *connect.Requ
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, err)
 	}
+	// The initial index is a saved point users can return to, so a dirty or
+	// non-Git checkout that yields transient working_tree provenance is
+	// promoted to a manual snapshot. Clean checkouts already carry commit
+	// provenance and keep it.
+	if snapshot.GetProvenance() == "working_tree" {
+		if err := s.store.SetSnapshotProvenance(ctx, snapshot.GetId(), "manual"); err != nil {
+			return connect.NewError(connect.CodeInternal, err)
+		}
+		snapshot.Provenance = "manual"
+	}
 	if req.Msg.GetMaterialize() {
 		_ = stream.Send(&codeindexv1.AddRepositoryEvent{Event: &codeindexv1.AddRepositoryEvent_Progress{Progress: &codeindexv1.Progress{Stage: "map"}}})
 		if err := s.mapRepository(ctx, repositoryID, snapshot, func(stage string, current, total int, detail string) {
@@ -225,11 +236,16 @@ func (s *repositoryService) requiredIndexers(ctx context.Context, root string) (
 	requirements := make([]*codeindexv1.IndexerRequirement, 0, len(statuses))
 	for _, status := range statuses {
 		requirements = append(requirements, &codeindexv1.IndexerRequirement{
-			Family:      status.Family,
-			Tool:        status.Name,
-			Languages:   languages[status.Family],
-			Installed:   status.Found,
-			InstallHint: status.InstallHint,
+			Family:       status.Family,
+			Tool:         status.Name,
+			Languages:    languages[status.Family],
+			Installed:    status.Found,
+			InstallHint:  status.InstallHint,
+			Version:      status.Version,
+			MinVersion:   status.Minimum,
+			BelowMinimum: status.BelowMinimum,
+			DownloadUrl:  status.DownloadURL,
+			Path:         status.Path,
 		})
 	}
 	return requirements, nil
@@ -422,7 +438,7 @@ type codeIndexService struct {
 	config *workspace.Config
 
 	mu      sync.Mutex
-	running map[string]struct{}
+	running map[string]string
 }
 
 func (s *codeIndexService) ListFacts(ctx context.Context, req *connect.Request[codeindexv1.CodeFactFilter]) (*connect.Response[codeindexv1.CodeFactPage], error) {
@@ -464,6 +480,65 @@ func (s *codeIndexService) ListSnapshots(ctx context.Context, req *connect.Reque
 	return connect.NewResponse(&codeindexv1.ListSnapshotsResponse{Snapshots: saved}), nil
 }
 
+// CaptureSnapshot indexes a repository and publishes a new snapshot. Working
+// tree captures include uncommitted changes and are recorded as durable manual
+// saved points; commit captures index the checked-out commit.
+func (s *codeIndexService) CaptureSnapshot(ctx context.Context, req *connect.Request[codeindexv1.CaptureSnapshotRequest], stream *connect.ServerStream[codeindexv1.CaptureSnapshotEvent]) error {
+	repositoryID := strings.TrimSpace(req.Msg.GetRepositoryId())
+	if repositoryID == "" {
+		return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("repository_id is required"))
+	}
+	repository, err := s.store.Repository(ctx, repositoryID)
+	if err != nil {
+		return connect.NewError(connect.CodeNotFound, err)
+	}
+	if !s.begin(repositoryID, "snapshot capture") {
+		return connect.NewError(connect.CodeAlreadyExists, fmt.Errorf("a map or snapshot capture is already running for this repository"))
+	}
+	defer s.end(repositoryID)
+	ctx, release, err := s.store.AcquireLease(ctx, repositoryID)
+	if err != nil {
+		return impactError(err)
+	}
+	defer release()
+
+	target := &codeindexv1.Revision{}
+	provenance := ""
+	if req.Msg.GetWorkingTree() {
+		target.WorkingTree = true
+		// Explicit captures are saved points, so they are published with a
+		// durable provenance instead of the transient working_tree marker.
+		provenance = "manual"
+	} else {
+		branch, revision, err := gitstate.CurrentCommit(ctx, repository.GetRoot())
+		if err != nil {
+			return connect.NewError(connect.CodeFailedPrecondition, err)
+		}
+		target.GitRevision = revision
+		target.GitBranch = branch
+	}
+	engine := ingest.Engine{
+		Store:        s.store,
+		Config:       configbridge.FromGlobal(s.config),
+		Root:         repository.GetRoot(),
+		RepositoryID: repository.GetId(),
+		Provenance:   provenance,
+		Progress: func(p indexer.Progress) {
+			_ = stream.Send(&codeindexv1.CaptureSnapshotEvent{Event: &codeindexv1.CaptureSnapshotEvent_Progress{Progress: &codeindexv1.Progress{
+				Stage:   p.Stage,
+				Current: uint32(p.Current),
+				Total:   uint32(p.Total),
+				Detail:  p.Detail,
+			}}})
+		},
+	}
+	snapshot, err := engine.Prepare(ctx, target)
+	if err != nil {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	return stream.Send(&codeindexv1.CaptureSnapshotEvent{Event: &codeindexv1.CaptureSnapshotEvent_Snapshot{Snapshot: snapshot}})
+}
+
 func (s *codeIndexService) DiffSnapshots(ctx context.Context, req *connect.Request[codeindexv1.SnapshotDiffRequest]) (*connect.Response[codeindexv1.SnapshotDiff], error) {
 	msg := req.Msg
 	if msg.GetFromSnapshotId() == "" || msg.GetToSnapshotId() == "" {
@@ -500,7 +575,7 @@ func registerCodeIndexHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStor
 	manager := newWatchManager(dataDir, idx)
 
 	repoSvc := &repositoryService{store: idx, ws: sqliteStore, dataDir: dataDir, watches: manager, selfHosted: selfHosted}
-	factSvc := &codeIndexService{store: idx, ws: sqliteStore, running: map[string]struct{}{}}
+	factSvc := &codeIndexService{store: idx, ws: sqliteStore, running: map[string]string{}}
 	if len(configs) > 0 {
 		repoSvc.config = configs[0]
 		factSvc.config = configs[0]

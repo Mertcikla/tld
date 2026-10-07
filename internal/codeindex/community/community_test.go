@@ -358,3 +358,15 @@ func BenchmarkBuildLarge(b *testing.B) {
 		}
 	}
 }
+
+func TestNestedIsolatedFilesCountedOnce(t *testing.T) {
+	files := []File{{Path: "docs/a/x.md"}, {Path: "docs/a/y.md"}, {Path: "docs/b/z.md"}}
+	groups := []*Group{{Isolated: true, Files: 3, Children: []*Group{
+		{Isolated: true, Files: 2, Members: []int{0, 1}},
+		{Isolated: true, Files: 1, Members: []int{2}},
+	}}}
+	metrics := measure(groups, newGraph(0, nil), files, nil, len(files), 0, 0)
+	if metrics.IsolatedFiles != len(files) {
+		t.Fatalf("isolated=%d want=%d", metrics.IsolatedFiles, len(files))
+	}
+}

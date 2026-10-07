@@ -63,3 +63,16 @@ type Store interface {
 	ExploreStore
 	ImportStore
 }
+
+// BatchElementCreator is an optional acceleration for stores that can create
+// up to 100 elements atomically. Results must match the input order and length;
+// an error must leave no created resources behind.
+type BatchElementCreator interface {
+	CreateElements(ctx context.Context, inputs []LibraryElement) ([]LibraryElement, error)
+}
+
+// BatchPlacementWriter atomically places up to 100 elements, preserving the
+// related-connector copying behavior of AddPlacement.
+type BatchPlacementWriter interface {
+	AddPlacements(ctx context.Context, viewID int64, inputs []ElementPlacement) error
+}

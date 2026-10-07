@@ -818,3 +818,125 @@ func TestGroupSplitRemovesObsoletePlacements(t *testing.T) {
 		t.Fatalf("merged placements = %d", len(placements))
 	}
 }
+
+// Explicitly implements the optional batch API while retaining the regular
+// Store wrapper, so cancellation occurs after the first batch has committed.
+type cancelBatchMapStore struct {
+	core.Store
+	batch  core.BatchElementCreator
+	cancel context.CancelFunc
+}
+
+func (s *cancelBatchMapStore) CreateElements(ctx context.Context, inputs []core.LibraryElement) ([]core.LibraryElement, error) {
+	rows, err := s.batch.CreateElements(ctx, inputs)
+	if err == nil {
+		s.cancel()
+	}
+	return rows, err
+}
+
+func TestGroupMapBatchCancellationRetainsAllCommittedFiles(t *testing.T) {
+	ws, idx := openGroupMapStore(t)
+	files := make([]community.File, 205)
+	members := make([]int, len(files))
+	for i := range files {
+		files[i] = community.File{ID: fmt.Sprint(i), Path: fmt.Sprintf("src/f%d.go", i), DisplayName: fmt.Sprintf("f%d.go", i), Language: "go"}
+		members[i] = i
+	}
+	input := GroupMapInput{RepositoryID: "repo", RepositoryName: "demo", SnapshotID: "snap", Files: files, Groups: []*community.Group{{Key: "all", Name: "all", Files: len(files), Members: members}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wrapped := &cancelBatchMapStore{Store: ws, batch: ws, cancel: cancel}
+	_, err := ApplyGroupMap(ctx, wrapped, idx, input, MapOptions{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected cancellation: %v", err)
+	}
+	mappings, err := idx.MappingsByRepository(context.Background(), "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var committed int
+	before := map[string]int64{}
+	for _, mapping := range mappings {
+		before[mapping.LogicalKey] = mapping.ResourceID
+		if strings.Contains(mapping.LogicalKey, "fact|") {
+			committed++
+		}
+	}
+	if committed != 100 {
+		t.Fatalf("lost committed ownership: %d files", committed)
+	}
+	if _, err := ApplyGroupMap(context.Background(), ws, idx, input, MapOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := idx.MappingsByRepository(context.Background(), "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mapping := range after {
+		if id, ok := before[mapping.LogicalKey]; ok && id != mapping.ResourceID {
+			t.Fatalf("retry replaced %s", mapping.LogicalKey)
+		}
+	}
+	var count int
+	if err := ws.DB().QueryRow(`SELECT count(*) FROM elements WHERE file_path IS NOT NULL`).Scan(&count); err != nil || count != len(files) {
+		t.Fatalf("duplicated/lost files: %d %v", count, err)
+	}
+}
+
+func TestPlacementBatchRollbackAndConnectorCopy(t *testing.T) {
+	ws, _ := openGroupMapStore(t)
+	ctx := context.Background()
+	a, err := ws.CreateElement(ctx, core.LibraryElement{Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ws.CreateElement(ctx, core.LibraryElement{Name: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := ws.CreateView(ctx, "source", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := ws.CreateView(ctx, "target", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{a.ID, b.ID} {
+		if _, err := ws.AddPlacement(ctx, source.ID, id, 0, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := ws.CreateConnector(ctx, core.Connector{ViewID: source.ID, SourceElementID: a.ID, TargetElementID: b.ID}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ws.DB().Exec(fmt.Sprintf(`CREATE TRIGGER fail_placement BEFORE INSERT ON placements WHEN NEW.view_id = %d AND NEW.element_id = %d BEGIN SELECT RAISE(ABORT, 'test failure'); END`, target.ID, b.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := []core.ElementPlacement{{ElementID: a.ID, PositionX: 10}, {ElementID: b.ID, PositionX: 20}}
+	if err := ws.AddPlacements(ctx, target.ID, pending); err == nil {
+		t.Fatal("expected failure")
+	}
+	placements, err := ws.ElementPlacements(ctx, target.ID)
+	if err != nil || len(placements) != 0 {
+		t.Fatalf("partial batch: %+v %v", placements, err)
+	}
+	if _, err := ws.DB().Exec(`DROP TRIGGER fail_placement`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.AddPlacements(ctx, target.ID, pending); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := ws.DB().QueryRow(`SELECT count(*) FROM connectors WHERE view_id = ?`, target.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("connector copy: %d %v", count, err)
+	}
+	if err := ws.AddPlacements(ctx, target.ID, pending); err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.DB().QueryRow(`SELECT count(*) FROM connectors WHERE view_id = ?`, target.ID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("duplicate connector copy: %d %v", count, err)
+	}
+}

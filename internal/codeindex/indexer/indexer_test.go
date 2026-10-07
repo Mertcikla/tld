@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -677,5 +678,29 @@ func TestProjectFailureDoesNotAbortRepository(t *testing.T) {
 	}
 	if len(g.Facts) == 0 {
 		t.Fatal("healthy project produced no facts")
+	}
+}
+
+func TestToolCancellationStopsPipeline(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/cancel\n\ngo 1.26\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package cancel\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Tools.SCIPGo = os.Args[0]
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sawRun := false
+	snap, _, err := (Pipeline{Config: cfg}).Build(ctx, &pb.IndexRequest{Directory: root}, func(p Progress) {
+		if strings.HasPrefix(p.Detail, "running ") {
+			sawRun = true
+			cancel()
+		}
+	})
+	if !sawRun || !errors.Is(err, context.Canceled) || snap != nil {
+		t.Fatalf("cancellation became a completed snapshot: run=%v snap=%v err=%v", sawRun, snap, err)
 	}
 }

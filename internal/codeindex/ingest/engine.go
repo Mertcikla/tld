@@ -20,6 +20,10 @@ type Engine struct {
 	Exclude            []string
 	Progress           indexer.ProgressFunc
 	PrepareCheckout    func(context.Context, string) error
+	// Provenance, when set, overrides the provenance inferred from the checkout
+	// for working-tree snapshots. Explicit captures publish durable saved points
+	// with their own marker instead of the transient working_tree provenance.
+	Provenance string
 }
 
 func (e Engine) Base(ctx context.Context, id string) (*indexer.IncrementalBase, error) {
@@ -133,16 +137,26 @@ func (e Engine) Prepare(ctx context.Context, target *pb.Revision) (*pb.Snapshot,
 		if err != nil {
 			return err
 		}
-		// A provenance transition must retain a distinct immutable commit record.
-		if reused && !target.WorkingTree && snap.Provenance != "commit" {
+		// A provenance transition must retain a distinct immutable record:
+		// commit snapshots are saved points, and an explicit working-tree
+		// capture is published with the provenance the caller requested.
+		provenance := ""
+		if target.WorkingTree {
+			provenance = e.Provenance
+		} else {
+			provenance = "commit"
+		}
+		if reused && provenance != "" && snap.Provenance != provenance {
 			snap, g, err = pipeline.Build(ctx, input, e.Progress)
 			if err != nil {
 				return err
 			}
 			reused = false
 		}
+		if provenance != "" {
+			snap.Provenance = provenance
+		}
 		if !target.WorkingTree {
-			snap.Provenance = "commit"
 			snap.GitRevision = revision
 			snap.GitBranch = branch
 		}

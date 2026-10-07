@@ -420,10 +420,10 @@ func (g *Graph) EnclosingFact(anchor *pb.SourceAnchor) *pb.CodeFact {
 	var best *pb.CodeFact
 	for _, f := range g.Facts {
 		a := f.Anchor
-		if a.Path != anchor.Path || a.StartByte > anchor.StartByte || a.EndByte < anchor.EndByte {
+		if a == nil || a.Path != anchor.Path || a.StartByte > anchor.StartByte || a.EndByte < anchor.EndByte {
 			continue
 		}
-		if best == nil || a.EndByte-a.StartByte < best.Anchor.EndByte-best.Anchor.StartByte {
+		if betterEnclosing(f, best) {
 			best = f
 		}
 	}

@@ -1,8 +1,7 @@
 import type { RepositoryImpact } from '../api/client'
 
-// Maximum blast radius the UI exposes; matches the context depth the backend
-// computes when a comparison is requested.
-export const MAX_BLAST_RADIUS = 3
+// Maximum blast radius the UI exposes and requests for comparison context.
+export const MAX_BLAST_RADIUS = 2
 
 // Node budget above which the displayed blast radius is narrowed with a
 // warning. Mirrors internal/codeindex/impact.DefaultMaxNodes.

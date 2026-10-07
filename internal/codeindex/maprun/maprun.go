@@ -19,6 +19,7 @@ import (
 	cgraph "github.com/mertcikla/tld/v2/internal/codeindex/graph"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mapconfig"
 	"github.com/mertcikla/tld/v2/internal/codeindex/materialize"
+	"github.com/mertcikla/tld/v2/internal/codeindex/metrics"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 )
@@ -31,6 +32,9 @@ type Deps struct {
 	Workspace core.Store
 	Codeindex *cstore.Store
 	Options   mapconfig.Options
+	// Metrics, when non-nil, collects coarse per-stage timings and item counts
+	// for the map run. It is optional and safe to leave nil.
+	Metrics *metrics.Collector
 }
 
 // Request selects which snapshot to map. External imports are controlled by
@@ -76,6 +80,7 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	}
 
 	report("loading", 0, 0, "loading file graph")
+	doneLoading := deps.Metrics.Measure("loading")
 	facts, err := deps.Codeindex.AllFacts(ctx, snapshotID, codeindexv1.FactKind_FACT_KIND_FILE)
 	if err != nil {
 		return nil, false, err
@@ -83,6 +88,14 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	if len(facts) == 0 {
 		return nil, false, ErrNoFileFacts
 	}
+	// Snapshot-scoped fact IDs change on cold rebuilds. Louvain visits nodes in
+	// input order, so use source identity to keep communities stable across them.
+	sort.Slice(facts, func(i, j int) bool {
+		if a, b := facts[i].GetAnchor().GetPath(), facts[j].GetAnchor().GetPath(); a != b {
+			return a < b
+		}
+		return stableFactKey(facts[i]) < stableFactKey(facts[j])
+	})
 	// External imports are opt-in per repository: their per-file connectors can
 	// dominate dense maps, so they stay off unless the repository enables them.
 	var fileImports []cstore.FileImport
@@ -111,6 +124,7 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 		repositoryRemote = remote
 	}
 	report("loading", len(facts), len(facts), "loaded")
+	doneLoading(int64(len(facts)))
 
 	communityEdges := make([]community.Edge, 0, len(fileEdges))
 	for _, edge := range fileEdges {
@@ -122,11 +136,13 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	}
 
 	report("grouping", 0, 0, "grouping dependencies")
+	doneGrouping := deps.Metrics.Measure("grouping")
 	grouping, err := community.Build(files, communityEdges, deps.Options.Grouping)
 	if err != nil {
 		return nil, false, err
 	}
 	materialize.SortGroups(grouping.Groups)
+	doneGrouping(int64(len(files)))
 	report("grouping", grouping.Metrics.RootGroups, grouping.Metrics.RootGroups, fmt.Sprintf(
 		"%d components · modularity %.2f · %d isolated files",
 		grouping.Metrics.RootGroups, grouping.Metrics.Modularity, grouping.Metrics.IsolatedFiles,
@@ -144,6 +160,7 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 
 	runID := cgraph.ID(repositoryID, snapshotID, "community", configHash)
 	report("materializing", 0, 0, "")
+	doneMaterialize := deps.Metrics.Measure("materializing")
 	if err := deps.Codeindex.InvalidateActiveMap(ctx, repositoryID); err != nil {
 		return nil, false, err
 	}
@@ -163,7 +180,9 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	if err != nil {
 		return nil, false, err
 	}
+	doneMaterialize(int64(len(files)))
 
+	donePersist := deps.Metrics.Measure("persist")
 	result := &codeindexv1.MapResult{
 		RunId:             runID,
 		SnapshotId:        snapshotID,
@@ -202,6 +221,7 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	}); err != nil {
 		return nil, false, err
 	}
+	donePersist(int64(grouping.Metrics.Groups))
 	return result, false, nil
 }
 

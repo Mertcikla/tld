@@ -93,6 +93,9 @@ var goWorkUse = regexp.MustCompile(`(?m)^\s*(?:use\s+)?(\./[^\s)]+)\s*$`)
 
 func workspaceFacts(path, rel string) []Fact {
 	base := filepath.Base(path)
+	if base != "go.work" && base != "pnpm-workspace.yaml" && base != "package.json" {
+		return nil
+	}
 	b, e := os.ReadFile(path)
 	if e != nil {
 		return nil
@@ -137,19 +140,31 @@ func workspaceFacts(path, rel string) []Fact {
 	return out
 }
 
+// Locate a token without allocating a slice and string for every source line.
 func lineOfString(b []byte, s string) int {
-	for i, line := range bytes.Split(b, []byte("\n")) {
-		if bytes.Contains(line, []byte(s)) {
-			return i + 1
-		}
+	if strings.Contains(s, "\n") {
+		return 1
 	}
-	return 1
+	off := bytes.Index(b, []byte(s))
+	if off < 0 {
+		return 1
+	}
+	return bytes.Count(b[:off], []byte("\n")) + 1
 }
 
 func sourceLine(b []byte, n int) string {
-	lines := bytes.Split(b, []byte("\n"))
-	if n < 1 || n > len(lines) {
+	if n < 1 {
 		return ""
 	}
-	return strings.TrimSpace(string(lines[n-1]))
+	for line := 1; line < n; line++ {
+		off := bytes.IndexByte(b, '\n')
+		if off < 0 {
+			return ""
+		}
+		b = b[off+1:]
+	}
+	if off := bytes.IndexByte(b, '\n'); off >= 0 {
+		b = b[:off]
+	}
+	return strings.TrimSpace(string(b))
 }

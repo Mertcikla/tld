@@ -5,7 +5,12 @@ import { limits, validateResult, commentBody, publicationContext, upsertComment,
 const head = 'a'.repeat(40);
 const base = 'b'.repeat(40);
 const trusted = { repository: 'owner/repo', prNumber: 7, head, targetBase: base, runID: 12, runAttempt: 1, runURL: 'https://github.com/owner/repo/actions/runs/12' };
-const ready = { version: 1, ...trusted, base, status: 'ready', elements: 2, connectors: 1,
+const stats = { files: 7, directories: 3, subsystems: 2, linesAdded: 412, linesRemoved: 88,
+  symbolsAdded: 12, symbolsModified: 4, symbolsRemoved: 2, paths: ['src/a.ts', 'src/b.ts'] };
+const history = { available: true,
+  size: { available: true, sampleSize: 200, percentile: 82, metric: 500, classification: 'high' },
+  fix: { files: 7, filesWithFixes: 3, weightedFixes: 14, considered: 5 } };
+const ready = { version: 1, ...trusted, base, status: 'ready', elements: 2, connectors: 1, stats, history,
   markdown: '```mermaid\nflowchart LR\n  a["A"] --> b["B"]\n```\n' };
 const pr = () => ({ number: 7, state: 'open', base: { sha: base, repo: { full_name: 'owner/repo' } }, head: { sha: head, ref: 'feature', repo: { id: 9 } } });
 const association = () => ({ number: 7, head: { sha: head, repo: { id: 9 } } });
@@ -41,9 +46,13 @@ test('valid results and all advisory statuses are accepted', () => {
   for (const status of ['skipped', 'empty', 'error']) assert.equal(validateResult(JSON.stringify({ ...ready, status, markdown: '' }), trusted).status, status);
 });
 
-test('artifact identity, counts, fenced content, and size are checked', () => {
+test('artifact identity, counts, stats, history, fenced content, and size are checked', () => {
   for (const changes of [{ prNumber: 8 }, { repository: 'attacker/repo' }, { head: base }, { targetBase: head }, { base: 'bad' },
     { elements: -1 }, { connectors: 1.2 }, { status: 'bad' }, { markdown: 'hello' },
+    { stats: { ...stats, files: -1 } }, { stats: { ...stats, paths: [1] } },
+    { history: { available: 'yes' } },
+    { history: { available: true, size: { available: true, sampleSize: 200, percentile: 101, metric: 1, classification: 'high' } } },
+    { history: { available: true, fix: { files: 1, filesWithFixes: 2, weightedFixes: -1 } } },
     { markdown: '```mermaid\nflowchart LR\n```\n@everyone\n```\n```' },
     { markdown: '```mermaid\nflowchart LR\n%%{init: {}}%%\n```' }]) {
     assert.throws(() => validateResult(JSON.stringify({ ...ready, ...changes }), trusted));
@@ -52,9 +61,11 @@ test('artifact identity, counts, fenced content, and size are checked', () => {
   assert.throws(() => validateResult('not-json', trusted));
 });
 
-test('comments include revisions, counts, diagram, and run link', () => {
+test('comments lead with change-risk stats, diagram, and run link instead of counts', () => {
   const body = commentBody(ready, trusted);
-  for (const value of [marker, head.slice(0, 12), base.slice(0, 12), '2 elements', '1 connectors', '```mermaid', trusted.runURL]) assert.ok(body.includes(value));
+  for (const value of [marker, head.slice(0, 12), base.slice(0, 12), 'Change risk', 'Elevated', '82nd percentile',
+    '+412 / −88', '3 of 7 files', 'Change stats', '```mermaid', trusted.runURL]) assert.ok(body.includes(value), value);
+  assert.ok(!body.includes('elements'));
 });
 
 test('oversized bodies and generation errors have bounded fixed notices', () => {

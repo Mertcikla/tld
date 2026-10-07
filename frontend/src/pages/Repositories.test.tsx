@@ -12,7 +12,10 @@ vi.mock('react-router-dom', () => ({
   useSearchParams: () => [searchParamsMock(), setParamsMock],
 }))
 vi.mock('../components/RepositoryTargetPicker', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', props) }))
-vi.mock('../components/RepositoryHistory', () => ({ default: (props: Record<string, unknown>) => React.createElement('div', { ...props, 'data-testid': 'mock-history' }) }))
+vi.mock('../components/RepositoryHistory', () => ({ default: (props: Record<string, unknown>) => {
+  const { footerContent, ...rest } = props
+  return React.createElement('div', { ...rest, 'data-testid': 'mock-history' }, footerContent as React.ReactNode)
+} }))
 
 vi.mock('../api/client', () => ({
   api: {
@@ -38,11 +41,15 @@ vi.mock('../api/client', () => ({
         { id: 'snap-0', repositoryId: 'repo-1', createdUnix: 90, gitRevision: 'old', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-0', ingestionStatus: 'complete', projects: [], warnings: [] },
         { id: 'snap-1', repositoryId: 'repo-1', createdUnix: 100, gitRevision: 'abc', gitBranch: 'main', provenance: 'commit', contentFingerprint: 'fp-1', commitMessage: 'feat: snapshot message', ingestionStatus: 'complete', projects: [], warnings: [] },
       ]),
+      captureSnapshot: vi.fn(async (_repositoryId: string, _handlers?: { workingTree?: boolean; onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void }) => ({
+        id: 'snap-2', repositoryId: 'repo-1', createdUnix: 110, gitRevision: 'abc', gitBranch: 'main', provenance: 'manual', contentFingerprint: 'fp-2', ingestionStatus: 'complete', projects: [], warnings: [],
+      })),
       settings: vi.fn(async () => ({ mapDefaults: { resolution: 1, minGroupSize: 2, minRootGroups: 3, maxRootGroups: 20, maxChildren: 8, maxDepth: 4, maxLeafFiles: 40, maxConnectorsPerView: 40, maxLeafConnectorsPerView: 12 }, mapOverrides: {}, effectiveMap: {}, remotes: [], isGit: false, currentBranch: '', headSha: '' })),
       updateMapConfiguration: vi.fn(),
       updateRemote: vi.fn(),
       maps: vi.fn(async () => []),
       history: vi.fn(async () => ({ repositoryUrl: 'https://github.com/test/demo', commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
+      rangeSummary: vi.fn(async () => ({ commits: 3, additions: 10, deletions: 4, changed: 6, files: 2 })),
       openPullRequests: vi.fn(async () => [{ number: 7, title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseBranch: 'main', headBranch: 'feature' }]),
       pullRequest: vi.fn(async () => ({ title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseSha: 'pr-base', headSha: 'pr-head', baseBranch: 'main', headBranch: 'feature' })),
       fileSymbols: vi.fn(async () => []),
@@ -172,6 +179,30 @@ vi.mock('@chakra-ui/react', async () => {
   }
 })
 
+/** Counts only rendered DOM nodes, ignoring the mocked Chakra components themselves. */
+function hostNodes(renderer: ReturnType<typeof create>, testId: string) {
+  return renderer.root
+    .findAll((node) => node.type === 'div' && node.props['data-testid'] === testId)
+}
+
+/**
+ * The `data-testid` of every rendered div between `node` and the root. Resize
+ * handles rely on `align-self: stretch`, so they must sit directly in the flex
+ * row: any extra div in this chain means the drag target has no height.
+ */
+function divTestIdAncestry(node: { type: unknown; props: Record<string, unknown>; parent: unknown }) {
+  const chain: (string | null)[] = []
+  let current = node as { type: unknown; props: Record<string, unknown>; parent: unknown } | null
+  while (current) {
+    if (current.type === 'div') {
+      const testId = current.props['data-testid']
+      chain.push(typeof testId === 'string' ? testId : null)
+    }
+    current = current.parent as typeof current
+  }
+  return chain
+}
+
 describe('Repositories map action', () => {
   afterEach(() => { vi.useRealTimers() })
   beforeEach(() => {
@@ -181,14 +212,12 @@ describe('Repositories map action', () => {
     globalThis.localStorage ??= { getItem: () => null, setItem: () => {} } as unknown as Storage
   })
 
-  it('hides history in Watch and moves repository information into settings', async () => {
+  it('hides history in Watch and hosts repository information in settings', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
-    expect(renderer.root.findAllByProps({ 'aria-label': 'History branch' })).toHaveLength(0)
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-delete-repo-1' })).toHaveLength(0)
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
-    const branchControl = renderer.root.findByProps({ 'aria-label': 'History branch' })
-    expect(branchControl.parent?.props.mb).toBe(4)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repository-settings-page' }).length).toBeGreaterThan(0)
     await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
     expect(renderer.root.findAllByProps({ 'data-testid': 'mock-history' })).toHaveLength(1)
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
@@ -197,13 +226,12 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.unmount() })
   })
 
-  it('hides the Watch tab and add-watch option when the server disables watching', async () => {
+  it('hides the Watch tab when the server disables watching', async () => {
     const { api } = await import('../api/client')
     vi.mocked(api.system.capabilities).mockResolvedValueOnce({ watch: false, editor: false, repositories: true })
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-live-tab' })).toHaveLength(0)
-    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-add-watch' })).toHaveLength(0)
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare-tab' })).toBeTruthy()
     await act(async () => { renderer.unmount() })
   })
@@ -261,20 +289,17 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.unmount() })
   })
 
-  it('runs the mapper for the selected head and stays on this page', async () => {
+  it('compares the selected targets without individual map buttons', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => {
       renderer = create(<Repositories />)
     })
-
-    const mapButton = renderer.root.findByProps({ 'data-testid': 'repositories-map' })
-    await act(async () => {
-      await mapButton.props.onClick()
-    })
-
     const { api } = await import('../api/client')
-    expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ snapshotId: 'snap-1', onProgress: expect.any(Function) }))
+    expect(renderer.root.findAll((node) => node.props['data-testid'] === 'repositories-map' || node.props['data-testid'] === 'repositories-map-base')).toHaveLength(0)
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+    expect(api.repositories.compare).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: { snapshotId: 'snap-0' }, head: { snapshotId: 'snap-1' }, signal: expect.any(AbortSignal) }))
     expect(navigateMock).not.toHaveBeenCalled()
+    renderer.unmount()
   })
 
   it('deletes a repository after confirmation, including materialized resources when toggled', async () => {
@@ -310,7 +335,7 @@ describe('Repositories map action', () => {
     const snapshotId = side === 'base' ? 'snap-0' : 'snap-1'
     expect(renderer.root.findByProps({ 'data-testid': `repositories-${side}-target` }).props.value).toBe(`snapshot:${snapshotId}`)
 
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
 
     act(() => {
       renderer.root
@@ -322,7 +347,7 @@ describe('Repositories map action', () => {
     })
 
     expect(api.repositories.deleteSnapshot).toHaveBeenCalledWith(snapshotId)
-    await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare-tab' }).props.onClick() })
     expect(renderer.root.findByProps({ 'data-testid': `repositories-${side}-target` }).props.value).toBe('')
     expect(renderer.root.findByProps({ 'data-testid': `repositories-${side === 'base' ? 'head' : 'base'}-target` }).props.value).toBe(`snapshot:${side === 'base' ? 'snap-1' : 'snap-0'}`)
     await act(async () => { renderer.unmount() })
@@ -339,6 +364,8 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
     await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props['aria-pressed']).toBe(true)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-pr-tab' }).props.onClick() })
     expect(renderer.root.findByProps({ 'aria-label': 'Pull request number or URL' }).props.value).toBe('')
     expect(api.repositories.history).toHaveBeenCalledWith('repo-2', '', 0)
     expect(vi.mocked(api.repositories.history).mock.calls.filter(([id]) => id === 'repo-2').some(([, branch]) => branch === 'pr-head')).toBe(false)
@@ -351,6 +378,8 @@ describe('Repositories map action', () => {
     await act(async () => {
       renderer = create(<Repositories />)
     })
+    const repositories = await api.repositories.list()
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([...repositories, { ...repositories[0], id: 'repo-2', root: '/repo/new', name: 'new' }])
 
     const addCell = () =>
       renderer.root.findAll(
@@ -380,17 +409,17 @@ describe('Repositories map action', () => {
         .props.onClick()
     })
 
-    expect(api.repositories.checkIndexers).toHaveBeenCalledWith({
-      path: '/repo/new',
-    })
+    expect(api.repositories.checkIndexers).not.toHaveBeenCalled()
     expect(api.repositories.add).toHaveBeenCalledWith(
       { path: '/repo/new' },
       expect.objectContaining({
-        materialize: true,
+        materialize: false,
         onProgress: expect.any(Function),
       }),
     )
     expect(api.repositories.list).toHaveBeenCalled()
+    expect(api.repositories.startWatch).not.toHaveBeenCalled()
+    expect(hostNodes(renderer, 'repositories-snapshots-panel')).toHaveLength(1)
     renderer.unmount()
   })
   it('adds a remote repository from the sidebar dialog', async () => {
@@ -415,16 +444,14 @@ describe('Repositories map action', () => {
         .props.onClick()
     })
 
-    expect(api.repositories.checkIndexers).toHaveBeenCalledWith({
-      remoteUrl: 'facebook/react',
-    })
+    expect(api.repositories.checkIndexers).not.toHaveBeenCalled()
     expect(api.repositories.add).toHaveBeenCalledWith(
       { remoteUrl: 'facebook/react' },
-      expect.objectContaining({ onProgress: expect.any(Function) }),
+      expect.objectContaining({ materialize: false, onProgress: expect.any(Function) }),
     )
     renderer.unmount()
   })
-  it('blocks adding a repository until required indexers are installed', async () => {
+  it('checks required indexers from the Snapshots tab and re-checks on demand', async () => {
     const { api } = await import('../api/client')
     vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({
       ready: false,
@@ -435,126 +462,120 @@ describe('Repositories map action', () => {
           languages: ['csharp'],
           installed: false,
           installHint: 'dotnet tool install --global scip-dotnet',
+          version: '',
+          minVersion: '0.2.14',
+          belowMinimum: false,
+          downloadUrl: 'https://github.com/sourcegraph/scip-dotnet/releases',
+          path: '',
         },
       ],
     })
     let renderer!: ReturnType<typeof create>
-    await act(async () => {
-      renderer = create(<Repositories />)
-    })
-    act(() => {
-      renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick()
-    })
-    act(() => {
-      renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-path' })
-        .props.onChange({ target: { value: '/repo/dotnet' } })
-    })
-    await act(async () => {
-      await renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-submit' })
-        .props.onClick()
-    })
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-indexers-check')).toHaveLength(1)
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-indexers-check' }).props.onClick() })
 
-    expect(api.repositories.add).not.toHaveBeenCalled()
-    expect(
-      renderer.root.findAll((node) => node.props.children === 'scip-dotnet')
-        .length,
-    ).toBeGreaterThan(0)
-    expect(
-      renderer.root.findAll(
-        (node) =>
-          node.props.children === 'dotnet tool install --global scip-dotnet',
-      ).length,
-    ).toBeGreaterThan(0)
-    expect(
-      renderer.root
-        .findAll(
-          (node) =>
-            node.props['data-testid'] === 'repositories-add-submit',
-        )
-        .some(
-          (node) => node.props.disabled === true || node.props.isDisabled === true,
-        ),
-    ).toBe(true)
+    expect(api.repositories.checkIndexers).toHaveBeenCalledWith({ path: '/repo/demo' })
+    expect(hostNodes(renderer, 'repositories-indexer-scip-dotnet')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.props.children === 'dotnet tool install --global scip-dotnet').length).toBeGreaterThan(0)
+    expect(renderer.root.findAll((node) => node.props.children === '1 missing').length).toBeGreaterThan(0)
 
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({ ready: true, indexers: [] })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-indexers-recheck' }).props.onClick() })
+    expect(api.repositories.checkIndexers).toHaveBeenLastCalledWith({ path: '/repo/demo' })
+    renderer.unmount()
+  })
+  it('shows indexer versions, status, and download links', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({
+      ready: false,
+      indexers: [
+        {
+          family: 'go',
+          tool: 'scip-go',
+          languages: ['go'],
+          installed: true,
+          installHint: 'go install github.com/scip-code/scip-go/cmd/scip-go@latest',
+          version: 'scip-go 0.2.7',
+          minVersion: '0.1.26',
+          belowMinimum: false,
+          downloadUrl: 'https://github.com/scip-code/scip-go/releases',
+          path: '/usr/local/bin/scip-go',
+        },
+        {
+          family: 'dotnet',
+          tool: 'scip-dotnet',
+          languages: ['csharp'],
+          installed: false,
+          installHint: 'dotnet tool install --global scip-dotnet',
+          version: '',
+          minVersion: '0.2.14',
+          belowMinimum: false,
+          downloadUrl: 'https://github.com/sourcegraph/scip-dotnet/releases',
+          path: '',
+        },
+      ],
+    })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-indexers-check' }).props.onClick() })
+
+    expect(hostNodes(renderer, 'repositories-indexer-scip-go')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repositories-indexer-scip-dotnet')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.props.children === 'scip-go 0.2.7').length).toBeGreaterThan(0)
+    expect(renderer.root.findAll((node) => node.props.children === 'min 0.1.26').length).toBeGreaterThan(0)
+    expect(renderer.root.findAll((node) => node.props.children === 'min 0.2.14').length).toBeGreaterThan(0)
+    expect(renderer.root.findAll((node) => node.props.children === '1 missing').length).toBeGreaterThan(0)
+    const download = renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-indexer-download-scip-dotnet')
+    expect(download).toHaveLength(1)
+    expect(download[0].props.href).toBe('https://github.com/sourcegraph/scip-dotnet/releases')
+    expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-indexer-download-scip-go')).toHaveLength(0)
+    renderer.unmount()
+  })
+  it('collapses the indexer checklist when every indexer is ready', async () => {
+    const { api } = await import('../api/client')
     vi.mocked(api.repositories.checkIndexers).mockResolvedValueOnce({
       ready: true,
-      indexers: [],
+      indexers: [
+        {
+          family: 'go',
+          tool: 'scip-go',
+          languages: ['go'],
+          installed: true,
+          installHint: 'go install github.com/scip-code/scip-go/cmd/scip-go@latest',
+          version: 'scip-go 0.2.7',
+          minVersion: '0.1.26',
+          belowMinimum: false,
+          downloadUrl: 'https://github.com/scip-code/scip-go/releases',
+          path: '/usr/local/bin/scip-go',
+        },
+      ],
     })
-    await act(async () => {
-      await renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-recheck' })
-        .props.onClick()
-    })
-    await act(async () => {
-      await renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-submit' })
-        .props.onClick()
-    })
-    expect(api.repositories.add).toHaveBeenCalledWith(
-      { path: '/repo/dotnet' },
-      expect.objectContaining({ materialize: true }),
-    )
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-indexers-check' }).props.onClick() })
+
+    expect(renderer.root.findAll((node) => node.props.children === 'Ready').length).toBeGreaterThan(0)
+    expect(hostNodes(renderer, 'repositories-indexer-scip-go')).toHaveLength(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-indexers-toggle' }).props['aria-expanded']).toBe(false)
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-indexers-toggle' }).props.onClick() })
+    expect(hostNodes(renderer, 'repositories-indexer-scip-go')).toHaveLength(1)
     renderer.unmount()
   })
-  it('adds without mapping when the toggle is off', async () => {
+  it('opens the Snapshots tab when a repository is added', async () => {
     const { api } = await import('../api/client')
     let renderer!: ReturnType<typeof create>
-    await act(async () => {
-      renderer = create(<Repositories />)
-    })
-    act(() => {
-      renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick()
-    })
-    act(() => {
-      renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-path' })
-        .props.onChange({ target: { value: '/repo/new' } })
-    })
-    act(() => {
-      renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-map' })
-        .props.onChange({ target: { checked: false } })
-    })
-    await act(async () => {
-      await renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-submit' })
-        .props.onClick()
-    })
-    expect(api.repositories.add).toHaveBeenCalledWith(
-      { path: '/repo/new' },
-      expect.objectContaining({ materialize: false }),
-    )
-    renderer.unmount()
-  })
-  it('starts the watcher with the map choice', async () => {
-    const { api } = await import('../api/client')
-    let renderer!: ReturnType<typeof create>
-    await act(async () => {
-      renderer = create(<Repositories />)
-    })
-    act(() => {
-      renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick()
-    })
-    act(() => {
-      renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-path' })
-        .props.onChange({ target: { value: '/repo/new' } })
-    })
-    act(() => {
-      renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-watch' })
-        .props.onChange({ target: { checked: true } })
-    })
-    await act(async () => {
-      await renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-submit' })
-        .props.onClick()
-    })
-    expect(api.repositories.startWatch).toHaveBeenCalledWith('repo-2', {
-      materialize: true,
-    })
+    await act(async () => { renderer = create(<Repositories />) })
+    const repositories = await api.repositories.list()
+    vi.mocked(api.repositories.list).mockResolvedValueOnce([...repositories, { ...repositories[0], id: 'repo-2', root: '/repo/new', name: 'new' }])
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props['aria-pressed']).toBe(true)
+    expect(hostNodes(renderer, 'repositories-snapshots-panel')).toHaveLength(1)
     renderer.unmount()
   })
   it('deletes a managed clone when toggled', async () => {
@@ -590,7 +611,7 @@ describe('Repositories map action', () => {
     expect(api.repositories.delete).toHaveBeenCalledWith('repo-1', { deleteMaterialized: false, deleteClone: true })
     renderer.unmount()
   })
-  it('shows friendly indexing status while adding a repository', async () => {
+  it('shows indexing progress on the Snapshots tab while adding a repository', async () => {
     const { api } = await import('../api/client')
     let finish!: (value: { id: string; root: string; latestSnapshotId: string }) => void
     vi.mocked(api.repositories.add).mockImplementationOnce(
@@ -606,101 +627,18 @@ describe('Repositories map action', () => {
         }),
     )
     let renderer!: ReturnType<typeof create>
-    await act(async () => {
-      renderer = create(<Repositories />)
-    })
-    const addCell = () =>
-      renderer.root.findAll(
-        (node) =>
-          node.type === 'div' &&
-          node.props['data-testid'] === 'repositories-add',
-      )[0]
-    act(() => {
-      addCell().props.onClick()
-    })
-    act(() => {
-      renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-path' })
-        .props.onChange({ target: { value: '/repo/new' } })
-    })
-    await act(async () => {
-      renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-submit' })
-        .props.onClick()
-    })
+    await act(async () => { renderer = create(<Repositories />) })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick() })
+    act(() => { renderer.root.findByProps({ 'data-testid': 'repositories-add-path' }).props.onChange({ target: { value: '/repo/new' } }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-add-submit' }).props.onClick() })
 
-    expect(
-      renderer.root.findByProps({ 'data-testid': 'repositories-add-status' }),
-    ).toBeTruthy()
-    expect(
-      renderer.root.findAll((node) => node.props.children === 'Parsing sources')
-        .length,
-    ).toBeGreaterThan(0)
-    expect(
-      renderer.root.findAll((node) => node.props.children === 'src/main.go')
-        .length,
-    ).toBeGreaterThan(0)
+    expect(hostNodes(renderer, 'repositories-operation-progress')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.props.children === 'Parsing sources · src/main.go · 1/4').length).toBeGreaterThan(0)
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props['aria-pressed']).toBe(true)
 
     await act(async () => {
       finish({ id: 'repo-2', root: '/repo/new', latestSnapshotId: 'snap-2' })
     })
-    renderer.unmount()
-  })
-  it('keeps the add dialog open while checking indexers and indexing', async () => {
-    const { api } = await import('../api/client')
-    let finishCheck!: (value: { ready: boolean; indexers: never[] }) => void
-    vi.mocked(api.repositories.checkIndexers).mockImplementationOnce(
-      () => new Promise((resolve) => { finishCheck = resolve }),
-    )
-    let finishAdd!: (value: { id: string; root: string; latestSnapshotId: string }) => void
-    vi.mocked(api.repositories.add).mockImplementationOnce(
-      () => new Promise((resolve) => { finishAdd = resolve }),
-    )
-    let renderer!: ReturnType<typeof create>
-    await act(async () => {
-      renderer = create(<Repositories />)
-    })
-    act(() => {
-      renderer.root.findByProps({ 'data-testid': 'repositories-add' }).props.onClick()
-    })
-    act(() => {
-      renderer.root
-        .findByProps({ 'data-testid': 'repositories-add-path' })
-        .props.onChange({ target: { value: '/repo/new' } })
-    })
-    act(() => {
-      renderer.root
-        .findAll(
-          (node) => node.props['data-testid'] === 'repositories-add-submit',
-        )[0]
-        .props.onClick()
-    })
-
-    const closeOnBlur = () =>
-      renderer.root.findAll(
-        (node) => node.props['data-testid'] === 'repositories-add-popover',
-      )[0].props['data-close-on-blur']
-
-    expect(closeOnBlur()).toBe('false')
-
-    await act(async () => {
-      finishCheck({ ready: true, indexers: [] })
-      await Promise.resolve()
-    })
-    expect(closeOnBlur()).toBe('false')
-
-    await act(async () => {
-      finishAdd({ id: 'repo-2', root: '/repo/new', latestSnapshotId: 'snap-2' })
-      await Promise.resolve()
-    })
-    renderer.unmount()
-  })
-  it('shows the commit message in the snapshot panel', async () => {
-    let renderer!: ReturnType<typeof create>
-    await act(async () => { renderer = create(<Repositories />) })
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
-    const messages = renderer.root.findAll((node) => node.props.children === 'feat: snapshot message')
-    expect(messages.length).toBeGreaterThan(0)
     renderer.unmount()
   })
   it('compares selected targets without running full map materialization', async () => {
@@ -714,28 +652,53 @@ describe('Repositories map action', () => {
     renderer.unmount()
   })
 
-  it('collapses and expands the compare branches from the summary bar', async () => {
+  it('collapses the history list while keeping compare controls in its header', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
-    const summary = () => renderer.root.findByProps({ 'data-testid': 'repositories-compare-summary' })
+    const history = () => renderer.root.findByProps({ 'data-testid': 'mock-history' })
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
-    await act(async () => { summary().props.onClick() })
-    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBe(0)
+    await act(async () => { history().props.onToggle() })
+    expect(history().props.collapsed).toBe(true)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare' })).toBeTruthy()
-    await act(async () => { summary().props.onClick() })
+    await act(async () => { history().props.onToggle() })
+    expect(history().props.collapsed).toBe(false)
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
     renderer.unmount()
   })
 
-  it('auto-collapses history and compare branches after comparing', async () => {
+  it('auto-collapses history after comparing while keeping controls visible', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.collapsed).toBe(false)
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
     expect(renderer.root.findByProps({ 'data-testid': 'mock-history' }).props.collapsed).toBe(true)
-    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBe(0)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare' })).toBeTruthy()
     renderer.unmount()
+  })
+
+  it('summarizes the selected range between base and head in the history footer', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.rangeSummary).mockResolvedValueOnce({ commits: 7, additions: 120, deletions: 30, changed: 45, files: 4 })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    expect(api.repositories.rangeSummary).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: 'old', head: 'abc', baseWorkingTree: false, headWorkingTree: false }))
+    const summary = renderer.root.findByProps({ 'data-testid': 'repositories-range-summary' })
+    expect(summary.findAll((node) => node.props.children === '7 commits').length).toBeGreaterThan(0)
+    expect(summary.findAll((node) => node.props.children === '+120').length).toBeGreaterThan(0)
+    expect(summary.findAll((node) => node.props.children === '~45').length).toBeGreaterThan(0)
+    expect(summary.findAll((node) => node.props.children === '−30').length).toBeGreaterThan(0)
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('re-runs the quick git diff when BASE or HEAD changes', async () => {
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.onChange('working_tree') })
+    expect(api.repositories.rangeSummary).toHaveBeenLastCalledWith('repo-1', expect.objectContaining({ base: 'old', head: '', headWorkingTree: true }))
+    await act(async () => { renderer.unmount() })
   })
 
   it('shows per-file insertion and deletion counts in the compact tree', async () => {
@@ -841,14 +804,14 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.unmount() })
   })
 
-  it('changes base and head independently and maps local working contents', async () => {
+  it('changes base and head independently while supporting working-tree targets', async () => {
     const { api } = await import('../api/client')
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.onChange('working_tree') })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-0')
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-map' }).props.onClick() })
-    expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ workingTree: true }))
+    expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
+    expect(api.repositories.map).not.toHaveBeenCalled()
   })
 
   it('displays a failed comparison', async () => {
@@ -861,18 +824,16 @@ describe('Repositories map action', () => {
     expect(renderer.root.findAll((node) => node.type === 'div' && node.children.includes('comparison unavailable')).length).toBeGreaterThan(0)
   })
 
-  it('restores targets from the URL and preserves them when browsing a branch', async () => {
-    const { api } = await import('../api/client')
+  it('restores targets from the URL and preserves them across settings', async () => {
     searchParamsMock.mockReturnValue(new URLSearchParams('repo=repo-1&base=snapshot:snap-1&head=working_tree&branch=feature'))
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-1')
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
-    await act(async () => { renderer.root.findByProps({ 'aria-label': 'History branch' }).props.onChange('main') })
-    expect(api.repositories.history).toHaveBeenCalledWith('repo-1', 'main', 0)
     await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
+    await act(async () => { renderer.unmount() })
   })
 
   it('ignores a comparison completed after cancellation', async () => {
@@ -1062,10 +1023,10 @@ describe('Repositories map action', () => {
       provenance: 'commit',
       contentFingerprint: `fp-${index}`,
     }))
-    vi.mocked(api.repositories.snapshots).mockResolvedValueOnce(seven)
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
+    vi.mocked(api.repositories.snapshots).mockResolvedValueOnce(seven)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
 
     const visible = () => renderer.root
       .findAll((node) => node.type === 'button' && typeof node.props['data-testid'] === 'string' && node.props['data-testid'].startsWith('repositories-snapshot-delete-'))
@@ -1081,6 +1042,103 @@ describe('Repositories map action', () => {
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-show-less' }).props.onClick() })
     expect(visible()).toHaveLength(5)
     renderer.unmount()
+  })
+
+  it('collapses the files and symbols panel into a rail that counts files and symbols', async () => {
+    const { api } = await import('../api/client')
+    const result = await api.repositories.compare('repo-1', { base: {}, head: {} })
+    vi.mocked(api.repositories.compare).mockResolvedValueOnce({ ...result, diff: { ...result.diff,
+      sources: [
+        { path: 'src/file.go', change: 'modified', fromHash: 'old', toHash: 'new' },
+        { path: 'src/other.go', change: 'modified', fromHash: 'old', toHash: 'new' },
+      ],
+      facts: { added: 3, removed: 2, modified: 1 },
+    } })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare' }).props.onClick() })
+
+    expect(hostNodes(renderer, 'repositories-files-panel')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repositories-files-resize')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repositories-files-collapsed')).toHaveLength(0)
+    const resize = hostNodes(renderer, 'repositories-files-resize')[0]
+    expect(resize.props.alignSelf).toBe('stretch')
+    expect(divTestIdAncestry(resize).slice(0, 2)).toEqual([
+      'repositories-files-resize',
+      'repositories-split',
+    ])
+
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-files-collapse' }).props.onClick() })
+
+    expect(hostNodes(renderer, 'repositories-files-panel')).toHaveLength(0)
+    expect(hostNodes(renderer, 'repositories-files-resize')).toHaveLength(0)
+    const rail = hostNodes(renderer, 'repositories-files-collapsed')[0]
+    expect(rail.props['aria-expanded']).toBe(false)
+    expect(rail.props['aria-label']).toBe('Expand files and symbols panel, 2 files, 6 symbols')
+    expect(hostNodes(renderer, 'repositories-files-collapsed-count')).toHaveLength(0)
+    expect(hostNodes(renderer, 'repositories-symbols-collapsed-count')).toHaveLength(0)
+
+    await act(async () => { rail.props.onClick() })
+
+    expect(hostNodes(renderer, 'repositories-files-panel')).toHaveLength(1)
+    expect(hostNodes(renderer, 'repositories-files-collapsed')).toHaveLength(0)
+    renderer.unmount()
+  })
+
+  it('renders the Snapshots tab as the first repository mode with its list', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    const tabIds = renderer.root
+      .findAll((node) => node.type === 'button' && typeof node.props['data-testid'] === 'string' && node.props['data-testid'].endsWith('-tab'))
+      .map((node) => node.props['data-testid'] as string)
+    expect(tabIds[0]).toBe('repositories-snapshots-tab')
+    expect(tabIds).toEqual(['repositories-snapshots-tab', 'repositories-compare-tab', 'repositories-live-tab', 'repositories-pr-tab'])
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    expect(hostNodes(renderer, 'repositories-snapshots-panel')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-snapshot-delete-snap-1')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-snapshot-capture')).toHaveLength(1)
+    expect(renderer.root.findAll((node) => node.props.children === 'feat: snapshot message').length).toBeGreaterThan(0)
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('captures working tree and commit snapshots from the Snapshots tab', async () => {
+    const { api } = await import('../api/client')
+    const history = await api.repositories.history('repo-1')
+    vi.mocked(api.repositories.history).mockResolvedValue({ ...history, isGit: true })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-capture' }).props.onClick() })
+    expect(api.repositories.captureSnapshot).toHaveBeenCalledWith('repo-1', expect.objectContaining({ workingTree: true, signal: expect.any(AbortSignal) }))
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-include-worktree' }).props.onChange({ target: { checked: false } }) })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-capture' }).props.onClick() })
+    expect(api.repositories.captureSnapshot).toHaveBeenLastCalledWith('repo-1', expect.objectContaining({ workingTree: false }))
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('maps a saved snapshot into the workspace from the snapshot details', async () => {
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    expect(renderer.root.findAll((node) => node.type === 'button' && node.props['data-testid'] === 'repositories-snapshot-map-snap-1')).toHaveLength(0)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-view-snap-1' }).props.onClick() })
+    await act(async () => { await renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-map-snap-1' }).props.onClick() })
+    expect(api.repositories.map).toHaveBeenCalledWith('repo-1', expect.objectContaining({ snapshotId: 'snap-1', signal: expect.any(AbortSignal) }))
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('views snapshot metadata from the Snapshots tab', async () => {
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-view-snap-1' }).props.onClick() })
+    const details = renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-details-snap-1' })
+    expect(details.findAll((node) => node.props.children === 'feat: snapshot message').length).toBeGreaterThan(0)
+    expect(details.findAll((node) => node.props.children === 'fp-1').length).toBeGreaterThan(0)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshot-view-snap-1' }).props.onClick() })
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-snapshot-details-snap-1' })).toHaveLength(0)
+    await act(async () => { renderer.unmount() })
   })
 
 })

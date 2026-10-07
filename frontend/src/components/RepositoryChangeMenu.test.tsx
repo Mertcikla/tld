@@ -26,9 +26,6 @@ function renderMenu(overrides: Partial<React.ComponentProps<typeof RepositoryCha
       onRadiusChange={vi.fn()}
       viewMode="standard"
       onViewModeChange={vi.fn()}
-      mermaidOpen
-      onToggleMermaid={vi.fn()}
-      hasMermaid
       {...overrides}
     />,
   )
@@ -59,20 +56,9 @@ describe('RepositoryChangeMenu', () => {
     expect(onViewModeChange).toHaveBeenCalledWith('plain')
   })
 
-  it('toggles the mermaid pane', () => {
-    const onToggleMermaid = vi.fn()
-    const renderer = renderMenu({ onToggleMermaid })
+  it('leaves the change diagram toggle to the panel itself', () => {
+    const renderer = renderMenu()
 
-    act(() => {
-      renderer.root.findByProps({ 'data-testid': 'repository-change-mermaid-toggle' }).props.onClick()
-    })
-
-    expect(onToggleMermaid).toHaveBeenCalledOnce()
-  })
-
-  it('disables the mermaid toggle without a diagram', () => {
-    const renderer = renderMenu({ hasMermaid: false })
-
-    expect(renderer.root.findByProps({ 'data-testid': 'repository-change-mermaid-toggle' }).props.isDisabled).toBe(true)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repository-change-mermaid-toggle' })).toHaveLength(0)
   })
 })

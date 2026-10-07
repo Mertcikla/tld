@@ -1,4 +1,5 @@
 import { ChevronDownIcon } from '@chakra-ui/icons'
+import type { ReactNode } from 'react'
 import {
   Button,
   Menu,
@@ -20,6 +21,9 @@ export default function RepositoryTargetPicker({
   isDisabled,
   'aria-label': ariaLabel,
   'data-testid': testId,
+  triggerContent,
+  compact = false,
+  card = false,
 }: {
   value: string
   groups: PickerGroup[]
@@ -27,6 +31,9 @@ export default function RepositoryTargetPicker({
   isDisabled?: boolean
   'aria-label': string
   'data-testid'?: string
+  triggerContent?: ReactNode
+  compact?: boolean
+  card?: boolean
 }) {
   const label = groups.flatMap((group) => group.options).find((option) => option.value === value)?.label ?? value
   return (
@@ -36,25 +43,27 @@ export default function RepositoryTargetPicker({
         aria-label={ariaLabel}
         data-testid={testId}
         isDisabled={isDisabled}
-        size="xs"
-        h="28px"
-        minH="28px"
-        w="full"
-        px={2}
-        variant="outline"
-        bg="var(--bg-panel)"
-        borderColor="whiteAlpha.200"
+        size={compact ? 'sm' : 'xs'}
+        h={card ? '64px' : compact ? 'auto' : '28px'}
+        minH={compact ? '24px' : '28px'}
+        minW={compact ? '280px' : undefined}
+        w={compact && !card ? 'auto' : 'full'}
+        px={card ? 3 : compact ? 0 : 2}
+        variant={compact && !card ? 'ghost' : 'outline'}
+        bg={card ? 'whiteAlpha.50' : compact ? 'transparent' : 'var(--bg-panel)'}
+        borderColor={compact && !card ? 'transparent' : 'whiteAlpha.200'}
+        borderRadius={card ? 'lg' : undefined}
         fontWeight="normal"
         textAlign="left"
-        rightIcon={<ChevronDownIcon color="gray.400" />}
-        _hover={{ bg: 'whiteAlpha.100' }}
+        rightIcon={compact && !card ? undefined : <ChevronDownIcon color="gray.400" />}
+        _hover={{ bg: 'whiteAlpha.100', ...(card ? { borderColor: 'whiteAlpha.400' } : {}) }}
         _expanded={{ borderColor: 'var(--accent)', bg: 'whiteAlpha.100' }}
       >
-        <Text as="span" display="block" isTruncated title={label}>{label}</Text>
+        {triggerContent ?? <Text as="span" display="block" isTruncated title={label}>{label}</Text>}
       </MenuButton>
       <Portal>
         <MenuList
-          minW={0}
+          minW={compact ? '280px' : 0}
           maxH="280px"
           overflowY="auto"
           overscrollBehavior="contain"

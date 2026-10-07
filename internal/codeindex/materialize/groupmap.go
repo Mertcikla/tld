@@ -182,23 +182,64 @@ func (m *mapMaterializer) materializeGroup(group *community.Group, viewID int64,
 			return err
 		}
 	}
-	for _, member := range group.Members {
-		if member < 0 || member >= len(m.input.Files) {
-			continue
+	// Commit only bounded batches, recording every committed resource before
+	// any subsequent context-sensitive work can fail.
+	for offset := 0; offset < len(group.Members); offset += 100 {
+		members := group.Members[offset:min(offset+100, len(group.Members))]
+		var inputs []core.LibraryElement
+		var keys []string
+		var fresh []int
+		ids := make(map[int]int64, len(members))
+		batch, canBatch := m.ws.(core.BatchElementCreator)
+		for _, member := range members {
+			if member < 0 || member >= len(m.input.Files) {
+				continue
+			}
+			fact := m.input.Files[member]
+			input := m.fileElement(member)
+			if hasLayer {
+				input.Tags = unionTags(input.Tags, []string{groupTagValue})
+			}
+			key := fileKey(m.input.RepositoryID, fact.ID)
+			_, exists := m.byKey[key]
+			if canBatch && !exists {
+				inputs = append(inputs, input)
+				keys = append(keys, key)
+				fresh = append(fresh, member)
+			} else {
+				id, err := m.upsertElement(key, input)
+				if err != nil {
+					return err
+				}
+				ids[member] = id
+			}
 		}
-		fact := m.input.Files[member]
-		fileInput := m.fileElement(member)
-		if hasLayer {
-			fileInput.Tags = unionTags(fileInput.Tags, []string{groupTagValue})
+		if len(inputs) > 0 {
+			created, err := batch.CreateElements(m.ctx, inputs)
+			if err != nil {
+				return fmt.Errorf("create map file batch: %w", err)
+			}
+			for i, element := range created {
+				key := keys[i]
+				m.kept[key] = true
+				m.recordMapping(key, cstore.MappingElement, element.ID)
+				m.result.Elements++
+				ids[fresh[i]] = element.ID
+			}
+			for range created {
+				m.advance("element")
+			}
 		}
-		fileID, err := m.upsertElement(fileKey(m.input.RepositoryID, fact.ID), fileInput)
-		if err != nil {
-			return err
+		for _, member := range members {
+			id, ok := ids[member]
+			if !ok {
+				continue
+			}
+			if err := m.queuePlacement(groupViewID, id); err != nil {
+				return err
+			}
+			m.recordFile(m.input.Files[member].ID, id, appendView(views, groupViewID), appendElem(elements, id))
 		}
-		if err := m.queuePlacement(groupViewID, fileID); err != nil {
-			return err
-		}
-		m.recordFile(fact.ID, fileID, appendView(views, groupViewID), appendElem(elements, fileID))
 	}
 	return nil
 }
