@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"os/exec"
@@ -223,8 +224,8 @@ func (s *repositoryService) GetRevisionRangeSummary(ctx context.Context, req *co
 	}
 	lines := parseNumstat(numstat)
 	for _, count := range lines {
-		result.Additions += uint32(count.added)
-		result.Deletions += uint32(count.removed)
+		result.Additions = addLineCount(result.Additions, count.added)
+		result.Deletions = addLineCount(result.Deletions, count.removed)
 	}
 	if reverse {
 		result.Additions, result.Deletions = result.Deletions, result.Additions
@@ -234,7 +235,8 @@ func (s *repositoryService) GetRevisionRangeSummary(ctx context.Context, req *co
 		// "changed" is the churn in files that already existed on both sides.
 		if file.status == 'M' {
 			if count, ok := lines[file.path]; ok {
-				result.Changed += uint32(count.added + count.removed)
+				result.Changed = addLineCount(result.Changed, count.added)
+				result.Changed = addLineCount(result.Changed, count.removed)
 			}
 		}
 	}
@@ -243,6 +245,18 @@ func (s *repositoryService) GetRevisionRangeSummary(ctx context.Context, req *co
 
 type rangeLineCount struct {
 	added, removed uint64
+}
+
+// addLineCount saturates summary totals at the protobuf field's upper bound.
+func addLineCount(total uint32, count uint64) uint32 {
+	if count > math.MaxUint32 {
+		return math.MaxUint32
+	}
+	increment := uint32(count)
+	if increment > math.MaxUint32-total {
+		return math.MaxUint32
+	}
+	return total + increment
 }
 
 // parseNumstat reads `git diff --numstat -z` records (added\tremoved\tpath\0).
