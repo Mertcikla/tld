@@ -1,5 +1,8 @@
 name: tld PR diagram
 description: Generate and cache PR impact diagrams, then publish them from a trusted workflow.
+branding:
+  icon: layers
+  color: blue
 inputs:
   mode:
     description: generate or publish
