@@ -13,19 +13,14 @@ jobs:
     timeout-minutes: 45
     continue-on-error: true
     steps:
-      - name: Checkout trusted bot source
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          path: bot
-          persist-credentials: false
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
           path: repository
-      - uses: ./bot
+      - name: tld PR diagram
+        uses: Mertcikla/tld@v2.4.0
         env:
           TLD_PR_MAX_ELEMENTS: ${{ vars.TLD_PR_MAX_ELEMENTS || '80' }}
           TLD_PR_MAX_CONNECTORS: ${{ vars.TLD_PR_MAX_CONNECTORS || '160' }}
