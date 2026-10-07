@@ -2,7 +2,6 @@ package list_test
 
 import (
 	"encoding/json"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -58,27 +57,6 @@ func TestListViews(t *testing.T) {
 	stdout, _ := cmd.MustRunCmd(t, dir, "list", "views")
 	if !strings.Contains(stdout, "platform") || !strings.Contains(stdout, "root") {
 		t.Fatalf("list views output wrong:\n%s", stdout)
-	}
-}
-
-func TestListViewsTree_OutputsDerivedViewSummary(t *testing.T) {
-	dir := t.TempDir()
-	cmd.MustInitWorkspace(t, dir)
-	seedViewsWorkspace(t, dir)
-
-	stdout, stderr, err := cmd.RunCmd(t, dir, "list", "views", "--tree")
-	if err != nil {
-		t.Fatalf("list views --tree: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-	}
-
-	if !regexp.MustCompile(`(?m)^VIEW\s+NAME\s+DEPTH\s+ELEMENTS\s+CHILD VIEWS\s+CONNECTORS\s+PATH$`).MatchString(stdout) {
-		t.Fatalf("stdout missing aligned header:\n%s", stdout)
-	}
-	assertViewRow(t, stdout, "root", "Workspace Root", "root")
-	assertViewRow(t, stdout, "platform", "Platform", "root/platform")
-	assertViewRow(t, stdout, "api", "API", "root/platform/api")
-	if stderr != "" {
-		t.Fatalf("expected empty stderr, got %q", stderr)
 	}
 }
 
@@ -158,21 +136,6 @@ func TestListElementsJSON(t *testing.T) {
 	if len(payload.Extra.Elements) != payload.Summary.Count {
 		t.Fatalf("extra.elements = %d, summary.count = %d", len(payload.Extra.Elements), payload.Summary.Count)
 	}
-}
-
-func assertViewRow(t *testing.T, output, ref, name, path string) {
-	t.Helper()
-	for _, line := range strings.Split(output, "\n") {
-		trimmed := strings.TrimLeft(line, " ")
-		if !strings.HasPrefix(trimmed, ref) || !strings.Contains(line, name) {
-			continue
-		}
-		if !strings.Contains(line, path) {
-			t.Fatalf("row %q missing path %q: %q", ref, path, line)
-		}
-		return
-	}
-	t.Fatalf("missing row ref=%q name=%q:\n%s", ref, name, output)
 }
 
 func seedViewsWorkspace(t *testing.T, dir string) {

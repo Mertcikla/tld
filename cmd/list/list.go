@@ -1,10 +1,13 @@
 package list
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"unicode/utf8"
 
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/term"
@@ -217,19 +220,16 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 				})
 			}
 			out := cmd.OutOrStdout()
-			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 			if tree {
-				_, _ = fmt.Fprintln(w, "VIEW\tNAME\tDEPTH\tELEMENTS\tCHILD VIEWS\tCONNECTORS\tPATH")
-				for _, row := range filtered {
-					_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%s\n",
-						row.Ref, row.Name, row.Depth, row.Elements, row.ChildViews, row.Connectors, row.Path)
-				}
-			} else {
-				_, _ = fmt.Fprintln(w, "REF\tNAME\tLABEL\tPARENT\tELEMENTS\tCHILD VIEWS\tCONNECTORS\tID")
-				for _, row := range filtered {
-					_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
-						row.Ref, row.Name, row.Label, row.Parent, row.Elements, row.ChildViews, row.Connectors, idString(row.ID))
-				}
+				renderViewTree(out, filtered)
+				term.Infof(out, "%d of %d view(s)", len(filtered), len(rows))
+				return nil
+			}
+			w := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintln(w, "REF\tNAME\tLABEL\tPARENT\tELEMENTS\tCHILD VIEWS\tCONNECTORS\tID")
+			for _, row := range filtered {
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\n",
+					row.Ref, row.Name, row.Label, row.Parent, row.Elements, row.ChildViews, row.Connectors, idString(row.ID))
 			}
 			_ = w.Flush()
 			term.Infof(out, "%d of %d view(s)", len(filtered), len(rows))
@@ -238,7 +238,7 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 	}
 	c.Flags().StringVar(&search, "search", "", "substring filter across ref, name, label, and parent")
 	c.Flags().StringVar(&parent, "parent", "", "only show views placed under this parent ref")
-	c.Flags().BoolVar(&tree, "tree", false, "show the derived view hierarchy with depth and path")
+	c.Flags().BoolVar(&tree, "tree", false, "render the derived view hierarchy as a tree")
 	return c
 }
 
@@ -434,6 +434,125 @@ func sortViewTreeRows(rows []viewRow) {
 		}
 		return rows[i].Ref < rows[j].Ref
 	})
+}
+
+// renderViewTree prints the derived view hierarchy using branch glyphs, similar
+// to the unix `tree` command. Each view is nested under the view that owns its
+// placement (the synthetic workspace root sits at the top).
+func renderViewTree(w io.Writer, rows []viewRow) {
+	if len(rows) == 0 {
+		return
+	}
+	byRef := make(map[string]viewRow, len(rows))
+	for _, row := range rows {
+		byRef[row.Ref] = row
+	}
+
+	children := make(map[string][]viewRow)
+	roots := make([]viewRow, 0, 1)
+	for _, row := range rows {
+		parent := viewTreeParent(row)
+		if parent == "" {
+			roots = append(roots, row)
+			continue
+		}
+		if _, ok := byRef[parent]; !ok {
+			roots = append(roots, row)
+			continue
+		}
+		children[parent] = append(children[parent], row)
+	}
+	sortViewTreeRows(roots)
+	for ref := range children {
+		sortViewTreeRows(children[ref])
+	}
+
+	visited := make(map[string]bool, len(rows))
+	var buf bytes.Buffer
+	tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "VIEW\tREF\tELEMENTS\tCONNECTORS")
+	for _, root := range roots {
+		if visited[root.Ref] {
+			continue
+		}
+		visited[root.Ref] = true
+		writeViewTreeLine(tw, "", "", root)
+		renderViewTreeChildren(tw, root.Ref, "", children, visited)
+	}
+	_ = tw.Flush()
+	writeStripedRows(w, buf.String())
+}
+
+// writeStripedRows writes tab-aligned tree lines, underlining the header and
+// applying a subtle background to alternating rows so long rows are easier to
+// follow. Styling happens after tab alignment so ANSI sequences never affect
+// column widths.
+func writeStripedRows(w io.Writer, text string) {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	if !term.IsColorEnabled(w) {
+		for _, line := range lines {
+			_, _ = fmt.Fprintln(w, line)
+		}
+		return
+	}
+	width := 0
+	for _, line := range lines {
+		if n := utf8.RuneCountInString(line); n > width {
+			width = n
+		}
+	}
+	for i, line := range lines {
+		if i == 0 {
+			_, _ = fmt.Fprintln(w, term.Colorize(w, term.ColorUnderline, line))
+			continue
+		}
+		if pad := width - utf8.RuneCountInString(line); pad > 0 {
+			line += strings.Repeat(" ", pad)
+		}
+		_, _ = fmt.Fprintln(w, term.Stripe(w, i, line))
+	}
+}
+
+func renderViewTreeChildren(w io.Writer, parentRef, prefix string, children map[string][]viewRow, visited map[string]bool) {
+	kids := children[parentRef]
+	for i, child := range kids {
+		if visited[child.Ref] {
+			continue
+		}
+		visited[child.Ref] = true
+		branch, childPrefix := "├── ", prefix+"│   "
+		if i == len(kids)-1 {
+			branch, childPrefix = "└── ", prefix+"    "
+		}
+		writeViewTreeLine(w, prefix, branch, child)
+		renderViewTreeChildren(w, child.Ref, childPrefix, children, visited)
+	}
+}
+
+// writeViewTreeLine writes one node, keeping the ref and counts in separate
+// tabs so the caller's tabwriter aligns them into distinct columns.
+func writeViewTreeLine(w io.Writer, prefix, branch string, row viewRow) {
+	label := prefix + branch + viewTreeLabel(row)
+	_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\n", label, row.Ref, row.Elements, row.Connectors)
+}
+
+// viewTreeParent resolves the owning view ref for a row, preferring the direct
+// parent placement and falling back to the derived path.
+func viewTreeParent(row viewRow) string {
+	if row.Parent != "" {
+		return row.Parent
+	}
+	if idx := strings.LastIndex(row.Path, "/"); idx > 0 {
+		return row.Path[:idx]
+	}
+	return ""
+}
+
+func viewTreeLabel(row viewRow) string {
+	if row.Name != "" {
+		return row.Name
+	}
+	return row.Ref
 }
 
 func metaID(ws *workspace.Workspace, kind, ref string) int32 {
