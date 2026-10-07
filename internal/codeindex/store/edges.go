@@ -60,9 +60,10 @@ func (s *Store) FileEdges(ctx context.Context, snapshotID string) ([]FileEdge, e
 	rows, err := s.bun.QueryContext(ctx, `
 		SELECT sf.path, tf.path, COALESCE(e.weight, 0)
 		FROM codeindex_edges e
+		JOIN codeindex_snapshot_edges m ON m.edge_id = e.id AND m.org_id = e.org_id
 		JOIN codeindex_facts sf ON sf.id = e.from_fact_id AND sf.org_id = e.org_id
 		JOIN codeindex_facts tf ON tf.id = e.to_fact_id AND tf.org_id = e.org_id
-		WHERE e.snapshot_id = ?`+where+`
+		WHERE m.snapshot_id = ?`+where+`
 		ORDER BY e.id`, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {
 		return nil, err
@@ -135,12 +136,13 @@ func (s *Store) AggregatedFileEdges(ctx context.Context, snapshotID string) ([]F
 	}
 	where, scopeArgs := scope(ctx).clause("e.org_id")
 	rows, err := s.bun.QueryContext(ctx, `
-		SELECT sf.path, tf.path, e.kind, COALESCE(e.weight, 0)
+		SELECT sf.path, tf.path, e.kind, SUM(COALESCE(e.weight, 0)), COUNT(*)
 		FROM codeindex_edges e
+		JOIN codeindex_snapshot_edges m ON m.edge_id = e.id AND m.org_id = e.org_id
 		JOIN codeindex_facts sf ON sf.id = e.from_fact_id AND sf.org_id = e.org_id
 		JOIN codeindex_facts tf ON tf.id = e.to_fact_id AND tf.org_id = e.org_id
-		WHERE e.snapshot_id = ?`+where+`
-		ORDER BY e.id`, append([]any{snapshotID}, scopeArgs...)...)
+		WHERE m.snapshot_id = ? AND sf.path <> '' AND tf.path <> '' AND sf.path <> tf.path`+where+`
+		GROUP BY sf.path, tf.path, e.kind`, append([]any{snapshotID}, scopeArgs...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -157,9 +159,9 @@ func (s *Store) AggregatedFileEdges(ctx context.Context, snapshotID string) ([]F
 	order := []pairKey{}
 	for rows.Next() {
 		var fromPath, toPath string
-		var kind int
+		var kind, observations int
 		var weight float64
-		if err := rows.Scan(&fromPath, &toPath, &kind, &weight); err != nil {
+		if err := rows.Scan(&fromPath, &toPath, &kind, &weight, &observations); err != nil {
 			return nil, err
 		}
 		if fromPath == "" || toPath == "" || fromPath == toPath {
@@ -182,7 +184,7 @@ func (s *Store) AggregatedFileEdges(ctx context.Context, snapshotID string) ([]F
 			entry.kindStats[pb.EdgeKind(kind)] = stat
 		}
 		stat.weight += weight
-		stat.observations++
+		stat.observations += observations
 	}
 	out := make([]FileEdge, 0, len(order))
 	for _, key := range order {

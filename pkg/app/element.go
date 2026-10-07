@@ -181,8 +181,48 @@ func (s *Store) CreateElement(ctx context.Context, input LibraryElement) (Librar
 	if err := s.ensureTagColors(ctx, input.Tags); err != nil {
 		return LibraryElement{}, err
 	}
+	row := newElementModel(input, nowString())
+	_, err := s.bun.NewInsert().Model(&row).Exec(ctx)
+	if err != nil {
+		return LibraryElement{}, err
+	}
+	return s.ElementByID(ctx, row.ID)
+}
+
+// CreateElements atomically creates a bounded batch in input order. New rows
+// cannot have child views, so returning the inserted models avoids readbacks.
+func (s *Store) CreateElements(ctx context.Context, inputs []LibraryElement) ([]LibraryElement, error) {
+	if len(inputs) == 0 {
+		return nil, nil
+	}
+	if len(inputs) > 100 {
+		return nil, errors.New("element batch exceeds 100")
+	}
+	rows := make([]elementModel, len(inputs))
+	var tags []string
 	now := nowString()
-	row := &elementModel{
+	for i, input := range inputs {
+		rows[i] = newElementModel(input, now)
+		tags = append(tags, input.Tags...)
+	}
+	err := s.RunInTransaction(ctx, func(ctx context.Context, tx *Store) error {
+		if err := tx.ensureTagColors(ctx, tags); err != nil {
+			return err
+		}
+		return tx.bun.NewInsert().Model(&rows).Returning("*").Scan(ctx)
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]LibraryElement, len(rows))
+	for i, row := range rows {
+		out[i] = elementFromModel(row)
+	}
+	return out, nil
+}
+
+func newElementModel(input LibraryElement, now string) elementModel {
+	return elementModel{
 		Name:                 strings.TrimSpace(input.Name),
 		Kind:                 input.Kind,
 		Description:          input.Description,
@@ -200,11 +240,6 @@ func (s *Store) CreateElement(ctx context.Context, input LibraryElement) (Librar
 		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
-	_, err := s.bun.NewInsert().Model(row).Exec(ctx)
-	if err != nil {
-		return LibraryElement{}, err
-	}
-	return s.ElementByID(ctx, row.ID)
 }
 
 func (s *Store) UpdateElement(ctx context.Context, id int64, input LibraryElement) (LibraryElement, error) {

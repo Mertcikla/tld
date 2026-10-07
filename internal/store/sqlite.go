@@ -356,3 +356,13 @@ func convertSlice[A any, B any](in []A, convert func(A) B) []B {
 	}
 	return out
 }
+
+// CreateElements commits the batch atomically and returns resources in input order.
+func (s *SQLiteStore) CreateElements(ctx context.Context, inputs []core.LibraryElement) ([]core.LibraryElement, error) {
+	return s.legacy.CreateElements(ctx, inputs)
+}
+
+// AddPlacements commits placement updates and related connector copies atomically.
+func (s *SQLiteStore) AddPlacements(ctx context.Context, viewID int64, placements []core.ElementPlacement) error {
+	return s.legacy.AddPlacements(ctx, viewID, placements)
+}

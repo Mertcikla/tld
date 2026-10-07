@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"github.com/uptrace/bun"
 
 	"github.com/google/uuid"
 )
@@ -221,4 +223,67 @@ func placedElementFromPlacementRow(row placementJoinRow) PlacedElement {
 		Language:             row.Language,
 		BypassNoiseGate:      row.BypassNoiseGate,
 	}
+}
+
+// AddPlacements atomically upserts a bounded batch and copies each related
+// connector once when at least one of its endpoints is newly placed.
+func (s *Store) AddPlacements(ctx context.Context, viewID int64, inputs []ElementPlacement) error {
+	if len(inputs) == 0 {
+		return nil
+	}
+	if len(inputs) > 100 {
+		return errors.New("placement batch exceeds 100")
+	}
+	return s.RunInTransaction(ctx, func(ctx context.Context, tx *Store) error {
+		var ids []int64
+		var rows []elementPlacementModel
+		positions := map[int64]int{}
+		now := nowString()
+		for _, input := range inputs {
+			if i, ok := positions[input.ElementID]; ok {
+				rows[i].PositionX = input.PositionX
+				rows[i].PositionY = input.PositionY
+				continue
+			}
+			positions[input.ElementID] = len(rows)
+			ids = append(ids, input.ElementID)
+			rows = append(rows, elementPlacementModel{ViewID: viewID, ElementID: input.ElementID, PositionX: input.PositionX, PositionY: input.PositionY, CreatedAt: now, UpdatedAt: now})
+		}
+		var existing []elementPlacementModel
+		if err := tx.bun.NewSelect().Model(&existing).Column("element_id").Where("view_id = ?", viewID).Where("element_id IN (?)", bun.List(ids)).Scan(ctx); err != nil {
+			return err
+		}
+		present := map[int64]bool{}
+		for _, row := range existing {
+			present[row.ElementID] = true
+		}
+		var added []int64
+		for _, id := range ids {
+			if !present[id] {
+				added = append(added, id)
+			}
+		}
+		if _, err := tx.bun.NewInsert().Model(&rows).On("CONFLICT(view_id, element_id) DO UPDATE").Set("position_x = excluded.position_x").Set("position_y = excluded.position_y").Set("updated_at = excluded.updated_at").Exec(ctx); err != nil {
+			return err
+		}
+		if len(added) == 0 {
+			return nil
+		}
+		var related []connectorModel
+		if err := tx.bun.NewSelect().Model(&related).
+			Where("view_id != ?", viewID).
+			Where("source_element_id IN (SELECT element_id FROM placements WHERE view_id = ?)", viewID).
+			Where("target_element_id IN (SELECT element_id FROM placements WHERE view_id = ?)", viewID).
+			Where("(source_element_id IN (?) OR target_element_id IN (?))", bun.List(added), bun.List(added)).Order("id").Scan(ctx); err != nil {
+			return err
+		}
+		for _, row := range related {
+			input := connectorFromModel(row)
+			input.ViewID = viewID
+			if _, err := tx.CreateConnector(ctx, input); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }

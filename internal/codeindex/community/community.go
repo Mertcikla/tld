@@ -646,9 +646,12 @@ func measure(roots []*Group, g *graph, files []File, activeMembers []int, totalF
 
 	rootDegree := map[int32]map[int32]struct{}{}
 	isolated := 0
-	for _, group := range nodes {
-		if group.Isolated {
-			isolated += group.Files
+	for _, path := range paths {
+		for _, id := range path {
+			if nodes[id].Isolated {
+				isolated++
+				break
+			}
 		}
 	}
 	for _, e := range g.edges {

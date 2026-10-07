@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
@@ -232,6 +231,9 @@ func (p Pipeline) buildOnce(ctx context.Context, req *pb.IndexRequest, progress 
 		projectKey := family + "|" + pr.Root
 		fingerprint := projectFingerprints[projectKey]
 		if err := p.indexProject(ctx, g, snap, req, pr, family, scipBacked, table, root, projectDir, projectKey, fingerprint, tmp, i, totalProjects, base, progress); err != nil {
+			if ctx.Err() != nil {
+				return nil, nil, false, ctx.Err()
+			}
 			// One project failing must not discard the rest of the repository:
 			// record a warning and keep indexing siblings.
 			snap.Warnings = append(snap.Warnings, fmt.Sprintf("%s (%s): %v", pr.Root, family, err))
@@ -345,13 +347,11 @@ func (p Pipeline) indexProject(
 		runTool := func(args []string) ([]byte, error) {
 			toolCtx, cancel := context.WithTimeout(ctx, p.Config.ToolTimeout())
 			defer cancel()
-			cmd := exec.CommandContext(toolCtx, tool, args...)
-			cmd.Dir = projectDir
-			return cmd.CombinedOutput()
+			return tools.Run(toolCtx, tool, args, projectDir)
 		}
 		emitProgress(progress, Progress{Stage: "scip", Current: int64(index), Total: int64(total), Detail: fmt.Sprintf("running %s · %s", spec.name, pr.Root)})
 		out, runErr := runTool(argv)
-		if runErr != nil && spec.fallbackArgs != nil {
+		if runErr != nil && !errors.Is(runErr, context.DeadlineExceeded) && !errors.Is(runErr, context.Canceled) && spec.fallbackArgs != nil {
 			// Extra projects are an enrichment; when one of them breaks the
 			// invocation, retry with the primary project only.
 			if fallback, fallbackExplicit, fallbackErr := spec.fallbackArgs(p.Config, c); fallbackErr == nil && len(fallback) > 0 && !slices.Equal(fallback, argv) {
@@ -440,8 +440,8 @@ func anyBaseSourceRemoved(sources map[string]*graph.Source, baseSources map[stri
 func toolVersion(ctx context.Context, tool string, args []string) string {
 	vctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(vctx, tool, args...).CombinedOutput()
-	if err != nil {
+	out, err := tools.Run(vctx, tool, args, "")
+	if err != nil || strings.HasPrefix(string(out), "[earlier tool output truncated]") {
 		return "unknown"
 	}
 	return strings.TrimSpace(strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0])

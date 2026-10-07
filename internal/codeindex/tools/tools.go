@@ -266,10 +266,9 @@ func versionTuple(s string) ([]int, bool) {
 func probeVersion(ctx context.Context, path string, args []string) string {
 	probeCtx, cancel := context.WithTimeout(ctx, versionTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(probeCtx, path, args...)
-	out, err := cmd.CombinedOutput()
+	out, err := Run(probeCtx, path, args, "")
 	text := strings.TrimSpace(string(out))
-	if text == "" && err != nil {
+	if probeCtx.Err() != nil || strings.HasPrefix(text, truncatedOutput) || (text == "" && err != nil) {
 		return ""
 	}
 	if line, _, found := strings.Cut(text, "\n"); found {

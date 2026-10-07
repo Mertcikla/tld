@@ -111,6 +111,9 @@ func scanInfraFile(path, rel, subject string) []Fact {
 		out = protoFacts(path, rel, subject)
 	}
 	out = append(out, workspaceFacts(path, rel)...)
+	if len(out) == 0 {
+		return nil
+	}
 	b, e := os.ReadFile(path)
 	if e != nil {
 		return out
