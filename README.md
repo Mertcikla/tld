@@ -37,14 +37,14 @@ Here are some examples that were generated using the agent skill.
   - [.NET eShop reference](https://tldiagram.com/app/explore/shared/ba6cbf2a-e0ff-468a-87e5-f720d35f448d)
 
 - **Editor and Github Integration**: Jump to the code in your editor or Github from diagrams, or open the code symbol in diagram from your editor to visualize the code using the [VSCode extension](https://marketplace.visualstudio.com/items?itemName=tlDiagram-com.tldiagram). 
-- **Mermaid Integration**: Paste your mermaid diagrams into canvas to import them or export as mermaid for quick sharing.
 - **Markdown Notes Support**: Add notes and documentation for your diagram or link an existing one, preview and edit diagrams and markdown side-by-side. 
-- **Mermaid Integration**: Easily sync your diagrams with mermaid blocks in a markdown file for portable viewing in any markdown viewer. [Link to docs](https://tldiagram.com/docs/ui/mermaid/)
-- **Bi-directional Sync**: (Experimental) Seamlessly sync changes between your local YAML files, the self-hosted web UI, and the cloud version at tlDiagram.com.
-- **Git diff visualization**: (Experimental) Sync and visualize the changes you or your agent are making live in diagram form. Inspect the dependencies and intervene when necessary.
-- **Diagrams as Code**: (Experimental) Manage architectural evolution alongside your source code with synchronous `add`/`connect`/`update`/`remove` commands that apply immediately and keep local YAML in sync.
-- **Automated Codebase Analysis**: (Experimental) Built-in tree-sitter integration to automatically discover architecture components in Go, Java, Python, C++, and TypeScript (more soon™ (hopefully)).
-
+- **Mermaid Integration**: Easily sync your diagrams with mermaid blocks in a markdown file for portable viewing in any markdown viewer [docs](https://tldiagram.com/docs/ui/mermaid/).
+- **Bi-directional Sync**: Seamlessly sync changes between your local YAML files, the self-hosted web UI, and the cloud version at tlDiagram.com.
+- **Git diff visualization**: Sync and visualize the changes you or your agent are making live in diagram form. Inspect the dependencies and intervene when necessary.
+- **Codebase Mapping**: Generate source grounded elements to jump-start your diagramming process. 
+- **Visualize Code Changes**: Visualize the changes between commits or a PR [docs](./docs/git-compare.md).
+- **PR Diagram Bot**: Automatically generate a diagram for your PR and visualize the changes in your codebase [docs](./docs/pr-bot.md).
+- **Diagrams as Code**: Manage architectural evolution alongside your source code.
 <p align="center">
 <img width="1280" height="882" alt="editor" src="https://github.com/user-attachments/assets/4ee283b0-ee45-4a04-86e4-f477c26e9977" />
 </p>
@@ -52,20 +52,6 @@ Here are some examples that were generated using the agent skill.
 
 ## Quick Start
 
-### Docker
-
-Both Compose files use `ghcr.io/mertcikla/tld:latest` from GitHub Container
-Registry. Start either stack (Docker Compose v2):
-
-```bash
-# SQLite
-docker compose up
-
-# Or PostgreSQL with pgvector, required by the core migrations
-docker compose -f docker-compose.postgres.yml up
-```
-
-### Native binary
 
 macOS and Linux
 ```bash
@@ -77,16 +63,14 @@ Windows
 powershell -ExecutionPolicy ByPass -c "irm https://tldiagram.com/install.ps1 | iex; tld serve --open"
 ```
 
+tld has native-desktop builds for macOS and windows. Look for tld-desktop binaries in releases.
+
 ## Documentation
 
 Visit [docs](https://tldiagram.com/docs) for more info.
 
 
 ## Deployment & Self-Hosting
-
-tld has native-desktop builds for macOS and windows. Look for tld-desktop binaries in releases.
-
-
 
 `tld` designed to be run fully offline, behind a reverse-proxy or in your infrastructure or as a local development tool.
 
@@ -102,7 +86,15 @@ export PORT=8060
 tld serve
 ```
 
-The PostgreSQL database must have `pgvector` support.
+### Docker
+
+```bash
+# SQLite
+docker compose up
+
+# Or PostgreSQL with pgvector, required by the core migrations
+docker compose -f docker-compose.postgres.yml up
+```
 
 ## Mobile 
 
