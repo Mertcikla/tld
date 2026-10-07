@@ -29,10 +29,10 @@ const (
 )
 
 func (a *APIAdapter) GetViewMarkdown(ctx context.Context, viewID int32, _ uuid.UUID) (*diagv1.ViewMarkdownDocument, string, error) {
-	if _, err := a.Store.legacy.ViewByID(ctx, int64(viewID)); err != nil {
+	if _, err := a.Store.ViewByID(ctx, int64(viewID)); err != nil {
 		return nil, "", err
 	}
-	doc, err := a.Store.legacy.ViewMarkdownByViewID(ctx, int64(viewID))
+	doc, err := a.Store.ViewMarkdownByViewID(ctx, int64(viewID))
 	if err != nil {
 		return nil, "", err
 	}
@@ -51,11 +51,11 @@ func (a *APIAdapter) GetViewMarkdown(ctx context.Context, viewID int32, _ uuid.U
 }
 
 func (a *APIAdapter) CreateViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, fileName *string, initialContent *string, targetKind string, path *string) (*diagv1.View, error) {
-	view, err := a.Store.legacy.ViewByID(ctx, int64(viewID))
+	view, err := a.Store.ViewByID(ctx, int64(viewID))
 	if err != nil {
 		return nil, err
 	}
-	if existing, err := a.Store.legacy.ViewMarkdownByViewID(ctx, int64(viewID)); err != nil {
+	if existing, err := a.Store.ViewMarkdownByViewID(ctx, int64(viewID)); err != nil {
 		return nil, err
 	} else if existing != nil {
 		return a.GetView(ctx, viewID, workspaceID)
@@ -71,14 +71,14 @@ func (a *APIAdapter) CreateViewMarkdown(ctx context.Context, viewID int32, works
 	if err := writeExclusiveMarkdownFile(absPath, content); err != nil {
 		return nil, err
 	}
-	if err := a.Store.legacy.UpsertViewMarkdown(ctx, int64(viewID), storedPath, isManaged, nowString(), sourceKind); err != nil {
+	if err := a.Store.UpsertViewMarkdown(ctx, int64(viewID), storedPath, isManaged, app.NowString(), sourceKind); err != nil {
 		return nil, err
 	}
 	return a.GetView(ctx, viewID, workspaceID)
 }
 
 func (a *APIAdapter) LinkViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, path string) (*diagv1.View, error) {
-	if _, err := a.Store.legacy.ViewByID(ctx, int64(viewID)); err != nil {
+	if _, err := a.Store.ViewByID(ctx, int64(viewID)); err != nil {
 		return nil, err
 	}
 	storedPath, absPath, err := a.normalizeLinkedMarkdownPath(path)
@@ -92,14 +92,14 @@ func (a *APIAdapter) LinkViewMarkdown(ctx context.Context, viewID int32, workspa
 	if info.IsDir() {
 		return nil, fmt.Errorf("markdown path must point to a file")
 	}
-	if err := a.Store.legacy.UpsertViewMarkdown(ctx, int64(viewID), storedPath, false, info.ModTime().UTC().Format(time.RFC3339), markdownSourceAttached); err != nil {
+	if err := a.Store.UpsertViewMarkdown(ctx, int64(viewID), storedPath, false, info.ModTime().UTC().Format(time.RFC3339), markdownSourceAttached); err != nil {
 		return nil, err
 	}
 	return a.GetView(ctx, viewID, workspaceID)
 }
 
 func (a *APIAdapter) SaveViewMarkdown(ctx context.Context, viewID int32, _ uuid.UUID, content string, expectedFileVersion *string, force bool) (*diagv1.ViewMarkdownDocument, error) {
-	doc, err := a.Store.legacy.ViewMarkdownByViewID(ctx, int64(viewID))
+	doc, err := a.Store.ViewMarkdownByViewID(ctx, int64(viewID))
 	if err != nil {
 		return nil, err
 	}
@@ -135,9 +135,9 @@ func (a *APIAdapter) SaveViewMarkdown(ctx context.Context, viewID int32, _ uuid.
 	if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
 		return nil, err
 	}
-	updatedAt := nowString()
+	updatedAt := app.NowString()
 	sourceKind := normalizeMarkdownSourceKind(doc.SourceKind, doc.IsManaged)
-	if err := a.Store.legacy.UpsertViewMarkdown(ctx, int64(viewID), doc.Path, doc.IsManaged, updatedAt, sourceKind); err != nil {
+	if err := a.Store.UpsertViewMarkdown(ctx, int64(viewID), doc.Path, doc.IsManaged, updatedAt, sourceKind); err != nil {
 		return nil, err
 	}
 	nextInfo, statErr := os.Stat(absPath)
@@ -154,7 +154,7 @@ func (a *APIAdapter) SaveViewMarkdown(ctx context.Context, viewID int32, _ uuid.
 }
 
 func (a *APIAdapter) UnlinkViewMarkdown(ctx context.Context, viewID int32, workspaceID uuid.UUID, deleteManagedFile bool) (*diagv1.View, error) {
-	doc, err := a.Store.legacy.ViewMarkdownByViewID(ctx, int64(viewID))
+	doc, err := a.Store.ViewMarkdownByViewID(ctx, int64(viewID))
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +170,7 @@ func (a *APIAdapter) UnlinkViewMarkdown(ctx context.Context, viewID int32, works
 			return nil, err
 		}
 	}
-	if err := a.Store.legacy.DeleteViewMarkdown(ctx, int64(viewID)); err != nil {
+	if err := a.Store.DeleteViewMarkdown(ctx, int64(viewID)); err != nil {
 		return nil, err
 	}
 	return a.GetView(ctx, viewID, workspaceID)
@@ -204,7 +204,7 @@ func (a *APIAdapter) viewMarkdownToProto(ctx context.Context, viewID int32, doc 
 	proto.Writable = writable
 	proto.CanEdit = exists && writable
 	proto.FileVersion = markdownFileVersion(info)
-	if linkedCount, err := a.Store.legacy.CountViewMarkdownByPath(ctx, doc.Path); err == nil {
+	if linkedCount, err := a.Store.CountViewMarkdownByPath(ctx, doc.Path); err == nil {
 		proto.LinkedViewCount = int32(linkedCount)
 	}
 	if root, ok := a.workspaceContentRoot(); ok {

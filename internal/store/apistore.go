@@ -28,15 +28,15 @@ func jsonString(value any, fallback string) string {
 
 var _ api.Store = (*APIAdapter)(nil)
 
-// APIAdapter exposes the local SQLite-backed store through the shared
-// ConnectRPC-oriented api.Store contract.
+// APIAdapter exposes the local store through the shared ConnectRPC-oriented
+// api.Store contract.
 type APIAdapter struct {
-	Store        *SQLiteStore
+	Store        *app.Store
 	DataDir      string
 	WorkspaceDir string
 }
 
-func NewAPIAdapter(store *SQLiteStore, paths ...string) *APIAdapter {
+func NewAPIAdapter(store *app.Store, paths ...string) *APIAdapter {
 	adapter := &APIAdapter{Store: store}
 	if len(paths) > 0 {
 		adapter.DataDir = paths[0]
@@ -64,13 +64,13 @@ func (a *APIAdapter) GetViews(ctx context.Context, _ uuid.UUID, parentViewID *in
 	var flat []app.ViewTreeNode
 	switch {
 	case parentViewID != nil:
-		nodes, err := a.Store.legacy.ChildViews(ctx, int64(*parentViewID))
+		nodes, err := a.Store.ChildViews(ctx, int64(*parentViewID))
 		if err != nil {
 			return nil, 0, err
 		}
 		flat = nodes
 	case isRoot != nil && *isRoot:
-		nodes, err := a.Store.legacy.RootViews(ctx)
+		nodes, err := a.Store.RootViews(ctx)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -113,7 +113,7 @@ func (a *APIAdapter) GetViews(ctx context.Context, _ uuid.UUID, parentViewID *in
 }
 
 func (a *APIAdapter) GetView(ctx context.Context, id int32, _ uuid.UUID) (*diagv1.View, error) {
-	view, err := a.Store.legacy.ViewByID(ctx, int64(id))
+	view, err := a.Store.ViewByID(ctx, int64(id))
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func (a *APIAdapter) CreateView(ctx context.Context, _ uuid.UUID, ownerElementID
 		v := int64(*ownerElementID)
 		ownerID = &v
 	}
-	view, err := a.Store.legacy.CreateView(ctx, name, label, ownerID)
+	view, err := a.Store.CreateView(ctx, name, label, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func (a *APIAdapter) CreateView(ctx context.Context, _ uuid.UUID, ownerElementID
 
 func (a *APIAdapter) UpdateView(ctx context.Context, id int32, _ uuid.UUID, name string, description *string, label *string, tags []string) (*diagv1.View, error) {
 	nameCopy := name
-	view, err := a.Store.legacy.UpdateView(ctx, int64(id), &nameCopy, description, label, tags)
+	view, err := a.Store.UpdateView(ctx, int64(id), &nameCopy, description, label, tags)
 	if err != nil {
 		return nil, err
 	}
@@ -143,11 +143,11 @@ func (a *APIAdapter) UpdateView(ctx context.Context, id int32, _ uuid.UUID, name
 }
 
 func (a *APIAdapter) DeleteView(ctx context.Context, id int32, _ uuid.UUID) error {
-	return a.Store.legacy.DeleteView(ctx, int64(id))
+	return a.Store.DeleteView(ctx, int64(id))
 }
 
 func (a *APIAdapter) ListElements(ctx context.Context, _ uuid.UUID, limit, offset int32, search string) ([]*diagv1.Element, int, error) {
-	elements, total, err := a.Store.legacy.Elements(ctx, int(limit), int(offset), search)
+	elements, total, err := a.Store.Elements(ctx, int(limit), int(offset), search)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -160,7 +160,7 @@ func (a *APIAdapter) ListElements(ctx context.Context, _ uuid.UUID, limit, offse
 }
 
 func (a *APIAdapter) GetElement(ctx context.Context, id int32, _ uuid.UUID) (*diagv1.Element, error) {
-	element, err := a.Store.legacy.ElementByID(ctx, int64(id))
+	element, err := a.Store.ElementByID(ctx, int64(id))
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +168,7 @@ func (a *APIAdapter) GetElement(ctx context.Context, id int32, _ uuid.UUID) (*di
 }
 
 func (a *APIAdapter) CreateElement(ctx context.Context, _ uuid.UUID, input api.ElementInput) (*diagv1.Element, error) {
-	element, err := a.Store.legacy.CreateElement(ctx, app.LibraryElement{
+	element, err := a.Store.CreateElement(ctx, app.LibraryElement{
 		Name:                 input.Name,
 		Description:          input.Description,
 		Kind:                 input.Kind,
@@ -194,7 +194,7 @@ func (a *APIAdapter) CreateElement(ctx context.Context, _ uuid.UUID, input api.E
 }
 
 func (a *APIAdapter) UpdateElement(ctx context.Context, id int32, _ uuid.UUID, input api.ElementInput) (*diagv1.Element, error) {
-	element, err := a.Store.legacy.UpdateElement(ctx, int64(id), app.LibraryElement{
+	element, err := a.Store.UpdateElement(ctx, int64(id), app.LibraryElement{
 		Name:                 input.Name,
 		Description:          input.Description,
 		Kind:                 input.Kind,
@@ -223,11 +223,11 @@ func (a *APIAdapter) DeleteElement(ctx context.Context, id int32, _ uuid.UUID) e
 	if err := a.Store.DeleteResourceVisibilityOverrides(ctx, "element", int64(id)); err != nil {
 		return err
 	}
-	return a.Store.legacy.DeleteElement(ctx, int64(id))
+	return a.Store.DeleteElement(ctx, int64(id))
 }
 
 func (a *APIAdapter) ListPlacements(ctx context.Context, viewID int32) ([]*diagv1.PlacedElement, error) {
-	content, err := a.Store.ProjectedViewContent(ctx, int64(viewID), nil)
+	content, err := a.Store.GetProjectedViewContent(ctx, int64(viewID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func (a *APIAdapter) ListPlacements(ctx context.Context, viewID int32) ([]*diagv
 }
 
 func (a *APIAdapter) ListAllPlacements(ctx context.Context, _ uuid.UUID) ([]*diagv1.PlacedElement, error) {
-	placements, err := a.Store.legacy.AllPlacements(ctx)
+	placements, err := a.Store.AllPlacements(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +251,7 @@ func (a *APIAdapter) ListAllPlacements(ctx context.Context, _ uuid.UUID) ([]*dia
 }
 
 func (a *APIAdapter) ListElementPlacements(ctx context.Context, elementID int32, _ uuid.UUID) ([]*diagv1.ViewPlacementInfo, error) {
-	placements, err := a.Store.legacy.ListElementPlacements(ctx, int64(elementID))
+	placements, err := a.Store.ListElementPlacements(ctx, int64(elementID))
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +266,7 @@ func (a *APIAdapter) ListElementPlacements(ctx context.Context, elementID int32,
 }
 
 func (a *APIAdapter) AddPlacement(ctx context.Context, viewID, elementID int32, x, y float64) (*diagv1.PlacedElement, error) {
-	placement, err := a.Store.legacy.AddPlacement(ctx, int64(viewID), int64(elementID), x, y)
+	placement, err := a.Store.AddPlacement(ctx, int64(viewID), int64(elementID), x, y)
 	if err != nil {
 		return nil, err
 	}
@@ -278,15 +278,15 @@ func (a *APIAdapter) AddPlacement(ctx context.Context, viewID, elementID int32, 
 }
 
 func (a *APIAdapter) UpdatePlacementPosition(ctx context.Context, viewID, elementID int32, x, y float64) error {
-	return a.Store.legacy.UpdatePlacement(ctx, int64(viewID), int64(elementID), x, y)
+	return a.Store.UpdatePlacement(ctx, int64(viewID), int64(elementID), x, y)
 }
 
 func (a *APIAdapter) RemovePlacement(ctx context.Context, viewID, elementID int32) error {
-	return a.Store.legacy.DeletePlacement(ctx, int64(viewID), int64(elementID))
+	return a.Store.DeletePlacement(ctx, int64(viewID), int64(elementID))
 }
 
 func (a *APIAdapter) ListConnectors(ctx context.Context, viewID int32, _ uuid.UUID) ([]*diagv1.Connector, error) {
-	content, err := a.Store.ProjectedViewContent(ctx, int64(viewID), nil)
+	content, err := a.Store.GetProjectedViewContent(ctx, int64(viewID), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +303,7 @@ func (a *APIAdapter) GetProjectedViewContent(ctx context.Context, viewID int32, 
 		value := int(*densityOverride)
 		override = &value
 	}
-	content, err := a.Store.ProjectedViewContent(ctx, int64(viewID), override)
+	content, err := a.Store.GetProjectedViewContent(ctx, int64(viewID), override)
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +321,7 @@ func (a *APIAdapter) GetProjectedViewContent(ctx context.Context, viewID int32, 
 }
 
 func (a *APIAdapter) ListAllConnectors(ctx context.Context, _ uuid.UUID) ([]*diagv1.Connector, error) {
-	connectors, err := a.Store.legacy.AllConnectors(ctx)
+	connectors, err := a.Store.AllConnectors(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +333,7 @@ func (a *APIAdapter) ListAllConnectors(ctx context.Context, _ uuid.UUID) ([]*dia
 }
 
 func (a *APIAdapter) GetConnector(ctx context.Context, id int32, _ uuid.UUID) (*diagv1.Connector, error) {
-	connector, err := a.Store.legacy.ConnectorByID(ctx, int64(id))
+	connector, err := a.Store.ConnectorByID(ctx, int64(id))
 	if err != nil {
 		return nil, err
 	}
@@ -341,7 +341,7 @@ func (a *APIAdapter) GetConnector(ctx context.Context, id int32, _ uuid.UUID) (*
 }
 
 func (a *APIAdapter) CreateConnector(ctx context.Context, _ uuid.UUID, input api.ConnectorInput) (*diagv1.Connector, error) {
-	connector, err := a.Store.legacy.CreateConnector(ctx, app.Connector{
+	connector, err := a.Store.CreateConnector(ctx, app.Connector{
 		ViewID:          int64(input.ViewID),
 		SourceElementID: int64(input.SourceID),
 		TargetElementID: int64(input.TargetID),
@@ -380,13 +380,13 @@ func (a *APIAdapter) createConnectorWithID(ctx context.Context, id int32, input 
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
-	_, err := a.Store.legacy.QueryDB().NewInsert().
+	_, err := a.Store.QueryDB().NewInsert().
 		Model(row).
 		Exec(ctx)
 	if err != nil {
 		return nil, err
 	}
-	connector, err := a.Store.legacy.ConnectorByID(ctx, int64(id))
+	connector, err := a.Store.ConnectorByID(ctx, int64(id))
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +394,7 @@ func (a *APIAdapter) createConnectorWithID(ctx context.Context, id int32, input 
 }
 
 func (a *APIAdapter) UpdateConnector(ctx context.Context, id int32, _ uuid.UUID, input api.ConnectorInput) (*diagv1.Connector, error) {
-	connector, err := a.Store.legacy.UpdateConnector(ctx, int64(id), app.Connector{
+	connector, err := a.Store.UpdateConnector(ctx, int64(id), app.Connector{
 		ID:              int64(id),
 		ViewID:          int64(input.ViewID),
 		SourceElementID: int64(input.SourceID),
@@ -419,11 +419,11 @@ func (a *APIAdapter) DeleteConnector(ctx context.Context, id int32, _ uuid.UUID)
 	if err := a.Store.DeleteResourceVisibilityOverrides(ctx, "connector", int64(id)); err != nil {
 		return err
 	}
-	return a.Store.legacy.DeleteConnector(ctx, int64(id))
+	return a.Store.DeleteConnector(ctx, int64(id))
 }
 
 func (a *APIAdapter) ListElementNavigations(ctx context.Context, _ uuid.UUID, elementID int32) ([]*diagv1.ElementNavigationInfo, error) {
-	navs, err := a.Store.legacy.ListElementNavigations(ctx, int64(elementID), nil, nil)
+	navs, err := a.Store.ListElementNavigations(ctx, int64(elementID), nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +435,7 @@ func (a *APIAdapter) ListElementNavigations(ctx context.Context, _ uuid.UUID, el
 }
 
 func (a *APIAdapter) ListIncomingElementNavigations(ctx context.Context, viewID int32) ([]*diagv1.IncomingElementNavigationInfo, error) {
-	navs, err := a.Store.legacy.ListIncomingNavigations(ctx, int64(viewID))
+	navs, err := a.Store.ListIncomingNavigations(ctx, int64(viewID))
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +454,7 @@ func (a *APIAdapter) ListIncomingElementNavigations(ctx context.Context, viewID 
 }
 
 func (a *APIAdapter) ListViewLayers(ctx context.Context, viewID int32) ([]*diagv1.ViewLayer, error) {
-	layers, err := a.Store.legacy.Layers(ctx, int64(viewID))
+	layers, err := a.Store.Layers(ctx, int64(viewID))
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +470,7 @@ func (a *APIAdapter) ListAllViewLayers(ctx context.Context, _ uuid.UUID) ([]*dia
 	if err != nil {
 		return nil, err
 	}
-	layers, err := a.Store.legacy.AllLayers(ctx)
+	layers, err := a.Store.AllLayers(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -488,7 +488,7 @@ func (a *APIAdapter) ListAllViewLayers(ctx context.Context, _ uuid.UUID) ([]*dia
 }
 
 func (a *APIAdapter) GetViewLayer(ctx context.Context, id int32) (*diagv1.ViewLayer, error) {
-	layer, err := a.Store.legacy.LayerByID(ctx, int64(id))
+	layer, err := a.Store.LayerByID(ctx, int64(id))
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +496,7 @@ func (a *APIAdapter) GetViewLayer(ctx context.Context, id int32) (*diagv1.ViewLa
 }
 
 func (a *APIAdapter) CreateViewLayer(ctx context.Context, viewID int32, name string, tags []string, color string) (*diagv1.ViewLayer, error) {
-	layer, err := a.Store.legacy.CreateLayer(ctx, int64(viewID), name, cloneStrings(tags), &color)
+	layer, err := a.Store.CreateLayer(ctx, int64(viewID), name, cloneStrings(tags), &color)
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +504,7 @@ func (a *APIAdapter) CreateViewLayer(ctx context.Context, viewID int32, name str
 }
 
 func (a *APIAdapter) UpdateViewLayer(ctx context.Context, id int32, name *string, tags []string, color *string) (*diagv1.ViewLayer, error) {
-	layer, err := a.Store.legacy.UpdateLayer(ctx, int64(id), app.ViewLayer{
+	layer, err := a.Store.UpdateLayer(ctx, int64(id), app.ViewLayer{
 		ID:    int64(id),
 		Name:  derefString(name),
 		Tags:  cloneStrings(tags),
@@ -517,7 +517,7 @@ func (a *APIAdapter) UpdateViewLayer(ctx context.Context, id int32, name *string
 }
 
 func (a *APIAdapter) DeleteViewLayer(ctx context.Context, id int32) error {
-	return a.Store.legacy.DeleteLayer(ctx, int64(id))
+	return a.Store.DeleteLayer(ctx, int64(id))
 }
 
 func (a *APIAdapter) Tags(ctx context.Context, _ uuid.UUID) (map[string]*diagv1.Tag, error) {
@@ -584,7 +584,7 @@ func (a *APIAdapter) ListViewThreads(ctx context.Context, workspaceID uuid.UUID,
 		CreatedAt         string  `bun:"created_at"`
 		ResolvedAt        *string `bun:"resolved_at"`
 	}
-	err := a.Store.legacy.QueryDB().NewRaw(
+	err := a.Store.QueryDB().NewRaw(
 		`SELECT t.id, t.workspace_id, t.view_id, t.element_id, t.connector_id, t.created_by,
 		        COALESCE(NULLIF(t.created_by_username, ''), t.created_by) AS created_by_username,
 		        t.status, t.created_at, t.resolved_at
@@ -614,7 +614,7 @@ func (a *APIAdapter) CreateViewThread(ctx context.Context, workspaceID uuid.UUID
 	var row struct {
 		ID int32 `bun:"id"`
 	}
-	err := a.Store.legacy.QueryDB().NewRaw(
+	err := a.Store.QueryDB().NewRaw(
 		`INSERT INTO view_threads (workspace_id, view_id, element_id, connector_id, created_by, created_by_username, status, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, 'open', ?)
 		 RETURNING id`,
@@ -639,7 +639,7 @@ func (a *APIAdapter) GetViewThread(ctx context.Context, workspaceID uuid.UUID, v
 		CreatedAt         string  `bun:"created_at"`
 		ResolvedAt        *string `bun:"resolved_at"`
 	}
-	err := a.Store.legacy.QueryDB().NewRaw(
+	err := a.Store.QueryDB().NewRaw(
 		`SELECT t.id, t.workspace_id, t.view_id, t.element_id, t.connector_id, t.created_by,
 		        COALESCE(NULLIF(t.created_by_username, ''), t.created_by) AS created_by_username,
 		        t.status, t.created_at, t.resolved_at
@@ -667,7 +667,7 @@ func (a *APIAdapter) SetViewThreadResolved(ctx context.Context, workspaceID uuid
 		now := nowRFC3339()
 		resolvedAt = &now
 	}
-	_, err := a.Store.legacy.QueryDB().NewRaw(
+	_, err := a.Store.QueryDB().NewRaw(
 		`UPDATE view_threads
 		 SET status = ?, resolved_at = ?
 		 WHERE workspace_id = ? AND view_id = ? AND id = ?`,
@@ -681,7 +681,7 @@ func (a *APIAdapter) CreateViewComment(ctx context.Context, workspaceID uuid.UUI
 	var row struct {
 		ID int32 `bun:"id"`
 	}
-	err := a.Store.legacy.QueryDB().NewRaw(
+	err := a.Store.QueryDB().NewRaw(
 		`INSERT INTO view_comments (workspace_id, view_id, thread_id, author_id, author_username, body, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 RETURNING id`,
@@ -714,7 +714,7 @@ func (a *APIAdapter) listViewComments(ctx context.Context, workspaceID uuid.UUID
 		CreatedAt      string `bun:"created_at"`
 		UpdatedAt      string `bun:"updated_at"`
 	}
-	err := a.Store.legacy.QueryDB().NewRaw(
+	err := a.Store.QueryDB().NewRaw(
 		`SELECT c.id, c.workspace_id, c.view_id, c.thread_id, c.author_id,
 		        COALESCE(NULLIF(c.author_username, ''), c.author_id) AS author_username,
 		        c.body, c.created_at, c.updated_at
@@ -769,7 +769,7 @@ func (a *APIAdapter) ListViewElementReactions(ctx context.Context, workspaceID u
 		Count       int32  `bun:"reaction_count"`
 		ReactedByMe int32  `bun:"reacted_by_me"`
 	}
-	err := a.Store.legacy.QueryDB().NewRaw(
+	err := a.Store.QueryDB().NewRaw(
 		`SELECT element_id, emoji, COUNT(*) AS reaction_count,
 		        MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) AS reacted_by_me
 		 FROM element_reactions
@@ -794,7 +794,7 @@ func (a *APIAdapter) ListViewElementReactions(ctx context.Context, workspaceID u
 }
 
 func (a *APIAdapter) ToggleElementReaction(ctx context.Context, workspaceID uuid.UUID, viewID, elementID int32, userID, emoji string) (bool, error) {
-	result, err := a.Store.legacy.QueryDB().NewRaw(
+	result, err := a.Store.QueryDB().NewRaw(
 		`DELETE FROM element_reactions
 		 WHERE workspace_id = ? AND view_id = ? AND element_id = ? AND user_id = ? AND emoji = ?`,
 		collaborationWorkspaceKey(workspaceID), viewID, elementID, userID, emoji,
@@ -807,7 +807,7 @@ func (a *APIAdapter) ToggleElementReaction(ctx context.Context, workspaceID uuid
 		return false, nil
 	}
 	now := nowRFC3339()
-	_, err = a.Store.legacy.QueryDB().NewRaw(
+	_, err = a.Store.QueryDB().NewRaw(
 		`INSERT INTO element_reactions (workspace_id, view_id, element_id, user_id, emoji, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		collaborationWorkspaceKey(workspaceID), viewID, elementID, userID, emoji, now,
@@ -828,7 +828,7 @@ func (a *APIAdapter) ListDrawings(ctx context.Context, workspaceID uuid.UUID, vi
 		Text     string  `bun:"text"`
 		FontSize float64 `bun:"font_size"`
 	}
-	err := a.Store.legacy.QueryDB().NewRaw(
+	err := a.Store.QueryDB().NewRaw(
 		`SELECT path_id, user_id, points, color, width, text, font_size
 		 FROM drawings
 		 WHERE workspace_id = ? AND view_id = ?
@@ -855,7 +855,7 @@ func (a *APIAdapter) ListDrawings(ctx context.Context, workspaceID uuid.UUID, vi
 
 func (a *APIAdapter) UpsertDrawing(ctx context.Context, workspaceID uuid.UUID, viewID int32, input api.RealtimeDrawingInput) error {
 	now := nowRFC3339()
-	_, err := a.Store.legacy.QueryDB().NewRaw(
+	_, err := a.Store.QueryDB().NewRaw(
 		`INSERT INTO drawings (workspace_id, view_id, user_id, path_id, points, color, width, text, font_size, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (workspace_id, view_id, path_id) DO UPDATE SET
@@ -872,7 +872,7 @@ func (a *APIAdapter) UpsertDrawing(ctx context.Context, workspaceID uuid.UUID, v
 }
 
 func (a *APIAdapter) DeleteDrawing(ctx context.Context, workspaceID uuid.UUID, viewID int32, pathID string) error {
-	_, err := a.Store.legacy.QueryDB().NewRaw(
+	_, err := a.Store.QueryDB().NewRaw(
 		`DELETE FROM drawings WHERE workspace_id = ? AND view_id = ? AND path_id = ?`,
 		collaborationWorkspaceKey(workspaceID), viewID, pathID,
 	).Exec(ctx)
@@ -1151,7 +1151,7 @@ func (a *APIAdapter) layoutPlanView(ctx context.Context, viewID int64, targets m
 	}
 	next := layout.LayoutPlacements(placements, targets, connectors, false)
 	for elementID, pos := range next {
-		if err := a.Store.legacy.UpdatePlacement(ctx, viewID, elementID, pos.X, pos.Y); err != nil {
+		if err := a.Store.UpdatePlacement(ctx, viewID, elementID, pos.X, pos.Y); err != nil {
 			return nil, err
 		}
 	}
@@ -1160,7 +1160,7 @@ func (a *APIAdapter) layoutPlanView(ctx context.Context, viewID int64, targets m
 
 func (a *APIAdapter) planViewPlacementNodes(ctx context.Context, viewID int64) ([]layout.Placement, error) {
 	var rows []placementLayoutModel
-	if err := a.Store.legacy.QueryDB().NewSelect().
+	if err := a.Store.QueryDB().NewSelect().
 		Model(&rows).
 		Column("element_id", "position_x", "position_y").
 		Where("view_id = ?", viewID).
@@ -1177,7 +1177,7 @@ func (a *APIAdapter) planViewPlacementNodes(ctx context.Context, viewID int64) (
 
 func (a *APIAdapter) planViewLayoutConnectors(ctx context.Context, viewID int64) ([]layout.Connector, error) {
 	var rows []connectorLayoutModel
-	if err := a.Store.legacy.QueryDB().NewSelect().
+	if err := a.Store.QueryDB().NewSelect().
 		Model(&rows).
 		Column("source_element_id", "target_element_id").
 		Where("view_id = ?", viewID).
@@ -1193,15 +1193,15 @@ func (a *APIAdapter) planViewLayoutConnectors(ctx context.Context, viewID int64)
 }
 
 func (a *APIAdapter) GetWorkspaceResourceCounts(ctx context.Context, _ uuid.UUID) (views, elements, connectors int, err error) {
-	views, err = a.Store.legacy.QueryDB().NewSelect().Model((*countModel)(nil)).Count(ctx)
+	views, err = a.Store.QueryDB().NewSelect().Model((*countModel)(nil)).Count(ctx)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	elements, err = a.Store.legacy.QueryDB().NewSelect().Model((*elementCountModel)(nil)).Count(ctx)
+	elements, err = a.Store.QueryDB().NewSelect().Model((*elementCountModel)(nil)).Count(ctx)
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	connectors, err = a.Store.legacy.QueryDB().NewSelect().Model((*connectorCountModel)(nil)).Count(ctx)
+	connectors, err = a.Store.QueryDB().NewSelect().Model((*connectorCountModel)(nil)).Count(ctx)
 	if err != nil {
 		return 0, 0, 0, err
 	}
@@ -1222,7 +1222,7 @@ func (a *APIAdapter) ensureRootViewID(ctx context.Context) (int32, error) {
 }
 
 func (a *APIAdapter) findPlacedElement(ctx context.Context, viewID, elementID int64) (*diagv1.PlacedElement, error) {
-	items, err := a.Store.legacy.Placements(ctx, viewID)
+	items, err := a.Store.Placements(ctx, viewID)
 	if err != nil {
 		return nil, err
 	}

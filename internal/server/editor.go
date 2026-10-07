@@ -20,7 +20,6 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/repolink"
-	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
@@ -34,8 +33,8 @@ type openEditorRequest struct {
 	Line         int    `json:"line"`
 }
 
-func registerEditorHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, selfHosted bool) {
-	fetcher := dbRepositoryFetcher{db: sqliteStore.DB()}
+func registerEditorHandlers(mux *http.ServeMux, appStore *app.Store, selfHosted bool) {
+	fetcher := dbRepositoryFetcher{db: appStore.DB()}
 	mux.HandleFunc("POST /api/editor/open", func(w http.ResponseWriter, r *http.Request) {
 		if selfHosted {
 			// The server cannot open the caller's editor in a self-hosted

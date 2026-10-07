@@ -1,6 +1,13 @@
 package core
 
-import "context"
+import (
+	"context"
+
+	"github.com/mertcikla/tld/v2/pkg/app"
+)
+
+// Store is satisfied directly by *app.Store; this keeps the contract honest.
+var _ Store = (*app.Store)(nil)
 
 type ViewStore interface {
 	ViewTree(ctx context.Context) ([]ViewTreeNode, error)

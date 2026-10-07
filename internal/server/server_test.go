@@ -23,11 +23,12 @@ import (
 	assets "github.com/mertcikla/tld/v2"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/tech"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 func TestServerReadyReportsResourceCounts(t *testing.T) {
-	sqliteStore, routes := newTestServer(t, uuid.MustParse("11111111-2222-3333-4444-555555555555"), nil)
-	if _, err := sqliteStore.DB().Exec(`
+	appStore, routes := newTestServer(t, uuid.MustParse("11111111-2222-3333-4444-555555555555"), nil)
+	if _, err := appStore.DB().Exec(`
 		INSERT INTO elements(id, name, tags, technology_connectors, created_at, updated_at)
 		VALUES
 			(10, 'API', '[]', '[]', 'now', 'now'),
@@ -60,8 +61,8 @@ func TestServerReadyReportsResourceCounts(t *testing.T) {
 }
 
 func TestServerInitializesViewNoiseGate(t *testing.T) {
-	sqliteStore, routes := newTestServer(t, uuid.Nil, nil)
-	if _, err := sqliteStore.DB().Exec(`
+	appStore, routes := newTestServer(t, uuid.Nil, nil)
+	if _, err := appStore.DB().Exec(`
 		INSERT INTO elements(id, name, tags, technology_connectors, bypass_noise_gate, created_at, updated_at)
 		VALUES
 			(101, 'A', '[]', '[]', 1, 'now', 'now'),
@@ -100,13 +101,13 @@ func TestServerInitializesViewNoiseGate(t *testing.T) {
 	}
 
 	var bypassed int
-	if err := sqliteStore.DB().QueryRow(`SELECT COUNT(*) FROM elements WHERE id BETWEEN 101 AND 105 AND bypass_noise_gate = 1`).Scan(&bypassed); err != nil {
+	if err := appStore.DB().QueryRow(`SELECT COUNT(*) FROM elements WHERE id BETWEEN 101 AND 105 AND bypass_noise_gate = 1`).Scan(&bypassed); err != nil {
 		t.Fatal(err)
 	}
 	if bypassed != 0 {
 		t.Fatalf("bypassed initialized elements = %d, want 0", bypassed)
 	}
-	level, err := sqliteStore.ViewDensityLevel(context.Background(), 1)
+	level, err := appStore.ViewDensityLevel(context.Background(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,8 +259,8 @@ func TestServerOrgTagColorsRoundTrip(t *testing.T) {
 
 func TestServerInjectsWorkspaceIDIntoConnectRPCResponses(t *testing.T) {
 	workspaceID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
-	sqliteStore, routes := newTestServer(t, workspaceID, nil)
-	if _, err := sqliteStore.DB().Exec(`
+	appStore, routes := newTestServer(t, workspaceID, nil)
+	if _, err := appStore.DB().Exec(`
 		INSERT INTO elements(id, org_id, name, tags, technology_connectors, created_at, updated_at)
 		VALUES (10, ?, 'API', '[]', '[]', 'now', 'now');
 	`, workspaceID.String()); err != nil {
@@ -623,26 +624,26 @@ func TestIsSafeDynamicIconFilenameRejectsPathSyntax(t *testing.T) {
 	}
 }
 
-func newTestServer(t *testing.T, workspaceID uuid.UUID, static fs.FS) (*localstore.SQLiteStore, http.Handler) {
+func newTestServer(t *testing.T, workspaceID uuid.UUID, static fs.FS) (*app.Store, http.Handler) {
 	return newTestServerWithOptions(t, workspaceID, static, Options{})
 }
 
-func newTestServerWithOptions(t *testing.T, workspaceID uuid.UUID, static fs.FS, opts Options) (*localstore.SQLiteStore, http.Handler) {
+func newTestServerWithOptions(t *testing.T, workspaceID uuid.UUID, static fs.FS, opts Options) (*app.Store, http.Handler) {
 	t.Helper()
 	t.Setenv("DEV", "")
 	if static == nil {
 		static = fstest.MapFS{"frontend/dist/index.html": {Data: []byte("<html>app</html>")}}
 	}
-	sqliteStore, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	appStore, err := localstore.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = sqliteStore.Legacy().Close() })
-	srv, err := NewWithOptions(sqliteStore, static, workspaceID, opts)
+	t.Cleanup(func() { _ = appStore.Close() })
+	srv, err := NewWithOptions(appStore, static, workspaceID, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return sqliteStore, srv.Routes()
+	return appStore, srv.Routes()
 }
 
 func dialCollaborationWebSocket(t *testing.T, serverURL string, viewID int, userID string) *websocket.Conn {

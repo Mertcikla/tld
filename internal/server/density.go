@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 type densityRequest struct {
@@ -25,13 +25,13 @@ type noiseGateInitializeRequest struct {
 	DensityLevel *int `json:"density_level"`
 }
 
-func registerDensityHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) {
+func registerDensityHandlers(mux *http.ServeMux, appStore *app.Store) {
 	mux.HandleFunc("GET /api/views/{id}/density", func(w http.ResponseWriter, r *http.Request) {
 		viewID, ok := parseViewID(w, r)
 		if !ok {
 			return
 		}
-		level, err := sqliteStore.ViewDensityLevel(r.Context(), viewID)
+		level, err := appStore.ViewDensityLevel(r.Context(), viewID)
 		if err != nil {
 			writeDensityError(w, err)
 			return
@@ -49,7 +49,7 @@ func registerDensityHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore)
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
-		if err := sqliteStore.SetViewDensityLevel(r.Context(), viewID, req.DensityLevel); err != nil {
+		if err := appStore.SetViewDensityLevel(r.Context(), viewID, req.DensityLevel); err != nil {
 			writeDensityError(w, err)
 			return
 		}
@@ -66,7 +66,7 @@ func registerDensityHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore)
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
-		result, err := sqliteStore.InitializeViewNoiseGate(r.Context(), viewID, req.DensityLevel)
+		result, err := appStore.InitializeViewNoiseGate(r.Context(), viewID, req.DensityLevel)
 		if err != nil {
 			writeDensityError(w, err)
 			return
@@ -79,7 +79,7 @@ func registerDensityHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore)
 		if !ok {
 			return
 		}
-		overrides, err := sqliteStore.VisibilityOverrides(r.Context(), viewID)
+		overrides, err := appStore.VisibilityOverrides(r.Context(), viewID)
 		if err != nil {
 			writeDensityError(w, err)
 			return
@@ -97,7 +97,7 @@ func registerDensityHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore)
 			writeJSONError(w, http.StatusBadRequest, "invalid JSON")
 			return
 		}
-		override, err := sqliteStore.SetVisibilityOverride(r.Context(), viewID, req.ResourceType, req.ResourceID, req.LevelDelta)
+		override, err := appStore.SetVisibilityOverride(r.Context(), viewID, req.ResourceType, req.ResourceID, req.LevelDelta)
 		if err != nil {
 			writeDensityError(w, err)
 			return
@@ -106,17 +106,17 @@ func registerDensityHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore)
 	})
 
 	mux.HandleFunc("POST /api/views/{id}/visibility-overrides/{resource_type}/{resource_id}/promote", func(w http.ResponseWriter, r *http.Request) {
-		adjustVisibilityOverride(w, r, sqliteStore, 1)
+		adjustVisibilityOverride(w, r, appStore, 1)
 	})
 	mux.HandleFunc("POST /api/views/{id}/visibility-overrides/{resource_type}/{resource_id}/demote", func(w http.ResponseWriter, r *http.Request) {
-		adjustVisibilityOverride(w, r, sqliteStore, -1)
+		adjustVisibilityOverride(w, r, appStore, -1)
 	})
 	mux.HandleFunc("DELETE /api/views/{id}/visibility-overrides/{resource_type}/{resource_id}", func(w http.ResponseWriter, r *http.Request) {
 		viewID, resourceType, resourceID, ok := parseOverridePath(w, r)
 		if !ok {
 			return
 		}
-		if err := sqliteStore.DeleteVisibilityOverride(r.Context(), viewID, resourceType, resourceID); err != nil {
+		if err := appStore.DeleteVisibilityOverride(r.Context(), viewID, resourceType, resourceID); err != nil {
 			writeDensityError(w, err)
 			return
 		}
@@ -124,12 +124,12 @@ func registerDensityHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore)
 	})
 }
 
-func adjustVisibilityOverride(w http.ResponseWriter, r *http.Request, sqliteStore *store.SQLiteStore, step int) {
+func adjustVisibilityOverride(w http.ResponseWriter, r *http.Request, appStore *app.Store, step int) {
 	viewID, resourceType, resourceID, ok := parseOverridePath(w, r)
 	if !ok {
 		return
 	}
-	override, err := sqliteStore.AdjustVisibilityOverride(r.Context(), viewID, resourceType, resourceID, step)
+	override, err := appStore.AdjustVisibilityOverride(r.Context(), viewID, resourceType, resourceID, step)
 	if err != nil {
 		writeDensityError(w, err)
 		return
@@ -152,7 +152,7 @@ func parseOverridePath(w http.ResponseWriter, r *http.Request) (int64, string, i
 		return 0, "", 0, false
 	}
 	resourceType := r.PathValue("resource_type")
-	if err := store.ValidateResourceType(resourceType); err != nil {
+	if err := app.ValidateResourceType(resourceType); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return 0, "", 0, false
 	}

@@ -14,6 +14,7 @@ import (
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/store"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 type cancelMapStore struct {
@@ -139,20 +140,20 @@ func groupMapFiles() []community.File {
 	}
 }
 
-func openGroupMapStore(t *testing.T) (*store.SQLiteStore, *cstore.Store) {
+func openGroupMapStore(t *testing.T) (*app.Store, *cstore.Store) {
 	t.Helper()
-	sqliteStore, err := store.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	appStore, err := store.Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	t.Cleanup(func() { _ = sqliteStore.Close() })
-	return sqliteStore, cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	t.Cleanup(func() { _ = appStore.Close() })
+	return appStore, cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 }
 
-func viewIDByName(t *testing.T, sqliteStore *store.SQLiteStore, name string) int64 {
+func viewIDByName(t *testing.T, appStore *app.Store, name string) int64 {
 	t.Helper()
 	var id int64
-	if err := sqliteStore.DB().QueryRow(
+	if err := appStore.DB().QueryRow(
 		`SELECT v.id FROM views v JOIN elements e ON e.id = v.owner_element_id WHERE e.name = ? ORDER BY v.id LIMIT 1`,
 		name).Scan(&id); err != nil {
 		t.Fatalf("view for %q: %v", name, err)
@@ -162,7 +163,7 @@ func viewIDByName(t *testing.T, sqliteStore *store.SQLiteStore, name string) int
 
 func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 	ctx := context.Background()
-	sqliteStore, idx := openGroupMapStore(t)
+	appStore, idx := openGroupMapStore(t)
 	files := groupMapFiles()
 	groups := []*community.Group{
 		{
@@ -184,7 +185,7 @@ func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 			{FromFactID: "id-b", ToFactID: "id-c", Weight: 1},
 		},
 	}
-	result, err := ApplyGroupMap(ctx, sqliteStore, idx, input, MapOptions{})
+	result, err := ApplyGroupMap(ctx, appStore, idx, input, MapOptions{})
 	if err != nil {
 		t.Fatalf("apply group map: %v", err)
 	}
@@ -194,7 +195,7 @@ func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 
 	rootViewID := result.ViewID
 	var rootNames []string
-	rows, err := sqliteStore.DB().QueryContext(ctx,
+	rows, err := appStore.DB().QueryContext(ctx,
 		`SELECT e.name FROM placements p JOIN elements e ON e.id = p.element_id WHERE p.view_id = ? ORDER BY e.name`, rootViewID)
 	if err != nil {
 		t.Fatal(err)
@@ -211,14 +212,14 @@ func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 		t.Fatalf("root placements = %v, want alpha and beta", rootNames)
 	}
 
-	alphaViewID := viewIDByName(t, sqliteStore, "alpha")
+	alphaViewID := viewIDByName(t, appStore, "alpha")
 	if alphaViewID == rootViewID {
 		t.Fatal("alpha view is not nested")
 	}
-	childViewID := viewIDByName(t, sqliteStore, "alpha-child")
+	childViewID := viewIDByName(t, appStore, "alpha-child")
 
 	var alphaFiles int
-	if err := sqliteStore.DB().QueryRowContext(ctx,
+	if err := appStore.DB().QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM placements p JOIN elements e ON e.id = p.element_id WHERE p.view_id = ? AND e.name = 'b.go'`,
 		alphaViewID).Scan(&alphaFiles); err != nil {
 		t.Fatal(err)
@@ -227,7 +228,7 @@ func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 		t.Fatalf("alpha view files = %d, want 1", alphaFiles)
 	}
 	var childFiles int
-	if err := sqliteStore.DB().QueryRowContext(ctx,
+	if err := appStore.DB().QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM placements p JOIN elements e ON e.id = p.element_id WHERE p.view_id = ? AND e.name = 'a.go'`,
 		childViewID).Scan(&childFiles); err != nil {
 		t.Fatal(err)
@@ -237,7 +238,7 @@ func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 	}
 
 	var rollupView int64
-	if err := sqliteStore.DB().QueryRowContext(ctx,
+	if err := appStore.DB().QueryRowContext(ctx,
 		`SELECT c.view_id FROM connectors c
 			JOIN elements s ON s.id = c.source_element_id
 			JOIN elements t ON t.id = c.target_element_id
@@ -248,7 +249,7 @@ func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 		t.Fatalf("cross-group connector view = %d, want root %d", rollupView, rootViewID)
 	}
 	var internalView int64
-	if err := sqliteStore.DB().QueryRowContext(ctx,
+	if err := appStore.DB().QueryRowContext(ctx,
 		`SELECT c.view_id FROM connectors c
 			JOIN elements s ON s.id = c.source_element_id
 			JOIN elements t ON t.id = c.target_element_id
@@ -259,7 +260,7 @@ func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 		t.Fatalf("internal connector view = %d, want alpha view %d", internalView, alphaViewID)
 	}
 
-	second, err := ApplyGroupMap(ctx, sqliteStore, idx, input, MapOptions{})
+	second, err := ApplyGroupMap(ctx, appStore, idx, input, MapOptions{})
 	if err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
@@ -270,7 +271,7 @@ func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 
 func TestApplyGroupMapLeafConnectorBudget(t *testing.T) {
 	ctx := context.Background()
-	sqliteStore, idx := openGroupMapStore(t)
+	appStore, idx := openGroupMapStore(t)
 	files := groupMapFiles()
 	groups := []*community.Group{
 		{Key: "leaf", Name: "leaf", Files: 3, Members: []int{0, 1, 2}},
@@ -284,7 +285,7 @@ func TestApplyGroupMapLeafConnectorBudget(t *testing.T) {
 			{FromFactID: "id-a", ToFactID: "id-c", Weight: 1},
 		},
 	}
-	result, err := ApplyGroupMap(ctx, sqliteStore, idx, input, MapOptions{MaxLeafConnectorsPerView: 1})
+	result, err := ApplyGroupMap(ctx, appStore, idx, input, MapOptions{MaxLeafConnectorsPerView: 1})
 	if err != nil {
 		t.Fatalf("apply group map: %v", err)
 	}
@@ -292,7 +293,7 @@ func TestApplyGroupMapLeafConnectorBudget(t *testing.T) {
 		t.Fatalf("leaf connectors = %d, want 1", result.Connectors)
 	}
 	var rows int
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&rows); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows != 1 {
@@ -302,7 +303,7 @@ func TestApplyGroupMapLeafConnectorBudget(t *testing.T) {
 
 func TestApplyGroupMapPrunesStaleGroups(t *testing.T) {
 	ctx := context.Background()
-	sqliteStore, idx := openGroupMapStore(t)
+	appStore, idx := openGroupMapStore(t)
 	files := groupMapFiles()
 	groups := []*community.Group{
 		{Key: "one", Name: "one", Files: 1, Members: []int{0}},
@@ -311,7 +312,7 @@ func TestApplyGroupMapPrunesStaleGroups(t *testing.T) {
 		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
 		Files: files, Groups: groups,
 	}
-	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, input, MapOptions{}); err != nil {
+	if _, err := ApplyGroupMap(ctx, appStore, idx, input, MapOptions{}); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 	updated := GroupMapInput{
@@ -319,7 +320,7 @@ func TestApplyGroupMapPrunesStaleGroups(t *testing.T) {
 		Files:  files,
 		Groups: []*community.Group{{Key: "two", Name: "two", Files: 2, Members: []int{1, 2}}},
 	}
-	result, err := ApplyGroupMap(ctx, sqliteStore, idx, updated, MapOptions{})
+	result, err := ApplyGroupMap(ctx, appStore, idx, updated, MapOptions{})
 	if err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
@@ -333,8 +334,8 @@ func TestApplyGroupMapPrunesStaleGroups(t *testing.T) {
 
 func TestApplyGroupMapNestsUnderWorkspaceRoot(t *testing.T) {
 	ctx := context.Background()
-	sqliteStore, idx := openGroupMapStore(t)
-	result, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+	appStore, idx := openGroupMapStore(t)
+	result, err := ApplyGroupMap(ctx, appStore, idx, GroupMapInput{
 		RepositoryID:   "repo-1",
 		RepositoryName: "demo",
 		RepositoryRoot: "/repo/demo",
@@ -349,11 +350,11 @@ func TestApplyGroupMapNestsUnderWorkspaceRoot(t *testing.T) {
 	}
 
 	var workspaceID int64
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT id FROM views WHERE name = 'Workspace' ORDER BY id LIMIT 1`).Scan(&workspaceID); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT id FROM views WHERE name = 'Workspace' ORDER BY id LIMIT 1`).Scan(&workspaceID); err != nil {
 		t.Fatalf("find workspace root: %v", err)
 	}
 	var topPlacements int
-	if err := sqliteStore.DB().QueryRowContext(ctx,
+	if err := appStore.DB().QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM placements p JOIN elements e ON e.id = p.element_id WHERE p.view_id = ? AND e.name = ?`,
 		workspaceID, "demo").Scan(&topPlacements); err != nil {
 		t.Fatal(err)
@@ -362,7 +363,7 @@ func TestApplyGroupMapNestsUnderWorkspaceRoot(t *testing.T) {
 		t.Fatalf("top element placements in workspace root = %d, want 1", topPlacements)
 	}
 	var ownerName string
-	if err := sqliteStore.DB().QueryRowContext(ctx,
+	if err := appStore.DB().QueryRowContext(ctx,
 		`SELECT e.name FROM views v JOIN elements e ON e.id = v.owner_element_id WHERE v.id = ?`,
 		result.ViewID).Scan(&ownerName); err != nil {
 		t.Fatalf("map view owner: %v", err)
@@ -374,8 +375,8 @@ func TestApplyGroupMapNestsUnderWorkspaceRoot(t *testing.T) {
 
 func TestApplyGroupMapMaterializesImports(t *testing.T) {
 	ctx := context.Background()
-	sqliteStore, idx := openGroupMapStore(t)
-	result, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+	appStore, idx := openGroupMapStore(t)
+	result, err := ApplyGroupMap(ctx, appStore, idx, GroupMapInput{
 		RepositoryID:   "repo-1",
 		RepositoryName: "demo",
 		RepositoryRoot: "/repo/demo",
@@ -401,20 +402,20 @@ func TestApplyGroupMapMaterializesImports(t *testing.T) {
 		t.Fatalf("import connectors = %d, want 2 (one per importing component)", result.Connectors)
 	}
 	var external, flask, celery int
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'External'`).Scan(&external); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'External'`).Scan(&external); err != nil {
 		t.Fatal(err)
 	}
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'flask'`).Scan(&flask); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'flask'`).Scan(&flask); err != nil {
 		t.Fatal(err)
 	}
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'celery'`).Scan(&celery); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'celery'`).Scan(&celery); err != nil {
 		t.Fatal(err)
 	}
 	if external != 1 || flask != 1 || celery != 1 {
 		t.Fatalf("External=%d flask=%d celery=%d, want 1/1/1", external, flask, celery)
 	}
 	var placedImports int
-	if err := sqliteStore.DB().QueryRowContext(ctx, `
+	if err := appStore.DB().QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM placements p
 		JOIN elements e ON e.id = p.element_id
 		JOIN views v ON v.id = p.view_id
@@ -428,7 +429,7 @@ func TestApplyGroupMapMaterializesImports(t *testing.T) {
 
 func TestApplyGroupMapBoundsImportConnectors(t *testing.T) {
 	ctx := context.Background()
-	sqliteStore, idx := openGroupMapStore(t)
+	appStore, idx := openGroupMapStore(t)
 	const components = 50
 	files := make([]community.File, 0, components)
 	groups := make([]*community.Group, 0, components)
@@ -439,7 +440,7 @@ func TestApplyGroupMapBoundsImportConnectors(t *testing.T) {
 		groups = append(groups, &community.Group{Key: fmt.Sprintf("g%d", i), Name: fmt.Sprintf("g%d", i), Files: 1, Members: []int{i}})
 		imports = append(imports, MapImport{FileFactID: id, Import: fmt.Sprintf("pkg-%d", i)})
 	}
-	result, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+	result, err := ApplyGroupMap(ctx, appStore, idx, GroupMapInput{
 		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
 		Files: files, Groups: groups, Imports: imports,
 	}, MapOptions{MaxConnectorsPerView: 5, MaxLeafConnectorsPerView: 5, IncludeExternalImports: true})
@@ -453,7 +454,7 @@ func TestApplyGroupMapBoundsImportConnectors(t *testing.T) {
 
 func TestApplyGroupMapPreservesUserEdits(t *testing.T) {
 	ctx := context.Background()
-	sqliteStore, idx := openGroupMapStore(t)
+	appStore, idx := openGroupMapStore(t)
 	files := groupMapFiles()
 	groups := []*community.Group{
 		{Key: "alpha", Name: "alpha", Files: 4, Members: []int{0, 1, 2, 3}},
@@ -466,37 +467,37 @@ func TestApplyGroupMapPreservesUserEdits(t *testing.T) {
 		Files:          files,
 		Groups:         groups,
 	}
-	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, input, MapOptions{}); err != nil {
+	if _, err := ApplyGroupMap(ctx, appStore, idx, input, MapOptions{}); err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
 
 	var fileID int64
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT id FROM elements WHERE name = 'b.go'`).Scan(&fileID); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT id FROM elements WHERE name = 'b.go'`).Scan(&fileID); err != nil {
 		t.Fatalf("find file element: %v", err)
 	}
-	if _, err := sqliteStore.UpdateElement(ctx, fileID, core.LibraryElement{Name: "renamed.go", Tags: []string{"keep"}}); err != nil {
+	if _, err := appStore.UpdateElement(ctx, fileID, core.LibraryElement{Name: "renamed.go", Tags: []string{"keep"}}); err != nil {
 		t.Fatalf("user edit: %v", err)
 	}
-	userView, err := sqliteStore.CreateView(ctx, "My Diagram", nil, nil)
+	userView, err := appStore.CreateView(ctx, "My Diagram", nil, nil)
 	if err != nil {
 		t.Fatalf("create user view: %v", err)
 	}
-	if _, err := sqliteStore.AddPlacement(ctx, userView.ID, fileID, 5, 6); err != nil {
+	if _, err := appStore.AddPlacement(ctx, userView.ID, fileID, 5, 6); err != nil {
 		t.Fatalf("user placement: %v", err)
 	}
-	groupViewID := viewIDByName(t, sqliteStore, "alpha")
+	groupViewID := viewIDByName(t, appStore, "alpha")
 	renamedView := "Renamed Alpha"
-	if _, err := sqliteStore.UpdateView(ctx, groupViewID, &renamedView, nil, nil, nil); err != nil {
+	if _, err := appStore.UpdateView(ctx, groupViewID, &renamedView, nil, nil, nil); err != nil {
 		t.Fatalf("rename view: %v", err)
 	}
 
 	// Re-materialize the same repository at a new snapshot.
 	input.SnapshotID = "snap-2"
-	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, input, MapOptions{}); err != nil {
+	if _, err := ApplyGroupMap(ctx, appStore, idx, input, MapOptions{}); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
 
-	got, err := sqliteStore.ElementByID(ctx, fileID)
+	got, err := appStore.ElementByID(ctx, fileID)
 	if err != nil {
 		t.Fatalf("element: %v", err)
 	}
@@ -506,7 +507,7 @@ func TestApplyGroupMapPreservesUserEdits(t *testing.T) {
 	if len(got.Tags) != 1 || got.Tags[0] != "keep" {
 		t.Fatalf("tags = %v, want preserved [keep]", got.Tags)
 	}
-	placements, err := sqliteStore.ListElementPlacements(ctx, fileID)
+	placements, err := appStore.ListElementPlacements(ctx, fileID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +520,7 @@ func TestApplyGroupMapPreservesUserEdits(t *testing.T) {
 	if !found {
 		t.Fatal("user placement was lost after re-materialization")
 	}
-	view, err := sqliteStore.ViewByID(ctx, groupViewID)
+	view, err := appStore.ViewByID(ctx, groupViewID)
 	if err != nil {
 		t.Fatalf("view: %v", err)
 	}
@@ -530,7 +531,7 @@ func TestApplyGroupMapPreservesUserEdits(t *testing.T) {
 
 func TestApplyGroupMapEnrichesGeneratedResources(t *testing.T) {
 	ctx := context.Background()
-	sqliteStore, idx := openGroupMapStore(t)
+	appStore, idx := openGroupMapStore(t)
 	files := []community.File{
 		{ID: "id-a", Path: "src/alpha/a.go", DisplayName: "a.go", Language: "go"},
 		{ID: "id-b", Path: "src/alpha/b.ts", DisplayName: "b.ts", Language: "tsx"},
@@ -545,7 +546,7 @@ func TestApplyGroupMapEnrichesGeneratedResources(t *testing.T) {
 		}},
 		{Key: "beta", Name: "beta", Files: 1, Members: []int{3}},
 	}
-	result, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+	result, err := ApplyGroupMap(ctx, appStore, idx, GroupMapInput{
 		RepositoryID: "repo-1", RepositoryName: "demo", RepositoryRoot: "/repo/demo", SnapshotID: "snap-1",
 		Files: files, Groups: groups,
 		Edges: []MapEdge{{FromFactID: "id-a", ToFactID: "id-d", Weight: 3, Kind: "calls"}},
@@ -557,10 +558,10 @@ func TestApplyGroupMapEnrichesGeneratedResources(t *testing.T) {
 	elementByName := func(name string) core.LibraryElement {
 		t.Helper()
 		var id int64
-		if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT id FROM elements WHERE name = ?`, name).Scan(&id); err != nil {
+		if err := appStore.DB().QueryRowContext(ctx, `SELECT id FROM elements WHERE name = ?`, name).Scan(&id); err != nil {
 			t.Fatalf("element %q: %v", name, err)
 		}
-		element, err := sqliteStore.ElementByID(ctx, id)
+		element, err := appStore.ElementByID(ctx, id)
 		if err != nil {
 			t.Fatalf("element %q: %v", name, err)
 		}
@@ -602,7 +603,7 @@ func TestApplyGroupMapEnrichesGeneratedResources(t *testing.T) {
 
 	var label, relationship sql.NullString
 	var tags string
-	if err := sqliteStore.DB().QueryRowContext(ctx,
+	if err := appStore.DB().QueryRowContext(ctx,
 		`SELECT label, relationship, tags FROM connectors LIMIT 1`).Scan(&label, &relationship, &tags); err != nil {
 		t.Fatalf("connector: %v", err)
 	}
@@ -613,14 +614,14 @@ func TestApplyGroupMapEnrichesGeneratedResources(t *testing.T) {
 		t.Fatalf("connector tags = %s, want dependency", tags)
 	}
 
-	rootLayers, err := sqliteStore.Layers(ctx, result.ViewID)
+	rootLayers, err := appStore.Layers(ctx, result.ViewID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if hasGroupLayer(rootLayers, "alpha") {
 		t.Fatalf("root layers = %+v, want no single-node group layer", rootLayers)
 	}
-	alphaLayers, err := sqliteStore.Layers(ctx, viewIDByName(t, sqliteStore, "alpha"))
+	alphaLayers, err := appStore.Layers(ctx, viewIDByName(t, appStore, "alpha"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +631,7 @@ func TestApplyGroupMapEnrichesGeneratedResources(t *testing.T) {
 	if len(alphaLayers) != 1 {
 		t.Fatalf("alpha layers = %+v, want exactly one group layer", alphaLayers)
 	}
-	if childLayers, err := sqliteStore.Layers(ctx, viewIDByName(t, sqliteStore, "alpha-child")); err != nil {
+	if childLayers, err := appStore.Layers(ctx, viewIDByName(t, appStore, "alpha-child")); err != nil {
 		t.Fatal(err)
 	} else if hasGroupLayer(childLayers, "alpha-child") {
 		t.Fatalf("alpha-child layers = %+v, want no group layer for a pure view", childLayers)
@@ -639,8 +640,8 @@ func TestApplyGroupMapEnrichesGeneratedResources(t *testing.T) {
 
 func TestApplyGroupMapAnnotatesImportMetadata(t *testing.T) {
 	ctx := context.Background()
-	sqliteStore, idx := openGroupMapStore(t)
-	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+	appStore, idx := openGroupMapStore(t)
+	if _, err := ApplyGroupMap(ctx, appStore, idx, GroupMapInput{
 		RepositoryID: "repo-1", SnapshotID: "snap-1", Files: groupMapFiles(),
 		Groups:  []*community.Group{{Key: "one", Name: "one", Files: 4, Members: []int{0, 1, 2, 3}}},
 		Imports: []MapImport{{FileFactID: "id-a", Import: "flask"}},
@@ -649,10 +650,10 @@ func TestApplyGroupMapAnnotatesImportMetadata(t *testing.T) {
 	}
 
 	var externalTags, importTags string
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT tags FROM elements WHERE name = 'External'`).Scan(&externalTags); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT tags FROM elements WHERE name = 'External'`).Scan(&externalTags); err != nil {
 		t.Fatal(err)
 	}
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT tags FROM elements WHERE name = 'flask'`).Scan(&importTags); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT tags FROM elements WHERE name = 'flask'`).Scan(&importTags); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(externalTags, "external") || !strings.Contains(importTags, "external") {
@@ -660,7 +661,7 @@ func TestApplyGroupMapAnnotatesImportMetadata(t *testing.T) {
 	}
 
 	var label, relationship, tags string
-	if err := sqliteStore.DB().QueryRowContext(ctx,
+	if err := appStore.DB().QueryRowContext(ctx,
 		`SELECT label, relationship, tags FROM connectors LIMIT 1`).Scan(&label, &relationship, &tags); err != nil {
 		t.Fatal(err)
 	}
@@ -671,7 +672,7 @@ func TestApplyGroupMapAnnotatesImportMetadata(t *testing.T) {
 
 func TestApplyGroupMapPreservesUserConnectorLabel(t *testing.T) {
 	ctx := context.Background()
-	sqliteStore, idx := openGroupMapStore(t)
+	appStore, idx := openGroupMapStore(t)
 	input := GroupMapInput{
 		RepositoryID: "repo-1", SnapshotID: "snap-1", Files: groupMapFiles(),
 		Groups: []*community.Group{
@@ -681,24 +682,24 @@ func TestApplyGroupMapPreservesUserConnectorLabel(t *testing.T) {
 		Edges: []MapEdge{{FromFactID: "id-a", ToFactID: "id-c", Weight: 1, Kind: "calls"}},
 	}
 	opts := MapOptions{AnnotateConnectors: true}
-	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, input, opts); err != nil {
+	if _, err := ApplyGroupMap(ctx, appStore, idx, input, opts); err != nil {
 		t.Fatal(err)
 	}
 	var connectorID int64
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT id FROM connectors LIMIT 1`).Scan(&connectorID); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT id FROM connectors LIMIT 1`).Scan(&connectorID); err != nil {
 		t.Fatal(err)
 	}
 	custom := "validates JWT"
-	if _, err := sqliteStore.UpdateConnector(ctx, connectorID, core.Connector{Label: &custom}); err != nil {
+	if _, err := appStore.UpdateConnector(ctx, connectorID, core.Connector{Label: &custom}); err != nil {
 		t.Fatal(err)
 	}
 
 	input.SnapshotID = "snap-2"
-	if _, err := ApplyGroupMap(ctx, sqliteStore, idx, input, opts); err != nil {
+	if _, err := ApplyGroupMap(ctx, appStore, idx, input, opts); err != nil {
 		t.Fatal(err)
 	}
 	var label, relationship sql.NullString
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT label, relationship FROM connectors WHERE id = ?`, connectorID).Scan(&label, &relationship); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT label, relationship FROM connectors WHERE id = ?`, connectorID).Scan(&label, &relationship); err != nil {
 		t.Fatal(err)
 	}
 	if !label.Valid || label.String != custom {
@@ -711,8 +712,8 @@ func TestApplyGroupMapPreservesUserConnectorLabel(t *testing.T) {
 
 func TestApplyGroupMapAdjustsConnectorHandles(t *testing.T) {
 	ctx := context.Background()
-	sqliteStore, idx := openGroupMapStore(t)
-	result, err := ApplyGroupMap(ctx, sqliteStore, idx, GroupMapInput{
+	appStore, idx := openGroupMapStore(t)
+	result, err := ApplyGroupMap(ctx, appStore, idx, GroupMapInput{
 		RepositoryID:   "repo-1",
 		RepositoryName: "demo",
 		SnapshotID:     "snap-1",
@@ -729,7 +730,7 @@ func TestApplyGroupMapAdjustsConnectorHandles(t *testing.T) {
 	if result.Connectors == 0 {
 		t.Fatal("expected a cross-group connector")
 	}
-	rows, err := sqliteStore.DB().QueryContext(ctx, `SELECT source_handle, target_handle FROM connectors`)
+	rows, err := appStore.DB().QueryContext(ctx, `SELECT source_handle, target_handle FROM connectors`)
 	if err != nil {
 		t.Fatal(err)
 	}

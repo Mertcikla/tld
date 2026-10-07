@@ -14,6 +14,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/server"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/app"
 	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )
 
@@ -98,23 +99,23 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 		staticFS = embedded
 	}
 
-	var sqliteStore *store.SQLiteStore
+	var appStore *app.Store
 	var err error
 	if o.Config != nil {
-		sqliteStore, err = store.OpenLocal(context.Background(), o.Config, dataDir, assets.FS)
+		appStore, err = store.OpenLocal(context.Background(), o.Config, dataDir, assets.FS)
 	} else {
-		sqliteStore, err = store.Open(dbPath, assets.FS)
+		appStore, err = store.Open(dbPath, assets.FS)
 	}
 	if err != nil {
 		return nil, err
 	}
-	dbDriver := sqliteStore.Dialect()
+	dbDriver := appStore.Dialect()
 	if dbDriver != dbrepo.DialectSQLite {
 		dbPath = ""
 		initializedData = false
 	}
 
-	apiStore := store.NewAPIAdapter(sqliteStore, dataDir)
+	apiStore := store.NewAPIAdapter(appStore, dataDir)
 	views, elements, connectors, err := apiStore.GetWorkspaceResourceCounts(context.Background(), localWorkspaceID)
 	if err != nil {
 		return nil, err
@@ -130,7 +131,7 @@ func Bootstrap(dataDir string, opts ...ServeOptions) (*App, error) {
 			allowedOrigins = o.Config.Serve.AllowedOrigins
 		}
 	}
-	srv, err := server.NewWithOptions(sqliteStore, staticFS, localWorkspaceID, server.Options{
+	srv, err := server.NewWithOptions(appStore, staticFS, localWorkspaceID, server.Options{
 		DataDir:        dataDir,
 		WorkspaceDir:   o.WorkspaceDir,
 		PublicURL:      publicURL,

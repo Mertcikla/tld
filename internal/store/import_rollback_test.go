@@ -16,8 +16,8 @@ func rollbackStrPtr(s string) *string { return &s }
 // TestImportServiceRollsBackPartialImports verifies that a failing import
 // leaves no partial state behind when the store supports transactions.
 func TestImportServiceRollsBackPartialImports(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
-	adapter := NewAPIAdapter(sqliteStore)
+	appStore := openAdapterTestStore(t)
+	adapter := NewAPIAdapter(appStore)
 	ctx := context.Background()
 	orgID := uuid.MustParse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 

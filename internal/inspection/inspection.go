@@ -322,13 +322,13 @@ func localState(ctx context.Context, ws *workspace.Workspace, opts Options) Sour
 			return state
 		}
 	}
-	sqliteStore, err := store.OpenLocal(ctx, cfg, opts.DataDir, assets.FS)
+	appStore, err := store.OpenLocal(ctx, cfg, opts.DataDir, assets.FS)
 	if err != nil {
 		state.Note = err.Error()
 		return state
 	}
-	defer func() { _ = sqliteStore.Legacy().Close() }()
-	adapter := store.NewAPIAdapter(sqliteStore)
+	defer func() { _ = appStore.Close() }()
+	adapter := store.NewAPIAdapter(appStore)
 	state.ID = int32(metadata.ID)
 	switch opts.Type {
 	case TypeElement:

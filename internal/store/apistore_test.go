@@ -18,19 +18,19 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-func openAdapterTestStore(t *testing.T) *SQLiteStore {
+func openAdapterTestStore(t *testing.T) *app.Store {
 	t.Helper()
-	sqliteStore, err := Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
+	appStore, err := Open(filepath.Join(t.TempDir(), "tld.db"), assets.FS)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = sqliteStore.Legacy().Close() })
-	return sqliteStore
+	t.Cleanup(func() { _ = appStore.Close() })
+	return appStore
 }
 
-func insertAdapterTestView(t *testing.T, sqliteStore *SQLiteStore, id int32, name string) {
+func insertAdapterTestView(t *testing.T, appStore *app.Store, id int32, name string) {
 	t.Helper()
-	if _, err := sqliteStore.DB().ExecContext(context.Background(), `
+	if _, err := appStore.DB().ExecContext(context.Background(), `
 		INSERT INTO views(id, owner_element_id, name, description, level_label, level, created_at, updated_at)
 		VALUES (?, NULL, ?, NULL, 'System', 0, 'now', 'now')
 	`, id, name); err != nil {
@@ -162,9 +162,9 @@ func TestElementToProtoPreservesExplicitLogoClear(t *testing.T) {
 }
 
 func TestGetWorkspaceResourceCountsUsesTableCounts(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 
-	db := sqliteStore.DB()
+	db := appStore.DB()
 	if _, err := db.Exec(`
 		INSERT INTO elements(name, tags, technology_connectors, created_at, updated_at)
 		VALUES
@@ -180,7 +180,7 @@ func TestGetWorkspaceResourceCountsUsesTableCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	views, elements, connectors, err := NewAPIAdapter(sqliteStore).GetWorkspaceResourceCounts(context.Background(), uuid.Nil)
+	views, elements, connectors, err := NewAPIAdapter(appStore).GetWorkspaceResourceCounts(context.Background(), uuid.Nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,9 +190,9 @@ func TestGetWorkspaceResourceCountsUsesTableCounts(t *testing.T) {
 }
 
 func TestGetViewsFiltersDirectChildrenByParentViewID(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 
-	db := sqliteStore.DB()
+	db := appStore.DB()
 	if _, err := db.Exec(`
 		INSERT INTO elements(id, name, tags, technology_connectors, created_at, updated_at)
 		VALUES
@@ -211,7 +211,7 @@ func TestGetViewsFiltersDirectChildrenByParentViewID(t *testing.T) {
 	}
 
 	parentID := int32(1)
-	children, total, err := NewAPIAdapter(sqliteStore).GetViews(context.Background(), uuid.Nil, &parentID, nil, "", 0, 0)
+	children, total, err := NewAPIAdapter(appStore).GetViews(context.Background(), uuid.Nil, &parentID, nil, "", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ func TestGetViewsFiltersDirectChildrenByParentViewID(t *testing.T) {
 	}
 
 	parentID = 20
-	children, total, err = NewAPIAdapter(sqliteStore).GetViews(context.Background(), uuid.Nil, &parentID, nil, "", 0, 0)
+	children, total, err = NewAPIAdapter(appStore).GetViews(context.Background(), uuid.Nil, &parentID, nil, "", 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,9 +230,9 @@ func TestGetViewsFiltersDirectChildrenByParentViewID(t *testing.T) {
 }
 
 func TestApplyPlanAutoLayoutsUnpositionedPlacements(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 
-	resp, err := NewAPIAdapter(sqliteStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
+	resp, err := NewAPIAdapter(appStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
 		Elements: []*diagv1.PlanElement{
 			{Ref: "api", Name: "API", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
 			{Ref: "db", Name: "DB", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
@@ -256,7 +256,7 @@ func TestApplyPlanAutoLayoutsUnpositionedPlacements(t *testing.T) {
 		t.Fatalf("placements overlapped at (%v, %v)", first.GetPositionX(), first.GetPositionY())
 	}
 
-	rows, err := sqliteStore.DB().QueryContext(context.Background(), `SELECT position_x, position_y FROM placements ORDER BY element_id`)
+	rows, err := appStore.DB().QueryContext(context.Background(), `SELECT position_x, position_y FROM placements ORDER BY element_id`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,10 +278,10 @@ func TestApplyPlanAutoLayoutsUnpositionedPlacements(t *testing.T) {
 }
 
 func TestApplyPlanCreatesMissingConnectorWithPlannedID(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 	connectorID := int32(77)
 
-	resp, err := NewAPIAdapter(sqliteStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
+	resp, err := NewAPIAdapter(appStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
 		Elements: []*diagv1.PlanElement{
 			{Ref: "api", Name: "API", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
 			{Ref: "db", Name: "DB", Placements: []*diagv1.PlanViewPlacement{{ParentRef: "root"}}},
@@ -300,16 +300,16 @@ func TestApplyPlanCreatesMissingConnectorWithPlannedID(t *testing.T) {
 	if got := resp.GetConnectorResults()[0].GetId(); got != 77 {
 		t.Fatalf("connector result id = %d, want 77", got)
 	}
-	if _, err := NewAPIAdapter(sqliteStore).GetConnector(context.Background(), 77, uuid.Nil); err != nil {
+	if _, err := NewAPIAdapter(appStore).GetConnector(context.Background(), 77, uuid.Nil); err != nil {
 		t.Fatalf("connector 77 was not created: %v", err)
 	}
 }
 
 func TestApplyPlanPreservesExplicitPlacementCoordinates(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 	x, y := 42.0, 84.0
 
-	resp, err := NewAPIAdapter(sqliteStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
+	resp, err := NewAPIAdapter(appStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
 		Elements: []*diagv1.PlanElement{{
 			Ref:  "api",
 			Name: "API",
@@ -333,10 +333,10 @@ func TestApplyPlanPreservesExplicitPlacementCoordinates(t *testing.T) {
 }
 
 func TestApplyPlanDefaultsBypassNoiseGateTrueAndPreservesExplicitFalse(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 	explicitFalse := false
 
-	resp, err := NewAPIAdapter(sqliteStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
+	resp, err := NewAPIAdapter(appStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
 		Elements: []*diagv1.PlanElement{
 			{Ref: "api", Name: "API"},
 			{Ref: "manual", Name: "Manual", BypassNoiseGate: &explicitFalse},
@@ -349,7 +349,7 @@ func TestApplyPlanDefaultsBypassNoiseGateTrueAndPreservesExplicitFalse(t *testin
 		t.Fatalf("created elements = %d, want 2", len(resp.GetCreatedElements()))
 	}
 
-	items, _, err := NewAPIAdapter(sqliteStore).ListElements(context.Background(), uuid.Nil, 0, 0, "")
+	items, _, err := NewAPIAdapter(appStore).ListElements(context.Background(), uuid.Nil, 0, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +368,7 @@ func TestApplyPlanDefaultsBypassNoiseGateTrueAndPreservesExplicitFalse(t *testin
 			continue
 		}
 		id := element.GetId()
-		updated, err := NewAPIAdapter(sqliteStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
+		updated, err := NewAPIAdapter(appStore).ApplyPlan(context.Background(), uuid.Nil, &diagv1.ApplyPlanRequest{
 			Elements: []*diagv1.PlanElement{{Ref: "manual", Id: &id, Name: "Manual edited"}},
 		})
 		if err != nil {
@@ -381,8 +381,8 @@ func TestApplyPlanDefaultsBypassNoiseGateTrueAndPreservesExplicitFalse(t *testin
 }
 
 func TestListElementsMapsSearchPaginationAndViewMetadata(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
-	db := sqliteStore.DB()
+	appStore := openAdapterTestStore(t)
+	db := appStore.DB()
 	if _, err := db.Exec(`
 		INSERT INTO elements(id, name, kind, description, tags, technology_connectors, created_at, updated_at)
 		VALUES
@@ -394,7 +394,7 @@ func TestListElementsMapsSearchPaginationAndViewMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, total, err := NewAPIAdapter(sqliteStore).ListElements(context.Background(), uuid.Nil, 1, 0, "API")
+	items, total, err := NewAPIAdapter(appStore).ListElements(context.Background(), uuid.Nil, 1, 0, "API")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -405,7 +405,7 @@ func TestListElementsMapsSearchPaginationAndViewMetadata(t *testing.T) {
 		t.Fatalf("view metadata = has:%v label:%q, want Service child view", items[0].GetHasView(), items[0].GetViewLabel())
 	}
 
-	items, total, err = NewAPIAdapter(sqliteStore).ListElements(context.Background(), uuid.Nil, 1, 1, "")
+	items, total, err = NewAPIAdapter(appStore).ListElements(context.Background(), uuid.Nil, 1, 1, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,12 +415,12 @@ func TestListElementsMapsSearchPaginationAndViewMetadata(t *testing.T) {
 }
 
 func TestViewMarkdownManagedLifecycle(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 	dataDir := t.TempDir()
-	adapter := NewAPIAdapter(sqliteStore, dataDir)
+	adapter := NewAPIAdapter(appStore, dataDir)
 	ctx := context.Background()
 
-	if _, err := sqliteStore.DB().ExecContext(ctx, `
+	if _, err := appStore.DB().ExecContext(ctx, `
 		INSERT INTO views(id, owner_element_id, name, description, level_label, level, created_at, updated_at)
 		VALUES (20, NULL, 'System Context', NULL, 'System', 0, 'now', 'now')
 	`); err != nil {
@@ -479,12 +479,12 @@ func TestViewMarkdownManagedLifecycle(t *testing.T) {
 }
 
 func TestViewMarkdownLinkReadsRelativeFilesFromDataDir(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 	dataDir := t.TempDir()
-	adapter := NewAPIAdapter(sqliteStore, dataDir)
+	adapter := NewAPIAdapter(appStore, dataDir)
 	ctx := context.Background()
 
-	if _, err := sqliteStore.DB().ExecContext(ctx, `
+	if _, err := appStore.DB().ExecContext(ctx, `
 		INSERT INTO views(id, owner_element_id, name, description, level_label, level, created_at, updated_at)
 		VALUES (30, NULL, 'Deployment', NULL, 'System', 0, 'now', 'now')
 	`); err != nil {
@@ -521,13 +521,13 @@ func TestViewMarkdownLinkReadsRelativeFilesFromDataDir(t *testing.T) {
 }
 
 func TestViewMarkdownLinkReadsPrivateWorkspacePathFromWorkspaceNotes(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 	dataDir := t.TempDir()
 	workspaceDir := t.TempDir()
-	adapter := NewAPIAdapter(sqliteStore, dataDir, workspaceDir)
+	adapter := NewAPIAdapter(appStore, dataDir, workspaceDir)
 	ctx := context.Background()
 
-	insertAdapterTestView(t, sqliteStore, 31, "Linked Notes")
+	insertAdapterTestView(t, appStore, 31, "Linked Notes")
 
 	relPath := filepath.Join(managedViewMarkdownDir, "source-notes.md")
 	absPath := filepath.Join(workspaceDir, ".tld", relPath)
@@ -558,12 +558,12 @@ func TestViewMarkdownLinkReadsPrivateWorkspacePathFromWorkspaceNotes(t *testing.
 }
 
 func TestViewMarkdownPrivateWorkspaceCreatesUnderTLDAndReportsMissing(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 	dataDir := t.TempDir()
 	workspaceDir := t.TempDir()
-	adapter := NewAPIAdapter(sqliteStore, dataDir, workspaceDir)
+	adapter := NewAPIAdapter(appStore, dataDir, workspaceDir)
 	ctx := context.Background()
-	insertAdapterTestView(t, sqliteStore, 40, "System Context")
+	insertAdapterTestView(t, appStore, 40, "System Context")
 
 	initialContent := "# System Context\n\nPrivate notes.\n"
 	if _, err := adapter.CreateViewMarkdown(ctx, 40, uuid.Nil, nil, &initialContent, "PRIVATE_WORKSPACE", nil); err != nil {
@@ -605,14 +605,14 @@ func TestViewMarkdownPrivateWorkspaceCreatesUnderTLDAndReportsMissing(t *testing
 }
 
 func TestViewMarkdownRepoCreationReportsGitState(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 	dataDir := t.TempDir()
 	workspaceDir := t.TempDir()
 	runGitCommand(t, workspaceDir, "init")
-	adapter := NewAPIAdapter(sqliteStore, dataDir, workspaceDir)
+	adapter := NewAPIAdapter(appStore, dataDir, workspaceDir)
 	ctx := context.Background()
-	insertAdapterTestView(t, sqliteStore, 41, "Checkout Flow")
-	insertAdapterTestView(t, sqliteStore, 42, "Ignored Flow")
+	insertAdapterTestView(t, appStore, 41, "Checkout Flow")
+	insertAdapterTestView(t, appStore, 42, "Ignored Flow")
 
 	repoPath := "docs/diagrams/checkout-flow.md"
 	if _, err := adapter.CreateViewMarkdown(ctx, 41, uuid.Nil, nil, nil, "REPO", &repoPath); err != nil {
@@ -649,11 +649,11 @@ func TestViewMarkdownRepoCreationReportsGitState(t *testing.T) {
 }
 
 func TestViewMarkdownSaveDetectsFileVersionConflict(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 	dataDir := t.TempDir()
-	adapter := NewAPIAdapter(sqliteStore, dataDir)
+	adapter := NewAPIAdapter(appStore, dataDir)
 	ctx := context.Background()
-	insertAdapterTestView(t, sqliteStore, 44, "Conflict Notes")
+	insertAdapterTestView(t, appStore, 44, "Conflict Notes")
 
 	initialContent := "# Conflict\n\nInitial.\n"
 	if _, err := adapter.CreateViewMarkdown(ctx, 44, uuid.Nil, nil, &initialContent, "PRIVATE_APP", nil); err != nil {
@@ -676,12 +676,12 @@ func TestViewMarkdownSaveDetectsFileVersionConflict(t *testing.T) {
 }
 
 func TestViewMarkdownUnmanagedRelativePathResolvesFromWorkspaceRoot(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 	dataDir := t.TempDir()
 	workspaceDir := t.TempDir()
-	adapter := NewAPIAdapter(sqliteStore, dataDir, workspaceDir)
+	adapter := NewAPIAdapter(appStore, dataDir, workspaceDir)
 	ctx := context.Background()
-	insertAdapterTestView(t, sqliteStore, 45, "Unmanaged Notes")
+	insertAdapterTestView(t, appStore, 45, "Unmanaged Notes")
 
 	relPath := filepath.Join("docs", "unmanaged.md")
 	dataDirContent := "# Unmanaged\n\nData dir file.\n"
@@ -698,7 +698,7 @@ func TestViewMarkdownUnmanagedRelativePathResolvesFromWorkspaceRoot(t *testing.T
 	if err := os.WriteFile(filepath.Join(workspaceDir, relPath), []byte(workspaceContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := sqliteStore.Legacy().UpsertViewMarkdown(ctx, 45, relPath, false, nowString()); err != nil {
+	if err := appStore.UpsertViewMarkdown(ctx, 45, relPath, false, app.NowString()); err != nil {
 		t.Fatal(err)
 	}
 
@@ -715,11 +715,11 @@ func TestViewMarkdownUnmanagedRelativePathResolvesFromWorkspaceRoot(t *testing.T
 }
 
 func TestViewMarkdownReadOnlyAttachedFileIsNotEditable(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
+	appStore := openAdapterTestStore(t)
 	dataDir := t.TempDir()
-	adapter := NewAPIAdapter(sqliteStore, dataDir)
+	adapter := NewAPIAdapter(appStore, dataDir)
 	ctx := context.Background()
-	insertAdapterTestView(t, sqliteStore, 46, "Read Only Notes")
+	insertAdapterTestView(t, appStore, 46, "Read Only Notes")
 
 	relPath := filepath.Join("docs", "read-only.md")
 	absPath := filepath.Join(dataDir, relPath)
@@ -746,8 +746,8 @@ func TestViewMarkdownReadOnlyAttachedFileIsNotEditable(t *testing.T) {
 	}
 }
 func TestConnectorAdapterPreservesHandlesDefaultsAndViewFiltering(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
-	db := sqliteStore.DB()
+	appStore := openAdapterTestStore(t)
+	db := appStore.DB()
 	if _, err := db.Exec(`
 		INSERT INTO elements(id, name, tags, technology_connectors, created_at, updated_at)
 		VALUES
@@ -761,7 +761,7 @@ func TestConnectorAdapterPreservesHandlesDefaultsAndViewFiltering(t *testing.T) 
 	label := "reads"
 	sourceHandle := "right"
 	targetHandle := "left"
-	connector, err := NewAPIAdapter(sqliteStore).CreateConnector(context.Background(), uuid.Nil, api.ConnectorInput{
+	connector, err := NewAPIAdapter(appStore).CreateConnector(context.Background(), uuid.Nil, api.ConnectorInput{
 		ViewID:       20,
 		SourceID:     10,
 		TargetID:     11,
@@ -784,18 +784,18 @@ func TestConnectorAdapterPreservesHandlesDefaultsAndViewFiltering(t *testing.T) 
 		t.Fatalf("connector tags = %v, want runtime", got)
 	}
 
-	all, err := NewAPIAdapter(sqliteStore).ListAllConnectors(context.Background(), uuid.Nil)
+	all, err := NewAPIAdapter(appStore).ListAllConnectors(context.Background(), uuid.Nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	inView, err := NewAPIAdapter(sqliteStore).ListConnectors(context.Background(), 20, uuid.Nil)
+	inView, err := NewAPIAdapter(appStore).ListConnectors(context.Background(), 20, uuid.Nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(all) != 1 || len(inView) != 1 || all[0].GetId() != inView[0].GetId() {
 		t.Fatalf("connector list mismatch: all=%+v inView=%+v", all, inView)
 	}
-	updated, err := NewAPIAdapter(sqliteStore).UpdateConnector(context.Background(), connector.GetId(), uuid.Nil, api.ConnectorInput{
+	updated, err := NewAPIAdapter(appStore).UpdateConnector(context.Background(), connector.GetId(), uuid.Nil, api.ConnectorInput{
 		ViewID:   20,
 		SourceID: 10,
 		TargetID: 11,
@@ -811,8 +811,8 @@ func TestConnectorAdapterPreservesHandlesDefaultsAndViewFiltering(t *testing.T) 
 }
 
 func TestViewAdapterPreservesAndUpdatesTags(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
-	db := sqliteStore.DB()
+	appStore := openAdapterTestStore(t)
+	db := appStore.DB()
 	if _, err := db.Exec(`
 		INSERT INTO elements(id, name, tags, technology_connectors, created_at, updated_at)
 		VALUES (10, 'API', '[]', '[]', 'now', 'now');
@@ -821,7 +821,7 @@ func TestViewAdapterPreservesAndUpdatesTags(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	adapter := NewAPIAdapter(sqliteStore)
+	adapter := NewAPIAdapter(appStore)
 	view, err := adapter.GetView(context.Background(), 20, uuid.Nil)
 	if err != nil {
 		t.Fatal(err)
@@ -844,8 +844,8 @@ func TestViewAdapterPreservesAndUpdatesTags(t *testing.T) {
 }
 
 func TestListAllViewLayersBatchesAndPreservesTreeOrder(t *testing.T) {
-	sqliteStore := openAdapterTestStore(t)
-	db := sqliteStore.DB()
+	appStore := openAdapterTestStore(t)
+	db := appStore.DB()
 	if _, err := db.Exec(`
 		INSERT INTO elements(id, name, tags, technology_connectors, created_at, updated_at)
 		VALUES (120, 'Service', '[]', '[]', 'now', 'now');
@@ -864,7 +864,7 @@ func TestListAllViewLayersBatchesAndPreservesTreeOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	layers, err := NewAPIAdapter(sqliteStore).ListAllViewLayers(context.Background(), uuid.Nil)
+	layers, err := NewAPIAdapter(appStore).ListAllViewLayers(context.Background(), uuid.Nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -194,6 +194,12 @@ func nowString() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
 
+// NowString returns the current UTC time in the RFC3339 format used for
+// created_at/updated_at columns.
+func NowString() string {
+	return nowString()
+}
+
 func normalizeDirection(value *string) string {
 	if value == nil || strings.TrimSpace(*value) == "" {
 		return "forward"

@@ -568,14 +568,14 @@ func NewMockServer(t *testing.T, svc diagv1connect.WorkspaceServiceHandler) stri
 
 func NewLocalAPIServer(t *testing.T, dataDir string) string {
 	t.Helper()
-	sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
+	appStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
 	if err != nil {
 		t.Fatalf("open local API database: %v", err)
 	}
-	t.Cleanup(func() { _ = sqliteStore.Legacy().Close() })
+	t.Cleanup(func() { _ = appStore.Close() })
 
 	static := fstest.MapFS{"frontend/dist/index.html": {Data: []byte("<html>app</html>")}}
-	srv, err := localapi.New(sqliteStore, static, uuid.MustParse("11111111-1111-1111-1111-111111111111"))
+	srv, err := localapi.New(appStore, static, uuid.MustParse("11111111-1111-1111-1111-111111111111"))
 	if err != nil {
 		t.Fatalf("create local API server: %v", err)
 	}

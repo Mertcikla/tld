@@ -19,8 +19,8 @@ import (
 
 func TestMapperServiceMapRepository(t *testing.T) {
 	workspaceID := uuid.New()
-	sqliteStore, routes := newTestServer(t, workspaceID, nil)
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	appStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo/demo"
@@ -109,13 +109,13 @@ func TestMapperServiceMapRepository(t *testing.T) {
 	}
 
 	var analysisRuns, groups, members int
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_analysis_runs WHERE repository_id = ?`, repoID).Scan(&analysisRuns); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_analysis_runs WHERE repository_id = ?`, repoID).Scan(&analysisRuns); err != nil {
 		t.Fatal(err)
 	}
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_groups WHERE run_id = ? AND kind = ?`, result.GetRunId(), int(cstore.GroupKindCommunity)).Scan(&groups); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_groups WHERE run_id = ? AND kind = ?`, result.GetRunId(), int(cstore.GroupKindCommunity)).Scan(&groups); err != nil {
 		t.Fatal(err)
 	}
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_group_members WHERE group_id IN (SELECT id FROM codeindex_groups WHERE run_id = ?)`, result.GetRunId()).Scan(&members); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM codeindex_group_members WHERE group_id IN (SELECT id FROM codeindex_groups WHERE run_id = ?)`, result.GetRunId()).Scan(&members); err != nil {
 		t.Fatal(err)
 	}
 	if analysisRuns != 1 || groups == 0 || members < 4 {
@@ -123,14 +123,14 @@ func TestMapperServiceMapRepository(t *testing.T) {
 	}
 
 	var connectors int
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&connectors); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&connectors); err != nil {
 		t.Fatal(err)
 	}
 	if connectors != 1 {
 		t.Fatalf("connectors = %d, want 1 file-to-file edge", connectors)
 	}
 	var connectorEndpoints int
-	if err := sqliteStore.DB().QueryRowContext(ctx, `
+	if err := appStore.DB().QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM connectors c
 		JOIN elements s ON s.id = c.source_element_id
 		JOIN elements t ON t.id = c.target_element_id
@@ -145,8 +145,8 @@ func TestMapperServiceMapRepository(t *testing.T) {
 func TestMapperServiceMapConfigChangeReruns(t *testing.T) {
 	workspaceID := uuid.New()
 	cfg := workspace.DefaultConfig()
-	sqliteStore, routes := newTestServerWithOptions(t, workspaceID, nil, Options{Config: cfg})
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	appStore, routes := newTestServerWithOptions(t, workspaceID, nil, Options{Config: cfg})
+	idx := cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo/config"
@@ -224,8 +224,8 @@ func TestMapperServiceMapConfigChangeReruns(t *testing.T) {
 
 func TestMapperServiceMaterializesBoundedExternalImports(t *testing.T) {
 	workspaceID := uuid.New()
-	sqliteStore, routes := newTestServer(t, workspaceID, nil)
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	appStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo/demo"
@@ -260,14 +260,14 @@ func TestMapperServiceMaterializesBoundedExternalImports(t *testing.T) {
 	// so the connector count stays bounded by the per-view budget rather than
 	// growing with files × imports.
 	var connectors int
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&connectors); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&connectors); err != nil {
 		t.Fatal(err)
 	}
 	if connectors < 1 || connectors > materialize.DefaultMaxConnectorsPerView {
 		t.Fatalf("import connectors = %d, want between 1 and %d", connectors, materialize.DefaultMaxConnectorsPerView)
 	}
 	var external int
-	if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'External'`).Scan(&external); err != nil {
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = 'External'`).Scan(&external); err != nil {
 		t.Fatal(err)
 	}
 	if external != 1 {
@@ -275,7 +275,7 @@ func TestMapperServiceMaterializesBoundedExternalImports(t *testing.T) {
 	}
 	for _, name := range []string{"celery", "flask"} {
 		var count int
-		if err := sqliteStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = ?`, name).Scan(&count); err != nil {
+		if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM elements WHERE name = ?`, name).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		if count != 1 {
@@ -286,8 +286,8 @@ func TestMapperServiceMaterializesBoundedExternalImports(t *testing.T) {
 
 func TestMapperServiceGraphGroupingNeedsNoEmbeddings(t *testing.T) {
 	workspaceID := uuid.New()
-	sqliteStore, routes := newTestServer(t, workspaceID, nil)
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	appStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo/empty"

@@ -37,8 +37,8 @@ func captureSnapshot(t *testing.T, client codeindexv1connect.CodeIndexServiceCli
 
 func seedCapturedRepository(t *testing.T, workspaceID uuid.UUID, root string) (*cstore.Store, *httptest.Server) {
 	t.Helper()
-	sqliteStore, routes := newTestServer(t, workspaceID, nil)
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	appStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 	repoID := graph.RepositoryID(root)
 	seed := &pb.Snapshot{Id: "seed", RepositoryId: repoID, IngestionStatus: "complete"}

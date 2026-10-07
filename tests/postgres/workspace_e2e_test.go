@@ -24,6 +24,7 @@ import (
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	workspacecfg "github.com/mertcikla/tld/v2/internal/workspace"
 	coreapi "github.com/mertcikla/tld/v2/pkg/api"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 type postgresAPIClient struct {
@@ -365,7 +366,7 @@ func requirePostgresDSN(t *testing.T) string {
 	return dsn
 }
 
-func openPostgresLocalStore(t *testing.T, dsn string) *localstore.SQLiteStore {
+func openPostgresLocalStore(t *testing.T, dsn string) *app.Store {
 	t.Helper()
 	resetPostgresSchema(t, dsn)
 	cfg := &workspacecfg.Config{
@@ -382,9 +383,9 @@ func openPostgresLocalStore(t *testing.T, dsn string) *localstore.SQLiteStore {
 	return store
 }
 
-func newPostgresAPIClient(t *testing.T, store *localstore.SQLiteStore, orgID uuid.UUID) postgresAPIClient {
+func newPostgresAPIClient(t *testing.T, store *app.Store, orgID uuid.UUID) postgresAPIClient {
 	t.Helper()
-	apiStore := coreapi.NewAPIStore(store.Legacy())
+	apiStore := coreapi.NewAPIStore(store)
 	workspacePath, workspaceHandler := diagv1connect.NewWorkspaceServiceHandler(&coreapi.WorkspaceService{
 		Store: apiStore,
 	})

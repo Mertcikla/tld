@@ -18,9 +18,9 @@ func (a *APIAdapter) RunInTransaction(ctx context.Context, fn func(context.Conte
 	if a.Store.Dialect() != dbrepo.DialectSQLite {
 		return fmt.Errorf("transactional Mermaid import for %s: %w", a.Store.Dialect(), api.ErrUnimplemented)
 	}
-	return a.Store.legacy.RunInTransaction(ctx, func(txCtx context.Context, txStore *app.Store) error {
+	return a.Store.RunInTransaction(ctx, func(txCtx context.Context, txStore *app.Store) error {
 		txAdapter := *a
-		txAdapter.Store = &SQLiteStore{legacy: txStore}
+		txAdapter.Store = txStore
 		return fn(txCtx, &txAdapter)
 	})
 }

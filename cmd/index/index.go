@@ -37,6 +37,7 @@ import (
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/app"
 	"github.com/spf13/cobra"
 )
 
@@ -108,7 +109,7 @@ unchanged elements by dependency hops.`,
 
 type engine struct {
 	store   *cstore.Store
-	ws      *localstore.SQLiteStore
+	ws      *app.Store
 	cfg     ci.Config
 	global  *workspace.Config
 	opts    options
