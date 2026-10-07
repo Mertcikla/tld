@@ -49,6 +49,7 @@ vi.mock('../api/client', () => ({
       updateRemote: vi.fn(),
       maps: vi.fn(async () => []),
       history: vi.fn(async () => ({ repositoryUrl: 'https://github.com/test/demo', commits: [], branches: [], headSha: '', currentBranch: '', isGit: false, hasMore: false })),
+      rangeSummary: vi.fn(async () => ({ commits: 3, additions: 10, deletions: 4, changed: 6, files: 2 })),
       openPullRequests: vi.fn(async () => [{ number: 7, title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseBranch: 'main', headBranch: 'feature' }]),
       pullRequest: vi.fn(async () => ({ title: 'Feature PR', url: 'https://github.com/test/demo/pull/7', baseSha: 'pr-base', headSha: 'pr-head', baseBranch: 'main', headBranch: 'feature' })),
       fileSymbols: vi.fn(async () => []),
@@ -675,6 +676,29 @@ describe('Repositories map action', () => {
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-base-target' }).length).toBeGreaterThan(0)
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-compare' })).toBeTruthy()
     renderer.unmount()
+  })
+
+  it('summarizes the selected range between base and head in the history footer', async () => {
+    const { api } = await import('../api/client')
+    vi.mocked(api.repositories.rangeSummary).mockResolvedValueOnce({ commits: 7, additions: 120, deletions: 30, changed: 45, files: 4 })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    expect(api.repositories.rangeSummary).toHaveBeenCalledWith('repo-1', expect.objectContaining({ base: 'old', head: 'abc', baseWorkingTree: false, headWorkingTree: false }))
+    const summary = renderer.root.findByProps({ 'data-testid': 'repositories-range-summary' })
+    expect(summary.findAll((node) => node.props.children === '7 commits').length).toBeGreaterThan(0)
+    expect(summary.findAll((node) => node.props.children === '+120').length).toBeGreaterThan(0)
+    expect(summary.findAll((node) => node.props.children === '~45').length).toBeGreaterThan(0)
+    expect(summary.findAll((node) => node.props.children === '−30').length).toBeGreaterThan(0)
+    await act(async () => { renderer.unmount() })
+  })
+
+  it('re-runs the quick git diff when BASE or HEAD changes', async () => {
+    const { api } = await import('../api/client')
+    let renderer!: ReturnType<typeof create>
+    await act(async () => { renderer = create(<Repositories />) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.onChange('working_tree') })
+    expect(api.repositories.rangeSummary).toHaveBeenLastCalledWith('repo-1', expect.objectContaining({ base: 'old', head: '', headWorkingTree: true }))
+    await act(async () => { renderer.unmount() })
   })
 
   it('shows per-file insertion and deletion counts in the compact tree', async () => {

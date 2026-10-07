@@ -237,6 +237,51 @@ func TestPrepareRejectsSnapshotFromAnotherRepository(t *testing.T) {
 	}
 }
 
+func TestRepositoryRevisionRangeSummary(t *testing.T) {
+	s, root, initial, repoID := prepareFixture(t)
+	testGit(t, root, "checkout", "-b", "feature")
+	writeFixtureSource(t, root, "feature.go", "package sample\nfunc Feature() {}\n")
+	testGit(t, root, "add", ".")
+	testGit(t, root, "commit", "-m", "feature change")
+	feature := strings.TrimSpace(testGit(t, root, "rev-parse", "HEAD"))
+	svc := &repositoryService{store: s.store}
+	ctx := context.Background()
+
+	added, err := svc.GetRevisionRangeSummary(ctx, connect.NewRequest(&pb.GetRevisionRangeSummaryRequest{RepositoryId: repoID, Base: initial, Head: feature}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added.Msg.GetCommits() != 1 || added.Msg.GetAdditions() != 2 || added.Msg.GetDeletions() != 0 || added.Msg.GetChanged() != 0 || added.Msg.GetFiles() != 1 {
+		t.Fatalf("added range = %+v", added.Msg)
+	}
+
+	writeFixtureSource(t, root, "feature.go", "package sample\nfunc Feature() {}\nfunc More() {}\n")
+	testGit(t, root, "add", ".")
+	testGit(t, root, "commit", "-m", "modify feature")
+	modified := strings.TrimSpace(testGit(t, root, "rev-parse", "HEAD"))
+	changed, err := svc.GetRevisionRangeSummary(ctx, connect.NewRequest(&pb.GetRevisionRangeSummaryRequest{RepositoryId: repoID, Base: feature, Head: modified}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Msg.GetCommits() != 1 || changed.Msg.GetFiles() != 1 || changed.Msg.GetAdditions() != 1 || changed.Msg.GetDeletions() != 0 || changed.Msg.GetChanged() != 1 {
+		t.Fatalf("modified range = %+v", changed.Msg)
+	}
+
+	// A working-tree side diffs the checkout against the other revision.
+	writeFixtureSource(t, root, "feature.go", "package sample\nfunc Feature() {}\nfunc More() {}\nfunc Worktree() {}\n")
+	workingTree, err := svc.GetRevisionRangeSummary(ctx, connect.NewRequest(&pb.GetRevisionRangeSummaryRequest{RepositoryId: repoID, Base: modified, HeadWorkingTree: true}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workingTree.Msg.GetFiles() != 1 || workingTree.Msg.GetAdditions() != 1 || workingTree.Msg.GetDeletions() != 0 || workingTree.Msg.GetChanged() != 1 {
+		t.Fatalf("working tree range = %+v", workingTree.Msg)
+	}
+
+	if _, err := svc.GetRevisionRangeSummary(ctx, connect.NewRequest(&pb.GetRevisionRangeSummaryRequest{RepositoryId: repoID, Base: initial})); connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("missing head error = %v, want invalid argument", err)
+	}
+}
+
 func TestRepositoryGitHistoryAndDetails(t *testing.T) {
 	s, root, initial, repoID := prepareFixture(t)
 	testGit(t, root, "checkout", "-b", "feature")

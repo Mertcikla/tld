@@ -425,6 +425,16 @@ export interface RepositoryCommitDetails {
   commit: RepositoryCommit | null
   files: { path: string; added: number; removed: number; binary: boolean }[]
 }
+
+// RevisionRangeSummary is the commit count and line diffstat for a revision
+// range, shown in the commit history footer before a full compare.
+export interface RevisionRangeSummary {
+  commits: number
+  additions: number
+  deletions: number
+  changed: number
+  files: number
+}
 export interface CompletedRepositoryMap {
   result: RepositoryMapResult
   completedUnix: number
@@ -2174,6 +2184,16 @@ export const api = {
     history: (repositoryId: string, branch = '', limit = 0): Promise<RepositoryGitHistory> => rpc(async () => {
       const response = await codeIndexRepositoryClient.getGitHistory({ repositoryId, branch, limit })
       return { ...response, commits: response.commits.map((commit) => ({ ...commit, createdUnix: Number(commit.createdUnix) })) }
+    }),
+    rangeSummary: (repositoryId: string, options: { base?: string; head?: string; baseWorkingTree?: boolean; headWorkingTree?: boolean; signal?: AbortSignal }): Promise<RevisionRangeSummary> => rpc(async () => {
+      const response = await codeIndexRepositoryClient.getRevisionRangeSummary({
+        repositoryId,
+        base: options.base ?? '',
+        head: options.head ?? '',
+        baseWorkingTree: options.baseWorkingTree ?? false,
+        headWorkingTree: options.headWorkingTree ?? false,
+      }, { signal: options.signal })
+      return { commits: response.commits, additions: response.additions, deletions: response.deletions, changed: response.changed, files: response.files }
     }),
     openPullRequests: (repositoryId: string, signal?: AbortSignal): Promise<OpenRepositoryPullRequest[]> => rpc(async () => {
       const response = await codeIndexRepositoryClient.listPullRequests({ id: repositoryId }, { signal })

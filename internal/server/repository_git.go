@@ -156,6 +156,143 @@ func (s *repositoryService) GetCommitDetails(ctx context.Context, req *connect.R
 	return connect.NewResponse(result), nil
 }
 
+// GetRevisionRangeSummary reports the commit count and line-level diffstat
+// between two commit-ish revisions using local Git only: it neither indexes nor
+// builds a map, so the history footer can preview a range before comparing.
+func (s *repositoryService) GetRevisionRangeSummary(ctx context.Context, req *connect.Request[pb.GetRevisionRangeSummaryRequest]) (*connect.Response[pb.RevisionRangeSummary], error) {
+	repo, err := s.store.Repository(ctx, req.Msg.GetRepositoryId())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeNotFound, err)
+	}
+	base := strings.TrimSpace(req.Msg.GetBase())
+	head := strings.TrimSpace(req.Msg.GetHead())
+	baseWorkingTree := req.Msg.GetBaseWorkingTree()
+	headWorkingTree := req.Msg.GetHeadWorkingTree()
+	if baseWorkingTree && headWorkingTree {
+		return connect.NewResponse(&pb.RevisionRangeSummary{}), nil
+	}
+	var baseSHA, headSHA string
+	if !baseWorkingTree {
+		if base == "" {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("base revision is required"))
+		}
+		if baseSHA, err = resolveRevision(ctx, repo.Root, base); err != nil {
+			return nil, err
+		}
+	}
+	if !headWorkingTree {
+		if head == "" {
+			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("head revision is required"))
+		}
+		if headSHA, err = resolveRevision(ctx, repo.Root, head); err != nil {
+			return nil, err
+		}
+	}
+	result := &pb.RevisionRangeSummary{}
+	// The diff describes BASE -> HEAD. A working-tree side compares the checkout
+	// against the other revision directly; when BASE is the working tree the diff
+	// is taken from HEAD's perspective and the line counts are flipped.
+	reverse := false
+	var diffTargets []string
+	switch {
+	case headWorkingTree:
+		diffTargets = []string{baseSHA}
+		if raw, countErr := repositoryGit(ctx, repo.Root, "rev-list", "--count", baseSHA+"..HEAD"); countErr == nil {
+			if count, parseErr := strconv.ParseUint(strings.TrimSpace(raw), 10, 32); parseErr == nil {
+				result.Commits = uint32(count)
+			}
+		}
+	case baseWorkingTree:
+		diffTargets = []string{headSHA}
+		reverse = true
+	default:
+		diffTargets = []string{baseSHA, headSHA}
+		if raw, countErr := repositoryGit(ctx, repo.Root, "rev-list", "--count", baseSHA+".."+headSHA); countErr == nil {
+			if count, parseErr := strconv.ParseUint(strings.TrimSpace(raw), 10, 32); parseErr == nil {
+				result.Commits = uint32(count)
+			}
+		}
+	}
+	numstat, err := repositoryGit(ctx, repo.Root, append(append([]string{"diff", "--numstat", "-z", "--no-renames"}, diffTargets...), "--")...)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	status, err := repositoryGit(ctx, repo.Root, append(append([]string{"diff", "--name-status", "-z", "--no-renames"}, diffTargets...), "--")...)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	lines := parseNumstat(numstat)
+	for _, count := range lines {
+		result.Additions += uint32(count.added)
+		result.Deletions += uint32(count.removed)
+	}
+	if reverse {
+		result.Additions, result.Deletions = result.Deletions, result.Additions
+	}
+	for _, file := range parseNameStatus(status) {
+		result.Files++
+		// "changed" is the churn in files that already existed on both sides.
+		if file.status == 'M' {
+			if count, ok := lines[file.path]; ok {
+				result.Changed += uint32(count.added + count.removed)
+			}
+		}
+	}
+	return connect.NewResponse(result), nil
+}
+
+type rangeLineCount struct {
+	added, removed uint64
+}
+
+// parseNumstat reads `git diff --numstat -z` records (added\tremoved\tpath\0).
+// Binary files report "-" counts and are skipped.
+func parseNumstat(raw string) map[string]rangeLineCount {
+	counts := make(map[string]rangeLineCount)
+	for _, record := range strings.Split(raw, "\x00") {
+		record = strings.TrimPrefix(record, "\n")
+		if record == "" {
+			continue
+		}
+		fields := strings.SplitN(record, "\t", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		added, addedOK := parseLineCount(fields[0])
+		removed, removedOK := parseLineCount(fields[1])
+		if !addedOK || !removedOK {
+			continue
+		}
+		counts[fields[2]] = rangeLineCount{added: added, removed: removed}
+	}
+	return counts
+}
+
+func parseLineCount(field string) (uint64, bool) {
+	value, err := strconv.ParseUint(strings.TrimSpace(field), 10, 64)
+	return value, err == nil
+}
+
+type rangeFileStatus struct {
+	status byte
+	path   string
+}
+
+// parseNameStatus reads `git diff --name-status -z` records (status\0path\0).
+func parseNameStatus(raw string) []rangeFileStatus {
+	fields := strings.Split(raw, "\x00")
+	out := make([]rangeFileStatus, 0, len(fields)/2)
+	for i := 0; i+1 < len(fields); i += 2 {
+		status := strings.TrimSpace(fields[i])
+		path := fields[i+1]
+		if status == "" || path == "" {
+			continue
+		}
+		out = append(out, rangeFileStatus{status: status[0], path: path})
+	}
+	return out
+}
+
 // repositoryBrowserURL converts Git origins to safe browser links without credentials.
 func repositoryBrowserURL(remote string) string {
 	remote = strings.TrimSpace(remote)

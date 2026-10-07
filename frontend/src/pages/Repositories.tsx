@@ -50,6 +50,7 @@ import {
   type CompletedRepositoryMap,
   type IndexedRepository,
   type RepositoryGitHistory,
+  type RevisionRangeSummary,
   type RepositoryPullRequest,
   type OpenRepositoryPullRequest,
   type RepositoryIndexerCheck,
@@ -349,6 +350,7 @@ export default function Repositories() {
   const [snapshots, setSnapshots] = useState<CodeSnapshot[]>([])
   const [maps, setMaps] = useState<CompletedRepositoryMap[]>([])
   const [history, setHistory] = useState<RepositoryGitHistory | null>(null)
+  const [rangeSummary, setRangeSummary] = useState<RevisionRangeSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [dataLoading, setDataLoading] = useState(false)
   const [error, setError] = useState('')
@@ -527,6 +529,36 @@ export default function Repositories() {
       stale = true
     }
   }, [selectedId, branch, nonce, mode, pullRequest])
+  // The footer previews the selected range with a quick local git diff. Snapshot
+  // targets resolve to their captured commit; a working-tree side diffs the
+  // checkout against the other target.
+  const baseWorkingTree = base === 'working_tree'
+  const headWorkingTree = head === 'working_tree'
+  const baseRevision = baseWorkingTree ? '' : base.startsWith('commit:') ? base.slice(7) : snapshotForTarget(base, snapshots)?.gitRevision || ''
+  const headRevision = headWorkingTree ? '' : head.startsWith('commit:') ? head.slice(7) : snapshotForTarget(head, snapshots)?.gitRevision || ''
+  useEffect(() => {
+    const baseReady = baseWorkingTree || !!baseRevision
+    const headReady = headWorkingTree || !!headRevision
+    if (!selectedId || !baseReady || !headReady || (baseWorkingTree && headWorkingTree)) {
+      setRangeSummary(null)
+      return
+    }
+    const controller = new AbortController()
+    let stale = false
+    api.repositories.rangeSummary(selectedId, {
+      base: baseRevision,
+      head: headRevision,
+      baseWorkingTree,
+      headWorkingTree,
+      signal: controller.signal,
+    })
+      .then((summary) => { if (!stale) setRangeSummary(summary) })
+      .catch(() => { if (!stale) setRangeSummary(null) })
+    return () => {
+      stale = true
+      controller.abort()
+    }
+  }, [selectedId, baseRevision, headRevision, baseWorkingTree, headWorkingTree, nonce])
   useEffect(() => {
     setComparison(null); setSelectedPath(''); setFilesTab('files')
     setOperationError('')
@@ -1296,16 +1328,8 @@ export default function Repositories() {
                 {(mode === 'compare' || (mode === 'pr' && pullRequest)) && <RepositoryHistory
                   repositoryId={selectedId}
                   history={history}
-                  base={
-                    base.startsWith('commit:')
-                      ? base.slice(7)
-                      : snapshotForTarget(base, snapshots)?.gitRevision || ''
-                  }
-                  head={
-                    head.startsWith('commit:')
-                      ? head.slice(7)
-                      : snapshotForTarget(head, snapshots)?.gitRevision || ''
-                  }
+                  base={baseRevision}
+                  head={headRevision}
                   disabled={busy || mode === 'pr'}
                   onRange={(older, newer) => {
                     if (busy || mode === 'pr') return
@@ -1323,9 +1347,26 @@ export default function Repositories() {
                           const status = targetStatus(value, snapshots, maps)
                           const snapshot = snapshotForTarget(value, snapshots)
                           const branchName = (side === 'base' ? baseBranch : headBranch) || snapshot?.gitBranch
+                          const displaySummary = snapshot?.commitMessage || targetSummary(value, snapshots)
                           return (
-                            <Flex key={side} flex="1 1 180px" minW={0} gap={2} align="center">
-                              {side === 'head' && <Box color="gray.500" flexShrink={0} display={{ base: 'none', md: 'flex' }}><SolidIcon icon={faCodeCompare} /></Box>}
+                            <Flex key={side} flex="1 1 180px" minW={0} gap={2} align="center" wrap="wrap">
+                              {side === 'head' && (
+                                <VStack spacing={2} flexShrink={0} display="flex" align="center" color="gray.500" minW={{ base: '100%', md: '112px' }} data-testid="repositories-range-summary">
+                                  {rangeSummary && (
+                                    <Text fontSize="xs" color="gray.400" whiteSpace="nowrap">
+                                      {`${rangeSummary.commits.toLocaleString()} ${rangeSummary.commits === 1 ? 'commit' : 'commits'}`}
+                                    </Text>
+                                  )}
+                                  <SolidIcon icon={faCodeCompare} />
+                                  {rangeSummary && (
+                                    <HStack spacing={1} fontSize="2xs" whiteSpace="nowrap">
+                                      <Text color="green.300">{`+${rangeSummary.additions.toLocaleString()}`}</Text>
+                                      <Text color="yellow.300">{`~${rangeSummary.changed.toLocaleString()}`}</Text>
+                                      <Text color="red.300">{`−${rangeSummary.deletions.toLocaleString()}`}</Text>
+                                    </HStack>
+                                  )}
+                                </VStack>
+                              )}
                               <Box flex={1} minW={0}>
                                 <RepositoryTargetPicker
                                   card
@@ -1341,7 +1382,7 @@ export default function Repositories() {
                                         <Badge colorScheme={status.colorScheme} fontSize="9px" borderRadius="sm" px={1.5} textTransform="none">{status.label}</Badge>
                                       </HStack>
                                       <HStack spacing={2} minW={0}>
-                                        <Text fontSize="sm" fontWeight="semibold" color="gray.100" fontFamily={value === 'working_tree' ? undefined : 'mono'} isTruncated title={targetSummary(value, snapshots)}>{targetSummary(value, snapshots)}</Text>
+                                        <Text fontSize="sm" fontWeight="semibold" color="gray.100" isTruncated title={displaySummary}>{displaySummary}</Text>
                                         {branchName && value !== 'working_tree' && <Text fontSize="xs" color="gray.500" isTruncated title={branchName}>{branchName}</Text>}
                                       </HStack>
                                     </VStack>
