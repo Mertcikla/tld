@@ -46,6 +46,17 @@ import {
 import { useStore } from '../../../store/useStore'
 import { isNotchedWheelGesture, wheelZoomFactor, type WheelDeltaLike } from '../../../utils/wheel'
 import { safariGestureClientPoint, safariGestureFactor, type SafariGestureEventLike } from '../../../utils/safariGesture'
+import {
+  AUTO_LAYOUT_GRID,
+  AUTO_LAYOUT_NODE_H,
+  AUTO_LAYOUT_NODE_W,
+  findAutoPlacementPosition,
+  nodeRect,
+  sideFacingPoint,
+  snapPositionToGrid,
+  type Neighbor,
+  type Rect,
+} from '../../../utils/autoLayout'
 
 const CONNECTOR_DRAG_UPDATE_INTERVAL_MS = 25
 const CONNECTOR_CLICK_MOVE_TOLERANCE = 6
@@ -486,6 +497,7 @@ interface CanvasInteractionOptions {
   toggleMarkdown?: () => void
   onFitView?: () => void
   setSnapToGrid?: (snap: boolean) => void
+  autoLayoutEnabled?: boolean
   defaultConnectorStyle?: ConnectorRouteStyle | null
   onConnectorCreatePreviewActiveChange?: (active: boolean) => void
 }
@@ -694,6 +706,7 @@ export function useCanvasInteractions({
   toggleMarkdown,
   onFitView,
   setSnapToGrid: setGlobalSnapToGrid,
+  autoLayoutEnabled = false,
   onConnectorCreatePreviewActiveChange,
 }: CanvasInteractionOptions) {
   const { screenToFlowPosition, setViewport, getViewport, zoomIn, zoomOut } = useReactFlow()
@@ -707,6 +720,47 @@ export function useCanvasInteractions({
   const getInteractionNodes = useCallback(() => {
     return interactionNodesRef.current.length > 0 ? interactionNodesRef.current : rfNodesRef.current
   }, [interactionNodesRef, rfNodesRef])
+
+  const collectPlacementObstacles = useCallback(() => {
+    return getInteractionNodes()
+      .filter((node) => node.type === 'elementNode' && parseNumericId(node.id) !== null)
+      .map((node) => nodeRect(node))
+  }, [getInteractionNodes])
+
+  // resolveAutoPlacementPosition anchors a pending element to its connector
+  // neighbors (or the nearest free slot when there are none) when auto layout
+  // mode is enabled. Otherwise it falls back to the cursor-derived position.
+  const resolveAutoPlacementPosition = useCallback((
+    flowX: number,
+    flowY: number,
+    sourceIds: number[],
+    sourceHandle: string | null,
+  ) => {
+    const fallback = pendingElementPositionFromFlowPoint(flowX, flowY)
+    if (!autoLayoutEnabled) return fallback
+
+    const nodes = getInteractionNodes()
+    const obstacles: Rect[] = collectPlacementObstacles()
+
+    const neighbors: Neighbor[] = []
+    for (const sourceId of sourceIds) {
+      const sourceNode = nodes.find((node) => parseNumericId(node.id) === sourceId)
+      if (!sourceNode) continue
+      const rect = nodeRect(sourceNode)
+      const side = getLogicalHandleId(sourceHandle, DEFAULT_SOURCE_HANDLE_SIDE)
+        ?? sideFacingPoint(rect, { x: flowX, y: flowY })
+      neighbors.push({ rect, side })
+    }
+
+    return findAutoPlacementPosition({
+      neighbors,
+      obstacles,
+      fallback,
+      width: AUTO_LAYOUT_NODE_W,
+      height: AUTO_LAYOUT_NODE_H,
+      grid: { x: AUTO_LAYOUT_GRID[0], y: AUTO_LAYOUT_GRID[1] },
+    })
+  }, [autoLayoutEnabled, collectPlacementObstacles, getInteractionNodes])
 
   const [canvasMenu, setCanvasMenu] = useState<{ x: number; y: number; flowX: number; flowY: number } | null>(null)
   const [pendingElement, setPendingElement] = useState<PendingElementState | null>(null)
@@ -882,12 +936,46 @@ export function useCanvasInteractions({
     isReconnectingRef.current = false
   }, [clearHandleReconnectListeners])
 
+  // When auto layout mode is on, a freshly created connector relocates its
+  // target element onto the layout grid, facing the source along the connector.
+  const relocateConnectedTarget = useCallback(async (connector: Connector) => {
+    if (!autoLayoutEnabled || !canEdit || viewId === null) return
+    const nodes = getInteractionNodes()
+    const sourceNode = nodes.find((node) => parseNumericId(node.id) === connector.source_element_id)
+    const targetNode = nodes.find((node) => parseNumericId(node.id) === connector.target_element_id)
+    if (!sourceNode || !targetNode) return
+
+    const side = getLogicalHandleId(connector.source_handle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE
+    const obstacles = nodes
+      .filter((node) => node.type === 'elementNode' && parseNumericId(node.id) !== null && node.id !== targetNode.id)
+      .map((node) => nodeRect(node))
+    const position = findAutoPlacementPosition({
+      neighbors: [{ rect: nodeRect(sourceNode), side }],
+      obstacles,
+      fallback: { x: targetNode.position.x, y: targetNode.position.y },
+      grid: { x: AUTO_LAYOUT_GRID[0], y: AUTO_LAYOUT_GRID[1] },
+    })
+    if (Math.abs(position.x - targetNode.position.x) < 1 && Math.abs(position.y - targetNode.position.y) < 1) return
+
+    const before = viewElementsRef.current.find((element) => element.element_id === connector.target_element_id)
+    updateElementPosition(connector.target_element_id, position.x, position.y)
+    setRfNodes((current) => current.map((node) =>
+      node.id === targetNode.id ? { ...node, position } : node))
+    try {
+      await api.workspace.views.placements.updatePosition(
+        viewId, connector.target_element_id, position.x, position.y,
+      )
+      if (before) onPlacementMoved?.(before, { ...before, position_x: position.x, position_y: position.y })
+    } catch { /* intentionally empty */ }
+  }, [autoLayoutEnabled, canEdit, getInteractionNodes, onPlacementMoved, setRfNodes, updateElementPosition, viewElementsRef, viewId])
+
   const finalizeConnectorCreate = useCallback(async (connector: Connector) => {
+    await relocateConnectedTarget(connector)
     upsertConnectorGraphSnapshot(connector)
     upsertConnector(connector)
     onConnectorSaved?.(connector)
     await refreshElements()
-  }, [onConnectorSaved, refreshElements, upsertConnector])
+  }, [onConnectorSaved, refreshElements, relocateConnectedTarget, upsertConnector])
 
   const createConnectorStyle = connectorStyleForCreate(defaultConnectorStyle)
 
@@ -934,14 +1022,14 @@ export function useCanvasInteractions({
     const sourceHandle = pendingConnectionSourceHandleRef.current
     setPendingElement({
       id: PENDING_ELEMENT_NODE_ID,
-      position: pendingElementPositionFromFlowPoint(flowX, flowY),
+      position: resolveAutoPlacementPosition(flowX, flowY, sourceIds, sourceHandle),
       mode: resolvePickerMode(flowX, flowY, mode, forceConnect),
       sourceElementIds: sourceIds,
       sourceHandle,
     })
     pendingConnectionSourceRef.current = null
     multiConnectionSourceIdsRef.current = null
-  }, [multiConnectionSourceIdsRef, snapToGrid, resolvePickerMode])
+  }, [multiConnectionSourceIdsRef, snapToGrid, resolvePickerMode, resolveAutoPlacementPosition])
 
   const updateConnectorDragPreview = useCallback((clientX: number, clientY: number, sourceNodeId: string, forceConnect = false) => {
     if (!shouldDisplayConnectorDragPlaceholder(getConnectorDragTargetAtPoint(clientX, clientY))) {
@@ -962,9 +1050,9 @@ export function useCanvasInteractions({
       flowX = Math.round(flowX / 10) * 10
       flowY = Math.round(flowY / 10) * 10
     }
-    const position = pendingElementPositionFromFlowPoint(flowX, flowY)
-    const mode = resolvePickerMode(flowX, flowY, 'connect', forceConnect)
     const sourceHandle = pendingConnectionSourceHandleRef.current
+    const position = resolveAutoPlacementPosition(flowX, flowY, [sourceElementId], sourceHandle)
+    const mode = resolvePickerMode(flowX, flowY, 'connect', forceConnect)
 
     setPendingElement((current) => {
       if (
@@ -987,7 +1075,7 @@ export function useCanvasInteractions({
         sourceHandle,
       }
     })
-  }, [getInteractionNodes, resolvePickerMode, snapToGrid])
+  }, [getInteractionNodes, resolveAutoPlacementPosition, resolvePickerMode, snapToGrid])
 
   // ── Pending element confirmation handlers ──────────────────────────────────
   const handleConfirmNewElement = useCallback(async (name: string) => {
@@ -1386,11 +1474,14 @@ export function useCanvasInteractions({
       const startPos = dragStartPositionsRef.current[candidate.id] ?? (currentObj ? { x: currentObj.position_x, y: currentObj.position_y } : null)
       delete dragStartPositionsRef.current[candidate.id]
       if (!currentObj || !startPos) return
-      if (Math.abs(startPos.x - candidate.position.x) < 2 && Math.abs(startPos.y - candidate.position.y) < 2) return
+      const targetPosition = autoLayoutEnabled
+        ? snapPositionToGrid(candidate.position, { x: AUTO_LAYOUT_GRID[0], y: AUTO_LAYOUT_GRID[1] })
+        : candidate.position
+      if (Math.abs(startPos.x - targetPosition.x) < 2 && Math.abs(startPos.y - targetPosition.y) < 2) return
 
       beforePlacements.push({ ...currentObj, position_x: startPos.x, position_y: startPos.y })
-      afterPlacements.push({ ...currentObj, position_x: candidate.position.x, position_y: candidate.position.y })
-      updateElementPosition(elementId, candidate.position.x, candidate.position.y)
+      afterPlacements.push({ ...currentObj, position_x: targetPosition.x, position_y: targetPosition.y })
+      updateElementPosition(elementId, targetPosition.x, targetPosition.y)
     })
 
     if (afterPlacements.length === 0) return
@@ -1421,7 +1512,7 @@ export function useCanvasInteractions({
     timerKeys.forEach((key) => {
       positionTimers.current[key] = timer
     })
-  }, [canEdit, updateElementPosition, viewId, viewElementsRef, onPlacementMoved, onPlacementsMoved])
+  }, [canEdit, updateElementPosition, viewId, viewElementsRef, onPlacementMoved, onPlacementsMoved, autoLayoutEnabled])
 
   const onNodeDragStart: NodeDragHandler = useCallback((_e, node, nodes) => {
     recordDragStartPositions(getDraggedElementNodes(node, nodes, rfNodesRef.current))
@@ -2642,8 +2733,9 @@ export function useCanvasInteractions({
       const obj: { id: number } = JSON.parse(rawObj)
       if (existingElementIds.has(obj.id)) return
       const pos = screenToFlowPositionRef.current({ x: e.clientX, y: e.clientY })
+      const placement = resolveAutoPlacementPosition(pos.x, pos.y, [], null)
       try {
-        await api.workspace.views.placements.add(viewId, obj.id, pos.x - 100, pos.y - 40)
+        await api.workspace.views.placements.add(viewId, obj.id, placement.x, placement.y)
         onUnsupportedMutation?.()
         await refreshElements()
         const placed = viewElementsRef.current.find((element) => element.element_id === obj.id)
@@ -2696,7 +2788,7 @@ export function useCanvasInteractions({
         }
       }
     }
-  }, [canEdit, viewId, existingElementIds, onUnsupportedMutation, refreshElements, rfNodesRef, viewElementsRef, layers, handleUpdateTags])
+  }, [canEdit, viewId, existingElementIds, onUnsupportedMutation, refreshElements, rfNodesRef, viewElementsRef, layers, handleUpdateTags, resolveAutoPlacementPosition])
 
   const onWheelCapture = useCallback((e: React.WheelEvent) => {
     if (touchStateRef.current.touches.size === 2) return

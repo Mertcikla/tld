@@ -8,6 +8,7 @@ import {
   MoveSourceIcon as MoveSourceSvg,
   MoveTargetIcon as MoveTargetSvg,
   GridIcon as GridSvg,
+  AutoLayoutIcon as AutoLayoutSvg,
 } from '../../../components/Icons'
 import { KbdHint } from '../../../components/PanelUI'
 import { useViewEditorContext } from '../context'
@@ -73,7 +74,7 @@ interface CanvasContextMenuProps {
 }
 
 export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = React.memo(({ menu, onAddElement, onCopyMermaid }) => {
-  const { canEdit, snapToGrid, setSnapToGrid } = useViewEditorContext()
+  const { canEdit, snapToGrid, setSnapToGrid, autoLayoutMode, setAutoLayoutMode } = useViewEditorContext()
   if (!menu) return null
 
   return (
@@ -116,6 +117,16 @@ export const CanvasContextMenu: React.FC<CanvasContextMenuProps> = React.memo(({
             <GridSvg />
             <Text fontSize="xs" fontWeight="normal" flex={1}>Snap to Grid</Text>
             {snapToGrid && <Box w="6px" h="6px" rounded="full" bg="var(--accent)" />}
+          </HStack>
+        </Button>
+        <Button size="sm" variant="ghost" h="30px" px={2.5} justifyContent="flex-start"
+          data-testid="vieweditor-canvas-context-auto-layout"
+          color="clay.text" _hover={{ bg: 'whiteAlpha.100' }}
+          onClick={() => setAutoLayoutMode(!autoLayoutMode)}>
+          <HStack spacing={2} w="full">
+            <AutoLayoutSvg />
+            <Text fontSize="xs" fontWeight="normal" flex={1}>Auto Layout</Text>
+            {autoLayoutMode && <Box w="6px" h="6px" rounded="full" bg="var(--accent)" />}
           </HStack>
         </Button>
       </VStack>

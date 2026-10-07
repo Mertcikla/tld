@@ -283,6 +283,20 @@ export function GridIcon({ size = 12, strokeWidth = 2.5 }: { size?: number, stro
   )
 }
 
+export function AutoLayoutIcon({ size = 14, strokeWidth = 2.2 }: { size?: number, strokeWidth?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="3" width="6" height="5" rx="1" />
+      <rect x="3" y="16" width="6" height="5" rx="1" />
+      <rect x="15" y="16" width="6" height="5" rx="1" />
+      <path d="M12 8v4" />
+      <path d="M12 12H6v4" />
+      <path d="M12 12h6v4" />
+    </svg>
+  )
+}
+
 export function ReloadIcon({ size = 14, strokeWidth = 2.2 }: { size?: number, strokeWidth?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">

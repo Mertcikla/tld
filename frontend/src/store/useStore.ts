@@ -17,6 +17,7 @@ export type ViewEditorUiState = {
   isOwner: boolean
   isFreePlan: boolean
   snapToGrid: boolean
+  autoLayoutMode: boolean
   selectedElement: LibraryElement | null
   selectedConnector: Connector | null
 }
@@ -48,6 +49,7 @@ export type CanvasStoreState = ViewEditorUiState & {
 
   setViewEditorUi: (patch: Partial<ViewEditorUiState>) => void
   setSnapToGrid: (snapToGrid: boolean) => void
+  setAutoLayoutMode: (autoLayoutMode: boolean) => void
   setSelectedElement: (selectedElement: LibraryElement | null) => void
   setSelectedConnector: (selectedConnector: Connector | null) => void
   setView: (view: ViewTreeNode | null | undefined) => void
@@ -78,6 +80,7 @@ export const emptyViewEditorUiState: ViewEditorUiState = {
   isOwner: false,
   isFreePlan: false,
   snapToGrid: false,
+  autoLayoutMode: false,
   selectedElement: null,
   selectedConnector: null,
 }
@@ -340,6 +343,7 @@ export const useStore = create<CanvasStoreState>((set) => ({
 
   setViewEditorUi: (patch) => set((state) => ({ ...state, ...patch })),
   setSnapToGrid: (snapToGrid) => set({ snapToGrid }),
+  setAutoLayoutMode: (autoLayoutMode) => set({ autoLayoutMode }),
   setSelectedElement: (selectedElement) => set({ selectedElement }),
   setSelectedConnector: (selectedConnector) => set({ selectedConnector }),
   setView: (view) => set({ view }),
