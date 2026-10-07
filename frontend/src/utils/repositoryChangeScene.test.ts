@@ -7,10 +7,17 @@ import { computeLayout } from '../components/ZUI/layout'
 
 const view = (id: number, name = 'Map', children: ViewTreeNode[] = []): ViewTreeNode => ({ id, name, description: null, level_label: null, level: 0, depth: 0, created_at: '', updated_at: '', parent_view_id: null, children })
 const placement = (id: number, path: string): PlacedElement => ({ id, element_id: id, view_id: 1, position_x: 42, position_y: 84, name: path, kind: 'component', description: 'Existing description', technology: null, url: null, logo_url: null, technology_connectors: [], tags: ['original'], repo: '/repo', file_path: path, has_view: false, view_label: null })
-const overlay = (change: 'added' | 'removed' | 'modified' | 'unchanged', path: string, distance: number, extra: Partial<RepositoryImpactOverlay> = {}): RepositoryImpactOverlay => ({ change, path, symbols: [], distance, ...extra })
+const overlay = (change: 'added' | 'removed' | 'modified' | 'unchanged', path: string, distance: number, extra: Partial<RepositoryImpactOverlay> = {}): RepositoryImpactOverlay => ({ change, path, symbols: [], symbolDetails: [], distance, ...extra })
 const connector = (id: number, source: number, target: number) => ({ id, view_id: 1, source_element_id: source, target_element_id: target, label: null, description: null, relationship: null, direction: 'forward', style: 'bezier', url: null, source_handle: null, target_handle: null, created_at: '', updated_at: '' })
 
 const scene: RepositoryImpactScene = {
+  repositoryId: 'repo',
+  comparisonKey: 'before..after',
+  version: '1',
+  schemaVersion: '1',
+  maxRadius: 2,
+  fromGitRevision: 'before',
+  toGitRevision: 'after',
   tree: [view(1, 'Map', [view(9, 'repo impact · Live changes')])],
   views: {
     1: { placements: [placement(1, 'a.go'), placement(2, 'b.go'), placement(3, 'c.go')], connectors: [connector(11, 1, 2), connector(12, 1, 3)] },
@@ -61,6 +68,7 @@ describe('repositoryChangeScene', () => {
   it('plain mode keeps the container elements that reach impacted nested views', () => {
     const linked = (id: number, from: number, to: number, element: number) => ({ id, element_id: element, from_view_id: from, to_view_id: to, to_view_name: `view-${to}`, relation_type: 'child' })
     const nested: RepositoryImpactScene = {
+      ...scene,
       tree: [view(10, 'Workspace', [view(11, 'repo map', [view(12, 'Group')])])],
       views: {
         10: { placements: [{ ...placement(100, ''), file_path: null, has_view: true, name: 'repo map' }], connectors: [] },
