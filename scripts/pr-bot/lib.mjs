@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { classificationLabel, ordinal } from './history.mjs';
 
 export const marker = '<!-- tld-pr-diagram:v1 -->';
 export const maxResultBytes = 256 * 1024;
@@ -21,6 +22,39 @@ export function digest(value) {
   return createHash('sha256').update(value).digest('hex');
 }
 
+const statFields = ['files', 'directories', 'subsystems', 'linesAdded', 'linesRemoved', 'symbolsAdded', 'symbolsModified', 'symbolsRemoved'];
+const bands = ['low', 'moderate', 'high'];
+
+function validStats(stats) {
+  if (stats === undefined) return;
+  if (typeof stats !== 'object' || stats === null) throw new Error('Invalid change stats');
+  for (const field of statFields) {
+    if (!Number.isSafeInteger(stats[field]) || stats[field] < 0) throw new Error('Invalid change stats');
+  }
+  if (stats.paths !== undefined && (!Array.isArray(stats.paths) || stats.paths.length > 1000 ||
+      stats.paths.some(value => typeof value !== 'string' || value.length > 1024))) throw new Error('Invalid change stats');
+}
+
+function validHistory(history) {
+  if (history === undefined) return;
+  if (typeof history !== 'object' || history === null || typeof history.available !== 'boolean') throw new Error('Invalid change history');
+  const size = history.size;
+  if (size !== undefined && size !== null) {
+    if (typeof size !== 'object' || typeof size.available !== 'boolean' || !bands.includes(size.classification) ||
+        !Number.isSafeInteger(size.sampleSize) || size.sampleSize < 0 || !Number.isSafeInteger(size.metric) || size.metric < 0 ||
+        (size.percentile !== null && (!Number.isSafeInteger(size.percentile) || size.percentile < 0 || size.percentile > 100))) {
+      throw new Error('Invalid change history');
+    }
+  }
+  const fix = history.fix;
+  if (fix !== undefined && fix !== null) {
+    for (const field of ['files', 'filesWithFixes']) {
+      if (!Number.isSafeInteger(fix[field]) || fix[field] < 0 || fix[field] > 1_000_000) throw new Error('Invalid change history');
+    }
+    if (typeof fix.weightedFixes !== 'number' || !Number.isFinite(fix.weightedFixes) || fix.weightedFixes < 0) throw new Error('Invalid change history');
+  }
+}
+
 export function validateResult(raw, trusted) {
   if (Buffer.byteLength(raw) > maxResultBytes) throw new Error('Result artifact is too large');
   const result = JSON.parse(raw);
@@ -30,6 +64,8 @@ export function validateResult(raw, trusted) {
   for (const field of ['elements', 'connectors']) {
     if (!Number.isSafeInteger(result[field]) || result[field] < 0) throw new Error('Invalid diagram counts');
   }
+  validStats(result.stats);
+  validHistory(result.history);
   if (result.status === 'ready') {
     if (result.elements === 0 || typeof result.markdown !== 'string' ||
         !/^```mermaid\r?\nflowchart LR\r?\n[\s\S]*\r?\n```\s*$/.test(result.markdown) ||
@@ -39,18 +75,52 @@ export function validateResult(raw, trusted) {
   return result;
 }
 
+// statsSection renders the change-risk summary. It replaces bare element and
+// connector counts with the signals a reviewer can act on: the change's size
+// rank among recent commits, and whether its files have broken before. Detail
+// stays collapsed so the comment stays short.
+function statsSection(result) {
+  const stats = result.stats ?? {};
+  const history = result.history ?? {};
+  const rows = [];
+  const size = history.size;
+  if (size) {
+    const rank = size.available
+      ? `${ordinal(size.percentile)} percentile of ${size.sampleSize} recent commits`
+      : `too few recent commits to rank`;
+    rows.push(['Size rank', `${classificationLabel(size.classification)} · ${rank}`]);
+  }
+  rows.push(['Lines changed', `+${stats.linesAdded ?? 0} / −${stats.linesRemoved ?? 0}`]);
+  rows.push(['Files', `${stats.files ?? 0} across ${stats.directories ?? 0} ${(stats.directories ?? 0) === 1 ? 'directory' : 'directories'}`]);
+  rows.push(['Symbols', `+${stats.symbolsAdded ?? 0} / ~${stats.symbolsModified ?? 0} / −${stats.symbolsRemoved ?? 0}`]);
+  const fix = history.fix;
+  if (fix) rows.push(['Prior bug fixes', fix.filesWithFixes === 0
+    ? 'none in the files it touches'
+    : `${fix.filesWithFixes} of ${fix.files} files (~${fix.weightedFixes} recency-weighted)`]);
+
+  const headline = [];
+  if (size) headline.push(classificationLabel(size.classification));
+  headline.push(`+${stats.linesAdded ?? 0}/−${stats.linesRemoved ?? 0}`);
+  headline.push(`${stats.files ?? 0} ${(stats.files ?? 0) === 1 ? 'file' : 'files'}`);
+  if (fix && fix.filesWithFixes > 0) headline.push(`${fix.filesWithFixes} with prior fixes`);
+
+  const table = ['| Metric | Value |', '|---|---|', ...rows.map(([key, value]) => `| ${key} | ${value} |`)].join('\n');
+  return `**Change risk**: ${headline.join(' · ')}\n\n<details><summary>Change stats</summary>\n\n${table}\n\n</details>`;
+}
+
 export function commentBody(result, trusted) {
-  const header = `${marker}\n<!-- tld-run:${trusted.runID}:${trusted.runAttempt ?? 1} -->\n### PR change diagram\n\n`;
+  const header = `${marker}\n<!-- tld-run:${trusted.runID}:${trusted.runAttempt ?? 1} -->\n### tld PR diagram\n\n`;
   const link = `[Workflow run](${trusted.runURL})`;
-  const revisions = `Compared \`${result.base.slice(0, 12)}\` → \`${result.head.slice(0, 12)}\`.`;
+  const revisions = `\`${result.base.slice(0, 12)}\` → \`${result.head.slice(0, 12)}\`.`;
+  const stats = statsSection(result);
   let content;
-  if (result.status === 'ready') content = `${revisions}\n\n${result.elements} elements · ${result.connectors} connectors\n\n${result.markdown.trim()}\n\n${link}`;
+  if (result.status === 'ready') content = [revisions, stats, result.markdown.trim(), link].filter(Boolean).join('\n\n');
   else if (result.status === 'skipped') {
     const reason = { 'artifact-size': 'output exceeds the artifact size budget', 'comment-size': 'output exceeds the comment size budget' }[result.skipReason] ?? 'diagram exceeds the configured element or connector limit';
-    content = `${revisions}\n\nDiagram skipped: ${reason} (${result.elements} elements, ${result.connectors} connectors).\n\n${link}`;
+    content = [revisions, stats, `Diagram skipped: ${reason}.`, link].filter(Boolean).join('\n\n');
   }
-  else if (result.status === 'empty') content = `${revisions}\n\nNo indexable changes to diagram.\n\n${link}`;
-  else content = `Diagram generation was unsuccessful. See the workflow logs for details.\n\n${link}`;
+  else if (result.status === 'empty') content = [revisions, `No indexable changes to diagram.`, link].filter(Boolean).join('\n\n');
+  else content = [`Diagram generation was unsuccessful. See the workflow logs for details.`, link].join('\n\n');
   if (Buffer.byteLength(header + content) > maxCommentBytes) {
     return commentBody({ ...result, status: 'skipped', skipReason: 'comment-size' }, trusted);
   }

@@ -9,8 +9,31 @@ The root `action.yml` is a reusable composite action with two modes:
 
 All bot failures are advisory. Oversized diagrams, empty comparisons, setup
 errors, and partial indexing replace any previous diagram with a short status.
-The comment includes compared revisions, diagram counts, and the run link.
-Existing test and lint checks are independent of this bot.
+The comment leads with change-risk statistics derived from the comparison and
+the PR checkout's git history: the change's size rank among recent commits, its
+lines, files, directories, and symbol churn, and whether its files have prior
+bug fixes. The diagram and run link follow. Existing test and lint checks are
+independent of this bot.
+
+## Change-risk stats
+
+The generator computes the stats once and stores them in the artifact, so the
+publisher stays read-only and never runs PR code or git. The compare report
+supplies the change's shape (files, lines, directories, symbol deltas); the
+checkout supplies two git walks anchored at the PR's merge base:
+
+- **Size rank** — total churn ranked against up to 200 recent commits, banded
+  `Below typical` / `Typical` / `Elevated`. With fewer than eight sampled
+  commits (a shallow clone) it falls back to fixed bands and says so.
+- **Prior bug fixes** — recency-weighted counts over the files the change
+  touches. A fix from a year before the change counts a half. A fix-history
+  percentile is deliberately deferred; only counts ship.
+- **Symbols** — added / modified / removed non-file facts from the index.
+
+The stats are adapted from Repowise's `repowise risk` change-risk layer; the
+0-10 diff-shape model and per-file fix table are intentionally out of scope.
+History walks are bounded (200 baseline commits, 2000 fix-history commits) and
+never fail the bot: a broken or shallow history degrades to "unavailable".
 
 ## Installing in another repository
 

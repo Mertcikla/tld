@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -244,17 +245,84 @@ func runCompare(cmd *cobra.Command, opts compareOptions, target, base, head stri
 
 // CompareReport counts the requested scope, before the shrinking output budgets.
 type CompareReport struct {
-	Status     string   `json:"status"`
-	Elements   int      `json:"elements"`
-	Connectors int      `json:"connectors"`
-	Base       string   `json:"base"`
-	Head       string   `json:"head"`
-	Warnings   []string `json:"warnings"`
-	Reason     string   `json:"reason,omitempty"`
+	Status     string       `json:"status"`
+	Elements   int          `json:"elements"`
+	Connectors int          `json:"connectors"`
+	Stats      CompareStats `json:"stats"`
+	Base       string       `json:"base"`
+	Head       string       `json:"head"`
+	Warnings   []string     `json:"warnings"`
+	Reason     string       `json:"reason,omitempty"`
+}
+
+// CompareStats summarizes the change itself: its scope, churn, and symbol
+// deltas. It is derived from the snapshot diff, so it is independent of every
+// output budget and stays available even when the diagram is skipped or empty.
+// Paths feed downstream history lookups; they are capped so a large rename
+// cannot blow the report or command line budget.
+type CompareStats struct {
+	Files           int      `json:"files"`
+	Directories     int      `json:"directories"`
+	Subsystems      int      `json:"subsystems"`
+	LinesAdded      int      `json:"linesAdded"`
+	LinesRemoved    int      `json:"linesRemoved"`
+	SymbolsAdded    int      `json:"symbolsAdded"`
+	SymbolsModified int      `json:"symbolsModified"`
+	SymbolsRemoved  int      `json:"symbolsRemoved"`
+	Paths           []string `json:"paths"`
+	PathsTruncated  bool     `json:"pathsTruncated,omitempty"`
+}
+
+// maxReportPaths bounds the changed-path list carried in the report. The list
+// exists so consumers can look up per-file history without re-deriving the
+// change set; more paths than this is already an unusually large change.
+const maxReportPaths = 500
+
+func comparisonStats(diagram *pb.ImpactDiagram) CompareStats {
+	stats := CompareStats{Paths: []string{}}
+	diff := diagram.GetDiff()
+	directories := map[string]struct{}{}
+	subsystems := map[string]struct{}{}
+	for _, change := range diff.GetSources() {
+		file := change.GetPath()
+		stats.Files++
+		stats.LinesAdded += int(change.GetLinesAdded())
+		stats.LinesRemoved += int(change.GetLinesRemoved())
+		directories[path.Dir(file)] = struct{}{}
+		if slash := strings.IndexByte(file, '/'); slash >= 0 {
+			subsystems[file[:slash]] = struct{}{}
+		} else {
+			subsystems["."] = struct{}{}
+		}
+		if len(stats.Paths) < maxReportPaths {
+			stats.Paths = append(stats.Paths, file)
+		} else {
+			stats.PathsTruncated = true
+		}
+	}
+	stats.Directories = len(directories)
+	stats.Subsystems = len(subsystems)
+	stats.SymbolsAdded = countSymbols(diff.GetFacts().GetAdded())
+	stats.SymbolsModified = countSymbols(diff.GetFacts().GetModified())
+	stats.SymbolsRemoved = countSymbols(diff.GetFacts().GetRemoved())
+	return stats
+}
+
+// countSymbols counts non-file facts. File facts mirror the changed path and
+// would double the count that the change's symbol churn describes.
+func countSymbols(facts []*pb.CodeFact) int {
+	count := 0
+	for _, fact := range facts {
+		if fact.GetKind() == pb.FactKind_FACT_KIND_FILE {
+			continue
+		}
+		count++
+	}
+	return count
 }
 
 func comparisonReport(diagram *pb.ImpactDiagram, opts compareOptions) CompareReport {
-	report := CompareReport{Status: "ready", Elements: len(diagram.GetNodes()), Connectors: len(diagram.GetEdges()), Warnings: []string{}}
+	report := CompareReport{Status: "ready", Elements: len(diagram.GetNodes()), Connectors: len(diagram.GetEdges()), Stats: comparisonStats(diagram), Warnings: []string{}}
 	if report.Elements == 0 {
 		report.Status = "empty"
 	}

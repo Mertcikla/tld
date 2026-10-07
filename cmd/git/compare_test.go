@@ -43,6 +43,40 @@ func TestCompareHardLimits(t *testing.T) {
 	}
 }
 
+func TestComparisonStats(t *testing.T) {
+	added, removed := uint32(12), uint32(3)
+	diagram := &pb.ImpactDiagram{
+		Diff: &pb.SnapshotDiff{
+			Sources: []*pb.SourceChange{
+				{Path: "internal/api/routes.go", LinesAdded: &added, LinesRemoved: &removed},
+				{Path: "internal/api/handlers.go"},
+				{Path: "README.md"},
+			},
+			Facts: &pb.CodeFactDelta{
+				Added:    []*pb.CodeFact{{Kind: pb.FactKind_FACT_KIND_FUNCTION}, {Kind: pb.FactKind_FACT_KIND_FILE}},
+				Modified: []*pb.CodeFact{{Kind: pb.FactKind_FACT_KIND_METHOD}},
+				Removed:  []*pb.CodeFact{{Kind: pb.FactKind_FACT_KIND_FILE}},
+			},
+		},
+	}
+	stats := comparisonStats(diagram)
+	if stats.Files != 3 || stats.Directories != 2 || stats.Subsystems != 2 {
+		t.Fatalf("scope = %+v", stats)
+	}
+	if stats.LinesAdded != 12 || stats.LinesRemoved != 3 {
+		t.Fatalf("churn = %+v", stats)
+	}
+	if stats.SymbolsAdded != 1 || stats.SymbolsModified != 1 || stats.SymbolsRemoved != 0 {
+		t.Fatalf("symbols = %+v", stats)
+	}
+	if len(stats.Paths) != 3 || stats.PathsTruncated {
+		t.Fatalf("paths = %+v", stats)
+	}
+	if report := comparisonReport(diagram, compareOptions{}); report.Stats.Files != 3 {
+		t.Fatalf("report stats = %+v", report)
+	}
+}
+
 func TestCompareReportAndSkip(t *testing.T) {
 	dir := compareRepo(t)
 	writeSource(t, dir, "b.go", "package a\nfunc B() {}\n")
