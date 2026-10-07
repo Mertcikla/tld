@@ -11,6 +11,7 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
 	"github.com/mertcikla/tld/v2/cmd"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
 func setupInspectWorkspace(t *testing.T, dir string) {
@@ -153,6 +154,46 @@ func TestInspectCloudUsesExportWithoutWriting(t *testing.T) {
 	if !strings.Contains(stdout, "cloud:") || !strings.Contains(stdout, "present") || !strings.Contains(stdout, "id=42") {
 		t.Fatalf("cloud state missing:\n%s", stdout)
 	}
+}
+
+func TestInspectCloudPreservesCachedRefWithCollidingNames(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "add", "API Service", "--ref", "custom-api", "--kind", "service")
+	meta, err := workspace.LoadMetadata(filepath.Join(dir, ".tld"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := int32(meta.Elements["custom-api"].ID)
+	svc := &cmd.MockDiagramService{
+		ExportFunc: func(*diagv1.ExportOrganizationRequest) (*diagv1.ExportOrganizationResponse, error) {
+			return &diagv1.ExportOrganizationResponse{Elements: []*diagv1.Element{
+				{Id: id + 1, Name: "API-Service"},
+				{Id: id, Name: "API Service"},
+			}}, nil
+		},
+	}
+	cmd.WriteConfig(t, dir, cmd.NewMockServer(t, svc), "test-key")
+	stdout, _, err := cmd.RunCmd(t, dir, "--format", "json", "inspect", "custom-api", "--cloud")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Sources []struct {
+			Source  string `json:"source"`
+			Present bool   `json:"present"`
+			ID      int32  `json:"id"`
+		} `json:"sources"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range report.Sources {
+		if source.Source == "cloud" && source.Present && source.ID == id {
+			return
+		}
+	}
+	t.Fatalf("cloud inspection lost cached identity: %s", stdout)
 }
 
 func TestInspectCloudUnauthorizedIncludesHint(t *testing.T) {

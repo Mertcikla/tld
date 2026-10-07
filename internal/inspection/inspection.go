@@ -385,7 +385,22 @@ func cloudState(ctx context.Context, ws *workspace.Workspace, opts Options) Sour
 		state.Note = cmdutil.WithUnauthorizedHint("cloud inspect failed", err).Error()
 		return state
 	}
-	cloudWS := cmdutil.ConvertExportResponse(ws, resp.Msg)
+	cloudIDs := make(map[workspace.ResourceID]bool, len(resp.Msg.Elements))
+	for _, element := range resp.Msg.Elements {
+		cloudIDs[workspace.ResourceID(element.Id)] = true
+	}
+	comparisonBase := &workspace.Workspace{Meta: &workspace.Meta{
+		Elements: make(map[string]*workspace.ResourceMetadata),
+	}}
+	if ws.Meta != nil {
+		comparisonBase.Meta.Connectors = ws.Meta.Connectors
+		for ref, meta := range ws.Meta.Elements {
+			if meta != nil && cloudIDs[meta.ID] {
+				comparisonBase.Meta.Elements[ref] = meta
+			}
+		}
+	}
+	cloudWS := cmdutil.ConvertExportResponse(comparisonBase, resp.Msg)
 	meta := elementMetadataForType(cloudWS, opts.Type, opts.Ref)
 	switch opts.Type {
 	case TypeElement, TypeView:
