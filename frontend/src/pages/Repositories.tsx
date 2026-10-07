@@ -854,7 +854,6 @@ export default function Repositories() {
       }
     }
   }
-  const currentViewId = maps[0]?.result.viewId
   const handleDelete = async () => {
     if (!repoToDelete) return
     setDeletingRepo(true)
@@ -967,38 +966,6 @@ export default function Repositories() {
       setProgress(null)
     }
   }
-  const repositoryDetails = (
-                  <Box px={4} pb={3}>
-                    <VStack align="stretch" spacing={2} mb={4}>
-                  <RepositoryTargetPicker
-                    aria-label="History branch"
-                    value={branch}
-                    isDisabled={busy || mode === 'pr' || !history?.isGit}
-                    onChange={setBranch}
-                    groups={[{ options: [
-                      { value: '', label: `Current HEAD${history?.currentBranch ? ` · ${history.currentBranch}` : ''}` },
-                      ...(branch && !history?.branches.some((b) => b.name === branch) ? [{ value: branch, label: branch }] : []),
-                      ...(history?.branches ?? []).map((b) => ({ value: b.name, label: b.name })),
-                    ] }]}
-                  />
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    isDisabled={!currentViewId || busy}
-                    onClick={() => navigate(`/views/${currentViewId}`)}
-                  >
-                    Open map
-                  </Button>
-                    </VStack>
-                    <RepositorySnapshotsPanel
-                      snapshots={snapshots}
-                      maps={maps}
-                      loading={dataLoading}
-                      deleting={deletingSnapshot}
-                      onDelete={setSnapshotToDelete}
-                    />
-                  </Box>
-  )
   return (
     <Box
       h="full"
@@ -1284,9 +1251,7 @@ export default function Repositories() {
             flexDir="column"
           >
             {selected && (showRepositorySettings ? (
-              <RepositorySettings key={selected.id} repository={selected} snapshots={snapshots} maps={maps} history={history} busy={busy} dataError={dataError || historyError} onBack={() => setShowRepositorySettings(false)} onDelete={() => { setRepoToDelete(selected); setDeleteMaterialized(false); setDeleteClone(selected.managed) }} onUpdated={() => { setNonce(n => n + 1); void reload() }}>
-                {repositoryDetails}
-              </RepositorySettings>
+              <RepositorySettings key={selected.id} repository={selected} snapshots={snapshots} maps={maps} history={history} busy={busy} dataError={dataError || historyError} onBack={() => setShowRepositorySettings(false)} onDelete={() => { setRepoToDelete(selected); setDeleteMaterialized(false); setDeleteClone(selected.managed) }} onUpdated={() => { setNonce(n => n + 1); void reload() }} />
             ) : (
               <>
                 <Flex

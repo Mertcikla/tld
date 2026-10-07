@@ -211,14 +211,12 @@ describe('Repositories map action', () => {
     globalThis.localStorage ??= { getItem: () => null, setItem: () => {} } as unknown as Storage
   })
 
-  it('hides history in Watch and moves repository information into settings', async () => {
+  it('hides history in Watch and hosts repository information in settings', async () => {
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
-    expect(renderer.root.findAllByProps({ 'aria-label': 'History branch' })).toHaveLength(0)
     expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-delete-repo-1' })).toHaveLength(0)
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
-    const branchControl = renderer.root.findByProps({ 'aria-label': 'History branch' })
-    expect(branchControl.parent?.props.mb).toBe(4)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repository-settings-page' }).length).toBeGreaterThan(0)
     await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
     expect(renderer.root.findAllByProps({ 'data-testid': 'mock-history' })).toHaveLength(1)
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-live-tab' }).props.onClick() })
@@ -336,7 +334,7 @@ describe('Repositories map action', () => {
     const snapshotId = side === 'base' ? 'snap-0' : 'snap-1'
     expect(renderer.root.findByProps({ 'data-testid': `repositories-${side}-target` }).props.value).toBe(`snapshot:${snapshotId}`)
 
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
 
     act(() => {
       renderer.root
@@ -348,7 +346,7 @@ describe('Repositories map action', () => {
     })
 
     expect(api.repositories.deleteSnapshot).toHaveBeenCalledWith(snapshotId)
-    await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-compare-tab' }).props.onClick() })
     expect(renderer.root.findByProps({ 'data-testid': `repositories-${side}-target` }).props.value).toBe('')
     expect(renderer.root.findByProps({ 'data-testid': `repositories-${side === 'base' ? 'head' : 'base'}-target` }).props.value).toBe(`snapshot:${side === 'base' ? 'snap-1' : 'snap-0'}`)
     await act(async () => { renderer.unmount() })
@@ -642,14 +640,6 @@ describe('Repositories map action', () => {
     })
     renderer.unmount()
   })
-  it('shows the commit message in the snapshot panel', async () => {
-    let renderer!: ReturnType<typeof create>
-    await act(async () => { renderer = create(<Repositories />) })
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
-    const messages = renderer.root.findAll((node) => node.props.children === 'feat: snapshot message')
-    expect(messages.length).toBeGreaterThan(0)
-    renderer.unmount()
-  })
   it('compares selected targets without running full map materialization', async () => {
     const { api } = await import('../api/client')
     let renderer!: ReturnType<typeof create>
@@ -810,18 +800,16 @@ describe('Repositories map action', () => {
     expect(renderer.root.findAll((node) => node.type === 'div' && node.children.includes('comparison unavailable')).length).toBeGreaterThan(0)
   })
 
-  it('restores targets from the URL and preserves them when browsing a branch', async () => {
-    const { api } = await import('../api/client')
+  it('restores targets from the URL and preserves them across settings', async () => {
     searchParamsMock.mockReturnValue(new URLSearchParams('repo=repo-1&base=snapshot:snap-1&head=working_tree&branch=feature'))
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-base-target' }).props.value).toBe('snapshot:snap-1')
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
     await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
-    await act(async () => { renderer.root.findByProps({ 'aria-label': 'History branch' }).props.onChange('main') })
-    expect(api.repositories.history).toHaveBeenCalledWith('repo-1', 'main', 0)
     await act(async () => { renderer.root.findByType((await import('./RepositorySettings')).default).props.onBack() })
     expect(renderer.root.findByProps({ 'data-testid': 'repositories-head-target' }).props.value).toBe('working_tree')
+    await act(async () => { renderer.unmount() })
   })
 
   it('ignores a comparison completed after cancellation', async () => {
@@ -1011,10 +999,10 @@ describe('Repositories map action', () => {
       provenance: 'commit',
       contentFingerprint: `fp-${index}`,
     }))
-    vi.mocked(api.repositories.snapshots).mockResolvedValueOnce(seven)
     let renderer!: ReturnType<typeof create>
     await act(async () => { renderer = create(<Repositories />) })
-    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-settings-repo-1' }).props.onClick({ stopPropagation: () => {} }) })
+    vi.mocked(api.repositories.snapshots).mockResolvedValueOnce(seven)
+    await act(async () => { renderer.root.findByProps({ 'data-testid': 'repositories-snapshots-tab' }).props.onClick() })
 
     const visible = () => renderer.root
       .findAll((node) => node.type === 'button' && typeof node.props['data-testid'] === 'string' && node.props['data-testid'].startsWith('repositories-snapshot-delete-'))
