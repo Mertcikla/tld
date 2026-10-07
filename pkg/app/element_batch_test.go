@@ -134,15 +134,15 @@ func TestPlacementBatchMatchesSequential(t *testing.T) {
 		return connectors
 	}
 	// The batch sees both original and sequential-view connectors, just as
-	// AddPlacement would. Each source connector is copied once.
+	// AddPlacement would. Copies in the sequential view must not amplify the batch.
 	got := normalize(batch.ID)
 	want := normalize(sequential.ID)
-	if len(want) != 3 || len(got) != 6 {
+	if len(want) != 3 || len(got) != 3 {
 		t.Fatalf("related connector inclusion: sequential=%d batch=%d", len(want), len(got))
 	}
 	for i := range want {
-		if !reflect.DeepEqual(want[i], got[i*2]) {
-			t.Fatalf("connector fields differ: %+v %+v", want[i], got[i*2])
+		if !reflect.DeepEqual(want[i], got[i]) {
+			t.Fatalf("connector fields differ: %+v %+v", want[i], got[i])
 		}
 	}
 	placements, err := s.ElementPlacements(ctx, batch.ID)

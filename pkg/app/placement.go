@@ -3,10 +3,27 @@ package app
 import (
 	"context"
 	"errors"
+
 	"github.com/uptrace/bun"
 
 	"github.com/google/uuid"
 )
+
+const uncopiedRelatedConnectors = `id IN (
+	SELECT MIN(id) FROM (
+		SELECT *, COALESCE(NULLIF(NULLIF(tags, 'null'), ''), '[]') AS normalized_tags,
+		ROW_NUMBER() OVER (
+			PARTITION BY view_id, org_id, source_element_id, target_element_id,
+				label, description, relationship, direction, style, url,
+				source_handle, target_handle, COALESCE(NULLIF(NULLIF(tags, 'null'), ''), '[]')
+			ORDER BY id
+		) AS occurrence FROM connectors
+	) AS candidates
+	GROUP BY org_id, source_element_id, target_element_id,
+		label, description, relationship, direction, style, url,
+		source_handle, target_handle, normalized_tags, occurrence
+	HAVING MAX(CASE WHEN view_id = ? THEN 1 ELSE 0 END) = 0
+)`
 
 type placementJoinRow struct {
 	ID                   int64   `bun:"id"`
@@ -157,6 +174,7 @@ func (s *Store) AddPlacement(ctx context.Context, viewID, elementID int64, x, y 
 			Column("source_element_id", "target_element_id", "label", "description", "relationship", "direction", "style", "url", "source_handle", "target_handle", "tags").
 			Where("((source_element_id = ? AND target_element_id IN (SELECT element_id FROM placements WHERE view_id = ?)) OR (target_element_id = ? AND source_element_id IN (SELECT element_id FROM placements WHERE view_id = ?)))", elementID, viewID, elementID, viewID).
 			Where("view_id != ?", viewID).
+			Where(uncopiedRelatedConnectors, viewID).
 			Scan(ctx); err == nil {
 			for _, c := range related {
 				_, _ = s.CreateConnector(ctx, Connector{
@@ -272,6 +290,7 @@ func (s *Store) AddPlacements(ctx context.Context, viewID int64, inputs []Elemen
 		var related []connectorModel
 		if err := tx.bun.NewSelect().Model(&related).
 			Where("view_id != ?", viewID).
+			Where(uncopiedRelatedConnectors, viewID).
 			Where("source_element_id IN (SELECT element_id FROM placements WHERE view_id = ?)", viewID).
 			Where("target_element_id IN (SELECT element_id FROM placements WHERE view_id = ?)", viewID).
 			Where("(source_element_id IN (?) OR target_element_id IN (?))", bun.List(added), bun.List(added)).Order("id").Scan(ctx); err != nil {

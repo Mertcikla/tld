@@ -813,4 +813,49 @@ func TestStoreCreateConnectorAllowsDuplicatePairsAndPlacementConnectorEnrichment
 	if len(conns1) != 2 {
 		t.Fatalf("Expected placement update not to duplicate auto-included connectors, got %d", len(conns1))
 	}
+
+	// Preserve a distinct relationship alongside identical parallel connectors.
+	if _, err := store.CreateConnector(ctx, Connector{
+		ViewID: view2.ID, SourceElementID: e1.ID, TargetElementID: e2.ID,
+		Label: new("publishes"), Style: "bezier",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 4 {
+		view, err := store.CreateView(ctx, fmt.Sprintf("Copy %d", i), nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		place := func() {
+			t.Helper()
+			if i%2 == 0 {
+				for _, id := range []int64{e1.ID, e2.ID} {
+					if _, err := store.AddPlacement(ctx, view.ID, id, 10, 20); err != nil {
+						t.Fatal(err)
+					}
+				}
+			} else if err := store.AddPlacements(ctx, view.ID, []ElementPlacement{{ElementID: e1.ID}, {ElementID: e2.ID}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for attempt := range 2 {
+			place()
+			connectors, err := store.Connectors(ctx, view.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			labels := map[string]int{}
+			for _, connector := range connectors {
+				if connector.Label != nil {
+					labels[*connector.Label]++
+				}
+			}
+			if len(connectors) != 3 || labels["calls"] != 2 || labels["publishes"] != 1 {
+				t.Fatalf("view %d attempt %d: copied relationships multiplied or merged: %+v", view.ID, attempt, connectors)
+			}
+			if err := store.DeletePlacement(ctx, view.ID, e2.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 }
