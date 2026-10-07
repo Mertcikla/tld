@@ -230,3 +230,72 @@ func TestFileImportsDedupeAndSkipRelative(t *testing.T) {
 		}
 	}
 }
+
+func TestFileEdgesReusedAcrossSnapshots(t *testing.T) {
+	ctx := context.Background()
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+	repo := graph.RepositoryID("/repo")
+	g1 := graph.NewGraph(repo, "edges-base")
+	for _, path := range []string{"a.go", "b.go"} {
+		a := &pb.SourceAnchor{Path: path, StartByte: 0, EndByte: 10}
+		g1.AddFact(pb.FactKind_FACT_KIND_FILE, path, "go", a, "", "", nil)
+		g1.AddFact(pb.FactKind_FACT_KIND_FUNCTION, path, "go", a, "", "", nil)
+	}
+	var from, to string
+	for _, f := range g1.Facts {
+		if f.Kind == pb.FactKind_FACT_KIND_FUNCTION {
+			if f.Name == "a.go" {
+				from = f.Id
+			} else {
+				to = f.Id
+			}
+		}
+	}
+	e := g1.AddEdgeFact(pb.EdgeKind_EDGE_KIND_CALLS, from, to, "", &pb.SourceAnchor{Path: "a.go", StartByte: 2, EndByte: 3}, nil)
+	e.Weight = 2.5
+	if err := st.Publish(ctx, "/repo", &pb.Snapshot{Id: g1.SnapshotID, RepositoryId: repo}, g1); err != nil {
+		t.Fatal(err)
+	}
+	g2 := graph.NewGraph(repo, "edges-head")
+	for id, f := range g1.Facts {
+		g2.Facts[id] = f
+		g2.Reused[id] = true
+	}
+	g2.EdgeFacts[e.Id] = e
+	g2.Reused[e.Id] = true
+	if err := st.Publish(ctx, "/repo", &pb.Snapshot{Id: g2.SnapshotID, RepositoryId: repo}, g2); err != nil {
+		t.Fatal(err)
+	}
+	for _, load := range []struct {
+		name string
+		fn   func(context.Context, string) ([]FileEdge, error)
+	}{{"raw", st.FileEdges}, {"aggregated", st.AggregatedFileEdges}} {
+		t.Run(load.name, func(t *testing.T) {
+			base, err := load.fn(ctx, g1.SnapshotID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			head, err := load.fn(ctx, g2.SnapshotID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(base) != 1 || len(head) != 1 || base[0] != head[0] {
+				t.Fatalf("reused edge missing or changed: base=%v head=%v", base, head)
+			}
+		})
+	}
+	// A third snapshot omitting the shared edge must not resurrect it.
+	g3 := graph.NewGraph(repo, "edges-removed")
+	for id, f := range g1.Facts {
+		g3.Facts[id] = f
+		g3.Reused[id] = true
+	}
+	if err := st.Publish(ctx, "/repo", &pb.Snapshot{Id: g3.SnapshotID, RepositoryId: repo}, g3); err != nil {
+		t.Fatal(err)
+	}
+	edges, err := st.AggregatedFileEdges(ctx, g3.SnapshotID)
+	if err != nil || len(edges) != 0 {
+		t.Fatalf("removed edges returned: %v, %v", edges, err)
+	}
+}

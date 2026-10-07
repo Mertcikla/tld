@@ -41,6 +41,21 @@ type symbols struct {
 func newSymbols() *symbols {
 	return &symbols{definitions: map[string]string{}, definitionSites: map[string]*pb.SourceAnchor{}, metadata: map[string]*scip.SymbolInformation{}}
 }
+
+// define picks a stable source site when an indexer assigns one symbol to
+// multiple declarations (for example C++ template specializations). Input
+// document/occurrence order must not change reference targets.
+func (table *symbols) define(key, id string, anchor *pb.SourceAnchor) {
+	if previous := table.definitionSites[key]; previous != nil {
+		if previous.Path < anchor.Path || (previous.Path == anchor.Path &&
+			(previous.StartByte < anchor.StartByte || (previous.StartByte == anchor.StartByte && previous.EndByte <= anchor.EndByte))) {
+			return
+		}
+	}
+	table.definitions[key] = id
+	table.definitionSites[key] = anchor
+}
+
 func symbolKey(symbol, path string) string {
 	if strings.HasPrefix(symbol, "local ") {
 		return path + "\x00" + symbol
@@ -57,6 +72,10 @@ func importSCIP(ctx context.Context, g *graph.Graph, project *pb.Project, artifa
 }
 func importSCIPReader(ctx context.Context, g *graph.Graph, project *pb.Project, r io.Reader, hashes map[string]string, strict, scipBacked bool, table *symbols) error {
 	var version string
+	var definitions *graph.FactIndex
+	if !scipBacked {
+		definitions = graph.NewFactIndex(g.Facts)
+	}
 	projectRoot := strings.Trim(project.Root, "/")
 	visitor := &scip.IndexVisitor{}
 	visitor.VisitMetadata = func(_ context.Context, m *scip.Metadata) error {
@@ -145,12 +164,10 @@ func importSCIPReader(ctx context.Context, g *graph.Graph, project *pb.Project, 
 			if o.GetSymbolRoles()&int32(scip.SymbolRole_Definition) != 0 {
 				if scipBacked {
 					if fact := synthesizeFact(g, source, o, symbol, table.metadata[key], anchor, encoding, version, declarations); fact != nil {
-						table.definitions[key] = fact.Id
-						table.definitionSites[key] = anchor
+						table.define(key, fact.Id, anchor)
 					}
-				} else if fact := matchDefinition(g, source, anchor); fact != nil {
-					table.definitions[key] = fact.Id
-					table.definitionSites[key] = anchor
+				} else if fact := definitions.NamedEnclosing(anchor, string(source.Text[anchor.StartByte:anchor.EndByte])); fact != nil {
+					table.define(key, fact.Id, anchor)
 					fact.SymbolKey = symbol
 					fact.QualifiedName = symbol
 					fact.Evidence = append(fact.Evidence, &pb.Evidence{Producer: "scip", Version: version, OriginalId: symbol, Anchor: anchor, Derivation: "matched declaration"})
@@ -225,17 +242,22 @@ func synthesizeFact(g *graph.Graph, source *graph.Source, o *scip.Occurrence, sy
 		signature = signatureContext(source.Text, start, end, name)
 	}
 	fact := g.AddFact(kind, name, source.Language, anchor, code, signature, &pb.Evidence{Producer: "scip", Version: version, OriginalId: symbol, Anchor: anchor, Derivation: "synthesized from definition occurrence"})
-	fact.SymbolKey = symbol
-	fact.QualifiedName = symbol
 	// Descriptors contain declaration scope and overload disambiguators, while
 	// package versions can change without changing a declaration's identity.
 	identity, err := scip.DescriptorOnlyFormatter.Format(symbol)
 	if err != nil {
 		identity = symbol
 	}
-	fact.LogicalKey += "|symbol|" + identity
-	if docs := info.GetDocumentation(); len(docs) > 0 {
-		fact.Documentation = strings.Join(docs, "\n")
+	logicalKey := graph.LogicalFactKey(kind, name, source.Path) + "|symbol|" + identity
+	// Several template instantiations can describe the same physical fact.
+	// Choose a canonical alias rather than appending aliases in arrival order.
+	if fact.SymbolKey == "" || logicalKey < fact.LogicalKey {
+		fact.SymbolKey = symbol
+		fact.QualifiedName = symbol
+		fact.LogicalKey = logicalKey
+		if docs := info.GetDocumentation(); len(docs) > 0 {
+			fact.Documentation = strings.Join(docs, "\n")
+		}
 	}
 	return fact
 }
@@ -341,23 +363,6 @@ func descriptorName(symbol string) string {
 	return strings.Trim(s, "`")
 }
 
-func matchDefinition(g *graph.Graph, source *graph.Source, anchor *pb.SourceAnchor) *pb.CodeFact {
-	if int(anchor.EndByte) > len(source.Text) {
-		return nil
-	}
-	name := string(source.Text[anchor.StartByte:anchor.EndByte])
-	var best *pb.CodeFact
-	for _, f := range g.Facts {
-		a := f.Anchor
-		if a.Path != anchor.Path || a.StartByte > anchor.StartByte || a.EndByte < anchor.EndByte || f.Name != name {
-			continue
-		}
-		if best == nil || a.EndByte-a.StartByte < best.Anchor.EndByte-best.Anchor.StartByte {
-			best = f
-		}
-	}
-	return best
-}
 func enrichFact(f *pb.CodeFact, info *scip.SymbolInformation) {
 	if info.GetDisplayName() != "" {
 		f.Name = info.GetDisplayName()
@@ -370,12 +375,13 @@ func enrichFact(f *pb.CodeFact, info *scip.SymbolInformation) {
 	}
 }
 func (table *symbols) apply(g *graph.Graph) {
+	owners := graph.NewFactIndex(g.Facts)
 	for _, ref := range table.references {
 		to := table.definitions[ref.key]
 		if to == "" {
 			continue
 		}
-		owner := g.EnclosingFact(ref.anchor)
+		owner := owners.Enclosing(ref.anchor)
 		if owner == nil {
 			continue
 		}

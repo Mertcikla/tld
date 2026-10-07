@@ -88,6 +88,14 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	if len(facts) == 0 {
 		return nil, false, ErrNoFileFacts
 	}
+	// Snapshot-scoped fact IDs change on cold rebuilds. Louvain visits nodes in
+	// input order, so use source identity to keep communities stable across them.
+	sort.Slice(facts, func(i, j int) bool {
+		if a, b := facts[i].GetAnchor().GetPath(), facts[j].GetAnchor().GetPath(); a != b {
+			return a < b
+		}
+		return stableFactKey(facts[i]) < stableFactKey(facts[j])
+	})
 	// External imports are opt-in per repository: their per-file connectors can
 	// dominate dense maps, so they stay off unless the repository enables them.
 	var fileImports []cstore.FileImport

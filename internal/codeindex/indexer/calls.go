@@ -22,6 +22,7 @@ type callSite struct {
 // Fact is the call's source. No source is re-parsed.
 func deriveCalls(g *graph.Graph, calls []callSite, table *symbols) {
 	references := table.byPath()
+	owners := graph.NewFactIndex(g.Facts)
 	for _, site := range calls {
 		source := g.Sources[site.path]
 		if source == nil {
@@ -40,7 +41,7 @@ func deriveCalls(g *graph.Graph, calls []callSite, table *symbols) {
 			continue
 		}
 		callAnchor := source.Anchor(int(site.start), int(site.end))
-		owner := g.EnclosingFact(callAnchor)
+		owner := owners.Enclosing(callAnchor)
 		if owner == nil {
 			continue
 		}

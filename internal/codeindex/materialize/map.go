@@ -239,13 +239,26 @@ func (m *mapMaterializer) applyLayout() error {
 			targets[elementID] = struct{}{}
 		}
 		next := layout.DeterministicLayoutPlacements(placements, targets, m.layoutEdges[viewID])
-		for elementID := range targets {
+		var pending []core.ElementPlacement
+		for _, elementID := range layout.SortedInt64Set(targets) {
 			position, ok := next[elementID]
-			if !ok {
-				continue
+			if ok {
+				pending = append(pending, core.ElementPlacement{ElementID: elementID, PositionX: position.X, PositionY: position.Y})
 			}
-			if _, err := m.ws.AddPlacement(m.ctx, viewID, elementID, position.X, position.Y); err != nil {
-				return fmt.Errorf("place map element %d in view %d: %w", elementID, viewID, err)
+		}
+		batch, canBatch := m.ws.(core.BatchPlacementWriter)
+		for offset := 0; offset < len(pending); offset += 100 {
+			chunk := pending[offset:min(offset+100, len(pending))]
+			if canBatch {
+				if err := batch.AddPlacements(m.ctx, viewID, chunk); err != nil {
+					return fmt.Errorf("place map batch in view %d: %w", viewID, err)
+				}
+			} else {
+				for _, p := range chunk {
+					if _, err := m.ws.AddPlacement(m.ctx, viewID, p.ElementID, p.PositionX, p.PositionY); err != nil {
+						return fmt.Errorf("place map element %d in view %d: %w", p.ElementID, viewID, err)
+					}
+				}
 			}
 		}
 		m.advance("layout")
