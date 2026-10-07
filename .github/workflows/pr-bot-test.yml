@@ -4,12 +4,14 @@ on:
     branches: [main]
     paths:
       - action.yml
+      - .github/actions/pr-diagram/**
       - scripts/pr-bot/**
       - .github/workflows/pr-diagram*.yml
       - .github/workflows/pr-bot-test.yml
   pull_request:
     paths:
       - action.yml
+      - .github/actions/pr-diagram/**
       - scripts/pr-bot/**
       - .github/workflows/pr-diagram*.yml
       - .github/workflows/pr-bot-test.yml

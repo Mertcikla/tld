@@ -43,7 +43,7 @@ runs:
       if: inputs.mode == 'generate'
       shell: bash
       env:
-        TLD_ACTION_PATH: ${{ github.action_path }}
+        TLD_ACTION_PATH: ${{ github.action_path }}/../../..
         INPUT_MODE: ${{ inputs.mode }}
         INPUT_REPOSITORY_PATH: ${{ inputs.repository-path }}
         INPUT_PREPARE_COMMAND: ${{ inputs.prepare-command }}
@@ -58,7 +58,7 @@ runs:
       with:
         go-version: '1.26.2'
         cache: true
-        cache-dependency-path: ${{ github.action_path }}/go.sum
+        cache-dependency-path: ${{ github.action_path }}/../../../go.sum
 
     - name: Set up Node
       id: setup-node
@@ -83,7 +83,7 @@ runs:
       continue-on-error: true
       shell: bash
       env:
-        TLD_ACTION_PATH: ${{ github.action_path }}
+        TLD_ACTION_PATH: ${{ github.action_path }}/../../..
         TLD_BINARY_DIR: ${{ steps.init.outputs.binary-dir }}
         TLD_VERSION: ${{ steps.init.outputs.tld-version }}
         TLD_INSTALL_GO: ${{ steps.init.outputs.go-indexer }}
@@ -158,7 +158,7 @@ runs:
       if: ${{ !cancelled() && steps.init.outputs.status != 'error' && inputs.mode == 'generate' }}
       shell: bash
       env:
-        TLD_ACTION_PATH: ${{ github.action_path }}
+        TLD_ACTION_PATH: ${{ github.action_path }}/../../..
         INPUT_REPOSITORY_PATH: ${{ inputs.repository-path }}
         INPUT_PREPARE_COMMAND: ${{ inputs.prepare-command }}
         INPUT_INDEXERS: ${{ inputs.indexers }}
@@ -189,7 +189,7 @@ runs:
       if: inputs.mode == 'publish'
       shell: bash
       env:
-        TLD_ACTION_PATH: ${{ github.action_path }}
+        TLD_ACTION_PATH: ${{ github.action_path }}/../../..
         INPUT_RUN_ID: ${{ inputs.run-id }}
         INPUT_SOURCE_WORKFLOW: ${{ inputs.source-workflow }}
         GITHUB_TOKEN: ${{ inputs.github-token }}
@@ -209,6 +209,6 @@ runs:
       if: ${{ !cancelled() && steps.publication.outputs.publish == 'true' }}
       shell: bash
       env:
-        TLD_ACTION_PATH: ${{ github.action_path }}
+        TLD_ACTION_PATH: ${{ github.action_path }}/../../..
         GITHUB_TOKEN: ${{ inputs.github-token }}
       run: node "$TLD_ACTION_PATH/scripts/pr-bot/main.mjs" publish

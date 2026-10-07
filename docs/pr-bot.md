@@ -1,6 +1,6 @@
 # GitHub PR change diagrams
 
-The root `action.yml` is a reusable composite action with two modes:
+The `.github/actions/pr-diagram/action.yml` is a reusable composite action with two modes:
 
 | Mode | Purpose |
 | --- | --- |
@@ -39,6 +39,9 @@ never fail the bot: a broken or shallow history degrades to "unavailable".
 
 Use an Ubuntu runner (x86_64 or ARM64). Choose a commit or release containing this action and
 replace `PINNED_REF` in both examples with that same immutable reference.
+Use a reference containing the subdirectory action. Older releases, including
+`v2.4.0`, keep the root action and use `Mertcikla/tld@PINNED_REF` instead;
+this repository's workflows remain pinned to that release until the next upgrade.
 To upgrade, change `tldVersion` in `scripts/pr-bot/main.mjs`;
 the download URL and binary/database cache keys update together.
 It sets up Go 1.26.2 and Node 24 for indexing and installs
@@ -71,7 +74,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: Mertcikla/tld@PINNED_REF
+      - uses: Mertcikla/tld/.github/actions/pr-diagram@PINNED_REF
         env:
           TLD_PR_MAX_ELEMENTS: '80'
           TLD_PR_MAX_CONNECTORS: '160'
@@ -104,7 +107,7 @@ jobs:
     timeout-minutes: 5
     continue-on-error: true
     steps:
-      - uses: Mertcikla/tld@PINNED_REF
+      - uses: Mertcikla/tld/.github/actions/pr-diagram@PINNED_REF
         with:
           mode: publish
           source-workflow: pr-diagram.yml
