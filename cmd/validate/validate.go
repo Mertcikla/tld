@@ -69,6 +69,12 @@ in full detail with individual element and connector information.`,
 				return fmt.Errorf("%d symbol verification error(s)", len(broken))
 			}
 
+			warnings := archwarnings.Analyze(ws)
+
+			if len(args) == 1 {
+				return printRuleViolations(cmd, args[0], warnings)
+			}
+
 			if len(ws.Elements) > 0 || len(ws.Connectors) > 0 {
 				viewCount := cmdutil.CountViews(ws)
 				term.Successf(cmd.OutOrStdout(), "Workspace valid: %d elements, %d views, %d connectors",
@@ -100,13 +106,7 @@ in full detail with individual element and connector information.`,
 				}
 			}
 
-			warnings := archwarnings.Analyze(ws)
-
-			if len(args) == 1 {
-				if err := printRuleViolations(cmd, args[0], warnings); err != nil {
-					return err
-				}
-			} else if len(warnings) > 0 {
+			if len(warnings) > 0 {
 				printWarningSummary(cmd, ws, warnings, verbose)
 			}
 

@@ -93,6 +93,9 @@ func TestValidateCmd_RuleCodeWithViolations(t *testing.T) {
 	if !strings.Contains(stdout, "How to fix:") {
 		t.Errorf("stdout %q does not contain 'How to fix:'", stdout)
 	}
+	if strings.Contains(stdout, "Workspace valid") || strings.Contains(stdout, "Architectural Warnings") {
+		t.Errorf("stdout %q should only contain the requested rule output", stdout)
+	}
 }
 
 func TestValidateCmd_RuleCodeNoViolations(t *testing.T) {
