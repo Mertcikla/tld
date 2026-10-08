@@ -29,7 +29,16 @@ type Options struct {
 	// AnnotateTechnology writes catalog technology onto elements.
 	AnnotateTechnology bool
 	// GroupLayers creates a view layer per community group.
-	GroupLayers bool
+	GroupLayers         bool
+	CrossViewConnectors bool
+	// CrossViewMaxViews, CrossViewMaxElementsPerView,
+	// CrossViewMaxConnectorsPerView and CrossViewMaxConnectorsPerElement bound
+	// how much cross-view detail a view draws when CrossViewConnectors is
+	// enabled.
+	CrossViewMaxViews                int
+	CrossViewMaxElementsPerView      int
+	CrossViewMaxConnectorsPerView    int
+	CrossViewMaxConnectorsPerElement int
 }
 
 // FromGlobal resolves global config into effective map options. Zero-valued
@@ -37,13 +46,18 @@ type Options struct {
 func FromGlobal(cfg *workspace.Config) Options {
 	defaults := community.DefaultOptions()
 	out := Options{
-		Grouping:                 defaults,
-		MaxConnectorsPerView:     materialize.DefaultMaxConnectorsPerView,
-		MaxLeafConnectorsPerView: materialize.DefaultMaxLeafConnectorsPerView,
-		AnnotateConnectors:       true,
-		AnnotateTags:             true,
-		AnnotateTechnology:       true,
-		GroupLayers:              true,
+		Grouping:                         defaults,
+		MaxConnectorsPerView:             materialize.DefaultMaxConnectorsPerView,
+		MaxLeafConnectorsPerView:         materialize.DefaultMaxLeafConnectorsPerView,
+		AnnotateConnectors:               true,
+		AnnotateTags:                     true,
+		AnnotateTechnology:               true,
+		GroupLayers:                      true,
+		CrossViewConnectors:              true,
+		CrossViewMaxViews:                materialize.DefaultCrossViewMaxViews,
+		CrossViewMaxElementsPerView:      materialize.DefaultCrossViewMaxElementsPerView,
+		CrossViewMaxConnectorsPerView:    materialize.DefaultCrossViewMaxConnectorsPerView,
+		CrossViewMaxConnectorsPerElement: materialize.DefaultCrossViewMaxConnectorsPerElement,
 	}
 	if cfg == nil {
 		return out
@@ -88,6 +102,19 @@ func FromGlobal(cfg *workspace.Config) Options {
 	applyBool(cfg.Map.Annotate.Tags, &out.AnnotateTags)
 	applyBool(cfg.Map.Annotate.Technology, &out.AnnotateTechnology)
 	applyBool(cfg.Map.Annotate.GroupLayers, &out.GroupLayers)
+	applyBool(cfg.Map.CrossView.Connectors, &out.CrossViewConnectors)
+	if cfg.Map.CrossView.MaxViews > 0 {
+		out.CrossViewMaxViews = cfg.Map.CrossView.MaxViews
+	}
+	if cfg.Map.CrossView.MaxElementsPerView > 0 {
+		out.CrossViewMaxElementsPerView = cfg.Map.CrossView.MaxElementsPerView
+	}
+	if cfg.Map.CrossView.MaxConnectorsPerView > 0 {
+		out.CrossViewMaxConnectorsPerView = cfg.Map.CrossView.MaxConnectorsPerView
+	}
+	if cfg.Map.CrossView.MaxConnectorsPerElement > 0 {
+		out.CrossViewMaxConnectorsPerElement = cfg.Map.CrossView.MaxConnectorsPerElement
+	}
 
 	return out
 }
@@ -109,6 +136,11 @@ func (o Options) Fingerprint() string {
 		"annotate_tags=" + strconv.FormatBool(o.AnnotateTags),
 		"annotate_technology=" + strconv.FormatBool(o.AnnotateTechnology),
 		"group_layers=" + strconv.FormatBool(o.GroupLayers),
+		"cross_view_connectors=" + strconv.FormatBool(o.CrossViewConnectors),
+		"cross_view_max_views=" + strconv.Itoa(o.CrossViewMaxViews),
+		"cross_view_max_elements_per_view=" + strconv.Itoa(o.CrossViewMaxElementsPerView),
+		"cross_view_max_connectors_per_view=" + strconv.Itoa(o.CrossViewMaxConnectorsPerView),
+		"cross_view_max_connectors_per_element=" + strconv.Itoa(o.CrossViewMaxConnectorsPerElement),
 	}, ",")
 }
 
@@ -116,19 +148,24 @@ func (o Options) Fingerprint() string {
 // change whenever a setting that affects map output changes so cached maps are
 // not reused across configurations.
 func (o Options) ConfigHash() string {
-	return cgraph.ID("group-v8", strconv.FormatBool(o.IncludeExternalImports), o.Fingerprint())
+	return cgraph.ID("group-v9", strconv.FormatBool(o.IncludeExternalImports), o.Fingerprint())
 }
 
 // MaterializeOptions builds the materialization options for these settings.
 func (o Options) MaterializeOptions(progress func(current, total int, detail string)) materialize.MapOptions {
 	return materialize.MapOptions{
-		MaxConnectorsPerView:     o.MaxConnectorsPerView,
-		MaxLeafConnectorsPerView: o.MaxLeafConnectorsPerView,
-		IncludeExternalImports:   o.IncludeExternalImports,
-		AnnotateConnectors:       o.AnnotateConnectors,
-		AnnotateTags:             o.AnnotateTags,
-		AnnotateTechnology:       o.AnnotateTechnology,
-		GroupLayers:              o.GroupLayers,
-		Progress:                 progress,
+		MaxConnectorsPerView:             o.MaxConnectorsPerView,
+		MaxLeafConnectorsPerView:         o.MaxLeafConnectorsPerView,
+		IncludeExternalImports:           o.IncludeExternalImports,
+		AnnotateConnectors:               o.AnnotateConnectors,
+		AnnotateTags:                     o.AnnotateTags,
+		AnnotateTechnology:               o.AnnotateTechnology,
+		GroupLayers:                      o.GroupLayers,
+		Progress:                         progress,
+		CrossViewConnectors:              o.CrossViewConnectors,
+		CrossViewMaxViews:                o.CrossViewMaxViews,
+		CrossViewMaxElementsPerView:      o.CrossViewMaxElementsPerView,
+		CrossViewMaxConnectorsPerView:    o.CrossViewMaxConnectorsPerView,
+		CrossViewMaxConnectorsPerElement: o.CrossViewMaxConnectorsPerElement,
 	}
 }

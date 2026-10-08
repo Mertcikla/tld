@@ -118,9 +118,23 @@ type Config struct {
 
 // MapConfig configures the graph mapping pipeline.
 type MapConfig struct {
-	Grouping MapGroupingConfig `yaml:"grouping"`
-	Budget   MapBudgetConfig   `yaml:"budget"`
-	Annotate MapAnnotateConfig `yaml:"annotate"`
+	Grouping  MapGroupingConfig  `yaml:"grouping"`
+	Budget    MapBudgetConfig    `yaml:"budget"`
+	Annotate  MapAnnotateConfig  `yaml:"annotate"`
+	CrossView MapCrossViewConfig `yaml:"cross_view"`
+}
+
+// MapCrossViewConfig controls the cross-view connectors drawn inside views.
+// A nil Connectors pointer means enabled, so cross-view connectors are on by
+// default and only opt-out needs configuration. The limits bound how many other
+// views a view reaches, how many source elements it uses to reach each one, and
+// how many cross-view connectors it draws.
+type MapCrossViewConfig struct {
+	Connectors              *bool `yaml:"connectors"`
+	MaxViews                int   `yaml:"max_views"`
+	MaxElementsPerView      int   `yaml:"max_elements_per_view"`
+	MaxConnectorsPerView    int   `yaml:"max_connectors_per_view"`
+	MaxConnectorsPerElement int   `yaml:"max_connectors_per_element"`
 }
 
 // MapAnnotateConfig controls generated enrichment on mapped resources. A nil
@@ -256,6 +270,12 @@ func DefaultConfig() *Config {
 			Budget: MapBudgetConfig{
 				MaxConnectorsPerView:     40,
 				MaxLeafConnectorsPerView: 12,
+			},
+			CrossView: MapCrossViewConfig{
+				MaxViews:                8,
+				MaxElementsPerView:      2,
+				MaxConnectorsPerView:    8,
+				MaxConnectorsPerElement: 8,
 			},
 		},
 		Updates: UpdatesConfig{

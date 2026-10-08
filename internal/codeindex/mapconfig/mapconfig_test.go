@@ -25,6 +25,15 @@ func TestFromGlobalFallsBackToEngineDefaults(t *testing.T) {
 		if !opts.AnnotateConnectors || !opts.AnnotateTags || !opts.AnnotateTechnology || !opts.GroupLayers {
 			t.Fatalf("annotation must default on: %+v", opts)
 		}
+		if !opts.CrossViewConnectors {
+			t.Fatalf("cross-view connectors must default on: %+v", opts)
+		}
+		if opts.CrossViewMaxViews != materialize.DefaultCrossViewMaxViews ||
+			opts.CrossViewMaxElementsPerView != materialize.DefaultCrossViewMaxElementsPerView ||
+			opts.CrossViewMaxConnectorsPerView != materialize.DefaultCrossViewMaxConnectorsPerView ||
+			opts.CrossViewMaxConnectorsPerElement != materialize.DefaultCrossViewMaxConnectorsPerElement {
+			t.Fatalf("cross-view limits drifted: %+v", opts)
+		}
 	}
 }
 
@@ -62,6 +71,14 @@ func TestFromGlobalAppliesOverrides(t *testing.T) {
 	cfg.Map.Grouping.MaxLeafFiles = 12
 	cfg.Map.Budget.MaxConnectorsPerView = 30
 	cfg.Map.Budget.MaxLeafConnectorsPerView = 6
+	disabled := false
+	cfg.Map.CrossView = workspace.MapCrossViewConfig{
+		Connectors:              &disabled,
+		MaxViews:                3,
+		MaxElementsPerView:      4,
+		MaxConnectorsPerView:    5,
+		MaxConnectorsPerElement: 6,
+	}
 
 	opts := mapconfig.FromGlobal(cfg)
 	want := community.Options{
@@ -78,6 +95,9 @@ func TestFromGlobalAppliesOverrides(t *testing.T) {
 	}
 	if opts.MaxConnectorsPerView != 30 || opts.MaxLeafConnectorsPerView != 6 {
 		t.Fatalf("budgets = %+v", opts)
+	}
+	if opts.CrossViewConnectors || opts.CrossViewMaxViews != 3 || opts.CrossViewMaxElementsPerView != 4 || opts.CrossViewMaxConnectorsPerView != 5 || opts.CrossViewMaxConnectorsPerElement != 6 {
+		t.Fatalf("cross-view = %+v", opts)
 	}
 }
 
@@ -96,19 +116,24 @@ func TestConfigHashTracksEverySetting(t *testing.T) {
 		t.Fatal("config hash is not stable across rebuilds")
 	}
 	mutations := map[string]func(*mapconfig.Options){
-		"resolution":          func(o *mapconfig.Options) { o.Grouping.Resolution += 0.5 },
-		"min_group_size":      func(o *mapconfig.Options) { o.Grouping.MinGroupSize++ },
-		"min_root_groups":     func(o *mapconfig.Options) { o.Grouping.MinRootGroups++ },
-		"max_root_groups":     func(o *mapconfig.Options) { o.Grouping.MaxRootGroups++ },
-		"max_children":        func(o *mapconfig.Options) { o.Grouping.MaxChildren++ },
-		"max_depth":           func(o *mapconfig.Options) { o.Grouping.MaxDepth++ },
-		"max_leaf_files":      func(o *mapconfig.Options) { o.Grouping.MaxLeafFiles++ },
-		"max_connectors":      func(o *mapconfig.Options) { o.MaxConnectorsPerView++ },
-		"max_leaf_connector":  func(o *mapconfig.Options) { o.MaxLeafConnectorsPerView++ },
-		"annotate_connectors": func(o *mapconfig.Options) { o.AnnotateConnectors = !o.AnnotateConnectors },
-		"annotate_tags":       func(o *mapconfig.Options) { o.AnnotateTags = !o.AnnotateTags },
-		"annotate_technology": func(o *mapconfig.Options) { o.AnnotateTechnology = !o.AnnotateTechnology },
-		"group_layers":        func(o *mapconfig.Options) { o.GroupLayers = !o.GroupLayers },
+		"resolution":                            func(o *mapconfig.Options) { o.Grouping.Resolution += 0.5 },
+		"min_group_size":                        func(o *mapconfig.Options) { o.Grouping.MinGroupSize++ },
+		"min_root_groups":                       func(o *mapconfig.Options) { o.Grouping.MinRootGroups++ },
+		"max_root_groups":                       func(o *mapconfig.Options) { o.Grouping.MaxRootGroups++ },
+		"max_children":                          func(o *mapconfig.Options) { o.Grouping.MaxChildren++ },
+		"max_depth":                             func(o *mapconfig.Options) { o.Grouping.MaxDepth++ },
+		"max_leaf_files":                        func(o *mapconfig.Options) { o.Grouping.MaxLeafFiles++ },
+		"max_connectors":                        func(o *mapconfig.Options) { o.MaxConnectorsPerView++ },
+		"max_leaf_connector":                    func(o *mapconfig.Options) { o.MaxLeafConnectorsPerView++ },
+		"annotate_connectors":                   func(o *mapconfig.Options) { o.AnnotateConnectors = !o.AnnotateConnectors },
+		"annotate_tags":                         func(o *mapconfig.Options) { o.AnnotateTags = !o.AnnotateTags },
+		"annotate_technology":                   func(o *mapconfig.Options) { o.AnnotateTechnology = !o.AnnotateTechnology },
+		"group_layers":                          func(o *mapconfig.Options) { o.GroupLayers = !o.GroupLayers },
+		"cross_view_connectors":                 func(o *mapconfig.Options) { o.CrossViewConnectors = !o.CrossViewConnectors },
+		"cross_view_max_views":                  func(o *mapconfig.Options) { o.CrossViewMaxViews++ },
+		"cross_view_max_elements_per_view":      func(o *mapconfig.Options) { o.CrossViewMaxElementsPerView++ },
+		"cross_view_max_connectors_per_view":    func(o *mapconfig.Options) { o.CrossViewMaxConnectorsPerView++ },
+		"cross_view_max_connectors_per_element": func(o *mapconfig.Options) { o.CrossViewMaxConnectorsPerElement++ },
 	}
 	for name, mutate := range mutations {
 		changed := base

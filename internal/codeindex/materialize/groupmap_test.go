@@ -161,6 +161,31 @@ func viewIDByName(t *testing.T, appStore *app.Store, name string) int64 {
 	return id
 }
 
+func elementIDByName(t *testing.T, appStore *app.Store, name string) int64 {
+	t.Helper()
+	var id int64
+	if err := appStore.DB().QueryRow(
+		`SELECT id FROM elements WHERE name = ? ORDER BY id LIMIT 1`, name).Scan(&id); err != nil {
+		t.Fatalf("element %q: %v", name, err)
+	}
+	return id
+}
+
+func crossViewMappingCount(t *testing.T, idx *cstore.Store, repositoryID string) int {
+	t.Helper()
+	mappings, err := idx.MappingsByRepository(context.Background(), repositoryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, mapping := range mappings {
+		if strings.Contains(mapping.LogicalKey, "|xconn|") {
+			count++
+		}
+	}
+	return count
+}
+
 func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 	ctx := context.Background()
 	appStore, idx := openGroupMapStore(t)
@@ -266,6 +291,207 @@ func TestApplyGroupMapHierarchyAndRollup(t *testing.T) {
 	}
 	if second.ViewID != result.ViewID || second.Pruned != 0 || second.Connectors != result.Connectors {
 		t.Fatalf("rerun changed map: %+v vs %+v", second, result)
+	}
+}
+
+func TestApplyGroupMapCrossViewConnectors(t *testing.T) {
+	ctx := context.Background()
+	appStore, idx := openGroupMapStore(t)
+	input := GroupMapInput{
+		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
+		Files: groupMapFiles(),
+		Groups: []*community.Group{
+			{Key: "alpha", Name: "alpha", Files: 2, Members: []int{0, 1}},
+			{Key: "beta", Name: "beta", Files: 2, Members: []int{2, 3}},
+		},
+		Edges: []MapEdge{
+			{FromFactID: "id-a", ToFactID: "id-b", Weight: 1, Kind: "calls"},
+			{FromFactID: "id-a", ToFactID: "id-c", Weight: 5, Kind: "calls"},
+			{FromFactID: "id-c", ToFactID: "id-a", Weight: 1, Kind: "references"},
+		},
+	}
+	result, err := ApplyGroupMap(ctx, appStore, idx, input, MapOptions{CrossViewConnectors: true, AnnotateConnectors: true})
+	if err != nil {
+		t.Fatalf("apply group map: %v", err)
+	}
+	if result.Connectors != 3 {
+		t.Fatalf("connectors = %d, want 3 (roll-up + intra + cross-view)", result.Connectors)
+	}
+	alphaViewID := viewIDByName(t, appStore, "alpha")
+	betaViewID := viewIDByName(t, appStore, "beta")
+	aID := elementIDByName(t, appStore, "a.go")
+	cID := elementIDByName(t, appStore, "c.go")
+
+	var viewID int64
+	var direction, label, tags string
+	if err := appStore.DB().QueryRowContext(ctx,
+		`SELECT view_id, direction, label, tags FROM connectors
+		 WHERE (source_element_id = ? AND target_element_id = ?) OR (source_element_id = ? AND target_element_id = ?)`,
+		aID, cID, cID, aID).Scan(&viewID, &direction, &label, &tags); err != nil {
+		t.Fatalf("cross-view connector: %v", err)
+	}
+	if viewID != alphaViewID {
+		t.Fatalf("cross-view connector view = %d, want alpha %d", viewID, alphaViewID)
+	}
+	if direction != "both" {
+		t.Fatalf("direction = %q, want both (reciprocal edges merged)", direction)
+	}
+	if label != "calls" {
+		t.Fatalf("label = %q, want dominant calls", label)
+	}
+	if !strings.Contains(tags, "cross-view") {
+		t.Fatalf("tags = %s, want cross-view", tags)
+	}
+
+	// The remote endpoint is placed in its own view and not in the owner view,
+	// which is what lets the off-view renderer project the connector into both.
+	var placedInBeta int
+	if err := appStore.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM placements WHERE view_id = ? AND element_id = ?`, betaViewID, cID).Scan(&placedInBeta); err != nil {
+		t.Fatal(err)
+	}
+	if placedInBeta != 1 {
+		t.Fatal("remote endpoint is not placed in its own view")
+	}
+	if count := crossViewMappingCount(t, idx, "repo-1"); count != 1 {
+		t.Fatalf("xconn mappings = %d, want 1", count)
+	}
+}
+
+func TestApplyGroupMapCrossViewConnectorsSkipNestedBranches(t *testing.T) {
+	ctx := context.Background()
+	appStore, idx := openGroupMapStore(t)
+	input := GroupMapInput{
+		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
+		Files: groupMapFiles(),
+		Groups: []*community.Group{
+			{Key: "alpha", Name: "alpha", Files: 2, Members: []int{1}, Children: []*community.Group{
+				{Key: "alpha-child", Name: "alpha-child", Files: 1, Members: []int{0}},
+			}},
+			{Key: "beta", Name: "beta", Files: 1, Members: []int{2}},
+		},
+		Edges: []MapEdge{
+			// Nested: the roll-up already draws this natively in alpha's view.
+			{FromFactID: "id-a", ToFactID: "id-b", Weight: 4},
+			// Different branches: qualifies for a cross-view connector.
+			{FromFactID: "id-b", ToFactID: "id-c", Weight: 2},
+		},
+	}
+	if _, err := ApplyGroupMap(ctx, appStore, idx, input, MapOptions{CrossViewConnectors: true}); err != nil {
+		t.Fatal(err)
+	}
+	if count := crossViewMappingCount(t, idx, "repo-1"); count != 1 {
+		t.Fatalf("xconn mappings = %d, want 1 (nested branch excluded)", count)
+	}
+}
+
+func TestApplyGroupMapCrossViewConnectorsRespectAggregateLimit(t *testing.T) {
+	ctx := context.Background()
+	appStore, idx := openGroupMapStore(t)
+	const connectedViews = 9
+	files := make([]community.File, 0, connectedViews+1)
+	groups := make([]*community.Group, 0, connectedViews+1)
+	edges := make([]MapEdge, 0, connectedViews)
+	for i := 0; i < connectedViews+1; i++ {
+		id := fmt.Sprintf("id-%d", i)
+		files = append(files, community.File{ID: id, Path: fmt.Sprintf("pkg%d/a.go", i), DisplayName: fmt.Sprintf("f%d.go", i), Language: "go"})
+		groups = append(groups, &community.Group{Key: fmt.Sprintf("g%d", i), Name: fmt.Sprintf("g%d", i), Files: 1, Members: []int{i}})
+		if i > 0 {
+			edges = append(edges, MapEdge{FromFactID: "id-0", ToFactID: id, Weight: float64(i), Kind: "calls"})
+		}
+	}
+	result, err := ApplyGroupMap(ctx, appStore, idx, GroupMapInput{
+		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
+		Files: files, Groups: groups, Edges: edges,
+	}, MapOptions{CrossViewConnectors: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// g0 reaches 9 distinct views, above the DefaultCrossViewMaxViews limit of
+	// 8, so its view keeps only the parent-level roll-up and no cross-view
+	// connectors.
+	if count := crossViewMappingCount(t, idx, "repo-1"); count != 0 {
+		t.Fatalf("xconn mappings = %d, want 0 (aggregate limit)", count)
+	}
+	if result.Connectors == 0 {
+		t.Fatal("expected parent-level roll-up connectors")
+	}
+}
+
+func TestApplyGroupMapCrossViewConnectorsRespectViewBudget(t *testing.T) {
+	ctx := context.Background()
+	appStore, idx := openGroupMapStore(t)
+	// alpha has eight loose files; four other views each receive edges from two
+	// distinct alpha elements, producing eight candidates capped per view.
+	files := []community.File{
+		{ID: "a1", Path: "alpha/a1.go", DisplayName: "a1.go", Language: "go"},
+		{ID: "a2", Path: "alpha/a2.go", DisplayName: "a2.go", Language: "go"},
+		{ID: "a3", Path: "alpha/a3.go", DisplayName: "a3.go", Language: "go"},
+		{ID: "a4", Path: "alpha/a4.go", DisplayName: "a4.go", Language: "go"},
+		{ID: "a5", Path: "alpha/a5.go", DisplayName: "a5.go", Language: "go"},
+		{ID: "a6", Path: "alpha/a6.go", DisplayName: "a6.go", Language: "go"},
+		{ID: "a7", Path: "alpha/a7.go", DisplayName: "a7.go", Language: "go"},
+		{ID: "a8", Path: "alpha/a8.go", DisplayName: "a8.go", Language: "go"},
+		{ID: "b1", Path: "beta/b1.go", DisplayName: "b1.go", Language: "go"},
+		{ID: "g1", Path: "gamma/g1.go", DisplayName: "g1.go", Language: "go"},
+		{ID: "d1", Path: "delta/d1.go", DisplayName: "d1.go", Language: "go"},
+		{ID: "e1", Path: "epsilon/e1.go", DisplayName: "e1.go", Language: "go"},
+	}
+	groups := []*community.Group{
+		{Key: "alpha", Name: "alpha", Files: 8, Members: []int{0, 1, 2, 3, 4, 5, 6, 7}},
+		{Key: "beta", Name: "beta", Files: 1, Members: []int{8}},
+		{Key: "gamma", Name: "gamma", Files: 1, Members: []int{9}},
+		{Key: "delta", Name: "delta", Files: 1, Members: []int{10}},
+		{Key: "epsilon", Name: "epsilon", Files: 1, Members: []int{11}},
+	}
+	edges := []MapEdge{
+		{FromFactID: "a1", ToFactID: "b1", Weight: 4}, {FromFactID: "a2", ToFactID: "b1", Weight: 3},
+		{FromFactID: "a3", ToFactID: "g1", Weight: 4}, {FromFactID: "a4", ToFactID: "g1", Weight: 3},
+		{FromFactID: "a5", ToFactID: "d1", Weight: 4}, {FromFactID: "a6", ToFactID: "d1", Weight: 3},
+		{FromFactID: "a7", ToFactID: "e1", Weight: 4}, {FromFactID: "a8", ToFactID: "e1", Weight: 3},
+	}
+	if _, err := ApplyGroupMap(ctx, appStore, idx, GroupMapInput{
+		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
+		Files: files, Groups: groups, Edges: edges,
+	}, MapOptions{CrossViewConnectors: true}); err != nil {
+		t.Fatal(err)
+	}
+	if count := crossViewMappingCount(t, idx, "repo-1"); count != DefaultCrossViewMaxConnectorsPerView {
+		t.Fatalf("xconn mappings = %d, want %d (view budget)", count, DefaultCrossViewMaxConnectorsPerView)
+	}
+}
+
+func TestApplyGroupMapCrossViewConnectorsPruneOnDisable(t *testing.T) {
+	ctx := context.Background()
+	appStore, idx := openGroupMapStore(t)
+	input := GroupMapInput{
+		RepositoryID: "repo-1", RepositoryName: "demo", SnapshotID: "snap-1",
+		Files: groupMapFiles(),
+		Groups: []*community.Group{
+			{Key: "alpha", Name: "alpha", Files: 2, Members: []int{0, 1}},
+			{Key: "beta", Name: "beta", Files: 2, Members: []int{2, 3}},
+		},
+		Edges: []MapEdge{{FromFactID: "id-a", ToFactID: "id-c", Weight: 1}},
+	}
+	if _, err := ApplyGroupMap(ctx, appStore, idx, input, MapOptions{CrossViewConnectors: true}); err != nil {
+		t.Fatal(err)
+	}
+	if count := crossViewMappingCount(t, idx, "repo-1"); count != 1 {
+		t.Fatalf("xconn mappings = %d, want 1", count)
+	}
+	input.SnapshotID = "snap-2"
+	if _, err := ApplyGroupMap(ctx, appStore, idx, input, MapOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if count := crossViewMappingCount(t, idx, "repo-1"); count != 0 {
+		t.Fatalf("xconn mappings after disable = %d, want 0", count)
+	}
+	var rows int
+	if err := appStore.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM connectors`).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 1 {
+		t.Fatalf("stored connectors = %d, want only the parent-level roll-up", rows)
 	}
 }
 

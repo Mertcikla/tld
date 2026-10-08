@@ -164,6 +164,11 @@ export interface RepositoryMapConfiguration {
   maxConnectorsPerView?: number
   maxLeafConnectorsPerView?: number
   includeExternalImports?: boolean
+  crossViewConnectors?: boolean
+  crossViewMaxViews?: number
+  crossViewMaxElementsPerView?: number
+  crossViewMaxConnectorsPerView?: number
+  crossViewMaxConnectorsPerElement?: number
 }
 export interface RepositoryRemote {
   name: string

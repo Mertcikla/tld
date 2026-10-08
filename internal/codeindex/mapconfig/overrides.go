@@ -64,6 +64,21 @@ func (o Options) WithOverrides(overrides *pb.RepositoryMapConfiguration) (Option
 	if overrides.IncludeExternalImports != nil {
 		o.IncludeExternalImports = overrides.GetIncludeExternalImports()
 	}
+	if overrides.CrossViewConnectors != nil {
+		o.CrossViewConnectors = overrides.GetCrossViewConnectors()
+	}
+	if overrides.CrossViewMaxViews != nil {
+		o.CrossViewMaxViews = int(overrides.GetCrossViewMaxViews())
+	}
+	if overrides.CrossViewMaxElementsPerView != nil {
+		o.CrossViewMaxElementsPerView = int(overrides.GetCrossViewMaxElementsPerView())
+	}
+	if overrides.CrossViewMaxConnectorsPerView != nil {
+		o.CrossViewMaxConnectorsPerView = int(overrides.GetCrossViewMaxConnectorsPerView())
+	}
+	if overrides.CrossViewMaxConnectorsPerElement != nil {
+		o.CrossViewMaxConnectorsPerElement = int(overrides.GetCrossViewMaxConnectorsPerElement())
+	}
 	if o.Grouping.MinRootGroups > o.Grouping.MaxRootGroups {
 		return o, fmt.Errorf("maximum root groups must be at least minimum root groups (including inherited defaults)")
 	}
@@ -73,15 +88,20 @@ func (o Options) WithOverrides(overrides *pb.RepositoryMapConfiguration) (Option
 // Configuration exposes every resolved value for inheritance-aware editors.
 func (o Options) Configuration() *pb.RepositoryMapConfiguration {
 	return &pb.RepositoryMapConfiguration{
-		Resolution:               proto.Float64(o.Grouping.Resolution),
-		MinGroupSize:             proto.Uint32(uint32(o.Grouping.MinGroupSize)),
-		MinRootGroups:            proto.Uint32(uint32(o.Grouping.MinRootGroups)),
-		MaxRootGroups:            proto.Uint32(uint32(o.Grouping.MaxRootGroups)),
-		MaxChildren:              proto.Uint32(uint32(o.Grouping.MaxChildren)),
-		MaxDepth:                 proto.Uint32(uint32(o.Grouping.MaxDepth)),
-		MaxLeafFiles:             proto.Uint32(uint32(o.Grouping.MaxLeafFiles)),
-		MaxConnectorsPerView:     proto.Uint32(uint32(o.MaxConnectorsPerView)),
-		MaxLeafConnectorsPerView: proto.Uint32(uint32(o.MaxLeafConnectorsPerView)),
-		IncludeExternalImports:   proto.Bool(o.IncludeExternalImports),
+		Resolution:                       proto.Float64(o.Grouping.Resolution),
+		MinGroupSize:                     proto.Uint32(uint32(o.Grouping.MinGroupSize)),
+		MinRootGroups:                    proto.Uint32(uint32(o.Grouping.MinRootGroups)),
+		MaxRootGroups:                    proto.Uint32(uint32(o.Grouping.MaxRootGroups)),
+		MaxChildren:                      proto.Uint32(uint32(o.Grouping.MaxChildren)),
+		MaxDepth:                         proto.Uint32(uint32(o.Grouping.MaxDepth)),
+		MaxLeafFiles:                     proto.Uint32(uint32(o.Grouping.MaxLeafFiles)),
+		MaxConnectorsPerView:             proto.Uint32(uint32(o.MaxConnectorsPerView)),
+		MaxLeafConnectorsPerView:         proto.Uint32(uint32(o.MaxLeafConnectorsPerView)),
+		IncludeExternalImports:           proto.Bool(o.IncludeExternalImports),
+		CrossViewConnectors:              proto.Bool(o.CrossViewConnectors),
+		CrossViewMaxViews:                proto.Uint32(uint32(o.CrossViewMaxViews)),
+		CrossViewMaxElementsPerView:      proto.Uint32(uint32(o.CrossViewMaxElementsPerView)),
+		CrossViewMaxConnectorsPerView:    proto.Uint32(uint32(o.CrossViewMaxConnectorsPerView)),
+		CrossViewMaxConnectorsPerElement: proto.Uint32(uint32(o.CrossViewMaxConnectorsPerElement)),
 	}
 }

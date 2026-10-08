@@ -44,7 +44,7 @@ vi.mock('../api/client', () => ({
       captureSnapshot: vi.fn(async (_repositoryId: string, _handlers?: { workingTree?: boolean; onProgress?: (progress: { stage: string; current: number; total: number; detail: string }) => void }) => ({
         id: 'snap-2', repositoryId: 'repo-1', createdUnix: 110, gitRevision: 'abc', gitBranch: 'main', provenance: 'manual', contentFingerprint: 'fp-2', ingestionStatus: 'complete', projects: [], warnings: [],
       })),
-      settings: vi.fn(async () => ({ mapDefaults: { resolution: 1, minGroupSize: 2, minRootGroups: 3, maxRootGroups: 20, maxChildren: 8, maxDepth: 4, maxLeafFiles: 40, maxConnectorsPerView: 40, maxLeafConnectorsPerView: 12 }, mapOverrides: {}, effectiveMap: {}, remotes: [], isGit: false, currentBranch: '', headSha: '' })),
+      settings: vi.fn(async () => ({ mapDefaults: { resolution: 1, minGroupSize: 2, minRootGroups: 3, maxRootGroups: 20, maxChildren: 8, maxDepth: 4, maxLeafFiles: 40, maxConnectorsPerView: 40, maxLeafConnectorsPerView: 12, crossViewConnectors: true, crossViewMaxViews: 8, crossViewMaxElementsPerView: 2, crossViewMaxConnectorsPerView: 8, crossViewMaxConnectorsPerElement: 8 }, mapOverrides: {}, effectiveMap: {}, remotes: [], isGit: false, currentBranch: '', headSha: '' })),
       updateMapConfiguration: vi.fn(),
       updateRemote: vi.fn(),
       maps: vi.fn(async () => []),

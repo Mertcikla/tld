@@ -124,6 +124,9 @@ func ApplyGroupMap(ctx context.Context, ws core.Store, idx IndexStore, input Gro
 	if err := m.materializeConnectors(); err != nil {
 		return m.result, err
 	}
+	if err := m.materializeCrossViewConnectors(); err != nil {
+		return m.result, err
+	}
 	if opts.IncludeExternalImports {
 		if err := m.materializeImports(rootViewID); err != nil {
 			return m.result, err
