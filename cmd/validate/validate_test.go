@@ -69,12 +69,48 @@ api-dup:
 		t.Errorf("stdout should include ARC204 duplicate-name warning, got:\n%s", stdout)
 	}
 
-	stdout, _, err = cmd.RunCmd(t, dir, "validate", "ARC204", "--strictness", "3")
+	// Requesting a rule explicitly runs it regardless of the configured or
+	// overridden strictness level.
+	for _, args := range [][]string{
+		{"validate", "ARC204"},
+		{"validate", "ARC204", "--strictness", "1"},
+	} {
+		stdout, _, err := cmd.RunCmd(t, dir, args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if !strings.Contains(stdout, "[ARC204]") || !strings.Contains(stdout, `"api-dup"`) {
+			t.Errorf("%v stdout should include ARC204 violations, got:\n%s", args, stdout)
+		}
+	}
+}
+
+func TestValidateCmd_RuleRequestOverridesExclude(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+
+	cfgDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", cfgDir)
+	if err := os.WriteFile(filepath.Join(cfgDir, "tld.global.yaml"), []byte("validation:\n  level: 3\n  exclude_rules: [ARC204]\n"), 0600); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(`
+api:
+  name: API
+  kind: service
+api-dup:
+  name: API
+  kind: service
+`), 0600); err != nil {
+		t.Fatalf("write elements: %v", err)
+	}
+
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "ARC204")
 	if err != nil {
 		t.Fatalf("validate ARC204: %v", err)
 	}
 	if !strings.Contains(stdout, "[ARC204]") || !strings.Contains(stdout, `"api-dup"`) {
-		t.Errorf("stdout should include ARC204 violations, got:\n%s", stdout)
+		t.Errorf("stdout should include ARC204 despite exclude list, got:\n%s", stdout)
 	}
 }
 

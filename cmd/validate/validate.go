@@ -23,6 +23,32 @@ var allWarningCodes = func() map[string]bool {
 
 var levelNames = map[int]string{1: "Minimal", 2: "Standard", 3: "Strict"}
 
+func normalizeRuleCode(code string) string {
+	return strings.ToUpper(strings.TrimSpace(code))
+}
+
+func knownRuleCodes() []string {
+	codes := make([]string, 0, len(allWarningCodes))
+	for code := range allWarningCodes {
+		codes = append(codes, code)
+	}
+	sort.Strings(codes)
+	return codes
+}
+
+func withoutRuleCode(codes []string, code string) []string {
+	if len(codes) == 0 {
+		return codes
+	}
+	filtered := make([]string, 0, len(codes))
+	for _, c := range codes {
+		if normalizeRuleCode(c) != code {
+			filtered = append(filtered, c)
+		}
+	}
+	return filtered
+}
+
 func NewValidateCmd(wdir *string) *cobra.Command {
 	var strictness int
 	var verbose bool
@@ -40,7 +66,8 @@ of architectural warnings grouped by rule code. Outdated diagrams are reported
 as warnings unless --strict is set.
 
 When called with a rule code (e.g. ARC002), shows only that rule's violations
-in full detail with individual element and connector information.`,
+in full detail with individual element and connector information. The requested
+rule runs regardless of the configured strictness level or exclude list.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ws, err := workspace.Load(*wdir)
@@ -52,6 +79,17 @@ in full detail with individual element and connector information.`,
 
 			if strictness > 0 {
 				ws.Config.Validation.Level = strictness
+			}
+
+			if len(args) == 1 {
+				code := normalizeRuleCode(args[0])
+				if !allWarningCodes[code] {
+					return fmt.Errorf("unknown rule code %q; known codes: %s", code, strings.Join(knownRuleCodes(), ", "))
+				}
+				// A directly requested rule runs regardless of the configured
+				// strictness level or exclude list.
+				ws.Config.Validation.IncludeRules = append(ws.Config.Validation.IncludeRules, code)
+				ws.Config.Validation.ExcludeRules = withoutRuleCode(ws.Config.Validation.ExcludeRules, code)
 			}
 
 			errs := ws.Validate()
@@ -216,14 +254,10 @@ func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings [
 }
 
 func printRuleViolations(cmd *cobra.Command, code string, warnings []archwarnings.WarningGroup) error {
-	code = strings.ToUpper(strings.TrimSpace(code))
+	code = normalizeRuleCode(code)
 
 	if !allWarningCodes[code] {
-		var known []string
-		for k := range allWarningCodes {
-			known = append(known, k)
-		}
-		return fmt.Errorf("unknown rule code %q; known codes: %s", code, strings.Join(known, ", "))
+		return fmt.Errorf("unknown rule code %q; known codes: %s", code, strings.Join(knownRuleCodes(), ", "))
 	}
 
 	for _, wg := range warnings {
