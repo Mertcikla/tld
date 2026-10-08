@@ -120,6 +120,127 @@ func TestAnalyze_TechnologyValidation(t *testing.T) {
 	}
 }
 
+func TestAnalyze_ARC204DuplicateNames(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"api":     {Name: "API", Kind: "service"},
+			"api-dup": {Name: "API", Kind: "service"},
+			"db":      {Name: "DB", Kind: "database"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	var found *warnings.WarningGroup
+	archWarnings := warnings.Analyze(ws)
+	for i := range archWarnings {
+		if archWarnings[i].RuleCode == "ARC204" {
+			found = &archWarnings[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected ARC204 warning, got %+v", archWarnings)
+	}
+	if len(found.Violations) != 1 || !strings.Contains(found.Violations[0], `"api-dup"`) {
+		t.Fatalf("unexpected ARC204 violations: %+v", found.Violations)
+	}
+}
+
+func TestAnalyze_ARC204HiddenBelowStrict(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"api":     {Name: "API", Kind: "service"},
+			"api-dup": {Name: "API", Kind: "service"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 2},
+		},
+	}
+
+	for _, warning := range warnings.Analyze(ws) {
+		if warning.RuleCode == "ARC204" {
+			t.Fatalf("expected ARC204 to be disabled below strict level, got %+v", warning)
+		}
+	}
+}
+
+func arc204Violations(t *testing.T, ws *workspace.Workspace) []string {
+	t.Helper()
+	for _, warning := range warnings.Analyze(ws) {
+		if warning.RuleCode == "ARC204" {
+			return warning.Violations
+		}
+	}
+	return nil
+}
+
+func TestAnalyze_ARC204IgnoresDistinctCodePaths(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"types-a": {Name: "types.ts", Kind: "file", RepositoryID: "repo", Repo: "github.com/acme/app", FilePath: "frontend/src/components/ViewExplorer/types.ts"},
+			"types-b": {Name: "types.ts", Kind: "file", RepositoryID: "repo", Repo: "github.com/acme/app", FilePath: "frontend/src/platform/types.ts"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	if violations := arc204Violations(t, ws); len(violations) != 0 {
+		t.Fatalf("expected distinct code paths to be exempt, got %+v", violations)
+	}
+}
+
+func TestAnalyze_ARC204FlagsSameCodePath(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"file":     {Name: "types.ts", Kind: "file", RepositoryID: "repo", FilePath: "frontend/src/types.ts"},
+			"file-dup": {Name: "types.ts", Kind: "file", RepositoryID: "repo", FilePath: "frontend/src/types.ts"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	violations := arc204Violations(t, ws)
+	if len(violations) != 1 || !strings.Contains(violations[0], `"file-dup"`) {
+		t.Fatalf("expected duplicate source location to be flagged, got %+v", violations)
+	}
+}
+
+func TestAnalyze_ARC204FlagsCodeBackedAgainstHandAuthored(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"types": {Name: "types.ts", Kind: "file", RepositoryID: "repo", FilePath: "frontend/src/types.ts"},
+			"doc":   {Name: "types.ts", Kind: "document"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	violations := arc204Violations(t, ws)
+	if len(violations) != 1 || !strings.Contains(violations[0], `"types"`) || !strings.Contains(violations[0], `"doc"`) {
+		t.Fatalf("expected hand-authored name to collide with code-backed element, got %+v", violations)
+	}
+}
+
+func TestAnalyze_ARC204SeparatesRepositoriesWithSamePath(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"repo-a": {Name: "main.go", Kind: "file", RepositoryID: "repo-a", FilePath: "cmd/main.go"},
+			"repo-b": {Name: "main.go", Kind: "file", RepositoryID: "repo-b", FilePath: "cmd/main.go"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	if violations := arc204Violations(t, ws); len(violations) != 0 {
+		t.Fatalf("expected elements in different repositories to be distinct, got %+v", violations)
+	}
+}
+
 func TestAnalyze_DeadEndDrilldownUsesOwnedViews(t *testing.T) {
 	ws := &workspace.Workspace{
 		Elements: map[string]*workspace.Element{

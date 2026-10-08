@@ -30,6 +30,7 @@ func TestRepositoryOverridesInheritAndValidate(t *testing.T) {
 		{Resolution: proto.Float64(0)}, {MaxDepth: proto.Uint32(0)},
 		{MinRootGroups: proto.Uint32(21)}, {MaxRootGroups: proto.Uint32(2)},
 		{MaxChildren: proto.Uint32(math.MaxUint32)},
+		{CrossViewMaxConnectorsPerView: proto.Uint32(0)},
 	} {
 		if _, err := defaults.WithOverrides(invalid); err == nil {
 			t.Fatalf("accepted invalid override: %v", invalid)
@@ -53,5 +54,35 @@ func TestRepositoryOverridesExternalImports(t *testing.T) {
 	off, err := defaults.WithOverrides(&pb.RepositoryMapConfiguration{IncludeExternalImports: proto.Bool(false)})
 	if err != nil || off.IncludeExternalImports {
 		t.Fatalf("explicit false override must be accepted: %+v %v", off, err)
+	}
+}
+
+func TestRepositoryOverridesCrossView(t *testing.T) {
+	defaults := mapconfig.FromGlobal(workspace.DefaultConfig())
+	if !defaults.CrossViewConnectors {
+		t.Fatal("cross-view connectors must default on")
+	}
+	if defaults.CrossViewMaxViews != 8 || defaults.CrossViewMaxConnectorsPerView != 8 {
+		t.Fatalf("cross-view defaults = %+v", defaults)
+	}
+	effective, err := defaults.WithOverrides(&pb.RepositoryMapConfiguration{
+		CrossViewConnectors:              proto.Bool(false),
+		CrossViewMaxViews:                proto.Uint32(3),
+		CrossViewMaxElementsPerView:      proto.Uint32(4),
+		CrossViewMaxConnectorsPerView:    proto.Uint32(5),
+		CrossViewMaxConnectorsPerElement: proto.Uint32(6),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.CrossViewConnectors || effective.CrossViewMaxViews != 3 || effective.CrossViewMaxElementsPerView != 4 || effective.CrossViewMaxConnectorsPerView != 5 || effective.CrossViewMaxConnectorsPerElement != 6 {
+		t.Fatalf("cross-view override = %+v", effective)
+	}
+	if defaults.CrossViewMaxConnectorsPerView != 8 {
+		t.Fatal("override mutated defaults")
+	}
+	config := effective.Configuration()
+	if config.GetCrossViewConnectors() || config.GetCrossViewMaxConnectorsPerView() != 5 {
+		t.Fatalf("configuration lost cross-view values: %+v", config)
 	}
 }

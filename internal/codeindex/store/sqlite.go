@@ -412,7 +412,7 @@ func (s *Store) Facts(ctx context.Context, snapshotID string, kind pb.FactKind, 
 		args = append(args, int(kind))
 	}
 	if pathPrefix != "" {
-		query += ` AND f.path LIKE ?`
+		query += ` AND f.path LIKE ? ESCAPE '!'`
 		args = append(args, escapeLike(pathPrefix)+"%")
 	}
 	if after != "" {
@@ -491,11 +491,13 @@ func (s *Store) EdgeVersions(ctx context.Context, logicalKey string) ([]*pb.Edge
 }
 
 func escapeLike(s string) string {
+	// Use an explicit escape character that does not depend on the dialect's
+	// handling of backslashes in SQL string literals or LIKE patterns.
 	out := make([]rune, 0, len(s))
 	for _, r := range s {
 		switch r {
-		case '%', '_', '\\':
-			out = append(out, '\\', r)
+		case '%', '_', '!':
+			out = append(out, '!', r)
 		default:
 			out = append(out, r)
 		}

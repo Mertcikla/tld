@@ -74,55 +74,54 @@ func (s *Store) ConnectorByID(ctx context.Context, id int64) (Connector, error) 
 }
 
 func (s *Store) UpdateConnector(ctx context.Context, id int64, patch Connector) (Connector, error) {
-	var row connectorModel
-	if err := s.bun.NewSelect().Model(&row).Where("id = ?", id).Scan(ctx); err != nil {
-		return Connector{}, err
-	}
 	if patch.Tags != nil {
 		if err := s.ensureTagColors(ctx, patch.Tags); err != nil {
 			return Connector{}, err
 		}
-		row.Tags = jsonString(patch.Tags, "[]")
+	}
+	var row connectorModel
+	q := s.bun.NewUpdate().
+		Model(&row).
+		Where("id = ?", id).
+		Set("updated_at = ?", nowString()).
+		Returning("*")
+	if patch.Tags != nil {
+		q = q.Set("tags = ?", jsonString(patch.Tags, "[]"))
 	}
 	if patch.ViewID != 0 {
-		row.ViewID = patch.ViewID
+		q = q.Set("view_id = ?", patch.ViewID)
 	}
 	if patch.SourceElementID != 0 {
-		row.SourceElementID = patch.SourceElementID
+		q = q.Set("source_element_id = ?", patch.SourceElementID)
 	}
 	if patch.TargetElementID != 0 {
-		row.TargetElementID = patch.TargetElementID
+		q = q.Set("target_element_id = ?", patch.TargetElementID)
 	}
 	if patch.Label != nil {
-		row.Label = patch.Label
+		q = q.Set("label = ?", patch.Label)
 	}
 	if patch.Description != nil {
-		row.Description = patch.Description
+		q = q.Set("description = ?", patch.Description)
 	}
 	if patch.Relationship != nil {
-		row.Relationship = patch.Relationship
+		q = q.Set("relationship = ?", patch.Relationship)
 	}
 	if patch.Direction != "" {
-		row.Direction = patch.Direction
+		q = q.Set("direction = ?", patch.Direction)
 	}
 	if patch.Style != "" {
-		row.Style = patch.Style
+		q = q.Set("style = ?", patch.Style)
 	}
 	if patch.URL != nil {
-		row.URL = patch.URL
+		q = q.Set("url = ?", patch.URL)
 	}
 	if patch.SourceHandle != nil {
-		row.SourceHandle = patch.SourceHandle
+		q = q.Set("source_handle = ?", patch.SourceHandle)
 	}
 	if patch.TargetHandle != nil {
-		row.TargetHandle = patch.TargetHandle
+		q = q.Set("target_handle = ?", patch.TargetHandle)
 	}
-	row.UpdatedAt = nowString()
-	if err := s.bun.NewUpdate().
-		Model(&row).
-		WherePK().
-		Returning("*").
-		Scan(ctx); err != nil {
+	if err := q.Scan(ctx); err != nil {
 		return Connector{}, err
 	}
 	return connectorFromModel(row), nil

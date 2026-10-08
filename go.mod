@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	buf.build/gen/go/tldiagramcom/diagram/connectrpc/go v1.21.0-20261007050104-c5e36afe7aa9.1
-	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261007050104-c5e36afe7aa9.2
+	buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go v1.36.12-20261008104353-aec6f40e0d46.2
 	connectrpc.com/connect v1.21.0
 	github.com/bmatcuk/doublestar/v4 v4.6.1
 	github.com/cespare/xxhash/v2 v2.3.0

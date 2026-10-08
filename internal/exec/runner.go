@@ -21,6 +21,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 const (
@@ -446,10 +447,10 @@ func (r *remoteRunner) ApplyPlan(ctx context.Context, req *diagv1.ApplyPlanReque
 // ---------- local runner ----------
 
 type localRunner struct {
-	sqliteStore *store.SQLiteStore
-	adapter     *store.APIAdapter
-	dbPath      string
-	dataDir     string
+	appStore *app.Store
+	adapter  *store.APIAdapter
+	dbPath   string
+	dataDir  string
 }
 
 func newLocalRunner(cfg *workspace.Config, dataDir string) (*localRunner, error) {
@@ -457,15 +458,15 @@ func newLocalRunner(cfg *workspace.Config, dataDir string) (*localRunner, error)
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
-	sqliteStore, err := store.OpenLocal(context.Background(), cfg, dataDir, assets.FS)
+	appStore, err := store.OpenLocal(context.Background(), cfg, dataDir, assets.FS)
 	if err != nil {
 		return nil, err
 	}
 	return &localRunner{
-		sqliteStore: sqliteStore,
-		adapter:     store.NewAPIAdapter(sqliteStore),
-		dbPath:      dbPath,
-		dataDir:     dataDir,
+		appStore: appStore,
+		adapter:  store.NewAPIAdapter(appStore),
+		dbPath:   dbPath,
+		dataDir:  dataDir,
 	}, nil
 }
 
@@ -473,8 +474,8 @@ func (r *localRunner) Name() string        { return TargetLocal }
 func (r *localRunner) TargetLabel() string { return r.dbPath }
 func (r *localRunner) DataDir() string     { return r.dataDir }
 func (r *localRunner) Close() error {
-	if r.sqliteStore != nil {
-		return r.sqliteStore.Legacy().Close()
+	if r.appStore != nil {
+		return r.appStore.Close()
 	}
 	return nil
 }

@@ -20,7 +20,7 @@ jobs:
           persist-credentials: false
           path: repository
       - name: tld PR diagram
-        uses: Mertcikla/tld@v2.4.0
+        uses: Mertcikla/tld@v2.4.1
         env:
           TLD_PR_MAX_ELEMENTS: ${{ vars.TLD_PR_MAX_ELEMENTS || '80' }}
           TLD_PR_MAX_CONNECTORS: ${{ vars.TLD_PR_MAX_CONNECTORS || '160' }}

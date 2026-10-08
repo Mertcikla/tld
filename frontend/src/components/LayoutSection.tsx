@@ -13,6 +13,7 @@ import {
   NumberInputField,
   NumberInputStepper,
   Select,
+  Switch,
   Text,
   VStack,
   Icon,
@@ -23,6 +24,7 @@ import { api } from '../api/client'
 import type { Connector, ViewTreeNode } from '../types'
 import ConfirmDialog from './ConfirmDialog'
 import { removeCollisions } from '../utils/layout'
+import { useViewEditorContext } from '../pages/ViewEditor/context'
 
 type Algorithm = 'dagre' | 'force'
 
@@ -55,7 +57,8 @@ interface Props {
 }
 
 export default function LayoutSection({ view, canEdit, onUnsupportedMutation, onConnectorSaved }: Props) {
-  const [open, setOpen] = useState(false)
+  const { autoLayoutMode, setAutoLayoutMode } = useViewEditorContext()
+  const [open, setOpen] = useState(true)
   const [algo, setAlgo] = useState<Algorithm>('dagre')
   const [running, setRunning] = useState(false)
   const [collisionRunning, setCollisionRunning] = useState(false)
@@ -288,6 +291,31 @@ export default function LayoutSection({ view, canEdit, onUnsupportedMutation, on
 
       <Collapse in={open} animateOpacity>
         <VStack pb={5} spacing={5} align="stretch">
+
+          {/* Auto layout on add */}
+          <HStack
+            justify="space-between"
+            align="center"
+            p={3}
+            bg="whiteAlpha.50"
+            borderRadius="xl"
+            border="1px solid"
+            borderColor="whiteAlpha.100"
+          >
+            <Box pr={3}>
+              <Text fontSize="xs" fontWeight="semibold" color="whiteAlpha.800">
+                Auto Layout
+              </Text>
+            </Box>
+            <Switch
+              data-testid="vieweditor-auto-layout-toggle"
+              isChecked={autoLayoutMode}
+              onChange={(e) => setAutoLayoutMode(e.target.checked)}
+              colorScheme="purple"
+              size="sm"
+              flexShrink={0}
+            />
+          </HStack>
 
           {/* Algorithm segmented control */}
           <Box p={1} bg="whiteAlpha.50" borderRadius="xl">

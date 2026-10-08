@@ -44,7 +44,7 @@ func TestValidateCmd_InvalidWorkspace(t *testing.T) {
 	}
 }
 
-func TestValidateCmd_DuplicateNamesAreWarnings(t *testing.T) {
+func TestValidateCmd_DuplicateNamesAreARC204(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(`
@@ -58,12 +58,59 @@ api-dup:
 		t.Fatalf("write elements: %v", err)
 	}
 
-	stdout, stderr, err := cmd.RunCmd(t, dir, "validate")
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "--strictness", "3")
 	if err != nil {
-		t.Fatalf("validate should treat duplicate names as warnings: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+		t.Fatalf("validate: %v", err)
 	}
-	if !strings.Contains(stdout, "Workspace valid") || !strings.Contains(stdout, "Validation warnings") || !strings.Contains(stdout, "duplicate element name") {
-		t.Fatalf("stdout should include valid summary and duplicate warning, got:\n%s", stdout)
+	if !strings.Contains(stdout, "Workspace valid") {
+		t.Errorf("stdout should include valid summary, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "ARC204") || !strings.Contains(stdout, "Duplicate Name") {
+		t.Errorf("stdout should include ARC204 duplicate-name warning, got:\n%s", stdout)
+	}
+
+	// Requesting a rule explicitly runs it regardless of the configured or
+	// overridden strictness level.
+	for _, args := range [][]string{
+		{"validate", "ARC204"},
+		{"validate", "ARC204", "--strictness", "1"},
+	} {
+		stdout, _, err := cmd.RunCmd(t, dir, args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		if !strings.Contains(stdout, "[ARC204]") || !strings.Contains(stdout, `"api-dup"`) {
+			t.Errorf("%v stdout should include ARC204 violations, got:\n%s", args, stdout)
+		}
+	}
+}
+
+func TestValidateCmd_RuleRequestOverridesExclude(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+
+	cfgDir := t.TempDir()
+	t.Setenv("TLD_CONFIG_DIR", cfgDir)
+	if err := os.WriteFile(filepath.Join(cfgDir, "tld.global.yaml"), []byte("validation:\n  level: 3\n  exclude_rules: [ARC204]\n"), 0600); err != nil {
+		t.Fatalf("write global config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(`
+api:
+  name: API
+  kind: service
+api-dup:
+  name: API
+  kind: service
+`), 0600); err != nil {
+		t.Fatalf("write elements: %v", err)
+	}
+
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "ARC204")
+	if err != nil {
+		t.Fatalf("validate ARC204: %v", err)
+	}
+	if !strings.Contains(stdout, "[ARC204]") || !strings.Contains(stdout, `"api-dup"`) {
+		t.Errorf("stdout should include ARC204 despite exclude list, got:\n%s", stdout)
 	}
 }
 
@@ -93,6 +140,9 @@ func TestValidateCmd_RuleCodeWithViolations(t *testing.T) {
 	if !strings.Contains(stdout, "How to fix:") {
 		t.Errorf("stdout %q does not contain 'How to fix:'", stdout)
 	}
+	if strings.Contains(stdout, "Workspace valid") || strings.Contains(stdout, "Architectural Warnings") {
+		t.Errorf("stdout %q should only contain the requested rule output", stdout)
+	}
 }
 
 func TestValidateCmd_RuleCodeNoViolations(t *testing.T) {
@@ -121,6 +171,26 @@ func TestValidateCmd_UnknownRuleCode(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown rule code") {
 		t.Errorf("error %q does not contain 'unknown rule code'", err)
+	}
+}
+
+func TestValidateCmd_RulesListsByLevel(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "rules")
+	if err != nil {
+		t.Fatalf("validate rules: %v", err)
+	}
+	for _, want := range []string{
+		"Level 1 (Minimal)", "Level 2 (Standard)", "Level 3 (Strict)",
+		"ARC001", "High Density",
+		"ARC102", "Missing Tech",
+		"ARC203", "Missing Label",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout %q does not contain %q", stdout, want)
+		}
 	}
 }
 

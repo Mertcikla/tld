@@ -28,7 +28,6 @@ import (
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/codeindex/tools"
 	"github.com/mertcikla/tld/v2/internal/repolink"
-	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/app"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -40,7 +39,7 @@ import (
 type repositoryService struct {
 	codeindexv1connect.UnimplementedRepositoryServiceHandler
 	store      *cstore.Store
-	ws         *store.SQLiteStore
+	ws         *app.Store
 	dataDir    string
 	config     *workspace.Config
 	watches    *watchManager
@@ -434,7 +433,7 @@ func (s *repositoryService) deleteMaterializedResources(ctx context.Context, rep
 type codeIndexService struct {
 	codeindexv1connect.UnimplementedCodeIndexServiceHandler
 	store  *cstore.Store
-	ws     *store.SQLiteStore
+	ws     *app.Store
 	config *workspace.Config
 
 	mu      sync.Mutex
@@ -569,13 +568,13 @@ const defaultPageSize = 200
 
 // registerCodeIndexHandlers wires the RepositoryService and CodeIndexService
 // and returns the watcher manager so the server can stop watchers on shutdown.
-func registerCodeIndexHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore, dataDir string, selfHosted bool, configs ...*workspace.Config) *watchManager {
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+func registerCodeIndexHandlers(mux *http.ServeMux, appStore *app.Store, dataDir string, selfHosted bool, configs ...*workspace.Config) *watchManager {
+	idx := cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 	_ = idx.BackfillRemoteKeys(context.Background())
 	manager := newWatchManager(dataDir, idx)
 
-	repoSvc := &repositoryService{store: idx, ws: sqliteStore, dataDir: dataDir, watches: manager, selfHosted: selfHosted}
-	factSvc := &codeIndexService{store: idx, ws: sqliteStore, running: map[string]string{}}
+	repoSvc := &repositoryService{store: idx, ws: appStore, dataDir: dataDir, watches: manager, selfHosted: selfHosted}
+	factSvc := &codeIndexService{store: idx, ws: appStore, running: map[string]string{}}
 	if len(configs) > 0 {
 		repoSvc.config = configs[0]
 		factSvc.config = configs[0]

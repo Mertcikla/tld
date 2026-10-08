@@ -205,6 +205,7 @@ func Run(ctx context.Context, deps Deps, req Request, progress ProgressFunc) (*c
 	params["folder_coverage"] = strconv.FormatFloat(grouping.Metrics.FolderCoverage, 'g', -1, 64)
 	params["max_connectors_per_view"] = strconv.Itoa(deps.Options.MaxConnectorsPerView)
 	params["max_leaf_connectors_per_view"] = strconv.Itoa(deps.Options.MaxLeafConnectorsPerView)
+	params["cross_view_connectors"] = strconv.FormatBool(deps.Options.CrossViewConnectors)
 	if err := deps.Codeindex.SaveAnalysis(ctx, cstore.AnalysisRun{
 		ID:           runID,
 		RepositoryID: repositoryID,

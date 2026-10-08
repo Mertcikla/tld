@@ -368,12 +368,24 @@ func TestGlobalConfigMapSettingsRoundTripAndEnv(t *testing.T) {
 	if err := workspace.SetGlobalConfigValue("map.budget.max_leaf_connectors_per_view", "7"); err != nil {
 		t.Fatalf("set budget: %v", err)
 	}
+	if err := workspace.SetGlobalConfigValue("map.cross_view.connectors", "false"); err != nil {
+		t.Fatalf("set cross view connectors: %v", err)
+	}
+	if err := workspace.SetGlobalConfigValue("map.cross_view.max_connectors_per_view", "5"); err != nil {
+		t.Fatalf("set cross view max per view: %v", err)
+	}
 	cfg, err := workspace.LoadGlobalConfig()
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
 	if cfg.Map.Grouping.Resolution != 1.5 || cfg.Map.Budget.MaxLeafConnectorsPerView != 7 {
 		t.Fatalf("map config = %+v", cfg.Map)
+	}
+	if cfg.Map.CrossView.Connectors == nil || *cfg.Map.CrossView.Connectors {
+		t.Fatalf("cross view connectors = %v, want false", cfg.Map.CrossView.Connectors)
+	}
+	if cfg.Map.CrossView.MaxConnectorsPerView != 5 || cfg.Map.CrossView.MaxViews != 8 || cfg.Map.CrossView.MaxConnectorsPerElement != 8 {
+		t.Fatalf("cross view config = %+v", cfg.Map.CrossView)
 	}
 	if cfg.Map.Grouping.MaxRootGroups != 20 || cfg.Map.Grouping.MaxDepth != 4 {
 		t.Fatalf("unset map keys lost defaults: %+v", cfg.Map.Grouping)

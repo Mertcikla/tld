@@ -124,6 +124,8 @@ import {
 import { useViewEditHistory } from './hooks/useViewEditHistory'
 import { useOverlapDetection } from './hooks/useOverlapDetection'
 import { removeCollisions } from '../../utils/layout'
+import { AUTO_LAYOUT_GRID, findAutoPlacementPosition, nodeRect, planIncrementalLayout, type IncrementalEdge } from '../../utils/autoLayout'
+import { chooseConnectorHandles } from '../../utils/connectorHandles'
 import { connectorToConnector, findClosestHandles, sanitizeExportFilename, triggerBlobDownload, triggerDownload } from './utils'
 import { DEFAULT_SOURCE_HANDLE_SIDE, DEFAULT_TARGET_HANDLE_SIDE, getCenterVisualHandleId, getLogicalHandleId, getOppositeHandleSide } from '../../utils/edgeDistribution'
 import { pickUnusedColor } from '../../components/ViewExplorer/utils'
@@ -800,6 +802,8 @@ function ViewEditorInner({
   const setViewEditorUi = useStore((state) => state.setViewEditorUi)
   const snapToGrid = useStore((state) => state.snapToGrid)
   const setStoreSnapToGrid = useStore((state) => state.setSnapToGrid)
+  const autoLayoutMode = useStore((state) => state.autoLayoutMode)
+  const setStoreAutoLayoutMode = useStore((state) => state.setAutoLayoutMode)
   const upsertStoreConnector = useStore((state) => state.upsertConnector)
   const removeStoreConnector = useStore((state) => state.removeConnector)
   const updateStoreElementPosition = useStore((state) => state.updateElementPosition)
@@ -810,10 +814,16 @@ function ViewEditorInner({
     if (typeof window !== 'undefined') localStorage.setItem('diag:snapToGrid', String(snap))
   }, [setStoreSnapToGrid])
 
+  const setAutoLayoutMode = useCallback((enabled: boolean) => {
+    setStoreAutoLayoutMode(enabled)
+    if (typeof window !== 'undefined') localStorage.setItem('diag:autoLayoutMode', String(enabled))
+  }, [setStoreAutoLayoutMode])
+
   useEffect(() => {
     if (typeof window === 'undefined') return
     setStoreSnapToGrid(localStorage.getItem('diag:snapToGrid') === 'true')
-  }, [setStoreSnapToGrid])
+    setStoreAutoLayoutMode(localStorage.getItem('diag:autoLayoutMode') === 'true')
+  }, [setStoreSnapToGrid, setStoreAutoLayoutMode])
 
   useEffect(() => {
     setViewEditorUi({
@@ -822,12 +832,14 @@ function ViewEditorInner({
       isOwner,
       isFreePlan,
       snapToGrid,
+      autoLayoutMode,
       selectedElement,
       selectedConnector: selectedEdge,
     })
-  }, [canEdit, isFreePlan, isOwner, selectedEdge, selectedElement, setViewEditorUi, snapToGrid, viewId])
+  }, [canEdit, isFreePlan, isOwner, selectedEdge, selectedElement, setViewEditorUi, snapToGrid, autoLayoutMode, viewId])
 
   useEffect(() => { localStorage.setItem('diag:snapToGrid', String(snapToGrid)) }, [snapToGrid])
+  useEffect(() => { localStorage.setItem('diag:autoLayoutMode', String(autoLayoutMode)) }, [autoLayoutMode])
   const [, setHoveredZoom] = useState<{ elementId: number | null; type: 'in' | 'out' | null } | null>(null)
   const hoveredZoomRef = useRef<{ elementId: number | null; type: 'in' | 'out' | null } | null>(null)
   const hoverPanLockedUntilRef = useRef(0)
@@ -2784,6 +2796,7 @@ function ViewEditorInner({
     toggleMarkdown: handleToggleMarkdown,
     onFitView: safeFitView,
     setSnapToGrid,
+    autoLayoutEnabled: autoLayoutMode,
   })
 
   // Wire stable placeholders to the real implementations from canvas hook
@@ -3745,11 +3758,21 @@ function ViewEditorInner({
   }, [canEdit, showAddingElementAt, lastMousePosRef])
   handleCreateNewLibraryRef.current = () => handleAddElementAtCenter(true)
 
+  const resolveAutoAddPosition = useCallback((flowX: number, flowY: number) => {
+    const fallback = { x: flowX - 100, y: flowY - 40 }
+    if (!autoLayoutMode) return fallback
+    const obstacles = rfNodesRef.current
+      .filter((node) => node.type === 'elementNode' && parseNumericId(node.id) !== null)
+      .map((node) => nodeRect(node))
+    return findAutoPlacementPosition({ obstacles, fallback, grid: { x: AUTO_LAYOUT_GRID[0], y: AUTO_LAYOUT_GRID[1] } })
+  }, [autoLayoutMode, rfNodesRef])
+
   const handleTapAdd = useCallback(async (obj: WorkspaceElement) => {
     if (!canEdit || !viewId || existingElementIds.has(obj.id)) return
     const pos = screenToFlowPositionRef.current({ x: window.innerWidth / 2, y: window.innerHeight / 2 })
-    try { await api.workspace.views.placements.add(viewId, obj.id, pos.x - 100, pos.y - 40); await refreshElements() } catch { /* intentionally empty */ }
-  }, [canEdit, viewId, existingElementIds, refreshElements])
+    const placement = resolveAutoAddPosition(pos.x, pos.y)
+    try { await api.workspace.views.placements.add(viewId, obj.id, placement.x, placement.y); await refreshElements() } catch { /* intentionally empty */ }
+  }, [canEdit, viewId, existingElementIds, refreshElements, resolveAutoAddPosition])
 
   const handleTouchDrop = useCallback(async (obj: WorkspaceElement, clientX: number, clientY: number) => {
     if (!canEdit || !viewId || existingElementIds.has(obj.id)) return
@@ -3757,8 +3780,9 @@ function ViewEditorInner({
     const bounds = container.getBoundingClientRect()
     if (clientX < bounds.left || clientX > bounds.right || clientY < bounds.top || clientY > bounds.bottom) return
     const pos = screenToFlowPositionRef.current({ x: clientX, y: clientY })
-    try { await api.workspace.views.placements.add(viewId, obj.id, pos.x - 100, pos.y - 40); await refreshElements() } catch { /* intentionally empty */ }
-  }, [canEdit, viewId, existingElementIds, refreshElements])
+    const placement = resolveAutoAddPosition(pos.x, pos.y)
+    try { await api.workspace.views.placements.add(viewId, obj.id, placement.x, placement.y); await refreshElements() } catch { /* intentionally empty */ }
+  }, [canEdit, viewId, existingElementIds, refreshElements, resolveAutoAddPosition])
 
   const handleFindElement = useCallback((elementId: number) => {
     const node = rfNodesRef.current.find((n) => (n.data as PlacedElement).element_id === elementId)
@@ -3960,8 +3984,35 @@ function ViewEditorInner({
       })
 
       const targetElementIdsBySourceId = mapViewSelectionElementIds(payload, duplicatedElementIdsBySourceId)
-      const placementPlan = planViewSelectionPastePlacements(payload, targetElementIdsBySourceId, pasteCenter)
-      const connectorPlan = planViewSelectionPasteConnectors(payload, targetElementIdsBySourceId)
+      let placementPlan = planViewSelectionPastePlacements(payload, targetElementIdsBySourceId, pasteCenter)
+      let connectorPlan = planViewSelectionPasteConnectors(payload, targetElementIdsBySourceId)
+
+      if (autoLayoutMode) {
+        const obstacles = rfNodesRef.current
+          .filter((node) => node.type === 'elementNode' && parseNumericId(node.id) !== null)
+          .map((node) => nodeRect(node))
+        const edges: IncrementalEdge[] = connectorPlan.map((connector) => ({
+          source: connector.sourceElementId,
+          target: connector.targetElementId,
+          side: getLogicalHandleId(connector.source_handle, DEFAULT_SOURCE_HANDLE_SIDE) ?? DEFAULT_SOURCE_HANDLE_SIDE,
+        }))
+        const positions = planIncrementalLayout(
+          placementPlan.map((placement) => placement.elementId),
+          edges,
+          { center: pasteCenter, obstacles, grid: { x: AUTO_LAYOUT_GRID[0], y: AUTO_LAYOUT_GRID[1] } },
+        )
+        placementPlan = placementPlan.map((placement) => {
+          const position = positions.get(placement.elementId)
+          return position ? { ...placement, x: position.x, y: position.y } : placement
+        })
+        connectorPlan = connectorPlan.map((connector) => {
+          const source = positions.get(connector.sourceElementId)
+          const target = positions.get(connector.targetElementId)
+          if (!source || !target) return connector
+          const handles = chooseConnectorHandles(source, target)
+          return { ...connector, source_handle: handles.source, target_handle: handles.target }
+        })
+      }
 
       await Promise.all(placementPlan.map((placement) =>
         api.workspace.views.placements.add(targetViewId, placement.elementId, placement.x, placement.y)
@@ -4000,7 +4051,7 @@ function ViewEditorInner({
       isPasteImportingRef.current = false
       setIsClipboardPasting(false)
     }
-  }, [canEdit, publishRealtimeConnectorUpsert, refreshElements, toast])
+  }, [canEdit, publishRealtimeConnectorUpsert, refreshElements, toast, autoLayoutMode, rfNodesRef])
 
   const handleCopyCutViewSelection = useCallback((event: ClipboardEvent) => {
     if (isEditableKeyboardTarget(event.target) || !isCanvasKeyboardTarget(event.target) || drawingMode || textEditorState || pendingElement) return
@@ -4205,6 +4256,7 @@ function ViewEditorInner({
   return (
     <ViewEditorContext.Provider value={{
       viewId, canEdit, isOwner, isFreePlan, snapToGrid, setSnapToGrid,
+      autoLayoutMode, setAutoLayoutMode,
       selectedElement, selectedConnector: selectedEdge,
       isMarkdownOpen, markdownPaneWidth
     }}>
@@ -4349,8 +4401,8 @@ function ViewEditorInner({
                 nodeTypes={nodeTypesMemo} edgeTypes={edgeTypesMemo}
                 nodesDraggable={canEdit} connectionMode={ConnectionMode.Loose} connectionRadius={25}
                 edgesUpdatable={canEdit} reconnectRadius={0}
-                snapToGrid={snapToGrid}
-                snapGrid={SNAP_GRID}
+                snapToGrid={snapToGrid || autoLayoutMode}
+                snapGrid={autoLayoutMode ? AUTO_LAYOUT_GRID : SNAP_GRID}
                 deleteKeyCode={null}
                 connectOnClick={false}
                 onlyRenderVisibleElements

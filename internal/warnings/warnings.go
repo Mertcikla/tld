@@ -2,6 +2,7 @@ package warnings
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/mertcikla/tld/v2/internal/tech"
@@ -272,6 +273,99 @@ var warningRules = []warningRule{
 			}
 		},
 	},
+	{
+		Code:        "ARC204",
+		Name:        "Duplicate Name",
+		Description: "Multiple elements share the same display name",
+		Mediation:   "Rename elements so each display name is unique and unambiguous.",
+		Level:       3,
+		Check: func(ctx *warningContext, rule warningRule) {
+			type nameGroup struct {
+				plain     []string
+				qualified map[string][]string
+			}
+			groups := map[string]*nameGroup{}
+			for ref, element := range ctx.ws.Elements {
+				if element == nil || strings.TrimSpace(element.Name) == "" {
+					continue
+				}
+				group := groups[element.Name]
+				if group == nil {
+					group = &nameGroup{qualified: map[string][]string{}}
+					groups[element.Name] = group
+				}
+				if identity := elementCodeIdentity(element); identity != "" {
+					group.qualified[identity] = append(group.qualified[identity], ref)
+				} else {
+					group.plain = append(group.plain, ref)
+				}
+			}
+			names := make([]string, 0, len(groups))
+			for name := range groups {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				group := groups[name]
+				if len(group.plain) > 0 {
+					// A hand-authored name is ambiguous with everything else
+					// that shares it, code-backed or not.
+					sort.Strings(group.plain)
+					firstRef := group.plain[0]
+					for _, ref := range group.plain[1:] {
+						ctx.addWarning(rule.Code, fmt.Sprintf("Element %q (Name: %q, also used by %q)", ref, name, firstRef))
+					}
+					var qualifiedRefs []string
+					for _, refs := range group.qualified {
+						qualifiedRefs = append(qualifiedRefs, refs...)
+					}
+					sort.Strings(qualifiedRefs)
+					for _, ref := range qualifiedRefs {
+						ctx.addWarning(rule.Code, fmt.Sprintf("Element %q (Name: %q, also used by %q)", ref, name, firstRef))
+					}
+					continue
+				}
+				// Code-backed elements sharing a display name are only
+				// duplicates when they resolve to the same source location.
+				identities := make([]string, 0, len(group.qualified))
+				for identity := range group.qualified {
+					identities = append(identities, identity)
+				}
+				sort.Strings(identities)
+				for _, identity := range identities {
+					refs := group.qualified[identity]
+					if len(refs) < 2 {
+						continue
+					}
+					sort.Strings(refs)
+					firstRef := refs[0]
+					for _, ref := range refs[1:] {
+						ctx.addWarning(rule.Code, fmt.Sprintf("Element %q (Name: %q, also used by %q)", ref, name, firstRef))
+					}
+				}
+			}
+		},
+	},
+}
+
+// elementCodeIdentity returns the stable source location of a code-backed
+// element. The mapping pipeline names file elements by basename while keeping
+// the full path on file_path, so repeated file names are intentional and only
+// collide when they resolve to the same repository, branch and path.
+// Hand-authored elements return "" and remain in the duplicate-name scope.
+func elementCodeIdentity(element *workspace.Element) string {
+	if element == nil {
+		return ""
+	}
+	path := strings.TrimSpace(element.FilePath)
+	if path == "" {
+		return ""
+	}
+	repo := strings.TrimSpace(element.RepositoryID)
+	if repo == "" {
+		repo = strings.TrimSpace(element.Repo)
+	}
+	return repo + "\x00" + strings.TrimSpace(element.Branch) + "\x00" + path
 }
 
 func (ctx *warningContext) isSingleSystemRootContext() bool {
@@ -316,6 +410,31 @@ type warningContext struct {
 	elementViews    map[string]map[string]int
 	viewConnectors  map[string]int
 	maxDepth        int
+}
+
+// Rule describes the static metadata for an architectural warning rule.
+type Rule struct {
+	Code        string
+	Name        string
+	Description string
+	Mediation   string
+	Level       int
+}
+
+// Rules returns the metadata for every architectural warning rule in
+// declaration order.
+func Rules() []Rule {
+	rules := make([]Rule, 0, len(warningRules))
+	for _, r := range warningRules {
+		rules = append(rules, Rule{
+			Code:        r.Code,
+			Name:        r.Name,
+			Description: r.Description,
+			Mediation:   r.Mediation,
+			Level:       r.Level,
+		})
+	}
+	return rules
 }
 
 // Analyze evaluates the workspace against architectural best practices and

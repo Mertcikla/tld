@@ -106,12 +106,12 @@ them. Use --force to skip the prompt.`,
 				if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 					return fmt.Errorf("create data dir: %w", err)
 				}
-				sqliteStore, err := store.Open(dbPath, assets.FS)
+				appStore, err := store.Open(dbPath, assets.FS)
 				if err != nil {
 					return err
 				}
-				defer func() { _ = sqliteStore.Legacy().Close() }()
-				adapter := store.NewAPIAdapter(sqliteStore)
+				defer func() { _ = appStore.Close() }()
+				adapter := store.NewAPIAdapter(appStore)
 				exportResp, err = exportLocalWorkspace(cmd.Context(), adapter)
 				if err != nil {
 					return fmt.Errorf("pull local failed: %w", err)

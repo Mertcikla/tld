@@ -96,7 +96,7 @@ func TestTransactionIsolatesConcurrentRequest(t *testing.T) {
 			if len(elements) != want || elements[0].Name != "independent" {
 				t.Fatalf("elements after transaction = %v, want %d including independent request", elements, want)
 			}
-			tags, err := store.Legacy().Tags(ctx)
+			tags, err := store.Tags(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

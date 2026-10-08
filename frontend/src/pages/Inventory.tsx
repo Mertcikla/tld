@@ -523,6 +523,8 @@ export default function Inventory() {
     isFreePlan: false,
     snapToGrid: false,
     setSnapToGrid: () => undefined,
+    autoLayoutMode: false,
+    setAutoLayoutMode: () => undefined,
     selectedElement: editing?.element ?? selectedRow?.element ?? null,
     selectedConnector: editing?.connector ?? selectedRow?.connector ?? null,
   }), [editing, selectedRow])

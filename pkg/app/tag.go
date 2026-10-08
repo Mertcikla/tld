@@ -104,34 +104,30 @@ func (s *Store) LayerByID(ctx context.Context, id int64) (ViewLayer, error) {
 }
 
 func (s *Store) UpdateLayer(ctx context.Context, id int64, patch ViewLayer) (ViewLayer, error) {
-	current, err := s.LayerByID(ctx, id)
-	if err != nil {
-		return ViewLayer{}, err
+	if patch.Tags != nil {
+		if err := s.ensureTagColors(ctx, patch.Tags); err != nil {
+			return ViewLayer{}, err
+		}
 	}
-	if patch.Name == "" {
-		patch.Name = current.Name
-	}
-	if patch.Tags == nil {
-		patch.Tags = current.Tags
-	}
-	if err := s.ensureTagColors(ctx, patch.Tags); err != nil {
-		return ViewLayer{}, err
-	}
-	if patch.Color == nil {
-		patch.Color = current.Color
-	}
-	_, err = s.bun.NewUpdate().
-		Model((*viewLayerModel)(nil)).
-		Set("name = ?", patch.Name).
-		Set("tags = ?", jsonString(patch.Tags, "[]")).
-		Set("color = ?", patch.Color).
-		Set("updated_at = ?", nowString()).
+	var row viewLayerModel
+	q := s.bun.NewUpdate().
+		Model(&row).
 		Where("id = ?", id).
-		Exec(ctx)
-	if err != nil {
+		Set("updated_at = ?", nowString()).
+		Returning("*")
+	if patch.Name != "" {
+		q = q.Set("name = ?", patch.Name)
+	}
+	if patch.Tags != nil {
+		q = q.Set("tags = ?", jsonString(patch.Tags, "[]"))
+	}
+	if patch.Color != nil {
+		q = q.Set("color = ?", patch.Color)
+	}
+	if err := q.Scan(ctx); err != nil {
 		return ViewLayer{}, err
 	}
-	return s.LayerByID(ctx, id)
+	return viewLayerFromModel(row), nil
 }
 
 func (s *Store) DeleteLayer(ctx context.Context, id int64) error {

@@ -138,12 +138,12 @@ func toolText(result *mcpsdk.CallToolResult) string {
 
 func openMCPTestDB(t *testing.T, dataDir string) *sql.DB {
 	t.Helper()
-	sqliteStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
+	appStore, err := store.Open(localserver.DatabasePath(dataDir), assets.FS)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	t.Cleanup(func() { _ = sqliteStore.Legacy().Close() })
-	return sqliteStore.DB()
+	t.Cleanup(func() { _ = appStore.Close() })
+	return appStore.DB()
 }
 
 func assertMCPCount(t *testing.T, db *sql.DB, query string, want int) {

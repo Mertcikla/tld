@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"math"
 	"sort"
+
+	"github.com/uptrace/bun"
 )
 
 const (
@@ -433,18 +435,36 @@ func (s *Store) AdjustVisibilityOverride(ctx context.Context, viewID int64, reso
 	if err := ValidateResourceType(resourceType); err != nil {
 		return VisibilityOverride{}, err
 	}
-	var row visibilityOverrideModel
-	err := s.bun.NewSelect().
-		Model(&row).
-		Column("level_delta").
-		Where("view_id = ?", viewID).
-		Where("resource_type = ?", resourceType).
-		Where("resource_id = ?", resourceID).
-		Scan(ctx)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	now := nowString()
+	row := &visibilityOverrideModel{
+		ViewID:       viewID,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		LevelDelta:   ClampOverrideDelta(step),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	// Apply the increment atomically in SQL so concurrent adjustments cannot
+	// lose an update. The CASE clamp keeps it portable across SQLite and
+	// Postgres; the explicit table alias disambiguates the existing row.
+	_, err := s.bun.NewInsert().
+		Model(row).
+		On("CONFLICT(view_id, resource_type, resource_id) DO UPDATE").
+		Set(`level_delta = CASE
+			WHEN view_visibility_override.level_delta + ? > ? THEN ?
+			WHEN view_visibility_override.level_delta + ? < ? THEN ?
+			ELSE view_visibility_override.level_delta + ?
+		END`,
+			step, MaxOverrideDelta, MaxOverrideDelta,
+			step, MinOverrideDelta, MinOverrideDelta,
+			step,
+		).
+		Set("updated_at = excluded.updated_at").
+		Exec(ctx)
+	if err != nil {
 		return VisibilityOverride{}, err
 	}
-	return s.SetVisibilityOverride(ctx, viewID, resourceType, resourceID, row.LevelDelta+step)
+	return s.visibilityOverride(ctx, viewID, resourceType, resourceID)
 }
 
 func (s *Store) DeleteVisibilityOverride(ctx context.Context, viewID int64, resourceType string, resourceID int64) error {
@@ -520,4 +540,126 @@ func (s *Store) GetProjectedViewContent(ctx context.Context, viewID int64, densi
 		return ProjectedViewContent{}, err
 	}
 	return ProjectViewContent(placements, connectors, overrides, level, EmptyDensitySignals()), nil
+}
+
+// NoiseGateInitialization reports the outcome of InitializeViewNoiseGate.
+type NoiseGateInitialization struct {
+	ViewID           int64 `json:"view_id"`
+	DensityLevel     int   `json:"density_level"`
+	ElementsEnabled  int   `json:"elements_enabled"`
+	OverridesCreated int   `json:"overrides_created"`
+}
+
+// InitializeViewNoiseGate applies the density level to a view and creates the
+// per-element visibility overrides the gate needs, preserving existing
+// overrides and bypasses.
+func (s *Store) InitializeViewNoiseGate(ctx context.Context, viewID int64, densityLevel *int) (NoiseGateInitialization, error) {
+	currentLevel, err := s.ViewDensityLevel(ctx, viewID)
+	if err != nil {
+		return NoiseGateInitialization{}, err
+	}
+	targetLevel := currentLevel
+	if densityLevel != nil {
+		if err := ValidateDensityLevel(*densityLevel); err != nil {
+			return NoiseGateInitialization{}, err
+		}
+		targetLevel = *densityLevel
+	}
+
+	placements, err := s.Placements(ctx, viewID)
+	if err != nil {
+		return NoiseGateInitialization{}, err
+	}
+	connectors, err := s.Connectors(ctx, viewID)
+	if err != nil {
+		return NoiseGateInitialization{}, err
+	}
+	overrides, err := s.VisibilityOverrides(ctx, viewID)
+	if err != nil {
+		return NoiseGateInitialization{}, err
+	}
+
+	signals := EmptyDensitySignals()
+	levels := InferElementGateLevels(placements, connectors, overrides, signals)
+
+	elementIDs := make([]int64, 0, len(placements))
+	seenElementIDs := make(map[int64]struct{}, len(placements))
+	for _, placement := range placements {
+		if _, ok := seenElementIDs[placement.ElementID]; ok {
+			continue
+		}
+		seenElementIDs[placement.ElementID] = struct{}{}
+		elementIDs = append(elementIDs, placement.ElementID)
+	}
+
+	existingElementOverrides := make(map[int64]struct{})
+	for _, override := range overrides {
+		if override.ResourceType == "element" {
+			existingElementOverrides[override.ResourceID] = struct{}{}
+		}
+	}
+	enableElements := len(overrides) == 0
+	elementsEnabled := 0
+	if enableElements {
+		elementsEnabled = len(elementIDs)
+	}
+
+	now := nowString()
+	newOverrides := make([]visibilityOverrideModel, 0, len(elementIDs))
+	for _, elementID := range elementIDs {
+		if _, exists := existingElementOverrides[elementID]; exists {
+			continue
+		}
+		level, ok := levels[elementID]
+		if !ok {
+			level = MaxDensityLevel
+		}
+		newOverrides = append(newOverrides, visibilityOverrideModel{
+			ViewID:       viewID,
+			ResourceType: "element",
+			ResourceID:   elementID,
+			LevelDelta:   -level,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		})
+	}
+
+	if err := s.QueryDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if _, err := tx.NewUpdate().
+			Table("views").
+			Set("density_level = ?", targetLevel).
+			Set("updated_at = ?", now).
+			Where("id = ?", viewID).
+			Exec(ctx); err != nil {
+			return err
+		}
+		if enableElements && len(elementIDs) > 0 {
+			if _, err := tx.NewUpdate().
+				Table("elements").
+				Set("bypass_noise_gate = ?", false).
+				Set("updated_at = ?", now).
+				Where("id IN (?)", bun.List(elementIDs)).
+				Exec(ctx); err != nil {
+				return err
+			}
+		}
+		if len(newOverrides) > 0 {
+			if _, err := tx.NewInsert().
+				Model(&newOverrides).
+				On("CONFLICT(view_id, resource_type, resource_id) DO NOTHING").
+				Exec(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return NoiseGateInitialization{}, err
+	}
+
+	return NoiseGateInitialization{
+		ViewID:           viewID,
+		DensityLevel:     targetLevel,
+		ElementsEnabled:  elementsEnabled,
+		OverridesCreated: len(newOverrides),
+	}, nil
 }

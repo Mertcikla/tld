@@ -73,6 +73,25 @@ type MapOptions struct {
 	// GroupLayers creates a view layer per community group so generated maps use
 	// the editor's colored group backgrounds and visibility toggles.
 	GroupLayers bool
+	// CrossViewConnectors draws dependencies that cross a view inside the view
+	// that owns the source element. Endpoints are the real elements, so the
+	// editor projects each connector into both endpoint views: a view shows what
+	// leaves it, and the other view shows the same connectors arriving. The
+	// CrossView* limits below keep busy views readable.
+	CrossViewConnectors bool
+	// CrossViewMaxViews is the maximum number of other views one view's
+	// cross-view connectors may reach. A view that reaches more is left
+	// untouched and its parent-level connector carries the coupling.
+	CrossViewMaxViews int
+	// CrossViewMaxElementsPerView is the maximum number of source elements used
+	// to reach one other view.
+	CrossViewMaxElementsPerView int
+	// CrossViewMaxConnectorsPerView is the maximum number of cross-view
+	// connectors drawn in one view.
+	CrossViewMaxConnectorsPerView int
+	// CrossViewMaxConnectorsPerElement is the maximum number of cross-view
+	// connectors drawn for one source element per other view.
+	CrossViewMaxConnectorsPerElement int
 	// Progress receives coarse (current, total, detail) updates while resources
 	// are created or updated. It may be nil.
 	Progress func(current, total int, detail string)
@@ -84,6 +103,23 @@ const DefaultMaxConnectorsPerView = 40
 // DefaultMaxLeafConnectorsPerView keeps file-level views legible; a group's
 // internal coupling is summarized in its element description instead.
 const DefaultMaxLeafConnectorsPerView = 12
+
+// DefaultCrossViewMaxViews is the maximum number of other views one view's
+// cross-view connectors may reach before the view is left untouched and its
+// parent-level connector carries the coupling.
+const DefaultCrossViewMaxViews = 8
+
+// DefaultCrossViewMaxElementsPerView is the maximum number of source elements
+// used to reach one other view.
+const DefaultCrossViewMaxElementsPerView = 2
+
+// DefaultCrossViewMaxConnectorsPerView is the maximum number of cross-view
+// connectors drawn in one view.
+const DefaultCrossViewMaxConnectorsPerView = 8
+
+// DefaultCrossViewMaxConnectorsPerElement is the maximum number of cross-view
+// connectors drawn for one source element per other view.
+const DefaultCrossViewMaxConnectorsPerElement = 8
 
 // MapResult summarizes what changed.
 type MapResult struct {
@@ -177,6 +213,34 @@ func maxLeafConnectorsPerView(opts MapOptions) int {
 		return opts.MaxLeafConnectorsPerView
 	}
 	return maxConnectorsPerView(opts)
+}
+
+func crossViewMaxViews(opts MapOptions) int {
+	if opts.CrossViewMaxViews > 0 {
+		return opts.CrossViewMaxViews
+	}
+	return DefaultCrossViewMaxViews
+}
+
+func crossViewMaxElementsPerView(opts MapOptions) int {
+	if opts.CrossViewMaxElementsPerView > 0 {
+		return opts.CrossViewMaxElementsPerView
+	}
+	return DefaultCrossViewMaxElementsPerView
+}
+
+func crossViewMaxConnectorsPerView(opts MapOptions) int {
+	if opts.CrossViewMaxConnectorsPerView > 0 {
+		return opts.CrossViewMaxConnectorsPerView
+	}
+	return DefaultCrossViewMaxConnectorsPerView
+}
+
+func crossViewMaxConnectorsPerElement(opts MapOptions) int {
+	if opts.CrossViewMaxConnectorsPerElement > 0 {
+		return opts.CrossViewMaxConnectorsPerElement
+	}
+	return DefaultCrossViewMaxConnectorsPerElement
 }
 
 // queuePlacement defers an element's placement until connectors exist so the
@@ -400,6 +464,219 @@ func (m *mapMaterializer) materializeConnectors() error {
 		}
 	}
 	return nil
+}
+
+// crossViewConnector is one dependency crossing a view, reduced to the
+// single connector the source element's view will own.
+type crossViewConnector struct {
+	viewID            int64
+	a                 int64
+	b                 int64
+	remoteViewID      int64
+	sourceViewElement int64
+	remoteViewElement int64
+	weight            float64
+	count             int
+	forward           bool
+	backward          bool
+	kinds             map[string]float64
+}
+
+// materializeCrossViewConnectors turns dependencies that cross a view into
+// connectors owned by the source element's view. Endpoints are the real
+// elements, so the editor projects each connector into both endpoint views:
+// opening a view shows what leaves it, and opening the other view shows the
+// same connectors arriving. A view that reaches more views than the limit is
+// skipped, leaving the existing parent-level connector as the aggregate.
+func (m *mapMaterializer) materializeCrossViewConnectors() error {
+	if !m.opts.CrossViewConnectors || len(m.input.Edges) == 0 {
+		return nil
+	}
+	grouped := map[elementEdgeKey]*crossViewConnector{}
+	for _, edge := range m.input.Edges {
+		if edge.FromFactID == "" || edge.ToFactID == "" || edge.FromFactID == edge.ToFactID {
+			continue
+		}
+		fromElement, fromOK := m.fileElementIDs[edge.FromFactID]
+		toElement, toOK := m.fileElementIDs[edge.ToFactID]
+		if !fromOK || !toOK {
+			continue
+		}
+		fromPath := m.fileElementPath[edge.FromFactID]
+		toPath := m.fileElementPath[edge.ToFactID]
+		fromChain := m.fileChains[edge.FromFactID]
+		toChain := m.fileChains[edge.ToFactID]
+		if len(fromPath) < 2 || len(toPath) < 2 || len(fromChain) == 0 || len(toChain) == 0 {
+			continue
+		}
+		a, b := fromElement, toElement
+		pathA, pathB := fromPath, toPath
+		chainA, chainB := fromChain, toChain
+		forward := true
+		if a > b {
+			a, b = b, a
+			pathA, pathB = toPath, fromPath
+			chainA, chainB = toChain, fromChain
+			forward = false
+		}
+		// Compare the view element path (everything but the element itself).
+		// When one is a prefix of the other the two elements are nested, and the
+		// roll-up already draws the dependency natively in the shared view, so a
+		// cross-view connector would only duplicate it.
+		viewsA, viewsB := pathA[:len(pathA)-1], pathB[:len(pathB)-1]
+		common := commonPrefixLen(viewsA, viewsB)
+		if common == len(viewsA) || common == len(viewsB) {
+			continue
+		}
+		key := elementEdgeKey{viewID: chainA[len(chainA)-1], a: a, b: b}
+		entry := grouped[key]
+		if entry == nil {
+			entry = &crossViewConnector{
+				viewID:            key.viewID,
+				a:                 a,
+				b:                 b,
+				remoteViewID:      chainB[len(chainB)-1],
+				sourceViewElement: pathA[common],
+				remoteViewElement: pathB[common],
+			}
+			grouped[key] = entry
+		}
+		if forward {
+			entry.forward = true
+		} else {
+			entry.backward = true
+		}
+		weight := edge.Weight
+		if weight <= 0 {
+			weight = 1
+		}
+		entry.weight += weight
+		entry.count++
+		if edge.Kind != "" {
+			if entry.kinds == nil {
+				entry.kinds = map[string]float64{}
+			}
+			entry.kinds[edge.Kind] += weight
+		}
+	}
+
+	byView := map[int64][]*crossViewConnector{}
+	for _, entry := range grouped {
+		byView[entry.viewID] = append(byView[entry.viewID], entry)
+	}
+	views := make([]int64, 0, len(byView))
+	for viewID := range byView {
+		views = append(views, viewID)
+	}
+	sort.Slice(views, func(i, j int) bool { return views[i] < views[j] })
+
+	elementsPerViewLimit := crossViewMaxElementsPerView(m.opts)
+	viewsLimit := crossViewMaxViews(m.opts)
+	connectorsPerViewLimit := crossViewMaxConnectorsPerView(m.opts)
+	connectorsPerElementLimit := crossViewMaxConnectorsPerElement(m.opts)
+
+	candidates := make([]*crossViewConnector, 0, len(grouped))
+	for _, viewID := range views {
+		entries := byView[viewID]
+		connectedViews := map[int64]bool{}
+		for _, entry := range entries {
+			connectedViews[entry.remoteViewElement] = true
+		}
+		if len(connectedViews) > viewsLimit {
+			// Too busy to read in place; the parent-level connector aggregates.
+			continue
+		}
+		sort.Slice(entries, func(i, j int) bool { return lessCrossViewConnector(entries[i], entries[j]) })
+		perViewElements := map[int64]map[int64]int{}
+		for _, entry := range entries {
+			elements := perViewElements[entry.remoteViewElement]
+			if elements == nil {
+				elements = map[int64]int{}
+				perViewElements[entry.remoteViewElement] = elements
+			}
+			if len(elements) >= elementsPerViewLimit && elements[entry.a] == 0 {
+				continue
+			}
+			if elements[entry.a] >= connectorsPerElementLimit {
+				continue
+			}
+			elements[entry.a]++
+			candidates = append(candidates, entry)
+		}
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].weight != candidates[j].weight {
+			return candidates[i].weight > candidates[j].weight
+		}
+		return lessCrossViewConnector(candidates[i], candidates[j])
+	})
+
+	perView := map[int64]int{}
+	perTargetViewElement := map[[2]int64]int{}
+	for _, entry := range candidates {
+		if perView[entry.viewID] >= connectorsPerViewLimit {
+			continue
+		}
+		targetViewElement := [2]int64{entry.remoteViewID, entry.sourceViewElement}
+		if perTargetViewElement[targetViewElement] >= connectorsPerElementLimit {
+			continue
+		}
+		perView[entry.viewID]++
+		perTargetViewElement[targetViewElement]++
+
+		direction := "forward"
+		switch {
+		case entry.forward && entry.backward:
+			direction = "both"
+		case entry.backward:
+			direction = "backward"
+		}
+		input := core.Connector{
+			ViewID:          entry.viewID,
+			SourceElementID: entry.a,
+			TargetElementID: entry.b,
+			Direction:       direction,
+			Style:           "bezier",
+		}
+		if m.opts.AnnotateConnectors {
+			relationship := dominantKind(entry.kinds)
+			description := fmt.Sprintf("%d cross-view dependencies", entry.count)
+			if entry.count == 1 {
+				description = "1 cross-view dependency"
+			}
+			input.Label = optionalStr(relationship)
+			input.Relationship = optionalStr(relationship)
+			input.Description = optionalStr(description)
+			input.Tags = []string{"dependency", "cross-view"}
+		}
+		if err := m.upsertConnector(elementCrossViewConnectorKey(m.input.RepositoryID, entry.viewID, entry.a, entry.b), input); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// lessCrossViewConnector orders cross-view connectors heaviest first with a
+// stable tie-break so repeated runs pick the same representatives.
+func lessCrossViewConnector(left, right *crossViewConnector) bool {
+	if left.weight != right.weight {
+		return left.weight > right.weight
+	}
+	if left.a != right.a {
+		return left.a < right.a
+	}
+	return left.b < right.b
+}
+
+// commonPrefixLen returns the number of leading equal entries.
+func commonPrefixLen(left, right []int64) int {
+	limit := min(len(left), len(right))
+	index := 0
+	for index < limit && left[index] == right[index] {
+		index++
+	}
+	return index
 }
 
 // materializeImports materializes external imports under a single External
@@ -970,6 +1247,13 @@ func fileKey(repositoryID, factID string) string {
 
 func elementConnectorKey(repositoryID string, viewID, a, b int64) string {
 	return fmt.Sprintf("%sconn|%s|%d|%d|%d", mapKeyPrefix, repositoryID, viewID, a, b)
+}
+
+// elementCrossViewConnectorKey names a cross-view connector. It is a distinct
+// namespace from elementConnectorKey so a roll-up connector and a cross-view
+// connector can never collide even when they share a view and an element pair.
+func elementCrossViewConnectorKey(repositoryID string, viewID, a, b int64) string {
+	return fmt.Sprintf("%sxconn|%s|%d|%d|%d", mapKeyPrefix, repositoryID, viewID, a, b)
 }
 
 func externalKey(repositoryID string) string {

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
@@ -14,7 +13,7 @@ type mergeElementsRequest struct {
 	Resolved   app.MergeResolved `json:"resolved"`
 }
 
-func registerMergeHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) {
+func registerMergeHandlers(mux *http.ServeMux, appStore *app.Store) {
 	mux.HandleFunc("POST /api/elements/merge", func(w http.ResponseWriter, r *http.Request) {
 		var req mergeElementsRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -25,7 +24,7 @@ func registerMergeHandlers(mux *http.ServeMux, sqliteStore *store.SQLiteStore) {
 			writeJSONError(w, http.StatusBadRequest, "source_id and survivor_id are required")
 			return
 		}
-		result, err := sqliteStore.Legacy().MergeElements(r.Context(), req.SourceID, req.SurvivorID, req.Resolved)
+		result, err := appStore.MergeElements(r.Context(), req.SourceID, req.SurvivorID, req.Resolved)
 		if err != nil {
 			writeJSONError(w, http.StatusBadRequest, err.Error())
 			return

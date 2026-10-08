@@ -22,8 +22,8 @@ import (
 
 func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 	workspaceID := uuid.New()
-	sqliteStore, routes := newTestServer(t, workspaceID, nil)
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	appStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo"
@@ -136,8 +136,8 @@ func TestCodeIndexFactServiceSnapshotsAndDiff(t *testing.T) {
 
 func TestListSnapshotsExcludesWorkingTree(t *testing.T) {
 	workspaceID := uuid.New()
-	sqliteStore, routes := newTestServer(t, workspaceID, nil)
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	appStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo-snapshots"
@@ -170,8 +170,8 @@ func TestListSnapshotsExcludesWorkingTree(t *testing.T) {
 
 func TestRepositoryServiceAddRepository(t *testing.T) {
 	workspaceID := uuid.New()
-	sqliteStore, routes := newTestServer(t, workspaceID, nil)
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	appStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	dir := t.TempDir()
@@ -328,8 +328,8 @@ func TestRepositoryServiceCheckRepositoryIndexers(t *testing.T) {
 
 func TestRepositoryServiceAddRepositoryMapsRepository(t *testing.T) {
 	workspaceID := uuid.New()
-	sqliteStore, routes := newTestServer(t, workspaceID, nil)
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	appStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	dir := t.TempDir()
@@ -379,7 +379,7 @@ func TestRepositoryServiceAddRepositoryMapsRepository(t *testing.T) {
 			continue
 		}
 		mapped = true
-		if _, err := sqliteStore.ViewByID(ctx, mapping.ResourceID); err != nil {
+		if _, err := appStore.ViewByID(ctx, mapping.ResourceID); err != nil {
 			t.Fatalf("mapped view missing: %v", err)
 		}
 	}
@@ -390,8 +390,8 @@ func TestRepositoryServiceAddRepositoryMapsRepository(t *testing.T) {
 
 func TestRepositoryServiceDeleteRepository(t *testing.T) {
 	workspaceID := uuid.New()
-	sqliteStore, routes := newTestServer(t, workspaceID, nil)
-	idx := cstore.NewStore(sqliteStore.DB(), sqliteStore.BunDB(), sqliteStore.Dialect())
+	appStore, routes := newTestServer(t, workspaceID, nil)
+	idx := cstore.NewStore(appStore.DB(), appStore.BunDB(), appStore.Dialect())
 	ctx := app.WithTenantOrgID(context.Background(), workspaceID)
 
 	root := "/repo-delete"
@@ -401,11 +401,11 @@ func TestRepositoryServiceDeleteRepository(t *testing.T) {
 		t.Fatalf("publish: %v", err)
 	}
 
-	view, err := sqliteStore.CreateView(ctx, "Repo Map", nil, nil)
+	view, err := appStore.CreateView(ctx, "Repo Map", nil, nil)
 	if err != nil {
 		t.Fatalf("create view: %v", err)
 	}
-	element, err := sqliteStore.CreateElement(ctx, core.LibraryElement{Name: "Repo Root"})
+	element, err := appStore.CreateElement(ctx, core.LibraryElement{Name: "Repo Root"})
 	if err != nil {
 		t.Fatalf("create element: %v", err)
 	}
@@ -438,7 +438,7 @@ func TestRepositoryServiceDeleteRepository(t *testing.T) {
 	if _, err := idx.Repository(ctx, repoID); err != nil {
 		t.Fatalf("busy deletion removed repository: %v", err)
 	}
-	if _, err := sqliteStore.ViewByID(ctx, view.ID); err != nil {
+	if _, err := appStore.ViewByID(ctx, view.ID); err != nil {
 		t.Fatalf("busy deletion removed materialized view: %v", err)
 	}
 
@@ -449,10 +449,10 @@ func TestRepositoryServiceDeleteRepository(t *testing.T) {
 	if _, err := idx.Repository(ctx, repoID); err == nil {
 		t.Fatal("repository still resolves after delete")
 	}
-	if _, err := sqliteStore.ViewByID(ctx, view.ID); err == nil {
+	if _, err := appStore.ViewByID(ctx, view.ID); err == nil {
 		t.Fatal("materialized view still resolves after delete")
 	}
-	if _, err := sqliteStore.ElementByID(ctx, element.ID); err == nil {
+	if _, err := appStore.ElementByID(ctx, element.ID); err == nil {
 		t.Fatal("materialized element still resolves after delete")
 	}
 	mappings, err := idx.MappingsByRepository(ctx, repoID)

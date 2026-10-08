@@ -227,6 +227,18 @@ func ValidateGlobalConfig(cfg *Config) ConfigValidationErrors {
 	if cfg.Map.Budget.MaxLeafConnectorsPerView < 1 {
 		add("map.budget.max_leaf_connectors_per_view", "must be at least 1")
 	}
+	if cfg.Map.CrossView.MaxViews < 1 {
+		add("map.cross_view.max_views", "must be at least 1")
+	}
+	if cfg.Map.CrossView.MaxElementsPerView < 1 {
+		add("map.cross_view.max_elements_per_view", "must be at least 1")
+	}
+	if cfg.Map.CrossView.MaxConnectorsPerView < 1 {
+		add("map.cross_view.max_connectors_per_view", "must be at least 1")
+	}
+	if cfg.Map.CrossView.MaxConnectorsPerElement < 1 {
+		add("map.cross_view.max_connectors_per_element", "must be at least 1")
+	}
 	return errs
 }
 
@@ -306,6 +318,11 @@ var configDefinitions = []ConfigDefinition{
 	{Key: "map.grouping.max_leaf_files", Env: []string{"TLD_MAP_GROUPING_MAX_LEAF_FILES"}, Description: "Files per leaf view before the group is subdivided."},
 	{Key: "map.budget.max_connectors_per_view", Env: []string{"TLD_MAP_BUDGET_MAX_CONNECTORS_PER_VIEW"}, Description: "Maximum rolled-up connectors drawn in one map view."},
 	{Key: "map.budget.max_leaf_connectors_per_view", Env: []string{"TLD_MAP_BUDGET_MAX_LEAF_CONNECTORS_PER_VIEW"}, Description: "Maximum connectors drawn in a file-only map view."},
+	{Key: "map.cross_view.connectors", Env: []string{"TLD_MAP_CROSS_VIEW_CONNECTORS"}, Description: "Draw dependencies crossing a view inside the view that owns the source element."},
+	{Key: "map.cross_view.max_views", Env: []string{"TLD_MAP_CROSS_VIEW_MAX_VIEWS"}, Description: "Skip a view's cross-view connectors when the view reaches more views than this."},
+	{Key: "map.cross_view.max_elements_per_view", Env: []string{"TLD_MAP_CROSS_VIEW_MAX_ELEMENTS_PER_VIEW"}, Description: "Maximum source elements used to reach one other view."},
+	{Key: "map.cross_view.max_connectors_per_view", Env: []string{"TLD_MAP_CROSS_VIEW_MAX_CONNECTORS_PER_VIEW"}, Description: "Maximum cross-view connectors drawn in one view."},
+	{Key: "map.cross_view.max_connectors_per_element", Env: []string{"TLD_MAP_CROSS_VIEW_MAX_CONNECTORS_PER_ELEMENT"}, Description: "Maximum cross-view connectors drawn for one source element per other view."},
 	{Key: "completion.remote", Env: []string{"TLD_COMPLETION_REMOTE"}, Description: "Allow shell completion to query remote resources."},
 	{Key: "updates.auto", Env: []string{"TLD_UPDATES_AUTO"}, Description: "Automatically install available tld CLI updates during startup checks."},
 	{Key: "updates.check_interval", Env: []string{"TLD_UPDATES_CHECK_INTERVAL"}, Description: "Minimum time between GitHub update checks."},
@@ -424,6 +441,11 @@ func applyEnvOverridesDetailed(cfg *Config, root *yaml.Node) ([]ConfigValue, err
 		{"map.grouping.max_leaf_files", "TLD_MAP_GROUPING_MAX_LEAF_FILES"},
 		{"map.budget.max_connectors_per_view", "TLD_MAP_BUDGET_MAX_CONNECTORS_PER_VIEW"},
 		{"map.budget.max_leaf_connectors_per_view", "TLD_MAP_BUDGET_MAX_LEAF_CONNECTORS_PER_VIEW"},
+		{"map.cross_view.connectors", "TLD_MAP_CROSS_VIEW_CONNECTORS"},
+		{"map.cross_view.max_views", "TLD_MAP_CROSS_VIEW_MAX_VIEWS"},
+		{"map.cross_view.max_elements_per_view", "TLD_MAP_CROSS_VIEW_MAX_ELEMENTS_PER_VIEW"},
+		{"map.cross_view.max_connectors_per_view", "TLD_MAP_CROSS_VIEW_MAX_CONNECTORS_PER_VIEW"},
+		{"map.cross_view.max_connectors_per_element", "TLD_MAP_CROSS_VIEW_MAX_CONNECTORS_PER_ELEMENT"},
 	} {
 		if err := apply(item.key, item.env, os.Getenv(item.env)); err != nil {
 			return nil, err
@@ -617,6 +639,36 @@ func setConfigValue(cfg *Config, key, value string) error {
 			return err
 		}
 		cfg.Map.Budget.MaxLeafConnectorsPerView = v
+	case "map.cross_view.connectors":
+		v, err := parseBool(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.CrossView.Connectors = &v
+	case "map.cross_view.max_views":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.CrossView.MaxViews = v
+	case "map.cross_view.max_elements_per_view":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.CrossView.MaxElementsPerView = v
+	case "map.cross_view.max_connectors_per_view":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.CrossView.MaxConnectorsPerView = v
+	case "map.cross_view.max_connectors_per_element":
+		v, err := parseInt(value)
+		if err != nil {
+			return err
+		}
+		cfg.Map.CrossView.MaxConnectorsPerElement = v
 	case "completion.remote":
 		v, err := parseBool(value)
 		if err != nil {
@@ -709,6 +761,16 @@ func getConfigValue(cfg *Config, key string) any {
 		return cfg.Map.Budget.MaxConnectorsPerView
 	case "map.budget.max_leaf_connectors_per_view":
 		return cfg.Map.Budget.MaxLeafConnectorsPerView
+	case "map.cross_view.connectors":
+		return cfg.Map.CrossView.Connectors == nil || *cfg.Map.CrossView.Connectors
+	case "map.cross_view.max_views":
+		return cfg.Map.CrossView.MaxViews
+	case "map.cross_view.max_elements_per_view":
+		return cfg.Map.CrossView.MaxElementsPerView
+	case "map.cross_view.max_connectors_per_view":
+		return cfg.Map.CrossView.MaxConnectorsPerView
+	case "map.cross_view.max_connectors_per_element":
+		return cfg.Map.CrossView.MaxConnectorsPerElement
 	case "completion.remote":
 		return cfg.Completion.Remote
 	case "updates.auto":
@@ -798,7 +860,16 @@ func configToYAMLNode(cfg *Config, existingRoot *yaml.Node) *yaml.Node {
 	appendUnknownEntries(mapBudget, mappingValueNode(mappingValueNode(existing, "map"), "budget"), setOf("max_connectors_per_view", "max_leaf_connectors_per_view"))
 	addMap(mapNode, "budget", mapBudget, "Connector drawing budgets for graph map views.")
 
-	appendUnknownEntries(mapNode, mappingValueNode(existing, "map"), setOf("grouping", "budget"))
+	mapCrossView := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	addScalar(mapCrossView, "connectors", cfg.Map.CrossView.Connectors == nil || *cfg.Map.CrossView.Connectors, desc("map.cross_view.connectors"))
+	addScalar(mapCrossView, "max_views", cfg.Map.CrossView.MaxViews, desc("map.cross_view.max_views"))
+	addScalar(mapCrossView, "max_elements_per_view", cfg.Map.CrossView.MaxElementsPerView, desc("map.cross_view.max_elements_per_view"))
+	addScalar(mapCrossView, "max_connectors_per_view", cfg.Map.CrossView.MaxConnectorsPerView, desc("map.cross_view.max_connectors_per_view"))
+	addScalar(mapCrossView, "max_connectors_per_element", cfg.Map.CrossView.MaxConnectorsPerElement, desc("map.cross_view.max_connectors_per_element"))
+	appendUnknownEntries(mapCrossView, mappingValueNode(mappingValueNode(existing, "map"), "cross_view"), setOf("connectors", "max_views", "max_elements_per_view", "max_connectors_per_view", "max_connectors_per_element"))
+	addMap(mapNode, "cross_view", mapCrossView, "Cross-view connectors drawn inside views.")
+
+	appendUnknownEntries(mapNode, mappingValueNode(existing, "map"), setOf("grouping", "budget", "cross_view"))
 	addMap(mapping, "map", mapNode, "Graph map pipeline settings.")
 
 	completion := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}

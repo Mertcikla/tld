@@ -10,7 +10,7 @@ import {
   type RepositorySettings as Settings,
 } from '../api/client'
 
-type NumberMapKey = 'resolution' | 'minGroupSize' | 'minRootGroups' | 'maxRootGroups' | 'maxChildren' | 'maxDepth' | 'maxLeafFiles' | 'maxConnectorsPerView' | 'maxLeafConnectorsPerView'
+type NumberMapKey = 'resolution' | 'minGroupSize' | 'minRootGroups' | 'maxRootGroups' | 'maxChildren' | 'maxDepth' | 'maxLeafFiles' | 'maxConnectorsPerView' | 'maxLeafConnectorsPerView' | 'crossViewMaxViews' | 'crossViewMaxElementsPerView' | 'crossViewMaxConnectorsPerView' | 'crossViewMaxConnectorsPerElement'
 
 const fields: { key: NumberMapKey; label: string; description: string; group: string }[] = [
   { key: 'resolution', label: 'Resolution', description: 'Higher values produce more, smaller groups.', group: 'Grouping' },
@@ -22,14 +22,23 @@ const fields: { key: NumberMapKey; label: string; description: string; group: st
   { key: 'maxLeafFiles', label: 'Maximum files per leaf', description: 'Subdivide leaf groups that exceed this size.', group: 'Grouping' },
   { key: 'maxConnectorsPerView', label: 'Connectors per view', description: 'Limit connections drawn in group views.', group: 'Connection budgets' },
   { key: 'maxLeafConnectorsPerView', label: 'Connectors per leaf view', description: 'Limit connections drawn in file-level views.', group: 'Connection budgets' },
+  { key: 'crossViewMaxViews', label: 'Max views per view', description: 'Skip cross-view connectors when a view reaches more views than this.', group: 'Cross-view connectors' },
+  { key: 'crossViewMaxElementsPerView', label: 'Source elements per view', description: 'Limit source elements used to reach one other view.', group: 'Cross-view connectors' },
+  { key: 'crossViewMaxConnectorsPerView', label: 'Cross-view connectors per view', description: 'Limit cross-view connectors drawn in one view.', group: 'Cross-view connectors' },
+  { key: 'crossViewMaxConnectorsPerElement', label: 'Cross-view connectors per element', description: 'Limit cross-view connectors drawn for one source element per other view.', group: 'Cross-view connectors' },
 ]
 
-const importFields: { key: 'includeExternalImports'; label: string; description: string }[] = [
-  { key: 'includeExternalImports', label: 'Materialize external imports', description: 'Show third-party imports under a single External element. Off by default because imports can dominate the connector budget.' },
+type BoolMapKey = 'includeExternalImports' | 'crossViewConnectors'
+
+const boolFields: { key: BoolMapKey; label: string; description: string; group: string }[] = [
+  { key: 'crossViewConnectors', label: 'Cross-view connectors', description: 'Draw dependencies that cross a view inside the view that owns the source element. On by default.', group: 'Cross-view connectors' },
+  { key: 'includeExternalImports', label: 'Materialize external imports', description: 'Show third-party imports under a single External element. Off by default because imports can dominate the connector budget.', group: 'External imports' },
 ]
 
-type MapKey = NumberMapKey | 'includeExternalImports'
-const overrideKeys: MapKey[] = [...fields.map(field => field.key), ...importFields.map(field => field.key)]
+type MapKey = NumberMapKey | BoolMapKey
+const overrideKeys: MapKey[] = [...fields.map(field => field.key), ...boolFields.map(field => field.key)]
+const mapGroups = ['Grouping', 'Connection budgets', 'Cross-view connectors', 'External imports']
+const boolKeys = new Set<MapKey>(boolFields.map(field => field.key))
 const stringValue = (value: number | boolean | undefined): string => value === undefined ? '' : String(value)
 
 interface Props {
@@ -111,7 +120,7 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
       }
       if (value !== settings.mapDefaults[field.key]) overrides[field.key] = value
     }
-    for (const field of importFields) {
+    for (const field of boolFields) {
       const raw = draft[field.key]
       if (raw === undefined) continue
       const value = raw === 'true'
@@ -137,7 +146,7 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
     if (!settings) return false
     const raw = draft[key]
     if (raw === undefined) return false
-    if (key === 'includeExternalImports') return raw !== defaultString(key)
+    if (boolKeys.has(key)) return raw !== defaultString(key)
     const value = Number(raw)
     return Number.isFinite(value) ? value !== settings.mapDefaults[key] : raw !== defaultString(key)
   }
@@ -222,57 +231,56 @@ export default function RepositorySettings({ repository, snapshots, maps, histor
         ) : (
           <>
             <VStack align="stretch" spacing={5}>
-              {['Grouping', 'Connection budgets'].map(group => (
-                <Box key={group}>
-                  <Text as="h3" fontSize="sm" fontWeight="semibold" mb={3}>{group}</Text>
-                  <Grid templateColumns={fieldColumns} gap={3}>
-                    {fields.filter(field => field.group === group).map(field => {
-                      const changed = isChanged(field.key)
-                      return (
-                        <Box key={field.key} border="1px solid" borderColor={changed ? 'var(--accent)' : 'var(--border-main)'} borderRadius="lg" p={3} minW={0}>
-                          <Text as="label" htmlFor={`map-${field.key}`} fontSize="sm" fontWeight="medium">{field.label}</Text>
-                          <Text id={`map-${field.key}-help`} fontSize="xs" color="gray.400" mt={1} minH="36px">{field.description}</Text>
-                          <Flex align="center" justify="space-between" gap={3} mt={3}>
-                            <Box>
-                              <Text fontSize="xs" color={changed ? 'var(--accent)' : 'gray.400'}>{changed ? 'Overridden' : 'Inherited'}</Text>
-                              <Text fontSize="xs" color="gray.500">Global default: {settings.mapDefaults[field.key]}</Text>
-                            </Box>
-                            <Input id={`map-${field.key}`} aria-describedby={`map-${field.key}-help`} data-testid={`repository-map-${field.key}`} type="number" size="sm" w="100px" flexShrink={0} min={field.key === 'resolution' ? undefined : 1} step={field.key === 'resolution' ? 'any' : 1} value={draft[field.key] ?? ''} isDisabled={disabled} onChange={event => {
-                              setDraft(old => ({ ...old, [field.key]: event.target.value }))
-                              setMessage('')
-                            }} />
-                          </Flex>
-                        </Box>
-                      )
-                    })}
-                  </Grid>
-                </Box>
-              ))}
-              <Box>
-                <Text as="h3" fontSize="sm" fontWeight="semibold" mb={3}>External imports</Text>
-                <Grid templateColumns={fieldColumns} gap={3}>
-                  {importFields.map(field => {
-                    const changed = isChanged(field.key)
-                    const enabled = (draft[field.key] ?? defaultString(field.key)) === 'true'
-                    return (
-                      <Box key={field.key} border="1px solid" borderColor={changed ? 'var(--accent)' : 'var(--border-main)'} borderRadius="lg" p={3} minW={0}>
-                        <Text as="label" htmlFor={`map-${field.key}`} fontSize="sm" fontWeight="medium">{field.label}</Text>
-                        <Text id={`map-${field.key}-help`} fontSize="xs" color="gray.400" mt={1} minH="36px">{field.description}</Text>
-                        <Flex align="center" justify="space-between" gap={3} mt={3}>
-                          <Box>
-                            <Text fontSize="xs" color={changed ? 'var(--accent)' : 'gray.400'}>{changed ? 'Overridden' : 'Inherited'}</Text>
-                            <Text fontSize="xs" color="gray.500">Global default: {String(settings.mapDefaults[field.key] ?? false)}</Text>
+              {mapGroups.map(group => {
+                const numberFields = fields.filter(field => field.group === group)
+                const booleanFields = boolFields.filter(field => field.group === group)
+                return (
+                  <Box key={group}>
+                    <Text as="h3" fontSize="sm" fontWeight="semibold" mb={3}>{group}</Text>
+                    <Grid templateColumns={fieldColumns} gap={3}>
+                      {numberFields.map(field => {
+                        const changed = isChanged(field.key)
+                        return (
+                          <Box key={field.key} border="1px solid" borderColor={changed ? 'var(--accent)' : 'var(--border-main)'} borderRadius="lg" p={3} minW={0}>
+                            <Text as="label" htmlFor={`map-${field.key}`} fontSize="sm" fontWeight="medium">{field.label}</Text>
+                            <Text id={`map-${field.key}-help`} fontSize="xs" color="gray.400" mt={1} minH="36px">{field.description}</Text>
+                            <Flex align="center" justify="space-between" gap={3} mt={3}>
+                              <Box>
+                                <Text fontSize="xs" color={changed ? 'var(--accent)' : 'gray.400'}>{changed ? 'Overridden' : 'Inherited'}</Text>
+                                <Text fontSize="xs" color="gray.500">Global default: {settings.mapDefaults[field.key]}</Text>
+                              </Box>
+                              <Input id={`map-${field.key}`} aria-describedby={`map-${field.key}-help`} data-testid={`repository-map-${field.key}`} type="number" size="sm" w="100px" flexShrink={0} min={field.key === 'resolution' ? undefined : 1} step={field.key === 'resolution' ? 'any' : 1} value={draft[field.key] ?? ''} isDisabled={disabled} onChange={event => {
+                                setDraft(old => ({ ...old, [field.key]: event.target.value }))
+                                setMessage('')
+                              }} />
+                            </Flex>
                           </Box>
-                          <Switch id={`map-${field.key}`} data-testid={`repository-map-${field.key}`} size="sm" colorScheme="blue" isChecked={enabled} isDisabled={disabled} onChange={event => {
-                            setDraft(old => ({ ...old, [field.key]: event.target.checked ? 'true' : 'false' }))
-                            setMessage('')
-                          }} />
-                        </Flex>
-                      </Box>
-                    )
-                  })}
-                </Grid>
-              </Box>
+                        )
+                      })}
+                      {booleanFields.map(field => {
+                        const changed = isChanged(field.key)
+                        const enabled = (draft[field.key] ?? defaultString(field.key)) === 'true'
+                        return (
+                          <Box key={field.key} border="1px solid" borderColor={changed ? 'var(--accent)' : 'var(--border-main)'} borderRadius="lg" p={3} minW={0}>
+                            <Text as="label" htmlFor={`map-${field.key}`} fontSize="sm" fontWeight="medium">{field.label}</Text>
+                            <Text id={`map-${field.key}-help`} fontSize="xs" color="gray.400" mt={1} minH="36px">{field.description}</Text>
+                            <Flex align="center" justify="space-between" gap={3} mt={3}>
+                              <Box>
+                                <Text fontSize="xs" color={changed ? 'var(--accent)' : 'gray.400'}>{changed ? 'Overridden' : 'Inherited'}</Text>
+                                <Text fontSize="xs" color="gray.500">Global default: {String(settings.mapDefaults[field.key] ?? false)}</Text>
+                              </Box>
+                              <Switch id={`map-${field.key}`} data-testid={`repository-map-${field.key}`} size="sm" colorScheme="blue" isChecked={enabled} isDisabled={disabled} onChange={event => {
+                                setDraft(old => ({ ...old, [field.key]: event.target.checked ? 'true' : 'false' }))
+                                setMessage('')
+                              }} />
+                            </Flex>
+                          </Box>
+                        )
+                      })}
+                    </Grid>
+                  </Box>
+                )
+              })}
             </VStack>
             <Flex align="center" justify="space-between" gap={3} wrap="wrap" mt={5} pt={4} borderTop="1px solid var(--border-main)">
               <Button size="sm" variant="ghost" isDisabled={disabled} onClick={() => {

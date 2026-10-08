@@ -17,12 +17,13 @@ import (
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	localstore "github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/app"
 	"github.com/spf13/cobra"
 )
 
 // openIndexStore resolves the data directory and opens the shared codeindex
 // store used by the status and stop subcommands.
-func openIndexStore(ctx context.Context, dataDirOverride string) (*localstore.SQLiteStore, *cstore.Store, string, error) {
+func openIndexStore(ctx context.Context, dataDirOverride string) (*app.Store, *cstore.Store, string, error) {
 	global, err := workspace.LoadGlobalConfig()
 	if err != nil {
 		return nil, nil, "", err

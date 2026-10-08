@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/mertcikla/tld/v2/internal/codeindex/symbolcheck"
@@ -18,16 +17,6 @@ type ValidationError struct {
 
 func (e ValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Location, e.Message)
-}
-
-// ValidationWarning describes a non-blocking validation concern.
-type ValidationWarning struct {
-	Location string
-	Message  string
-}
-
-func (w ValidationWarning) Error() string {
-	return fmt.Sprintf("%s: %s", w.Location, w.Message)
 }
 
 // ValidationOptions allows configuring the validation process.
@@ -104,40 +93,6 @@ func (ws *Workspace) ValidateWithOpts(opts ValidationOptions) []ValidationError 
 	}
 
 	return errs
-}
-
-// ValidateWarnings reports non-blocking workspace concerns.
-func (ws *Workspace) ValidateWarnings() []ValidationWarning {
-	nameOwners := map[string][]string{}
-	for ref, element := range ws.Elements {
-		if element == nil || strings.TrimSpace(element.Name) == "" {
-			continue
-		}
-		nameOwners[element.Name] = append(nameOwners[element.Name], ref)
-	}
-
-	names := make([]string, 0, len(nameOwners))
-	for name := range nameOwners {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	var warnings []ValidationWarning
-	for _, name := range names {
-		refs := nameOwners[name]
-		if len(refs) < 2 {
-			continue
-		}
-		sort.Strings(refs)
-		firstRef := refs[0]
-		for _, ref := range refs[1:] {
-			warnings = append(warnings, ValidationWarning{
-				Location: fmt.Sprintf("elements.yaml[%s]", ref),
-				Message:  fmt.Sprintf("duplicate element name %q (also used by %q)", name, firstRef),
-			})
-		}
-	}
-	return warnings
 }
 
 func (ws *Workspace) validateConflictMarkers() []ValidationError {

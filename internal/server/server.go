@@ -19,6 +19,7 @@ import (
 	"github.com/mertcikla/tld/v2/internal/tech"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/mertcikla/tld/v2/pkg/api"
+	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
 type Server struct {
@@ -34,15 +35,15 @@ type Options struct {
 	Config         *workspace.Config
 }
 
-func New(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, dataDir ...string) (*Server, error) {
+func New(appStore *app.Store, static fs.FS, workspaceID uuid.UUID, dataDir ...string) (*Server, error) {
 	opts := Options{}
 	if len(dataDir) > 0 {
 		opts.DataDir = dataDir[0]
 	}
-	return NewWithOptions(sqliteStore, static, workspaceID, opts)
+	return NewWithOptions(appStore, static, workspaceID, opts)
 }
 
-func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uuid.UUID, opts Options) (*Server, error) {
+func NewWithOptions(appStore *app.Store, static fs.FS, workspaceID uuid.UUID, opts Options) (*Server, error) {
 	dataDirs := []string{}
 	if opts.DataDir != "" || opts.WorkspaceDir != "" {
 		dataDirs = append(dataDirs, opts.DataDir)
@@ -50,7 +51,7 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 			dataDirs = append(dataDirs, opts.WorkspaceDir)
 		}
 	}
-	apiStore := store.NewAPIAdapter(sqliteStore, dataDirs...)
+	apiStore := store.NewAPIAdapter(appStore, dataDirs...)
 	collabHub := api.NewCollaborationHub()
 	collabHooks := collaborationHooks{base: api.NopWorkspaceHooks{}, store: apiStore, hub: collabHub}
 	wsSvc := &api.WorkspaceService{Store: apiStore, Hooks: collabHooks}
@@ -63,10 +64,10 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 
 	mux := http.NewServeMux()
 	selfHosted := isSelfHosted(opts)
-	watchManager := registerCodeIndexHandlers(mux, sqliteStore, opts.DataDir, selfHosted, opts.Config)
-	registerEditorHandlers(mux, sqliteStore, selfHosted)
-	registerDensityHandlers(mux, sqliteStore)
-	registerMergeHandlers(mux, sqliteStore)
+	watchManager := registerCodeIndexHandlers(mux, appStore, opts.DataDir, selfHosted, opts.Config)
+	registerEditorHandlers(mux, appStore, selfHosted)
+	registerDensityHandlers(mux, appStore)
+	registerMergeHandlers(mux, appStore)
 	registerTagHandlers(mux, apiStore, workspaceID)
 
 	mux.HandleFunc("GET /api/ready", func(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +107,7 @@ func NewWithOptions(sqliteStore *store.SQLiteStore, static fs.FS, workspaceID uu
 			return
 		}
 
-		svg, err := sqliteStore.ThumbnailSVG(r.Context(), viewID)
+		svg, err := appStore.ThumbnailSVG(r.Context(), viewID)
 		if err != nil {
 			http.Error(w, "thumbnail not found", http.StatusNotFound)
 			return

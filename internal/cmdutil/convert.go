@@ -2,6 +2,7 @@ package cmdutil
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
@@ -21,12 +22,7 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 		},
 	}
 
-	existingElementRefs := make(map[int32]string)
-	if baseWS.Meta != nil {
-		for ref, m := range baseWS.Meta.Elements {
-			existingElementRefs[int32(m.ID)] = ref
-		}
-	}
+	objectIDToRef := allocateExportElementRefs(baseWS, msg.Elements)
 	existingConnectorRefs := make(map[int32]string)
 	if baseWS.Meta != nil {
 		for ref, m := range baseWS.Meta.Connectors {
@@ -34,16 +30,8 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 		}
 	}
 
-	objectIDToRef := make(map[int32]string)
 	for _, e := range msg.Elements {
-		ref, ok := existingElementRefs[e.Id]
-		if !ok {
-			ref = workspace.Slugify(e.Name)
-			if ref == "" {
-				ref = fmt.Sprintf("element-%d", e.Id)
-			}
-		}
-		objectIDToRef[e.Id] = ref
+		ref := objectIDToRef[e.Id]
 		kind := e.GetKind()
 		if kind == "" {
 			kind = "element"
@@ -155,6 +143,80 @@ func ConvertExportResponse(baseWS *workspace.Workspace, msg *diagv1.ExportOrgani
 	}
 
 	return newWS
+}
+
+func allocateExportElementRefs(base *workspace.Workspace, elements []*diagv1.Element) map[int32]string {
+	refs := make(map[int32]string)
+	existing := make(map[int32]string)
+	used := make(map[string]bool)
+	for ref := range base.Elements {
+		used[ref] = true
+	}
+	if base.Meta != nil {
+		// Sort cached refs too so even duplicate cached IDs resolve consistently.
+		cached := make([]string, 0, len(base.Meta.Elements))
+		for ref := range base.Meta.Elements {
+			used[ref] = true
+			cached = append(cached, ref)
+		}
+		slices.Sort(cached)
+		for _, ref := range cached {
+			meta := base.Meta.Elements[ref]
+			if meta != nil && meta.ID != 0 {
+				if _, exists := existing[int32(meta.ID)]; !exists {
+					existing[int32(meta.ID)] = ref
+				}
+			}
+		}
+	}
+
+	// A stable ID order makes new refs independent of the export's row order.
+	ordered := slices.Clone(elements)
+	slices.SortFunc(ordered, func(a, b *diagv1.Element) int {
+		if a.Id < b.Id {
+			return -1
+		}
+		if a.Id > b.Id {
+			return 1
+		}
+		return 0
+	})
+	var collisions []*diagv1.Element
+	for _, element := range ordered {
+		if ref, exists := existing[element.Id]; exists {
+			refs[element.Id] = ref
+			continue
+		}
+		if _, exists := refs[element.Id]; exists {
+			continue
+		}
+		ref := workspace.Slugify(element.Name)
+		if ref == "" {
+			ref = fmt.Sprintf("element-%d", element.Id)
+		}
+		if used[ref] {
+			collisions = append(collisions, element)
+			continue
+		}
+		refs[element.Id] = ref
+		used[ref] = true
+	}
+	// Assign natural refs first so generated suffixes cannot take another
+	// exported element's name. Reserve every candidate as soon as it is used.
+	for _, element := range collisions {
+		stem := workspace.Slugify(element.Name)
+		if stem == "" {
+			stem = "element"
+		}
+		candidate := fmt.Sprintf("%s-%d", stem, element.Id)
+		ref := candidate
+		for suffix := 2; used[ref]; suffix++ {
+			ref = fmt.Sprintf("%s-%d", candidate, suffix)
+		}
+		refs[element.Id] = ref
+		used[ref] = true
+	}
+	return refs
 }
 
 func connectorRefMatches(ref, viewRef, srcRef, tgtRef, label string) bool {

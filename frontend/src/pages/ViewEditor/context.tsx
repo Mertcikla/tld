@@ -9,6 +9,8 @@ export interface ViewEditorContextValue {
   isFreePlan: boolean
   snapToGrid: boolean
   setSnapToGrid: (snap: boolean) => void
+  autoLayoutMode: boolean
+  setAutoLayoutMode: (enabled: boolean) => void
   selectedElement: LibraryElement | null
   selectedConnector: Connector | null
   isMarkdownOpen?: boolean
@@ -25,10 +27,12 @@ export function useViewEditorContext(): ViewEditorContextValue {
   const isFreePlan = useStore((state) => state.isFreePlan)
   const snapToGrid = useStore((state) => state.snapToGrid)
   const setSnapToGrid = useStore((state) => state.setSnapToGrid)
+  const autoLayoutMode = useStore((state) => state.autoLayoutMode)
+  const setAutoLayoutMode = useStore((state) => state.setAutoLayoutMode)
   const selectedElement = useStore((state) => state.selectedElement)
   const selectedConnector = useStore((state) => state.selectedConnector)
 
   if (context) return context
 
-  return { viewId, canEdit, isOwner, isFreePlan, snapToGrid, setSnapToGrid, selectedElement, selectedConnector }
+  return { viewId, canEdit, isOwner, isFreePlan, snapToGrid, setSnapToGrid, autoLayoutMode, setAutoLayoutMode, selectedElement, selectedConnector }
 }
