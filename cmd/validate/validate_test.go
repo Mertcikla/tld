@@ -44,7 +44,7 @@ func TestValidateCmd_InvalidWorkspace(t *testing.T) {
 	}
 }
 
-func TestValidateCmd_DuplicateNamesAreWarnings(t *testing.T) {
+func TestValidateCmd_DuplicateNamesAreARC204(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(`
@@ -58,12 +58,23 @@ api-dup:
 		t.Fatalf("write elements: %v", err)
 	}
 
-	stdout, stderr, err := cmd.RunCmd(t, dir, "validate")
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "--strictness", "3")
 	if err != nil {
-		t.Fatalf("validate should treat duplicate names as warnings: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+		t.Fatalf("validate: %v", err)
 	}
-	if !strings.Contains(stdout, "Workspace valid") || !strings.Contains(stdout, "Validation warnings") || !strings.Contains(stdout, "duplicate element name") {
-		t.Fatalf("stdout should include valid summary and duplicate warning, got:\n%s", stdout)
+	if !strings.Contains(stdout, "Workspace valid") {
+		t.Errorf("stdout should include valid summary, got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "ARC204") || !strings.Contains(stdout, "Duplicate Name") {
+		t.Errorf("stdout should include ARC204 duplicate-name warning, got:\n%s", stdout)
+	}
+
+	stdout, _, err = cmd.RunCmd(t, dir, "validate", "ARC204", "--strictness", "3")
+	if err != nil {
+		t.Fatalf("validate ARC204: %v", err)
+	}
+	if !strings.Contains(stdout, "[ARC204]") || !strings.Contains(stdout, `"api-dup"`) {
+		t.Errorf("stdout should include ARC204 violations, got:\n%s", stdout)
 	}
 }
 

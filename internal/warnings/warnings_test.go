@@ -120,6 +120,51 @@ func TestAnalyze_TechnologyValidation(t *testing.T) {
 	}
 }
 
+func TestAnalyze_ARC204DuplicateNames(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"api":     {Name: "API", Kind: "service"},
+			"api-dup": {Name: "API", Kind: "service"},
+			"db":      {Name: "DB", Kind: "database"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	var found *warnings.WarningGroup
+	archWarnings := warnings.Analyze(ws)
+	for i := range archWarnings {
+		if archWarnings[i].RuleCode == "ARC204" {
+			found = &archWarnings[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("expected ARC204 warning, got %+v", archWarnings)
+	}
+	if len(found.Violations) != 1 || !strings.Contains(found.Violations[0], `"api-dup"`) {
+		t.Fatalf("unexpected ARC204 violations: %+v", found.Violations)
+	}
+}
+
+func TestAnalyze_ARC204HiddenBelowStrict(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"api":     {Name: "API", Kind: "service"},
+			"api-dup": {Name: "API", Kind: "service"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 2},
+		},
+	}
+
+	for _, warning := range warnings.Analyze(ws) {
+		if warning.RuleCode == "ARC204" {
+			t.Fatalf("expected ARC204 to be disabled below strict level, got %+v", warning)
+		}
+	}
+}
+
 func TestAnalyze_DeadEndDrilldownUsesOwnedViews(t *testing.T) {
 	ws := &workspace.Workspace{
 		Elements: map[string]*workspace.Element{

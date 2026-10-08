@@ -53,7 +53,6 @@ in full detail with individual element and connector information.`,
 			if strictness > 0 {
 				ws.Config.Validation.Level = strictness
 			}
-			validationWarnings := ws.ValidateWarnings()
 
 			errs := ws.Validate()
 			if len(errs) > 0 {
@@ -86,13 +85,6 @@ in full detail with individual element and connector information.`,
 				term.Hint(cmd.OutOrStdout(), "Commands apply immediately; run 'tld pull' to refresh YAML after frontend changes.")
 			} else {
 				term.Warnf(cmd.OutOrStdout(), "nothing to validate")
-			}
-
-			if len(validationWarnings) > 0 {
-				term.Warn(cmd.OutOrStdout(), "Validation warnings:")
-				for _, warning := range validationWarnings {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    - %s\n", warning)
-				}
 			}
 
 			outdated := cmdutil.CheckOutdated(ws, repoCtx, rules)

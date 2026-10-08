@@ -2,6 +2,7 @@ package warnings
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/mertcikla/tld/v2/internal/tech"
@@ -268,6 +269,38 @@ var warningRules = []warningRule{
 			for connectorRef, connector := range ctx.ws.Connectors {
 				if connector != nil && connector.Label == "" {
 					ctx.addWarning(rule.Code, fmt.Sprintf("Connector %q in View %q", connectorRef, normalizeWarningViewRef(connector.View)))
+				}
+			}
+		},
+	},
+	{
+		Code:        "ARC204",
+		Name:        "Duplicate Name",
+		Description: "Multiple elements share the same display name",
+		Mediation:   "Rename elements so each display name is unique and unambiguous.",
+		Level:       3,
+		Check: func(ctx *warningContext, rule warningRule) {
+			nameOwners := map[string][]string{}
+			for ref, element := range ctx.ws.Elements {
+				if element == nil || strings.TrimSpace(element.Name) == "" {
+					continue
+				}
+				nameOwners[element.Name] = append(nameOwners[element.Name], ref)
+			}
+			names := make([]string, 0, len(nameOwners))
+			for name := range nameOwners {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				refs := nameOwners[name]
+				if len(refs) < 2 {
+					continue
+				}
+				sort.Strings(refs)
+				firstRef := refs[0]
+				for _, ref := range refs[1:] {
+					ctx.addWarning(rule.Code, fmt.Sprintf("Element %q (Name: %q, also used by %q)", ref, name, firstRef))
 				}
 			}
 		},

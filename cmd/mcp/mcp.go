@@ -320,13 +320,6 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 			return errResult(fmt.Errorf("%s%d symbol error(s)", out, len(broken)))
 		}
 		out += fmt.Sprintf("Workspace valid: %d elements, %d connectors\n", len(ws.Elements), len(ws.Connectors))
-		validationWarnings := ws.ValidateWarnings()
-		if len(validationWarnings) > 0 {
-			out += "\nValidation warnings:\n"
-			for _, warning := range validationWarnings {
-				out += "  - " + warning.Error() + "\n"
-			}
-		}
 		outdated := cmdutil.CheckOutdated(ws, repoCtx, rules)
 		if len(outdated) > 0 {
 			out += "\nOutdated diagrams:\n"
