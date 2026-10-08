@@ -62,8 +62,7 @@ referenced symbols still exist in source files, and flag diagrams whose
 metadata is older than the file's last git commit.
 
 When called without arguments, validates the entire workspace and shows a summary
-of architectural warnings grouped by rule code. Outdated diagrams are reported
-as warnings unless --strict is set.
+of architectural warnings grouped by rule code.
 
 When called with a rule code (e.g. ARC002), shows only that rule's violations
 in full detail with individual element and connector information. The requested
@@ -124,28 +123,10 @@ rule runs regardless of the configured strictness level or exclude list.`,
 				term.Warnf(cmd.OutOrStdout(), "nothing to validate")
 			}
 
-			outdated := cmdutil.CheckOutdated(ws, repoCtx, rules)
-			if len(outdated) > 0 {
-				if strict {
-					term.Fail(cmd.OutOrStdout(), "Outdated diagrams:")
-				} else {
-					term.Warn(cmd.OutOrStdout(), "Outdated diagrams:")
-				}
-				for _, msg := range outdated {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    - %s\n", msg)
-				}
-				if strict {
-					term.Hint(cmd.OutOrStdout(), "run the matching add/update command to sync diagram metadata")
-				}
-			}
-
 			if len(warnings) > 0 {
 				printWarningSummary(cmd, ws, warnings, verbose)
 			}
 
-			if strict && len(outdated) > 0 {
-				return fmt.Errorf("%d outdated diagram(s) detected", len(outdated))
-			}
 			return nil
 		},
 	}

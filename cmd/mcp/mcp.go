@@ -292,7 +292,7 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_validate",
-		Description: "Validate workspace YAML files; returns errors, outdated diagrams, and architectural warnings.",
+		Description: "Validate workspace YAML files; returns errors, and architectural warnings.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a validateArgs) (*mcpsdk.CallToolResult, result, error) {
 		ws, err := workspace.Load(*wdir)
 		if err != nil {
@@ -320,13 +320,7 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 			return errResult(fmt.Errorf("%s%d symbol error(s)", out, len(broken)))
 		}
 		out += fmt.Sprintf("Workspace valid: %d elements, %d connectors\n", len(ws.Elements), len(ws.Connectors))
-		outdated := cmdutil.CheckOutdated(ws, repoCtx, rules)
-		if len(outdated) > 0 {
-			out += "\nOutdated diagrams:\n"
-			for _, m := range outdated {
-				out += "  - " + m + "\n"
-			}
-		}
+
 		warnings := archwarnings.Analyze(ws)
 		if len(warnings) > 0 {
 			out += "\nArchitectural warnings:\n"
