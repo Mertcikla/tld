@@ -112,6 +112,9 @@ rule runs regardless of the configured strictness level or exclude list.`,
 			warnings := archwarnings.Analyze(ws)
 
 			if len(args) == 1 {
+				if normalizeRuleCode(args[0]) == "ARC205" {
+					return printGrounding(cmd, ws)
+				}
 				return printRuleViolations(cmd, args[0], warnings)
 			}
 
@@ -207,6 +210,11 @@ func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings [
 		for _, wg := range warnings {
 			_, _ = fmt.Fprintf(out, "[%s] %s\n", wg.RuleCode, wg.RuleName)
 			_, _ = fmt.Fprintf(out, "  %s\n", wg.Mediation)
+			if wg.Score != nil {
+				for _, reason := range wg.Score.Reasoning {
+					_, _ = fmt.Fprintf(out, "  %s\n", reason)
+				}
+			}
 			for _, v := range wg.Violations {
 				_, _ = fmt.Fprintf(out, "    - %s\n", v)
 			}
@@ -231,6 +239,49 @@ func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings [
 	}
 
 	_, _ = fmt.Fprintln(out, "To suppress specific rule codes, use .tld.yaml: validation.exclude_rules: [ARC002]")
+}
+
+func printGrounding(cmd *cobra.Command, ws *workspace.Workspace) error {
+	out := cmd.OutOrStdout()
+	report := archwarnings.Grounding(ws)
+
+	_, _ = fmt.Fprintln(out, "[ARC205] Low Grounding")
+	_, _ = fmt.Fprintln(out, "Description: View has too few source-linked elements")
+	_, _ = fmt.Fprintf(out, "Workspace source grounding: %d/10\n\n", report.Value)
+	_, _ = fmt.Fprintf(out, "Linkable elements: %d\n", report.Eligible)
+	_, _ = fmt.Fprintf(out, "Source-linked:     %d\n", report.Grounded)
+	_, _ = fmt.Fprintf(out, "Exempt (abstract/external): %d\n\n", report.Exempt)
+
+	_, _ = fmt.Fprintln(out, "Reasoning:")
+	for _, reason := range report.Reasoning {
+		_, _ = fmt.Fprintf(out, "  - %s\n", reason)
+	}
+
+	hasViews := false
+	for _, view := range report.Views {
+		if view.Eligible > 0 {
+			hasViews = true
+			break
+		}
+	}
+	if hasViews {
+		_, _ = fmt.Fprintln(out, "\nPer-view scores:")
+		tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "  VIEW\tSCORE\tLINKED\tUNGROUNDED")
+		for _, view := range report.Views {
+			if view.Eligible == 0 {
+				continue
+			}
+			_, _ = fmt.Fprintf(tw, "  %s\t%d/10\t%d/%d\t%s\n", view.ViewRef, view.Value, view.Grounded, view.Eligible, strings.Join(view.Ungrounded, ", "))
+		}
+		_ = tw.Flush()
+	}
+
+	_, _ = fmt.Fprintln(out, "\nHow to improve:")
+	if rule, ok := archwarnings.RuleByCode("ARC205"); ok {
+		_, _ = fmt.Fprintf(out, "  %s\n", rule.Mediation)
+	}
+	return nil
 }
 
 func printRuleViolations(cmd *cobra.Command, code string, warnings []archwarnings.WarningGroup) error {

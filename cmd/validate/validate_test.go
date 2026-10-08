@@ -114,6 +114,34 @@ api-dup:
 	}
 }
 
+func TestValidateCmd_GroundingReport(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(`
+handler:
+  name: Handler
+  kind: function
+model:
+  name: Model
+  kind: struct
+`), 0600); err != nil {
+		t.Fatalf("write elements: %v", err)
+	}
+
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "ARC205")
+	if err != nil {
+		t.Fatalf("validate ARC205: %v", err)
+	}
+	for _, want := range []string{
+		"[ARC205]", "Low Grounding", "Workspace source grounding: 0/10",
+		"Linkable elements: 2", "0 of 2 linkable elements", "Reasoning:", "How to improve:",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout %q does not contain %q", stdout, want)
+		}
+	}
+}
+
 func TestValidateCmd_RuleCodeWithViolations(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)

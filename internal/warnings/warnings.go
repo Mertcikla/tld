@@ -2,6 +2,7 @@ package warnings
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 
@@ -12,6 +13,10 @@ import (
 // syntheticRootViewRef is the ref used for the root-level (synthetic) view.
 const syntheticRootViewRef = "root"
 
+// groundingMinScore is the 0-10 score below which the ARC205 rule warns at
+// strict (level 3) validation.
+const groundingMinScore = 5
+
 // WarningGroup represents a collection of similar architectural warnings.
 type WarningGroup struct {
 	RuleCode    string
@@ -19,6 +24,29 @@ type WarningGroup struct {
 	Description string
 	Mediation   string
 	Violations  []string
+	// Score is optional and only populated by rules that rank the workspace on
+	// a 0-10 scale (currently ARC205).
+	Score *WarningScore
+}
+
+// WarningScore is a 0-10 quality score for a rule, carrying the reasoning that
+// produced it so users know how to improve.
+type WarningScore struct {
+	Value     int
+	Grounded  int
+	Eligible  int
+	Exempt    int
+	Reasoning []string
+	Views     []ViewScore
+}
+
+// ViewScore is the source grounding score for a single view.
+type ViewScore struct {
+	ViewRef    string
+	Value      int
+	Grounded   int
+	Eligible   int
+	Ungrounded []string
 }
 
 type warningRule struct {
@@ -346,6 +374,184 @@ var warningRules = []warningRule{
 			}
 		},
 	},
+	{
+		Code:        "ARC205",
+		Name:        "Low Grounding",
+		Description: "View has too few source-linked elements",
+		Mediation:   "Link code-backed elements to a `file_path` (and `symbol` when possible). Deliberately abstract or external elements are exempt.",
+		Level:       3,
+		Check: func(ctx *warningContext, rule warningRule) {
+			report := ctx.groundingReport()
+			ctx.scores[rule.Code] = &report
+			if report.Eligible == 0 {
+				return
+			}
+			if report.Value < groundingMinScore {
+				ctx.addWarning(rule.Code, fmt.Sprintf("Workspace is %d/%d grounded (score %d/10)", report.Grounded, report.Eligible, report.Value))
+			}
+			for _, view := range report.Views {
+				if view.Eligible == 0 || view.Value >= groundingMinScore {
+					continue
+				}
+				ctx.addWarning(rule.Code, fmt.Sprintf("View %q is %d/%d grounded (score %d/10)", view.ViewRef, view.Grounded, view.Eligible, view.Value))
+			}
+		},
+	},
+}
+
+// defaultGroundableKinds is the built-in set of element kinds treated as
+// linkable code-backed resources by the ARC205 source grounding score.
+var defaultGroundableKinds = []string{
+	"file", "folder", "directory", "package", "module", "namespace",
+	"function", "method", "class", "struct", "interface", "type",
+	"enum", "field", "variable", "constant", "symbol",
+}
+
+func groundableKinds() map[string]bool {
+	set := make(map[string]bool, len(defaultGroundableKinds))
+	for _, kind := range defaultGroundableKinds {
+		set[kind] = true
+	}
+	return set
+}
+
+// elementHasSourceLink reports whether an element is linked to a source file or
+// symbol. Repository-only links (repo/repository_id without a path) do not
+// count as source links.
+func elementHasSourceLink(element *workspace.Element) bool {
+	if element == nil {
+		return false
+	}
+	return strings.TrimSpace(element.FilePath) != "" || strings.TrimSpace(element.Symbol) != ""
+}
+
+// isCodeindexElement reports whether an element is a resource materialized from
+// the codeindex (a row in codeindex_elements). Those are auto-generated from
+// indexed code and are silently excluded from the ARC205 grounded-ness score so
+// the score reflects user-authored diagrams only.
+func isCodeindexElement(element *workspace.Element) bool {
+	return element != nil && strings.TrimSpace(element.RepositoryID) != ""
+}
+
+// isGroundableElement reports whether an element should be counted toward the
+// source grounding score. Code-like kinds are always counted; any element that
+// already declares a source link is counted too, so grounded abstract elements
+// are not silently ignored. Ungrounded abstract/external elements are exempt.
+func isGroundableElement(element *workspace.Element, kinds map[string]bool) bool {
+	if element == nil {
+		return false
+	}
+	if elementHasSourceLink(element) {
+		return true
+	}
+	return kinds[strings.ToLower(strings.TrimSpace(element.Kind))]
+}
+
+func groundingValue(grounded, eligible int) int {
+	if eligible <= 0 {
+		return 0
+	}
+	return int(math.Round(10 * float64(grounded) / float64(eligible)))
+}
+
+// Grounding computes the 0-10 source grounding score for the workspace and each
+// view. It is exported so callers can render the full report on demand, even
+// when no warning threshold was crossed.
+func Grounding(ws *workspace.Workspace) WarningScore {
+	if ws == nil {
+		return WarningScore{}
+	}
+	ctx := newWarningContext(ws)
+	ctx.prepareData()
+	return ctx.groundingReport()
+}
+
+func (ctx *warningContext) groundingReport() WarningScore {
+	kinds := groundableKinds()
+	var report WarningScore
+
+	for _, element := range ctx.ws.Elements {
+		if isCodeindexElement(element) {
+			continue
+		}
+		if !isGroundableElement(element, kinds) {
+			report.Exempt++
+			continue
+		}
+		report.Eligible++
+		if elementHasSourceLink(element) {
+			report.Grounded++
+		}
+	}
+	report.Value = groundingValue(report.Grounded, report.Eligible)
+
+	viewRefs := make([]string, 0, len(ctx.viewElements))
+	for viewRef := range ctx.viewElements {
+		viewRefs = append(viewRefs, viewRef)
+	}
+	sort.Slice(viewRefs, func(i, j int) bool {
+		if viewRefs[i] == syntheticRootViewRef {
+			return true
+		}
+		if viewRefs[j] == syntheticRootViewRef {
+			return false
+		}
+		return viewRefs[i] < viewRefs[j]
+	})
+
+	for _, viewRef := range viewRefs {
+		seen := make(map[string]bool)
+		var view ViewScore
+		view.ViewRef = viewRef
+		for _, ref := range ctx.viewElements[viewRef] {
+			if seen[ref] {
+				continue
+			}
+			seen[ref] = true
+			element := ctx.ws.Elements[ref]
+			if isCodeindexElement(element) {
+				continue
+			}
+			if !isGroundableElement(element, kinds) {
+				continue
+			}
+			view.Eligible++
+			if elementHasSourceLink(element) {
+				view.Grounded++
+			} else {
+				view.Ungrounded = append(view.Ungrounded, ref)
+			}
+		}
+		sort.Strings(view.Ungrounded)
+		view.Value = groundingValue(view.Grounded, view.Eligible)
+		report.Views = append(report.Views, view)
+	}
+
+	report.Reasoning = groundingReasoning(report)
+	return report
+}
+
+func groundingReasoning(report WarningScore) []string {
+	if report.Eligible == 0 {
+		return []string{"No code-like or source-linked elements found; source grounding does not apply."}
+	}
+	lines := []string{
+		fmt.Sprintf("%d of %d linkable elements are source-linked (score %d/10).", report.Grounded, report.Eligible, report.Value),
+	}
+	if report.Exempt > 0 {
+		lines = append(lines, fmt.Sprintf("%d abstract/external element(s) were exempt from the score.", report.Exempt))
+	}
+	var weak []string
+	for _, view := range report.Views {
+		if view.Eligible == 0 || view.Value >= groundingMinScore {
+			continue
+		}
+		weak = append(weak, fmt.Sprintf("%s (%d/10)", view.ViewRef, view.Value))
+	}
+	if len(weak) > 0 {
+		lines = append(lines, "Views below the grounding floor of "+fmt.Sprintf("%d/10", groundingMinScore)+": "+strings.Join(weak, ", ")+".")
+	}
+	return lines
 }
 
 // elementCodeIdentity returns the stable source location of a code-backed
@@ -406,6 +612,7 @@ type warningContext struct {
 	allowLowInsight bool
 	activeRules     []warningRule
 	violations      map[string][]string
+	scores          map[string]*WarningScore
 	viewElements    map[string][]string
 	elementViews    map[string]map[string]int
 	viewConnectors  map[string]int
@@ -437,6 +644,17 @@ func Rules() []Rule {
 	return rules
 }
 
+// RuleByCode returns the metadata for a rule code.
+func RuleByCode(code string) (Rule, bool) {
+	code = normalizeWarningRuleCode(code)
+	for _, rule := range Rules() {
+		if rule.Code == code {
+			return rule, true
+		}
+	}
+	return Rule{}, false
+}
+
 // Analyze evaluates the workspace against architectural best practices and
 // returns grouped warnings based on the configured strictness level.
 func Analyze(ws *workspace.Workspace) []WarningGroup {
@@ -463,6 +681,7 @@ func newWarningContext(ws *workspace.Workspace) *warningContext {
 		allowLowInsight: allowLowInsight,
 		activeRules:     resolveConfiguredWarningRules(level, includeRules, excludeRules),
 		violations:      make(map[string][]string),
+		scores:          make(map[string]*WarningScore),
 		viewElements:    make(map[string][]string),
 		elementViews:    make(map[string]map[string]int),
 		viewConnectors:  make(map[string]int),
@@ -600,6 +819,7 @@ func (ctx *warningContext) toSlice() []WarningGroup {
 				Description: rule.Description,
 				Mediation:   rule.Mediation,
 				Violations:  violations,
+				Score:       ctx.scores[rule.Code],
 			})
 		}
 	}

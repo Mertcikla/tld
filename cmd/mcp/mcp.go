@@ -327,6 +327,12 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 			for _, w := range warnings {
 				if a.Verbose {
 					out += fmt.Sprintf("[%s] %s\n%s\n", w.RuleCode, w.RuleName, w.Mediation)
+					if w.Score != nil {
+						out += fmt.Sprintf("  Score: %d/10\n", w.Score.Value)
+						for _, reason := range w.Score.Reasoning {
+							out += "  " + reason + "\n"
+						}
+					}
 					for _, v := range w.Violations {
 						out += "  * " + v + "\n"
 					}

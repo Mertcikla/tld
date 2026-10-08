@@ -241,6 +241,136 @@ func TestAnalyze_ARC204SeparatesRepositoriesWithSamePath(t *testing.T) {
 	}
 }
 
+func TestAnalyze_ARC205HiddenBelowStrict(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"a": {Name: "A", Kind: "struct"},
+			"b": {Name: "B", Kind: "struct"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 2},
+		},
+	}
+
+	for _, warning := range warnings.Analyze(ws) {
+		if warning.RuleCode == "ARC205" {
+			t.Fatalf("expected ARC205 to be disabled below strict level, got %+v", warning)
+		}
+	}
+}
+
+func TestGrounding_ExemptsAbstractAndScoresLinked(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"repo":   {Name: "Repo", Kind: "repository"},
+			"file":   {Name: "main.go", Kind: "file", FilePath: "cmd/main.go", Symbol: "main"},
+			"config": {Name: "Config", Kind: "struct"},
+			"api":    {Name: "API", Kind: "service", FilePath: "api.go"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	report := warnings.Grounding(ws)
+	if report.Eligible != 3 {
+		t.Fatalf("eligible = %d, want 3", report.Eligible)
+	}
+	if report.Grounded != 2 {
+		t.Fatalf("grounded = %d, want 2", report.Grounded)
+	}
+	if report.Exempt != 1 {
+		t.Fatalf("exempt = %d, want 1", report.Exempt)
+	}
+	if report.Value != 7 {
+		t.Fatalf("score = %d, want 7", report.Value)
+	}
+}
+
+func TestGrounding_ExcludesCodeindexElements(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			// Materialized from the codeindex: linked, but excluded anyway.
+			"main.go": {Name: "main.go", Kind: "file", RepositoryID: "repo-1", Repo: "github.com/acme/app", FilePath: "cmd/main.go"},
+			// User-authored and ungrounded.
+			"model": {Name: "Model", Kind: "struct"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	report := warnings.Grounding(ws)
+	if report.Eligible != 1 {
+		t.Fatalf("eligible = %d, want 1", report.Eligible)
+	}
+	if report.Grounded != 0 || report.Value != 0 {
+		t.Fatalf("grounded/value = %d/%d, want 0/0", report.Grounded, report.Value)
+	}
+}
+
+func TestGrounding_PerViewScoresAndThreshold(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"platform": {Name: "Platform", Kind: "workspace", HasView: true, Placements: []workspace.ViewPlacement{{ParentRef: "root"}}},
+			"handler":  {Name: "Handler", Kind: "function", FilePath: "handler.go", Symbol: "Handle", Placements: []workspace.ViewPlacement{{ParentRef: "platform"}}},
+			"model":    {Name: "Model", Kind: "struct", Placements: []workspace.ViewPlacement{{ParentRef: "platform"}}},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	report := warnings.Grounding(ws)
+	var platform *warnings.ViewScore
+	for i := range report.Views {
+		if report.Views[i].ViewRef == "platform" {
+			platform = &report.Views[i]
+		}
+	}
+	if platform == nil {
+		t.Fatalf("expected a score for view \"platform\", got %+v", report.Views)
+	}
+	if platform.Eligible != 2 || platform.Grounded != 1 || platform.Value != 5 {
+		t.Fatalf("platform view score = %+v, want eligible=2 grounded=1 value=5", platform)
+	}
+	if len(platform.Ungrounded) != 1 || platform.Ungrounded[0] != "model" {
+		t.Fatalf("ungrounded = %+v, want [model]", platform.Ungrounded)
+	}
+}
+
+func TestAnalyze_ARC205FlagsLowGrounding(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"handler": {Name: "Handler", Kind: "function"},
+			"model":   {Name: "Model", Kind: "struct"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	var found *warnings.WarningGroup
+	archWarnings := warnings.Analyze(ws)
+	for i := range archWarnings {
+		if archWarnings[i].RuleCode == "ARC205" {
+			found = &archWarnings[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("expected ARC205 warning for ungrounded code-like elements")
+	}
+	if found.Score == nil {
+		t.Fatalf("expected ARC205 to carry a score, got %+v", found)
+	}
+	if found.Score.Value != 0 {
+		t.Fatalf("score = %d, want 0", found.Score.Value)
+	}
+	if len(found.Score.Reasoning) == 0 {
+		t.Fatalf("expected reasoning for ARC205, got %+v", found.Score)
+	}
+}
+
 func TestAnalyze_DeadEndDrilldownUsesOwnedViews(t *testing.T) {
 	ws := &workspace.Workspace{
 		Elements: map[string]*workspace.Element{
