@@ -1,13 +1,11 @@
-package store
+package app
 
 import (
 	"context"
 	"testing"
-
-	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
-func seedDensityView(t *testing.T, appStore *app.Store) {
+func seedDensityView(t *testing.T, appStore *Store) {
 	t.Helper()
 	if _, err := appStore.DB().Exec(`
 		INSERT INTO elements(id, name, tags, technology_connectors, created_at, updated_at)
@@ -37,7 +35,7 @@ func seedDensityView(t *testing.T, appStore *app.Store) {
 }
 
 func TestDensityValidationAndOverrideClamping(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	ctx := context.Background()
 
 	if err := appStore.SetViewDensityLevel(ctx, 1, -3); err == nil {
@@ -95,7 +93,7 @@ func TestDensityValidationAndOverrideClamping(t *testing.T) {
 }
 
 func TestInitializeViewNoiseGatePreservesConfiguredBypassesAndCreatesMissingOverrides(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	seedDensityView(t, appStore)
 	ctx := context.Background()
 
@@ -154,7 +152,7 @@ func TestInitializeViewNoiseGatePreservesConfiguredBypassesAndCreatesMissingOver
 }
 
 func TestInitializeViewNoiseGatePreservesExplicitBypassOnReenable(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	seedDensityView(t, appStore)
 	ctx := context.Background()
 
@@ -190,7 +188,7 @@ func TestInitializeViewNoiseGatePreservesExplicitBypassOnReenable(t *testing.T) 
 }
 
 func TestInitializeViewNoiseGateProjectionUsesInferredLevels(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	seedDensityView(t, appStore)
 	ctx := context.Background()
 
@@ -219,7 +217,7 @@ func TestInitializeViewNoiseGateProjectionUsesInferredLevels(t *testing.T) {
 }
 
 func TestDensityProjectionPromotedConnectorPullsEndpoints(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	seedDensityView(t, appStore)
 	ctx := context.Background()
 
@@ -250,7 +248,7 @@ func TestDensityProjectionPromotedConnectorPullsEndpoints(t *testing.T) {
 }
 
 func TestDensityProjectionBypassNoiseGateDoesNotConsumeElementCap(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	seedDensityView(t, appStore)
 	ctx := context.Background()
 
@@ -273,7 +271,7 @@ func TestDensityProjectionBypassNoiseGateDoesNotConsumeElementCap(t *testing.T) 
 }
 
 func TestDensityProjectionBypassNoiseGateIgnoresOverrideUntilDisabled(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	seedDensityView(t, appStore)
 	ctx := context.Background()
 
@@ -308,7 +306,7 @@ func TestDensityProjectionBypassNoiseGateIgnoresOverrideUntilDisabled(t *testing
 }
 
 func TestRichNoiseGateRemainsVisibleAtRichAndFullDensity(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	seedDensityView(t, appStore)
 	ctx := context.Background()
 
@@ -345,7 +343,7 @@ func TestRichNoiseGateRemainsVisibleAtRichAndFullDensity(t *testing.T) {
 }
 
 func TestFullNoiseGateHidesUntilFullDensity(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	seedDensityView(t, appStore)
 	ctx := context.Background()
 
@@ -387,7 +385,7 @@ func TestFullNoiseGateHidesUntilFullDensity(t *testing.T) {
 }
 
 func TestElementNoiseGateThresholdForcesVisibilityAtSelectedDensity(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	seedDensityView(t, appStore)
 	ctx := context.Background()
 
@@ -419,7 +417,7 @@ func TestElementNoiseGateThresholdForcesVisibilityAtSelectedDensity(t *testing.T
 }
 
 func TestElementNormalNoiseGateIsExplicitOverride(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	seedDensityView(t, appStore)
 	ctx := context.Background()
 
@@ -468,7 +466,7 @@ func TestElementNormalNoiseGateIsExplicitOverride(t *testing.T) {
 	}
 }
 
-func densityOverrideDelta(overrides []app.VisibilityOverride, elementID int64) int {
+func densityOverrideDelta(overrides []VisibilityOverride, elementID int64) int {
 	for _, override := range overrides {
 		if override.ResourceType == "element" && override.ResourceID == elementID {
 			return override.LevelDelta
@@ -477,7 +475,7 @@ func densityOverrideDelta(overrides []app.VisibilityOverride, elementID int64) i
 	return 999
 }
 
-func containsPlacement(items []app.PlacedElement, elementID int64) bool {
+func containsPlacement(items []PlacedElement, elementID int64) bool {
 	for _, item := range items {
 		if item.ElementID == elementID {
 			return true
@@ -486,7 +484,7 @@ func containsPlacement(items []app.PlacedElement, elementID int64) bool {
 	return false
 }
 
-func containsConnector(items []app.Connector, connectorID int64) bool {
+func containsConnector(items []Connector, connectorID int64) bool {
 	for _, item := range items {
 		if item.ID == connectorID {
 			return true
@@ -495,7 +493,7 @@ func containsConnector(items []app.Connector, connectorID int64) bool {
 	return false
 }
 
-func placementIDs(items []app.PlacedElement) []int64 {
+func placementIDs(items []PlacedElement) []int64 {
 	out := make([]int64, 0, len(items))
 	for _, item := range items {
 		out = append(out, item.ElementID)
@@ -503,7 +501,7 @@ func placementIDs(items []app.PlacedElement) []int64 {
 	return out
 }
 
-func connectorIDs(items []app.Connector) []int64 {
+func connectorIDs(items []Connector) []int64 {
 	out := make([]int64, 0, len(items))
 	for _, item := range items {
 		out = append(out, item.ID)
@@ -512,7 +510,7 @@ func connectorIDs(items []app.Connector) []int64 {
 }
 
 func TestDensityProjectionDependencyGroup(t *testing.T) {
-	appStore := openAdapterTestStore(t)
+	appStore := openAppStore(t)
 	ctx := context.Background()
 
 	// Seed one regular element (id 301, kind "component") and one dependency-group element (id 302, kind "dependency-group")
