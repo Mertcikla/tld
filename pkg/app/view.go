@@ -439,34 +439,26 @@ func (s *Store) CreateView(ctx context.Context, name string, levelLabel *string,
 }
 
 func (s *Store) UpdateView(ctx context.Context, id int64, name *string, description *string, levelLabel *string, tags []string) (ViewSummary, error) {
-	current, err := s.ViewByID(ctx, id)
-	if err != nil {
-		return ViewSummary{}, err
-	}
-	nextName := current.Name
-	if name != nil && strings.TrimSpace(*name) != "" {
-		nextName = strings.TrimSpace(*name)
-	}
-	nextDescription := current.Description
-	if description != nil {
-		nextDescription = description
-	}
-	var tagJSON any
 	if tags != nil {
 		if err := s.ensureTagColors(ctx, tags); err != nil {
 			return ViewSummary{}, err
 		}
-		tagJSON = jsonString(tags, "[]")
 	}
-	res, err := s.bun.NewUpdate().
+	q := s.bun.NewUpdate().
 		Model((*viewModel)(nil)).
-		Set("name = ?", nextName).
-		Set("description = ?", nextDescription).
 		Set("level_label = ?", levelLabel).
-		Set("tags = COALESCE(?, tags)", tagJSON).
 		Set("updated_at = ?", nowString()).
-		Where("id = ?", id).
-		Exec(ctx)
+		Where("id = ?", id)
+	if name != nil && strings.TrimSpace(*name) != "" {
+		q = q.Set("name = ?", strings.TrimSpace(*name))
+	}
+	if description != nil {
+		q = q.Set("description = ?", description)
+	}
+	if tags != nil {
+		q = q.Set("tags = ?", jsonString(tags, "[]"))
+	}
+	res, err := q.Exec(ctx)
 	if err != nil {
 		return ViewSummary{}, err
 	}

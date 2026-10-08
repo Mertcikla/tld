@@ -256,7 +256,7 @@ func (m *viewMarkdownModel) BeforeDelete(ctx context.Context, query *bun.DeleteQ
 }
 
 type visibilityOverrideModel struct {
-	bun.BaseModel `bun:"table:view_visibility_overrides"`
+	bun.BaseModel `bun:"table:view_visibility_overrides,alias:view_visibility_override"`
 
 	ViewID       int64      `bun:"view_id,pk"`
 	ResourceType string     `bun:"resource_type,pk"`

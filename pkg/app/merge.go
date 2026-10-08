@@ -29,16 +29,20 @@ func (s *Store) MergeElements(ctx context.Context, sourceID, survivorID int64, r
 		return MergeResult{}, errors.New("cannot merge an element into itself")
 	}
 
-	source, err := s.ElementByID(ctx, sourceID)
-	if err != nil {
-		return MergeResult{}, fmt.Errorf("load source element: %w", err)
-	}
-	survivor, err := s.ElementByID(ctx, survivorID)
-	if err != nil {
-		return MergeResult{}, fmt.Errorf("load survivor element: %w", err)
-	}
-
 	if err := s.bun.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		txStore := *s
+		txStore.bun = tx
+
+		// Read inside the transaction so the merge cannot act on a stale row.
+		source, err := txStore.ElementByID(ctx, sourceID)
+		if err != nil {
+			return fmt.Errorf("load source element: %w", err)
+		}
+		survivor, err := txStore.ElementByID(ctx, survivorID)
+		if err != nil {
+			return fmt.Errorf("load survivor element: %w", err)
+		}
+
 		// Reassign connectors: source_element_id -> survivor, target_element_id -> survivor.
 		if _, err := tx.NewUpdate().
 			Model((*connectorModel)(nil)).

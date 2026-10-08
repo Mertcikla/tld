@@ -435,18 +435,36 @@ func (s *Store) AdjustVisibilityOverride(ctx context.Context, viewID int64, reso
 	if err := ValidateResourceType(resourceType); err != nil {
 		return VisibilityOverride{}, err
 	}
-	var row visibilityOverrideModel
-	err := s.bun.NewSelect().
-		Model(&row).
-		Column("level_delta").
-		Where("view_id = ?", viewID).
-		Where("resource_type = ?", resourceType).
-		Where("resource_id = ?", resourceID).
-		Scan(ctx)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	now := nowString()
+	row := &visibilityOverrideModel{
+		ViewID:       viewID,
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		LevelDelta:   ClampOverrideDelta(step),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	// Apply the increment atomically in SQL so concurrent adjustments cannot
+	// lose an update. The CASE clamp keeps it portable across SQLite and
+	// Postgres; the explicit table alias disambiguates the existing row.
+	_, err := s.bun.NewInsert().
+		Model(row).
+		On("CONFLICT(view_id, resource_type, resource_id) DO UPDATE").
+		Set(`level_delta = CASE
+			WHEN view_visibility_override.level_delta + ? > ? THEN ?
+			WHEN view_visibility_override.level_delta + ? < ? THEN ?
+			ELSE view_visibility_override.level_delta + ?
+		END`,
+			step, MaxOverrideDelta, MaxOverrideDelta,
+			step, MinOverrideDelta, MinOverrideDelta,
+			step,
+		).
+		Set("updated_at = excluded.updated_at").
+		Exec(ctx)
+	if err != nil {
 		return VisibilityOverride{}, err
 	}
-	return s.SetVisibilityOverride(ctx, viewID, resourceType, resourceID, row.LevelDelta+step)
+	return s.visibilityOverride(ctx, viewID, resourceType, resourceID)
 }
 
 func (s *Store) DeleteVisibilityOverride(ctx context.Context, viewID int64, resourceType string, resourceID int64) error {
