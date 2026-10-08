@@ -127,6 +127,26 @@ func TestValidateCmd_UnknownRuleCode(t *testing.T) {
 	}
 }
 
+func TestValidateCmd_RulesListsByLevel(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "rules")
+	if err != nil {
+		t.Fatalf("validate rules: %v", err)
+	}
+	for _, want := range []string{
+		"Level 1 (Minimal)", "Level 2 (Standard)", "Level 3 (Strict)",
+		"ARC001", "High Density",
+		"ARC102", "Missing Tech",
+		"ARC203", "Missing Label",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout %q does not contain %q", stdout, want)
+		}
+	}
+}
+
 func TestValidateCmd_VerboseFlag(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)

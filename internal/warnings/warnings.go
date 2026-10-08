@@ -318,6 +318,31 @@ type warningContext struct {
 	maxDepth        int
 }
 
+// Rule describes the static metadata for an architectural warning rule.
+type Rule struct {
+	Code        string
+	Name        string
+	Description string
+	Mediation   string
+	Level       int
+}
+
+// Rules returns the metadata for every architectural warning rule in
+// declaration order.
+func Rules() []Rule {
+	rules := make([]Rule, 0, len(warningRules))
+	for _, r := range warningRules {
+		rules = append(rules, Rule{
+			Code:        r.Code,
+			Name:        r.Name,
+			Description: r.Description,
+			Mediation:   r.Mediation,
+			Level:       r.Level,
+		})
+	}
+	return rules
+}
+
 // Analyze evaluates the workspace against architectural best practices and
 // returns grouped warnings based on the configured strictness level.
 func Analyze(ws *workspace.Workspace) []WarningGroup {

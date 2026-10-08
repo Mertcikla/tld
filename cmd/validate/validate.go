@@ -2,6 +2,7 @@ package validate
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -12,12 +13,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var allWarningCodes = map[string]bool{
-	"ARC001": true, "ARC002": true, "ARC003": true, "ARC004": true,
-	"ARC005": true, "ARC006": true, "ARC007": true,
-	"ARC101": true, "ARC102": true, "ARC103": true,
-	"ARC201": true, "ARC202": true, "ARC203": true,
-}
+var allWarningCodes = func() map[string]bool {
+	codes := make(map[string]bool)
+	for _, r := range archwarnings.Rules() {
+		codes[r.Code] = true
+	}
+	return codes
+}()
+
+var levelNames = map[int]string{1: "Minimal", 2: "Standard", 3: "Strict"}
 
 func NewValidateCmd(wdir *string) *cobra.Command {
 	var strictness int
@@ -120,7 +124,63 @@ in full detail with individual element and connector information.`,
 	c.Flags().IntVar(&strictness, "strictness", 0, "override validation strictness level [1-3]")
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "show full architectural warnings output")
 	c.Flags().BoolVar(&strict, "strict", false, "exit non-zero when outdated diagrams are detected")
+	c.AddCommand(newRulesCmd())
 	return c
+}
+
+func newRulesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "rules",
+		Short: "List architectural validation rules grouped by strictness level",
+		Long: `List every architectural validation rule, grouped by the strictness level at
+which it becomes active, along with its description.
+
+Rules are enabled based on validation.level in .tld.yaml (1 = Minimal,
+2 = Standard, 3 = Strict). Use 'tld validate <code>' to inspect a rule's
+violations in the current workspace.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			printRules(cmd)
+			return nil
+		},
+	}
+}
+
+func printRules(cmd *cobra.Command) {
+	out := cmd.OutOrStdout()
+	rules := archwarnings.Rules()
+
+	levels := make([]int, 0, len(levelNames))
+	seen := make(map[int]bool)
+	for _, r := range rules {
+		if !seen[r.Level] {
+			seen[r.Level] = true
+			levels = append(levels, r.Level)
+		}
+	}
+	sort.Ints(levels)
+
+	_, _ = fmt.Fprintln(out, "Architectural Validation Rules")
+	_, _ = fmt.Fprintln(out)
+
+	for _, level := range levels {
+		name := levelNames[level]
+		if name == "" {
+			name = "Custom"
+		}
+		_, _ = fmt.Fprintf(out, "Level %d (%s)\n\n", level, name)
+		tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(tw, "CODE\tRULE\tDESCRIPTION")
+		for _, r := range rules {
+			if r.Level == level {
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Code, r.Name, r.Description)
+			}
+		}
+		_ = tw.Flush()
+		_, _ = fmt.Fprintln(out)
+	}
+
+	_, _ = fmt.Fprintln(out, "Use 'tld validate <code>' to see detailed violations for a rule.")
 }
 
 func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings []archwarnings.WarningGroup, verbose bool) {
@@ -128,7 +188,6 @@ func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings [
 	if level == 0 {
 		level = workspace.DefaultValidationLevel
 	}
-	levelNames := map[int]string{1: "Minimal", 2: "Standard", 3: "Strict"}
 	out := cmd.OutOrStdout()
 	_, _ = fmt.Fprintf(out, "\nArchitectural Warnings (Level %d: %s)\n\n", level, levelNames[level])
 	_, _ = fmt.Fprintln(out, "Issues found in workspace that may affect the visibility and usability of your diagrams. Consider applying the suggested mediations to improve your diagrams.")
