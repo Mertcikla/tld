@@ -280,31 +280,92 @@ var warningRules = []warningRule{
 		Mediation:   "Rename elements so each display name is unique and unambiguous.",
 		Level:       3,
 		Check: func(ctx *warningContext, rule warningRule) {
-			nameOwners := map[string][]string{}
+			type nameGroup struct {
+				plain     []string
+				qualified map[string][]string
+			}
+			groups := map[string]*nameGroup{}
 			for ref, element := range ctx.ws.Elements {
 				if element == nil || strings.TrimSpace(element.Name) == "" {
 					continue
 				}
-				nameOwners[element.Name] = append(nameOwners[element.Name], ref)
+				group := groups[element.Name]
+				if group == nil {
+					group = &nameGroup{qualified: map[string][]string{}}
+					groups[element.Name] = group
+				}
+				if identity := elementCodeIdentity(element); identity != "" {
+					group.qualified[identity] = append(group.qualified[identity], ref)
+				} else {
+					group.plain = append(group.plain, ref)
+				}
 			}
-			names := make([]string, 0, len(nameOwners))
-			for name := range nameOwners {
+			names := make([]string, 0, len(groups))
+			for name := range groups {
 				names = append(names, name)
 			}
 			sort.Strings(names)
 			for _, name := range names {
-				refs := nameOwners[name]
-				if len(refs) < 2 {
+				group := groups[name]
+				if len(group.plain) > 0 {
+					// A hand-authored name is ambiguous with everything else
+					// that shares it, code-backed or not.
+					sort.Strings(group.plain)
+					firstRef := group.plain[0]
+					for _, ref := range group.plain[1:] {
+						ctx.addWarning(rule.Code, fmt.Sprintf("Element %q (Name: %q, also used by %q)", ref, name, firstRef))
+					}
+					var qualifiedRefs []string
+					for _, refs := range group.qualified {
+						qualifiedRefs = append(qualifiedRefs, refs...)
+					}
+					sort.Strings(qualifiedRefs)
+					for _, ref := range qualifiedRefs {
+						ctx.addWarning(rule.Code, fmt.Sprintf("Element %q (Name: %q, also used by %q)", ref, name, firstRef))
+					}
 					continue
 				}
-				sort.Strings(refs)
-				firstRef := refs[0]
-				for _, ref := range refs[1:] {
-					ctx.addWarning(rule.Code, fmt.Sprintf("Element %q (Name: %q, also used by %q)", ref, name, firstRef))
+				// Code-backed elements sharing a display name are only
+				// duplicates when they resolve to the same source location.
+				identities := make([]string, 0, len(group.qualified))
+				for identity := range group.qualified {
+					identities = append(identities, identity)
+				}
+				sort.Strings(identities)
+				for _, identity := range identities {
+					refs := group.qualified[identity]
+					if len(refs) < 2 {
+						continue
+					}
+					sort.Strings(refs)
+					firstRef := refs[0]
+					for _, ref := range refs[1:] {
+						ctx.addWarning(rule.Code, fmt.Sprintf("Element %q (Name: %q, also used by %q)", ref, name, firstRef))
+					}
 				}
 			}
 		},
 	},
+}
+
+// elementCodeIdentity returns the stable source location of a code-backed
+// element. The mapping pipeline names file elements by basename while keeping
+// the full path on file_path, so repeated file names are intentional and only
+// collide when they resolve to the same repository, branch and path.
+// Hand-authored elements return "" and remain in the duplicate-name scope.
+func elementCodeIdentity(element *workspace.Element) string {
+	if element == nil {
+		return ""
+	}
+	path := strings.TrimSpace(element.FilePath)
+	if path == "" {
+		return ""
+	}
+	repo := strings.TrimSpace(element.RepositoryID)
+	if repo == "" {
+		repo = strings.TrimSpace(element.Repo)
+	}
+	return repo + "\x00" + strings.TrimSpace(element.Branch) + "\x00" + path
 }
 
 func (ctx *warningContext) isSingleSystemRootContext() bool {
