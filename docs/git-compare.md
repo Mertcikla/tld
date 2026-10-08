@@ -90,7 +90,7 @@ temporary checkout: install dependencies and generate required build assets
 there, rather than only in the original checkout. A setup failure stops the
 comparison. Preparation should leave tracked indexing inputs unchanged.
 
-See [the PR action guide](pr-bot.md) for cached GitHub PR comments and fork support.
+See [the tld PR diagram bot](https://github.com/Mertcikla/tld-pr-bot) for cached GitHub PR comments and fork support.
 
 ## Tips
 
