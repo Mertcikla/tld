@@ -119,12 +119,17 @@ func (s *Store) DeleteSnapshot(ctx context.Context, snapshotID string) error {
 		if _, err := tx.NewRaw(`UPDATE codeindex_elements SET snapshot_id = '' WHERE snapshot_id = ?`+where, append([]any{snapshotID}, scopeArgs...)...).Exec(ctx); err != nil {
 			return err
 		}
+		org := scope(ctx).value()
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_edges
-			WHERE repository_id = ? AND id NOT IN (SELECT edge_id FROM codeindex_snapshot_edges WHERE codeindex_snapshot_edges.org_id = codeindex_edges.org_id)`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
+			WHERE repository_id = ? AND org_id = ? AND id NOT IN (
+				SELECT edge_id FROM codeindex_snapshot_edges WHERE org_id = ?)`,
+			repositoryID, org, org).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_facts
-			WHERE repository_id = ? AND id NOT IN (SELECT fact_id FROM codeindex_snapshot_facts WHERE codeindex_snapshot_facts.org_id = codeindex_facts.org_id)`+where, append([]any{repositoryID}, scopeArgs...)...).Exec(ctx); err != nil {
+			WHERE repository_id = ? AND org_id = ? AND id NOT IN (
+				SELECT fact_id FROM codeindex_snapshot_facts WHERE org_id = ?)`,
+			repositoryID, org, org).Exec(ctx); err != nil {
 			return err
 		}
 		if _, err := tx.NewRaw(`DELETE FROM codeindex_snapshots WHERE id = ?`+where, append([]any{snapshotID}, scopeArgs...)...).Exec(ctx); err != nil {
