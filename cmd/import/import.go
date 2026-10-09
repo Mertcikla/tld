@@ -112,7 +112,7 @@ func runImport(cmd *cobra.Command, wdir, format string, compact bool, file, targ
 	}
 
 	if dryRun {
-		return reportImport(cmd, format, compact, "dry-run", plan)
+		return reportImport(cmd, format, compact, "import", "dry-run", plan)
 	}
 
 	resp, err := runner.ApplyPlan(ctx, plan.Request)
@@ -127,7 +127,7 @@ func runImport(cmd *cobra.Command, wdir, format string, compact bool, file, targ
 			err))
 	}
 
-	return reportImport(cmd, format, compact, "ok", plan)
+	return reportImport(cmd, format, compact, "import", "ok", plan)
 }
 
 func readImportDocument(path string, stdin io.Reader) (*importDocument, error) {
@@ -372,13 +372,13 @@ func protoMetadata(meta *diagv1.ResourceMetadata) *workspace.ResourceMetadata {
 	return &workspace.ResourceMetadata{ID: workspace.ResourceID(id), UpdatedAt: updatedAt}
 }
 
-func reportImport(cmd *cobra.Command, format string, compact bool, status string, plan *exec.ImportPlan) error {
+func reportImport(cmd *cobra.Command, format string, compact bool, command, status string, plan *exec.ImportPlan) error {
 	elements := plan.ElementsCreated + plan.ElementsUpdated
 	connectors := plan.ConnectorsCreated + plan.ConnectorsUpdated
 
 	if cmdutil.WantsJSON(format) {
 		return cmdutil.WriteJSON(cmd.OutOrStdout(), compact, cmdutil.JSONOutput{
-			Command: "import",
+			Command: command,
 			Status:  status,
 			Summary: map[string]int{
 				"elements_created":   plan.ElementsCreated,
@@ -392,8 +392,8 @@ func reportImport(cmd *cobra.Command, format string, compact bool, status string
 
 	if status == "dry-run" {
 		term.Successf(cmd.OutOrStdout(),
-			"dry-run: would import %d element(s) (%d new, %d updated) and %d connector(s) (%d new, %d updated)",
-			elements, plan.ElementsCreated, plan.ElementsUpdated,
+			"dry-run: would %s %d element(s) (%d new, %d updated) and %d connector(s) (%d new, %d updated)",
+			command, elements, plan.ElementsCreated, plan.ElementsUpdated,
 			connectors, plan.ConnectorsCreated, plan.ConnectorsUpdated)
 		if plan.ViewsCreated > 0 {
 			term.Infof(cmd.OutOrStdout(), "would create %d view(s)", plan.ViewsCreated)
@@ -402,8 +402,8 @@ func reportImport(cmd *cobra.Command, format string, compact bool, status string
 	}
 
 	term.Successf(cmd.OutOrStdout(),
-		"import: %d element(s) (%d new, %d updated) and %d connector(s) (%d new, %d updated)",
-		elements, plan.ElementsCreated, plan.ElementsUpdated,
+		"%s: %d element(s) (%d new, %d updated) and %d connector(s) (%d new, %d updated)",
+		command, elements, plan.ElementsCreated, plan.ElementsUpdated,
 		connectors, plan.ConnectorsCreated, plan.ConnectorsUpdated)
 	if plan.ViewsCreated > 0 {
 		term.Infof(cmd.OutOrStdout(), "created %d view(s)", plan.ViewsCreated)

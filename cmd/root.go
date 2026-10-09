@@ -127,6 +127,9 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 	importCmd := importcmd.NewImportCmd(&wdir, &outputFormat, &compactJSON)
 	importCmd.GroupID = resourceGroup.ID
 
+	syncCmd := importcmd.NewSyncCmd(&wdir, &outputFormat, &compactJSON)
+	syncCmd.GroupID = syncGroup.ID
+
 	removeCmd := remove.NewRemoveCmd(&wdir, &outputFormat, &compactJSON)
 	removeCmd.GroupID = resourceGroup.ID
 
@@ -211,6 +214,7 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 		validateCmd,
 		loginCmd,
 		pullCmd,
+		syncCmd,
 		renderCmd,
 		inspectCmd,
 		listCmd,

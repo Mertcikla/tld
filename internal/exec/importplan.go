@@ -141,7 +141,9 @@ func BuildImportPlan(
 			LogoUrl:         strOrNil(el.LogoURL),
 			Tags:            el.Tags,
 			Repo:            strOrNil(el.Repo),
+			RepositoryId:    strOrNil(el.RepositoryID),
 			Branch:          strOrNil(el.Branch),
+			Language:        strOrNil(el.Language),
 			FilePath:        strOrNil(el.FilePath),
 			BypassNoiseGate: el.BypassNoiseGate,
 		}
