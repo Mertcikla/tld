@@ -29,6 +29,31 @@ func normalizeRuleCode(code string) string {
 	return strings.ToUpper(strings.TrimSpace(code))
 }
 
+// ensureCacheInSync aborts validation when the workspace YAML has drifted from
+// the state last written to the target, so symbol and freshness checks never run
+// against a stale cache. A missing lock file or an unrecorded hash is treated as
+// unverifiable, keeping hand-authored workspaces usable.
+func ensureCacheInSync(dir string) error {
+	lockFile, err := workspace.LoadLockFile(dir)
+	if err != nil {
+		return fmt.Errorf("load lock file: %w", err)
+	}
+	if lockFile == nil || strings.TrimSpace(lockFile.WorkspaceHash) == "" {
+		return nil
+	}
+	currentHash, err := workspace.CalculateWorkspaceHash(dir)
+	if err != nil {
+		return fmt.Errorf("calculate workspace hash: %w", err)
+	}
+	if currentHash != lockFile.WorkspaceHash {
+		return cmdutil.WithHint(
+			errors.New("workspace YAML is out of sync with the last applied state"),
+			"Run 'tld pull' to refresh local YAML from the target, or 'tld sync' to push local changes, then re-run 'tld validate'.",
+		)
+	}
+	return nil
+}
+
 func knownRuleCodes() []string {
 	codes := make([]string, 0, len(allWarningCodes))
 	for code := range allWarningCodes {
@@ -81,6 +106,9 @@ rule runs regardless of the configured strictness level or exclude list.`,
 			ws, err := workspace.Load(*wdir)
 			if err != nil {
 				return fmt.Errorf("load workspace: %w", err)
+			}
+			if err := ensureCacheInSync(ws.Dir); err != nil {
+				return err
 			}
 			repoCtx := cmdutil.DetectRepoScope(cmdutil.GetWorkingDir(), *wdir)
 			rules := ws.IgnoreRulesForRepository(repoCtx.Name)
