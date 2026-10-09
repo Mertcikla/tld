@@ -25,6 +25,8 @@ import (
 type linkOptions struct {
 	next     bool
 	unlink   bool
+	ignore   bool
+	unignore bool
 	external bool
 	file     string
 	symbol   string
@@ -55,13 +57,17 @@ folder (trailing slash), or a URL. Use --repo for a repository-level link and
 Use --next (without an element ref) to list up to 5 unlinked elements sorted by
 view level as suggestions.
 
+Use --ignore to ignore, and --unignore to restore it.
+
   tld link svc internal/api.go#function:Handle
   tld link svc internal/api.go --line 42
   tld link svc --file internal/api.go --symbol Handle
   tld link svc --repo acme/app
   tld link svc --external https://status.acme.com
   tld link --next                       # suggest up to 5 unlinked elements
-  tld link svc --unlink                 # clear the link`,
+  tld link svc --unlink                 # clear the link
+  tld link svc --ignore                 # exempt an unlinked element from grounding
+  tld link svc --unignore               # restore grounding for an ignored element`,
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != nil {
@@ -76,6 +82,8 @@ view level as suggestions.
 
 	c.Flags().BoolVar(&opts.next, "next", false, "show up to 5 unlinked elements, sorted by view level")
 	c.Flags().BoolVar(&opts.unlink, "unlink", false, "clear the element's source link")
+	c.Flags().BoolVar(&opts.ignore, "ignore", false, "exempt an unlinked element from the grounding score")
+	c.Flags().BoolVar(&opts.unignore, "unignore", false, "restore grounding for an ignored element")
 	c.Flags().BoolVar(&opts.external, "external", false, "link externally (URL or unindexed repository)")
 	c.Flags().StringVar(&opts.file, "file", "", "file or folder path within a repository")
 	c.Flags().StringVar(&opts.symbol, "symbol", "", "declaration name to anchor within --file")
@@ -89,13 +97,28 @@ view level as suggestions.
 }
 
 func run(cmd *cobra.Command, wdir *string, opts linkOptions, args []string) error {
-	if opts.next && len(args) != 0 {
-		return fail(cmd, opts, fmt.Errorf("--next does not take an element ref"))
+	if opts.next {
+		if len(args) != 0 {
+			return fail(cmd, opts, fmt.Errorf("--next does not take an element ref"))
+		}
+		if opts.unlink || opts.ignore || opts.unignore || opts.external {
+			return fail(cmd, opts, fmt.Errorf("--next cannot be combined with --unlink, --ignore, --unignore, or --external"))
+		}
 	}
-	if opts.unlink && len(args) != 1 {
-		return fail(cmd, opts, fmt.Errorf("--unlink requires exactly one element ref"))
+	if opts.ignore && opts.unignore {
+		return fail(cmd, opts, fmt.Errorf("--ignore and --unignore are mutually exclusive"))
 	}
-	if !opts.next && !opts.unlink && len(args) == 0 {
+	if opts.unlink && (opts.ignore || opts.unignore) {
+		return fail(cmd, opts, fmt.Errorf("--unlink cannot be combined with --ignore or --unignore"))
+	}
+	if (opts.ignore || opts.unignore) && (len(args) > 1 || opts.external || opts.repo != "" || opts.file != "" || opts.symbol != "" || opts.line != 0) {
+		return fail(cmd, opts, fmt.Errorf("--ignore and --unignore cannot be combined with a link target"))
+	}
+	markerMode := opts.unlink || opts.ignore || opts.unignore
+	if markerMode && len(args) != 1 {
+		return fail(cmd, opts, fmt.Errorf("--unlink, --ignore, and --unignore require exactly one element ref"))
+	}
+	if !opts.next && !markerMode && len(args) == 0 {
 		return fail(cmd, opts, fmt.Errorf("an element ref is required (or use --next)"))
 	}
 	if len(args) > 2 {
@@ -136,6 +159,10 @@ func run(cmd *cobra.Command, wdir *string, opts linkOptions, args []string) erro
 		return reportResult(cmd, ws, ref, nil, opts, "unlinked")
 	}
 
+	if opts.ignore || opts.unignore {
+		return applyIgnore(cmd, sess, ws, ref, element, opts)
+	}
+
 	target := ""
 	if len(args) == 2 {
 		target = args[1]
@@ -168,6 +195,33 @@ func run(cmd *cobra.Command, wdir *string, opts linkOptions, args []string) erro
 	return reportResult(cmd, updated, ref, &res, opts, "linked")
 }
 
+// applyIgnore toggles the reserved grounding-ignore tag on an element. Ignoring
+// exempts an unlinked element from the ARC205 score without marking it external.
+func applyIgnore(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, ref string, element *workspace.Element, opts linkOptions) error {
+	action := "ignored"
+	var tags []string
+	if opts.ignore {
+		tags = appendTag(element.Tags, archwarnings.GroundingIgnoreTag)
+	} else {
+		action = "unignored"
+		tags = removeTag(element.Tags, archwarnings.GroundingIgnoreTag)
+	}
+
+	if opts.dryRun {
+		term.Successf(cmd.OutOrStdout(), "dry-run: %s %s", action, ref)
+		return nil
+	}
+
+	if err := update.ApplyElementFieldUpdate(cmd, sess, ws, ref, "tags", strings.Join(tags, ", ")); err != nil {
+		return fail(cmd, opts, fmt.Errorf("write ignore: %w", err))
+	}
+	updated, err := sess.Reload()
+	if err != nil {
+		return fail(cmd, opts, fmt.Errorf("reload workspace: %w", err))
+	}
+	return reportResult(cmd, updated, ref, nil, opts, action)
+}
+
 func fail(cmd *cobra.Command, opts linkOptions, err error) error {
 	if cmdutil.WantsJSON(opts.format) {
 		_ = cmdutil.WriteCommandError(cmd.OutOrStdout(), opts.compact, "link", err)
@@ -184,6 +238,8 @@ func reportResult(cmd *cobra.Command, ws *workspace.Workspace, ref string, res *
 			"score":    report.Value,
 			"grounded": report.Grounded,
 			"eligible": report.Eligible,
+			"external": report.External,
+			"ignored":  report.Ignored,
 			"views":    report.Views,
 		}
 		if res != nil {
@@ -201,6 +257,10 @@ func reportResult(cmd *cobra.Command, ws *workspace.Workspace, ref string, res *
 	switch action {
 	case "unlinked":
 		term.Successf(out, "Unlinked %q", ref)
+	case "ignored":
+		term.Successf(out, "Ignored %q (exempt from grounding)", ref)
+	case "unignored":
+		term.Successf(out, "Unignored %q", ref)
 	default:
 		if res != nil {
 			term.Successf(out, "Linked %q → %s", ref, res.display)

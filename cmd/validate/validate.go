@@ -300,6 +300,9 @@ func printGrounding(cmd *cobra.Command, ws *workspace.Workspace, opts ...archwar
 	if report.External > 0 {
 		_, _ = fmt.Fprintf(out, "Exempt (external links): %d\n", report.External)
 	}
+	if report.Ignored > 0 {
+		_, _ = fmt.Fprintf(out, "Exempt (ignored): %d\n", report.Ignored)
+	}
 	_, _ = fmt.Fprintln(out)
 
 	_, _ = fmt.Fprintln(out, "Reasoning:")

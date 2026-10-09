@@ -95,6 +95,8 @@ type linkArgs struct {
 	Repo     string `json:"repo,omitempty" jsonschema:"repository remote URL or owner/name"`
 	External bool   `json:"external,omitempty" jsonschema:"force an external (documented) link"`
 	Unlink   bool   `json:"unlink,omitempty" jsonschema:"clear the element's source link"`
+	Ignore   bool   `json:"ignore,omitempty" jsonschema:"exempt an unlinked element from the grounding score"`
+	Unignore bool   `json:"unignore,omitempty" jsonschema:"restore grounding for an ignored element"`
 }
 
 type linkNextArgs struct {
@@ -395,6 +397,12 @@ func registerLinkTools(server *mcpsdk.Server, wdir, format *string, compact *boo
 		}
 		if a.Unlink {
 			args = append(args, "--unlink")
+		}
+		if a.Ignore {
+			args = append(args, "--ignore")
+		}
+		if a.Unignore {
+			args = append(args, "--unignore")
 		}
 		if dataDir != "" {
 			args = append(args, "--data-dir", dataDir)

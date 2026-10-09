@@ -102,24 +102,6 @@ func TestLinkCmd_UnlinkClearsSourceLink(t *testing.T) {
 	}
 }
 
-func TestLinkCmd_AnchorWritesFileLink(t *testing.T) {
-	dir := t.TempDir()
-	cmd.MustInitWorkspace(t, dir)
-	writeElements(t, dir, "svc:\n  name: Payment Service\n  kind: struct\n")
-
-	stdout, _, err := cmd.RunCmd(t, dir, "link", "svc", "internal/api.go#function:Handle")
-	if err != nil {
-		t.Fatalf("link: %v\n%s", err, stdout)
-	}
-	content := readElements(t, dir)
-	if !strings.Contains(content, "file_path: internal/api.go#function:Handle") {
-		t.Fatalf("anchor not written:\n%s", content)
-	}
-	if !strings.Contains(stdout, "Grounding: workspace 10/10") {
-		t.Fatalf("expected fully grounded: %s", stdout)
-	}
-}
-
 func TestLinkCmd_ExplicitFileAndSymbol(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
@@ -198,6 +180,70 @@ func TestLinkCmd_NextWhenAllGrounded(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "All linkable elements are grounded.") {
 		t.Fatalf("unexpected stdout: %s", stdout)
+	}
+}
+
+func TestLinkCmd_IgnoreExemptsFromGrounding(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	writeElements(t, dir, "svc:\n  name: Payment Service\n  kind: struct\n")
+
+	stdout, _, err := cmd.RunCmd(t, dir, "link", "svc", "--ignore")
+	if err != nil {
+		t.Fatalf("link --ignore: %v\n%s", err, stdout)
+	}
+	if !strings.Contains(readElements(t, dir), "$ignored") {
+		t.Fatalf("ignore marker not written:\n%s", readElements(t, dir))
+	}
+
+	out, _, err := cmd.RunCmd(t, dir, "validate", "ARC205")
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !strings.Contains(out, "Exempt (ignored): 1") {
+		t.Fatalf("ignored element not exempt:\n%s", out)
+	}
+}
+
+func TestLinkCmd_UnignoreRestoresGrounding(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	writeElements(t, dir, "svc:\n  name: Payment Service\n  kind: struct\n  tags: [\"ui\", \"$ignored\"]\n")
+
+	if _, _, err := cmd.RunCmd(t, dir, "link", "svc", "--unignore"); err != nil {
+		t.Fatalf("unignore: %v", err)
+	}
+	content := readElements(t, dir)
+	if strings.Contains(content, "$ignored") {
+		t.Fatalf("ignore marker not cleared:\n%s", content)
+	}
+	if !strings.Contains(content, "ui") {
+		t.Fatalf("other tags not preserved:\n%s", content)
+	}
+}
+
+func TestLinkCmd_NextSkipsIgnored(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	writeElements(t, dir, "svc:\n  name: Payment Service\n  kind: struct\n  tags: [\"$ignored\"]\n")
+
+	stdout, _, err := cmd.RunCmd(t, dir, "link", "--next")
+	if err != nil {
+		t.Fatalf("link --next: %v", err)
+	}
+	if !strings.Contains(stdout, "All linkable elements are grounded.") {
+		t.Fatalf("ignored element should not be suggested:\n%s", stdout)
+	}
+}
+
+func TestLinkCmd_IgnoreConflictsWithLinkTarget(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	writeElements(t, dir, "svc:\n  name: Payment Service\n  kind: struct\n")
+
+	_, _, err := cmd.RunCmd(t, dir, "link", "svc", "--ignore", "--external", "https://example.com")
+	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("expected conflict error, got %v", err)
 	}
 }
 

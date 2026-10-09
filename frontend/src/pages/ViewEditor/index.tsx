@@ -154,6 +154,7 @@ import {
   isElementGroupTag,
   ELEMENT_GROUP_NODE_PREFIX,
 } from '../../utils/elementGroups'
+import { isGroundingIgnoreTag } from '../../utils/groundingTags'
 import { overrideViewContentInSnapshot } from '../../crossBranch/graph'
 import { useCrossBranchContextSettings } from '../../crossBranch/settings'
 import { removeConnectorGraphSnapshot, removePlacementGraphSnapshot, upsertConnectorGraphSnapshot, upsertPlacementGraphSnapshot, useWorkspaceGraphSnapshot } from '../../crossBranch/store'
@@ -1683,7 +1684,7 @@ function ViewEditorInner({
     selectedCanvasElements.forEach((element) => {
       const tags = element.tags ?? []
       tags.forEach((tag) => {
-        if (isElementGroupTag(tag)) return
+        if (isElementGroupTag(tag) || isGroundingIgnoreTag(tag)) return
         counts[tag] = (counts[tag] ?? 0) + 1
       })
     })
@@ -1994,10 +1995,10 @@ function ViewEditorInner({
 
   const availableTags = useMemo(() => {
     const tags = new Set<string>()
-    viewElements.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t)) tags.add(t) }))
-    allElements.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t)) tags.add(t) }))
-    connectors.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t)) tags.add(t) }))
-    Object.keys(tagColors).forEach((t) => { if (!isElementGroupTag(t)) tags.add(t) })
+    viewElements.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t) && !isGroundingIgnoreTag(t)) tags.add(t) }))
+    allElements.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t) && !isGroundingIgnoreTag(t)) tags.add(t) }))
+    connectors.forEach((o) => o.tags?.forEach((t: string) => { if (!isElementGroupTag(t) && !isGroundingIgnoreTag(t)) tags.add(t) }))
+    Object.keys(tagColors).forEach((t) => { if (!isElementGroupTag(t) && !isGroundingIgnoreTag(t)) tags.add(t) })
     return Array.from(tags).sort((a, b) => a.localeCompare(b))
   }, [allElements, connectors, tagColors, viewElements])
 

@@ -396,6 +396,39 @@ func TestGrounding_ExternalTagExempt(t *testing.T) {
 	}
 }
 
+func TestGrounding_IgnoreTagExempt(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"abstract": {Name: "Abstract", Kind: "component", Tags: []string{"ui", "$ignored"}},
+			"local":    {Name: "Local", Kind: "struct"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	report := warnings.Grounding(ws)
+	if report.Ignored != 1 {
+		t.Fatalf("ignored = %d, want 1", report.Ignored)
+	}
+	if report.External != 0 {
+		t.Fatalf("external = %d, want 0", report.External)
+	}
+	if report.Eligible != 1 {
+		t.Fatalf("eligible = %d, want 1", report.Eligible)
+	}
+	if report.Value != 0 {
+		t.Fatalf("value = %d, want 0", report.Value)
+	}
+
+	_, details := warnings.GroundingDetails(ws)
+	for _, detail := range details {
+		if detail.Ref == "abstract" {
+			t.Fatalf("ignored element leaked into grounding details: %+v", detail)
+		}
+	}
+}
+
 func TestGroundingDetails_OrderedByViewDepth(t *testing.T) {
 	ws := &workspace.Workspace{
 		Elements: map[string]*workspace.Element{

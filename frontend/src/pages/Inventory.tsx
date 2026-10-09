@@ -34,6 +34,7 @@ import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, DeleteIcon, EditIcon,
 import { ZoomInIcon } from '../components/Icons'
 import { api } from '../api/client'
 import { isElementGroupTag, elementGroupTagForLayer } from '../utils/elementGroups'
+import { isGroundingIgnoreTag } from '../utils/groundingTags'
 import { TYPE_COLORS } from '../types'
 import { resolveElementIconUrl } from '../utils/elementIcon'
 import ConnectorPanel from '../components/ConnectorPanel'
@@ -167,10 +168,10 @@ export default function Inventory() {
         }
       })
       const tagSet = new Set<string>(Object.keys(fetchedTagColors))
-      allElements.forEach((element) => element.tags.forEach((tag) => tagSet.add(tag)))
-      flatViews.forEach((view) => (view.tags ?? []).forEach((tag) => tagSet.add(tag)))
-      nextConnectors.forEach((connector) => (connector.tags ?? []).forEach((tag) => tagSet.add(tag)))
-      allLayers.forEach((layer) => layer.tags.forEach((tag) => tagSet.add(tag)))
+      allElements.forEach((element) => element.tags.forEach((tag) => { if (!isGroundingIgnoreTag(tag)) tagSet.add(tag) }))
+      flatViews.forEach((view) => (view.tags ?? []).forEach((tag) => { if (!isGroundingIgnoreTag(tag)) tagSet.add(tag) }))
+      nextConnectors.forEach((connector) => (connector.tags ?? []).forEach((tag) => { if (!isGroundingIgnoreTag(tag)) tagSet.add(tag) }))
+      allLayers.forEach((layer) => layer.tags.forEach((tag) => { if (!isGroundingIgnoreTag(tag)) tagSet.add(tag) }))
       setElements(allElements)
       setViews(flatViews)
       setConnectors(nextConnectors)
@@ -532,7 +533,7 @@ export default function Inventory() {
   const tagsInSelection = useMemo(() => {
     const counts: Record<string, number> = {}
     selectedRows.forEach((row) => row.tags.forEach((tag) => {
-      if (!isElementGroupTag(tag)) counts[tag] = (counts[tag] ?? 0) + 1
+      if (!isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)) counts[tag] = (counts[tag] ?? 0) + 1
     }))
     return counts
   }, [selectedRows])

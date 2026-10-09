@@ -51,6 +51,7 @@ import { ChevronDownIcon, ImageUploadIcon, ZoomInIcon, ZoomOutIcon } from './Ico
 import ScrollIndicatorWrapper from './ScrollIndicatorWrapper'
 import TagUpsert from './TagUpsert'
 import { isElementGroupTag } from '../utils/elementGroups'
+import { isGroundingIgnoreTag } from '../utils/groundingTags'
 import { openExternalUrl } from '../lib/desktop'
 
 import { useViewEditorContext } from '../pages/ViewEditor/context'
@@ -1685,7 +1686,7 @@ function ElementPanel({
                 isReadOnly={isReadOnly}
               />
               <Wrap mt={3}>
-                {tags.filter((tag) => !isElementGroupTag(tag)).map((tag) => (
+                {tags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)).map((tag) => (
                   <WrapItem key={tag}>
                     <Tag data-testid="element-panel-tag-chip" size="sm" variant="subtle" bg="whiteAlpha.100" border="1px solid" borderColor="whiteAlpha.200">
                       <TagLabel color="white">{tag}</TagLabel>

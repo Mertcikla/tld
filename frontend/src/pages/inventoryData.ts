@@ -1,5 +1,6 @@
 import type { Connector, DependencyConnector, LibraryElement, ViewTreeNode } from '../types'
 import { isElementGroupTag } from '../utils/elementGroups'
+import { isGroundingIgnoreTag } from '../utils/groundingTags'
 
 export type InventoryType = 'all' | 'elements' | 'views' | 'connectors'
 export type InventoryObjectType = 'element' | 'view' | 'connector'
@@ -85,7 +86,7 @@ export function buildInventoryRows(
   })
 
   const elementRows = elements.map((element): InventoryRow => {
-    const visibleTags = element.tags.filter((tag) => !isElementGroupTag(tag))
+    const visibleTags = element.tags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag))
     const connectorCount = connectorCountsByElement.get(element.id) ?? 0
     const qualityFlags = [
       ...(visibleTags.length === 0 ? ['untagged'] : []),

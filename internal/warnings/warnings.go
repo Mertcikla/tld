@@ -36,6 +36,7 @@ type WarningScore struct {
 	Grounded  int
 	Eligible  int
 	External  int
+	Ignored   int
 	Reasoning []string
 	Views     []ViewScore
 }
@@ -52,6 +53,7 @@ type GroundingElement struct {
 	Eligible       bool
 	CodeindexOwned bool
 	External       bool
+	Ignored        bool
 }
 
 // ViewScore is the source grounding score for a single view.
@@ -432,6 +434,12 @@ var warningRules = []warningRule{
 // exempt from the source grounding score.
 const externalTag = "external"
 
+// GroundingIgnoreTag is the reserved system tag that exempts an element from
+// the source grounding score without marking it external. It is user-owned
+// state stored alongside ordinary tags but hidden from tag UI, and the `$`
+// prefix keeps it from colliding with, or being parsed as, a normal tag.
+const GroundingIgnoreTag = "$ignored"
+
 // hasExternalTag reports whether the element carries the external marker tag.
 func hasExternalTag(element *workspace.Element) bool {
 	if element == nil {
@@ -439,6 +447,19 @@ func hasExternalTag(element *workspace.Element) bool {
 	}
 	for _, tag := range element.Tags {
 		if strings.EqualFold(strings.TrimSpace(tag), externalTag) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasIgnoredTag reports whether the element carries the reserved ignore tag.
+func hasIgnoredTag(element *workspace.Element) bool {
+	if element == nil {
+		return false
+	}
+	for _, tag := range element.Tags {
+		if strings.EqualFold(strings.TrimSpace(tag), GroundingIgnoreTag) {
 			return true
 		}
 	}
@@ -457,7 +478,8 @@ func elementHasSourceLink(element *workspace.Element) bool {
 
 // isGroundableElement reports whether an element should be counted toward the
 // source grounding score. Every element counts: only codeindex-owned elements
-// (excluded by the caller) and elements carrying the external tag are ignored.
+// (excluded by the caller) and elements carrying the external or ignore tags
+// are ignored.
 func isGroundableElement(element *workspace.Element) bool {
 	return element != nil
 }
@@ -484,8 +506,9 @@ func Grounding(ws *workspace.Workspace, opts ...Option) WarningScore {
 // GroundingDetails computes the source grounding score together with a
 // per-element breakdown of eligible elements. Elements are ordered by view
 // depth (shallowest first), then view ref, then ref, so callers can surface the
-// next element that still needs a source link. Elements linked externally are
-// excluded (they are exempt), as are codeindex-owned elements.
+// next element that still needs a source link. Elements linked externally or
+// carrying the reserved ignore tag are excluded (they are exempt), as are
+// codeindex-owned elements.
 func GroundingDetails(ws *workspace.Workspace, opts ...Option) (WarningScore, []GroundingElement) {
 	if ws == nil {
 		return WarningScore{}, nil
@@ -516,7 +539,7 @@ func GroundingDetails(ws *workspace.Workspace, opts ...Option) (WarningScore, []
 
 	var details []GroundingElement
 	for ref, element := range ctx.ws.Elements {
-		if element == nil || ctx.isCodeindexElement(element) || hasExternalTag(element) {
+		if element == nil || ctx.isCodeindexElement(element) || hasExternalTag(element) || hasIgnoredTag(element) {
 			continue
 		}
 		views := make([]string, 0, len(elementViews[ref]))
@@ -577,6 +600,10 @@ func (ctx *warningContext) groundingReport() WarningScore {
 			report.External++
 			continue
 		}
+		if hasIgnoredTag(element) {
+			report.Ignored++
+			continue
+		}
 		if !isGroundableElement(element) {
 			continue
 		}
@@ -617,6 +644,9 @@ func (ctx *warningContext) groundingReport() WarningScore {
 			if hasExternalTag(element) {
 				continue
 			}
+			if hasIgnoredTag(element) {
+				continue
+			}
 			if !isGroundableElement(element) {
 				continue
 			}
@@ -645,6 +675,9 @@ func groundingReasoning(report WarningScore) []string {
 	}
 	if report.External > 0 {
 		lines = append(lines, fmt.Sprintf("%d element(s) documented with an external link were exempt from the score.", report.External))
+	}
+	if report.Ignored > 0 {
+		lines = append(lines, fmt.Sprintf("%d element(s) were ignored and exempt from the score.", report.Ignored))
 	}
 	var weak []string
 	for _, view := range report.Views {

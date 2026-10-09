@@ -41,6 +41,7 @@ import { formatLineSourceLink, formatSymbolSourceLink, parseSourceLink } from '.
 import { openExternalUrl } from '../lib/desktop'
 import { api, type IndexedRepository } from '../api/client'
 import { isLocalRepoPath, listIndexedRepositories, normalizeRemoteKey } from '../utils/repositoryResolver'
+import { GROUNDING_IGNORE_TAG, isGroundingIgnoreTag } from '../utils/groundingTags'
 import type { LibraryElement } from '../types'
 
 interface Props {
@@ -325,6 +326,7 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
   const { basePath: initBasePath, symbolName: initSymbolName, nodeType: initNodeType, pickedLine: initPickedLine } = parseExistingLink(element)
 
   const hasExistingLink = !!(element.repo && element.file_path)
+  const isIgnored = (element.tags ?? []).some(isGroundingIgnoreTag)
   const [mode, setMode] = useState<'summary' | 'edit'>(hasExistingLink ? 'summary' : 'edit')
 
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
@@ -713,6 +715,13 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
     setStep(1)
   }
 
+  // Toggle the reserved grounding-ignore tag. Ignoring exempts the element from
+  // the ARC205 source-grounding score without recording an external link.
+  function handleIgnoreToggle(ignored: boolean) {
+    const base = (element.tags ?? []).filter((tag) => !isGroundingIgnoreTag(tag))
+    onUpdate({ tags: ignored ? [...base, GROUNDING_IGNORE_TAG] : base })
+  }
+
   const repoValid = /^[\w.-]+\/[\w.-]+$/.test(parseRepoSlug(repo)) ||
     (isLocalRepoPath(repo) && !!element.repository_id)
   const showPreviewCard = mode === 'edit' && step === 4
@@ -750,6 +759,11 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                       </Badge>
                     )}
                   </>
+                )}
+                {isIgnored && (
+                  <Badge variant="subtle" colorScheme="orange" fontSize="9px" px={1.5}>
+                    Ignored
+                  </Badge>
                 )}
               </HStack>
               <AccordionIcon color="gray.500" />
@@ -808,6 +822,19 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                       Open in GitHub
                     </Button>
                   )}
+                  {isIgnored && (
+                    <HStack justify="space-between" pt={1}>
+                      <Text fontSize="10px" color="orange.300">
+                        Exempt from the grounding score.
+                      </Text>
+                      {!isReadOnly && (
+                        <Button size="xs" variant="ghost" color="orange.200" h="20px" _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
+                          onClick={(e) => { e.stopPropagation(); handleIgnoreToggle(false) }}>
+                          Un-ignore
+                        </Button>
+                      )}
+                    </HStack>
+                  )}
                 </VStack>
               </VStack>
             ) : (
@@ -838,6 +865,26 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                     </Button>
                   )}
                 </HStack>
+
+                {!isReadOnly && (
+                  isIgnored ? (
+                    <HStack justify="space-between" bg="orange.900" rounded="md" px={2.5} py={1.5} border="1px solid" borderColor="orange.700">
+                      <Text fontSize="10px" color="orange.200">
+                        Ignored — excluded from the grounding score.
+                      </Text>
+                      <Button size="xs" variant="ghost" color="orange.200" h="20px" _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
+                        onClick={() => handleIgnoreToggle(false)}>
+                        Un-ignore
+                      </Button>
+                    </HStack>
+                  ) : (
+                    <Button size="xs" variant="ghost" color="gray.500" h="20px" alignSelf="flex-start" px={0}
+                      _hover={{ color: 'white', bg: 'transparent' }}
+                      onClick={() => handleIgnoreToggle(true)}>
+                      Ignore this element
+                    </Button>
+                  )
+                )}
 
                 <StepIndicator step={step} />
 

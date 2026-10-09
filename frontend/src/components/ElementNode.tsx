@@ -5,6 +5,7 @@ import { LinkIcon } from '@chakra-ui/icons'
 
 import type { LibraryElement, PlacedElement, ViewConnector, Tag } from '../types'
 import { isElementGroupTag } from '../utils/elementGroups'
+import { isGroundingIgnoreTag } from '../utils/groundingTags'
 import { ElementContainer } from './NodeContainer'
 import { ElementBody } from './NodeBody'
 import { resolveElementIconUrl } from '../utils/elementIcon'
@@ -1016,7 +1017,7 @@ function ElementNode({ data, selected }: Props) {
       />
 
       {/* Tags Dots & Hover Overlay */}
-      {!isPending && data.tags?.some((tag) => !isElementGroupTag(tag)) && (
+      {!isPending && data.tags?.some((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)) && (
         <Box
           position="absolute"
           bottom="8px"
@@ -1026,7 +1027,7 @@ function ElementNode({ data, selected }: Props) {
         >
           {/* Tag Dots (up to 5) */}
           <HStack spacing={1} _groupHover={{ opacity: 0 }}>
-            {data.tags.filter((tag) => !isElementGroupTag(tag)).slice(0, 5).map((tag, i) => (
+            {data.tags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)).slice(0, 5).map((tag, i) => (
               <Box
                 key={i}
                 w="6px"
@@ -1037,9 +1038,9 @@ function ElementNode({ data, selected }: Props) {
                 transition="all 0.2s"
               />
             ))}
-            {data.tags.filter((tag) => !isElementGroupTag(tag)).length > 5 && (
+            {data.tags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)).length > 5 && (
               <Text fontSize="8px" fontWeight="bold" color="whiteAlpha.600" lineHeight={1}>
-                +{data.tags.filter((tag) => !isElementGroupTag(tag)).length - 5}
+                +{data.tags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)).length - 5}
               </Text>
             )}
           </HStack>
@@ -1059,7 +1060,7 @@ function ElementNode({ data, selected }: Props) {
             _groupHover={{ opacity: 1, visibility: 'visible', transform: 'scale(1) translate(0px, 0px)' }}
             pointerEvents="none"
           >
-            {data.tags.filter((tag) => !isElementGroupTag(tag)).map((tag) => (
+            {data.tags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag)).map((tag) => (
               <Box
                 key={tag}
                 bg="var(--bg-panel)"
