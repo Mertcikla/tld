@@ -279,6 +279,7 @@ function serializeTechnologyLinkForSave(link: TechnologyConnector): TechnologyCo
 
 type AutoSaveOverrides = {
   tags?: string[]
+  url?: string | null
   technologyLinks?: TechnologyConnector[]
   explicitLogoClear?: boolean
 }
@@ -541,6 +542,7 @@ function ElementPanel({
 
   const buildPayloadAndFingerprint = useCallback(async (overrides?: AutoSaveOverrides) => {
     const tagsForSave = overrides?.tags ?? tags
+    const urlForSave = overrides && 'url' in overrides ? (overrides.url ?? '') : url
     const linksForSave = overrides?.technologyLinks ?? technologyLinks
     const explicitLogoClearForSave = overrides?.explicitLogoClear ?? explicitLogoClear
 
@@ -565,7 +567,7 @@ function ElementPanel({
       description,
       kind: normalizedType,
       technology: linksForSave.map((link) => link.label).join(', '),
-      url,
+      url: urlForSave,
       logo_url: logoUrl,
       technology_connectors: normalizedLinks,
       tags: tagsForSave,
@@ -1810,9 +1812,19 @@ function ElementPanel({
                 isReadOnly={isReadOnly}
                 onUpdate={(updates) => {
                   Object.assign(element, updates)
-                  // Trigger a save with new updates by rebuilding payload in saveIfDirty
+                  // Tags and url also live in local state (used when rebuilding
+                  // the save payload), so mirror them before the autosave.
+                  if (updates.tags) {
+                    setTags(updates.tags)
+                  }
+                  if ('url' in updates) {
+                    setUrl(updates.url ?? '')
+                  }
                   if (!isReadOnly) {
-                    scheduleAutoSave()
+                    const overrides: AutoSaveOverrides = {}
+                    if (updates.tags) overrides.tags = updates.tags
+                    if ('url' in updates) overrides.url = updates.url ?? null
+                    scheduleAutoSave(Object.keys(overrides).length > 0 ? overrides : undefined)
                   }
                 }}
               />

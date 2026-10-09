@@ -68,7 +68,65 @@ function parseExistingLink(element: LibraryElement) {
   return { basePath, symbolName, nodeType, pickedLine }
 }
 
+type SourceKind = 'file' | 'manual'
+
+type ManualKind = 'url' | 'repo' | 'path'
+
+// Detect which source form the element currently encodes so the editor opens on
+// the matching tab. Mirrors the forms accepted by `tld link`.
+function detectSourceKind(element: LibraryElement): SourceKind {
+  if (element.repo && element.file_path) return 'file'
+  if (element.repo || element.file_path || element.url) return 'manual'
+  return 'file'
+}
+
+// classifyManualTarget infers how a single free-form target should be stored,
+// mirroring the explicit forms `tld link` accepts: an http(s) URL links
+// externally, an owner/repo slug links at repository granularity, and anything
+// else is a file or folder path.
+function classifyManualTarget(value: string): ManualKind {
+  const trimmed = value.trim()
+  if (isHttpUrl(trimmed)) return 'url'
+  if (!trimmed || trimmed.endsWith('/') || trimmed.includes('#')) return 'path'
+  const lastSegment = trimmed.split('/').pop() ?? ''
+  if (/^[\w.-]+\/[\w.-]+$/.test(trimmed) && !lastSegment.includes('.')) return 'repo'
+  return 'path'
+}
+
+// withExternalTag adds or removes the reserved `external` marker tag used by
+// `tld link --external`, leaving every other tag (including `$ignored`) intact.
+function withExternalTag(tags: string[] | undefined, external: boolean): string[] {
+  const base = (tags ?? []).filter((tag) => tag.trim().toLowerCase() !== 'external')
+  return external ? [...base, 'external'] : base
+}
+
+function isHttpUrl(value: string | null | undefined): boolean {
+  const lower = (value ?? '').trim().toLowerCase()
+  return lower.startsWith('http://') || lower.startsWith('https://')
+}
+
+// manualTargetHint explains how the current free-form target will be stored.
+function manualTargetHint(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  switch (classifyManualTarget(trimmed)) {
+    case 'url':
+      return 'Links externally, outside the code index.'
+    case 'repo':
+      return 'Links at repository granularity (no file path).'
+    default:
+      return trimmed.endsWith('/')
+        ? 'Links a folder.'
+        : 'Links a file path. Use Git for symbol/line anchors.'
+  }
+}
+
 const STEP_LABELS = ['Repo', 'Branch', 'File', 'Symbol']
+
+const SOURCE_KIND_TABS: ReadonlyArray<readonly [SourceKind, string]> = [
+  ['file', 'Git'],
+  ['manual', 'Manual'],
+]
 
 function StepIndicator({ step }: { step: number }) {
   return (
@@ -325,9 +383,15 @@ function PreviewCard({
 export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props) {
   const { basePath: initBasePath, symbolName: initSymbolName, nodeType: initNodeType, pickedLine: initPickedLine } = parseExistingLink(element)
 
-  const hasExistingLink = !!(element.repo && element.file_path)
+  const hasRepo = !!element.repo
+  const hasFilePath = !!element.file_path
+  const hasUrl = !!element.url
+  const hasAnyLink = hasRepo || hasFilePath || hasUrl
+  const isExternalTagged = (element.tags ?? []).some((tag) => tag.trim().toLowerCase() === 'external')
   const isIgnored = (element.tags ?? []).some(isGroundingIgnoreTag)
-  const [mode, setMode] = useState<'summary' | 'edit'>(hasExistingLink ? 'summary' : 'edit')
+  const [mode, setMode] = useState<'summary' | 'edit'>(hasAnyLink ? 'summary' : 'edit')
+  const [sourceKind, setSourceKind] = useState<SourceKind>(detectSourceKind(element))
+  const [manualTarget, setManualTarget] = useState(element.url || element.file_path || element.repo || '')
 
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1)
 
@@ -409,7 +473,7 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
   }, [repo, element.repository_id, element.repo])
 
   useEffect(() => {
-    const hasLink = !!(element.repo && element.file_path)
+    const hasLink = !!(element.repo || element.file_path || element.url)
 
     // Only force a reset if we are not currently editing, or if the link changed from underneath us
     if (mode === 'summary' || (element.repo !== repo && element.file_path !== filePath)) {
@@ -430,6 +494,8 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
         setSymbols([])
         setRawCode('')
         setLineSearch('')
+        setSourceKind(detectSourceKind(element))
+        setManualTarget(element.url || element.file_path || element.repo || '')
       }
     }
   }, [element, filePath, mode, repo])
@@ -695,12 +761,52 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
       branch,
       file_path: buildFilePath(),
       language: isSupported ? language : undefined,
+      url: null,
+      tags: withExternalTag(element.tags, false),
     })
     setMode('summary')
   }
 
+  // Single free-form link target, mirroring the forms `tld link` accepts. The
+  // target is classified as an external URL, a repository, or a file/folder
+  // path.
+  function handleApplyManual() {
+    const value = manualTarget.trim()
+    if (!value) return
+    const kind = classifyManualTarget(value)
+    if (kind === 'url') {
+      onUpdate({
+        url: value,
+        repo: null,
+        repository_id: null,
+        branch: null,
+        file_path: null,
+        language: null,
+        tags: withExternalTag(element.tags, true),
+      })
+    } else if (kind === 'repo') {
+      onUpdate({
+        repo: isLocalRepoPath(value) ? value : parseRepoSlug(value),
+        repository_id: null,
+        branch: branch.trim() || null,
+        file_path: null,
+        language: null,
+        url: null,
+        tags: withExternalTag(element.tags, false),
+      })
+    } else {
+      onUpdate({
+        file_path: value,
+        language: null,
+        url: null,
+        tags: withExternalTag(element.tags, false),
+      })
+    }
+    setMode('summary')
+  }
+
   function handleRemoveLink() {
-    onUpdate({ repo: null, repository_id: null, branch: null, file_path: null, language: null })
+    onUpdate({ repo: null, repository_id: null, branch: null, file_path: null, language: null, url: null, tags: withExternalTag(element.tags, false) })
     // Explicitly reset local state to ensure immediate UI update
     setRepo('')
     setBranch('')
@@ -711,6 +817,8 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
     setRawCode('')
     setPickedLine(null)
     setSelectedSymbol(null)
+    setManualTarget('')
+    setSourceKind('file')
     setMode('edit')
     setStep(1)
   }
@@ -724,7 +832,7 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
 
   const repoValid = /^[\w.-]+\/[\w.-]+$/.test(parseRepoSlug(repo)) ||
     (isLocalRepoPath(repo) && !!element.repository_id)
-  const showPreviewCard = mode === 'edit' && step === 4
+  const showPreviewCard = mode === 'edit' && sourceKind === 'file' && step === 4
 
   const existingLocalRepo = isLocalRepoPath(element.repo)
   const summaryRemoteSlug = indexedRepo?.remoteUrl?.includes('github.com')
@@ -737,6 +845,11 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
       : ''
   const showGithubLink = /^[\w.-]+\/[\w.-]+$/.test(summaryRemoteSlug)
 
+  const parsedExisting = parseExistingLink(element)
+  const anchorLabel = parsedExisting.symbolName || (parsedExisting.pickedLine ? `L${parsedExisting.pickedLine}` : '')
+  const isFolderLink = hasFilePath && parsedExisting.basePath.endsWith('/')
+  const summaryUrl = (element.url ?? '').trim()
+
   // --- RENDER ---
   return (
     <Box overflow="visible">
@@ -746,13 +859,18 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
             <AccordionButton px={0} py={3} _hover={{ bg: 'transparent' }}>
               <HStack flex="1" textAlign="left" spacing={2}>
                 <Text fontSize="sm" fontFamily="var(--chakra-fonts-heading)" >
-                  Git Source
+                  Source
                 </Text>
-                {hasExistingLink && mode === 'summary' && (
+                {hasAnyLink && mode === 'summary' && (
                   <>
                     <Badge variant="subtle" colorScheme="blue" fontSize="9px" ml={1} px={1.5}>
                       Linked
                     </Badge>
+                    {isExternalTagged && (
+                      <Badge variant="subtle" colorScheme="purple" fontSize="9px" px={1.5}>
+                        External
+                      </Badge>
+                    )}
                     {(element.repository_id || indexedRepo) && (
                       <Badge variant="subtle" colorScheme="green" fontSize="9px" px={1.5}>
                         Indexed
@@ -770,20 +888,22 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
             </AccordionButton>
           </h2>
           <AccordionPanel pb={4} px={0} overflow="visible">
-            {mode === 'summary' ? (
+            {mode === 'summary' && !isIgnored ? (
               <VStack align="stretch" spacing={2}>
                 <VStack align="stretch" spacing={1.5}
                   bg="whiteAlpha.50" rounded="lg" px={3} py={2.5}
                   border="1px solid" borderColor="whiteAlpha.100">
                   <HStack justify="space-between">
                     <HStack spacing={2} minW={0}>
-                      <Text fontSize="xs" color="gray.500" flexShrink={0}>Repo</Text>
-                      <Text fontSize="xs" color="white" fontFamily="mono" isTruncated>{summaryRepoLabel}</Text>
+                      <Text fontSize="xs" color="gray.500" flexShrink={0}>{hasUrl ? 'URL' : hasRepo ? 'Repo' : 'File'}</Text>
+                      <Text fontSize="xs" color="white" fontFamily="mono" isTruncated>
+                        {hasUrl ? summaryUrl : hasRepo ? summaryRepoLabel : parsedExisting.basePath}
+                      </Text>
                     </HStack>
                     {!isReadOnly && (
                       <HStack spacing={1}>
                         <Button size="xs" variant="ghost" color="gray.500" h="20px" _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
-                          onClick={(e) => { e.stopPropagation(); setStep(1); setMode('edit') }}>
+                          onClick={(e) => { e.stopPropagation(); setSourceKind(detectSourceKind(element)); setStep(1); setMode('edit') }}>
                           Edit
                         </Button>
                         <Tooltip label="Remove link" placement="top">
@@ -793,53 +913,47 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                       </HStack>
                     )}
                   </HStack>
-                  <HStack spacing={2} minW={0}>
-                    <Text fontSize="xs" color="gray.500" flexShrink={0}>Branch</Text>
-                    <Badge colorScheme="blue" fontSize="9px">{element.branch || 'main'}</Badge>
-                  </HStack>
-                  <HStack spacing={2} minW={0}>
-                    <Text fontSize="xs" color="gray.500" flexShrink={0}>File</Text>
-                    <Text fontSize="xs" color="gray.300" fontFamily="mono" isTruncated>{parseExistingLink(element).basePath}</Text>
-                  </HStack>
-                  {parseExistingLink(element).symbolName && (
+                  {hasRepo && (
                     <HStack spacing={2} minW={0}>
-                      <Text fontSize="xs" color="gray.500" flexShrink={0}>Symbol</Text>
-                      <Text fontSize="xs" color="blue.300" fontFamily="mono" fontWeight="600">{parseExistingLink(element).symbolName}</Text>
+                      <Text fontSize="xs" color="gray.500" flexShrink={0}>Branch</Text>
+                      <Badge colorScheme="blue" fontSize="9px">{element.branch || 'main'}</Badge>
                     </HStack>
                   )}
-                  {parseExistingLink(element).pickedLine && !parseExistingLink(element).symbolName && (
+                  {hasFilePath && (hasRepo || hasUrl) && (
                     <HStack spacing={2} minW={0}>
-                      <Text fontSize="xs" color="gray.500" flexShrink={0}>Line</Text>
-                      <Text fontSize="xs" color="blue.300" fontFamily="mono">L{parseExistingLink(element).pickedLine}</Text>
+                      <Text fontSize="xs" color="gray.500" flexShrink={0}>{isFolderLink ? 'Folder' : 'File'}</Text>
+                      <Text fontSize="xs" color="gray.300" fontFamily="mono" isTruncated>{parsedExisting.basePath}</Text>
                     </HStack>
                   )}
-                  {showGithubLink && (
+                  {anchorLabel && (
+                    <HStack spacing={2} minW={0}>
+                      <Text fontSize="xs" color="gray.500" flexShrink={0}>{parsedExisting.symbolName ? 'Symbol' : 'Line'}</Text>
+                      <Text fontSize="xs" color="blue.300" fontFamily="mono" fontWeight="600">{anchorLabel}</Text>
+                    </HStack>
+                  )}
+                  {hasUrl && (
                     <Button
-                      onClick={() => openExternalUrl(`https://github.com/${summaryRemoteSlug}/blob/${element.branch || 'main'}/${parseExistingLink(element).basePath}`)}
+                      onClick={() => openExternalUrl(summaryUrl)}
+                      size="xs" variant="ghost" leftIcon={<ExternalLinkIcon />}
+                      justifyContent="flex-start" px={0} mt={0.5} h="auto" py={1}
+                      color="blue.400" _hover={{ color: 'blue.200', bg: 'transparent' }}>
+                      Open link
+                    </Button>
+                  )}
+                  {showGithubLink && hasFilePath && (
+                    <Button
+                      onClick={() => openExternalUrl(`https://github.com/${summaryRemoteSlug}/blob/${element.branch || 'main'}/${parsedExisting.basePath}`)}
                       size="xs" variant="ghost" leftIcon={<ExternalLinkIcon />}
                       justifyContent="flex-start" px={0} mt={0.5} h="auto" py={1}
                       color="blue.400" _hover={{ color: 'blue.200', bg: 'transparent' }}>
                       Open in GitHub
                     </Button>
                   )}
-                  {isIgnored && (
-                    <HStack justify="space-between" pt={1}>
-                      <Text fontSize="10px" color="orange.300">
-                        Exempt from the grounding score.
-                      </Text>
-                      {!isReadOnly && (
-                        <Button size="xs" variant="ghost" color="orange.200" h="20px" _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
-                          onClick={(e) => { e.stopPropagation(); handleIgnoreToggle(false) }}>
-                          Un-ignore
-                        </Button>
-                      )}
-                    </HStack>
-                  )}
                 </VStack>
               </VStack>
             ) : (
               <VStack align="stretch" spacing={3} overflow="visible">
-                {showPreviewCard && (
+                {showPreviewCard && !isIgnored && (
                   <PreviewCard
                     filename={filePath.split('/').pop() || filePath}
                     isLoading={symbolLoading || rawCodeLoading}
@@ -854,38 +968,40 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                   />
                 )}
 
-                <HStack justify="space-between" mb={1}>
-                  <Text fontSize="10px" color="gray.500" fontWeight="bold" textTransform="uppercase">
-                    {hasExistingLink ? 'Re-configure link' : 'New link'}
-                  </Text>
-                  {hasExistingLink && (
-                    <Button size="xs" variant="ghost" color="gray.500" h="20px" _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
+                <HStack spacing={1} flexWrap="wrap" mb={1}>
+                  {SOURCE_KIND_TABS.map(([kind, label]) => (
+                    <Button
+                      key={kind}
+                      size="xs" h="24px"
+                      isDisabled={isReadOnly || isIgnored}
+                      variant={sourceKind === kind ? 'solid' : 'ghost'}
+                      colorScheme={sourceKind === kind ? 'blue' : undefined}
+                      color={sourceKind === kind ? undefined : 'gray.400'}
+                      _hover={sourceKind === kind ? undefined : { bg: 'whiteAlpha.100', color: 'white' }}
+                      onClick={() => setSourceKind(kind)}
+                    >
+                      {label}
+                    </Button>
+                  ))}
+                  {!isReadOnly && (
+                    <Button size="xs" h="24px" variant="ghost" ml="auto"
+                      color={isIgnored ? 'orange.300' : 'gray.500'}
+                      _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
+                      onClick={() => handleIgnoreToggle(!isIgnored)}>
+                      {isIgnored ? 'Un-ignore' : 'Ignore'}
+                    </Button>
+                  )}
+                  {hasAnyLink && !isReadOnly && !isIgnored && (
+                    <Button size="xs" h="24px" variant="ghost" color="gray.500"
+                      _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
                       onClick={() => setMode('summary')}>
                       Cancel
                     </Button>
                   )}
                 </HStack>
 
-                {!isReadOnly && (
-                  isIgnored ? (
-                    <HStack justify="space-between" bg="orange.900" rounded="md" px={2.5} py={1.5} border="1px solid" borderColor="orange.700">
-                      <Text fontSize="10px" color="orange.200">
-                        Ignored — excluded from the grounding score.
-                      </Text>
-                      <Button size="xs" variant="ghost" color="orange.200" h="20px" _hover={{ color: 'white', bg: 'whiteAlpha.100' }}
-                        onClick={() => handleIgnoreToggle(false)}>
-                        Un-ignore
-                      </Button>
-                    </HStack>
-                  ) : (
-                    <Button size="xs" variant="ghost" color="gray.500" h="20px" alignSelf="flex-start" px={0}
-                      _hover={{ color: 'white', bg: 'transparent' }}
-                      onClick={() => handleIgnoreToggle(true)}>
-                      Ignore this element
-                    </Button>
-                  )
-                )}
-
+                {!isIgnored && sourceKind === 'file' && (
+                  <>
                 <StepIndicator step={step} />
 
                 {/* STEP 1 */}
@@ -1208,6 +1324,47 @@ export default function GitSourceLinker({ element, isReadOnly, onUpdate }: Props
                         Apply
                       </Button>
                     </HStack>
+                  </VStack>
+                )}
+                  </>
+                )}
+
+                {!isIgnored && sourceKind === 'manual' && (
+                  <VStack align="stretch" spacing={3}>
+                    <FormControl>
+                      <FormLabel fontSize="xs" color="gray.400">Target</FormLabel>
+                      <Input
+                        size="sm" value={manualTarget}
+                        onChange={e => setManualTarget(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleApplyManual() }}
+                        placeholder="file, path or URL"
+                        isDisabled={isReadOnly}
+                        bg="whiteAlpha.50" borderColor="whiteAlpha.100"
+                        _hover={{ borderColor: 'whiteAlpha.300' }}
+                        _focus={{ borderColor: 'blue.500', bg: 'whiteAlpha.100' }}
+                      />
+                      <Text fontSize="10px" color="gray.600" mt={1}>
+                        {manualTargetHint(manualTarget)}
+                      </Text>
+                    </FormControl>
+                    {classifyManualTarget(manualTarget) === 'repo' && (
+                      <FormControl>
+                        <FormLabel fontSize="xs" color="gray.400">Branch (optional)</FormLabel>
+                        <Input
+                          size="sm" value={branch}
+                          onChange={e => setBranch(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') handleApplyManual() }}
+                          placeholder="main"
+                          isDisabled={isReadOnly}
+                          bg="whiteAlpha.50" borderColor="whiteAlpha.100"
+                          _hover={{ borderColor: 'whiteAlpha.300' }}
+                          _focus={{ borderColor: 'blue.500', bg: 'whiteAlpha.100' }}
+                        />
+                      </FormControl>
+                    )}
+                    <Button size="sm" colorScheme="blue" alignSelf="flex-end" h="32px" isDisabled={isReadOnly || !manualTarget.trim()} onClick={handleApplyManual}>
+                      Apply
+                    </Button>
                   </VStack>
                 )}
               </VStack>
