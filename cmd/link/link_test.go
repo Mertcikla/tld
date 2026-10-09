@@ -1,13 +1,17 @@
 package link_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/cmd"
+	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )
 
 func writeElements(t *testing.T, dir, content string) {
@@ -275,5 +279,52 @@ func TestLinkCmd_MarksLocalMetadataChanged(t *testing.T) {
 	workspaceDir := workspace.ResolveDir(dir)
 	if !strings.Contains(readElements(t, workspaceDir), "file_path: internal/api.go#function:Handle") {
 		t.Fatalf("link not written to YAML:\n%s", readElements(t, workspaceDir))
+	}
+}
+
+// TestLinkCmd_NextSkipsCodeindexElements guards against link suggestions
+// diverging from `tld validate ARC205`: codeindex-materialized elements are
+// excluded from the score and therefore must not be suggested for linking.
+func TestLinkCmd_NextSkipsCodeindexElements(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	writeElements(t, dir, `mapped:
+  name: frontend/src
+  kind: component
+manual:
+  name: Manual
+  kind: component
+`)
+
+	dataDir := t.TempDir()
+	ctx := context.Background()
+	handle, err := dbrepo.OpenSQLite(ctx, dbrepo.DBOptions{
+		SQLitePath: filepath.Join(dataDir, "tld.db"),
+		Migrations: assets.FS,
+	})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if _, err := handle.DB.ExecContext(ctx, `INSERT INTO elements (id, name, kind, created_at, updated_at)
+		VALUES (101, 'frontend/src', 'component', 'now', 'now')`); err != nil {
+		t.Fatalf("insert element: %v", err)
+	}
+	if err := cstore.NewStoreFromHandle(handle).SaveMappings(ctx, []cstore.ResourceMapping{
+		{LogicalKey: "map|group|repo|101", Kind: cstore.MappingElement, ResourceID: 101, RepositoryID: "repo", SnapshotID: "snap"},
+	}); err != nil {
+		t.Fatalf("save mappings: %v", err)
+	}
+	_ = handle.Close()
+	t.Setenv("TLD_DATA_DIR", dataDir)
+
+	stdout, _, err := cmd.RunCmd(t, dir, "link", "--next")
+	if err != nil {
+		t.Fatalf("link --next: %v\n%s", err, stdout)
+	}
+	if strings.Contains(stdout, "ref mapped") {
+		t.Fatalf("codeindex element should not be suggested:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "ref manual") {
+		t.Fatalf("user-authored element should be suggested:\n%s", stdout)
 	}
 }

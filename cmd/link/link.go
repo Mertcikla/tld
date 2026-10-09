@@ -12,6 +12,7 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/tld/v2/cmd/update"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
+	"github.com/mertcikla/tld/v2/internal/codeindex/mappingcheck"
 	"github.com/mertcikla/tld/v2/internal/exec"
 	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/mertcikla/tld/v2/internal/sourcelink"
@@ -229,8 +230,21 @@ func fail(cmd *cobra.Command, opts linkOptions, err error) error {
 	return err
 }
 
+// groundingOptions mirrors `validate ARC205`: codeindex-materialized elements
+// are excluded from the score so link suggestions and the reported grounding
+// score match validation.
+func groundingOptions(cmd *cobra.Command, ws *workspace.Workspace, opts linkOptions) []archwarnings.Option {
+	var scoreOpts []archwarnings.Option
+	if resolvedDir, err := workspace.ResolveDataDir(&ws.Config, opts.dataDir); err == nil {
+		if classify := mappingcheck.Classifier(cmd.Context(), resolvedDir); classify != nil {
+			scoreOpts = append(scoreOpts, archwarnings.WithCodeindexElementClassifier(classify))
+		}
+	}
+	return scoreOpts
+}
+
 func reportResult(cmd *cobra.Command, ws *workspace.Workspace, ref string, res *resolvedLink, opts linkOptions, action string) error {
-	report := archwarnings.Grounding(ws)
+	report := archwarnings.Grounding(ws, groundingOptions(cmd, ws, opts)...)
 
 	if cmdutil.WantsJSON(opts.format) {
 		extra := map[string]any{
@@ -278,7 +292,7 @@ const nextSuggestionLimit = 5
 // runNext reports up to nextSuggestionLimit unlinked elements, shallowest view
 // level first, as optional suggestions. It never mutates anything.
 func runNext(cmd *cobra.Command, ws *workspace.Workspace, opts linkOptions) error {
-	_, details := archwarnings.GroundingDetails(ws)
+	_, details := archwarnings.GroundingDetails(ws, groundingOptions(cmd, ws, opts)...)
 	next := ungroundedElements(details, nextSuggestionLimit)
 
 	if cmdutil.WantsJSON(opts.format) {
