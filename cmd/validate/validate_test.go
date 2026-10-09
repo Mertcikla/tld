@@ -7,7 +7,32 @@ import (
 	"testing"
 
 	"github.com/mertcikla/tld/v2/cmd"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 )
+
+func TestValidateCmd_AbortsWhenCacheOutOfSync(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	if _, _, err := cmd.RunCmd(t, dir, "add", "System", "--ref", "sys", "--kind", "workspace"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	// Hand-edit the YAML cache without pushing it to the target.
+	if err := workspace.UpdateElementField(workspace.ResolveDir(dir), "sys", "name", "Renamed System"); err != nil {
+		t.Fatalf("edit cache: %v", err)
+	}
+
+	_, _, err := cmd.RunCmd(t, dir, "validate")
+	if err == nil {
+		t.Fatal("expected out-of-sync error")
+	}
+	if !strings.Contains(err.Error(), "out of sync") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "tld pull") || !strings.Contains(err.Error(), "tld sync") {
+		t.Fatalf("error should suggest pull/sync: %v", err)
+	}
+}
 
 func TestValidateCmd_ValidWorkspace(t *testing.T) {
 	dir := t.TempDir()

@@ -47,7 +47,9 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			if strings.TrimSpace(kind) != "" {
+			if strings.TrimSpace(kind) == "" {
+				kind = ""
+			} else {
 				normalizedKind, err := validateKind(kind)
 				if err != nil {
 					return err

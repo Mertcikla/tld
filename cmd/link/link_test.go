@@ -72,6 +72,26 @@ func TestLinkCmd_ExternalLinkExemptsFromGrounding(t *testing.T) {
 	}
 }
 
+func TestLinkCmd_KeepsCacheInSync(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	if _, _, err := cmd.RunCmd(t, dir, "add", "System", "--ref", "sys", "--kind", "workspace"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, _, err := cmd.RunCmd(t, dir, "link", "sys", "--external", "https://status.acme.com"); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	if _, _, err := cmd.RunCmd(t, dir, "validate"); err != nil {
+		t.Fatalf("validate after link: %v", err)
+	}
+	if _, _, err := cmd.RunCmd(t, dir, "link", "sys", "--unlink"); err != nil {
+		t.Fatalf("unlink: %v", err)
+	}
+	if _, _, err := cmd.RunCmd(t, dir, "validate"); err != nil {
+		t.Fatalf("validate after unlink: %v", err)
+	}
+}
+
 func TestLinkCmd_UnlinkClearsSourceLink(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)

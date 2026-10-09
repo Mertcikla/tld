@@ -209,13 +209,17 @@ func run(cmd *cobra.Command, wdir *string, opts linkOptions, args []string) erro
 	if err != nil {
 		return fail(cmd, opts, err)
 	}
-	if err := applyLinkDB(writeCtx, runner, elementID, element.Tags, res); err != nil {
+	updatedElement, err := applyLinkDB(writeCtx, runner, elementID, element.Tags, res)
+	if err != nil {
 		return fail(cmd, opts, fmt.Errorf("write link: %w", err))
 	}
 	// Refresh the YAML cache (write-through) when a workspace is in play.
 	if sess.HasWorkspace() {
 		if err := applyLink(sess.Wdir, ref, element.Tags, res); err != nil {
 			return fail(cmd, opts, fmt.Errorf("write link: %w", err))
+		}
+		if err := exec.RecordElementMeta(writeCtx, sess.Wdir, ref, updatedElement, 0, nil); err != nil {
+			return fail(cmd, opts, fmt.Errorf("update cache metadata: %w", err))
 		}
 	}
 	updated, err := sess.Reload()
@@ -858,11 +862,12 @@ func applyLink(dir, ref string, currentTags []string, res resolvedLink) error {
 	return nil
 }
 
-// applyLinkDB writes the resolved link to the target element directly.
-func applyLinkDB(ctx context.Context, runner exec.Runner, elementID int32, currentTags []string, res resolvedLink) error {
+// applyLinkDB writes the resolved link to the target element directly and
+// returns the updated element.
+func applyLinkDB(ctx context.Context, runner exec.Runner, elementID int32, currentTags []string, res resolvedLink) (*diagv1.Element, error) {
 	existing, err := runner.GetElement(ctx, elementID)
 	if err != nil {
-		return cmdutil.WithUnauthorizedHint("read element failed", err)
+		return nil, cmdutil.WithUnauthorizedHint("read element failed", err)
 	}
 	input := linkElementInput(existing)
 	if res.filePath != "" {
@@ -888,10 +893,11 @@ func applyLinkDB(ctx context.Context, runner exec.Runner, elementID int32, curre
 	if res.external {
 		input.Tags = appendTag(currentTags, "external")
 	}
-	if _, err := runner.UpdateElement(ctx, elementID, input); err != nil {
-		return cmdutil.WithUnauthorizedHint("update element failed", err)
+	updated, err := runner.UpdateElement(ctx, elementID, input)
+	if err != nil {
+		return nil, cmdutil.WithUnauthorizedHint("update element failed", err)
 	}
-	return nil
+	return updated, nil
 }
 
 func linkElementInput(e *diagv1.Element) api.ElementInput {
@@ -956,13 +962,17 @@ func applyUnlink(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Worksp
 	if input.Tags == nil {
 		input.Tags = []string{}
 	}
-	if _, err := runner.UpdateElement(ctx, elementID, input); err != nil {
+	updated, err := runner.UpdateElement(ctx, elementID, input)
+	if err != nil {
 		return cmdutil.WithUnauthorizedHint("unlink element failed", err)
 	}
 	// Refresh the YAML cache (write-through) when a workspace is in play.
 	if sess.HasWorkspace() {
 		if err := unlinkFields(sess.Wdir, ref, element); err != nil {
 			return err
+		}
+		if err := exec.RecordElementMeta(ctx, sess.Wdir, ref, updated, 0, nil); err != nil {
+			return fmt.Errorf("update cache metadata: %w", err)
 		}
 	}
 	return nil
