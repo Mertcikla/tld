@@ -195,6 +195,9 @@ func (r *remoteRunner) CreateElement(ctx context.Context, input api.ElementInput
 	if input.FilePath != nil {
 		req.FilePath = input.FilePath
 	}
+	if input.RepositoryID != nil {
+		req.RepositoryId = input.RepositoryID
+	}
 	req.BypassNoiseGate = input.BypassNoiseGate
 	resp, err := c.CreateElement(ctx, connect.NewRequest(req))
 	if err != nil {
@@ -219,6 +222,9 @@ func (r *remoteRunner) UpdateElement(ctx context.Context, id int32, input api.El
 	req.Branch = input.Branch
 	req.Language = input.Language
 	req.FilePath = input.FilePath
+	if input.RepositoryID != nil {
+		req.RepositoryId = input.RepositoryID
+	}
 	req.BypassNoiseGate = input.BypassNoiseGate
 	resp, err := c.UpdateElement(ctx, connect.NewRequest(req))
 	if err != nil {

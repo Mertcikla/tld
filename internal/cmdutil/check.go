@@ -13,20 +13,21 @@ import (
 func CheckSymbols(ctx context.Context, ws *workspace.Workspace, repoCtx RepoScope, rules *ignore.Rules) []string {
 	var failures []string
 	for ref, element := range ws.Elements {
-		if element.FilePath == "" || element.Symbol == "" {
+		filePath, symbol := element.SourceFile()
+		if filePath == "" || symbol == "" {
 			continue
 		}
 		if !repoCtx.MatchesElement(element) {
 			continue
 		}
-		if rules != nil && (rules.ShouldIgnorePath(element.FilePath) || rules.ShouldIgnoreSymbol(element.Symbol)) {
+		if rules != nil && (rules.ShouldIgnorePath(filePath) || rules.ShouldIgnoreSymbol(symbol)) {
 			continue
 		}
-		absPath := repoCtx.ResolvePath(element.FilePath)
+		absPath := repoCtx.ResolvePath(filePath)
 		if _, err := os.Stat(absPath); err != nil {
 			continue
 		}
-		found, err := symbolcheck.HasSymbol(ctx, absPath, element.Symbol)
+		found, err := symbolcheck.HasSymbol(ctx, absPath, symbol)
 		if err != nil {
 			if symbolcheck.IsUnsupported(err) {
 				continue
@@ -37,7 +38,7 @@ func CheckSymbols(ctx context.Context, ws *workspace.Workspace, repoCtx RepoScop
 		if !found {
 			failures = append(failures, fmt.Sprintf(
 				"elements.yaml[%s]: symbol %q not found in %s",
-				ref, element.Symbol, element.FilePath,
+				ref, symbol, filePath,
 			))
 		}
 	}

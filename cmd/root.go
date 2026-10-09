@@ -13,6 +13,7 @@ import (
 	indexcmd "github.com/mertcikla/tld/v2/cmd/index"
 	"github.com/mertcikla/tld/v2/cmd/initialize"
 	inspectcmd "github.com/mertcikla/tld/v2/cmd/inspect"
+	linkcmd "github.com/mertcikla/tld/v2/cmd/link"
 	listcmd "github.com/mertcikla/tld/v2/cmd/list"
 	"github.com/mertcikla/tld/v2/cmd/login"
 	"github.com/mertcikla/tld/v2/cmd/mcp"
@@ -135,6 +136,9 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 	renameCmd := rename.NewRenameCmd(&wdir)
 	renameCmd.GroupID = resourceGroup.ID
 
+	linkCmd := linkcmd.NewLinkCmd(&wdir, &outputFormat, &compactJSON)
+	linkCmd.GroupID = resourceGroup.ID
+
 	viewCmd := viewcmd.NewViewCmd(&wdir, &outputFormat, &compactJSON)
 	viewCmd.GroupID = resourceGroup.ID
 
@@ -201,6 +205,7 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 		removeCmd,
 		updateCmd,
 		renameCmd,
+		linkCmd,
 		viewCmd,
 		initCmd,
 		validateCmd,

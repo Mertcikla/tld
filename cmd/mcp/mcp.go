@@ -10,6 +10,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/add"
 	"github.com/mertcikla/tld/v2/cmd/connect"
 	"github.com/mertcikla/tld/v2/cmd/inspect"
+	"github.com/mertcikla/tld/v2/cmd/link"
 	"github.com/mertcikla/tld/v2/cmd/list"
 	"github.com/mertcikla/tld/v2/cmd/pull"
 	"github.com/mertcikla/tld/v2/cmd/remove"
@@ -18,6 +19,7 @@ import (
 	"github.com/mertcikla/tld/v2/cmd/update"
 	"github.com/mertcikla/tld/v2/cmd/view"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
+	mappingcheck "github.com/mertcikla/tld/v2/internal/codeindex/mappingcheck"
 	"github.com/mertcikla/tld/v2/internal/localserver"
 	archwarnings "github.com/mertcikla/tld/v2/internal/warnings"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -82,6 +84,25 @@ type updateConnectorArgs struct {
 type validateArgs struct {
 	Strictness int  `json:"strictness,omitempty" jsonschema:"override validation level [1-3]"`
 	Verbose    bool `json:"verbose,omitempty"`
+}
+
+type linkArgs struct {
+	Ref      string `json:"ref" jsonschema:"element ref to link"`
+	Target   string `json:"target,omitempty" jsonschema:"file, folder, symbol, indexed repo, or external URL"`
+	File     string `json:"file,omitempty" jsonschema:"file or folder path within a repository"`
+	Symbol   string `json:"symbol,omitempty" jsonschema:"declaration name to link to"`
+	Repo     string `json:"repo,omitempty" jsonschema:"repository remote URL, owner/name, or codeindex id"`
+	External bool   `json:"external,omitempty" jsonschema:"force an external (documented) link"`
+	Unlink   bool   `json:"unlink,omitempty" jsonschema:"clear the element's source link"`
+	View     string `json:"view,omitempty" jsonschema:"view to scope the next-element suggestion"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"maximum candidates shown"`
+	NoVerify bool   `json:"no_verify,omitempty" jsonschema:"skip verification against the codeindex"`
+	Quiet    bool   `json:"quiet,omitempty" jsonschema:"only print the link result"`
+}
+
+type linkNextArgs struct {
+	View  string `json:"view,omitempty" jsonschema:"limit to a view ref"`
+	Limit int    `json:"limit,omitempty" jsonschema:"maximum candidates shown"`
 }
 
 type pullArgs struct {
@@ -321,7 +342,11 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 		}
 		out += fmt.Sprintf("Workspace valid: %d elements, %d connectors\n", len(ws.Elements), len(ws.Connectors))
 
-		warnings := archwarnings.Analyze(ws)
+		var scoreOpts []archwarnings.Option
+		if classify := mappingcheck.Classifier(ctx, dataDir); classify != nil {
+			scoreOpts = append(scoreOpts, archwarnings.WithCodeindexElementClassifier(classify))
+		}
+		warnings := archwarnings.Analyze(ws, scoreOpts...)
 		if len(warnings) > 0 {
 			out += "\nArchitectural warnings:\n"
 			for _, w := range warnings {
@@ -342,6 +367,68 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 			}
 		}
 		return textResult(out)
+	})
+}
+
+func registerLinkTools(server *mcpsdk.Server, wdir, format *string, compact *bool, dataDir string) {
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "tld_link",
+		Description: "Link an element to a codeindex file/symbol or an external resource, then report the updated ARC205 grounding score and the next element to link. Omit target and selectors to list candidate targets.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a linkArgs) (*mcpsdk.CallToolResult, result, error) {
+		c := link.NewLinkCmd(wdir, format, compact)
+		args := []string{a.Ref}
+		if a.Target != "" {
+			args = append(args, a.Target)
+		}
+		if a.File != "" {
+			args = append(args, "--file", a.File)
+		}
+		if a.Symbol != "" {
+			args = append(args, "--symbol", a.Symbol)
+		}
+		if a.Repo != "" {
+			args = append(args, "--repo", a.Repo)
+		}
+		if a.External {
+			args = append(args, "--external")
+		}
+		if a.Unlink {
+			args = append(args, "--unlink")
+		}
+		if a.View != "" {
+			args = append(args, "--view", a.View)
+		}
+		if a.Limit > 0 {
+			args = append(args, "--limit", fmt.Sprintf("%d", a.Limit))
+		}
+		if a.NoVerify {
+			args = append(args, "--no-verify")
+		}
+		if a.Quiet {
+			args = append(args, "--quiet")
+		}
+		if dataDir != "" {
+			args = append(args, "--data-dir", dataDir)
+		}
+		return runSubcommand(ctx, c, args)
+	})
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "tld_link_next",
+		Description: "Show the next element that still needs a source link, ordered by view depth, with candidate targets.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a linkNextArgs) (*mcpsdk.CallToolResult, result, error) {
+		c := link.NewLinkCmd(wdir, format, compact)
+		args := []string{"--next"}
+		if a.View != "" {
+			args = append(args, "--view", a.View)
+		}
+		if a.Limit > 0 {
+			args = append(args, "--limit", fmt.Sprintf("%d", a.Limit))
+		}
+		if dataDir != "" {
+			args = append(args, "--data-dir", dataDir)
+		}
+		return runSubcommand(ctx, c, args)
 	})
 }
 
@@ -594,6 +681,7 @@ Accepts the same --host, --port, --data-dir flags as 'tld serve'.`,
 
 			server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "tld", Version: "0.1.0"}, nil)
 			registerTools(server, cmd, wdir, format, compact, dataDir)
+			registerLinkTools(server, wdir, format, compact, dataDir)
 			registerViewTools(server, wdir, format, compact, dataDir)
 			registerQueryTools(server, wdir, format, compact, dataDir)
 			addPullTool(server, wdir)

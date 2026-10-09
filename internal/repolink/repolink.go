@@ -14,6 +14,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/mertcikla/tld/v2/internal/sourcelink"
 )
 
 // Repository is an indexed codeindex repository reference.
@@ -159,10 +161,7 @@ func Resolve(repositoryID, repo, filePath string, repos []Repository) (Repositor
 	if resolved, ok := ByRemote(repo, repos); ok {
 		return resolved, true
 	}
-	clean := filePath
-	if before, _, found := strings.Cut(clean, "#"); found {
-		clean = before
-	}
+	clean := sourcelink.BasePath(filePath)
 	if !filepath.IsAbs(strings.TrimSpace(clean)) {
 		return Repository{}, false
 	}

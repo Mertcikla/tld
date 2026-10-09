@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
+	mappingcheck "github.com/mertcikla/tld/v2/internal/codeindex/mappingcheck"
 	"github.com/mertcikla/tld/v2/internal/term"
 	archwarnings "github.com/mertcikla/tld/v2/internal/warnings"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -53,6 +54,7 @@ func NewValidateCmd(wdir *string) *cobra.Command {
 	var strictness int
 	var verbose bool
 	var strict bool
+	var dataDir string
 
 	c := &cobra.Command{
 		Use:   "validate [rule-code]",
@@ -75,6 +77,15 @@ rule runs regardless of the configured strictness level or exclude list.`,
 			}
 			repoCtx := cmdutil.DetectRepoScope(cmdutil.GetWorkingDir(), *wdir)
 			rules := ws.IgnoreRulesForRepository(repoCtx.Name)
+
+			// Identify codeindex-materialized elements live against the local
+			// database so ARC205 scores only user-authored diagrams.
+			var scoreOpts []archwarnings.Option
+			if resolvedDir, dirErr := workspace.ResolveDataDir(&ws.Config, dataDir); dirErr == nil {
+				if classify := mappingcheck.Classifier(cmd.Context(), resolvedDir); classify != nil {
+					scoreOpts = append(scoreOpts, archwarnings.WithCodeindexElementClassifier(classify))
+				}
+			}
 
 			if strictness > 0 {
 				ws.Config.Validation.Level = strictness
@@ -109,11 +120,11 @@ rule runs regardless of the configured strictness level or exclude list.`,
 				return fmt.Errorf("%d symbol verification error(s)", len(broken))
 			}
 
-			warnings := archwarnings.Analyze(ws)
+			warnings := archwarnings.Analyze(ws, scoreOpts...)
 
 			if len(args) == 1 {
 				if normalizeRuleCode(args[0]) == "ARC205" {
-					return printGrounding(cmd, ws)
+					return printGrounding(cmd, ws, scoreOpts...)
 				}
 				return printRuleViolations(cmd, args[0], warnings)
 			}
@@ -137,6 +148,7 @@ rule runs regardless of the configured strictness level or exclude list.`,
 	c.Flags().IntVar(&strictness, "strictness", 0, "override validation strictness level [1-3]")
 	c.Flags().BoolVarP(&verbose, "verbose", "v", false, "show full architectural warnings output")
 	c.Flags().BoolVar(&strict, "strict", false, "exit non-zero when outdated diagrams are detected")
+	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for the local database used to identify codeindex elements")
 	c.AddCommand(newRulesCmd())
 	return c
 }
@@ -241,16 +253,19 @@ func printWarningSummary(cmd *cobra.Command, ws *workspace.Workspace, warnings [
 	_, _ = fmt.Fprintln(out, "To suppress specific rule codes, use .tld.yaml: validation.exclude_rules: [ARC002]")
 }
 
-func printGrounding(cmd *cobra.Command, ws *workspace.Workspace) error {
+func printGrounding(cmd *cobra.Command, ws *workspace.Workspace, opts ...archwarnings.Option) error {
 	out := cmd.OutOrStdout()
-	report := archwarnings.Grounding(ws)
+	report := archwarnings.Grounding(ws, opts...)
 
 	_, _ = fmt.Fprintln(out, "[ARC205] Low Grounding")
 	_, _ = fmt.Fprintln(out, "Description: View has too few source-linked elements")
 	_, _ = fmt.Fprintf(out, "Workspace source grounding: %d/10\n\n", report.Value)
 	_, _ = fmt.Fprintf(out, "Linkable elements: %d\n", report.Eligible)
 	_, _ = fmt.Fprintf(out, "Source-linked:     %d\n", report.Grounded)
-	_, _ = fmt.Fprintf(out, "Exempt (abstract/external): %d\n\n", report.Exempt)
+	if report.External > 0 {
+		_, _ = fmt.Fprintf(out, "Exempt (external links): %d\n", report.External)
+	}
+	_, _ = fmt.Fprintln(out)
 
 	_, _ = fmt.Fprintln(out, "Reasoning:")
 	for _, reason := range report.Reasoning {

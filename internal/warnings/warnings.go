@@ -35,9 +35,23 @@ type WarningScore struct {
 	Value     int
 	Grounded  int
 	Eligible  int
-	Exempt    int
+	External  int
 	Reasoning []string
 	Views     []ViewScore
+}
+
+// GroundingElement is a per-element view of the source grounding state. It is
+// used to surface the next element that needs a source link.
+type GroundingElement struct {
+	Ref            string
+	Name           string
+	Kind           string
+	Views          []string
+	Depth          int
+	Grounded       bool
+	Eligible       bool
+	CodeindexOwned bool
+	External       bool
 }
 
 // ViewScore is the source grounding score for a single view.
@@ -47,6 +61,20 @@ type ViewScore struct {
 	Grounded   int
 	Eligible   int
 	Ungrounded []string
+}
+
+// Option customizes how Analyze and Grounding evaluate a workspace.
+type Option func(*warningContext)
+
+// WithCodeindexElementClassifier supplies a predicate that reports whether an
+// element was materialized from the codeindex (a row in codeindex_elements).
+// Those elements are silently excluded from the ARC205 source-grounding score
+// so it reflects user-authored diagrams only. When unset, no elements are
+// excluded.
+func WithCodeindexElementClassifier(classify func(*workspace.Element) bool) Option {
+	return func(ctx *warningContext) {
+		ctx.codeindexClassifier = classify
+	}
 }
 
 type warningRule struct {
@@ -399,20 +427,22 @@ var warningRules = []warningRule{
 	},
 }
 
-// defaultGroundableKinds is the built-in set of element kinds treated as
-// linkable code-backed resources by the ARC205 source grounding score.
-var defaultGroundableKinds = []string{
-	"file", "folder", "directory", "package", "module", "namespace",
-	"function", "method", "class", "struct", "interface", "type",
-	"enum", "field", "variable", "constant", "symbol",
-}
+// externalTag marks an element whose source is documented externally, e.g. a
+// repo the codeindex cannot access or a cloud resource. Such elements are
+// exempt from the source grounding score.
+const externalTag = "external"
 
-func groundableKinds() map[string]bool {
-	set := make(map[string]bool, len(defaultGroundableKinds))
-	for _, kind := range defaultGroundableKinds {
-		set[kind] = true
+// hasExternalTag reports whether the element carries the external marker tag.
+func hasExternalTag(element *workspace.Element) bool {
+	if element == nil {
+		return false
 	}
-	return set
+	for _, tag := range element.Tags {
+		if strings.EqualFold(strings.TrimSpace(tag), externalTag) {
+			return true
+		}
+	}
+	return false
 }
 
 // elementHasSourceLink reports whether an element is linked to a source file or
@@ -425,26 +455,11 @@ func elementHasSourceLink(element *workspace.Element) bool {
 	return strings.TrimSpace(element.FilePath) != "" || strings.TrimSpace(element.Symbol) != ""
 }
 
-// isCodeindexElement reports whether an element is a resource materialized from
-// the codeindex (a row in codeindex_elements). Those are auto-generated from
-// indexed code and are silently excluded from the ARC205 grounded-ness score so
-// the score reflects user-authored diagrams only.
-func isCodeindexElement(element *workspace.Element) bool {
-	return element != nil && strings.TrimSpace(element.RepositoryID) != ""
-}
-
 // isGroundableElement reports whether an element should be counted toward the
-// source grounding score. Code-like kinds are always counted; any element that
-// already declares a source link is counted too, so grounded abstract elements
-// are not silently ignored. Ungrounded abstract/external elements are exempt.
-func isGroundableElement(element *workspace.Element, kinds map[string]bool) bool {
-	if element == nil {
-		return false
-	}
-	if elementHasSourceLink(element) {
-		return true
-	}
-	return kinds[strings.ToLower(strings.TrimSpace(element.Kind))]
+// source grounding score. Every element counts: only codeindex-owned elements
+// (excluded by the caller) and elements carrying the external tag are ignored.
+func isGroundableElement(element *workspace.Element) bool {
+	return element != nil
 }
 
 func groundingValue(grounded, eligible int) int {
@@ -457,25 +472,112 @@ func groundingValue(grounded, eligible int) int {
 // Grounding computes the 0-10 source grounding score for the workspace and each
 // view. It is exported so callers can render the full report on demand, even
 // when no warning threshold was crossed.
-func Grounding(ws *workspace.Workspace) WarningScore {
+func Grounding(ws *workspace.Workspace, opts ...Option) WarningScore {
 	if ws == nil {
 		return WarningScore{}
 	}
-	ctx := newWarningContext(ws)
+	ctx := newWarningContext(ws, opts...)
 	ctx.prepareData()
 	return ctx.groundingReport()
 }
 
+// GroundingDetails computes the source grounding score together with a
+// per-element breakdown of eligible elements. Elements are ordered by view
+// depth (shallowest first), then view ref, then ref, so callers can surface the
+// next element that still needs a source link. Elements linked externally are
+// excluded (they are exempt), as are codeindex-owned elements.
+func GroundingDetails(ws *workspace.Workspace, opts ...Option) (WarningScore, []GroundingElement) {
+	if ws == nil {
+		return WarningScore{}, nil
+	}
+	ctx := newWarningContext(ws, opts...)
+	ctx.prepareData()
+	report := ctx.groundingReport()
+	viewDepths := ctx.viewDepthMap()
+
+	elementViews := make(map[string]map[string]bool, len(ctx.ws.Elements))
+	for viewRef, refs := range ctx.viewElements {
+		for _, ref := range refs {
+			if elementViews[ref] == nil {
+				elementViews[ref] = make(map[string]bool)
+			}
+			elementViews[ref][viewRef] = true
+		}
+	}
+
+	// Depth of the contents of a view: root is 0, a view owned by an element is
+	// one level below the view that element sits in.
+	depthOfView := func(viewRef string) int {
+		if viewRef == syntheticRootViewRef {
+			return 0
+		}
+		return viewDepths[viewRef] + 1
+	}
+
+	var details []GroundingElement
+	for ref, element := range ctx.ws.Elements {
+		if element == nil || ctx.isCodeindexElement(element) || hasExternalTag(element) {
+			continue
+		}
+		views := make([]string, 0, len(elementViews[ref]))
+		for viewRef := range elementViews[ref] {
+			views = append(views, viewRef)
+		}
+		// Order views by depth so the first is the shallowest, matching Depth.
+		sort.SliceStable(views, func(i, j int) bool {
+			di, dj := depthOfView(views[i]), depthOfView(views[j])
+			if di != dj {
+				return di < dj
+			}
+			return views[i] < views[j]
+		})
+		depth := 0
+		if len(views) > 0 {
+			depth = depthOfView(views[0])
+		}
+		details = append(details, GroundingElement{
+			Ref:      ref,
+			Name:     element.Name,
+			Kind:     element.Kind,
+			Views:    views,
+			Depth:    depth,
+			Grounded: elementHasSourceLink(element),
+			Eligible: true,
+		})
+	}
+
+	sort.SliceStable(details, func(i, j int) bool {
+		if details[i].Depth != details[j].Depth {
+			return details[i].Depth < details[j].Depth
+		}
+		vi, vj := firstView(details[i]), firstView(details[j])
+		if vi != vj {
+			return vi < vj
+		}
+		return details[i].Ref < details[j].Ref
+	})
+	return report, details
+}
+
+func firstView(element GroundingElement) string {
+	if len(element.Views) > 0 {
+		return element.Views[0]
+	}
+	return ""
+}
+
 func (ctx *warningContext) groundingReport() WarningScore {
-	kinds := groundableKinds()
 	var report WarningScore
 
 	for _, element := range ctx.ws.Elements {
-		if isCodeindexElement(element) {
+		if ctx.isCodeindexElement(element) {
 			continue
 		}
-		if !isGroundableElement(element, kinds) {
-			report.Exempt++
+		if hasExternalTag(element) {
+			report.External++
+			continue
+		}
+		if !isGroundableElement(element) {
 			continue
 		}
 		report.Eligible++
@@ -509,10 +611,13 @@ func (ctx *warningContext) groundingReport() WarningScore {
 			}
 			seen[ref] = true
 			element := ctx.ws.Elements[ref]
-			if isCodeindexElement(element) {
+			if ctx.isCodeindexElement(element) {
 				continue
 			}
-			if !isGroundableElement(element, kinds) {
+			if hasExternalTag(element) {
+				continue
+			}
+			if !isGroundableElement(element) {
 				continue
 			}
 			view.Eligible++
@@ -533,13 +638,13 @@ func (ctx *warningContext) groundingReport() WarningScore {
 
 func groundingReasoning(report WarningScore) []string {
 	if report.Eligible == 0 {
-		return []string{"No code-like or source-linked elements found; source grounding does not apply."}
+		return []string{"No linkable elements found; source grounding does not apply."}
 	}
 	lines := []string{
 		fmt.Sprintf("%d of %d linkable elements are source-linked (score %d/10).", report.Grounded, report.Eligible, report.Value),
 	}
-	if report.Exempt > 0 {
-		lines = append(lines, fmt.Sprintf("%d abstract/external element(s) were exempt from the score.", report.Exempt))
+	if report.External > 0 {
+		lines = append(lines, fmt.Sprintf("%d element(s) documented with an external link were exempt from the score.", report.External))
 	}
 	var weak []string
 	for _, view := range report.Views {
@@ -607,16 +712,27 @@ func (ctx *warningContext) isSingleSystemRootContext() bool {
 }
 
 type warningContext struct {
-	ws              *workspace.Workspace
-	level           int
-	allowLowInsight bool
-	activeRules     []warningRule
-	violations      map[string][]string
-	scores          map[string]*WarningScore
-	viewElements    map[string][]string
-	elementViews    map[string]map[string]int
-	viewConnectors  map[string]int
-	maxDepth        int
+	ws                  *workspace.Workspace
+	level               int
+	allowLowInsight     bool
+	activeRules         []warningRule
+	violations          map[string][]string
+	scores              map[string]*WarningScore
+	viewElements        map[string][]string
+	elementViews        map[string]map[string]int
+	viewConnectors      map[string]int
+	maxDepth            int
+	codeindexClassifier func(*workspace.Element) bool
+}
+
+// isCodeindexElement reports whether the element was materialized from the
+// codeindex, per the classifier supplied by the caller. With no classifier,
+// nothing is classified as codeindex-owned.
+func (ctx *warningContext) isCodeindexElement(element *workspace.Element) bool {
+	if ctx == nil || ctx.codeindexClassifier == nil || element == nil {
+		return false
+	}
+	return ctx.codeindexClassifier(element)
 }
 
 // Rule describes the static metadata for an architectural warning rule.
@@ -657,25 +773,25 @@ func RuleByCode(code string) (Rule, bool) {
 
 // Analyze evaluates the workspace against architectural best practices and
 // returns grouped warnings based on the configured strictness level.
-func Analyze(ws *workspace.Workspace) []WarningGroup {
+func Analyze(ws *workspace.Workspace, opts ...Option) []WarningGroup {
 	if ws == nil {
 		return nil
 	}
 
-	ctx := newWarningContext(ws)
+	ctx := newWarningContext(ws, opts...)
 	ctx.prepareData()
 	ctx.checkAll()
 
 	return ctx.toSlice()
 }
 
-func newWarningContext(ws *workspace.Workspace) *warningContext {
+func newWarningContext(ws *workspace.Workspace, opts ...Option) *warningContext {
 	level := ws.Config.Validation.Level
 	allowLowInsight := ws.Config.Validation.AllowLowInsight
 	includeRules := ws.Config.Validation.IncludeRules
 	excludeRules := ws.Config.Validation.ExcludeRules
 
-	return &warningContext{
+	ctx := &warningContext{
 		ws:              ws,
 		level:           level,
 		allowLowInsight: allowLowInsight,
@@ -686,6 +802,12 @@ func newWarningContext(ws *workspace.Workspace) *warningContext {
 		elementViews:    make(map[string]map[string]int),
 		viewConnectors:  make(map[string]int),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(ctx)
+		}
+	}
+	return ctx
 }
 
 func resolveConfiguredWarningRules(level int, includeRules, excludeRules []string) []warningRule {
@@ -746,6 +868,17 @@ func (ctx *warningContext) prepareData() {
 }
 
 func (ctx *warningContext) calculateMaxDepth() {
+	for _, depth := range ctx.viewDepthMap() {
+		if depth > ctx.maxDepth {
+			ctx.maxDepth = depth
+		}
+	}
+}
+
+// viewDepthMap returns the nesting depth of every view-owning element, using
+// the same scheme as ARC004: a top-level view is 0 and each nested level adds 1.
+// The synthetic root is implicit at 0.
+func (ctx *warningContext) viewDepthMap() map[string]int {
 	memo := make(map[string]int)
 	visiting := make(map[string]bool)
 	var viewDepth func(string) int
@@ -783,11 +916,9 @@ func (ctx *warningContext) calculateMaxDepth() {
 		if element == nil || !element.HasView {
 			continue
 		}
-		depth := viewDepth(ref)
-		if depth > ctx.maxDepth {
-			ctx.maxDepth = depth
-		}
+		viewDepth(ref)
 	}
+	return memo
 }
 
 func (ctx *warningContext) checkAll() {

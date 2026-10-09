@@ -5,6 +5,46 @@ import (
 	"testing"
 )
 
+func TestMappedElementIndex(t *testing.T) {
+	ctx := context.Background()
+	st, handle := openTestStore(t)
+	defer func() { _ = handle.Close() }()
+
+	if _, err := handle.DB.ExecContext(ctx, `INSERT INTO elements (id, name, kind, repository_id, file_path, created_at, updated_at)
+		VALUES (11, 'a.go', 'file', 'repo', 'src/a.go', 'now', 'now')`); err != nil {
+		t.Fatalf("insert file element: %v", err)
+	}
+	if _, err := handle.DB.ExecContext(ctx, `INSERT INTO elements (id, name, kind, created_at, updated_at)
+		VALUES (12, 'frontend/src', 'component', 'now', 'now')`); err != nil {
+		t.Fatalf("insert component element: %v", err)
+	}
+	if err := st.SaveMappings(ctx, []ResourceMapping{
+		{LogicalKey: "map|fact|repo|1", Kind: MappingElement, ResourceID: 11, RepositoryID: "repo", SnapshotID: "snap"},
+		{LogicalKey: "map|group|repo|1", Kind: MappingElement, ResourceID: 12, RepositoryID: "repo", SnapshotID: "snap"},
+		// Dangling mapping: no elements row, so the join must drop it.
+		{LogicalKey: "map|fact|repo|2", Kind: MappingElement, ResourceID: 99, RepositoryID: "repo", SnapshotID: "snap"},
+	}); err != nil {
+		t.Fatalf("save mappings: %v", err)
+	}
+
+	index, err := st.MappedElementIndex(ctx)
+	if err != nil {
+		t.Fatalf("mapped index: %v", err)
+	}
+	if _, ok := index.Sources[ElementSourceKey("repo", "src/a.go")]; !ok {
+		t.Fatalf("missing mapped source: %+v", index.Sources)
+	}
+	if len(index.Sources) != 1 {
+		t.Fatalf("sources = %+v, want 1", index.Sources)
+	}
+	if _, ok := index.Names[ElementNameKey("component", "frontend/src")]; !ok {
+		t.Fatalf("missing mapped name: %+v", index.Names)
+	}
+	if len(index.Names) != 1 {
+		t.Fatalf("names = %+v, want 1", index.Names)
+	}
+}
+
 func TestResourceMappings(t *testing.T) {
 	ctx := context.Background()
 	st, handle := openTestStore(t)

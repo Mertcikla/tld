@@ -1,6 +1,8 @@
 package workspace_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -141,5 +143,42 @@ func TestValidate_RootPlacementsAndRootViewAreAllowed(t *testing.T) {
 	})
 	if errs := ws.Validate(); len(errs) != 0 {
 		t.Fatalf("expected valid workspace, got %v", errs)
+	}
+}
+
+func TestValidate_SymbolAnchorInFilePath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "service.go"), []byte("package main\n\nfunc Service() {}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	ws := buildWorkspace(map[string]*workspace.Element{
+		"svc": {Name: "Service", Kind: "service", FilePath: "service.go#function:Service"},
+	}, nil)
+	if errs := ws.Validate(); len(errs) != 0 {
+		t.Fatalf("expected anchor symbol to verify, got %v", errs)
+	}
+
+	broken := buildWorkspace(map[string]*workspace.Element{
+		"svc": {Name: "Service", Kind: "service", FilePath: "service.go#function:Missing"},
+	}, nil)
+	if errs := broken.Validate(); !containsValidationMessage(errs, `symbol "Missing" not found`) {
+		t.Fatalf("expected missing anchor symbol error, got %v", errs)
+	}
+}
+
+func TestValidate_LineAnchorSkipsSymbolCheck(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "service.go"), []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+
+	ws := buildWorkspace(map[string]*workspace.Element{
+		"svc": {Name: "Service", Kind: "service", FilePath: "service.go#L1"},
+	}, nil)
+	if errs := ws.Validate(); len(errs) != 0 {
+		t.Fatalf("line anchor should not require a symbol, got %v", errs)
 	}
 }

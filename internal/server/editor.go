@@ -20,6 +20,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/google/uuid"
 	"github.com/mertcikla/tld/v2/internal/repolink"
+	"github.com/mertcikla/tld/v2/internal/sourcelink"
 	"github.com/mertcikla/tld/v2/pkg/app"
 )
 
@@ -187,10 +188,7 @@ func (f dbRepositoryFetcher) Repositories(ctx context.Context) ([]repolink.Repos
 }
 
 func resolveEditorPath(ctx context.Context, store repositoryFetcher, repositoryID, repoValue, filePath string) (string, error) {
-	cleanFile := strings.TrimSpace(filePath)
-	if before, _, ok := strings.Cut(cleanFile, "#"); ok {
-		cleanFile = before
-	}
+	cleanFile := sourcelink.BasePath(strings.TrimSpace(filePath))
 
 	repos, err := store.Repositories(ctx)
 	if err != nil {

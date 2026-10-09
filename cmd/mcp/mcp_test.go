@@ -68,6 +68,31 @@ func TestMCPViewCreateAndRender(t *testing.T) {
 	}
 }
 
+func TestMCPLinkExternalAndNext(t *testing.T) {
+	_, clientSession := setupMCPWorkspace(t)
+
+	mustCallTool(t, clientSession, "tld_add", map[string]any{"name": "Payment Service", "ref": "svc", "kind": "struct"})
+
+	next := toolText(mustCallTool(t, clientSession, "tld_link_next", nil))
+	if !strings.Contains(next, "ref svc") {
+		t.Fatalf("link_next output = %q", next)
+	}
+
+	linked := toolText(mustCallTool(t, clientSession, "tld_link", map[string]any{
+		"ref":      "svc",
+		"external": true,
+		"target":   "https://status.acme.com",
+	}))
+	if !strings.Contains(linked, "Linked") || !strings.Contains(linked, "status.acme.com") {
+		t.Fatalf("link output = %q", linked)
+	}
+
+	done := toolText(mustCallTool(t, clientSession, "tld_link_next", nil))
+	if !strings.Contains(done, "All linkable elements are grounded.") {
+		t.Fatalf("link_next after unlink = %q", done)
+	}
+}
+
 // setupMCPWorkspace initializes an isolated config/data dir and workspace, then
 // returns the data dir and a connected in-memory MCP client session with every
 // tool registered.
@@ -94,6 +119,7 @@ func setupMCPWorkspace(t *testing.T) (string, *mcpsdk.ClientSession) {
 	compact := false
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "tld-test", Version: "test"}, nil)
 	registerTools(server, &cobra.Command{}, &wdir, &format, &compact, dataDir)
+	registerLinkTools(server, &wdir, &format, &compact, dataDir)
 	registerViewTools(server, &wdir, &format, &compact, dataDir)
 	registerQueryTools(server, &wdir, &format, &compact, dataDir)
 

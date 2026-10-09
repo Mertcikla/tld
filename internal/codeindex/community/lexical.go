@@ -136,9 +136,9 @@ func lexicalTokens(text string) []string {
 // lexicalIndex scores distinctive identifier tokens across the whole dataset
 // so many groups can be named without re-tokenizing.
 type lexicalIndex struct {
-	docs       []map[string]int
-	frequency  map[string]int
-	total      int
+	docs      []map[string]int
+	frequency map[string]int
+	total     int
 }
 
 func newLexicalIndex(files []File) *lexicalIndex {

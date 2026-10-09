@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -131,6 +132,61 @@ func (s *Store) MappingsByRepository(ctx context.Context, repositoryID string) (
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// ElementSourceKey identifies a workspace element by its codeindex source
+// location (repository id + file path). It is the join key between a YAML
+// workspace element and its materialized database row.
+func ElementSourceKey(repositoryID, filePath string) string {
+	return repositoryID + "\x00" + filePath
+}
+
+// ElementNameKey identifies a path-less workspace element (a codeindex group or
+// repository root) by kind and display name. It is a fallback identity for
+// materialized elements that carry no file path.
+func ElementNameKey(kind, name string) string {
+	return strings.ToLower(strings.TrimSpace(kind)) + "\x00" + strings.TrimSpace(name)
+}
+
+// MappedElementIndex indexes workspace elements that were materialized from the
+// codeindex. File-backed elements are keyed by source location; path-less
+// elements (groups, repository roots) are keyed by kind and name.
+type MappedElementIndex struct {
+	Sources map[string]struct{}
+	Names   map[string]struct{}
+}
+
+// MappedElementIndex is a live read of the codeindex_elements mapping table
+// joined to the elements it points at, so a caller can tell genuinely
+// codeindex-owned elements apart from user-authored ones.
+func (s *Store) MappedElementIndex(ctx context.Context) (MappedElementIndex, error) {
+	where, scopeArgs := scope(ctx).clause("m.org_id")
+	rows, err := s.bun.QueryContext(ctx, `SELECT e.repository_id, e.file_path, e.kind, e.name
+		FROM codeindex_elements m
+		JOIN elements e ON e.id = m.resource_id
+		WHERE m.resource_type = ?`+where, append([]any{string(MappingElement)}, scopeArgs...)...)
+	if err != nil {
+		return MappedElementIndex{}, err
+	}
+	defer func() { _ = rows.Close() }()
+	index := MappedElementIndex{
+		Sources: make(map[string]struct{}),
+		Names:   make(map[string]struct{}),
+	}
+	for rows.Next() {
+		var repositoryID, filePath, kind, name sql.NullString
+		if err := rows.Scan(&repositoryID, &filePath, &kind, &name); err != nil {
+			return MappedElementIndex{}, err
+		}
+		if filePath.Valid && strings.TrimSpace(filePath.String) != "" {
+			index.Sources[ElementSourceKey(repositoryID.String, filePath.String)] = struct{}{}
+			continue
+		}
+		if strings.TrimSpace(name.String) != "" {
+			index.Names[ElementNameKey(kind.String, name.String)] = struct{}{}
+		}
+	}
+	return index, rows.Err()
 }
 
 // DeleteMapping removes a single mapping by logical key.

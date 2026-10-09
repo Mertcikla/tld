@@ -161,5 +161,4 @@ func TestPublishRoundTrip(t *testing.T) {
 		t.Fatalf("repository summary = %+v", repos[0])
 	}
 
-
 }
