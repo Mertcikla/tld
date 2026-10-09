@@ -40,6 +40,12 @@ the local YAML cache. Use this after making changes in the frontend UI.
 If you have local hand-edits, tld pull will warn you before overwriting
 them. Use --force to skip the prompt.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !cmdutil.WorkspaceConfigured(cmd, *wdir) && !cmd.Flags().Changed("workspace") {
+				return cmdutil.WithHint(
+					errors.New("no workspace to write"),
+					"Run 'tld init' first, or pass --workspace <dir> (or --yaml) to export the database into YAML files.",
+				)
+			}
 			ws, err := cmdutil.LoadWorkspace(*wdir)
 			if err != nil {
 				return err

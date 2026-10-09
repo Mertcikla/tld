@@ -33,7 +33,7 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 	var dataDir string
 	c := &cobra.Command{
 		Use:   "element <ref>",
-		Short: "Remove an element from elements.yaml",
+		Short: "Remove an element",
 		Args:  cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {
@@ -43,15 +43,39 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := args[0]
+			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
+			if err != nil {
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove element", err)
+				}
+				return err
+			}
+			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
+			if err != nil {
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove element", err)
+				}
+				return err
+			}
+			ref, err = cmdutil.ResolveElementArg(ws, ref)
+			if err != nil {
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove element", err)
+				}
+				return err
+			}
 			if dryRun {
-				err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
-					return workspace.RemoveElement(cloneDir, ref)
-				})
-				if err != nil {
-					if cmdutil.WantsJSON(*format) {
-						return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove element", err)
+				if sess.HasWorkspace() {
+					err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
+						return workspace.RemoveElement(cloneDir, ref)
+					})
+					if err != nil {
+						if cmdutil.WantsJSON(*format) {
+							return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove element", err)
+						}
+						return fmt.Errorf("dry-run remove element: %w", err)
 					}
-					return fmt.Errorf("dry-run remove element: %w", err)
 				}
 				if cmdutil.WantsJSON(*format) {
 					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "remove element", "dry-run", ref)
@@ -63,39 +87,34 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 			// anything. The server delete runs first: a failed YAML write can
 			// be retried, but dropped cache metadata could not (the server
 			// copy would be orphaned).
-			preWS, err := cmdutil.LoadWorkspace(*wdir)
-			if err != nil {
-				if cmdutil.WantsJSON(*format) {
-					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove element", err)
-				}
-				return err
-			}
-			if err := workspace.CheckElementRemoval(preWS, ref); err != nil {
+			if err := workspace.CheckElementRemoval(ws, ref); err != nil {
 				if cmdutil.WantsJSON(*format) {
 					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove element", err)
 				}
 				return err
 			}
 			var elementID, viewID int32
-			if preWS.Meta != nil {
-				if m, ok := preWS.Meta.Elements[ref]; ok && m != nil {
+			if ws.Meta != nil {
+				if m, ok := ws.Meta.Elements[ref]; ok && m != nil {
 					elementID = int32(m.ID)
 				}
-				if m, ok := preWS.Meta.Views[ref]; ok && m != nil {
+				if m, ok := ws.Meta.Views[ref]; ok && m != nil {
 					viewID = int32(m.ID)
 				}
 			}
-			if err := runRemoveElementServer(cmd, preWS, target, dataDir, elementID, viewID); err != nil {
+			if err := runRemoveElementServer(cmd, sess, elementID, viewID); err != nil {
 				if cmdutil.WantsJSON(*format) {
 					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove element", err)
 				}
 				return err
 			}
-			if err := workspace.RemoveElement(*wdir, ref); err != nil {
-				if cmdutil.WantsJSON(*format) {
-					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove element", err)
+			if sess.HasWorkspace() {
+				if err := workspace.RemoveElement(*wdir, ref); err != nil {
+					if cmdutil.WantsJSON(*format) {
+						return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove element", err)
+					}
+					return fmt.Errorf("remove element: %w", err)
 				}
-				return fmt.Errorf("remove element: %w", err)
 			}
 			if cmdutil.WantsJSON(*format) {
 				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "remove element", "remove", ref)
@@ -113,22 +132,16 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 // runRemoveElementServer deletes the element (and its view, if any) on the
 // server synchronously, before the YAML cache entry is removed. A NotFound is
 // tolerated so a retry after a partial failure can converge.
-func runRemoveElementServer(cmd *cobra.Command, ws *workspace.Workspace, target, dataDir string, elementID, viewID int32) error {
+func runRemoveElementServer(cmd *cobra.Command, sess *cmdutil.Session, elementID, viewID int32) error {
 	if elementID == 0 {
 		// No cached ID (e.g. hand-written YAML): nothing to delete server-side.
 		return nil
 	}
-	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
+	runner, err := sess.Runner()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = runner.Close() }()
-	if runner.Name() == exec.TargetRemote {
-		if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
-			return err
-		}
-	}
-	ctx := cmd.Context()
+	ctx := sess.Context(cmd.Context())
 	if err := runner.DeleteElement(ctx, elementID); err != nil && !exec.IsNotFound(err) {
 		return cmdutil.WithUnauthorizedHint("server delete element failed", err)
 	}
@@ -157,58 +170,97 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Short: "Remove matching connector(s) from connectors.yaml",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
+			if err != nil {
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
+				}
+				return err
+			}
+			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
+			if err != nil {
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
+				}
+				return err
+			}
+			view, err = cmdutil.ResolveViewArg(ws, view)
+			if err != nil {
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
+				}
+				return err
+			}
+			if from, err = cmdutil.ResolveElementArg(ws, from); err != nil {
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
+				}
+				return err
+			}
+			if to, err = cmdutil.ResolveElementArg(ws, to); err != nil {
+				if cmdutil.WantsJSON(*format) {
+					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
+				}
+				return err
+			}
 			if dryRun {
-				var n int
-				err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
-					var runErr error
-					n, runErr = workspace.RemoveConnectorWithLabel(cloneDir, view, from, to, label)
-					return runErr
-				})
-				if err != nil {
-					if cmdutil.WantsJSON(*format) {
-						return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
+				if sess.HasWorkspace() {
+					var n int
+					err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
+						var runErr error
+						n, runErr = workspace.RemoveConnectorWithLabel(cloneDir, view, from, to, label)
+						return runErr
+					})
+					if err != nil {
+						if cmdutil.WantsJSON(*format) {
+							return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
+						}
+						return fmt.Errorf("dry-run remove connector: %w", err)
 					}
-					return fmt.Errorf("dry-run remove connector: %w", err)
+					if n == 0 {
+						term.Info(cmd.OutOrStdout(), "Dry-run: no matching connectors found — nothing would be removed.")
+					} else {
+						term.Successf(cmd.OutOrStdout(), "dry-run: del: %d", n)
+					}
+				} else {
+					n := len(matchConnectorKeys(ws, view, from, to, label))
+					if n == 0 {
+						term.Info(cmd.OutOrStdout(), "Dry-run: no matching connectors found — nothing would be removed.")
+					} else {
+						term.Successf(cmd.OutOrStdout(), "dry-run: del: %d", n)
+					}
 				}
 				if cmdutil.WantsJSON(*format) {
 					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "remove connector", "dry-run", fmt.Sprintf("%s:%s:%s", view, from, to))
-				}
-				if n == 0 {
-					term.Info(cmd.OutOrStdout(), "Dry-run: no matching connectors found — nothing would be removed.")
-				} else {
-					term.Successf(cmd.OutOrStdout(), "dry-run: del: %d", n)
 				}
 				return nil
 			}
 			// Capture connector IDs and refuse ambiguity before mutating
 			// anything. The server delete runs first so a failed YAML write
 			// can be retried with the cached IDs still intact.
-			preWS, err := cmdutil.LoadWorkspace(*wdir)
-			if err != nil {
-				if cmdutil.WantsJSON(*format) {
-					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
-				}
-				return err
-			}
-			matchedKeys := matchConnectorKeys(preWS, view, from, to, label)
+			matchedKeys := matchConnectorKeys(ws, view, from, to, label)
 			if err := workspace.CheckConnectorRemoval(matchedKeys, label); err != nil {
 				if cmdutil.WantsJSON(*format) {
 					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
 				}
 				return err
 			}
-			if err := runRemoveConnectorsServer(cmd, preWS, target, dataDir, matchedKeys); err != nil {
+			if err := runRemoveConnectorsServer(cmd, sess, ws, matchedKeys); err != nil {
 				if cmdutil.WantsJSON(*format) {
 					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
 				}
 				return err
 			}
-			n, err := workspace.RemoveConnectorWithLabel(*wdir, view, from, to, label)
-			if err != nil {
-				if cmdutil.WantsJSON(*format) {
-					return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
+			n := len(matchedKeys)
+			if sess.HasWorkspace() {
+				n, err = workspace.RemoveConnectorWithLabel(*wdir, view, from, to, label)
+				if err != nil {
+					if cmdutil.WantsJSON(*format) {
+						return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "remove connector", err)
+					}
+					return fmt.Errorf("remove connector: %w", err)
 				}
-				return fmt.Errorf("remove connector: %w", err)
 			}
 			if cmdutil.WantsJSON(*format) {
 				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "remove connector", "remove", fmt.Sprintf("%s:%s:%s", view, from, to))
@@ -270,7 +322,7 @@ func matchConnectorKeys(ws *workspace.Workspace, view, from, to, label string) [
 // synchronously, before the YAML cache entries are removed. Keys without
 // cached IDs are skipped, and a NotFound is tolerated so a retry after a
 // partial failure can converge.
-func runRemoveConnectorsServer(cmd *cobra.Command, ws *workspace.Workspace, target, dataDir string, keys []string) error {
+func runRemoveConnectorsServer(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, keys []string) error {
 	var ids []int32
 	if ws.Meta != nil {
 		for _, k := range keys {
@@ -282,17 +334,11 @@ func runRemoveConnectorsServer(cmd *cobra.Command, ws *workspace.Workspace, targ
 	if len(ids) == 0 {
 		return nil
 	}
-	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
+	runner, err := sess.Runner()
 	if err != nil {
 		return err
 	}
-	defer func() { _ = runner.Close() }()
-	if runner.Name() == exec.TargetRemote {
-		if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
-			return err
-		}
-	}
-	ctx := cmd.Context()
+	ctx := sess.Context(cmd.Context())
 	for _, id := range ids {
 		if err := runner.DeleteConnector(ctx, id); err != nil && !exec.IsNotFound(err) {
 			return cmdutil.WithUnauthorizedHint("server delete connector failed", err)

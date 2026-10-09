@@ -63,6 +63,9 @@ type Runner interface {
 	// ApplyPlan atomically creates/updates a whole batch of elements, views,
 	// placements and connectors in a single transaction.
 	ApplyPlan(ctx context.Context, req *diagv1.ApplyPlanRequest) (*diagv1.ApplyPlanResponse, error)
+
+	// ExportWorkspace returns the full target state in the shared export format.
+	ExportWorkspace(ctx context.Context) (*diagv1.ExportOrganizationResponse, error)
 }
 
 // ---------- target resolution (moved from cmd/apply) ----------

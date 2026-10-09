@@ -13,6 +13,7 @@ func setupConfig(t *testing.T) {
 	t.Helper()
 	configDir := t.TempDir()
 	t.Setenv("TLD_CONFIG_DIR", configDir)
+	t.Setenv("TLD_DATA_DIR", t.TempDir())
 	if err := os.WriteFile(filepath.Join(configDir, "tld.yaml"), []byte("server_url: https://tldiagram.com\napi_key: \"\"\norg_id: \"\"\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

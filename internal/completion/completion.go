@@ -16,6 +16,7 @@ import (
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"connectrpc.com/connect"
 	"github.com/mertcikla/tld/v2/internal/client"
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -26,9 +27,19 @@ const (
 	remotePageSize = 500
 )
 
+// loadWS resolves completion candidates from workspace YAML when a workspace
+// is configured, otherwise from a local database snapshot. It never fails and
+// never writes files.
 func loadWS(wdir *string) *workspace.Workspace {
 	if wdir == nil {
 		return nil
+	}
+	if !workspace.IsWorkspaceDir(workspace.ResolveDir(*wdir)) {
+		ws, err := cmdutil.LocalWorkspace(*wdir)
+		if err != nil {
+			return nil
+		}
+		return ws
 	}
 	ws, err := workspace.Load(*wdir)
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/inspection"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -25,6 +26,12 @@ func NewInspectCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Short: "Inspect a resource across YAML, local DB, and optional cloud state",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			sess, err := cmdutil.OpenSession(cmd, *wdir, "", dataDirFlag)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = sess.Close() }()
+
 			cfg, err := workspace.LoadGlobalConfig()
 			if err != nil {
 				return err
@@ -33,7 +40,7 @@ func NewInspectCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			report, err := inspection.Build(cmd.Context(), inspection.Options{
+			opts := inspection.Options{
 				WorkspaceDir: *wdir,
 				Ref:          args[0],
 				Type:         strings.ToLower(strings.TrimSpace(resourceType)),
@@ -41,7 +48,18 @@ func NewInspectCmd(wdir, format *string, compact *bool) *cobra.Command {
 				Database:     cfg.Database,
 				IncludeLocal: true,
 				IncludeCloud: includeCloud || includeAll,
-			})
+			}
+			if !sess.HasWorkspace() {
+				ws, err := sess.LoadWorkspace()
+				if err != nil {
+					return err
+				}
+				opts.Workspace = ws
+				opts.TargetOnly = true
+				opts.IncludeLocal = false
+				opts.IncludeCloud = includeCloud || includeAll
+			}
+			report, err := inspection.Build(cmd.Context(), opts)
 			if err != nil {
 				if wantsJSON(*format) {
 					return writeJSON(cmd.OutOrStdout(), *compact, map[string]any{

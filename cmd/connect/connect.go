@@ -35,12 +35,27 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Short: "Add a connector between two elements",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := validateConnectorRefs(from, to, legacyView); err != nil {
+			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
+			if err != nil {
 				return err
 			}
-			ws, err := workspace.Load(*wdir)
+			defer func() { _ = sess.Close() }()
+			if sess.HasWorkspace() {
+				if err := validateConnectorRefs(from, to, legacyView); err != nil {
+					return err
+				}
+			}
+			ws, err := sess.LoadWorkspace()
 			if err != nil {
 				return fmt.Errorf("load workspace: %w", err)
+			}
+			from, err = cmdutil.ResolveElementArg(ws, from)
+			if err != nil {
+				return err
+			}
+			to, err = cmdutil.ResolveElementArg(ws, to)
+			if err != nil {
+				return err
 			}
 			if err := validateConnectorEndpointsExist(ws, from, to); err != nil {
 				return err
@@ -54,8 +69,18 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 				if err != nil {
 					return err
 				}
-			} else if err := validateConnectorViewExists(ws, view); err != nil {
-				return err
+			} else {
+				resolvedView, resolveErr := cmdutil.ResolveViewArg(ws, view)
+				if resolveErr != nil {
+					if err := validateConnectorViewExists(ws, view); err != nil {
+						return err
+					}
+					return resolveErr
+				}
+				view = resolvedView
+				if err := validateConnectorViewExists(ws, view); err != nil {
+					return err
+				}
 			}
 			spec := &workspace.Connector{
 				View:         view,
@@ -70,13 +95,15 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 				Tags:         workspace.ParseTagList(tags),
 			}
 			if dryRun {
-				if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
-					return workspace.AppendConnector(cloneDir, spec)
-				}); err != nil {
-					if cmdutil.WantsJSON(*format) {
-						return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "connect", err)
+				if sess.HasWorkspace() {
+					if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
+						return workspace.AppendConnector(cloneDir, spec)
+					}); err != nil {
+						if cmdutil.WantsJSON(*format) {
+							return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "connect", err)
+						}
+						return fmt.Errorf("dry-run connect: %w", err)
 					}
-					return fmt.Errorf("dry-run connect: %w", err)
 				}
 				if cmdutil.WantsJSON(*format) {
 					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "connect", "dry-run", fmt.Sprintf("%s:%s", from, to))
@@ -85,7 +112,7 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 				term.Infof(cmd.OutOrStdout(), "connector view: %s", view)
 				return nil
 			}
-			return runConnect(cmd, *wdir, *format, *compact, target, dataDir, spec, from, to, view)
+			return runConnect(cmd, sess, ws, *format, *compact, spec, from, to, view)
 		},
 	}
 
@@ -123,37 +150,27 @@ func NewConnectCmd(wdir, format *string, compact *bool) *cobra.Command {
 
 // runConnect creates the connector on the server synchronously, then refreshes
 // the local YAML cache.
-func runConnect(cmd *cobra.Command, wdir, format string, compact bool, target, dataDir string, spec *workspace.Connector, from, to, view string) error {
+func runConnect(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, format string, compact bool, spec *workspace.Connector, from, to, view string) error {
 	fail := func(err error) error {
 		if cmdutil.WantsJSON(format) {
 			return cmdutil.WriteCommandError(cmd.OutOrStdout(), compact, "connect", err)
 		}
 		return err
 	}
-	ws, err := cmdutil.LoadWorkspace(wdir)
+	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)
 	}
-	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
+	ctx := sess.Context(cmd.Context())
+	sourceID, err := exec.EnsureElementID(ctx, runner, ws, sess.Wdir, from)
 	if err != nil {
 		return fail(err)
 	}
-	defer func() { _ = runner.Close() }()
-	if runner.Name() == exec.TargetRemote {
-		if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
-			return fail(err)
-		}
-	}
-	ctx := cmd.Context()
-	sourceID, err := exec.EnsureElementID(ctx, runner, ws, wdir, from)
+	targetID, err := exec.EnsureElementID(ctx, runner, ws, sess.Wdir, to)
 	if err != nil {
 		return fail(err)
 	}
-	targetID, err := exec.EnsureElementID(ctx, runner, ws, wdir, to)
-	if err != nil {
-		return fail(err)
-	}
-	viewID, err := exec.ResolveParentViewID(ctx, runner, ws, wdir, view)
+	viewID, err := exec.ResolveParentViewID(ctx, runner, ws, sess.Wdir, view)
 	if err != nil {
 		return fail(fmt.Errorf("resolve connector view: %w", err))
 	}
@@ -180,11 +197,13 @@ func runConnect(cmd *cobra.Command, wdir, format string, compact bool, target, d
 	if err != nil {
 		return fail(cmdutil.WithUnauthorizedHint("server create connector failed", err))
 	}
-	if err := workspace.AppendConnector(wdir, spec); err != nil {
-		return fail(fmt.Errorf("update YAML cache: %w", err))
-	}
-	if err := exec.RecordConnectorMeta(wdir, workspace.ConnectorKey(spec), created); err != nil {
-		return fail(fmt.Errorf("update cache metadata: %w", err))
+	if sess.HasWorkspace() {
+		if err := workspace.AppendConnector(sess.Wdir, spec); err != nil {
+			return fail(fmt.Errorf("update YAML cache: %w", err))
+		}
+		if err := exec.RecordConnectorMeta(ctx, sess.Wdir, workspace.ConnectorKey(spec), created); err != nil {
+			return fail(fmt.Errorf("update cache metadata: %w", err))
+		}
 	}
 	if cmdutil.WantsJSON(format) {
 		return cmdutil.WriteMutation(cmd.OutOrStdout(), compact, "connect", "connect", fmt.Sprintf("%s:%s", from, to))

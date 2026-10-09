@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -71,6 +72,12 @@ in full detail with individual element and connector information. The requested
 rule runs regardless of the configured strictness level or exclude list.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !cmdutil.WorkspaceConfigured(cmd, *wdir) {
+				return cmdutil.WithHint(
+					errors.New("validate requires a workspace"),
+					"Run inside a workspace directory, pass --workspace, or use --yaml. Symbol and freshness checks need .tld.yaml repository configuration.",
+				)
+			}
 			ws, err := workspace.Load(*wdir)
 			if err != nil {
 				return fmt.Errorf("load workspace: %w", err)

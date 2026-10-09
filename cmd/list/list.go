@@ -20,7 +20,7 @@ import (
 func NewListCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c := &cobra.Command{
 		Use:   "list",
-		Short: "List workspace resources",
+		Short: "List resources",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return cmd.Help()
@@ -80,7 +80,12 @@ func newElementsCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Short: "List elements",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			ws, err := cmdutil.LoadWorkspace(*wdir)
+			sess, err := cmdutil.OpenSession(cmd, *wdir, "", "")
+			if err != nil {
+				return failf(cmd, *format, *compact, "list elements", err)
+			}
+			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
 			if err != nil {
 				return failf(cmd, *format, *compact, "list elements", err)
 			}
@@ -134,7 +139,12 @@ func newConnectorsCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Short: "List connectors",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			ws, err := cmdutil.LoadWorkspace(*wdir)
+			sess, err := cmdutil.OpenSession(cmd, *wdir, "", "")
+			if err != nil {
+				return failf(cmd, *format, *compact, "list connectors", err)
+			}
+			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
 			if err != nil {
 				return failf(cmd, *format, *compact, "list connectors", err)
 			}
@@ -188,7 +198,12 @@ func newViewsCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Short: "List views (diagrams)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			ws, err := cmdutil.LoadWorkspace(*wdir)
+			sess, err := cmdutil.OpenSession(cmd, *wdir, "", "")
+			if err != nil {
+				return failf(cmd, *format, *compact, "list views", err)
+			}
+			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
 			if err != nil {
 				return failf(cmd, *format, *compact, "list views", err)
 			}

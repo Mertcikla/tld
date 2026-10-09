@@ -87,7 +87,7 @@ func EnsureElementID(ctx context.Context, runner Runner, ws *workspace.Workspace
 	if err != nil {
 		return 0, fmt.Errorf("auto-create missing element %q: %w", ref, err)
 	}
-	if err := RecordElementMeta(wdir, ref, created, 0, nil); err != nil {
+	if err := RecordElementMeta(ctx, wdir, ref, created, 0, nil); err != nil {
 		return 0, err
 	}
 	return created.GetId(), nil
@@ -169,8 +169,10 @@ func ResolveParentViewID(ctx context.Context, runner Runner, ws *workspace.Works
 	if err != nil {
 		return 0, err
 	}
-	if err := promoteElementView(wdir, parentRef, viewID); err != nil {
-		return 0, err
+	if cacheEnabled(ctx) {
+		if err := promoteElementView(wdir, parentRef, viewID); err != nil {
+			return 0, err
+		}
 	}
 	return viewID, nil
 }
@@ -202,7 +204,11 @@ func promoteElementView(wdir, ref string, viewID int32) error {
 
 // RecordElementMeta stores element IDs in the workspace meta (plus the owned
 // view ID when ownedViewID != 0) and persists the YAML cache + lockfile hash.
-func RecordElementMeta(wdir, ref string, element *diagv1.Element, ownedViewID int32, view *diagv1.View) error {
+// It is a no-op when the context disables cache writes.
+func RecordElementMeta(ctx context.Context, wdir, ref string, element *diagv1.Element, ownedViewID int32, view *diagv1.View) error {
+	if !cacheEnabled(ctx) {
+		return nil
+	}
 	ws, err := workspace.Load(wdir)
 	if err != nil {
 		return err
@@ -229,8 +235,12 @@ func RecordElementMeta(wdir, ref string, element *diagv1.Element, ownedViewID in
 	return persistCache(wdir, ws)
 }
 
-// RecordConnectorMeta stores a connector ID in the workspace meta.
-func RecordConnectorMeta(wdir, key string, connector *diagv1.Connector) error {
+// RecordConnectorMeta stores a connector ID in the workspace meta. It is a
+// no-op when the context disables cache writes.
+func RecordConnectorMeta(ctx context.Context, wdir, key string, connector *diagv1.Connector) error {
+	if !cacheEnabled(ctx) {
+		return nil
+	}
 	ws, err := workspace.Load(wdir)
 	if err != nil {
 		return err
@@ -253,8 +263,12 @@ func RecordConnectorMeta(wdir, key string, connector *diagv1.Connector) error {
 	return persistCache(wdir, ws)
 }
 
-// DropElementMeta removes element/view meta entries after deletion.
-func DropElementMeta(wdir, ref string) error {
+// DropElementMeta removes element/view meta entries after deletion. It is a
+// no-op when the context disables cache writes.
+func DropElementMeta(ctx context.Context, wdir, ref string) error {
+	if !cacheEnabled(ctx) {
+		return nil
+	}
 	ws, err := workspace.Load(wdir)
 	if err != nil {
 		return err
@@ -266,8 +280,12 @@ func DropElementMeta(wdir, ref string) error {
 	return persistCache(wdir, ws)
 }
 
-// DropConnectorMeta removes a connector meta entry after deletion.
-func DropConnectorMeta(wdir string, keys ...string) error {
+// DropConnectorMeta removes a connector meta entry after deletion. It is a
+// no-op when the context disables cache writes.
+func DropConnectorMeta(ctx context.Context, wdir string, keys ...string) error {
+	if !cacheEnabled(ctx) {
+		return nil
+	}
 	ws, err := workspace.Load(wdir)
 	if err != nil {
 		return err

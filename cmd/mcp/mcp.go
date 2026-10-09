@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -313,8 +314,14 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_validate",
-		Description: "Validate workspace YAML files; returns errors, and architectural warnings.",
+		Description: "Validate workspace YAML files (requires a workspace or --yaml); returns errors and architectural warnings.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a validateArgs) (*mcpsdk.CallToolResult, result, error) {
+		if !cmdutil.WorkspaceConfigured(nil, *wdir) {
+			return errResult(cmdutil.WithHint(
+				errors.New("validate requires a workspace"),
+				"tld_validate needs workspace YAML with .tld.yaml repository configuration. Use tld_list_* tools for database state.",
+			))
+		}
 		ws, err := workspace.Load(*wdir)
 		if err != nil {
 			return errResult(fmt.Errorf("load workspace: %w", err))
@@ -435,7 +442,7 @@ func registerLinkTools(server *mcpsdk.Server, wdir, format *string, compact *boo
 func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bool, dataDir string) {
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_list_elements",
-		Description: "List workspace elements, optionally filtered by search text or kind.",
+		Description: "List elements from the database or workspace, optionally filtered by search text or kind.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a listElementsArgs) (*mcpsdk.CallToolResult, result, error) {
 		c := list.NewListCmd(wdir, format, compact)
 		args := []string{"elements"}
@@ -450,7 +457,7 @@ func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bo
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_list_connectors",
-		Description: "List workspace connectors, optionally filtered by search text or view.",
+		Description: "List connectors from the database or workspace, optionally filtered by search text or view.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a listConnectorsArgs) (*mcpsdk.CallToolResult, result, error) {
 		c := list.NewListCmd(wdir, format, compact)
 		args := []string{"connectors"}
@@ -465,7 +472,7 @@ func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bo
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_list_views",
-		Description: "List workspace views (diagrams), optionally filtered by search text or parent, with an optional hierarchy tree.",
+		Description: "List views (diagrams) from the database or workspace, optionally filtered by search text or parent, with an optional hierarchy tree.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a listViewsArgs) (*mcpsdk.CallToolResult, result, error) {
 		c := list.NewListCmd(wdir, format, compact)
 		args := []string{"views"}
@@ -483,7 +490,7 @@ func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bo
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_inspect",
-		Description: "Inspect an element, view, or connector across YAML, local DB, and optional cloud state.",
+		Description: "Inspect an element, view, or connector in the database; in a workspace, also reports YAML, local DB, and optional cloud state.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a inspectArgs) (*mcpsdk.CallToolResult, result, error) {
 		c := inspect.NewInspectCmd(wdir, format, compact)
 		args := []string{a.Ref}
@@ -504,7 +511,7 @@ func registerQueryTools(server *mcpsdk.Server, wdir, format *string, compact *bo
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "tld_render",
-		Description: "Render a workspace view to a text format (mermaid).",
+		Description: "Render a view (diagram) from the database or workspace to a text format (mermaid).",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, a renderArgs) (*mcpsdk.CallToolResult, result, error) {
 		c := render.NewRenderCmd(wdir)
 		target := a.View

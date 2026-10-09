@@ -12,16 +12,19 @@ import (
 	"path/filepath"
 	"strings"
 
+	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/codeindex/mappingcheck"
 	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/codeindex/suggest"
 	"github.com/mertcikla/tld/v2/internal/completion"
+	"github.com/mertcikla/tld/v2/internal/exec"
 	"github.com/mertcikla/tld/v2/internal/repolink"
 	"github.com/mertcikla/tld/v2/internal/sourcelink"
 	"github.com/mertcikla/tld/v2/internal/term"
 	archwarnings "github.com/mertcikla/tld/v2/internal/warnings"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/api"
 	"github.com/spf13/cobra"
 )
 
@@ -120,7 +123,13 @@ func run(cmd *cobra.Command, wdir *string, opts linkOptions, args []string) erro
 		return fail(cmd, opts, fmt.Errorf("too many arguments"))
 	}
 
-	ws, err := workspace.Load(*wdir)
+	sess, err := cmdutil.OpenSession(cmd, *wdir, "", opts.dataDir)
+	if err != nil {
+		return fail(cmd, opts, err)
+	}
+	defer func() { _ = sess.Close() }()
+
+	ws, err := sess.LoadWorkspace()
 	if err != nil {
 		return fail(cmd, opts, fmt.Errorf("load workspace: %w", err))
 	}
@@ -148,18 +157,21 @@ func run(cmd *cobra.Command, wdir *string, opts linkOptions, args []string) erro
 		return runNext(cmd, ws, nil, sug, groundingOpts, opts)
 	}
 
-	ref := args[0]
+	ref, err := cmdutil.ResolveElementArg(ws, args[0])
+	if err != nil {
+		return fail(cmd, opts, err)
+	}
 	element := ws.Elements[ref]
 	if element == nil {
 		return fail(cmd, opts, fmt.Errorf("element %q not found", ref))
 	}
 
 	if opts.unlink {
-		if err := applyUnlink(*wdir, ref, element, opts.dryRun); err != nil {
+		if err := applyUnlink(cmd, sess, ws, ref, element, opts.dryRun); err != nil {
 			return fail(cmd, opts, err)
 		}
 		if !opts.dryRun {
-			ws, _ = workspace.Load(*wdir)
+			ws, _ = sess.Reload()
 		}
 		return reportResult(cmd, ws, ref, nil, sug, groundingOpts, opts, "unlinked")
 	}
@@ -188,10 +200,24 @@ func run(cmd *cobra.Command, wdir *string, opts linkOptions, args []string) erro
 
 	owner := ownerFor(ws, res.repositoryID)
 	res.owner = owner
-	if err := applyLink(*wdir, ref, element.Tags, res); err != nil {
-		return fail(cmd, opts, fmt.Errorf("write link: %w", err))
+	if sess.HasWorkspace() {
+		if err := applyLink(sess.Wdir, ref, element.Tags, res); err != nil {
+			return fail(cmd, opts, fmt.Errorf("write link: %w", err))
+		}
+	} else {
+		runner, err := sess.Runner()
+		if err != nil {
+			return fail(cmd, opts, err)
+		}
+		elementID, err := elementIDForLink(ws, ref)
+		if err != nil {
+			return fail(cmd, opts, err)
+		}
+		if err := applyLinkDB(sess.Context(ctx), runner, elementID, element.Tags, res); err != nil {
+			return fail(cmd, opts, fmt.Errorf("write link: %w", err))
+		}
 	}
-	updated, err := workspace.Load(*wdir)
+	updated, err := sess.Reload()
 	if err != nil {
 		return fail(cmd, opts, fmt.Errorf("reload workspace: %w", err))
 	}
@@ -831,13 +857,120 @@ func applyLink(dir, ref string, currentTags []string, res resolvedLink) error {
 	return nil
 }
 
-func applyUnlink(dir, ref string, element *workspace.Element, dryRun bool) error {
-	if dryRun {
-		return cmdutil.WithWorkspaceDryRun(dir, func(cloneDir string) error {
-			return unlinkFields(cloneDir, ref, element)
-		})
+// applyLinkDB writes the resolved link to the target element directly.
+func applyLinkDB(ctx context.Context, runner exec.Runner, elementID int32, currentTags []string, res resolvedLink) error {
+	existing, err := runner.GetElement(ctx, elementID)
+	if err != nil {
+		return cmdutil.WithUnauthorizedHint("read element failed", err)
 	}
-	return unlinkFields(dir, ref, element)
+	input := linkElementInput(existing)
+	if res.filePath != "" {
+		value := res.filePath
+		input.FilePath = &value
+	}
+	if res.repositoryID != "" {
+		value := res.repositoryID
+		input.RepositoryID = &value
+	}
+	if res.repo != "" {
+		value := res.repo
+		input.Repo = &value
+	}
+	if res.branch != "" {
+		value := res.branch
+		input.Branch = &value
+	}
+	if res.url != "" {
+		value := res.url
+		input.URL = &value
+	}
+	if res.external {
+		input.Tags = appendTag(currentTags, "external")
+	}
+	if _, err := runner.UpdateElement(ctx, elementID, input); err != nil {
+		return cmdutil.WithUnauthorizedHint("update element failed", err)
+	}
+	return nil
+}
+
+func linkElementInput(e *diagv1.Element) api.ElementInput {
+	bypass := e.GetBypassNoiseGate()
+	return api.ElementInput{
+		Name:            e.GetName(),
+		Description:     optionalString(e.Description),
+		Kind:            optionalString(e.Kind),
+		Technology:      optionalString(e.Technology),
+		URL:             optionalString(e.Url),
+		LogoURL:         optionalString(e.LogoUrl),
+		TechLinks:       e.TechnologyLinks,
+		Tags:            e.Tags,
+		Repo:            optionalString(e.Repo),
+		RepositoryID:    optionalString(e.RepositoryId),
+		Branch:          optionalString(e.Branch),
+		Language:        optionalString(e.Language),
+		FilePath:        optionalString(e.FilePath),
+		BypassNoiseGate: &bypass,
+		HasView:         e.GetHasView(),
+		ViewLabel:       optionalString(e.ViewLabel),
+	}
+}
+
+func optionalString(s *string) *string {
+	if s == nil || *s == "" {
+		return nil
+	}
+	return s
+}
+
+func elementIDForLink(ws *workspace.Workspace, ref string) (int32, error) {
+	if ws != nil && ws.Meta != nil {
+		if m, ok := ws.Meta.Elements[ref]; ok && m != nil && m.ID != 0 {
+			return int32(m.ID), nil
+		}
+	}
+	return 0, fmt.Errorf("element %q has no database ID; run 'tld pull' or recreate it", ref)
+}
+
+func applyUnlink(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, ref string, element *workspace.Element, dryRun bool) error {
+	if sess.HasWorkspace() {
+		if dryRun {
+			return cmdutil.WithWorkspaceDryRun(sess.Wdir, func(cloneDir string) error {
+				return unlinkFields(cloneDir, ref, element)
+			})
+		}
+		return unlinkFields(sess.Wdir, ref, element)
+	}
+	if dryRun {
+		return nil
+	}
+	runner, err := sess.Runner()
+	if err != nil {
+		return err
+	}
+	elementID, err := elementIDForLink(ws, ref)
+	if err != nil {
+		return err
+	}
+	existing, err := runner.GetElement(sess.Context(cmd.Context()), elementID)
+	if err != nil {
+		return cmdutil.WithUnauthorizedHint("read element failed", err)
+	}
+	input := linkElementInput(existing)
+	empty := ""
+	// Empty strings (not nil) clear the columns; nil means "leave unchanged".
+	input.FilePath = &empty
+	input.RepositoryID = &empty
+	input.Repo = &empty
+	input.Branch = &empty
+	input.Tags = removeTag(existing.GetTags(), "external")
+	if input.Tags == nil {
+		input.Tags = []string{}
+	}
+	_, err = runner.UpdateElement(sess.Context(cmd.Context()), elementID, input)
+	if err != nil {
+		return cmdutil.WithUnauthorizedHint("unlink element failed", err)
+	}
+	return nil
 }
 
 func unlinkFields(dir, ref string, element *workspace.Element) error {
