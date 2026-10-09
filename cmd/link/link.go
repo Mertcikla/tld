@@ -5,12 +5,12 @@
 package link
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"strings"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
+	"github.com/mertcikla/tld/v2/cmd/update"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/exec"
 	"github.com/mertcikla/tld/v2/internal/repolink"
@@ -91,7 +91,6 @@ view level as suggestions.
 }
 
 func run(cmd *cobra.Command, wdir *string, opts linkOptions, args []string) error {
-	ctx := cmd.Context()
 	if opts.next && len(args) != 0 {
 		return fail(cmd, opts, fmt.Errorf("--next does not take an element ref"))
 	}
@@ -156,26 +155,12 @@ func run(cmd *cobra.Command, wdir *string, opts linkOptions, args []string) erro
 		return nil
 	}
 
-	writeCtx := sess.Context(ctx)
-	runner, err := sess.Runner()
-	if err != nil {
-		return fail(cmd, opts, err)
-	}
-	elementID, err := exec.EnsureElementID(writeCtx, runner, ws, sess.Wdir, ref)
-	if err != nil {
-		return fail(cmd, opts, err)
-	}
-	updatedElement, err := applyLinkDB(writeCtx, runner, elementID, element.Tags, res)
-	if err != nil {
-		return fail(cmd, opts, fmt.Errorf("write link: %w", err))
-	}
-	// Refresh the YAML cache (write-through) when a workspace is in play.
-	if sess.HasWorkspace() {
-		if err := applyLink(sess.Wdir, ref, element.Tags, res); err != nil {
-			return fail(cmd, opts, fmt.Errorf("write link: %w", err))
+	for _, field := range res.elementFields(element.Tags) {
+		if strings.TrimSpace(field.value) == "" {
+			continue
 		}
-		if err := exec.RecordElementMeta(writeCtx, sess.Wdir, ref, updatedElement, 0, nil); err != nil {
-			return fail(cmd, opts, fmt.Errorf("update cache metadata: %w", err))
+		if err := update.ApplyElementFieldUpdate(cmd, sess, ws, ref, field.name, field.value); err != nil {
+			return fail(cmd, opts, fmt.Errorf("write link: %w", err))
 		}
 	}
 	updated, err := sess.Reload()
@@ -503,62 +488,21 @@ func repoSlug(remote string) string {
 	return parsed.Host + "/" + slug
 }
 
-func applyLink(dir, ref string, currentTags []string, res resolvedLink) error {
+// elementFields lists the element field updates a resolved link maps to, in the
+// order they are applied. Empty fields are skipped by the caller.
+func (r resolvedLink) elementFields(currentTags []string) []struct{ name, value string } {
 	fields := []struct{ name, value string }{
-		{"file_path", res.filePath},
-		{"repo", res.repo},
-		{"branch", res.branch},
-		{"url", res.url},
+		{"file_path", r.filePath},
+		{"repo", r.repo},
+		{"branch", r.branch},
+		{"url", r.url},
 	}
-	for _, field := range fields {
-		if strings.TrimSpace(field.value) == "" {
-			continue
-		}
-		if err := workspace.UpdateElementField(dir, ref, field.name, field.value); err != nil {
-			return err
-		}
+	if r.external {
+		fields = append(fields, struct{ name, value string }{
+			"tags", strings.Join(appendTag(currentTags, "external"), ", "),
+		})
 	}
-	if res.external {
-		tags := appendTag(currentTags, "external")
-		if err := workspace.UpdateElementField(dir, ref, "tags", strings.Join(tags, ", ")); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// applyLinkDB writes the resolved link to the target element directly and
-// returns the updated element.
-func applyLinkDB(ctx context.Context, runner exec.Runner, elementID int32, currentTags []string, res resolvedLink) (*diagv1.Element, error) {
-	existing, err := runner.GetElement(ctx, elementID)
-	if err != nil {
-		return nil, cmdutil.WithUnauthorizedHint("read element failed", err)
-	}
-	input := linkElementInput(existing)
-	if res.filePath != "" {
-		value := res.filePath
-		input.FilePath = &value
-	}
-	if res.repo != "" {
-		value := res.repo
-		input.Repo = &value
-	}
-	if res.branch != "" {
-		value := res.branch
-		input.Branch = &value
-	}
-	if res.url != "" {
-		value := res.url
-		input.URL = &value
-	}
-	if res.external {
-		input.Tags = appendTag(currentTags, "external")
-	}
-	updated, err := runner.UpdateElement(ctx, elementID, input)
-	if err != nil {
-		return nil, cmdutil.WithUnauthorizedHint("update element failed", err)
-	}
-	return updated, nil
+	return fields
 }
 
 func linkElementInput(e *diagv1.Element) api.ElementInput {
@@ -634,6 +578,10 @@ func applyUnlink(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Worksp
 		}
 		if err := exec.RecordElementMeta(ctx, sess.Wdir, ref, updated, 0, nil); err != nil {
 			return fmt.Errorf("update cache metadata: %w", err)
+		}
+
+		if err := workspace.TouchCurrentElementMetadata(sess.Wdir, ref); err != nil {
+			return fmt.Errorf("refresh cache metadata: %w", err)
 		}
 	}
 	return nil

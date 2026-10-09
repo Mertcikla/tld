@@ -239,3 +239,47 @@ func TestMergeWorkspace_ServerWinsOnElementPlacementPositions(t *testing.T) {
 		t.Fatalf("server placement should win, got %+v", got["api"].Placements[0])
 	}
 }
+
+func TestMergeWorkspace_LocalLinkConflictsWithConcurrentServerEdit(t *testing.T) {
+	dir := t.TempDir()
+	lastSync := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(`api:
+  name: API
+  kind: service
+  file_path: internal/api.go
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lastSyncMeta := &workspace.Meta{
+		Elements: map[string]*workspace.ResourceMetadata{"api": {ID: 1, UpdatedAt: lastSync}},
+	}
+	// The local link advanced the current watermark past the last sync.
+	currentMeta := &workspace.Meta{
+		Elements: map[string]*workspace.ResourceMetadata{"api": {ID: 1, UpdatedAt: lastSync.Add(time.Minute)}},
+	}
+	// A concurrent server edit renamed the element and dropped its link.
+	newWS := &workspace.Workspace{
+		Dir: dir,
+		Elements: map[string]*workspace.Element{
+			"api": {Name: "API v2", Kind: "service"},
+		},
+		Meta: &workspace.Meta{
+			Elements: map[string]*workspace.ResourceMetadata{"api": {ID: 1, UpdatedAt: lastSync.Add(2 * time.Minute)}},
+		},
+	}
+
+	if _, err := workspace.MergeWorkspace(dir, newWS, lastSyncMeta, currentMeta); err != nil {
+		t.Fatalf("MergeWorkspace: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "file_path: internal/api.go") {
+		t.Fatalf("local link was silently dropped:\n%s", text)
+	}
+	if !strings.Contains(text, "CONFLICT") {
+		t.Fatalf("concurrent server edit did not raise a conflict:\n%s", text)
+	}
+}

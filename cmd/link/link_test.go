@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mertcikla/tld/v2/cmd"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 )
 
 func writeElements(t *testing.T, dir, content string) {
@@ -219,5 +220,36 @@ func TestLinkCmd_NextWhenAllGrounded(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "All linkable elements are grounded.") {
 		t.Fatalf("unexpected stdout: %s", stdout)
+	}
+}
+
+func TestLinkCmd_MarksLocalMetadataChanged(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	if _, _, err := cmd.RunCmd(t, dir, "add", "System", "--ref", "sys", "--kind", "workspace"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if _, _, err := cmd.RunCmd(t, dir, "link", "sys", "internal/api.go#function:Handle"); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+
+	lockFile, err := workspace.LoadLockFile(workspace.ResolveDir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lockFile == nil {
+		t.Fatal("no lock file after link")
+	}
+	current := lockFile.CurrentElements["sys"]
+	lastSync := lockFile.Metadata.Elements["sys"]
+	if current == nil || lastSync == nil {
+		t.Fatalf("missing metadata: current=%+v lastSync=%+v", current, lastSync)
+	}
+	if !current.UpdatedAt.After(lastSync.UpdatedAt) {
+		t.Fatalf("link did not mark a local change: current=%s lastSync=%s", current.UpdatedAt, lastSync.UpdatedAt)
+	}
+	workspaceDir := workspace.ResolveDir(dir)
+	if !strings.Contains(readElements(t, workspaceDir), "file_path: internal/api.go#function:Handle") {
+		t.Fatalf("link not written to YAML:\n%s", readElements(t, workspaceDir))
 	}
 }

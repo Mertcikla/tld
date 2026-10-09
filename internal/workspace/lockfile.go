@@ -251,6 +251,45 @@ func persistCurrentMetadata(dir string, assign func(*LockFile)) (bool, error) {
 	return true, nil
 }
 
+func TouchCurrentElementMetadata(dir, ref string) error {
+	return touchCurrentMetadata(dir, ref, func(lockFile *LockFile) map[string]*ResourceMetadata {
+		return lockFile.CurrentElements
+	})
+}
+
+func TouchCurrentViewMetadata(dir, ref string) error {
+	return touchCurrentMetadata(dir, ref, func(lockFile *LockFile) map[string]*ResourceMetadata {
+		return lockFile.CurrentViews
+	})
+}
+
+func TouchCurrentConnectorMetadata(dir, ref string) error {
+	return touchCurrentMetadata(dir, ref, func(lockFile *LockFile) map[string]*ResourceMetadata {
+		return lockFile.CurrentConnectors
+	})
+}
+
+func touchCurrentMetadata(dir, ref string, pick func(*LockFile) map[string]*ResourceMetadata) error {
+	lockFile, err := LoadLockFile(dir)
+	if err != nil {
+		return fmt.Errorf("load lock file: %w", err)
+	}
+	if lockFile == nil {
+		return nil
+	}
+	metadata := pick(lockFile)
+	if metadata[ref] == nil {
+		return nil
+	}
+	updated := *metadata[ref]
+	updated.UpdatedAt = time.Now()
+	metadata[ref] = &updated
+	if err := WriteLockFile(dir, lockFile); err != nil {
+		return fmt.Errorf("write lock file: %w", err)
+	}
+	return nil
+}
+
 func RenameCurrentElementMetadata(dir, oldRef, newRef string) error {
 	return renameCurrentMetadata(dir, oldRef, newRef,
 		func(lockFile *LockFile) map[string]*ResourceMetadata {

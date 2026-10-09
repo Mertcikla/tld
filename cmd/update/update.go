@@ -105,19 +105,8 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 			}
 			// Target first: a failed target write must not leave the YAML
 			// cache claiming a change the target never saw.
-			updated, viewID, err := runUpdateElementServer(cmd, sess, ws, ref, field, value)
-			if err != nil {
+			if err := ApplyElementFieldUpdate(cmd, sess, ws, ref, field, value); err != nil {
 				return fail(err)
-			}
-			if sess.HasWorkspace() {
-				if err := workspace.UpdateElementField(*wdir, ref, field, value); err != nil {
-					return fail(fmt.Errorf("update YAML cache: %w", err))
-				}
-				if updated != nil {
-					if err := exec.RecordElementMeta(sess.Context(cmd.Context()), *wdir, ref, updated, viewID, nil); err != nil {
-						return fail(fmt.Errorf("update cache metadata: %w", err))
-					}
-				}
 			}
 			if cmdutil.WantsJSON(*format) {
 				return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "update element", "update", ref)
@@ -231,6 +220,11 @@ func newConnectorCmd(wdir, format *string, compact *bool) *cobra.Command {
 					if err := exec.RecordConnectorMeta(sess.Context(cmd.Context()), *wdir, newKey, updated); err != nil {
 						return fail(fmt.Errorf("update cache metadata: %w", err))
 					}
+					// Advance the local current watermark so pull can detect a
+					// concurrent server edit instead of silently overwriting it.
+					if err := workspace.TouchCurrentConnectorMetadata(*wdir, newKey); err != nil {
+						return fail(fmt.Errorf("refresh cache metadata: %w", err))
+					}
 				}
 			}
 			if cmdutil.WantsJSON(*format) {
@@ -298,6 +292,32 @@ func unsupportedElementFieldError(ref, field string) error {
 	default:
 		return fmt.Errorf("unknown element field %q; known fields: %s", field, strings.Join(completion.ElementFields(), ", "))
 	}
+}
+
+func ApplyElementFieldUpdate(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, ref, field, value string) error {
+	updated, viewID, err := runUpdateElementServer(cmd, sess, ws, ref, field, value)
+	if err != nil {
+		return err
+	}
+	if !sess.HasWorkspace() || updated == nil {
+		return nil
+	}
+	if err := workspace.UpdateElementField(sess.Wdir, ref, field, value); err != nil {
+		return fmt.Errorf("update YAML cache: %w", err)
+	}
+	if err := exec.RecordElementMeta(sess.Context(cmd.Context()), sess.Wdir, ref, updated, viewID, nil); err != nil {
+		return fmt.Errorf("update cache metadata: %w", err)
+	}
+
+	if err := workspace.TouchCurrentElementMetadata(sess.Wdir, ref); err != nil {
+		return fmt.Errorf("refresh cache metadata: %w", err)
+	}
+	if viewID != 0 {
+		if err := workspace.TouchCurrentViewMetadata(sess.Wdir, ref); err != nil {
+			return fmt.Errorf("refresh view metadata: %w", err)
+		}
+	}
+	return nil
 }
 
 // runUpdateElementServer mirrors a YAML element field change to the server and
