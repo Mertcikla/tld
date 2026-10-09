@@ -68,7 +68,7 @@ func TestMCPViewCreateAndRender(t *testing.T) {
 	}
 }
 
-func TestMCPLinkExternalAndNext(t *testing.T) {
+func TestMCPLinkExternal(t *testing.T) {
 	_, clientSession := setupMCPWorkspace(t)
 
 	mustCallTool(t, clientSession, "tld_add", map[string]any{"name": "Payment Service", "ref": "svc", "kind": "struct"})
@@ -85,11 +85,6 @@ func TestMCPLinkExternalAndNext(t *testing.T) {
 	}))
 	if !strings.Contains(linked, "Linked") || !strings.Contains(linked, "status.acme.com") {
 		t.Fatalf("link output = %q", linked)
-	}
-
-	done := toolText(mustCallTool(t, clientSession, "tld_link_next", nil))
-	if !strings.Contains(done, "All linkable elements are grounded.") {
-		t.Fatalf("link_next after unlink = %q", done)
 	}
 }
 

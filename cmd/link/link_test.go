@@ -1,20 +1,13 @@
 package link_test
 
 import (
-	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
-	assets "github.com/mertcikla/tld/v2"
 	"github.com/mertcikla/tld/v2/cmd"
-	"github.com/mertcikla/tld/v2/internal/codeindex/config"
-	"github.com/mertcikla/tld/v2/internal/codeindex/indexer"
-	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
-	"github.com/mertcikla/tld/v2/internal/localserver"
-	"github.com/mertcikla/tld/v2/pkg/dbrepo"
 )
 
 func writeElements(t *testing.T, dir, content string) {
@@ -109,7 +102,7 @@ func TestLinkCmd_UnlinkClearsSourceLink(t *testing.T) {
 	}
 }
 
-func TestLinkCmd_AnchorWritesUnverifiedFileLink(t *testing.T) {
+func TestLinkCmd_AnchorWritesFileLink(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
 	writeElements(t, dir, "svc:\n  name: Payment Service\n  kind: struct\n")
@@ -124,6 +117,45 @@ func TestLinkCmd_AnchorWritesUnverifiedFileLink(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Grounding: workspace 10/10") {
 		t.Fatalf("expected fully grounded: %s", stdout)
+	}
+}
+
+func TestLinkCmd_ExplicitFileAndSymbol(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	writeElements(t, dir, "svc:\n  name: Payment Service\n  kind: struct\n")
+
+	if _, _, err := cmd.RunCmd(t, dir, "link", "svc", "--file", "internal/api.go", "--symbol", "Handle"); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	content := readElements(t, dir)
+	if !strings.Contains(content, "file_path: internal/api.go#symbol:Handle") {
+		t.Fatalf("explicit symbol anchor not written:\n%s", content)
+	}
+}
+
+func TestLinkCmd_RepoLink(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	writeElements(t, dir, "svc:\n  name: Payment Service\n  kind: struct\n")
+
+	if _, _, err := cmd.RunCmd(t, dir, "link", "svc", "--repo", "https://github.com/acme/app"); err != nil {
+		t.Fatalf("link: %v", err)
+	}
+	content := readElements(t, dir)
+	if !strings.Contains(content, "repo: acme/app") {
+		t.Fatalf("repo not written:\n%s", content)
+	}
+}
+
+func TestLinkCmd_RequiresTarget(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	writeElements(t, dir, "svc:\n  name: Payment Service\n  kind: struct\n")
+
+	_, _, err := cmd.RunCmd(t, dir, "link", "svc")
+	if err == nil || !strings.Contains(err.Error(), "a target is required") {
+		t.Fatalf("expected target-required error, got %v", err)
 	}
 }
 
@@ -155,6 +187,27 @@ top:
 	}
 }
 
+func TestLinkCmd_NextLimitsToFive(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	var content strings.Builder
+	for i := 1; i <= 7; i++ {
+		fmt.Fprintf(&content, "e%d:\n  name: E%d\n  kind: struct\n  placements: [ { parent: root } ]\n", i, i)
+	}
+	writeElements(t, dir, content.String())
+
+	stdout, _, err := cmd.RunCmd(t, dir, "link", "--next")
+	if err != nil {
+		t.Fatalf("link --next: %v", err)
+	}
+	if !strings.Contains(stdout, "Next unlinked elements (5):") {
+		t.Fatalf("expected 5 suggestions, got:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "ref e6") || strings.Contains(stdout, "ref e7") {
+		t.Fatalf("expected only the first 5 by view level, got:\n%s", stdout)
+	}
+}
+
 func TestLinkCmd_NextWhenAllGrounded(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
@@ -167,87 +220,4 @@ func TestLinkCmd_NextWhenAllGrounded(t *testing.T) {
 	if !strings.Contains(stdout, "All linkable elements are grounded.") {
 		t.Fatalf("unexpected stdout: %s", stdout)
 	}
-}
-
-func TestLinkCmd_CandidatesNeedIndex(t *testing.T) {
-	dir := t.TempDir()
-	cmd.MustInitWorkspace(t, dir)
-	writeElements(t, dir, "svc:\n  name: Payment Service\n  kind: struct\n")
-
-	_, _, err := cmd.RunCmd(t, dir, "link", "svc")
-	if err == nil || !strings.Contains(err.Error(), "no local codeindex") {
-		t.Fatalf("expected no-index error, got %v", err)
-	}
-}
-
-func TestLinkCmd_CandidatesPrintRunnableCommands(t *testing.T) {
-	dataDir := seedIndexedRepo(t)
-	dir := t.TempDir()
-	cmd.MustInitWorkspace(t, dir)
-	writeElements(t, dir, "svc:\n  name: Process Payment\n  kind: struct\n")
-
-	stdout, _, err := cmd.RunCmd(t, dir, "link", "svc", "--data-dir", dataDir)
-	if err != nil {
-		t.Fatalf("link: %v\n%s", err, stdout)
-	}
-	if !strings.Contains(stdout, "tld link svc service.go#function:ProcessPayment") {
-		t.Fatalf("expected a runnable candidate command, got:\n%s", stdout)
-	}
-	if strings.Contains(stdout, "(0.") {
-		t.Fatalf("candidate scores should not be printed:\n%s", stdout)
-	}
-}
-
-func TestLinkCmd_ResolvesAgainstIndex(t *testing.T) {
-	dataDir := seedIndexedRepo(t)
-	dir := t.TempDir()
-	cmd.MustInitWorkspace(t, dir)
-	writeElements(t, dir, "svc:\n  name: Process Payment\n  kind: struct\n")
-
-	stdout, _, err := cmd.RunCmd(t, dir, "link", "svc", "ProcessPayment", "--data-dir", dataDir)
-	if err != nil {
-		t.Fatalf("link: %v\n%s", err, stdout)
-	}
-	content := readElements(t, dir)
-	if !strings.Contains(content, "file_path: service.go#function:ProcessPayment") {
-		t.Fatalf("symbol anchor not written:\n%s", content)
-	}
-	if !strings.Contains(content, "repository_id:") {
-		t.Fatalf("repository_id not written:\n%s", content)
-	}
-	if strings.Contains(stdout, "recorded unverified") {
-		t.Fatalf("expected verified link, got:\n%s", stdout)
-	}
-}
-
-// seedIndexedRepo builds and publishes a tiny codeindex snapshot in a data dir
-// and returns that dir.
-func seedIndexedRepo(t *testing.T) string {
-	t.Helper()
-	dataDir := t.TempDir()
-	repoDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoDir, "service.go"), []byte("package main\n\nfunc ProcessPayment() {}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx := context.Background()
-	handle, err := dbrepo.OpenSQLite(ctx, dbrepo.DBOptions{
-		SQLitePath: localserver.DatabasePath(dataDir),
-		Migrations: assets.FS,
-	})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
-	defer func() { _ = handle.Close() }()
-
-	pipeline := indexer.Pipeline{Config: config.Default()}
-	snap, graph, err := pipeline.Build(ctx, &pb.IndexRequest{Directory: repoDir}, nil)
-	if err != nil {
-		t.Fatalf("index build: %v", err)
-	}
-	store := cstore.NewStoreFromHandle(handle)
-	if err := store.Publish(ctx, repoDir, snap, graph); err != nil {
-		t.Fatalf("publish: %v", err)
-	}
-	return dataDir
 }
