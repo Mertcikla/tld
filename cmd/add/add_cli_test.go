@@ -69,12 +69,37 @@ func TestAddCmd_TrimsKind(t *testing.T) {
 	}
 }
 
+func TestAddCmd_EmptyKindLeavesFieldUnset(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+	}{
+		{name: "omitted", args: []string{"add", "API", "--ref", "api"}},
+		{name: "whitespace", args: []string{"add", "API", "--ref", "api", "--kind", "   "}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cmd.MustInitWorkspace(t, dir)
+
+			if _, _, err := cmd.RunCmd(t, dir, tt.args...); err != nil {
+				t.Fatalf("add without kind: %v", err)
+			}
+			ws, err := workspace.Load(dir)
+			if err != nil {
+				t.Fatalf("load workspace: %v", err)
+			}
+			if got := ws.Elements["api"].Kind; got != "" {
+				t.Fatalf("kind = %q, want unset", got)
+			}
+		})
+	}
+}
+
 func TestAddCmd_InvalidKindFails(t *testing.T) {
 	tests := []struct {
 		name string
 		kind string
 	}{
-		{name: "empty", kind: "   "},
 		{name: "control", kind: "service\nkind"},
 		{name: "too long", kind: strings.Repeat("a", 65)},
 	}

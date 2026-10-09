@@ -47,11 +47,13 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			normalizedKind, err := validateKind(kind)
-			if err != nil {
-				return err
+			if strings.TrimSpace(kind) != "" {
+				normalizedKind, err := validateKind(kind)
+				if err != nil {
+					return err
+				}
+				kind = normalizedKind
 			}
-			kind = normalizedKind
 			r := ref
 			if r == "" {
 				r = workspace.Slugify(name)

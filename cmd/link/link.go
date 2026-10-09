@@ -200,20 +200,21 @@ func run(cmd *cobra.Command, wdir *string, opts linkOptions, args []string) erro
 
 	owner := ownerFor(ws, res.repositoryID)
 	res.owner = owner
+	writeCtx := sess.Context(ctx)
+	runner, err := sess.Runner()
+	if err != nil {
+		return fail(cmd, opts, err)
+	}
+	elementID, err := exec.EnsureElementID(writeCtx, runner, ws, sess.Wdir, ref)
+	if err != nil {
+		return fail(cmd, opts, err)
+	}
+	if err := applyLinkDB(writeCtx, runner, elementID, element.Tags, res); err != nil {
+		return fail(cmd, opts, fmt.Errorf("write link: %w", err))
+	}
+	// Refresh the YAML cache (write-through) when a workspace is in play.
 	if sess.HasWorkspace() {
 		if err := applyLink(sess.Wdir, ref, element.Tags, res); err != nil {
-			return fail(cmd, opts, fmt.Errorf("write link: %w", err))
-		}
-	} else {
-		runner, err := sess.Runner()
-		if err != nil {
-			return fail(cmd, opts, err)
-		}
-		elementID, err := elementIDForLink(ws, ref)
-		if err != nil {
-			return fail(cmd, opts, err)
-		}
-		if err := applyLinkDB(sess.Context(ctx), runner, elementID, element.Tags, res); err != nil {
 			return fail(cmd, opts, fmt.Errorf("write link: %w", err))
 		}
 	}
@@ -922,36 +923,25 @@ func optionalString(s *string) *string {
 	return s
 }
 
-func elementIDForLink(ws *workspace.Workspace, ref string) (int32, error) {
-	if ws != nil && ws.Meta != nil {
-		if m, ok := ws.Meta.Elements[ref]; ok && m != nil && m.ID != 0 {
-			return int32(m.ID), nil
-		}
-	}
-	return 0, fmt.Errorf("element %q has no database ID; run 'tld pull' or recreate it", ref)
-}
-
 func applyUnlink(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, ref string, element *workspace.Element, dryRun bool) error {
-	if sess.HasWorkspace() {
-		if dryRun {
+	if dryRun {
+		if sess.HasWorkspace() {
 			return cmdutil.WithWorkspaceDryRun(sess.Wdir, func(cloneDir string) error {
 				return unlinkFields(cloneDir, ref, element)
 			})
 		}
-		return unlinkFields(sess.Wdir, ref, element)
-	}
-	if dryRun {
 		return nil
 	}
+	ctx := sess.Context(cmd.Context())
 	runner, err := sess.Runner()
 	if err != nil {
 		return err
 	}
-	elementID, err := elementIDForLink(ws, ref)
+	elementID, err := exec.EnsureElementID(ctx, runner, ws, sess.Wdir, ref)
 	if err != nil {
 		return err
 	}
-	existing, err := runner.GetElement(sess.Context(cmd.Context()), elementID)
+	existing, err := runner.GetElement(ctx, elementID)
 	if err != nil {
 		return cmdutil.WithUnauthorizedHint("read element failed", err)
 	}
@@ -966,9 +956,14 @@ func applyUnlink(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Worksp
 	if input.Tags == nil {
 		input.Tags = []string{}
 	}
-	_, err = runner.UpdateElement(sess.Context(cmd.Context()), elementID, input)
-	if err != nil {
+	if _, err := runner.UpdateElement(ctx, elementID, input); err != nil {
 		return cmdutil.WithUnauthorizedHint("unlink element failed", err)
+	}
+	// Refresh the YAML cache (write-through) when a workspace is in play.
+	if sess.HasWorkspace() {
+		if err := unlinkFields(sess.Wdir, ref, element); err != nil {
+			return err
+		}
 	}
 	return nil
 }
