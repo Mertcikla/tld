@@ -12,15 +12,13 @@ import {
   HStack,
   IconButton,
   Input,
-  Popover,
-  PopoverArrow,
-  PopoverBody,
-  PopoverCloseButton,
-  PopoverContent,
-  PopoverFooter,
-  PopoverHeader,
-  PopoverTrigger,
-  Portal,
+  Modal,
+  ModalBody,
+  ModalCloseButton,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  ModalOverlay,
   Progress,
   Spinner,
   Switch,
@@ -414,6 +412,7 @@ export default function Repositories() {
   const [addOpen, setAddOpen] = useState(false)
   const [addPath, setAddPath] = useState('')
   const [adding, setAdding] = useState(false)
+  const [addTarget, setAddTarget] = useState('')
   const [addError, setAddError] = useState('')
   const [indexerCheck, setIndexerCheck] = useState<RepositoryIndexerCheck | null>(null)
   const [indexersOpen, setIndexersOpen] = useState(true)
@@ -963,8 +962,10 @@ export default function Repositories() {
     }
     setAdding(true)
     setAddError('')
+    setAddTarget(value)
     setAddOpen(false)
     setShowRepositorySettings(false)
+    // Switch to the snapshots tab so the page shows the operation progress.
     changeMode('snapshots')
     setBusy(true)
     setProgress(null)
@@ -987,6 +988,9 @@ export default function Repositories() {
       })
       await reload()
       selectRepo(added.id)
+      // selectRepo swaps the selection but not the tab; re-assert snapshots so
+      // the newly added repository lands on its snapshots page.
+      changeMode('snapshots')
     } catch (err) {
       setAddError(
         err instanceof Error ? err.message : 'Could not add repository',
@@ -994,6 +998,7 @@ export default function Repositories() {
       setAddOpen(true)
     } finally {
       setAdding(false)
+      setAddTarget('')
       setBusy(false)
       setProgress(null)
     }
@@ -1150,20 +1155,6 @@ export default function Repositories() {
             ))}
             </Box>
             <Box flexShrink={0} borderTop="1px solid" borderColor="whiteAlpha.100">
-              <Popover
-                isOpen={addOpen}
-                onOpen={() => {
-                  setAddError('')
-                }}
-                onClose={() => {
-                  if (!adding) setAddOpen(false)
-                }}
-                placement="right-start"
-                isLazy
-                closeOnBlur={!adding}
-                returnFocusOnClose={false}
-              >
-                <PopoverTrigger>
               <Flex
                 role="button"
                 tabIndex={0}
@@ -1208,70 +1199,77 @@ export default function Repositories() {
                   </Box>
                 )}
               </Flex>
-                </PopoverTrigger>
-                <Portal>
-                  <PopoverContent w="320px" maxW="calc(100vw - 24px)">
-                    <PopoverArrow />
-                    <PopoverCloseButton isDisabled={adding} />
-                    <PopoverHeader fontWeight="semibold">
-                      Add repository
-                    </PopoverHeader>
-                    <PopoverBody>
-                      <FormControl>
-                        <Text fontSize="sm" mb={2} color="gray.400">
-                          Index a local repository or clone a remote one
-                          (owner/repo or Git URL).
-                        </Text>
-                        <Input
-                          autoFocus
-                          size="sm"
-                          placeholder="/path/to/repository or owner/repo"
-                          value={addPath}
-                          data-testid="repositories-add-path"
-                          isDisabled={adding}
-                          onChange={(e) => {
-                            setAddPath(e.target.value)
-                            setAddError('')
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') void handleAddRepository()
-                          }}
-                        />
-                      </FormControl>
-                      {addError && (
-                        <Alert status="error" mt={3} borderRadius="md">
-                          <AlertIcon />
-                          <Text fontSize="sm">{addError}</Text>
-                        </Alert>
-                      )}
-                    </PopoverBody>
-                    <PopoverFooter
-                      display="flex"
-                      justifyContent="flex-end"
-                      gap={2}
-                    >
-                      <Button
+              <Modal
+                isOpen={addOpen}
+                onClose={() => {
+                  if (!adding) setAddOpen(false)
+                }}
+                isCentered
+                size="md"
+                closeOnOverlayClick={!adding}
+                closeOnEsc={!adding}
+              >
+                <ModalOverlay bg="blackAlpha.700" backdropFilter="blur(4px)" />
+                <ModalContent
+                  bg="var(--bg-panel)"
+                  border="1px solid"
+                  borderColor="var(--border-main)"
+                >
+                  <ModalHeader fontWeight="semibold">
+                    Add repository
+                  </ModalHeader>
+                  <ModalCloseButton isDisabled={adding} />
+                  <ModalBody>
+                    <FormControl>
+                      <Text fontSize="sm" mb={2} color="gray.400">
+                        Index a local repository or clone a remote one
+                        (path, owner/repo or Git URL).
+                      </Text>
+                      <Input
+                        autoFocus
                         size="sm"
-                        variant="ghost"
+                        placeholder="/path/to/repository or owner/repo"
+                        value={addPath}
+                        data-testid="repositories-add-path"
                         isDisabled={adding}
-                        onClick={() => setAddOpen(false)}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        size="sm"
-                        style={accentStyle}
-                        data-testid="repositories-add-submit"
-                        isLoading={adding}
-                        isDisabled={!addPath.trim()}
-                        onClick={() => void handleAddRepository()}
-                      >
-                        Add repository
-                      </Button>
-                    </PopoverFooter>
-                  </PopoverContent>
-                </Portal>
-              </Popover>
+                        onChange={(e) => {
+                          setAddPath(e.target.value)
+                          setAddError('')
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') void handleAddRepository()
+                        }}
+                      />
+                    </FormControl>
+                    {addError && (
+                      <Alert status="error" mt={3} borderRadius="md">
+                        <AlertIcon />
+                        <Text fontSize="sm">{addError}</Text>
+                      </Alert>
+                    )}
+                  </ModalBody>
+                  <ModalFooter gap={2}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      isDisabled={adding}
+                      onClick={() => setAddOpen(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      style={accentStyle}
+                      data-testid="repositories-add-submit"
+                      isLoading={adding}
+                      isDisabled={!addPath.trim()}
+                      onClick={() => void handleAddRepository()}
+                    >
+                      Add repository
+                    </Button>
+                  </ModalFooter>
+                </ModalContent>
+              </Modal>
             </Box>
           </Box>
           <Box
@@ -1300,7 +1298,7 @@ export default function Repositories() {
                 >
                   <HStack spacing={0.5} p={0.5} bg="blackAlpha.200" border="1px solid" borderColor="whiteAlpha.50" borderRadius="lg" aria-label="Repository mode">
                     {([['snapshots', 'Snapshots'], ['compare', 'Compare'], ['live', 'Watch'], ['pr', 'PR Review']] as const).filter(([value]) => value !== 'live' || watchEnabled).map(([value, label]) => (
-                      <Button key={value} size="sm" variant="ghost" borderRadius="md" px={3} h="28px" minW="auto" leftIcon={<RepositoryModeIcon mode={value} />} iconSpacing={1.5} fontSize="11px" fontWeight="semibold" bg={mode === value ? 'var(--bg-element)' : 'transparent'} color={mode === value ? 'white' : 'gray.500'} _hover={{ bg: mode === value ? 'var(--bg-element)' : 'whiteAlpha.50' }} _active={{ bg: 'var(--bg-element)' }} transition="color 0.2s" data-testid={`repositories-${value}-tab`} aria-pressed={mode === value} onClick={() => changeMode(value)}>{label}</Button>
+                      <Button key={value} size="sm" variant="ghost" borderRadius="md" px={3} h="28px" minW="auto" leftIcon={<RepositoryModeIcon mode={value} />} iconSpacing={1.5} fontSize="11px" fontWeight="semibold" isDisabled={adding} bg={mode === value ? 'var(--bg-element)' : 'transparent'} color={mode === value ? 'white' : 'gray.500'} _hover={{ bg: mode === value ? 'var(--bg-element)' : 'whiteAlpha.50' }} _active={{ bg: 'var(--bg-element)' }} transition="color 0.2s" data-testid={`repositories-${value}-tab`} aria-pressed={mode === value} onClick={() => changeMode(value)}>{label}</Button>
                     ))}
                   </HStack>
                 </Flex>
@@ -1452,7 +1450,18 @@ export default function Repositories() {
                 )}
                 <ErrorMessage message={operationError} />
 
-                {mode === 'snapshots' ? (
+                {adding ? (
+                  <Center flex={1} p={6}>
+                    <VStack spacing={2} maxW="480px" textAlign="center">
+                      <Text fontSize="xs" color="gray.500" fontFamily="mono" isTruncated w="full">
+                        {addTarget}
+                      </Text>
+                      <Text fontSize="xs" color="gray.600">
+                        Preparing repository…
+                      </Text>
+                    </VStack>
+                  </Center>
+                ) : mode === 'snapshots' ? (
                   <Box px={{ base: 3, md: 4 }} py={4} maxW="1100px" w="full" mx="auto">
                     <RepositorySnapshotsPanel
                       key={selectedId}
