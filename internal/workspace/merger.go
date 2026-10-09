@@ -16,81 +16,133 @@ var positionKeys = map[string]bool{
 	"position_y": true,
 }
 
+// MergeResult reports the local resources a merge drops because they are no
+// longer present on the target, and how many resources were tracked locally.
+type MergeResult struct {
+	DeletedElements   []string
+	DeletedConnectors []string
+	TrackedElements   int
+	TrackedConnectors int
+}
+
 // MergeWorkspace merges changes from a new workspace (from server) into the current on-disk state.
 // It uses yaml.Node to preserve comments and formatting.
 // lastSyncMeta is the metadata from the .tld.lock file (state at last pull/apply).
 // currentMeta is the metadata loaded from local YAML files (current state on disk).
-func MergeWorkspace(dir string, newWS *Workspace, lastSyncMeta *Meta, currentMeta *Meta) error {
-	if useElementWorkspaceFiles(newWS) {
-		var elementMeta map[string]*ResourceMetadata
-		var viewMeta map[string]*ResourceMetadata
-		var connectorMeta map[string]*ResourceMetadata
-		if newWS.Meta != nil {
-			elementMeta = newWS.Meta.Elements
-			viewMeta = newWS.Meta.Views
-			connectorMeta = newWS.Meta.Connectors
-		}
-
-		storedViewMeta, err := PersistCurrentViewMetadata(dir, viewMeta)
-		if err != nil {
-			return fmt.Errorf("persist current view metadata: %w", err)
-		}
-		storedConnectorMeta, err := PersistCurrentConnectorMetadata(dir, connectorMeta)
-		if err != nil {
-			return fmt.Errorf("persist current connector metadata: %w", err)
-		}
-
-		elementMetaSections := []metadataSection{{name: "_meta_elements", values: elementMeta, persist: false}, {name: "_meta_views", values: viewMeta, persist: !storedViewMeta}}
-		if err := mergeYAMLMapWithMetadataSections(
-			filepath.Join(dir, "elements.yaml"),
-			newWS.Elements,
-			combinedElementMetadata(newWS.Meta),
-			combinedElementMetadata(lastSyncMeta),
-			combinedElementMetadata(currentMeta),
-			nil,
-			elementMetaSections,
-		); err != nil {
-			return fmt.Errorf("merge elements: %w", err)
-		}
-
-		if err := mergeYAMLMapWithMetadataSections(
-			filepath.Join(dir, "connectors.yaml"),
-			newWS.Connectors,
-			connectorMeta,
-			lastSyncMeta.Connectors,
-			currentMeta.Connectors,
-			connectorKeyFromNode,
-			[]metadataSection{{name: "_meta_connectors", values: connectorMeta, persist: !storedConnectorMeta}},
-		); err != nil {
-			return fmt.Errorf("merge connectors: %w", err)
-		}
-
-		if err := cleanupLegacyWorkspaceFiles(dir); err != nil {
-			return fmt.Errorf("cleanup legacy workspace files: %w", err)
-		}
-		return nil
-	}
-
-	return nil
+func MergeWorkspace(dir string, newWS *Workspace, lastSyncMeta *Meta, currentMeta *Meta) (*MergeResult, error) {
+	return mergeWorkspace(dir, newWS, lastSyncMeta, currentMeta, false)
 }
 
-func mergeYAMLMapWithMetadataSections(path string, serverItems any, serverMeta map[string]*ResourceMetadata, lastSyncMeta map[string]*ResourceMetadata, currentMeta map[string]*ResourceMetadata, normalizeKey func(string, *yaml.Node) string, sections []metadataSection) error {
+// PlanMergeWorkspace computes what MergeWorkspace would do without writing any
+// files or metadata. It lets callers inspect (and refuse) destructive merges
+// before they touch the local cache.
+func PlanMergeWorkspace(dir string, newWS *Workspace, lastSyncMeta *Meta, currentMeta *Meta) (*MergeResult, error) {
+	return mergeWorkspace(dir, newWS, lastSyncMeta, currentMeta, true)
+}
+
+func mergeWorkspace(dir string, newWS *Workspace, lastSyncMeta *Meta, currentMeta *Meta, dryRun bool) (*MergeResult, error) {
+	result := &MergeResult{}
+	if !useElementWorkspaceFiles(newWS) {
+		return result, nil
+	}
+
+	var elementMeta map[string]*ResourceMetadata
+	var viewMeta map[string]*ResourceMetadata
+	var connectorMeta map[string]*ResourceMetadata
+	if newWS.Meta != nil {
+		elementMeta = newWS.Meta.Elements
+		viewMeta = newWS.Meta.Views
+		connectorMeta = newWS.Meta.Connectors
+	}
+
+	storedViewMeta := false
+	storedConnectorMeta := false
+	if !dryRun {
+		var err error
+		storedViewMeta, err = PersistCurrentViewMetadata(dir, viewMeta)
+		if err != nil {
+			return nil, fmt.Errorf("persist current view metadata: %w", err)
+		}
+		storedConnectorMeta, err = PersistCurrentConnectorMetadata(dir, connectorMeta)
+		if err != nil {
+			return nil, fmt.Errorf("persist current connector metadata: %w", err)
+		}
+	}
+
+	elementMetaSections := []metadataSection{{name: "_meta_elements", values: elementMeta, persist: false}, {name: "_meta_views", values: viewMeta, persist: !storedViewMeta}}
+	elementResult, err := mergeYAMLMapWithMetadataSections(
+		filepath.Join(dir, "elements.yaml"),
+		newWS.Elements,
+		combinedElementMetadata(newWS.Meta),
+		combinedElementMetadata(lastSyncMeta),
+		combinedElementMetadata(currentMeta),
+		nil,
+		elementMetaSections,
+		dryRun,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("merge elements: %w", err)
+	}
+	result.DeletedElements = elementResult.deleted
+	result.TrackedElements = elementResult.tracked
+
+	connectorResult, err := mergeYAMLMapWithMetadataSections(
+		filepath.Join(dir, "connectors.yaml"),
+		newWS.Connectors,
+		connectorMeta,
+		lastSyncMeta.Connectors,
+		currentMeta.Connectors,
+		connectorKeyFromNode,
+		[]metadataSection{{name: "_meta_connectors", values: connectorMeta, persist: !storedConnectorMeta}},
+		dryRun,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("merge connectors: %w", err)
+	}
+	result.DeletedConnectors = connectorResult.deleted
+	result.TrackedConnectors = connectorResult.tracked
+
+	if !dryRun {
+		if err := cleanupLegacyWorkspaceFiles(dir); err != nil {
+			return nil, fmt.Errorf("cleanup legacy workspace files: %w", err)
+		}
+	}
+	return result, nil
+}
+
+// mergeFileResult is the per-file outcome of a merge: the local keys removed
+// because they are absent from the target, and how many local keys were tracked
+// as previously synced.
+type mergeFileResult struct {
+	deleted []string
+	tracked int
+}
+
+func mergeYAMLMapWithMetadataSections(path string, serverItems any, serverMeta map[string]*ResourceMetadata, lastSyncMeta map[string]*ResourceMetadata, currentMeta map[string]*ResourceMetadata, normalizeKey func(string, *yaml.Node) string, sections []metadataSection, dryRun bool) (mergeFileResult, error) {
+	var result mergeFileResult
+
 	// Load existing file into a Node
 	var root yaml.Node
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return WriteFullYAMLMapSections(path, serverItems, sections)
+			if dryRun {
+				return result, nil
+			}
+			return result, WriteFullYAMLMapSections(path, serverItems, sections)
 		}
-		return fmt.Errorf("read %s: %w", path, err)
+		return result, fmt.Errorf("read %s: %w", path, err)
 	}
 
 	if err := yaml.Unmarshal(data, &root); err != nil {
-		return fmt.Errorf("unmarshal %s: %w", path, err)
+		return result, fmt.Errorf("unmarshal %s: %w", path, err)
 	}
 
 	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
-		return WriteFullYAMLMapSections(path, serverItems, sections)
+		if dryRun {
+			return result, nil
+		}
+		return result, WriteFullYAMLMapSections(path, serverItems, sections)
 	}
 
 	// Convert serverItems to a map for easy lookup
@@ -100,20 +152,27 @@ func mergeYAMLMapWithMetadataSections(path string, serverItems any, serverMeta m
 
 	switch root.Content[0].Kind {
 	case yaml.MappingNode:
-		return mergeYAMLMappingNode(path, &root, root.Content[0], serverItemsMap, serverMeta, lastSyncMeta, currentMeta, normalizeKey, sections)
+		return mergeYAMLMappingNode(path, &root, root.Content[0], serverItemsMap, serverMeta, lastSyncMeta, currentMeta, normalizeKey, sections, dryRun)
 	case yaml.SequenceNode:
 		if normalizeKey == nil {
-			return WriteFullYAMLMapSections(path, serverItems, sections)
+			if dryRun {
+				return result, nil
+			}
+			return result, WriteFullYAMLMapSections(path, serverItems, sections)
 		}
-		return mergeYAMLSequenceNode(path, &root, root.Content[0], serverItems, serverItemsMap, serverMeta, lastSyncMeta, currentMeta, normalizeKey, sections)
+		return mergeYAMLSequenceNode(path, &root, root.Content[0], serverItems, serverItemsMap, serverMeta, lastSyncMeta, currentMeta, normalizeKey, sections, dryRun)
 	default:
-		return WriteFullYAMLMapSections(path, serverItems, sections)
+		if dryRun {
+			return result, nil
+		}
+		return result, WriteFullYAMLMapSections(path, serverItems, sections)
 	}
 }
 
 // mergeYAMLMappingNode merges a mapping-rooted workspace document, where each
 // resource is keyed by its ref and metadata lives in _meta_* sections.
-func mergeYAMLMappingNode(path string, root, mapping *yaml.Node, serverItemsMap map[string]any, serverMeta, lastSyncMeta, currentMeta map[string]*ResourceMetadata, normalizeKey func(string, *yaml.Node) string, sections []metadataSection) error {
+func mergeYAMLMappingNode(path string, root, mapping *yaml.Node, serverItemsMap map[string]any, serverMeta, lastSyncMeta, currentMeta map[string]*ResourceMetadata, normalizeKey func(string, *yaml.Node) string, sections []metadataSection, dryRun bool) (mergeFileResult, error) {
+	var result mergeFileResult
 	seenKeys := make(map[string]bool)
 	var newContent []*yaml.Node
 
@@ -138,12 +197,20 @@ func mergeYAMLMappingNode(path string, root, mapping *yaml.Node, serverItemsMap 
 			seenKeys[key] = true
 		}
 
-		entry, err := mergeLocalYAMLValue(path, key, valNode, serverItem, onServer, serverMeta[key], lastSyncMeta[key], currentMeta[key])
+		lMeta := lastSyncMeta[key]
+		if lMeta != nil {
+			result.tracked++
+		}
+
+		entry, err := mergeLocalYAMLValue(path, key, valNode, serverItem, onServer, serverMeta[key], lMeta, currentMeta[key])
 		if err != nil {
-			return err
+			return result, err
 		}
 		applyEntryConflict(entry, sections, serverMeta, key)
 		if !entry.keep {
+			if lMeta != nil {
+				result.deleted = append(result.deleted, key)
+			}
 			continue
 		}
 		newContent = append(newContent, keyNode, entry.node)
@@ -168,22 +235,26 @@ func mergeYAMLMappingNode(path string, root, mapping *yaml.Node, serverItemsMap 
 		_ = metaKeyNode.Encode(section.name)
 		metaValNode, err := EncodeMeta(section.values)
 		if err != nil {
-			return err
+			return result, err
 		}
 		newContent = append(newContent, &metaKeyNode, metaValNode)
 	}
 
 	mapping.Content = newContent
 
+	if dryRun {
+		return result, nil
+	}
 	// Write back, preserving/adding the yaml-language-server schema directive.
-	return encodeYAMLWithSchemaHeader(path, root)
+	return result, encodeYAMLWithSchemaHeader(path, root)
 }
 
 // mergeYAMLSequenceNode merges a sequence-rooted document (the flat list format
 // Save/WriteFullYAMLList produce for connectors.yaml). The sequence shape is
 // preserved; since a list has nowhere to attach a _meta_* section, metadata that
 // would otherwise be persisted there is written inline on each entry instead.
-func mergeYAMLSequenceNode(path string, root, sequence *yaml.Node, serverItems any, serverItemsMap map[string]any, serverMeta, lastSyncMeta, currentMeta map[string]*ResourceMetadata, normalizeKey func(string, *yaml.Node) string, sections []metadataSection) error {
+func mergeYAMLSequenceNode(path string, root, sequence *yaml.Node, serverItems any, serverItemsMap map[string]any, serverMeta, lastSyncMeta, currentMeta map[string]*ResourceMetadata, normalizeKey func(string, *yaml.Node) string, sections []metadataSection, dryRun bool) (mergeFileResult, error) {
+	var result mergeFileResult
 	inlineUpdatedAt := sectionsPersistInlineMetadata(sections)
 
 	seenKeys := make(map[string]bool)
@@ -196,12 +267,20 @@ func mergeYAMLSequenceNode(path string, root, sequence *yaml.Node, serverItems a
 			seenKeys[key] = true
 		}
 
-		entry, err := mergeLocalYAMLValue(path, key, item, serverItem, onServer, serverMeta[key], lastSyncMeta[key], currentMeta[key])
+		lMeta := lastSyncMeta[key]
+		if lMeta != nil {
+			result.tracked++
+		}
+
+		entry, err := mergeLocalYAMLValue(path, key, item, serverItem, onServer, serverMeta[key], lMeta, currentMeta[key])
 		if err != nil {
-			return err
+			return result, err
 		}
 		applyEntryConflict(entry, nil, serverMeta, key)
 		if !entry.keep {
+			if lMeta != nil {
+				result.deleted = append(result.deleted, key)
+			}
 			continue
 		}
 		newContent = append(newContent, entry.node)
@@ -219,14 +298,17 @@ func mergeYAMLSequenceNode(path string, root, sequence *yaml.Node, serverItems a
 	for _, key := range serverKeys {
 		node, err := encodeSequenceServerEntry(serverItems, key, serverItemsMap[key], serverMeta[key], inlineUpdatedAt)
 		if err != nil {
-			return err
+			return result, err
 		}
 		newContent = append(newContent, node)
 	}
 
 	sequence.Content = newContent
 
-	return encodeYAMLWithSchemaHeader(path, root)
+	if dryRun {
+		return result, nil
+	}
+	return result, encodeYAMLWithSchemaHeader(path, root)
 }
 
 // mergedYAMLEntry is the outcome of merging one on-disk entry against the

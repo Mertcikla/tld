@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,7 +15,6 @@ import (
 	"github.com/mertcikla/tld/v2/internal/client"
 	"github.com/mertcikla/tld/v2/internal/cmdutil"
 	"github.com/mertcikla/tld/v2/internal/exec"
-	"github.com/mertcikla/tld/v2/internal/localserver"
 	"github.com/mertcikla/tld/v2/internal/store"
 	"github.com/mertcikla/tld/v2/internal/term"
 	"github.com/mertcikla/tld/v2/internal/workspace"
@@ -108,11 +105,7 @@ them. Use --force to skip the prompt.`,
 				if err != nil {
 					return err
 				}
-				dbPath := localserver.DatabasePath(resolvedDataDir)
-				if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-					return fmt.Errorf("create data dir: %w", err)
-				}
-				appStore, err := store.Open(dbPath, assets.FS)
+				appStore, err := store.OpenLocal(cmd.Context(), &ws.Config, resolvedDataDir, assets.FS)
 				if err != nil {
 					return err
 				}
@@ -126,13 +119,8 @@ them. Use --force to skip the prompt.`,
 
 			newWS := cmdutil.ConvertExportResponse(ws, exportResp)
 
-			if dryRun {
-				term.Infof(cmd.OutOrStdout(), "Would pull: %d elements, %d diagrams, %d connectors",
-					len(newWS.Elements), cmdutil.CountViews(newWS), len(newWS.Connectors))
-				return nil
-			}
-
-			// Perform surgical merge
+			// Metadata recorded at the last sync, used to tell resources
+			// deleted on the target from new local ones.
 			lastSyncMeta := &workspace.Meta{
 				Elements:   make(map[string]*workspace.ResourceMetadata),
 				Views:      make(map[string]*workspace.ResourceMetadata),
@@ -142,12 +130,32 @@ them. Use --force to skip the prompt.`,
 				lastSyncMeta = lockFile.Metadata
 			}
 
+			if dryRun {
+				term.Infof(cmd.OutOrStdout(), "Would pull: %d elements, %d diagrams, %d connectors",
+					len(newWS.Elements), cmdutil.CountViews(newWS), len(newWS.Connectors))
+				if !force {
+					plan, err := workspace.PlanMergeWorkspace(*wdir, newWS, lastSyncMeta, ws.Meta)
+					if err != nil {
+						return fmt.Errorf("plan merge: %w", err)
+					}
+					reportPlannedDeletions(cmd, plan)
+				}
+				return nil
+			}
+
 			if force {
 				if err := workspace.Save(newWS); err != nil {
 					return fmt.Errorf("force save workspace: %w", err)
 				}
 			} else {
-				if err := workspace.MergeWorkspace(*wdir, newWS, lastSyncMeta, ws.Meta); err != nil {
+				plan, err := workspace.PlanMergeWorkspace(*wdir, newWS, lastSyncMeta, ws.Meta)
+				if err != nil {
+					return fmt.Errorf("plan merge: %w", err)
+				}
+				if err := guardMassDeletion(resolvedTarget, plan); err != nil {
+					return err
+				}
+				if _, err := workspace.MergeWorkspace(*wdir, newWS, lastSyncMeta, ws.Meta); err != nil {
 					return fmt.Errorf("merge workspace: %w", err)
 				}
 			}
@@ -184,6 +192,45 @@ them. Use --force to skip the prompt.`,
 	c.Flags().StringVar(&target, "target", "", "pull target: auto, local, or remote")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 	return c
+}
+
+// guardMassDeletion refuses a non-force pull that would drop a large share of
+// the resources the target previously knew about. That is almost always a wrong
+// or empty target (stale org-id, fresh --data-dir, or a database.driver
+// mismatch) rather than an intentional mass delete, so abort before writing.
+func guardMassDeletion(target string, plan *workspace.MergeResult) error {
+	deletedElements := len(plan.DeletedElements)
+	deletedConnectors := len(plan.DeletedConnectors)
+	if !deletesMost(deletedElements, plan.TrackedElements) && !deletesMost(deletedConnectors, plan.TrackedConnectors) {
+		return nil
+	}
+	return cmdutil.WithHint(
+		fmt.Errorf("refusing to pull: target %q is missing %d of %d tracked elements and %d of %d tracked connectors",
+			exec.TargetDisplayName(target), deletedElements, plan.TrackedElements, deletedConnectors, plan.TrackedConnectors),
+		"The target looks wrong or empty. Check --target/--data-dir and org_id, or re-run with --force to overwrite the local cache.",
+	)
+}
+
+// deletesMost reports whether a deletion removes at least half of the tracked
+// resources. Any deletion at all counts when the target tracked one resource.
+func deletesMost(deleted, tracked int) bool {
+	return deleted > 0 && deleted*2 >= tracked
+}
+
+// reportPlannedDeletions lists the local resources a merge would remove so
+// --dry-run surfaces destructive pulls instead of only printing counts.
+func reportPlannedDeletions(cmd *cobra.Command, plan *workspace.MergeResult) {
+	if len(plan.DeletedElements) == 0 && len(plan.DeletedConnectors) == 0 {
+		return
+	}
+	term.Warn(cmd.OutOrStdout(), fmt.Sprintf("Would delete %d elements and %d connectors missing from the target:",
+		len(plan.DeletedElements), len(plan.DeletedConnectors)))
+	for _, ref := range plan.DeletedElements {
+		term.Infof(cmd.OutOrStdout(), "  - element %s", ref)
+	}
+	for _, ref := range plan.DeletedConnectors {
+		term.Infof(cmd.OutOrStdout(), "  - connector %s", ref)
+	}
 }
 
 func exportLocalWorkspace(ctx context.Context, adapter *store.APIAdapter) (*diagv1.ExportOrganizationResponse, error) {

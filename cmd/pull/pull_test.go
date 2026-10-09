@@ -3,6 +3,7 @@ package pull_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mertcikla/tld/v2/cmd"
@@ -93,6 +94,84 @@ _meta_elements:
 	}
 	if obj["description"] != "New description" {
 		t.Errorf("Expected description 'New description', got %q", obj["description"])
+	}
+}
+
+func TestPullCmd_EmptyTargetAbortsAndKeepsCache(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := t.TempDir()
+	freshDataDir := t.TempDir()
+
+	t.Setenv("TLD_CONFIG_DIR", dir)
+	t.Setenv("TLD_DATA_DIR", dataDir)
+
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "add", "API Service", "--ref", "api", "--kind", "service")
+	cmd.MustRunCmd(t, dir, "add", "Database", "--ref", "db", "--kind", "database")
+
+	elementsPath := filepath.Join(dir, ".tld", "elements.yaml")
+	before, err := os.ReadFile(elementsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Pull from a different, empty local database: every tracked element looks
+	// like it was deleted on the target. The pull must abort instead of wiping
+	// the local cache.
+	stdout, stderr, err := cmd.RunCmd(t, dir, "pull", "--target", "local", "--data-dir", freshDataDir)
+	if err == nil {
+		t.Fatalf("expected pull to abort on empty target\nstdout: %s\nstderr: %s", stdout, stderr)
+	}
+	if !strings.Contains(err.Error(), "refusing to pull") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	after, err := os.ReadFile(elementsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("elements.yaml was modified despite the guard:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+func TestPullCmd_DryRunReportsDeletions(t *testing.T) {
+	dir := t.TempDir()
+	dataDir := t.TempDir()
+	freshDataDir := t.TempDir()
+
+	t.Setenv("TLD_CONFIG_DIR", dir)
+	t.Setenv("TLD_DATA_DIR", dataDir)
+
+	cmd.MustInitWorkspace(t, dir)
+	cmd.MustRunCmd(t, dir, "add", "API Service", "--ref", "api", "--kind", "service")
+	cmd.MustRunCmd(t, dir, "add", "Database", "--ref", "db", "--kind", "database")
+
+	elementsPath := filepath.Join(dir, ".tld", "elements.yaml")
+	before, err := os.ReadFile(elementsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := cmd.RunCmd(t, dir, "pull", "--target", "local", "--data-dir", freshDataDir, "--dry-run")
+	if err != nil {
+		t.Fatalf("dry-run pull: %v\nstdout: %s", err, stdout)
+	}
+	if !strings.Contains(stdout, "Would delete") {
+		t.Fatalf("dry-run did not warn about deletions:\n%s", stdout)
+	}
+	for _, ref := range []string{"api", "db"} {
+		if !strings.Contains(stdout, "element "+ref) {
+			t.Fatalf("dry-run did not list element %q:\n%s", ref, stdout)
+		}
+	}
+
+	after, err := os.ReadFile(elementsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("dry-run modified elements.yaml:\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }
 

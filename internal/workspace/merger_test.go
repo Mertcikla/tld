@@ -32,7 +32,7 @@ func TestMergeWorkspace_WritesElementWorkspaceAndCleansLegacyFiles(t *testing.T)
 		},
 	}
 
-	if err := workspace.MergeWorkspace(dir, newWS, &workspace.Meta{}, &workspace.Meta{}); err != nil {
+	if _, err := workspace.MergeWorkspace(dir, newWS, &workspace.Meta{}, &workspace.Meta{}); err != nil {
 		t.Fatalf("MergeWorkspace: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "diagrams.yaml")); !os.IsNotExist(err) {
@@ -74,7 +74,7 @@ func TestMergeWorkspace_MigratesLegacyConnectorKeys(t *testing.T) {
 		},
 	}
 
-	if err := workspace.MergeWorkspace(dir, newWS, &workspace.Meta{}, &workspace.Meta{}); err != nil {
+	if _, err := workspace.MergeWorkspace(dir, newWS, &workspace.Meta{}, &workspace.Meta{}); err != nil {
 		t.Fatalf("MergeWorkspace: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "connectors.yaml"))
@@ -117,7 +117,7 @@ func TestMergeWorkspace_PreservesListFormConnectors(t *testing.T) {
 		},
 	}
 
-	if err := workspace.MergeWorkspace(dir, newWS, &workspace.Meta{}, &workspace.Meta{}); err != nil {
+	if _, err := workspace.MergeWorkspace(dir, newWS, &workspace.Meta{}, &workspace.Meta{}); err != nil {
 		t.Fatalf("MergeWorkspace: %v", err)
 	}
 
@@ -136,6 +136,59 @@ func TestMergeWorkspace_PreservesListFormConnectors(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("connectors.yaml missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestPlanMergeWorkspaceReportsDeletionsWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	elements := `api:
+  name: API
+  kind: service
+db:
+  name: DB
+  kind: database
+`
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(elements), 0600); err != nil {
+		t.Fatal(err)
+	}
+	lastSyncTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	lastSyncMeta := &workspace.Meta{
+		Elements: map[string]*workspace.ResourceMetadata{
+			"api": {ID: 1, UpdatedAt: lastSyncTime},
+			"db":  {ID: 2, UpdatedAt: lastSyncTime},
+		},
+	}
+	currentMeta := &workspace.Meta{
+		Elements: map[string]*workspace.ResourceMetadata{
+			"api": {ID: 1, UpdatedAt: lastSyncTime},
+			"db":  {ID: 2, UpdatedAt: lastSyncTime},
+		},
+	}
+	emptyTarget := &workspace.Workspace{
+		Dir:        dir,
+		Elements:   map[string]*workspace.Element{},
+		Connectors: map[string]*workspace.Connector{},
+		Meta: &workspace.Meta{
+			Elements:   map[string]*workspace.ResourceMetadata{},
+			Views:      map[string]*workspace.ResourceMetadata{},
+			Connectors: map[string]*workspace.ResourceMetadata{},
+		},
+	}
+
+	result, err := workspace.PlanMergeWorkspace(dir, emptyTarget, lastSyncMeta, currentMeta)
+	if err != nil {
+		t.Fatalf("PlanMergeWorkspace: %v", err)
+	}
+	if result.TrackedElements != 2 || len(result.DeletedElements) != 2 {
+		t.Fatalf("plan = %+v, want 2 tracked and 2 deleted elements", result)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != elements {
+		t.Fatalf("PlanMergeWorkspace modified elements.yaml:\n%s", data)
 	}
 }
 
@@ -171,7 +224,7 @@ func TestMergeWorkspace_ServerWinsOnElementPlacementPositions(t *testing.T) {
 		},
 	}
 
-	if err := workspace.MergeWorkspace(dir, newWS, lastSyncMeta, currentMeta); err != nil {
+	if _, err := workspace.MergeWorkspace(dir, newWS, lastSyncMeta, currentMeta); err != nil {
 		t.Fatalf("MergeWorkspace: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "elements.yaml"))
