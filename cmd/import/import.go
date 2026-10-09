@@ -66,7 +66,12 @@ Schemas:
   connectors: %s`, workspace.ElementsSchemaURL, workspace.ConnectorsSchemaURL),
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runImport(cmd, *wdir, *format, *compact, args[0], target, dataDir, dryRun)
+			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = sess.Close() }()
+			return runImport(cmd, sess, *format, *compact, args[0], dryRun)
 		},
 	}
 
@@ -76,7 +81,7 @@ Schemas:
 	return c
 }
 
-func runImport(cmd *cobra.Command, wdir, format string, compact bool, file, target, dataDir string, dryRun bool) error {
+func runImport(cmd *cobra.Command, sess *cmdutil.Session, format string, compact bool, file string, dryRun bool) error {
 	fail := func(err error) error {
 		if cmdutil.WantsJSON(format) {
 			return cmdutil.WriteCommandError(cmd.OutOrStdout(), compact, "import", err)
@@ -89,30 +94,24 @@ func runImport(cmd *cobra.Command, wdir, format string, compact bool, file, targ
 		return fail(err)
 	}
 
-	ws, err := cmdutil.LoadWorkspace(wdir)
+	ws, err := sess.LoadWorkspace()
 	if err != nil {
 		return fail(err)
 	}
 
-	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
+	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)
 	}
-	defer func() { _ = runner.Close() }()
-	if runner.Name() == exec.TargetRemote {
-		if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
-			return fail(err)
-		}
-	}
 
-	ctx := cmd.Context()
+	ctx := sess.Context(cmd.Context())
 	plan, err := exec.BuildImportPlan(ctx, runner, ws, doc.Elements, doc.Connectors)
 	if err != nil {
 		return fail(fmt.Errorf("import aborted before any changes were made: %w", err))
 	}
 
 	if dryRun {
-		return reportImport(cmd, format, compact, "dry-run", plan)
+		return reportImport(cmd, format, compact, "import", "dry-run", plan)
 	}
 
 	resp, err := runner.ApplyPlan(ctx, plan.Request)
@@ -120,14 +119,16 @@ func runImport(cmd *cobra.Command, wdir, format string, compact bool, file, targ
 		return fail(explainApplyError(err))
 	}
 
-	if err := persistImportCache(wdir, ws, plan, resp); err != nil {
-		return fail(fmt.Errorf(
-			"the import was applied to the target, but updating the local cache failed: %w\n"+
-				"The target state is correct; run `tld pull` to refresh the local files",
-			err))
+	if sess.HasWorkspace() {
+		if err := persistImportCache(sess.Wdir, ws, plan, resp); err != nil {
+			return fail(fmt.Errorf(
+				"the import was applied to the target, but updating the local cache failed: %w\n"+
+					"The target state is correct; run `tld pull` to refresh the local files",
+				err))
+		}
 	}
 
-	return reportImport(cmd, format, compact, "ok", plan)
+	return reportImport(cmd, format, compact, "import", "ok", plan)
 }
 
 func readImportDocument(path string, stdin io.Reader) (*importDocument, error) {
@@ -372,13 +373,13 @@ func protoMetadata(meta *diagv1.ResourceMetadata) *workspace.ResourceMetadata {
 	return &workspace.ResourceMetadata{ID: workspace.ResourceID(id), UpdatedAt: updatedAt}
 }
 
-func reportImport(cmd *cobra.Command, format string, compact bool, status string, plan *exec.ImportPlan) error {
+func reportImport(cmd *cobra.Command, format string, compact bool, command, status string, plan *exec.ImportPlan) error {
 	elements := plan.ElementsCreated + plan.ElementsUpdated
 	connectors := plan.ConnectorsCreated + plan.ConnectorsUpdated
 
 	if cmdutil.WantsJSON(format) {
 		return cmdutil.WriteJSON(cmd.OutOrStdout(), compact, cmdutil.JSONOutput{
-			Command: "import",
+			Command: command,
 			Status:  status,
 			Summary: map[string]int{
 				"elements_created":   plan.ElementsCreated,
@@ -392,8 +393,8 @@ func reportImport(cmd *cobra.Command, format string, compact bool, status string
 
 	if status == "dry-run" {
 		term.Successf(cmd.OutOrStdout(),
-			"dry-run: would import %d element(s) (%d new, %d updated) and %d connector(s) (%d new, %d updated)",
-			elements, plan.ElementsCreated, plan.ElementsUpdated,
+			"dry-run: would %s %d element(s) (%d new, %d updated) and %d connector(s) (%d new, %d updated)",
+			command, elements, plan.ElementsCreated, plan.ElementsUpdated,
 			connectors, plan.ConnectorsCreated, plan.ConnectorsUpdated)
 		if plan.ViewsCreated > 0 {
 			term.Infof(cmd.OutOrStdout(), "would create %d view(s)", plan.ViewsCreated)
@@ -402,8 +403,8 @@ func reportImport(cmd *cobra.Command, format string, compact bool, status string
 	}
 
 	term.Successf(cmd.OutOrStdout(),
-		"import: %d element(s) (%d new, %d updated) and %d connector(s) (%d new, %d updated)",
-		elements, plan.ElementsCreated, plan.ElementsUpdated,
+		"%s: %d element(s) (%d new, %d updated) and %d connector(s) (%d new, %d updated)",
+		command, elements, plan.ElementsCreated, plan.ElementsUpdated,
 		connectors, plan.ConnectorsCreated, plan.ConnectorsUpdated)
 	if plan.ViewsCreated > 0 {
 		term.Infof(cmd.OutOrStdout(), "created %d view(s)", plan.ViewsCreated)

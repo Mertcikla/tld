@@ -1,6 +1,7 @@
 package warnings_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -238,6 +239,226 @@ func TestAnalyze_ARC204SeparatesRepositoriesWithSamePath(t *testing.T) {
 
 	if violations := arc204Violations(t, ws); len(violations) != 0 {
 		t.Fatalf("expected elements in different repositories to be distinct, got %+v", violations)
+	}
+}
+
+func TestAnalyze_ARC205HiddenBelowStrict(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"a": {Name: "A", Kind: "struct"},
+			"b": {Name: "B", Kind: "struct"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 2},
+		},
+	}
+
+	for _, warning := range warnings.Analyze(ws) {
+		if warning.RuleCode == "ARC205" {
+			t.Fatalf("expected ARC205 to be disabled below strict level, got %+v", warning)
+		}
+	}
+}
+
+func TestGrounding_CountsAllNonExternalElements(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"repo":   {Name: "Repo", Kind: "repository"},
+			"file":   {Name: "main.go", Kind: "file", FilePath: "cmd/main.go", Symbol: "main"},
+			"config": {Name: "Config", Kind: "struct"},
+			"api":    {Name: "API", Kind: "service", FilePath: "api.go"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	// Every element counts; only external links and codeindex-owned elements
+	// are ignored.
+	report := warnings.Grounding(ws)
+	if report.Eligible != 4 {
+		t.Fatalf("eligible = %d, want 4", report.Eligible)
+	}
+	if report.Grounded != 2 {
+		t.Fatalf("grounded = %d, want 2", report.Grounded)
+	}
+	if report.Value != 5 {
+		t.Fatalf("score = %d, want 5", report.Value)
+	}
+}
+
+func TestGrounding_ExcludesCodeindexElements(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			// Materialized from the codeindex: linked, but excluded anyway.
+			"main.go": {Name: "main.go", Kind: "file", RepositoryID: "repo-1", Repo: "github.com/acme/app", FilePath: "cmd/main.go"},
+			// User-authored and ungrounded.
+			"model": {Name: "Model", Kind: "struct"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	report := warnings.Grounding(ws, warnings.WithCodeindexElementClassifier(func(el *workspace.Element) bool {
+		return el != nil && el.RepositoryID == "repo-1"
+	}))
+	if report.Eligible != 1 {
+		t.Fatalf("eligible = %d, want 1", report.Eligible)
+	}
+	if report.Grounded != 0 || report.Value != 0 {
+		t.Fatalf("grounded/value = %d/%d, want 0/0", report.Grounded, report.Value)
+	}
+}
+
+func TestGrounding_PerViewScoresAndThreshold(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"platform": {Name: "Platform", Kind: "workspace", HasView: true, Placements: []workspace.ViewPlacement{{ParentRef: "root"}}},
+			"handler":  {Name: "Handler", Kind: "function", FilePath: "handler.go", Symbol: "Handle", Placements: []workspace.ViewPlacement{{ParentRef: "platform"}}},
+			"model":    {Name: "Model", Kind: "struct", Placements: []workspace.ViewPlacement{{ParentRef: "platform"}}},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	report := warnings.Grounding(ws)
+	var platform *warnings.ViewScore
+	for i := range report.Views {
+		if report.Views[i].ViewRef == "platform" {
+			platform = &report.Views[i]
+		}
+	}
+	if platform == nil {
+		t.Fatalf("expected a score for view \"platform\", got %+v", report.Views)
+	}
+	if platform.Eligible != 2 || platform.Grounded != 1 || platform.Value != 5 {
+		t.Fatalf("platform view score = %+v, want eligible=2 grounded=1 value=5", platform)
+	}
+	if len(platform.Ungrounded) != 1 || platform.Ungrounded[0] != "model" {
+		t.Fatalf("ungrounded = %+v, want [model]", platform.Ungrounded)
+	}
+}
+
+func TestAnalyze_ARC205FlagsLowGrounding(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"handler": {Name: "Handler", Kind: "function"},
+			"model":   {Name: "Model", Kind: "struct"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	var found *warnings.WarningGroup
+	archWarnings := warnings.Analyze(ws)
+	for i := range archWarnings {
+		if archWarnings[i].RuleCode == "ARC205" {
+			found = &archWarnings[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("expected ARC205 warning for ungrounded code-like elements")
+	}
+	if found.Score == nil {
+		t.Fatalf("expected ARC205 to carry a score, got %+v", found)
+	}
+	if found.Score.Value != 0 {
+		t.Fatalf("score = %d, want 0", found.Score.Value)
+	}
+	if len(found.Score.Reasoning) == 0 {
+		t.Fatalf("expected reasoning for ARC205, got %+v", found.Score)
+	}
+}
+
+func TestGrounding_ExternalTagExempt(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"vendored": {Name: "Vendored", Kind: "file", Repo: "github.com/acme/other", Tags: []string{"external"}},
+			"local":    {Name: "Local", Kind: "struct"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	report := warnings.Grounding(ws)
+	if report.External != 1 {
+		t.Fatalf("external = %d, want 1", report.External)
+	}
+	if report.Eligible != 1 {
+		t.Fatalf("eligible = %d, want 1", report.Eligible)
+	}
+	if report.Value != 0 {
+		t.Fatalf("value = %d, want 0", report.Value)
+	}
+}
+
+func TestGrounding_IgnoreTagExempt(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"abstract": {Name: "Abstract", Kind: "component", Tags: []string{"ui", "$ignored"}},
+			"local":    {Name: "Local", Kind: "struct"},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	report := warnings.Grounding(ws)
+	if report.Ignored != 1 {
+		t.Fatalf("ignored = %d, want 1", report.Ignored)
+	}
+	if report.External != 0 {
+		t.Fatalf("external = %d, want 0", report.External)
+	}
+	if report.Eligible != 1 {
+		t.Fatalf("eligible = %d, want 1", report.Eligible)
+	}
+	if report.Value != 0 {
+		t.Fatalf("value = %d, want 0", report.Value)
+	}
+
+	_, details := warnings.GroundingDetails(ws)
+	for _, detail := range details {
+		if detail.Ref == "abstract" {
+			t.Fatalf("ignored element leaked into grounding details: %+v", detail)
+		}
+	}
+}
+
+func TestGroundingDetails_OrderedByViewDepth(t *testing.T) {
+	ws := &workspace.Workspace{
+		Elements: map[string]*workspace.Element{
+			"platform": {Name: "Platform", Kind: "workspace", HasView: true, Placements: []workspace.ViewPlacement{{ParentRef: "root"}}},
+			"core":     {Name: "Core", Kind: "workspace", HasView: true, Placements: []workspace.ViewPlacement{{ParentRef: "platform"}}},
+			"a":        {Name: "A", Kind: "struct", Placements: []workspace.ViewPlacement{{ParentRef: "root"}}},
+			"b":        {Name: "B", Kind: "struct", Placements: []workspace.ViewPlacement{{ParentRef: "platform"}}},
+			"c":        {Name: "C", Kind: "struct", Placements: []workspace.ViewPlacement{{ParentRef: "core"}}},
+			"d":        {Name: "D", Kind: "struct", FilePath: "d.go", Placements: []workspace.ViewPlacement{{ParentRef: "core"}}},
+		},
+		Config: workspace.Config{
+			Validation: workspace.ValidationConfig{Level: 3},
+		},
+	}
+
+	_, details := warnings.GroundingDetails(ws)
+	got := make([]string, 0, len(details))
+	byRef := make(map[string]warnings.GroundingElement, len(details))
+	for _, detail := range details {
+		got = append(got, detail.Ref)
+		byRef[detail.Ref] = detail
+	}
+	if want := []string{"a", "platform", "b", "core", "c", "d"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+	if byRef["a"].Depth != 0 || byRef["b"].Depth != 1 || byRef["c"].Depth != 2 {
+		t.Fatalf("depths = a:%d b:%d c:%d", byRef["a"].Depth, byRef["b"].Depth, byRef["c"].Depth)
+	}
+	if !byRef["d"].Grounded {
+		t.Fatalf("expected d to be grounded")
 	}
 }
 

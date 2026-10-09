@@ -15,7 +15,7 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react'
-import { ChevronDownIcon } from '@chakra-ui/icons'
+import { ChevronUpIcon } from '@chakra-ui/icons'
 import {
   api,
   type RepositoryCommit,
@@ -409,7 +409,7 @@ export default function RepositoryHistory({
         <Grid
           px={4}
           py={2}
-          gap={2}
+          gap={4}
           alignItems="center"
           templateColumns="24px minmax(0, 1fr)"
           borderTop="1px solid"
@@ -421,7 +421,7 @@ export default function RepositoryHistory({
             size="xs"
             variant="ghost"
             flexShrink={0}
-            icon={<ChevronDownIcon boxSize="14px" transform={collapsed ? 'rotate(-90deg)' : undefined} transition="transform 0.2s" />}
+            icon={<ChevronUpIcon boxSize="24px" transform={collapsed ? 'rotate(180deg)' : undefined} transition="transform 0.2s" />}
             onClick={onToggle}
           />
           <Box minW={0}>{footerContent}</Box>

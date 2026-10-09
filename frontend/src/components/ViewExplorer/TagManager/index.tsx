@@ -26,6 +26,7 @@ import { TagDragGhost } from './TagDragGhost'
 import { pickUnusedColor } from '../utils'
 import { ChevronDownIcon } from '../../Icons'
 import { elementGroupTagForLayer, isElementGroupLayer, isElementGroupTag } from '../../../utils/elementGroups'
+import { isGroundingIgnoreTag } from '../../../utils/groundingTags'
 
 interface Props {
   availableTags: string[]
@@ -168,7 +169,7 @@ export const TagManager: React.FC<Props> = ({
     [layers],
   )
 
-  const visibleTags = availableTags.filter((tag) => !isElementGroupTag(tag))
+  const visibleTags = availableTags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag))
   const groupTags = layers.filter(isElementGroupLayer).map((layer) => ({
     tag: elementGroupTagForLayer(layer)!,
     label: `group:${layer.name}`,

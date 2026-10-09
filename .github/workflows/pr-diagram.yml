@@ -20,11 +20,13 @@ jobs:
           persist-credentials: false
           path: repository
       - name: tld PR diagram
-        uses: Mertcikla/tld@v2.4.1
+        uses: Mertcikla/tld-pr-bot@main
         env:
           TLD_PR_MAX_ELEMENTS: ${{ vars.TLD_PR_MAX_ELEMENTS || '80' }}
           TLD_PR_MAX_CONNECTORS: ${{ vars.TLD_PR_MAX_CONNECTORS || '160' }}
         with:
           mode: generate
+          tld-version: latest
+          indexers: go typescript
           repository-path: ${{ github.workspace }}/repository
           prepare-command: npm --prefix frontend ci --ignore-scripts && npm --prefix frontend run build:app

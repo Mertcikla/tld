@@ -135,7 +135,7 @@ func TestEnsureElementIDDoesNotMaskServerErrors(t *testing.T) {
 
 // TestSyncCommands_ParentGetsDiagramWhenChildAdded verifies that add by itself
 // creates no diagram, and that placing another element under it elevates the
-// parent: its diagram is created on the server (with the --diagram-label) and
+// parent: its diagram is created on the server (with the --view-label) and
 // recorded in the YAML cache.
 func TestSyncCommands_ParentGetsDiagramWhenChildAdded(t *testing.T) {
 	svc := &cmd.MockDiagramService{}
@@ -144,7 +144,7 @@ func TestSyncCommands_ParentGetsDiagramWhenChildAdded(t *testing.T) {
 	dir := t.TempDir()
 	cmd.SetupApplyWorkspace(t, dir, serverURL)
 
-	if _, _, err := cmd.RunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace", "--diagram-label", "System"); err != nil {
+	if _, _, err := cmd.RunCmd(t, dir, "add", "Platform", "--ref", "platform", "--kind", "workspace", "--view-label", "System"); err != nil {
 		t.Fatalf("add platform: %v", err)
 	}
 	ws, err := workspace.Load(dir)

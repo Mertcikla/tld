@@ -50,8 +50,8 @@ func newCreateCmd(wdir, format *string, compact *bool) *cobra.Command {
 		Short: "Create (or ensure) the view owned by an element",
 		Long: `Create the diagram owned by an element and set has_view on it.
 
-The element must already exist in elements.yaml; create it first with 'tld add'.
-Use --name and --label to set the view display name and level label.`,
+The element must already exist (ref, name, or database ID); create it first with
+'tld add'. Use --name and --label to set the view display name and level label.`,
 		Args: cobra.ExactArgs(1),
 		ValidArgsFunction: func(_ *cobra.Command, args []string, _ string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {
@@ -61,10 +61,16 @@ Use --name and --label to set the view display name and level label.`,
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := args[0]
-			if err := workspace.ValidateElementRef(ref); err != nil {
+			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
+			if err != nil {
 				return failf(cmd, *format, *compact, "view create", err)
 			}
-			ws, err := cmdutil.LoadWorkspace(*wdir)
+			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
+			if err != nil {
+				return failf(cmd, *format, *compact, "view create", err)
+			}
+			ref, err = cmdutil.ResolveElementArg(ws, ref)
 			if err != nil {
 				return failf(cmd, *format, *compact, "view create", err)
 			}
@@ -82,17 +88,11 @@ Use --name and --label to set the view display name and level label.`,
 			if dryRun {
 				return reportDryRun(cmd, *format, *compact, ref, viewName)
 			}
-			runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
+			runner, err := sess.Runner()
 			if err != nil {
 				return failf(cmd, *format, *compact, "view create", err)
 			}
-			defer func() { _ = runner.Close() }()
-			if runner.Name() == exec.TargetRemote {
-				if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
-					return failf(cmd, *format, *compact, "view create", err)
-				}
-			}
-			ctx := cmd.Context()
+			ctx := sess.Context(cmd.Context())
 			// ResolveParentViewID creates the view, sets has_view, and records
 			// the view metadata in the YAML cache.
 			viewID, err := exec.ResolveParentViewID(ctx, runner, ws, *wdir, ref)
@@ -108,7 +108,7 @@ Use --name and --label to set the view display name and level label.`,
 			if _, err := runner.UpdateView(ctx, viewID, viewName, labelPtr); err != nil {
 				return failf(cmd, *format, *compact, "view create", cmdutil.WithUnauthorizedHint("server update view failed", err))
 			}
-			if err := applyViewFields(*wdir, ref, viewName, labelPtr); err != nil {
+			if err := applyViewFields(sess, *wdir, ref, viewName, labelPtr); err != nil {
 				return failf(cmd, *format, *compact, "view create", err)
 			}
 			if cmdutil.WantsJSON(*format) {
@@ -146,7 +146,16 @@ func newRenameCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if newName == "" {
 				return failf(cmd, *format, *compact, "view rename", fmt.Errorf("new view name is required"))
 			}
-			ws, err := cmdutil.LoadWorkspace(*wdir)
+			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
+			if err != nil {
+				return failf(cmd, *format, *compact, "view rename", err)
+			}
+			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
+			if err != nil {
+				return failf(cmd, *format, *compact, "view rename", err)
+			}
+			ref, err = cmdutil.ResolveElementArg(ws, ref)
 			if err != nil {
 				return failf(cmd, *format, *compact, "view rename", err)
 			}
@@ -156,7 +165,7 @@ func newRenameCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if dryRun {
 				return reportDryRun(cmd, *format, *compact, ref, newName)
 			}
-			return updateView(cmd, ws, *wdir, target, dataDir, *format, *compact, "view rename", ref, &newName, nil)
+			return updateView(cmd, sess, ws, *wdir, *format, *compact, "view rename", ref, &newName, nil)
 		},
 	}
 	addTargetFlags(c, &target, &dataDir)
@@ -182,7 +191,16 @@ func newSetLevelCmd(wdir, format *string, compact *bool) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref, label := args[0], args[1]
-			ws, err := cmdutil.LoadWorkspace(*wdir)
+			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
+			if err != nil {
+				return failf(cmd, *format, *compact, "view set-level", err)
+			}
+			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
+			if err != nil {
+				return failf(cmd, *format, *compact, "view set-level", err)
+			}
+			ref, err = cmdutil.ResolveElementArg(ws, ref)
 			if err != nil {
 				return failf(cmd, *format, *compact, "view set-level", err)
 			}
@@ -192,7 +210,7 @@ func newSetLevelCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if dryRun {
 				return reportDryRun(cmd, *format, *compact, ref, label)
 			}
-			return updateView(cmd, ws, *wdir, target, dataDir, *format, *compact, "view set-level", ref, nil, &label)
+			return updateView(cmd, sess, ws, *wdir, *format, *compact, "view set-level", ref, nil, &label)
 		},
 	}
 	addTargetFlags(c, &target, &dataDir)
@@ -222,7 +240,16 @@ it, first.`,
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ref := args[0]
-			ws, err := cmdutil.LoadWorkspace(*wdir)
+			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
+			if err != nil {
+				return failf(cmd, *format, *compact, "view delete", err)
+			}
+			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
+			if err != nil {
+				return failf(cmd, *format, *compact, "view delete", err)
+			}
+			ref, err = cmdutil.ResolveElementArg(ws, ref)
 			if err != nil {
 				return failf(cmd, *format, *compact, "view delete", err)
 			}
@@ -235,7 +262,7 @@ it, first.`,
 			if dryRun {
 				return reportDryRun(cmd, *format, *compact, ref, "")
 			}
-			return deleteView(cmd, ws, *wdir, target, dataDir, *format, *compact, ref)
+			return deleteView(cmd, sess, ws, *wdir, *format, *compact, ref)
 		},
 	}
 	addTargetFlags(c, &target, &dataDir)
@@ -300,20 +327,14 @@ func ensureViewEmpty(ws *workspace.Workspace, ref string) error {
 }
 
 // updateView sets the view name and/or level label on the server and in YAML.
-func updateView(cmd *cobra.Command, ws *workspace.Workspace, wdir, target, dataDir, format string, compact bool, command, ref string, newName, newLabel *string) error {
+func updateView(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, wdir, format string, compact bool, command, ref string, newName, newLabel *string) error {
 	fail := func(err error) error { return failf(cmd, format, compact, command, err) }
 	el := ws.Elements[ref]
-	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
+	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)
 	}
-	defer func() { _ = runner.Close() }()
-	if runner.Name() == exec.TargetRemote {
-		if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
-			return fail(err)
-		}
-	}
-	ctx := cmd.Context()
+	ctx := sess.Context(cmd.Context())
 	viewID, err := exec.ResolveParentViewID(ctx, runner, ws, wdir, ref)
 	if err != nil {
 		return fail(err)
@@ -335,7 +356,7 @@ func updateView(cmd *cobra.Command, ws *workspace.Workspace, wdir, target, dataD
 	if _, err := runner.UpdateView(ctx, viewID, name, labelPtr); err != nil {
 		return fail(cmdutil.WithUnauthorizedHint("server update view failed", err))
 	}
-	if err := applyViewFields(wdir, ref, name, newLabel); err != nil {
+	if err := applyViewFields(sess, wdir, ref, name, newLabel); err != nil {
 		return fail(err)
 	}
 	if cmdutil.WantsJSON(format) {
@@ -346,8 +367,11 @@ func updateView(cmd *cobra.Command, ws *workspace.Workspace, wdir, target, dataD
 }
 
 // applyViewFields writes the view display fields back into elements.yaml. An
-// empty newLabel clears the recorded level label.
-func applyViewFields(wdir, ref, name string, newLabel *string) error {
+// empty newLabel clears the recorded level label. It is a no-op in DB mode.
+func applyViewFields(sess *cmdutil.Session, wdir, ref, name string, newLabel *string) error {
+	if !sess.HasWorkspace() {
+		return nil
+	}
 	if name != "" {
 		if err := workspace.UpdateElementField(wdir, ref, "view_name", name); err != nil {
 			return fmt.Errorf("update YAML cache: %w", err)
@@ -361,19 +385,13 @@ func applyViewFields(wdir, ref, name string, newLabel *string) error {
 	return nil
 }
 
-func deleteView(cmd *cobra.Command, ws *workspace.Workspace, wdir, target, dataDir, format string, compact bool, ref string) error {
+func deleteView(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, wdir, format string, compact bool, ref string) error {
 	fail := func(err error) error { return failf(cmd, format, compact, "view delete", err) }
-	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
+	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)
 	}
-	defer func() { _ = runner.Close() }()
-	if runner.Name() == exec.TargetRemote {
-		if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
-			return fail(err)
-		}
-	}
-	ctx := cmd.Context()
+	ctx := sess.Context(cmd.Context())
 	if ws.Meta != nil {
 		if m, ok := ws.Meta.Views[ref]; ok && m != nil && m.ID != 0 {
 			if err := runner.DeleteView(ctx, int32(m.ID)); err != nil && !exec.IsNotFound(err) {
@@ -381,22 +399,24 @@ func deleteView(cmd *cobra.Command, ws *workspace.Workspace, wdir, target, dataD
 			}
 		}
 	}
-	if err := workspace.UpdateElementField(wdir, ref, "has_view", "false"); err != nil {
-		return fail(fmt.Errorf("update YAML cache: %w", err))
-	}
-	el := ws.Elements[ref]
-	if el != nil && el.ViewName != "" {
-		if err := workspace.UpdateElementField(wdir, ref, "view_name", ""); err != nil {
+	if sess.HasWorkspace() {
+		if err := workspace.UpdateElementField(wdir, ref, "has_view", "false"); err != nil {
 			return fail(fmt.Errorf("update YAML cache: %w", err))
 		}
-	}
-	if el != nil && el.ViewLabel != "" {
-		if err := workspace.UpdateElementField(wdir, ref, "view_label", ""); err != nil {
-			return fail(fmt.Errorf("update YAML cache: %w", err))
+		el := ws.Elements[ref]
+		if el != nil && el.ViewName != "" {
+			if err := workspace.UpdateElementField(wdir, ref, "view_name", ""); err != nil {
+				return fail(fmt.Errorf("update YAML cache: %w", err))
+			}
 		}
-	}
-	if err := workspace.DeleteCurrentViewMetadataEntries(wdir, ref); err != nil {
-		return fail(fmt.Errorf("drop view metadata: %w", err))
+		if el != nil && el.ViewLabel != "" {
+			if err := workspace.UpdateElementField(wdir, ref, "view_label", ""); err != nil {
+				return fail(fmt.Errorf("update YAML cache: %w", err))
+			}
+		}
+		if err := workspace.DeleteCurrentViewMetadataEntries(wdir, ref); err != nil {
+			return fail(fmt.Errorf("drop view metadata: %w", err))
+		}
 	}
 	if cmdutil.WantsJSON(format) {
 		return cmdutil.WriteMutation(cmd.OutOrStdout(), compact, "view delete", "delete", ref)

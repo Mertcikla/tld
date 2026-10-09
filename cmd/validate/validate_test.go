@@ -7,7 +7,32 @@ import (
 	"testing"
 
 	"github.com/mertcikla/tld/v2/cmd"
+	"github.com/mertcikla/tld/v2/internal/workspace"
 )
+
+func TestValidateCmd_AbortsWhenCacheOutOfSync(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	if _, _, err := cmd.RunCmd(t, dir, "add", "System", "--ref", "sys", "--kind", "workspace"); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	// Hand-edit the YAML cache without pushing it to the target.
+	if err := workspace.UpdateElementField(workspace.ResolveDir(dir), "sys", "name", "Renamed System"); err != nil {
+		t.Fatalf("edit cache: %v", err)
+	}
+
+	_, _, err := cmd.RunCmd(t, dir, "validate")
+	if err == nil {
+		t.Fatal("expected out-of-sync error")
+	}
+	if !strings.Contains(err.Error(), "out of sync") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "tld pull") || !strings.Contains(err.Error(), "tld sync") {
+		t.Fatalf("error should suggest pull/sync: %v", err)
+	}
+}
 
 func TestValidateCmd_ValidWorkspace(t *testing.T) {
 	dir := t.TempDir()
@@ -111,6 +136,34 @@ api-dup:
 	}
 	if !strings.Contains(stdout, "[ARC204]") || !strings.Contains(stdout, `"api-dup"`) {
 		t.Errorf("stdout should include ARC204 despite exclude list, got:\n%s", stdout)
+	}
+}
+
+func TestValidateCmd_GroundingReport(t *testing.T) {
+	dir := t.TempDir()
+	cmd.MustInitWorkspace(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(`
+handler:
+  name: Handler
+  kind: function
+model:
+  name: Model
+  kind: struct
+`), 0600); err != nil {
+		t.Fatalf("write elements: %v", err)
+	}
+
+	stdout, _, err := cmd.RunCmd(t, dir, "validate", "ARC205")
+	if err != nil {
+		t.Fatalf("validate ARC205: %v", err)
+	}
+	for _, want := range []string{
+		"[ARC205]", "Low Grounding", "Workspace source grounding: 0/10",
+		"Linkable elements: 2", "0 of 2 linkable elements", "Reasoning:", "How to improve:",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout %q does not contain %q", stdout, want)
+		}
 	}
 }
 
@@ -259,9 +312,7 @@ func TestValidateCmd_AllChecksPass(t *testing.T) {
 	if !strings.Contains(stdout, "Workspace valid") {
 		t.Fatalf("unexpected stdout: %s", stdout)
 	}
-	if strings.Contains(stdout, "Outdated diagrams") || strings.Contains(stderr, "Symbol verification errors") {
-		t.Fatalf("expected a clean validate, got:\nstdout: %s\nstderr: %s", stdout, stderr)
-	}
+
 }
 
 // TestValidateCmd_BrokenSymbol verifies symbol verification failures abort.
@@ -281,48 +332,6 @@ func TestValidateCmd_BrokenSymbol(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "Validation errors") || !strings.Contains(stderr, `symbol "Missing" not found`) {
 		t.Fatalf("unexpected stderr: %s", stderr)
-	}
-}
-
-// TestValidateCmd_OutdatedWarn verifies stale diagram metadata is reported as a
-// warning without failing by default.
-func TestValidateCmd_OutdatedWarn(t *testing.T) {
-	dir := t.TempDir()
-	cmd.MustInitWorkspace(t, dir)
-	cmd.InitGitRepo(t, dir, "service.go", "package main\nfunc Service() {}\n")
-	withWorkingDir(t, dir)
-	content := "service:\n  name: Service\n  kind: service\n  file_path: service.go\n  symbol: Service\n  placements: [ { parent: root } ]\n\n_meta_elements:\n  service:\n    id: 1\n    updated_at: 2000-01-01T00:00:00Z\n"
-	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	stdout, stderr, err := cmd.RunCmd(t, dir, "validate")
-	if err != nil {
-		t.Fatalf("expected warning-only validate\nstdout: %s\nstderr: %s\nerr: %v", stdout, stderr, err)
-	}
-	if !strings.Contains(stdout, "Outdated diagrams") {
-		t.Fatalf("unexpected stdout: %s", stdout)
-	}
-}
-
-// TestValidateCmd_OutdatedStrict verifies --strict turns outdated diagrams into
-// a non-zero exit.
-func TestValidateCmd_OutdatedStrict(t *testing.T) {
-	dir := t.TempDir()
-	cmd.MustInitWorkspace(t, dir)
-	cmd.InitGitRepo(t, dir, "service.go", "package main\nfunc Service() {}\n")
-	withWorkingDir(t, dir)
-	content := "service:\n  name: Service\n  kind: service\n  file_path: service.go\n  symbol: Service\n  placements: [ { parent: root } ]\n\n_meta_elements:\n  service:\n    id: 1\n    updated_at: 2000-01-01T00:00:00Z\n"
-	if err := os.WriteFile(filepath.Join(dir, "elements.yaml"), []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	stdout, stderr, err := cmd.RunCmd(t, dir, "validate", "--strict")
-	if err == nil {
-		t.Fatalf("expected strict validate failure\nstdout: %s\nstderr: %s", stdout, stderr)
-	}
-	if !strings.Contains(stdout, "Outdated diagrams") {
-		t.Fatalf("unexpected stdout: %s", stdout)
 	}
 }
 

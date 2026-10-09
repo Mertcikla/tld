@@ -21,7 +21,7 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 
 	c := &cobra.Command{
 		Use:   "render [view]",
-		Short: "Render a workspace view to text output formats",
+		Short: "Render a view (diagram) to text output formats",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			target := strings.TrimSpace(view)
@@ -35,14 +35,16 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 			if !strings.EqualFold(format, "mermaid") {
 				return fmt.Errorf("unsupported --format %q (supported: mermaid)", format)
 			}
-			ws, err := workspace.Load(*wdir)
+			ws, err := loadWorkspace(cmd, *wdir)
 			if err != nil {
-				return fmt.Errorf("load workspace: %w", err)
+				return err
 			}
 			if viewRef != workspace.RootRef {
-				if _, ok := ws.Elements[viewRef]; !ok {
-					return fmt.Errorf("view %q not found", viewRef)
+				resolved, resolveErr := cmdutil.ResolveViewArg(ws, viewRef)
+				if resolveErr != nil {
+					return fmt.Errorf("view %q not found", target)
 				}
+				viewRef = resolved
 			}
 
 			content, err := renderMermaid(ws, viewRef)
@@ -85,6 +87,15 @@ func NewRenderCmd(wdir *string) *cobra.Command {
 		return completion.ViewRefs(wdir)
 	})
 	return c
+}
+
+func loadWorkspace(cmd *cobra.Command, wdir string) (*workspace.Workspace, error) {
+	sess, err := cmdutil.OpenSession(cmd, wdir, "", "")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = sess.Close() }()
+	return sess.LoadWorkspace()
 }
 
 func renderMermaid(ws *workspace.Workspace, view string) (string, error) {

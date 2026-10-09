@@ -53,7 +53,6 @@ type Store struct {
 	db      *sql.DB
 	bun     *bun.DB
 	dialect dbrepo.Dialect
-
 }
 
 var _ CodeIndexStore = (*Store)(nil)

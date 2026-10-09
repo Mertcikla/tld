@@ -19,29 +19,25 @@ import (
 
 func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	var (
-		description     string
-		technology      string
-		dryRun          bool
-		url             string
-		positionX       float64
-		positionY       float64
-		ref             string
-		kind            string
-		parent          string
-		diagramLabel    string
-		target          string
-		dataDir         string
-		tags            string
-		owner           string
-		symbol          string
-		logoURL         string
-		densityLevel    int
-		bypassNoiseGate bool
+		description string
+		technology  string
+		dryRun      bool
+		url         string
+		positionX   float64
+		positionY   float64
+		ref         string
+		kind        string
+		parent      string
+		viewLabel   string
+		target      string
+		dataDir     string
+		tags        string
+		logoURL     string
 	)
 
 	c := &cobra.Command{
 		Use:   "add <name>",
-		Short: "Add or update an element in elements.yaml",
+		Short: "Add or update an element",
 		Args:  cobra.ExactArgs(1),
 		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 			if len(args) != 0 {
@@ -51,11 +47,15 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
-			normalizedKind, err := validateKind(kind)
-			if err != nil {
-				return err
+			if strings.TrimSpace(kind) == "" {
+				kind = ""
+			} else {
+				normalizedKind, err := validateKind(kind)
+				if err != nil {
+					return err
+				}
+				kind = normalizedKind
 			}
-			kind = normalizedKind
 			r := ref
 			if r == "" {
 				r = workspace.Slugify(name)
@@ -66,55 +66,60 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if err := workspace.ValidateElementRef(r); err != nil {
 				return err
 			}
+			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = sess.Close() }()
+			ws, err := sess.LoadWorkspace()
+			if err != nil {
+				return err
+			}
+			if resolved, resolveErr := cmdutil.ResolveElementArg(ws, r); resolveErr == nil {
+				r = resolved
+			}
 			placementParent := parent
 			if placementParent == "" {
 				placementParent = "root"
 			}
-			if err := workspace.ValidateParentRef(placementParent); err != nil {
-				return err
-			}
 			if placementParent != workspace.RootRef {
-				ws, err := workspace.Load(*wdir)
-				if err != nil {
-					return fmt.Errorf("load workspace: %w", err)
-				}
-				if _, ok := ws.Elements[placementParent]; !ok {
+				resolvedParent, resolveErr := cmdutil.ResolveElementArg(ws, placementParent)
+				if resolveErr != nil {
+					if err := workspace.ValidateParentRef(placementParent); err != nil {
+						return err
+					}
 					return fmt.Errorf("parent ref %q not found", placementParent)
 				}
+				placementParent = resolvedParent
 			}
 			normalizedTechnology, wasNormalized := normalizeTechnology(technology)
 			parsedTags := workspace.ParseTagList(tags)
 			spec := &workspace.Element{
-				Name:         name,
-				Kind:         kind,
-				Owner:        owner,
-				Description:  description,
-				Technology:   normalizedTechnology,
-				URL:          url,
-				LogoURL:      logoURL,
-				Symbol:       symbol,
-				Tags:         parsedTags,
-				ViewLabel:    diagramLabel,
-				DensityLevel: densityLevel,
+				Name:        name,
+				Kind:        kind,
+				Description: description,
+				Technology:  normalizedTechnology,
+				URL:         url,
+				LogoURL:     logoURL,
+				Tags:        parsedTags,
+				ViewLabel:   viewLabel,
 				Placements: []workspace.ViewPlacement{{
 					ParentRef: placementParent,
 					PositionX: positionX,
 					PositionY: positionY,
 				}},
 			}
-			if cmd.Flags().Changed("bypass-noise-gate") {
-				bypass := bypassNoiseGate
-				spec.BypassNoiseGate = &bypass
-			}
 			validateAndWarnTechnology(cmd, technology)
 			if dryRun {
-				if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
-					return workspace.UpsertElement(cloneDir, r, spec)
-				}); err != nil {
-					if cmdutil.WantsJSON(*format) {
-						return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "add", err)
+				if sess.HasWorkspace() {
+					if err := cmdutil.WithWorkspaceDryRun(*wdir, func(cloneDir string) error {
+						return workspace.UpsertElement(cloneDir, r, spec)
+					}); err != nil {
+						if cmdutil.WantsJSON(*format) {
+							return cmdutil.WriteCommandError(cmd.OutOrStdout(), *compact, "add", err)
+						}
+						return fmt.Errorf("dry-run add element: %w", err)
 					}
-					return fmt.Errorf("dry-run add element: %w", err)
 				}
 				if cmdutil.WantsJSON(*format) {
 					return cmdutil.WriteMutation(cmd.OutOrStdout(), *compact, "add", "dry-run", r)
@@ -126,26 +131,22 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				}
 				return nil
 			}
-			return runAdd(cmd, *wdir, *format, *compact, target, dataDir, r, spec, placementParent, wasNormalized, technology, normalizedTechnology)
+			return runAdd(cmd, sess, ws, *format, *compact, r, spec, placementParent, wasNormalized, technology, normalizedTechnology)
 		},
 	}
 
-	c.Flags().StringVar(&kind, "kind", "service", "short element kind metadata, e.g. service, database, component, function")
+	c.Flags().StringVar(&kind, "kind", "", "short element kind metadata, e.g. service, database, component, function")
 	c.Flags().StringVar(&description, "description", "", "description")
 	c.Flags().StringVar(&technology, "technology", "", "primary technology")
 	c.Flags().StringVar(&url, "url", "", "external URL")
 	c.Flags().StringVar(&logoURL, "logo-url", "", "logo image URL")
-	c.Flags().StringVar(&owner, "owner", "", "owning repository key (must be registered in .tld.yaml)")
-	c.Flags().StringVar(&symbol, "symbol", "", "named code symbol within --file-path, e.g. MyFunc")
 	c.Flags().StringVar(&tags, "tags", "", "comma-separated tags")
-	c.Flags().IntVar(&densityLevel, "density-level", 0, "canvas density level [-2..2]")
-	c.Flags().BoolVar(&bypassNoiseGate, "bypass-noise-gate", true, "exempt this element from the view noise gate")
 	c.Flags().Float64Var(&positionX, "position-x", 0, "horizontal canvas position")
 	c.Flags().Float64Var(&positionY, "position-y", 0, "vertical canvas position")
 	c.Flags().StringVar(&ref, "ref", "", "override generated ref (default: slugified name)")
 	c.Flags().StringVar(&parent, "parent", "root", "parent element ref or root")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
-	c.Flags().StringVar(&diagramLabel, "diagram-label", "", "label for the diagram created when this element becomes a parent")
+	c.Flags().StringVar(&viewLabel, "view-label", "", "label for the diagram created when this element becomes a parent")
 	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 
@@ -160,35 +161,23 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 
 // runAdd writes the element to the server synchronously, then refreshes the
 // local YAML cache. Every invocation gets immediate server feedback.
-func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataDir, ref string, spec *workspace.Element, placementParent string, wasNormalized bool, technology, normalizedTechnology string) error {
+func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, format string, compact bool, ref string, spec *workspace.Element, placementParent string, wasNormalized bool, technology, normalizedTechnology string) error {
 	fail := func(err error) error {
 		if cmdutil.WantsJSON(format) {
 			return cmdutil.WriteCommandError(cmd.OutOrStdout(), compact, "add", err)
 		}
 		return err
 	}
-	ws, err := cmdutil.LoadWorkspace(wdir)
+	runner, err := sess.Runner()
 	if err != nil {
 		return fail(err)
-	}
-	runner, err := exec.NewRunner(ws.Config, target, dataDir, false)
-	if err != nil {
-		return fail(err)
-	}
-	defer func() { _ = runner.Close() }()
-	if runner.Name() == exec.TargetRemote {
-		if err := cmdutil.EnsureAPIKey(ws.Config.APIKey); err != nil {
-			return fail(err)
-		}
 	}
 
 	// add merges into the existing YAML spec (see workspace.UpsertElement), so
-	// empty values mean "keep the existing server value" here. Explicit
-	// clearing is available through `tld update element`.
+	// empty values mean "keep the existing server value" here. CLI-authored
+	// elements are exempt from the view noise gate; that flag is owned by
+	// codeindex materialization, not by this command.
 	bypass := true
-	if spec.BypassNoiseGate != nil {
-		bypass = *spec.BypassNoiseGate
-	}
 	// add merges, so union the incoming tags with the element's existing tags
 	// (matching workspace.UpsertElement) instead of replacing them.
 	var tags []string
@@ -212,7 +201,7 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 		HasView:         spec.HasView,
 		ViewLabel:       strptr(spec.ViewLabel),
 	}
-	ctx := cmd.Context()
+	ctx := sess.Context(cmd.Context())
 	savedElement, updated, err := upsertElement(ctx, runner, ws, ref, input)
 	if err != nil {
 		return fail(cmdutil.WithUnauthorizedHint("server upsert element failed", err))
@@ -221,7 +210,7 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 
 	// Ensure placement in the parent view (creating the parent view when needed,
 	// mirroring the legacy canonical-view promotion).
-	parentViewID, err := exec.ResolveParentViewID(ctx, runner, ws, wdir, placementParent)
+	parentViewID, err := exec.ResolveParentViewID(ctx, runner, ws, sess.Wdir, placementParent)
 	if err != nil {
 		return fail(fmt.Errorf("resolve parent view: %w", err))
 	}
@@ -236,12 +225,14 @@ func runAdd(cmd *cobra.Command, wdir, format string, compact bool, target, dataD
 	// The element gets its own diagram only when another element is placed
 	// under it: ResolveParentViewID creates and records the parent's view.
 
-	// Refresh YAML cache (write-through).
-	if err := workspace.UpsertElement(wdir, ref, spec); err != nil {
-		return fail(fmt.Errorf("update YAML cache: %w", err))
-	}
-	if err := exec.RecordElementMeta(wdir, ref, savedElement, 0, nil); err != nil {
-		return fail(fmt.Errorf("update cache metadata: %w", err))
+	// Refresh YAML cache (write-through) when a workspace is in play.
+	if sess.HasWorkspace() {
+		if err := workspace.UpsertElement(sess.Wdir, ref, spec); err != nil {
+			return fail(fmt.Errorf("update YAML cache: %w", err))
+		}
+		if err := exec.RecordElementMeta(ctx, sess.Wdir, ref, savedElement, 0, nil); err != nil {
+			return fail(fmt.Errorf("update cache metadata: %w", err))
+		}
 	}
 
 	if cmdutil.WantsJSON(format) {

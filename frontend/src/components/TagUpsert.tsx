@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Box, HStack, Input, Text, VStack } from '@chakra-ui/react'
 import { isElementGroupTag } from '../utils/elementGroups'
+import { isGroundingIgnoreTag } from '../utils/groundingTags'
 
 interface Props {
   currentTags: string[]
@@ -32,7 +33,7 @@ export default function TagUpsert({
     if (!trimmed || isGroupQuery) return []
     const q = lower
     return availableTags
-      .filter((tag) => !isElementGroupTag(tag))
+      .filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag))
       .filter((t) => t.toLowerCase().includes(q) && !currentTags.includes(t))
       .slice(0, 8)
   })()
@@ -55,7 +56,7 @@ export default function TagUpsert({
 
   const results: ResultItem[] = []
 
-  if (!isGroupQuery && trimmed && !isElementGroupTag(trimmed) && !currentTags.includes(trimmed)) {
+  if (!isGroupQuery && trimmed && !isElementGroupTag(trimmed) && !isGroundingIgnoreTag(trimmed) && !currentTags.includes(trimmed)) {
     results.push({ kind: 'new', label: trimmed })
   }
 
@@ -89,7 +90,7 @@ export default function TagUpsert({
       e.preventDefault()
       if (results.length > 0) {
         confirm(activeIndex)
-      } else if (!isGroupQuery && trimmed && !currentTags.includes(trimmed)) {
+      } else if (!isGroupQuery && trimmed && !isElementGroupTag(trimmed) && !isGroundingIgnoreTag(trimmed) && !currentTags.includes(trimmed)) {
         onAddTag(trimmed)
         setQuery('')
       }

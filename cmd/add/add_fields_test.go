@@ -14,11 +14,7 @@ func TestAddCmdPersistsExtendedFields(t *testing.T) {
 
 	cmd.MustRunCmd(t, dir, "add", "Gateway", "--ref", "gateway", "--kind", "service",
 		"--tags", "edge, ingress",
-		"--owner", "platform",
-		"--symbol", "ServeHTTP",
 		"--logo-url", "https://example.test/logo.svg",
-		"--density-level", "1",
-		"--bypass-noise-gate=false",
 	)
 
 	ws, err := workspace.Load(dir)
@@ -32,24 +28,12 @@ func TestAddCmdPersistsExtendedFields(t *testing.T) {
 	if !reflect.DeepEqual(el.Tags, []string{"edge", "ingress"}) {
 		t.Fatalf("tags = %v, want [edge ingress]", el.Tags)
 	}
-	if el.Owner != "platform" {
-		t.Fatalf("owner = %q", el.Owner)
-	}
-	if el.Symbol != "ServeHTTP" {
-		t.Fatalf("symbol = %q", el.Symbol)
-	}
 	if el.LogoURL != "https://example.test/logo.svg" {
 		t.Fatalf("logo_url = %q", el.LogoURL)
 	}
-	if el.DensityLevel != 1 {
-		t.Fatalf("density_level = %d, want 1", el.DensityLevel)
-	}
-	if el.BypassNoiseGate == nil || *el.BypassNoiseGate {
-		t.Fatalf("bypass_noise_gate = %v, want explicit false", el.BypassNoiseGate)
-	}
 }
 
-func TestAddCmdDefaultsBypassNoiseGateTrue(t *testing.T) {
+func TestAddCmdDefaultsTags(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
 	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--kind", "service", "--tags", "core")

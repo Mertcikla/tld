@@ -898,6 +898,49 @@ func UpdateElementField(dir, ref, field, value string) error {
 	return writeYAMLNode(path, root)
 }
 
+// RemoveElementField deletes a scalar field from an element by ref, leaving the
+// rest of the YAML (including comments) untouched.
+func RemoveElementField(dir, ref, field string) error {
+	if !elementScalarFields[field] {
+		return fmt.Errorf("unknown element field %q; known fields: %s", field, strings.Join(ElementFieldNames(), ", "))
+	}
+
+	path := filepath.Join(dir, "elements.yaml")
+	root, mapping, err := loadYAMLMappingNode(path)
+	if err != nil {
+		return err
+	}
+
+	found := false
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		keyNode := mapping.Content[i]
+		if keyNode.Value == "_meta_elements" || keyNode.Value == "_meta_views" {
+			continue
+		}
+		if keyNode.Value != ref {
+			continue
+		}
+		found = true
+		elementNode := mapping.Content[i+1]
+		if elementNode.Kind == yaml.MappingNode {
+			content := elementNode.Content
+			for j := 0; j+1 < len(content); j += 2 {
+				if content[j].Value == field {
+					elementNode.Content = append(content[:j:j], content[j+2:]...)
+					break
+				}
+			}
+		}
+		break
+	}
+
+	if !found {
+		return fmt.Errorf("element %q not found", ref)
+	}
+
+	return writeYAMLNode(path, root)
+}
+
 // ParseTagList splits a comma or whitespace separated tag list into a
 // normalized, de-duplicated slice preserving first-seen order.
 func ParseTagList(value string) []string {

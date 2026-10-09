@@ -10,14 +10,13 @@ import (
 	"github.com/mertcikla/tld/v2/cmd"
 	"github.com/mertcikla/tld/v2/internal/exec"
 	"github.com/mertcikla/tld/v2/internal/workspace"
+	"github.com/mertcikla/tld/v2/pkg/api"
 )
 
 func TestImportCmd_PreservesOmittedVisibility(t *testing.T) {
 	dir := t.TempDir()
 	cmd.MustInitWorkspace(t, dir)
-	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api", "--bypass-noise-gate=false")
-	file := writeImportFile(t, "elements:\n  api:\n    name: API\n    description: edited\n")
-	cmd.MustRunCmd(t, dir, "import", file)
+	cmd.MustRunCmd(t, dir, "add", "API", "--ref", "api")
 	ws, err := workspace.Load(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -27,15 +26,25 @@ func TestImportCmd_PreservesOmittedVisibility(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = runner.Close() }()
+	bypass := false
+	if _, err := runner.UpdateElement(context.Background(), int32(ws.Meta.Elements["api"].ID), api.ElementInput{
+		Name:            "API",
+		BypassNoiseGate: &bypass,
+	}); err != nil {
+		t.Fatalf("seed visibility: %v", err)
+	}
+	file := writeImportFile(t, "elements:\n  api:\n    name: API\n    description: edited\n")
+	cmd.MustRunCmd(t, dir, "import", file)
+	ws, err = workspace.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	el, err := runner.GetElement(context.Background(), int32(ws.Meta.Elements["api"].ID))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if el.GetBypassNoiseGate() || el.GetDescription() != "edited" {
 		t.Fatalf("import changed omitted visibility or lost description: %v", el)
-	}
-	if ws.Elements["api"].BypassNoiseGate == nil || *ws.Elements["api"].BypassNoiseGate {
-		t.Fatal("local cache lost visibility setting")
 	}
 }
 

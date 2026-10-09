@@ -453,7 +453,7 @@ func TestMergeWorkspaceAddsSchemaDirective(t *testing.T) {
 		Meta:       emptyMeta,
 	}
 	for i := 0; i < 2; i++ {
-		if err := workspace.MergeWorkspace(dir, ws, emptyMeta, emptyMeta); err != nil {
+		if _, err := workspace.MergeWorkspace(dir, ws, emptyMeta, emptyMeta); err != nil {
 			t.Fatalf("MergeWorkspace: %v", err)
 		}
 		assertSchemaDirective(t, filepath.Join(dir, "elements.yaml"), workspace.ElementsSchemaURL)

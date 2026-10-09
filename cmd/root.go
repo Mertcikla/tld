@@ -13,6 +13,7 @@ import (
 	indexcmd "github.com/mertcikla/tld/v2/cmd/index"
 	"github.com/mertcikla/tld/v2/cmd/initialize"
 	inspectcmd "github.com/mertcikla/tld/v2/cmd/inspect"
+	linkcmd "github.com/mertcikla/tld/v2/cmd/link"
 	listcmd "github.com/mertcikla/tld/v2/cmd/list"
 	"github.com/mertcikla/tld/v2/cmd/login"
 	"github.com/mertcikla/tld/v2/cmd/mcp"
@@ -36,6 +37,7 @@ import (
 var rootCmd = NewRootCmd()
 var outputFormat string
 var compactJSON bool
+var yamlMode bool
 
 type RootOption func(*cobra.Command)
 
@@ -62,9 +64,14 @@ func Execute() {
 // binary and by tests to get a clean instance with no shared state.
 func NewRootCmd(options ...RootOption) *cobra.Command {
 	root := &cobra.Command{
-		Use:           "tld",
-		Short:         "tld -- tlDiagram CLI",
-		Long:          `tld CLI for managing and visualizing system architecture diagrams.`,
+		Use:   "tld",
+		Short: "tld -- tlDiagram CLI",
+		Long: `tld CLI for managing and visualizing system architecture diagrams.
+
+Commands work on the database directly: the local database by default, or the
+configured cloud workspace when credentials are present. Pass --yaml (or run in
+a directory that holds workspace YAML files) to read and write
+elements.yaml/connectors.yaml instead.`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       version.Version,
@@ -78,6 +85,7 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 		defaultWdir = "tld"
 	}
 	root.PersistentFlags().StringVarP(&wdir, "workspace", "w", defaultWdir, "workspace directory")
+	root.PersistentFlags().BoolVar(&yamlMode, "yaml", false, "read and write workspace YAML files instead of working on the database directly")
 	root.PersistentFlags().StringVar(&outputFormat, "format", "text", "output format: text or json")
 	root.PersistentFlags().BoolVar(&compactJSON, "compact", false, "compact JSON output (no whitespace)")
 
@@ -126,6 +134,9 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 	importCmd := importcmd.NewImportCmd(&wdir, &outputFormat, &compactJSON)
 	importCmd.GroupID = resourceGroup.ID
 
+	syncCmd := importcmd.NewSyncCmd(&wdir, &outputFormat, &compactJSON)
+	syncCmd.GroupID = syncGroup.ID
+
 	removeCmd := remove.NewRemoveCmd(&wdir, &outputFormat, &compactJSON)
 	removeCmd.GroupID = resourceGroup.ID
 
@@ -134,6 +145,9 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 
 	renameCmd := rename.NewRenameCmd(&wdir)
 	renameCmd.GroupID = resourceGroup.ID
+
+	linkCmd := linkcmd.NewLinkCmd(&wdir, &outputFormat, &compactJSON)
+	linkCmd.GroupID = resourceGroup.ID
 
 	viewCmd := viewcmd.NewViewCmd(&wdir, &outputFormat, &compactJSON)
 	viewCmd.GroupID = resourceGroup.ID
@@ -201,11 +215,13 @@ func NewRootCmd(options ...RootOption) *cobra.Command {
 		removeCmd,
 		updateCmd,
 		renameCmd,
+		linkCmd,
 		viewCmd,
 		initCmd,
 		validateCmd,
 		loginCmd,
 		pullCmd,
+		syncCmd,
 		renderCmd,
 		inspectCmd,
 		listCmd,

@@ -127,13 +127,14 @@ func (ws *Workspace) validateSymbols() []ValidationError {
 	ctx := context.Background()
 
 	for ref, element := range ws.Elements {
-		if element.FilePath == "" || element.Symbol == "" {
+		filePath, symbol := element.SourceFile()
+		if filePath == "" || symbol == "" {
 			continue
 		}
-		if _, err := os.Stat(element.FilePath); err != nil {
+		if _, err := os.Stat(filePath); err != nil {
 			continue // file not accessible locally skip
 		}
-		found, err := symbolcheck.HasSymbol(ctx, element.FilePath, element.Symbol)
+		found, err := symbolcheck.HasSymbol(ctx, filePath, symbol)
 		if err != nil {
 			if symbolcheck.IsUnsupported(err) {
 				continue // language not supported skip silently
@@ -147,7 +148,7 @@ func (ws *Workspace) validateSymbols() []ValidationError {
 		if !found {
 			errs = append(errs, ValidationError{
 				Location: fmt.Sprintf("elements.yaml[%s]", ref),
-				Message:  fmt.Sprintf("symbol %q not found in %s", element.Symbol, element.FilePath),
+				Message:  fmt.Sprintf("symbol %q not found in %s", symbol, filePath),
 			})
 		}
 	}

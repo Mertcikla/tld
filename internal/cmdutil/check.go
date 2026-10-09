@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"github.com/mertcikla/tld/v2/internal/codeindex/symbolcheck"
-	"github.com/mertcikla/tld/v2/internal/git"
 	"github.com/mertcikla/tld/v2/internal/ignore"
 	"github.com/mertcikla/tld/v2/internal/workspace"
 )
@@ -14,20 +13,21 @@ import (
 func CheckSymbols(ctx context.Context, ws *workspace.Workspace, repoCtx RepoScope, rules *ignore.Rules) []string {
 	var failures []string
 	for ref, element := range ws.Elements {
-		if element.FilePath == "" || element.Symbol == "" {
+		filePath, symbol := element.SourceFile()
+		if filePath == "" || symbol == "" {
 			continue
 		}
 		if !repoCtx.MatchesElement(element) {
 			continue
 		}
-		if rules != nil && (rules.ShouldIgnorePath(element.FilePath) || rules.ShouldIgnoreSymbol(element.Symbol)) {
+		if rules != nil && (rules.ShouldIgnorePath(filePath) || rules.ShouldIgnoreSymbol(symbol)) {
 			continue
 		}
-		absPath := repoCtx.ResolvePath(element.FilePath)
+		absPath := repoCtx.ResolvePath(filePath)
 		if _, err := os.Stat(absPath); err != nil {
 			continue
 		}
-		found, err := symbolcheck.HasSymbol(ctx, absPath, element.Symbol)
+		found, err := symbolcheck.HasSymbol(ctx, absPath, symbol)
 		if err != nil {
 			if symbolcheck.IsUnsupported(err) {
 				continue
@@ -38,48 +38,9 @@ func CheckSymbols(ctx context.Context, ws *workspace.Workspace, repoCtx RepoScop
 		if !found {
 			failures = append(failures, fmt.Sprintf(
 				"elements.yaml[%s]: symbol %q not found in %s",
-				ref, element.Symbol, element.FilePath,
+				ref, symbol, filePath,
 			))
 		}
 	}
 	return failures
-}
-
-func CheckOutdated(ws *workspace.Workspace, repoCtx RepoScope, rules *ignore.Rules) []string {
-	var outdated []string
-
-	if ws.Meta == nil || ws.Meta.Elements == nil {
-		return nil
-	}
-
-	if !repoCtx.Active() {
-		return nil
-	}
-
-	for ref, element := range ws.Elements {
-		if element.FilePath == "" || !repoCtx.MatchesElement(element) {
-			continue
-		}
-		if rules != nil && rules.ShouldIgnorePath(element.FilePath) {
-			continue
-		}
-		meta, ok := ws.Meta.Elements[ref]
-		if !ok || meta.UpdatedAt.IsZero() {
-			continue
-		}
-		commitTime, err := git.FileLastCommitAt(repoCtx.Root, element.FilePath)
-		if err != nil {
-			continue
-		}
-		if commitTime.After(meta.UpdatedAt) {
-			outdated = append(outdated, fmt.Sprintf(
-				"elements.yaml[%s]: file %s changed %s, diagram last synced %s",
-				ref,
-				element.FilePath,
-				commitTime.Format("2006-01-02 15:04:05"),
-				meta.UpdatedAt.Format("2006-01-02 15:04:05"),
-			))
-		}
-	}
-	return outdated
 }

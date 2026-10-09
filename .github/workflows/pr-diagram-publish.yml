@@ -19,7 +19,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: tld PR diagram
-        uses: Mertcikla/tld@v2.4.1
+        uses: Mertcikla/tld-pr-bot@main
         with:
           mode: publish
           source-workflow: pr-diagram.yml

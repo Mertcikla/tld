@@ -6,6 +6,7 @@ import {
 import { AddElementIcon as AddElementSvg } from './Icons'
 import { KbdHint } from './PanelUI'
 import { isElementGroupTag } from '../utils/elementGroups'
+import { isGroundingIgnoreTag } from '../utils/groundingTags'
 // Inline the props interface to avoid circular dependency with the web variant
 // (vite.vscode.config.ts overrides ViewFloatingMenu.tsx → this file)
 interface ViewFloatingMenuProps {
@@ -92,7 +93,7 @@ export default function ViewFloatingMenu({
   markdownBusy = false,
   onMarkdownToggle,
 }: ViewFloatingMenuProps) {
-  const visibleTags = availableTags.filter((tag) => !isElementGroupTag(tag))
+  const visibleTags = availableTags.filter((tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag))
   const notesLabel = !hasMarkdown ? 'Notes' : markdownOpen ? 'Hide Notes' : 'Notes'
   const notesDisabled = markdownBusy || (!hasMarkdown && !canEdit)
 

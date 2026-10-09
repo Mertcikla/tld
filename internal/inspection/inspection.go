@@ -35,6 +35,14 @@ type Options struct {
 	Database     workspace.DatabaseConfig
 	IncludeLocal bool
 	IncludeCloud bool
+
+	// Workspace, when set, is used instead of loading workspace YAML from
+	// WorkspaceDir. Callers in DB mode pass a snapshot materialized from the
+	// target export.
+	Workspace *workspace.Workspace
+	// TargetOnly reports the materialized target state as the single "target"
+	// source instead of the YAML + local DB + cloud source list.
+	TargetOnly bool
 }
 
 type Report struct {
@@ -119,9 +127,13 @@ type RelatedResources struct {
 }
 
 func Build(ctx context.Context, opts Options) (Report, error) {
-	ws, err := cmdutil.LoadWorkspace(opts.WorkspaceDir)
-	if err != nil {
-		return Report{}, err
+	ws := opts.Workspace
+	if ws == nil {
+		loaded, err := cmdutil.LoadWorkspace(opts.WorkspaceDir)
+		if err != nil {
+			return Report{}, err
+		}
+		ws = loaded
 	}
 
 	report := Report{
@@ -169,6 +181,16 @@ func Build(ctx context.Context, opts Options) (Report, error) {
 		report.Sources = append(report.Sources, yamlElementState(TypeConnector, connectorMetadata(ws, opts.Ref)))
 	default:
 		return Report{}, fmt.Errorf("unsupported inspect type %q", opts.Type)
+	}
+
+	if opts.TargetOnly {
+		if n := len(report.Sources); n > 0 {
+			report.Sources[n-1].Source = "target"
+		}
+		if opts.IncludeCloud {
+			report.Sources = append(report.Sources, cloudState(ctx, ws, opts))
+		}
+		return report, nil
 	}
 
 	if opts.IncludeLocal {

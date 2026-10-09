@@ -43,7 +43,7 @@ Here are some examples that were generated using the agent skill.
 - **Git diff visualization**: Sync and visualize the changes you or your agent are making live in diagram form. Inspect the dependencies and intervene when necessary.
 - **Codebase Mapping**: Generate source grounded elements to jump-start your diagramming process. 
 - **Visualize Code Changes**: Visualize the changes between commits or a PR [docs](./docs/git-compare.md).
-- **PR Diagram Bot**: Automatically generate a diagram for your PR and visualize the changes in your codebase [docs](./docs/pr-bot.md).
+- **PR Diagram Bot**: Automatically generate a diagram for your PR and visualize the changes in your codebase [docs](https://github.com/Mertcikla/tld-pr-bot).
 - **Diagrams as Code**: Manage architectural evolution alongside your source code.
 <p align="center">
 <img width="1280" height="882" alt="editor" src="https://github.com/user-attachments/assets/4ee283b0-ee45-4a04-86e4-f477c26e9977" />

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetState
 import { api } from '../../api/client'
 import type { ExploreData, Tag, ViewLayer } from '../../types'
 import { elementGroupTagForLayer, isElementGroupLayer, isElementGroupTag } from '../../utils/elementGroups'
+import { isGroundingIgnoreTag } from '../../utils/groundingTags'
 
 export interface ExploreTagsState {
   allTags: string[]
@@ -32,7 +33,7 @@ export function deriveExploreTagMetrics(data: ExploreData | null, layers: ViewLa
   Object.values(data.views).forEach((view) => {
       (view?.placements ?? []).forEach((placement) => {
         (placement.tags ?? []).forEach((tag) => {
-          if (isElementGroupTag(tag)) return
+          if (isElementGroupTag(tag) || isGroundingIgnoreTag(tag)) return
           tagSet.add(tag)
           tagCounts[tag] = (tagCounts[tag] ?? 0) + 1
         })
