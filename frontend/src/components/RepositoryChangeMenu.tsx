@@ -1,4 +1,5 @@
 import { Box, Button, HStack, Text, VStack } from '@chakra-ui/react'
+import type { RepositoryChangeScope } from '../utils/repositoryChangeScene'
 
 export type RepositoryChangeViewMode = 'standard' | 'plain'
 
@@ -9,6 +10,9 @@ export default function RepositoryChangeMenu({
   busy = false,
   viewMode,
   onViewModeChange,
+  scope,
+  onScopeChange,
+  authoredCount,
 }: {
   radius: number
   maxRadius: number
@@ -16,6 +20,9 @@ export default function RepositoryChangeMenu({
   busy?: boolean
   viewMode: RepositoryChangeViewMode
   onViewModeChange: (mode: RepositoryChangeViewMode) => void
+  scope: RepositoryChangeScope
+  onScopeChange: (scope: RepositoryChangeScope) => void
+  authoredCount: number
 }) {
   const radiusStops = Array.from({ length: Math.max(0, maxRadius) + 1 }, (_, r) => r)
 
@@ -59,6 +66,31 @@ export default function RepositoryChangeMenu({
               {option === 'standard' ? 'Standard' : 'Plain'}
             </Button>
           ))}
+        </HStack>
+
+        <Box w="1px" h="16px" bg="whiteAlpha.200" flexShrink={0}/>
+
+        <HStack spacing={1} align="center" data-testid="repositories-diagram-scope" px={1}>
+          {(['mapped', 'authored'] as const).map((option) => {
+            const disabled = busy || (option === 'authored' && authoredCount === 0)
+            return (
+              <Button
+                key={option}
+                data-testid={`repositories-diagram-scope-${option}`}
+                title={option === 'authored' && authoredCount === 0 ? 'No authored elements matched this change' : undefined}
+                size="xs"
+                h="28px"
+                px={2}
+                variant={scope === option ? 'solid' : 'ghost'}
+                isDisabled={disabled}
+                onClick={() => {
+                  if (option !== scope) onScopeChange(option)
+                }}
+              >
+                {option === 'mapped' ? 'Mapped' : 'Authored'}
+              </Button>
+            )
+          })}
         </HStack>
 
         <Box w="1px" h="16px" bg="whiteAlpha.200" flexShrink={0}/>

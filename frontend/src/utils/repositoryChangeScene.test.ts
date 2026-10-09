@@ -7,7 +7,7 @@ import { computeLayout } from '../components/ZUI/layout'
 
 const view = (id: number, name = 'Map', children: ViewTreeNode[] = []): ViewTreeNode => ({ id, name, description: null, level_label: null, level: 0, depth: 0, created_at: '', updated_at: '', parent_view_id: null, children })
 const placement = (id: number, path: string): PlacedElement => ({ id, element_id: id, view_id: 1, position_x: 42, position_y: 84, name: path, kind: 'component', description: 'Existing description', technology: null, url: null, logo_url: null, technology_connectors: [], tags: ['original'], repo: '/repo', file_path: path, has_view: false, view_label: null })
-const overlay = (change: 'added' | 'removed' | 'modified' | 'unchanged', path: string, distance: number, extra: Partial<RepositoryImpactOverlay> = {}): RepositoryImpactOverlay => ({ change, path, symbols: [], symbolDetails: [], distance, ...extra })
+const overlay = (change: 'added' | 'removed' | 'modified' | 'unchanged', path: string, distance: number, extra: Partial<RepositoryImpactOverlay> = {}): RepositoryImpactOverlay => ({ change, path, symbols: [], symbolDetails: [], distance, reason: 'direct', ...extra })
 const connector = (id: number, source: number, target: number) => ({ id, view_id: 1, source_element_id: source, target_element_id: target, label: null, description: null, relationship: null, direction: 'forward', style: 'bezier', url: null, source_handle: null, target_handle: null, created_at: '', updated_at: '' })
 
 const scene: RepositoryImpactScene = {
@@ -30,6 +30,7 @@ const scene: RepositoryImpactScene = {
     2: overlay('unchanged', 'b.go', 1),
     3: overlay('unchanged', 'c.go', 2),
   },
+  authoredViewIds: [],
 }
 
 describe('repositoryChangeScene', () => {
@@ -98,5 +99,41 @@ describe('repositoryChangeScene', () => {
     const added = rendered.data.views[1].placements.find((element) => element.element_id === -1)!
     expect(added.tags).toContain(REPOSITORY_CHANGE_TAG)
     expect(rendered.overlays[-1].change).toBe('added')
+  })
+
+  it('authored scope keeps only authored views with their ancestors and drops the fallback view', () => {
+    const authored: RepositoryImpactScene = {
+      ...scene,
+      tree: [view(10, 'Workspace', [view(11, 'repo map'), view(51, 'My services'), view(-1, 'Changes')])],
+      views: {
+        10: { placements: [placement(100, 'top.go')], connectors: [] },
+        11: { placements: [placement(1, 'a.go')], connectors: [] },
+        51: { placements: [placement(7, 'svc/auth'), placement(8, 'svc/')], connectors: [] },
+        '-1': { placements: [placement(-1, 'new.go')], connectors: [] },
+      },
+      overlays: {
+        1: overlay('modified', 'a.go', 0),
+        7: overlay('modified', 'svc/auth', 0),
+        8: overlay('modified', 'svc/', 0, { reason: 'contained' }),
+        [-1]: overlay('added', 'new.go', 0),
+      },
+      authoredViewIds: [51],
+    }
+    const rendered = repositoryChangeScene(authored, { radius: 0, scope: 'authored' })
+    expect(rendered.data.tree.map((tree) => tree.id)).toEqual([10])
+    expect(rendered.data.tree[0].children?.map((child) => child.id)).toEqual([51])
+    expect(rendered.data.views[11]).toBeUndefined()
+    expect(rendered.data.views[-1]).toBeUndefined()
+    expect(rendered.data.views[51].placements.map((element) => element.element_id)).toEqual([7, 8])
+    expect(rendered.overlays[7]?.change).toBe('modified')
+    expect(rendered.overlays[8]).toMatchObject({ change: 'modified', reason: 'contained' })
+    expect(rendered.overlays[1]).toBeUndefined()
+    expect(rendered.overlays[-1]).toBeUndefined()
+  })
+
+  it('mapped scope is the default and ignores authored view ids', () => {
+    const rendered = repositoryChangeScene(scene, { radius: 0 })
+    expect(rendered.data.tree.map((tree) => tree.id)).toEqual([1])
+    expect(rendered.overlays[1]?.change).toBe('modified')
   })
 })

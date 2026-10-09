@@ -1070,7 +1070,14 @@ function drawSceneNode(
     ctx.globalAlpha = parentAlpha
     ctx.strokeStyle = color
     ctx.lineWidth = 2.5 / drawZoom
-    ctx.setLineDash(change.change === 'removed' ? [5 / drawZoom, 3 / drawZoom] : [])
+    // Folder/service roll-ups read as a ring rather than a direct hit: the
+    // reason is containment, not a change to the element itself. Removed
+    // keeps its dash.
+    if (change.reason === 'contained') {
+      ctx.setLineDash([8 / drawZoom, 4 / drawZoom])
+    } else {
+      ctx.setLineDash(change.change === 'removed' ? [5 / drawZoom, 3 / drawZoom] : [])
+    }
     traceShape()
     ctx.stroke()
     if (change.change !== 'unchanged' && drawScreenW > 70 && !renderCtx.lowDetail) {

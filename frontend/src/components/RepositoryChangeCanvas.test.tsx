@@ -216,4 +216,62 @@ describe('RepositoryChangeCanvas mermaid pane', () => {
     expect(hostNodes(atOverlay, 'repository-change-mermaid-slot')[0].props.position).toBe('relative')
     expect(hostNodes(atOverlay, 'mock-mermaid')[0].props['data-overlay']).toBe('false')
   })
+
+  it('toggles between mapped and authored scopes and disables authored without authored views', async () => {
+    stubEnvironment()
+    const renderer = await renderCanvas()
+    const menu = () => renderer.root.findByType(RepositoryChangeMenu)
+    expect(menu().props.scope).toBe('mapped')
+    expect(menu().props.authoredCount).toBe(0)
+    // No scene has loaded yet, so the authored option stays disabled.
+    expect(hostNodes(renderer, 'repositories-diagram-scope-authored')[0].props.isDisabled).toBe(true)
+    expect(hostNodes(renderer, 'repositories-diagram-scope-mapped')[0].props.isDisabled).toBe(false)
+
+    await act(async () => { menu().props.onRadiusChange(2) })
+    expect(menu().props.radius).toBe(2)
+    await act(async () => { menu().props.onScopeChange('authored') })
+    expect(menu().props.scope).toBe('authored')
+    // Authored overlays are all direct changes, so the radius resets and the
+    // blast-radius stops collapse to zero.
+    expect(menu().props.radius).toBe(0)
+    expect(menu().props.maxRadius).toBe(0)
+
+    await act(async () => {
+      renderer.update(<RepositoryChangeCanvas diagram={{ ...diagram, comparisonKey: 'next' }} selectedPath="" />)
+    })
+    expect(menu().props.scope).toBe('mapped')
+    renderer.unmount()
+  })
+
+  it('enables the authored scope once the scene names authored views', async () => {
+    stubEnvironment()
+    const { api } = await import('../api/client')
+    const impactScene = api.repositories.impactScene as unknown as ReturnType<typeof vi.fn>
+    impactScene.mockResolvedValueOnce({
+      tree: [{ id: 10, name: 'Workspace', children: [{ id: 51, name: 'Mine', children: [] }] }],
+      views: {
+        10: { placements: [], connectors: [] },
+        51: { placements: [{ element_id: 7, tags: [], file_path: 'x' }], connectors: [] },
+      },
+      navigations: [],
+      fallbackViewId: 0,
+      repositoryId: 'repo-1',
+      comparisonKey: 'pair',
+      version: 'v1',
+      schemaVersion: '1',
+      maxRadius: 0,
+      fromGitRevision: 'a',
+      toGitRevision: 'b',
+      overlays: { 7: { change: 'modified', path: 'x', symbols: [], distance: 0 } },
+      authoredViewIds: [51],
+    })
+    let renderer!: ReturnType<typeof create>
+    await act(async () => {
+      renderer = create(<RepositoryChangeCanvas diagram={diagram} selectedPath="" />)
+    })
+    const menu = () => renderer.root.findByType(RepositoryChangeMenu)
+    expect(menu().props.authoredCount).toBe(1)
+    expect(hostNodes(renderer, 'repositories-diagram-scope-authored')[0].props.isDisabled).toBe(false)
+    renderer.unmount()
+  })
 })

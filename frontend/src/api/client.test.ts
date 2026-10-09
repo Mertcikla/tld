@@ -7,6 +7,7 @@ import {
   EdgeFactSchema,
   FactKind,
   ImpactSceneSchema,
+  OverlayReason,
   SnapshotDiffSchema,
   SnapshotSchema,
 } from '@buf/tldiagramcom_diagram.bufbuild_es/codeindex/v1/codeindex_pb.js'
@@ -262,6 +263,7 @@ describe('impact scene mapping', () => {
       maxRadius: 2,
       fromGitRevision: 'aaa',
       toGitRevision: 'bbb',
+      authoredViewIds: [9n],
       tree: [{ id: 1, name: 'Root', children: [] }],
       views: {
         '1': {
@@ -281,6 +283,16 @@ describe('impact scene mapping', () => {
                 ],
               },
             },
+            {
+              element: { elementId: 8, viewId: 9, name: 'svc', filePath: 'svc/', tags: [] },
+              overlay: {
+                change: ChangeKind.MODIFIED,
+                path: 'svc/',
+                distance: 0,
+                reason: OverlayReason.CONTAINED,
+                symbols: [],
+              },
+            },
           ],
           connectors: [],
         },
@@ -295,7 +307,10 @@ describe('impact scene mapping', () => {
     expect(mapped.maxRadius).toBe(2)
     expect(mapped.fromGitRevision).toBe('aaa')
     expect(mapped.toGitRevision).toBe('bbb')
+    expect(mapped.authoredViewIds).toEqual([9])
     expect(mapped.overlays[7].symbols).toEqual(['~ Changed', '+ Fresh', '− Gone'])
+    expect(mapped.overlays[7].reason).toBe('direct')
+    expect(mapped.overlays[8]).toMatchObject({ change: 'modified', path: 'svc/', reason: 'contained' })
     expect(mapped.overlays[7].symbolDetails[0]).toEqual({
       change: 'modified',
       name: 'Changed',

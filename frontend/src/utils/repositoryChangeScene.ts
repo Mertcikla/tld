@@ -5,13 +5,19 @@ import type { ZUIChangeOverlay } from '../components/ZUI/types'
 export { CHANGE_OVERLAY_TAG as REPOSITORY_CHANGE_TAG } from '../components/ZUI/changeOverlay'
 import { CHANGE_OVERLAY_TAG as REPOSITORY_CHANGE_TAG } from '../components/ZUI/changeOverlay'
 
+export type RepositoryChangeScope = 'mapped' | 'authored'
+
 // repositoryChangeScene adapts the backend-assembled impact scene to the ZUI
 // canvas contract. Membership, transient placements and connector routing are
 // owned by the backend; this only applies the client-side blast radius and
 // standard/plain view filters, both of which never require a server call.
-export function repositoryChangeScene(scene: RepositoryImpactScene, options: { radius: number; plain?: boolean }) {
+// The scope filter switches between the generated map (mapped) and the
+// user-authored diagrams the change touched (authored).
+export function repositoryChangeScene(scene: RepositoryImpactScene, options: { radius: number; plain?: boolean; scope?: RepositoryChangeScope }) {
   const plain = options.plain ?? false
   const radius = options.radius
+  const scope = options.scope ?? 'mapped'
+  const authored = new Set(scene.authoredViewIds ?? [])
   const overlays: Record<number, ZUIChangeOverlay> = {}
   const impacted = new Set<number>()
   for (const [elementId, overlay] of Object.entries(scene.overlays)) {
@@ -22,6 +28,16 @@ export function repositoryChangeScene(scene: RepositoryImpactScene, options: { r
   const keep = (tree: ViewTreeNode[]): ViewTreeNode[] => tree.flatMap((view) => {
     // Retired impact views are excluded while an older watcher is still running.
     if (view.name.includes(' impact · ')) return []
+    // Authored mode drops the generated map and the synthetic Changes view: it
+    // shows only the views the user authored, with their ancestors so the
+    // hierarchy still renders.
+    if (scope === 'authored') {
+      if (view.id === scene.fallbackViewId && scene.fallbackViewId !== 0) return []
+      const children = keep(view.children ?? [])
+      if (!authored.has(view.id) && !children.length) return []
+      retained.add(view.id)
+      return [{ ...view, children }]
+    }
     const children = keep(view.children ?? [])
     const placements = scene.views[String(view.id)]?.placements ?? []
     if (!children.length && !placements.some(shown)) return []
@@ -58,6 +74,7 @@ export function repositoryChangeScene(scene: RepositoryImpactScene, options: { r
         overlays[element.element_id] = {
           change: overlay.change, path: overlay.path,
           linesAdded: overlay.linesAdded, linesRemoved: overlay.linesRemoved, symbols: overlay.symbols,
+          reason: overlay.reason,
         }
         return overlay.change === 'unchanged' ? element : { ...element, tags: [...element.tags, REPOSITORY_CHANGE_TAG] }
       }),

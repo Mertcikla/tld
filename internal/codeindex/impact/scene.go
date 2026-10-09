@@ -2,14 +2,17 @@ package impact
 
 import (
 	"context"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
 
 	pb "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/codeindex/v1"
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
+	cstore "github.com/mertcikla/tld/v2/internal/codeindex/store"
 	"github.com/mertcikla/tld/v2/internal/core"
 	"github.com/mertcikla/tld/v2/internal/layout"
+	"github.com/mertcikla/tld/v2/internal/sourcelink"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -40,7 +43,11 @@ func (s Service) Scene(ctx context.Context, diagram *pb.ImpactDiagram) (*pb.Impa
 	if err != nil {
 		return nil, err
 	}
-	builder := sceneBuilder{diagram: diagram, workspace: workspace, root: repo.Root}
+	mappings, err := s.Index.MappingsByRepository(ctx, diagram.GetRepositoryId())
+	if err != nil {
+		return nil, err
+	}
+	builder := sceneBuilder{diagram: diagram, workspace: workspace, root: repo.Root, mappings: mappings}
 	return builder.build(), nil
 }
 
@@ -48,12 +55,27 @@ type sceneBuilder struct {
 	diagram   *pb.ImpactDiagram
 	workspace core.ExploreData
 	root      string
+	mappings  []cstore.ResourceMapping
 
 	nodes      map[string]*pb.ImpactNode
 	sources    map[string]*pb.SourceChange
 	contextIDs map[int64]bool
 	matched    map[string]bool
 	retained   map[int64]bool
+
+	// Codeindex provenance: workspace resources the map pipeline owns. A view
+	// is authored when it is not a generated map view and carries a change
+	// overlay on a non-generated element.
+	mappedElements map[int64]bool
+	mappedViews    map[int64]bool
+	authored       map[int64]bool
+	// authoredOverlays memoizes the overlay match per element. An absent key
+	// means the element hasn't been checked; a nil value means it has no
+	// authored overlay.
+	authoredOverlays map[int64]*pb.ImpactSceneOverlay
+	// prefixes holds every directory prefix of a directly changed path, so
+	// folder-granularity authored links match in constant time.
+	prefixes map[string]bool
 }
 
 func (b *sceneBuilder) build() *pb.ImpactScene {
@@ -88,6 +110,12 @@ func (b *sceneBuilder) build() *pb.ImpactScene {
 	// The radius a reader may still select is bounded by what this scene
 	// actually carries, not by the wider neighbourhood it was scoped from.
 	scene.MaxRadius = sceneMaxRadius(scene)
+	// Authored views are sorted so the payload is deterministic.
+	scene.AuthoredViewIds = make([]int64, 0, len(b.authored))
+	for viewID := range b.authored {
+		scene.AuthoredViewIds = append(scene.AuthoredViewIds, viewID)
+	}
+	sort.Slice(scene.AuthoredViewIds, func(i, j int) bool { return scene.AuthoredViewIds[i] < scene.AuthoredViewIds[j] })
 	return scene
 }
 
@@ -111,6 +139,26 @@ func (b *sceneBuilder) index() {
 	b.contextIDs = map[int64]bool{}
 	b.matched = map[string]bool{}
 	b.retained = map[int64]bool{}
+	b.mappedElements = map[int64]bool{}
+	b.mappedViews = map[int64]bool{}
+	b.authored = map[int64]bool{}
+	b.authoredOverlays = map[int64]*pb.ImpactSceneOverlay{}
+	b.prefixes = map[string]bool{}
+	for _, mapping := range b.mappings {
+		// The retired impact materializer's resources are never treated as
+		// owned by the map pipeline.
+		if strings.HasPrefix(mapping.LogicalKey, "impact|") {
+			continue
+		}
+		switch mapping.Kind {
+		case cstore.MappingElement:
+			b.mappedElements[mapping.ResourceID] = true
+		case cstore.MappingView:
+			if strings.HasPrefix(mapping.LogicalKey, "map|") {
+				b.mappedViews[mapping.ResourceID] = true
+			}
+		}
+	}
 	for _, node := range b.diagram.GetNodes() {
 		if node == nil {
 			continue
@@ -118,6 +166,17 @@ func (b *sceneBuilder) index() {
 		b.nodes[normalizeScenePath(node.GetPath())] = node
 		if node.GetDistance() > 0 && node.GetElementId() != 0 {
 			b.contextIDs[node.GetElementId()] = true
+		}
+		if node.GetDistance() == 0 {
+			path := strings.TrimSuffix(normalizeScenePath(node.GetPath()), "/")
+			for rest := path; ; {
+				slash := strings.LastIndexByte(rest, '/')
+				if slash < 0 {
+					break
+				}
+				rest = rest[:slash]
+				b.prefixes[rest] = true
+			}
 		}
 	}
 	for _, source := range b.diagram.GetDiff().GetSources() {
@@ -149,7 +208,9 @@ func (b *sceneBuilder) belongs(element core.PlacedElement) bool {
 }
 
 // pruneTree drops views with no repository placement and no retained children,
-// plus views owned by the retired impact materializer.
+// plus views owned by the retired impact materializer. A view is also kept
+// when a user-authored element in it matches a changed path, so hand-drawn
+// diagrams survive the membership filter.
 func (b *sceneBuilder) pruneTree(nodes []core.ViewTreeNode) []core.ViewTreeNode {
 	out := make([]core.ViewTreeNode, 0, len(nodes))
 	for _, view := range nodes {
@@ -165,6 +226,17 @@ func (b *sceneBuilder) pruneTree(nodes []core.ViewTreeNode) []core.ViewTreeNode 
 				break
 			}
 		}
+		if !visible {
+			for _, placement := range content.Placements {
+				if b.mappedElements[placement.ElementID] {
+					continue
+				}
+				if b.matchAuthoredOverlay(placement) != nil {
+					visible = true
+					break
+				}
+			}
+		}
 		if len(children) == 0 && !visible {
 			continue
 		}
@@ -176,10 +248,15 @@ func (b *sceneBuilder) pruneTree(nodes []core.ViewTreeNode) []core.ViewTreeNode 
 }
 
 // appendView copies a retained view's placements and connectors, attaching a
-// change overlay to every placement that matches a diagram node.
+// change overlay to every placement that matches a diagram node. Placements
+// the generated map does not own are resolved with the authored matcher, so an
+// authored element anchored to a file, symbol, line, or folder is annotated
+// the same way a mapped element is. A retained view that is not a generated
+// map view and carries an overlay is recorded as authored.
 func (b *sceneBuilder) appendView(scene *pb.ImpactScene, viewID int64) {
 	content := b.workspace.Views[strconv.FormatInt(viewID, 10)]
 	placements := make([]*pb.ScenePlacement, 0, len(content.Placements))
+	carriesOverlay := false
 	for _, placement := range content.Placements {
 		item := scenePlacement(placement)
 		if b.belongs(placement) {
@@ -190,7 +267,18 @@ func (b *sceneBuilder) appendView(scene *pb.ImpactScene, viewID int64) {
 				item.Overlay = b.overlay(node)
 			}
 		}
+		if item.Overlay == nil && !b.mappedElements[placement.ElementID] {
+			if overlay := b.matchAuthoredOverlay(placement); overlay != nil {
+				item.Overlay = overlay
+			}
+		}
+		if item.Overlay != nil {
+			carriesOverlay = true
+		}
 		placements = append(placements, item)
+	}
+	if carriesOverlay && !b.mappedViews[viewID] {
+		b.authored[viewID] = true
 	}
 	connectors := make([]*diagv1.Connector, 0, len(content.Connectors))
 	for _, connector := range content.Connectors {
@@ -267,15 +355,190 @@ func (b *sceneBuilder) placeMissing(scene *pb.ImpactScene) {
 	scene.Views[strconv.FormatInt(viewID, 10)] = &pb.SceneViewContent{Placements: placements, Connectors: connectors}
 }
 
+// matchAuthoredOverlay resolves a change overlay for a placement the
+// generated map does not own, so an authored element anchored to a file,
+// symbol, line, or folder is annotated the same way a mapped element is.
+// Results are memoized per element: an element carries the same file_path in
+// every view, so pruneTree and appendView always agree. Every consumed
+// direct-change node is recorded in matched, so placeMissing never duplicates
+// a file that an authored element already represents.
+func (b *sceneBuilder) matchAuthoredOverlay(placement core.PlacedElement) *pb.ImpactSceneOverlay {
+	if overlay, checked := b.authoredOverlays[placement.ElementID]; checked {
+		return overlay
+	}
+	overlay := b.authoredOverlayFor(placement)
+	b.authoredOverlays[placement.ElementID] = overlay
+	return overlay
+}
+
+func (b *sceneBuilder) authoredOverlayFor(placement core.PlacedElement) *pb.ImpactSceneOverlay {
+	if placement.FilePath == nil {
+		return nil
+	}
+	parsed := sourcelink.Parse(*placement.FilePath)
+	raw := strings.ReplaceAll(strings.TrimSpace(parsed.BasePath), "\\", "/")
+	if raw == "" {
+		return nil
+	}
+	base, ok := b.repoRelativePath(strings.TrimSuffix(raw, "/"))
+	if !ok {
+		return nil
+	}
+	// A trailing slash is an explicit folder link; a path that names no
+	// changed file but prefixes one is an implicit one. Both roll up.
+	node := b.nodes[base]
+	if strings.HasSuffix(raw, "/") || (node == nil && b.prefixes[base]) {
+		return b.folderOverlay(base)
+	}
+	if node == nil || node.GetDistance() > 0 {
+		return nil
+	}
+	switch parsed.Anchor.Kind {
+	case sourcelink.AnchorNone:
+		b.matched[node.GetPath()] = true
+		return b.overlay(node)
+	case sourcelink.AnchorLine, sourcelink.AnchorSymbol:
+		if !symbolAnchorMatches(node, parsed.Anchor) {
+			return nil
+		}
+		b.matched[node.GetPath()] = true
+		return b.overlay(node)
+	default:
+		return nil
+	}
+}
+
+// repoRelativePath normalizes an authored link's base path to the
+// repository-relative form diagram nodes carry. Absolute paths that live under
+// the compared repository's checkout are stripped to their relative form;
+// relative paths are kept. Anything that resolves outside the repository
+// returns false and never matches.
+func (b *sceneBuilder) repoRelativePath(base string) (string, bool) {
+	if strings.HasPrefix(base, "/") {
+		if strings.TrimSpace(b.root) == "" {
+			return "", false
+		}
+		root := strings.TrimSuffix(strings.ReplaceAll(b.root, "\\", "/"), "/")
+		rel, ok := strings.CutPrefix(base, root+"/")
+		if !ok {
+			return "", false
+		}
+		base = rel
+	}
+	cleaned := path.Clean(base)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", false
+	}
+	return cleaned, true
+}
+
+// symbolAnchorMatches reports whether a changed node carries a symbol change
+// on the authored anchor: a symbol anchor matches by declaration name, a line
+// anchor by overlap between the author's line range and a changed symbol's
+// anchor lines. Authored line anchors are 1-based (editor convention) while
+// stored fact anchors are 0-based, so the author range is shifted down first.
+func symbolAnchorMatches(node *pb.ImpactNode, anchor sourcelink.Anchor) bool {
+	if node == nil {
+		return false
+	}
+	for _, kind := range []pb.ChangeKind{
+		pb.ChangeKind_CHANGE_KIND_ADDED,
+		pb.ChangeKind_CHANGE_KIND_REMOVED,
+		pb.ChangeKind_CHANGE_KIND_MODIFIED,
+	} {
+		for _, fact := range factsByKind(node.GetSymbols(), kind) {
+			if fact == nil {
+				continue
+			}
+			switch anchor.Kind {
+			case sourcelink.AnchorSymbol:
+				if anchor.Symbol != "" && fact.GetName() == anchor.Symbol {
+					return true
+				}
+			case sourcelink.AnchorLine:
+				if anchor.StartLine <= 0 {
+					continue
+				}
+				end := anchor.EndLine
+				if end <= 0 {
+					end = anchor.StartLine
+				}
+				if factAnchor := fact.GetAnchor(); factAnchor != nil &&
+					int(factAnchor.GetStartLine()) <= end-1 && anchor.StartLine-1 <= int(factAnchor.GetEndLine()) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// folderOverlay aggregates the direct changes under an authored folder link
+// into one roll-up overlay. Only files that changed themselves are included:
+// folders that merely neighbour a change stay unlit, keeping the authored
+// toggle quiet. The change is the single kind present, or modified when the
+// folder mixes kinds. Every consumed node is recorded in matched so
+// placeMissing never duplicates a file the folder already represents.
+func (b *sceneBuilder) folderOverlay(base string) *pb.ImpactSceneOverlay {
+	if base == "" || !b.prefixes[base] {
+		return nil
+	}
+	matched := make([]*pb.ImpactNode, 0)
+	for _, node := range b.diagram.GetNodes() {
+		if node == nil || node.GetDistance() > 0 {
+			continue
+		}
+		changed := strings.TrimSuffix(normalizeScenePath(node.GetPath()), "/")
+		if changed != base && !strings.HasPrefix(changed, base+"/") {
+			continue
+		}
+		matched = append(matched, node)
+	}
+	if len(matched) == 0 {
+		return nil
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].GetPath() < matched[j].GetPath() })
+	overlay := &pb.ImpactSceneOverlay{Change: pb.ChangeKind_CHANGE_KIND_MODIFIED, Path: base + "/", Distance: 0, Reason: pb.OverlayReason_OVERLAY_REASON_CONTAINED}
+	kinds := map[pb.ChangeKind]bool{}
+	var linesAdded, linesRemoved uint32
+	for _, node := range matched {
+		kinds[node.GetChange()] = true
+		if source := b.sources[node.GetPath()]; source != nil {
+			if source.LinesAdded != nil {
+				linesAdded += *source.LinesAdded
+			}
+			if source.LinesRemoved != nil {
+				linesRemoved += *source.LinesRemoved
+			}
+		}
+		overlay.Symbols = append(overlay.Symbols, b.overlay(node).GetSymbols()...)
+		b.matched[node.GetPath()] = true
+	}
+	if len(kinds) == 1 {
+		for kind := range kinds {
+			overlay.Change = kind
+		}
+	}
+	if linesAdded > 0 {
+		overlay.LinesAdded = proto.Uint32(linesAdded)
+	}
+	if linesRemoved > 0 {
+		overlay.LinesRemoved = proto.Uint32(linesRemoved)
+	}
+	return overlay
+}
+
 // overlay shapes a diagram node into the transient annotation the canvas
 // renders. Context nodes keep their hop distance so clients can scope them.
 // Symbol changes are carried structured: a reader labels them itself, so no
-// pre-shaped text has to stay in sync with the underlying fact.
+// pre-shaped text has to stay in sync with the underlying fact. Every overlay
+// this helper shapes is a direct hit on its own path; roll-ups set CONTAINED
+// themselves.
 func (b *sceneBuilder) overlay(node *pb.ImpactNode) *pb.ImpactSceneOverlay {
 	if node == nil {
 		return nil
 	}
-	overlay := &pb.ImpactSceneOverlay{Change: node.GetChange(), Path: node.GetPath(), Distance: node.GetDistance()}
+	overlay := &pb.ImpactSceneOverlay{Change: node.GetChange(), Path: node.GetPath(), Distance: node.GetDistance(), Reason: pb.OverlayReason_OVERLAY_REASON_DIRECT}
 	if source := b.sources[node.GetPath()]; source != nil {
 		overlay.LinesAdded = source.LinesAdded
 		overlay.LinesRemoved = source.LinesRemoved

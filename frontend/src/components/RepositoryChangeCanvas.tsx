@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Flex, Text } from '@chakra-ui/react'
 import { api, type RepositoryImpact as ImpactDiagram, type RepositoryImpactScene } from '../api/client'
 import { ZUICanvas, type ZUICanvasHandle } from './ZUI'
-import { repositoryChangeScene, REPOSITORY_CHANGE_TAG } from '../utils/repositoryChangeScene'
+import { repositoryChangeScene, REPOSITORY_CHANGE_TAG, type RepositoryChangeScope } from '../utils/repositoryChangeScene'
 import { fitBlastRadius, MAX_BLAST_RADIUS } from '../utils/impactScope'
 import {
   PANEL_COLLAPSE_SNAP,
@@ -26,6 +26,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const [error, setError] = useState('')
   const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
   const [radius, setRadius] = useState(0)
+  const [scope, setScope] = useState<RepositoryChangeScope>('mapped')
   const mermaidPane = useResizableColumn({
     storageKey: 'tld:repositories:mermaidPaneWidth',
     defaultWidth: MERMAID_PANE_DEFAULT_WIDTH,
@@ -39,6 +40,10 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const comparisonKey = diagram?.comparisonKey ?? ''
   const version = diagram?.version ?? ''
   const maxRadius = diagram ? Math.max(0, Math.min(MAX_BLAST_RADIUS, diagram.maxRadius)) : 0
+  const authoredCount = scene?.authoredViewIds.length ?? 0
+  // Authored overlays are all direct changes (distance 0): the blast-radius
+  // slider has nothing to widen there.
+  const effectiveMaxRadius = scope === 'authored' ? 0 : maxRadius
   const budgetRadius = diagram ? fitBlastRadius(diagram, maxRadius) : 0
   useEffect(() => {
     let active = true
@@ -52,11 +57,15 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   }, [repositoryId, comparisonKey, version])
   useEffect(() => {
     setRadius(0)
+    setScope('mapped')
   }, [comparisonKey, version, maxRadius])
-  const view = useMemo(() => scene ? repositoryChangeScene(scene, { radius, plain: displayMode === 'plain' }) : null, [scene, radius, displayMode])
+  const view = useMemo(() => scene ? repositoryChangeScene(scene, { radius, plain: displayMode === 'plain', scope }) : null, [scene, radius, displayMode, scope])
   const warning = diagram != null && radius > budgetRadius
-  const focusSelected = useCallback(() => {
-    if (!view || !selectedPath) return
+  const handleScopeChange = useCallback((next: RepositoryChangeScope) => {
+    setScope(next)
+    if (next === 'authored') setRadius(0)
+  }, [])
+  const focusSelected = useCallback(() => {    if (!view || !selectedPath) return
     for (const [viewId, data] of Object.entries(view.data.views)) {
       const element = data.placements.find((item) => item.file_path === selectedPath && view.overlays[item.element_id])
       if (element && canvas.current?.focusElement(Number(viewId), element.element_id)) return
@@ -78,11 +87,14 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
             {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate highlightedTags={diagram.nodes.length ? [REPOSITORY_CHANGE_TAG] : []} highlightColor={colors.modified} crossBranchSettings={crossBranchSettings} onReady={focusSelected} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
             <RepositoryChangeMenu
               radius={radius}
-              maxRadius={maxRadius}
+              maxRadius={effectiveMaxRadius}
               onRadiusChange={setRadius}
               busy={busy}
               viewMode={displayMode}
               onViewModeChange={setDisplayMode}
+              scope={scope}
+              onScopeChange={handleScopeChange}
+              authoredCount={authoredCount}
             />
           </Box>
           {/* The change diagram is always docked beside the canvas; shrinking it

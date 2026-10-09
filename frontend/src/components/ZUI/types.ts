@@ -108,6 +108,8 @@ export interface ZUIChangeOverlay {
   linesAdded?: number
   linesRemoved?: number
   symbols: string[]
+  /** Why the element carries an overlay; roll-ups render softer. */
+  reason: 'direct' | 'contained'
 }
 
 /** Top-level group wrapping one root diagram. */

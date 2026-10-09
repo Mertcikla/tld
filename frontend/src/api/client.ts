@@ -79,6 +79,7 @@ import {
   ChangeKind,
   CodeIndexService,
   FactKind,
+  OverlayReason,
   RepositoryService,
   type Snapshot as CodeSnapshotProto,
   type SnapshotDiff as SnapshotDiffProto,
@@ -280,6 +281,9 @@ export interface RepositoryImpactSymbol {
 }
 // RepositoryImpactOverlay is one placement's transient change annotation.
 // Context neighbours carry the hop distance used for client-side scoping.
+// The reason tells why the element carries an overlay: it changed itself
+// (direct), or it only contains changed files (contained), which readers
+// style softer than a direct hit.
 export interface RepositoryImpactOverlay {
   change: SnapshotSourceChange['change'] | 'unchanged'
   path: string
@@ -288,11 +292,14 @@ export interface RepositoryImpactOverlay {
   symbols: string[]
   symbolDetails: RepositoryImpactSymbol[]
   distance: number
+  reason: 'direct' | 'contained'
 }
 // RepositoryImpactScene is the backend-assembled change scene: the repository
 // workspace subset, context neighbours, and transient placements with overlays.
 // It is self-contained, so the identity fields travel with it and a viewer can
 // render the scene without the repository, its index, or its snapshots.
+// authoredViewIds names the views annotated on user-authored elements rather
+// than codeindex-materialized ones, for the mapped/authored scope toggle.
 export interface RepositoryImpactScene extends ExploreData {
   fallbackViewId: number
   repositoryId: string
@@ -303,6 +310,7 @@ export interface RepositoryImpactScene extends ExploreData {
   fromGitRevision: string
   toGitRevision: string
   overlays: Record<number, RepositoryImpactOverlay>
+  authoredViewIds: number[]
 }
 export interface LiveRepositoryImpact {
   diagram: RepositoryImpact | null
@@ -676,6 +684,7 @@ export function mapImpactScene(scene: ImpactSceneProto): RepositoryImpactScene {
           }),
           symbolDetails: placement.overlay.symbols.map(mapImpactSymbolChange),
           distance: placement.overlay.distance,
+          reason: placement.overlay.reason === OverlayReason.CONTAINED ? 'contained' : 'direct',
         }
       }
       return mapped
@@ -698,6 +707,7 @@ export function mapImpactScene(scene: ImpactSceneProto): RepositoryImpactScene {
     fromGitRevision: scene.fromGitRevision,
     toGitRevision: scene.toGitRevision,
     overlays,
+    authoredViewIds: scene.authoredViewIds.map(Number),
   }
 }
 
