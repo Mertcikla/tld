@@ -32,11 +32,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 		target          string
 		dataDir         string
 		tags            string
-		owner           string
-		symbol          string
 		logoURL         string
-		densityLevel    int
-		bypassNoiseGate bool
 	)
 
 	c := &cobra.Command{
@@ -95,26 +91,19 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 			normalizedTechnology, wasNormalized := normalizeTechnology(technology)
 			parsedTags := workspace.ParseTagList(tags)
 			spec := &workspace.Element{
-				Name:         name,
-				Kind:         kind,
-				Owner:        owner,
-				Description:  description,
-				Technology:   normalizedTechnology,
-				URL:          url,
-				LogoURL:      logoURL,
-				Symbol:       symbol,
-				Tags:         parsedTags,
-				ViewLabel:    diagramLabel,
-				DensityLevel: densityLevel,
+				Name:        name,
+				Kind:        kind,
+				Description: description,
+				Technology:  normalizedTechnology,
+				URL:         url,
+				LogoURL:     logoURL,
+				Tags:        parsedTags,
+				ViewLabel:   diagramLabel,
 				Placements: []workspace.ViewPlacement{{
 					ParentRef: placementParent,
 					PositionX: positionX,
 					PositionY: positionY,
 				}},
-			}
-			if cmd.Flags().Changed("bypass-noise-gate") {
-				bypass := bypassNoiseGate
-				spec.BypassNoiseGate = &bypass
 			}
 			validateAndWarnTechnology(cmd, technology)
 			if dryRun {
@@ -147,11 +136,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&technology, "technology", "", "primary technology")
 	c.Flags().StringVar(&url, "url", "", "external URL")
 	c.Flags().StringVar(&logoURL, "logo-url", "", "logo image URL")
-	c.Flags().StringVar(&owner, "owner", "", "owning repository key (must be registered in .tld.yaml)")
-	c.Flags().StringVar(&symbol, "symbol", "", "named code symbol within --file-path, e.g. MyFunc")
 	c.Flags().StringVar(&tags, "tags", "", "comma-separated tags")
-	c.Flags().IntVar(&densityLevel, "density-level", 0, "canvas density level [-2..2]")
-	c.Flags().BoolVar(&bypassNoiseGate, "bypass-noise-gate", true, "exempt this element from the view noise gate")
 	c.Flags().Float64Var(&positionX, "position-x", 0, "horizontal canvas position")
 	c.Flags().Float64Var(&positionY, "position-y", 0, "vertical canvas position")
 	c.Flags().StringVar(&ref, "ref", "", "override generated ref (default: slugified name)")
@@ -185,12 +170,10 @@ func runAdd(cmd *cobra.Command, sess *cmdutil.Session, ws *workspace.Workspace, 
 	}
 
 	// add merges into the existing YAML spec (see workspace.UpsertElement), so
-	// empty values mean "keep the existing server value" here. Explicit
-	// clearing is available through `tld update element`.
+	// empty values mean "keep the existing server value" here. CLI-authored
+	// elements are exempt from the view noise gate; that flag is owned by
+	// codeindex materialization, not by this command.
 	bypass := true
-	if spec.BypassNoiseGate != nil {
-		bypass = *spec.BypassNoiseGate
-	}
 	// add merges, so union the incoming tags with the element's existing tags
 	// (matching workspace.UpsertElement) instead of replacing them.
 	var tags []string

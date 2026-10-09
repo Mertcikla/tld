@@ -89,8 +89,12 @@ func TestDBModeUpdateFields(t *testing.T) {
 	}
 
 	_, _, err := RunCmd(t, dir, "update", "element", "svc", "owner", "payments")
-	if err == nil || !strings.Contains(err.Error(), "no database column") {
-		t.Fatalf("owner update err = %v, want no-database-column error", err)
+	if err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("owner update err = %v, want unsupported-field error", err)
+	}
+	_, _, err = RunCmd(t, dir, "update", "element", "svc", "ref", "renamed")
+	if err == nil || !strings.Contains(err.Error(), "tld rename") {
+		t.Fatalf("ref update err = %v, want tld rename hint", err)
 	}
 	assertNoWorkspaceFiles(t, dir)
 }

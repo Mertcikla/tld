@@ -3,7 +3,7 @@ package update
 import (
 	"context"
 	"fmt"
-	"strconv"
+	"slices"
 	"strings"
 
 	diagv1 "buf.build/gen/go/tldiagramcom/diagram/protocolbuffers/go/diag/v1"
@@ -67,6 +67,9 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 			if err != nil {
 				return fail(err)
 			}
+			if !serverSyncedElementFields(field) {
+				return fail(unsupportedElementFieldError(ref, field))
+			}
 			sess, err := cmdutil.OpenSession(cmd, *wdir, target, dataDir)
 			if err != nil {
 				return fail(err)
@@ -78,12 +81,6 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 			}
 			if ref, err = cmdutil.ResolveElementArg(ws, ref); err != nil {
 				return fail(err)
-			}
-			if !sess.HasWorkspace() && yamlOnlyElementField(field) {
-				return fail(cmdutil.WithHint(
-					fmt.Errorf("field %q has no database column", field),
-					"ref, owner, symbol, has_view, and density_level live in workspace YAML. Re-run with --yaml or use a workspace.",
-				))
 			}
 			if mode != "" {
 				el := ws.Elements[ref]
@@ -106,35 +103,19 @@ func newElementCmd(wdir, format *string, compact *bool) *cobra.Command {
 				term.Successf(cmd.OutOrStdout(), "dry-run: update %q: %s=%q", ref, field, value)
 				return nil
 			}
-			switch {
-			case field == "ref":
-				// Rename is a local-alias change; the server ID is unchanged.
+			// Target first: a failed target write must not leave the YAML
+			// cache claiming a change the target never saw.
+			updated, viewID, err := runUpdateElementServer(cmd, sess, ws, ref, field, value)
+			if err != nil {
+				return fail(err)
+			}
+			if sess.HasWorkspace() {
 				if err := workspace.UpdateElementField(*wdir, ref, field, value); err != nil {
-					return fail(fmt.Errorf("update element: %w", err))
+					return fail(fmt.Errorf("update YAML cache: %w", err))
 				}
-				if err := renameElementMetadata(*wdir, ref, value); err != nil {
-					return fail(err)
-				}
-			case !serverSyncedElementFields(field):
-				// YAML-only metadata (owner, symbol, density, etc.).
-				if err := workspace.UpdateElementField(*wdir, ref, field, value); err != nil {
-					return fail(fmt.Errorf("update element: %w", err))
-				}
-			default:
-				// Server first: a failed server write must not leave the YAML
-				// cache claiming a change the server never saw.
-				updated, viewID, err := runUpdateElementServer(cmd, sess, ws, ref, field, value)
-				if err != nil {
-					return fail(err)
-				}
-				if sess.HasWorkspace() {
-					if err := workspace.UpdateElementField(*wdir, ref, field, value); err != nil {
-						return fail(fmt.Errorf("update YAML cache: %w", err))
-					}
-					if updated != nil {
-						if err := exec.RecordElementMeta(sess.Context(cmd.Context()), *wdir, ref, updated, viewID, nil); err != nil {
-							return fail(fmt.Errorf("update cache metadata: %w", err))
-						}
+				if updated != nil {
+					if err := exec.RecordElementMeta(sess.Context(cmd.Context()), *wdir, ref, updated, viewID, nil); err != nil {
+						return fail(fmt.Errorf("update cache metadata: %w", err))
 					}
 				}
 			}
@@ -299,38 +280,24 @@ func resolveTagValue(current []string, value, mode string) string {
 	}
 }
 
-// serverSyncedElementFields are YAML element fields mirrored to the server.
+// serverSyncedElementFields reports whether `update element` accepts the field.
+// Every accepted field mirrors to the target store.
 func serverSyncedElementFields(field string) bool {
-	switch field {
-	case "name", "kind", "description", "technology", "url", "logo_url",
-		"repo", "repository_id", "branch", "language", "file_path",
-		"view_label", "view_name", "tags", "bypass_noise_gate":
-		return true
-	default:
-		return false
-	}
+	return slices.Contains(completion.ElementFields(), field)
 }
 
-// yamlOnlyElementField reports fields with no database column. They can only
-// be updated when a workspace is in play.
-func yamlOnlyElementField(field string) bool {
+// unsupportedElementFieldError explains why a field is not accepted. Fields
+// without a database column (owner, symbol, has_view, density_level) are only
+// editable directly in workspace YAML, and ref renames go through `tld rename`.
+func unsupportedElementFieldError(ref, field string) error {
 	switch field {
-	case "ref", "owner", "symbol", "has_view", "density_level":
-		return true
+	case "ref":
+		return fmt.Errorf(`"ref" cannot be updated in place; use 'tld rename --from %s --to <new-ref>'`, ref)
+	case "owner", "symbol", "has_view", "density_level":
+		return fmt.Errorf("field %q is not supported by 'update element'; edit the workspace YAML directly", field)
 	default:
-		return false
+		return fmt.Errorf("unknown element field %q; known fields: %s", field, strings.Join(completion.ElementFields(), ", "))
 	}
-}
-
-// renameElementMetadata moves lockfile metadata after a local ref rename.
-func renameElementMetadata(wdir, ref, newRef string) error {
-	if err := workspace.RenameCurrentElementMetadata(wdir, ref, newRef); err != nil {
-		return fmt.Errorf("update rename metadata: %w", err)
-	}
-	if err := workspace.RenameCurrentViewMetadata(wdir, ref, newRef); err != nil {
-		return fmt.Errorf("update rename metadata: %w", err)
-	}
-	return nil
 }
 
 // runUpdateElementServer mirrors a YAML element field change to the server and
@@ -379,11 +346,11 @@ func runUpdateElementServer(cmd *cobra.Command, sess *cmdutil.Session, ws *works
 		}
 		return updatedElement, viewID, nil
 	default:
-		bypass := true
 		existing, err := runner.GetElement(ctx, elementID)
 		if err != nil {
 			return nil, 0, cmdutil.WithUnauthorizedHint("server get element failed", err)
 		}
+		bypass := existing.GetBypassNoiseGate()
 		input := api.ElementInput{
 			Name:            existing.GetName(),
 			Description:     optStrFromProto(existing.Description),
@@ -499,10 +466,6 @@ func applyElementField(input *api.ElementInput, el *workspace.Element, field, va
 		input.FilePath = &value
 	case "view_label":
 		input.ViewLabel = &value
-	case "bypass_noise_gate":
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			input.BypassNoiseGate = &parsed
-		}
 	}
 }
 
