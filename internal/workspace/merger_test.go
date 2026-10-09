@@ -90,6 +90,55 @@ func TestMergeWorkspace_MigratesLegacyConnectorKeys(t *testing.T) {
 	}
 }
 
+func TestMergeWorkspace_PreservesListFormConnectors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "connectors.yaml"), []byte(`- view: platform
+  source: api
+  target: db
+  label: reads
+- view: platform
+  source: api
+  target: cache
+  label: writes
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	newWS := &workspace.Workspace{
+		Dir: dir,
+		Connectors: map[string]*workspace.Connector{
+			"platform/api~cache/writes":    {View: "platform", Source: "api", Target: "cache", Label: "writes"},
+			"platform/api~queue/publishes": {View: "platform", Source: "api", Target: "queue", Label: "publishes"},
+		},
+		Meta: &workspace.Meta{
+			Connectors: map[string]*workspace.ResourceMetadata{
+				"platform/api~cache/writes":    {ID: 1, UpdatedAt: time.Now()},
+				"platform/api~queue/publishes": {ID: 2, UpdatedAt: time.Now()},
+			},
+		},
+	}
+
+	if err := workspace.MergeWorkspace(dir, newWS, &workspace.Meta{}, &workspace.Meta{}); err != nil {
+		t.Fatalf("MergeWorkspace: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "connectors.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "_meta_connectors:") {
+		t.Fatalf("connectors.yaml should stay a list, got map metadata section:\n%s", text)
+	}
+	if !strings.Contains(text, "- view: platform") {
+		t.Fatalf("connectors.yaml should stay in list form:\n%s", text)
+	}
+	for _, want := range []string{"target: db", "target: cache", "target: queue"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("connectors.yaml missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func TestMergeWorkspace_ServerWinsOnElementPlacementPositions(t *testing.T) {
 	dir := t.TempDir()
 	lastSyncTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
