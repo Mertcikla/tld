@@ -212,7 +212,7 @@ func registerTools(server *mcpsdk.Server, _ *cobra.Command, wdir, format *string
 			args = append(args, "--position-y", fmt.Sprintf("%v", a.PositionY))
 		}
 		if a.ViewLabel != "" {
-			args = append(args, "--diagram-label", a.ViewLabel)
+			args = append(args, "--view-label", a.ViewLabel)
 		}
 		if dataDir != "" {
 			args = append(args, "--data-dir", dataDir)

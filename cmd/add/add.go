@@ -19,20 +19,20 @@ import (
 
 func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	var (
-		description     string
-		technology      string
-		dryRun          bool
-		url             string
-		positionX       float64
-		positionY       float64
-		ref             string
-		kind            string
-		parent          string
-		diagramLabel    string
-		target          string
-		dataDir         string
-		tags            string
-		logoURL         string
+		description string
+		technology  string
+		dryRun      bool
+		url         string
+		positionX   float64
+		positionY   float64
+		ref         string
+		kind        string
+		parent      string
+		viewLabel   string
+		target      string
+		dataDir     string
+		tags        string
+		logoURL     string
 	)
 
 	c := &cobra.Command{
@@ -98,7 +98,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 				URL:         url,
 				LogoURL:     logoURL,
 				Tags:        parsedTags,
-				ViewLabel:   diagramLabel,
+				ViewLabel:   viewLabel,
 				Placements: []workspace.ViewPlacement{{
 					ParentRef: placementParent,
 					PositionX: positionX,
@@ -131,7 +131,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 		},
 	}
 
-	c.Flags().StringVar(&kind, "kind", "service", "short element kind metadata, e.g. service, database, component, function")
+	c.Flags().StringVar(&kind, "kind", "", "short element kind metadata, e.g. service, database, component, function")
 	c.Flags().StringVar(&description, "description", "", "description")
 	c.Flags().StringVar(&technology, "technology", "", "primary technology")
 	c.Flags().StringVar(&url, "url", "", "external URL")
@@ -142,7 +142,7 @@ func NewAddCmd(wdir, format *string, compact *bool) *cobra.Command {
 	c.Flags().StringVar(&ref, "ref", "", "override generated ref (default: slugified name)")
 	c.Flags().StringVar(&parent, "parent", "root", "parent element ref or root")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "preview the change without writing files")
-	c.Flags().StringVar(&diagramLabel, "diagram-label", "", "label for the diagram created when this element becomes a parent")
+	c.Flags().StringVar(&viewLabel, "view-label", "", "label for the diagram created when this element becomes a parent")
 	c.Flags().StringVar(&target, "target", "", "sync target: auto, local, remote, or cloud")
 	c.Flags().StringVar(&dataDir, "data-dir", "", "data directory for local target state")
 
