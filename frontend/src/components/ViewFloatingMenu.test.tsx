@@ -140,4 +140,22 @@ describe('ViewFloatingMenu noise gate toggle', () => {
     expect(onDensityLevelChange).toHaveBeenCalledWith(1)
     expect(onNoiseGateEnabledChange).toHaveBeenCalledWith(false)
   })
+
+  it('keeps the toggle enabled while the gate is busy so the popover does not blur-close', () => {
+    const onNoiseGateEnabledChange = vi.fn()
+    const renderer = renderMenu({
+      noiseGateEnabled: true,
+      noiseGateBusy: true,
+      onNoiseGateEnabledChange,
+    })
+
+    const toggle = renderer.root.findByProps({ 'data-testid': 'vieweditor-noise-gate-toggle' })
+    expect(toggle.props.isDisabled).toBe(false)
+
+    act(() => {
+      toggle.props.onChange({ target: { checked: false } })
+    })
+
+    expect(onNoiseGateEnabledChange).toHaveBeenCalledWith(false)
+  })
 })

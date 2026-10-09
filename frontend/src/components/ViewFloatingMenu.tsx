@@ -296,9 +296,6 @@ function ViewFloatingMenu({
                           borderColor={focusMode ? 'rgba(var(--accent-rgb), 0.22)' : 'whiteAlpha.100'}
                         >
                           <HStack spacing={2.5} minW={0}>
-                            <Box color={focusMode ? 'var(--accent)' : 'gray.400'} flexShrink={0}>
-                              <FocusSvg size={15} />
-                            </Box>
                             <Box minW={0}>
                               <Text fontSize="xs" fontWeight="semibold" color="whiteAlpha.900">Hide External</Text>
                             </Box>
@@ -326,7 +323,7 @@ function ViewFloatingMenu({
                           <HStack justify="space-between" mb={2.5} align="flex-start">
                             <Box>
                               <Text fontSize="xs" fontWeight="semibold" color="whiteAlpha.900">Noise Gate</Text>
-                              <Text fontSize="10px" color="whiteAlpha.600">Control how much detail is shown</Text>
+                              <Text fontSize="10px" color="whiteAlpha.600"></Text>
                             </Box>
                             <HStack spacing={2} flexShrink={0}>
                               <Text
@@ -346,7 +343,7 @@ function ViewFloatingMenu({
                                 data-testid="vieweditor-noise-gate-toggle"
                                 size="sm"
                                 isChecked={noiseGateEnabled}
-                                isDisabled={noiseGateBusy || !onNoiseGateEnabledChange}
+                                isDisabled={!onNoiseGateEnabledChange}
                                 onChange={(event) => onNoiseGateEnabledChange?.(event.target.checked)}
                                 colorScheme="teal"
                                 aria-label="Toggle noise gate"
