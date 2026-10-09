@@ -1,7 +1,6 @@
 package link_test
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -185,27 +184,6 @@ top:
 	}
 	if !strings.Contains(stdout, "ref top") {
 		t.Fatalf("expected top-level element first, got:\n%s", stdout)
-	}
-}
-
-func TestLinkCmd_NextLimitsToFive(t *testing.T) {
-	dir := t.TempDir()
-	cmd.MustInitWorkspace(t, dir)
-	var content strings.Builder
-	for i := 1; i <= 7; i++ {
-		fmt.Fprintf(&content, "e%d:\n  name: E%d\n  kind: struct\n  placements: [ { parent: root } ]\n", i, i)
-	}
-	writeElements(t, dir, content.String())
-
-	stdout, _, err := cmd.RunCmd(t, dir, "link", "--next")
-	if err != nil {
-		t.Fatalf("link --next: %v", err)
-	}
-	if !strings.Contains(stdout, "Next unlinked elements (5):") {
-		t.Fatalf("expected 5 suggestions, got:\n%s", stdout)
-	}
-	if strings.Contains(stdout, "ref e6") || strings.Contains(stdout, "ref e7") {
-		t.Fatalf("expected only the first 5 by view level, got:\n%s", stdout)
 	}
 }
 

@@ -95,7 +95,6 @@ type linkArgs struct {
 	Repo     string `json:"repo,omitempty" jsonschema:"repository remote URL or owner/name"`
 	External bool   `json:"external,omitempty" jsonschema:"force an external (documented) link"`
 	Unlink   bool   `json:"unlink,omitempty" jsonschema:"clear the element's source link"`
-	Quiet    bool   `json:"quiet,omitempty" jsonschema:"only print the link result"`
 }
 
 type linkNextArgs struct {
@@ -396,9 +395,6 @@ func registerLinkTools(server *mcpsdk.Server, wdir, format *string, compact *boo
 		}
 		if a.Unlink {
 			args = append(args, "--unlink")
-		}
-		if a.Quiet {
-			args = append(args, "--quiet")
 		}
 		if dataDir != "" {
 			args = append(args, "--data-dir", dataDir)

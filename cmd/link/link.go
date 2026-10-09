@@ -32,7 +32,6 @@ type linkOptions struct {
 	nodeType string
 	repo     string
 	branch   string
-	quiet    bool
 	dryRun   bool
 	dataDir  string
 	format   string
@@ -84,7 +83,6 @@ view level as suggestions.
 	c.Flags().StringVar(&opts.nodeType, "node-type", "", "symbol node type for the anchor (default derived)")
 	c.Flags().StringVar(&opts.repo, "repo", "", "repository remote URL or owner/name")
 	c.Flags().StringVar(&opts.branch, "branch", "", "branch to record with the link")
-	c.Flags().BoolVar(&opts.quiet, "quiet", false, "only print the link result")
 	c.Flags().BoolVar(&opts.dryRun, "dry-run", false, "preview the change without writing files")
 	c.Flags().StringVar(&opts.dataDir, "data-dir", "", "data directory for local target state")
 	return c
@@ -211,9 +209,6 @@ func reportResult(cmd *cobra.Command, ws *workspace.Workspace, ref string, res *
 			}
 		}
 	}
-	if !opts.quiet {
-		_, _ = fmt.Fprintf(out, "Grounding: workspace %d/10 (%d/%d)\n", report.Value, report.Grounded, report.Eligible)
-	}
 	return nil
 }
 
@@ -239,7 +234,7 @@ func runNext(cmd *cobra.Command, ws *workspace.Workspace, opts linkOptions) erro
 		term.Successf(out, "All linkable elements are grounded.")
 		return nil
 	}
-	_, _ = fmt.Fprintf(out, "Next unlinked elements (%d):\n", len(next))
+	_, _ = fmt.Fprintf(out, "Next (%d) unlinked elements, run tld validate ARC205 for full list\n", len(next))
 	for _, element := range next {
 		_, _ = fmt.Fprintf(out, "  - %s\n", suggestionLine(element))
 	}
