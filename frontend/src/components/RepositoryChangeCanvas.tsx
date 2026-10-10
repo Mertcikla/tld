@@ -2,11 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Box, Flex, Text } from '@chakra-ui/react'
 import { api, type RepositoryImpact as ImpactDiagram, type RepositoryImpactScene } from '../api/client'
 import type { Tag } from '../types'
-import { CHANGE_OVERLAY_TAG } from './ZUI/changeOverlay'
 import { isElementGroupTag } from '../utils/elementGroups'
 import { isGroundingIgnoreTag } from '../utils/groundingTags'
 import { ZUICanvas, type ZUICanvasHandle } from './ZUI'
-import { repositoryChangeScene } from '../utils/repositoryChangeScene'
+import { REPOSITORY_TAG_COLORS, repositoryChangeScene } from '../utils/repositoryChangeScene'
 import {
   PANEL_COLLAPSE_SNAP,
   PANEL_OVERLAY_SNAP,
@@ -18,6 +17,10 @@ import RepositoryChangeMermaid from './RepositoryChangeMermaid'
 
 const MERMAID_PANE_DEFAULT_WIDTH = 380
 const crossBranchSettings = { enabled: false, depth: 1, connectorBudget: 50, connectorPriority: 'external' as const }
+const seedTagColors = (): Record<string, Tag> =>
+  Object.fromEntries(
+    Object.entries(REPOSITORY_TAG_COLORS).map(([name, color]) => [name, { name, color, description: null }]),
+  )
 export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMessage = 'Select Base and Head, then compare to overlay changes on the map.', busy = false }: {
   diagram: ImpactDiagram | null; selectedPath: string; emptyMessage?: string
   busy?: boolean
@@ -27,7 +30,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
   const [scene, setScene] = useState<RepositoryImpactScene | null>(null)
   const [error, setError] = useState('')
   const [displayMode, setDisplayMode] = useState<'standard' | 'plain'>('standard')
-  const [tagColors, setTagColors] = useState<Record<string, Tag>>({})
+  const [tagColors, setTagColors] = useState<Record<string, Tag>>(seedTagColors)
   const [highlightedTags, setHighlightedTags] = useState<string[]>([])
   const [hiddenTags, setHiddenTags] = useState<string[]>([])
   const mermaidPane = useResizableColumn({
@@ -60,8 +63,8 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
       const pending = api.workspace?.orgs?.tagColors?.list?.()
       if (pending && typeof (pending as Promise<Record<string, Tag>>).then === 'function') {
         void (pending as Promise<Record<string, Tag>>)
-          .then((colors) => { if (!cancelled) setTagColors(colors) })
-          .catch(() => { if (!cancelled) setTagColors({}) })
+          .then((colors) => { if (!cancelled) setTagColors({ ...seedTagColors(), ...colors }) })
+          .catch(() => { if (!cancelled) setTagColors(seedTagColors()) })
       }
     } catch {
       if (!cancelled) setTagColors({})
@@ -75,7 +78,7 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
       for (const data of Object.values(view.data.views)) {
         for (const placement of data?.placements ?? []) {
           for (const tag of placement.tags ?? []) {
-            if (tag === CHANGE_OVERLAY_TAG || isElementGroupTag(tag) || isGroundingIgnoreTag(tag)) continue
+            if (isElementGroupTag(tag) || isGroundingIgnoreTag(tag)) continue
             tagSet.add(tag)
             tagCounts[tag] = (tagCounts[tag] ?? 0) + 1
           }
@@ -104,12 +107,11 @@ export default function RepositoryChangeCanvas({ diagram, selectedPath, emptyMes
         {!diagram.nodes.length && <Text p={3} fontSize="sm" color="gray.400">No source changes in this comparison.</Text>}
         <Flex flex={1} minH={0} direction={{ base: 'column', lg: 'row' }} position="relative" ref={splitRef} data-testid="repository-change-split">
           <Box position="relative" minW={0} flex={1} minH={{ base: '420px', xl: '560px' }} data-testid="repository-change-canvas">
-            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} provenanceOverlays={view.provenance} preserveCameraOnUpdate highlightedTags={highlightedTags} hiddenTags={hiddenTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={focusSelected} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
+            {view ? <ZUICanvas ref={canvas} data={view.data} changeOverlays={view.overlays} preserveCameraOnUpdate highlightedTags={highlightedTags} hiddenTags={hiddenTags} tagColors={tagColors} crossBranchSettings={crossBranchSettings} hoverLocked={highlightedTags.length > 0} onReady={focusSelected} /> : !error && <Text p={6} fontSize="sm" color="gray.400">Loading change scene…</Text>}
             <RepositoryChangeMenu
               busy={busy}
               viewMode={displayMode}
               onViewModeChange={setDisplayMode}
-              showProvenanceLegend
               allTags={tagMetrics.allTags}
               tagCounts={tagMetrics.tagCounts}
               tagColors={tagColors}

@@ -1,9 +1,8 @@
 import type { ViewLayer } from '../../types'
 import { elementGroupTagForLayer, isElementGroupTag } from '../../utils/elementGroups'
 import { isGroundingIgnoreTag } from '../../utils/groundingTags'
-import { CHANGE_OVERLAY_TAG } from './changeOverlay'
 import type { DiagramGroupLayout, LayoutNode, ZUIViewState } from './types'
-import { PROVENANCE_META } from './provenance'
+import { CHANGE_RING_COLORS } from './changeOverlay'
 import { EDGE_CHANGE_META } from './edgeChange'
 import { positionForHandleSide, stepRoutePoints } from '../../utils/connectorRoute'
 import type { SceneGraph, SceneNode } from './sceneGraph'
@@ -43,9 +42,15 @@ const MIN_FONT_HINT = 12
 const MAX_FONT_HINT = 24
 
 const VIEW_EDITOR_NODE_H = 85
+const VIEW_EDITOR_NODE_W = 180
 const NAME_FONT_TO_NODE_H = 20 / VIEW_EDITOR_NODE_H
 const TYPE_FONT_TO_NODE_H = 10 / VIEW_EDITOR_NODE_H
 const RADIUS_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
+const TAG_DOT_TO_NODE_H = 6 / VIEW_EDITOR_NODE_H
+const TAG_DOT_GAP_TO_NODE_H = 4 / VIEW_EDITOR_NODE_H
+const TAG_DOT_INSET_X_TO_NODE_W = 8 / VIEW_EDITOR_NODE_W
+const TAG_DOT_INSET_Y_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
+const TAG_OVERFLOW_FONT_TO_NODE_H = 8 / VIEW_EDITOR_NODE_H
 
 export interface ScreenRect {
   left: number
@@ -191,7 +196,7 @@ function tagColorFor(tag: string, fallback: string): string {
 /** Visible workspace tags for node chrome: mirrors ViewEditor's ElementNode filter. */
 function visibleNodeTags(tags: string[]): string[] {
   return (tags ?? []).filter(
-    (tag) => tag !== CHANGE_OVERLAY_TAG && !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag),
+    (tag) => !isElementGroupTag(tag) && !isGroundingIgnoreTag(tag),
   )
 }
 
@@ -1113,11 +1118,11 @@ function drawSceneNode(
         }
         ctx.restore()
       } else if (drawScreenW > 50) {
-        const dotD = 6 / drawZoom
+        const dotD = h * TAG_DOT_TO_NODE_H
         const dotR = dotD / 2
-        const gap = 4 / drawZoom
-        const insetX = 8 / drawZoom
-        const insetY = 8 / drawZoom
+        const gap = h * TAG_DOT_GAP_TO_NODE_H
+        const insetX = w * TAG_DOT_INSET_X_TO_NODE_W
+        const insetY = h * TAG_DOT_INSET_Y_TO_NODE_H
         const maxDots = 5
         const shown = tags.slice(0, maxDots)
         ctx.save()
@@ -1131,7 +1136,7 @@ function drawSceneNode(
           ctx.fill()
         })
         if (tags.length > maxDots) {
-          ctx.font = `700 ${8 / drawZoom}px ${ZUI_FONT_FAMILY}`
+          ctx.font = `700 ${h * TAG_OVERFLOW_FONT_TO_NODE_H}px ${ZUI_FONT_FAMILY}`
           ctx.fillStyle = 'rgba(255,255,255,0.6)'
           ctx.textAlign = 'left'
           ctx.textBaseline = 'middle'
@@ -1146,26 +1151,20 @@ function drawSceneNode(
     }
   }
 
-  // Blast-radius context keeps its grey marker internally for opacity, but is
-  // not drawn: neighbours should look exactly like the original canvas.
+  // Change state reads as a single solid ring color-coded by line change.
+  // Everything else (provenance, blast-radius context) reads through tags —
+  // except modified, which carries its +added/−removed lines badge instead.
   if (layout.changeOverlay && layout.changeOverlay.change !== 'unchanged' && parentAlpha > 0.05) {
     const change = layout.changeOverlay
-    const color = { added: '#48bb78', removed: '#fc8181', modified: '#ecc94b', unchanged: '#718096' }[change.change]
+    const color = CHANGE_RING_COLORS[change.change]
     ctx.save()
     ctx.globalAlpha = parentAlpha
     ctx.strokeStyle = color
     ctx.lineWidth = 2.5 / drawZoom
-    // Folder/service roll-ups read as a ring rather than a direct hit: the
-    // reason is containment, not a change to the element itself. Removed
-    // keeps its dash.
-    if (change.reason === 'contained') {
-      ctx.setLineDash([8 / drawZoom, 4 / drawZoom])
-    } else {
-      ctx.setLineDash(change.change === 'removed' ? [5 / drawZoom, 3 / drawZoom] : [])
-    }
+    ctx.setLineDash([])
     traceShape()
     ctx.stroke()
-    if (change.change !== 'unchanged' && drawScreenW > 70 && !renderCtx.lowDetail) {
+    if (change.change === 'modified' && drawScreenW > 70 && !renderCtx.lowDetail) {
       const plus = `+${change.linesAdded ?? 0}`
       const minus = `\u2212${change.linesRemoved ?? 0}`
       const badgePad = 6 / drawZoom
@@ -1193,44 +1192,6 @@ function drawSceneNode(
       ctx.fillText(plus, badgeX + padX, textY)
       ctx.fillStyle = '#fc8181'
       ctx.fillText(minus, badgeX + padX + plusW + gap, textY)
-    }
-    ctx.restore()
-  }
-
-  // Provenance reads as a second ring so it composes with the change overlay:
-  // authored nodes (the baseline) carry no extra chrome, graph-augmented
-  // transients get a violet dash, map-generated nodes a teal dotted ring.
-  // A glyph chip at the top-left names the kind once the node is legible.
-  if (layout.provenance && layout.provenance !== 'authored' && parentAlpha > 0.05) {
-    const meta = PROVENANCE_META[layout.provenance]
-    ctx.save()
-    ctx.globalAlpha = parentAlpha
-    ctx.strokeStyle = meta.color
-    ctx.lineWidth = 2 / drawZoom
-    ctx.setLineDash(meta.dash.map((segment) => segment / drawZoom))
-    traceShape()
-    ctx.stroke()
-    ctx.setLineDash([])
-    if (drawScreenW > 90 && !renderCtx.lowDetail) {
-      const glyph = meta.glyph
-      const chipPad = 5 / drawZoom
-      const chipH = 15 / drawZoom
-      ctx.font = `600 ${10 / drawZoom}px ${ZUI_FONT_FAMILY}`
-      const glyphW = ctx.measureText(glyph).width
-      const chipW = glyphW + chipPad * 2
-      const chipX = x + chipPad
-      const chipY = y + chipPad
-      ctx.beginPath()
-      ctx.roundRect(chipX, chipY, chipW, chipH, 4 / drawZoom)
-      ctx.fillStyle = portalTintColor(meta.color, 0.28)
-      ctx.fill()
-      ctx.strokeStyle = meta.color
-      ctx.lineWidth = 1.25 / drawZoom
-      ctx.stroke()
-      ctx.textAlign = 'left'
-      ctx.textBaseline = 'middle'
-      ctx.fillStyle = meta.color
-      ctx.fillText(glyph, chipX + chipPad, chipY + chipH / 2 + 0.5 / drawZoom)
     }
     ctx.restore()
   }

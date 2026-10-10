@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { RepositoryImpactOverlay, RepositoryImpactScene } from '../api/client'
 import type { PlacedElement, ViewTreeNode } from '../types'
-import { repositoryChangeScene, REPOSITORY_CHANGE_TAG } from './repositoryChangeScene'
-import { applyChangeOverlays, CHANGE_OVERLAY_TAG } from '../components/ZUI/changeOverlay'
+import { repositoryChangeScene } from './repositoryChangeScene'
+import { applyChangeOverlays } from '../components/ZUI/changeOverlay'
 import { computeLayout } from '../components/ZUI/layout'
 
 const view = (id: number, name = 'Map', children: ViewTreeNode[] = []): ViewTreeNode => ({ id, name, description: null, level_label: null, level: 0, depth: 0, created_at: '', updated_at: '', parent_view_id: null, children })
@@ -41,15 +41,17 @@ describe('repositoryChangeScene', () => {
     expect(rendered.overlays[3]?.change).toBe('unchanged')
   })
 
-  it('tags direct changes and leaves blast-radius context unhighlighted', () => {
+  it('tags direct changes and blast-radius context with change-state tags', () => {
     const rendered = repositoryChangeScene(scene, {})
     const annotated = applyChangeOverlays(computeLayout(rendered.data), rendered.overlays)
     const changed = annotated.groups[0].nodes.find((node) => node.elementId === 1)!
     const context = annotated.groups[0].nodes.find((node) => node.elementId === 2)!
-    expect(changed.tags).toContain(CHANGE_OVERLAY_TAG)
-    expect(context.tags).not.toContain(CHANGE_OVERLAY_TAG)
+    // Modified reads through the +a/−r lines badge, not a tag.
+    expect(changed.tags).not.toContain('modified')
+    expect(changed.changeOverlay?.change).toBe('modified')
+    expect(context.tags).toContain('unchanged')
     expect(context.changeOverlay?.change).toBe('unchanged')
-    expect(rendered.data.views[1].placements.find((element) => element.element_id === 2)!.tags).not.toContain(REPOSITORY_CHANGE_TAG)
+    expect(rendered.data.views[1].placements.find((element) => element.element_id === 1)!.tags).not.toContain('modified')
   })
 
   it('plain mode hides non-impacted elements and their connectors while keeping neighbours', () => {
@@ -92,7 +94,8 @@ describe('repositoryChangeScene', () => {
     }
     const rendered = repositoryChangeScene(withTransient, {})
     const added = rendered.data.views[1].placements.find((element) => element.element_id === -1)!
-    expect(added.tags).toContain(REPOSITORY_CHANGE_TAG)
+    expect(added.tags).toContain('added')
+    expect(added.tags).toContain('augmented')
     expect(rendered.overlays[-1].change).toBe('added')
   })
 
@@ -102,7 +105,7 @@ describe('repositoryChangeScene', () => {
     expect(rendered.overlays[1]?.change).toBe('modified')
   })
 
-  it('marks provenance: transients augmented, authored views authored, the rest generated', () => {
+  it('tags provenance: transients augmented, authored views authored, the rest generated', () => {
     const withOrphan: RepositoryImpactScene = {
       ...scene,
       tree: [view(10, 'Workspace', [view(11, 'repo map'), view(51, 'My services'), view(-1, 'Changes')])],
@@ -120,10 +123,12 @@ describe('repositoryChangeScene', () => {
       authoredViewIds: [51],
     }
     const grounded = repositoryChangeScene(withOrphan, {})
-    expect(grounded.provenance[7]).toBe('authored')
-    expect(grounded.provenance[-1]).toBe('augmented')
+    const tagsFor = (viewId: number, elementId: number) =>
+      grounded.data.views[viewId].placements.find((element) => element.element_id === elementId)!.tags
+    expect(tagsFor(51, 7)).toContain('authored')
+    expect(tagsFor(-1, -1)).toContain('augmented')
     const degraded = repositoryChangeScene({ ...withOrphan, authoredViewIds: [] }, {})
-    expect(degraded.provenance[1]).toBe('generated')
+    expect(degraded.data.views[11].placements.find((element) => element.element_id === 1)!.tags).toContain('generated')
   })
 
   it('falls back to mapped when no authored view matched', () => {

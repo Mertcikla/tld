@@ -42,8 +42,6 @@ export interface ZUITestInteraction {
  */
 export interface LayoutNode {
   changeOverlay?: ZUIChangeOverlay
-  /** Where this node comes from: workspace-authored, graph-augmented transient, or map-generated. */
-  provenance?: ZUINodeProvenance
   // ── Identity ────────────────────────────────────────────────────
   /** Unique stable id: "d{diagramId}-o{elementId}" */
   id: string

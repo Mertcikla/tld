@@ -1,10 +1,19 @@
 import type { RepositoryImpactScene } from '../api/client'
 import type { ExploreData, PlacedElement, ViewTreeNode } from '../types'
 import type { ZUIChangeOverlay } from '../components/ZUI/types'
-import type { ZUINodeProvenance } from '../components/ZUI/types'
+import { CHANGE_RING_COLORS } from '../components/ZUI/changeOverlay'
+import { PROVENANCE_META, type ZUINodeProvenance } from '../components/ZUI/provenance'
 
-export { CHANGE_OVERLAY_TAG as REPOSITORY_CHANGE_TAG } from '../components/ZUI/changeOverlay'
-import { CHANGE_OVERLAY_TAG as REPOSITORY_CHANGE_TAG } from '../components/ZUI/changeOverlay'
+export const CHANGE_STATE_TAGS = ['added', 'removed', 'unchanged'] as const
+export const PROVENANCE_TAGS = ['authored', 'augmented', 'generated'] as const
+
+/** Seed colors for overlay tags; workspace tagColors take precedence. */
+export const REPOSITORY_TAG_COLORS: Record<string, string> = {
+  ...CHANGE_RING_COLORS,
+  authored: PROVENANCE_META.authored.color,
+  augmented: PROVENANCE_META.augmented.color,
+  generated: PROVENANCE_META.generated.color,
+}
 
 // repositoryChangeScene adapts the backend-assembled impact scene to the ZUI
 // canvas contract. Membership, transient placements and connector routing are
@@ -22,7 +31,6 @@ export function repositoryChangeScene(scene: RepositoryImpactScene, options: { p
   // diagram instead of an empty canvas.
   const degraded = authored.size === 0
   const overlays: Record<number, ZUIChangeOverlay> = {}
-  const provenance: Record<number, ZUINodeProvenance> = {}
   // Without a display radius everything computed shows: impacted means
   // carrying a change overlay.
   const impacted = new Set<number>()
@@ -125,28 +133,30 @@ export function repositoryChangeScene(scene: RepositoryImpactScene, options: { p
     data.views[id] = {
       ...view,
       placements: placements.map((element) => {
-        // Provenance is orthogonal to change state: transients synthesized
-        // from graph facts read as augmented even inside authored views,
-        // authored-view members as authored, everything else as generated.
-        provenance[element.element_id] = element.element_id < 0
+        // Provenance is a plain tag: transients synthesized from graph facts
+        // read as augmented even inside authored views, authored-view members
+        // as authored, everything else as generated. Change state is a second
+        // tag so blast-radius context reads through the tag menu instead of
+        // outline chrome — except modified, which reads through the +a/−r
+        // lines badge under the node instead of a tag.
+        const provenanceTag: ZUINodeProvenance = element.element_id < 0
           ? 'augmented'
           : authored.has(id) ? 'authored' : 'generated'
         const overlay = scene.overlays[element.element_id]
-        // Only direct changes glow; blast-radius context keeps its outline but no
-        // spotlight so it reads as surrounding context.
-        if (!overlay) return element
+        if (!overlay) return { ...element, tags: [...element.tags, provenanceTag] }
         overlays[element.element_id] = {
           change: overlay.change, path: overlay.path,
           linesAdded: overlay.linesAdded, linesRemoved: overlay.linesRemoved, symbols: overlay.symbols,
           reason: overlay.reason,
         }
-        return overlay.change === 'unchanged' ? element : { ...element, tags: [...element.tags, REPOSITORY_CHANGE_TAG] }
+        const changeTags = overlay.change === 'modified' ? [] : [overlay.change]
+        return { ...element, tags: [...element.tags, provenanceTag, ...changeTags] }
       }),
       connectors,
     }
   }
   data.navigations = (scene.navigations ?? []).filter((link) => retained.has(link.from_view_id) && retained.has(link.to_view_id))
-  return { data, overlays, provenance }
+  return { data, overlays }
 }
 
 function findSceneView(tree: ViewTreeNode[], id: number): ViewTreeNode | null {

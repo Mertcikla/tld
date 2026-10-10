@@ -107,11 +107,12 @@ describe('ZUIHoverPopover hover lock', () => {
 })
 
 describe('ZUIHoverPopover provenance', () => {
-  it('names non-authored provenance under the change details', () => {
+  it('renders no provenance row: provenance reads through tags now', () => {
     const item = hoveredNode()
+    if (item.type !== 'node') throw new Error('expected a node hover target')
     item.data = {
       ...item.data,
-      provenance: 'augmented',
+      tags: [...item.data.tags, 'augmented'],
       changeOverlay: { change: 'modified', path: 'new.go', symbols: [], reason: 'direct' },
     }
     const renderer = create(
@@ -122,21 +123,8 @@ describe('ZUIHoverPopover provenance', () => {
         onHoverLock={() => {}}
       />,
     )
-    expect(renderer.root.findAllByProps({ 'data-testid': 'zui-provenance-details' }).length).toBeGreaterThanOrEqual(1)
-  })
-
-  it('stays quiet for authored nodes', () => {
-    const item = hoveredNode()
-    item.data = { ...item.data, provenance: 'authored' }
-    const renderer = create(
-      <ZUIHoverPopover
-        hoveredItem={item}
-        hoveredScreenRect={{ sx: 0, sy: 0, sw: 100, sh: 80 }}
-        isHoveredItemFullyVisible
-        onHoverLock={() => {}}
-      />,
-    )
     expect(renderer.root.findAllByProps({ 'data-testid': 'zui-provenance-details' })).toHaveLength(0)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'zui-change-details' }).length).toBeGreaterThanOrEqual(1)
   })
 })
 

@@ -1,19 +1,16 @@
 import { Box, Button, HStack, IconButton, Popover, PopoverBody, PopoverContent, PopoverTrigger, Portal, Text, VStack } from '@chakra-ui/react'
 import type { Tag } from '../types'
 import { EyeIcon, EyeOffIcon, TagsIcon } from './Icons'
-import { PROVENANCE_META, type ZUINodeProvenance } from './ZUI/provenance'
 import { EDGE_CHANGE_META, type ZUIEdgeChange } from './ZUI/edgeChange'
 
 export type RepositoryChangeViewMode = 'standard' | 'plain'
 
-const PROVENANCE_ORDER: ZUINodeProvenance[] = ['authored', 'augmented', 'generated']
 const EDGE_CHANGE_ORDER: ZUIEdgeChange[] = ['added', 'removed', 'modified']
 
 export default function RepositoryChangeMenu({
   busy = false,
   viewMode,
   onViewModeChange,
-  showProvenanceLegend = false,
   allTags = [],
   tagCounts = {},
   tagColors = {},
@@ -24,7 +21,6 @@ export default function RepositoryChangeMenu({
   busy?: boolean
   viewMode: RepositoryChangeViewMode
   onViewModeChange: (mode: RepositoryChangeViewMode) => void
-  showProvenanceLegend?: boolean
   allTags?: string[]
   tagCounts?: Record<string, number>
   tagColors?: Record<string, Tag>
@@ -148,39 +144,28 @@ export default function RepositoryChangeMenu({
           </>
         )}
       </HStack>
-      {showProvenanceLegend && (
-        <HStack
-          pointerEvents="auto"
-          spacing={3}
-          bg="var(--bg-panel)"
-          border="1px solid"
-          borderColor="whiteAlpha.100"
-          rounded="xl"
-          boxShadow="0 5px 10px rgba(0,0,0,0.5)"
-          backdropFilter="blur(20px)"
-          px={3}
-          py={1.5}
-          data-testid="repositories-provenance-legend"
-        >
-          {PROVENANCE_ORDER.map((kind) => (
-            <HStack key={kind} spacing={1.5} data-testid={`repositories-provenance-${kind}`}>
-              <Box boxSize="8px" borderRadius="full" bg={PROVENANCE_META[kind].color} flexShrink={0} />
-              <Text fontSize="10px" color="gray.400" title={PROVENANCE_META[kind].blurb}>
-                {PROVENANCE_META[kind].glyph} {PROVENANCE_META[kind].label}
-              </Text>
-            </HStack>
-          ))}
-          <Box w="1px" h="14px" bg="whiteAlpha.200" flexShrink={0} />
-          {EDGE_CHANGE_ORDER.map((kind) => (
-            <HStack key={kind} spacing={1.5} data-testid={`repositories-edge-${kind}`}>
-              <Box w="14px" h="0" borderTop="2px solid" borderColor={EDGE_CHANGE_META[kind].color} borderTopStyle={kind === 'removed' ? 'dashed' : 'solid'} flexShrink={0} />
-              <Text fontSize="10px" color="gray.400" title={EDGE_CHANGE_META[kind].label}>
-                {kind} edge
-              </Text>
-            </HStack>
-          ))}
-        </HStack>
-      )}
+      <HStack
+        pointerEvents="auto"
+        spacing={3}
+        bg="var(--bg-panel)"
+        border="1px solid"
+        borderColor="whiteAlpha.100"
+        rounded="xl"
+        boxShadow="0 5px 10px rgba(0,0,0,0.5)"
+        backdropFilter="blur(20px)"
+        px={3}
+        py={1.5}
+        data-testid="repositories-change-legend"
+      >
+        {EDGE_CHANGE_ORDER.map((kind) => (
+          <HStack key={kind} spacing={1.5} data-testid={`repositories-edge-${kind}`}>
+            <Box w="14px" h="0" borderTop="2px solid" borderColor={EDGE_CHANGE_META[kind].color} borderTopStyle={kind === 'removed' ? 'dashed' : 'solid'} flexShrink={0} />
+            <Text fontSize="10px" color="gray.400" title={EDGE_CHANGE_META[kind].label}>
+              {kind} edge
+            </Text>
+          </HStack>
+        ))}
+      </HStack>
     </VStack>
   )
 }

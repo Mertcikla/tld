@@ -46,14 +46,10 @@ describe('RepositoryChangeMenu', () => {
     expect(renderer.root.findAllByProps({ 'data-testid': 'repository-change-mermaid-toggle' })).toHaveLength(0)
   })
 
-  it('hides the provenance legend unless asked', () => {
-    expect(renderMenu().root.findAllByProps({ 'data-testid': 'repositories-provenance-legend' })).toHaveLength(0)
-
-    const renderer = renderMenu({ showProvenanceLegend: true })
-    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-provenance-legend' }).length).toBeGreaterThanOrEqual(1)
-    for (const kind of ['authored', 'augmented', 'generated']) {
-      expect(renderer.root.findAllByProps({ 'data-testid': `repositories-provenance-${kind}` }).length).toBeGreaterThanOrEqual(1)
-    }
+  it('always shows the edge-change legend without provenance entries', () => {
+    const renderer = renderMenu()
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-change-legend' }).length).toBeGreaterThanOrEqual(1)
+    expect(renderer.root.findAllByProps({ 'data-testid': 'repositories-provenance-legend' })).toHaveLength(0)
     for (const kind of ['added', 'removed', 'modified']) {
       expect(renderer.root.findAllByProps({ 'data-testid': `repositories-edge-${kind}` }).length).toBeGreaterThanOrEqual(1)
     }
